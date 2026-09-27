@@ -516,6 +516,7 @@ export const settingsSections = {
     errors: {
       serviceUnavailable: '当前版本未提供应用设置服务',
       readFailed: '读取平台功能设置失败',
+      saveDesktopNotificationsFailed: '保存桌面通知设置失败，请重试',
       saveConversationHtmlRenderingFailed:
         '保存会话 HTML 渲染设置失败，请重试',
       saveRemoteProjectsFailed: '保存远程项目设置失败，请重试',
@@ -530,6 +531,15 @@ export const settingsSections = {
     tabs: {
       ariaLabel: '平台功能设置',
       general: '通用设置'
+    },
+    groups: {
+      conversation: '会话与通知',
+      workspace: '工作目录与下载'
+    },
+    desktopNotifications: {
+      enabled: '桌面通知',
+      description:
+        '后台工作需要关注时显示系统通知。关闭后不影响应用内通知。'
     },
     conversationHtml: {
       title: '会话 HTML 渲染',

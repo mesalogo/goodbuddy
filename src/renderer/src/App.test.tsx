@@ -1130,6 +1130,7 @@ function installRemoteProjectsSetting(enabled: boolean): {
 } {
   let settings: ApplicationSettings = {
     checkUpdatesOnStartup: false,
+    desktopNotificationsEnabled: true,
     updateSource: "github",
     modelDownloadSource: "modelscope",
     localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3144,6 +3145,7 @@ describe("App", () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3247,6 +3249,7 @@ describe("App", () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3262,6 +3265,7 @@ describe("App", () => {
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3363,6 +3367,7 @@ describe("App", () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3378,6 +3383,7 @@ describe("App", () => {
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -5653,6 +5659,7 @@ describe("App", () => {
   it("updates and removes the composer shortcut hint immediately after saving Settings", async () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
+      desktopNotificationsEnabled: true,
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13541,6 +13548,7 @@ describe("App", () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13556,6 +13564,7 @@ describe("App", () => {
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13608,6 +13617,7 @@ describe("App", () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13667,6 +13677,7 @@ describe("App", () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13703,6 +13714,7 @@ describe("App", () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13718,6 +13730,7 @@ describe("App", () => {
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        desktopNotificationsEnabled: true,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13779,6 +13792,7 @@ describe("App", () => {
     ]);
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
+      desktopNotificationsEnabled: true,
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13837,6 +13851,7 @@ describe("App", () => {
   it("omits global notes settings while retaining application center settings without navigating the workspace", async () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
+      desktopNotificationsEnabled: true,
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,

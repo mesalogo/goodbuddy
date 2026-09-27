@@ -58,6 +58,7 @@ export const applicationNavigationSchema = z.object({
 const applicationPreferencesSchema = z
   .object({
     checkUpdatesOnStartup: z.boolean(),
+    desktopNotificationsEnabled: z.boolean().default(true),
     updateSource: updateSourceSchema,
     modelDownloadSource: modelDownloadSourceSchema,
     localToolEnvironment: localToolEnvironmentSettingsSchema,
@@ -88,6 +89,7 @@ export const applicationSettingsUpdateSchema = applicationPreferencesSchema
   .partial()
   .extend({
     applicationNavigation: applicationNavigationSchema.optional(),
+    desktopNotificationsEnabled: z.boolean().optional(),
     localInferenceEnabled: z.boolean().optional(),
     magicNotesEnabled: z.boolean().optional(),
     heartbeatEnabled: z.boolean().optional(),

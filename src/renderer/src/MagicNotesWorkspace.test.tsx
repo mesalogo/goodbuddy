@@ -73,6 +73,7 @@ const todo: MagicTodoItem = {
 }
 const otherTodo: MagicTodoItem = { ...todo, id: '00000000-0000-4000-8000-000000000604', noteId: secondNoteId, noteTitle: second.title, title: '准备演示' }
 const settings: ApplicationSettings = {
+  desktopNotificationsEnabled: true,
   checkUpdatesOnStartup: false, updateSource: 'github', modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings, applicationNavigation: defaultApplicationNavigation,
   localInferenceEnabled: true, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false,

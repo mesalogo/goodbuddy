@@ -541,6 +541,8 @@ export const settingsSections = {
       serviceUnavailable:
         'Application settings are not available in this version',
       readFailed: 'Could not load platform feature settings',
+      saveDesktopNotificationsFailed:
+        'Could not save the desktop notification setting. Try again.',
       saveConversationHtmlRenderingFailed:
         'Could not save the conversation HTML rendering setting. Try again.',
       saveRemoteProjectsFailed:
@@ -559,6 +561,15 @@ export const settingsSections = {
     tabs: {
       ariaLabel: 'Platform feature settings',
       general: 'General'
+    },
+    groups: {
+      conversation: 'Conversations & notifications',
+      workspace: 'Workspace & downloads'
+    },
+    desktopNotifications: {
+      enabled: 'Desktop notifications',
+      description:
+        'Show system notifications when background work needs your attention. Turning this off does not affect in-app notifications.'
     },
     conversationHtml: {
       title: 'Conversation HTML rendering',

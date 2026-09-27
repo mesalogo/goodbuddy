@@ -250,6 +250,7 @@ export const resolveLegacyLocalToolEnvironmentPaths: LegacyLocalToolEnvironmentR
 
 export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
+  desktopNotificationsEnabled: true,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -289,6 +290,7 @@ export class ApplicationSettingsStore {
     settings: Omit<
       StoredApplicationSettings,
       | 'conversationHtmlRenderingEnabled'
+      | 'desktopNotificationsEnabled'
       | 'localToolEnvironment'
       | 'version'
       | 'applicationNavigation'
@@ -297,6 +299,7 @@ export class ApplicationSettingsStore {
       | 'magicNoteCanvasPageCount'
     > & {
       conversationHtmlRenderingEnabled?: boolean
+      desktopNotificationsEnabled?: boolean
       magicNoteCanvasPageCount?: number
       version: number
     }
@@ -522,6 +525,7 @@ export class ApplicationSettingsStore {
     const stored = await this.loadStored()
     return {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
+      desktopNotificationsEnabled: stored.desktopNotificationsEnabled,
       updateSource: stored.updateSource,
       modelDownloadSource: stored.modelDownloadSource,
       localToolEnvironment: stored.localToolEnvironment,
@@ -567,6 +571,7 @@ export class ApplicationSettingsStore {
       this.warnings = []
       const settings: ApplicationSettings = {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
+        desktopNotificationsEnabled: next.desktopNotificationsEnabled,
         updateSource: next.updateSource,
         modelDownloadSource: next.modelDownloadSource,
         localToolEnvironment: next.localToolEnvironment,

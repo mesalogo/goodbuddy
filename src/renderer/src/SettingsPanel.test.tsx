@@ -546,6 +546,7 @@ const removeEmbeddingModel = vi.fn(
 )
 let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
+  desktopNotificationsEnabled: true,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -839,6 +840,7 @@ describe('SettingsPanel runtime files', () => {
     await changeUiLocale('zh-CN')
     applicationSettings = {
       checkUpdatesOnStartup: true,
+      desktopNotificationsEnabled: true,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -1426,7 +1428,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(
       screen.getByRole('tab', { name: /Platform Features/i })
     )
-    expect(screen.getByText('Default workspace')).toBeInTheDocument()
+    expect(screen.getByText('Workspace & downloads')).toBeInTheDocument()
     expect(
       screen.getByLabelText('Default workspace folder')
     ).toBeInTheDocument()
@@ -1574,6 +1576,100 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
   })
 
+  it.each([
+    ['zh-CN', '平台功能', '桌面通知'],
+    ['en-US', 'Platform features', 'Desktop notifications']
+  ] as const)('saves desktop notifications immediately in %s', async (locale, category, label) => {
+    await changeUiLocale(locale)
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: category }))
+    const toggle = await screen.findByRole('switch', { name: label })
+    expect(toggle).toBeChecked()
+    expect(toggle).toHaveAccessibleDescription()
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle).not.toBeChecked())
+    expect(updateApplicationSettings).toHaveBeenLastCalledWith({
+      desktopNotificationsEnabled: false
+    })
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle).toBeChecked())
+    expect(updateApplicationSettings).toHaveBeenLastCalledWith({
+      desktopNotificationsEnabled: true
+    })
+    expect(updateApplicationSettings).toHaveBeenCalledTimes(2)
+    expect(updateRuntime).not.toHaveBeenCalled()
+  })
+
+  it('loads disabled desktop notifications and groups related General settings', async () => {
+    applicationSettings.desktopNotificationsEnabled = false
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const conversation = await screen.findByRole('article', { name: '会话与通知' })
+    expect(within(conversation).getByRole('switch', { name: '桌面通知' })).not.toBeChecked()
+    expect(within(conversation).getByRole('switch', { name: '在会话中渲染 HTML' })).toBeChecked()
+    const workspace = screen.getByRole('article', { name: '工作目录与下载' })
+    expect(within(workspace).getByRole('textbox')).toHaveValue(runtimeSettings.workspacePath)
+    expect(within(workspace).getByRole('radio', { name: /ModelScope/u })).toBeChecked()
+    expect(updateApplicationSettings).not.toHaveBeenCalled()
+  })
+
+  it('keeps desktop notifications confirmed while saving and reports failure through onNotify', async () => {
+    const onNotify = vi.fn()
+    let rejectSave!: (reason: Error) => void
+    updateApplicationSettings.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectSave = reject
+    }))
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        onNotify={onNotify}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const toggle = await screen.findByRole('switch', { name: '桌面通知' })
+    fireEvent.click(toggle)
+    expect(toggle).toBeDisabled()
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+    expect(updateApplicationSettings).toHaveBeenCalledTimes(1)
+    await act(async () => rejectSave(new Error('save failed')))
+    expect(toggle).toBeEnabled()
+    expect(toggle).toBeChecked()
+    expect(onNotify).toHaveBeenCalledExactlyOnceWith({
+      tone: 'error',
+      message: '保存桌面通知设置失败，请重试',
+      dedupeKey: 'desktop-notifications-save'
+    })
+    expect(screen.queryByText('保存桌面通知设置失败，请重试')).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle).not.toBeChecked())
+    expect(updateApplicationSettings).toHaveBeenCalledTimes(2)
+  })
+
   it('disables conversation HTML rendering from General settings', async () => {
     const onConversationHtmlRenderingEnabledChange = vi.fn()
     render(
@@ -1628,6 +1724,9 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('radio', { name: /ModelScope/u })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('switch', { name: '桌面通知' })
     ).not.toBeInTheDocument()
     expect(
       screen.queryByText('当前选择：ModelScope')

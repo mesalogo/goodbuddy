@@ -493,6 +493,29 @@ export function PlatformFeaturesSettingsSection({
     }
   }
 
+  const changeDesktopNotifications = async (
+    enabled: boolean
+  ): Promise<void> => {
+    const updates = window.goodbuddy.updates
+    if (!updates || !settings || saving) {
+      return
+    }
+    setSaving(true)
+    try {
+      setSettings(await updates.updateSettings({
+        desktopNotificationsEnabled: enabled
+      }))
+    } catch {
+      onNotify?.({
+        tone: 'error',
+        message: t('platformFeatures.errors.saveDesktopNotificationsFailed'),
+        dedupeKey: 'desktop-notifications-save'
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const changeRemoteProjects = async (
     enabled: boolean
   ): Promise<void> => {
@@ -556,53 +579,6 @@ export function PlatformFeaturesSettingsSection({
           id="platform-features-panel-general"
           role="tabpanel"
         >
-        <article className="capability-card">
-          <div className="capability-card__header">
-            <span className="inline-help-label">
-              <FolderOpen aria-hidden="true" size={16} />
-              <strong>{settingsT('runtime.workspace.title')}</strong>
-              <InlineHelp label={settingsT('runtime.workspace.title')}>
-                {settingsT('runtime.workspace.description')}
-              </InlineHelp>
-            </span>
-          </div>
-          <label className="field">
-            <span>{settingsT('runtime.workspace.directoryLabel')}</span>
-            <div className="workspace-picker">
-              <input
-                aria-label={settingsT('runtime.workspace.directoryLabel')}
-                onChange={(event) =>
-                  onWorkspacePathChange(event.target.value)
-                }
-                value={workspacePath}
-              />
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  void window.goodbuddy.settings
-                    .selectWorkspace()
-                    .then((selected) => {
-                      if (selected) {
-                        onWorkspacePathChange(selected)
-                      }
-                    })
-                    .catch((reason: unknown) => {
-                      setError(
-                        displayErrorMessage(
-                          reason,
-                          settingsT('errors.selectWorkspace')
-                        )
-                      )
-                    })
-                }}
-                type="button"
-              >
-                {settingsT('actions.select')}
-              </button>
-            </div>
-          </label>
-        </article>
-
         <article className="capability-card">
           <div className="capability-card__header">
             <span className="inline-help-label">
@@ -710,98 +686,164 @@ export function PlatformFeaturesSettingsSection({
           )}
         </article>
         {settings && (
-          <article className="capability-card">
+          <article
+            aria-label={t('platformFeatures.groups.conversation')}
+            className="capability-card"
+          >
             <div className="capability-card__header">
-              <span className="inline-help-label">
-                <strong>
-                  {t('platformFeatures.conversationHtml.title')}
-                </strong>
-                <InlineHelp label={t('platformFeatures.conversationHtml.title')}>
-                  {t('platformFeatures.conversationHtml.description')}
-                </InlineHelp>
-              </span>
+              <strong>{t('platformFeatures.groups.conversation')}</strong>
             </div>
             <label className="toggle-row">
               <input
-                checked={settings.conversationHtmlRenderingEnabled}
+                aria-describedby="desktop-notifications-description"
+                checked={settings.desktopNotificationsEnabled}
                 disabled={saving}
                 onChange={(event) =>
-                  void changeConversationHtmlRendering(
-                    event.target.checked
-                  )
+                  void changeDesktopNotifications(event.target.checked)
                 }
                 role="switch"
                 type="checkbox"
               />
-              <span>
-                {t('platformFeatures.conversationHtml.enabled')}
-              </span>
+              <span>{t('platformFeatures.desktopNotifications.enabled')}</span>
             </label>
+            <p id="desktop-notifications-description">
+              {t('platformFeatures.desktopNotifications.description')}
+            </p>
+            <div className="inline-help-label">
+              <label className="toggle-row">
+                <input
+                  checked={settings.conversationHtmlRenderingEnabled}
+                  disabled={saving}
+                  onChange={(event) =>
+                    void changeConversationHtmlRendering(
+                      event.target.checked
+                    )
+                  }
+                  role="switch"
+                  type="checkbox"
+                />
+                <span>
+                  {t('platformFeatures.conversationHtml.enabled')}
+                </span>
+              </label>
+              <InlineHelp label={t('platformFeatures.conversationHtml.title')}>
+                {t('platformFeatures.conversationHtml.description')}
+              </InlineHelp>
+            </div>
           </article>
         )}
-        {settings ? (
-        <article className="capability-card">
+        <article
+          aria-label={t('platformFeatures.groups.workspace')}
+          className="capability-card"
+        >
           <div className="capability-card__header">
             <span className="inline-help-label">
-              <strong>
-                {t('platformFeatures.modelDownloadSource.title')}
-              </strong>
-              <InlineHelp label={t('platformFeatures.modelDownloadSource.title')}>
-                {t(
-                  'platformFeatures.modelDownloadSource.description'
-                )}
+              <FolderOpen aria-hidden="true" size={16} />
+              <strong>{t('platformFeatures.groups.workspace')}</strong>
+              <InlineHelp label={settingsT('runtime.workspace.title')}>
+                {settingsT('runtime.workspace.description')}
               </InlineHelp>
             </span>
           </div>
-          <fieldset className="model-download-source">
-            <legend className="sr-only">
-              {t('platformFeatures.modelDownloadSource.title')}
-            </legend>
-            {(
-              ['modelscope', 'hugging-face'] as const
-            ).map((source) => (
-              <label
-                className={
-                  source === settings.modelDownloadSource
-                    ? 'model-download-source__option model-download-source__option--selected'
-                    : 'model-download-source__option'
+          <label className="field">
+            <span>{settingsT('runtime.workspace.directoryLabel')}</span>
+            <div className="workspace-picker">
+              <input
+                aria-label={settingsT('runtime.workspace.directoryLabel')}
+                onChange={(event) =>
+                  onWorkspacePathChange(event.target.value)
                 }
-                key={source}
+                value={workspacePath}
+              />
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  void window.goodbuddy.settings
+                    .selectWorkspace()
+                    .then((selected) => {
+                      if (selected) {
+                        onWorkspacePathChange(selected)
+                      }
+                    })
+                    .catch((reason: unknown) => {
+                      setError(
+                        displayErrorMessage(
+                          reason,
+                          settingsT('errors.selectWorkspace')
+                        )
+                      )
+                    })
+                }}
+                type="button"
               >
-                <input
-                  checked={source === settings.modelDownloadSource}
-                  disabled={saving}
-                  name="model-download-source"
-                  onChange={() =>
-                    void changeModelDownloadSource(source)
-                  }
-                  type="radio"
-                  value={source}
-                />
-                <span>
-                  <strong>{t(`modelDownloadSources.${source}`)}</strong>
-                  <small>
+                {settingsT('actions.select')}
+              </button>
+            </div>
+          </label>
+          {settings ? (
+            <>
+              <div className="capability-card__header">
+                <span className="inline-help-label">
+                  <strong>
+                    {t('platformFeatures.modelDownloadSource.title')}
+                  </strong>
+                  <InlineHelp label={t('platformFeatures.modelDownloadSource.title')}>
                     {t(
-                      `platformFeatures.modelDownloadSource.options.${source}`
+                      'platformFeatures.modelDownloadSource.description'
                     )}
-                  </small>
+                  </InlineHelp>
                 </span>
-              </label>
-            ))}
-          </fieldset>
-          {sourceError && (
-            <p className="settings-warning" role="alert">
-              {sourceError}
-            </p>
+              </div>
+              <fieldset className="model-download-source">
+                <legend className="sr-only">
+                  {t('platformFeatures.modelDownloadSource.title')}
+                </legend>
+                {(
+                  ['modelscope', 'hugging-face'] as const
+                ).map((source) => (
+                  <label
+                    className={
+                      source === settings.modelDownloadSource
+                        ? 'model-download-source__option model-download-source__option--selected'
+                        : 'model-download-source__option'
+                    }
+                    key={source}
+                  >
+                    <input
+                      checked={source === settings.modelDownloadSource}
+                      disabled={saving}
+                      name="model-download-source"
+                      onChange={() =>
+                        void changeModelDownloadSource(source)
+                      }
+                      type="radio"
+                      value={source}
+                    />
+                    <span>
+                      <strong>{t(`modelDownloadSources.${source}`)}</strong>
+                      <small>
+                        {t(
+                          `platformFeatures.modelDownloadSource.options.${source}`
+                        )}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+              {sourceError && (
+                <p className="settings-warning" role="alert">
+                  {sourceError}
+                </p>
+              )}
+            </>
+          ) : (
+            !error && (
+              <p className="settings-notice" role="status">
+                {t('platformFeatures.loading')}
+              </p>
+            )
           )}
         </article>
-        ) : (
-          !error && (
-            <p className="settings-notice" role="status">
-              {t('platformFeatures.loading')}
-            </p>
-          )
-        )}
         </section>
       )}
 

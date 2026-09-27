@@ -44,6 +44,34 @@ afterEach(async () => {
 })
 
 describe('ApplicationSettingsStore', () => {
+  it.each([11, 12])('defaults missing desktop notifications to on in version %s', async (version) => {
+    const { filePath, store } = await createStore()
+    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null, checkUpdatesOnStartup: false }
+    delete legacy.desktopNotificationsEnabled
+    await writeFile(filePath, JSON.stringify(legacy))
+    expect(await store.get()).toEqual({ ...defaultApplicationSettings, checkUpdatesOnStartup: false })
+    expect(applicationSettingsSchema.parse({ ...defaultApplicationSettings, desktopNotificationsEnabled: undefined }).desktopNotificationsEnabled).toBe(true)
+  })
+
+  it('persists and publishes desktop notification choices without resetting them on unrelated updates', async () => {
+    const { filePath, store } = await createStore()
+    expect((await store.get()).desktopNotificationsEnabled).toBe(true)
+    const changed = vi.fn()
+    store.onChanged(changed)
+    for (const desktopNotificationsEnabled of [false, true]) {
+      const saved = await store.update({ desktopNotificationsEnabled })
+      expect(saved.desktopNotificationsEnabled).toBe(desktopNotificationsEnabled)
+      expect(changed).toHaveBeenLastCalledWith(saved)
+      await store.update({ checkUpdatesOnStartup: false })
+      expect((await createApplicationSettingsStore(filePath).get()).desktopNotificationsEnabled).toBe(desktopNotificationsEnabled)
+      expect(JSON.parse(await readFile(filePath, 'utf8')).desktopNotificationsEnabled).toBe(desktopNotificationsEnabled)
+    }
+    expect(applicationSettingsUpdateSchema.parse({ checkUpdatesOnStartup: false })).toEqual({ checkUpdatesOnStartup: false })
+    for (const desktopNotificationsEnabled of ['false', 0, null]) {
+      await expect(store.update({ desktopNotificationsEnabled })).rejects.toThrow()
+    }
+  })
+
   it('persists review pagination and batch controls without enabling supervision', async () => {
     const { filePath, store } = await createStore()
     const supervisionReview = { pageSize: 1, batchCharacters: 16000, batchMessages: 50, executionSeconds: 3600 }

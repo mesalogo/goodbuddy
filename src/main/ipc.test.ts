@@ -34,6 +34,8 @@ import type {
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { ImageGenerationService } from './agent/image-generation-service'
+import { ApplicationSettingsStore } from './application-settings-store'
+import * as desktopNotification from './desktop-notification'
 import type { AgentExecutionRequest } from './agent/runtime'
 import { KnowledgeService } from './knowledge/knowledge-service'
 import { KnowledgeDatabase } from './knowledge/knowledge-database'
@@ -5201,7 +5203,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     heartbeatEnabled?: boolean,
     obsidianService?: ObsidianService,
     nativeClientCoordinator?: Parameters<typeof registerIpcHandlers>[45],
-    nativeTerminalManager?: Parameters<typeof registerIpcHandlers>[41]
+    nativeTerminalManager?: Parameters<typeof registerIpcHandlers>[41],
+    applicationSettingsStore?: ApplicationSettingsStore
   ) {
     const assistantDatabase = {
       createTask: vi.fn(),
@@ -5438,6 +5441,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     args[44] = obsidianService
     args[45] = nativeClientCoordinator
     args[41] = nativeTerminalManager
+    if (applicationSettingsStore) args[15] = applicationSettingsStore
     const dispose = registerIpcHandlers(...args)
     return {
       approvalBroker,
@@ -5481,6 +5485,60 @@ describe('registerIpcHandlers agent terminal state', () => {
   }) => ({
     sender: webContents,
     senderFrame: webContents.mainFrame
+  })
+
+  it.each([
+    ['conversation', 'completed'], ['conversation', 'failed'],
+    ['channel', 'completed'], ['channel', 'failed']
+  ] as const)('uses the latest saved desktop notification preference for %s %s results', async (origin, status) => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-notification-ipc-'))
+    const store = new ApplicationSettingsStore(join(directory, 'application.json'))
+    await store.update({ magicNotesEnabled: false })
+    const notify = vi.spyOn(desktopNotification, 'showDesktopNotificationWhenUnfocused').mockReturnValue(true)
+    let preference: 'default' | boolean | 'unreadable' = 'default'
+    const get = vi.spyOn(store, 'get')
+    const harness = createHarness({
+      capability: 'chat',
+      async *run(request: { requestId: string }) {
+        // Change the persisted choice after admission to detect stale startup/task snapshots.
+        if (typeof preference === 'boolean') await store.update({ desktopNotificationsEnabled: preference })
+        if (preference === 'unreadable') get.mockRejectedValueOnce(new Error('Settings unavailable'))
+        if (status === 'failed') throw new Error('Runtime failed')
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }, undefined, 'always', undefined, false, undefined, undefined, undefined, false,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, store)
+    try {
+      for (preference of ['default', false, true, 'unreadable'] as const) {
+        notify.mockClear()
+        harness.webContents.send.mockClear()
+        harness.assistantDatabase.updateTaskStatus.mockClear()
+        if (origin === 'channel') {
+          await expect(channelMocks.executor!({
+            channel: 'wecom', eventId: crypto.randomUUID(), senderId: 'user-1',
+            conversationId: 'conversation-1', conversationType: 'direct',
+            text: 'Read only', mentioned: false, workMode: 'ask'
+          }, new AbortController().signal)).resolves.toMatchObject({ status })
+        } else {
+          const requestId = crypto.randomUUID()
+          await harness.handler!(trustedEvent(harness.webContents), {
+            requestId, conversationId: crypto.randomUUID(), prompt: 'Read only', workMode: 'ask'
+          })
+          await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(
+            ipcChannels.agentEvent, expect.objectContaining({ requestId, type: status === 'completed' ? 'done' : 'error' })
+          ))
+        }
+        expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+          expect.any(String), status, ...(status === 'failed' ? ['Runtime failed'] : [])
+        )
+        expect(notify).toHaveBeenCalledTimes(preference === 'default' || preference === true ? 1 : 0)
+      }
+    } finally {
+      await harness.dispose()
+      notify.mockRestore()
+      get.mockRestore()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   function createManagedSshHarness(

@@ -23,6 +23,7 @@ describe('UpdateSettingsSection', () => {
   it('checks the official release manifest and updates the startup preference', async () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: true,
+      desktopNotificationsEnabled: true,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -186,6 +187,7 @@ describe('UpdateSettingsSection', () => {
         updates: {
           getSettings: vi.fn(async () => ({
             checkUpdatesOnStartup: true,
+            desktopNotificationsEnabled: true,
             updateSource: 'github',
             magicNotesEnabled: true,
             magicNoteCommentMode: 'immediate',
@@ -193,6 +195,7 @@ describe('UpdateSettingsSection', () => {
           })),
           updateSettings: vi.fn(async () => ({
             checkUpdatesOnStartup: true,
+            desktopNotificationsEnabled: true,
             updateSource: 'github',
             magicNotesEnabled: true,
             magicNoteCommentMode: 'immediate',
@@ -239,6 +242,7 @@ describe('UpdateSettingsSection', () => {
         updates: {
           getSettings: vi.fn(async () => ({
             checkUpdatesOnStartup: false,
+            desktopNotificationsEnabled: true,
             updateSource: 'mirror',
             magicNotesEnabled: true,
             magicNoteCommentMode: 'immediate',

@@ -11,6 +11,7 @@ import {
   dialog,
   ipcMain,
   shell,
+  type NotificationConstructorOptions,
   type IpcMainInvokeEvent
 } from 'electron'
 import {
@@ -1043,6 +1044,15 @@ export function registerIpcHandlers(
   obsidianService?: ObsidianService,
   nativeClientCoordinator?: Pick<NativeClientCoordinator, 'open' | 'get' | 'stop' | 'closeOwner'>
 ): () => Promise<void> {
+  const notifyDesktop = async (options: NotificationConstructorOptions): Promise<void> => {
+    try {
+      if ((await applicationSettingsStore?.get())?.desktopNotificationsEnabled === false) return
+    } catch {
+      // A notification preference read must not change the task's terminal result.
+      return
+    }
+    showDesktopNotificationWhenUnfocused(window, options)
+  }
   type ActiveRequestLease = {
     controller: AbortController
     isReply: boolean
@@ -2601,7 +2611,7 @@ export function registerIpcHandlers(
         })
       }
       assistantDatabase.updateTaskStatus(taskId, 'completed')
-      showDesktopNotificationWhenUnfocused(window, {
+      await notifyDesktop({
         title:
           origin === 'channel'
             ? `${remoteContext?.channelLabel ?? '远程通道'}请求已完成`
@@ -2631,7 +2641,7 @@ export function registerIpcHandlers(
         cancelled ? 'cancelled' : 'failed',
         message
       )
-      showDesktopNotificationWhenUnfocused(window, {
+      await notifyDesktop({
         title:
           origin === 'channel'
             ? `${remoteContext?.channelLabel ?? '远程通道'}请求失败`
@@ -4496,7 +4506,7 @@ export function registerIpcHandlers(
                 'completed'
               )
             }
-            showDesktopNotificationWhenUnfocused(window, {
+            await notifyDesktop({
               title: 'GoodBuddy 任务已完成',
               body: '回复已生成，可返回会话查看。'
             })
@@ -4573,7 +4583,7 @@ export function registerIpcHandlers(
             )
           }
         }
-        showDesktopNotificationWhenUnfocused(window, {
+        await notifyDesktop({
           title: cancelled
             ? 'GoodBuddy 任务已取消'
             : 'GoodBuddy 任务失败',
