@@ -84,7 +84,7 @@ describe('Portable package resources', () => {
     ).toBe(false)
   })
 
-  it('validates the metadata-only portable output', () => {
+  it('validates portable resources including the DS Web entry', () => {
     const requiredPaths =
       portableBuilder.portableRequiredPaths(directory)
     const missingPath = requiredPaths.at(-1)
@@ -98,6 +98,10 @@ describe('Portable package resources', () => {
     ).toThrow(missingPath)
     mkdirSync(dirname(missingPath!), { recursive: true })
     writeFileSync(missingPath!, 'required')
+    const dshEntry = join(directory, 'resources', 'runtimes', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    expect(() => portableBuilder.assertPortableOutput(directory)).toThrow(dshEntry)
+    mkdirSync(dirname(dshEntry), { recursive: true })
+    writeFileSync(dshEntry, 'required')
     expect(() =>
       portableBuilder.assertPortableOutput(directory)
     ).not.toThrow()

@@ -159,7 +159,10 @@ function portableRequiredPaths(directory) {
 }
 
 function assertPortableOutput(directory) {
-  const requiredPaths = portableRequiredPaths(directory)
+  const requiredPaths = [
+    ...portableRequiredPaths(directory),
+    join(directory, 'resources', 'runtimes', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  ]
   const missing = requiredPaths.filter(
     (filePath) => !statSync(filePath, { throwIfNoEntry: false })?.isFile()
   )

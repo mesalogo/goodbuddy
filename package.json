@@ -82,8 +82,8 @@
     ],
     "extraResources": [
       {
-        "from": ".runtime-resources/dsh-${arch}",
-        "to": "runtimes/dsh"
+        "from": ".runtime-resources/dsh-${arch}/node_modules",
+        "to": "runtimes/dsh/node_modules"
       },
       {
         "from": "resources/skills",
