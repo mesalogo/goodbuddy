@@ -7,29 +7,26 @@ import {
   waitFor,
   within
 } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  KnowledgeGraphChartLoader,
-  KnowledgeWorkspace,
-  type KnowledgeWorkspaceProps
-} from './KnowledgeWorkspace'
+import { KnowledgeWorkspace } from './KnowledgeWorkspace'
+import { PageShell } from './WorkspacePrimitives'
+import { KnowledgeGraphChartLoader } from './knowledge-workspace/KnowledgeGraphChartLoader'
+import type { KnowledgeWorkspaceProps } from './knowledge-workspace/types'
 import i18n from './i18n'
 import {
   defaultKnowledgeOntologySettings
 } from '../../shared/knowledge-ontology'
 
-const knowledgeWorkspaceSource = readFileSync(
-  join(
-    process.cwd(),
-    'src',
-    'renderer',
-    'src',
-    'KnowledgeWorkspace.tsx'
-  ),
-  'utf8'
-)
+const rendererDirectory = join(process.cwd(), 'src', 'renderer', 'src')
+const knowledgeWorkspaceDirectory = join(rendererDirectory, 'knowledge-workspace')
+const knowledgeWorkspaceSource = [
+  join(rendererDirectory, 'KnowledgeWorkspace.tsx'),
+  ...readdirSync(knowledgeWorkspaceDirectory)
+    .filter((name) => name.endsWith('.tsx'))
+    .map((name) => join(knowledgeWorkspaceDirectory, name))
+].map((file) => readFileSync(file, 'utf8')).join('\n')
 
 const g6Mock = vi.hoisted(() => {
   const handlers = new Map<string, (event: unknown) => void>()
@@ -71,6 +68,10 @@ vi.mock('@antv/g6', () => ({
     CLICK: 'node:click',
     DRAG_END: 'node:dragend'
   }
+}))
+
+vi.mock('./DocumentResultPreview', () => ({
+  DocumentResultPreview: ({ resultId }: { resultId: string }) => <div>Preview {resultId}</div>
 }))
 
 const library: KnowledgeWorkspaceProps['libraries'][number] = {
@@ -262,6 +263,150 @@ function createProps(
 }
 
 describe('KnowledgeWorkspace', () => {
+  it.each(['file', 'url'] as const)('merges a single %s source and document, and searches both identities', async (kind) => {
+    const base = createProps()
+    const source = { ...base.sources[0]!, kind, name: 'source-alias', location: 'https://example.com/source-location' }
+    const document = { ...base.documents[0]!, name: 'manual.pdf', path: '/docs/document-location.pdf', resultId: 'result-1' }
+    const props = createProps({ sources: [source], documents: [document] })
+    const view = render(<KnowledgeWorkspace {...props} />)
+    const table = screen.getByRole('table', { name: '文档与来源' })
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(within(table).getAllByText('manual.pdf')).toHaveLength(1)
+    expect(within(table).queryByText('source-alias')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '内容来源' })).not.toBeInTheDocument()
+    const search = screen.getByRole('searchbox', { name: '搜索文档与来源' })
+    for (const value of ['source-alias', 'source-location', 'manual.pdf', 'document-location']) {
+      fireEvent.change(search, { target: { value } })
+      expect(within(table).getAllByRole('row')).toHaveLength(2)
+    }
+    fireEvent.change(search, { target: { value: 'no-match' } })
+    expect(screen.getByText('没有匹配的文档或来源，请尝试其他名称或路径。')).toBeVisible()
+    fireEvent.change(search, { target: { value: '' } })
+    view.rerender(<KnowledgeWorkspace {...props} sources={[{ ...source, name: document.name }]} />)
+    expect(screen.getAllByText('manual.pdf')).toHaveLength(1)
+    fireEvent.click(screen.getByText('更多操作'))
+    fireEvent.click(screen.getByRole('button', { name: '同步 manual.pdf' }))
+    await waitFor(() => expect(props.onSyncSource).toHaveBeenCalledWith(source.id))
+    fireEvent.click(screen.getByRole('button', { name: '使用当前设置重新解析' }))
+    await waitFor(() => expect(props.onRebuildDocument).toHaveBeenCalledWith(library.id, document.id))
+    for (const [status, name, callback] of [
+      ['syncing', '暂停', props.onPauseSource],
+      ['failed', '重试', props.onRetrySource],
+      ['paused', '同步', props.onSyncSource]
+    ] as const) {
+      view.rerender(<KnowledgeWorkspace {...props} sources={[{ ...source, name: document.name, status }]} />)
+      fireEvent.click(screen.getByRole('button', { name: `${name} manual.pdf` }))
+      await waitFor(() => {
+        expect(callback).toHaveBeenCalledWith(source.id)
+        expect(screen.getByRole('button', { name: `${name} manual.pdf` })).toBeEnabled()
+      })
+    }
+  })
+
+  it('keeps a multi-document URL grouped when search leaves just one matching document', () => {
+    const base = createProps()
+    render(<KnowledgeWorkspace {...createProps({
+      sources: [{ ...base.sources[0]!, kind: 'url', name: 'Website', documentCount: 2 }],
+      documents: [base.documents[0]!, { ...base.documents[0]!, id: 'second', name: 'second.md' }]
+    })} />)
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索文档与来源' }), { target: { value: 'second.md' } })
+    const table = screen.getByRole('table', { name: '文档与来源' })
+    expect(within(table).getAllByRole('row')).toHaveLength(3)
+    expect(within(table).getByText('Website')).toBeVisible()
+    expect(within(table).getByText('second.md')).toBeVisible()
+    expect(within(table).queryByText('架构说明.md')).not.toBeInTheDocument()
+  })
+
+  it('keeps directory groups, empty failed sources and orphan documents, with unfiltered removal counts', async () => {
+    const base = createProps()
+    const props = createProps({
+      sources: [
+        { ...base.sources[0]!, documentCount: 2 },
+        { ...base.sources[0]!, id: 'empty', name: 'failed.pdf', location: '/failed.pdf', kind: 'file', status: 'failed', documentCount: 0, error: '读取失败' },
+        { ...base.sources[0]!, id: 'syncing', name: 'loading.pdf', location: '/loading.pdf', kind: 'file', status: 'syncing', documentCount: 0 }
+      ],
+      documents: [
+        base.documents[0]!,
+        { ...base.documents[0]!, id: 'second', name: 'second.md' },
+        { ...base.documents[0]!, id: 'orphan', sourceId: 'missing', name: 'orphan.md' },
+        { ...base.documents[0]!, id: 'unassigned', sourceId: undefined, name: 'unassigned.md' }
+      ]
+    })
+    render(<KnowledgeWorkspace {...props} />)
+    const table = screen.getByRole('table', { name: '文档与来源' })
+    expect(within(table).getAllByRole('row')).toHaveLength(8)
+    expect(within(table).getByText('orphan.md')).toBeVisible()
+    expect(within(table).getByText('unassigned.md')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '重试 failed.pdf' }))
+    await waitFor(() => expect(props.onRetrySource).toHaveBeenCalledWith('empty'))
+    fireEvent.click(screen.getByRole('button', { name: '暂停 loading.pdf' }))
+    await waitFor(() => expect(props.onPauseSource).toHaveBeenCalledWith('syncing'))
+    const search = screen.getByRole('searchbox', { name: '搜索文档与来源' })
+    fireEvent.change(search, { target: { value: '产品手册' } })
+    expect(within(table).getAllByRole('row')).toHaveLength(4)
+    fireEvent.change(search, { target: { value: 'second.md' } })
+    expect(within(table).getAllByRole('row')).toHaveLength(3)
+    expect(within(table).getByText('产品手册')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '移除来源 产品手册' }))
+    expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(
+      '将删除此来源的 2 篇文档、检索索引、图谱证据和应用托管副本。磁盘上的原始文件不会改变。'
+    )
+    fireEvent.click(screen.getByRole('button', { name: '移除来源' }))
+    await waitFor(() => expect(props.onRemoveSource).toHaveBeenCalledWith('source-1'))
+  })
+
+  it('restores the merged preview trigger, search and scroll position, and retains file drop imports', async () => {
+    const base = createProps()
+    const props = createProps({
+      sources: [{ ...base.sources[0]!, kind: 'file' }],
+      documents: [{ ...base.documents[0]!, resultId: 'result-1' }]
+    })
+    render(<PageShell variant="master-detail"><KnowledgeWorkspace {...props} /></PageShell>)
+    const search = screen.getByRole('searchbox', { name: '搜索文档与来源' })
+    fireEvent.change(search, { target: { value: '架构' } })
+    const trigger = screen.getByRole('button', { name: '查看解析结果' })
+    const scroll = trigger.closest<HTMLElement>('.workspace-panel-scroll')!
+    scroll.scrollTop = 240
+    trigger.focus()
+    fireEvent.click(trigger)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '返回文档列表' })).toHaveFocus()
+      expect(scroll.scrollTop).toBe(0)
+      expect(screen.getByText('Preview result-1')).toBeVisible()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '返回文档列表' }))
+    await waitFor(() => {
+      expect(trigger).toHaveFocus()
+      expect(scroll.scrollTop).toBe(240)
+      expect(search).toHaveValue('架构')
+    })
+    const file = new File(['text'], 'dropped.txt', { type: 'text/plain' })
+    fireEvent.drop(screen.getByText('将文件拖到这里，加入“产品知识”'), { dataTransfer: { files: [file] } })
+    await waitFor(() => expect(props.onImportFiles).toHaveBeenCalledWith(library.id, [file], undefined))
+  })
+
+  it('opens both source and document tasks from one merged task action', () => {
+    const base = createProps()
+    const task = {
+      libraryId: library.id, kind: 'document-process' as const, stage: 'parsing' as const,
+      status: 'running' as const, progress: 20, attempt: 1, canCancel: false, canRetry: false,
+      createdAt: '2026-09-27T00:00:00Z', updatedAt: '2026-09-27T00:00:00Z'
+    }
+    render(<KnowledgeWorkspace {...createProps({
+      sources: [{ ...base.sources[0]!, kind: 'file' }],
+      tasks: [
+        { ...task, id: 'source-task', sourceId: 'source-1', scope: 'source', documentName: 'Source task' },
+        { ...task, id: 'document-task', documentId: 'document-1', scope: 'document', documentName: 'Document task' },
+        { ...task, id: 'unrelated-task', documentId: 'other', scope: 'document', documentName: 'Unrelated task' }
+      ]
+    })} />)
+    expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: '查看任务' }))
+    expect(screen.getByText('Source task')).toBeVisible()
+    expect(screen.getByText('Document task')).toBeVisible()
+    expect(screen.queryByText('Unrelated task')).not.toBeInTheDocument()
+  })
+
   it('searches external names and instances and filters the unified library list', async () => {
     await i18n.changeLanguage('en-US')
     const external = { ...library, id: 'external-1', name: 'Company handbook', external: { knowledgeBaseId: 'external-1', instanceId: 'instance-1', provider: 'dify' as const, remoteKnowledgeBaseId: 'remote-1', remoteName: 'Remote policies', commonConfig: { resultLimit: 6, requestTimeoutMs: 15000, maxSnippetCharacters: 4000 }, providerConfig: { provider: 'dify' as const, useDatasetDefaults: true as const }, lastVerifiedAt: '2026-09-12' } }
@@ -1484,10 +1629,10 @@ describe('KnowledgeWorkspace', () => {
     expect(screen.getByRole('tablist', { name: '知识库视图' })).toHaveClass(
       'page-tabs'
     )
-    expect(screen.getByLabelText('搜索文档').closest('label')).toHaveClass(
+    expect(screen.getByLabelText('搜索文档与来源').closest('label')).toHaveClass(
       'knowledge-documents__search'
     )
-    expect(screen.getByLabelText('搜索文档')).not.toHaveStyle({
+    expect(screen.getByLabelText('搜索文档与来源')).not.toHaveStyle({
       outline: 'none'
     })
     expect(screen.getByText('本地文件 · 架构说明.md')).toBeInTheDocument()

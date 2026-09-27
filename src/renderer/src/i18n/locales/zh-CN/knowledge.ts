@@ -562,6 +562,14 @@ export const knowledge = {
     },
     dropFiles: '将文件拖到这里，加入“{{name}}”',
     sourceMeta: '{{count}} 个文档 · {{time}}',
+    lastSynced: '最近同步：{{time}}',
+    moreActions: '更多操作',
+    reparse: '使用当前设置重新解析',
+    viewResult: '查看解析结果',
+    previewLabel: '解析结果：{{name}}',
+    backToList: '返回文档列表',
+    reparsing: '正在重新解析，当前显示上次结果',
+    reparseFailed: '本次解析失败，上次结果仍可用：{{error}}',
     syncProgress: '{{name}} 同步进度',
     actions: {
       pauseSource: '暂停 {{name}}',
@@ -582,9 +590,9 @@ export const knowledge = {
       removing: '正在移除…'
     },
     table: {
-      title: '文档与索引',
-      empty: '尚无文档。导入内容来源后，处理状态会显示在这里。',
-      noResults: '没有与搜索条件匹配的文档。',
+      title: '文档与来源',
+      empty: '尚无文档或来源。导入文件、目录或 URL 后，可在这里查看同步和索引状态。',
+      noResults: '没有匹配的文档或来源，请尝试其他名称或路径。',
       columns: {
         document: '文档',
         status: '状态',
@@ -596,8 +604,8 @@ export const knowledge = {
       }
     },
     search: {
-      label: '搜索文档',
-      placeholder: '搜索名称或路径'
+      label: '搜索文档与来源',
+      placeholder: '搜索文档、来源名称或路径'
     },
     indexProgress: '{{name}} 索引进度'
   },

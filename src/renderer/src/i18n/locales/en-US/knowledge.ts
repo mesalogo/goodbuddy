@@ -598,6 +598,14 @@ export const knowledge = {
     },
     dropFiles: 'Drop files here to add them to “{{name}}”',
     sourceMeta: '{{count}} documents · {{time}}',
+    lastSynced: 'Last synced: {{time}}',
+    moreActions: 'More actions',
+    reparse: 'Reparse with current settings',
+    viewResult: 'View parsed result',
+    previewLabel: 'Parsed result: {{name}}',
+    backToList: 'Back to document list',
+    reparsing: 'Reparsing; showing the previous result',
+    reparseFailed: 'Parsing failed; the previous result is still available: {{error}}',
     syncProgress: '{{name}} sync progress',
     actions: {
       pauseSource: 'Pause {{name}}',
@@ -618,10 +626,10 @@ export const knowledge = {
       removing: 'Removing…'
     },
     table: {
-      title: 'Documents and index',
+      title: 'Documents and sources',
       empty:
-        'No documents yet. Processing status appears here after you import a content source.',
-      noResults: 'No documents match your search.',
+        'No documents or sources yet. Import files, a folder, or a URL to see sync and index status here.',
+      noResults: 'No documents or sources match. Try another name or path.',
       columns: {
         document: 'Document',
         status: 'Status',
@@ -633,8 +641,8 @@ export const knowledge = {
       }
     },
     search: {
-      label: 'Search documents',
-      placeholder: 'Search names or paths'
+      label: 'Search documents and sources',
+      placeholder: 'Search document or source names and paths'
     },
     indexProgress: '{{name}} index progress'
   },

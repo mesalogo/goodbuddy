@@ -16,6 +16,25 @@
 
 ## 验证证据
 
+### 2026-09-27 文档与来源统一列表
+
+在现有 `knowledge-workspace` 拆分基础上修改 `DocumentsView.tsx`，单文件、单 URL 与
+唯一关联文档合成一行；目录及一对多来源保留组标题，零文档来源和孤立文档继续可见。
+统一搜索、完整移除数量、次要操作折叠及预览返回规则见 [UI 设计](./ui-design.md#6-来源操作)。
+`KnowledgeTasksView.tsx` 支持合并行同时传入来源和文档上下文，展示两者相关任务。
+
+- `npx vitest run src/renderer/src/KnowledgeWorkspace.test.tsx src/renderer/src/DocumentResultPreview.test.tsx src/renderer/src/KnowledgeChunkManager.test.tsx src/renderer/src/WorkspacePrimitives.test.tsx`：4 个文件、94 项通过。
+- 新增用例覆盖单文件与 URL 去重、来源和文档搜索、一对多过滤、零文档来源重试与暂停、
+  孤立文档、完整移除数量、合并任务入口、拖放，以及预览返回后的搜索、焦点和滚动恢复。
+  工作区测试使用解析预览替身；真实预览组件由同次运行的 `DocumentResultPreview.test.tsx` 验证。
+- `npm run typecheck`、`npm run lint` 和 `git diff --check` 通过。
+- 完整 `npm test` 运行 200 秒后超时，超时前输出 `HeartbeatCenter.test.tsx` 两项失败，
+  全量测试未完成。独立运行 `npm test -- src/renderer/src/HeartbeatCenter.test.tsx`
+  复现 40 项通过、2 项失败：zh-CN／en-US 的 `keeps tab titles unique...` 用例在第 213 行
+  期望 1 个 `tablist`，实际为 2 个。该失败与本次知识库修改无关，本轮未修改心跳中心。
+- 未做真实 Electron 浅深主题、窄窗口、原生键盘及 UI → Main 导入验收。
+  未调用外部模型或知识服务，未提交改动。
+
 ### 2026-09-20 清理孤立的内存图谱搜索
 
 - 删除仅剩测试调用的 `searchGraph`、专属评分/遍历辅助函数、搜索上限及测试 fixture。
