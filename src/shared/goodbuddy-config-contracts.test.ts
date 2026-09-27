@@ -152,6 +152,7 @@ describe('GoodBuddy configuration contracts', () => {
     const snapshot = {
       application: {
         checkUpdatesOnStartup: true,
+        desktopNotificationsEnabled: true,
         updateSource: 'github',
         modelDownloadSource: 'modelscope',
         localToolEnvironment: defaultLocalToolEnvironmentSettings,

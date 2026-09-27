@@ -52,6 +52,12 @@ records are listed separately and do not introduce another feature status.
   longer stop at 100 conversations, and consecutive sends no longer truncate
   saved history beyond 500 messages. Model context limits still apply;
   previously lost messages cannot be restored.
+  Pinned and unpinned groups order by the latest message creation time,
+  keeping positions stable during streaming text and tool updates.
+- [x] **Optional desktop task notifications**: A default-on switch under
+  Platform Features / General immediately controls system task reminders.
+  In-app notifications remain available independently; General settings group
+  shortcuts, conversations and notifications, and workspace and downloads.
 - [x] **On-demand contextual help**: Supplementary page and settings
   explanations use shared title- or field-adjacent help controls with mouse
   and keyboard access. Important operation consequences and errors remain visible.
@@ -792,7 +798,7 @@ records are listed separately and do not introduce another feature status.
   [Smart Heartbeat PRD](./docs/features/smart-heartbeat/prd.md).
 - [x] **Supervisor reviews, story graphs, and activity**: Review a selected scope
   and period, read dated supervision results and history in Work review, inspect saved result graphs and sources, confirm or revise entities,
-  and preview local knowledge entity writes. Sidebar feedback follows or pins a
+  and continue a discussion with source-linked review context. Sidebar feedback follows or pins a
   Conversation or Task and opens its matching result. It shows target names with
   compact pin/refresh buttons and preserves long-title readability and keyboard
   focus in narrow sidebars. Activity combines heartbeat
@@ -811,6 +817,10 @@ records are listed separately and do not introduce another feature status.
   cancellation from Activity preserves saved batches and holds admission until
   cleanup finishes. Cancelled reviews cannot resume. Story-graph events, entities,
   and relations have separate counted tabs synchronized with canvas selection.
+  Continue discussion opens directly from feedback or graph sources, with an
+  editable question and explicit target-conversation navigation. The UI no
+  longer exposes knowledge-entity writeback controls or redundant context
+  explanations, and Automatic supervision hides empty metrics until activity exists.
 - [ ] **Further supervision capabilities** (planned): Full event-by-event replay,
   Experiment targets, chronological manual-edit audits, event
   triggers, and broader execution observation remain incomplete. Current automatic

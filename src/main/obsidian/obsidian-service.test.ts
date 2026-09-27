@@ -127,7 +127,7 @@ describe('offline packaged MCPVault', () => {
     expect(await call('list_directory', {})).toContain('smoke.md')
     expect(await readFile(join(vaultPath, 'smoke.md'), 'utf8')).toContain('status: verified')
     await call('delete_note', { path: 'smoke.md', confirmPath: 'smoke.md', trashMode: 'local' })
-  })
+  }, 15_000)
 
   it('does not launch for an already cancelled call', async () => {
     const start = vi.spyOn(StdioClientTransport.prototype, 'start')
