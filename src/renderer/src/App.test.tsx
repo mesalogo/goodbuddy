@@ -9256,6 +9256,11 @@ describe("App", () => {
 
     render(<App />);
 
+    await waitFor(() => expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "opencode", projectId }),
+    ));
+    // Let startup selection and its focus effects finish before opening these options.
+    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
     openComposerOptions();
     const agentPicker = await screen.findByRole("button", {
       name: /OpenCode Runtime Agent/u,

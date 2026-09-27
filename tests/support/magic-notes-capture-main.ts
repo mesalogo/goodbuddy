@@ -110,7 +110,7 @@ app.whenReady().then(async () => {
     await wait(`Boolean(document.getElementById('magic-note-entry-${captured.id}'))`, 'full workspace exact entry')
     evidence.workspaceOpened = true
     await click('View source message', `document.getElementById('magic-note-entry-${captured.id}')`)
-    await wait('document.activeElement?.textContent?.includes("CAPTURE_HISTORY_501_END")', 'source message focus')
+    await wait('document.activeElement?.matches("article.message") && document.activeElement.textContent.includes("CAPTURE_HISTORY_501_END")', 'source message focus')
     evidence.sourceOpened = true
     await click('Conversation actions')
     await click('Save conversation to note')
