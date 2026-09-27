@@ -124,8 +124,14 @@ app.whenReady().then(async () => {
     evidence.newSaved = true
     // Electron resize and the production sidebar transition settle asynchronously.
     win.setSize(760, 800)
-    await wait(`${panel}.getBoundingClientRect().width > 100`, 'narrow panel layout after resize')
+    await wait('window.innerWidth < 900', 'narrow viewport after resize')
+    await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    if (await run('document.querySelector(".assistant-sidebar-toggle").getAttribute("aria-expanded") === "false"')) {
+      await click('Toggle assistant workspace')
+    }
+    await wait(`document.querySelector(".assistant-sidebar-toggle").getAttribute("aria-expanded") === "true" && ${panel}.getBoundingClientRect().width > 100`, 'visible narrow panel after resize')
     await run(`document.querySelector('#compact-note-append').focus()`)
+    await wait('document.activeElement?.id === "compact-note-append"', 'narrow append focus')
     await key('Escape')
     await wait('document.activeElement?.id === "compact-note-search"', 'Escape returns to list and search')
     await key('Tab')

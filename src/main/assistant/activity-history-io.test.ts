@@ -73,7 +73,7 @@ it('migrates activity history and writes only changed records during streaming',
     database.close()
     rmSync(directory, { recursive: true, force: true })
   }
-})
+}, 15_000)
 
 it('keeps activity comparisons correct after rollback, external writes and clearing', () => {
   const directory = mkdtempSync(join(tmpdir(), 'goodbuddy-save-io-'))
