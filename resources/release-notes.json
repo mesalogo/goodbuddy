@@ -2,6 +2,52 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.0",
+      "releasedAt": "2026-09-27",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**连接本地 Obsidian 仓库**：在 MCP 设置中测试并启用全部已注册仓库或指定文件夹，即可在受支持的本地对话中搜索、阅读笔记，并在 Execute 中写回结果，无需安装 Obsidian 插件。默认关闭，支持直连模型及 GoodBuddy 管理的本地 OpenCode、Continue，暂不支持 DeepSeek Harness 和远程执行。",
+            "**把对话保存到魔法笔记**：单条 AI 回答或完整会话可先预览、编辑，再追加到已有笔记或创建新笔记，保存后可返回来源会话。右侧工作栏新增笔记入口，支持搜索与快速追加，切换会话时保留未提交草稿。",
+            "**从输入区打开本地 Runtime 客户端（预览）**：本地项目选择 Continue 或 OpenCode 后可打开工作栏原生终端，选择 DS 后可在系统浏览器打开官方 Web 客户端，使用当前项目和模型。客户端是独立会话，不复制 GoodBuddy 聊天历史；DS 网页关闭后服务仍运行，可在 GoodBuddy 中停止，远程快捷入口尚不支持。"
+          ],
+          "fixes": [
+            "**知识库列表与操作更清楚**：内容来源和文档索引合并展示，单文档来源不再重复占行，目录分组、失败来源和统一搜索仍可使用。整理重新处理、移除与任务历史入口，减少重复菜单和不明确的操作。",
+            "**监督回顾避免重复运行**：手动开始、自动触发和继续回顾共用运行状态，已有回顾执行时会定位当前任务，不再叠加新回顾。可从活动记录取消，已保存批次保留；故事线事件、实体和关系改为独立页签浏览。",
+            "**修复弹窗与窄窗口操作**：恢复删除确认按钮的可见样式，修正弹层遮挡、控件状态及窄布局滚动。助手工作栏的添加按钮不再被滚动箭头覆盖，设置和知识库中的操作保持可达。",
+            "**本地 Runtime 启动更可靠**：修复便携包缺少 DS Web 入口及依赖导致无法打开浏览器的问题。Continue 关闭自动更新后不再停留在更新检查提示，DS 输入区保留停止服务操作而不再常驻重复说明。",
+            "**补齐 Runtime 遥测关闭设置**：DS Web 与配套 Agent 的远程 Runtime 启动统一应用遥测关闭配置。模型、MCP 和用户主动联网请求保持可用，已有自动更新关闭设置不变。"
+          ],
+          "notices": [
+            "首次启动会将数据库升级至 schema 48。升级前请备份完整用户数据，包括数据库及相邻 `notes/` 目录；旧客户端不能打开升级后的数据库，回退需使用升级前备份。",
+            "远程用户请先升级 Desktop 至 **0.15.0**，再下载并更新 Host 上的 Agent **0.15.0**。已有进程不会热更新，Agent 独立发布，不替代桌面端 Latest。",
+            "原生客户端仍为预览，其 Skills/MCP 与 GoodBuddy 会话能力并非完全等价；Continue 和 DS Web 首次启动可能需要准备标准 Node 环境。真实模型请求可能产生费用，其他平台与安装包验收以本次发布流程结果为准。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Connect local Obsidian vaults**: Test and enable all registered vaults or a selected folder in MCP settings to search and read notes in supported local conversations, and write results back in Execute, without an Obsidian plugin. Disabled by default, this supports direct models and GoodBuddy-managed local OpenCode and Continue, but not DeepSeek Harness or remote execution.",
+            "**Save conversations to Magic Notes**: Preview and edit an AI response or a complete conversation before appending it to an existing note or creating a new one, with links back to the source conversation. The new Notes workbar entry supports search and quick appends while preserving unsent drafts across conversation switches.",
+            "**Open local Runtime clients from the composer (preview)**: In a local project, open a native workbar terminal for Continue or OpenCode, or the official DS Web client in your system browser, using the current project and model. These are independent sessions without copied GoodBuddy chat history; closing the DS page leaves its service running until stopped in GoodBuddy, and remote shortcuts are not supported yet."
+          ],
+          "fixes": [
+            "**Clearer knowledge lists and actions**: Sources and indexed documents now share one list, without duplicate rows for single-document sources, while retaining directory groups, failed sources, and unified search. Reprocessing, removal, and task-history actions are organized to reduce duplicate menus and ambiguous operations.",
+            "**Avoid overlapping Supervisor reviews**: Manual starts, automatic triggers, and resumed reviews share the active-run state, directing you to existing work instead of starting an overlapping review. Cancel from Activity while retaining saved batches, and browse story-graph events, entities, and relations in separate tabs.",
+            "**Usable dialogs and narrow layouts**: Restores visible destructive-confirmation buttons and fixes overlay occlusion, control states, and scrolling in narrow layouts. Workbar scroll arrows no longer cover the add button, and settings and knowledge actions remain reachable.",
+            "**More reliable local Runtime startup**: Fixes missing DS Web entry files and dependencies in portable packages that prevented browser launch. Continue no longer remains on an update-check message when automatic updates are disabled, and the DS composer keeps its stop action without persistent duplicate help text.",
+            "**Consistent Runtime telemetry opt-out**: DS Web and remote Runtimes in the matching Agent apply the shared telemetry opt-out settings at startup. Model, MCP, and user-requested network access remain available, and existing automatic-update opt-outs are unchanged."
+          ],
+          "notices": [
+            "First launch upgrades the database to schema 48. Back up complete user data, including the database and adjacent `notes/` directory, before upgrading; older clients cannot open the upgraded database, so rollback requires a pre-upgrade backup.",
+            "Remote users should upgrade Desktop to **0.15.0** before downloading and updating Hosts to Agent **0.15.0**. Existing processes are not hot-updated, and the independent Agent release does not replace Desktop Latest.",
+            "Native clients remain a preview and do not offer full parity with GoodBuddy conversation Skills/MCP capabilities; Continue and DS Web may need to prepare a standard Node environment on first launch. Real model requests may incur charges, and other-platform and packaged-app acceptance depend on this release's validation results."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.16",
       "releasedAt": "2026-09-26",
       "notes": {

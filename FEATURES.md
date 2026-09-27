@@ -324,7 +324,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.13.4`, while the current Desktop release candidate is `0.13.16`; formal
+  `0.15.0`, matching the current Desktop release candidate `0.15.0`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -393,6 +393,21 @@ records are listed separately and do not introduce another feature status.
   user's authorization for all tools, processes, network access, and writable
   paths available to the current local or SSH account, including paths outside
   the workspace and native subagent work.
+- **Local native Runtime clients (preview)**: The composer opens Continue or
+  OpenCode in a workbar terminal, or the official DS Web client in the system
+  browser, using the current local project and model. These are independent
+  sessions, without imported GoodBuddy conversation history. Closing a DS page
+  does not stop its service; use GoodBuddy's stop action. Remote shortcuts are
+  not connected. Managed standard Node delivery, Continue/OpenCode Ask built-in
+  MCP mappings, and full cross-platform package acceptance remain incomplete;
+  existing Windows real-model evidence does not establish full capability parity.
+  See the [implementation and remaining work](./docs/features/assistant-workbar/progress.md#2026-09-27-local-native-client-validation).
+- **Runtime telemetry opt-out**: Local DS Web and remote Runtime/model-bridge
+  launches share the telemetry opt-out environment without blocking model, MCP,
+  or user-requested networking. Continue skips disabled automatic-update checks.
+  Remote changes require a newly started Runtime from the matching Agent;
+  current-source Linux x64 Agent/model validation is recorded in the
+  [0.15.0 preparation record](./docs/development/release-preparation-0.15.0.md).
 - [x] **Efficient direct-model workspace tools**: Direct models use bundled
   ripgrep with native arguments for file discovery and content search, read large
     UTF-8 files by line, and apply multi-file patches in Execute. Ask searches stay
@@ -612,6 +627,10 @@ records are listed separately and do not introduce another feature status.
   retrieval parameters are collapsed by default. Documents distinguish ready,
   processing, and failed states, with source opening, retry, and confirmation
   before source removal.
+  Sources and indexed documents share one searchable list: single-document
+  sources do not duplicate rows, while directories retain grouped documents and
+  failed sources retain recovery actions. Task history and secondary operations
+  remain reachable from the consolidated controls.
 - [x] **External knowledge-base connections**: Manage Dify, FastGPT,
   and RAGFlow instances from the Knowledge page, then discover remote
   knowledge bases or enter their IDs and verify bindings with provider-specific
@@ -681,9 +700,10 @@ records are listed separately and do not introduce another feature status.
   navigation. Saved sources link back to conversations and messages; drafts survive
   conversation switches. Real App/preload/IPC/SQLite acceptance passed, including
   complete 502-message history and native keyboard use in a 214px panel, with zero
-  model calls. Repository validation is not all green; the
-  [validation record](./docs/features/magic-notes/progress.md) separates focused
-  passes, fixture repairs and execution-time test/typecheck failures.
+  model calls. The [feature validation record](./docs/features/magic-notes/progress.md)
+  separates focused passes, fixture repairs and earlier execution-time failures;
+  the [0.15.0 candidate validation](./docs/development/release-preparation-0.15.0.md)
+  passed the full suite, typecheck and lint.
 - [x] **Paged canvas notes**: The integrated PeopleLib Fabric + Quill editor
   combines flowing body text with pen/highlighter, object selection/transforms,
   floating text, images and paper templates. Editors and read-only viewers support
@@ -787,6 +807,10 @@ records are listed separately and do not introduce another feature status.
   flow with a separate run status and correctly placed empty state.
   Calls remain read-only without tools and may incur model charges. See the
   [implementation and evidence](./docs/features/conversation-supervision/progress.md).
+  Manual starts, automatic triggers, and resume share one active review;
+  cancellation from Activity preserves saved batches and holds admission until
+  cleanup finishes. Cancelled reviews cannot resume. Story-graph events, entities,
+  and relations have separate counted tabs synchronized with canvas selection.
 - [ ] **Further supervision capabilities** (planned): Full event-by-event replay,
   Experiment targets, chronological manual-edit audits, event
   triggers, and broader execution observation remain incomplete. Current automatic
@@ -876,9 +900,15 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.13.16`; Agent `0.13.4` is published, with
+- The current Desktop and Agent candidates are both `0.15.0`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.0` adds Obsidian integration, conversation capture into Magic
+  Notes, and preview local native clients, plus knowledge, Supervisor, and UI
+  fixes. Schema 48 adds conversation-source metadata; older clients require a
+  complete pre-upgrade backup for rollback. Agent `0.15.0` requires Desktop
+  `0.15.0`, retains Node `24.19.0`, and updates remote telemetry opt-out and
+  disabled Continue update-check behavior without adding remote client shortcuts.
 - Desktop `0.13.15` carries forward the unpublished `0.13.14` changes to paged Supervisor reviews and resume behavior,
   native ripgrep searches, to-do layouts, and explicit remote follow-up after an
   uncertain result. Database schema 47 requires a complete pre-upgrade backup
@@ -900,7 +930,7 @@ records are listed separately and do not introduce another feature status.
   packaging, and publication verification remain separate acceptance steps.
   No local production build, packaging, or LoongArch preview is requested.
   Current validation status is recorded in the
-  [release preparation record](./docs/development/release-preparation-0.13.16.md).
+  [release preparation record](./docs/development/release-preparation-0.15.0.md).
 - Desktop `0.13.12` and Agent `0.13.3` have completed their native release jobs;
   this does not replace development-time real-Host scenario coverage.
 - Validation records remain separate from implementation status. Current-source
