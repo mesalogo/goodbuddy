@@ -5,7 +5,13 @@ type TabKeyEvent = {
 }
 
 const focusableSelector =
-  'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), iframe:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
+
+export function getModalFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(focusableSelector))
+    .filter((element) => !element.hasAttribute('data-focus-guard') &&
+      !element.closest('[hidden], [inert], [aria-hidden="true"]'))
+}
 
 export function trapTabFocus(
   event: TabKeyEvent,
@@ -14,9 +20,7 @@ export function trapTabFocus(
   if (event.key !== 'Tab' || !container) {
     return
   }
-  const focusable = Array.from(
-    container.querySelectorAll<HTMLElement>(focusableSelector)
-  ).filter((element) => !element.closest('[hidden], [inert], [aria-hidden="true"]'))
+  const focusable = getModalFocusableElements(container)
   if (focusable.length === 0) {
     event.preventDefault()
     container.focus()

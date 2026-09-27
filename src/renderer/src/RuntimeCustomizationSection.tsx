@@ -882,6 +882,7 @@ export const RuntimeCustomizationSection = forwardRef<
                         aria-label={t(
                           'runtime.customization.continue.ruleName'
                         )}
+                        className="field-control"
                         maxLength={
                           runtimeCustomizationLimits.nameCharacters
                         }
@@ -947,6 +948,7 @@ export const RuntimeCustomizationSection = forwardRef<
                         'runtime.customization.continue.ruleContent',
                         { name: rule.name }
                       )}
+                      className="field-control"
                       maxLength={
                         runtimeCustomizationLimits.contentCharacters
                       }
@@ -1014,6 +1016,7 @@ export const RuntimeCustomizationSection = forwardRef<
                         aria-label={t(
                           'runtime.customization.continue.promptName'
                         )}
+                        className="field-control"
                         maxLength={
                           runtimeCustomizationLimits.nameCharacters
                         }
@@ -1057,6 +1060,7 @@ export const RuntimeCustomizationSection = forwardRef<
                         'runtime.customization.continue.promptDescription',
                         { name: prompt.name }
                       )}
+                      className="field-control"
                       maxLength={
                         runtimeCustomizationLimits.descriptionCharacters
                       }
@@ -1084,6 +1088,7 @@ export const RuntimeCustomizationSection = forwardRef<
                         'runtime.customization.continue.promptContent',
                         { name: prompt.name }
                       )}
+                      className="field-control"
                       maxLength={
                         runtimeCustomizationLimits.contentCharacters
                       }

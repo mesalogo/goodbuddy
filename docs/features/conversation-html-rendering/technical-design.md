@@ -56,6 +56,17 @@ iframe 无法按内容自适应高度，因为 `sandbox=""` 不含 `allow-same-o
 嵌入预览完全相同的清理后文档，不额外放宽 Sandbox 或 CSP。切换回复时，源码面板与全屏
 预览按当前 source 派生开合状态，不使用会引发级联渲染的重置 effect。
 
+全屏 iframe 提供 `tabIndex=0`，共享焦点候选包含 iframe。关闭按钮的正向 Tab 显式进入
+预览，支持没有链接的长文；iframe 后的焦点守卫将原生 Tab 返回到后续 Modal 控件或关闭
+按钮。守卫本身不作为焦点循环的首尾，通知关闭按钮仍参与循环。
+
+iframe 内的 Escape 不会冒泡到父文档。`registerWindowIpcHandlers` 只在主窗口直接子
+`about:srcdoc` frame 获得焦点且收到 Escape keyDown 时，向主 Renderer 发送
+`window:preview-escape`。Preload 暴露无参数订阅 `app.onPreviewEscape`；全屏组件仅在
+自己的 iframe 当前聚焦且所属 Modal 未被 inert 隔离时关闭。组件卸载移除订阅，窗口 IPC
+释放时移除输入监听。此路径不执行预览脚本、不授予同源权限，也不暴露原始键盘事件或
+Electron 对象；iframe 的 Sandbox/CSP 保持原值。
+
 ## 验证范围
 
 - 应用设置默认值、关闭持久化和版本 10 迁移。
@@ -65,4 +76,5 @@ iframe 无法按内容自适应高度，因为 `sandbox=""` 不含 `allow-same-o
 - 源码按钮的 `aria-expanded` 切换，以及全屏预览的初始焦点、背景 inert、Escape 关闭和
   焦点恢复。
 - 主 Agent、子 Agent、用户、推理和流式状态边界。
+- 真实 Electron 中带链接与纯正文 iframe 的进入、正反向 Tab 返回和内部 Escape；通过生产 Main/Preload 事件订阅完成关闭。
 - 从设置 Switch 到当前会话重新渲染的应用级集成路径。

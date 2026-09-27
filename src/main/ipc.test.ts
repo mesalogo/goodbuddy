@@ -102,7 +102,7 @@ describe('terminal IPC boundary', () => {
   })
 
   it('validates terminal requests and routes them through the trusted renderer owner', async () => {
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       id: 73,
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
@@ -1065,7 +1065,7 @@ describe('registerIpcHandlers update source routing', () => {
   })
 
   it('uses the persisted source for checks and the download page', async () => {
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       isDestroyed: vi.fn(() => false),
@@ -1172,7 +1172,7 @@ describe('registerIpcHandlers model download source routing', () => {
   })
 
   it('uses the persisted source and rejects stale renderer requests', async () => {
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       isDestroyed: vi.fn(() => false),
@@ -1421,7 +1421,7 @@ describe('registerIpcHandlers DSH runtime extensions', () => {
   })
 
   it('validates extension actions, reloads the Runtime, and trusts only the renderer', async () => {
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       isDestroyed: vi.fn(() => false),
@@ -1568,7 +1568,7 @@ describe('registerIpcHandlers SSH hosts', () => {
   })
 
   it('validates narrow host requests and restricts them to the trusted renderer', async () => {
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       isDestroyed: vi.fn(() => false),
@@ -2302,7 +2302,7 @@ describe('registerIpcHandlers SSH hosts', () => {
       setProjectArchived: vi.fn(),
       deleteProject: vi.fn()
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       isDestroyed: vi.fn(() => false),
@@ -2667,7 +2667,7 @@ describe('registerIpcHandlers lifecycle tracking', () => {
     const workspace = await mkdtemp(
       join(tmpdir(), 'goodbuddy-ipc-settings-')
     )
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -2879,7 +2879,7 @@ describe('registerIpcHandlers lifecycle tracking', () => {
       .mockRejectedValueOnce(activationError)
       .mockRejectedValueOnce(rollbackError)
     const repairs = vi.fn()
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -3041,7 +3041,7 @@ describe('registerIpcHandlers lifecycle tracking', () => {
     })
     const repairs = vi.fn(() => [])
     const reportRepairs = vi.fn()
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -3179,7 +3179,7 @@ describe('registerIpcHandlers knowledge snapshot ontology', () => {
         tasks: []
       }))
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -3267,7 +3267,7 @@ describe('registerIpcHandlers knowledge embedding index', () => {
         knowledgeEmbeddingApiKeyConfigured: false
       }))
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -3361,7 +3361,7 @@ describe('registerIpcHandlers knowledge task actions', () => {
       cancelTask: vi.fn(async () => true),
       retryTask: vi.fn(async () => undefined)
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -3432,7 +3432,7 @@ describe('registerIpcHandlers model ZIP dialogs', () => {
   })
 
   it('imports and exports speech and OCR ZIPs through trusted dialogs', async () => {
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -3665,7 +3665,7 @@ describe('registerIpcHandlers document parsing', () => {
       listPendingConversationQueueIds: vi.fn(() => []),
       createInlineArtifact
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -3811,7 +3811,7 @@ describe('registerIpcHandlers connection tests', () => {
       dispose: vi.fn(async () => undefined)
     }
     const getResolvedSettings = vi.fn(async () => resolvedSettings)
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -3934,7 +3934,7 @@ describe('registerIpcHandlers connection tests', () => {
       getStatus: vi.fn(),
       dispose: vi.fn(async () => undefined)
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -4029,7 +4029,7 @@ describe('registerIpcHandlers Runtime config actions', () => {
         continueConfigPath: configPath
       }
     }))
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -4160,7 +4160,7 @@ describe('registerIpcHandlers window controls', () => {
   it('restricts custom chrome controls to the trusted main window', async () => {
     let maximized = false
     const listeners = new Map<string, () => void>()
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -4259,7 +4259,7 @@ describe('registerIpcHandlers workspace files', () => {
       listPendingConversationQueueIds: vi.fn(() => []),
       getProject: vi.fn(() => ({ id: projectId, rootPath }))
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html')
     }
@@ -4348,7 +4348,7 @@ describe('registerIpcHandlers workspace files', () => {
         updatedAt: '2026-08-01T00:00:00.000Z'
       }))
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html')
     }
@@ -4424,7 +4424,7 @@ describe('registerIpcHandlers token usage', () => {
       listPendingConversationQueueIds: vi.fn(() => []),
       getExecutionStatsAsync: vi.fn(async () => summary)
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'), send: vi.fn()
     }
@@ -4470,7 +4470,7 @@ describe('registerIpcHandlers token usage', () => {
       listPendingConversationQueueIds: vi.fn(() => []),
       getTokenUsageSummary: vi.fn(() => summary)
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: {
         url: 'file:///goodbuddy/index.html'
       },
@@ -4575,7 +4575,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
       clear: vi.fn(),
       remove: vi.fn()
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: {
         url: 'file:///goodbuddy/index.html'
       },
@@ -4709,7 +4709,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
       listConversationQueueItems: vi.fn(() => []),
       listPendingConversationQueueIds: vi.fn(() => [])
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: {
         url: 'file:///goodbuddy/index.html'
       },
@@ -4829,7 +4829,7 @@ describe('registerIpcHandlers Runtime customization', () => {
         detail: 'OpenCode manages native context'
       }
     }
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       isDestroyed: vi.fn(() => false),
@@ -5321,7 +5321,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         rootPath: 'C:\\ProjectWorkspace'
       }))
     }
-    const webContents = {
+    const webContents = { on: vi.fn(),
       id: 9,
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
@@ -12728,7 +12728,7 @@ describe('registerIpcHandlers Magic Notes analysis', () => {
     runtimeFactoryMocks.createDefaultModelRuntime.mockReturnValue(
       analysisRuntime
     )
-    const webContents = {
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()

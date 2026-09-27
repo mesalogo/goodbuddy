@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import DOMPurify from 'dompurify'
@@ -44,7 +44,7 @@ function ResultImage({ resultId, image, onLocate, label }: {
   </div>
 }
 
-function SectionContent({ content, result, onImage }: {
+const SectionContent = memo(function SectionContent({ content, result, onImage }: {
   content: string; result: DocumentResult; onImage: (id: string) => void
 }): React.JSX.Element {
   const pieces = useMemo(() => content.split(/(<table\b[\s\S]*?<\/table>)/giu), [content])
@@ -61,7 +61,7 @@ function SectionContent({ content, result, onImage }: {
         const image = images.get(id)
         return image ? <><ResultImage resultId={result.id} image={image} /><button type="button" className="secondary-button" onClick={() => onImage(id)}>第 {image.pageNumber} 页图片 · 在图片中查看</button></> : <span>图片资源不可用</span>
       } }}>{piece.replace(/<\/?(?:div|p|span|h[1-6])\b[^>]*>/giu, '\n').replace(/<br\s*\/?\s*>/giu, '\n\n')}</ReactMarkdown>)}</div>
-}
+})
 
 export function DocumentResultPreview({ resultId, allowAddImages = false, conversationId, showOpenOriginal = true, imageActionsInImagesTab = false }: { resultId: string; allowAddImages?: boolean; conversationId?: string; showOpenOriginal?: boolean; imageActionsInImagesTab?: boolean }): React.JSX.Element {
   const conversationContext = useContext(DocumentConversationContext)
@@ -109,6 +109,10 @@ export function DocumentResultPreview({ resultId, allowAddImages = false, conver
     return () => { active = false; unsubscribe() }
   }, [allowAddImages, target])
   const focusTarget = useRef<string | undefined>(undefined)
+  const showImage = useCallback((id: string) => {
+    focusTarget.current = `${prefix}-image-${id}`
+    setTab('images')
+  }, [prefix])
   useEffect(() => {
     let active = true
     void window.goodbuddy.documentParsing!.getResult(resultId).then(
@@ -138,9 +142,7 @@ export function DocumentResultPreview({ resultId, allowAddImages = false, conver
     <section className="document-result-panel" role="tabpanel" id={`${prefix}-panel-${tab}`} aria-labelledby={`${prefix}-tab-${tab}`}>
       {tab === 'text' && result.sections.map((section, index) => <article key={index}>
         <h3 tabIndex={-1} id={`${prefix}-section-${index}`}>{section.locator}</h3>
-        <SectionContent content={section.content} result={result} onImage={(id) => {
-          focusTarget.current = `${prefix}-image-${id}`; setTab('images')
-        }} />
+        <SectionContent content={section.content} result={result} onImage={showImage} />
       </article>)}
       {tab === 'images' && <><p>已保存 {result.images.length} 张 · 未保存 {result.missingImages.length} 张</p>
         {!result.images.length && <p>此结果没有提取图片；原生解析器可能只提取文字。</p>}

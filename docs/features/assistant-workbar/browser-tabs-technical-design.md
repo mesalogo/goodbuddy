@@ -81,12 +81,14 @@ Record<ConversationId, Record<BrowserTabId, BrowserLiveState>>
 
 `BrowserViewport` 统一观察 body Portal 的插入、移除和可见属性变化，以及浮层尺寸、
 窗口尺寸、滚动和过渡结束。`browser-viewport-occlusion.ts` 按共享语义识别
-`aria-modal="true"`、dialog、alertdialog、menu 和应用通知：可见应用级 Modal 始终释放
+`aria-modal="true"`、dialog、alertdialog、menu、tooltip 和应用通知：可见应用级 Modal 始终释放
 viewport，其余浮层只在与浏览器区域相交时释放。隐藏节点和隐藏祖先不阻塞浏览器。
 最后一个遮挡消失后，只有当前活动实例恢复同一 viewport 租约；网页、历史和页面状态不变。
 终端关闭确认复用此机制，不再维护单独的隐藏条件。页面无需逐个登记弹窗，也不能靠提高
 CSS `z-index` 覆盖原生子视图。此逻辑仅涉及 Desktop Renderer 的显示租约，不改变
 Runtime、MCP 或远端 Agent 的请求、导航与生命周期。
+同行帮助仍使用 `role="tooltip"`；相交判定使用其内容矩形，不使用铺满窗口的
+`FloatingPortal` 宿主。真实 App 的相交与非相交验证见[浮层审查修复记录](../../quality/overlay-review-2026-09-27.md)。
 
 浏览器应用声明 `visibleAcrossContextSwitches: true`，打开的 Tab 跨项目、会话切换继续显示。
 切换活动 Conversation 不改变当前选中的浏览器或其 `targetRef.conversationId`；用户在会话 B

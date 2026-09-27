@@ -227,6 +227,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     toggleMaximize: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     isMaximized: vi.fn(async () => false),
+    onPreviewEscape: vi.fn(() => () => undefined),
     onMaximizedChanged: vi.fn((listener) => {
       maximizedChangedListener = listener;
       return removeMaximizedChangedListener;

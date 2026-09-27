@@ -250,6 +250,11 @@ const desktopApi: DesktopApi = {
           handler
         )
     },
+    onPreviewEscape: (listener) => {
+      const handler = (): void => listener()
+      ipcRenderer.on(ipcChannels.windowPreviewEscape, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.windowPreviewEscape, handler)
+    },
     onBeforeQuit: (listener) => {
       const handler = (
         _event: Electron.IpcRendererEvent,

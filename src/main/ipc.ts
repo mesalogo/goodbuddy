@@ -3257,7 +3257,7 @@ export function registerIpcHandlers(
     false
   )
 
-  registerWindowIpcHandlers(registerHandler, window)
+  const disposeWindowIpc = registerWindowIpcHandlers(registerHandler, window)
 
   registerHandler(ipcChannels.appClearLocalData, (event) => {
     assertTrustedSender(event, window)
@@ -7374,6 +7374,7 @@ export function registerIpcHandlers(
   registerKnowledgeIpcHandlers(registerHandler, window, knowledgeService, settingsStore)
 
   return async () => {
+    disposeWindowIpc()
     shuttingDown = true
     if (nativeClientCoordinator) window.webContents.removeListener('destroyed', closeNativeClients)
     await nativeClientCoordinator?.closeOwner(nativeClientOwnerId)

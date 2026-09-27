@@ -3,6 +3,7 @@ export const browserOverlaySelector = [
   '[role="dialog"]',
   '[role="alertdialog"]',
   '[role="menu"]',
+  '[role="tooltip"]',
   '.app-notification'
 ].join(', ')
 

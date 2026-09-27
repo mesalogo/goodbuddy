@@ -1989,7 +1989,7 @@ describe('RightAssistantSidebar resizing', () => {
       bounds.mockRestore()
     }
   })
-  it.each(['menu', 'dialog', 'notification'])('hides the native view only while an overlapping %s is visible', async (kind) => {
+  it.each(['menu', 'dialog', 'tooltip', 'notification'])('hides the native view only while an overlapping %s is visible', async (kind) => {
     const popup = document.createElement('section')
     if (kind === 'notification') popup.className = 'app-notification'
     else popup.setAttribute('role', kind)

@@ -23,6 +23,7 @@ export const ipcChannels = {
   windowClose: 'window:close',
   windowIsMaximized: 'window:is-maximized',
   windowMaximizedChanged: 'window:maximized-changed',
+  windowPreviewEscape: 'window:preview-escape',
   appRendererPersistenceReady: 'app:renderer-persistence-ready',
   appRendererPersistenceRequest: 'app:renderer-persistence-request',
   appRendererPersistenceComplete: 'app:renderer-persistence-complete',

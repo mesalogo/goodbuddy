@@ -27,9 +27,16 @@ describe('native browser overlay detection', () => {
     const { host, viewport } = setup({ 'aria-modal': 'true' }, false)
     expect(isBrowserViewportOccluded(host, viewport)).toBe(true)
   })
-  it.each(['dialog', 'alertdialog', 'menu'])('detects overlapping %s without requiring modal focus setup', role => {
+  it.each(['dialog', 'alertdialog', 'menu', 'tooltip'])('detects overlapping %s without requiring modal focus setup', role => {
     const { host, viewport } = setup({ role })
     expect(isBrowserViewportOccluded(host, viewport)).toBe(true)
+  })
+  it('ignores non-overlapping and hidden tooltips', () => {
+    const { host, overlay, viewport } = setup({ role: 'tooltip' }, false)
+    expect(isBrowserViewportOccluded(host, viewport)).toBe(false)
+    vi.spyOn(overlay, 'getBoundingClientRect').mockReturnValue(viewport)
+    overlay.hidden = true
+    expect(isBrowserViewportOccluded(host, viewport)).toBe(false)
   })
   it.each(['hidden', 'display', 'visibility', 'ancestor-display'])('ignores a modal hidden by %s', kind => {
     const { host, parent, overlay, viewport } = setup({ 'aria-modal': 'true' })

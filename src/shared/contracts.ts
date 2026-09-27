@@ -1783,6 +1783,7 @@ export type DesktopApi = {
     close: () => Promise<void>
     isMaximized: () => Promise<boolean>
     onMaximizedChanged: (listener: (maximized: boolean) => void) => () => void
+    onPreviewEscape: (listener: () => void) => () => void
     onBeforeQuit: (listener: () => Promise<void>) => () => void
     clearLocalData: () => Promise<void>
     onNewConversation: (listener: () => void) => () => void

@@ -65,6 +65,7 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
   let api: DesktopApi['magicNotes']
   let applicationSettings: ApplicationSettingsStore
   const webContents = { id: 91, mainFrame: { url: 'file:///canvas-test/index.html' },
+    on: vi.fn(), removeListener: vi.fn(),
     getURL: () => 'file:///canvas-test/index.html', isDestroyed: () => false, send: vi.fn() }
   const window = { webContents, isDestroyed: () => false, isMaximized: () => false,
     on: vi.fn(), removeListener: vi.fn() }

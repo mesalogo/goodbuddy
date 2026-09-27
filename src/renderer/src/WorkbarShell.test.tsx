@@ -158,8 +158,9 @@ describe('WorkbarShell', () => {
     fireEvent.scroll(scroll)
     expect(previous).toBeDisabled()
     const add = screen.getByRole('button', { name: '打开工作栏应用' })
-    expect(add.parentElement).toBe(strip)
-    expect(list.nextElementSibling).toBe(add)
+    expect(add.parentElement).toBe(row.parentElement)
+    expect(row.nextElementSibling).toBe(add)
+    expect(scroll).not.toContainElement(add)
     expect(row.firstElementChild).toBe(previous)
     expect(row.lastElementChild).toBe(next)
     rowWidth = 800

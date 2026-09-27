@@ -57,11 +57,14 @@ AI 列 280。测试同步原生输入与实际状态后独立复跑通过，保�
 [UI 设计系统](../../UI-DESIGN.md)。
 
 **防复发**：`WorkspacePrimitives.test.tsx` 的
-"releases the native drag region for every full-window overlay" 从 Renderer 顶层全部 CSS 文件自动发现
-全部 `position: fixed` 遮罩并逐个校验，新增遗漏会直接失败。
+"releases the native drag region for every full-window overlay" 递归扫描 Renderer CSS，按
+`position: fixed` 与 `inset` 声明发现遮罩，排除不接收指针的透明宿主，并校验共享 no-drag。
 
 **历史**：`e9679fe`、`ca4a58c` 各修了一部分被人工点到的弹窗，同一批改动又新增了两个未覆盖
 的遮罩；后续复查改为共享规则加自动发现测试。
+2026-09-27 复查发现自动发现仍依赖 `backdrop/modal` 后缀，漏掉知识引用的
+`.knowledge-citation-dialog`。补入共享规则并移除后缀限制；真实 App 的 Windows
+`WM_NCHITTEST` 回归验证修复后为 `HTCLIENT`，临时清除该规则的对照为 `HTCAPTION`。
 
 ## 共享控件样式依赖页面祖先
 
@@ -80,6 +83,15 @@ AI 列 280。测试同步原生输入与实际状态后独立复跑通过，保�
 
 **历史**：2026-09-27 同次检查确认草稿确认及上述四处调用均受同一作用域错误影响。
 
+同日后续全局审查发现，控件已有全局定义仍会被容器与状态规则覆盖：深色通用输入规则替换
+控件边框，普通图标 hover 覆盖危险图标，菜单按钮规则覆盖危险确认；`.field input` 还将
+Radio 与 Switch 当成文本字段。共享规则现已排除二元控件，恢复全局焦点轮廓，降低菜单
+默认样式特异性，并移除深色控件兜底覆盖。Continue 独立字段通过 `.field-control` 复用
+输入规则。`shared-controls.electron.test.ts` 检查浅深主题、设置容器、body Portal、菜单
+组合、默认/悬停/禁用/选中态及原生 Tab 焦点，并渲染实际 Continue 组件。令牌测试同时检查
+主按钮 hover 白字与控件背景的对比度。[审查修复记录](shared-controls-review-2026-09-27.md)
+保留本次范围、验证结果和未测项。
+
 ## 网页浮层遗漏原生浏览器视图
 
 **症状**：知识库实例、项目设置等 Modal 的右侧被浏览器网页覆盖，通知或菜单也可能
@@ -97,6 +109,9 @@ AI 列 280。测试同步原生输入与实际状态后独立复跑通过，保�
 
 **历史**：先前浏览器多实例修正只覆盖了终端关闭确认；2026-09-13 用户在知识库实例
 Modal 再次复现，同一检查确认其他应用级 Modal 均缺少处理。
+2026-09-27 同行帮助的 tooltip 仍未进入选择器。现已纳入同一相交判定和尺寸观察；
+Electron 回归从运行记录页打开真实 InlineHelp，并通过工作栏分隔条形成相交与非相交布局，
+检查实际 WebContentsView 可见性及恢复后的页面标记，确认网页没有重建或刷新。
 
 ## Modal 内的菜单与通知被遮挡或隔离
 
@@ -116,6 +131,18 @@ Modal，兼顾 top layer 绘制、辅助技术的模态归属及焦点循环；�
 
 **历史**：2026-09-19 同次检查确认解析测试菜单和应用级通知两处挂载机制错误，后者影响
 多个全局 Modal；统一宿主后补完整 App 的真实保存通知与 TXT 解析复验。
+
+2026-09-27 在真实 App 的“设置 → 能力与工具 → MCP → 自定义 MCP → 添加 Server”
+再次复现子层遮挡：MCP body Portal 沿用 `z-index: 70`，低于设置的 `130`，输入框中心
+实际命中父设置页签。编辑器仅手动聚焦，父设置未设为 `inert`。添加与编辑统一接入
+`--z-dialog` 和 `activateModalFocus`；遮罩关闭阻止默认鼠标焦点转移，Escape 停在子层。
+新增 Electron 回归检查真实鼠标命中、输入、Tab 循环、各关闭入口、生产 IPC 保存及重读，
+并检查浏览器在父子 Modal 期间隐藏、最后恢复同一未刷新的网页。子 Modal 应使用共享模态
+机制；上述 `FloatingPortal` 仍用于非模态菜单与通知。
+同次审查确认解析结果打开图片时也沿用低于父层的 `z-index: 80`，现复用 `--z-dialog`。
+解析正文使用稳定的组件与图片回调，避免 App 打开大图时重建触发节点而丢失返回焦点。
+窄侧栏打开项目 Modal 也已接入共享背景隔离，避免一次 Escape 同时关闭两层。
+本阶段实现、键盘边界和 Electron 证据见[浮层审查修复记录](overlay-review-2026-09-27.md)。
 
 ## Flex 滚动内容压缩页签和分段控件
 

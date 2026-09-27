@@ -5911,6 +5911,7 @@ describe('SettingsPanel runtime files', () => {
     const addServer = await screen.findByRole('button', {
       name: '添加 Server'
     })
+    const settingsBackdrop = addServer.closest<HTMLElement>('.settings-backdrop')!
     fireEvent.click(addServer)
     const dialog = screen.getByRole('dialog', {
       name: '添加 MCP Server'
@@ -5921,6 +5922,8 @@ describe('SettingsPanel runtime files', () => {
     const saveButton = within(dialog).getByRole('button', {
       name: '保存 MCP Server'
     })
+    expect(settingsBackdrop.inert).toBe(true)
+    expect(dialog.parentElement?.parentElement).toBe(document.body)
     closeButton.focus()
     fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
     expect(saveButton).toHaveFocus()
@@ -5961,6 +5964,7 @@ describe('SettingsPanel runtime files', () => {
       )
     )
     await waitFor(() => expect(addServer).toHaveFocus())
+    expect(settingsBackdrop.inert).toBe(false)
     expect(
       screen.queryByRole('dialog', { name: '添加 MCP Server' })
     ).not.toBeInTheDocument()
@@ -5975,6 +5979,7 @@ describe('SettingsPanel runtime files', () => {
     }
     fireEvent.mouseDown(backdrop)
     await waitFor(() => expect(addServer).toHaveFocus())
+    expect(settingsBackdrop.inert).toBe(false)
     expect(
       screen.queryByRole('dialog', { name: '添加 MCP Server' })
     ).not.toBeInTheDocument()

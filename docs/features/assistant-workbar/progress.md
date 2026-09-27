@@ -1,5 +1,14 @@
 # 工作栏实现与验证进度
 
+## 2026-09-27：窄栏添加入口
+
+“+”已移出页签滚动容器；左右箭头和溢出测量使用扣除添加按钮宽度后的页签区域。
+Windows Electron 回归覆盖 `300px` 工作栏、默认四页签和 16 个含长标题的页签，验证
+原生鼠标打开应用目录、创建浏览器实例、Escape 返回、箭头滚动及 Home/End 激活。
+窄栏扩到 `900px` 后，默认页签的溢出箭头消失，缩回后恢复。
+中英文、浅深主题均通过，模型调用 0 次。范围与命令见
+[窄容器布局修复记录](../../quality/responsive-controls-review-2026-09-27.md)。
+
 ## 2026-09-27 Continue Update Status
 
 The shared Continue adapter now skips the update service before it emits the

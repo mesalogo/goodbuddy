@@ -11,7 +11,7 @@
   --text-disabled: #718398;
   --text-on-accent: #fff;
   --border-default: #cedce7;
-  --border-control: #7f95aa;
+  --border-control: #748a9f;
   --border-subtle: #e2eaf1;
   --accent: #086fc7;
   --accent-solid: #0875cf;
@@ -675,7 +675,6 @@
 .custom-task-dialog__field
   :is(input, textarea, select):focus-visible {
   border-color: var(--accent);
-  box-shadow: var(--focus-ring);
 }
 
 .custom-task-dialog__field
@@ -3917,6 +3916,7 @@ textarea:focus-visible {
   .document-parsing-diagnostic-backdrop,
   .mcp-editor-backdrop,
   .knowledge-confirm-dialog-backdrop,
+  .knowledge-citation-dialog,
   .knowledge-library-dialog-backdrop,
   .knowledge-dialog-backdrop,
   .external-knowledge-modal
@@ -3992,7 +3992,7 @@ button > svg {
   scrollbar-gutter: stable;
 }
 
-.icon-button:hover {
+.icon-button:hover:where(:not(:disabled, .danger-ghost)) {
   background: var(--accent-subtle);
   color: var(--accent);
 }
@@ -4119,6 +4119,13 @@ button > svg {
   flex: 0 0 46px;
   align-items: flex-end;
   gap: var(--space-1);
+}
+
+.workbar-shell__tab-navigation {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1;
 }
 
 .workbar-shell__tab-scroll {
@@ -5315,7 +5322,6 @@ button > svg {
   padding: 0 var(--space-2);
   border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
-  outline: none;
   background: var(--surface-raised);
   color: var(--text-primary);
   font-family: var(--font-family-ui);
@@ -5324,7 +5330,6 @@ button > svg {
 
 .assistant-sidebar__browser-address input:focus-visible {
   border-color: var(--accent);
-  box-shadow: var(--focus-ring);
 }
 
 .assistant-sidebar__browser-go {
@@ -7209,7 +7214,7 @@ button > svg {
 
 .image-viewer-backdrop {
   position: fixed;
-  z-index: 80;
+  z-index: var(--z-dialog);
   display: grid;
   padding: var(--space-4);
   background: var(--overlay-backdrop);
@@ -9942,6 +9947,7 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .model-connection-manager {
   display: grid;
+  container: model-connections / inline-size;
   min-width: 0;
   align-items: start;
   grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
@@ -9986,6 +9992,16 @@ details.settings-section > :not(summary) + :not(summary) {
 .model-connection-list > [role='list'] {
   max-height: 480px;
   overflow-y: auto;
+}
+
+@container model-connections (max-width: 640px) {
+  .model-connection-manager > * {
+    grid-column: 1 / -1;
+  }
+
+  .model-connection-list > [role='list'] {
+    max-height: 180px;
+  }
 }
 
 .model-connection-list [role='listitem'] + [role='listitem'] {
@@ -11260,35 +11276,38 @@ details.settings-section > :not(summary) + :not(summary) {
   font-weight: 650;
 }
 
-.field input,
+.field input:not(:where([type='checkbox'], [type='radio'])),
 .field textarea,
-.field select {
+.field select,
+.field-control {
   width: 100%;
   min-height: 38px;
   padding: 0 11px;
   border: 1px solid var(--border-control);
   border-radius: 9px;
-  outline: 0;
   background: var(--surface-raised);
   color: var(--text-primary);
   font-size: var(--font-body);
 }
 
-.field input:focus,
+.field input:not(:where([type='checkbox'], [type='radio'])):focus,
 .field textarea:focus,
-.field select:focus {
+.field select:focus,
+.field-control:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-.field input:disabled,
+.field input:not(:where([type='checkbox'], [type='radio'])):disabled,
 .field textarea:disabled,
-.field select:disabled {
+.field select:disabled,
+.field-control:disabled {
   background: var(--surface-muted);
   color: var(--text-muted);
 }
 
-.field textarea {
+.field textarea,
+textarea.field-control {
   padding-top: 9px;
   padding-bottom: 9px;
   resize: vertical;
@@ -12247,7 +12266,7 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .mcp-editor-backdrop {
   position: fixed;
-  z-index: 70;
+  z-index: var(--z-dialog);
   display: grid;
   padding: var(--space-4);
   background: var(--overlay-backdrop);
@@ -12486,8 +12505,8 @@ details.settings-section > :not(summary) + :not(summary) {
   font-size: var(--font-body);
 }
 
-.conversation-actions button,
-.workspace-files__menu button {
+/* Menu defaults must not override shared button states. */
+:where(.conversation-actions, .workspace-files__menu) button {
   display: flex;
   min-height: 30px;
   align-items: center;
@@ -12501,8 +12520,7 @@ details.settings-section > :not(summary) + :not(summary) {
   text-align: left;
 }
 
-.conversation-actions button:hover,
-.workspace-files__menu button:hover {
+:where(.conversation-actions, .workspace-files__menu) button:where(:hover:not(:disabled)) {
   background: var(--accent-subtle);
   color: var(--accent);
 }
@@ -13089,7 +13107,7 @@ details.settings-section > :not(summary) + :not(summary) {
   white-space: nowrap;
 }
 
-.page-tabs__tab:hover {
+.page-tabs__tab:hover:where(:not(.page-tabs__tab--active)) {
   background: var(--surface-subtle);
   color: var(--text-primary);
 }
@@ -13149,6 +13167,12 @@ details.settings-section > :not(summary) + :not(summary) {
   background: var(--surface-raised);
   color: var(--accent);
   box-shadow: var(--shadow-card);
+}
+
+.icon-button:disabled,
+.segmented-control__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .empty-state {
@@ -16298,7 +16322,7 @@ details.settings-section > :not(summary) + :not(summary) {
   --border-subtle: #20384b;
   --accent: #72c5ff;
   --accent-solid: #1469b5;
-  --accent-solid-hover: #1c7dce;
+  --accent-solid-hover: #1a77c5;
   --accent-hover: #9bd7ff;
   --accent-selected: #28668f;
   --accent-subtle: #123b5b;
@@ -16366,8 +16390,7 @@ details.settings-section > :not(summary) + :not(summary) {
   .heartbeat-center__plans .heartbeat-settings,
   .heartbeat-settings__item,
   .capability-card,
-  .quick-actions button,
-  .secondary-button
+  .quick-actions button
 ) {
   border-color: var(--border-subtle);
   background: var(--surface-raised);
@@ -16378,20 +16401,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .topbar
 ) {
   background: var(--surface-subtle);
-}
-
-:root[data-theme='dark'] :where(
-  .app-shell,
-  .sidebar,
-  .topbar,
-  .assistant-sidebar,
-  .settings-panel,
-  .project-create-card,
-  .workspace-panel-scroll
-) :where(input, textarea, select) {
-  border-color: var(--border-default);
-  background: var(--surface-subtle);
-  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] :where(
@@ -16481,7 +16490,6 @@ details.settings-section > :not(summary) + :not(summary) {
 
 :root[data-theme='dark'] :where(
   .user-card,
-  .icon-button,
   .assistant-sidebar__row,
   .welcome__description,
   .tool-activity,
@@ -16489,7 +16497,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .settings-tabs button,
   .credential-state,
   .capability-card p,
-  .secondary-button,
   .check-field,
   .token-usage th,
   .token-usage td,
@@ -16526,8 +16533,6 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 :root[data-theme='dark'] :where(
-  .icon-button:hover,
-  .icon-button--active,
   .user-card:hover,
   .secondary-button:hover:not(:disabled),
   .settings-tabs button[aria-selected='true']
@@ -16946,14 +16951,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .runtime-customization-section__error {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .model-connection-manager {
-    grid-template-columns: 1fr;
-  }
-
-  .model-connection-list > [role='list'] {
-    max-height: 180px;
   }
 
   .capability-list--tools {
@@ -18091,8 +18088,6 @@ details.settings-section > :not(summary) + :not(summary) {
   box-shadow: var(--shadow-dialog);
 }
 .workspace-files__menu button { min-height: 32px; justify-content: flex-start; font-size: var(--font-body); }
-.workspace-files__menu .danger-ghost { color: var(--danger); }
-.workspace-files__menu .danger-ghost:hover { color: var(--danger-strong); background: var(--danger-subtle); }
 .workspace-files__menu [role="separator"] { border-top: 1px solid var(--border-subtle); }
 .workspace-files__path { overflow-wrap: anywhere; }
 .workspace-files__directory-picker { display: grid; min-width: 0; gap: var(--space-2); }

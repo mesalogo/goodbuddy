@@ -24,6 +24,7 @@ const mermaidMock = vi.hoisted(() => ({
   initialize: vi.fn(),
   render: vi.fn()
 }))
+const previewEscape = vi.fn<() => void>()
 
 vi.mock('mermaid', () => ({
   default: mermaidMock
@@ -31,6 +32,12 @@ vi.mock('mermaid', () => ({
 
 describe('MarkdownRenderer', () => {
   beforeEach(() => {
+    Object.defineProperty(window, 'goodbuddy', { configurable: true, value: {
+      app: { onPreviewEscape: vi.fn((listener: () => void) => {
+        previewEscape.mockImplementation(listener)
+        return () => previewEscape.mockReset()
+      }) }
+    } })
     mermaidMock.render.mockResolvedValue({
       svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50">
         <rect id="safe-node" width="100" height="50" />
@@ -178,18 +185,27 @@ const ready = true
       name: '关闭全屏预览'
     })
     expect(closeButton).toHaveFocus()
+    act(() => previewEscape())
+    expect(dialog).toBeInTheDocument()
     expect(
       document.querySelector<HTMLElement>('.app-shell')?.inert
     ).toBe(true)
 
     const frame = screen.getByTitle('Agent 回复 HTML 全屏静态预览')
     expect(frame).toHaveAttribute('sandbox', '')
+    expect(frame).toHaveAttribute('tabindex', '0')
     expect(frame).toHaveAttribute('referrerpolicy', 'no-referrer')
     expect(frame.getAttribute('srcdoc') ?? '').toContain(
       'Full screen page'
     )
 
-    fireEvent.keyDown(dialog, { key: 'Escape' })
+    fireEvent.keyDown(closeButton, { key: 'Tab' })
+    expect(frame).toHaveFocus()
+    dialog.setAttribute('inert', '')
+    act(() => previewEscape())
+    expect(dialog).toBeInTheDocument()
+    dialog.removeAttribute('inert')
+    act(() => previewEscape())
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(viewerButton).toHaveFocus()
   })

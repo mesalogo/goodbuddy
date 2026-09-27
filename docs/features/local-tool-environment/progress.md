@@ -81,6 +81,49 @@
 
 ## 已验证证据
 
+### 2026-09-27 MCP 编辑器遮挡修复
+
+真实 Electron App 经“设置 → 能力与工具 → MCP → 自定义 MCP → 添加 Server”复现。
+修复前编辑器层级为 `70`、设置为 `130`，输入框中心命中设置页签容器；名称输入框虽已
+获得焦点，父设置仍为 `inert=false`。添加和编辑现接入共享 Modal 层级与背景隔离，
+遮罩关闭保留触发按钮焦点。没有修改 Runtime、Agent 或 MCP 传输实现。
+
+`overlay-layering.electron.test.ts` 新增真实 App 用例，复用生产 preload、IPC、
+`CapabilityService`、设置存储与 `BrowserService`。已通过的场景：
+
+| 场景 | 验证结果 |
+| --- | --- |
+| 无浏览器，浅色 `1280 × 900`、深色 `960 × 420` | 添加/编辑鼠标命中、文字输入、父设置隔离、Tab/Shift+Tab 循环通过 |
+| 右侧原生浏览器打开，浅色 `1280 × 900`、深色 `1280 × 420` | 设置及 MCP 期间原生视图隐藏；设置关闭后恢复相同 webContents ID、URL 和页面内标记，无重建或刷新 |
+| 关闭与焦点 | X、取消、Escape、遮罩、保存成功返回原触发按钮；关闭子层保留设置，关闭设置返回其入口 |
+| 持久化 | 四次 UI 保存经生产 IPC 写入临时配置，新建 `CapabilityService` 重读四条记录；编辑重开回显名称 |
+
+原有 overlay Electron 用例也通过，继续覆盖解析菜单、二级结果、通知、应用中心、本机
+推理监控和原生 `dialog`。回归禁用 Windows 原生窗口遮挡节流，避免其他桌面窗口暂停
+测试的帧等待；未改变产品窗口选项。浏览器页面使用本地 HTTP 服务；MCP 测试配置保存为
+停用状态，不启动外部 MCP 命令。真实模型调用 **0 次**。
+
+证据范围为 Windows x64 开发态 Electron。无关启动服务使用 harness 替身，未配置的
+向量模型与 Runtime 原生能力服务会返回不可用；未验收这些服务、外部 MCP 连接、远程
+Agent 或其他操作系统。短窗口从已打开设置调整尺寸；宽度跨越工作栏自动收起阈值的路径
+不作为浏览器保持打开的验收场景。
+
+最终 focused 集合为 6 文件、215 项通过；`npm run typecheck`、`npm run lint` 和
+`git diff --check` 通过。本轮未运行全仓 `npm test` 或打包。验证命令：
+
+```text
+npx vitest run tests/overlay-layering.electron.test.ts src/renderer/src/McpSettingsSection.test.tsx src/renderer/src/SettingsPanel.test.tsx src/renderer/src/FloatingPortal.test.tsx src/renderer/src/WorkspacePrimitives.test.tsx src/renderer/src/RightAssistantSidebar.resize.test.tsx
+npm run typecheck
+npm run lint
+git diff --check
+```
+
+调试期间的失败记录：旧代码在真实鼠标命中断言失败；接入共享焦点后补修遮罩关闭的默认
+焦点转移。harness 的帧等待曾受 Windows 窗口遮挡节流影响，浏览器导航曾在创建或输入
+状态提交前触发；分别关闭测试进程的遮挡节流，并等待可用控件与实际页面加载后验证。
+这些失败未计为产品验收通过。中文文档扫描无阻断项；本节的并列项是实测关闭入口和覆盖
+组件清单，保留以便核对。
+
 ### 2026-09-03 `v0.12.0` 失败标签恢复
 
 - 不可变标签工作流 `33704483505` 的 Windows x64/ARM64 与 macOS x64/ARM64 托管 Python

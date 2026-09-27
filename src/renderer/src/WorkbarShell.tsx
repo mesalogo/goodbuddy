@@ -402,98 +402,114 @@ export function WorkbarShell({
       aria-label={t('sidebar.workbar.ariaLabel')}
       className={joinClassNames('workbar-shell', className)}
     >
-      <div className="workbar-shell__tab-row" ref={tabRowRef}>
-        {tabOverflow.visible && (
-          <button
-            aria-label={t('sidebar.workbar.scrollLeft')}
-            title={t('sidebar.workbar.scrollLeft')}
-            className="workbar-shell__scroll-button"
-            disabled={!tabOverflow.left}
-            onClick={() => scrollTabs(-1)}
-            type="button"
-          >
-            <ChevronLeft aria-hidden="true" />
-          </button>
-        )}
-        <div className="workbar-shell__tab-scroll" ref={tabScrollRef} onScroll={updateTabOverflow}>
-          <div className="workbar-shell__tab-strip" ref={tabListRef}>
-          <div
-            aria-label={t('sidebar.workbar.tablist')}
-            className="workbar-shell__tablist"
-            role="tablist"
-          >
-            {instances.map((instance, index) => {
-              const selected =
-                !catalogOpen && instance.id === activeInstanceId
-              const AppIcon = WORKBAR_APP_ICONS[instance.appId]
-              const closable =
-                appDefinitions.find(
-                  (definition) => definition.id === instance.appId
-                )?.closable === true
-              return (
-                <div
-                  className={joinClassNames(
-                    'workbar-shell__tab-item',
-                    selected && 'workbar-shell__tab-item--active'
-                  )}
-                  key={instance.id}
-                >
-                  <button
-                    aria-controls={panelId(instance.id)}
-                    aria-selected={selected}
-                    className={joinClassNames(
-                      'workbar-shell__tab',
-                      selected && 'workbar-shell__tab--active'
-                    )}
-                    id={tabId(instance.id)}
-                    onClick={() => {
-                      setCatalogOpen(false)
-                      setTargetError(null)
-                      onActiveInstanceChange(instance.id)
-                    }}
-                    onKeyDown={(event) =>
-                      handleTabKeyDown(event, index)
-                    }
-                    role="tab"
-                    tabIndex={selected ? 0 : -1}
-                    title={
-                      appDefinitions.find(
-                        (application) =>
-                          application.id === instance.appId
-                      )?.description ?? instance.title
-                    }
-                    type="button"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="workbar-shell__tab-icon"
+      <div className="workbar-shell__tab-row">
+        <div className="workbar-shell__tab-navigation" ref={tabRowRef}>
+          {tabOverflow.visible && (
+            <button
+              aria-label={t('sidebar.workbar.scrollLeft')}
+              title={t('sidebar.workbar.scrollLeft')}
+              className="workbar-shell__scroll-button"
+              disabled={!tabOverflow.left}
+              onClick={() => scrollTabs(-1)}
+              type="button"
+            >
+              <ChevronLeft aria-hidden="true" />
+            </button>
+          )}
+          <div className="workbar-shell__tab-scroll" ref={tabScrollRef} onScroll={updateTabOverflow}>
+            <div className="workbar-shell__tab-strip" ref={tabListRef}>
+              <div
+                aria-label={t('sidebar.workbar.tablist')}
+                className="workbar-shell__tablist"
+                role="tablist"
+              >
+                {instances.map((instance, index) => {
+                  const selected =
+                    !catalogOpen && instance.id === activeInstanceId
+                  const AppIcon = WORKBAR_APP_ICONS[instance.appId]
+                  const closable =
+                    appDefinitions.find(
+                      (definition) => definition.id === instance.appId
+                    )?.closable === true
+                  return (
+                    <div
+                      className={joinClassNames(
+                        'workbar-shell__tab-item',
+                        selected && 'workbar-shell__tab-item--active'
+                      )}
+                      key={instance.id}
                     >
-                      <AppIcon />
-                    </span>
-                    <span className="workbar-shell__tab-label">
-                      {instance.title}
-                    </span>
-                    {renderTabAdornment?.(instance)}
-                  </button>
-                  {closable ? (
-                    <button
-                      aria-label={t('sidebar.workbar.close', {
-                        title: instance.title
-                      })}
-                      className="workbar-shell__tab-close"
-                      onClick={() => void handleClose(instance)}
-                      title={t('sidebar.workbar.close', {
-                        title: instance.title
-                      })}
-                      type="button"
-                    >
-                      <X aria-hidden="true" />
-                    </button>
-                  ) : null}
-                </div>
-              )
-            })}
+                      <button
+                        aria-controls={panelId(instance.id)}
+                        aria-selected={selected}
+                        className={joinClassNames(
+                          'workbar-shell__tab',
+                          selected && 'workbar-shell__tab--active'
+                        )}
+                        id={tabId(instance.id)}
+                        onClick={() => {
+                          setCatalogOpen(false)
+                          setTargetError(null)
+                          onActiveInstanceChange(instance.id)
+                        }}
+                        onKeyDown={(event) =>
+                          handleTabKeyDown(event, index)
+                        }
+                        role="tab"
+                        tabIndex={selected ? 0 : -1}
+                        title={
+                          appDefinitions.find(
+                            (application) =>
+                              application.id === instance.appId
+                          )?.description ?? instance.title
+                        }
+                        type="button"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="workbar-shell__tab-icon"
+                        >
+                          <AppIcon />
+                        </span>
+                        <span className="workbar-shell__tab-label">
+                          {instance.title}
+                        </span>
+                        {renderTabAdornment?.(instance)}
+                      </button>
+                      {closable ? (
+                        <button
+                          aria-label={t('sidebar.workbar.close', {
+                            title: instance.title
+                          })}
+                          className="workbar-shell__tab-close"
+                          onClick={() => void handleClose(instance)}
+                          title={t('sidebar.workbar.close', {
+                            title: instance.title
+                          })}
+                          type="button"
+                        >
+                          <X aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           </div>
+          {tabOverflow.visible && (
+            <button
+              aria-label={t('sidebar.workbar.scrollRight')}
+              title={t('sidebar.workbar.scrollRight')}
+              className="workbar-shell__scroll-button"
+              disabled={!tabOverflow.right}
+              onClick={() => scrollTabs(1)}
+              type="button"
+            >
+              <ChevronRight aria-hidden="true" />
+            </button>
+          )}
+        </div>
         <button
           aria-expanded={catalogOpen}
           aria-label={t('sidebar.workbar.add')}
@@ -510,20 +526,6 @@ export function WorkbarShell({
         >
           <span aria-hidden="true">+</span>
         </button>
-          </div>
-        </div>
-        {tabOverflow.visible && (
-          <button
-            aria-label={t('sidebar.workbar.scrollRight')}
-            title={t('sidebar.workbar.scrollRight')}
-            className="workbar-shell__scroll-button"
-            disabled={!tabOverflow.right}
-            onClick={() => scrollTabs(1)}
-            type="button"
-          >
-            <ChevronRight aria-hidden="true" />
-          </button>
-        )}
       </div>
 
       <div className="workbar-shell__content">

@@ -3,6 +3,7 @@ import { Code2, FileCode2, Maximize2, X } from 'lucide-react'
 import {
   memo,
   useEffect,
+  useEffectEvent,
   useId,
   useMemo,
   useRef,
@@ -10,7 +11,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { activateModalFocus, trapTabFocus } from './dialog-focus'
+import { activateModalFocus, getModalFocusableElements, trapTabFocus } from './dialog-focus'
 
 const forbiddenTags = [
   'base',
@@ -108,11 +109,18 @@ function StaticHtmlViewer({
   const hintId = useId()
   const dialogRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  const closePreview = useEffectEvent(onClose)
 
   useEffect(
     () => activateModalFocus(() => closeRef.current),
     []
   )
+  useEffect(() => window.goodbuddy.app.onPreviewEscape(() => {
+    if (document.activeElement === frameRef.current && !dialogRef.current?.closest('[inert]')) {
+      closePreview()
+    }
+  }), [])
 
   return createPortal(
     <div
@@ -131,7 +139,13 @@ function StaticHtmlViewer({
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
             event.preventDefault()
+            event.stopPropagation()
             onClose()
+            return
+          }
+          if (event.key === 'Tab' && !event.shiftKey && document.activeElement === closeRef.current) {
+            event.preventDefault()
+            frameRef.current?.focus()
             return
           }
           trapTabFocus(event, dialogRef.current)
@@ -160,11 +174,20 @@ function StaticHtmlViewer({
           </button>
         </header>
         <iframe
+          ref={frameRef}
           referrerPolicy="no-referrer"
           sandbox=""
           srcDoc={documentSource}
+          tabIndex={0}
           title={t('markdown.htmlViewerFrame')}
         />
+        {/* Native Tab leaving a cross-origin frame needs a focus target in this document. */}
+        <span className="sr-only" tabIndex={0} data-focus-guard onFocus={() => {
+          if (!dialogRef.current || !frameRef.current) return
+          const targets = getModalFocusableElements(dialogRef.current)
+          const next = targets[targets.indexOf(frameRef.current) + 1] ?? targets[0]
+          next?.focus()
+        }} />
       </section>
     </div>,
     document.body

@@ -279,6 +279,14 @@ stdio MCP：
   Tab、不渲染占位面板。
 - 页签直接包装层使用 `flex: 0 0 auto`，并由 CSS 回归测试保证在滚动设置布局中不可收缩。
 
+`McpSettingsSection` 的添加与编辑共用 body Portal，遮罩使用 `--z-dialog`。
+打开前记录并聚焦触发按钮，再由 `activateModalFocus` 隔离父设置、聚焦名称并在关闭时
+恢复原隔离状态与焦点；键盘事件在子层停止传播。遮罩的 `mousedown` 关闭分支阻止默认
+焦点转移，避免恢复到触发按钮后又失焦。原生浏览器继续复用
+`browser-viewport-occlusion.ts`，无需 MCP 专用隐藏条件。
+真实 App 回归位于 `tests/overlay-layering.electron.test.ts`，使用生产 preload、IPC、
+配置存储及 `BrowserService`，验证添加、持久化、编辑、父层隔离与原生浏览器恢复。
+
 ### 11.2 工具环境状态与 IPC
 
 Renderer 接收：

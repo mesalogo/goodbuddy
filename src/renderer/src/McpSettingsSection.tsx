@@ -31,7 +31,7 @@ import type {
   RuntimeTarget,
   WebSearchTestResult
 } from '../../shared/capability-contracts'
-import { trapTabFocus } from './dialog-focus'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { PageTabs } from './WorkspacePrimitives'
 
 const configurableMcpTargets: RuntimeTarget[] = [
@@ -177,10 +177,10 @@ export function McpSettingsSection({
     if (!editorOpen) {
       return
     }
-    const frame = requestAnimationFrame(() =>
-      editorNameRef.current?.focus()
+    return activateModalFocus(
+      () => editorNameRef.current,
+      () => editorTriggerRef.current ?? null
     )
-    return () => cancelAnimationFrame(frame)
   }, [editorOpen])
 
   const run = async (
@@ -388,6 +388,7 @@ export function McpSettingsSection({
     trigger: HTMLButtonElement
   ): void => {
     editorTriggerRef.current = trigger
+    trigger.focus()
     setError(undefined)
     setEditor(nextEditor)
   }
@@ -396,16 +397,14 @@ export function McpSettingsSection({
     if (busy === 'save') {
       return
     }
-    const trigger = editorTriggerRef.current
-    editorTriggerRef.current = undefined
     setError(undefined)
     setEditor(undefined)
-    requestAnimationFrame(() => trigger?.focus())
   }
 
   const handleEditorKeyDown = (
     event: React.KeyboardEvent<HTMLDivElement>
   ): void => {
+    event.stopPropagation()
     if (event.key === 'Escape') {
       event.preventDefault()
       closeEditor()
@@ -1214,6 +1213,7 @@ export function McpSettingsSection({
             className="mcp-editor-backdrop"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) {
+                event.preventDefault()
                 closeEditor()
               }
             }}

@@ -164,13 +164,15 @@ describe('WorkspacePrimitives', () => {
     // region, otherwise the native titlebar keeps the pointer and its controls
     // stop responding to hover and clicks.
     const overlays = [
-      ...readdirSync(join(process.cwd(), 'src', 'renderer', 'src'))
+      ...readdirSync(join(process.cwd(), 'src', 'renderer', 'src'), { recursive: true, encoding: 'utf8' })
         .filter((name) => name.endsWith('.css'))
         .map((name) => readFileSync(join(process.cwd(), 'src', 'renderer', 'src', name), 'utf8'))
         .join('\n').matchAll(
-        /^(\.[\w-]*(?:backdrop|modal))\s*\{([^}]*)\}/gmu
+        /^\s*(\.[\w-]+)\s*\{([^}]*)\}/gmu
       )
-    ].filter(([, , body]) => /position:\s*fixed/u.test(body!))
+    ].filter(([, selector, body]) => /position:\s*fixed/u.test(body!) &&
+      (/inset\s*:/u.test(body!) || /(?:backdrop|modal|dialog)$/u.test(selector!)) &&
+      !/pointer-events:\s*none/u.test(body!))
     expect(overlays.length).toBeGreaterThan(10)
     for (const [, selector, body] of overlays) {
       expect(covered, `${selector} must release the drag region`).toContain(
@@ -425,7 +427,7 @@ describe('WorkspacePrimitives', () => {
       /\.field > span\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
     )
     expect(stylesheet).toMatch(
-      /\.field input,\s*\.field textarea,\s*\.field select\s*\{[^}]*font-size:\s*var\(--font-body\);/u
+      /\.field input:not\(:where\(\[type='checkbox'\], \[type='radio'\]\)\),\s*\.field textarea,\s*\.field select,\s*\.field-control\s*\{[^}]*font-size:\s*var\(--font-body\);/u
     )
     expect(stylesheet).toMatch(
       /\.field small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
@@ -822,6 +824,7 @@ describe('WorkspacePrimitives', () => {
       ['success', 'success-subtle'],
       ['danger', 'danger-subtle'],
       ['text-on-accent', 'accent-solid'],
+      ['text-on-accent', 'accent-solid-hover'],
       ['text-on-accent', 'danger-solid'],
       ['text-on-accent', 'danger-solid-hover']
     ] as const
@@ -833,6 +836,9 @@ describe('WorkspacePrimitives', () => {
     }
     expect(
       contrast(tokens['border-control']!, tokens['surface-raised']!)
+    ).toBeGreaterThanOrEqual(3)
+    expect(
+      contrast(tokens['border-control']!, tokens['surface-subtle']!)
     ).toBeGreaterThanOrEqual(3)
   })
 })

@@ -41,7 +41,7 @@ import type {
 import type {
   RemoteProjectRecoveryState
 } from '../../shared/remote-project-recovery-contracts'
-import { trapTabFocus } from './dialog-focus'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import {
   getDefaultRuntimeSelection
 } from './runtime-selection'
@@ -813,6 +813,15 @@ export function ProjectSwitcher({
   }, [directoryPickerOpen])
 
   useEffect(() => {
+    if (!dialogMode) return
+    return activateModalFocus(
+      () => dialogRef.current?.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled), select:not(:disabled)') ??
+        dialogRef.current?.querySelector<HTMLElement>('button:not(:disabled)') ?? null,
+      () => restoreFocusTarget.current === 'create' ? createButtonRef.current : projectPickerButtonRef.current
+    )
+  }, [dialogMode])
+
+  useEffect(() => {
     if (!dialogMode) {
       if (restoreFocusTarget.current === 'create') {
         createButtonRef.current?.focus()
@@ -823,6 +832,7 @@ export function ProjectSwitcher({
       return
     }
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || dialogRef.current?.closest('[inert]')) return
       if (directoryPickerOpen) {
         if (event.key === 'Escape') {
           event.preventDefault()
@@ -833,6 +843,7 @@ export function ProjectSwitcher({
         return
       }
       if (event.key === 'Escape' && !archiving && !deleting) {
+        event.preventDefault()
         if (remoteProjectsEnabled && remoteSaving) {
           void window.goodbuddy.projects.remote
             .cancelCurrent()

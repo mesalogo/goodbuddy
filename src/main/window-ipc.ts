@@ -22,7 +22,17 @@ export function registerClipboardIpcHandlers(
 export function registerWindowIpcHandlers(
   registerHandler: typeof ipcMain.handle,
   window: BrowserWindow
-): void {
+): () => void {
+  const contents = window.webContents
+  // Sandboxed srcdoc keyboard events cannot bubble to the renderer's modal.
+  const previewEscape = (_event: Electron.Event, input: Electron.Input): void => {
+    const frame = contents.focusedFrame
+    if (input.type === 'keyDown' && input.key === 'Escape' &&
+      frame?.parent === contents.mainFrame && frame.url.startsWith('about:srcdoc')) {
+      contents.send(ipcChannels.windowPreviewEscape)
+    }
+  }
+  contents.on('before-input-event', previewEscape)
   registerHandler(ipcChannels.appShow, (event) => {
     assertTrustedSender(event, window)
     showWindow(window)
@@ -56,4 +66,5 @@ export function registerWindowIpcHandlers(
     assertTrustedSender(event, window)
     return window.isMaximized()
   })
+  return () => contents.removeListener('before-input-event', previewEscape)
 }
