@@ -178,7 +178,7 @@ import {
   messageRenderBatchSize,
   type ChatScrollSnapshot,
 } from "./ChatHistoryPane";
-import { isUnusedConversation, type Conversation } from "./chat-conversation";
+import { isUnusedConversation, sortConversationsForDisplay, type Conversation } from "./chat-conversation";
 import {
   clearLegacyActivityHistory,
   loadLegacyActivityHistory,
@@ -1234,7 +1234,7 @@ function mergePersistedConversations(
       merged.push(conversation);
     }
   }
-  return merged.sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || right.updatedAt - left.updatedAt);
+  return sortConversationsForDisplay(merged);
 }
 
 function getProjectDefaultRuntimeSelection(
@@ -3694,7 +3694,7 @@ function App(): React.JSX.Element {
   );
   const filteredConversations = useMemo(() => {
     const query = deferredSearchQuery.trim().toLocaleLowerCase();
-    return conversations.filter(
+    return sortConversationsForDisplay(conversations.filter(
       (conversation) =>
         (!activeProjectId || conversation.projectId === activeProjectId) &&
         (activeProject?.kind !== "channel" ||
@@ -3703,7 +3703,7 @@ function App(): React.JSX.Element {
           (persistedSearchMatches.query === query && persistedSearchMatches.ids.has(conversation.id)) ||
           conversation.title.toLocaleLowerCase().includes(query) ||
           (localSearchMatches.query === query && localSearchMatches.ids.has(conversation.id))),
-    ).sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || right.updatedAt - left.updatedAt);
+    ));
   }, [
     activeProject,
     activeProjectId,

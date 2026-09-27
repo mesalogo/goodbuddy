@@ -3644,6 +3644,69 @@ describe("App", () => {
     expect(screen.queryByRole("img", { name: "已置顶" })).not.toBeInTheDocument();
   });
 
+  it("keeps parallel streaming conversations in message order while persisting fresh deltas", async () => {
+    const snapshots: ConversationSnapshot[] = ["First", "Second"].map((title, index) => ({
+      id: `parallel-${index}`, projectId, title, updatedAt: 100 - index, messages: [],
+    }));
+    vi.mocked(api.conversations.list).mockResolvedValue(snapshots);
+    const { container } = render(<App />);
+    await screen.findByLabelText("更多会话操作 First");
+    const titles = (): string[] => Array.from(container.querySelectorAll(".conversation-item__title")).map(item => item.textContent!);
+    for (const [index, title] of ["First", "Second"].entries()) {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${title}`) }));
+      fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: `Request ${title}` } });
+      fireEvent.click(screen.getByLabelText("发送"));
+      await waitFor(() => expect(run).toHaveBeenCalledTimes(index + 1));
+    }
+    expect(titles()).toEqual(["Second", "First"]);
+    const first = run.mock.calls[0]![0];
+    const second = run.mock.calls[1]![0];
+    const savedBefore = vi.mocked(api.conversations.saveLocal).mock.calls.flatMap(([batch]) => batch)
+      .filter(entry => entry.header.id === first.conversationId).at(-1)!;
+    for (const [request, delta] of [[first, "First output"], [second, "Second output"], [first, " continued"]] as const) {
+      act(() => agentListener?.({ requestId: request.requestId, type: "text", delta }));
+      await waitFor(() => {
+        expect(vi.mocked(api.conversations.saveLocal).mock.calls.flatMap(([batch]) => batch)
+          .some(entry => entry.header.id === request.conversationId && entry.messages.some(message => message.content.includes(delta)))).toBe(true);
+        expect(titles()).toEqual(["Second", "First"]);
+      });
+    }
+    const savedAfter = vi.mocked(api.conversations.saveLocal).mock.calls.flatMap(([batch]) => batch)
+      .filter(entry => entry.header.id === first.conversationId).at(-1)!;
+    expect(savedAfter.header.updatedAt).toBeGreaterThan(savedBefore.header.updatedAt);
+    act(() => agentListener?.({ requestId: first.requestId, type: "done" }));
+    expect(titles()).toEqual(["Second", "First"]);
+    act(() => agentListener?.({ requestId: second.requestId, type: "done" }));
+    await waitFor(() => expect(screen.queryByLabelText("停止生成")).not.toBeInTheDocument());
+    expect(titles()).toEqual(["Second", "First"]);
+  });
+
+  it.each([false, true])("keeps summary and detail order stable across refreshes and moves a newly messaged conversation forward (channel: %s)", async (channel) => {
+    const snapshots: ConversationSnapshot[] = ["Earlier", "Later"].map((title, index) => ({
+      id: `stable-${index}`, projectId, title, updatedAt: 900 - index,
+      ...(channel ? { remote: { channel: "weixin" as const, accountDisplay: "Account", conversationType: "direct" as const } } : {}),
+      messages: [{ id: `message-${index}`, role: "assistant", state: "complete", content: `Body ${title}`, createdAt: 100 + index }],
+    }));
+    vi.mocked(api.conversations.get).mockImplementation(async id => snapshots.find(item => item.id === id)!);
+    vi.mocked(api.conversations.listSummaries).mockImplementation(async (input) => snapshots.map(item =>
+      input?.includes(item.id) ? item : { ...item, messages: [], messageSummary: { count: item.messages.length, firstRole: "assistant", latestMessageAt: Math.max(...item.messages.map(message => message.createdAt)) } }));
+    const { container } = render(<App />);
+    const titles = (): string[] => Array.from(container.querySelectorAll(".conversation-item__title")).map(item => item.textContent!);
+    await waitFor(() => expect(titles()).toEqual(["Later", "Earlier"]));
+    fireEvent.click(container.querySelectorAll(".conversation-item")[0]!);
+    await screen.findByText("Body Later");
+    snapshots[0] = { ...snapshots[0]!, updatedAt: 1000, title: "Refreshed Earlier" };
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(titles()).toEqual(["Later", "Refreshed Earlier"]));
+    fireEvent.click(container.querySelectorAll(".conversation-item")[1]!);
+    await screen.findByText("Body Earlier");
+    expect(titles()).toEqual(["Later", "Refreshed Earlier"]);
+    snapshots[0] = { ...snapshots[0]!, updatedAt: 1100, messages: [...snapshots[0]!.messages,
+      { id: "new-message", role: "user", state: "complete", content: "New turn", createdAt: 200 }] };
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(titles()).toEqual(["Refreshed Earlier", "Later"]));
+  });
+
   it("uses the dedicated pin update for channel conversations", async () => {
     vi.mocked(api.conversations.list).mockResolvedValue([{
       id: "pin-channel", projectId, title: "Channel discussion", updatedAt: 100, messages: [],

@@ -545,6 +545,10 @@ describe('AssistantDatabase', () => {
       expect(summaries).toHaveLength(100)
       expect(summaries.every(item => item.messages.length === 0 &&
         item.messageSummary?.count === 16 && item.messageSummary.firstRole === 'assistant')).toBe(true)
+      for (const snapshot of snapshots) {
+        expect(summaries.find(item => item.id === snapshot.id)?.messageSummary?.latestMessageAt)
+          .toBe(Math.max(...snapshot.messages.map(message => message.createdAt)))
+      }
       expect(JSON.stringify(summaries).length).toBeLessThan(JSON.stringify(snapshots).length * 0.02)
       const id = snapshots[0]!.id
       const detail = database.listConversationSummaries([id]).find(item => item.id === id)!
@@ -557,12 +561,14 @@ describe('AssistantDatabase', () => {
       expect(database.searchConversations('   ')).toEqual([])
       const added = { id: randomUUID(), title: 'Newer', updatedAt: 1000 }
       database.saveLocalConversations([{ header: added, messages: [] }])
+      expect(database.listConversationSummaries().find(item => item.id === added.id)?.messageSummary?.latestMessageAt).toBeUndefined()
       expect(database.listConversationSummaries().some(item => item.id === id)).toBe(true)
       expect(database.searchConversations('äpfel 中文 0 %_')).toEqual([id])
       expect(database.listConversationSummaries([id]).find(item => item.id === id)?.messages).toHaveLength(16)
       // A header-only save of a summary cannot replace or erase messages.
       database.saveLocalConversations([{ header: { id, title: 'Renamed', updatedAt: 101 }, messages: [] }])
       expect(database.getConversation(id).messages).toEqual(snapshots[0]!.messages)
+      expect(database.listConversationSummaries().find(item => item.id === id)?.messageSummary?.latestMessageAt).toBe(15)
     } finally { database.close() }
   })
 

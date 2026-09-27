@@ -1,5 +1,28 @@
 # 应用导航实施进度
 
+## 2026-09-28：并行会话输出时保持列表顺序
+
+修复多个会话交替输出时，左侧列表随每个增量反复换位的问题。展示顺序统一使用消息创建
+时间，摘要查询补充只读 `latestMessageAt`。交互规则见[会话置顶与操作菜单](./ui-design.md#会话置顶与操作菜单)，
+时间字段与合并边界见[会话列表读取与前端保留](../assistant-workbar/execution-history-storage.md#会话列表读取与前端保留)。
+本地及远程事件的更新时间写入、快照合并判定和增量保存保持原实现。
+
+聚焦验证命令：
+
+```text
+npx vitest run src/renderer/src/chat-conversation.test.ts src/renderer/src/App.test.tsx src/main/assistant/assistant-database.test.ts -t "conversation display order|parallel streaming conversations|summary and detail order|sorts pinned conversations|merges persisted pin metadata|lists lightweight history|persists only the changed conversation|preserves live .* across snapshot|loads only the opened history"
+```
+
+结果：3 个文件、13 项通过。覆盖并行文字增量与完成后顺序、保存时间继续推进、本地和消息
+通道的摘要／详情刷新、新消息前移、置顶合并、同时间固定顺序、空会话回退、摘要附带实时
+消息及真实 SQLite 摘要时间。历史加载回归继续验证刷新不重复保存未变化的消息。
+修改过的 7 个 TypeScript 文件定向 ESLint 通过。中文文档按 deai-writing 自查清单复核。
+
+本轮验证为 App 组件事件回归与真实 SQLite 测试，未进行 Electron 窗口或真实模型调用。
+改动仅涉及桌面展示及桌面 Main 的只读摘要，未改变 Agent 协议或桌面到 Agent 的执行路径，
+无需部署 Host。全仓 typecheck、ESLint 和 `git diff --check` 通过；全量测试运行十分钟后
+超时，期间报告配置摘要和 Agent 离线安装测试失败，未取得全仓测试通过结果。
+
 2026-09-23 文档校正：当前 `heartbeat` 已作为可选应用管理，默认值与执行边界见[应用启停与执行](../conversation-supervision/logic-design.md#应用启停与执行)，设置与导航契约见[技术设计](./technical-design.md#4-应用导航偏好)。下方日期记录保留当时实现与验证结果；其中“心跳始终显示”“无应用级开关”和旧字段删除说明不再代表当前行为。本次仅核对源码并更新文档，未重新执行功能测试。
 
 ## 2026-09-18：窄幅单列应用列表

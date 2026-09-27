@@ -2889,6 +2889,7 @@ export class AssistantDatabase {
     const summaryStatement = database.prepare(
       `SELECT count(*) AS count,
               max(state = 'streaming') AS streaming,
+              max(created_at) AS latestMessageAt,
               (SELECT role FROM messages WHERE conversation_id = ? ORDER BY sequence LIMIT 1) AS firstRole
        FROM messages WHERE conversation_id = ?`
     )
@@ -2899,12 +2900,16 @@ export class AssistantDatabase {
     return conversations.map((conversation) => {
       if (detailIds && !detailIds.has(conversation.id) && !activeIds.has(conversation.id)) {
         const summary = summaryStatement.get(conversation.id, conversation.id) as {
-          count: number; streaming: number | null; firstRole: ConversationMessage['role'] | null
+          count: number; streaming: number | null; firstRole: ConversationMessage['role'] | null; latestMessageAt: string | null
         }
         if (!summary.streaming) {
           return {
             ...toConversationSnapshot(conversation, []),
-            messageSummary: { count: summary.count, firstRole: summary.firstRole ?? undefined }
+            messageSummary: {
+              count: summary.count,
+              firstRole: summary.firstRole ?? undefined,
+              latestMessageAt: summary.latestMessageAt === null ? undefined : Date.parse(summary.latestMessageAt)
+            }
           }
         }
       }

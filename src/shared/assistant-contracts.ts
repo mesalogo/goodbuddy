@@ -617,6 +617,7 @@ export type ConversationListSnapshot = ConversationSnapshot & {
   messageSummary?: {
     count: number
     firstRole?: ConversationMessage['role']
+    latestMessageAt?: number
   }
 }
 export const conversationListRequestSchema = z.object({
