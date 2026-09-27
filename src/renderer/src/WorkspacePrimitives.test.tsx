@@ -344,7 +344,7 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
-  it('floats Runtime context compaction without shifting the composer', () => {
+  it('wraps native client and compaction actions without overlapping composer metadata', () => {
     expect(stylesheet).toMatch(
       /\.composer-wrap\s*\{[^}]*var\(--space-2\);[^}]*background:\s*var\(--surface-raised\);/u
     )
@@ -352,10 +352,10 @@ describe('WorkspacePrimitives', () => {
       /\.composer-meta\s*\{[^}]*position:\s*relative;[^}]*min-height:\s*26px;[^}]*margin:\s*var\(--space-1\) 0 0;/u
     )
     expect(stylesheet).toMatch(
-      /\.composer-meta--with-context-compact\s*\{[^}]*padding-left:\s*calc\(/u
+      /\.composer-meta__actions\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;/u
     )
-    expect(stylesheet).toMatch(
-      /\.composer-context-compact\s*\{[^}]*position:\s*absolute;[^}]*bottom:\s*0;[^}]*left:\s*0;/u
+    expect(stylesheet).not.toMatch(
+      /\.composer-context-compact\s*\{[^}]*position:\s*absolute;/u
     )
   })
 

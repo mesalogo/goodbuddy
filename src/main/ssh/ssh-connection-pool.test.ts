@@ -59,6 +59,7 @@ function createConnection(identity: SshPoolConnectionIdentity) {
   return {
     identity,
     isUsable: vi.fn(() => true),
+    forwardLoopback: vi.fn(),
     onDisconnect: vi.fn(() => () => undefined),
     openTerminalShell: vi.fn(),
     openAgentAttach: vi.fn(),

@@ -80,14 +80,10 @@ describe('embedding IPC boundary', () => {
 
 describe('local tool environment IPC boundary', () => {
   it('trust-checks every operation and accepts only shared bounded schemas', async () => {
-    const source = await readFile(
-      join(process.cwd(), 'src', 'main', 'ipc.ts'),
+    const region = await readFile(
+      join(process.cwd(), 'src', 'main', 'local-tool-environment', 'local-tool-environment-ipc.ts'),
       'utf8'
     )
-    const region =
-      source.match(
-        /const requireLocalToolEnvironmentService[\s\S]*?registerHandler\(ipcChannels\.shortcutSettingsGet/u
-      )?.[0] ?? ''
     expect(region.match(/assertTrustedSender\(event, window\)/gu)).toHaveLength(8)
     expect(region).toContain('localToolEnvironmentSettingsSchema.parse(input)')
     expect(region).toContain('localToolKindInputSchema.parse(input)')
@@ -335,6 +331,7 @@ const electronMocks = vi.hoisted(() => {
   const handlers = new Map<string, InvokeHandler>()
   return {
     handlers,
+    invoke: vi.fn(),
     handle: vi.fn((channel: string, handler: InvokeHandler) => {
       handlers.set(channel, handler)
     }),
@@ -1008,6 +1005,40 @@ describe('registerIpcHandlers computer capabilities', () => {
     )
     expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(5)
 
+    const capabilityChannels = [
+      ipcChannels.capabilitiesSnapshot,
+      ipcChannels.runtimeExtensionsSnapshot,
+      ipcChannels.runtimeExtensionsApply,
+      ipcChannels.capabilitiesImportSkill,
+      ipcChannels.capabilitiesRemoveSkill,
+      ipcChannels.capabilitiesToggleSkill,
+      ipcChannels.capabilitiesAssignSkill,
+      ipcChannels.capabilitiesUpdateObsidianSettings,
+      ipcChannels.capabilitiesTestObsidianConnection,
+      ipcChannels.capabilitiesSelectObsidianVault,
+      ipcChannels.capabilitiesToggleBuiltinMcp,
+      ipcChannels.capabilitiesAssignBuiltinMcp,
+      ipcChannels.capabilitiesSaveMcp,
+      ipcChannels.capabilitiesRemoveMcp,
+      ipcChannels.capabilitiesTestMcp,
+      ipcChannels.capabilitiesToggleWebSearch,
+      ipcChannels.capabilitiesTestWebSearch,
+      ipcChannels.capabilitiesToggleComputer,
+      ipcChannels.capabilitiesConfigureComputer,
+      ipcChannels.capabilitiesDiagnoseComputer,
+      ipcChannels.capabilitiesCreateBrowserProfile,
+      ipcChannels.capabilitiesRenameBrowserProfile,
+      ipcChannels.capabilitiesDefaultBrowserProfile,
+      ipcChannels.capabilitiesRemoveBrowserProfile
+    ]
+    const registrations = electronMocks.handle.mock.calls.map(([channel]) => channel)
+    const start = registrations.indexOf(ipcChannels.capabilitiesSnapshot)
+    expect(registrations.slice(start - 1, start + capabilityChannels.length + 1)).toEqual([
+      ipcChannels.expertsRemove,
+      ...capabilityChannels,
+      ipcChannels.contextSelectFiles
+    ])
+
     expect(() =>
       electronMocks.handlers.get(
         ipcChannels.capabilitiesDiagnoseComputer
@@ -1020,6 +1051,10 @@ describe('registerIpcHandlers computer capabilities', () => {
       )
     ).toThrow('拒绝来自未知窗口的 IPC 请求')
     await dispose()
+    for (const channel of capabilityChannels) {
+      expect(electronMocks.removeHandler).toHaveBeenCalledWith(channel)
+      expect(electronMocks.handlers.has(channel)).toBe(false)
+    }
   })
 })
 
@@ -1329,6 +1364,9 @@ describe('registerIpcHandlers model download source routing', () => {
 })
 
 vi.mock('electron', () => ({
+  contextBridge: { exposeInMainWorld: (name: string, value: unknown) => vi.stubGlobal(name, value) },
+  ipcRenderer: { invoke: electronMocks.invoke },
+  webUtils: {},
   nativeImage: { createFromBuffer: (buffer: Buffer) => ({ isEmpty: () => false, toPNG: () => buffer }) },
   app: {
     getAppPath: vi.fn(() => process.cwd()),
@@ -5116,7 +5154,9 @@ describe('registerIpcHandlers agent terminal state', () => {
     imageService?: ImageGenerationService,
     imageDatabase?: AssistantDatabase,
     heartbeatEnabled?: boolean,
-    obsidianService?: ObsidianService
+    obsidianService?: ObsidianService,
+    nativeClientCoordinator?: Parameters<typeof registerIpcHandlers>[45],
+    nativeTerminalManager?: Parameters<typeof registerIpcHandlers>[41]
   ) {
     const assistantDatabase = {
       createTask: vi.fn(),
@@ -5240,7 +5280,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       id: 9,
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
-      send: vi.fn()
+      send: vi.fn(),
+      once: vi.fn(),
+      removeListener: vi.fn(),
+      isDestroyed: vi.fn(() => false)
     }
     const window = {
       webContents,
@@ -5348,6 +5391,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     ]
     args[43] = imageService
     args[44] = obsidianService
+    args[45] = nativeClientCoordinator
+    args[41] = nativeTerminalManager
     const dispose = registerIpcHandlers(...args)
     return {
       approvalBroker,
@@ -5950,6 +5995,35 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(run).toHaveBeenCalledTimes(1)
       expect(releaseConversation).toHaveBeenCalledTimes(1)
     } finally { finish(); await harness.dispose(); database.close() }
+  })
+
+  it('routes native clients through validated owner-scoped IPC and cleans up the window', async () => {
+    const coordinator = {
+      open: vi.fn(async () => ({ kind: 'browser' as const, serviceId: 'native-service' })),
+      get: vi.fn(async () => ({ serviceId: 'native-service' })),
+      stop: vi.fn(async () => {}),
+      closeOwner: vi.fn(async () => {})
+    }
+    const harness = createHarness({}, undefined, 'always', undefined, false, undefined,
+      undefined, undefined, false, undefined, undefined, undefined, undefined, undefined, false, undefined, coordinator)
+    const event = trustedEvent(harness.webContents)
+    const input = { conversationId: '00000000-0000-4000-8000-000000000401' }
+    const open = electronMocks.handlers.get(ipcChannels.runtimeNativeClientOpen)!
+    const get = electronMocks.handlers.get(ipcChannels.runtimeNativeClientGet)!
+    const stop = electronMocks.handlers.get(ipcChannels.runtimeNativeClientStop)!
+    await expect(open(event, input)).resolves.toEqual({ kind: 'browser', serviceId: 'native-service' })
+    expect(coordinator.open).toHaveBeenCalledWith(9, input.conversationId)
+    await expect(get(event, input)).resolves.toEqual({ serviceId: 'native-service' })
+    expect(coordinator.get).toHaveBeenCalledWith(9, input.conversationId)
+    await stop(event, { serviceId: 'native-service' })
+    expect(coordinator.stop).toHaveBeenCalledWith(9, 'native-service')
+    await expect(open(event, { ...input, runtime: 'continue' })).rejects.toThrow()
+    await expect(open({ ...event, sender: { id: 99 } }, input)).rejects.toThrow()
+    await expect(stop(event, { serviceId: '' })).rejects.toThrow()
+    expect(coordinator.open).toHaveBeenCalledTimes(1)
+    expect(harness.webContents.once).toHaveBeenCalledWith('destroyed', expect.any(Function))
+    await harness.dispose()
+    expect(coordinator.closeOwner).toHaveBeenCalledWith(9)
   })
 
   it('production supervision IPC pauses in-flight work and resumes saved batches without replaying them', async () => {
@@ -8636,6 +8710,179 @@ describe('registerIpcHandlers agent terminal state', () => {
       await harness.dispose()
     }
   })
+
+  it.skipIf(!process.env.GOODBUDDY_NATIVE_CLIENT_INTEGRATION)('opens and stops official native clients from the real UI through preload, IPC and saved project settings', async () => {
+    const { createElement } = await import('react')
+    const { render, fireEvent, waitFor, cleanup } = await import('@testing-library/react/pure')
+    const rendererModule = '../renderer/src/RuntimeNativeClientActions'
+    const { RuntimeNativeClientActions } = await import(rendererModule) as {
+      RuntimeNativeClientActions: import('react').ComponentType<{
+        browser: boolean; contextKey: string; conversationId: string; prepareConversation: () => Promise<string>
+        onTerminal: (value: import('../shared/terminal-contracts').TerminalSnapshot) => void; notify: (value: unknown) => void
+      }>
+    }
+    const { default: i18n } = await import('i18next')
+    const { NativeClientCoordinator } = await import('./agent/native-client-coordinator')
+    const { RuntimeSettingsStore } = await import('./runtime-settings-store')
+    const { ApplicationSettingsStore } = await import('./application-settings-store')
+    const { ExecutionSpaceResolver } = await import('./execution-space/execution-space-resolver')
+    const { KnowledgeMcpGateway } = await import('./agent/knowledge-mcp-gateway')
+    const { TerminalSessionManager } = await import('./terminal/terminal-session-manager')
+    const { resolveNpmCliPaths } = await import('./local-tool-environment')
+    const { resolveBundledRuntimePaths } = await import('./agent/bundled-runtimes')
+    const root = await mkdtemp(join(tmpdir(), 'goodbuddy-native-ui-'))
+    const database = new AssistantDatabase(join(root, 'assistant.sqlite'))
+    const liveModule = process.env.GOODBUDDY_NATIVE_CLIENT_LIVE_MODULE
+    const { createRequire } = await import('node:module')
+    const live = liveModule ? createRequire(import.meta.url)(liveModule) as {
+      begin: (fetcher: typeof fetch) => typeof fetch
+      profile: (runtime: string) => import('./runtime-settings-store').ResolvedModelProfile
+      web: (url: string, workspace: string) => Promise<void>
+      terminal: (runtime: string, write: (data: string) => Promise<unknown>, output: () => string) => Promise<void>
+      finish: () => Promise<void>
+    } : undefined
+    if (live) vi.stubGlobal('fetch', live.begin(fetch))
+    let coordinator: InstanceType<typeof NativeClientCoordinator> | undefined
+    let harness: ReturnType<typeof createHarness> | undefined
+    let terminalManager: InstanceType<typeof TerminalSessionManager> | undefined
+    try {
+      database.initialize(root)
+      const secrets = new Map<string, string>()
+      const cipher = { isAvailable: () => true,
+        encrypt: (value: string) => { const id = crypto.randomUUID(); secrets.set(id, value); return Buffer.from(id) },
+        decrypt: (value: Buffer) => secrets.get(value.toString())! }
+      const settingsStore = new RuntimeSettingsStore(join(root, 'settings.json'), cipher, {})
+      const profileId = '00000000-0000-4000-8000-000000000221'
+      const inputDefaults = { ...defaultRuntimeSettings } as Record<string, unknown>
+      delete inputDefaults.supportsImageInput
+      const selectedProfile = live?.profile('deepseek-harness')
+      await settingsStore.update(runtimeSettingsInputSchema.parse({ ...inputDefaults, apiKey: { action: 'keep' },
+        provider: 'deepseek-harness', workspacePath: root,
+        modelProfiles: [{ name: 'Native UI Test', baseUrl: 'http://127.0.0.1:1', modelName: 'native-ui-model',
+          protocol: 'openai-chat-completions', authentication: 'api-key', imageGenerationQuality: 'auto',
+          ...selectedProfile, id: profileId, apiKey: { action: 'replace', value: selectedProfile?.apiKey ?? 'native-ui-secret' } }],
+        defaultModelProfileId: profileId, deepseekHarnessModelSource: { kind: 'profile', profileId }
+      }))
+      const project = database.createProject({ name: 'Native UI', description: '', rootPath: root,
+        defaultWorkMode: 'ask', runtimeSelection: { provider: 'deepseek-harness', profileId } })
+      const conversationId = '00000000-0000-4000-8000-000000000222'
+      const now = Date.now()
+      const save = async (): Promise<string> => {
+        database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Native UI', updatedAt: now }, messages: [] }])
+        return conversationId
+      }
+      await save()
+      const capabilities = new CapabilityService(join(root, 'capabilities.json'), join(root, 'builtin'), join(root, 'imported'), cipher)
+      const opened: string[] = []
+      const terminalEvents: import('../shared/terminal-contracts').TerminalEvent[] = []
+      terminalManager = new TerminalSessionManager({ database, executionSpaceResolver: new ExecutionSpaceResolver(),
+        targetResolver: {} as never, sshPool: {} as never, remoteEnabled: () => false,
+        deliverEvent: (ownerId, event) => {
+          expect(ownerId).toBe(9)
+          terminalEvents.push(event)
+          terminalManager!.acknowledge(ownerId, event.sessionId, event.sequence)
+        }
+      })
+      const applicationSettingsStore = new ApplicationSettingsStore(join(root, 'application.json'))
+      if (process.env.NATIVE_DSH_TEST_NODE) await applicationSettingsStore.update({
+        localToolEnvironment: { ...(await applicationSettingsStore.get()).localToolEnvironment,
+          node: { source: 'custom', executablePath: process.env.NATIVE_DSH_TEST_NODE } }
+      })
+      coordinator = new NativeClientCoordinator({ database, settingsStore,
+        applicationSettingsStore,
+        capabilities, executionSpaceResolver: new ExecutionSpaceResolver(), terminalManager,
+        localEnvironment: { launchEnvironmentProvider: () => process.env } as never,
+        rootDirectory: join(root, 'clients'), managedNodeDirectory: join(root, 'node'),
+        bundledRuntimePaths: resolveBundledRuntimePaths({ appPath: process.cwd(), resourcesPath: '', packaged: false }),
+        npmCliPath: resolveNpmCliPaths({ appPath: process.cwd(), resourcesPath: '', packaged: false }).npmCliPath,
+        createGateway: () => new KnowledgeMcpGateway({} as never, { now: () => 0 }),
+        openExternal: async (url) => { opened.push(url) }
+      })
+      harness = createHarness({}, undefined, 'always', undefined, false, undefined, undefined, undefined,
+        false, undefined, undefined, undefined, undefined, undefined, false, undefined, coordinator, terminalManager)
+      const event = trustedEvent(harness.webContents)
+      electronMocks.invoke.mockImplementation((channel: string, input: unknown) => electronMocks.handlers.get(channel)!(event, input))
+      await import('../preload/index')
+      const notify = vi.fn()
+      const view = render(createElement(RuntimeNativeClientActions, { browser: true, contextKey: project.id,
+        conversationId, prepareConversation: save, onTerminal: vi.fn(), notify }))
+      fireEvent.click(view.getByRole('button', { name: i18n.t('app:composer.nativeClient.browser') }))
+      await waitFor(() => {
+        expect(notify).not.toHaveBeenCalled()
+        expect(view.getByRole('button', { name: i18n.t('app:composer.nativeClient.reopen') })).toBeEnabled()
+      }, { timeout: 120_000 })
+      expect(opened).toHaveLength(1)
+      const handle = await coordinator.get(9, conversationId)
+      expect(handle?.serviceId).toBeTruthy()
+      expect(await coordinator.get(10, conversationId)).toBeNull()
+      await coordinator.stop(10, handle!.serviceId)
+      expect(await coordinator.get(9, conversationId)).toEqual(handle)
+      database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Native UI', updatedAt: now + 1, workMode: 'execute' }, messages: [] }])
+      expect(await coordinator.get(9, conversationId)).toBeNull()
+      database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Native UI', updatedAt: now + 2, workMode: 'ask' }, messages: [] }])
+      expect(await coordinator.get(9, conversationId)).toEqual(handle)
+      const config = await readFile(join(root, 'clients', 'dsh', handle!.serviceId, 'cordis.patch.yml'), 'utf8')
+      expect(config).toContain(selectedProfile?.modelName ?? 'native-ui-model')
+      expect(config).not.toContain('native-ui-secret')
+      if (selectedProfile?.apiKey) expect(config).not.toContain(selectedProfile.apiKey)
+      const auth = await fetch(opened[0]!, { redirect: 'manual' })
+      expect(auth.status).toBe(303)
+      const cookie = auth.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+      const page = await fetch(new URL('/', opened[0]!), { headers: { cookie } })
+      expect(page.status).toBe(200)
+      expect(await page.text()).toContain('<html')
+      await live?.web(opened[0]!, root)
+      fireEvent.click(view.getByRole('button', { name: i18n.t('app:composer.nativeClient.reopen') }))
+      await waitFor(() => expect(opened).toHaveLength(2))
+      expect(await coordinator.get(9, conversationId)).toEqual(handle)
+      await waitFor(() => expect(view.getByRole('button', { name: i18n.t('app:composer.nativeClient.stop') })).toBeEnabled())
+      fireEvent.click(view.getByRole('button', { name: i18n.t('app:composer.nativeClient.stop') }))
+      fireEvent.click(view.getByRole('button', { name: i18n.t('app:composer.nativeClient.confirmStop') }))
+      await waitFor(() => expect(view.queryByRole('button', { name: i18n.t('app:composer.nativeClient.stop') })).not.toBeInTheDocument(), { timeout: 10_000 })
+      expect(await coordinator.get(9, conversationId)).toBeNull()
+      await expect(fetch(new URL('/', opened[0]!))).rejects.toThrow()
+
+      const terminals: import('../shared/terminal-contracts').TerminalSnapshot[] = []
+      for (const provider of ['continue', 'opencode'] as const) {
+        if (live) {
+          const profile = live.profile(provider)
+          await settingsStore.update(runtimeSettingsInputSchema.parse({ ...inputDefaults, apiKey: { action: 'keep' },
+            provider, workspacePath: root, defaultModelProfileId: profileId,
+            modelProfiles: [{ ...profile, id: profileId, imageGenerationQuality: 'auto', apiKey: { action: 'replace', value: profile.apiKey } }],
+            [`${provider}ModelSource`]: { kind: 'profile', profileId }
+          }))
+        }
+        database.updateProject(project.id, { ...project, runtimeSelection: { provider, profileId } })
+        const onTerminal = vi.fn<(value: import('../shared/terminal-contracts').TerminalSnapshot) => void>()
+        notify.mockClear()
+        view.rerender(createElement(RuntimeNativeClientActions, { browser: false, contextKey: `${project.id}:${provider}`,
+          conversationId, prepareConversation: save, onTerminal, notify }))
+        fireEvent.click(view.getByRole('button', { name: i18n.t('app:composer.nativeClient.terminal') }))
+        await waitFor(() => {
+          expect(notify).not.toHaveBeenCalled()
+          expect(onTerminal).toHaveBeenCalledWith(expect.objectContaining({ state: 'running', workingDirectory: root }))
+        }, { timeout: 30_000 })
+        const terminal = onTerminal.mock.calls[0]![0]
+        terminals.push(terminal)
+        await waitFor(() => expect(terminalEvents.some(event => event.sessionId === terminal.sessionId && event.type === 'output' && /Continue|OpenCode|opencode|Native UI Test|native-ui-model/u.test(event.data))).toBe(true), { timeout: 20_000 })
+        await live?.terminal(provider,
+          data => (globalThis as unknown as { goodbuddy: import('../shared/contracts').DesktopApi }).goodbuddy.terminal.write({ sessionId: terminal.sessionId, data }),
+          () => terminalEvents.flatMap(event => event.sessionId === terminal.sessionId && event.type === 'output' ? [event.data] : []).join(''))
+      }
+      await harness.dispose()
+      harness = undefined
+      for (const terminal of terminals) expect(() => terminalManager!.snapshot(9, terminal.sessionId)).toThrow()
+    } finally {
+      cleanup()
+      vi.unstubAllGlobals()
+      await harness?.dispose()
+      await coordinator?.dispose()
+      await terminalManager?.dispose()
+      database.close()
+      await rm(root, { recursive: true, force: true })
+      await live?.finish()
+    }
+  }, 360_000)
 
   it('tests an unsaved Obsidian UI draft through registered IPC and bundled MCPVault, then saves and refreshes', async () => {
     const { createElement } = await import('react')

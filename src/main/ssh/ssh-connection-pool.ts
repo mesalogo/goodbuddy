@@ -1,4 +1,5 @@
 import { createHmac, getCiphers, randomBytes } from "node:crypto";
+import { connect as connectLoopback, type Socket } from "node:net";
 import { Client } from "ssh2";
 import type { ClientChannel, ConnectConfig, SFTPWrapper } from "ssh2";
 import {
@@ -69,12 +70,18 @@ export type SshTerminalShellOptions = {
   cols: number;
   rows: number;
   term?: string;
+  /** Main-generated native launch, not part of the renderer terminal contract. */
+  command?: string;
+  pty?: false;
 };
+
+export type SshLoopbackForward = { port: number; close(): Promise<void> };
 
 export interface AuthenticatedSshConnection {
   readonly identity: SshPoolConnectionIdentity;
   isUsable(): boolean;
   onDisconnect(listener: (error?: Error) => void): () => void;
+  forwardLoopback(localPort: number): Promise<SshLoopbackForward>;
   openTerminalShell(
     options: SshTerminalShellOptions,
     signal?: AbortSignal,
@@ -170,7 +177,7 @@ type InternalSshConnectionLease = SshTerminalConnectionLease &
 
 type ClientLike = Pick<
   Client,
-  "connect" | "end" | "destroy" | "exec" | "shell" | "sftp" | "on" | "once"
+  "connect" | "end" | "destroy" | "exec" | "shell" | "sftp" | "on" | "once" | "removeListener" | "forwardIn" | "unforwardIn"
 >;
 
 type SshConnectionDependencies = {
@@ -468,18 +475,56 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
         finish(new Error("SSH 终端通道打开超时"));
       }, CHANNEL_OPEN_TIMEOUT_MS);
       signal?.addEventListener("abort", abort, { once: true });
-      this.client.shell(
-        {
+      const pty = {
           term: options.term ?? "xterm-256color",
           cols: options.cols,
           rows: options.rows,
           width: 0,
           height: 0,
-        },
-        { env: {}, x11: false },
-        (error, channel) => finish(error, channel),
-      );
+        };
+      if (options.command) {
+        this.client.exec(options.command, { pty: options.pty === false ? false : pty, env: {}, x11: false }, (error, channel) => finish(error, channel));
+      } else {
+        this.client.shell(pty, { env: {}, x11: false }, (error, channel) => finish(error, channel));
+      }
     });
+  }
+
+  async forwardLoopback(localPort: number): Promise<SshLoopbackForward> {
+    this.assertUsable();
+    const port = await new Promise<number>((resolve, reject) => {
+      this.client.forwardIn("127.0.0.1", 0, (error, allocated) => error ? reject(error) : resolve(allocated));
+    });
+    const streams = new Set<Socket | ClientChannel>();
+    const acceptConnection = (details: { destPort: number }, accept: () => ClientChannel): void => {
+      if (details.destPort !== port) return;
+      const remote = accept();
+      const local = connectLoopback({ host: "127.0.0.1", port: localPort });
+      streams.add(remote);
+      streams.add(local);
+      const close = (): void => {
+        streams.delete(remote);
+        streams.delete(local);
+        remote.destroy();
+        local.destroy();
+      };
+      remote.once("error", close);
+      local.once("error", close);
+      remote.once("close", close);
+      local.once("close", close);
+      remote.pipe(local).pipe(remote);
+    };
+    this.client.on("tcp connection", acceptConnection);
+    let closing: Promise<void> | undefined;
+    const removeDisconnect = this.onDisconnect(() => { void close(); });
+    const close = (): Promise<void> => closing ??= (async () => {
+      removeDisconnect();
+      this.client.removeListener("tcp connection", acceptConnection);
+      for (const stream of streams) stream.destroy();
+      streams.clear();
+      if (this.isUsable()) await new Promise<void>(resolve => this.client.unforwardIn("127.0.0.1", port, () => resolve()));
+    })();
+    return { port, close };
   }
 
   async openAgentAttach(
@@ -1022,6 +1067,10 @@ export class SshConnectionPool {
       openTerminalShell: (options, signal) => {
         assertActive();
         return connection.openTerminalShell(options, signal);
+      },
+      forwardLoopback: (localPort) => {
+        assertActive();
+        return connection.forwardLoopback(localPort);
       },
       openAgentAttach: (installationId, signal) => {
         assertActive();

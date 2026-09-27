@@ -33,7 +33,7 @@
 | `src/shared/external-knowledge-contracts.ts` | Provider 配置、实例与绑定输入、目录、测试结果和外部引用定位契约 |
 | `src/shared/knowledge-contracts.ts`、`contracts.ts`、`assistant-contracts.ts` | 现有知识结果、列表和会话引用增加外部字段 |
 | `src/shared/knowledge-reference.ts` | 预检索与 MCP 共用的引用转换和去重键 |
-| `src/main/ipc.ts`、`src/preload/index.ts`、`src/shared/ipc-channels.ts` | 可信发送方检查、Zod 输入解析、类型化跨进程调用 |
+| `src/main/ipc.ts`、`src/main/knowledge/knowledge-ipc.ts`、`src/preload/index.ts`、`src/shared/ipc-channels.ts` | 可信发送方检查、Zod 输入解析、类型化跨进程调用 |
 | `src/renderer/src/ExternalKnowledge.tsx` | 实例 Modal、绑定表单、Provider 配置、外部详情与检索结果 |
 | `KnowledgeWorkspace.tsx`、`App.tsx`、`KnowledgeCitationDialog.tsx` | 统一列表、聊天选择、刷新及历史引用显示 |
 

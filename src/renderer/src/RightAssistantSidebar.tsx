@@ -125,6 +125,7 @@ export type RightAssistantSidebarProps = {
   notesOpenRequest?: number
   notesPanel?: React.ReactNode
   onBeforeCloseNotes?: () => Promise<boolean>
+  nativeTerminals?: readonly { terminal: TerminalSnapshot; focus: boolean }[]
   open: boolean
   tab: AssistantSidebarTab
   approvals: PendingSidebarApproval[]
@@ -815,6 +816,7 @@ export function RightAssistantSidebar({
   notesOpenRequest = 0,
   notesPanel,
   onBeforeCloseNotes,
+  nativeTerminals,
   open,
   tab,
   approvals,
@@ -1060,6 +1062,18 @@ export function RightAssistantSidebar({
   const [terminalSnapshots, setTerminalSnapshots] = useState<
     Record<string, TerminalSnapshot>
   >({})
+  const [attachedNativeTerminalCount, setAttachedNativeTerminalCount] = useState(0)
+  if (nativeTerminals && nativeTerminals.length > attachedNativeTerminalCount) {
+    const additions = nativeTerminals.slice(attachedNativeTerminalCount)
+    setAttachedNativeTerminalCount(nativeTerminals.length)
+    setWorkbarInstances(current => [...current, ...additions.map(({ terminal }) => ({
+      id: terminal.sessionId, appId: 'terminal' as const, title: terminal.title, targetRef: terminal.target
+    }))])
+    setTerminalSessionIds(current => ({ ...current, ...Object.fromEntries(additions.map(({ terminal }) => [terminal.sessionId, terminal.sessionId])) }))
+    setTerminalSnapshots(current => ({ ...current, ...Object.fromEntries(additions.map(({ terminal }) => [terminal.sessionId, terminal])) }))
+    const focused = additions.findLast(entry => entry.focus)
+    if (focused) setActiveWorkbarInstanceId(focused.terminal.sessionId)
+  }
   const [terminalCloseConfirmation, setTerminalCloseConfirmation] =
     useState<{
       instance: WorkbarTabInstance

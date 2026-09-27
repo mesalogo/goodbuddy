@@ -24,6 +24,7 @@ import {
 } from "../../shared/application-settings-contracts";
 import type { GlobalShortcutSettingsSnapshot } from "../../shared/shortcut";
 import type { TerminalSnapshot } from "../../shared/terminal-contracts";
+import type { RuntimeNativeClientApi } from "./RuntimeNativeClientActions";
 import { loadBrandingPreferences, saveBrandingPreferences } from "./branding";
 import type {
   AssistantProject,
@@ -198,7 +199,10 @@ const terminalSnapshot: TerminalSnapshot = {
   error: null,
 };
 
-const api: DesktopApi = {
+const api: DesktopApi & RuntimeNativeClientApi = {
+  openRuntimeNativeClient: vi.fn(async () => ({ kind: "terminal" as const, terminal: terminalSnapshot })),
+  getRuntimeNativeClient: vi.fn(async () => null),
+  stopRuntimeNativeClient: vi.fn(async () => undefined),
   localInference: {
     openSettings: vi.fn(async () => undefined),
     getSnapshot: vi.fn(async () => ({ services: [], tasks: [] })),
@@ -1162,6 +1166,9 @@ describe("App", () => {
     document.documentElement.style.colorScheme = "";
     vi.clearAllMocks();
     vi.mocked(api.magicNotes.search).mockReset().mockResolvedValue([]);
+    vi.mocked(api.openRuntimeNativeClient).mockReset().mockResolvedValue({ kind: "terminal", terminal: terminalSnapshot });
+    vi.mocked(api.getRuntimeNativeClient).mockReset().mockResolvedValue(null);
+    vi.mocked(api.stopRuntimeNativeClient).mockReset().mockResolvedValue();
     vi.mocked(api.knowledge.getSnapshot).mockReset();
     vi.mocked(api.knowledge.externalInstancesList).mockReset();
     vi.mocked(api.agent.respondQuestion).mockReset().mockResolvedValue();
@@ -9663,6 +9670,77 @@ describe("App", () => {
     );
   });
 
+  it.each(["continue", "opencode"] as const)("opens the %s native terminal without compression or history and persists current settings", async (provider) => {
+    const conversationId = "00000000-0000-4000-8000-000000000731";
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([{
+      id: conversationId, projectId, title: "Native client", updatedAt: Date.now(),
+      runtimeSelection: { provider }, workMode: "execute", messages: [],
+    }]);
+    render(<App />);
+    const open = await screen.findByRole("button", { name: "在终端中打开" });
+    expect(open).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "压缩上下文" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "向 GoodBuddy 提问" }), { target: { value: "Keep my draft" } });
+    fireEvent.click(open);
+    await waitFor(() => {
+      expect(api.openRuntimeNativeClient).toHaveBeenCalledWith({ conversationId });
+      expect(screen.getByRole("tab", { name: /终端 1/ })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("region", { name: "用户终端：终端 1" })).toBeInTheDocument();
+    });
+    expect(api.conversations.saveLocal).toHaveBeenCalledWith([{
+      header: expect.objectContaining({ id: conversationId, runtimeSelection: { provider }, workMode: "execute" }), messages: [],
+    }]);
+    expect(screen.getByRole("textbox", { name: "向 GoodBuddy 提问" })).toHaveValue("Keep my draft");
+    expect(api.terminal.create).not.toHaveBeenCalled();
+  });
+
+  it("hides the native client shortcut for the built-in model", async () => {
+    render(<App />);
+    await screen.findByRole("textbox", { name: "向 GoodBuddy 提问" });
+    await waitFor(() => expect(api.settings.getRuntime).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "在终端中打开" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "在浏览器中打开" })).not.toBeInTheDocument();
+  });
+
+  it("opens local DS in the external browser without opening the workbar", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000731";
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([{
+      id: conversationId, projectId, title: "DS client", updatedAt: Date.now(),
+      runtimeSelection: { provider: "deepseek-harness" }, messages: [],
+    }]);
+    vi.mocked(api.openRuntimeNativeClient).mockResolvedValue({ kind: "browser", serviceId: "ds-service" });
+    render(<App />);
+    const open = await screen.findByRole("button", { name: "在浏览器中打开" });
+    await waitFor(() => expect(api.getRuntimeNativeClient).toHaveBeenCalledWith({ conversationId }));
+    fireEvent.click(open);
+    await waitFor(() => {
+      expect(api.openRuntimeNativeClient).toHaveBeenCalledWith({ conversationId });
+      expect(screen.getByRole("button", { name: "重新打开" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "停止此服务" })).toBeEnabled();
+    });
+    expect(screen.getByRole("button", { name: "切换助手工作栏" })).toHaveAttribute("aria-expanded", "false");
+    expect(api.terminal.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps a late native terminal without opening the workbar after switching conversations", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000731";
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      { id: conversationId, projectId, title: "Original native", updatedAt: 2, runtimeSelection: { provider: "continue" }, messages: [] },
+      { id: "00000000-0000-4000-8000-000000000732", projectId, title: "Other conversation", updatedAt: 1, messages: [] },
+    ]);
+    let finish!: (result: Awaited<ReturnType<RuntimeNativeClientApi['openRuntimeNativeClient']>>) => void;
+    vi.mocked(api.openRuntimeNativeClient).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "在终端中打开" }));
+    await waitFor(() => expect(api.openRuntimeNativeClient).toHaveBeenCalledWith({ conversationId }));
+    fireEvent.click(screen.getByRole("button", { name: /^Other conversation/ }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "正在打开…" })).not.toBeInTheDocument());
+    await act(async () => finish({ kind: "terminal", terminal: terminalSnapshot }));
+    expect(screen.getByRole("button", { name: "切换助手工作栏" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "切换助手工作栏" }));
+    expect(await screen.findByRole("tab", { name: /终端 1/ })).toHaveAttribute("aria-selected", "false");
+  });
+
   it("manually compacts Continue context and persists the summary state", async () => {
     const conversationId = "00000000-0000-4000-8000-000000000731";
     const messages = [
@@ -9755,11 +9833,10 @@ describe("App", () => {
       name: "压缩上下文",
     });
     expect(compactContext.parentElement).toHaveClass(
-      "composer-meta",
-      "composer-meta--with-context-compact",
+      "composer-meta__actions",
     );
     expect(compactContext.parentElement?.firstElementChild).toBe(
-      compactContext,
+      screen.getByRole("button", { name: "在终端中打开" }),
     );
     fireEvent.click(compactContext);
     await waitFor(() =>

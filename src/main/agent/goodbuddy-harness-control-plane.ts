@@ -730,6 +730,26 @@ export class GoodBuddyHarnessControlPlane {
       }
       return next()
     })
+    this.ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+      const record = this.sessions.get(agent.session.id)
+      if (
+        record?.handle.agent !== agent ||
+        !record.inflight ||
+        frame.type !== 'chunk'
+      ) {
+        return
+      }
+      const chunk = frame.chunk
+      if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
+        this.queueDelta(
+          agent.session.id,
+          chunk.type === 'text-delta' ? 'text' : 'reasoning',
+          chunk.text
+        )
+      } else if (chunk.type === 'usage') {
+        this.queueUsage(agent.session.id, chunk.usage)
+      }
+    })
     this.ctx.on(
       'session/event',
       (session, event: SessionEvent) => {
@@ -741,23 +761,7 @@ export class GoodBuddyHarnessControlPlane {
         if (!inflight) {
           return
         }
-        if (event.type === 'assistant/chunk') {
-          const chunk = event.data.chunk
-          if (
-            chunk.type === 'text-delta' ||
-            chunk.type === 'reasoning-delta'
-          ) {
-            this.queueDelta(
-              session.header.id,
-              chunk.type === 'text-delta'
-                ? 'text'
-                : 'reasoning',
-              chunk.text
-            )
-          } else if (chunk.type === 'usage') {
-            this.queueUsage(session.header.id, chunk.usage)
-          }
-        } else if (event.type === 'tool/call') {
+        if (event.type === 'tool/call') {
           this.queueEvent(session.header.id, {
             type: 'tool',
             callId: event.data.callId,
@@ -769,15 +773,13 @@ export class GoodBuddyHarnessControlPlane {
             )
           })
         } else if (event.type === 'tool/result') {
-          const toolResult = event.data.message.content.find(
-            (content) => content.type === 'tool-result'
-          )
+          const toolResult = event.data.message
           this.queueEvent(session.header.id, {
             type: 'tool',
-            callId: toolResult?.toolCallId ?? 'unknown-tool-call',
+            callId: toolResult.toolCallId,
             name: 'tool',
             state:
-              event.data.error || toolResult?.isError === true
+              event.data.error || toolResult.isError === true
                 ? 'failed'
                 : 'completed',
             output: boundedJson(event.data.message.content)

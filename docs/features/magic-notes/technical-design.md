@@ -1,5 +1,23 @@
 # Magic Notes Technical Design
 
+## Main IPC Ownership
+
+[magic-notes-ipc.ts](../../../src/main/magic-notes/magic-notes-ipc.ts) owns
+note search/list/get/create/update/delete, entry create/update/delete and todo
+list/status/update handlers, including conversation-source validation and entry
+content mapping. Its two registration functions receive the existing tracked
+`registerHandler`, window and database from [ipc.ts](../../../src/main/ipc.ts),
+preserving registration order: note CRUD, entry/draft analysis, todo CRUD, then
+todo analysis. [magic-notes-analysis-ipc.ts](../../../src/main/magic-notes/magic-notes-analysis-ipc.ts)
+owns the three analysis handlers through two registration functions. It receives
+the window, database, settings readers, usage persistence callback and existing
+error formatter; it imports `createDefaultModelRuntime` directly. `ipc.ts` retains
+tracked registration/removal and shared usage persistence.
+Sender checks and shared input schemas stay at each handler boundary.
+[rich-content.ts](../../../src/main/magic-notes/rich-content.ts) remains shared
+by CRUD and draft analysis. Analysis retains revision checks, hidden task status,
+stream events, error causes and nested release/dispose cleanup.
+
 ## Continuous Record Workspace
 
 The detail mounts every entry in a continuous newest-first stream. The left index
@@ -252,7 +270,13 @@ Draft, saved-entry and todo analysis use the existing typed preload/IPC methods
 and `createDefaultModelRuntime`. Each canvas request reads the current default
 model profile's `supportsImageInput` (or the resolved default setting when no
 profile is selected). Main resolves settings again for the actual request. This
-does not change an Agent runtime or desktop-to-Agent protocol.
+does not change an Agent runtime or desktop-to-Agent protocol. All three handlers
+read global resolved settings per request, without applying chat/project runtime
+selection. The factory creates a tool-free direct `ModelAgentRuntime`, using the
+resolved default model connection and that profile's headers, body options and
+output limit. Environment-managed default credentials retain the settings store's
+environment overrides. The existing context-compression configuration can select
+a separate summary model; it does not select the main analysis model.
 
 `magicNoteCanvasPageCount` is an application preference: an integer from 1 to 8,
 defaulting to 1 when absent in historical settings. The application center and

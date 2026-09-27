@@ -914,6 +914,18 @@ describe('release build arguments', () => {
       )
       mkdirSync(configPlugin, { recursive: true })
       writeFileSync(join(configPlugin, 'package.json'), JSON.stringify({ version: '1.18.29' }))
+      const webPackages = {
+        '@deepseek-ai/dsh': { version: '0.1.7-rc.2', dependencies: { sharp: '0.35.4', koffi: '3.1.4' } },
+        sharp: { version: '0.35.4', optionalDependencies: { '@img/sharp-win32-x64': '0.35.4' } },
+        'sharp/node_modules/@img/sharp-win32-x64': { version: '0.35.4' },
+        koffi: { version: '3.1.4', optionalDependencies: { '@koromix/koffi-win32-x64': '3.1.4' } },
+        '@koromix/koffi-win32-x64': { version: '3.1.4' }
+      }
+      for (const [name, manifest] of Object.entries(webPackages)) {
+        const directory = join(projectRoot, 'node_modules', name)
+        mkdirSync(directory, { recursive: true })
+        writeFileSync(join(directory, 'package.json'), JSON.stringify({ name, ...manifest }))
+      }
       mkdirSync(join(projectRoot, 'out', 'main'), {
         recursive: true
       })
@@ -925,7 +937,7 @@ describe('release build arguments', () => {
         join(projectRoot, 'package.json'),
         JSON.stringify({
           dependencies: {
-            '@deepseek-ai/dsh-llm': '0.1.2-rc.1',
+            '@deepseek-ai/dsh-llm': '0.1.7-rc.2',
             '@vscode/ripgrep': '1.18.0'
           }
         })
@@ -993,6 +1005,7 @@ describe('release build arguments', () => {
           packager: { projectDir: projectRoot }
         })
       ).resolves.toBeUndefined()
+      expect(existsSync(join(projectRoot, '.runtime-resources', 'dsh-x64', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))).toBe(true)
       expect(
         existsSync(join(projectRoot, '.agent-resources'))
       ).toBe(false)
@@ -1005,7 +1018,7 @@ describe('release build arguments', () => {
         )
       ).toMatchObject({
         name: '@deepseek-ai/dsh-llm',
-        version: '0.1.2-rc.1'
+        version: '0.1.7-rc.2'
       })
     } finally {
       rmSync(projectRoot, { recursive: true, force: true })

@@ -126,19 +126,13 @@ function toolResultText(
   callId: string
 ): string | undefined {
   for (const message of options.messages) {
-    for (const block of message.content) {
-      if (
-        block.type !== 'tool-result' ||
-        block.toolCallId !== callId
-      ) {
-        continue
-      }
-      return block.content
+    if (message.role === 'tool' && message.toolCallId === callId) {
+      return message.content
         .filter(
           (
             content
           ): content is Extract<
-            (typeof block.content)[number],
+            (typeof message.content)[number],
             { type: 'text' }
           > => content.type === 'text'
         )
@@ -154,7 +148,7 @@ function latestUserText(options: GenerateOptions): string {
     .filter(
       (message) =>
         message.role === 'user' &&
-        message.source.kind === 'user'
+        message.source?.kind === 'user'
     )
     .flatMap((message) =>
       message.content
@@ -396,7 +390,7 @@ function createInProcessLaunch(
         model: options.model,
         supportsImageInput: options.supportsImageInput,
         requestHeaders: options.requestHeaders,
-        harnessVersion: '0.1.2-rc.1',
+        harnessVersion: '0.1.7-rc.2',
         credentialRefs: options.credentialRefs,
         skillPackages: options.skillPackages,
         extensionPackages: options.extensionPackages,
@@ -838,9 +832,14 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
         )
 
         expect(observedRequest?.maxTokens).toBeUndefined()
-        expect(observedRequest?.system).toContain(
-          'act through the available tools'
-        )
+        expect(
+          observedRequest?.messages
+            .filter((message) => message.role === 'system')
+            .flatMap((message) => message.content)
+            .filter((block) => block.type === 'text')
+            .map((block) => block.text)
+            .join('\n')
+        ).toContain('act through the available tools')
         expect(reasoning).toHaveLength(8)
         expect(
           reasoning.map((event) => event.delta).join('')

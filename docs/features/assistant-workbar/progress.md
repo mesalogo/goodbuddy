@@ -1,5 +1,75 @@
 # 工作栏实现与验证进度
 
+## 2026-09-27 Local Native Client Validation
+
+Scope: [native client proposal](./runtime-native-client-proposal.md), FR-2/3/5/6/7/8,
+US-2/4/5/6/8, local portions of P1/P2/P3/P5. Source baseline:
+`55efca3ee1d8a491c4d9709888e302188cd988bd` plus the concurrent working tree.
+
+- Fixed the coordinator's browser-open failure path: a ready DS service and its
+  gateway remain available for owner-scoped reopen/stop. Startup failures still
+  release their gateway. Focused regressions cover current credentials, work mode,
+  Node selection, concurrent open, owner isolation and retry.
+  The DS service also includes the coordinator configuration key in its own match
+  hash; updated skill digests or launch settings cannot reuse an older instance.
+- DS Ask now maps built-in gateway read grants to the official MCP tool names.
+  Custom MCP remains Execute-only, following existing Runtime behavior. The real
+  DS process test loads an assigned directory containing `SKILL.md`, rather than
+  only a synthetic loose Markdown skill file.
+- Custom standard Node uses the current local tool environment selection without
+  a separate npm install. The managed Node fallback still has a bespoke pinned npm
+  install and remains a delivery gap; it was not exercised by this real-model run.
+- The opt-in IPC integration test uses the production action component, preload
+  methods, registered handlers, saved project/model stores, coordinator, official
+  DS Web process, and real Continue/OpenCode PTYs. Electron transport is simulated
+  by the existing IPC test harness and the action component runs in jsdom; this is
+  not a full desktop-window or packaged-app acceptance result. DS Web itself was
+  driven in real headless Edge. The hook retains credentials only in process
+  memory; the temporary settings file stores opaque test-cipher identifiers.
+
+| Client | Configured Model | Supplier HTTP Dispatches | Result |
+| --- | --- | ---: | --- |
+| DS Web 0.1.7-rc.2 | `deepseek-flash` | 2 | Workspace/model selected automatically; Web displayed `NATIVE_WEB_OK` |
+| Continue 1.5.47 | `gpt-6-astra` | 4 | Two prompts and two title requests; second transcript confirms the assistant response, with underscores consumed by Markdown rendering |
+| OpenCode 1.18.29 | `gpt-6-astra` | 1 | Native TUI displayed `NATIVE_OPENCODE_OK`; supplier response also contains it |
+| Total | | 7 | All HTTP 200; no further dispatches needed |
+
+The first terminal assertion matched echoed prompt text and was rejected as
+evidence. The second prompt did not contain the expected joined answer. The
+OpenCode probe waits for the rendered TUI and uses bracketed paste before Enter.
+The initial six-dispatch bound was increased to eight to cover the remaining
+OpenCode path; seven were used in total. The host environment supplied
+`NODE_TLS_REJECT_UNAUTHORIZED=0`, so this run does not verify strict TLS.
+
+Evidence under the approved temporary `opencode/dsh-017-verify` directory:
+`native-live-evidence.json`, `native-main-result.json`, `native-web.png`, and
+`native-{continue,opencode}-terminal.txt`. `native-live-run.cjs` composes the existing
+encrypted settings snapshot/safeStorage bootstrap with the production IPC test.
+Original `runtime-settings.json` remained byte-identical. The final test verifies
+DS stop/reopen/owner isolation and failed fetch after stop, closes both terminal
+sessions, and removes its temporary workspace/configuration. Owned live client
+processes were absent after completion.
+
+Checks: official DS/coordinator focused tests passed (12) under standard Node 24.19.0;
+the opt-in UI/preload/IPC test passed both without provider calls and with the live
+hooks. Four installed Continue/OpenCode Ask/Execute tests passed with real clients
+and deterministic supplier responses; these made zero external supplier calls.
+Repository lint and Agent/Renderer TypeScript checks passed. Main typecheck is
+currently blocked by concurrent SSH
+test doubles missing `forwardLoopback`; no local native-client type errors remain.
+The full `npm test` run finished with 5,285 passed, 79 skipped and one failure:
+the desktop runtime-hook fixture lacked the new DS Web package tree. The fixture
+was corrected and all 44 build-release tests then passed in a focused rerun. The
+full run began before the final configuration-key regression and fixture updates;
+the final DS/coordinator and UI/preload/IPC paths were rerun separately and passed.
+This is not a claim of a subsequent all-green full-suite run. Full output is in
+`native-full-tests.log` beside the live evidence.
+
+Remaining: remote coordinator wiring and real Host acceptance belong to the
+concurrent remote implementation; Continue/OpenCode Ask built-in MCP mappings,
+managed standard Node distribution, full Electron/packaged UI acceptance and other
+platforms are not verified here. `ipc.ts` was not edited in this work.
+
 ## 2026-09-26 结构升级与历史回收分离（未发布）
 
 - schema 45／46 的回归先复现普通结构升级执行 `VACUUM`，修复后不转换历史、

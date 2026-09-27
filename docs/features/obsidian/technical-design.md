@@ -14,7 +14,7 @@
 | 共享目录与直连 | [obsidian-tools.ts](../../../src/shared/obsidian-tools.ts) 定义 19 个工具；[model-tool-provider.ts](../../../src/main/agent/model-tool-provider.ts) 发现并调用同一目录，保留上游错误详情 |
 | 构建 | [package-mcpvault.ts](../../../src/main/obsidian/package-mcpvault.ts) 复制依赖树，[electron.vite.config.ts](../../../electron.vite.config.ts) 调用打包函数，[package.json](../../../package.json) 配置版本及解包资源 |
 
-正式链路为设置页面经 Preload、受信任的 Main IPC 处理器到配置服务或 ObsidianService；会话经既有能力入口到 ObsidianService，再通过 stdio 到 MCPVault。[index.ts](../../../src/main/index.ts) 创建服务并注入工具启动环境、网关及 IPC；[ipc.ts](../../../src/main/ipc.ts) 已注册设置、测试和目录选择处理器，并在会话入口按保存设置及工作模式签发请求授权。
+正式链路为设置页面经 Preload、受信任的 Main IPC 处理器到配置服务或 ObsidianService；会话经既有能力入口到 ObsidianService，再通过 stdio 到 MCPVault。[index.ts](../../../src/main/index.ts) 创建服务并注入工具启动环境、网关及 IPC；[capability-ipc.ts](../../../src/main/capabilities/capability-ipc.ts) 注册设置、测试和目录选择处理器，接收 [ipc.ts](../../../src/main/ipc.ts) 的注册及刷新回调。`ipc.ts` 保留处理器跟踪、Runtime 重载和生命周期管理，并在会话入口按保存设置及工作模式签发请求授权。
 
 ## 配置与 IPC
 

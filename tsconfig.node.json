@@ -18,6 +18,13 @@
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
+    "src/agent-daemon/agent-model-gateway.ts",
+    "src/agent-daemon/model-bridge-helper.ts",
+    "src/agent-daemon/model-bridge-broker.ts",
+    "src/agent-daemon/managed-paths.ts",
+    "src/agent-daemon/errors.ts",
+    "src/agent-daemon/async-utils.ts",
+    "src/agent-daemon/opencode-subagent-plugin.ts",
     "tests/**/*.ts"
   ]
 }

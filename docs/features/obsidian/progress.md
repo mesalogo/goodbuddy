@@ -71,7 +71,7 @@ node build/run-obsidian-packaged-acceptance.cjs "<temporary-output>/win-unpacked
 | [共享工具测试](../../../src/shared/obsidian-tools.test.ts) | 19 工具集合和 18 个上游工具的字段、默认值、必填项与约束对应 |
 | [HTTP 网关测试](../../../src/main/agent/knowledge-mcp-gateway.obsidian.test.ts) | 实际 HTTP MCP 发现 19 工具，真实多仓库读写、删除及错误返回；另覆盖撤销、取消和等待 transport 关闭 |
 | [直连提供器测试](../../../src/main/agent/model-tool-provider.obsidian.test.ts) | 通过实际服务执行全部 19 个工具并核验文件，包含笔记移动、二进制附件移动和删除；覆盖 Ask、失效令牌、原生错误及关闭清理 |
-| [index.ts](../../../src/main/index.ts) 与[ipc.ts](../../../src/main/ipc.ts) | 正式启动实例化、依赖注入和 IPC 注册；范围保存、开关及分配提交在持久化前撤销旧 Obsidian 请求授权 |
+| [index.ts](../../../src/main/index.ts)、[ipc.ts](../../../src/main/ipc.ts) 与[capability-ipc.ts](../../../src/main/capabilities/capability-ipc.ts) | 正式启动实例化、依赖注入和 IPC 注册；能力处理器位于 `capability-ipc.ts`，范围保存、开关及分配提交在持久化前撤销旧 Obsidian 请求授权 |
 | [package-mcpvault.ts](../../../src/main/obsidian/package-mcpvault.ts) 与[构建配置](../../../electron.vite.config.ts) | 构建期递归复制运行依赖，并固定上游版本 |
 
 ## 验证记录

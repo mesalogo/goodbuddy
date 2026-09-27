@@ -1,5 +1,31 @@
 # Magic Notes Progress
 
+## 2026-09-27: Analysis IPC Extraction
+
+The three analysis handlers now live in `magic-notes-analysis-ipc.ts`, with
+the existing tracked registration injected at the original positions around
+note and todo CRUD. Model selection and lifecycle are documented in
+[Main IPC Ownership](./technical-design.md#main-ipc-ownership) and
+[Canvas Analysis and Comments](./technical-design.md#canvas-analysis-and-comments).
+No runtime factory, model-selection rule or Agent protocol changed.
+
+- Before and after extraction, with `GB_NOTES_LIVE=0`:
+  `npm test -- src/main/ipc.test.ts src/main/magic-notes src/preload/magic-notes-events.test.ts tests/magic-note-canvas-text.test.ts tests/magic-notes-analysis.electron.test.ts`
+  passed 8 files, 232 tests, with 1 skipped (96.49s baseline, 97.90s after).
+  Electron exercised vision and text-only analysis through production UI/preload/IPC
+  with a local model stub; real provider calls for these checks: 0.
+- `npm run lint` passed. `npm run typecheck` stopped in the Node project with
+  11 unrelated missing-`forwardLoopback` errors in `ssh-connection-pool.test.ts`,
+  `ssh-host-directory-browser.test.ts` and `ssh-terminal-session.test.ts`.
+  Separate `npx tsc --noEmit -p tsconfig.agent.json` and
+  `npx tsc --noEmit -p tsconfig.web.json` passed.
+- A 120-second-bounded `npm test -- --bail=1` stopped after 94.45s:
+  20 files passed, 1 failed; 1004 tests passed, 1 failed, 25 skipped.
+  `RightAssistantSidebar.resize.test.tsx:387` expected two persisted terminal
+  titles but received one. This was not a complete full-suite run, and the
+  unrelated failure was not changed.
+- `git diff --check` passed with existing LF/CRLF warnings.
+
 ## 2026-09-26: Conversation Capture and Compact Notes Panel
 
 - FR-1/FR-4: `notes` is an application-scoped optional singleton in the workbar.

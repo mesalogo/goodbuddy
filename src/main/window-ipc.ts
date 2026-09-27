@@ -1,0 +1,59 @@
+import { clipboard, type BrowserWindow, type ipcMain } from 'electron'
+import { clipboardTextSchema } from '../shared/contracts'
+import { ipcChannels } from '../shared/ipc-channels'
+import { assertTrustedSender } from './trusted-ipc-sender'
+import { showWindow } from './window'
+
+export function registerClipboardIpcHandlers(
+  registerHandler: typeof ipcMain.handle,
+  window: BrowserWindow
+): void {
+  registerHandler(ipcChannels.clipboardReadText, (event) => {
+    assertTrustedSender(event, window)
+    return clipboardTextSchema.parse(clipboard.readText())
+  })
+
+  registerHandler(ipcChannels.clipboardWriteText, (event, input) => {
+    assertTrustedSender(event, window)
+    clipboard.writeText(clipboardTextSchema.parse(input))
+  })
+}
+
+export function registerWindowIpcHandlers(
+  registerHandler: typeof ipcMain.handle,
+  window: BrowserWindow
+): void {
+  registerHandler(ipcChannels.appShow, (event) => {
+    assertTrustedSender(event, window)
+    showWindow(window)
+  })
+
+  registerHandler(ipcChannels.appHide, (event) => {
+    assertTrustedSender(event, window)
+    window.hide()
+  })
+
+  registerHandler(ipcChannels.windowMinimize, (event) => {
+    assertTrustedSender(event, window)
+    window.minimize()
+  })
+
+  registerHandler(ipcChannels.windowToggleMaximize, (event) => {
+    assertTrustedSender(event, window)
+    if (window.isMaximized()) {
+      window.unmaximize()
+    } else {
+      window.maximize()
+    }
+  })
+
+  registerHandler(ipcChannels.windowClose, (event) => {
+    assertTrustedSender(event, window)
+    window.close()
+  })
+
+  registerHandler(ipcChannels.windowIsMaximized, (event): boolean => {
+    assertTrustedSender(event, window)
+    return window.isMaximized()
+  })
+}

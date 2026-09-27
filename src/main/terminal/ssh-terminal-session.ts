@@ -25,6 +25,7 @@ export type SshTerminalSessionOptions = {
   targetLabel: string;
   title: string;
   shell?: string;
+  command?: string;
   workingDirectory?: string;
   size: TerminalSize;
   poolTarget: SshConnectionPoolTarget;
@@ -95,7 +96,7 @@ export async function createSshTerminalSession(
   options: SshTerminalSessionOptions,
 ): Promise<SshTerminalSession> {
   const initialSize = terminalSizeSchema.parse(options.size);
-  const workingDirectoryCommand = options.workingDirectory
+  const workingDirectoryCommand = options.workingDirectory && !options.command
     ? `cd -- ${quotePosixShellArgument(options.workingDirectory)} || exit\r`
     : undefined;
   const lease = await pool.acquireTerminal(options.poolTarget, options.signal);
@@ -106,6 +107,7 @@ export async function createSshTerminalSession(
         cols: initialSize.cols,
         rows: initialSize.rows,
         term: SSH_TERMINAL_TERM,
+        ...(options.command ? { command: options.command } : {}),
       },
       options.signal,
     );

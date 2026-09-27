@@ -64,6 +64,7 @@ function createHarness(idleTimeoutMs = 60_000) {
   const connection = {
     identity,
     isUsable: vi.fn(() => usable),
+    forwardLoopback: vi.fn(),
     onDisconnect: vi.fn((listener: (error?: Error) => void) => {
       disconnectListeners.add(listener);
       return () => disconnectListeners.delete(listener);

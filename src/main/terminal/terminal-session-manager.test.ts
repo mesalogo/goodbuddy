@@ -160,6 +160,28 @@ function harness(
 }
 
 describe('TerminalSessionManager routing and delivery', () => {
+  it('releases native resources on exit before delivery, exactly once through close', async () => {
+    const test = harness()
+    const dispose = vi.fn(async () => undefined)
+    const launch = { spawnSpec: { executable: '/runtime', args: [], cwd: '/authoritative/root', env: {}, label: 'OpenCode' }, title: 'OpenCode', dispose }
+    const result = await test.manager.create(1, { target: { type: 'project', projectId }, cols: 80, rows: 24 }, launch)
+    expect(test.createLocalSession.mock.calls[0]?.[0]).toMatchObject({ spawnSpec: launch.spawnSpec, title: 'OpenCode' })
+    test.localSessions[0]!.emit({ sessionId: result.sessionId, sequence: 2, type: 'state', state: 'exited' })
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(test.delivered).toHaveLength(0)
+    await test.manager.close(1, result.sessionId)
+    expect(dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases native resources when execution-space resolution disagrees', async () => {
+    const test = harness()
+    const dispose = vi.fn(async () => undefined)
+    await expect(test.manager.create(1, { target: { type: 'project', projectId }, cols: 80, rows: 24 }, {
+      spawnSpec: { executable: '/runtime', args: [], cwd: '/different', env: {}, label: 'OpenCode' }, title: 'OpenCode', dispose
+    })).rejects.toThrow('execution space')
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(test.createLocalSession).not.toHaveBeenCalled()
+  })
   it('routes Home local and authoritative local project roots', async () => {
     const test = harness()
     const local = await test.manager.create(1, {

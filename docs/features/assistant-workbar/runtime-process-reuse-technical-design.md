@@ -70,6 +70,9 @@ schema 35 的存储修复与本方案独立，不能回退或删历史来改善�
 | Cordis | 4.0.2 | Host 根组件与 Agent scope 的生命周期 |
 | Continue CLI | 1.5.47 | 实际受管补丁入口的单 `M.session`、QuizService 和权限状态 |
 
+本表保留进程复用探针执行时的版本。2026-09-26 DS 已升级为 `0.1.7-rc.2`，
+Cordis 为 `4.0.4`；当前依赖及升级回归见 [DS 实现进度](../deepseek-harness/progress.md)。
+
 已通过的三个隔离探针：
 
 1. **OpenCode HTTP**：调用当前生产 Server launcher，只有一次 spawn；同一个 SDK client

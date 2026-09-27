@@ -22,7 +22,7 @@ function controlPlane() {
       provider: 'goodbuddy',
       model: 'deepseek-test',
       workspace: resolve('workspace'),
-      harnessVersion: '0.1.2-rc.1',
+      harnessVersion: '0.1.7-rc.2',
       execution: { mode: 'host' },
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skills: []
@@ -75,7 +75,7 @@ function stubAgentContext() {
     provider: 'goodbuddy',
     model: 'deepseek-test',
     workspace: resolve('workspace'),
-    harnessVersion: '0.1.2-rc.1',
+    harnessVersion: '0.1.7-rc.2',
     execution: { mode: 'host' },
     credentialRefs: ['GOODBUDDY_API_KEY'],
     skills: [],
@@ -169,7 +169,7 @@ describe('GoodBuddy Harness internal control plane', () => {
       model: 'vision-test',
       supportsImageInput: true,
       workspace: resolve('workspace'),
-      harnessVersion: '0.1.2-rc.1',
+      harnessVersion: '0.1.7-rc.2',
       execution: { mode: 'host' },
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skills: []
@@ -337,37 +337,33 @@ describe('GoodBuddy Harness internal control plane', () => {
   it('delivers more than 4 MiB of cumulative output without cancelling', async () => {
     const { listeners, extNotification, handle, internals } =
       stubAgentContext()
-    const sessionEvent = listeners.get('session/event')!
+    const assistantStream = listeners.get('agent/assistant-stream')!
     for (let index = 0; index < 65; index++) {
-      sessionEvent(
-        handle.agent.session,
-        {
-          type: 'assistant/chunk',
-          data: {
-            chunk: {
-              type: 'text-delta',
-              text: 'x'.repeat(65_536)
+      assistantStream({
+        agent: handle.agent,
+        frame: {
+          type: 'chunk',
+          chunk: {
+            type: 'text-delta',
+            text: 'x'.repeat(65_536)
+          }
+        }
+      })
+      assistantStream({
+        agent: handle.agent,
+        frame: {
+          type: 'chunk',
+          chunk: {
+            type: 'usage',
+            usage: {
+              inputTokens: 1,
+              outputTokens: 1,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0
             }
           }
         }
-      )
-      sessionEvent(
-        handle.agent.session,
-        {
-          type: 'assistant/chunk',
-          data: {
-            chunk: {
-              type: 'usage',
-              usage: {
-                inputTokens: 1,
-                outputTokens: 1,
-                cacheReadTokens: 0,
-                cacheWriteTokens: 0
-              }
-            }
-          }
-        }
-      )
+      })
       await internals.sessions.get('session-output')!.inflight.eventTail
     }
 

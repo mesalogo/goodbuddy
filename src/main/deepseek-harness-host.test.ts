@@ -33,7 +33,7 @@ describe('controlled DeepSeek Harness host', () => {
         api: 'openai-completions',
         provider: 'goodbuddy',
         model: 'deepseek-test',
-        harnessVersion: '0.1.2-rc.1',
+        harnessVersion: '0.1.7-rc.2',
         credentialRefs: ['GOODBUDDY_API_KEY'],
         dshHome: 'C:\\controlled-dsh-home',
         skillPackages: []
@@ -82,7 +82,7 @@ describe('controlled DeepSeek Harness host', () => {
       provider: 'goodbuddy',
       model: 'qwen-plus',
       supportsImageInput: true,
-      harnessVersion: '0.1.2-rc.1',
+      harnessVersion: '0.1.7-rc.2',
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [],
       stream: {
@@ -103,7 +103,7 @@ describe('controlled DeepSeek Harness host', () => {
         command: 'echo goodbuddy-host-execution'
       }).workdir
     ).toBe(root)
-    const execution = await host.context.shell.run(
+    const processHandle = await host.context.shell.execute(
       host.context.shell.resolve({
         command:
           process.platform === 'win32'
@@ -111,6 +111,7 @@ describe('controlled DeepSeek Harness host', () => {
             : 'printf goodbuddy-host-execution'
       })
     )
+    const execution = await processHandle.result()
     expect(execution).toMatchObject({
       exitCode: 0,
       timedOut: false,
@@ -143,7 +144,7 @@ describe('controlled DeepSeek Harness host', () => {
       api: 'openai-completions',
       provider: 'goodbuddy',
       model: 'deepseek-test',
-      harnessVersion: '0.1.2-rc.1',
+      harnessVersion: '0.1.7-rc.2',
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [],
       stream: {
@@ -181,7 +182,7 @@ describe('controlled DeepSeek Harness host', () => {
       api: 'openai-completions',
       provider: 'goodbuddy',
       model: 'deepseek-test',
-      harnessVersion: '0.1.2-rc.1',
+      harnessVersion: '0.1.7-rc.2',
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [],
       extensionPackages: [
@@ -237,7 +238,7 @@ describe('controlled DeepSeek Harness host', () => {
       api: 'openai-completions',
       provider: 'goodbuddy',
       model: 'deepseek-test',
-      harnessVersion: '0.1.2-rc.1',
+      harnessVersion: '0.1.7-rc.2',
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [
         { id: 'web-3d-game', directory: skillDirectory }
@@ -256,7 +257,6 @@ describe('controlled DeepSeek Harness host', () => {
           isolate: ['skills', 'tools']
         })
         createdContext = agentContext
-        await options.setup?.(agentContext)
         const agent = {
           options: options.agentOptions ?? {},
           session: {
@@ -268,6 +268,7 @@ describe('controlled DeepSeek Harness host', () => {
           ctx: agentContext,
           cancel: vi.fn()
         }
+        await options.setup?.(agentContext, agent as never)
         createdAgent = agent as never
         return {
           agent,

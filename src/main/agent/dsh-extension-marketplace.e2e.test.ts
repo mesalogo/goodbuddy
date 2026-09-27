@@ -95,7 +95,7 @@ describe.skipIf(!enabled)('DSH marketplace live E2E', () => {
           api: 'openai-completions',
           provider: 'goodbuddy',
           model: 'deepseek-test',
-          harnessVersion: '0.1.2-rc.1',
+          harnessVersion: '0.1.7-rc.2',
           credentialRefs: ['GOODBUDDY_API_KEY'],
           skillPackages: [],
           extensionPackages: extensions,

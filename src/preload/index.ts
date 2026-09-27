@@ -210,6 +210,9 @@ import type {
 
 
 const desktopApi: DesktopApi = {
+  openRuntimeNativeClient: (input) => ipcRenderer.invoke(ipcChannels.runtimeNativeClientOpen, input),
+  getRuntimeNativeClient: (input) => ipcRenderer.invoke(ipcChannels.runtimeNativeClientGet, input),
+  stopRuntimeNativeClient: (input) => ipcRenderer.invoke(ipcChannels.runtimeNativeClientStop, input),
   storageUpgrade: {
     getProgress: () => ipcRenderer.invoke(ipcChannels.storageUpgradeProgress),
     act: async (action) => {

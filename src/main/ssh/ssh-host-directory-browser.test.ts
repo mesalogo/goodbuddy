@@ -52,6 +52,7 @@ function createLease(
       ...identity
     },
     isUsable: vi.fn(() => true),
+    forwardLoopback: vi.fn(),
     openAgentAttach: vi.fn(),
     runAgentDoctor: vi.fn(),
     runAgentBootstrapProbe: vi.fn(),

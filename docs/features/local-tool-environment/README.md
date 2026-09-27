@@ -8,7 +8,16 @@ stdio MCP 提供明确、可诊断的 Node.js 与 Python 环境，同时允许�
 用户从设置中心的“能力与工具”进入，并在 `Skills`、`MCP`、`工具执行环境` 三个水平
 Tab 之间切换。
 
+[Obsidian 接入](../obsidian/README.md)复用本功能的 `LaunchEnvironmentProvider` 启动
+随包交付的 MCPVault，不新增 Node 安装或下载源设置。生产组件自动化已覆盖真实 MCPVault
+调用，Electron 托管 Node 离线冒烟仍待完成，具体见[验证记录](../obsidian/progress.md)。
+
 ## 文档导航
+
+Local native Continue and DS Web clients now honor the current custom Node
+selection. They require standard Node rather than Electron's Node mode; the
+remaining managed fallback and validation are tracked in
+[native client progress](../assistant-workbar/progress.md#2026-09-27-local-native-client-validation).
 
 | 文档 | 权威职责 |
 | --- | --- |

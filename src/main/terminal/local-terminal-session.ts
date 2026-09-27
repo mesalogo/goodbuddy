@@ -29,6 +29,15 @@ export type LocalTerminalLaunch = {
   env: NodeJS.ProcessEnv
 }
 
+/** Main-owned launch material. Never accepted by the terminal IPC contract. */
+export type NativeTerminalSpawnSpec = {
+  executable: string
+  args: string[]
+  cwd: string
+  env: NodeJS.ProcessEnv
+  label: string
+}
+
 export type LocalPtySpawn = (
   file: string,
   args: string[],
@@ -52,6 +61,7 @@ export type LocalTerminalSessionOptions = {
   title: string
   size: TerminalSize
   projectDirectory?: string
+  spawnSpec?: NativeTerminalSpawnSpec
   dependencies?: LocalTerminalDependencies
 }
 
@@ -370,14 +380,23 @@ export class LocalTerminalSession {
 
   private async start(): Promise<void> {
     try {
-      this.launch = await resolveLocalTerminalLaunch(
+      const spec = this.options.spawnSpec
+      if (spec && !(await (this.dependencies.directoryExists ?? defaultDirectoryExists)(spec.cwd))) {
+        throw new Error('Native client project directory is unavailable')
+      }
+      this.launch = spec ? {
+        shell: spec.executable,
+        shellLabel: spec.label,
+        cwd: spec.cwd,
+        env: spec.env
+      } : await resolveLocalTerminalLaunch(
         this.options.target.type === 'project'
           ? this.options.projectDirectory
           : undefined,
         this.dependencies
       )
       const spawn = this.dependencies.spawn ?? nodePty.spawn
-      this.pty = spawn(this.launch.shell, [], {
+      this.pty = spawn(this.launch.shell, spec?.args ?? [], {
         name: 'xterm-256color',
         cols: this.size.cols,
         rows: this.size.rows,

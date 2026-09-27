@@ -570,6 +570,13 @@ export const app = {
       nothingToCompact: 'There is no earlier conversation history to compact',
       compactFailed: 'Context compaction failed'
     },
+    nativeClient: {
+      terminal: 'Open in terminal', browser: 'Open in browser', opening: 'Opening...', stopping: 'Stopping...',
+      reopen: 'Reopen', stop: 'Stop this service', confirmStop: 'Stop service', cancel: 'Cancel',
+      description: 'Independent session. Closing the page keeps the service running; stop it here or quit GoodBuddy.',
+      stopWarning: 'Stopping disconnects this service and interrupts its requests.',
+      stopped: 'Native client service stopped', failed: 'Could not open the native client'
+    },
     experts: {
       general: 'General assistant',
       generalDescription: 'Default single assistant',

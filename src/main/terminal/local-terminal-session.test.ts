@@ -93,6 +93,24 @@ function sessionDependencies(
 }
 
 describe('local terminal launch resolution', () => {
+  it('spawns a Main-owned native executable directly without typing a shell command', async () => {
+    const pty = new FakePty()
+    const dependencies = sessionDependencies(pty)
+    const spawnSpec = { executable: '/managed/node', args: ['/managed/cn.js', '--config', '/config with spaces.json'], cwd: '/project', env: { PATH: '/managed' }, label: 'Continue' }
+    const session = await LocalTerminalSession.create({ ...baseOptions, spawnSpec, dependencies })
+    expect(dependencies.spawn).toHaveBeenCalledWith(spawnSpec.executable, spawnSpec.args, expect.objectContaining({ cwd: '/project', env: spawnSpec.env }))
+    expect(pty.write).not.toHaveBeenCalled()
+    expect(session.snapshot()).toMatchObject({ state: 'running', shell: 'Continue', workingDirectory: '/project' })
+    await session.close()
+  })
+
+  it('fails a native launch with an invalid project directory instead of falling back home', async () => {
+    const dependencies = sessionDependencies(new FakePty(), { directoryExists: async (path: string) => path === '/home/tester' })
+    const session = await LocalTerminalSession.create({ ...baseOptions, dependencies,
+      spawnSpec: { executable: '/managed/opencode', args: [], cwd: '/missing', env: {}, label: 'OpenCode' } })
+    expect(session.snapshot().state).toBe('failed')
+    expect(dependencies.spawn).not.toHaveBeenCalled()
+  })
   it('prefers pwsh, then PowerShell, then COMSPEC on Windows', async () => {
     const available = new Set(['C:\\bin\\powershell.EXE'])
     const shell = await resolveLocalTerminalShell({

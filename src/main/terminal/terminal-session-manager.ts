@@ -19,6 +19,7 @@ import type {
 } from '../ssh/ssh-connection-pool'
 import {
   LocalTerminalSession,
+  type NativeTerminalSpawnSpec,
   type LocalTerminalSessionOptions
 } from './local-terminal-session'
 import {
@@ -73,6 +74,14 @@ type SessionRecord = {
   ready: Promise<ManagedTerminalSession>
   closePromise?: Promise<TerminalSnapshot>
   removeEventListener?: () => void
+  releaseResources?: () => Promise<void>
+}
+
+export type NativeTerminalLaunch = {
+  spawnSpec: NativeTerminalSpawnSpec
+  title: string
+  dispose(): Promise<void>
+  remote?: { hostId: string; hostRevision: number; hostKeyGeneration: number; command: string }
 }
 
 type ResolvedLaunch =
@@ -103,7 +112,8 @@ export class TerminalSessionManager {
 
   async create(
     ownerWebContentsId: number,
-    request: TerminalCreateRequest
+    request: TerminalCreateRequest,
+    nativeLaunch?: NativeTerminalLaunch
   ): Promise<TerminalSnapshot> {
     this.assertOwnerId(ownerWebContentsId)
     if (this.disposed) {
@@ -130,16 +140,26 @@ export class TerminalSessionManager {
       closing: false,
       ready: Promise.resolve(undefined as never)
     }
+    if (nativeLaunch) {
+      let release: Promise<void> | undefined
+      record.releaseResources = () => release ??= nativeLaunch.dispose()
+    }
     this.records.set(sessionId, record)
-    record.ready = this.createSession(record, request)
+    record.ready = this.createSession(record, request, nativeLaunch)
 
     try {
       const session = await record.ready
+      if (nativeLaunch && session.snapshot().state === 'failed') {
+        const message = session.snapshot().error?.message ?? 'Native terminal failed to start'
+        await this.closeRecord(record)
+        throw new Error(message)
+      }
       if (record.closing) {
         return await this.closeRecord(record)
       }
       return session.snapshot()
     } catch (error) {
+      await record.releaseResources?.()
       if (this.records.get(sessionId) === record) {
         this.records.delete(sessionId)
       }
@@ -263,14 +283,24 @@ export class TerminalSessionManager {
 
   private async createSession(
     record: SessionRecord,
-    request: TerminalCreateRequest
+    request: TerminalCreateRequest,
+    nativeLaunch?: NativeTerminalLaunch
   ): Promise<ManagedTerminalSession> {
     const launch = await this.resolveLaunch(request)
+    if (nativeLaunch) {
+      const remote = nativeLaunch.remote
+      const matches = remote
+        ? launch.kind === 'ssh' && launch.workingDirectory === nativeLaunch.spawnSpec.cwd &&
+          launch.poolTarget.host.id === remote.hostId && launch.poolTarget.hostRevision === remote.hostRevision &&
+          launch.poolTarget.hostKeyGeneration === remote.hostKeyGeneration
+        : launch.kind === 'local' && launch.projectDirectory === nativeLaunch.spawnSpec.cwd
+      if (!matches) throw new Error('Native terminal launch does not match the project execution space')
+    }
     const common = {
       sessionId: record.sessionId,
       target: request.target,
       targetLabel: launch.targetLabel,
-      title: `终端 · ${launch.targetLabel}`,
+      title: nativeLaunch?.title ?? `终端 · ${launch.targetLabel}`,
       size: { cols: request.cols, rows: request.rows }
     }
     let session: ManagedTerminalSession
@@ -284,7 +314,8 @@ export class TerminalSessionManager {
           TerminalCreateRequest['target'],
           { type: 'local' | 'project' }
         >,
-        projectDirectory: launch.projectDirectory
+        projectDirectory: launch.projectDirectory,
+        ...(nativeLaunch ? { spawnSpec: nativeLaunch.spawnSpec } : {})
       })
       record.session = session
       record.removeEventListener = session.onEvent?.((event) =>
@@ -299,6 +330,7 @@ export class TerminalSessionManager {
         ...common,
         workingDirectory: launch.workingDirectory,
         poolTarget: launch.poolTarget,
+        ...(nativeLaunch?.remote ? { command: nativeLaunch.remote.command, shell: nativeLaunch.spawnSpec.label } : {}),
         onEvent: (event) => this.handleEvent(record, event)
       })
       record.session = session
@@ -376,6 +408,10 @@ export class TerminalSessionManager {
     if (this.records.get(record.sessionId) !== record) {
       return
     }
+    if (event.type === 'state' && ['exited', 'failed', 'interrupted'].includes(event.state)) {
+      // Cleanup must also happen while event delivery is waiting for the IPC reply.
+      void record.releaseResources?.().catch(() => undefined)
+    }
     if (!record.deliveryEnabled) {
       record.delayedEvents.push(event)
       return
@@ -413,6 +449,7 @@ export class TerminalSessionManager {
       try {
         const session = await record.ready
         const closed = await session.close()
+        await record.releaseResources?.()
         const snapshot =
           closed && typeof closed === 'object' && 'sessionId' in closed
             ? closed

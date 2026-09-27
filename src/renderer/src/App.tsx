@@ -3,6 +3,8 @@ import { MagicNotesPanel } from './MagicNotesPanel';
 import { AnchoredMenu } from './AnchoredMenu';
 import { useMagicNoteDraft } from './use-magic-note-draft';
 import type { MagicNoteSource } from '../../shared/magic-notes-contracts';
+import { RuntimeNativeClientActions } from "./RuntimeNativeClientActions";
+import type { TerminalSnapshot } from "../../shared/terminal-contracts";
 import LocalInferencePage from "./LocalInferencePage";
 import { ApplicationMenu } from './ApplicationMenu';
 import { AttachmentResultButton } from './AttachmentResultButton';
@@ -2440,6 +2442,7 @@ function App(): React.JSX.Element {
     loadPrimarySidebarWidth,
   );
   const [primarySidebarResizing, setPrimarySidebarResizing] = useState(false);
+  const [nativeTerminals, setNativeTerminals] = useState<{ terminal: TerminalSnapshot; focus: boolean }[]>([]);
   const [assistantSidebarOpen, setAssistantSidebarOpen] = useState(
     () => window.innerWidth >= 1280,
   );
@@ -8903,6 +8906,32 @@ function App(): React.JSX.Element {
       activeRuntimeSelection?.provider === "continue") &&
     runtimeNativeSnapshot?.context.manualCompact === true;
 
+  const nativeClientAvailable = activeRuntimeSelection?.provider === "continue" ||
+    activeRuntimeSelection?.provider === "opencode" ||
+    (activeRuntimeSelection?.provider === "deepseek-harness" && activeProject?.executionSpace.kind === "local");
+  const nativeClientContextKey = useMemo(() => JSON.stringify([
+    activeId, activeProjectId, activeRuntimeSelection, workMode, runtimeSettings,
+  ]), [activeId, activeProjectId, activeRuntimeSelection, workMode, runtimeSettings]);
+  const prepareNativeClientConversation = async (): Promise<string> => {
+    let conversation = activeConversation;
+    if (!conversation) {
+      conversation = await new Promise<Conversation>((resolve, reject) => {
+        if (!startNewConversation(activeProjectId || undefined, { ready: resolve })) {
+          reject(new Error(t("notices.channelConversationAutomatic")));
+        }
+      });
+      setActiveId(conversation.id);
+    }
+    // Save the current selection before Main resolves the launch from its conversation ID.
+    const header = toLocalConversationHeader({ ...conversation, runtimeSelection: activeRuntimeSelection, workMode });
+    const operation = conversationPersistenceQueueRef.current.then(() =>
+      window.goodbuddy.conversations.saveLocal([{ header, messages: [] }]),
+    );
+    conversationPersistenceQueueRef.current = operation.catch(() => undefined);
+    await operation;
+    return conversation.id;
+  };
+
   const composerContextMetrics = useMemo(() => {
     if (
       !activeConversation ||
@@ -10995,12 +11024,22 @@ function App(): React.JSX.Element {
                           </div>
                         </div>
                         <div
-                          className={`composer-meta${
-                            runtimeContextCompactAvailable
-                              ? " composer-meta--with-context-compact"
-                              : ""
-                          }`}
+                          className="composer-meta"
                         >
+                          <div className="composer-meta__actions">
+                          {nativeClientAvailable && <RuntimeNativeClientActions
+                            browser={activeRuntimeSelection?.provider === "deepseek-harness"}
+                            contextKey={nativeClientContextKey}
+                            conversationId={activeConversation?.id}
+                            prepareConversation={prepareNativeClientConversation}
+                            notify={notify}
+                            onTerminal={(terminal) => {
+                              const focus = activeProjectIdRef.current === activeProjectId &&
+                                activeConversationIdRef.current === activeId && viewRef.current === "chat";
+                              setNativeTerminals(current => [...current, { terminal, focus }]);
+                              if (focus) setAssistantSidebarOpen(true);
+                            }}
+                          />}
                           {runtimeContextCompactAvailable && (
                             <button
                               className="composer-context-compact"
@@ -11023,6 +11062,7 @@ function App(): React.JSX.Element {
                                 : t("composer.context.compact")}
                             </button>
                           )}
+                          </div>
                           {composerContextMetrics && (
                             <div
                               className={`composer-context-meter${
@@ -11863,6 +11903,7 @@ function App(): React.JSX.Element {
             notesPanel={<MagicNotesPanel state={noteDraft} active={assistantSidebarOpen && magicNotesEnabled} commentMode={applicationSettings?.magicNoteCommentMode} commentFormat={applicationSettings?.magicNoteCommentFormat} onNotify={notify} onOpenSource={openNoteSource}
               onCancelCapture={() => requestAnimationFrame(() => { const trigger = noteCaptureTrigger.current; (trigger?.isConnected && !trigger.closest('[hidden], [inert]') ? trigger : noteTitleMenuRef.current)?.focus(); })}
               onOpenWorkspace={(noteId, entryId) => requestWorkspaceLeave('magic-notes', () => { setNotesNavigation({ noteId, entryId, requestId: Date.now() }); commitView('magic-notes'); })} />}
+            nativeTerminals={nativeTerminals}
             activeConversationId={activeId}
             conversationStats={statsConversation && executionStats.conversation ? {
               conversationId: statsConversation.id,

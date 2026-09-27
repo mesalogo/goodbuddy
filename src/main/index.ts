@@ -1,4 +1,5 @@
 import { localInferenceService } from './local-inference-service'
+import { NativeClientCoordinator } from './agent/native-client-coordinator'
 import { createEmbeddingUtilityTransport } from './knowledge/embedding-utility-transport'
 import {
   app,
@@ -229,6 +230,7 @@ let stopRuntimeReconfiguration: (() => Promise<void>) | undefined
 let dshExtensionInstaller: DshNpmExtensionInstaller | undefined
 let remoteAgentServices: RemoteAgentServices | undefined
 let terminalSessionManager: TerminalSessionManager | undefined
+let nativeClientCoordinator: NativeClientCoordinator | undefined
 let managedRemoteExecutionServices:
   | ManagedRemoteExecutionServices
   | undefined
@@ -1424,6 +1426,22 @@ if (hasSingleInstanceLock) {
         }
       }
     })
+    nativeClientCoordinator = new NativeClientCoordinator({
+      database: startupAssistantDatabase, settingsStore, applicationSettingsStore,
+      capabilities: capabilityService, executionSpaceResolver, terminalManager: terminalSessionManager,
+      localEnvironment: startupLocalToolEnvironmentService, bundledRuntimePaths,
+      rootDirectory: join(app.getPath('userData'), 'native-clients'),
+      managedNodeDirectory: join(toolEnvironmentRoot, 'native-node-22.22.0'),
+      npmCliPath: npmCliPaths.npmCliPath,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+      openExternal: (url) => shell.openExternal(url),
+      createGateway: () => new KnowledgeMcpGateway(startupKnowledgeService, {
+        // This dedicated gateway lives until native-client disposal, not a chat request timeout.
+        now: () => 0,
+        magicNotesDatabase: startupAssistantDatabase, configService: goodbuddyConfigService,
+        obsidianService, launchEnvironmentProvider: startupLocalToolEnvironmentService.launchEnvironmentProvider
+      })
+    })
     removeIpcHandlers = registerIpcHandlers(
       mainWindow,
       runtime,
@@ -1485,7 +1503,8 @@ if (hasSingleInstanceLock) {
       terminalSessionManager,
       startupLocalToolEnvironmentService,
       imageGenerationService,
-      obsidianService
+      obsidianService,
+      nativeClientCoordinator
     )
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
       mainWindow,
@@ -1583,6 +1602,7 @@ app.on('before-quit', (event) => {
           () => dshExtensionInstaller?.dispose(),
           () => imageGenerationService?.dispose(),
           () => knowledgeService?.beginShutdown(),
+          () => nativeClientCoordinator?.dispose(),
           () => removeIpcHandlers?.()
         ],
         [() => stopRuntimeReconfiguration?.()],

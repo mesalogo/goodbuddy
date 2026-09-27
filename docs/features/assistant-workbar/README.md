@@ -18,6 +18,7 @@
 | [执行记录存储与升级回收](./execution-history-storage.md) | 子任务差量存储、远程去重、旧库转换、会话置顶、摘要与完整历史按需读取、内存引用释放 |
 | [Runtime 交互边界](./runtime-interactions.md) | 原生权限、结构化问答、后台拒绝、终端交互、并行与输出、消息请求状态及资源生命周期规则 |
 | [Runtime 进程复用技术设计](./runtime-process-reuse-technical-design.md) | 跨 Runtime 资源调研、锁定协议证据、进程与会话拆分、远端模型桥、实施顺序和性能验收 |
+| [Runtime 原生客户端启动方案](./runtime-native-client-proposal.md) | Local terminal/DS Web shortcut requirements, startup rules, current integration, validation boundaries and remaining remote/resource work |
 | [Runtime 执行清单技术设计](./runtime-checklist-technical-design.md) | OC/CN 原生清单提取、远程 Agent 传递复用、消息恢复与真实部署验收；尚未实现 |
 
 当前尚未拆出独立 User Stories、功能逻辑和 UI 设计文档；产品场景与验收保留在现有 PRD，
