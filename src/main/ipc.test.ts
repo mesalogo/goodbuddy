@@ -4945,6 +4945,35 @@ describe('registerIpcHandlers Runtime customization', () => {
       senderFrame: webContents.mainFrame
     }
 
+    const settingsChannels = [
+      ipcChannels.runtimeSettingsGet,
+      ipcChannels.runtimeCustomizationGet,
+      ipcChannels.runtimeCustomizationUpdate,
+      ipcChannels.runtimeNativeSnapshot,
+      ipcChannels.runtimeSettingsUpdate,
+      ipcChannels.runtimeSettingsSelectWorkspace,
+      ipcChannels.runtimeSettingsDetect,
+      ipcChannels.runtimeSettingsSelectFile,
+      ipcChannels.runtimeSettingsOpenConfig,
+      ipcChannels.runtimeSettingsTestModel,
+      ipcChannels.runtimeSettingsTest
+    ]
+    const registeredChannels = [...electronMocks.handlers.keys()]
+    const settingsStart = registeredChannels.indexOf(settingsChannels[0]!)
+    expect(registeredChannels.slice(settingsStart - 1, settingsStart + 12)).toEqual([
+      ipcChannels.agentCompactConversation,
+      ...settingsChannels,
+      ipcChannels.sshHostsGet
+    ])
+    for (const channel of settingsChannels) {
+      await expect(Promise.resolve().then(() =>
+        electronMocks.handlers.get(channel)?.({ ...event, sender: {} }, {})
+      )).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    }
+    expect(settingsStore.getRuntimeCustomization).not.toHaveBeenCalled()
+    expect(settingsStore.updateRuntimeCustomization).not.toHaveBeenCalled()
+    expect(selectedRuntimes.getNativeSnapshot).not.toHaveBeenCalled()
+
     await expect(
       electronMocks.handlers.get(
         ipcChannels.runtimeCustomizationGet
@@ -5004,6 +5033,22 @@ describe('registerIpcHandlers Runtime customization', () => {
         rootPath: 'C:\\ProjectWorkspace'
       })
     )
+
+    await expect(
+      electronMocks.handlers.get(ipcChannels.runtimeNativeSnapshot)?.(event, {
+        provider: 'opencode'
+      })
+    ).resolves.toEqual(snapshot)
+    expect(selectedRuntimes.getNativeSnapshot).toHaveBeenLastCalledWith(
+      { provider: 'opencode' },
+      expect.objectContaining({ kind: 'local', rootPath: 'C:\\DefaultWorkspace' })
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.runtimeNativeSnapshot)?.(event, {
+        provider: 'opencode', projectId: 'invalid'
+      })
+    ).rejects.toThrow()
+    expect(selectedRuntimes.getNativeSnapshot).toHaveBeenCalledTimes(2)
 
     const compactInput = {
       requestId,

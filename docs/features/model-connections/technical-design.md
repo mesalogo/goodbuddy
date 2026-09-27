@@ -125,3 +125,25 @@ Main 的 `toPublicSettings` 复用 `resolveDeepSeekHarnessModelProfile`，只在
 `source: 'profile'` 描述来源分支，不代表凭据来源：仅环境密钥或旧环境变量可能仍影响该
 GoodBuddy 连接，但不会被误报为完整管理员预置。连接解析不代替真实模型请求或可用性测试。
 UI 的未保存兼容候选只作草稿预览，保存后继续以 Main 返回的投影为准。
+
+## 10. Settings IPC Ownership
+
+[model-settings-ipc.ts](../../../src/main/model-settings-ipc.ts) registers the
+11 model/runtime settings handlers: public settings, customization reads and
+updates, native inventory, settings updates, workspace/file selection, runtime
+detection, config actions, and model/runtime connection tests. It owns sender
+checks, shared schema parsing, config-file metadata, and activation rollback.
+
+[ipc.ts](../../../src/main/ipc.ts) calls this registrar at the original position
+and retains tracked registration, the shared settings-update queue, runtime
+activation, conversation-selection repair, and project execution-space resolution.
+These operations are injected as narrow callbacks. Runtime activation still
+cancels affected expert-team requests; failed activation restores the previous
+settings and reactivates them before the next queued update can run. Cleanup waits
+for the tracked handler promises. Usage recording, runtime refresh subscriptions,
+and runtime/Agent lifecycle ownership remain in the composition root.
+
+The integration tests in [ipc.test.ts](../../../src/main/ipc.test.ts) exercise the
+production registrar through `registerIpcHandlers`, including registration order,
+trusted senders, serialized updates, rollback failures, cleanup waiting for reload,
+native inventory resolution, and connection/config actions.
