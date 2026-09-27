@@ -7391,13 +7391,18 @@ describe("App", () => {
     const created = { ...existing, id: '33333333-3333-4333-8333-333333333333', name: 'Remote handbook', external: { knowledgeBaseId: '33333333-3333-4333-8333-333333333333', instanceId: instance.id, provider: 'dify' as const, remoteKnowledgeBaseId: 'remote-1', remoteName: 'Remote handbook', commonConfig: { resultLimit: 6, requestTimeoutMs: 15000, maxSnippetCharacters: 4000 }, providerConfig: { provider: 'dify' as const, useDatasetDefaults: true as const }, lastVerifiedAt: '2026-09-12' } };
     const initial = { libraries: [existing, excluded], selectedLibraryId: existing.id, sources: [], documents: [], graphNodes: [], graphRelations: [], evidence: [] };
     const updated = { ...initial, libraries: [...initial.libraries, created], selectedLibraryId: created.id };
-    vi.mocked(api.knowledge.getSnapshot).mockImplementation(async (libraryId) =>
-      libraryId === created.id ? updated : initial
-    );
+    let persistedSnapshot = initial;
+    vi.mocked(api.knowledge.getSnapshot).mockImplementation(async (libraryId) => ({
+      ...persistedSnapshot,
+      selectedLibraryId: libraryId ?? persistedSnapshot.selectedLibraryId,
+    }));
     vi.mocked(api.knowledge.externalInstancesList).mockResolvedValue([instance]);
     vi.mocked(api.knowledge.externalCatalogList).mockResolvedValueOnce({ items: [{ id: 'remote-1', name: 'Remote handbook' }], hasMore: false });
     vi.mocked(api.knowledge.externalCatalogGet).mockResolvedValueOnce({ id: 'remote-1', name: 'Remote handbook' });
-    vi.mocked(api.knowledge.externalBindingsCreate).mockResolvedValueOnce(updated);
+    vi.mocked(api.knowledge.externalBindingsCreate).mockImplementationOnce(async () => {
+      persistedSnapshot = updated;
+      return updated;
+    });
     vi.mocked(api.conversations.list).mockResolvedValueOnce([{ id: '44444444-4444-4444-8444-444444444444', projectId, title: 'External scope test', updatedAt: 200, messages: [], knowledgeLibraryIds: [existing.id] }]);
     render(<App />);
     await screen.findByRole('button', { name: /^External scope test/u });
@@ -7412,7 +7417,8 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '添加知识库' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: '添加知识库' }));
     await screen.findByRole('heading', { name: 'Remote handbook' }, { timeout: 5_000 });
-    await waitFor(() => expect(api.knowledge.getSnapshot).toHaveBeenLastCalledWith(created.id));
+    // Polling can also refresh another selection; every snapshot must retain the created binding.
+    await waitFor(() => expect(api.knowledge.getSnapshot).toHaveBeenCalledWith(created.id));
     fireEvent.click(screen.getByRole('button', { name: /^External scope test/u }));
     openComposerOptions();
     fireEvent.click(await screen.findByRole('button', { name: '选择知识库，本次已启用 2 个' }));
