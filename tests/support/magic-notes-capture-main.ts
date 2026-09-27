@@ -13,7 +13,7 @@ const directory = process.env.GB_CAPTURE_DIRECTORY!
 app.setPath('userData', join(directory, 'profile'))
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: {
+  const win = new BrowserWindow({ show: true, width: 1280, height: 900, webPreferences: {
     sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false,
     preload: join(directory, 'preload.cjs')
   } })
@@ -46,7 +46,16 @@ app.whenReady().then(async () => {
       if (await run(script)) return
       await new Promise(resolve => setTimeout(resolve, 50))
     }
-    throw new Error(`Timed out: ${label}`)
+    const focus = await run(`(() => {
+      const title = document.querySelector('#compact-note-title');
+      const active = document.activeElement;
+      return { documentFocused: document.hasFocus(), activeId: active?.id,
+        activeTag: active?.tagName, activeLabel: active?.getAttribute('aria-label'),
+        titlePresent: Boolean(title), titleDisabled: title?.disabled,
+        titleVisible: title?.checkVisibility(), titleInert: Boolean(title?.closest('[inert]')),
+        saving: document.querySelector('.magic-note-panel')?.getAttribute('aria-busy') };
+    })()`)
+    throw new Error(`Timed out: ${label}; focus=${JSON.stringify(focus)}`)
   }
   function button(name: string, root = 'document'): string {
     return `[...${root}.querySelectorAll('button,[role="menuitem"]')].find(e => (e.getAttribute('aria-label') || e.textContent.trim()) === ${JSON.stringify(name)} && e.getClientRects().length)`
@@ -71,6 +80,9 @@ app.whenReady().then(async () => {
   let closed = false
   try {
     await win.loadURL(process.env.GB_CAPTURE_URL!)
+    win.focus()
+    win.webContents.focus()
+    await wait('document.hasFocus()', 'visible capture window focus')
     await wait('document.body.innerText.includes("CAPTURE_HISTORY_501_END")', 'App persisted history')
     assert.equal(await run('document.body.innerText.includes("CAPTURE_HISTORY_0_END")'), false, 'old history must initially be folded')
     // The last assistant reply is rendered by the real ChatTimeline.

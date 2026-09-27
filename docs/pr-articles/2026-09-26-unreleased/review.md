@@ -1,5 +1,84 @@
 # 0.13.8 起综合宣传稿核查记录
 
+## 2026-09-28 发布候选归档
+
+- 用户授权将当前工作区宣传文档与素材一并提交、推送，并由代理自行审核后继续
+  Desktop/Agent 0.15.0 发布，不再逐次等待提交确认。
+- 下方 2026-09-27 记录及正文中的 `0f8bf40` 截止点保留为当时的内容核查截面，
+  其中“发布准备未提交”“Agent 实机未完成”等是历史状态，不代表当前发布进度。
+  当前候选、实机与 CI 结果以 [0.15.0 发布准备记录](../../development/release-preparation-0.15.0.md)
+  和两个独立发布渠道为准，正式版本未完成公开核验前不宣称已经发布。
+- 新增候选 `deepseekweb.png`、`obsidian.png`、`storygraph.png` 已逐张检查，
+  未发现可见 API Key、密码或令牌。原图按用户授权归档，不裁切或改写；
+  DS 图仍有本机用户名、路径和浏览器书签，图谱包含既有会话摘要，
+  不能直接当作隔离公开演示素材。正式宣传配图仍遵循下方素材核验及重拍要求。
+- 本次提交原始候选素材不等于确认其构建 SHA，也不授权发布文章到外部媒体。
+  不因候选截图归档宣称跨平台安装包或完整对话验收通过。
+
+## 2026-09-27 增量更新
+
+本节为最新核查结论；下方首次核查记录保留历史语境，其中截止点、schema 和截图缺口以本节更新为准。
+
+- 用户要求检查“上一次到目前最新提交中间的功能更新”，并更新已有草稿；沿用已确认的综合稿结构，直接补充。
+- 上次截止 `51166136157a646530e1ad9f6a0242c1c6390e95`；本轮固定至 `0f8bf405db7ca21a85cc70009ad083eb837e1e03`，共 17 个提交。全文总范围为 `v0.13.7..0f8bf40`。
+- 目标提交没有 tag；已核查正式版仍截至 `v0.13.16`。用户确认所述功能均已开发完成，正文已去除开发状态标签；后续已提交功能只保留发布版本待确认的说明。工作区的 `package.json`、锁文件、Agent Runtime 锁、功能矩阵和未跟踪 `release-preparation-0.15.0.md` 不作为已发布依据，也未修改。
+- 选题：保留工作回顾主线，新增聊天采集、Obsidian 与原生客户端三个独立使用场景；知识库统一列表和图谱页签归入改进；运行配置和交互问题归入修复。按用户要求，打包类修复只保留内部核查依据，不进入宣传正文。标题随覆盖范围更新。
+- `1094433` 将数据库格式升至 48。正文已替换仅适用于 0.13.15→0.13.16 的升级说明，明确完整备份和旧客户端回退限制。
+
+### 本轮完整盘点
+
+下表“实现”只指进入固定提交。逐项依据提交 diff、生产实现和已提交的功能记录；本轮未执行产品测试、打包、真实模型调用或远程 Host 验收。
+
+| 内容 | 分类与入口 | 功能与边界 | 提交及证据 |
+| --- | --- | --- | --- |
+| 本机 Obsidian 接入 | 新增／设置→能力与工具→MCP | 注册仓库发现、指定文件夹、独立测试与保存、开关和 Runtime 分配；搜索、读取、写入、追加、局部修改等。默认关闭；直连模型及受管理本机 OpenCode/Continue 支持，DSH 与远程不支持；Ask 只读、Execute 可写；不是知识库复制或同步 | `55efca3`；`src/main/obsidian/obsidian-service.ts`、`src/shared/obsidian-tools.ts`、[Obsidian 进度](../../features/obsidian/progress.md) |
+| 聊天采集到魔法笔记 | 新增／助手消息、会话菜单 | 单条助手正文或完整会话用户/助手正文，预览编辑、追加或原子创建笔记；保留来源回跳，源删除后内容保留；不复制工具日志/附件，单记录 500 KiB，生成中不可采集 | `1094433`；`App.tsx`、`ChatTimeline.tsx`、`magic-notes-contracts.ts`、[笔记进度](../../features/magic-notes/progress.md) |
+| 快速笔记与草稿 | 新增／快速笔记、工作栏“+” | 标题/正文搜索、摘要、文字追加；切项目/会话保留草稿，关闭/替换/禁用有确认，重启不恢复；仍是全局笔记，完整画布/待办编辑在工作区；采集本身不调模型，自动评论沿用设置 | `1094433`；`MagicNotesPanel.tsx`、`MagicNoteSource.tsx`、`use-magic-note-draft.tsx` |
+| 来源存储升级 | 兼容性／启动 | schema 48 保存来源元数据，不改写文件化正文；旧客户端不能直接打开升级数据库 | `1094433`；`assistant-database.ts`、笔记技术设计 |
+| 本地原生客户端 | 新增／聊天输入区 | Continue/OpenCode 工作栏终端、DS 系统浏览器 Web；沿用项目与模型，独立历史；DS 可复用、重开、停止，关闭网页不停止服务。远程协调入口未接通；Continue/DS 需标准 Node，托管准备可能联网；Continue/OpenCode 原生 Ask 暂无 MCP | `f81f342`；`native-client-coordinator.ts`、`native-terminal-client.ts`、`native-dsh-web-client.ts`、[客户端方案](../../features/assistant-workbar/runtime-native-client-proposal.md) |
+| DSH 依赖升级 | 新功能配套／内部版本 | DSH 0.1.7-rc.2、Cordis 4.0.4；不把依赖版本当模型名或稳定版承诺，正文并入原生客户端 | `f81f342`；提交中的 package/锁文件 |
+| 知识库统一列表 | 改进／知识库文档页 | 单文档来源合行、目录分组、失败来源保留、来源与文档统一搜索、紧凑拖放区域；归属语义不改变 | `5177b47`；`knowledge-workspace/DocumentsView.tsx`、[知识库界面](../../features/knowledge-base/ui-design.md) |
+| 文档操作及任务批次 | 改进兼修复／列表、解析预览、任务页 | 保留 URL，突出查看与更多菜单，解析结果导航和图片操作归位；按批次展开历史，计数/筛选跟随对象；多文档来源范围修正，不同来源操作不互相阻塞 | `ceb275b`、`67dedc2`；`DocumentsView.tsx`、`KnowledgeTasksView.tsx`、`DocumentResultPreview.tsx` |
+| 图谱侧栏页签 | 改进／故事线图谱 | 事件、实体、关系计数与独立滚动，切页签保留选择，画布选中联动类别；没有新增图谱导出或回放 | `40c108d`；`SupervisorWorkspace.tsx` |
+| 遥测配置传播 | 修复／启动 | 补到 DS Web、远程 Runtime、模型桥 helper；不影响主动联网，不是新设置页或无联网保证；对应 Agent 发布归属待定，不能归给 Agent 0.13.4 | `eb53c82`；`runtime-privacy-environment.ts`、Agent profile/helper |
+| Continue 更新状态 | 修复／原生终端 | 禁用更新时更新服务不再发出检查状态；不称终端卡死已修复，不涉及关闭桌面更新 | `0f0b6ac`；`continue-host-adapter.ts` |
+| DS Web portable 依赖 | 内部维护／不进入宣传正文 | 修正 CLI、嵌套依赖和 Web 资源复制，新增 CLI 入口存在性检查；仅保留核查依据，未据此宣称最终包完整验证 | `5ecc19d`；`build/native-dsh-resources.cjs`、`build/build-portable.cjs`、package 复制规则与测试 |
+| 控件、弹层与窄布局 | 修复／多页面 | 危险按钮、深浅主题、禁用与焦点、Continue 字段；MCP/图片嵌套弹层可交互、项目 Escape 范围、帮助与原生浏览器遮挡；HTML 键盘与 Escape；工作栏添加按钮和模型协议文字 | `8b15399`、`11facf0`、`2713a81`；`styles.css`、`dialog-focus.ts`、`StaticHtmlPreview.tsx`、`WorkbarShell.tsx`、[弹层复核](../../quality/overlay-review-2026-09-27.md) |
+| DS 输入区精简 | 改进／输入区 | 删除常驻独立会话/服务说明，保留重开与停止；正文合入界面调整，实际生命周期照实说明 | `0f8bf40`；`RuntimeNativeClientActions.tsx` |
+| IPC 与聊天组件抽取 | 维护／不单独宣传 | 模型设置 IPC、聊天历史组件及文档归属说明；不当作新增用户功能 | `4edf06b`、`44cd944`；`model-settings-ipc.ts`、`ChatHistoryPane.tsx` |
+| 导航测试修正及文章素材 | 维护／不单独宣传 | 嵌套页签断言修正；上一稿提交及 Continue/OpenCode 图片入库 | `4a2986c`、`11facf0`、`5ecc19d` |
+
+### 验证证据与限制
+
+- Obsidian 已提交记录包含 Windows Electron 设置操作、本机 OpenCode/Continue 读写及解包应用连接验证；未扩大为所有平台安装包或物理断网通过。
+- 聊天采集记录包含真实 App/Preload/IPC/SQLite、502 条历史、来源回跳、214px 面板输入和源删除保留；502 是样例，非产品上限。schema 和正文容量另查契约。
+- 原生客户端有本地真实模型历史证据，但部分组件/IPC 使用测试模拟；Continue 后续记录有完整 Windows 生产 App 操作。DS 正常 UI、最终 portable 和跨平台整体验收不能据此视为全通过。部分历史模型验证有 TLS override，不作为严格 TLS 验证证据。
+- 遥测修复有 16 项定向测试记录，修改后的 Agent 实机与后台联网监测尚未完成；DS 打包有 3 项复制规则回归，非最终包真实对话。
+- `2713a81` 全量记录为 5309 通过、3 失败、83 跳过；项目焦点修正后定向 331 通过，其余两个 HeartbeatCenter 断言由 `4a2986c` 修正，后续 96 项通过及 typecheck/lint 通过。最终固定提交未重跑全量，不能合写为全量全绿。
+- 知识库有定向及 Electron 布局回归，真实导入/解析链路未在对应改动轮重跑。历史证据详见[知识库进度](../../features/knowledge-base/progress.md)、[工作栏进度](../../features/assistant-workbar/progress.md)、[控件与响应式复核](../../quality/responsive-controls-review-2026-09-27.md)。
+
+### 配图更新
+
+已逐张读取四张现有图片，未改动或裁切原文件；`continue.png`、`opencode.png` 已由 `5ecc19d` 跟踪，`obsidian.png`、`deepseekweb.png` 是用户工作区未跟踪素材。图片只作候选，尚未绑定可核验构建 SHA，因此未直接作为最终配图插入正文。本轮没有新拍截图，也没有将上一轮构建检查结论冒称为本轮重新验证。
+
+| 编号 | 内容与路径 | 最新状态 |
+| --- | --- | --- |
+| 01–05 | 原工作回顾、来源、图表、批次、待办图 | 仍待补，原计划保留；最终截图需反映最新图谱页签 |
+| 06 | 聊天采集与来源返回；`assets/06-chat-note-source.png` | 必补；现有四张图均不能证明该流程 |
+| 07 | Obsidian；候选 `obsidian.png`，计划 `assets/07-obsidian-notes.png` | 建议；现图设置可读、浅色中文，能展示范围和分配，不能证明读写结果；需核验构建来源或补拍公开示例 |
+| 08 | 原生客户端；候选 `continue.png`、`opencode.png`、`deepseekweb.png`，计划 `assets/08-native-clients.png` | 建议；前两张展示工作栏终端并含本机路径及聊天；Continue 有模型能力警告；DS 图含书签、头像和本机用户路径。发布前重拍或生成明确标注的脱敏副本，并确认构建来源 |
+| R01/R02/C01 | 最终版本、后续提交的发布归属、回顾控件 | 仍待最终安装包核验；R02 覆盖 0.13.16 之后已完成的功能与修复 |
+
+### 本轮交付检查
+
+仅更新正文、核查记录和索引；产品测试、构建、新截图及真实模型调用为 0。
+
+- Python 3.13.13 执行 deai-writing 扫描：阻断项 0、复核项 16、读取错误 0。按命中行逐条核对：15 项为发布状态、功能范围、升级或取消语义等必要限定，1 项是“模型准确理解”的能力边界表述，保留。
+- 独立只读复核未发现重大事实过度宣称、版本混淆或前后矛盾；新增 8 个相对 Markdown 链接目标均存在，图 06–08 的编号、场景、文件名与优先级对应，R01/R02/C01 和索引一致。
+- 四张候选素材均已打开审阅；没有插入不存在的计划图片链接，没有把启动界面当作完整流程验收。
+- `git diff --check -- docs/pr-articles` 通过，仅提示既有 LF→CRLF 行尾策略。完成时再次确认 HEAD 仍为 `0f8bf405db7ca21a85cc70009ad083eb837e1e03`。
+- 未提交 Git、打 tag 或对外发布；既有版本准备与图片文件保持原状。
+
 ## 状态与范围
 
 - 状态：草稿，未对外发布，截图待补。首次建档与检查日期：2026-09-26。
@@ -117,7 +196,7 @@
 | 04 | 必补 | 同一回顾的阶段与保存批次；`assets/04-review-progress.png` | blocked：同上，区分 0.13.16 与后续取消控件 |
 | 05 | 建议 | 虚构笔记待办调宽与折叠；`assets/05-note-todos.png` | blocked：同上 |
 | R01 | 必填 | 最终版本、下载、日期、完整更新说明 | 尚未在线核验，不编造 |
-| R02 | 必处理 | 5116613 的最终归属 | 已提交但未归入目标 tag；发布前合并或移除开发中小节 |
+| R02 | 必处理 | 5116613 的最终归属 | 已提交但未归入目标 tag；发布前核验对应版本并处理小节中的编辑提示 |
 | C01 | 必核对 | 续跑期间暂停与取消控件版本 | 保留具体差异，待匹配最终安装包 |
 
 取得可核验产物后的步骤：在本轮独立临时目录建立 Node supervisor 与 Electron bootstrap，ready 前隔离 userData/sessionData，通过生产 Main/Preload/Renderer 启动；正常 UI 创建虚构项目、消息、任务和笔记。回顾演示仅发送所需最小模型请求并从实际请求边界计数。检查保存与重新打开、对象来源、暂停续跑后，逐张 capturePage 并打开审阅，确认无私人资料、裁切、错误状态；只归档实际采用图片，停止本次进程并清理演示 profile。

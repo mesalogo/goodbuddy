@@ -319,6 +319,11 @@ describe('ContinueHostAdapter', () => {
   it('removes capability config when cancellation reaches the pre-spawn check', async () => {
     const distribution = await createDistribution()
     const launchHost = vi.fn<ContinueHostLauncher>()
+    const controller = new AbortController()
+    const launchEnvironmentProvider = vi.fn(() => {
+      controller.abort(new Error('cancelled'))
+      return {}
+    })
     const adapter = new ContinueHostAdapter({
       binaryPath: distribution.entryPath,
       configPath: '',
@@ -326,6 +331,7 @@ describe('ContinueHostAdapter', () => {
       cacheRoot: distribution.cacheRoot,
       trustedBundleHashes: [distribution.sourceHash],
       launchHost,
+      launchEnvironmentProvider,
       modelProfile: {
         id: '00000000-0000-4000-8000-000000000098',
         name: 'Local model',
@@ -335,7 +341,6 @@ describe('ContinueHostAdapter', () => {
         authentication: 'none'
       }
     })
-    const controller = new AbortController()
     const pending = adapter.run(
       'search',
       controller.signal,
@@ -348,9 +353,8 @@ describe('ContinueHostAdapter', () => {
         }
       }
     )
-    setTimeout(() => controller.abort(new Error('cancelled')), 0)
-
     await expect(pending).rejects.toThrow('cancelled')
+    expect(launchEnvironmentProvider).toHaveBeenCalledOnce()
     expect(launchHost).not.toHaveBeenCalled()
     await expect(readdir(distribution.cacheRoot)).resolves.not.toEqual(
       expect.arrayContaining([
