@@ -60,6 +60,11 @@ describe('OpenCode direct launch profile', () => {
         workMode
       })
       const config = JSON.parse(profile.env.OPENCODE_CONFIG_CONTENT!)
+      expect(profile.env).toMatchObject({
+        DO_NOT_TRACK: '1', OTEL_SDK_DISABLED: 'true',
+        OTEL_LOGS_EXPORTER: 'none', OTEL_METRICS_EXPORTER: 'none', OTEL_TRACES_EXPORTER: 'none',
+        OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_MODELS_FETCH: '1'
+      })
       expect(config.snapshot).toBe(false)
       expect(config.permission).toBe(workMode === 'ask' ? 'ask' : 'allow')
     }

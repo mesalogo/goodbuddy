@@ -418,7 +418,7 @@ Main 的 Web/MCP ToolProvider 按工作区保存，最后一个对应 Session �
 
 - 使用环境变量白名单构造 utilityProcess 环境。
 - 不继承 `NODE_OPTIONS`、调试端口、任意 npm 配置、用户 `DSH_*` 覆盖或白名单之外的凭据。
-- `DSH_TELEMETRY_DISABLED=1` 必须固定设置。
+- `DSH_TELEMETRY_DISABLED=1` 必须固定设置。后台 Host 与独立 Web 启动器均叠加 `src/shared/runtime-privacy-environment.ts` 的通用遥测关闭配置，设置 `DO_NOT_TRACK=1`、`OTEL_SDK_DISABLED=true`，并关闭日志、指标和追踪 exporter。模型、MCP 和用户主动联网请求不受此配置限制。
 - Harness Home 指向 GoodBuddy 管理的隔离目录。
 - 不调用官方 `loadEnv` 或 `loadLayeredEnv`。
 - API Key 由 Main 从加密设置中解析。

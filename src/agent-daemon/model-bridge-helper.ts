@@ -1,3 +1,4 @@
+import { runtimePrivacyEnvironment } from '../shared/runtime-privacy-environment'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
@@ -931,7 +932,9 @@ function credentialFreeHelperEnvironment(
     'XDG_STATE_HOME'
   ] as const
   const environment: NodeJS.ProcessEnv = {
+        ...runtimePrivacyEnvironment,
     OPENCODE_CONFIG_CONTENT: config,
+
     OPENCODE_ENABLE_QUESTION_TOOL: 'true'
   }
   for (const name of allowed) {

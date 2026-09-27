@@ -10,7 +10,7 @@ import { canonicalJson } from '../../shared/agent-protocol/canonical'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import { createManagedModelBridge } from '../remote-agent/managed-model-bridge'
 import { terminateProcessTreeAndWait } from './child-process-termination'
-import { buildCredentialFilteredUserEnvironment } from './process-environment'
+import { buildCredentialFilteredUserEnvironment, runtimePrivacyEnvironment } from './process-environment'
 import { nativeDshMcpToolName, nativeDshWebPatch, nativeDshWebPolicySource, type NativeDshMcpServer } from './native-dsh-web-policy'
 
 export type { NativeDshMcpServer } from './native-dsh-web-policy'
@@ -177,7 +177,7 @@ export class NativeDshWebClientService {
     instance.child = spawn(launch.nodeExecutablePath, [cli, 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'], {
       cwd: request.workspace, shell: false, windowsHide: true,
       detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...environment, DSH_HOME: instance.home, DSH_TELEMETRY_DISABLED: '1',
+      env: { ...environment, ...runtimePrivacyEnvironment, DSH_HOME: instance.home, DSH_TELEMETRY_DISABLED: '1',
         DSH_PERMISSION_MODE: 'danger-full-access', GOODBUDDY_DSH_MODEL_KEY: MODEL_BRIDGE_SDK_AUTH_SENTINEL }
     })
     const child = instance.child

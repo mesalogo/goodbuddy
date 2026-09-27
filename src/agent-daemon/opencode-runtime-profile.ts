@@ -1,3 +1,4 @@
+import { runtimePrivacyEnvironment } from "../shared/runtime-privacy-environment";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   OPENCODE_REMOTE_RUNTIME_ENVIRONMENT_NAMES,
@@ -148,6 +149,7 @@ export function createOpenCodeLaunchProfile(input: {
 
   const environmentBase = {
     ...executeEnvironment(process.env, workspaceDirectory),
+    ...runtimePrivacyEnvironment,
     ...(isContinue ? {} : { ...OPEN_CODE_RUNTIME_ENVIRONMENT,
       OPENCODE_CONFIG_DIR: join(bundleDirectory, "config", "opencode") }),
   };
