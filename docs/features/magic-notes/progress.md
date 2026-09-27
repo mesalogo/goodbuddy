@@ -1,5 +1,32 @@
 # Magic Notes Progress
 
+## 2026-09-27: Shared Destructive Button Styles
+
+The draft discard Portal now receives the global `danger-solid` styles. The
+shared rule also covers note deletion, HeartbeatSettings, SupervisorWorkspace,
+WorkspaceActionDialog and ToolEnvironmentSettingsSection without caller changes.
+Sizing, typography and disabled feedback share the primary/secondary button
+rules; theme tokens provide default and hover backgrounds. See
+[shared destructive controls](../../../UI-DESIGN.md#66-危险操作).
+
+- `npm test -- tests/magic-notes-capture.electron.test.ts src/renderer/src/WorkspacePrimitives.test.tsx`
+  passed 2 files / 37 tests. The real App/preload/IPC/SQLite capture test opens the
+  draft guard outside the notes page ancestor. Both themes render a 36px-high,
+  10px-radius button with the same font and padding as Continue editing. Native
+  Tab reaches the visible shared focus ring; continuing editing retains the draft.
+- Hover uses Chromium `CSS.forcePseudoState`; disabled is set on the rendered
+  button to check opacity, cursor and suppressed hover. These are CSS state
+  checks, not verification of native pointer targeting or an asynchronous submit.
+  Theme contrast checks include both default and hover backgrounds.
+- Windows Electron screenshots were captured and visually inspected for both
+  themes with keyboard focus. Set `GB_CAPTURE_SCREENSHOT_DIRECTORY` to an existing
+  directory to retain `draft-danger-light.png` and `draft-danger-dark.png`.
+  Model calls: 0. Other callers and other OSes were not individually rendered.
+- `npm run typecheck` and `npm run lint` passed. Repository-wide
+  `npm test -- --bail=1` stopped at the unrelated
+  `HeartbeatCenter.test.tsx:213` assertion (expected one tablist, received two);
+  this is not an all-green full-suite result.
+
 ## 2026-09-27: Analysis IPC Extraction
 
 The three analysis handlers now live in `magic-notes-analysis-ipc.ts`, with

@@ -68,7 +68,7 @@
 | `--success`、`--success-subtle` | 成功状态 |
 | `--warning` | 警告状态 |
 | `--danger`、`--danger-strong` | 危险文本和状态 |
-| `--danger-solid` | 最终确认按钮等需要反白文字的危险背景 |
+| `--danger-solid`、`--danger-solid-hover` | 最终确认按钮等需要反白文字的危险背景及悬停背景 |
 | `--danger-border`、`--danger-subtle` | 危险入口和失败状态背景 |
 
 浅色与深色具体值只在 `styles.css` 的主题根节点维护。状态组件必须同时显示文字或图标，不能仅靠颜色区分。
@@ -268,6 +268,11 @@
 - `danger-ghost`：列表行、菜单和工具栏中的删除入口。
 - `danger-solid`：确认对话框中的最终危险操作。
 - `danger-zone`：设置页中集中展示的高影响操作区域。
+
+`danger-solid` 必须是全局共享类，不依赖页面祖先；通过 Portal 挂到 `body` 后仍须生效。
+尺寸、圆角、字体、间距和禁用状态与 `primary-button`、`secondary-button` 共用规则，
+键盘焦点沿用全局 `button:focus-visible`。背景及可用态悬停使用危险实心色令牌，文字使用
+`--text-on-accent`；禁用时不触发悬停变色。
 
 普通页面不得用实心红色按钮与主操作并列。危险入口必须使用具体动词和对象，例如“删除知识条目”，避免只写“确定”。
 

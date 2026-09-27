@@ -145,6 +145,78 @@ app.whenReady().then(async () => {
     evidence.keyboard = true
     evidence.narrowPanel = true
     evidence.panelWidth = bounds.width
+    // Exercise the actual draft guard Portal outside the notes page ancestry.
+    await run(`document.querySelector('#compact-note-append').focus()`)
+    await win.webContents.insertText('Unsaved style regression draft')
+    await key('Escape')
+    await wait('Boolean(document.querySelector("#note-draft-title"))', 'draft discard Portal')
+    const danger = 'document.querySelector(".custom-task-dialog .danger-solid")'
+    assert.equal(await run(`${danger}.closest('.magic-notes-page') === null`), true)
+    const buttonStyles = []
+    win.show()
+    win.focus()
+    win.webContents.focus()
+    await wait('document.hasFocus()', 'native window focus for button styles')
+    win.webContents.debugger.attach('1.3')
+    await win.webContents.debugger.sendCommand('DOM.enable')
+    await win.webContents.debugger.sendCommand('CSS.enable')
+    const { root } = await win.webContents.debugger.sendCommand('DOM.getDocument')
+    const { nodeId } = await win.webContents.debugger.sendCommand('DOM.querySelector', { nodeId: root.nodeId, selector: '.custom-task-dialog .danger-solid' })
+    for (const theme of ['light', 'dark']) {
+      await run(`document.documentElement.dataset.theme = '${theme}'`)
+      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+      await run(`${button('Continue editing')}.focus()`)
+      await key('Tab')
+      await wait(`${danger} === document.activeElement && ${danger}.matches(':focus-visible')`, 'keyboard focus on discard')
+      const style = await run<Record<string, string | number | boolean>>(`(() => {
+        const b = ${danger}, s = getComputedStyle(b);
+        const other = getComputedStyle(b.previousElementSibling);
+        const token = name => s.getPropertyValue(name).trim();
+        const rgb = value => { const c = document.createElement('span'); c.style.color = value; b.append(c); const v = getComputedStyle(c).color; c.remove(); return v };
+        return { width: b.getBoundingClientRect().width, height: b.getBoundingClientRect().height, minHeight: s.minHeight,
+          controlHeight: token('--control-height'), background: s.backgroundColor,
+          expectedBackground: rgb(token('--danger-solid')), expectedHover: rgb(token('--danger-solid-hover')), color: s.color,
+          expectedColor: rgb(token('--text-on-accent')), radius: s.borderRadius,
+          expectedRadius: token('--radius-control'), font: s.font, siblingFont: other.font,
+          padding: s.padding, siblingPadding: other.padding, display: s.display,
+          focused: b === document.activeElement && b.matches(':focus-visible'),
+          outline: s.outlineWidth, pixelRatio: window.devicePixelRatio, outlineStyle: s.outlineStyle, outlineOffset: s.outlineOffset,
+          outlineColor: s.outlineColor, expectedOutline: rgb(token('--accent')) };
+      })()`)
+      assert.equal(style.background, style.expectedBackground)
+      assert.equal(style.color, style.expectedColor)
+      assert.equal(style.radius, style.expectedRadius)
+      assert.equal(style.minHeight, style.controlHeight)
+      assert.ok(Number(style.height) >= parseFloat(String(style.controlHeight)))
+      assert.equal(style.font, style.siblingFont)
+      assert.equal(style.padding, style.siblingPadding)
+      assert.equal(style.display, 'flex') // Inline flex is blockified in the dialog's flex footer.
+      assert.equal(style.focused, true)
+      // Chromium snaps outline widths to physical pixels on fractional Windows scaling.
+      assert.ok(Math.abs(parseFloat(String(style.outline)) - 2) < 1 / Number(style.pixelRatio))
+      assert.equal(style.outlineStyle, 'solid')
+      assert.ok(Math.abs(parseFloat(String(style.outlineOffset)) - 2) < 1 / Number(style.pixelRatio))
+      assert.equal(style.outlineColor, style.expectedOutline)
+      if (process.env.GB_CAPTURE_SCREENSHOT_DIRECTORY) {
+        writeFileSync(join(process.env.GB_CAPTURE_SCREENSHOT_DIRECTORY, `draft-danger-${theme}.png`), (await win.webContents.capturePage()).toPNG())
+      }
+      // Force the browser pseudo-state to test CSS independently of OS pointer ownership.
+      await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: ['hover'] })
+      const hover = await run<string>(`getComputedStyle(${danger}).backgroundColor`)
+      assert.equal(hover, style.expectedHover)
+      assert.notEqual(hover, style.background)
+      await run(`${danger}.disabled = true`)
+      const disabled = await run(`(() => { const s=getComputedStyle(${danger}); return {background:s.backgroundColor,opacity:s.opacity,cursor:s.cursor} })()`)
+      assert.deepEqual(disabled, { background: style.background, opacity: '0.55', cursor: 'not-allowed' })
+      await run(`${danger}.disabled = false`)
+      await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] })
+      buttonStyles.push({ theme, ...style, hover, disabled })
+    }
+    evidence.dangerButtonStyles = buttonStyles
+    win.webContents.debugger.detach()
+    await click('Continue editing')
+    await wait('!document.querySelector("#note-draft-title")', 'continue editing retains draft')
+    assert.equal(await run('document.querySelector("#compact-note-append").value'), 'Unsaved style regression draft')
     await run('window.goodbuddy.magicNotes.get(' + JSON.stringify(newNote.id) + ')')
     await dispose()
     database.close()

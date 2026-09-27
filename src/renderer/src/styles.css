@@ -21,6 +21,7 @@
   --accent-subtle: #e8f4ff;
   --danger: #c53640;
   --danger-solid: #aa2630;
+  --danger-solid-hover: #8e2028;
   --danger-strong: #b72d37;
   --danger-border: #efbcc2;
   --danger-subtle: #fff1f2;
@@ -2426,16 +2427,6 @@
 .magic-note-comment__narrative.markdown-content
   :where(p, ul, ol, blockquote) {
   margin-block: var(--space-2);
-}
-
-.magic-notes-page .danger-solid {
-  min-height: var(--control-height);
-  padding: 0 13px;
-  border: 1px solid var(--danger-solid);
-  border-radius: var(--radius-control);
-  background: var(--danger-solid);
-  color: var(--text-on-accent);
-  cursor: pointer;
 }
 
 @container magic-notes-page (max-width: 800px) {
@@ -12314,6 +12305,7 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .primary-button,
 .secondary-button,
+.danger-solid,
 .danger-button {
   display: inline-flex;
   align-items: center;
@@ -12336,7 +12328,9 @@ details.settings-section > :not(summary) + :not(summary) {
   background: var(--accent-solid-hover);
 }
 
-.primary-button:disabled {
+.primary-button:disabled,
+.secondary-button:disabled,
+.danger-solid:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -12347,9 +12341,15 @@ details.settings-section > :not(summary) + :not(summary) {
   color: var(--text-secondary);
 }
 
-.secondary-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+.danger-solid {
+  border: 1px solid var(--danger-solid);
+  background: var(--danger-solid);
+  color: var(--text-on-accent);
+}
+
+.danger-solid:hover:not(:disabled) {
+  border-color: var(--danger-solid-hover);
+  background: var(--danger-solid-hover);
 }
 
 .danger-ghost {
@@ -16304,6 +16304,7 @@ details.settings-section > :not(summary) + :not(summary) {
   --accent-subtle: #123b5b;
   --danger: #ff9faa;
   --danger-solid: #ad3441;
+  --danger-solid-hover: #962d38;
   --danger-strong: #ffb0b9;
   --danger-border: #71404a;
   --danger-subtle: #421f2a;

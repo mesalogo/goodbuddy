@@ -59,6 +59,7 @@ it('captures messages and full history from App through real Electron preload, I
     const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))
     process.stdout.write(`Magic notes capture Electron evidence: ${JSON.stringify(result)}\n`)
     expect(result.error, output).toBeUndefined()
+    expect(result.dangerButtonStyles.map((style: { theme: string }) => style.theme)).toEqual(['light', 'dark'])
     expect(result).toMatchObject({ existingSaved: true, newSaved: true, fullHistoryCount: 502,
       sourceOpened: true, workspaceOpened: true, keyboard: true, narrowPanel: true,
       sqliteReopened: true, sourceSurvivesDeletion: true, modelAttempts: 0 })

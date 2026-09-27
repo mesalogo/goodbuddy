@@ -431,10 +431,10 @@ describe('WorkspacePrimitives', () => {
       /\.field small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
     )
     expect(stylesheet).toMatch(
-      /\.primary-button:disabled\s*\{[^}]*cursor:\s*not-allowed;/u
+      /\.primary-button:disabled,\s*\.secondary-button:disabled,\s*\.danger-solid:disabled\s*\{[^}]*cursor:\s*not-allowed;[^}]*opacity:\s*0\.55;/u
     )
     expect(stylesheet).toMatch(
-      /\.secondary-button:disabled\s*\{[^}]*cursor:\s*not-allowed;/u
+      /\.danger-solid:hover:not\(:disabled\)\s*\{[^}]*background:\s*var\(--danger-solid-hover\);/u
     )
     expect(stylesheet).toMatch(
       /\.danger-button:disabled\s*\{[^}]*cursor:\s*not-allowed;/u
@@ -476,7 +476,7 @@ describe('WorkspacePrimitives', () => {
       /button\s*>\s*svg\s*\{[^}]*display:\s*block;[^}]*flex:\s*0 0 auto;/u
     )
     expect(stylesheet).toMatch(
-      /\.primary-button,\s*\.secondary-button,\s*\.danger-button\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;[^}]*gap:\s*var\(--space-2\);/u
+      /\.primary-button,\s*\.secondary-button,\s*\.danger-solid,\s*\.danger-button\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;[^}]*gap:\s*var\(--space-2\);/u
     )
     expect(stylesheet).toMatch(
       /button:focus-visible,\s*input:focus-visible,\s*select:focus-visible,\s*textarea:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\);/u
@@ -822,7 +822,8 @@ describe('WorkspacePrimitives', () => {
       ['success', 'success-subtle'],
       ['danger', 'danger-subtle'],
       ['text-on-accent', 'accent-solid'],
-      ['text-on-accent', 'danger-solid']
+      ['text-on-accent', 'danger-solid'],
+      ['text-on-accent', 'danger-solid-hover']
     ] as const
     for (const [foreground, background] of textPairs) {
       expect(
