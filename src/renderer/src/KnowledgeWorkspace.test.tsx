@@ -263,6 +263,74 @@ function createProps(
 }
 
 describe('KnowledgeWorkspace', () => {
+  it('distinguishes merged URLs with the same title and keeps secondary actions in a keyboard menu', async () => {
+    const base = createProps()
+    const urls = ['https://example.com/guide?edition=one', 'https://example.com/guide?edition=two']
+    const props = createProps({
+      sources: urls.map((location, index) => ({ ...base.sources[0]!, id: `url-${index}`, kind: 'url', name: 'Guide', location })),
+      documents: urls.map((path, index) => ({ ...base.documents[0]!, id: `doc-${index}`, sourceId: `url-${index}`, name: 'Guide', path, resultId: `result-${index}` }))
+    })
+    render(<KnowledgeWorkspace {...props} />)
+    const table = screen.getByRole('table', { name: '文档与来源' })
+    const rows = within(table).getAllByRole('row').slice(1)
+    for (const [index, row] of rows.entries()) {
+      expect(within(row).getByText(urls[index]!)).toBeVisible()
+      expect(within(row).getAllByRole('button')).toHaveLength(2)
+      expect(within(row).getByRole('button', { name: '查看解析结果' })).toBeVisible()
+      expect(row.querySelector('details')).toBeNull()
+    }
+    const trigger = within(rows[1]!).getByRole('button', { name: 'Guide 的更多操作' })
+    fireEvent.click(trigger)
+    expect(screen.getByRole('menuitem', { name: '打开 Guide 的原始来源' })).toHaveFocus()
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    expect(screen.getByRole('menuitem', { name: '移除来源 Guide' })).toHaveFocus()
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(trigger).toHaveFocus()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开 Guide 的原始来源' }))
+    await waitFor(() => expect(props.onOpenDocumentSource).toHaveBeenCalledWith(library.id, 'doc-1'))
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索文档与来源' }), { target: { value: 'edition=two' } })
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(screen.queryByText(urls[0]!)).not.toBeInTheDocument()
+  })
+
+  it('counts contextual batches once and keeps finished failures in history without active batch fragments', () => {
+    const base = createProps()
+    const task = {
+      libraryId: library.id, scope: 'document' as const, kind: 'document-rebuild' as const,
+      stage: 'finalizing' as const, status: 'succeeded' as const, progress: 100,
+      attempt: 1, canCancel: false, canRetry: false,
+      createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z'
+    }
+    render(<KnowledgeWorkspace {...createProps({ sources: [{ ...base.sources[0]!, kind: 'file' }], tasks: [
+      { ...task, id: 'old', documentName: 'Finished batch', documentId: 'document-1', status: 'failed', canRetry: true, error: { message: 'Index failed' } },
+      { ...task, id: 'old-stage', parentTaskId: 'old', documentName: 'Finished stage', documentId: 'document-1', kind: 'parsing' },
+      { ...task, id: 'active', documentName: 'Current batch', documentId: 'document-1', status: 'running', canCancel: true, attempt: 2, createdAt: '2026-09-27T00:00:00Z' },
+      { ...task, id: 'active-stage', parentTaskId: 'active', documentName: 'Successful stage in active batch', documentId: 'document-1', kind: 'parsing' },
+      { ...task, id: 'elsewhere', documentName: 'Other document', documentId: 'other' }
+    ] })} />)
+    fireEvent.click(screen.getByRole('button', { name: '查看任务' }))
+    expect(screen.getByText('共 2 个任务批次')).toBeVisible()
+    expect(screen.getByText('进行中 1')).toBeVisible()
+    expect(screen.getByText('失败 1')).toBeVisible()
+    expect(screen.getByText('历史 1')).toBeVisible()
+    expect(document.querySelector('.knowledge-task-list > li strong')).toHaveTextContent('Current batch')
+    fireEvent.click(screen.getByRole('button', { name: '历史' }))
+    expect(screen.getByText('Finished batch')).toBeVisible()
+    expect(screen.queryByText('Current batch')).not.toBeInTheDocument()
+    expect(screen.queryByText('Successful stage in active batch')).not.toBeInTheDocument()
+    expect(screen.queryByText('Finished stage')).not.toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    expect(screen.queryByText('等待处理')).not.toBeInTheDocument()
+    expect(screen.getByText('Index failed')).toBeVisible()
+    expect(screen.getByRole('button', { name: '重试任务' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '展开 Finished batch 的阶段任务' }))
+    expect(screen.getByText('Finished stage')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '清除对象筛选' }))
+    expect(screen.getByText('共 3 个任务批次')).toBeVisible()
+  })
+
   it.each(['file', 'url'] as const)('merges a single %s source and document, and searches both identities', async (kind) => {
     const base = createProps()
     const source = { ...base.sources[0]!, kind, name: 'source-alias', location: 'https://example.com/source-location' }
@@ -284,10 +352,12 @@ describe('KnowledgeWorkspace', () => {
     fireEvent.change(search, { target: { value: '' } })
     view.rerender(<KnowledgeWorkspace {...props} sources={[{ ...source, name: document.name }]} />)
     expect(screen.getAllByText('manual.pdf')).toHaveLength(1)
-    fireEvent.click(screen.getByText('更多操作'))
-    fireEvent.click(screen.getByRole('button', { name: '同步 manual.pdf' }))
+    const openMenu = (): void => { fireEvent.click(screen.getByRole('button', { name: 'manual.pdf 的更多操作' })) }
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: '同步 manual.pdf' }))
     await waitFor(() => expect(props.onSyncSource).toHaveBeenCalledWith(source.id))
-    fireEvent.click(screen.getByRole('button', { name: '使用当前设置重新解析' }))
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: '使用当前设置重新解析' }))
     await waitFor(() => expect(props.onRebuildDocument).toHaveBeenCalledWith(library.id, document.id))
     for (const [status, name, callback] of [
       ['syncing', '暂停', props.onPauseSource],
@@ -295,10 +365,11 @@ describe('KnowledgeWorkspace', () => {
       ['paused', '同步', props.onSyncSource]
     ] as const) {
       view.rerender(<KnowledgeWorkspace {...props} sources={[{ ...source, name: document.name, status }]} />)
-      fireEvent.click(screen.getByRole('button', { name: `${name} manual.pdf` }))
+      openMenu()
+      fireEvent.click(screen.getByRole('menuitem', { name: `${name} manual.pdf` }))
       await waitFor(() => {
         expect(callback).toHaveBeenCalledWith(source.id)
-        expect(screen.getByRole('button', { name: `${name} manual.pdf` })).toBeEnabled()
+        expect(screen.queryByRole('menu')).not.toBeInTheDocument()
       })
     }
   })
@@ -347,7 +418,8 @@ describe('KnowledgeWorkspace', () => {
     fireEvent.change(search, { target: { value: 'second.md' } })
     expect(within(table).getAllByRole('row')).toHaveLength(3)
     expect(within(table).getByText('产品手册')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '移除来源 产品手册' }))
+    fireEvent.click(screen.getByRole('button', { name: '产品手册 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '移除来源 产品手册' }))
     expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(
       '将删除此来源的 2 篇文档、检索索引、图谱证据和应用托管副本。磁盘上的原始文件不会改变。'
     )
@@ -385,7 +457,7 @@ describe('KnowledgeWorkspace', () => {
     await waitFor(() => expect(props.onImportFiles).toHaveBeenCalledWith(library.id, [file], undefined))
   })
 
-  it('opens both source and document tasks from one merged task action', () => {
+  it.each(['list', 'preview'] as const)('opens both source and document tasks from a merged %s action', async (entry) => {
     const base = createProps()
     const task = {
       libraryId: library.id, kind: 'document-process' as const, stage: 'parsing' as const,
@@ -394,17 +466,149 @@ describe('KnowledgeWorkspace', () => {
     }
     render(<KnowledgeWorkspace {...createProps({
       sources: [{ ...base.sources[0]!, kind: 'file' }],
+      documents: [{ ...base.documents[0]!, resultId: 'saved-result' }],
       tasks: [
         { ...task, id: 'source-task', sourceId: 'source-1', scope: 'source', documentName: 'Source task' },
         { ...task, id: 'document-task', documentId: 'document-1', scope: 'document', documentName: 'Document task' },
         { ...task, id: 'unrelated-task', documentId: 'other', scope: 'document', documentName: 'Unrelated task' }
       ]
     })} />)
-    expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: '查看任务' }))
+    if (entry === 'preview') {
+      fireEvent.click(screen.getByRole('button', { name: '查看解析结果' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: '返回文档列表' })).toHaveFocus())
+    }
+    fireEvent.click(screen.getByRole('button', { name: '架构说明.md 的更多操作' }))
+    expect(screen.getAllByRole('menuitem', { name: '查看任务' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('menuitem', { name: '查看任务' }))
     expect(screen.getByText('Source task')).toBeVisible()
     expect(screen.getByText('Document task')).toBeVisible()
     expect(screen.queryByText('Unrelated task')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['directory', 'list'], ['directory', 'preview'], ['url', 'list'], ['url', 'preview']
+  ] as const)('keeps document task scope in a filtered %s group through the %s entry', async (kind, entry) => {
+    const base = createProps()
+    const task = {
+      libraryId: library.id, sourceId: 'source-1', kind: 'document-process' as const,
+      stage: 'finalizing' as const, status: 'succeeded' as const, progress: 100,
+      attempt: 1, canCancel: false, canRetry: false,
+      createdAt: '2026-09-27T00:00:00Z', updatedAt: '2026-09-27T00:00:00Z'
+    }
+    render(<KnowledgeWorkspace {...createProps({
+      sources: [{ ...base.sources[0]!, kind, documentCount: 2 }],
+      documents: [
+        { ...base.documents[0]!, name: 'A.md', resultId: 'result-a' },
+        { ...base.documents[0]!, id: 'document-2', name: 'B.md', resultId: 'result-b' }
+      ],
+      tasks: [
+        { ...task, id: 'batch', scope: 'source', kind: 'source-sync', documentName: 'Import batch' },
+        { ...task, id: 'task-a', parentTaskId: 'batch', scope: 'document', documentId: 'document-1', documentName: 'Task A' },
+        { ...task, id: 'task-b', parentTaskId: 'batch', scope: 'document', documentId: 'document-2', documentName: 'Task B' },
+        { ...task, id: 'other-source-task', scope: 'source', documentName: 'Other source operation' }
+      ]
+    })} />)
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索文档与来源' }), { target: { value: 'A.md' } })
+    if (entry === 'preview') {
+      fireEvent.click(screen.getByRole('button', { name: '查看解析结果' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: '返回文档列表' })).toHaveFocus())
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'A.md 的更多操作' }))
+    if (entry === 'preview') {
+      expect(screen.getByRole('menuitem', { name: '同步 产品手册' })).toBeEnabled()
+      expect(screen.getByRole('menuitem', { name: '移除来源 产品手册' })).toBeEnabled()
+    }
+    fireEvent.click(screen.getByRole('menuitem', { name: '查看任务' }))
+    expect(screen.getByText('共 1 个任务批次')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '展开 Import batch 的阶段任务' }))
+    expect(screen.getByText('Task A')).toBeVisible()
+    expect(screen.queryByText('Task B')).not.toBeInTheDocument()
+    expect(screen.queryByText('Other source operation')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['sync', 'a-first'], ['sync', 'b-fails-first'], ['reparse', 'a-first'], ['reparse', 'b-fails-first']
+  ] as const)('allows pausing B during A %s and retains pending state when %s', async (operation, completion) => {
+    const base = createProps()
+    let resolveA!: () => void
+    let resolveB!: () => void
+    let rejectB!: (error: Error) => void
+    const a = new Promise<void>((resolve) => { resolveA = resolve })
+    const b = new Promise<void>((resolve, reject) => { resolveB = resolve; rejectB = reject })
+    const props = createProps({
+      sources: [
+        { ...base.sources[0]!, name: 'Source A' },
+        { ...base.sources[0]!, id: 'source-b', name: 'Source B', status: 'syncing', documentCount: 0 }
+      ],
+      documents: [{ ...base.documents[0]!, name: 'A.md', resultId: 'result-a' }],
+      onSyncSource: vi.fn(() => a), onRebuildDocument: vi.fn(() => a), onPauseSource: vi.fn(() => b)
+    })
+    render(<KnowledgeWorkspace {...props} />)
+    const aMenuName = operation === 'sync' ? 'Source A 的更多操作' : 'A.md 的更多操作'
+    const aActionName = operation === 'sync' ? '同步 Source A' : '使用当前设置重新解析'
+    const checkPending = (aPending: boolean, bPending: boolean): void => {
+      fireEvent.click(screen.getByRole('button', { name: aMenuName }))
+      expect(screen.getByRole('menuitem', { name: aActionName })).toHaveProperty('disabled', aPending)
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+      expect(screen.getByRole('button', { name: '暂停 Source B' })).toHaveProperty('disabled', bPending)
+      fireEvent.click(screen.getByRole('button', { name: 'Source B 的更多操作' }))
+      expect(screen.getByRole('menuitem', { name: '暂停 Source B' })).toHaveProperty('disabled', bPending)
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    }
+    fireEvent.click(screen.getByRole('button', { name: aMenuName }))
+    fireEvent.click(screen.getByRole('menuitem', { name: aActionName }))
+    if (operation === 'sync') expect(props.onSyncSource).toHaveBeenCalledWith('source-1')
+    else expect(props.onRebuildDocument).toHaveBeenCalledWith(library.id, 'document-1')
+    checkPending(true, false)
+    fireEvent.click(screen.getByRole('button', { name: 'Source B 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '暂停 Source B' }))
+    expect(props.onPauseSource).toHaveBeenCalledExactlyOnceWith('source-b')
+    checkPending(true, true)
+    fireEvent.click(screen.getByRole('button', { name: '暂停 Source B' }))
+    expect(props.onPauseSource).toHaveBeenCalledTimes(1)
+    if (completion === 'a-first') {
+      await act(async () => { resolveA(); await a })
+      checkPending(false, true)
+      await act(async () => { resolveB(); await b })
+    } else {
+      await act(async () => { rejectB(new Error('Pause failed')); await b.catch(() => undefined) })
+      expect(screen.getByRole('alert')).toHaveTextContent('Pause failed')
+      checkPending(true, false)
+      await act(async () => { resolveA(); await a })
+    }
+    checkPending(false, false)
+  })
+
+  it('keeps the saved preview after a failed reparse and exposes source removal from its menu', async () => {
+    const base = createProps()
+    const openResultOriginal = vi.fn(async () => { throw new Error('Saved original missing') })
+    vi.stubGlobal('goodbuddy', { documentParsing: { openResultOriginal } })
+    const onRebuildDocument = vi.fn(async () => { throw new Error('Parser unavailable') })
+    const props = createProps({ sources: [{ ...base.sources[0]!, kind: 'file' }],
+      documents: [{ ...base.documents[0]!, resultId: 'saved-result' }], onRebuildDocument })
+    render(<KnowledgeWorkspace {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: '查看解析结果' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '返回文档列表' })).toHaveFocus())
+    fireEvent.click(screen.getByRole('button', { name: '架构说明.md 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开解析时原件' }))
+    await waitFor(() => {
+      expect(openResultOriginal).toHaveBeenCalledWith('saved-result')
+      expect(screen.getByRole('alert')).toHaveTextContent('Saved original missing')
+      expect(screen.getByText('Preview saved-result')).toBeVisible()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '架构说明.md 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '使用当前设置重新解析' }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Parser unavailable')
+      expect(screen.getByText('Preview saved-result')).toBeVisible()
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '架构说明.md 的更多操作' }))
+    expect(screen.getByRole('menuitem', { name: '使用当前设置重新解析' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('menuitem', { name: '移除来源 产品手册' }))
+    expect(screen.getByRole('alertdialog')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.getByText('Preview saved-result')).toBeVisible()
   })
 
   it('searches external names and instances and filters the unified library list', async () => {
@@ -428,6 +632,7 @@ describe('KnowledgeWorkspace', () => {
 
   afterEach(() => {
     cleanup()
+    vi.unstubAllGlobals()
     vi.clearAllMocks()
     g6Mock.handlers.clear()
     g6Mock.graph.getZoom.mockReturnValue(1)
@@ -529,9 +734,8 @@ describe('KnowledgeWorkspace', () => {
       />
     )
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '移除来源 产品手册' })
-    )
+    fireEvent.click(screen.getByRole('button', { name: '产品手册 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '移除来源 产品手册' }))
     expect(
       screen.getByRole('alertdialog', {
         name: '移除来源“产品手册”？'
@@ -607,9 +811,8 @@ describe('KnowledgeWorkspace', () => {
       'library-1',
       'document-1'
     )
-    expect(
-      screen.getByRole('button', { name: '文档分块' })
-    ).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '架构说明.md 的更多操作' }))
+    expect(screen.getByRole('menuitem', { name: '文档分块' })).toBeEnabled()
   })
 
   it('opens the retrieval workbench and runs an isolated test query', async () => {
@@ -654,9 +857,8 @@ describe('KnowledgeWorkspace', () => {
         {...createProps({ onListChunks })}
       />
     )
-    fireEvent.click(
-      screen.getByRole('button', { name: '文档分块' })
-    )
+    fireEvent.click(screen.getByRole('button', { name: '架构说明.md 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '文档分块' }))
     expect(
       screen.getByRole('dialog', { name: '文档分块' })
     ).toBeInTheDocument()
@@ -718,10 +920,11 @@ describe('KnowledgeWorkspace', () => {
       />
     )
 
-    const chunkButtons = screen.getAllByRole('button', { name: '文档分块' })
-    fireEvent.click(chunkButtons[0]!)
+    fireEvent.click(screen.getByRole('button', { name: '架构说明.md 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '文档分块' }))
     fireEvent.click(screen.getByRole('button', { name: '关闭文档分块' }))
-    fireEvent.click(chunkButtons[1]!)
+    fireEvent.click(screen.getByRole('button', { name: '第二份文档.md 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '文档分块' }))
     expect(await screen.findByText('第二份文档内容')).toBeInTheDocument()
 
     await act(async () => {
@@ -1386,10 +1589,7 @@ describe('KnowledgeWorkspace', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '任务中心' }))
     fireEvent.click(screen.getByRole('button', { name: '失败' }))
-    const progress = screen.getByRole('progressbar', {
-      name: '失败文档.md 文档处理进度'
-    })
-    expect(progress.closest('[aria-live]')).toBeNull()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '重试任务' }))
 
     const alert = await screen.findByRole('alert')
@@ -1644,13 +1844,12 @@ describe('KnowledgeWorkspace', () => {
     const syncSource = screen.getByRole('button', {
       name: '同步 产品手册'
     })
-    const removeSource = screen.getByRole('button', {
+    fireEvent.click(screen.getByRole('button', { name: '产品手册 的更多操作' }))
+    const removeSource = screen.getByRole('menuitem', {
       name: '移除来源 产品手册'
     })
-    expect(syncSource.parentElement).toBe(removeSource.parentElement)
-    expect(syncSource.parentElement).toHaveClass(
-      'knowledge-source-row__actions'
-    )
+    expect(syncSource.parentElement).toHaveClass('knowledge-document-actions')
+    expect(removeSource.closest('[role="menu"]')).toBeInTheDocument()
     expect(removeSource).not.toHaveStyle({ padding: '8px' })
 
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))

@@ -103,3 +103,21 @@ it('anchors upward, clamps to a narrow viewport, repositions on resize and uses 
   expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   expect(isBrowserViewportOccluded(host, new DOMRect(200, 100, 100, 100))).toBe(false)
 })
+
+it('flips a top anchor downward and keeps the menu in view when its anchor scrolls offscreen', () => {
+  vi.stubGlobal('innerWidth', 420)
+  vi.stubGlobal('innerHeight', 480)
+  let anchorTop = 20
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    return this.getAttribute('role') === 'menu' ? new DOMRect(124, 62, 280, 200) : new DOMRect(360, anchorTop, 34, 34)
+  })
+  render(<Harness />)
+  fireEvent.click(screen.getByText('Launcher'))
+  const menu = screen.getByRole('menu')
+  Object.defineProperty(menu, 'scrollHeight', { value: 200, configurable: true })
+  fireEvent(window, new Event('resize'))
+  expect(menu).toHaveStyle({ top: '62px', left: '124px', maxHeight: '402px' })
+  anchorTop = -100
+  fireEvent(window, new Event('scroll'))
+  expect(menu).toHaveStyle({ top: '16px', maxHeight: '448px' })
+})

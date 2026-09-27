@@ -13983,6 +13983,7 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .knowledge-documents {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -14073,26 +14074,36 @@ details.settings-section > :not(summary) + :not(summary) {
   margin-top: var(--space-3);
 }
 
-.knowledge-document-more {
-  margin-top: var(--space-2);
+.knowledge-document-preview__header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
-.knowledge-document-more > summary {
-  width: fit-content;
-  min-height: var(--control-height);
-  align-content: center;
-  border-radius: var(--radius-control);
+.knowledge-document-preview__title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-document-preview__title h3 {
+  margin: 0 0 var(--space-1);
+}
+
+.knowledge-document-preview__title > span {
+  margin-right: var(--space-2);
   color: var(--text-secondary);
-  cursor: pointer;
 }
 
-.knowledge-document-more > summary:hover {
-  color: var(--accent);
+.anchored-menu .knowledge-action--danger {
+  color: var(--danger);
 }
 
-.knowledge-document-more > summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.anchored-menu .knowledge-action:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .knowledge-source-row__main,
@@ -14211,7 +14222,11 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .knowledge-documents__table-scroll td:last-child:not([colspan]) {
-  width: 28%;
+  width: 1%;
+}
+
+.knowledge-document-actions {
+  flex-wrap: nowrap;
 }
 
 .knowledge-documents__table-scroll button {
@@ -14219,13 +14234,11 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .knowledge-document-path {
-  max-width: 360px;
-  overflow: hidden;
+  max-width: 280px;
   color: var(--text-muted);
   font-size: var(--font-body);
   line-height: 1.55;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-document-status {

@@ -6,6 +6,7 @@ import { useState, useMemo } from 'react'
 import { toErrorMessage, taskStageLabelKeys, clampProgress } from './helpers'
 import { ChevronDown, ChevronRight, LoaderCircle, X, RotateCcw, ListChecks } from 'lucide-react'
 import { EmptyState, SegmentedControl } from '../WorkspacePrimitives'
+import { InlineHelp } from '../InlineHelp'
 
 const taskKindLabelKeys = {
   'source-sync': 'taskKinds.sourceSync',
@@ -94,14 +95,6 @@ export function KnowledgeTasksView({
   const [actionErrors, setActionErrors] = useState<
     ReadonlyMap<string, KnowledgeTaskActionError>
   >(() => new Map())
-  const activeCount = tasks.filter(
-    (task) => task.status === 'queued' || task.status === 'running'
-  ).length
-  const failedCount = tasks.filter(
-    (task) =>
-      task.status === 'failed' || task.status === 'interrupted'
-  ).length
-  const historyCount = tasks.length - activeCount - failedCount
   const taskById = useMemo(
     () => new Map(tasks.map((task) => [task.id, task])),
     [tasks]
@@ -128,33 +121,9 @@ export function KnowledgeTasksView({
       ),
     [context, tasks]
   )
-  const directMatches = useMemo(
-    () =>
-      contextTasks.filter((task) => {
-        if (filter === 'active') {
-          return task.status === 'queued' || task.status === 'running'
-        }
-        if (filter === 'failed') {
-          return (
-            task.status === 'failed' ||
-            task.status === 'interrupted'
-          )
-        }
-        if (filter === 'history') {
-          return ![
-            'queued',
-            'running',
-            'failed',
-            'interrupted'
-          ].includes(task.status)
-        }
-        return true
-      }),
-    [contextTasks, filter]
-  )
   const visibleIds = useMemo(() => {
-    const result = new Set(directMatches.map((task) => task.id))
-    for (const task of directMatches) {
+    const result = new Set(contextTasks.map((task) => task.id))
+    for (const task of contextTasks) {
       let parentId = task.parentTaskId
       while (parentId && taskById.has(parentId)) {
         result.add(parentId)
@@ -162,12 +131,21 @@ export function KnowledgeTasksView({
       }
     }
     return result
-  }, [directMatches, taskById])
-  const topLevelTasks = tasks.filter(
-    (task) =>
-      visibleIds.has(task.id) &&
-      (!task.parentTaskId || !taskById.has(task.parentTaskId))
-  )
+  }, [contextTasks, taskById])
+  const batches = useMemo(() => {
+    const collect = (task: KnowledgeTaskItem): KnowledgeTaskItem[] => [task,
+      ...(childrenByParent.get(task.id) ?? []).filter((child) => visibleIds.has(child.id)).flatMap(collect)]
+    return tasks.filter((task) => visibleIds.has(task.id) && (!task.parentTaskId || !taskById.has(task.parentTaskId)))
+      .map((task) => {
+        const members = collect(task)
+        return { task, active: members.some((item) => item.status === 'queued' || item.status === 'running'),
+          failed: members.some((item) => item.status === 'failed' || item.status === 'interrupted') }
+      }).sort((a, b) => b.task.createdAt.localeCompare(a.task.createdAt))
+  }, [tasks, taskById, childrenByParent, visibleIds])
+  const activeCount = batches.filter((batch) => batch.active).length
+  const failedCount = batches.filter((batch) => batch.failed).length
+  const historyCount = batches.filter((batch) => !batch.active).length
+  const topLevelTasks = useMemo(() => batches.filter((batch) => filter === 'all' || (filter === 'active' ? batch.active : filter === 'failed' ? batch.failed : !batch.active)), [batches, filter])
   const filterOptions = [
     { value: 'all', label: t('tasks.filters.all') },
     { value: 'active', label: t('tasks.filters.active') },
@@ -214,7 +192,8 @@ export function KnowledgeTasksView({
 
   const renderTask = (
     task: KnowledgeTaskItem,
-    nested = false
+    nested = false,
+    containsFailures = false
   ): React.JSX.Element => {
     const children = (childrenByParent.get(task.id) ?? []).filter(
       (child) => visibleIds.has(child.id)
@@ -225,6 +204,12 @@ export function KnowledgeTasksView({
     const actionErrorId = `knowledge-task-${task.id}-action-error`
     const pendingAction = pendingActions.get(task.id)
     const actionError = actionErrors.get(task.id)
+    const active = task.status === 'queued' || task.status === 'running'
+    const summary = [
+      task.message || (active ? t('tasks.waiting') : ''),
+      hasChildren ? t('tasks.childCount', { count: children.length }) : '',
+      task.attempt > 1 ? t('tasks.attempt', { count: task.attempt }) : ''
+    ].filter(Boolean).join(' · ')
     const time =
       task.completedAt ??
       task.updatedAt ??
@@ -291,8 +276,9 @@ export function KnowledgeTasksView({
             {t(taskStatusLabelKeys[task.status])}
           </span>
         </div>
-        <div className="knowledge-task__stage">
-          <strong>{t('tasks.currentStage')}</strong>
+        {containsFailures && task.status !== 'failed' && task.status !== 'interrupted' && <p className="knowledge-inline-error">{t('tasks.containsFailures')}</p>}
+        {(active || task.status === 'failed' || task.status === 'interrupted') && <div className="knowledge-task__stage">
+          <strong>{t(active ? 'tasks.currentStage' : 'tasks.stoppedStage')}</strong>
           <span>{t(taskStageLabelKeys[task.stage])}</span>
           {task.completedItems !== undefined &&
             task.totalItems !== undefined && (
@@ -303,8 +289,8 @@ export function KnowledgeTasksView({
                 })}
               </span>
             )}
-        </div>
-        <div className="knowledge-task__progress">
+        </div>}
+        {active && <div className="knowledge-task__progress">
           <progress
             aria-label={t('tasks.progressAriaLabel', {
               name: task.documentName,
@@ -316,9 +302,9 @@ export function KnowledgeTasksView({
           <span>
             {formatPercent(clampProgress(task.progress) / 100, locale)}
           </span>
-        </div>
+        </div>}
         <div className="knowledge-task__meta">
-          <span>{task.message || t('tasks.waiting')}</span>
+          <span>{summary}</span>
           <time dateTime={time}>
             {formatDateTime(time, locale, t)}
           </time>
@@ -425,12 +411,13 @@ export function KnowledgeTasksView({
     >
       <div className="knowledge-tasks__summary">
         <div>
-          <h3 id="knowledge-tasks-title">
+          <h3 id="knowledge-tasks-title" className="inline-help-label">
             {t('tasks.title')}
+            <InlineHelp label={t('tasks.title')}>{t('tasks.batchHelp')}</InlineHelp>
           </h3>
           <p className="knowledge-section-description">
             {t('tasks.totalCount', {
-              count: formatNumber(tasks.length, locale)
+              count: formatNumber(batches.length, locale)
             })}
           </p>
         </div>
@@ -455,7 +442,11 @@ export function KnowledgeTasksView({
       <div className="knowledge-tasks__toolbar">
         <SegmentedControl
           ariaLabel={t('tasks.filters.ariaLabel')}
-          onChange={setFilter}
+          onChange={(value) => {
+            setFilter(value)
+            if (value === 'active' || value === 'failed') setExpanded(new Set(childrenByParent.keys()))
+            else setExpanded(new Set())
+          }}
           options={filterOptions}
           value={filter}
         />
@@ -481,7 +472,7 @@ export function KnowledgeTasksView({
         />
       ) : (
       <ol className="knowledge-task-list">
-        {topLevelTasks.map((task) => renderTask(task))}
+        {topLevelTasks.map(({ task, failed }) => renderTask(task, false, failed))}
       </ol>
       )}
     </section>

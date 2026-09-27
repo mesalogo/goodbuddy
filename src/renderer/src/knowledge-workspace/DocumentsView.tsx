@@ -22,13 +22,10 @@ import {
   UploadCloud,
   FileText,
   ListChecks,
-  CirclePause,
-  RotateCcw,
-  RefreshCw,
-  Trash2,
   Search
 } from 'lucide-react'
 import { RemoveSourceDialog } from './RemoveSourceDialog'
+import { KnowledgeActionsMenu, type KnowledgeAction } from './KnowledgeActionsMenu'
 
 const sourceStatusLabelKeys = {
   queued: 'sourceStatuses.queued',
@@ -87,7 +84,7 @@ function formatDocumentLocation(
   try {
     const url = new URL(value)
     if (url.protocol === 'http:' || url.protocol === 'https:') {
-      return `${url.origin}${url.pathname}`
+      return `${url.origin}${url.pathname}${url.search}${url.hash}`
     }
   } catch {
     // Local paths are intentionally reduced below.
@@ -146,7 +143,7 @@ export function DocumentsView({
   const [url, setUrl] = useState('')
   const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
-  const [pending, setPending] = useState<string>()
+  const [pending, setPending] = useState<ReadonlyMap<string, number>>(() => new Map())
   const [error, setError] = useState<string>()
   const [removingSource, setRemovingSource] =
     useState<KnowledgeSource>()
@@ -159,16 +156,23 @@ export function DocumentsView({
     id: string,
     action: () => void | Promise<void>
   ): Promise<boolean> => {
-    setPending(id)
+    setPending((current) => new Map(current).set(id, (current.get(id) ?? 0) + 1))
     setError(undefined)
     try {
       await action()
       return true
     } catch (reason) {
-      setError(toErrorMessage(reason, t))
+      const message = toErrorMessage(reason, t)
+      setError(viewedDocumentId && id === `retry:${viewedDocumentId}` ? t('documents.reparseFailed', { error: message }) : message)
       return false
     } finally {
-      setPending(undefined)
+      setPending((current) => {
+        const next = new Map(current)
+        const remaining = (next.get(id) ?? 1) - 1
+        if (remaining > 0) next.set(id, remaining)
+        else next.delete(id)
+        return next
+      })
     }
   }
 
@@ -215,6 +219,10 @@ export function DocumentsView({
     return result
   }, [documents, sources, locale, query])
   const viewedDocument = useMemo(() => documents.find((document) => document.id === viewedDocumentId), [documents, viewedDocumentId])
+  const viewedSource = sources.find((source) => source.id === viewedDocument?.sourceId)
+  const viewedTaskSourceId = viewedSource && viewedSource.kind !== 'directory' &&
+    !documents.some((document) => document.sourceId === viewedSource.id && document.id !== viewedDocumentId)
+    ? viewedSource.id : undefined
 
   const sourceStatus = (source: KnowledgeSource): React.JSX.Element => (
     <span className={`knowledge-source-row__status knowledge-source-row__status--${source.status}`}>
@@ -224,34 +232,39 @@ export function DocumentsView({
     </span>
   )
 
-  const sourceActions = (source: KnowledgeSource): React.JSX.Element => (
-    <div className="knowledge-source-row__actions">
-      <button
-        aria-label={t(source.status === 'syncing' ? 'documents.actions.pauseSource' : source.status === 'failed' ? 'documents.actions.retrySource' : 'documents.actions.syncSource', { name: source.name })}
-        className="secondary-button"
-        disabled={pending === source.id}
-        onClick={() => void run(source.id, () => source.status === 'syncing' ? onPauseSource(source.id) : source.status === 'failed' ? onRetrySource(source.id) : onSyncSource(source.id))}
-        type="button"
-      >
-        {source.status === 'syncing' ? <CirclePause aria-hidden="true" size={14} /> : source.status === 'failed' ? <RotateCcw aria-hidden="true" size={14} /> : <RefreshCw aria-hidden="true" size={14} />}
-        {t(source.status === 'syncing' ? 'actions.pause' : source.status === 'failed' ? 'actions.retry' : 'actions.sync')}
-      </button>
-      <button
-        aria-label={t('documents.actions.removeSource', { name: source.name })}
-        className="danger-button danger-button--quiet"
-        disabled={pending === source.id}
-        onClick={() => setRemovingSource(source)}
-        type="button"
-      >
-        <Trash2 aria-hidden="true" size={14} />{t('actions.remove')}
-      </button>
-    </div>
-  )
+  const sourceActions = (source: KnowledgeSource): KnowledgeAction[] => [
+    {
+      label: t(source.status === 'syncing' ? 'documents.actions.pauseSource' : source.status === 'failed' ? 'documents.actions.retrySource' : 'documents.actions.syncSource', { name: source.name }),
+      disabled: pending.has(source.id),
+      onClick: () => void run(source.id, () => source.status === 'syncing' ? onPauseSource(source.id) : source.status === 'failed' ? onRetrySource(source.id) : onSyncSource(source.id))
+    },
+    {
+      label: t('documents.actions.removeSource', { name: source.name }),
+      disabled: pending.has(source.id), danger: true, separator: true,
+      onClick: () => setRemovingSource(source)
+    }
+  ]
+  const documentActions = (document: KnowledgeDocumentItem, source: KnowledgeSource | undefined, taskSourceId?: string): KnowledgeAction[] => [
+    { label: t('documents.actions.openDocumentSource', { name: document.name }), disabled: pending.has(`open:${document.id}`),
+      onClick: () => void run(`open:${document.id}`, () => onOpenDocumentSource(library.id, document.id)) },
+    ...(document.resultId ? [{
+      label: t('documents.openParsedOriginal'), disabled: pending.has(`original:${document.id}`),
+      onClick: () => void run(`original:${document.id}`, () => window.goodbuddy.documentParsing!.openResultOriginal(document.resultId!))
+    }] : []),
+    { label: t('chunks.title'), disabled: (document.chunkCount ?? 0) === 0, onClick: () => onManageChunks(document) },
+    ...(tasks?.some((task) => task.documentId === document.id || (taskSourceId && task.sourceId === taskSourceId)) ? [{
+      label: t('actions.viewTasks'), onClick: () => onViewTasks({ documentId: document.id, ...(taskSourceId ? { sourceId: taskSourceId } : {}) })
+    }] : []),
+    { label: t(document.status === 'failed' ? 'actions.retryDocument' : 'documents.reparse'), separator: true,
+      disabled: pending.has(`retry:${document.id}`) || tasks?.some((task) => task.documentId === document.id && (task.status === 'queued' || task.status === 'running')),
+      onClick: () => void run(`retry:${document.id}`, () => onRebuildDocument(library.id, document.id)) },
+    ...(source ? sourceActions(source) : [])
+  ]
 
   return (
     <div className="knowledge-documents">
       {viewedDocument?.resultId && <section aria-label={t('documents.previewLabel', { name: viewedDocument.name })}>
-        <div className="document-result-actions">
+        <div className="knowledge-document-preview__header">
           <button ref={previewBackRef} type="button" className="secondary-button" onClick={() => {
             setViewedDocumentId(undefined)
             requestAnimationFrame(() => {
@@ -259,12 +272,14 @@ export function DocumentsView({
               if (previewOriginRef.current?.scroll) previewOriginRef.current.scroll.scrollTop = previewOriginRef.current.top
             })
           }}>{t('documents.backToList')}</button>
-          <strong>{library.name} · {viewedDocument.name}</strong><ScopeBadge scope={{ kind: 'global' }} />
-          <button type="button" className="secondary-button" disabled={Boolean(pending)} onClick={() => void run(`retry:${viewedDocument.id}`, () => onRebuildDocument(library.id, viewedDocument.id))}>{t('documents.reparse')}</button>
+          <div className="knowledge-document-preview__title"><h3>{viewedDocument.name}</h3><span>{library.name}</span><ScopeBadge scope={{ kind: 'global' }} />
+            {viewedDocument.path && <div className="knowledge-document-path">{formatDocumentLocation(viewedDocument.path, t)}</div>}
+          </div>
+          <KnowledgeActionsMenu label={t('documents.moreActionsFor', { name: viewedDocument.name })} actions={documentActions(viewedDocument, viewedSource, viewedTaskSourceId)} />
         </div>
-        {pending && <p role="status">{t('documents.reparsing')}</p>}
-        {error && <p role="alert">{t('documents.reparseFailed', { error })}</p>}
-        <DocumentResultPreview key={viewedDocument.resultId} resultId={viewedDocument.resultId} allowAddImages />
+        {pending.has(`retry:${viewedDocument.id}`) && <p role="status">{t('documents.reparsing')}</p>}
+        {error && <p className="knowledge-inline-error" role="alert">{error}</p>}
+        <DocumentResultPreview key={viewedDocument.resultId} resultId={viewedDocument.resultId} allowAddImages showOpenOriginal={false} imageActionsInImagesTab />
       </section>}
       <div hidden={Boolean(viewedDocument?.resultId)}>
       <section aria-labelledby="documents-title">
@@ -403,7 +418,7 @@ export function DocumentsView({
             />
             <button
               className="primary-button"
-              disabled={pending === 'url'}
+              disabled={pending.has('url')}
               type="submit"
             >
               {t('actions.import')}
@@ -521,11 +536,18 @@ export function DocumentsView({
                               count: formatNumber(source.documentCount, locale),
                               time: formatTime(source.lastSyncedAt, locale, t)
                             })}</div>
+                            {source.kind === 'url' && source.location && <div className="knowledge-document-path">{formatDocumentLocation(source.location, t)}</div>}
                             {source.error && <div className="knowledge-source-row__error">{source.error}</div>}
                           </div>
                           <div className="knowledge-document-actions">
-                            {tasks?.some((task) => task.sourceId === source.id) && <button type="button" className="secondary-button" onClick={() => onViewTasks({ sourceId: source.id })}><ListChecks aria-hidden="true" size={14} />{t('actions.viewTasks')}</button>}
-                            {sourceActions(source)}
+                            <button type="button" className="secondary-button" disabled={pending.has(source.id)}
+                              onClick={source.status === 'failed' || !tasks?.some((task) => task.sourceId === source.id) ? sourceActions(source)[0]!.onClick : () => onViewTasks({ sourceId: source.id })}>
+                              {source.status === 'failed' || !tasks?.some((task) => task.sourceId === source.id) ? sourceActions(source)[0]!.label : t('actions.viewTasks')}
+                            </button>
+                            <KnowledgeActionsMenu label={t('documents.moreActionsFor', { name: source.name })} actions={[
+                              ...(tasks?.some((task) => task.sourceId === source.id) ? [{ label: t('actions.viewTasks'), onClick: () => onViewTasks({ sourceId: source.id }) }] : []),
+                              ...sourceActions(source)
+                            ]} />
                           </div>
                         </div>
                       </td>
@@ -544,9 +566,9 @@ export function DocumentsView({
                    <tr key={key} className={grouped ? 'knowledge-document-row--grouped' : undefined}>
                      <td>
                        <strong>{document.name}</strong>
-                       {document.path && !source && (
-                        <div className="knowledge-document-path">
-                          {formatDocumentLocation(document.path, t)}
+                        {(document.path || (source?.kind === 'url' && source.location)) && (
+                         <div className="knowledge-document-path">
+                           {formatDocumentLocation(source?.kind === 'url' && source.location ? source.location : document.path!, t)}
                         </div>
                        )}
                        {source && <div className="knowledge-source-row__meta">{t('documents.lastSynced', { time: formatTime(source.lastSyncedAt, locale, t) })}</div>}
@@ -621,7 +643,7 @@ export function DocumentsView({
                           setViewedDocumentId(document.id)
                           requestAnimationFrame(() => { previewBackRef.current?.focus(); if (scroll) scroll.scrollTop = 0 })
                          }}>{t('documents.viewResult')}</button>}
-                        {relatedTasks.length > 0 && (
+                         {!document.resultId && document.status === 'failed' ? <button type="button" className="secondary-button" aria-label={t('documents.actions.retryDocument', { name: document.name })} disabled={pending.has(`retry:${document.id}`) || Boolean(activeTask)} onClick={() => void run(`retry:${document.id}`, () => onRebuildDocument(library.id, document.id))}>{t('actions.retryDocument')}</button> : !document.resultId && relatedTasks.length > 0 ? (
                           <button
                             className="secondary-button"
                             onClick={() =>
@@ -632,14 +654,13 @@ export function DocumentsView({
                             <ListChecks aria-hidden="true" size={14} />
                             {t('actions.viewTasks')}
                           </button>
-                        )}
-                        <button
+                         ) : !document.resultId ? <button
                           aria-label={t(
                             'documents.actions.openDocumentSource',
                             { name: document.name }
                           )}
                           className="secondary-button"
-                          disabled={pending === `open:${document.id}`}
+                          disabled={pending.has(`open:${document.id}`)}
                           onClick={() =>
                             void run(`open:${document.id}`, () =>
                               onOpenDocumentSource(
@@ -651,45 +672,9 @@ export function DocumentsView({
                           type="button"
                         >
                           {t('actions.openSource')}
-                        </button>
-                        {document.status === 'failed' && (
-                          <button
-                            aria-label={t(
-                              'documents.actions.retryDocument',
-                              { name: document.name }
-                            )}
-                            className="secondary-button"
-                            disabled={pending === `retry:${document.id}`}
-                            onClick={() =>
-                              void run(`retry:${document.id}`, () =>
-                                onRebuildDocument(
-                                  library.id,
-                                  document.id
-                                )
-                              )
-                            }
-                            type="button"
-                          >
-                            <RotateCcw aria-hidden="true" size={14} />
-                            {t('actions.retryDocument')}
-                          </button>
-                        )}
-                        <button
-                          className="secondary-button"
-                          disabled={(document.chunkCount ?? 0) === 0}
-                          onClick={() => onManageChunks(document)}
-                          type="button"
-                        >
-                          {t('chunks.title')}
-                        </button>
-                       </div>
-                       {(source || (document.resultId && document.status !== 'failed')) && <details className="knowledge-document-more">
-                         <summary>{t('documents.moreActions')}</summary>
-                         <div className="knowledge-document-actions">
-                           {document.resultId && document.status !== 'failed' && <button type="button" className="secondary-button" disabled={Boolean(activeTask) || pending === `retry:${document.id}`} onClick={() => void run(`retry:${document.id}`, () => onRebuildDocument(library.id, document.id))}>{t('documents.reparse')}</button>}
-                           {source && sourceActions(source)}
-                         </div>
-                       </details>}
+                         </button> : null}
+                         <KnowledgeActionsMenu label={t('documents.moreActionsFor', { name: document.name })} actions={documentActions(document, source, source?.id)} />
+                        </div>
                      </td>
                   </tr>
                   )
@@ -699,6 +684,7 @@ export function DocumentsView({
           </div>
         )}
       </section>
+      </div>
       {removingSource && (
         <RemoveSourceDialog
           onCancel={() => setRemovingSource(undefined)}
@@ -707,7 +693,6 @@ export function DocumentsView({
           storageMode={library.storageMode}
         />
       )}
-      </div>
     </div>
   )
 }

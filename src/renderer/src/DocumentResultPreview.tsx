@@ -63,7 +63,7 @@ function SectionContent({ content, result, onImage }: {
       } }}>{piece.replace(/<\/?(?:div|p|span|h[1-6])\b[^>]*>/giu, '\n').replace(/<br\s*\/?\s*>/giu, '\n\n')}</ReactMarkdown>)}</div>
 }
 
-export function DocumentResultPreview({ resultId, allowAddImages = false, conversationId }: { resultId: string; allowAddImages?: boolean; conversationId?: string }): React.JSX.Element {
+export function DocumentResultPreview({ resultId, allowAddImages = false, conversationId, showOpenOriginal = true, imageActionsInImagesTab = false }: { resultId: string; allowAddImages?: boolean; conversationId?: string; showOpenOriginal?: boolean; imageActionsInImagesTab?: boolean }): React.JSX.Element {
   const conversationContext = useContext(DocumentConversationContext)
   const [result, setResult] = useState<DocumentResult>()
   const [error, setError] = useState('')
@@ -128,10 +128,10 @@ export function DocumentResultPreview({ resultId, allowAddImages = false, conver
   if (!result) return <p role="status">正在读取解析结果</p>
   return <div className="document-result-preview">
     <div className="document-result-actions"><strong>{({ complete: '解析完成', partial: '部分解析', 'images-only': '仅图片，无可发送正文' })[result.completeness]}</strong>
-      <button type="button" className="secondary-button" onClick={() => {
+      {showOpenOriginal && <button type="button" className="secondary-button" onClick={() => {
         setActionError('')
         void window.goodbuddy.documentParsing!.openResultOriginal(result.id).catch((reason: unknown) => setActionError(reason instanceof Error ? reason.message : '原文件不可用'))
-      }}>打开原文件</button></div>
+      }}>打开原文件</button>}</div>
     {actionError && <p role="alert">{actionError}</p>}
     <PageTabs ariaLabel="解析结果" idPrefix={prefix} variant="segmented" value={tab} onChange={setTab}
       tabs={[{ id: 'text', label: '正文' }, { id: 'images', label: `图片（${result.images.length}）` }, { id: 'details', label: '详情' }]} />
@@ -172,7 +172,7 @@ export function DocumentResultPreview({ resultId, allowAddImages = false, conver
       </>}
       {result.warnings.length > 0 && <div className="settings-warning"><strong>解析警告</strong><ul>{result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
     </section>
-    {allowAddImages && <div className="document-result-actions">
+    {allowAddImages && (!imageActionsInImagesTab || tab === 'images') && <div className="document-result-actions">
       <label className="field"><span>添加到会话草稿</span><select value={target} disabled={adding} onChange={(event) => { setTarget(event.target.value); setDraft([]) }}>
         <option value="">选择会话后添加</option>{conversations.map((conversation) => <option key={conversation.id} value={conversation.id}>{conversation.projectId ? projectNames[conversation.projectId] ?? '项目不可用' : '未绑定项目'} · {conversation.title}</option>)}
       </select></label>

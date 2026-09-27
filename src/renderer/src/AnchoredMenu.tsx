@@ -23,11 +23,13 @@ export function AnchoredMenu({ anchorRef, id, label, onClose, children }: {
     const height = viewport?.height ?? window.innerHeight
     const rect = anchor.getBoundingClientRect()
     const menuWidth = Math.max(0, Math.min(280, width - 32))
-    const bottom = Math.max(top + 16, Math.min(rect.top - 8, top + height - 16))
     menu.style.width = `${menuWidth}px`
-    menu.style.maxHeight = `${Math.max(0, bottom - top - 16)}px`
+    const above = Math.max(0, Math.min(height - 32, rect.top - top - 24))
+    const below = Math.max(0, Math.min(height - 32, top + height - rect.bottom - 24))
+    const openBelow = menu.scrollHeight > above && below > above
+    menu.style.maxHeight = `${openBelow ? below : above}px`
     menu.style.left = `${Math.max(left + 16, Math.min(rect.left, left + width - menuWidth - 16))}px`
-    menu.style.top = `${Math.max(top + 16, bottom - menu.getBoundingClientRect().height)}px`
+    menu.style.top = `${Math.max(top + 16, openBelow ? rect.bottom + 8 : Math.min(rect.top - 8, top + height - 16) - menu.getBoundingClientRect().height)}px`
   })
   useLayoutEffect(() => { position() })
   useEffect(() => {

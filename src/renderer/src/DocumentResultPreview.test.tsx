@@ -51,3 +51,21 @@ it('starts with zero selected images and retains selections across tabs until ex
   await waitFor(() => expect(add).toHaveBeenCalledWith('conversation', result.id, [result.images[0]!.id]))
   expect(screen.getByRole('checkbox')).not.toBeChecked()
 })
+
+it('keeps knowledge reading separate from image actions without changing the default preview', async () => {
+  render(<DocumentResultPreview resultId={result.id} allowAddImages conversationId="conversation" showOpenOriginal={false} imageActionsInImagesTab />)
+  expect(await screen.findByText('Invoice')).toBeVisible()
+  expect(screen.queryByRole('button', { name: '打开原文件' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '添加所选图片' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('tab', { name: '图片（1）' }))
+  fireEvent.click(screen.getByRole('checkbox'))
+  fireEvent.click(screen.getByRole('tab', { name: '正文' }))
+  expect(screen.queryByRole('button', { name: '添加所选图片' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('tab', { name: '图片（1）' }))
+  expect(screen.getByRole('checkbox')).toBeChecked()
+  fireEvent.click(screen.getByRole('button', { name: '添加所选图片' }))
+  await waitFor(() => {
+    expect(add).toHaveBeenCalledWith('conversation', result.id, [result.images[0]!.id])
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+  })
+})

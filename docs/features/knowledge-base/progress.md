@@ -16,6 +16,50 @@
 
 ## 验证证据
 
+### 2026-09-27 独立评审 P2 修复
+
+- `DocumentsView` 将任务来源 ID 与维护用来源分开传递。目录和一对多 URL 的文档预览
+  只筛选当前文档任务，父批次作为上下文保留，同组 B 的任务不再因来源 ID 被纳入。
+  真正单文档合并行在列表和预览中均保留来源、文档双 ID；判定使用完整文档集合。
+- 在飞状态由全局单 ID 改为按操作 ID 计数，完成或失败时只清理本次操作。来源暂停、
+  同步及文档操作使用各自 ID 判断禁用，A 同步或重解析期间仍可暂停 B。
+- 新增 9 项行为回归：目录及一对多 URL 各覆盖列表、预览入口，并在搜索只剩 A 时确认
+  不纳入 B 或其他来源级任务；单文档合并预览覆盖双 ID。四组 deferred 用例验证
+  A 同步／重解析与 B 暂停的调用 ID、重复提交禁用、A 先完成及 B 先失败后的独立状态。
+  预览测试同时确认所属来源的同步和移除入口仍可用。
+- `npx vitest run src/renderer/src/KnowledgeWorkspace.test.tsx src/renderer/src/DocumentResultPreview.test.tsx`：
+  2 个文件、66 项通过；`npm run typecheck`、`npm run lint`、`git diff --check` 通过。
+- 本轮仅修改上述组件、工作区测试及本地知识库 UI／进度文档。未重跑全量或 Electron
+  渲染验收，未提交；此前全量结果及渲染验证边界见下方记录。
+
+### 2026-09-27 文档入口与任务历史整理
+
+对应 US-D1、US-D2、US-D4，完成文档行、解析预览与知识任务中心的界面修改。当前交互
+以 [来源操作](./ui-design.md#6-来源操作) 和 [任务历史](./ui-design.md#8-任务批次与历史)
+为准，替代下方同日早期记录中的原生折叠操作区。
+
+- 合并 URL 行恢复地址，保留查询参数与片段；同标题、不同查询参数的两条 URL 已验证
+  可以区分、分别搜索并打开正确来源。
+- 文档与来源行使用一个主要按钮和共享菜单，分块、任务、重解析、同步、暂停、重试及
+  移除继续可达。预览按返回、标题、维护操作分层，保留搜索、焦点与滚动恢复；解析时
+  原件与当前来源使用各自原有 API。共享菜单补充向下翻转及缩窗后的视口高度限制。
+- 任务中心按真实父子记录计批次，对象筛选同步影响计数。历史包含已结束失败批次，
+  运行批次中的成功子步骤不会单独混入历史。取消、重试继续服从服务契约。
+- 最终定向命令 `npx vitest run src/renderer/src/ApplicationMenu.test.tsx src/renderer/src/KnowledgeWorkspace.test.tsx src/renderer/src/DocumentResultPreview.test.tsx src/renderer/src/KnowledgeChunkManager.test.tsx src/renderer/src/WorkspacePrimitives.test.tsx tests/knowledge-layout.electron.test.ts tests/attachment-layout.electron.test.ts tests/overlay-layering.electron.test.ts`：8 个文件、106 项通过。
+- `tests/knowledge-layout.electron.test.ts` 使用真实 DocumentsView、KnowledgeTasksView、
+  DocumentResultPreview、菜单与 CSS，覆盖浅深主题及 1100×720、720×720、420×480。
+  验证页面无横向溢出、表格内部滚动、菜单展开不改变行高、顶部菜单翻转、原生 End／Escape、
+  预览焦点恢复及历史默认折叠。截图已检查宽屏列表、窄屏预览与菜单、任务历史。
+  截图复核发现文档 Grid 原先会被表格最小宽度撑开；列宽改用 `minmax(0, 1fr)`，
+  并增加内部页面容器无横向溢出的断言，确保导入工具栏不随表格横向滚动。
+  隐藏窗口无截图时曾停在帧等待；改用可见窗口并确认真实焦点后，无截图运行通过。
+- 附件布局和 Modal 浮层的真实 Electron 回归通过，验证共享菜单修改没有破坏这两个入口。
+- 完整 `npm test` 最后一次完成：448 个文件通过、1 个失败、11 个跳过；5291 项通过、
+  2 项失败、83 项跳过。失败仅为下方已记录的 HeartbeatCenter 中英文 tablist 数量断言。
+  此后补回解析时原件菜单入口、补测锚点滚出视口，并修正窄屏 Grid，均通过上述最终定向回归。
+- `npm run typecheck`、`npm run lint`、`git diff --check` 通过。布局 fixture 使用合成数据与桥接替身，
+  本轮未从完整 App 重做 UI → Main 的文件导入及真实解析服务验收；没有新增外部模型调用。
+
 ### 2026-09-27 文档与来源统一列表
 
 在现有 `knowledge-workspace` 拆分基础上修改 `DocumentsView.tsx`，单文件、单 URL 与
