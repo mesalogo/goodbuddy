@@ -353,6 +353,41 @@ describe('HeartbeatCenter', () => {
     expect(props.onRunNow).not.toHaveBeenCalled()
   })
 
+  it.each(['unconfigured', 'enabled', 'paused'])('keeps %s plans usable without an empty activity dashboard', (state) => {
+    const props = createProps({
+      configs: state === 'unconfigured' ? [] : [{ ...config, enabled: state === 'enabled' }],
+      runs: [],
+      entries: []
+    })
+    const view = render(<HeartbeatCenter {...props} />)
+    const t = (key: string) => i18n.t(key, { ns: 'heartbeat' })
+    expect(screen.queryByLabelText(t('center.metrics.ariaLabel'))).not.toBeInTheDocument()
+    for (const key of ['center.trend.title', 'center.suggestions.memoryTitle', 'center.suggestions.taskTitle', 'center.history.timelineTitle', 'center.history.auditTitle']) {
+      expect(screen.queryByRole('heading', { name: t(key) })).not.toBeInTheDocument()
+    }
+    expect(screen.getByText(t('settings.scheduleHelp'))).toBeVisible()
+    expect(screen.getByRole('button', { name: t('settings.refreshPlans') })).toBeEnabled()
+    expect(screen.getByRole('button', { name: t('settings.createTitle') })).toBeEnabled()
+    if (state !== 'unconfigured') {
+      for (const key of ['settings.editAriaLabel', 'settings.runNowAriaLabel', 'settings.deleteAriaLabel', state === 'enabled' ? 'settings.pauseAriaLabel' : 'settings.resumeAriaLabel']) {
+        expect(screen.getByRole('button', { name: i18n.t(key, { ns: 'heartbeat', name: config.name }) })).toBeEnabled()
+      }
+    }
+    fireEvent.click(screen.getByRole('button', { name: t('settings.createTitle') }))
+    expect(screen.getByLabelText(t('settings.recurrenceAriaLabel'))).toHaveValue('daily')
+    fireEvent.click(screen.getByRole('button', { name: t('settings.close') }))
+    expect(props.onRunNow).not.toHaveBeenCalled()
+    expect(props.onCreate).not.toHaveBeenCalled()
+
+    view.rerender(<HeartbeatCenter {...props} runs={[runs[1]!]} />)
+    expect(screen.getByLabelText(t('center.metrics.ariaLabel'))).toBeVisible()
+    expect(screen.getByText(runs[1]!.error!)).toBeVisible()
+    view.rerender(<HeartbeatCenter {...props} entries={[entry]} />)
+    expect(screen.getByText(entry.summary)).toBeVisible()
+    expect(screen.getByText(memory.content)).toBeVisible()
+    expect(screen.getByText(task.title)).toBeVisible()
+  })
+
   it.each(['daily', 'weekly'])('saves the explicitly configured %s plan and rejects invalid windows', async (frequency) => {
     const props = createProps({ configs: [], runs: [], entries: [] })
     render(<HeartbeatCenter {...props} />, false)
@@ -709,9 +744,11 @@ describe('HeartbeatCenter', () => {
     expect(within(recap).getAllByRole('button', { name: '刷新' })).toHaveLength(1)
     expect(within(recap).queryByText(/暂无自动监督报告|还没有成功回顾/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
-    const reports = screen.getByRole('region', { name: '自动监督报告' })
-    expect(within(reports).queryByText(entry.summary) !== null).toBe(!empty)
-    expect(within(reports).queryByText(/暂无自动监督报告/) !== null).toBe(empty)
+    if (empty) {
+      expect(screen.queryByRole('region', { name: '自动监督报告' })).not.toBeInTheDocument()
+    } else {
+      expect(within(screen.getByRole('region', { name: '自动监督报告' })).getByText(entry.summary)).toBeVisible()
+    }
     expect(screen.queryByText('Successful work review')).not.toBeInTheDocument()
   })
 
@@ -1086,10 +1123,11 @@ describe('HeartbeatCenter', () => {
     const props = createProps(empty ? { configs: [], entries: [], runs: [], memories: [], tasks: [] } : {})
     render(<HeartbeatCenter {...props} />)
     const panel = screen.getByRole('tabpanel', { name: '自动监督' })
-    for (const name of ['当前状态', '报告趋势', '运行记录']) {
-      expect(within(panel).getByRole('heading', { name })).toBeVisible()
+    expect(within(panel).getByRole('heading', { name: '当前状态' })).toBeVisible()
+    for (const name of ['报告趋势', '运行记录']) {
+      expect(within(panel).queryByRole('heading', { name }) !== null).toBe(!empty)
     }
-    expect(panel.querySelector('.heartbeat-center__metrics')).toBeVisible()
+    expect(panel.querySelector('.heartbeat-center__metrics') !== null).toBe(!empty)
     expect(panel.querySelector('.scope-badge')).toBeVisible()
     expect(within(panel).getAllByRole('button', { name: '创建自动监督计划' })).toHaveLength(1)
     expect(panel.querySelectorAll('#heartbeat-panel-overview .empty-state')).toHaveLength(0)

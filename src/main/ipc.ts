@@ -7197,10 +7197,22 @@ export function registerIpcHandlers(
     if (source.resultId !== request.resultId) throw new Error('监督来源与结果不匹配')
     const result = assistantDatabase.getSupervisionResult(request.resultId)
     if (!result) throw new Error('监督结果不存在')
+    const graph = assistantDatabase.getSupervisionGraph({ resultId: request.resultId }) as import('../shared/supervision-contracts').SupervisionGraphView
+    const eventIds = new Set(graph.eventSources.filter((link) => link.source_id === request.sourceId).map((link) => link.event_id))
+    const events = graph.events.filter((item) => eventIds.has(item.id))
+    const entityIds = new Set(graph.eventEntities.filter((link) => events.some((item) => item.id === link.event_id)).map((link) => link.entity_id))
+    const entities = graph.entities.filter((item) => entityIds.has(item.id))
+    const entityLabels = new Map(entities.map((item) => [item.id, item.canonical_label]))
+    const relations = graph.relations.filter((item) => entityLabels.has(item.from_entity_id) && entityLabels.has(item.to_entity_id))
+    const summary = [
+      ...events.map((item) => `事件：${item.title}\n${item.description}`),
+      ...entities.map((item) => `实体：${item.canonical_label}\n${item.description}`),
+      ...relations.map((item) => `关系：${entityLabels.get(item.from_entity_id)} → ${entityLabels.get(item.to_entity_id)}（${item.relation_type}）\n${item.reason}`)
+    ].join('\n\n')
     return {
       source: { title: source.title, sourceType: source.sourceType, sourceId: source.sourceId, content: source.content, occurredAt: source.occurredAt },
-      summary: String(result.summary ?? ''),
-      prompt: `请基于以下监督回顾继续讨论。\n\n回顾摘要：\n${String(result.summary ?? '')}\n\n来源：${source.title}\n${source.content}`
+      summary,
+      prompt: `请基于以下监督回顾继续讨论。${summary ? `\n\n回顾摘要：\n${summary}` : ''}\n\n来源：${source.title}\n${source.content}`
     }
   })
   registerHandler(ipcChannels.supervisionContinue, async (event, input: unknown) => {

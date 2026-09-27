@@ -6188,6 +6188,58 @@ describe('registerIpcHandlers agent terminal state', () => {
     } finally { await harness.dispose(); database.close() }
   })
 
+  it('scopes supervision continuation context to source-linked graph evidence', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const occurredAt = '2026-09-22T10:00:00.000Z'
+    database.saveSupervisionResult({
+      request: { trigger: 'manual', scope: { kind: 'global' }, timeRange: { from: occurredAt, to: occurredAt } },
+      evidence: ['selected', 'unrelated', 'unlinked'].map((id) => ({
+        id, sourceType: 'conversation', sourceId: `${id}-conversation`, title: `${id} source`, content: `${id} snapshot`, occurredAt
+      })),
+      output: {
+        summary: 'Unrelated whole-result summary', changeDigest: 'Unrelated global digest', openItems: ['Unrelated open item'],
+        entities: ['Atlas', 'Beacon', 'Other'].map((id) => ({
+          id, label: id, description: `${id} actual description`, sourceReferenceIds: [id === 'Other' ? 'unrelated' : 'selected']
+        })),
+        events: [
+          { title: 'Linked decision', description: 'Linked event actual description', occurredAt, eventType: 'decision', entityIds: ['Atlas', 'Beacon'], sourceReferenceIds: ['selected'] },
+          { title: 'Unrelated event', description: 'Unrelated event description', occurredAt, eventType: 'discussion', entityIds: ['Other'], sourceReferenceIds: ['unrelated'] }
+        ],
+        entityChanges: [],
+        relations: [
+          { fromEntityId: 'Atlas', toEntityId: 'Beacon', relationType: 'depends-on', reason: 'Linked relation actual reason', sourceReferenceIds: ['selected'] },
+          { fromEntityId: 'Atlas', toEntityId: 'Other', relationType: 'related', reason: 'Unrelated relation reason', sourceReferenceIds: ['unrelated'] }
+        ]
+      }
+    })
+    const harness = createHarness({}, undefined, 'always', undefined, false, undefined, undefined, undefined,
+      false, undefined, undefined, undefined, undefined, database)
+    try {
+      const resultId = database.listSupervisionResults()[0]!.id
+      const graph = database.getSupervisionGraph({ resultId }) as import('../shared/supervision-contracts').SupervisionGraphView
+      const getGraph = vi.spyOn(database, 'getSupervisionGraph')
+      const handler = electronMocks.handlers.get(ipcChannels.supervisionContinueContext)!
+      const sourceId = graph.sources.find((source) => source.title === 'selected source')!.id
+      const context = await handler(trustedEvent(harness.webContents), { resultId, sourceId }) as { prompt: string; summary: string; source: unknown }
+      expect(getGraph).toHaveBeenCalledWith({ resultId })
+      expect(context.source).toEqual({ title: 'selected source', sourceType: 'conversation', sourceId: 'selected-conversation', content: 'selected snapshot', occurredAt })
+      for (const evidence of ['Linked decision', 'Linked event actual description', 'Atlas actual description', 'Beacon actual description', 'depends-on', 'Linked relation actual reason']) {
+        expect(context.summary).toContain(evidence)
+        expect(context.prompt).toContain(evidence)
+      }
+      expect(context.prompt).toContain('selected snapshot')
+      for (const unrelated of ['Unrelated whole-result summary', 'Unrelated global digest', 'Unrelated open item', 'Unrelated event', 'Other actual description', 'Unrelated relation reason', 'unrelated snapshot', 'unlinked snapshot']) {
+        expect(context.summary).not.toContain(unrelated)
+        expect(context.prompt).not.toContain(unrelated)
+      }
+      const unlinkedSourceId = graph.sources.find((source) => source.title === 'unlinked source')!.id
+      const unlinked = await handler(trustedEvent(harness.webContents), { resultId, sourceId: unlinkedSourceId }) as { prompt: string; summary: string }
+      expect(unlinked.summary).toBe('')
+      expect(unlinked.prompt).toBe('请基于以下监督回顾继续讨论。\n\n来源：unlinked source\nunlinked snapshot')
+    } finally { await harness.dispose(); database.close() }
+  })
+
   it.each(['global', 'projects'] as const)('collects supervision within the exact UI timeRange before limits (%s)', async (kind) => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-22T08:00:00.000Z'))

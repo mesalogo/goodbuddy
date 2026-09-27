@@ -46,6 +46,7 @@ export type HeartbeatCenterProps = {
   onRetryApplicationSettings?: () => void
   active?: boolean
   graphNavigation?: SupervisionGraphNavigation
+  onOpenConversation?: (conversationId: string) => void
   configs: AssistantHeartbeatConfig[]
   runs: AssistantHeartbeatRun[]
   entries: AssistantHeartbeatEntry[]
@@ -146,6 +147,7 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
             tab={pageTab}
             onTabChange={setPageTab}
             projects={props.projects}
+            onOpenConversation={props.onOpenConversation}
             onOpenActivity={() => {
               setActivityPlanId('')
               setPageTab('activity')
@@ -395,6 +397,9 @@ function HeartbeatSections({
   )
   const hasHeartbeatData =
     configs.length > 0 || runs.length > 0 || entries.length > 0
+  const hasHeartbeatActivity =
+    runs.length > 0 || entries.length > 0 ||
+    heartbeatMemories.length > 0 || followUpTasks.length > 0
   const heartbeatScope = useMemo<WorkspaceScope>(() => {
     if (
       configs.length === 0 ||
@@ -584,6 +589,7 @@ function HeartbeatSections({
             </div>
           </section>
 
+          {hasHeartbeatActivity && <>
           <dl
             aria-label={t('center.metrics.ariaLabel')}
             className="heartbeat-center__metrics"
@@ -781,10 +787,11 @@ function HeartbeatSections({
             </section>
 
           </div>
+          </>}
         </div>
       )}
 
-      {pageTab === 'plans' && (
+      {hasHeartbeatActivity && (
         <div
           className="heartbeat-center__panel heartbeat-center__suggestions"
           id="heartbeat-panel-suggestions"
@@ -1012,7 +1019,7 @@ function HeartbeatSections({
         </div>
       )}
 
-      {pageTab === 'plans' && (
+      {hasHeartbeatActivity && (
         <div
           className="heartbeat-center__panel"
           id="heartbeat-panel-history"
@@ -1120,7 +1127,7 @@ function HeartbeatSections({
         </div>
       )}
 
-      {pageTab === 'plans' && <section
+      {hasHeartbeatActivity && <section
             aria-labelledby="heartbeat-runs-title"
             className="heartbeat-center__section"
           >

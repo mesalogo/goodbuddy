@@ -146,6 +146,8 @@ Object.defineProperty(window, 'goodbuddy', {
       ? {}
       : {
           supervision: {
+            continueContext: async () => ({ prompt: '模拟讨论上下文：本周已核对交付清单，负责人已确认。\n\n原始依据：模拟会议记录。外部评审时间仍待确认，下一步需要核对验收条件。' }),
+            continue: async () => { throw new Error('Preview fixture must not send a message') },
             execution: async () => ({ active: params.has('activity'), ...(params.has('activity') ? { runId: 'activity-1' } : {}) }),
             batches: async ({ runId, offset, limit }: { runId: string; offset: number; limit: number }) => Array.from({ length: runId === 'activity-0' ? 6 : 12 }, (_, index) => ({
               id: `leaf-${index}`, projectId: index < 3 ? 'Atlas' : 'Beacon', conversationId: `conversation-${Math.floor(index / 2)}`,
@@ -204,6 +206,7 @@ Object.defineProperty(window, 'goodbuddy', {
             entityAction: async () => {},
             relationAction: async () => {},
             source: async () => ({
+              ...(params.has('preview') ? { sourceType: 'conversation', sourceId: 'simulated-conversation-uuid' } : {}),
               title: '模拟会议记录',
               content: '视觉 fixture，不是真实用户数据。',
               occurredAt: '2026-09-21T08:00:00.000Z'
@@ -252,7 +255,7 @@ createRoot(document.getElementById('root')!).render(
         <HeartbeatCenter
           applicationSettings={applicationSettingsSchema.parse({ checkUpdatesOnStartup: true, updateSource: 'github', modelDownloadSource: 'modelscope', localToolEnvironment: defaultLocalToolEnvironmentSettings, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false })}
           onUpdateApplicationSettings={async () => true}
-          configs={menu ? [{ id: 'plan', name: '模拟每日回顾', scope: { kind: 'global' }, timezone: 'Asia/Shanghai', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 48, retentionDays: 90, nextRunAt: '2026-09-24T01:00:00.000Z', createdAt, updatedAt: createdAt }] : []}
+           configs={menu || params.has('plan-only') ? [{ id: 'plan', name: '模拟每日回顾', scope: { kind: 'global' }, timezone: 'Asia/Shanghai', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 48, retentionDays: 90, nextRunAt: '2026-09-24T01:00:00.000Z', createdAt, updatedAt: createdAt }] : []}
           runs={menu ? [{ id: 'run', configId: 'plan', trigger: 'scheduled', scheduledFor: createdAt, status: 'completed', attemptCount: 1, createdAt, updatedAt: createdAt }] : []}
           entries={menu ? [{ id: 'report', configId: 'plan', runId: 'run', scheduledFor: createdAt, summary: '模拟自动监督报告：交付计划已更新，待核对负责人和验收日期。', highlights: ['保留原始依据，核对交付时间。'], proposedMemoryIds: ['memory'], followUpTaskIds: ['task'], createdAt }] : []}
           memories={menu ? [{ id: 'memory', scope: 'global', type: 'preference', content: '模拟建议：周会总结保留负责人和下一次检查日期。', confidence: 0.9, salience: 0.8, status: 'proposed', createdAt, updatedAt: createdAt }] : []}
@@ -267,7 +270,8 @@ createRoot(document.getElementById('root')!).render(
           onSetMemoryStatus={noop}
           onSetTaskStatus={noop}
           onUseFollowUpTask={() => {}}
-          onRetryLoad={noop}
+           onRetryLoad={noop}
+           onOpenConversation={params.has('preview') ? () => { throw new Error('Preview fixture must not navigate') } : undefined}
         />
       </PageShell>}
     </div>

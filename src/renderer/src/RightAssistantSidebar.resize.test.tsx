@@ -154,6 +154,7 @@ function sidebarElement({
   conversationTitles = new Map(),
   supervisionEnabled,
   supervisionLibraries,
+  onOpenSupervisionConversation,
   conversationStats,
   taskDurations,
   selectedTaskId,
@@ -195,6 +196,7 @@ function sidebarElement({
   conversationTitles?: ReadonlyMap<string, string>
   supervisionEnabled?: boolean
   supervisionLibraries?: React.ComponentProps<typeof RightAssistantSidebar>['supervisionLibraries']
+  onOpenSupervisionConversation?: React.ComponentProps<typeof RightAssistantSidebar>['onOpenSupervisionConversation']
   conversationStats?: React.ComponentProps<typeof RightAssistantSidebar>['conversationStats']
   taskDurations?: React.ComponentProps<typeof RightAssistantSidebar>['taskDurations']
   selectedTaskId?: string
@@ -216,6 +218,7 @@ function sidebarElement({
         activeConversationId={activeConversationId}
         supervisionEnabled={supervisionEnabled}
         supervisionLibraries={supervisionLibraries}
+        onOpenSupervisionConversation={onOpenSupervisionConversation}
         conversationStats={conversationStats}
         taskDurations={taskDurations}
         selectedTaskId={selectedTaskId}
@@ -321,33 +324,25 @@ it('shows the task name while following and pinned, without displaying its raw I
   await waitFor(() => expect(overview).toHaveBeenLastCalledWith({ target: { type: 'task', taskId: 'task-uuid' } }))
 })
 
-it.each(['cancel', 'failure'] as const)('retries supervision knowledge preview after %s and shows returned content', async (outcome) => {
-  const knowledgePreview = vi.fn(async () => ({ previewId: 'preview', libraryId: 'library', operation: 'create-entity',
-    entity: { label: 'Returned label', type: 'Returned type', description: 'Returned description', aliases: ['Returned alias'] },
-    source: { title: 'Returned source', content: 'Returned evidence' } }))
-  const knowledgeCommit = vi.fn(async () => ({}))
-  if (outcome === 'failure') knowledgeCommit.mockRejectedValueOnce(new Error('Write failed'))
+it('previews supervision sources without navigating and omits legacy entity writeback controls', async () => {
+  const knowledgePreview = vi.fn()
+  const knowledgeCommit = vi.fn()
+  const onOpenSupervisionConversation = vi.fn()
   Object.assign(window.goodbuddy, { supervision: {
     overview: vi.fn(async () => [{ id: 'result', storyLineId: 'story', sourceId: 'source', summary: 'Summary', scope: { kind: 'global' }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-22T00:00:00Z' } }]),
-    sourceContext: vi.fn(async () => ({ id: 'source', title: 'Source', content: 'Content' })), knowledgePreview, knowledgeCommit
+    sourceContext: vi.fn(async () => ({ id: 'source', title: 'Source', content: 'Content', contextType: 'conversation', conversationId: 'source-conversation' })), knowledgePreview, knowledgeCommit
   } })
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(outcome !== 'cancel').mockReturnValue(true)
-  try {
-    renderSidebar({ activeConversationId: 'conversation', supervisionEnabled: true, supervisionLibraries: [{ id: 'library', name: 'Target library' } as never] })
-    fireEvent.click(await screen.findByRole('button', { name: '查看来源' }))
-    const button = await screen.findByRole('button', { name: '预览并写入实体' })
-    fireEvent.click(button)
-    await waitFor(() => expect(confirm).toHaveBeenCalledOnce())
-    for (const text of ['Target library', 'Returned label', 'Returned type', 'Returned description', 'Returned alias', 'Returned source', 'Returned evidence']) {
-      expect(confirm.mock.calls[0]![0]).toContain(text)
-    }
-    await waitFor(() => expect(button).toBeEnabled())
-    expect(knowledgeCommit).toHaveBeenCalledTimes(outcome === 'cancel' ? 0 : 1)
-    fireEvent.click(button)
-    expect(await screen.findByText('知识实体已写入')).toBeInTheDocument()
-    expect(knowledgePreview).toHaveBeenCalledTimes(2)
-    expect(button).toBeEnabled()
-  } finally { confirm.mockRestore() }
+  renderSidebar({ activeConversationId: 'conversation', supervisionEnabled: true, supervisionLibraries: [{ id: 'library', name: 'Target library' } as never], onOpenSupervisionConversation })
+  fireEvent.click(await screen.findByRole('button', { name: '查看来源' }))
+  expect(await screen.findByText('Content')).toBeInTheDocument()
+  expect(onOpenSupervisionConversation).not.toHaveBeenCalled()
+  const card = within(screen.getByRole('region', { name: '监督反馈' }))
+  expect(card.queryByRole('combobox')).not.toBeInTheDocument()
+  expect(card.queryByRole('button', { name: '预览并写入实体' })).not.toBeInTheDocument()
+  fireEvent.click(card.getByRole('button', { name: '打开会话' }))
+  expect(onOpenSupervisionConversation).toHaveBeenCalledExactlyOnceWith('source-conversation')
+  expect(knowledgePreview).not.toHaveBeenCalled()
+  expect(knowledgeCommit).not.toHaveBeenCalled()
 })
 
 describe('RightAssistantSidebar tab titles', () => {

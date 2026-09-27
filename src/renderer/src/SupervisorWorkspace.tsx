@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { BookOpen, Network, RefreshCw, X } from 'lucide-react'
 import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
 import { EmptyState, PageTabs } from './WorkspacePrimitives'
+import { SupervisionDiscussion } from './SupervisionDiscussion'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 import { heartbeatScopeSchema } from '../../shared/assistant-contracts'
 import {
@@ -20,6 +21,7 @@ type Props = {
   tab?: 'overview' | 'graph' | 'plans' | 'activity' | 'settings'
   projects?: AssistantProject[]
   onOpenActivity?: () => void
+  onOpenConversation?: (conversationId: string) => void
   onTabChange?: (tab: 'overview' | 'graph' | 'plans' | 'activity' | 'settings') => void
 }
 const emptyGraph: SupervisionGraphView = {
@@ -48,7 +50,8 @@ export function SupervisorWorkspace({
   tab = 'overview',
   projects = [],
   onTabChange,
-  onOpenActivity
+  onOpenActivity,
+  onOpenConversation
 }: Props) {
   const { t, i18n } = useTranslation('heartbeat')
   const graphId = useId()
@@ -67,6 +70,7 @@ export function SupervisorWorkspace({
     title: string
     content: string
     occurredAt: string
+    conversationId?: string
   }>()
   const [projectId, setProjectId] = useState('global')
   const [days, setDays] = useState(7)
@@ -442,7 +446,9 @@ export function SupervisorWorkspace({
         id,
         title: String(item.title),
         content: String(item.content),
-        occurredAt: String(item.occurredAt)
+        occurredAt: String(item.occurredAt),
+        conversationId: item.sourceType === 'conversation' && typeof item.sourceId === 'string'
+          ? item.sourceId : undefined
       })
     } catch (reason) {
       if (generation !== loadGeneration.current) return
@@ -1294,7 +1300,24 @@ export function SupervisorWorkspace({
                           <h4>{t('supervisor.sourceSnapshot')}</h4>
                           <p>{source.title}</p>
                           <time>{date(source.occurredAt)}</time>
+                          {source.conversationId && onOpenConversation && (
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => onOpenConversation(source.conversationId!)}
+                            >
+                              {t('supervisor.openConversation')}
+                            </button>
+                          )}
                           <pre>{source.content}</pre>
+                          {source.conversationId && resultId && onOpenConversation && <SupervisionDiscussion
+                            key={`${resultId}:${source.id}:${source.conversationId}`}
+                            resultId={resultId}
+                            sourceId={source.id}
+                            conversationId={source.conversationId}
+                            title={source.title}
+                            onOpenConversation={onOpenConversation}
+                          />}
                         </section>
                       )}
                   </aside>

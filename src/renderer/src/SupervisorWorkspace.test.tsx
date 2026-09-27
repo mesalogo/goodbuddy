@@ -10,6 +10,29 @@ const render = (ui: React.ReactNode) => {
 }
 
 describe('SupervisorWorkspace', () => {
+  it.each(['conversation', 'knowledge'])('opens only conversation sources without replacing the saved %s snapshot', async (sourceType) => {
+    const onOpenConversation = vi.fn()
+    const source = vi.fn(async () => ({ sourceType, sourceId: 'original-conversation', title: 'Original source', content: 'Saved snapshot', occurredAt: result.createdAt }))
+    window.goodbuddy = { supervision: {
+      overview: async () => [result], source,
+      graph: async () => ({ storyLine: null,
+        events: [{ id: 'event', title: 'Event', description: '', occurred_at: result.createdAt }],
+        entities: [], relations: [], eventEntities: [],
+        sources: [{ id: 'source', title: 'Original source', occurred_at: result.createdAt }],
+        eventSources: [{ event_id: 'event', source_id: 'source' }] })
+    } } as never
+    render(<SupervisorWorkspace tab="graph" onOpenConversation={onOpenConversation} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Original source/ }))
+    expect(await screen.findByText('Saved snapshot')).toBeVisible()
+    expect(onOpenConversation).not.toHaveBeenCalled()
+    if (sourceType === 'conversation') {
+      fireEvent.click(screen.getByRole('button', { name: '打开会话' }))
+      expect(onOpenConversation).toHaveBeenCalledWith('original-conversation')
+    } else {
+      expect(screen.queryByRole('button', { name: '打开会话' })).not.toBeInTheDocument()
+    }
+    expect(source).toHaveBeenCalledOnce()
+  })
   it('keeps dated historical content and exact graph selection when configuring and running a new review', async () => {
     const old = { ...result, id: 'old', summary: 'Earlier conclusion.\n\nImportant final conclusion.', changeDigest: 'Confirmed change', openItems: ['Pending decision'], createdAt: '2026-08-22T00:00:00.000Z' }
     let finish!: () => void

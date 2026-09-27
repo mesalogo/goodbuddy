@@ -244,7 +244,6 @@ function SupervisionCardContent({
   taskTitle,
   pinned = false,
   onTogglePinned,
-  supervisionLibraries: libraries,
   onContinueSupervision: onContinue,
   onOpenSupervisionGraph,
   onOpenSupervisionConversation: onOpenConversation
@@ -256,7 +255,9 @@ function SupervisionCardContent({
   const [source, setSource] = useState<Record<string, unknown>>()
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
-  const [libraryId, setLibraryId] = useState(libraries?.[0]?.id ?? '')
+  const [contextPrompt, setContextPrompt] = useState<string>()
+  const [question, setQuestion] = useState('')
+  const busy = useRef(false)
   const targetKey = target ? JSON.stringify(target) : undefined
 
   useEffect(() => {
@@ -272,56 +273,45 @@ function SupervisionCardContent({
   }, [targetKey, refresh])
 
   const openSource = async (sourceId: string): Promise<void> => {
+    if (busy.current) return
+    busy.current = true
     setLoading(true); setMessage('')
     try {
         if (!sourceId) throw new Error('监督结果没有可定位来源')
         const context = await window.goodbuddy.supervision.sourceContext(sourceId)
       if (!mounted.current) return
       setSource(context)
-      if (context.contextType === 'conversation' && context.conversationId) {
-        onOpenConversation?.(String(context.conversationId))
-      }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '来源不可用')
-    } finally { setLoading(false) }
+      if (mounted.current) setMessage(error instanceof Error ? error.message : '来源不可用')
+    } finally { busy.current = false; if (mounted.current) setLoading(false) }
   }
 
   const continueDiscussion = async (): Promise<void> => {
-    if (!result || !source || !activeConversationId || !onContinue) return
+    if (!result || !activeConversationId || !onContinue || busy.current) return
+    busy.current = true
     setLoading(true); setMessage('')
     try {
-      const preview = await window.goodbuddy.supervision.continueContext({ sourceId: String(source.id), resultId: result.id })
+      const sourceId = String(result.sourceId ?? '')
+      if (!sourceId) throw new Error('监督结果没有可定位来源')
+      const preview = await window.goodbuddy.supervision.continueContext({ sourceId, resultId: result.id })
       if (!mounted.current) return
-      if (!window.confirm(`确认将以下监督上下文发送到会话「${conversationTitle ?? activeConversationId}」 (${activeConversationId})？\n\n` + String(preview.prompt ?? ''))) return
-      await onContinue(String(preview.prompt ?? ''), activeConversationId)
-    } catch (error) { setMessage(error instanceof Error ? error.message : '继续讨论失败') }
-    finally { setLoading(false) }
+      if (typeof preview.prompt !== 'string' || !preview.prompt.trim()) throw new Error(t('supervisor.discussion.empty'))
+      setContextPrompt(preview.prompt)
+      setQuestion(t('supervisor.discussion.defaultQuestion'))
+    } catch (error) { if (mounted.current) setMessage(error instanceof Error ? error.message : '继续讨论失败') }
+    finally { busy.current = false; if (mounted.current) setLoading(false) }
   }
 
-  const commitEntity = async (): Promise<void> => {
-    if (!result || !source || !libraryId) return
+  const sendDiscussion = async (): Promise<void> => {
+    if (!contextPrompt || !question.trim() || !activeConversationId || !onContinue || busy.current) return
+    busy.current = true
     setLoading(true); setMessage('')
     try {
-      const preview = await window.goodbuddy.supervision.knowledgePreview({
-        operation: 'create-entity', libraryId, label: '监督回顾', type: '概念',
-        description: String(result.summary ?? ''), aliases: [], sourceId: String(source.id)
-      })
-      const nextPreviewId = String(preview.previewId ?? '')
+      await onContinue(`${contextPrompt}\n\n${question}`, activeConversationId)
       if (!mounted.current) return
-      const entity = preview.entity as Record<string, unknown>
-      const evidence = preview.source as Record<string, unknown>
-      if (window.confirm([
-        '确认写入以下知识实体预览？',
-        `知识库：${libraries?.find((library) => library.id === preview.libraryId)?.name ?? preview.libraryId}`,
-        `名称：${entity.label}`, `类型：${entity.type}`,
-        `描述：${entity.description}`, `别名：${(entity.aliases as string[]).join('、') || '无'}`,
-        `来源：${evidence.title}`, String(evidence.content ?? '')
-      ].join('\n\n'))) {
-        await window.goodbuddy.supervision.knowledgeCommit({ previewId: nextPreviewId })
-        setMessage('知识实体已写入')
-      }
-    } catch (error) { setMessage(error instanceof Error ? error.message : '知识库提交失败') }
-    finally { setLoading(false) }
+      setContextPrompt(undefined); setQuestion('')
+    } catch (error) { if (mounted.current) setMessage(error instanceof Error ? error.message : '继续讨论失败') }
+    finally { busy.current = false; if (mounted.current) setLoading(false) }
   }
 
   return <section className="assistant-sidebar__section supervision-card" aria-label="监督反馈">
@@ -329,7 +319,7 @@ function SupervisionCardContent({
       <h3>监督反馈</h3>
       <div className="supervision-card__actions">
         {onTogglePinned && <button type="button" className={`icon-button${pinned ? ' icon-button--active' : ''}`} aria-label={pinned ? '取消固定监督目标' : '固定监督目标'} title={pinned ? '取消固定监督目标' : '固定监督目标'} aria-pressed={pinned} disabled={!target} onClick={onTogglePinned}><Pin aria-hidden="true" size={14} /></button>}
-        <button type="button" className="icon-button" aria-label="刷新监督回顾" title="刷新监督回顾" disabled={!target || loading} onClick={() => { setResult(undefined); setSource(undefined); setMessage(''); setRefresh((value) => value + 1) }}><RefreshCw aria-hidden="true" size={14} /></button>
+        <button type="button" className="icon-button" aria-label="刷新监督回顾" title="刷新监督回顾" disabled={!target || loading} onClick={() => { setResult(undefined); setSource(undefined); setContextPrompt(undefined); setQuestion(''); setMessage(''); setRefresh((value) => value + 1) }}><RefreshCw aria-hidden="true" size={14} /></button>
       </div>
     </div>
     {target && <p className="supervision-card__target" title={target.type === 'conversation' ? target.conversationId : target.taskId}>{pinned ? '已固定 · ' : ''}{target.type === 'conversation' ? `会话：${conversationTitle?.trim() || '未命名会话'}` : `任务：${taskTitle?.trim() || '未命名任务'}`}</p>}
@@ -340,10 +330,21 @@ function SupervisionCardContent({
       <div className="supervision-card__actions">
         {onOpenSupervisionGraph && <button type="button" className="secondary-button" onClick={() => onOpenSupervisionGraph(result.id)}>{t('supervisor.viewInGraph')}</button>}
         <button type="button" className="secondary-button" disabled={loading} onClick={() => void openSource(String((result as Record<string, unknown>).sourceId ?? ''))}>查看来源</button>
-        <button type="button" className="primary-button" disabled={loading || !activeConversationId || !source} title={!activeConversationId ? '没有当前会话，无法继续讨论' : undefined} onClick={() => void continueDiscussion()}>继续讨论</button>
+        <button type="button" className="primary-button" disabled={loading || !activeConversationId || !onContinue || contextPrompt !== undefined} title={!activeConversationId ? '没有当前会话，无法继续讨论' : undefined} onClick={() => void continueDiscussion()}>{t('supervisor.discussion.start')}</button>
       </div>
-      {source && <div className="supervision-card__source"><strong>{String(source.title ?? '来源')}</strong><p>{String(source.content ?? source.error ?? '')}</p>{source.error !== undefined && <small>{String(source.error)}</small>}</div>}
-      {libraries && libraries.length > 0 && source && <div className="supervision-card__actions"><select aria-label="选择知识库" value={libraryId} onChange={(event) => setLibraryId(event.target.value)}>{libraries.map((library) => <option key={library.id} value={library.id}>{library.name}</option>)}</select><button type="button" className="secondary-button" disabled={loading} onClick={() => void commitEntity()}>预览并写入实体</button></div>}
+      {source && <div className="supervision-card__source"><strong>{String(source.title ?? '来源')}</strong><p>{String(source.content ?? source.error ?? '')}</p>{source.error !== undefined && <small>{String(source.error)}</small>}
+        {source.contextType === 'conversation' && Boolean(source.conversationId) && onOpenConversation && <button type="button" className="secondary-button" disabled={loading} onClick={() => onOpenConversation(String(source.conversationId))}>{t('supervisor.openConversation')}</button>}
+      </div>}
+      {contextPrompt !== undefined && <div className="supervision-card__source">
+        <p title={activeConversationId}>{t('supervisor.discussion.target', { title: conversationTitle?.trim() || '未命名会话' })}</p>
+        <label className="field"><span>{t('supervisor.discussion.question')}</span><textarea rows={3} value={question} disabled={loading} onChange={(event) => setQuestion(event.target.value)} /></label>
+        <p>{t('supervisor.discussion.contextHint')}</p>
+        <div className="supervision-card__actions">
+          <button type="button" className="secondary-button" disabled={loading} onClick={() => { setContextPrompt(undefined); setQuestion(''); setMessage('') }}>{t('supervisor.cancel')}</button>
+          <button type="button" className="primary-button" disabled={loading || !question.trim() || !activeConversationId || !onContinue} onClick={() => void sendDiscussion()}>{t(loading ? 'supervisor.discussion.sending' : 'supervisor.discussion.send')}</button>
+        </div>
+      </div>}
+      {loading && <p role="status">{t('supervisor.discussion.loading')}</p>}
       {message && <p role="status">{message}</p>}
     </>}
   </section>

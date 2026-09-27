@@ -11205,6 +11205,7 @@ function App(): React.JSX.Element {
                         onRetryApplicationSettings={() => void reloadApplicationSettings()}
                         active={view === 'heartbeat'}
                         graphNavigation={supervisionGraphNavigation}
+                        onOpenConversation={openActivityConversation}
                         configs={assistantHeartbeats}
                         entries={heartbeatEntries}
                         loadError={heartbeatLoadError}
@@ -11527,12 +11528,13 @@ function App(): React.JSX.Element {
                 commitView('heartbeat');
               });
             }}
-            onOpenSupervisionConversation={(conversationId) => setActiveId(conversationId)}
+            onOpenSupervisionConversation={openActivityConversation}
             onContinueSupervision={async (prompt, conversationId) => {
               await window.goodbuddy.supervision.continue({
                 conversationId,
                 prompt,
               })
+              openActivityConversation(conversationId)
             }}
             onCreateCustomTask={() => openCustomTaskDialog("current")}
             schedules={assistantSchedules}

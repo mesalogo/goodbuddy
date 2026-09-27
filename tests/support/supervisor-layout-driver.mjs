@@ -229,8 +229,8 @@ app
             })()`)
             assert(report.pageWidth <= width && report.scrollWidth <= report.clientWidth, 'Recap/automatic overflow')
             assert.equal(report.refresh, 1, 'One refresh owner per panel')
-            assert.equal(report.reports, tab === 'plans')
-            assert.equal(report.suggestions, tab === 'plans')
+            assert.equal(report.reports, tab === 'plans' && scenario === 'populated')
+            assert.equal(report.suggestions, tab === 'plans' && scenario === 'populated')
             assert.equal(report.recap, tab === 'overview' && scenario !== 'empty')
             if (tab === 'overview') {
               assert(!report.text.includes('暂无自动监督报告') && !report.text.includes('待确认记忆'))
@@ -240,13 +240,13 @@ app
                 assert(report.clientWidth - report.proseWidth <= 50, 'Prose fills the panel within card padding')
               } else assert(report.text.includes('还没有成功回顾'))
             } else {
-              assert.equal(report.text.includes('暂无自动监督报告'), scenario !== 'populated')
-              assert(report.text.includes('自动监督报告'))
+              assert(!report.text.includes('暂无自动监督报告'))
+              assert.equal(report.text.includes('自动监督报告'), scenario === 'populated')
             }
             reports.push({ scenario, tab, ...report })
             const prefix = `recap-${scenario}-${tab}-${width}`
             await writeFile(join(artifacts, `${prefix}.png`), (await win.webContents.capturePage()).toPNG())
-            if (tab === 'plans') {
+            if (tab === 'plans' && scenario === 'populated') {
               for (const anchor of ['heartbeat-memory-title', 'heartbeat-reports-title', 'heartbeat-runs-title']) {
                 await js(`document.getElementById('${anchor}').scrollIntoView({block:'start'})`)
                 if (anchor === 'heartbeat-reports-title' && scenario === 'populated') await js(`document.querySelector('#heartbeat-panel-history button[aria-expanded=false]')?.click()`)
@@ -277,8 +277,9 @@ app
       return
     }
     if (process.env.GOODBUDDY_SUPERVISOR_AUTOMATIC_OVERVIEW) {
-      for (const empty of [false, true]) {
-        await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + (empty ? '' : '?menu=1'))
+      for (const scenario of ['populated', 'empty', 'plan-only']) {
+        const empty = scenario !== 'populated'
+        await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + (scenario === 'populated' ? '?menu=1' : scenario === 'plan-only' ? '?plan-only=1' : ''))
         await wait('!!document.querySelector("#supervisor-tab-plans")')
         await js('document.fonts.ready')
         await js('document.documentElement.dataset.theme = "light"')
@@ -295,22 +296,27 @@ app
                 overview: !!panel.querySelector('#heartbeat-panel-overview'),
                 metrics: !!panel.querySelector('.heartbeat-center__metrics'),
                 trend: !!panel.querySelector('#heartbeat-trend-title'),
-                audit: !!panel.querySelector('#heartbeat-runs-title'),
+                 audit: !!panel.querySelector('#heartbeat-runs-title'),
+                 reports: !!panel.querySelector('#heartbeat-reports-title'),
+                 suggestions: !!panel.querySelector('#heartbeat-panel-suggestions'),
+                 emptyReports: panel.textContent.includes('暂无自动监督报告'),
                 plans: !!panel.querySelector('#heartbeat-panel-plans'),
                 create: [...panel.querySelectorAll('button')].filter(b => b.textContent === '创建自动监督计划').length,
                 emptyStates: panel.querySelectorAll('#heartbeat-panel-overview .empty-state').length,
                 activity: panel.querySelectorAll('.supervisor-activity__item').length };
             })()`)
             assert(report.pageWidth <= width && report.scrollWidth <= report.panelWidth, 'Automatic panel overflow')
-            for (const key of ['overview', 'metrics', 'trend', 'audit', 'plans']) assert.equal(report[key], tab === 'plans', key)
+            for (const key of ['overview', 'plans']) assert.equal(report[key], tab === 'plans', key)
+            for (const key of ['metrics', 'trend', 'audit', 'reports', 'suggestions']) assert.equal(report[key], tab === 'plans' && !empty, key)
+            assert.equal(report.emptyReports, false)
             assert.equal(report.create, tab === 'plans' ? 1 : 0)
             assert.equal(report.emptyStates, 0)
             if (tab === 'activity') assert.equal(report.activity, 3)
-            reports.push({ empty, tab, ...report })
-            const prefix = `automatic-${empty ? 'empty' : 'populated'}-${tab}-light-${width}`
+            reports.push({ scenario, empty, tab, ...report })
+            const prefix = `automatic-${scenario}-${tab}-light-${width}`
             await writeFile(join(artifacts, `${prefix}.png`), (await win.webContents.capturePage()).toPNG())
             if (tab === 'plans') {
-              for (const anchor of ['heartbeat-trend-title', 'heartbeat-runs-title']) {
+              for (const anchor of empty ? [] : ['heartbeat-trend-title', 'heartbeat-runs-title']) {
                 await js(`document.getElementById('${anchor}').scrollIntoView({block:'start'})`)
                 await settle()
                 await writeFile(join(artifacts, `${prefix}-${anchor}.png`), (await win.webContents.capturePage()).toPNG())
@@ -335,6 +341,45 @@ app
       }
       assert.deepEqual(errors, [])
       await writeFile(join(artifacts, 'automatic-overview-measurements.json'), JSON.stringify(reports, null, 2))
+      await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + '?preview=1')
+      await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
+      await js('document.querySelector("#supervisor-tab-graph").click()')
+      await wait('!!document.querySelector(".supervisor-workspace__map")')
+      await js(`document.querySelector('.supervisor-workspace__map [aria-label="观察工作过程"]').dispatchEvent(new MouseEvent('click', {bubbles:true}))`)
+      await settle()
+      await js('document.querySelector(".supervisor-workspace__detail > .link-button").click()')
+      await wait('!!document.querySelector(".supervisor-discussion > button")')
+      await js('document.querySelector(".supervisor-discussion > button").click()')
+      await wait('!!document.querySelector(".supervisor-discussion textarea")')
+      await js('document.fonts.ready')
+      const previews = []
+      for (const theme of ['light', 'dark']) {
+        await js(`document.documentElement.dataset.theme = '${theme}'`)
+        for (const width of [1440, 390]) {
+          win.setContentSize(width, 1100)
+            await js(`document.querySelector('.supervisor-discussion').scrollIntoView({block:'center'})`)
+            await settle()
+            const report = await js(`(() => {
+              const preview = document.querySelector('.supervisor-discussion');
+              const box = e => { const r = e.getBoundingClientRect(); return {left:r.left, right:r.right, top:r.top, bottom:r.bottom}; };
+              return { width:innerWidth, pageWidth:document.documentElement.scrollWidth,
+                clientWidth:preview.clientWidth, scrollWidth:preview.scrollWidth,
+                question:preview.querySelector('textarea').value, text:preview.textContent,
+                controls:[...preview.querySelectorAll('textarea, button')].map(box) };
+            })()`)
+            assert(report.pageWidth <= width && report.scrollWidth <= report.clientWidth, 'Discussion preview overflow')
+            assert(report.question.trim() && report.text.includes('模拟会议记录'), 'Discussion question and destination visible')
+            assert(report.controls.every(box => box.left >= 0 && box.right <= width && box.top >= 0 && box.bottom <= 1100), 'Preview controls fit viewport')
+            assert(await js('!document.querySelector(".supervisor-discussion [role=alert]")'), 'Preview loads without error')
+            assert(await js('!document.querySelector(".supervisor-discussion details")'), 'No redundant context disclosure')
+            previews.push({ theme, ...report })
+            await writeFile(join(artifacts, `discussion-preview-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
+        }
+      }
+      await js('document.querySelector(".supervisor-discussion .secondary-button").click()')
+      await wait('!document.querySelector(".supervisor-discussion textarea")')
+      assert.deepEqual(errors, [])
+      await writeFile(join(artifacts, 'discussion-preview-measurements.json'), JSON.stringify(previews, null, 2))
       console.log(JSON.stringify({ artifacts, cases: reports.length, errors }))
       win.destroy()
       app.quit()
