@@ -78,6 +78,7 @@ async function createDistribution(version = '1.5.47'): Promise<{
     'let j=(0,atn.default)();j.use(atn.default.json()),j.get("/state"',
     'listen(i,async()=>{console.log(Ht.green(`Server started on http://localhost:${i}`))',
     'async function SCt(e){return n5e||',
+    'async checkAndAutoUpdate(){throw new Error("Update check reached")}',
     'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}',
     'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}',
     'function Sin(e,t){let n=[];n.push({role:"system",content:t});let r=oot(e);return n.push(...r),n}',
@@ -230,6 +231,20 @@ describe('ContinueHostAdapter', () => {
     expect(bootstrap).toContain(
       'process.argv = process.argv.slice(2)'
     )
+  })
+
+  it('skips update work and checking state when updates are disabled', async () => {
+    const distribution = await createDistribution()
+    const adapter = new ContinueHostAdapter({ binaryPath: distribution.entryPath, configPath: '', workspace: process.cwd(), cacheRoot: distribution.cacheRoot, trustedBundleHashes: [distribution.sourceHash] })
+    const prepared = await adapter.getPreparedHost()
+    const bundle = await readFile(join(prepared.entryPath, '..', 'index.js'), 'utf8')
+    const method = bundle.slice(bundle.indexOf('async checkAndAutoUpdate(){'), bundle.indexOf(';shouldUseResponsesEndpoint'))
+    const service = new Function('process', `return {${method}}`)({ env: { GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1' } })
+    service.setState = vi.fn()
+    await service.checkAndAutoUpdate()
+    expect(service.setState).toHaveBeenCalledExactlyOnceWith({ autoUpdate: false, status: 'idle', message: 'Continue CLI', isUpdateAvailable: false })
+    const enabled = new Function('process', `return {${method}}`)({ env: {} })
+    await expect(enabled.checkAndAutoUpdate()).rejects.toThrow('Update check reached')
   })
 
   it('rejects unsupported Continue versions without patching them', async () => {

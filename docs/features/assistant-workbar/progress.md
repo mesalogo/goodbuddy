@@ -1,5 +1,85 @@
 # 工作栏实现与验证进度
 
+## 2026-09-27 Continue Update Status
+
+The shared Continue adapter now skips the update service before it emits the
+checking state; behavior is specified in the [native client design](./runtime-native-client-proposal.md#62-continue-与-opencode).
+The regression executes the patched method and verifies idle-only state when
+disabled, while retaining the original path when the flag is absent.
+
+- Windows production coordinator/PTY and real DS browser validation completed:
+  Continue made 2 supplier requests, OpenCode 1, and DS Web 2; all five returned
+  HTTP 200 and the clients displayed the expected answers. Captured terminal
+  output contained no `Checking for updates`. Original settings stayed byte-identical.
+- Current adapter source was bundled and uploaded through pinned-identity SSH to
+  the shared Linux x64 Host, under a dedicated `/root/tmp/gb-update-check-*`
+  directory. Continue 1.5.47 reached its initialized Ask TUI and displayed
+  `Continue CLI`; 15 seconds of PTY capture contained no update-check text.
+  This startup check made zero model calls and did not run the Agent protocol or
+  remote model bridge. Agent helper imports this same adapter, but complete
+  remote shortcut and real-model acceptance remain unfinished.
+- Adapter tests: 30 passed. Repository typecheck and lint passed. Full `npm test`
+  reached the tool's 600-second limit without a final summary; it is not recorded
+  as a passing full run.
+
+Evidence is in the local temporary `opencode/dsh-017-verify` directory:
+`update-check-evidence.json`, `update-check-main-result.json`, and
+`remote-pty-run.cjs`. The local action/IPC harness uses jsdom and simulated
+Electron transport with real child clients. It does not reproduce or rule out
+full desktop-window freezing. The inherited TLS verification override and lack
+of a complete background-network capture also limit the evidence.
+
+### Full production App follow-up
+
+A fresh `npm run build` passed. The resulting production Main, Preload and
+Renderer were launched in an isolated Windows Electron profile. Native mouse
+input selected Continue and opened its terminal; native text input and Enter
+submitted a minimal request. The actual Continue output contained the expected
+joined answer and no `Checking for updates`. Main HTTP dispatch instrumentation
+recorded two additional provider requests, both HTTP 200: this fix's validation
+now totals seven external model requests. A subsequent no-submit probe copied
+initialized TUI content and typed input from the active xterm buffer.
+
+Early driver attempts targeted a restored inactive terminal, giving an empty
+clipboard; selecting the newly opened terminal resolved this without product
+changes. Another attempt sent Enter before focus/input settled and dispatched
+zero requests. These harness failures are not product freeze fixes. The full App
+remained callable and accepted terminal input in the successful runs; the user's
+original freeze has not been reproduced or uniquely diagnosed. Captured PNGs
+have not been visually reviewed. The production TLS policy still enabled the
+verification override, despite the launcher's strict environment setting.
+
+Local evidence: `full-app-model-events.json`, `full-app-calls.json`,
+`full-app-buffer.txt` and the `full-app*.cjs` drivers in the same temporary folder.
+The isolated profile was removed after checking that no probe-owned Electron or
+Node processes remained; the separate diagnostic evidence was retained.
+The full-suite rerun completed in 734 seconds: 5,298 passed,
+86 skipped and 3 failed tests, plus one failed suite setup. Failures were the
+OpenCode isolation fixture (`spawnSync npm.cmd EINVAL`), Magic Notes layout's
+90-second timeout, and two HeartbeatCenter tablist assertions. These files were
+not changed here; this is not an all-green suite. Original runtime settings were
+byte-identical after the full-App probes, and no probe-owned processes remained.
+Remote shortcut integration and full Agent/model acceptance remain outstanding.
+
+### Failure triage follow-up
+
+The OpenCode isolation and native Magic Notes layout files passed together through
+`npm test` (8 tests). The earlier full-suite supervisor invoked Vitest directly,
+without npm's launcher environment; its OpenCode setup error did not recur through
+the npm entry point. The layout timeout also did not recur. These focused results
+do not replace the failed full-suite result.
+
+Both HeartbeatCenter language cases still fail independently. Source inspection
+shows the graph contains a separate, named PageTabs for events/entities/relations
+inside the page-level tabs; the older test assumes there can only be one tablist
+anywhere on the page. Neither that feature nor its test was changed for this
+Continue fix. No unrelated UI change or assertion relaxation was made.
+
+The retained full-App log contains no matching unresponsive, crash, timeout or
+maximum-update-depth errors. This does not establish the cause of the reported
+freeze. This follow-up made zero external model requests (the fix-validation total
+remains seven); the OpenCode regression uses loopback model fixtures.
+
 ## 2026-09-27 Local Native Client Validation
 
 Scope: [native client proposal](./runtime-native-client-proposal.md), FR-2/3/5/6/7/8,

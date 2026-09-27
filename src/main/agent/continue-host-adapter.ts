@@ -893,6 +893,7 @@ export class ContinueHostAdapter {
       'listen(i,async()=>{console.log(Ht.green(`Server started on http://localhost:${i}`))'
     const versionCheckMarker =
       'async function SCt(e){return n5e||'
+    const updateServiceMarker = 'async checkAndAutoUpdate(){'
     const responseRoutingMarker =
       'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}'
     const modelConfigurationMarker =
@@ -956,6 +957,11 @@ export class ContinueHostAdapter {
       patched,
       versionCheckMarker,
       'async function SCt(e){if(process.env.GOODBUDDY_DISABLE_CONTINUE_UPDATES==="1")return null;return n5e||'
+    )
+    patched = replaceExactly(
+      patched,
+      updateServiceMarker,
+      `${updateServiceMarker}if(process.env.GOODBUDDY_DISABLE_CONTINUE_UPDATES==="1"){this.setState({autoUpdate:!1,status:"idle",message:"Continue CLI",isUpdateAvailable:!1});return;}`
     )
     patched = replaceExactly(
       patched,

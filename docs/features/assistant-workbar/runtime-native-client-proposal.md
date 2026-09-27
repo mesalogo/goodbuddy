@@ -205,6 +205,8 @@ Skills/MCP 配置，避免继承测试机器的全局默认模型。
 模拟键入一段含凭据的启动命令。退出 CLI 后是否保留终端输出沿用既有终端体验；其桥接应
 随 CLI 生命周期收束，不等到整个聊天结束。
 
+Continue 的共享宿主适配器在 `GOODBUDDY_DISABLE_CONTINUE_UPDATES=1` 时，直接让更新服务保持 idle，并显示 `Continue CLI`，不进入 checking 状态。仅跳过底层版本查询仍会短暂显示 `Checking for updates`，因此服务入口和版本查询两处都需跳过。本地原生终端与 Agent Continue helper 使用同一适配器；已有缓存按补丁内容哈希重新生成。实测范围见[更新提示验证记录](./progress.md#2026-09-27-continue-update-status)。
+
 模型桥作为客户端会话资源保持有效。复用前检查当前桥接是否依赖单轮请求、单一消息 ID
 或短时授权；必要时只提取所需的会话级资源接口。真实供应商密钥不写入 CLI 配置，客户端
 仅获得桥接所需的局部连接信息。
