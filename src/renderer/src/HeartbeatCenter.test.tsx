@@ -205,13 +205,23 @@ describe('HeartbeatCenter', () => {
     expect(screen.getByRole('button', { name: t('supervisor.run') })).toBeEnabled()
     expect(screen.getByRole('combobox', { name: t('supervisor.scope') })).toBeVisible()
     expect(screen.queryByText(t('supervisor.sourcesHint'))).not.toBeInTheDocument()
-    for (const key of ['supervisor.recap', 'supervisor.graph', 'supervisor.automatic', 'activity.title', 'supervisor.settings']) {
-      fireEvent.click(screen.getByRole('tab', { name: t(key) }))
+    const pageTabKeys = ['supervisor.recap', 'supervisor.graph', 'supervisor.automatic', 'activity.title', 'supervisor.settings']
+    for (const key of pageTabKeys) {
+      const navigation = screen.getByRole('tablist', { name: t('supervisor.navigation') })
+      expect(within(navigation).getAllByRole('tab')).toEqual(pageTabKeys.map((tabKey) => within(navigation).getByRole('tab', { name: t(tabKey) })))
+      const activeTab = within(navigation).getByRole('tab', { name: t(key) })
+      fireEvent.click(activeTab)
       const panel = screen.getByRole('tabpanel', { name: t(key) })
+      expect(within(navigation).getAllByRole('tab', { selected: true })).toEqual([activeTab])
+      expect(activeTab).toHaveAttribute('aria-controls', panel.id)
+      expect(panel).toHaveAttribute('aria-labelledby', activeTab.id)
       expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
       expect(within(panel).queryByRole('heading', { name: t(key) })).not.toBeInTheDocument()
-      expect(screen.getAllByRole('tablist')).toHaveLength(1)
-      expect(within(panel).queryByRole('tablist')).not.toBeInTheDocument()
+      expect(within(panel).queryByRole('tablist', { name: t('supervisor.navigation') })).not.toBeInTheDocument()
+      if (key !== 'supervisor.graph') {
+        expect(screen.getAllByRole('tablist')).toEqual([navigation])
+        expect(within(panel).queryByRole('tablist')).not.toBeInTheDocument()
+      }
       if (key === 'supervisor.settings') {
         expect(within(panel).queryByRole('button', { name: t('center.actions.refreshAriaLabel') })).not.toBeInTheDocument()
         expect(panel.querySelector('.scope-badge')).not.toBeInTheDocument()
@@ -220,6 +230,30 @@ describe('HeartbeatCenter', () => {
         expect(within(panel).getByRole('button', { name: t('center.actions.refresh') })).toBeVisible()
       }
       if (key === 'supervisor.graph') {
+        const graphNavigation = within(panel).getByRole('tablist', { name: t('supervisor.selection') })
+        expect(screen.getAllByRole('tablist')).toEqual([navigation, graphNavigation])
+        expect(within(panel).getAllByRole('tablist')).toEqual([graphNavigation])
+        const graphTabs = ['event', 'entity', 'relation'].map((kind) =>
+          within(graphNavigation).getByRole('tab', { name: `${t(`supervisor.listTabs.${kind}`)} ${kind === 'event' ? 1 : 0}` })
+        )
+        expect(within(graphNavigation).getAllByRole('tab')).toEqual(graphTabs)
+        expect(within(graphNavigation).getAllByRole('tab', { selected: true })).toEqual([graphTabs[0]])
+        for (const [index, graphTab] of graphTabs.entries()) {
+          if (index > 0) fireEvent.keyDown(graphTabs[index - 1]!, { key: 'ArrowRight' })
+          expect(within(graphNavigation).getAllByRole('tab', { selected: true })).toEqual([graphTab])
+          expect(graphTab).toHaveAttribute('tabindex', '0')
+          if (index > 0) expect(graphTab).toHaveFocus()
+          const graphPanel = within(panel).getByRole('tabpanel')
+          expect(graphPanel).toHaveAccessibleName(graphTab.textContent!)
+          expect(graphTab).toHaveAttribute('aria-controls', graphPanel.id)
+          expect(graphPanel).toHaveAttribute('aria-labelledby', graphTab.id)
+          if (index === 0) {
+            expect(within(graphPanel).getByRole('button', { name: /Review event/ })).toBeVisible()
+          } else {
+            expect(within(graphPanel).getByText(t('supervisor.listEmpty'))).toBeVisible()
+          }
+          expect(within(navigation).getAllByRole('tab', { selected: true })).toEqual([activeTab])
+        }
         expect(within(panel).getByRole('region', { name: t('supervisor.canvas') })).toBeVisible()
         expect(within(panel).getByRole('heading', { name: t('supervisor.inspector') })).toBeVisible()
         expect(within(panel).getByText(`${t('supervisor.graphScope')}: ${t('center.scope.global')}`)).toBeVisible()

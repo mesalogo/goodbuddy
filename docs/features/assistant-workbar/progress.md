@@ -78,11 +78,16 @@ without npm's launcher environment; its OpenCode setup error did not recur throu
 the npm entry point. The layout timeout also did not recur. These focused results
 do not replace the failed full-suite result.
 
-Both HeartbeatCenter language cases still fail independently. Source inspection
+Both HeartbeatCenter language cases failed independently at that point. Source inspection
 shows the graph contains a separate, named PageTabs for events/entities/relations
 inside the page-level tabs; the older test assumes there can only be one tablist
 anywhere on the page. Neither that feature nor its test was changed for this
 Continue fix. No unrelated UI change or assertion relaxation was made.
+
+A separate 2026-09-27 follow-up corrected the navigation scope assertions after
+checking the graph design. HeartbeatCenter, SupervisorWorkspace and shared tab
+tests passed together (96 tests); the full suite was not rerun. See the
+[validation record](../../quality/responsive-controls-review-2026-09-27.md#heartbeatcenter-断言修复).
 
 The retained full-App log contains no matching unresponsive, crash, timeout or
 maximum-update-depth errors. This does not establish the cause of the reported

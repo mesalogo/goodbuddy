@@ -97,7 +97,23 @@ Electron 浮层回归共 331 项通过，包含窄侧栏 Escape 隔离与 MCP �
 1 个 tablist，并要求内容面板内没有 tablist；但图谱有事件数据时，
 `SupervisorWorkspace.tsx:677` 已渲染事件、实体、关系的内层 `PageTabs`，实际总数为 2。
 未带本轮改动的 HEAD `11facf0` 使用相同依赖独立执行该文件，也得到 40 通过、2 失败。
-本次保留组件与断言，后续需按图谱导航设计确认测试范围；没有将预期数量直接改为 2。
+当时保留组件与断言；后续修复及定向验证见下节。
+
+### HeartbeatCenter 断言修复
+
+2026-09-27 后续核对[监督者 UI 设计](../features/conversation-supervision/ui-design.md#故事线图谱)、
+`HeartbeatCenter`、`SupervisorWorkspace` 和共享 `PageTabs`：顶层导航与图谱分类导航各有
+独立可访问名称，图谱内层页签符合设计。修改前按测试名称复跑，中英文均在原第 213 行失败。
+
+测试现按 role 和可访问名称分别定位两层导航，核对顶层五页签、图谱事件/实体/关系及数量、
+唯一选中态和 tab/panel 双向关联；方向键切换内层页签时检查焦点、事件内容或分类空态，
+并确认顶层仍选中故事线图谱。非图谱页面继续断言没有内层 tablist，原有标题、范围和操作
+断言保留。生产代码未改；设计文档澄清“一套 PageTabs”指顶层导航。
+
+`npm test -- src/renderer/src/HeartbeatCenter.test.tsx src/renderer/src/SupervisorWorkspace.test.tsx src/renderer/src/WorkspacePrimitives.test.tsx`
+通过 3 文件、96 项，包含 HeartbeatCenter 全部 42 项。`npm run typecheck` 通过；
+`npm run lint` 首次超过 60 秒执行时限，提高时限重跑后通过。本轮未重新运行全仓测试，
+上表历史全量结果及跳过项保持原记录。
 
 ### Electron 结果与未测范围
 
@@ -107,7 +123,7 @@ overlay 文件 3 项通过，包含 MCP 四种主题/窗口/浏览器场景、�
 这些样式与 MCP 驱动的模型请求尝试为 0。全仓另有隔离的 403 fixture 输出，每种凭据来源
 各记录 1 次请求；这不作为真实模型生成证据，也不据此声称全仓外部调用总数为 0。
 
-剩余失败为上述两项 HeartbeatCenter 既有断言。全仓跳过的 11 文件、83 项仍未形成通过证据。
+当时剩余的两项 HeartbeatCenter 断言已由上述定向验证确认修复。全仓跳过的 11 文件、83 项仍未形成通过证据。
 本次没有运行生产构建、打包、macOS/Linux 验证、远程 Agent 实机或外部 MCP 连接；
 未覆盖强制颜色、完整系统缩放/200% 字号矩阵、原生 select 弹出菜单的鼠标选项选择，
 也未将组件 fixture 当作全部 App 业务入口验收。部分 Electron 驱动关闭了 Windows
