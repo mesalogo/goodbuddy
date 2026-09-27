@@ -413,27 +413,27 @@
   padding: var(--space-4);
   background: var(--surface-subtle);
   border-radius: var(--radius-card) 0 0 var(--radius-card);
+  overflow: hidden;
+}
+.supervisor-workspace__graph-list > .page-tabs,
+.supervisor-workspace__graph-list > p {
+  flex: 0 0 auto;
+}
+.supervisor-workspace__graph-list > .supervisor-workspace__list-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--space-1);
   overflow: auto;
   scrollbar-width: thin;
 }
-.supervisor-workspace__graph-list > * {
+.supervisor-workspace__graph-list .page-tabs__tab {
+  gap: var(--space-1);
+  padding-inline: var(--space-1);
+}
+.supervisor-workspace__list-panel > button {
   flex: 0 0 auto;
-}
-.supervisor-workspace__graph-list h3 {
-  display: flex;
-  justify-content: space-between;
-  margin: var(--space-4) 0 var(--space-2);
-  font-size: var(--font-body);
-}
-.supervisor-workspace__graph-list h3:first-child {
-  margin-top: var(--space-1);
-}
-.supervisor-workspace__graph-list h3 span {
-  color: var(--text-muted);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-}
-.supervisor-workspace__graph-list button {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
@@ -468,10 +468,10 @@
   background: currentColor;
   border-radius: 50%;
 }
-.supervisor-workspace__graph-list button:hover {
+.supervisor-workspace__list-panel > button:hover {
   background: var(--surface-raised);
 }
-.supervisor-workspace__graph-list button[aria-pressed='true'] {
+.supervisor-workspace__list-panel > button[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent-subtle);
 }

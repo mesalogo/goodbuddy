@@ -82,6 +82,8 @@ export const heartbeat = {
     newReview: '新回顾', summary: '工作总结', changes: '本次变化', runningHint: '新回顾正在整理，已有结果仍可阅读。',
     empty: '还没有成功回顾', emptyHint: '即使没有自动监督计划，也可以手动回顾当前进展。', run: '回顾当前进展', running: '回顾整理中…', retryRun: '重试回顾', dismiss: '关闭提示',
     graphScope: '图谱范围', graphEmpty: '当前范围没有故事线事件', legend: '实线表示事件影响实体，虚线表示实体关系。时间轴逆时针排列，起止之间保留缺口。', start: '起点', end: '终点',
+    listTabs: { event: '事件', entity: '实体', relation: '关系' },
+    listEmpty: '本次回顾暂无此类记录。',
     events: '时间事件', entities: '知识实体', relations: '实体关系', eventSources: '事件来源', sources: '关联来源', noSources: '没有可用的关联来源。', selectHint: '选择事件、实体或关系查看详情。', sourceSnapshot: '来源详情', sourceMissing: '来源不存在',
     confirm: '确认', revise: '修订', remove: '移除关系', label: '实体名称', save: '保存修订', cancel: '取消', removeHint: '这只改变图谱中的关系组织，原始来源仍然保留。',
     relationTypes: { supports: '支持', 'depends-on': '依赖', contrasts: '对比', related: '相关' },

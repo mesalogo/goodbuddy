@@ -85,6 +85,8 @@ export const heartbeat = {
     newReview: 'New review', summary: 'Work summary', changes: 'Changes', runningHint: 'A new review is running. The existing result remains available to read.',
     empty: 'No successful review yet', emptyHint: 'You can review current progress manually even without an automatic supervision plan.', run: 'Review current progress', running: 'Reviewing…', retryRun: 'Retry review', dismiss: 'Dismiss',
     graphScope: 'Graph scope', graphEmpty: 'No story events in this scope', legend: 'Solid lines show event impact on entities; dashed lines show entity relations. Time runs counter-clockwise with a visible gap.', start: 'Start', end: 'End',
+    listTabs: { event: 'Events', entity: 'Entities', relation: 'Relations' },
+    listEmpty: 'No records of this type in this review.',
     events: 'Time events', entities: 'Knowledge entities', relations: 'Entity relations', eventSources: 'Event sources', sources: 'Related sources', noSources: 'No related sources are available.', selectHint: 'Select an event, entity, or relation to inspect it.', sourceSnapshot: 'Source details', sourceMissing: 'Source not found',
     confirm: 'Confirm', revise: 'Revise', remove: 'Remove relation', label: 'Entity name', save: 'Save revision', cancel: 'Cancel', removeHint: 'This changes graph organization only; the original source remains available.',
     relationTypes: { supports: 'Supports', 'depends-on': 'Depends on', contrasts: 'Contrasts', related: 'Related' },

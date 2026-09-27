@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BookOpen, Network, RefreshCw, X } from 'lucide-react'
 import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
-import { EmptyState } from './WorkspacePrimitives'
+import { EmptyState, PageTabs } from './WorkspacePrimitives'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 import { heartbeatScopeSchema } from '../../shared/assistant-contracts'
 import {
@@ -61,6 +61,7 @@ export function SupervisorWorkspace({
   const [error, setError] = useState<string>()
   const [errorAction, setErrorAction] = useState<'run' | 'source' | 'action'>()
   const [selection, setSelection] = useState<Selection>()
+  const [listTab, setListTab] = useState<Selection['kind']>('event')
   const [source, setSource] = useState<{
     id: string
     title: string
@@ -388,6 +389,7 @@ export function SupervisorWorkspace({
   const stageEvent = layout.events[stage]
   const select = (next: Selection) => {
     setSelection(next)
+    setListTab(next.kind)
     setSource(undefined)
     setConfirmRemoval(false)
     setRevision(undefined)
@@ -672,11 +674,30 @@ export function SupervisorWorkspace({
                     className="supervisor-workspace__graph-list"
                     aria-label={t('supervisor.selection')}
                   >
-                    <h3>
-                      {t('supervisor.events')}
-                      <span>{layout.events.length}</span>
-                    </h3>
-                    {layout.events.map((event, index) => (
+                    <PageTabs
+                      ariaLabel={t('supervisor.selection')}
+                      idPrefix={`${graphId}-list`}
+                      value={listTab}
+                      onChange={setListTab}
+                      tabs={[
+                        { id: 'event', label: `${t('supervisor.listTabs.event')} ${layout.events.length}` },
+                        { id: 'entity', label: `${t('supervisor.listTabs.entity')} ${layout.entities.length}` },
+                        { id: 'relation', label: `${t('supervisor.listTabs.relation')} ${graph.relations.length}` }
+                      ]}
+                    />
+                    <div
+                      key={listTab}
+                      className="supervisor-workspace__list-panel"
+                      role="tabpanel"
+                      id={`${graphId}-list-panel-${listTab}`}
+                      aria-labelledby={`${graphId}-list-tab-${listTab}`}
+                      tabIndex={0}
+                    >
+                    {((listTab === 'entity' && !layout.entities.length) ||
+                      (listTab === 'relation' && !graph.relations.length)) && (
+                      <p className="supervisor-workspace__muted">{t('supervisor.listEmpty')}</p>
+                    )}
+                    {listTab === 'event' && layout.events.map((event, index) => (
                       <button
                         key={event.id}
                         aria-label={`${index + 1}. ${event.title} · ${date(event.occurred_at)}`}
@@ -694,11 +715,7 @@ export function SupervisorWorkspace({
                         </span>
                       </button>
                     ))}
-                    <h3>
-                      {t('supervisor.entities')}
-                      <span>{layout.entities.length}</span>
-                    </h3>
-                    {layout.entities.map((entity) => (
+                    {listTab === 'entity' && layout.entities.map((entity) => (
                       <button
                         key={entity.id}
                         data-tone={entityTone(entity.id)}
@@ -716,11 +733,7 @@ export function SupervisorWorkspace({
                         </span>
                       </button>
                     ))}
-                    <h3>
-                      {t('supervisor.relations')}
-                      <span>{graph.relations.length}</span>
-                    </h3>
-                    {graph.relations.map((relation) => (
+                    {listTab === 'relation' && graph.relations.map((relation) => (
                       <button
                         key={relation.id}
                         aria-pressed={selection?.id === relation.id}
@@ -744,6 +757,7 @@ export function SupervisorWorkspace({
                         )}
                       </button>
                     ))}
+                    </div>
                     <p className="supervisor-workspace__muted">
                       {t('supervisor.legend')}
                     </p>

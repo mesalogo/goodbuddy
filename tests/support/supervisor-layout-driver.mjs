@@ -669,7 +669,8 @@ app
       win.setContentSize(width, 1100)
       await settle()
       const scrolling = await js(`(() => {
-        const list = document.querySelector('.supervisor-workspace__graph-list');
+        const sidebar = document.querySelector('.supervisor-workspace__graph-list');
+        const list = sidebar.querySelector('[role=tabpanel]');
         const canvas = document.querySelector('.supervisor-workspace__graph-canvas');
         const shell = document.querySelector('.page-shell');
         list.scrollIntoView({block:'end'});
@@ -678,7 +679,7 @@ app
         const last = list.lastElementChild.getBoundingClientRect();
         const button = list.querySelector('button:last-of-type');
         const b = button.getBoundingClientRect(), r = list.getBoundingClientRect();
-        return { width: innerWidth, height: r.height, canvasHeight: canvas.getBoundingClientRect().height,
+        return { width: innerWidth, height: sidebar.getBoundingClientRect().height, canvasHeight: canvas.getBoundingClientRect().height,
           clientHeight: list.clientHeight, scrollHeight: list.scrollHeight, scrollTop: list.scrollTop,
           bottomGap: r.bottom - last.bottom,
           paddingBottom: parseFloat(getComputedStyle(list).paddingBottom),
@@ -703,15 +704,19 @@ app
     }
     win.setContentSize(1440, 1100)
     await js(
-      'document.querySelector(".supervisor-workspace__graph-list button:last-of-type").click()'
-    )
+       'document.querySelectorAll(".supervisor-workspace__graph-list [role=tab]")[2].click()'
+     )
+     await settle()
+     await js('document.querySelector(".supervisor-workspace__list-panel button:last-of-type").click()')
     await settle()
     assert(
       await js('document.querySelectorAll("[data-relation]").length === 1'),
       'Selected relation endpoints must remain visible'
     )
+    await js('document.querySelectorAll(".supervisor-workspace__graph-list [role=tab]")[0].click()')
+    await settle()
     const target = await js(
-      `(() => { const e = document.querySelectorAll('.supervisor-workspace__graph-list button')[79]; e.scrollIntoView({block:'center'}); const r = e.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), hit: e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }; })()`
+      `(() => { const e = document.querySelectorAll('.supervisor-workspace__list-panel button')[79]; e.scrollIntoView({block:'center'}); const r = e.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), hit: e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }; })()`
     )
     assert(target.hit, 'Last event is not reachable')
     win.webContents.sendInputEvent({
@@ -736,9 +741,9 @@ app
     )
     assert.equal(
       await js(
-        'document.querySelectorAll(".supervisor-workspace__graph-list button").length'
+        'document.querySelectorAll(".supervisor-workspace__list-panel button").length'
       ),
-      121
+      80
     )
     const positions = await js(
       '[...document.querySelectorAll(".supervisor-workspace__node:not(.supervisor-workspace__entity) circle")].map(e => [e.getAttribute("cx"), e.getAttribute("cy")].join())'
@@ -946,7 +951,7 @@ app
             const panel = document.querySelector('#supervisor-panel-${tab}');
             return { width: innerWidth, pageWidth: document.documentElement.scrollWidth,
               panelWidth: panel.clientWidth, scrollWidth: panel.scrollWidth,
-              tabs: [...document.querySelectorAll('[role=tab]')].map(e => e.textContent),
+              tabs: [...document.querySelectorAll('[role=tab][id^="supervisor-tab-"]')].map(e => e.textContent),
               nestedMenus: panel.querySelectorAll('[role=tablist]').length,
               reports: !!panel.querySelector('#heartbeat-reports-title'),
               reportWidth: panel.querySelector('#heartbeat-panel-history > section')?.getBoundingClientRect().width,
@@ -958,7 +963,7 @@ app
               refresh: [...panel.querySelectorAll('button')].some(e => e.textContent.includes('刷新')) };
           })()`)
           assert.deepEqual(menuLayout.tabs, ['工作回顾', '故事线图谱', '自动监督', '活动记录', '设置'])
-          assert.equal(menuLayout.nestedMenus, 0)
+           assert.equal(menuLayout.nestedMenus, tab === 'graph' ? 1 : 0)
           assert(menuLayout.pageWidth <= width && menuLayout.scrollWidth <= menuLayout.panelWidth, 'Menu panel overflow')
            assert.equal(menuLayout.reports, tab === 'plans')
            if (tab === 'plans') assert(Math.abs(menuLayout.reportWidth - menuLayout.panelWidth) <= 1, 'Reports must use full reading width')
