@@ -201,6 +201,7 @@ export const workspace = {
     resizeValue: '{{width}} 像素',
     categoriesAriaLabel: '工作栏分类',
     tabs: {
+      notes: { label: '笔记', description: '搜索笔记、采集会话和快速追加文字。' },
       tasks: {
         label: '任务中心',
         description: '处理待审批操作并管理自动化'

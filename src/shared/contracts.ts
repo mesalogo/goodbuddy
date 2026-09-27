@@ -73,6 +73,9 @@ import type {
   MagicNoteDetail,
   MagicNoteEntryCreateResult,
   MagicNoteCreateInput,
+  MagicNoteCreateResult,
+  MagicNoteSearchInput,
+  MagicNoteSummary,
   MagicNoteEntryCreateInput,
   MagicNoteEntryUpdateInput,
   MagicNoteContent,
@@ -2325,8 +2328,9 @@ export type DesktopApi = {
   }
   magicNotes: {
     list: () => Promise<MagicNotesSnapshot>
+    search: (input: MagicNoteSearchInput) => Promise<MagicNoteSummary[]>
     get: (noteId: string) => Promise<MagicNoteDetail>
-    create: (input: MagicNoteCreateInput) => Promise<MagicNoteDetail>
+    create: (input: MagicNoteCreateInput) => Promise<MagicNoteCreateResult>
     update: (input: MagicNoteUpdateInput) => Promise<MagicNoteDetail>
     remove: (noteId: string) => Promise<void>
     createEntry: (

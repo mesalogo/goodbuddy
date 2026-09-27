@@ -178,6 +178,7 @@ it('migrates schema 35 conversations to unpinned while retaining existing data a
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+    ALTER TABLE magic_note_entries DROP COLUMN source_json;
     PRAGMA user_version = 35;`)
   legacy.close()
   try {
@@ -332,6 +333,7 @@ it('preserves existing supervision data when upgrading schema 41 and reopening',
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+    ALTER TABLE magic_note_entries DROP COLUMN source_json;
     PRAGMA user_version = 41;`)
   legacy.close()
   try {
@@ -1098,6 +1100,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 3;
     `)
     oldDatabase.close()
@@ -1264,6 +1267,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 26;
     `)
     legacy.close()
@@ -1383,6 +1387,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 30;
     `)
     legacy.close()
@@ -1464,6 +1469,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 30;
     `)
     legacy.close()
@@ -1564,6 +1570,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1614,6 +1621,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1665,6 +1673,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1712,6 +1721,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1748,6 +1758,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1781,6 +1792,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 5;
     `)
     versionFive.close()
@@ -1911,6 +1923,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 21;
       COMMIT;
     `)
@@ -2010,6 +2023,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 9;
     `)
     legacy.close()
@@ -2071,6 +2085,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 16`)
     legacy.close()
 
@@ -3026,6 +3041,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 23`)
     legacy.close()
 
@@ -3193,6 +3209,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 18;
     `)
     legacy.close()
@@ -3709,6 +3726,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 31;
     `)
     legacy.close()

@@ -26,9 +26,26 @@ context and protects unsaved editor changes. A successful save followed by no
 further edits does not prompt again on return. Narrow note layouts use an index
 drawer and bounded bottom AI pane.
 
+Conversation capture and the compact Notes workbar panel are implemented. Users
+can preview and edit one assistant response or the complete conversation text,
+then append it to an existing note or create a note with its first entry. Quick
+notes opens the same panel for search, browsing and text appends. Saved entries
+carry structured conversation sources with return navigation. The panel and full
+workspace share storage and change notifications; drafts remain in App memory.
+Real Electron acceptance passed through the App UI, production preload, IPC and
+SQLite. Repository validation is not all green; the [progress record](./progress.md)
+separates focused passes, repaired schema fixtures and execution-time failures.
+
 ## Documents
 
-- [Technical design](./technical-design.md): file storage, schema 38 migration,
+- [Conversation integration PRD](./prd.md): scope and acceptance for
+  conversation capture and the compact workbar panel.
+- [Conversation integration logic](./logic-design.md): capture boundaries, source
+  lifetime, panel state, draft protection and application availability.
+- [Conversation integration UI](./ui-design.md): implemented entry points, compact
+  panel, capture preview and source navigation, following the root UI system.
+- [Technical design](./technical-design.md): file storage, schema 38 body migration,
+  schema 48 source metadata, desktop search and atomic initial-entry creation,
   backup boundaries, database notifications, process boundaries, canvas and AI
   contracts, refresh lifecycle and regression coverage.
 - [Progress](./progress.md): implementation and validation evidence.

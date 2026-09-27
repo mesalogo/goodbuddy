@@ -193,7 +193,7 @@ it('preserves schema-45 plans, reports, IDs and foreign keys while extending sta
     sql.exec(`INSERT INTO ${table}_old SELECT * FROM ${table}; DROP TABLE ${table}; ALTER TABLE ${table}_old RENAME TO ${table};`)
     for (const index of indexes) sql.exec(String(index.sql))
   }
-  sql.exec('PRAGMA user_version = 45; COMMIT; PRAGMA foreign_keys = ON;')
+  sql.exec('ALTER TABLE magic_note_entries DROP COLUMN source_json; PRAGMA user_version = 45; COMMIT; PRAGMA foreign_keys = ON;')
   db.initialize(directory)
   expect(db.getHeartbeatConfig(config.id)).toEqual(savedConfig)
   expect(db.listHeartbeatEntries(config.id)).toEqual(savedEntries)

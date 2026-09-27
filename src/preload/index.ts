@@ -156,6 +156,8 @@ import type {
   MagicNoteAnalysisStreamEvent,
   MagicNoteDraftAnalysis,
   MagicNoteDetail,
+  MagicNoteCreateResult,
+  MagicNoteSummary,
   MagicNoteEntryCreateResult,
   MagicNotesSnapshot,
   MagicTodoItem,
@@ -1625,6 +1627,8 @@ const desktopApi: DesktopApi = {
     }
   },
   magicNotes: {
+    search: (input) =>
+      ipcRenderer.invoke(ipcChannels.magicNotesSearch, input) as Promise<MagicNoteSummary[]>,
     list: () =>
       ipcRenderer.invoke(
         ipcChannels.magicNotesList
@@ -1637,7 +1641,7 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.magicNotesCreate,
         input
-      ) as Promise<MagicNoteDetail>,
+      ) as Promise<MagicNoteCreateResult>,
     update: (input) =>
       ipcRenderer.invoke(
         ipcChannels.magicNotesUpdate,

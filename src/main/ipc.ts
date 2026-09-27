@@ -198,6 +198,8 @@ import {
 import {
   magicNoteAnalyzeSchema,
   magicNoteCreateSchema,
+  magicNoteSearchSchema,
+  type MagicNoteSource,
   magicNoteDeleteSchema,
   magicNoteDraftAnalyzeSchema,
   magicNoteEntryCreateSchema,
@@ -8430,6 +8432,33 @@ export function registerIpcHandlers(
     contextManager.remove(requestIdSchema.parse(input))
   })
 
+  const resolveMagicNoteSource = (source?: MagicNoteSource): MagicNoteSource | undefined => {
+    if (!source) return undefined
+    const conversation = assistantDatabase.getConversation(source.conversationId)
+    const messages = new Map(conversation.messages.map((message) => [message.id, message]))
+    for (const id of source.messageIds) {
+      const message = messages.get(id)
+      if (!message || (source.kind === 'message' && message.role !== 'assistant')) {
+        throw new Error('Invalid conversation source message')
+      }
+    }
+    const project = conversation.projectId ? assistantDatabase.getProject(conversation.projectId) : undefined
+    return {
+      kind: source.kind,
+      conversationId: conversation.id,
+      messageIds: source.messageIds,
+      capturedAt: source.capturedAt,
+      conversationTitle: conversation.title,
+      ...(project ? { projectId: project.id, projectName: project.name } : {})
+    }
+  }
+
+  registerHandler(ipcChannels.magicNotesSearch, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { query, limit } = magicNoteSearchSchema.parse(input)
+    return assistantDatabase.searchMagicNoteSummaries(query, limit)
+  })
+
   registerHandler(ipcChannels.magicNotesList, (event) => {
     assertTrustedSender(event, window)
     return { notes: assistantDatabase.listMagicNotes() }
@@ -8443,9 +8472,8 @@ export function registerIpcHandlers(
 
   registerHandler(ipcChannels.magicNotesCreate, (event, input: unknown) => {
     assertTrustedSender(event, window)
-    return assistantDatabase.createMagicNote(
-      magicNoteCreateSchema.parse(input)
-    )
+    const parsed = magicNoteCreateSchema.parse(input)
+    return assistantDatabase.createMagicNote({ ...parsed, source: resolveMagicNoteSource(parsed.source) })
   })
 
   registerHandler(ipcChannels.magicNotesUpdate, (event, input: unknown) => {
@@ -8470,6 +8498,7 @@ export function registerIpcHandlers(
       return assistantDatabase.createMagicNoteEntry({
         noteId: parsed.noteId,
         content,
+        source: resolveMagicNoteSource(parsed.source),
         plainText: magicNotePlainText(content)
       })
     }

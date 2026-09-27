@@ -86,6 +86,9 @@ import {
 } from '../../shared/runtime-selection-contracts'
 import {
   MAGIC_NOTE_MAX_NOTE_EMBED_BYTES,
+  magicNoteSourceSchema,
+  type MagicNoteSource,
+  type MagicNoteCreateResult,
   type MagicNoteComment,
   type MagicNoteDetail,
   type MagicNoteEntryCreateResult,
@@ -119,7 +122,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 47
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 48
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -256,6 +259,7 @@ type MagicNoteEntryRow = {
   id: string
   note_id: string
   content_json: string
+  source_json: string | null
   plain_text: string
   comments_json: string
   analyzed_at: string | null
@@ -666,6 +670,7 @@ function toMagicNoteEntry(row: MagicNoteEntryRow, content: MagicNoteContent): Ma
     id: row.id,
     noteId: row.note_id,
     content,
+    ...(row.source_json ? { source: magicNoteSourceSchema.parse(JSON.parse(row.source_json)) } : {}),
     plainText: row.plain_text,
     comments: JSON.parse(row.comments_json) as MagicNoteComment[],
     analyzedAt: row.analyzed_at ?? undefined,
@@ -3920,8 +3925,12 @@ export class AssistantDatabase {
   createMagicNote(input: {
     title: string
     content?: MagicNoteContent
-  }): MagicNoteDetail {
+    source?: MagicNoteSource
+  }): MagicNoteCreateResult {
     const id = randomUUID()
+    const entryId = input.content ? randomUUID() : undefined
+    const source = input.source ? magicNoteSourceSchema.parse(input.source) : undefined
+    if (source && !input.content) throw new Error('Source requires initial content')
     const now = new Date().toISOString()
     const database = this.requireDatabase()
     if (input.content) {
@@ -3945,16 +3954,15 @@ export class AssistantDatabase {
            VALUES (?, ?, ?, 0, ?, ?, ?)`
         )
         .run(id, null, input.title, input.content ? 1 : 0, now, now)
-      if (input.content) {
-        const entryId = randomUUID()
+      if (input.content && entryId) {
         const pointer = this.writeMagicNoteBody(id, entryId, input.content, 0, now)
         database
           .prepare(
             `INSERT INTO magic_note_entries
               (id, note_id, content_json, plain_text, comments_json,
                actions_json, analyzed_at, revision, created_at, updated_at,
-               image_bytes)
-             VALUES (?, ?, ?, ?, '[]', '[]', NULL, 0, ?, ?, ?)`
+               image_bytes, source_json)
+             VALUES (?, ?, ?, ?, '[]', '[]', NULL, 0, ?, ?, ?, ?)`
           )
           .run(
             entryId,
@@ -3963,7 +3971,8 @@ export class AssistantDatabase {
             magicNotePlainText(input.content),
             now,
             now,
-            embeddedBytes
+            embeddedBytes,
+            source ? JSON.stringify(source) : null
           )
         this.syncMagicNoteTodos(
           database,
@@ -3984,7 +3993,7 @@ export class AssistantDatabase {
     if (input.content) {
       this.notifyMagicTodosChanged()
     }
-    return detail
+    return { ...detail, ...(entryId ? { createdEntryId: entryId } : {}) }
   }
 
   updateMagicNote(input: {
@@ -4034,7 +4043,9 @@ export class AssistantDatabase {
     noteId: string
     content: MagicNoteContent
     plainText: string
+    source?: MagicNoteSource
   }): MagicNoteEntryCreateResult {
+    const source = input.source ? magicNoteSourceSchema.parse(input.source) : undefined
     const database = this.requireDatabase()
     const entryId = randomUUID()
     const content = validateMagicNoteContent(input.content)
@@ -4059,8 +4070,8 @@ export class AssistantDatabase {
           `INSERT INTO magic_note_entries
             (id, note_id, content_json, plain_text, comments_json,
              actions_json, analyzed_at, revision, created_at, updated_at,
-             image_bytes)
-           VALUES (?, ?, ?, ?, '[]', '[]', NULL, 0, ?, ?, ?)`
+             image_bytes, source_json)
+           VALUES (?, ?, ?, ?, '[]', '[]', NULL, 0, ?, ?, ?, ?)`
         )
         .run(
           entryId,
@@ -4069,7 +4080,8 @@ export class AssistantDatabase {
           input.plainText,
           now,
           now,
-          magicNoteEmbeddedBytes(input.content)
+          magicNoteEmbeddedBytes(input.content),
+          source ? JSON.stringify(source) : null
         )
       this.syncMagicNoteTodos(
         database,
@@ -4285,6 +4297,23 @@ export class AssistantDatabase {
       )
       .get() as { incomplete_count: number }
     return { incompleteCount: row.incomplete_count }
+  }
+
+  searchMagicNoteSummaries(query: string, limit = 200): MagicNoteSummary[] {
+    const pattern = `%${query.replace(/[\\%_]/gu, '\\$&')}%`
+    const rows = this.requireDatabase().prepare(
+      `SELECT n.*,
+         (SELECT COUNT(*) FROM magic_note_entries e WHERE e.note_id = n.id) AS entry_count,
+         (SELECT plain_text FROM magic_note_entries e WHERE e.note_id = n.id
+          ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS latest_plain_text
+       FROM magic_notes n
+       WHERE n.title LIKE ? ESCAPE '\\'
+          OR EXISTS (SELECT 1 FROM magic_note_entries e
+                     WHERE e.note_id = n.id AND e.plain_text LIKE ? ESCAPE '\\')
+       ORDER BY n.pinned DESC, n.updated_at DESC, n.rowid DESC
+       LIMIT ?`
+    ).all(pattern, pattern, limit) as MagicNoteRow[]
+    return rows.map(toMagicNoteSummary)
   }
 
   searchMagicNotes(query: string, limit: number): MagicNoteSearchResult[] {
@@ -11424,6 +11453,13 @@ export class AssistantDatabase {
       try {
         database.exec(supervisionReviewMigration)
         database.exec('PRAGMA user_version = 47; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+    if (version.user_version < 48) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec('ALTER TABLE magic_note_entries ADD COLUMN source_json TEXT;')
+        database.exec('PRAGMA user_version = 48; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
   }

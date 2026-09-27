@@ -207,6 +207,7 @@ export const workspace = {
     resizeValue: '{{width}} pixels',
     categoriesAriaLabel: 'Workspace categories',
     tabs: {
+      notes: { label: 'Notes', description: 'Search notes, capture conversations, and append text.' },
       tasks: {
         label: 'Task center',
         description: 'Review approvals and manage automations'

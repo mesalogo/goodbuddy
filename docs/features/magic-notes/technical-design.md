@@ -449,6 +449,124 @@ These note tools run in the desktop gateway. Remote gbagent ACP sessions
 currently inject only the image MCP server, so this change requires no
 daemon implementation update.
 
+## Conversation Integration
+
+The desktop API and renderer integration are implemented. Scope and behavior
+are owned by the [PRD](./prd.md), [logic design](./logic-design.md) and
+[UI design](./ui-design.md). Real Electron acceptance passed; focused results,
+fixture repairs and non-green repository checks are recorded in [progress](./progress.md).
+
+### Workbar and Capture
+
+`WORKBAR_APP_DEFINITIONS` registers `notes` as an optional, closable, reorderable
+singleton with application scope, no `targetRef` and `defaultOpen: false`.
+`RightAssistantSidebar` opens or activates it through the existing
+[workbar tab model](../assistant-workbar/terminal-tabs-prd.md), and removes it when
+Magic Notes is disabled. Sidebar pinning does not control this availability.
+`MagicNotesPanel` renders the compact view; `WorkbarShell` supplies the shared tab
+controls. The footer shortcut and collapsed-sidebar chat-header shortcut both
+activate the same instance.
+
+`App.captureToNote` receives the message identity from `ChatTimeline`, or calls
+`ensureConversationHistory` for whole-conversation capture. It freezes text and
+source IDs before opening the preview and waits for queued conversation persistence
+so Main can validate newly completed messages. Whole-conversation text includes
+nonempty user/assistant bodies with role headings. It excludes reasoning, tool
+logs and attachment binaries, and rejects streaming conversations.
+
+`useMagicNoteDraft` lives in App and owns the draft, selected note, saving state
+and one shared confirmation promise. Selection and drafts survive panel remounts
+and conversation/project switches, but are not persisted across app restarts.
+The guard rejects leaving while saving and confirms discarding pending input;
+explicit cancellation compares text/title with their initial preview values.
+Application disablement and tab closing call the same guard. Workspace navigation
+also passes through the full workspace's existing leave check.
+
+`capturedNoteContent` converts text into v1 Quill string inserts, preserving
+newlines and adding the terminal newline when needed. It splits inserts at the
+200,000-code-unit operation limit without splitting surrogate pairs; the complete
+record still passes the shared rich-content schema. Markdown stays literal text.
+No summarization or attachment copying runs during capture. New-note titles are
+limited to 100 characters. A synchronous submission ref prevents duplicate writes.
+
+`magicNotes.create({ title, content?, source? })` returns `MagicNoteCreateResult`,
+with `createdEntryId` when initial content exists. `createMagicNote` inserts the
+note, first entry, source and derived todos inside one SQLite transaction; failure
+leaves no committed empty note and sends no success notification. This atomicity
+applies to database membership; filesystem writes retain the reconciliation
+boundary in [File Storage and Writes](#file-storage-and-writes).
+`magicNotes.createEntry({ noteId, content, source? })` always returns the exact
+`createdEntryId`. The panel uses that ID to scroll, focus and briefly highlight the
+new record. Opening the full workspace passes `{noteId, entryId?, requestId}` into
+its existing guarded note-navigation path.
+
+`magicNotes.search({ query, limit? })` is exposed by `DesktopApi`, preload and
+`magic-notes:search`. Trusted-sender and shared-schema validation precede
+`AssistantDatabase.searchMagicNoteSummaries`. The trimmed query has a 1,000-character
+limit; result limits are 1-200, defaulting to 200. The panel requests 100 results
+and debounces nonempty queries by 180 ms. SQL searches note titles or indexed entry
+text using `EXISTS`, so each note occurs once before `LIMIT`. Empty queries list
+notes; ordering is pinned first, then updated time and row ID descending.
+`%`, `_` and backslashes are escaped for literal matching. Agent `note_search`
+retains its separate entry-level output and 1-100 limit.
+
+### Source Metadata
+
+`magicNoteSourceSchema` defines `kind` (`message` or `conversation`),
+`conversationId`, nonempty unique `messageIds`, ISO `capturedAt`,
+`conversationTitle`, and optional `projectId` / `projectName`. A message source
+requires exactly one message ID. Create/create-entry inputs accept `source`;
+note creation requires initial content when source is supplied. Entry reads
+return it independently of editable content, while update inputs cannot replace it.
+
+The IPC helper `resolveMagicNoteSource` loads the stored conversation and verifies
+that every message ID belongs to it; a single-message source must identify an
+assistant message. It replaces renderer-supplied title/project labels with current
+database values while retaining the supplied capture time and IDs. Preview labels
+therefore describe capture time, but stored labels describe save time. Missing
+source rows reject creation; later source deletion does not block note reads or edits.
+
+Schema 48 adds nullable `magic_note_entries.source_json` in a transaction and
+advances `PRAGMA user_version`. Existing entries read without a source. It adds no
+conversation foreign key or deletion cascade, and does not rewrite file-backed
+bodies. Schema 38 remains the historical body migration. Structure-only upgrade
+does not independently trigger body conversion or VACUUM; see the
+[database migration guide](../../development/database-migrations.md). Coordinated
+SQLite/files backups include the source metadata.
+
+`MagicNoteSource` is shared by panel summaries and workspace records. Its callback
+`App.openNoteSource` reads `conversations.get`, then navigates through the workspace
+leave guard. Message navigation increases the mounted timeline range before
+scrolling and focusing. A missing message opens its conversation with a notice;
+a confirmed missing conversation disables that source bar's jump buttons. Other
+read errors remain retryable. No deleted-source flag is stored.
+
+### Refresh and Validation
+
+Both views use the same Main store and `magic-notes:changed` notification. The
+panel reloads search and selected detail when active, and ignores superseded
+responses. Search/loading state belongs to the mounted panel; input and selected
+note belong to App. A deleted selected note clears the selection and matching
+target ID while preserving draft text. Read and save failures have local recovery
+feedback. The full workspace retains its existing revision and dirty-editor rules.
+
+After a successful save, only `after-save-auto` starts entry analysis using the
+returned `createdEntryId` and configured comment format. Analysis errors notify
+without undoing the save or recreating the entry. Other comment modes perform no
+panel analysis.
+
+Regression cases are in `MagicNotesPanel.test.tsx`, `App.test.tsx`,
+`ChatTimeline.test.tsx`, `MagicNotesWorkspace.test.tsx`, workbar contract tests,
+database/storage tests and production preload/IPC integration tests.
+`tests/magic-notes-capture.electron.test.ts` mounts the real App with production
+preload and capture IPC, backed by SQLite/files. It validates existing/new-note
+saves, verbatim 502-message history, workspace/source navigation, native keyboard
+input in a narrow panel, database reopen and retention after source deletion,
+with zero model calls. Failed writes and external refresh retain their focused
+regression coverage; this Electron result does not claim every failure path.
+Repository test/typecheck failures and repaired migration fixtures are documented
+separately in [progress](./progress.md).
+
 ## Validation
 
 - `magic-note-storage.test.ts` uses real files and SQLite for migration equality,
@@ -476,6 +594,6 @@ daemon implementation update.
   coverage includes portal placement, keyboard navigation, dismissal, delete
   confirmation, target selection, revision failures and draft preservation.
 
-Schema 38 and the file layout above govern current persistence; refresh
+Schema 48 adds source metadata to the schema 38 file-backed body layout; refresh
 notifications need no separate storage or network service. Dated validation
 results and remaining repository checks are owned by [progress](./progress.md).

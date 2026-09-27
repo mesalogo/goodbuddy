@@ -2,6 +2,21 @@ import type { TranslationShape } from '../../resource-types'
 import type { magicNotes as chineseMagicNotes } from '../zh-CN/magicNotes'
 
 export const magicNotes = {
+  capture: {
+    add: 'Add to note', quick: 'Quick note', conversation: 'Save conversation to note', menu: 'Conversation actions',
+    search: 'Search notes', target: 'Save to', title: 'Note title', content: 'Text to add', global: 'Global',
+    openWorkspace: 'Open in full workspace', back: 'Back to notes', choose: 'Choose an existing note',
+    empty: 'No notes yet. Create one to start writing.', noResults: 'No matching notes. Change your search or create a note.',
+    source: 'From conversation', openSource: 'Return to conversation', openMessage: 'View source message',
+    missingConversation: 'The original conversation no longer exists', missingMessage: 'The original message no longer exists',
+    messageScope: 'Saves this reply as text, excluding reasoning, tool logs, images, and attachment files.',
+    conversationScope: 'Saves all user and assistant text at capture time, including earlier history, excluding reasoning, tool logs, images, and attachment files.',
+    incomplete: 'This reply is incomplete. The preview includes its available text.', wait: 'Wait for the reply to finish or stop generation before saving.',
+    tooLong: 'Each entry supports up to 500 KB of text. Shorten the content before saving.',
+    required: 'Enter text and choose a note, or enter a new note title (up to 100 characters).',
+    saving: 'Saving...', deletedTarget: 'The target note was deleted. Choose another note; your draft is preserved.',
+    user: 'User', assistant: 'Assistant', loading: 'Loading the full conversation...'
+  },
   records: { title: 'Records', pane: 'Record index', hide: 'Hide record index', show: 'Show record index', pages: '{{count}} pages', firstPage: 'Canvas first page', previewFailed: 'First page preview unavailable' },
   canvas: {
     savedAnalysisFailed: 'Entry saved, but automatic analysis failed: {{error}}. You can analyze it again later.',

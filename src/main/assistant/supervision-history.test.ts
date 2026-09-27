@@ -46,6 +46,7 @@ it('supervision preserves result history and protected identities within scope t
       DROP TABLE supervision_review_navigation; DROP TABLE supervision_review_batches;
       DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 42;`)
     legacy.close()
     db.initialize(process.cwd())

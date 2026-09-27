@@ -80,6 +80,24 @@ function createMessages(): Message[] {
 }
 
 describe('ChatTimeline', () => {
+  it('captures only nonempty settled assistant replies, including incomplete replies', () => {
+    const onAddToNote = vi.fn()
+    const messages: Message[] = [
+      { id: 'complete', role: 'assistant', content: 'Complete text', createdAt: 1, state: 'complete' },
+      { id: 'partial', role: 'assistant', content: 'Partial text', createdAt: 2, state: 'error' },
+      { id: 'streaming', role: 'assistant', content: 'Streaming text', createdAt: 3, state: 'streaming' },
+      { id: 'empty', role: 'assistant', content: '', createdAt: 4, state: 'complete' },
+      { id: 'user', role: 'user', content: 'User text', createdAt: 5, state: 'complete' }
+    ]
+    const props = { ...callbacks, artifactById: new Map(), conversationId: 'capture-conversation', hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const, messageStartIndex: 0, totalMessageCount: messages.length, messages }
+    const view = render(<ChatTimeline {...props} onAddToNote={onAddToNote} />)
+    const buttons = screen.getAllByRole('button', { name: '加入笔记' })
+    expect(buttons).toHaveLength(2)
+    fireEvent.click(buttons[1]!)
+    expect(onAddToNote).toHaveBeenCalledWith('capture-conversation', messages[1], buttons[1])
+    view.rerender(<ChatTimeline {...props} />)
+    expect(screen.queryByRole('button', { name: '加入笔记' })).not.toBeInTheDocument()
+  })
   it('keeps a question before later tools and text when its answer arrives and history reopens', () => {
     const props = {
       artifactById: new Map(), conversationId: 'question-order',

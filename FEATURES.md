@@ -674,6 +674,16 @@ records are listed separately and do not introduce another feature status.
   navigation can show the incomplete-todo count, and create, save, and comment
   results use application-wide notifications. Agent/MCP note writes automatically
   refresh the open workbench while preserving selection and unsaved drafts.
+- **Conversation capture and quick notes** (implemented; real Electron acceptance passed):
+  Preview and edit an assistant response or complete conversation text before
+  appending to an existing note or creating one with its first entry. The compact
+  Notes workbar tab supports title/body search, quick text appends and full-workspace
+  navigation. Saved sources link back to conversations and messages; drafts survive
+  conversation switches. Real App/preload/IPC/SQLite acceptance passed, including
+  complete 502-message history and native keyboard use in a 214px panel, with zero
+  model calls. Repository validation is not all green; the
+  [validation record](./docs/features/magic-notes/progress.md) separates focused
+  passes, fixture repairs and execution-time test/typecheck failures.
 - [x] **Paged canvas notes**: The integrated PeopleLib Fabric + Quill editor
   combines flowing body text with pen/highlighter, object selection/transforms,
   floating text, images and paper templates. Editors and read-only viewers support
@@ -696,13 +706,13 @@ records are listed separately and do not introduce another feature status.
   invalidated by layout changes and reanalyzed in after-save-auto mode. MCP
   rejects plain-text replacement of canvas entries. Implementation is complete;
   final validation status is tracked in the [feature progress record](./docs/features/magic-notes/progress.md).
-  The first upgrade migrates stored bodies into files and raises the database
-  schema to 39 together with attachment changes. Older clients cannot reopen
+  Historical body migration moved stored bodies into files; schema 48 now adds
+  conversation-source metadata. Older clients cannot reopen
   that database; rollback requires a pre-upgrade backup.
 - [ ] **MCP Server Control Plane** (planned): Unified MCP lifecycle, health
   checks, reconnection, schema cache, isolation, approval, and audit.
-- [ ] **Traceable note excerpts and AI editing** (planned): Collects sourced
-  excerpts from conversations, knowledge, and the web and provides
+- [ ] **Knowledge/web excerpts and AI editing** (planned): Extend capture beyond
+  the implemented conversation-text path to knowledge and web excerpts, with
   confirmation-based summarization, rewriting, and organization.
 
 ### Work management, long-term collaboration, and workflows

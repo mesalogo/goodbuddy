@@ -868,6 +868,7 @@ const api: DesktopApi = {
     remove: vi.fn(async () => {}),
   },
   magicNotes: {
+    search: vi.fn(async () => []),
     list: vi.fn(async () => ({ notes: [] })),
     get: vi.fn(async () => {
       throw new Error("not used");
@@ -1160,6 +1161,7 @@ describe("App", () => {
     delete document.documentElement.dataset.theme;
     document.documentElement.style.colorScheme = "";
     vi.clearAllMocks();
+    vi.mocked(api.magicNotes.search).mockReset().mockResolvedValue([]);
     vi.mocked(api.knowledge.getSnapshot).mockReset();
     vi.mocked(api.knowledge.externalInstancesList).mockReset();
     vi.mocked(api.agent.respondQuestion).mockReset().mockResolvedValue();
@@ -13872,6 +13874,148 @@ describe("App", () => {
     expect(updates.updateSettings).toHaveBeenLastCalledWith({
       applicationNavigation: { ...external.applicationNavigation, pinned: { ...external.applicationNavigation.pinned, 'local-inference': true } },
     })
+  })
+
+  it('captures all conversation history, freezes the source, and preserves the preview across hidden workbar and new conversations', async () => {
+    await api.updates!.updateSettings({ magicNotesEnabled: true })
+    const messages = Array.from({ length: 502 }, (_, index) => ({ id: crypto.randomUUID(), role: index % 2 ? 'assistant' as const : 'user' as const, content: `Capture history ${index}`, createdAt: 1_775_000_000_000 + index, state: 'complete' as const }))
+    const conversation = { id: crypto.randomUUID(), projectId, title: 'Captured discussion', updatedAt: 1_775_000_000_502, messages }
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([conversation])
+    render(<App />)
+    await screen.findByText('Capture history 501')
+    expect(screen.queryByText('Capture history 0')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '会话操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '保存当前对话到笔记' }))
+    const preview = await screen.findByLabelText('待加入内容')
+    expect(preview).toHaveValue(messages.map(message => `## ${message.role === 'user' ? '用户' : '助手'}\n\n${message.content}`).join('\n\n'))
+    expect(screen.getAllByRole('tab', { name: '笔记' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: '快速笔记' }))
+    expect(screen.getAllByRole('tab', { name: '笔记' })).toHaveLength(1)
+    fireEvent.change(preview, { target: { value: 'Frozen edited capture' } })
+    fireEvent.click(screen.getByRole('button', { name: /收起工作栏|助手工作栏/ }))
+    fireEvent.click(screen.getByRole('button', { name: '快速笔记' }))
+    expect(await screen.findByLabelText('待加入内容')).toHaveValue('Frozen edited capture')
+    fireEvent.click(screen.getByRole('button', { name: /新建对话/ }))
+    expect(await screen.findByLabelText('待加入内容')).toHaveValue('Frozen edited capture')
+    fireEvent.click(screen.getByRole('button', { name: '新建笔记' }))
+    expect(screen.getByLabelText('笔记标题')).toHaveValue('Captured discussion')
+    fireEvent.click(within(screen.getByRole('region', { name: '快速笔记' })).getByRole('button', { name: '加入笔记' }))
+    await waitFor(() => expect(api.magicNotes.create).toHaveBeenCalledWith(expect.objectContaining({ source: expect.objectContaining({ kind: 'conversation', conversationId: conversation.id, messageIds: messages.map(message => message.id) }), content: { version: 1, ops: [{ insert: 'Frozen edited capture\n' }] } })))
+  })
+
+  it('adds an assistant reply to an explicitly selected note and opens the returned entry in the full workspace', async () => {
+    await api.updates!.updateSettings({ magicNotesEnabled: true, magicNoteCommentMode: 'after-save-manual' })
+    const message = { id: crypto.randomUUID(), role: 'assistant' as const, content: 'Reusable **answer**', createdAt: 1, state: 'complete' as const }
+    const conversation = { id: crypto.randomUUID(), projectId, title: 'Source answer discussion', updatedAt: 2, messages: [message] }
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([conversation])
+    const noteId = crypto.randomUUID()
+    const oldEntry = { id: crypto.randomUUID(), noteId, content: { version: 1 as const, ops: [{ insert: 'Keep existing entry\n' }] }, plainText: 'Keep existing entry', comments: [], revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z' }
+    const note = { id: noteId, title: 'Collected answers', preview: oldEntry.plainText, entryCount: 1, pinned: false, revision: 1, createdAt: oldEntry.createdAt, updatedAt: oldEntry.updatedAt, entries: [oldEntry] }
+    const createdEntryId = crypto.randomUUID()
+    const saved = { ...note, entryCount: 2, entries: [oldEntry, { ...oldEntry, id: createdEntryId, content: { version: 1 as const, ops: [{ insert: `${message.content}\n` }] }, plainText: message.content }], createdEntryId }
+    vi.mocked(api.magicNotes.search).mockResolvedValue([note])
+    vi.mocked(api.magicNotes.get).mockResolvedValue(note)
+    vi.mocked(api.magicNotes.createEntry).mockImplementationOnce(async () => {
+      vi.mocked(api.magicNotes.get).mockResolvedValue(saved)
+      vi.mocked(api.magicNotes.list).mockResolvedValue({ notes: [saved] })
+      return saved
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '加入笔记' }))
+    const panel = within(await screen.findByRole('region', { name: '快速笔记' }))
+    expect(panel.getByLabelText('待加入内容')).toHaveValue(message.content)
+    expect(panel.getByRole('button', { name: '加入笔记' })).toBeDisabled()
+    fireEvent.click(await panel.findByRole('button', { name: /Collected answers/ }))
+    fireEvent.click(panel.getByRole('button', { name: '加入笔记' }))
+    await waitFor(() => expect(api.magicNotes.createEntry).toHaveBeenCalledWith({ noteId, content: { version: 1, ops: [{ insert: `${message.content}\n` }] }, source: expect.objectContaining({ kind: 'message', conversationId: conversation.id, messageIds: [message.id] }) }))
+    expect(await panel.findByText('Keep existing entry')).toBeVisible()
+    const added = await waitFor(() => {
+      const element = document.getElementById(`compact-note-entry-${createdEntryId}`)
+      expect(element).not.toBeNull()
+      return element!
+    })
+    const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    try {
+      fireEvent.click(within(added).getByRole('button', { name: '在完整工作区打开' }))
+      await waitFor(() => {
+        expect(document.getElementById(`magic-note-entry-${createdEntryId}`)).toBeVisible()
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
+      })
+    } finally {
+      if (originalScroll) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScroll)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+    }
+    expect(api.magicNotes.analyze).not.toHaveBeenCalled()
+  })
+
+  it('does not capture partial history when loading the full conversation fails', async () => {
+    await api.updates!.updateSettings({ magicNotesEnabled: true })
+    const id = crypto.randomUUID()
+    vi.mocked(api.conversations.listSummaries).mockResolvedValue([
+      { id: crypto.randomUUID(), projectId, title: 'Opened discussion', updatedAt: 2, messages: [{ id: crypto.randomUUID(), role: 'assistant', state: 'complete', content: 'Opened discussion text', createdAt: 1 }] },
+      { id, projectId, title: 'Unavailable history', updatedAt: 1, messages: [], messageSummary: { count: 10, firstRole: 'user' } }
+    ])
+    vi.mocked(api.conversations.get).mockRejectedValue(new Error('History read failed'))
+    render(<App />)
+    await screen.findByText('Opened discussion text')
+    fireEvent.click(screen.getByText('Unavailable history'))
+    await screen.findByText('History read failed')
+    fireEvent.click(screen.getByRole('button', { name: '会话操作' }))
+    expect(screen.getByRole('menuitem', { name: '保存当前对话到笔记' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('menuitem', { name: '保存当前对话到笔记' }))
+    await waitFor(() => expect(api.conversations.get).toHaveBeenCalledTimes(2))
+    expect(screen.queryByLabelText('待加入内容')).not.toBeInTheDocument()
+    expect(api.magicNotes.create).not.toHaveBeenCalled()
+    expect(api.magicNotes.createEntry).not.toHaveBeenCalled()
+  })
+
+  it('opens note sources in folded history and distinguishes a deleted message from a deleted conversation', async () => {
+    await api.updates!.updateSettings({ magicNotesEnabled: true })
+    const messages = Array.from({ length: 102 }, (_, index) => ({ id: crypto.randomUUID(), role: index % 2 ? 'assistant' as const : 'user' as const, content: `Source history ${index}`, createdAt: 1_775_000_000_000 + index, state: 'complete' as const }))
+    const conversation = { id: crypto.randomUUID(), projectId, title: 'Source discussion', updatedAt: 1_775_000_000_502, messages }
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([conversation])
+    const noteId = crypto.randomUUID()
+    const note = { id: noteId, title: 'Source note', preview: '', entryCount: 1, pinned: false, revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z', entries: [{ id: crypto.randomUUID(), noteId, content: { version: 1 as const, ops: [{ insert: 'Saved text\n' }] }, plainText: 'Saved text', comments: [], revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z', source: { kind: 'message' as const, conversationId: conversation.id, messageIds: [messages[1]!.id], capturedAt: '2026-09-26T00:00:00Z', conversationTitle: conversation.title } }] }
+    vi.mocked(api.magicNotes.search).mockResolvedValue([note])
+    vi.mocked(api.magicNotes.get).mockResolvedValue(note)
+    render(<App />)
+    await screen.findByText('Source history 101')
+    expect(screen.queryByText('Source history 1')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '快速笔记' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Source note/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看来源消息' }))
+    await waitFor(() => {
+      expect(screen.getByText('Source history 1')).toBeVisible()
+      expect(document.activeElement).toHaveTextContent('Source history 1')
+    })
+    vi.mocked(api.conversations.get).mockResolvedValue({ ...conversation, messages: [] })
+    fireEvent.click(screen.getByRole('button', { name: '查看来源消息' }))
+    expect(await screen.findByText('原消息已不存在')).toBeVisible()
+    vi.mocked(api.conversations.get).mockRejectedValue(new Error('对话不存在'))
+    fireEvent.click(screen.getByRole('button', { name: '返回原会话' }))
+    expect(await screen.findByRole('button', { name: '原会话已不存在' })).toBeDisabled()
+    expect(screen.getByText('Saved text')).toBeVisible()
+  })
+
+  it('guards disabling Magic Notes with an unsaved quick draft before saving application settings', async () => {
+    await api.updates!.updateSettings({ magicNotesEnabled: true })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '快速笔记' }))
+    fireEvent.click(await screen.findByRole('button', { name: '新建笔记' }))
+    fireEvent.change(screen.getByLabelText('笔记标题'), { target: { value: 'Unsaved quick note' } })
+    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+    const center = await screen.findByRole('dialog', { name: '应用中心' })
+    fireEvent.click(within(center).getByRole('button', { name: /魔法笔记.*设置|设置.*魔法笔记/ }))
+    const enabled = await screen.findByRole('switch', { name: /启用/ })
+    const calls = vi.mocked(api.updates!.updateSettings).mock.calls.length
+    fireEvent.click(enabled)
+    const guard = await screen.findByRole('dialog', { name: /放弃/ })
+    expect(vi.mocked(api.updates!.updateSettings).mock.calls).toHaveLength(calls)
+    fireEvent.click(within(guard).getByRole('button', { name: '继续编辑' }))
+    expect(vi.mocked(api.updates!.updateSettings).mock.calls).toHaveLength(calls)
   })
 
   it('keeps Magic Notes free of a generic application settings shortcut', async () => {

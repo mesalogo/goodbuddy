@@ -1,4 +1,8 @@
 import { ImageCapabilityNotice } from "./ImageCapabilityNotice";
+import { MagicNotesPanel } from './MagicNotesPanel';
+import { AnchoredMenu } from './AnchoredMenu';
+import { useMagicNoteDraft } from './use-magic-note-draft';
+import type { MagicNoteSource } from '../../shared/magic-notes-contracts';
 import LocalInferencePage from "./LocalInferencePage";
 import { ApplicationMenu } from './ApplicationMenu';
 import { AttachmentResultButton } from './AttachmentResultButton';
@@ -861,6 +865,8 @@ function ConversationHistoryLoader({ conversationId, active, load }: {
 }
 
 function ChatHistoryPane({
+  onAddToNote,
+  noteMessageNavigation,
   onOpenImageModelSettings,
   onReselectImageSources,
   onEditImage,
@@ -885,6 +891,8 @@ function ChatHistoryPane({
   taskStrip,
   visibleMessageCount,
 }: {
+  onAddToNote?: (conversationId: string, message: Message, trigger: HTMLElement) => void;
+  noteMessageNavigation?: { conversationId: string; messageId: string; requestId: number };
   onOpenImageModelSettings: () => void;
   onReselectImageSources: (operation: ImageOperation) => void;
   onEditImage: (artifact: AssistantArtifact) => void;
@@ -950,6 +958,18 @@ function ChatHistoryPane({
     [conversation.messages, visibleMessageStartIndex],
   );
   const hiddenMessageCount = visibleMessageStartIndex;
+
+  useEffect(() => {
+    if (!active || noteMessageNavigation?.conversationId !== conversation.id) return;
+    const element = messageArticleRefs.current.get(noteMessageNavigation.messageId);
+    if (!element) return;
+    const frame = requestAnimationFrame(() => {
+      element.scrollIntoView?.({ block: 'center' });
+      element.tabIndex = -1;
+      element.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, conversation.id, noteMessageNavigation, visibleMessageCount]);
 
   const handleArticleRef = useCallback(
     (messageId: string, element: HTMLElement | null): void => {
@@ -1183,6 +1203,7 @@ function ChatHistoryPane({
           messageStartIndex={visibleMessageStartIndex}
           onArticleRef={handleArticleRef}
           onCopyMessage={onCopyMessage}
+          onAddToNote={onAddToNote}
           onDownloadImage={onDownloadImage}
           onOpenCitationContext={onOpenCitationContext}
           onOpenCitationSource={onOpenCitationSource}
@@ -2450,6 +2471,16 @@ function App(): React.JSX.Element {
     undefined,
   );
   const notesLeaveRequesterRef = useRef<SettingsLeaveRequester | undefined>(undefined);
+  const noteDraft = useMagicNoteDraft();
+  const { guard: guardNoteDraft, setDraft: setNoteDraft } = noteDraft;
+  const [notesOpenRequest, setNotesOpenRequest] = useState(0);
+  const [notesNavigation, setNotesNavigation] = useState<{ noteId: string; entryId?: string; requestId: number }>();
+  const [noteMessageNavigation, setNoteMessageNavigation] = useState<{ conversationId: string; messageId: string; requestId: number }>();
+  const [noteCaptureLoading, setNoteCaptureLoading] = useState(false);
+  const noteCapturePending = useRef(false);
+  const noteCaptureTrigger = useRef<HTMLElement | null>(null);
+  const noteTitleMenuRef = useRef<HTMLButtonElement>(null);
+  const [noteTitleMenuOpen, setNoteTitleMenuOpen] = useState(false);
   const registerNotesLeaveRequester = useCallback((requester: SettingsLeaveRequester | undefined): void => {
     notesLeaveRequesterRef.current = requester;
   }, []);
@@ -2631,11 +2662,23 @@ function App(): React.JSX.Element {
   ), [applicationNavigation, applicationSettings, magicNotesEnabled]);
   const applyApplicationSettings = useCallback((settings: ApplicationSettings): void => {
     setApplicationSettings(settings);
-    setMagicNotesEnabled(settings.magicNotesEnabled);
+    if (settings.magicNotesEnabled) setMagicNotesEnabled(true);
+    else {
+      const revision = applicationSettingsRevisionRef.current;
+      void guardNoteDraft().then(async allowed => {
+        if (revision !== applicationSettingsRevisionRef.current) return;
+        if (allowed) { setNoteDraft(undefined); setMagicNotesEnabled(false); }
+        else if (window.goodbuddy.updates) {
+          // Continuing an externally disabled draft restores the same application setting.
+          try { await window.goodbuddy.updates.updateSettings({ magicNotesEnabled: true }); }
+          catch (reason) { setApplicationSettingsError(displayErrorMessage(reason, tRef.current('applications.saveFailed'))); }
+        }
+      });
+    }
     setMagicNotesShowIncompleteTodoCount(settings.magicNotesShowIncompleteTodoCount);
     setConversationHtmlRenderingEnabled(settings.conversationHtmlRenderingEnabled !== false);
     setRemoteProjectsEnabled(settings.remoteProjectsEnabled);
-  }, []);
+  }, [guardNoteDraft, setNoteDraft]);
   const reloadApplicationSettings = useCallback(async (): Promise<void> => {
     const revision = ++applicationSettingsRevisionRef.current;
     applicationSettingsPendingRef.current++;
@@ -2657,6 +2700,10 @@ function App(): React.JSX.Element {
   }, [applyApplicationSettings, t]);
   const updateApplicationSettings = useCallback(async (patch: ApplicationSettingsUpdate): Promise<boolean> => {
     if (applicationSettingsPendingRef.current || applicationSettingsUnconfirmed) return false;
+    if (patch.magicNotesEnabled === false) {
+      if (!await guardNoteDraft()) return false;
+      setNoteDraft(undefined);
+    }
     const revision = ++applicationSettingsRevisionRef.current;
     applicationSettingsPendingRef.current++;
     setApplicationSettingsPending(true);
@@ -2683,7 +2730,7 @@ function App(): React.JSX.Element {
     } finally {
       setApplicationSettingsPending(--applicationSettingsPendingRef.current > 0);
     }
-  }, [applicationSettingsUnconfirmed, applyApplicationSettings, t]);
+  }, [applicationSettingsUnconfirmed, applyApplicationSettings, guardNoteDraft, setNoteDraft, t]);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -8454,6 +8501,71 @@ function App(): React.JSX.Element {
     }
   };
 
+  const openQuickNotes = useCallback((): void => {
+    if (!magicNotesEnabled) return;
+    setAssistantSidebarOpen(true);
+    setNotesOpenRequest(value => value + 1);
+  }, [magicNotesEnabled]);
+  const captureToNote = useCallback(async (conversationId: string, message?: Message, trigger?: HTMLElement): Promise<void> => {
+    if (!magicNotesEnabled || noteCapturePending.current || noteDraft.saving) return;
+    const snapshot = conversationsRef.current.find(item => item.id === conversationId);
+    if (!snapshot || (message && (message.state === 'streaming' || !message.content.trim()))) return;
+    if (!message && snapshot.messages.some(item => item.state === 'streaming')) {
+      notify({ tone: 'info', message: t('magicNotes:capture.wait') });
+      return;
+    }
+    noteCapturePending.current = true;
+    setNoteCaptureLoading(true);
+    const capturedAt = new Date().toISOString();
+    try {
+      const conversation = message ? snapshot : await ensureConversationHistory(conversationId);
+      const messages = message ? [message] : conversation.messages.filter(item => (item.role === 'user' || item.role === 'assistant') && item.content.trim());
+      if (!message && messages.some(item => item.state === 'streaming')) throw new Error(t('magicNotes:capture.wait'));
+      const text = message ? message.content : messages.map(item => `## ${t(item.role === 'user' ? 'magicNotes:capture.user' : 'magicNotes:capture.assistant')}\n\n${item.content}`).join('\n\n');
+      if (!text.trim()) return;
+      // Main validates source IDs against persisted messages, including newly completed replies.
+      persistLocalConversationChanges();
+      await conversationPersistenceQueueRef.current;
+      if (!await guardNoteDraft()) return;
+      const title = conversation.title.slice(0, 100);
+      setNoteDraft({ text, initialText: text, title, initialTitle: title, targetId: '', newNote: false,
+        incomplete: message ? message.state !== 'complete' : undefined,
+        source: { kind: message ? 'message' : 'conversation', conversationId, messageIds: messages.map(item => item.id), capturedAt,
+          conversationTitle: conversation.title, projectId: conversation.projectId, projectName: conversation.projectId ? projectNames.get(conversation.projectId) : undefined } });
+      noteCaptureTrigger.current = trigger ?? noteTitleMenuRef.current;
+      openQuickNotes();
+    } catch (reason) { notify({ tone: 'error', message: displayErrorMessage(reason, t('magicNotes:errors.operationFailed')) }); }
+    finally { noteCapturePending.current = false; setNoteCaptureLoading(false); }
+  }, [magicNotesEnabled, noteDraft.saving, ensureConversationHistory, persistLocalConversationChanges, guardNoteDraft, setNoteDraft, projectNames, openQuickNotes, notify, t]);
+  const openNoteSource = async (source: MagicNoteSource, messageId?: string): Promise<'opened' | 'missing'> => {
+    let snapshot;
+    try { snapshot = await window.goodbuddy.conversations.get(source.conversationId); }
+    catch (reason) {
+      if (reason instanceof Error && /对话不存在(?:$|["'])/u.test(reason.message)) return 'missing';
+      throw reason;
+    }
+    requestWorkspaceLeave('chat', () => {
+      const next = mergePersistedConversations(conversationsRef.current, [snapshot], persistedLocalConversationsRef.current, new Set([source.conversationId, ...retainedConversationDetailIds()]));
+      conversationsRef.current = next;
+      setConversations(next);
+      setActiveProjectId(snapshot.projectId ?? '');
+      setActiveId(source.conversationId);
+      setSearchQuery('');
+      commitView('chat');
+      const targetId = messageId ?? (source.kind === 'message' ? source.messageIds[0] : undefined);
+      if (targetId) {
+        const conversation = next.find(item => item.id === source.conversationId)!;
+        const index = conversation.messages.findIndex(item => item.id === targetId);
+        if (index < 0 || !snapshot.messages.some(message => message.id === targetId)) notify({ tone: 'info', message: t('magicNotes:capture.missingMessage') });
+        else {
+          setVisibleMessageCounts(current => ({ ...current, [source.conversationId]: Math.max(current[source.conversationId] ?? messageRenderBatchSize, conversation.messages.length - index) }));
+          setNoteMessageNavigation({ conversationId: source.conversationId, messageId: targetId, requestId: Date.now() });
+        }
+      }
+    });
+    return 'opened';
+  };
+
   const openActivityConversation = (conversationId: string): void => {
     const open = async (): Promise<void> => {
       let conversation = conversationsRef.current.find(
@@ -9597,6 +9709,7 @@ function App(): React.JSX.Element {
           ) : null}
         </div>
 
+        {magicNotesEnabled && <button type="button" className="nav-item" title={t('magicNotes:capture.quick')} onClick={openQuickNotes}><FileText size={17} aria-hidden="true" /><span>{t('magicNotes:capture.quick')}</span></button>}
         <div className="sidebar-footer sidebar-footer--applications">
           <button
             className="nav-item"
@@ -9735,6 +9848,12 @@ function App(): React.JSX.Element {
                   </b>
                 )}
               </div>
+              {magicNotesEnabled && activeConversation && <>
+                <button type="button" className="icon-button" ref={noteTitleMenuRef} aria-label={t('magicNotes:capture.menu')} title={t('magicNotes:capture.menu')} aria-haspopup="menu" aria-expanded={noteTitleMenuOpen} onClick={() => setNoteTitleMenuOpen(value => !value)}><MoreHorizontal size={16} /></button>
+                {noteTitleMenuOpen && <AnchoredMenu anchorRef={noteTitleMenuRef} id="note-conversation-menu" label={t('magicNotes:capture.menu')} onClose={() => setNoteTitleMenuOpen(false)}>
+                  <button role="menuitem" tabIndex={-1} type="button" disabled={isRunning || noteCaptureLoading || noteDraft.saving} title={isRunning ? t('magicNotes:capture.wait') : undefined} onClick={() => { setNoteTitleMenuOpen(false); void captureToNote(activeConversation.id); }}>{t(noteCaptureLoading ? 'magicNotes:capture.loading' : 'magicNotes:capture.conversation')}</button>
+                </AnchoredMenu>}
+              </>}
               <ScopeBadge
                 scope={
                   activeProject
@@ -9752,6 +9871,7 @@ function App(): React.JSX.Element {
             </>
           )}
           <div className="topbar__actions">
+            {magicNotesEnabled && !sidebarOpen && <button type="button" className="icon-button" aria-label={t('magicNotes:capture.quick')} title={t('magicNotes:capture.quick')} onClick={openQuickNotes}><FileText size={17} aria-hidden="true" /></button>}
             <button
               aria-controls="assistant-sidebar"
               aria-expanded={assistantSidebarOpen}
@@ -9822,6 +9942,8 @@ function App(): React.JSX.Element {
                         key={conversation.id}
                         locale={locale}
                         onCopyMessage={copyMessage}
+                        onAddToNote={magicNotesEnabled ? captureToNote : undefined}
+                        noteMessageNavigation={noteMessageNavigation}
                         onDownloadImage={downloadImage}
                         onEditImage={editImage}
                         onOpenImageModelSettings={openImageModelSettings}
@@ -11061,7 +11183,7 @@ function App(): React.JSX.Element {
                           <RouteLoadingStatus label={t("route.loading")} />
                         }
                       >
-                        <MagicNotesWorkspace onNotify={notify} applicationSettings={applicationSettings} onBeforeLeave={registerNotesLeaveRequester} />
+                        <MagicNotesWorkspace onNotify={notify} applicationSettings={applicationSettings} onBeforeLeave={registerNotesLeaveRequester} navigation={notesNavigation} onOpenSource={openNoteSource} />
                       </Suspense>
                     </RouteErrorBoundary>
                   </PageShell>
@@ -11734,6 +11856,13 @@ function App(): React.JSX.Element {
             />
           )}
           <RightAssistantSidebar
+            notesEnabled={magicNotesEnabled}
+            notesSettingsReady={Boolean(applicationSettings)}
+            notesOpenRequest={notesOpenRequest}
+            onBeforeCloseNotes={async () => { if (!await guardNoteDraft()) return false; setNoteDraft(undefined); return true; }}
+            notesPanel={<MagicNotesPanel state={noteDraft} active={assistantSidebarOpen && magicNotesEnabled} commentMode={applicationSettings?.magicNoteCommentMode} commentFormat={applicationSettings?.magicNoteCommentFormat} onNotify={notify} onOpenSource={openNoteSource}
+              onCancelCapture={() => requestAnimationFrame(() => { const trigger = noteCaptureTrigger.current; (trigger?.isConnected && !trigger.closest('[hidden], [inert]') ? trigger : noteTitleMenuRef.current)?.focus(); })}
+              onOpenWorkspace={(noteId, entryId) => requestWorkspaceLeave('magic-notes', () => { setNotesNavigation({ noteId, entryId, requestId: Date.now() }); commitView('magic-notes'); })} />}
             activeConversationId={activeId}
             conversationStats={statsConversation && executionStats.conversation ? {
               conversationId: statsConversation.id,
@@ -11835,6 +11964,7 @@ function App(): React.JSX.Element {
           />
         </div>
       </div>
+      {noteDraft.confirmation}
       </DocumentConversationContext>
     </div>
   );

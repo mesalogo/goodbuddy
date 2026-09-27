@@ -282,11 +282,40 @@ export const magicNoteContentSchema = z.union([magicNoteRichContentSchema, magic
 export type MagicNoteContent = z.infer<typeof magicNoteContentSchema>
 export type MagicNoteAnalysisInputMode = 'text' | 'images' | 'canvas-images' | 'text-fallback'
 
+export const magicNoteSourceSchema = z.object({
+  kind: z.enum(['message', 'conversation']),
+  conversationId: magicNoteIdSchema,
+  messageIds: z.array(magicNoteIdSchema).min(1),
+  capturedAt: z.string().datetime(),
+  conversationTitle: z.string(),
+  projectId: magicNoteIdSchema.optional(),
+  projectName: z.string().optional()
+}).strict().superRefine((source, context) => {
+  if (source.kind === 'message' && source.messageIds.length !== 1) {
+    context.addIssue({ code: 'custom', path: ['messageIds'], message: 'Message sources require exactly one message' })
+  }
+  if (new Set(source.messageIds).size !== source.messageIds.length) {
+    context.addIssue({ code: 'custom', path: ['messageIds'], message: 'Source message IDs must be unique' })
+  }
+})
+export type MagicNoteSource = z.infer<typeof magicNoteSourceSchema>
+
+export const magicNoteSearchSchema = z.object({
+  query: z.string().trim().max(1000),
+  limit: z.number().int().min(1).max(200).optional()
+}).strict()
+export type MagicNoteSearchInput = z.infer<typeof magicNoteSearchSchema>
+
 export const magicNoteCreateSchema = z
   .object({
-    title: z.string().trim().min(1).max(100)
+    title: z.string().trim().min(1).max(100),
+    content: magicNoteContentSchema.optional(),
+    source: magicNoteSourceSchema.optional()
   })
   .strict()
+  .refine((input) => !input.source || !!input.content, {
+    path: ['content'], message: 'Source requires initial content'
+  })
 export type MagicNoteCreateInput = z.infer<typeof magicNoteCreateSchema>
 
 export const magicNoteUpdateSchema = z
@@ -311,7 +340,8 @@ export const magicNoteDeleteSchema = z
 export const magicNoteEntryCreateSchema = z
   .object({
     noteId: magicNoteIdSchema,
-    content: magicNoteContentSchema
+    content: magicNoteContentSchema,
+    source: magicNoteSourceSchema.optional()
   })
   .strict()
 export type MagicNoteEntryCreateInput = z.infer<
@@ -440,6 +470,7 @@ export type MagicNoteEntry = {
   id: string
   noteId: string
   content: MagicNoteContent
+  source?: MagicNoteSource
   plainText: string
   comments: MagicNoteComment[]
   analyzedAt?: string
@@ -465,6 +496,10 @@ export type MagicNoteDetail = MagicNoteSummary & {
 
 export type MagicNoteEntryCreateResult = MagicNoteDetail & {
   createdEntryId: string
+}
+
+export type MagicNoteCreateResult = MagicNoteDetail & {
+  createdEntryId?: string
 }
 
 export type MagicNotesSnapshot = {

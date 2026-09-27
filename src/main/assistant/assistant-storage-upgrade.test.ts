@@ -55,12 +55,12 @@ function subagent(requestId: string): SubagentEvent {
 }
 
 describe('subagent progress storage', () => {
-  it.each([45, 46])('upgrades schema %i without reconverting history or vacuuming ordinary free pages', async (sourceVersion) => {
+  it.each([45, 46, 47])('upgrades schema %i without reconverting history or vacuuming ordinary free pages', async (sourceVersion) => {
     const { path, database, taskId } = await fixture()
     const event = subagent(randomUUID())
     event.progress = [{ id: randomUUID(), type: 'text', content: 'Keep current-format progress' }]
     database.appendTaskEvent(taskId, 'subagent', event)
-    const note = database.createMagicNote({ title: 'Already migrated', content: { version: 1, ops: [{ insert: 'Keep note\n' }] } })
+    const note = database.getMagicNote(database.createMagicNote({ title: 'Already migrated', content: { version: 1, ops: [{ insert: 'Keep note\n' }] } }).id)
     const header = { id: randomUUID(), title: 'Keep chat', updatedAt: 1000 }
     const message = { id: randomUUID(), role: 'assistant' as const, state: 'complete' as const,
       content: 'Normal chat update'.repeat(100_000), createdAt: 1000 }
@@ -70,14 +70,15 @@ describe('subagent progress storage', () => {
     database.close()
     const sql = new DatabaseSync(path)
     try {
-      sql.exec(`DROP VIEW supervision_review_current;
+      if (sourceVersion < 47) sql.exec(`DROP VIEW supervision_review_current;
         DROP TABLE supervision_review_navigation; DROP TABLE supervision_review_batches;
         DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;`)
       if (sourceVersion === 45) sql.exec(`
         DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
         DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
         DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;`)
-      sql.exec(`PRAGMA user_version = ${sourceVersion}; PRAGMA wal_checkpoint(TRUNCATE)`)
+      sql.exec(`ALTER TABLE magic_note_entries DROP COLUMN source_json;
+        PRAGMA user_version = ${sourceVersion}; PRAGMA wal_checkpoint(TRUNCATE)`)
       expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBeGreaterThan(0)
       const events = sql.prepare('SELECT * FROM task_events WHERE task_id = ? ORDER BY id').all(taskId)
       expect(events.length).toBeGreaterThan(0)
@@ -143,7 +144,7 @@ describe('subagent progress storage', () => {
 
   it('does not re-show migration after a note is already migrated and later chats free pages', async () => {
     const { path, database } = await fixture()
-    const note = database.createMagicNote({ title: 'Legacy note', content: { version: 1, ops: [{ insert: 'note body\n' }] } })
+    const note = database.getMagicNote(database.createMagicNote({ title: 'Legacy note', content: { version: 1, ops: [{ insert: 'note body\n' }] } }).id)
     database.close()
     const legacy = new DatabaseSync(path)
     try {
@@ -158,6 +159,7 @@ describe('subagent progress storage', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+        ALTER TABLE magic_note_entries DROP COLUMN source_json;
         PRAGMA user_version = 37`)
     } finally { legacy.close() }
     expect(hasPendingAssistantStorageUpgrade(path)).toBe(true)
@@ -479,6 +481,7 @@ describe('subagent progress storage', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+        ALTER TABLE magic_note_entries DROP COLUMN source_json;
         PRAGMA user_version = ${sourceVersion}; BEGIN`)
       const insert = legacy.prepare(
         `INSERT INTO task_events(

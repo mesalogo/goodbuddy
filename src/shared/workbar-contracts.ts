@@ -24,6 +24,7 @@ export const workbarAppIdSchema = z.enum([
   'workspace',
   'browser',
   'results',
+  'notes',
   'terminal'
 ])
 export type WorkbarAppId = z.infer<typeof workbarAppIdSchema>
@@ -153,6 +154,20 @@ export const WORKBAR_APP_DEFINITIONS = [
     availability: { state: 'available' }
   },
   {
+    id: 'notes',
+    visibleAcrossContextSwitches: true,
+    label: '笔记',
+    icon: 'notes',
+    description: '浏览笔记和快速追加文字。',
+    instancePolicy: 'single',
+    defaultContext: 'application',
+    defaultOpen: false,
+    required: false,
+    closable: true,
+    reorderable: true,
+    availability: { state: 'available' }
+  },
+  {
     id: 'terminal',
     visibleAcrossContextSwitches: true,
     label: '终端',
@@ -205,6 +220,9 @@ export const workbarTabInstanceSchema = z
   })
   .strict()
   .superRefine((instance, context) => {
+    if (instance.appId === 'notes' && instance.targetRef) {
+      context.addIssue({ code: 'custom', path: ['targetRef'], message: 'Notes are application scoped and do not accept target bindings' })
+    }
     if (
       instance.appId === 'terminal' &&
       (!instance.targetRef || !['local', 'project'].includes(instance.targetRef.type))

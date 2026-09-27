@@ -86,6 +86,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 2`)
     raw.close()
 
@@ -148,6 +149,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 20`)
     raw.close()
 

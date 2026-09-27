@@ -526,6 +526,7 @@ function SubagentStatusList({
 }
 
 type ChatMessageRowProps = {
+  onAddToNote?: (conversationId: string, message: Message, trigger: HTMLElement) => void
   onOpenImageModelSettings?: () => void
   onReselectImageSources?: (operation: ImageOperation) => void
   onEditImage?: (artifact: AssistantArtifact) => void
@@ -563,6 +564,7 @@ type ChatMessageRowProps = {
 }
 
 function ChatMessageRowView({
+  onAddToNote,
   onOpenImageModelSettings,
   onReselectImageSources,
   onEditImage,
@@ -1274,6 +1276,7 @@ function ChatMessageRowView({
           message.state !== 'streaming' &&
           Boolean(message.content.trim()) && (
             <div className="message__actions">
+              {!greeting && onAddToNote && <button type="button" className="icon-button" aria-label={t('magicNotes:capture.add')} title={t('magicNotes:capture.add')} onClick={event => onAddToNote(conversationId, message, event.currentTarget)}><FileText aria-hidden="true" size={15} /></button>}
               <button
                 aria-label={t(copied ? 'notices.messageCopied' : 'chat.copyMessage')}
                 className="icon-button"
@@ -1321,6 +1324,7 @@ function ChatMessageRowView({
 export const ChatMessageRow = memo(ChatMessageRowView)
 
 type ChatTimelineProps = {
+  onAddToNote?: ChatMessageRowProps['onAddToNote']
   onOpenImageModelSettings?: () => void
   onReselectImageSources?: (operation: ImageOperation) => void
   onEditImage?: (artifact: AssistantArtifact) => void
@@ -1361,6 +1365,7 @@ type ChatTimelineProps = {
 }
 
 export const ChatTimeline = memo(function ChatTimeline({
+  onAddToNote,
   onOpenImageModelSettings,
   onReselectImageSources,
   onEditImage,
@@ -1404,6 +1409,7 @@ export const ChatTimeline = memo(function ChatTimeline({
         const messageIndex = messageStartIndex + visibleMessageIndex
         return (
           <ChatMessageRow
+            onAddToNote={onAddToNote}
             onOpenImageModelSettings={onOpenImageModelSettings}
             onReselectImageSources={onReselectImageSources}
             onEditImage={onEditImage}

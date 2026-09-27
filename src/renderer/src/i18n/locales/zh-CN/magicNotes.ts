@@ -1,4 +1,19 @@
 export const magicNotes = {
+  capture: {
+    add: '加入笔记', quick: '快速笔记', conversation: '保存当前对话到笔记', menu: '会话操作',
+    search: '搜索笔记', target: '保存到', title: '笔记标题', content: '待加入内容', global: '全局',
+    openWorkspace: '在完整工作区打开', back: '返回笔记列表', choose: '选择已有笔记',
+    empty: '还没有笔记，创建一篇开始记录。', noResults: '未找到相关笔记，请修改搜索词或新建笔记。',
+    source: '来自会话', openSource: '返回原会话', openMessage: '查看来源消息',
+    missingConversation: '原会话已不存在', missingMessage: '原消息已不存在',
+    messageScope: '保存范围：该回答的文字正文，不含推理、工具日志、图片和附件文件。',
+    conversationScope: '保存范围：触发时完整对话的用户与助手文字正文，不含推理、工具日志、图片和附件文件。',
+    incomplete: '这条回答尚未完成，预览保留已有正文。', wait: '请等待回答完成或停止生成后再保存。',
+    tooLong: '每条记录的文字不能超过 500 KB，请缩减内容后保存。',
+    required: '请输入正文并选择目标笔记，或填写新笔记标题（最多 100 字）。',
+    saving: '正在保存…', deletedTarget: '目标笔记已删除，请重新选择；草稿已保留。',
+    user: '用户', assistant: '助手', loading: '正在读取完整对话…'
+  },
   records: { title: '记录', pane: '记录索引', hide: '收起记录索引', show: '展开记录索引', pages: '{{count}} 页', firstPage: '画布首页', previewFailed: '首页预览加载失败' },
   canvas: {
     savedAnalysisFailed: '记录已保存，但自动分析失败：{{error}}。可稍后重新分析。',

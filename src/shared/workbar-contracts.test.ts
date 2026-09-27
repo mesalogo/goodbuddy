@@ -13,6 +13,14 @@ const terminalId = '00000000-0000-4000-8000-000000000102'
 const projectId = '00000000-0000-4000-8000-000000000201'
 
 describe('workbar contracts', () => {
+  it('keeps notes as a context-independent single instance through layout normalization', () => {
+    const instance = { id: taskId, appId: 'notes', title: 'Notes' } as const
+    const layout = { instances: [instance, { ...instance, id: terminalId }], activeInstanceId: terminalId, expanded: true, dock: 'right', widthRatio: 0.3 }
+    expect(workbarLayoutPreferencesSchema.safeParse(layout).success).toBe(false)
+    expect(normalizeWorkbarLayoutPreferences(layout, [])?.instances).toEqual([instance])
+    expect(workbarTabInstanceSchema.safeParse({ ...instance, targetRef: { type: 'conversation', conversationId: 'A' } }).success).toBe(false)
+    expect(workbarTabInstanceSchema.safeParse({ ...instance, targetRef: { type: 'project', projectId } }).success).toBe(false)
+  })
   it('persists supervision conversation and task targets without allowing task terminal bindings', () => {
     for (const targetRef of [{ type: 'conversation', conversationId: 'A' }, { type: 'task', taskId: 'task-A' }]) {
       const instance = { id: taskId, appId: 'tasks', title: 'Tasks', targetRef }
@@ -36,6 +44,7 @@ describe('workbar contracts', () => {
       { id: 'workspace', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: true, closable: false, reorderable: false },
       { id: 'browser', instancePolicy: 'multiple', defaultContext: 'current-conversation', defaultOpen: true, required: false, closable: true, reorderable: true },
       { id: 'results', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: false, closable: true, reorderable: true },
+      { id: 'notes', instancePolicy: 'single', defaultContext: 'application', defaultOpen: false, required: false, closable: true, reorderable: true },
       {
         id: 'terminal',
         instancePolicy: 'multiple',

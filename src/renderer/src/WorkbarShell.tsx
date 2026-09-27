@@ -5,6 +5,7 @@ import {
   FileOutput,
   FolderTree,
   Globe2,
+  NotebookPen,
   SquareTerminal,
   X,
   type LucideIcon
@@ -35,6 +36,7 @@ const WORKBAR_APP_ICONS: Record<WorkbarAppId, LucideIcon> = {
   workspace: FolderTree,
   browser: Globe2,
   results: FileOutput,
+  notes: NotebookPen,
   terminal: SquareTerminal
 }
 

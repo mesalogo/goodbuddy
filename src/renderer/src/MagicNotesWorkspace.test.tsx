@@ -200,6 +200,16 @@ async function openTodo(): Promise<void> {
 }
 
 describe('MagicNotesWorkspace overview navigation', () => {
+  it('opens an externally requested note and entry after initial loading and renders its source', async () => {
+    const source = { kind: 'message' as const, conversationId: 'conversation-a', messageIds: ['message-a'], capturedAt: detail.createdAt, conversationTitle: 'Original discussion' }
+    get.mockResolvedValue({ ...detail, entries: [{ ...detail.entries[0]!, source }] })
+    const onOpenSource = vi.fn(async () => 'opened' as const)
+    render(<MagicNotesWorkspace onNotify={onNotify} navigation={{ noteId, entryId, requestId: 1 }} onOpenSource={onOpenSource} />)
+    expect(await screen.findByDisplayValue(detail.title)).toBeVisible()
+    fireEvent.click(await screen.findByRole('button', { name: '查看来源消息' }))
+    expect(onOpenSource).toHaveBeenCalledWith(source, 'message-a')
+    expect(document.getElementById(`magic-note-entry-${entryId}`)).toBeVisible()
+  })
   it('flushes pending canvas input before an App leave and retains it when continuing', async () => {
     let requestLeave: ((leave: () => void) => void) | undefined
     const leave = vi.fn()

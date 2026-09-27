@@ -1,5 +1,8 @@
 // @vitest-environment node
 import { mkdtemp, rm } from 'node:fs/promises'
+import fs from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -91,10 +94,102 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     open()
   })
   afterEach(async () => {
+    vi.restoreAllMocks()
     await dispose?.()
     database?.close()
     bridge.handlers.clear()
     await rm(directory, { recursive: true, force: true })
+  })
+
+  it('captures verified source labels and preserves them after source deletion, edits and reopen', async () => {
+    const project = database.createProject({ name: 'Actual project', rootPath: directory,
+      description: '', defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' } })
+    const header = { id: randomUUID(), title: 'Actual conversation', projectId: project.id, updatedAt: 1 }
+    const messages = Array.from({ length: 120 }, (_, index) => ({ id: randomUUID(),
+      role: index % 2 ? 'assistant' as const : 'user' as const,
+      content: `History ${index}`, state: 'complete' as const, createdAt: index }))
+    database.saveLocalConversations([{ header, messages }])
+    const source = { kind: 'conversation' as const, conversationId: header.id,
+      messageIds: messages.map(message => message.id), capturedAt: '2026-09-26T01:02:03.000Z',
+      conversationTitle: 'Forged title', projectId: randomUUID(), projectName: 'Forged project' }
+    const content = { version: 1 as const, ops: [{ insert: messages.map(message => `${message.role}: ${message.content}\n`).join('') }] }
+    const created = await api.create({ title: 'Captured history', content, source })
+    expect(created.createdEntryId).toBe(created.entries[0]!.id)
+    const expectedSource = { ...source, conversationTitle: header.title, projectId: project.id, projectName: project.name }
+    expect(created.entries[0]!.source).toEqual(expectedSource)
+    expect(created.entries[0]!.content).toEqual(content)
+    const appended = await api.createEntry({ noteId: created.id, content,
+      source: { ...source, kind: 'message', messageIds: [messages[1]!.id] } })
+    expect(appended.entries.find(entry => entry.id === appended.createdEntryId)?.source)
+      .toEqual({ ...expectedSource, kind: 'message', messageIds: [messages[1]!.id] })
+    database.deleteLocalConversation(header.id)
+    const edited = await api.updateEntry({ entryId: created.createdEntryId!, expectedRevision: 0,
+      content: { version: 1, ops: [{ insert: 'Edited copy\n' }] } })
+    expect(edited.entries[0]!.source).toEqual(expectedSource)
+    await reopen()
+    expect(await api.get(created.id)).toEqual(edited)
+    const sql = new DatabaseSync(join(directory, 'assistant.sqlite'))
+    try {
+      const row = sql.prepare('SELECT source_json FROM magic_note_entries WHERE id = ?').get(created.createdEntryId!) as { source_json: string }
+      expect(JSON.parse(row.source_json)).toEqual(expectedSource)
+    } finally { sql.close() }
+    await api.remove(created.id)
+    await expect(api.get(created.id)).rejects.toThrow()
+  })
+
+  it('rejects invalid source identities and source-only creates without leaving empty notes', async () => {
+    const header = { id: randomUUID(), title: 'Global conversation', updatedAt: 1 }
+    const message = { id: randomUUID(), role: 'assistant' as const, content: 'Answer', state: 'error' as const, createdAt: 1 }
+    database.saveLocalConversations([{ header, messages: [message] }])
+    const content = { version: 1 as const, ops: [{ insert: 'Edited preview\n' }] }
+    const source = { kind: 'message' as const, conversationId: header.id, messageIds: [message.id],
+      capturedAt: new Date().toISOString(), conversationTitle: 'Untrusted', projectId: randomUUID(), projectName: 'Untrusted' }
+    await expect(api.create({ title: 'Invalid', source })).rejects.toThrow()
+    await expect(api.create({ title: 'Invalid', content, source: { ...source, messageIds: [randomUUID()] } })).rejects.toThrow()
+    await expect(api.create({ title: 'Invalid', content, source: { ...source, messageIds: [message.id, message.id] } })).rejects.toThrow()
+    await expect(api.create({ title: 'Invalid', content, source: { ...source, conversationId: randomUUID() } })).rejects.toThrow()
+    expect((await api.list()).notes).toEqual([])
+    const note = await api.create({ title: 'Partial answer', content, source })
+    expect(note.entries[0]!.source).toEqual({ kind: 'message', conversationId: header.id,
+      messageIds: [message.id], capturedAt: source.capturedAt, conversationTitle: header.title })
+    await api.remove(note.id)
+    expect(database.getConversation(header.id).messages).toEqual([message])
+  })
+
+  it('rolls back a new note when writing its initial body fails and allows retry', async () => {
+    const rename = fs.renameSync
+    const failure = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      if (String(to).includes('entries')) throw new Error('Initial body write failed')
+      rename(from, to)
+    })
+    const input = { title: 'Atomic capture', content: { version: 1 as const, ops: [{ insert: 'Saved once\n' }] } }
+    await expect(api.create(input)).rejects.toThrow('Initial body write failed')
+    expect((await api.list()).notes).toEqual([])
+    failure.mockRestore()
+    const note = await api.create(input)
+    expect(note.entries).toHaveLength(1)
+    expect(note.createdEntryId).toBe(note.entries[0]!.id)
+    expect((await api.list()).notes).toHaveLength(1)
+  })
+
+  it('searches titles and all entry bodies with note-level limits while preserving Agent entry results', async () => {
+    const titleOnly = await api.create({ title: 'Needle title' })
+    expect(titleOnly.createdEntryId).toBeUndefined()
+    const bodyOnly = await api.create({ title: 'Body only', content: { version: 1, ops: [{ insert: 'Needle body\n' }] } })
+    for (let index = 0; index < 4; index++) {
+      await api.createEntry({ noteId: bodyOnly.id, content: { version: 1, ops: [{ insert: `Needle ${index}\n` }] } })
+    }
+    await api.createEntry({ noteId: bodyOnly.id, content: { version: 1, ops: [{ insert: 'Latest unrelated preview\n' }] } })
+    const results = await api.search({ query: ' Needle ', limit: 2 })
+    expect(new Set(results.map(note => note.id))).toEqual(new Set([bodyOnly.id, titleOnly.id]))
+    expect(results.find(note => note.id === bodyOnly.id)).toMatchObject({ entryCount: 6, preview: 'Latest unrelated preview' })
+    expect(database.searchMagicNotes('Needle', 20).filter(result => result.noteId === bodyOnly.id)).toHaveLength(5)
+    await api.update({ noteId: titleOnly.id, pinned: true, expectedRevision: titleOnly.revision })
+    expect((await api.search({ query: 'Needle', limit: 1 })).map(note => note.id)).toEqual([titleOnly.id])
+    expect(await api.search({ query: '%' })).toEqual([])
+    expect(await api.search({ query: '' })).toHaveLength(2)
+    await expect(api.search({ query: 'Needle', limit: 0 })).rejects.toThrow()
+    await expect(api.search({ query: 'Needle', limit: 201 })).rejects.toThrow()
   })
 
   it.each([true, false])('limits saved, draft and todo input using persisted page order and count (vision=%s)', async (supportsImageInput) => {

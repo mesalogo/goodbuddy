@@ -31,6 +31,7 @@ it('migrates activity history and writes only changed records during streaming',
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version=43`)
     const legacySave = raw.prepare('UPDATE activity_history SET records_json = ?, legacy_history_may_be_incomplete = 1')
     legacySave.run(JSON.stringify(records))

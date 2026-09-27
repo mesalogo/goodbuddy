@@ -319,6 +319,7 @@ export const ipcChannels = {
   contextReadClipboard: 'context:read-clipboard',
   contextRemove: 'context:remove',
   magicNotesList: 'magic-notes:list',
+  magicNotesSearch: 'magic-notes:search',
   magicNotesGet: 'magic-notes:get',
   magicNotesCreate: 'magic-notes:create',
   magicNotesUpdate: 'magic-notes:update',

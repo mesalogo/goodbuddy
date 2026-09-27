@@ -49,6 +49,8 @@ import type {
 import type { ApplicationSettings, MagicNoteCommentMode } from '../../shared/application-settings-contracts'
 import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text'
 import { MagicNoteContent } from './MagicNoteContent'
+import { MagicNoteSource, type OpenMagicNoteSource } from './MagicNoteSource'
+import './magic-notes-panel.css'
 import { MagicTodoDirectory } from './MagicTodoDirectory'
 import { MagicNoteEditor } from './MagicNoteEditor'
 import { MagicCanvasEditor, canvasHasContent, type MagicCanvasEditorHandle } from './MagicCanvasEditor'
@@ -65,6 +67,8 @@ import {
 } from './WorkspacePrimitives'
 
 export type MagicNotesWorkspaceProps = {
+  navigation?: { noteId: string; entryId?: string; requestId: number }
+  onOpenSource?: OpenMagicNoteSource
   applicationSettings?: ApplicationSettings
   onNotify: (notification: AppNotificationInput) => void
   onBeforeLeave?: (requester: ((leave: () => void) => void) | undefined) => void
@@ -348,6 +352,8 @@ function TodoListItem({
 }
 
 export function MagicNotesWorkspace({
+  navigation,
+  onOpenSource,
   onNotify,
   onBeforeLeave,
   applicationSettings
@@ -1155,6 +1161,13 @@ export function MagicNotesWorkspace({
     onBeforeLeave?.((leave) => { void requestDraftSwitch({ kind: 'leave', leave }) })
     return () => onBeforeLeave?.(undefined)
   }, [onBeforeLeave, requestDraftSwitch])
+
+  const handledNavigation = useRef<typeof navigation>(undefined)
+  useEffect(() => {
+    if (!navigation || handledNavigation.current === navigation || loadStatus !== 'ready' || busy) return
+    handledNavigation.current = navigation
+    void requestDraftSwitch({ kind: 'note', noteId: navigation.noteId, entryId: navigation.entryId })
+  }, [navigation, requestDraftSwitch, loadStatus, busy])
 
   const continueEditing = useCallback((): void => {
     setPendingDraftSwitch(undefined)
@@ -2710,6 +2723,7 @@ export function MagicNotesWorkspace({
                       tabIndex={-1}
                       className={`magic-note-entry${editingEntry?.id === entry.id && entry.content.version === 2 ? ' magic-note-entry--canvas-editing' : ''}`}
                     >
+                      {entry.source && <MagicNoteSource source={entry.source} onOpen={onOpenSource} />}
                       <header>
                         <time dateTime={entry.createdAt}>
                           {dateFormatter.format(new Date(entry.createdAt))}

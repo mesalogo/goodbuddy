@@ -1,5 +1,78 @@
 # Magic Notes Progress
 
+## 2026-09-26: Conversation Capture and Compact Notes Panel
+
+- FR-1/FR-4: `notes` is an application-scoped optional singleton in the workbar.
+  The compact panel supports title/body search, browsing, text appends and full
+  workspace navigation. Quick notes uses the same tab; app enablement controls
+  availability independently of sidebar pinning.
+- FR-2/FR-3: Assistant-message and conversation-header actions open editable text
+  previews. Whole-conversation capture loads complete history. App owns drafts
+  and selection; close, replacement and disable actions use the draft guard.
+  Success focuses the returned entry ID; failed saves retain input.
+- FR-5: Schema 48 adds nullable source metadata. Main validates message ownership
+  and resolves display labels at save time. Panel and workspace share source
+  navigation, including missing-message and missing-conversation handling.
+- FR-6: Desktop search, preload/IPC and note-level SQL results are connected.
+  Creating a note with initial content commits note/entry membership in one
+  transaction. Both views use existing change notifications; file reconciliation
+  and workspace optimistic revisions retain their existing boundaries. See
+  [the implemented contract](./technical-design.md#conversation-integration).
+
+Validation reported by implementation subagents in this session:
+
+| Scope | Reported result | Evidence boundary |
+| --- | --- | --- |
+| Backend focused checks | 362 tests passed | Subagent handoff; not a repository-wide result |
+| Frontend focused checks | 8 files / 592 tests passed | Subagent handoff; not real Electron acceptance |
+| Web TypeScript and lint | Passed | Subagent handoff; does not establish full-repository typecheck/lint |
+
+The coordinating agent subsequently reported real Electron acceptance passing.
+[magic-notes-capture.electron.test.ts](../../../tests/magic-notes-capture.electron.test.ts)
+and its [Main driver](../../../tests/support/magic-notes-capture-main.ts) /
+[renderer](../../../tests/support/magic-notes-capture-renderer.tsx) mount the real
+App UI and use production preload, registered IPC and SQLite/file storage.
+Unrelated services use test dependencies; the renderer bridge is not replaced.
+
+- Saving an assistant response to an existing note retains its earlier entry;
+  whole-conversation capture creates a new note with its first entry.
+- All 502 historical messages are compared verbatim in the preview and saved
+  content, including history initially outside the rendered timeline.
+- Full-workspace navigation locates the exact saved entry; source navigation
+  restores the conversation and focuses the source message. The coordinating
+  agent also reports source-history expansion coverage.
+- Native Electron keyboard input covers returning to the list, opening a note
+  and appending text in a measured 214px panel, without horizontal overflow.
+- SQLite close/reopen preserves both notes. Deleting the source conversation
+  retains their saved content and source metadata. Model calls: **0**.
+
+The combined Electron, `canvas-ipc.integration`, `MagicNotesPanel` and
+`ChatTimeline` run passed **4 files / 70 tests**. Lint and web TypeScript passed.
+This validates the App capture path in a test Electron window with isolated data;
+it does not establish release-package or cross-platform acceptance.
+
+Repository validation and subsequent fixture repairs:
+
+| Check | Result at execution time | Follow-up |
+| --- | --- | --- |
+| `npm test` | 457 files / 5,359 cases: 5,272 passed, 4 failed, 83 skipped | No all-green full-suite rerun reported |
+| Three schema-fixture failures | Activity-history and two worker fixture variants omitted `DROP COLUMN source_json` when reconstructing old schemas | Fixed; the five-file regression run below passed |
+| Remaining test failure | `tests/build-release.test.ts`: missing DSH resources | Unrelated to notes; not fixed in this validation pass |
+| Full-repository typecheck | Failed on parallel SSH mocks missing `forwardLoopback`, an IPC native-terminal fixture referencing undefined `terminalManager`, and mismatched arguments in `obsidian-runtime-acceptance` | Execution-time findings; later concurrent changes may alter them |
+
+After fixture repairs, **5 files / 58 tests passed**:
+`src/main/assistant/activity-history-io.test.ts`,
+`tests/assistant-storage-worker.test.ts`,
+`src/main/assistant/assistant-storage-upgrade.test.ts`,
+`src/main/magic-notes/magic-note-storage.test.ts` and
+`src/main/magic-notes/canvas-ipc.integration.test.ts`.
+This focused rerun does not replace the failed full-suite/typecheck results.
+
+Status: **implemented; real Electron acceptance passed; repository validation is
+not all green**. Results above come from the session handoffs, not a rerun by this
+documentation task. Later fixes require their own verification evidence; older
+Electron/full-suite results below do not validate this integration.
+
 ## 2026-09-24: Resizable Todo List and Collapsible Note Groups
 
 - Todo list/detail uses a 1px divider with a transparent 9px pointer target and

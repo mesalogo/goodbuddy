@@ -53,6 +53,30 @@ function canvas(size = 40): MagicNoteCanvasContent {
 }
 
 describe('Magic note SQLite and filesystem storage', () => {
+  it('upgrades schema 47 with nullable sources without rewriting bodies and reopens idempotently', () => {
+    const { database, sql, path, directory } = setup()
+    const created = database.createMagicNote({ title: 'Existing note', content: rich })
+    const before = database.getMagicNote(created.id)
+    const bodyPath = join(directory, 'notes', created.id, 'entries', `${created.createdEntryId}.json`)
+    const body = readFileSync(bodyPath)
+    const modifiedAt = statSync(bodyPath).mtimeMs
+    database.close()
+    // Reconstruct the previous released schema; production never downgrades databases.
+    sql.exec('ALTER TABLE magic_note_entries DROP COLUMN source_json; PRAGMA user_version = 47;')
+    upgradeAssistantStorage(path, () => undefined)
+    expect(sql.prepare('PRAGMA user_version').get()).toEqual({ user_version: ASSISTANT_DATABASE_SCHEMA_VERSION })
+    expect(sql.prepare('SELECT source_json FROM magic_note_entries').get()).toEqual({ source_json: null })
+    expect(sql.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    database.initialize(directory)
+    expect(database.getMagicNote(created.id)).toEqual(before)
+    expect(database.getMagicNote(created.id).entries[0]).not.toHaveProperty('source')
+    expect(readFileSync(bodyPath)).toEqual(body)
+    expect(statSync(bodyPath).mtimeMs).toBe(modifiedAt)
+    database.close()
+    database.initialize(directory)
+    expect(database.getMagicNote(created.id)).toEqual(before)
+  })
+
   it('preserves textual data URLs and arbitrary $asset objects through save, migration and reopen', () => {
     const { database, sql, path, directory } = setup()
     const text = 'data:text/plain;base64,aGVsbG8'
@@ -61,7 +85,7 @@ describe('Magic note SQLite and filesystem storage', () => {
     const drawing = canvas()
     drawing.pages[0]!.objects.push({ type: 'IText', ...custom }, { type: 'Group', objects: [{ type: 'Image', src: png, name: text, custom }] })
     drawing.flow!.ops.push({ insert: text }, { insert: { image: png } }, { insert: { custom } })
-    const notes = [richText, drawing].map((content) => database.createMagicNote({ title: 'Literal URLs', content }))
+    const notes = [richText, drawing].map((content) => database.getMagicNote(database.createMagicNote({ title: 'Literal URLs', content }).id))
     for (const [index, note] of notes.entries()) expect(note.entries[0]!.content).toEqual([richText, drawing][index])
     const disk = JSON.parse(readFileSync(join(directory, 'notes', notes[1]!.id, 'entries', `${notes[1]!.entries[0]!.id}.json`), 'utf8'))
     expect(disk.content.pages[0].objects[2]).toEqual({ type: 'IText', ...custom })
@@ -125,7 +149,7 @@ describe('Magic note SQLite and filesystem storage', () => {
     expect(existsSync(root)).toBe(true)
     expect(logged).toHaveBeenCalled()
     // A delayed reset cleanup must not remove notes created afterwards.
-    const retained = database.createMagicNote({ title: 'New note', content: canvas() })
+    const retained = database.getMagicNote(database.createMagicNote({ title: 'New note', content: canvas() }).id)
     failing = false
     database.listMagicNotes()
     expect(existsSync(root)).toBe(false)
@@ -134,7 +158,7 @@ describe('Magic note SQLite and filesystem storage', () => {
 
   it('still rejects authoritative body rename failures before committing SQL', () => {
     const { database } = setup()
-    const note = database.createMagicNote({ title: 'Body error', content: rich })
+    const note = database.getMagicNote(database.createMagicNote({ title: 'Body error', content: rich }).id)
     const entry = note.entries[0]!
     vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
       if (String(target).endsWith(`${entry.id}.json`)) throw new Error('body rename blocked')
@@ -229,6 +253,7 @@ describe('Magic note SQLite and filesystem storage', () => {
       DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 37`)
     rmSync(join(directory, 'notes'), { recursive: true })
     const progress: number[] = []
@@ -270,7 +295,7 @@ describe('Magic note SQLite and filesystem storage', () => {
 
   it('reclaims migrated SQLite payload space and restores a coordinated database/files backup', async () => {
     const { database, sql, directory, path } = setup()
-    const note = database.createMagicNote({ title: 'Large legacy PDF', content: canvas(2 * 1024 * 1024) })
+    const note = database.getMagicNote(database.createMagicNote({ title: 'Large legacy PDF', content: canvas(2 * 1024 * 1024) }).id)
     const entry = note.entries[0]!
     database.close()
     sql.prepare('UPDATE magic_note_entries SET content_json = ? WHERE id = ?').run(JSON.stringify(entry.content), entry.id)
@@ -340,7 +365,7 @@ describe('Magic note SQLite and filesystem storage', () => {
 
   it('rolls back failed creates and cleans their unaccepted files without affecting existing notes', () => {
     const { database, sql, directory } = setup()
-    const retained = database.createMagicNote({ title: 'Keep', content: rich })
+    const retained = database.getMagicNote(database.createMagicNote({ title: 'Keep', content: rich }).id)
     sql.exec(`CREATE TRIGGER fail_note_insert BEFORE INSERT ON magic_note_entries
       BEGIN SELECT RAISE(ABORT, 'insert unavailable'); END`)
     expect(() => database.createMagicNote({ title: 'Failed', content: canvas() })).toThrow('insert unavailable')

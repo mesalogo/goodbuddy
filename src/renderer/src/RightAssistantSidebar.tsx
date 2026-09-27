@@ -83,6 +83,7 @@ export type AssistantSidebarTab =
   | 'workspace'
   | 'browser'
   | 'results'
+  | 'notes'
 
 export type SidebarArtifact = {
   id: string
@@ -119,6 +120,11 @@ export type SidebarTaskDuration = {
 }
 
 export type RightAssistantSidebarProps = {
+  notesEnabled?: boolean
+  notesSettingsReady?: boolean
+  notesOpenRequest?: number
+  notesPanel?: React.ReactNode
+  onBeforeCloseNotes?: () => Promise<boolean>
   open: boolean
   tab: AssistantSidebarTab
   approvals: PendingSidebarApproval[]
@@ -179,7 +185,8 @@ const tabIds: AssistantSidebarTab[] = [
   'tasks',
   'workspace',
   'browser',
-  'results'
+  'results',
+  'notes'
 ]
 const emptyChangedFiles: WorkspaceChanges['files'] = []
 const defaultSidebarRatio = 0.3
@@ -803,6 +810,11 @@ function BrowserViewport({
 }
 
 export function RightAssistantSidebar({
+  notesEnabled = false,
+  notesSettingsReady = true,
+  notesOpenRequest = 0,
+  notesPanel,
+  onBeforeCloseNotes,
   open,
   tab,
   approvals,
@@ -876,7 +888,7 @@ export function RightAssistantSidebar({
   )
   const localizedAppDefinitions = useMemo(
     () =>
-      WORKBAR_APP_DEFINITIONS.map((definition) => {
+      WORKBAR_APP_DEFINITIONS.filter(definition => definition.id !== 'notes' || notesEnabled).map((definition) => {
         const tabDefinition = tabs.find(
           (item) => item.id === definition.id
         )
@@ -890,7 +902,7 @@ export function RightAssistantSidebar({
             t('sidebar.tabs.terminal.description')
         } satisfies WorkbarAppDefinition
       }),
-    [t, tabs]
+    [t, tabs, notesEnabled]
   )
   const [workbarInstances, setWorkbarInstances] = useState<
     WorkbarTabInstance[]
@@ -1353,6 +1365,28 @@ export function RightAssistantSidebar({
     [activeConversationId, conversationTitles, localizedAppDefinitions, workbarInstances]
   )
 
+  const [handledNotesRequest, setHandledNotesRequest] = useState(0)
+  if (handledNotesRequest !== notesOpenRequest) {
+    setHandledNotesRequest(notesOpenRequest)
+    if (notesEnabled && notesOpenRequest) {
+      const existing = workbarInstances.find(instance => instance.appId === 'notes')
+      if (existing) setActiveWorkbarInstanceId(existing.id)
+      else if (workbarInstances.length < WORKBAR_LIMITS.maximumOpenInstances) {
+        const instance: WorkbarTabInstance = { id: crypto.randomUUID(), appId: 'notes', title: t('sidebar.tabs.notes.label') }
+        setWorkbarInstances([...workbarInstances, instance])
+        setActiveWorkbarInstanceId(instance.id)
+      } else {
+        setActionErrorState({ scope: { instanceId: activeWorkbarInstanceId, open }, message: t('sidebar.workbar.limit', { count: WORKBAR_LIMITS.maximumOpenInstances }) })
+      }
+      setBrowserFullscreenInstanceId(undefined)
+    }
+  }
+  if (notesSettingsReady && !notesEnabled && workbarInstances.some(instance => instance.appId === 'notes')) {
+    const next = workbarInstances.filter(instance => instance.appId !== 'notes')
+    setWorkbarInstances(next)
+    if (activeWorkbarApp === 'notes') setActiveWorkbarInstanceId(next[0]?.id ?? null)
+  }
+
   const ensureBrowserTab = useCallback(
     (
       instance: WorkbarTabInstance
@@ -1527,6 +1561,7 @@ export function RightAssistantSidebar({
       if (definition?.closable !== true) {
         return false
       }
+      if (instance.appId === 'notes' && onBeforeCloseNotes && !await onBeforeCloseNotes()) return false
       if (instance.appId === 'browser') {
         let tabId = browserTabIdsRef.current[instance.id]
         let conversationId =
@@ -1596,6 +1631,7 @@ export function RightAssistantSidebar({
       return true
     },
     [
+      onBeforeCloseNotes,
       activeWorkbarInstanceId,
       setActionError,
       removeWorkbarInstance,
@@ -2022,7 +2058,7 @@ export function RightAssistantSidebar({
         }
         renderPanel={(instance) => (
           <div
-            className={`assistant-sidebar__body${instance.appId === 'browser' ? ' assistant-sidebar__body--browser' : ''}`}
+            className={`assistant-sidebar__body${instance.appId === 'browser' ? ' assistant-sidebar__body--browser' : instance.appId === 'notes' ? ' assistant-sidebar__body--notes' : ''}`}
           >
         {hasUnboundRequestBrowser &&
           workbarInstances.length >= WORKBAR_LIMITS.maximumOpenInstances ? (
@@ -2035,6 +2071,7 @@ export function RightAssistantSidebar({
             {actionError}
           </p>
         ) : null}
+        {instance.appId === 'notes' && notesPanel}
         {instance.appId === 'terminal' &&
          instance.targetRef &&
          (instance.targetRef.type === 'local' || instance.targetRef.type === 'project') ? (

@@ -30,9 +30,9 @@ it.each([false, true])('runs the real startup worker with legacy notes=%s withou
   const databasePath = join(root, 'assistant.sqlite')
   const database = new AssistantDatabase(databasePath)
   database.initialize(root)
-  const note = database.createMagicNote({
+  const note = database.getMagicNote(database.createMagicNote({
     title: 'Worker note', content: { version: 1, ops: [{ insert: 'Keep note\n' }] }
-  })
+  }).id)
   const header = { id: randomUUID(), title: 'Worker chat', updatedAt: 1000 }
   const message = { id: randomUUID(), role: 'assistant' as const, state: 'complete' as const,
     content: 'Normal chat'.repeat(100_000), createdAt: 1000 }
@@ -45,6 +45,7 @@ it.each([false, true])('runs the real startup worker with legacy notes=%s withou
     sql.exec(`DROP VIEW supervision_review_current;
       DROP TABLE supervision_review_navigation; DROP TABLE supervision_review_batches;
       DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;
+      ALTER TABLE magic_note_entries DROP COLUMN source_json;
       PRAGMA user_version = 46;`)
     if (legacyNotes) sql.prepare('UPDATE magic_note_entries SET content_json = ? WHERE id = ?')
       .run(JSON.stringify(note.entries[0]!.content), note.entries[0]!.id)

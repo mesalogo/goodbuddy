@@ -889,10 +889,10 @@ describe('KnowledgeMcpGateway', () => {
       gateway.getMagicNote(readToken, { noteId: created.id })
     ).toThrow('笔记不存在')
 
-    const canvas = database.createMagicNote({ title: 'Canvas', content: {
+    const canvas = database.getMagicNote(database.createMagicNote({ title: 'Canvas', content: {
       version: 2, kind: 'paged-canvas', assets: [],
       pages: [{ id: 'page', width: 794, height: 1123, background: { type: 'template', template: 'blank' }, objects: [{ type: 'IText', text: 'Canvas text' }] }]
-    } })
+    } }).id)
     const canvasEntry = gateway.getMagicNote(readToken, { noteId: canvas.id }).entries[0]!
     expect(canvasEntry).toMatchObject({ content: 'Canvas text', contentKind: 'paged-canvas', contentVersion: 2, plainTextEditable: false })
     expect(() => gateway.updateMagicNoteEntry(writeToken, { entryId: canvasEntry.id, expectedRevision: canvasEntry.revision, content: 'overwrite' })).toThrow('画布记录不能')
