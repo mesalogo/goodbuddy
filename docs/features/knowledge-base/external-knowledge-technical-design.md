@@ -37,6 +37,24 @@
 | `src/renderer/src/ExternalKnowledge.tsx` | 实例 Modal、绑定表单、Provider 配置、外部详情与检索结果 |
 | `KnowledgeWorkspace.tsx`、`App.tsx`、`KnowledgeCitationDialog.tsx` | 统一列表、聊天选择、刷新及历史引用显示 |
 
+Renderer 的 `KnowledgeWorkspace.tsx` 保留库选择、页签路由、检索与分块管理状态及回调。
+原有子组件位于 `src/renderer/src/knowledge-workspace/`：
+
+| 文件 | 职责 |
+| --- | --- |
+| `DocumentsView.tsx` | 来源导入、文档列表与解析结果预览 |
+| `KnowledgeSettingsView.tsx` | 索引、分块及图谱配置，向量索引状态轮询 |
+| `KnowledgeTasksView.tsx` | 任务筛选、层级展示、取消和重试 |
+| `GraphView.tsx`、`GraphEditors.tsx` | 图谱浏览、实体与关系编辑 |
+| `KnowledgeGraphChartLoader.tsx` | 图谱画布延迟加载及失败重试 |
+| `LibraryDialogs.tsx`、`RemoveSourceDialog.tsx`、`GraphDestructiveDialog.tsx` | 建库表单、库编辑与删除、来源移除及图谱破坏性操作确认 |
+| `types.ts` | 工作区 Props 与组件间使用的类型 |
+| `formatting.ts`、`helpers.ts` | 多个组件共用的本地化格式化、标签、别名解析、进度和错误处理 |
+
+子组件直接导入所需模块，不反向依赖工作区入口。单个视图专用的格式化与标签留在该视图，
+检索结果转换留在入口。模块拆分保留组件 Props、挂载位置、key 与副作用顺序；文档与来源
+合并后的列表结构及操作归属见 [UI 设计](./ui-design.md#6-来源操作)。
+
 `ExternalKnowledge.tsx` 的字段改用全局 `.field`，修正 body Portal 脱离知识库祖先后
 丢失 scoped 控件样式的问题。CSS 提供 560px 紧凑弹窗和粘附底部操作区；实例选择复用
 既有 picker 样式并实现菜单键盘行为。没有新增 Main 模块，具体控件规则由

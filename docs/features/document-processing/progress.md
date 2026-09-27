@@ -50,13 +50,19 @@ reading 与知识库 master-detail 壳层，KnowledgeWorkspace 不再嵌套壳�
 | 应用中心 → 本机推理监控 | [应用定义](../../../src/renderer/src/ApplicationCenter.tsx)仍为四项；[监控](../../../src/renderer/src/LocalInferencePage.tsx)显示本地服务并加载/释放 OCR | 不承担远程 OCR 配置或管理；关闭监控入口不等于关闭解析能力 |
 | 监控 → 模型与连接设置 | [IPC](../../../src/main/ipc.ts)的 `localInferenceOpenSettings` 只发出无分类的 `settingsOpen`；[App](../../../src/renderer/src/App.tsx)仅打开设置，[SettingsPanel](../../../src/renderer/src/SettingsPanel.tsx)默认分类为 `runtime` | 文案与默认落点不一致，未直达模型或文档解析；本轮仅记录，产品跳转未修复 |
 | 聊天附件 | App 的附件按钮直接选文件；当前卡片显示名称、容量、缩略图或图标、文本 tooltip 和移除 | 尚无逐附件更多菜单、显式 OCR、解析结果预览、重解析或文档选图 |
-| 知识库文档 | [DocumentsView](../../../src/renderer/src/KnowledgeWorkspace.tsx)提供任务、打开来源、失败文档重试和分块管理；来源行另有同步，库页头另有“用于当前对话” | 解析文档详情、成功文档重解析及选图须新增，不能把分块管理 Modal 当作已有完整解析预览 |
+| 知识库文档 | 当时位于 `KnowledgeWorkspace.tsx` 的 DocumentsView 提供任务、打开来源、失败文档重试和分块管理；来源行另有同步，库页头另有“用于当前对话” | 解析文档详情、成功文档重解析及选图须新增，不能把分块管理 Modal 当作已有完整解析预览 |
 | 新建选图目标会话 | App 的 `startNewConversation` 返回布尔值，拒绝消息通道项目，并在复用空会话或新建后切到聊天 | 预览保留、目标 ID 取得及返回确认仍需接线；直接调用不满足 US-I9 |
 
 本轮更正文档中“既有文档详情”的描述，补齐菜单矩阵及 US-H16 / A-15；队列修改统一先
 恢复到草稿，显式图片 OCR 的上传说明与快速模式区别保持一致。根 UI 规范与双语功能清单
 同步标明本轮范围；本地 OCR 仍为现有能力，HTTP 和新附件流程仍为规划。
 未修改产品代码、探索脚本或既有应用排序，OCR、文本及视觉模型调用均为 0。
+
+2026-09-27 模块归属复核：上述表格保留实施前状态。当前
+[DocumentsView](../../../src/renderer/src/knowledge-workspace/DocumentsView.tsx)
+已从工作区入口拆出，提供解析预览、返回列表、重新解析及预览内选图；工作区入口保留库选择、
+检索与分块管理。文档与来源统一列表的行为及验证见
+[知识库进度](../knowledge-base/progress.md#2026-09-27-文档与来源统一列表)。
 
 ## 2026-09-19 实现与验证
 

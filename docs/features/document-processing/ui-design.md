@@ -6,15 +6,15 @@
 
 ## 1. 容器与共享组件
 
-遵循根目录 [UI 设计系统](../../../UI-DESIGN.md)，保留当前应用容器结构。下表依据
-2026-09-18 源码核对，标为新增的内容需要实现，不能当作现有 API。
+遵循根目录 [UI 设计系统](../../../UI-DESIGN.md)，保留当前应用容器结构。下表的知识库
+模块归属已于 2026-09-27 复核；各入口的实现与验证状态见[进度](./progress.md)。
 
 | 位置 | 现有结构及设计用法 |
 | --- | --- |
 | 设置中心 | `SettingsPanel.tsx` 整窗 Modal 内的 `DocumentParsingSettingsSection.tsx`；继续使用 `SettingsCategoryHeader`、`settings-section`、`field`，不套第二个 PageShell 或一级标题 |
 | 聊天 | `App.tsx` 的 `PageShell variant="reading"`；附件卡位于原 Composer 内，待发送队列仍在 Composer 外，不在助手工作栏增加附件栏目 |
-| 知识库 | `App.tsx` 已提供 `PageShell variant="master-detail"`，`KnowledgeWorkspace.tsx` 内含库导航与 DocumentsView；需在文档区域新增解析详情及返回列表，不再嵌套页面壳层或新建知识库级页签 |
-| 解析预览 | 新增共享内容视图，分别嵌入设置诊断 Modal、聊天附件 Modal 和知识库文档详情；共享数据和交互，外层容器负责标题、范围、关闭与滚动 |
+| 知识库 | `App.tsx` 提供 `PageShell variant="master-detail"`，`KnowledgeWorkspace.tsx` 保留库导航并挂载 `knowledge-workspace/DocumentsView.tsx`；文档区域内切换解析详情与列表，不嵌套页面壳层或新建知识库级页签 |
+| 解析预览 | `DocumentResultPreview.tsx` 分别嵌入设置诊断 Modal、聊天附件 Modal 和知识库文档详情；共享数据和交互，外层容器负责标题、范围、关闭与滚动 |
 | 页签与选择 | `WorkspacePrimitives.tsx` 的 `PageTabs variant="segmented"` 承载正文、图片、详情；来源及过滤模式使用 `SegmentedControl`，不能用它替换页签语义 |
 | 浮层 | Modal 沿用 body Portal、`activateModalFocus` 与 `trapTabFocus`；测试及附件菜单复用 `AnchoredMenu`，由共享 `FloatingPortal` 挂入所属 Modal 并在 top layer 绘制。通知遵循根 UI 规范 |
 | 图文内容 | 复用 `MarkdownRenderer.tsx` 的排版、表格滚动和静态 HTML 处理边界；补齐受管图片与 OCR HTML 表格适配，现有 Markdown 渲染器并未直接支持这些资源 |
@@ -36,8 +36,8 @@
 | 管理本地 OCR 文件 | 同一“文档解析”分类的本地模型区 | 下载、校验、ZIP、删除和目录操作；全局模型下载源仍在“平台功能 / 通用设置”，与 OCR 来源选择分开 |
 | 查看或释放本地 OCR 内存 | “应用中心” → “本机推理监控”（`local-inference` Modal），或其常驻入口 | 只管理本机执行服务；应用启用及常驻控制入口，不控制解析功能；HTTP 服务不出现在本机服务列表，也不提供远程启停 |
 | 添加文件或图片 | “当前对话” → “添加附件”，或输入框粘贴 | 先加入当前草稿，再按输入类型处理；上传按钮继续直接选文件，不改成先选 OCR 的菜单 |
-| 查看聊天解析结果 | 草稿或历史消息的附件卡 | 规划中的共享预览；来源消息与目标草稿分别显示，历史输入只读 |
-| 查看知识文档结果 | “知识库” → 选库 → “文档与来源”中的文档操作 | 规划新增“查看解析结果”和文档详情；返回恢复库、列表筛选和位置；不改变活动会话 |
+| 查看聊天解析结果 | 草稿或历史消息的附件卡 | 打开共享预览；来源消息与目标草稿分别显示，历史输入只读 |
+| 查看知识文档结果 | “知识库” → 选库 → “文档与来源”中的文档操作 | “查看解析结果”进入文档详情；返回恢复库、列表筛选和位置；不改变活动会话 |
 | 把文档插图用于聊天 | 聊天或知识文档预览 → “图片” → “添加所选图片” | 明确目标会话草稿后复制；设置测试预览无此操作；已有“用于当前对话”仍负责知识库检索范围，不代替选图 |
 
 从解析失败或未配置提示提供“前往文档解析设置”时，须直达 `document-parsing` 分类并保留
