@@ -234,18 +234,18 @@ export function DocumentsView({
 
   const sourceActions = (source: KnowledgeSource): KnowledgeAction[] => [
     {
-      label: t(source.status === 'syncing' ? 'documents.actions.pauseSource' : source.status === 'failed' ? 'documents.actions.retrySource' : 'documents.actions.syncSource', { name: source.name }),
+      label: t(source.status === 'syncing' ? 'actions.pause' : source.status === 'failed' ? 'actions.retry' : 'actions.sync'),
       disabled: pending.has(source.id),
       onClick: () => void run(source.id, () => source.status === 'syncing' ? onPauseSource(source.id) : source.status === 'failed' ? onRetrySource(source.id) : onSyncSource(source.id))
     },
     {
-      label: t('documents.actions.removeSource', { name: source.name }),
+      label: t('actions.removeSource'),
       disabled: pending.has(source.id), danger: true, separator: true,
       onClick: () => setRemovingSource(source)
     }
   ]
   const documentActions = (document: KnowledgeDocumentItem, source: KnowledgeSource | undefined, taskSourceId?: string): KnowledgeAction[] => [
-    { label: t('documents.actions.openDocumentSource', { name: document.name }), disabled: pending.has(`open:${document.id}`),
+    { label: t('actions.openSource'), disabled: pending.has(`open:${document.id}`),
       onClick: () => void run(`open:${document.id}`, () => onOpenDocumentSource(library.id, document.id)) },
     ...(document.resultId ? [{
       label: t('documents.openParsedOriginal'), disabled: pending.has(`original:${document.id}`),

@@ -58,6 +58,7 @@ it('renders knowledge rows, menus, preview and task history in wide and narrow E
             await wait('!!document.querySelector("[role=menuitem]")'); await settle();
             assert.equal(await js('document.querySelector("tbody tr").getBoundingClientRect().height'), height);
             const menu = await js('document.querySelector("[role=menu]").getBoundingClientRect().toJSON()');
+            assert.equal(menu.width, 220);
             assert(menu.left >= 15 && menu.right <= width - 15 && menu.top >= 15 && menu.height >= 32, JSON.stringify(menu));
             await capture('knowledge-menu-' + theme + '-' + width);
             console.log('Closing list menu');
@@ -77,10 +78,16 @@ it('renders knowledge rows, menus, preview and task history in wide and narrow E
             console.log('Opening preview menu');
             await js('document.querySelector(".knowledge-document-preview__header [aria-haspopup=menu]").click()'); await settle();
             const previewMenu = await js('document.querySelector("[role=menu]").getBoundingClientRect().toJSON()');
+            assert.equal(previewMenu.width, 220);
             assert(previewMenu.height >= 100 && previewMenu.top >= 16 && previewMenu.bottom <= (width === 420 ? 480 : 720) - 15, JSON.stringify(previewMenu));
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'End' });
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'End' }); await settle();
-            assert(await js('document.activeElement.textContent.includes("移除来源")'));
+            assert(await js('document.activeElement.textContent === "移除来源"'));
+            for (let i = 0; i < 2; i++) {
+              win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Up' });
+              win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Up' }); await settle();
+            }
+            assert(await js('document.activeElement.textContent === "重新解析"'));
             await capture('knowledge-preview-menu-' + theme + '-' + width);
             console.log('Closing preview menu');
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });

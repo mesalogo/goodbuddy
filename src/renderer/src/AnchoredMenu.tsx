@@ -3,10 +3,11 @@ import { flushSync } from 'react-dom'
 import { FloatingPortal } from './FloatingPortal'
 import './anchored-menu.css'
 
-export function AnchoredMenu({ anchorRef, id, label, onClose, children }: {
+export function AnchoredMenu({ anchorRef, id, label, width: preferredWidth = 280, onClose, children }: {
   anchorRef: RefObject<HTMLButtonElement | null>
   id: string
   label: string
+  width?: number
   onClose: () => void
   children: ReactNode
 }): React.JSX.Element {
@@ -22,7 +23,7 @@ export function AnchoredMenu({ anchorRef, id, label, onClose, children }: {
     const width = viewport?.width ?? window.innerWidth
     const height = viewport?.height ?? window.innerHeight
     const rect = anchor.getBoundingClientRect()
-    const menuWidth = Math.max(0, Math.min(280, width - 32))
+    const menuWidth = Math.max(0, Math.min(preferredWidth, width - 32))
     menu.style.width = `${menuWidth}px`
     const above = Math.max(0, Math.min(height - 32, rect.top - top - 24))
     const below = Math.max(0, Math.min(height - 32, top + height - rect.bottom - 24))
