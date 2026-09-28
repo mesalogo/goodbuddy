@@ -13,6 +13,10 @@ const DEFAULT_MAXIMUM_FILES = 4
 const DEFAULT_MAXIMUM_RECORDS = 1_000
 export const MAXIMUM_PENDING_DESKTOP_DIAGNOSTIC_WRITES = 32
 const DIAGNOSTIC_FILE_NAME = 'desktop-diagnostics.ndjson'
+const rendererExitReasons = new Set([
+  'clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oom',
+  'launch-failed', 'integrity-failure'
+])
 const allowedStages = new Set([
   'renderer',
   'startup',
@@ -69,6 +73,8 @@ export type DesktopDiagnosticFailure = Readonly<{
   stage: string
   code: string
   error: unknown
+  reason?: string
+  exitCode?: number
 }>
 
 export type DesktopDiagnosticFailureObserver = (
@@ -82,6 +88,8 @@ export type DesktopDiagnosticRecord = Readonly<{
   code: string
   errorType: string
   message: string
+  reason?: string
+  exitCode?: number
 }>
 
 export type DesktopDiagnosticsOptions = Readonly<{
@@ -169,13 +177,20 @@ export function normalizeDesktopDiagnosticRecord(
   }
   const component = safeComponent(candidate.component)
   const stage = safeStage(candidate.stage)
+  const code = safeCode(candidate.code)
+  const rendererGone = component === 'desktop' && stage === 'renderer' &&
+    code === 'desktop.renderer.gone'
   return Object.freeze({
     timestamp: timestamp.toISOString(),
     component,
     stage,
-    code: safeCode(candidate.code),
+    code,
     errorType: safeStoredErrorType(candidate.errorType),
-    message: fixedMessage(component, stage)
+    message: fixedMessage(component, stage),
+    ...(rendererGone && typeof candidate.reason === 'string' &&
+      rendererExitReasons.has(candidate.reason) ? { reason: candidate.reason } : {}),
+    ...(rendererGone && Number.isSafeInteger(candidate.exitCode)
+      ? { exitCode: candidate.exitCode } : {})
   })
 }
 
@@ -249,7 +264,9 @@ export class DesktopDiagnostics {
         component: failure.component,
         stage: failure.stage,
         code: failure.code,
-        errorType: safeErrorType(failure.error)
+        errorType: safeErrorType(failure.error),
+        reason: failure.reason,
+        exitCode: failure.exitCode
       })
       if (normalized === undefined) {
         return Promise.reject(

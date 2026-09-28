@@ -21,8 +21,10 @@ diagnosis of their cause.
 - Native crashes and main-frame load failures use the existing bounded desktop
   diagnostics store (`desktop.renderer.gone`, `desktop.renderer.load-failed`,
   stage `renderer`). Persistent records retain fixed summaries rather than raw
-  errors. Crash reason/exit code and React errors/component stacks go to their
-  respective process consoles. There is no new diagnostic IPC.
+  errors. Renderer exit records also retain Electron's enumerated `reason` and
+  numeric `exitCode` when written, read back and exported; older records without
+  these fields remain readable. The exit details still go to the Main console.
+  React errors/component stacks remain console-only. There is no new diagnostic IPC.
 
 The boundary does not catch module evaluation/startup failures before React
 mounts, event-handler exceptions, asynchronous rejections, a hung renderer, or

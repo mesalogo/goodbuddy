@@ -114,6 +114,8 @@ export function createMainWindow(
       component: 'desktop',
       stage: 'renderer',
       code: 'desktop.renderer.gone',
+      reason: details.reason,
+      exitCode: details.exitCode,
       error: new Error(`Renderer exited: ${details.reason} (${details.exitCode})`)
     })
     if (recoveryPending) return

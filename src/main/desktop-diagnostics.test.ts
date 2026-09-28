@@ -34,6 +34,40 @@ afterEach(async () => {
 })
 
 describe('DesktopDiagnostics', () => {
+  it('preserves renderer exit details on disk and in exports after restart', async () => {
+    const directory = await temporaryDirectory()
+    const diagnostics = new DesktopDiagnostics(directory)
+    await diagnostics.recordFailure({
+      component: 'desktop', stage: 'renderer', code: 'desktop.renderer.gone',
+      error: new Error('private renderer details'), reason: 'oom', exitCode: -9
+    })
+    await diagnostics.dispose()
+    const persisted = await readFile(join(directory, 'desktop-diagnostics.ndjson'), 'utf8')
+    expect(JSON.parse(persisted)).toMatchObject({ reason: 'oom', exitCode: -9 })
+    expect(persisted).not.toContain('private renderer details')
+    const restarted = new DesktopDiagnostics(directory)
+    try {
+      expect(JSON.parse((await restarted.exportRecent()).toString('utf8')))
+        .toMatchObject({ reason: 'oom', exitCode: -9 })
+    } finally {
+      await restarted.dispose()
+    }
+  })
+
+  it('omits invalid exit details and keeps older records readable', () => {
+    const record = {
+      timestamp: '2026-09-28T03:19:18.062Z', component: 'desktop',
+      stage: 'renderer', code: 'desktop.renderer.gone', errorType: 'Error'
+    }
+    const normalized = normalizeDesktopDiagnosticRecord(record)
+    expect(normalized).toMatchObject({ code: 'desktop.renderer.gone' })
+    expect(normalized).not.toHaveProperty('reason')
+    expect(normalized).not.toHaveProperty('exitCode')
+    expect(normalizeDesktopDiagnosticRecord({
+      ...record, reason: 'private error content', exitCode: Infinity
+    })).toEqual(normalized)
+  })
+
   it('persists renderer failure codes without storing raw error content', async () => {
     const diagnostics = new DesktopDiagnostics(await temporaryDirectory())
     for (const code of ['desktop.renderer.gone', 'desktop.renderer.load-failed']) {

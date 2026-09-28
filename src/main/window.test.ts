@@ -78,7 +78,12 @@ describe('window recovery', () => {
     gone({}, { reason: 'crashed', exitCode: 1 })
     expect(dialog.showMessageBox).toHaveBeenCalledTimes(before + 1)
     expect(window.webContents.reload).not.toHaveBeenCalled()
-    expect(observe).toHaveBeenCalledWith(expect.objectContaining({ code: 'desktop.renderer.gone' }))
+    expect(observe).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      code: 'desktop.renderer.gone', reason: 'oom', exitCode: 9
+    }))
+    expect(observe).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      code: 'desktop.renderer.gone', reason: 'crashed', exitCode: 1
+    }))
     respond({ response: 0, checkboxChecked: false })
     await vi.waitFor(() => expect(window.webContents.reload).toHaveBeenCalledOnce())
     gone({}, { reason: 'crashed', exitCode: 1 })
