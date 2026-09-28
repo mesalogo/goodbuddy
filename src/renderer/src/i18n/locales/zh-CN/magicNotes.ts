@@ -10,7 +10,7 @@ export const magicNotes = {
     conversationScope: '保存范围：触发时完整对话的用户与助手文字正文，不含推理、工具日志、图片和附件文件。',
     incomplete: '这条回答尚未完成，预览保留已有正文。', wait: '请等待回答完成或停止生成后再保存。',
     tooLong: '每条记录的文字不能超过 500 KB，请缩减内容后保存。',
-    required: '请输入正文并选择目标笔记，或填写新笔记标题（最多 100 字）。',
+    scopeHelp: '保存内容说明', titleTooLong: '笔记标题最多 100 字。',
     saving: '正在保存…', deletedTarget: '目标笔记已删除，请重新选择；草稿已保留。',
     user: '用户', assistant: '助手', loading: '正在读取完整对话…'
   },

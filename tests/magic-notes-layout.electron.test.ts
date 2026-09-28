@@ -74,6 +74,8 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await open(); await js('document.fonts.ready'); win.focus(); win.webContents.focus();
         const editor = '.magic-note-composer .magic-note-editor__content .ql-editor';
         const emptyHeight = (await rect(editor)).height;
+        const saveButton = '.magic-note-composer > footer > .primary-button';
+        const desktopSaveWidth = (await rect(saveButton)).width;
         assert(emptyHeight >= 110 && emptyHeight <= 125, 'Empty composer height: ' + emptyHeight);
         assert.equal(await js('document.querySelector("#magic-notes-title").textContent'), 'Layout note');
         assert.equal(await js('document.querySelector(".page-header__description")'), null);
@@ -113,6 +115,10 @@ it('resizes record columns with native Electron input and preserves desktop widt
         assert(await js('document.documentElement.scrollWidth <= innerWidth'));
         const narrowStream = (await rect(stream)).width;
         await click('#magic-notes-index-toggle'); assert.equal((await rect(stream)).width, narrowStream);
+        const narrowSave = await rect(saveButton), narrowFooter = await rect('.magic-note-composer > footer');
+        const footerPaddingRight = await js('parseFloat(getComputedStyle(document.querySelector(".magic-note-composer > footer")).paddingRight)');
+        assert(Math.abs(narrowSave.width - desktopSaveWidth) <= 1, 'Narrow Save button retains its content width: ' + JSON.stringify({ desktopSaveWidth, narrowSave, narrowFooter }));
+        assert(Math.abs(narrowFooter.x + narrowFooter.width - footerPaddingRight - narrowSave.x - narrowSave.width) <= 1, 'Narrow Save button stays right-aligned within footer padding');
         await screenshot('magic-notes-narrow');
         win.setContentSize(1280, 800); await settle(); await settle();
         assert.equal((await rect(index)).width, withoutAi);
@@ -161,7 +167,7 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await wait('!!document.querySelector("#magic-library-switch")');
         await click('#magic-library-switch');
         assert.equal((await rect('#magic-todo-list')).width, todoWidth);
-        fs.writeFileSync(${JSON.stringify(join(directory, 'result.json'))}, JSON.stringify({ emptyHeight, grownHeight, dragged, withoutAi, constrained, narrowStream, persisted: true }));
+        fs.writeFileSync(${JSON.stringify(join(directory, 'result.json'))}, JSON.stringify({ emptyHeight, grownHeight, dragged, withoutAi, constrained, narrowStream, desktopSaveWidth, narrowSave, narrowFooter, footerPaddingRight, persisted: true }));
         app.exit(0);
       }).catch(error => { console.error(error); app.exit(1); });
     `)

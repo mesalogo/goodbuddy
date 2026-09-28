@@ -7,6 +7,7 @@ import { MagicNoteSource, type OpenMagicNoteSource } from './MagicNoteSource'
 import type { useMagicNoteDraft } from './use-magic-note-draft'
 import type { AppNotificationInput } from './notifications'
 import { SegmentedControl } from './WorkspacePrimitives'
+import { InlineHelp } from './InlineHelp'
 import './magic-notes-panel.css'
 
 const MagicCanvasThumbnail = lazy(async () => ({ default: (await import('./MagicCanvasThumbnail')).MagicCanvasThumbnail }))
@@ -149,8 +150,8 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
     setSelectedNoteId('')
     requestAnimationFrame(() => document.getElementById('compact-note-search')?.focus())
   }
-  const validationMessage = tooLong ? t('capture.tooLong') : draft && !valid ? t('capture.required') : undefined
-  const validationId = [validationMessage && 'compact-note-validation', saveError && 'compact-note-save-error'].filter(Boolean).join(' ') || undefined
+  const validationId = tooLong ? 'compact-note-validation' : undefined
+  const titleTooLong = Boolean(draft?.newNote && draft.title.trim().length > 100)
   const list = (
     <>
       <label htmlFor="compact-note-search">{t('capture.search')}</label>
@@ -202,13 +203,18 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
         {draft && !quickDraft ? (
           <>
             {draft.source && <div className="magic-note-source">
-              <span>{draft.source.projectName && `${draft.source.projectName} / `}{draft.source.conversationTitle}</span>
-              <p>{t(draft.source.kind === 'message' ? 'capture.messageScope' : 'capture.conversationScope')}</p>
+              <div className="magic-note-panel__source-heading">
+                <span>{draft.source.projectName && `${draft.source.projectName} / `}{draft.source.conversationTitle}</span>
+                <InlineHelp label={t('capture.scopeHelp')}>
+                  {t(draft.source.kind === 'message' ? 'capture.messageScope' : 'capture.conversationScope')}
+                </InlineHelp>
+              </div>
               {draft.incomplete && <p>{t('capture.incomplete')}</p>}
             </div>}
             <textarea ref={preview} id="compact-note-text" aria-label={t('capture.content')} value={draft.text} disabled={saving}
               aria-describedby={validationId} aria-invalid={tooLong || undefined}
               onChange={event => setDraft({ ...draft, text: event.target.value })} />
+            {tooLong && <p id="compact-note-validation">{t('capture.tooLong')}</p>}
             <h3>{t('capture.target')}</h3>
             <SegmentedControl ariaLabel={t('capture.target')} disabled={saving}
               value={draft.newNote ? 'new' : 'existing'}
@@ -218,8 +224,9 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
               <>
                 <label htmlFor="compact-note-title">{t('capture.title')}</label>
                 <input ref={title} id="compact-note-title" value={draft.title} disabled={saving}
-                  aria-describedby={validationId} aria-invalid={draft.title.trim().length > 100 || undefined}
+                  aria-describedby={titleTooLong ? 'compact-note-title-error' : undefined} aria-invalid={titleTooLong || undefined}
                   onChange={event => setDraft({ ...draft, title: event.target.value })} />
+                {titleTooLong && <p id="compact-note-title-error">{t('capture.titleTooLong')}</p>}
               </>
             ) : (
               <>
@@ -264,14 +271,16 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
                 text: event.target.value, initialText: '', title: '', initialTitle: '', targetId: currentDetail.id, newNote: false
               })} />
           </>}
-          {validationMessage && <p id="compact-note-validation">{validationMessage}</p>}
-          {saveError && <p role="alert" id="compact-note-save-error">{saveError}</p>}
-          <div className="magic-note-panel__actions">
-            {draft && <button className="secondary-button" type="button" disabled={saving}
-              onClick={() => void cancel()}>{t('actions.cancel')}</button>}
-            <button className="primary-button" type="button" disabled={saving || !valid} onClick={() => void save()}>
-              {t(saving ? 'capture.saving' : draft?.newNote && !draft.text.trim() && !draft.source ? 'actions.createNote' : 'capture.add')}
-            </button>
+          {quickDraft && tooLong && <p id="compact-note-validation">{t('capture.tooLong')}</p>}
+          <div className="magic-note-panel__submit">
+            {saveError && <p role="alert" id="compact-note-save-error">{saveError}</p>}
+            <div className="magic-note-panel__actions">
+              {draft && <button className="secondary-button" type="button" disabled={saving}
+                onClick={() => void cancel()}>{t('actions.cancel')}</button>}
+              <button className="primary-button" type="button" disabled={saving || !valid} onClick={() => void save()}>
+                {t(saving ? 'capture.saving' : draft?.newNote && !draft.text.trim() && !draft.source ? 'actions.createNote' : 'capture.add')}
+              </button>
+            </div>
           </div>
         </footer>
       )}

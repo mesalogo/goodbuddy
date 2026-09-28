@@ -22,6 +22,11 @@
 .magic-note-panel__preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
 .magic-note-panel__footer { border-top: 1px solid var(--border-subtle); border-bottom: 0; }
 .magic-note-panel__footer p { margin: 0 0 var(--space-2); overflow-wrap: anywhere; }
+.magic-note-panel__source-heading { display: flex; align-items: center; gap: var(--space-2); }
+.magic-note-panel__source-heading > span { min-width: 0; }
+.magic-note-panel__submit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.magic-note-panel__submit > p { flex: 1 1 200px; min-width: 0; margin: 0; }
+.magic-note-panel__submit > .magic-note-panel__actions { margin-left: auto; }
 .assistant-sidebar__body.assistant-sidebar__body--notes { overflow: hidden; padding: 0; display: flex; flex-direction: column; }
 .assistant-sidebar__body--notes > .magic-note-panel { flex: 1; }
 .magic-note-panel .magic-note-panel__footer textarea { min-height: 80px; max-height: 180px; }

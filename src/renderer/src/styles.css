@@ -2467,11 +2467,6 @@
 }
 
 @container magic-notes-page (max-width: 720px) {
-  .magic-note-composer > footer {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .magic-note-entry__delete {
     align-items: stretch;
     flex-direction: column;

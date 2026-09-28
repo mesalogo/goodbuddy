@@ -13,7 +13,7 @@ export const magicNotes = {
     conversationScope: 'Saves all user and assistant text at capture time, including earlier history, excluding reasoning, tool logs, images, and attachment files.',
     incomplete: 'This reply is incomplete. The preview includes its available text.', wait: 'Wait for the reply to finish or stop generation before saving.',
     tooLong: 'Each entry supports up to 500 KB of text. Shorten the content before saving.',
-    required: 'Enter text and choose a note, or enter a new note title (up to 100 characters).',
+    scopeHelp: 'What gets saved', titleTooLong: 'Use a title of up to 100 characters.',
     saving: 'Saving...', deletedTarget: 'The target note was deleted. Choose another note; your draft is preserved.',
     user: 'User', assistant: 'Assistant', loading: 'Loading the full conversation...'
   },
