@@ -2,6 +2,44 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.2",
+      "releasedAt": "2026-09-28",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**让 Agent 查阅故事图谱**：启用监督者并分配 Story Graph 工具后，可让模型查找已保存的决定、变化过程和来源片段，在继续工作前核对已有依据。支持直连模型、本地 DeepSeek Harness，以及本地和远程 OpenCode、Continue；读取不修改图谱，也不代表完整历史重建或跨范围事实合并。"
+          ],
+          "fixes": [
+            "**继续讨论前编辑完整消息**：从监督结果继续讨论时，可查看并修改即将发送的完整上下文和问题，并确认目标会话。发送以编辑后的可见内容为准，不会重新附加已删除的上下文。",
+            "**简化笔记采集界面**：采集和快速追加面板移除重复标签、范围提示及重复入口，保留内容编辑、目标选择和必要的校验错误。输入框仍有可访问名称，保存行为和来源关联不变。",
+            "**保留窗口异常退出线索**：诊断日志现在记录渲染进程退出原因和退出码，便于排查窗口异常。此项改善诊断信息，不代表已修复所有导致窗口退出的问题。",
+            "**下载与入门信息更容易查找**：双语网站调整产品介绍、使用场景和设置问答，下载入口紧接首页介绍。移动端展示同步优化，DeepSeek Harness 与 LoongArch 仍保留预览标识。"
+          ],
+          "notices": [
+            "远程 Story Graph 需要配套更新 Desktop **0.15.2** 和 Agent **0.15.0**，先升级桌面端，再更新 Host。",
+            "数据库保持 schema 48；从更早版本升级前仍应备份完整用户数据，包括数据库和相邻 `notes/` 目录。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Let agents consult Story Graph**: Enable Supervisor and assign the Story Graph tools to let agents look up saved decisions, their evolution, and source fragments before continuing work. Supports direct models, local DeepSeek Harness, and local or remote OpenCode and Continue; reads do not modify the graph or provide complete historical reconstruction or cross-scope fact merging."
+          ],
+          "fixes": [
+            "**Edit the complete follow-up message**: Continuing from Supervisor results now shows the full context and question for editing, together with the destination conversation. Sending uses the visible draft without reattaching context you removed.",
+            "**Simpler note capture controls**: Capture and quick-append panels remove repeated labels, scope hints, and duplicate entry points while retaining editing, destination selection, and actionable validation errors. Inputs keep accessible names, and saving and source links behave as before.",
+            "**Retain window-exit diagnostics**: Diagnostic logs now retain renderer exit reasons and exit codes to help investigate unexpected window exits. This improves diagnostics rather than claiming to fix every underlying cause.",
+            "**Clearer downloads and setup guidance**: The bilingual website refreshes product explanations, usage scenarios, and setup FAQs, with downloads immediately after the introduction. Mobile layouts improve while DeepSeek Harness and LoongArch retain their preview labels."
+          ],
+          "notices": [
+            "Remote Story Graph requires Desktop **0.15.2** and Agent **0.15.0**. Upgrade Desktop before updating Hosts.",
+            "The database remains on schema 48. Before upgrading from older versions, back up complete user data, including the database and adjacent `notes/` directory."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.1",
       "releasedAt": "2026-09-28",
       "notes": {

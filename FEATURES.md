@@ -330,7 +330,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.0`, paired with the current Desktop release candidate `0.15.1`; formal
+  `0.15.0`, paired with the current Desktop release candidate `0.15.2`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -920,15 +920,21 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.1` and the Agent candidate is `0.15.0`, with
+- The current Desktop candidate is `0.15.2` and the Agent candidate is `0.15.0`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
 - Desktop `0.15.1` carries forward the unpublished `0.15.0` Obsidian integration, conversation capture into Magic
   Notes, and preview local native clients, plus knowledge, Supervisor, and UI
   fixes. Schema 48 adds conversation-source metadata; older clients require a
   complete pre-upgrade backup for rollback. Agent `0.15.0` requires Desktop
-  `0.15.1`, retains Node `24.19.0`, and updates remote telemetry opt-out and
+  `0.15.2`, retains Node `24.19.0`, and updates remote telemetry opt-out and
   disabled Continue update-check behavior without adding remote client shortcuts.
+- Desktop `0.15.1` completed all six native release targets and GitHub/OSS publication.
+  Desktop `0.15.2` adds read-only Story Graph tools and a fully editable
+  Supervisor follow-up message, simplifies note capture, and improves exit diagnostics.
+  Remote Story Graph requires the paired Agent `0.15.0`; planned Host and cloud
+  management applications remain unimplemented. Current candidate evidence is in the
+  [0.15.2 preparation record](./docs/development/release-preparation-0.15.2.md).
 - Desktop `0.13.15` carries forward the unpublished `0.13.14` changes to paged Supervisor reviews and resume behavior,
   native ripgrep searches, to-do layouts, and explicit remote follow-up after an
   uncertain result. Database schema 47 requires a complete pre-upgrade backup
@@ -1031,9 +1037,15 @@ records are listed separately and do not introduce another feature status.
   offline GoodBuddy transfer release acceptance. Until these gates pass, this
   path must not be described as published or as having passed formal release
   acceptance.
-- [ ] **Multi-cloud remote sandbox Agents** (planned): Manages dedicated Linux
-  sandboxes through cloud-provider APIs and SSH Agents. Credentials remain in
-  Main, and high-risk control-plane operations receive separate confirmation.
+- [ ] **Host and cloud environment management** (planned): Move host management
+  into App Center with a list/detail workspace. A sibling cloud application
+  reuses host connections and remote execution. The first-version adapter plan
+  covers AWS, Azure, Alibaba Cloud, Tencent Cloud, VMware vCenter / vSphere,
+  and ZStack, delivered in batches with real instance discovery, import, and
+  execution acceptance. Instance creation, start/stop, deletion, and network
+  orchestration follow later. Provider APIs are not implemented; existing cloud
+  servers can already be added manually when SSH requirements are met. See the
+  [product scope](./docs/features/remote-host/prd.md).
 
 ## Roadmap Principles
 
