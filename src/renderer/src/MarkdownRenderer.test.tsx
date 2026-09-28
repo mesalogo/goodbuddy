@@ -17,7 +17,8 @@ import {
 import { changeUiLocale } from './i18n'
 import {
   InlineMarkdown,
-  MarkdownRenderer
+  MarkdownRenderer,
+  normalizeLatexDelimiters
 } from './MarkdownRenderer'
 
 const mermaidMock = vi.hoisted(() => ({
@@ -31,6 +32,26 @@ vi.mock('mermaid', () => ({
 }))
 
 describe('MarkdownRenderer', () => {
+  it.each([
+    ['# Title\n\n**bold** `code`\n', '# Title\n\n**bold** `code`\n'],
+    ['plain \\', 'plain \\'],
+    ['partial \\(x', 'partial $x'],
+    ['partial x\\)', 'partial x$'],
+    ['\\(x\\)', '$$\nx\n$$'],
+    ['\\[x\\]', '$$\nx\n$$'],
+    ['$x$', '$$\nx\n$$'],
+    ['`\\(code\\)` then \\(x\\)', '`\\(code\\)` then $x$'],
+    ['~~~tex\n$x$\n\\(x\\)\n~~~', '~~~tex\n$x$\n\\(x\\)\n~~~']
+  ])('preserves normalization across fast paths: %j', (content, expected) => {
+    expect(normalizeLatexDelimiters(content)).toBe(expected)
+  })
+
+  it('preserves CRLF conversion inside code and standalone HTML without math', () => {
+    expect(normalizeLatexDelimiters('```txt\r\na\r\n```')).toBe('```txt\na\n```')
+    expect(normalizeLatexDelimiters('<section>\r\na\r\n</section>')).toBe('<section>\na\n</section>')
+    expect(normalizeLatexDelimiters('a\rb\r')).toBe('a\rb\r')
+  })
+
   beforeEach(() => {
     Object.defineProperty(window, 'goodbuddy', { configurable: true, value: {
       app: { onPreviewEscape: vi.fn((listener: () => void) => {

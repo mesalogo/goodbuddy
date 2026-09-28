@@ -173,7 +173,12 @@ empty content. Failed creates leave no accepted database membership; their
 unaccepted files are removed on the next access or reopen.
 
 After commit, reconciliation derives `note.json` from database membership and
-scans all retained entry files before removing unreferenced assets. Manifest or
+inspects all retained entry files before removing unreferenced assets. Startup
+repair reads each current body once to inspect its revision and collect asset
+references, then passes the complete per-note reference set to reconciliation.
+If media inspection fails, cleanup uses its existing deferred retry path rather
+than trusting a partial set. Revision mismatch recovery still hydrates the body;
+legacy conversion still verifies its written content. Manifest or
 GC failures log `console.warn` with the note ID and error and remain in an
 in-memory retry set. Later database access retries; reopening derives cleanup
 again from membership. These cleanup failures do not turn a committed save,

@@ -1888,7 +1888,7 @@ export class AssistantDatabase {
     return JSON.stringify({ storage: 'file', version: content.version, revision })
   }
 
-  private reconcileMagicNoteFiles(noteId?: string): void {
+  private reconcileMagicNoteFiles(noteId?: string, inspectedAssets?: ReadonlySet<string>): void {
     const database = this.database!
     // SQL and authoritative bodies are already committed. Cleanup must never
     // turn an accepted save/delete/reset into a retryable UI write failure.
@@ -1901,7 +1901,7 @@ export class AssistantDatabase {
         else this.noteStorage.clear()
       } else if (database.prepare('SELECT id FROM magic_notes WHERE id = ?').get(noteId)) {
         const entries = database.prepare('SELECT id FROM magic_note_entries WHERE note_id = ? ORDER BY created_at, rowid').all(noteId) as Array<{ id: string }>
-        this.noteStorage.reconcile(noteId, entries.map((entry) => entry.id))
+        this.noteStorage.reconcile(noteId, entries.map((entry) => entry.id), inspectedAssets)
       } else {
         this.noteStorage.deleteNote(noteId)
       }
@@ -1929,6 +1929,7 @@ export class AssistantDatabase {
     let processed = 0
     let migrated = false
     for (const note of notes) {
+      let referencedAssets: Set<string> | undefined = new Set<string>()
       const entries = database.prepare('SELECT id FROM magic_note_entries WHERE note_id = ? ORDER BY created_at, rowid').all(note.id) as Array<{ id: string }>
       for (const { id } of entries) {
         if (isCancelled()) throw new DOMException('Upgrade cancelled', 'AbortError')
@@ -1937,6 +1938,7 @@ export class AssistantDatabase {
           // One payload at a time: a canvas may contain a large PDF.
           const row = database.prepare('SELECT * FROM magic_note_entries WHERE id = ?').get(id) as MagicNoteEntryRow
           const pointer = JSON.parse(row.content_json) as { storage?: string; revision?: number }
+          const inspected = pointer.storage === 'file' ? this.noteStorage.inspect(note.id, id) : undefined
           if (pointer.storage !== 'file') {
             const content = JSON.parse(row.content_json) as MagicNoteContent
             this.noteStorage.write({ noteId: note.id, id, content, revision: row.revision, updatedAt: row.updated_at })
@@ -1948,7 +1950,7 @@ export class AssistantDatabase {
               magicNotePlainText(content), magicNoteEmbeddedBytes(content), id
             )
             migrated = true
-          } else if (this.noteStorage.revision(note.id, id) !== pointer.revision) {
+          } else if (inspected!.revision !== pointer.revision) {
             const saved = this.noteStorage.read(note.id, id)
             database.prepare(`UPDATE magic_note_entries SET content_json = ?, plain_text = ?, image_bytes = ?,
               revision = MAX(revision, ?), updated_at = ?, comments_json = '[]', analyzed_at = NULL WHERE id = ?`).run(
@@ -1958,6 +1960,9 @@ export class AssistantDatabase {
             database.prepare('UPDATE magic_notes SET revision = revision + 1, updated_at = ? WHERE id = ?').run(saved.updatedAt, note.id)
             this.syncMagicNoteTodos(database, note.id, id, saved.content, saved.updatedAt)
           }
+          const assets = (inspected ?? this.noteStorage.inspect(note.id, id)).referencedAssets
+          if (!assets) referencedAssets = undefined
+          else if (referencedAssets) for (const asset of assets) referencedAssets.add(asset)
           database.exec('COMMIT')
         } catch (error) {
           database.exec('ROLLBACK')
@@ -1966,7 +1971,7 @@ export class AssistantDatabase {
         processed++
         if (migrated) onProgress?.({ stage: 'converting', processed, total, bytesBefore })
       }
-      this.reconcileMagicNoteFiles(note.id)
+      this.reconcileMagicNoteFiles(note.id, referencedAssets)
     }
     if (!noteIds) this.reconcileMagicNoteFiles()
     this.dirtyMagicNotes.clear()

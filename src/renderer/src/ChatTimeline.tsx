@@ -608,20 +608,20 @@ function ChatMessageRowView({
   const compressionMarkers =
     message.contextCompressions ??
     (message.contextCompression ? [message.contextCompression] : [])
-  const subagentsById = new Map(
+  const subagentsById = useMemo(() => new Map(
     (message.subagents ?? []).map((subagent) => [
       subagent.childTaskId,
       subagent
     ])
-  )
-  const orderedSubagentIds = new Set(
+  ), [message.subagents])
+  const orderedSubagentIds = useMemo(() => new Set(
     message.blocks
       ?.filter((block) => block.type === 'subagent')
       .map((block) => block.childTaskId)
-  )
-  const unorderedSubagents = message.subagents?.filter(
+  ), [message.blocks])
+  const unorderedSubagents = useMemo(() => message.subagents?.filter(
     (subagent) => !orderedSubagentIds.has(subagent.childTaskId)
-  )
+  ), [message.subagents, orderedSubagentIds])
   const compressionLabel = (
     compression: ConversationContextCompressionMarker
   ): string =>

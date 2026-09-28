@@ -1,5 +1,30 @@
 # Magic Notes Progress
 
+## 2026-09-28: Startup Body Read Reuse
+
+Startup repair now reuses the asset references collected during revision
+inspection, as described in [file reconciliation](./technical-design.md#schema-38-migration).
+The persisted format and revision recovery rules are unchanged.
+
+- Real temporary SQLite/filesystem fixture: 120 entries across 120 notes,
+  half rich text and half canvas, with 4,039,560 bytes of body JSON.
+  Five initializations each read 240 bodies before and 120 after the change.
+  Logical bytes read fell from 8,079,120 to 4,039,560 per initialization.
+- Baseline durations were 148.23, 134.42, 131.06, 140.66 and 172.90 ms;
+  after durations were 136.89, 119.11, 116.41, 115.14 and 116.26 ms.
+  Medians were 140.66 and 116.41 ms. These Windows runs used warm filesystem
+  caches on a shared machine; they do not measure cold application startup.
+- `npx vitest run src/main/magic-notes/magic-note-storage.test.ts src/main/assistant/assistant-database.test.ts src/main/assistant/assistant-storage-upgrade.test.ts src/main/assistant-storage-startup.test.ts tests/assistant-storage-worker.test.ts`
+  passed 154 tests. Coverage includes failed media inspection, missing/invalid
+  bodies, retained shared assets, revision mismatch recovery and migration.
+- Full `npm test`: 5382 passed, 84 skipped, 3 failed. The failures were the
+  App question-round request wait and Electron note capture focus/layout waits.
+  All three passed in targeted reruns; the full run was not all green.
+  The capture rerun exercised production App/preload/IPC/SQLite and reopening.
+- `npm run typecheck` passed. Full lint still reports 10 errors in the existing
+  untracked `sidebar-final-probe.ts` and `sidebar-final-run.mjs`; lint excluding
+  those two files passed. No provider calls were made for these storage benchmarks.
+
 ## 2026-09-27: Shared Destructive Button Styles
 
 The draft discard Portal now receives the global `danger-solid` styles. The

@@ -49,6 +49,18 @@ const speechRecognitionMocks = vi.hoisted(() => ({
 
 const messageRenderProbe = vi.hoisted(() => vi.fn());
 const assistantTasksProbe = vi.hoisted(() => vi.fn());
+const activityRenderProbe = vi.hoisted(() => vi.fn());
+
+vi.mock("./WorkspacePrimitives", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./WorkspacePrimitives")>();
+  return {
+    ...original,
+    PageHeader: (props: Parameters<typeof original.PageHeader>[0]) => {
+      if (props.headingId === "activity-panel-title") activityRenderProbe();
+      return <original.PageHeader {...props} />;
+    },
+  };
+});
 
 vi.mock("./use-unviewed-completions", async (importOriginal) => {
   const original = await importOriginal<typeof import("./use-unviewed-completions")>();
@@ -2980,6 +2992,46 @@ describe("App", () => {
       }),
     ).toBe(heading);
     expect(route).not.toHaveAttribute("hidden");
+  });
+
+  it("isolates hidden Activity renders from composer and streaming updates", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "Activity render isolation" } });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
+    const heading = await screen.findByRole("heading", { name: "运行记录" });
+    fireEvent.click(screen.getByRole("tab", { name: "活动时间线" }));
+    const node = document.querySelector<HTMLButtonElement>(".activity-track__node")!;
+    fireEvent.click(node);
+    const detail = screen.getByLabelText("选中的活动节点详情");
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    const route = heading.closest('[data-route="activity"]')!;
+    expect(route).toHaveAttribute("hidden");
+    activityRenderProbe.mockClear();
+    for (const value of ["a", "ab", "abc"]) {
+      fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value } });
+    }
+    expect.soft(activityRenderProbe).toHaveBeenCalledTimes(0);
+    activityRenderProbe.mockClear();
+    for (const delta of ["Stream", " response", " updated"]) {
+      act(() => agentListener?.({ requestId, type: "text", delta }));
+      await screen.findByText(new RegExp(delta.trim(), "u"));
+    }
+    expect.soft(activityRenderProbe).toHaveBeenCalledTimes(0);
+    act(() => agentListener?.({ requestId, type: "done" }));
+    await waitFor(() => expect(activityRenderProbe.mock.calls.length).toBeGreaterThan(0));
+    expect(route).toHaveAttribute("hidden");
+    fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
+    expect(screen.getByRole("heading", { name: "运行记录" })).toBe(heading);
+    expect(screen.getByRole("tab", { name: "活动时间线" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("选中的活动节点详情")).toBe(detail);
+    expect(node).toHaveAttribute("aria-pressed", "true");
+    expect(document.querySelectorAll(".activity-track__node")).toHaveLength(2);
+    fireEvent.click(within(detail).getByRole("button", { name: "打开所属对话" }));
+    expect(route).toHaveAttribute("hidden");
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue("abc");
   });
 
   it("keeps Settings outside the workspace KeepAlive cache", async () => {
@@ -12236,6 +12288,28 @@ describe("App", () => {
     act(() => agentListener?.({ requestId, type: "question-resolved", questionId: "second" }));
     expect(screen.queryByRole("button", { name: "提交回答" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /全项目活动/u })).not.toHaveTextContent("待处理");
+  });
+
+  it("does not save a duplicate question-resolved event after the first resolution is persisted", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "Persist question resolution" } });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    act(() => agentListener?.({ requestId, type: "question", questionId: "persisted-question",
+      questions: [{ header: "Input", question: "Resolve me?", options: [], multiple: false, custom: true }] }));
+    expect(screen.getByText("Resolve me?")).toBeInTheDocument();
+    await act(async () => { await beforeQuitListener!(); });
+    vi.mocked(api.conversations.saveLocal).mockClear();
+    act(() => agentListener?.({ requestId, type: "question-resolved", questionId: "persisted-question" }));
+    expect(screen.queryByText("Resolve me?")).not.toBeInTheDocument();
+    await act(async () => { await beforeQuitListener!(); });
+    expect(api.conversations.saveLocal).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.conversations.saveLocal).mock.calls[0]![0].flatMap(item => item.messages)).toHaveLength(1);
+    vi.mocked(api.conversations.saveLocal).mockClear();
+    act(() => agentListener?.({ requestId, type: "question-resolved", questionId: "persisted-question" }));
+    await act(async () => { await beforeQuitListener!(); });
+    expect(api.conversations.saveLocal).toHaveBeenCalledTimes(0);
   });
 
   it("renders, saves and reloads OpenCode answers across question rounds", async () => {

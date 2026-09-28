@@ -75,8 +75,19 @@ export class MagicNoteStorage {
     return join(this.rootPath, noteId, 'entries', `${entryId}.json`)
   }
 
-  revision(noteId: string, entryId: string): number {
-    return (JSON.parse(readFileSync(this.entryPath(noteId, entryId), 'utf8')) as MagicNoteStoredEntry).revision
+  inspect(noteId: string, entryId: string): { revision: number; referencedAssets?: Set<string> } {
+    const entry = JSON.parse(readFileSync(this.entryPath(noteId, entryId), 'utf8')) as MagicNoteStoredEntry
+    const referencedAssets = new Set<string>()
+    try {
+      mapMediaFields(entry.content, (value) => {
+        if (value && typeof value === 'object' && '$asset' in value) referencedAssets.add(String(value.$asset))
+        return value
+      })
+    } catch {
+      // Let reconciliation retry failed media inspection through its deferred-cleanup path.
+      return { revision: entry.revision }
+    }
+    return { revision: entry.revision, referencedAssets }
   }
 
   write(entry: MagicNoteStoredEntry): void {
@@ -108,18 +119,21 @@ export class MagicNoteStorage {
     return entry
   }
 
-  reconcile(noteId: string, entryIds: string[]): void {
+  reconcile(noteId: string, entryIds: string[], inspectedAssets?: ReadonlySet<string>): void {
     const notePath = join(this.rootPath, noteId)
     const entriesPath = join(notePath, 'entries')
     const retained = new Set(entryIds.map((id) => `${id}.json`))
     const referenced = new Set<string>()
-    // Read every retained body before deleting anything, including shared assets.
-    for (const name of retained) {
-      const entry = JSON.parse(readFileSync(join(entriesPath, name), 'utf8')) as MagicNoteStoredEntry
-      mapMediaFields(entry.content, (value) => {
-        if (value && typeof value === 'object' && '$asset' in value) referenced.add(String(value.$asset))
-        return value
-      })
+    // Repair can supply references only after inspecting every retained body.
+    // Otherwise read them all before deleting anything, including shared assets.
+    if (!inspectedAssets) {
+      for (const name of retained) {
+        const entry = JSON.parse(readFileSync(join(entriesPath, name), 'utf8')) as MagicNoteStoredEntry
+        mapMediaFields(entry.content, (value) => {
+          if (value && typeof value === 'object' && '$asset' in value) referenced.add(String(value.$asset))
+          return value
+        })
+      }
     }
     this.atomicWrite(join(notePath, 'note.json'), JSON.stringify({ id: noteId, entries: entryIds }))
     if (existsSync(entriesPath)) {
@@ -133,7 +147,7 @@ export class MagicNoteStorage {
     const assetsPath = join(notePath, 'assets')
     if (existsSync(assetsPath)) {
       for (const name of readdirSync(assetsPath)) {
-        if (!referenced.has(`assets/${name}`)) fs.rmSync(join(assetsPath, name), { force: true })
+        if (!(inspectedAssets ?? referenced).has(`assets/${name}`)) fs.rmSync(join(assetsPath, name), { force: true })
       }
     }
   }

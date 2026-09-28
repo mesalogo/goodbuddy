@@ -280,6 +280,44 @@
   Renderer 堆内存。
 - **验收：** 测试数据、运行步骤和原始结果可重复执行。
 
+#### 2026-09-28 Measurement Evidence (Partial)
+
+`npx vitest run tests/streaming-markdown.electron.test.ts` runs the real
+MarkdownRenderer in Electron 43.2.0 / Chromium 150.0.7871.129. It compares the
+original normalizer with fast paths that skip unchanged text, retaining live
+Markdown, math, code and HTML behavior. It also measures a 102,400-byte answer
+at six growing prefixes, alternating original/current execution order in the
+same page, with one warm-up sweep and three measured sweeps (18 samples each).
+
+| Measurement | Original | Current |
+| --- | --- | --- |
+| 100KiB growing-prefix render median, isolated run | 54.80 ms | 54.65 ms |
+| Same run p95 | 95.50 ms | 106.10 ms |
+| Growing-prefix render median, full-suite run | 53.50 ms | 53.10 ms |
+| Same run p95 | 93.70 ms | 83.40 ms |
+
+These development-mode measurements include synchronous React rendering, DOM
+commit and style/layout, but exclude frame waiting and paint. With 18 samples,
+nearest-rank p95 is the maximum sample. The results do not establish an overall
+rendering improvement. Smaller 6.4-7.2K-character corpora do show lower normalizer
+cost: prose median 33-34 microseconds to below 1 microsecond, and mixed math/code
+median 32-35 to 16-20 microseconds. The production changes remain limited to this
+preprocessing and memoizing unchanged subagent-derived collections. In the
+four-subagent regression, initial render plus six updates builds the lookup map
+once instead of seven times; block-dependent scans still run when blocks change.
+
+Validation: 550 prefix normalization comparisons, 1,100 short-prefix DOM
+comparisons and 24 long-prefix DOM comparisons passed. The real Electron
+terminal-status probe covers cancellation, failure, retry and persistence via
+three loopback model-stub requests; the Mermaid viewer covers nine scenarios
+and ten PNG downloads. No external model calls were used for these probes.
+Full `npm test` passed 459 files / 5,397 tests, with 11 files / 84 tests skipped.
+Type checking and scoped lint passed. Full lint remains blocked by the existing
+untracked sidebar-final probe files.
+
+This is partial evidence for PERF-03, not completion: full-App input latency,
+frame rate, heap measurements and 500KB/1MB scenarios remain unmeasured.
+
 ### PERF-04 流式更新合并
 
 - **优先级 / 状态：** P1 / 待开始

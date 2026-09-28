@@ -8,6 +8,12 @@ import type { MagicNoteCanvasContent, MagicNoteContent } from '../../shared/magi
 import { AssistantDatabase, ASSISTANT_DATABASE_SCHEMA_VERSION } from '../assistant/assistant-database'
 import { getPendingAssistantStorageUpgrade, upgradeAssistantStorage } from '../assistant/assistant-storage-upgrade'
 
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  const readFileSync = vi.fn(actual.readFileSync)
+  return { ...actual, readFileSync, default: { ...actual, readFileSync } }
+})
+
 const actualFs = { renameSync: fs.renameSync, rmSync: fs.rmSync }
 
 const directories: string[] = []
@@ -16,6 +22,7 @@ afterEach(() => {
   vi.restoreAllMocks()
   for (const connection of connections.splice(0)) connection.close()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
+  vi.mocked(readFileSync).mockClear()
 })
 
 function setup(options: ConstructorParameters<typeof AssistantDatabase>[1] = {}) {
@@ -53,6 +60,36 @@ function canvas(size = 40): MagicNoteCanvasContent {
 }
 
 describe('Magic note SQLite and filesystem storage', () => {
+  it('measures current entry startup body reads on real SQLite and filesystem fixtures', () => {
+    const { database, directory, sql } = setup()
+    const paths: string[] = []
+    for (let index = 0; index < 120; index++) {
+      const content = index % 2 ? canvas() : structuredClone(rich)
+      if (content.version === 1) content.ops.unshift({ insert: 'x'.repeat(32 * 1024) })
+      else content.pages[0]!.objects.push({ type: 'IText', text: 'x'.repeat(32 * 1024) })
+      const note = database.createMagicNote({ title: `Synthetic ${index}`, content })
+      paths.push(join(directory, 'notes', note.id, 'entries', `${note.entries[0]!.id}.json`))
+    }
+    database.close()
+    const bodyPaths = new Set(paths)
+    const reads = vi.mocked(readFileSync)
+    const durations: number[] = []
+    const counts: number[] = []
+    for (let run = 0; run < 5; run++) {
+      reads.mockClear()
+      const start = performance.now()
+      database.initialize(directory)
+      durations.push(Number((performance.now() - start).toFixed(2)))
+      counts.push(reads.mock.calls.filter(([path]) => bodyPaths.has(String(path))).length)
+      for (const path of paths) expect(reads.mock.calls.filter(([readPath]) => String(readPath) === path)).toHaveLength(1)
+      expect(reads.mock.calls.some(([path]) => String(path).includes(join(directory, 'notes')) && String(path).includes('assets'))).toBe(false)
+      database.close()
+    }
+    console.info('Synthetic note startup', { entries: paths.length, bodyBytes: paths.reduce((sum, path) => sum + statSync(path).size, 0), counts, durationsMs: durations })
+    expect(counts).toEqual(Array(5).fill(paths.length))
+    expect(sql.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+  })
+
   it('upgrades schema 47 with nullable sources without rewriting bodies and reopens idempotently', () => {
     const { database, sql, path, directory } = setup()
     const created = database.createMagicNote({ title: 'Existing note', content: rich })
@@ -75,6 +112,43 @@ describe('Magic note SQLite and filesystem storage', () => {
     database.close()
     database.initialize(directory)
     expect(database.getMagicNote(created.id)).toEqual(before)
+  })
+
+  it.each(['missing', 'invalid-json', 'invalid-media'] as const)('retains all assets when a later retained body has %s corruption', (failure) => {
+    const { database, directory } = setup()
+    const note = database.createMagicNote({ title: 'Retained bodies', content: rich })
+    const entries = database.createMagicNoteEntry({ noteId: note.id, content: canvas(), plainText: '' }).entries
+    const root = join(directory, 'notes', note.id)
+    const bodyPath = join(root, 'entries', `${entries[1]!.id}.json`)
+    const original = readFileSync(bodyPath, 'utf8')
+    const manifest = readFileSync(join(root, 'note.json'), 'utf8')
+    writeFileSync(join(root, 'assets', 'unused.bin'), 'keep until inspection succeeds')
+    const assets = readdirSync(join(root, 'assets')).map((name) => [name, readFileSync(join(root, 'assets', name))] as const)
+    database.close()
+    if (failure === 'missing') rmSync(bodyPath)
+    else if (failure === 'invalid-json') writeFileSync(bodyPath, '{')
+    else {
+      const body = JSON.parse(original)
+      body.content.pages = null
+      writeFileSync(bodyPath, JSON.stringify(body))
+    }
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    if (failure === 'invalid-media') {
+      database.initialize(directory)
+      expect(warning).toHaveBeenCalledWith('Magic note file cleanup deferred', expect.objectContaining({ noteId: note.id }))
+    } else expect(() => database.initialize(directory)).toThrow()
+    for (const [name, bytes] of assets) expect(readFileSync(join(root, 'assets', name))).toEqual(bytes)
+    expect(readFileSync(join(root, 'note.json'), 'utf8')).toBe(manifest)
+    database.close()
+    writeFileSync(bodyPath, original)
+    vi.mocked(readFileSync).mockClear()
+    database.initialize(directory)
+    for (const entry of entries) {
+      const path = join(root, 'entries', `${entry.id}.json`)
+      expect(vi.mocked(readFileSync).mock.calls.filter(([readPath]) => String(readPath) === path)).toHaveLength(1)
+    }
+    expect(database.getMagicNote(note.id).entries).toEqual(entries)
+    expect(existsSync(join(root, 'assets', 'unused.bin'))).toBe(false)
   })
 
   it('preserves textual data URLs and arbitrary $asset objects through save, migration and reopen', () => {
@@ -339,14 +413,20 @@ describe('Magic note SQLite and filesystem storage', () => {
     const { database, sql, directory } = setup()
     const note = database.createMagicNote({ title: 'Repair', content: rich })
     const entry = note.entries[0]!
+    database.saveMagicNoteAnalysis({ entryId: entry.id, expectedRevision: entry.revision,
+      comments: [{ id: randomUUID(), kind: 'summary', content: 'Stale analysis' }] })
+    const analyzed = database.getMagicNoteEntry(entry.id)
     sql.exec(`CREATE TRIGGER fail_note_update BEFORE UPDATE OF content_json ON magic_note_entries
       BEGIN SELECT RAISE(ABORT, 'index unavailable'); END`)
-    expect(() => database.updateMagicNoteEntry({ entryId: entry.id, expectedRevision: entry.revision, content: canvas(), plainText: '' })).toThrow('index unavailable')
+    expect(() => database.updateMagicNoteEntry({ entryId: entry.id, expectedRevision: analyzed.revision, content: canvas(), plainText: '' })).toThrow('index unavailable')
     expect(() => database.searchMagicNotes('PDF text', 10)).toThrow('index unavailable')
     sql.exec('DROP TRIGGER fail_note_update')
     if (reopen) { database.close(); database.initialize(directory) }
     expect(database.searchMagicNotes('PDF text', 10)).toHaveLength(1)
-    expect(database.getMagicNoteEntry(entry.id)).toMatchObject({ content: canvas(), revision: 1 })
+    expect(database.getMagicNoteEntry(entry.id)).toMatchObject({ content: canvas(), revision: analyzed.revision + 1, comments: [], analyzedAt: undefined })
+    const assetNames = readdirSync(join(directory, 'notes', note.id, 'assets'))
+    expect(assetNames).toHaveLength(2)
+    expect(assetNames.some((name) => name.endsWith('.pdf'))).toBe(true)
     expect(database.listMagicTodos()).toEqual([expect.objectContaining({ title: 'Canvas task' })])
     expect(() => database.updateMagicNoteEntry({ entryId: entry.id, expectedRevision: 0, content: rich, plainText: '' })).toThrow('已被更新')
   })

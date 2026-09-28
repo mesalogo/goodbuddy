@@ -15,6 +15,18 @@ import { ActivityPanel } from './ActivityPanel'
 import { upsertActivityRecord, type ActivityRecord } from './activity-store'
 import i18n from './i18n'
 
+const activityRenderProbe = vi.hoisted(() => vi.fn())
+vi.mock('./WorkspacePrimitives', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./WorkspacePrimitives')>()
+  return {
+    ...original,
+    PageHeader: (props: Parameters<typeof original.PageHeader>[0]) => {
+      if (props.headingId === 'activity-panel-title') activityRenderProbe()
+      return <original.PageHeader {...props} />
+    }
+  }
+})
+
 function makeRecord(
   index: number,
   status: ActivityRecord['status'] = 'completed'
@@ -77,6 +89,37 @@ function makeTokenUsage(): TokenUsageSummary {
 }
 
 describe('ActivityPanel', () => {
+  it('skips unchanged hidden renders while retaining selection and accepting real updates', () => {
+    const record = makeRecord(1, 'running')
+    const props = { records: [record], tokenUsage: makeTokenUsage(), onClear: vi.fn(), onOpenConversation: vi.fn() }
+    const { rerender } = render(<div hidden={false}><ActivityPanel {...props} /></div>)
+    fireEvent.click(screen.getByRole('tab', { name: '活动时间线' }))
+    const node = screen.getByRole('button', { name: /活动 1，工具/u })
+    fireEvent.click(node)
+    const detail = screen.getByLabelText('选中的活动节点详情')
+    activityRenderProbe.mockClear()
+    for (let index = 0; index < 3; index++) {
+      rerender(<div hidden data-update={index}><ActivityPanel {...props} /></div>)
+    }
+    expect(activityRenderProbe).toHaveBeenCalledTimes(0)
+    const updated = { ...props, records: [{ ...record, detail: 'Real update', status: 'failed' as const }], onOpenConversation: vi.fn(), onClear: vi.fn() }
+    rerender(<div hidden><ActivityPanel {...updated} /></div>)
+    expect(activityRenderProbe).toHaveBeenCalledTimes(1)
+    rerender(<div hidden={false}><ActivityPanel {...updated} /></div>)
+    expect(activityRenderProbe).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('选中的活动节点详情')).toBe(detail)
+    expect(node).toHaveAttribute('aria-pressed', 'true')
+    expect(node).toHaveClass('activity-track__node--failed')
+    expect(within(detail).getByText('Real update')).toBeInTheDocument()
+    fireEvent.click(within(detail).getByRole('button', { name: '打开所属对话' }))
+    expect(updated.onOpenConversation).toHaveBeenCalledWith(record.conversationId)
+    expect(props.onOpenConversation).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '清空记录' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认清空 1 条活动记录' }))
+    expect(updated.onClear).toHaveBeenCalledOnce()
+    expect(props.onClear).not.toHaveBeenCalled()
+  })
+
   it('opens timeline guidance separately from tab navigation', () => {
     render(<ActivityPanel onClear={vi.fn()} onOpenConversation={vi.fn()} records={[makeRecord(1)]} tokenUsage={makeTokenUsage()} />)
     fireEvent.click(screen.getByRole('tab', { name: '活动时间线' }))

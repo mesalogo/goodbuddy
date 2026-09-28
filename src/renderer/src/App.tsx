@@ -3876,19 +3876,21 @@ function App(): React.JSX.Element {
       messageId: string,
       update: (message: Message) => Message,
     ): void => {
-      setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === conversationId
-            ? {
-                ...conversation,
-                updatedAt: Date.now(),
-                messages: conversation.messages.map((message) =>
-                  message.id === messageId ? update(message) : message,
-                ),
-              }
-            : conversation,
-        ),
-      );
+      setConversations((current) => {
+        const conversationIndex = current.findIndex(item => item.id === conversationId);
+        const conversation = current[conversationIndex];
+        if (!conversation) return current;
+        const messageIndex = conversation.messages.findIndex(message => message.id === messageId);
+        const message = conversation.messages[messageIndex];
+        if (!message) return current;
+        const updated = update(message);
+        if (updated === message) return current;
+        const messages = [...conversation.messages];
+        messages[messageIndex] = updated;
+        const next = [...current];
+        next[conversationIndex] = { ...conversation, updatedAt: Date.now(), messages };
+        return next;
+      });
     },
     [],
   );
@@ -8159,7 +8161,13 @@ function App(): React.JSX.Element {
     return 'opened';
   };
 
-  const openActivityConversation = (conversationId: string): void => {
+  const clearActivity = useCallback((): void => {
+    legacyActivityHistoryMayBeIncompleteRef.current = false;
+    setLegacyActivityHistoryMayBeIncomplete(false);
+    setActivityRecords([]);
+  }, []);
+
+  const openActivityConversation = useCallback((conversationId: string): void => {
     const open = async (): Promise<void> => {
       let conversation = conversationsRef.current.find(
         (candidate) => candidate.id === conversationId,
@@ -8195,7 +8203,7 @@ function App(): React.JSX.Element {
       if (narrowWindow) closeNarrowSidebar();
     };
     requestWorkspaceLeave("chat", () => { void open(); });
-  };
+  }, [closeNarrowSidebar, commitView, narrowWindow, requestWorkspaceLeave, setActiveId, t]);
 
   const openAssistantTask = (task: AssistantTask): void => {
     if (!task.conversationId) {
@@ -11361,11 +11369,7 @@ function App(): React.JSX.Element {
                       }
                     >
                       <ActivityPanel
-                        onClear={() => {
-                          legacyActivityHistoryMayBeIncompleteRef.current = false;
-                          setLegacyActivityHistoryMayBeIncomplete(false);
-                          setActivityRecords([]);
-                        }}
+                        onClear={clearActivity}
                         onOpenConversation={openActivityConversation}
                         projects={projects}
                         records={activityRecords}

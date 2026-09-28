@@ -861,6 +861,97 @@ describe('ChatTimeline', () => {
     }
   })
 
+  it('reuses subagent derivations during streaming and invalidates only changed dependencies', () => {
+    const props = {
+      ...callbacks, artifactById: new Map(), conversationId: 'subagent-stream',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, totalMessageCount: 1
+    }
+    const subagents: NonNullable<Message['subagents']> = ['a', 'b', 'c', 'd'].map(id => ({
+      childTaskId: id, expertId: id, expertName: `Expert ${id}`,
+      routingMode: 'native', state: 'running'
+    }))
+    const makeBlocks = (content: string): NonNullable<Message['blocks']> => [
+      { id: 'b', type: 'subagent', childTaskId: 'b' },
+      { id: 'missing', type: 'subagent', childTaskId: 'missing' },
+      { id: 'text', type: 'text', content },
+      { id: 'a', type: 'subagent', childTaskId: 'a' }
+    ]
+    let message: Message = {
+      id: 'stream', role: 'assistant', content: 'Initial', createdAt: 0,
+      state: 'streaming', subagents, blocks: makeBlocks('Initial')
+    }
+    const map = vi.spyOn(subagents, 'map')
+    const filter = vi.spyOn(subagents, 'filter')
+    const blockFilters = [vi.spyOn(message.blocks!, 'filter')]
+    // Question IDs also filter blocks; count only passes returning subagent markers.
+    const counts = () => ({
+      map: map.mock.calls.length,
+      ordered: blockFilters.reduce((count, probe) => count + probe.mock.results.filter(
+        result => result.type === 'return' && result.value[0]?.type === 'subagent'
+      ).length, 0),
+      unordered: filter.mock.calls.length
+    })
+    try {
+      const view = render(<ChatTimeline {...props} messages={[message]} />)
+      const cardNames = () => Array.from(view.container.querySelectorAll(
+        '.subagent-status-card__heading strong'
+      ), element => element.textContent)
+      expect(cardNames()).toEqual(['Expert b', 'Expert a', 'Expert c', 'Expert d'])
+      expect(counts()).toEqual({ map: 1, ordered: 1, unordered: 1 })
+
+      for (let index = 0; index < 3; index += 1) {
+        message = { ...message, status: `Streaming ${index}` }
+        view.rerender(<ChatTimeline {...props} messages={[message]} />)
+        expect(screen.getByRole('status', { name: `Streaming ${index}` })).toBeVisible()
+      }
+      expect(counts()).toEqual({ map: 1, ordered: 1, unordered: 1 })
+
+      for (let index = 0; index < 3; index += 1) {
+        const content = `Streamed block ${index}`
+        message = { ...message, content, blocks: makeBlocks(content) }
+        blockFilters.push(vi.spyOn(message.blocks!, 'filter'))
+        view.rerender(<ChatTimeline {...props} messages={[message]} />)
+        expect(screen.getByText(content)).toBeVisible()
+        expect(markdownRenderProbe).toHaveBeenLastCalledWith(content)
+        expect(cardNames()).toEqual(['Expert b', 'Expert a', 'Expert c', 'Expert d'])
+      }
+      expect(counts()).toEqual({ map: 1, ordered: 4, unordered: 4 })
+
+      // Both anchored lookup and unanchored fallback must receive new child data.
+      message = { ...message, subagents: subagents.map(child => ({
+        ...child, expertName: `Updated ${child.childTaskId}`, state: 'completed',
+        output: `Result ${child.childTaskId}`
+      })) }
+      view.rerender(<ChatTimeline {...props} messages={[message]} />)
+      expect(cardNames()).toEqual(['Updated b', 'Updated a', 'Updated c', 'Updated d'])
+      for (const card of view.container.querySelectorAll<HTMLDetailsElement>('.subagent-status-card')) {
+        expect(card).toHaveClass('subagent-status-card--completed')
+        fireEvent.click(card.querySelector('summary')!)
+        fireEvent(card, new Event('toggle'))
+        const id = card.querySelector('strong')!.textContent!.slice(-1)
+        expect(within(card).getByText(`Result ${id}`)).toBeVisible()
+      }
+
+      // Move a fallback child into the ordered blocks without duplicating it.
+      message = { ...message, blocks: [{ id: 'd', type: 'subagent', childTaskId: 'd' }] }
+      view.rerender(<ChatTimeline {...props} messages={[message]} />)
+      expect(cardNames()).toEqual(['Updated d', 'Updated a', 'Updated b', 'Updated c'])
+      for (const blocks of [undefined, []]) {
+        message = { ...message, blocks }
+        view.rerender(<ChatTimeline {...props} messages={[message]} />)
+        expect(cardNames()).toEqual(['Updated a', 'Updated b', 'Updated c', 'Updated d'])
+      }
+      message = { ...message, subagents: undefined }
+      view.rerender(<ChatTimeline {...props} messages={[message]} />)
+      expect(cardNames()).toEqual([])
+    } finally {
+      map.mockRestore()
+      filter.mockRestore()
+      blockFilters.forEach(probe => probe.mockRestore())
+    }
+  })
+
   it('shows every parallel expert output in its own expandable card', () => {
     const messages: Message[] = [
       {

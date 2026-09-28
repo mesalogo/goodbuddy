@@ -117,7 +117,17 @@ export class ConversationAttachmentStorage {
   }
 
   reference(conversationId: string, kind: 'draft' | 'message' | 'queue' | 'parsing', ownerId: string, ids: string[]): void {
-    const assets = ids.filter((id) => this.has(id)).map((id) => this.row(id))
+    const assets: AssetRow[] = []
+    for (const id of new Set(ids)) {
+      const asset = this.database.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as AssetRow | undefined
+      if (asset) assets.push(asset)
+    }
+    const refs = this.database.prepare(`SELECT attachment_id, conversation_id FROM attachment_refs
+      WHERE kind = ? AND owner_id = ? ORDER BY rowid`).all(kind, ownerId) as { attachment_id: string; conversation_id: string }[]
+    // Draft order is visible, and matching references can still point to temporary files.
+    if (refs.length === assets.length && assets.every((asset, index) =>
+      refs[index]?.attachment_id === asset.id && refs[index]?.conversation_id === conversationId && !asset.path.startsWith('temp')
+    )) return
     for (const asset of assets) {
       if (!asset.path.startsWith(`temp`)) continue
       const context = JSON.parse(asset.metadata) as ContextAttachment

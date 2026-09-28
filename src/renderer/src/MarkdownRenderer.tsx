@@ -134,6 +134,9 @@ const wholeMarkdownFence =
   /^```(?:markdown|md)\s*\r?\n([\s\S]*?)\r?\n```$/iu
 
 function replaceLatexDelimiters(line: string): string {
+  if (!line.includes('\\(') && !line.includes('\\)')) {
+    return line
+  }
   let output = ''
   let index = 0
   let codeDelimiterLength = 0
@@ -171,7 +174,11 @@ function replaceLatexDelimiters(line: string): string {
   return output
 }
 
-function normalizeLatexDelimiters(content: string): string {
+export function normalizeLatexDelimiters(content: string): string {
+  // Without math markers or CRLF, every line would be returned unchanged.
+  if (!/[$\\\r]/u.test(content)) {
+    return content
+  }
   let fence:
     | {
         character: '`' | '~'

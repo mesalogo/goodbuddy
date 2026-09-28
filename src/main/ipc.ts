@@ -6397,8 +6397,6 @@ export function registerIpcHandlers(
       assistantDatabase.setConversationPinned(
         conversationSetPinnedSchema.parse(input)
       )
-      contextManager.assets?.reconcile((conversationId, kind, ownerId) => assistantDatabase.hasAttachmentOwner(conversationId, kind, ownerId), false, contextManager.activeContextIds())
-      if (contextManager.assets) contextManager.cancelUnavailableImport()
       publishConversationChange()
     }
   )

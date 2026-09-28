@@ -1,5 +1,5 @@
 import { Activity, ChevronRight, Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
 import type {
@@ -239,7 +239,7 @@ function groupActivityRecordsByProject(
   })
 }
 
-export function ActivityPanel({
+export const ActivityPanel = memo(function ActivityPanel({
   projects = [],
   records,
   tokenUsage,
@@ -1165,4 +1165,4 @@ export function ActivityPanel({
       )}
     </section>
   )
-}
+})

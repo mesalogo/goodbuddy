@@ -33,6 +33,8 @@ import type {
 } from '../shared/ssh-host-contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
+import { ConversationAttachmentStorage } from './conversation-attachment-storage'
+import { DocumentResultStorage } from './document-result-storage'
 import { ImageGenerationService } from './agent/image-generation-service'
 import { ApplicationSettingsStore } from './application-settings-store'
 import * as desktopNotification from './desktop-notification'
@@ -4519,6 +4521,95 @@ describe('registerIpcHandlers local conversation persistence', () => {
   afterEach(() => {
     electronMocks.handlers.clear()
     vi.clearAllMocks()
+  })
+
+  it('pins and unpins without attachment reconciliation or import checks', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'goodbuddy-pin-ipc-'))
+    const database = new AssistantDatabase(join(root, 'assistant.sqlite'))
+    const results = new DocumentResultStorage(join(root, 'temp', 'document-parsing'))
+    const assets = new ConversationAttachmentStorage(root, results)
+    let dispose: ReturnType<typeof registerIpcHandlers> | undefined
+    try {
+      database.initialize(root)
+      const conversationId = '00000000-0000-4000-8000-000000000301'
+      const messageId = '00000000-0000-4000-8000-000000000302'
+      database.saveLocalConversations([{
+        header: { id: conversationId, title: 'Pin regression', updatedAt: 1 },
+        messages: [{ id: messageId, role: 'user', content: 'Keep this message', createdAt: 1, state: 'complete' }]
+      }])
+      const assetId = assets.beginParsing(conversationId, 'pending.pdf', Buffer.from('original'))
+      assets.reference(conversationId, 'draft', conversationId, [assetId])
+      assets.reference(conversationId, 'message', messageId, [assetId])
+      const before = database.getConversation(conversationId)
+      const reconcile = vi.spyOn(assets, 'reconcile')
+      const collect = vi.spyOn(assets, 'collect')
+      const hasOwner = vi.spyOn(database, 'hasAttachmentOwner')
+      const contextManager = {
+        assets,
+        activeContextIds: vi.fn(() => []),
+        cancelUnavailableImport: vi.fn(),
+        clear: vi.fn()
+      }
+      const webContents = {
+        on: vi.fn(), removeListener: vi.fn(),
+        mainFrame: { url: 'file:///goodbuddy/index.html' },
+        getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+        send: vi.fn()
+      }
+      const window = {
+        webContents, isDestroyed: vi.fn(() => false),
+        on: vi.fn(), removeListener: vi.fn()
+      }
+      dispose = registerIpcHandlers(
+        window as never, { capability: 'text' } as never,
+        'CommandOrControl+Shift+Space', {} as never, {} as never,
+        contextManager as never, {} as never, database,
+        { clear: vi.fn() } as never, {} as never, vi.fn(async () => {})
+      )
+      const event = { sender: webContents, senderFrame: webContents.mainFrame }
+      const pin = electronMocks.handlers.get(ipcChannels.conversationsSetPinned)!
+      expect(pin).toBeTypeOf('function')
+      webContents.send.mockClear()
+      for (const pinned of [true, true, false]) {
+        expect(pin(event, { conversationId, pinned })).toBeUndefined()
+        expect(database.getConversation(conversationId)).toEqual({ ...before, pinned })
+      }
+      expect(webContents.send.mock.calls).toEqual([
+        [ipcChannels.conversationsChanged],
+        [ipcChannels.conversationsChanged],
+        [ipcChannels.conversationsChanged]
+      ])
+      expect({
+        reconciliations: reconcile.mock.calls.length,
+        ownerChecks: hasOwner.mock.calls.length,
+        collections: collect.mock.calls.length,
+        activeContextReads: contextManager.activeContextIds.mock.calls.length,
+        importChecks: contextManager.cancelUnavailableImport.mock.calls.length
+      }).toEqual({ reconciliations: 0, ownerChecks: 0, collections: 0, activeContextReads: 0, importChecks: 0 })
+      expect(assets.draft(conversationId).map((asset) => asset.id)).toEqual([assetId])
+      expect(assets.get(assetId).parsingState).toBe('parsing')
+      expect(assets.original(assetId).data).toEqual(Buffer.from('original'))
+
+      webContents.send.mockClear()
+      expect(() => pin(event, { conversationId, pinned: 'yes' })).toThrow()
+      expect(() => pin({ ...event, sender: {} }, { conversationId, pinned: true })).toThrow()
+      expect(() => pin(event, {
+        conversationId: '00000000-0000-4000-8000-000000000399', pinned: true
+      })).toThrow()
+      expect(webContents.send).not.toHaveBeenCalled()
+      expect(database.getConversation(conversationId)).toEqual(before)
+
+      expect(electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, conversationId)).toBe(true)
+      expect(collect).toHaveBeenCalledOnce()
+      expect(contextManager.cancelUnavailableImport).toHaveBeenCalledOnce()
+      expect(assets.has(assetId)).toBe(false)
+    } finally {
+      await dispose?.()
+      assets.close()
+      await results.close()
+      database.close()
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('validates and forwards incremental saves, branches, and explicit deletions', async () => {
