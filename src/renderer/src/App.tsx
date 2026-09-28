@@ -8890,7 +8890,11 @@ function App(): React.JSX.Element {
                       }}
                     >
                       <span className="conversation-item__primary">
-                        {conversation.pinned && <Pin className="conversation-pin" size={13} role="img" aria-label={t("conversation.actions.pinned")}><title>{t("conversation.actions.pinned")}</title></Pin>}
+                        {conversation.pinned && (
+                          <span className="conversation-pin">
+                            <Pin size={13} role="img" aria-label={t("conversation.actions.pinned")}><title>{t("conversation.actions.pinned")}</title></Pin>
+                          </span>
+                        )}
                         {branchSourceTitle && (
                           <ConversationBranchBadge
                             sourceTitle={branchSourceTitle}

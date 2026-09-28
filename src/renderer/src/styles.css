@@ -12554,7 +12554,13 @@ textarea.field-control {
 }
 
 .conversation-pin {
+  display: inline-flex;
+  width: 20px;
+  height: 18px;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-right: var(--space-1);
   color: var(--text-secondary);
 }
 

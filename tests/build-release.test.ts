@@ -810,7 +810,9 @@ describe('release build arguments', () => {
     )
 
     expect(packageJson.build.files).toEqual([
-      'out/**/*',
+      'out/main/**/*',
+      'out/preload/**/*',
+      'out/renderer/**/*',
       'package.json',
       '!node_modules/npm{,/**/*}'
     ])

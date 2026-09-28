@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -12,9 +12,29 @@ it('copies DS dependencies and nested assets through the actual builder matcher'
   const root = mkdtempSync(join(tmpdir(), 'goodbuddy-dsh-packaging-'))
   const config = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))
   const resource = config.build.extraResources.find((entry: { to: string }) => entry.to.startsWith('runtimes/dsh'))
-  const files = ['@deepseek-ai/dsh/lib/bin.js', '@deepseek-ai/dsh/node_modules/example/index.js', '@deepseek-ai/dsh-web/dist/index.html']
+  const files = [
+    '@deepseek-ai/dsh/lib/bin.js',
+    '@deepseek-ai/dsh/node_modules/example/index.js',
+    '@deepseek-ai/dsh-web/dist/index.html',
+    '@deepseek-ai/dsh-web/config.yml',
+    '@deepseek-ai/dsh-web/LICENSE',
+    'native/addon.node',
+    'native/helper.exe',
+    'native/helper.dll',
+    'assets/data.map'
+  ]
+  const excluded = [
+    '@deepseek-ai/dsh/lib/bin.js.map',
+    '@deepseek-ai/dsh/node_modules/example/index.d.ts',
+    'example/index.d.mts',
+    'example/index.d.cts',
+    'example/index.d.ts.map',
+    'example/index.mjs.map',
+    'example/index.cjs.map',
+    'native/helper.pdb'
+  ]
   try {
-    for (const file of files) {
+    for (const file of [...files, ...excluded]) {
       const source = join(root, '.runtime-resources/dsh-x64/node_modules', file)
       mkdirSync(dirname(source), { recursive: true })
       writeFileSync(source, file)
@@ -29,6 +49,9 @@ it('copies DS dependencies and nested assets through the actual builder matcher'
     await copyFiles(matchers)
     for (const file of files) {
       expect(readFileSync(join(destination, 'runtimes/dsh/node_modules', file), 'utf8')).toBe(file)
+    }
+    for (const file of excluded) {
+      expect(existsSync(join(destination, 'runtimes/dsh/node_modules', file)), file).toBe(false)
     }
   } finally {
     rmSync(root, { recursive: true, force: true })

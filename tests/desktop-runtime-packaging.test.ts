@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -13,6 +13,27 @@ const { getFileMatchers, copyFiles } = require('app-builder-lib/out/fileMatcher'
 const { verifyOpenCodeConfig, verifyHarnessBundleImports } = require('../build/verify-desktop-runtimes.cjs')
 
 describe('desktop Runtime packaging', () => {
+  it('ships only production output even when validation builds remain in out', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'goodbuddy-production-output-'))
+    const output = join(root, 'output')
+    const included = ['out/main/index.js', 'out/main/chunks/shared.js', 'out/main/obsidian-mcpvault/server.js', 'out/preload/index.cjs', 'out/renderer/index.html', 'package.json']
+    const excluded = ['out/chat-paste-validation/renderer/index.html', 'out/another-probe/main.js']
+    try {
+      for (const file of [...included, ...excluded]) {
+        mkdirSync(dirname(join(root, file)), { recursive: true })
+        writeFileSync(join(root, file), file)
+      }
+      await copyFiles(getFileMatchers({ files: packageJson.build.files }, 'files', output, {
+        defaultSrc: root, globalOutDir: output, customBuildOptions: {},
+        macroExpander: (value: string) => value
+      }))
+      for (const file of included) expect(existsSync(join(output, file)), file).toBe(true)
+      for (const file of excluded) expect(existsSync(join(output, file)), file).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('runs packaged Windows Runtime checks in CI before removing the unpacked output', () => {
     const release = readFileSync(join(process.cwd(), 'build', 'build-release.cjs'), 'utf8')
     const smoke = readFileSync(join(process.cwd(), 'build', 'run-packaged-deepseek-harness-smoke.cjs'), 'utf8')

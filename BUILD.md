@@ -182,6 +182,30 @@ npm run dist:linux:arm64
 已由 Vite 打包的 `@antv/g6` 归类为构建期依赖，不会再作为独立 Node 模块复制进桌面
 安装包。
 
+Desktop packaging includes only `out/main`, `out/preload`, and `out/renderer`;
+validation builds elsewhere under `out` are not shipped. Renderer-only React,
+Xterm, Mermaid, Fabric, Quill, i18next, and Markdown/math dependencies are build-time
+dependencies: Vite ships their browser bundles, while the existing license
+resources remain included. Install development dependencies before building;
+do not prune them before bundling and copying license resources.
+
+The desktop DS Web resource filter excludes JavaScript/TypeScript source maps,
+`.d.ts` / `.d.mts` / `.d.cts` declarations, and `.pdb` debug symbols. It preserves
+the installed dependency layout, plugin configuration, browser assets, licenses,
+native binaries, and non-code `.map` assets. This filter does not change the
+separately built remote Agent or Runtime payloads.
+
+Windows x64 development validation on 2026-09-28 compared the existing 0.15.2
+portable directory (excluding `data`) with a fresh unpacked test build:
+`app.asar` decreased from 609.4 to 350.5 MiB, and DS Web decreased from 28,701
+files / 463.4 MiB to 14,984 files / 357.0 MiB. Total measured size decreased from
+1,758.3 to 1,438.4 MiB despite the test build retaining 45.6 MiB more Electron
+locales than the portable build. These are unpacked sizes, not installer download
+sizes. Builder-copy regression tests, production build/type checks, packaged
+Harness/OpenCode/npm smoke checks, DS Web authentication/page scripts/workspace
+creation, and packaged App/settings/notes-page loading passed. Full editor/canvas
+interaction and other platform packages were not revalidated in this check.
+
 以上 `dist*` 与 `portable` 命令用于普通本地桌面打包。它们会携带
 `agent-runtime-lock.json`、`remote-runtime-lock.json` 与公开的
 `agent-release-keys.json`，但所有桌面构建路径（包括本地 `portable`）都不会嵌入
