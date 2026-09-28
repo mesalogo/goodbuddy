@@ -175,17 +175,21 @@ Main 继续校验可信 sender、Zod 输入，复用 `ApplicationSettingsStore` 
 原 `user-card` 整行设置按钮已替换为容器和相邻独立按钮：
 
 ```tsx
-<div className="sidebar-footer">
-  <button onClick={toggleApplicationMenu} aria-haspopup="menu" aria-expanded={applicationMenuOpen} ...>
-    {t('navigation.applicationCenter')}
+<div className="sidebar-footer sidebar-footer--applications">
+  <button className="nav-item" onClick={toggleApplicationMenu} aria-haspopup="menu" aria-expanded={applicationMenuOpen} ...>
+    <Grid2X2 aria-hidden="true" />
+    <span>{t('applications.menuLabel')}</span>
+    <ChevronDown aria-hidden="true" />
   </button>
-  <button aria-label={t('navigation.settings')} ...>
+  <div className="sidebar-footer__divider" aria-hidden="true" />
+  <button className="nav-item" aria-label={t('navigation.settings')} ...>
     <Settings aria-hidden="true" />
+    <span>{t('navigation.settings')}</span>
   </button>
 </div>
 ```
 
-应用中心和设置为相邻独立按钮。设置按钮继续调用 `navigateFromSidebar('settings', trigger)`，
+“应用”（`applications.menuLabel`：中文“应用”、英文 `Apps`）和设置为横向等高独立按钮，使用 `nav-item` 样式和弱竖分隔线；“管理应用”菜单项使用 `LayoutGrid` 图标，管理 Modal 标题保持“应用中心” / `Application Center`。设置按钮继续调用 `navigateFromSidebar('settings', trigger)`，
 保留设置预加载、焦点恢复和未保存离开确认。该调用只打开设置 Modal，不更新当前工作区或
 KeepAlive 缓存；`settingsOpen` 独立管理打开状态。关闭后卸载设置内容，下次按入口指定的分类
 和消息通道重新挂载，避免缓存上次分类覆盖本次直达目标。底层工作区继续挂载，普通关闭不跳回聊天。

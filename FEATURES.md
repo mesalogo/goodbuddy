@@ -141,10 +141,11 @@ records are listed separately and do not introduce another feature status.
   models, approval policy, budgets, and timeouts in a Project, with reusable
   templates.
 - [x] **Application center and navigation**:
-  Clicking the bottom App Center opens a lightweight upward anchored popup with enabled apps,
+  The footer shows equal-height Apps and Settings buttons with visible labels and a subtle vertical divider.
+  Clicking Apps, marked with a downward chevron, opens a lightweight upward anchored popup with enabled apps,
   regardless of pinning or opening history, and no modal backdrop. Clicking an app row closes
   the popup; Local Inference Monitor opens a separate modal preserving the workspace, while other apps
-  open their main content pages. Manage Apps opens searchable cards with settings details;
+  open their main content pages. Manage Apps uses a LayoutGrid icon and opens Application Center with searchable cards and settings details;
   layout and interaction rules are defined in the [UI design](./docs/features/application-tool-navigation/ui-design.md).
   All four application cards support arrow and drag reordering regardless of enablement or pinning.
   Cards, the launcher, and the filtered sidebar share one persisted order. Knowledge

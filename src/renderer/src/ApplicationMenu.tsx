@@ -1,5 +1,5 @@
 import { useMemo, type RefObject } from 'react'
-import { Settings } from 'lucide-react'
+import { LayoutGrid } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { defaultApplicationNavigation, type ApplicationSettings, type BuiltInApplicationId } from '../../shared/application-settings-contracts'
 import { applicationDefinitions, isApplicationEnabled } from './ApplicationCenter'
@@ -36,7 +36,7 @@ export function ApplicationMenu({ anchorRef, settings, pending, error, onClose, 
     })}
     <div role="separator" />
     <button type="button" role="menuitem" tabIndex={-1} onClick={() => { onClose(); anchorRef.current?.focus(); onManage() }}>
-      <Settings size={16} aria-hidden="true" /><span>{t('applications.manage')}</span>
+      <LayoutGrid size={16} aria-hidden="true" /><span>{t('applications.manage')}</span>
     </button>
   </AnchoredMenu>
 }

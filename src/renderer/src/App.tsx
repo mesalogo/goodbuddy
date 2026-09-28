@@ -9362,10 +9362,12 @@ function App(): React.JSX.Element {
             }}
           >
             <Grid2X2 size={17} aria-hidden="true" />
-            <span>{t("applications.title")}</span>
+            <span>{t("applications.menuLabel")}</span>
+            <ChevronDown size={16} aria-hidden="true" />
           </button>
+          <div className="sidebar-footer__divider" aria-hidden="true" />
           <button
-            className="icon-button"
+            className="nav-item"
             aria-label={t('navigation.settings')}
             title={t('navigation.settings')}
             type="button"
@@ -9375,7 +9377,8 @@ function App(): React.JSX.Element {
             }
             onPointerEnter={() => preloadWorkspaceRouteOnIntent("settings")}
           >
-            <Settings size={16} />
+            <Settings size={16} aria-hidden="true" />
+            <span>{t('navigation.settings')}</span>
           </button>
         </div>
       </aside>

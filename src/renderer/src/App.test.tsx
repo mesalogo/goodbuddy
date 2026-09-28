@@ -6204,7 +6204,7 @@ describe("App", () => {
         name: "选择知识库，本次已启用 1 个",
       }),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }));
+    fireEvent.click(screen.getByRole('button', { name: '应用' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }));
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '知识库' } });
     expect(within(screen.getByRole('dialog')).queryByRole('switch')).not.toBeInTheDocument();
@@ -13904,7 +13904,7 @@ describe("App", () => {
       expect(screen.queryByRole("button", { name: "应用设置" })).not.toBeInTheDocument();
       expect(api.updates.updateSettings).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "关闭设置" }));
-      fireEvent.click(screen.getByRole("button", { name: "应用中心" }));
+      fireEvent.click(screen.getByRole("button", { name: "应用" }));
       fireEvent.click(screen.getByRole("menuitem", { name: "管理应用" }));
       fireEvent.click(screen.getByRole("button", { name: "魔法笔记 应用设置" }));
       const toggle = await screen.findByRole("switch", {
@@ -13942,7 +13942,7 @@ describe("App", () => {
     await updates.updateSettings({ magicNotesEnabled: true })
     render(<App />)
     await screen.findByRole('button', { name: '魔法笔记' })
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     const move = screen.getByRole('button', { name: '下移 知识库' })
     await waitFor(() => expect(move).toBeEnabled())
@@ -13962,7 +13962,7 @@ describe("App", () => {
     expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual([
       '对话', '监督者', '知识库', '魔法笔记', '运行记录',
     ])
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '管理应用'])
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记'])
@@ -13982,7 +13982,7 @@ describe("App", () => {
       },
     }
     vi.mocked(updates.getSettings).mockResolvedValue({ ...external, applicationNavigation: { ...external.applicationNavigation, order: [...external.applicationNavigation.order] } })
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
     const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
@@ -14014,7 +14014,7 @@ describe("App", () => {
     await screen.findByRole('button', { name: '监督者' })
     const reply = deferred<ApplicationSettings>()
     if (operation === 'read') vi.mocked(updates.getSettings).mockReturnValueOnce(reply.promise)
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
     const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
@@ -14181,7 +14181,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('button', { name: /^笔记搜索/ }))
     fireEvent.click(await screen.findByRole('button', { name: '新建笔记' }))
     fireEvent.change(screen.getByLabelText('笔记标题'), { target: { value: 'Unsaved quick note' } })
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     const center = await screen.findByRole('dialog', { name: '应用中心' })
     fireEvent.click(within(center).getByRole('button', { name: /魔法笔记.*设置|设置.*魔法笔记/ }))
@@ -14235,7 +14235,7 @@ describe("App", () => {
     expect(await screen.findByRole('alertdialog')).toBeVisible()
     expect(screen.queryByRole('button', { name: '关闭设置' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '知识库' }))
     expect(await screen.findByRole('alertdialog')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '放弃草稿并切换' }))
@@ -14263,7 +14263,7 @@ describe("App", () => {
      if (entry === 'sidebar') await api.updates!.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'local-inference': true } } })
     render(<App />)
     await waitFor(() => expect(api.updates!.getSettings).toHaveBeenCalled())
-    const nav = entry === 'sidebar' ? await screen.findByRole('button', { name: '本机推理监控' }) : screen.getByRole('button', { name: '应用中心' })
+    const nav = entry === 'sidebar' ? await screen.findByRole('button', { name: '本机推理监控' }) : screen.getByRole('button', { name: '应用' })
     if (entry !== 'sidebar') expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual(['对话', '知识库', '监督者', '运行记录'])
     fireEvent.click(screen.getByRole('button', { name: '知识库' }))
     const workspace = await screen.findByLabelText('知识工作区')
@@ -14271,7 +14271,7 @@ describe("App", () => {
       nav.focus()
       fireEvent.click(nav)
     } else {
-      fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+      fireEvent.click(screen.getByRole('button', { name: '应用' }))
       if (entry === 'menu') fireEvent.click(screen.getByRole('menuitem', { name: '本机推理监控' }))
       else {
         fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
@@ -14290,7 +14290,7 @@ describe("App", () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByLabelText('知识工作区')).toBe(workspace)
     expect(workspace.closest('.app-shell')).toHaveProperty('inert', false)
-    expect(entry === 'sidebar' ? nav : screen.getByRole('button', { name: '应用中心' })).toHaveFocus()
+    expect(entry === 'sidebar' ? nav : screen.getByRole('button', { name: '应用' })).toHaveFocus()
   })
 
   it('saves Supervisor timeouts and concurrency through application settings and restores them on reopen', async () => {
@@ -14342,7 +14342,7 @@ describe("App", () => {
     render(<App />)
 
     expect(await screen.findByRole('button', { name: '监督者' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     fireEvent.click(screen.getByRole('button', { name: '监督者 应用设置' }))
     const enable = screen.getByRole('switch', { name: '启用应用' })
@@ -14362,7 +14362,7 @@ describe("App", () => {
         { name: '监督者' },
       ),
     ).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     expect(screen.queryByRole('menuitem', { name: '监督者' })).not.toBeInTheDocument()
     expect(api.heartbeats.remove).not.toHaveBeenCalled()
     expect(await api.heartbeats.list()).toEqual([plan])
@@ -14377,7 +14377,7 @@ describe("App", () => {
     })
     render(<App />)
     const inferenceNav = await screen.findByRole('button', { name: '本机推理监控' })
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
     const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
@@ -14385,11 +14385,14 @@ describe("App", () => {
     fireEvent.click(pin)
     await waitFor(() => expect(inferenceNav).not.toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
-    const trigger = screen.getByRole('button', { name: '应用中心' })
+    const trigger = screen.getByRole('button', { name: '应用', expanded: false })
     expect(trigger).toHaveFocus()
+    expect(within(screen.getByRole('button', { name: '设置' })).getByText('设置')).toBeVisible()
     fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('menuitem', { name: '本机推理监控' }))
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
     const workspace = await screen.findByRole('region', { name: '本机推理服务' })
     expect(within(screen.getByRole('navigation', { name: '主导航' })).queryByRole('button', { name: '本机推理监控' })).not.toBeInTheDocument()
     await act(async () => changed(await api.updates!.updateSettings({ localInferenceEnabled: false })))
@@ -14403,14 +14406,14 @@ describe("App", () => {
     expect((await api.updates!.getSettings()).applicationNavigation.pinned['local-inference']).toBe(false)
     await act(async () => changed(await api.updates!.updateSettings({ localInferenceEnabled: false })))
     fireEvent.click(screen.getByRole('button', { name: '关闭本机推理监控' }))
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
     await waitFor(() => expect(screen.getByRole('switch', { name: '启用应用' })).not.toBeDisabled())
     fireEvent.click(screen.getByRole('switch', { name: '启用应用' }))
     await waitFor(() => expect(screen.getByRole('switch', { name: '启用应用' })).toBeChecked())
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '本机推理监控' }))
     expect(await screen.findByRole('region', { name: '本机推理服务' })).toBeVisible()
   })
@@ -14418,7 +14421,7 @@ describe("App", () => {
   it('keeps confirmed application preferences and locks edits until an unknown save is read back', async () => {
     render(<App />)
     await screen.findByRole('button', { name: '知识库' })
-    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     const updates = api.updates!
     fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))

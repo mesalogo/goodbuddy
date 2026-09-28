@@ -9,6 +9,7 @@ export const app = {
     priority: { low: 'Low priority', medium: 'Medium priority', high: 'High priority' }
   },
   applications: {
+    menuLabel: 'Apps',
     alwaysShown: 'Always shown', optional: 'Optional',
     manage: 'Manage Apps',
     title: 'Application Center', description: 'Open and reorder built-in applications, and manage optional apps and pins. Knowledge is always shown; Supervisor can be enabled or disabled.',

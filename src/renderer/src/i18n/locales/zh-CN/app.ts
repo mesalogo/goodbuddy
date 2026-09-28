@@ -6,6 +6,7 @@ export const app = {
     priority: { low: '低优先级', medium: '中优先级', high: '高优先级' }
   },
   applications: {
+    menuLabel: '应用',
     alwaysShown: '始终显示', optional: '可选',
     manage: '管理应用',
     title: '应用中心', description: '打开和排列内置应用，管理可选应用的启用与常驻。知识库始终显示，监督者可启用或关闭。',
