@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "releases": [
     {
-      "version": "0.15.0",
+      "version": "0.15.1",
       "releasedAt": "2026-09-28",
       "notes": {
         "zh-CN": {
@@ -24,7 +24,7 @@
           ],
           "notices": [
             "首次启动会将数据库升级至 schema 48。升级前请备份完整用户数据，包括数据库及相邻 `notes/` 目录；旧客户端不能打开升级后的数据库，回退需使用升级前备份。",
-            "远程用户请先升级 Desktop 至 **0.15.0**，再下载并更新 Host 上的 Agent **0.15.0**。已有进程不会热更新，Agent 独立发布，不替代桌面端 Latest。",
+            "远程用户请先升级 Desktop 至 **0.15.1**，再下载并更新 Host 上的 Agent **0.15.0**。已有进程不会热更新，Agent 独立发布，不替代桌面端 Latest。",
             "原生客户端仍为预览，其 Skills/MCP 与 GoodBuddy 会话能力并非完全等价；Continue 和 DS Web 首次启动可能需要准备标准 Node 环境。真实模型请求可能产生费用，其他平台与安装包验收以本次发布流程结果为准。"
           ]
         },
@@ -47,7 +47,7 @@
           ],
           "notices": [
             "First launch upgrades the database to schema 48. Back up complete user data, including the database and adjacent `notes/` directory, before upgrading; older clients cannot open the upgraded database, so rollback requires a pre-upgrade backup.",
-            "Remote users should upgrade Desktop to **0.15.0** before downloading and updating Hosts to Agent **0.15.0**. Existing processes are not hot-updated, and the independent Agent release does not replace Desktop Latest.",
+            "Remote users should upgrade Desktop to **0.15.1** before downloading and updating Hosts to Agent **0.15.0**. Existing processes are not hot-updated, and the independent Agent release does not replace Desktop Latest.",
             "Native clients remain a preview and do not offer full parity with GoodBuddy conversation Skills/MCP capabilities; Continue and DS Web may need to prepare a standard Node environment on first launch. Real model requests may incur charges, and other-platform and packaged-app acceptance depend on this release's validation results."
           ]
         }

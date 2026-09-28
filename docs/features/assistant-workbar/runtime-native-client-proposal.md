@@ -193,6 +193,11 @@ Renderer 仅提交当前会话或项目标识及选择标识。Main 重新解析
 共享接口应返回可供界面使用的启动状态、终端标识或 DS 服务标识。外部 URL 由 Main 打开，
 不允许 Renderer 提交任意程序、命令行、凭据或任意服务地址。错误保留组件、阶段和脱敏原因。
 
+DS Web 随包依赖通过 `build/native-dsh-resources.cjs` 保留 npm 的嵌套布局。
+复制时原样保留相对符号链接，不能将 CLI 链接改写成构建机的绝对路径；
+经过 electron-builder 资源复制后，即使移除原始安装和暂存目录，链接仍须能解析到包内文件。
+这一交付约束覆盖 FR-9；不改变 Agent 的独立 Runtime 打包路径。
+
 ### 6.2 Continue 与 OpenCode
 
 Continue 使用已解析的标准 Node 启动固定版本 CLI，不能直接假定 Electron 的

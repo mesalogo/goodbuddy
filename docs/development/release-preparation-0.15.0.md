@@ -1,15 +1,17 @@
-# Desktop 与 Agent 0.15.0 发布准备
+# Desktop 0.15.1 与 Agent 0.15.0 发布准备及恢复
 
-日期：2026-09-27。候选验证通过，不代表已发布。
+日期：2026-09-27 至 2026-09-28。原 Desktop 0.15.0 标签构建失败，
+用户已选择 Desktop 0.15.1 与 Agent 0.15.0 恢复发布；验证通过不代表已发布。
 
 ## 范围与批准
 
 - 用户要求 Desktop 与 GoodBuddy Agent 同步升级至 `0.15.0`，明确不构建 LoongArch。
 - 源码基线：`0f8bf405db7ca21a85cc70009ad083eb837e1e03`。
 - Desktop 差异基线为已发布的 `v0.13.16`，Agent 为 `agent-v0.13.4`。
-- 准备两个独立标签 `v0.15.0` 与 `agent-v0.15.0`；尚未创建或推送。
+- `v0.15.0` 已创建并推送，保持不可变；恢复使用 `v0.15.1`，
+  `agent-v0.15.0` 尚未创建或推送。
 - 用户已批准两份完整双语说明，正式正文仅维护在
-  [Desktop 发布资源](../../resources/release-notes.json) 的 `0.15.0` 条目与
+  [Desktop 发布资源](../../resources/release-notes.json) 的 `0.15.1` 条目与
   [Agent 发布资源](../../resources/agent-release-notes/0.15.0.md)。
   已逐条核对写入文本与批准草案一致，本记录不再复制正文。
 - `FEATURES.md` 与 `FEATURES.zh-CN.md` 已核对本轮能力、限制和候选版本。
@@ -195,6 +197,31 @@ Windows 原生 Runtime 聚焦用例、类型检查和 lint 通过。
 冻结 tree `42a92450ad7d9ebc50167c7946bff53cff2889e6` 的 Linux 全量为
 **5,371 通过、51 跳过、0 失败**，耗时 748.67 秒。
 
+## Desktop 0.15.1 恢复
+
+`65a21390debe0dd04871417a363a9d87a29339e6` 的主分支
+[CI 36347785076](https://github.com/mesalogo/goodbuddy/actions/runs/36347785076)
+验证与生产构建全部通过后，两个远端创建了不可变 `v0.15.0`。
+其正式 [CI 36348938269](https://github.com/mesalogo/goodbuddy/actions/runs/36348938269)
+两个 macOS 目标在 `codesign --verify --deep --strict` 失败，
+报 `invalid destination for symbolic link in bundle`；GitHub Release 未发布。
+
+Host 隔离 fixture 经实际 DS 资源准备和 electron-builder 文件复制，
+复现相对 npm CLI 链接变成原构建目录的绝对链接。不是签名凭据或测试超时问题。
+用户明确选择 **Desktop 0.15.1 + Agent 0.15.0** 恢复，不移动或复用旧标签。
+修正仅让复制保留相对链接；新增回归移除原安装与暂存目录后验证最终链接仍可读。
+该路径不用于 Agent，远程 Runtime 与 Agent 源码未改，不增加真实模型调用。
+未发布 Desktop 0.15.0 的双语条目迁移到 0.15.1，保留全部功能说明；
+Agent 版本不变，其包元数据从新版 Desktop manifest 派生最低版本 0.15.1，
+两份说明和功能矩阵同步这个升级顺序。
+
+原标签最终 Windows/Linux 四个目标成功，两个 macOS 失败，发布任务跳过，
+公开 Latest 仍为 `v0.13.16`。
+Windows 打包相关测试 45 通过、1 个 POSIX 链接用例跳过，类型、lint、
+发布说明校验通过。冻结 tree `99d3271174a68922fbf0a1a4cfbadbb85a6067c8`
+在 Linux Host 全量 **5,372 通过、51 跳过、0 失败**，耗时 745.88 秒；
+新增符号链接回归实际执行通过。提交仅追加验证记录，恢复候选 CI 与 macOS 签名待验证。
+
 ## 数据、兼容与验收边界
 
 Desktop schema 48 新增魔法笔记会话来源元数据。升级前应备份完整用户数据，
@@ -202,7 +229,7 @@ Desktop schema 48 新增魔法笔记会话来源元数据。升级前应备份�
 本次发布准备不修改数据库迁移实现，也不直接改写用户数据库。
 
 Agent 发布工作流以候选 `package.json` 设置最低 Desktop 版本，因此
-Agent 0.15.0 包要求 Desktop 0.15.0；Node、OpenCode、Continue 锁不变。
+Agent 0.15.0 包要求 Desktop 0.15.1；Node、OpenCode、Continue 锁不变。
 Agent 与 Desktop 独立发布，Agent 不替代 Desktop Latest。
 
 原生客户端的远程 coordinator、托管标准 Node 交付整合、Continue/OpenCode

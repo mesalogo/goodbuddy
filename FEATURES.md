@@ -330,7 +330,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.0`, matching the current Desktop release candidate `0.15.0`; formal
+  `0.15.0`, paired with the current Desktop release candidate `0.15.1`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -910,14 +910,14 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop and Agent candidates are both `0.15.0`, with
+- The current Desktop candidate is `0.15.1` and the Agent candidate is `0.15.0`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
-- Desktop `0.15.0` adds Obsidian integration, conversation capture into Magic
+- Desktop `0.15.1` carries forward the unpublished `0.15.0` Obsidian integration, conversation capture into Magic
   Notes, and preview local native clients, plus knowledge, Supervisor, and UI
   fixes. Schema 48 adds conversation-source metadata; older clients require a
   complete pre-upgrade backup for rollback. Agent `0.15.0` requires Desktop
-  `0.15.0`, retains Node `24.19.0`, and updates remote telemetry opt-out and
+  `0.15.1`, retains Node `24.19.0`, and updates remote telemetry opt-out and
   disabled Continue update-check behavior without adding remote client shortcuts.
 - Desktop `0.13.15` carries forward the unpublished `0.13.14` changes to paged Supervisor reviews and resume behavior,
   native ripgrep searches, to-do layouts, and explicit remote follow-up after an

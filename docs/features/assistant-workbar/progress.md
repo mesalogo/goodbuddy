@@ -1,5 +1,18 @@
 # 工作栏实现与验证进度
 
+## 2026-09-28：DS Web 资源符号链接与 macOS 发布恢复
+
+Desktop `v0.15.0` 原生构建中，两个 macOS 目标均因包外符号链接未通过签名校验。
+Linux Host 隔离 fixture 调用实际 DS 资源准备及 electron-builder 文件复制后，
+确认相对 CLI 链接变成构建目录的绝对路径。复制现使用 `verbatimSymlinks`，
+保留 npm 相对链接；回归移除原始安装和暂存目录后，仍须能读取最终包内链接目标。
+Windows 打包聚焦回归 45 项通过，1 项 POSIX 符号链接测试不适用于 Windows；
+类型、lint 和 0.15.1 双语说明校验通过。完整冻结快照在 Linux Host 全量
+5,372 通过、51 跳过，新增符号链接用例实际执行通过；macOS 原生签名仍待发布 CI。
+这只改变 Desktop 的本地 DS Web 资源准备，不改变 Agent 的独立 Runtime 包装、
+模型桥或启动控制，模型调用 0 次。恢复版本及最终证据见
+[发布恢复记录](../../development/release-preparation-0.15.0.md)。
+
 ## 2026-09-27：窄栏添加入口
 
 “+”已移出页签滚动容器；左右箭头和溢出测量使用扣除添加按钮宽度后的页签区域。

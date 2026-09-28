@@ -21,7 +21,7 @@ async function prepareNativeDshResources(projectDir, platform, architecture, dow
     if (visited.has(directory)) return;
     visited.add(directory);
     const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
-    await cp(directory, join(target, relative(projectDir, directory)), { recursive: true });
+    await cp(directory, join(target, relative(projectDir, directory)), { recursive: true, verbatimSymlinks: true });
     const optional = manifest.optionalDependencies ?? {};
     for (const name of Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies, ...optional })) {
       const dependency = locate(name, directory);
