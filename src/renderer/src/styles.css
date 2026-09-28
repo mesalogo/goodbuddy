@@ -2587,9 +2587,8 @@ textarea:focus-visible {
 .sidebar > .brand,
 .sidebar > .project-switcher,
 .sidebar > .new-chat,
-.sidebar > .sidebar-search,
 .sidebar > .primary-nav,
-.sidebar > .conversation-list,
+.sidebar > .sidebar-conversations,
 .sidebar > .sidebar-footer {
   min-width: 0;
 }
@@ -3527,14 +3526,13 @@ textarea:focus-visible {
 .sidebar-search {
   position: relative;
   display: flex;
-  min-width: 248px;
+  min-width: 0;
   align-items: center;
   padding: 9px 11px;
   padding-right: 40px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
-  margin-bottom: var(--space-4);
-  background: var(--surface-raised);
+  background: transparent;
   color: var(--text-muted);
   gap: var(--space-2);
 }
@@ -3648,11 +3646,41 @@ textarea:focus-visible {
   place-items: center;
 }
 
-.conversation-list {
-  min-width: 248px;
+.sidebar-conversations {
+  display: flex;
+  min-height: 0;
   flex: 1;
-  padding-top: var(--space-4);
+  flex-direction: column;
+  padding: var(--space-2);
+  margin-top: var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.sidebar-conversations__header {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-1) var(--space-3);
+}
+
+.conversation-list {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
   overflow: auto;
+}
+
+@media (max-height: 600px) {
+  .sidebar {
+    overflow-y: auto;
+  }
+
+  .sidebar > * {
+    flex-shrink: 0;
+  }
+
+  .sidebar-conversations {
+    min-height: 200px;
+  }
 }
 
 @media (forced-colors: none) and (pointer: fine) {
@@ -3813,7 +3841,8 @@ textarea:focus-visible {
 
 .sidebar-footer {
   min-width: 248px;
-  padding-top: 12px;
+  padding-top: var(--space-4);
+  margin-top: var(--space-4);
   border-top: 1px solid var(--border-default);
 }
 
@@ -16427,7 +16456,6 @@ textarea.field-control {
 }
 
 :root[data-theme='dark'] :where(
-  .sidebar-search,
   .settings-section,
   .settings-tabs,
   .assistant-sidebar__row,

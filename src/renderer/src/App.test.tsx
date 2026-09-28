@@ -3054,6 +3054,10 @@ describe("App", () => {
     ]);
     const { container } = render(<App />);
     const search = await screen.findByLabelText("搜索对话");
+    const conversationSection = search.closest(".sidebar-conversations");
+    expect(conversationSection).toBeInTheDocument();
+    expect(search.closest(".conversation-list")).toBeNull();
+    expect(conversationSection?.querySelector(".conversation-list")).toBeInTheDocument();
     const searchControls = within(search.parentElement!);
     expect(
       searchControls.queryByRole("button", { name: "清除搜索" }),

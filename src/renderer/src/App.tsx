@@ -8716,31 +8716,6 @@ function App(): React.JSX.Element {
           </button>
         )}
 
-        <div className="sidebar-search">
-          <Search size={15} />
-          <input
-            aria-label={t("sidebar.searchLabel")}
-            ref={searchInputRef}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder={t("sidebar.searchPlaceholder")}
-            value={searchQuery}
-          />
-          {searchQuery.length > 0 && (
-            <button
-              aria-label={t("conversation.clearSearch")}
-              className="icon-button sidebar-search__clear"
-              onClick={() => {
-                setSearchQuery("");
-                searchInputRef.current?.focus();
-              }}
-              title={t("conversation.clearSearch")}
-              type="button"
-            >
-              <X aria-hidden="true" size={14} />
-            </button>
-          )}
-        </div>
-
         <nav className="primary-nav" aria-label={t("navigation.label")}>
           <button
             aria-current={view === "chat" ? "page" : undefined}
@@ -8800,8 +8775,34 @@ function App(): React.JSX.Element {
           </button>
         </nav>
 
+        <section className="sidebar-conversations" aria-label={t("sidebar.recent")}>
+          <div className="sidebar-conversations__header">
+            <div className="sidebar-search">
+              <Search aria-hidden="true" size={15} />
+              <input
+                aria-label={t("sidebar.searchLabel")}
+                ref={searchInputRef}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder={t("sidebar.searchPlaceholder")}
+                value={searchQuery}
+              />
+              {searchQuery.length > 0 && (
+                <button
+                  aria-label={t("conversation.clearSearch")}
+                  className="icon-button sidebar-search__clear"
+                  onClick={() => {
+                    setSearchQuery("");
+                    searchInputRef.current?.focus();
+                  }}
+                  title={t("conversation.clearSearch")}
+                  type="button"
+                >
+                  <X aria-hidden="true" size={14} />
+                </button>
+              )}
+            </div>
+          </div>
         <div className="conversation-list">
-          <p className="section-label">{t("sidebar.recent")}</p>
           {!conversationLoadError &&
             filteredConversations.map((conversation) => {
               const conversationTasks =
@@ -9327,6 +9328,8 @@ function App(): React.JSX.Element {
             )
           ) : null}
         </div>
+
+        </section>
 
         <div className="sidebar-footer sidebar-footer--applications">
           <button
