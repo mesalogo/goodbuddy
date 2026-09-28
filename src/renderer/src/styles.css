@@ -3655,6 +3655,13 @@ textarea:focus-visible {
   overflow: auto;
 }
 
+@media (forced-colors: none) and (pointer: fine) {
+  .conversation-list {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-control) transparent;
+  }
+}
+
 .conversation-entry + .conversation-entry {
   margin-top: var(--space-1);
 }
