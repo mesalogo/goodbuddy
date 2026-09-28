@@ -31,6 +31,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   CircleAlert,
   CircleHelp,
@@ -9350,7 +9351,7 @@ function App(): React.JSX.Element {
           >
             <Grid2X2 size={17} aria-hidden="true" />
             <span>{t("applications.menuLabel")}</span>
-            <ChevronDown size={16} aria-hidden="true" />
+            <ChevronUp size={16} aria-hidden="true" />
           </button>
           <div className="sidebar-footer__divider" aria-hidden="true" />
           <button

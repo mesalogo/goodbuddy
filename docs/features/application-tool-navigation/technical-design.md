@@ -179,7 +179,7 @@ Main 继续校验可信 sender、Zod 输入，复用 `ApplicationSettingsStore` 
   <button className="nav-item" onClick={toggleApplicationMenu} aria-haspopup="menu" aria-expanded={applicationMenuOpen} ...>
     <Grid2X2 aria-hidden="true" />
     <span>{t('applications.menuLabel')}</span>
-    <ChevronDown aria-hidden="true" />
+    <ChevronUp aria-hidden="true" />
   </button>
   <div className="sidebar-footer__divider" aria-hidden="true" />
   <button className="nav-item" aria-label={t('navigation.settings')} ...>

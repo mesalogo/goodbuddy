@@ -205,7 +205,8 @@
   gap: var(--space-2);
 }
 .sidebar-footer--applications > .nav-item {
-  flex: 1 0 auto;
+  flex: 1 1 0;
+  min-width: 0;
   gap: var(--space-2);
   padding-inline: var(--space-2);
   justify-content: center;
@@ -216,6 +217,6 @@
 }
 .sidebar-footer__divider {
   flex: 0 0 1px;
-  height: var(--space-4);
-  background: var(--border-subtle);
+  height: var(--space-6);
+  background: var(--border-control);
 }
