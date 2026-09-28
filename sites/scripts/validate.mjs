@@ -248,10 +248,11 @@ for (const breakpoint of ["1199px", "959px", "719px"]) {
 }
 
 const requiredCopy = [
-  "免注册",
-  "支持信创软硬件的",
+  "无需注册 GoodBuddy 账号",
+  "面向国产化",
+  "与信创环境的",
   "产品亮点",
-  "本地工作空间，统一 Runtime，也支持信创环境",
+  "桌面 AI 工作空间",
   "桌面版本覆盖国产 x64、ARM64 和龙芯 LoongArch",
   "龙芯 LoongArch 独立编译预览版",
   "龙芯 LoongArch（实验预览）",
@@ -262,13 +263,12 @@ const requiredCopy = [
   "银河麒麟",
   "海光 · 兆芯（x64）",
   "鲲鹏 · 飞腾（ARM64）",
-  "Agent Runtime 可连接",
-  "直连模型、OpenCode、Continue",
+  "内置集成 OpenCode、Continue",
   "DeepSeek Harness",
   "魔法笔记",
   "智能心跳",
   "文件、截图、应用窗口、剪贴板和离线语音",
-  "微信、企业微信和钉钉",
+  "微信、企业微信或钉钉",
 ];
 
 for (const copy of requiredCopy) {
@@ -276,13 +276,10 @@ for (const copy of requiredCopy) {
 }
 
 const requiredEnglishCopy = [
-  "No account required.",
+  "No GoodBuddy account required",
   "Product highlights",
-  "Model chat and coding agents",
-  "on your desktop.",
   "Windows, macOS, and Linux",
-  "separate experimental LoongArch preview",
-  "Agent Runtimes in one desktop interface",
+  "LoongArch has a separate experimental preview",
   "Direct models",
   "OpenCode",
   "Continue",
@@ -292,6 +289,20 @@ const requiredEnglishCopy = [
 
 for (const copy of requiredEnglishCopy) {
   report(englishHtml.includes(copy), `英文页面缺少准确文案：${copy}`);
+}
+
+for (const [relativePath, content] of [["index.html", html], ["en.html", englishHtml]]) {
+  for (const id of ["workflows", "faq"]) {
+    report(content.includes(`id="${id}"`), `${relativePath} 缺少 ${id} 区域`);
+  }
+  const mainContent = content.match(/<main\b[^>]*>([\s\S]*?)<\/main>/)?.[1] ?? "";
+  const mainSections = [...mainContent.matchAll(/<section\b[^>]*>/g)];
+  report(/\sid="download"/.test(mainSections[1]?.[0] ?? ""),
+    `${relativePath} 下载区必须是 main 中的第二个 section`);
+  report((content.match(/<summary>/g) ?? []).length >= 4,
+    `${relativePath} 常见问题必须使用原生可展开控件`);
+  report(!/approval-controlled|受控执行|继续经过审批/.test(content),
+    `${relativePath} 不得保留过时的执行审批文案`);
 }
 
 for (const forbiddenCopy of ["信创", "国产", "统信 UOS", "银河麒麟", "海光", "兆芯", "鲲鹏", "飞腾"]) {
