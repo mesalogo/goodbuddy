@@ -6,7 +6,7 @@ import type { MagicNoteCommentMode } from '../../shared/application-settings-con
 import { MagicNoteSource, type OpenMagicNoteSource } from './MagicNoteSource'
 import type { useMagicNoteDraft } from './use-magic-note-draft'
 import type { AppNotificationInput } from './notifications'
-import { ScopeBadge, SegmentedControl } from './WorkspacePrimitives'
+import { SegmentedControl } from './WorkspacePrimitives'
 import './magic-notes-panel.css'
 
 const MagicCanvasThumbnail = lazy(async () => ({ default: (await import('./MagicCanvasThumbnail')).MagicCanvasThumbnail }))
@@ -149,7 +149,8 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
     setSelectedNoteId('')
     requestAnimationFrame(() => document.getElementById('compact-note-search')?.focus())
   }
-  const validationId = `compact-note-validation${saveError ? ' compact-note-save-error' : ''}`
+  const validationMessage = tooLong ? t('capture.tooLong') : draft && !valid ? t('capture.required') : undefined
+  const validationId = [validationMessage && 'compact-note-validation', saveError && 'compact-note-save-error'].filter(Boolean).join(' ') || undefined
   const list = (
     <>
       <label htmlFor="compact-note-search">{t('capture.search')}</label>
@@ -182,7 +183,6 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
       }}>
       <header className="magic-note-panel__header">
         <strong>{draft?.source ? t('capture.add') : currentDetail?.title ?? t('page.title')}</strong>
-        <ScopeBadge scope={{ kind: 'global' }} />
         {(!draft || quickDraft) && currentDetail && (
           <div className="magic-note-panel__actions">
             <button className="icon-button" type="button" title={t('capture.back')}
@@ -202,12 +202,11 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
         {draft && !quickDraft ? (
           <>
             {draft.source && <div className="magic-note-source">
-              <span>{draft.source.projectName ?? t('capture.global')} / {draft.source.conversationTitle}</span>
+              <span>{draft.source.projectName && `${draft.source.projectName} / `}{draft.source.conversationTitle}</span>
               <p>{t(draft.source.kind === 'message' ? 'capture.messageScope' : 'capture.conversationScope')}</p>
               {draft.incomplete && <p>{t('capture.incomplete')}</p>}
             </div>}
-            <label htmlFor="compact-note-text">{t('capture.content')}</label>
-            <textarea ref={preview} id="compact-note-text" value={draft.text} disabled={saving}
+            <textarea ref={preview} id="compact-note-text" aria-label={t('capture.content')} value={draft.text} disabled={saving}
               aria-describedby={validationId} aria-invalid={tooLong || undefined}
               onChange={event => setDraft({ ...draft, text: event.target.value })} />
             <h3>{t('capture.target')}</h3>
@@ -259,14 +258,13 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
       {(draft || currentDetail) && (
         <footer className="magic-note-panel__footer">
           {(!draft || quickDraft) && currentDetail && <>
-            <label htmlFor="compact-note-append">{t('capture.content')}</label>
-            <textarea id="compact-note-append" value={draft?.text ?? ''} disabled={saving}
+            <textarea id="compact-note-append" aria-label={t('capture.content')} value={draft?.text ?? ''} disabled={saving}
               aria-describedby={validationId} aria-invalid={tooLong || undefined}
               onChange={event => setDraft(draft ? { ...draft, text: event.target.value } : {
                 text: event.target.value, initialText: '', title: '', initialTitle: '', targetId: currentDetail.id, newNote: false
               })} />
           </>}
-          <p id="compact-note-validation">{tooLong ? t('capture.tooLong') : draft && !valid ? t('capture.required') : t('capture.global')}</p>
+          {validationMessage && <p id="compact-note-validation">{validationMessage}</p>}
           {saveError && <p role="alert" id="compact-note-save-error">{saveError}</p>}
           <div className="magic-note-panel__actions">
             {draft && <button className="secondary-button" type="button" disabled={saving}

@@ -6,7 +6,7 @@
 .magic-note-panel__scroll > * { flex-shrink: 0; }
 .magic-note-panel h3 { margin: 0; font-size: var(--font-section-title); }
 .magic-note-panel__scroll > .segmented-control { flex: 0 0 auto; }
-.magic-note-panel__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.magic-note-panel__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 .magic-note-panel input, .magic-note-panel textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: var(--space-2); color: var(--text-primary); background: var(--surface-raised); border: 1px solid var(--border-control); border-radius: var(--radius-control); font: inherit; }
 .magic-note-panel textarea { min-height: 180px; resize: vertical; }
 .magic-note-panel__list { display: flex; flex-direction: column; gap: var(--space-2); }

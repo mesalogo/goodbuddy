@@ -33,7 +33,7 @@
 | --- | --- | --- | --- |
 | 本机 Obsidian 接入 | 新增／设置→能力与工具→MCP | 注册仓库发现、指定文件夹、独立测试与保存、开关和 Runtime 分配；搜索、读取、写入、追加、局部修改等。默认关闭；直连模型及受管理本机 OpenCode/Continue 支持，DSH 与远程不支持；Ask 只读、Execute 可写；不是知识库复制或同步 | `55efca3`；`src/main/obsidian/obsidian-service.ts`、`src/shared/obsidian-tools.ts`、[Obsidian 进度](../../features/obsidian/progress.md) |
 | 聊天采集到魔法笔记 | 新增／助手消息、会话菜单 | 单条助手正文或完整会话用户/助手正文，预览编辑、追加或原子创建笔记；保留来源回跳，源删除后内容保留；不复制工具日志/附件，单记录 500 KiB，生成中不可采集 | `1094433`；`App.tsx`、`ChatTimeline.tsx`、`magic-notes-contracts.ts`、[笔记进度](../../features/magic-notes/progress.md) |
-| 快速笔记与草稿 | 新增／快速笔记、工作栏“+” | 标题/正文搜索、摘要、文字追加；切项目/会话保留草稿，关闭/替换/禁用有确认，重启不恢复；仍是全局笔记，完整画布/待办编辑在工作区；采集本身不调模型，自动评论沿用设置 | `1094433`；`MagicNotesPanel.tsx`、`MagicNoteSource.tsx`、`use-magic-note-draft.tsx` |
+| 快速笔记与草稿 | 工作栏“+ → 笔记” | 标题/正文搜索、摘要、文字追加；切项目/会话保留草稿，关闭/替换/禁用有确认，重启不恢复；仍是全局笔记，完整画布/待办编辑在工作区；采集本身不调模型，自动评论沿用设置 | `1094433`；`MagicNotesPanel.tsx`、`MagicNoteSource.tsx`、`use-magic-note-draft.tsx` |
 | 来源存储升级 | 兼容性／启动 | schema 48 保存来源元数据，不改写文件化正文；旧客户端不能直接打开升级数据库 | `1094433`；`assistant-database.ts`、笔记技术设计 |
 | 本地原生客户端 | 新增／聊天输入区 | Continue/OpenCode 工作栏终端、DS 系统浏览器 Web；沿用项目与模型，独立历史；DS 可复用、重开、停止，关闭网页不停止服务。远程协调入口未接通；Continue/DS 需标准 Node，托管准备可能联网；Continue/OpenCode 原生 Ask 暂无 MCP | `f81f342`；`native-client-coordinator.ts`、`native-terminal-client.ts`、`native-dsh-web-client.ts`、[客户端方案](../../features/assistant-workbar/runtime-native-client-proposal.md) |
 | DSH 依赖升级 | 新功能配套／内部版本 | DSH 0.1.7-rc.2、Cordis 4.0.4；不把依赖版本当模型名或稳定版承诺，正文并入原生客户端 | `f81f342`；提交中的 package/锁文件 |

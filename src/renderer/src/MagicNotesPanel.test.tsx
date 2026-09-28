@@ -51,9 +51,13 @@ describe('compact notes', () => {
     render(<Harness />)
     fireEvent.click(screen.getByText('Capture'))
     await screen.findByDisplayValue('Captured text')
+    expect(screen.getByRole('textbox', { name: 'Text to add' })).toBeVisible()
+    expect(screen.queryByText('Text to add')).not.toBeInTheDocument()
+    expect(screen.queryByText('Global')).not.toBeInTheDocument()
     expect(create).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'New note' }))
     expect(screen.getByLabelText('Note title')).toHaveValue('Discussion A')
+    expect(document.getElementById('compact-note-validation')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Add to note' }))
     await waitFor(() => {
       expect(create).toHaveBeenCalledWith({ title: 'Discussion A', content: capturedNoteContent('Captured text'), source })

@@ -19,7 +19,7 @@ export function MagicNoteSource({ source, onOpen }: { source: Source; onOpen?: O
   }
   return <aside className="magic-note-source" aria-label={t('capture.source')}>
     <span>{t('capture.source')}: {source.conversationTitle}</span>
-    <span>{source.projectName ?? t('capture.global')} · <time dateTime={source.capturedAt}>{new Date(source.capturedAt).toLocaleString(i18n.language)}</time></span>
+    <span>{source.projectName && `${source.projectName} · `}<time dateTime={source.capturedAt}>{new Date(source.capturedAt).toLocaleString(i18n.language)}</time></span>
     {onOpen && <div className="magic-note-panel__actions">
       <button className="secondary-button" type="button" disabled={missing || busy} onClick={() => void open()}>{t(missing ? 'capture.missingConversation' : 'capture.openSource')}</button>
       {source.kind === 'message' && <button className="secondary-button" type="button" disabled={missing || busy} onClick={() => void open(source.messageIds[0])}>{t('capture.openMessage')}</button>}

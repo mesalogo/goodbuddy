@@ -9340,7 +9340,6 @@ function App(): React.JSX.Element {
           ) : null}
         </div>
 
-        {magicNotesEnabled && <button type="button" className="nav-item" title={t('magicNotes:capture.quick')} onClick={openQuickNotes}><FileText size={17} aria-hidden="true" /><span>{t('magicNotes:capture.quick')}</span></button>}
         <div className="sidebar-footer sidebar-footer--applications">
           <button
             className="nav-item"
@@ -9502,7 +9501,6 @@ function App(): React.JSX.Element {
             </>
           )}
           <div className="topbar__actions">
-            {magicNotesEnabled && !sidebarOpen && <button type="button" className="icon-button" aria-label={t('magicNotes:capture.quick')} title={t('magicNotes:capture.quick')} onClick={openQuickNotes}><FileText size={17} aria-hidden="true" /></button>}
             <button
               aria-controls="assistant-sidebar"
               aria-expanded={assistantSidebarOpen}
