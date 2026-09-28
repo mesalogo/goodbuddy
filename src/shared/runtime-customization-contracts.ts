@@ -498,7 +498,7 @@ export type RuntimeConversationCompactInput = z.infer<
 
 export const runtimeConversationCompactResultSchema = z
   .object({
-    provider: z.enum(['opencode', 'continue']),
+    provider: z.enum(['opencode', 'continue', 'model']),
     strategy: z.enum(['native', 'goodbuddy-summary']),
     compacted: z.boolean(),
     detail: z.string().trim().min(1).max(500),

@@ -7521,8 +7521,7 @@ function App(): React.JSX.Element {
     if (
       !activeConversation ||
       !activeRuntimeSelection ||
-      (activeRuntimeSelection.provider !== "opencode" &&
-        activeRuntimeSelection.provider !== "continue") ||
+      !runtimeContextCompactAvailable ||
       runtimeContextCompacting ||
       isRunning
     ) {
@@ -8500,9 +8499,17 @@ function App(): React.JSX.Element {
       : undefined,
   ].filter(Boolean).join(" · ");
   const runtimeContextCompactAvailable =
-    (activeRuntimeSelection?.provider === "opencode" ||
-      activeRuntimeSelection?.provider === "continue") &&
-    runtimeNativeSnapshot?.context.manualCompact === true;
+    activeRuntimeSelection?.provider === "model"
+      ? !activeConversation?.remote &&
+        activeProject?.executionSpace.kind !== "ssh" &&
+        runtimeSettings?.modelProfiles.some(
+          (profile) =>
+            profile.id === getRuntimeSelectionProfileId(activeRuntimeSelection, runtimeSettings) &&
+            profile.protocol !== "openai-images-generations",
+        ) === true
+      : (activeRuntimeSelection?.provider === "opencode" ||
+          activeRuntimeSelection?.provider === "continue") &&
+        runtimeNativeSnapshot?.context.manualCompact === true;
 
   const nativeClientAvailable = activeRuntimeSelection?.provider === "continue" ||
     activeRuntimeSelection?.provider === "opencode" ||

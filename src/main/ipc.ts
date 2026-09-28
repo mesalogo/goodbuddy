@@ -4739,7 +4739,8 @@ export function registerIpcHandlers(
       const request = runtimeConversationCompactInputSchema.parse(input)
       if (
         request.runtimeSelection.provider !== 'opencode' &&
-        request.runtimeSelection.provider !== 'continue'
+        request.runtimeSelection.provider !== 'continue' &&
+        request.runtimeSelection.provider !== 'model'
       ) {
         throw new Error('当前 Runtime 不支持手动压缩')
       }
@@ -4791,6 +4792,12 @@ export function registerIpcHandlers(
         settings,
         request.runtimeSelection
       )
+      if (
+        request.runtimeSelection.provider === 'model' &&
+        !isAgentRuntimeModelProtocol(selected.settings.modelProtocol)
+      ) {
+        throw new Error('当前模型连接不支持上下文摘要')
+      }
       if (project?.executionSpace?.kind === 'ssh') {
         await requireRemoteProjectsEnabled()
       }
@@ -4844,7 +4851,12 @@ export function registerIpcHandlers(
                   (candidate) =>
                     candidate.id === compressionSource.profileId
                 )
-              : selected.settings.continueModelProfile) ??
+              : request.runtimeSelection.provider === 'model'
+                ? selected.settings.modelProfiles.find(
+                    (candidate) =>
+                      candidate.id === selected.settings.defaultModelProfileId
+                  )
+                : selected.settings.continueModelProfile) ??
             selected.settings.modelProfiles.find(
               (candidate) =>
                 candidate.id ===
@@ -4854,8 +4866,8 @@ export function registerIpcHandlers(
             selected.settings.modelProfiles.find((candidate) =>
               isAgentRuntimeModelProtocol(candidate.protocol)
             )
-          if (!profile) {
-            throw new Error('没有可用于 Continue 上下文摘要的文本模型连接')
+          if (!profile || !isAgentRuntimeModelProtocol(profile.protocol)) {
+            throw new Error('没有可用于上下文摘要的文本模型连接')
           }
           if (
             profile.authentication === 'api-key' &&

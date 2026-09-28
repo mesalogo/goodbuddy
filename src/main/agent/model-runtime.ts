@@ -2410,23 +2410,23 @@ export class ModelAgentRuntime implements AgentRuntime {
           buildConversationSummaryHistory(state.summary)
         )
       : 0
-    if (
-      (!compression.settings.enabled && !options.force) ||
-      history.length === 0
-    ) {
+    if (history.length === 0) {
       return { request, compressed: false }
     }
 
-    const plan = planContextCompression({
-      history: remainingHistory,
-      prompt: requestPrompt,
-      summaryTokens: currentSummaryTokens,
-      settings: compression.settings,
-      contextWindowTokens: compression.contextWindowTokens,
-      allowCompressLatestTurn: options.allowCompressLatestTurn,
-      effectiveTriggerTokens: options.effectiveTriggerTokens,
-      triggerContextTokens: options.triggerContextTokens
-    })
+    const plan =
+      !compression.settings.enabled && !options.force
+        ? undefined
+        : planContextCompression({
+            history: remainingHistory,
+            prompt: requestPrompt,
+            summaryTokens: currentSummaryTokens,
+            settings: compression.settings,
+            contextWindowTokens: compression.contextWindowTokens,
+            allowCompressLatestTurn: options.allowCompressLatestTurn,
+            effectiveTriggerTokens: options.effectiveTriggerTokens,
+            triggerContextTokens: options.triggerContextTokens
+          })
     if (!plan) {
       return state
         ? {
@@ -4153,8 +4153,11 @@ export class ModelAgentRuntime implements AgentRuntime {
     ) {
       throw new Error('当前模型连接不支持上下文摘要')
     }
-    if (request.runtimeSelection.provider !== 'continue') {
-      throw new Error('GoodBuddy 摘要压缩仅适用于 Continue Runtime')
+    if (
+      request.runtimeSelection.provider !== 'continue' &&
+      request.runtimeSelection.provider !== 'model'
+    ) {
+      throw new Error('GoodBuddy 摘要压缩仅适用于直连模型和 Continue Runtime')
     }
 
     if (request.contextCompressionState) {
@@ -4210,11 +4213,13 @@ export class ModelAgentRuntime implements AgentRuntime {
     }
     return {
       result: {
-        provider: 'continue',
+        provider: request.runtimeSelection.provider,
         strategy: 'goodbuddy-summary',
         compacted,
         detail: compacted
-          ? '已使用 GoodBuddy 摘要压缩较早的 Continue 对话历史'
+          ? request.runtimeSelection.provider === 'continue'
+            ? '已使用 GoodBuddy 摘要压缩较早的 Continue 对话历史'
+            : '已使用 GoodBuddy 摘要压缩较早的对话历史'
           : '当前对话没有可继续压缩的较早历史',
         ...(conversationState
           ? { contextCompressionState: conversationState }

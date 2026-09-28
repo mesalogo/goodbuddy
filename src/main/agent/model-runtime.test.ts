@@ -796,7 +796,7 @@ describe('ModelAgentRuntime', () => {
     )
   })
 
-  it('manually compacts Continue history even when automatic compression is disabled', async () => {
+  it.each(['continue', 'model'] as const)('manually compacts %s history even when automatic compression is disabled', async (provider) => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(
       new Response(createEventStream('手动压缩摘要'), {
         status: 200,
@@ -831,7 +831,7 @@ describe('ModelAgentRuntime', () => {
       {
         requestId: '00000000-0000-4000-8000-000000000081',
         conversationId: '00000000-0000-4000-8000-000000000082',
-        runtimeSelection: { provider: 'continue' },
+        runtimeSelection: { provider },
         history,
         historyMessageIds: [
           '00000000-0000-4000-8000-000000000083',
@@ -850,7 +850,7 @@ describe('ModelAgentRuntime', () => {
     expect(JSON.stringify(body.messages)).toContain('earlier question')
     expect(JSON.stringify(body.messages)).not.toContain('recent question')
     expect(outcome.result).toMatchObject({
-      provider: 'continue',
+      provider,
       strategy: 'goodbuddy-summary',
       compacted: true,
       contextCompressionState: {
@@ -862,6 +862,29 @@ describe('ModelAgentRuntime', () => {
         summary: '手动压缩摘要'
       }
     })
+    fetcher.mockResolvedValueOnce(new Response(createEventStream('next answer'), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' }
+    }))
+    for await (const event of runtime.run({
+      requestId: crypto.randomUUID(),
+      conversationId: crypto.randomUUID(),
+      prompt: 'continue',
+      history,
+      historyMessageIds: [
+        '00000000-0000-4000-8000-000000000083',
+        '00000000-0000-4000-8000-000000000084',
+        '00000000-0000-4000-8000-000000000085',
+        '00000000-0000-4000-8000-000000000086'
+      ],
+      contextCompressionState: outcome.result.contextCompressionState
+    }, new AbortController().signal)) {
+      expect(event.type).not.toBe('error')
+    }
+    const nextBody = fetcher.mock.calls[1]![1]!.body as string
+    expect(nextBody).toContain('手动压缩摘要')
+    expect(nextBody).toContain('recent question')
+    expect(nextBody).not.toContain('earlier question')
     await runtime.dispose()
   })
 

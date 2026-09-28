@@ -9883,7 +9883,9 @@ describe("App", () => {
     expect(await screen.findByRole("tab", { name: /终端 1/ })).toHaveAttribute("aria-selected", "false");
   });
 
-  it("manually compacts Continue context and persists the summary state", async () => {
+  it.each([
+    ["continue", false], ["model", false], ["model", true],
+  ] as const)("manually compacts %s context below threshold with auto compression %s and persists the summary state", async (provider, enabled) => {
     const conversationId = "00000000-0000-4000-8000-000000000731";
     const messages = [
       {
@@ -9912,7 +9914,7 @@ describe("App", () => {
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
       contextCompression: {
-        enabled: true,
+        enabled,
         triggerTokens: 20_000,
         recentRawTokens: 4_000,
         modelSource: { kind: "current" },
@@ -9923,15 +9925,15 @@ describe("App", () => {
       {
         id: conversationId,
         projectId,
-        runtimeSelection: { provider: "continue" },
-        title: "Continue 长对话",
+        runtimeSelection: { provider },
+        title: "手动压缩对话",
         updatedAt: 1_775_000_000_001,
         messages,
       },
     ]);
     vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
-      id: "continue",
-      label: "Continue",
+      id: provider,
+      label: provider,
       available: true,
       supportsToolExecution: true,
       detail: "Ready",
@@ -9962,10 +9964,10 @@ describe("App", () => {
       },
     );
     vi.mocked(api.agent.compactConversation).mockResolvedValueOnce({
-      provider: "continue",
+      provider,
       strategy: "goodbuddy-summary",
       compacted: true,
-      detail: "已压缩 Continue 对话历史",
+      detail: "已压缩对话历史",
       contextCompressionState: summaryState,
     });
 
@@ -9977,16 +9979,20 @@ describe("App", () => {
     expect(compactContext.parentElement).toHaveClass(
       "composer-meta__actions",
     );
-    expect(compactContext.parentElement?.firstElementChild).toBe(
-      screen.getByRole("button", { name: "在终端中打开" }),
-    );
+    if (provider === "continue") {
+      expect(compactContext.parentElement?.firstElementChild).toBe(
+        screen.getByRole("button", { name: "在终端中打开" }),
+      );
+    } else {
+      expect(api.runtimeCustomization.getNativeSnapshot).not.toHaveBeenCalled();
+    }
     fireEvent.click(compactContext);
     await waitFor(() =>
       expect(api.agent.compactConversation).toHaveBeenCalledWith({
         requestId: expect.any(String),
         conversationId,
         projectId,
-        runtimeSelection: { provider: "continue" },
+        runtimeSelection: { provider },
         history: messages.map(({ role, content }) => ({
           role,
           content,
@@ -9996,11 +10002,9 @@ describe("App", () => {
       }),
     );
     expect(
-      await screen.findByText("已压缩 Continue 对话历史"),
+      await screen.findByText("已压缩对话历史"),
     ).toBeInTheDocument();
-    expect(await screen.findByText(/压缩后对话估算/u)).not.toHaveTextContent(
-      "压缩线",
-    );
+    expect(await screen.findByText(/压缩后对话估算/u)).toBeInTheDocument();
     await waitFor(() =>
       expect(api.conversations.saveLocal).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -10014,6 +10018,48 @@ describe("App", () => {
         }),
       ]),
     );
+    fireEvent.change(screen.getByRole("textbox", { name: "向 GoodBuddy 提问" }), {
+      target: { value: "继续" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(api.agent.run).toHaveBeenCalledWith(
+      expect.objectContaining({ contextCompressionState: summaryState }),
+    ));
+    expect(screen.getByRole("button", { name: "压缩上下文" })).toBeDisabled();
+  });
+
+  it("hides manual compaction for the selected image profile even when the default is text", async () => {
+    const settings = await api.settings.getRuntime();
+    const imageProfile = {
+      ...settings.modelProfiles[0]!,
+      id: "00000000-0000-4000-8000-000000000739",
+      name: "Image model",
+      protocol: "openai-images-generations" as const,
+    };
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings, modelProfiles: [...settings.modelProfiles, imageProfile],
+    });
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([{
+      id: "00000000-0000-4000-8000-000000000738", projectId,
+      runtimeSelection: { provider: "model", profileId: imageProfile.id },
+      title: "Image conversation", updatedAt: Date.now(), messages: [],
+    }]);
+    render(<App />);
+    await waitFor(() => expect(api.agent.getStatus).toHaveBeenCalledWith({ provider: "model", profileId: imageProfile.id }));
+    expect(screen.queryByRole("button", { name: "压缩上下文" })).not.toBeInTheDocument();
+  });
+
+  it("hides direct model manual compaction for remote channel conversations", async () => {
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([{
+      id: "00000000-0000-4000-8000-000000000740", projectId,
+      runtimeSelection: { provider: "model", profileId: modelProfileId },
+      title: "Remote model conversation", updatedAt: Date.now(), messages: [],
+      remote: { channel: "weixin", accountDisplay: "Remote account", conversationType: "direct" },
+    }]);
+    render(<App />);
+    await waitFor(() => expect(api.agent.getStatus).toHaveBeenCalledWith({ provider: "model", profileId: modelProfileId }));
+    expect(screen.queryByRole("button", { name: "压缩上下文" })).not.toBeInTheDocument();
+    expect(api.agent.compactConversation).not.toHaveBeenCalled();
   });
 
   it("restores the direct-model mode after leaving an Agent Runtime", async () => {

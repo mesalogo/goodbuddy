@@ -4523,6 +4523,75 @@ describe('registerIpcHandlers local conversation persistence', () => {
     vi.clearAllMocks()
   })
 
+  it.each(['current', 'profile', 'image', 'missing'] as const)(
+    'routes direct model manual compaction using %s selection', async (source) => {
+      const profile = {
+        id: crypto.randomUUID(), name: 'Selected', baseUrl: 'https://models.example',
+        modelName: 'selected-text', protocol: 'anthropic-messages', authentication: 'none'
+      }
+      const fallback = { ...profile, id: crypto.randomUUID(), modelName: 'default-text' }
+      const summary = { ...profile, id: crypto.randomUUID(), modelName: 'summary-text' }
+      const selection = { provider: 'model' as const, profileId: source === 'missing' ? crypto.randomUUID() : profile.id }
+      const settings = {
+        provider: 'model', workspacePath: 'C:\\Workspace', defaultModelProfileId: fallback.id,
+        modelProfiles: [fallback, { ...profile, protocol: source === 'image' ? 'openai-images-generations' : profile.protocol }, summary],
+        continueModelProfile: fallback,
+        contextCompression: { enabled: false, modelSource: source === 'profile' ? { kind: 'profile', profileId: summary.id } : { kind: 'current' } }
+      }
+      const messages = [
+        { id: crypto.randomUUID(), role: 'user', content: 'earlier question', state: 'complete' },
+        { id: crypto.randomUUID(), role: 'assistant', content: 'earlier answer', state: 'complete' }
+      ]
+      const conversationId = crypto.randomUUID()
+      const database = {
+        queueDueSchedules: vi.fn(() => []), listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => []),
+        getConversation: vi.fn(() => ({ id: conversationId, runtimeSelection: selection, messages })),
+        createTask: vi.fn(), updateTaskStatus: vi.fn()
+      }
+      const compactor = {
+        compactConversation: vi.fn(async () => ({ result: {
+          provider: 'model', strategy: 'goodbuddy-summary', compacted: true, detail: 'Compacted'
+        } })),
+        dispose: vi.fn(async () => {})
+      }
+      runtimeFactoryMocks.createModelProfileRuntime.mockReturnValue(compactor)
+      const webContents = { on: vi.fn(), removeListener: vi.fn(),
+        mainFrame: { url: 'file:///goodbuddy/index.html' },
+        getURL: vi.fn(() => 'file:///goodbuddy/index.html'), send: vi.fn()
+      }
+      const window = { webContents, isDestroyed: vi.fn(() => false), on: vi.fn(), removeListener: vi.fn() }
+      const dispose = registerIpcHandlers(
+        window as never, {} as never, 'CommandOrControl+Shift+Space',
+        { getResolvedSettings: vi.fn(async () => settings) } as never,
+        {} as never, { clear: vi.fn() } as never, {} as never, database as never,
+        { clear: vi.fn() } as never, {} as never, vi.fn(async () => {})
+      )
+      try {
+        const result = electronMocks.handlers.get(ipcChannels.agentCompactConversation)?.(
+          { sender: webContents, senderFrame: webContents.mainFrame },
+          { requestId: crypto.randomUUID(), conversationId, runtimeSelection: selection,
+            history: messages.map(({ role, content }) => ({ role, content })),
+            historyMessageIds: messages.map(({ id }) => id) }
+        )
+        if (source === 'image' || source === 'missing') {
+          await expect(result).rejects.toThrow()
+          expect(runtimeFactoryMocks.createModelProfileRuntime).not.toHaveBeenCalled()
+        } else {
+          await expect(result).resolves.toMatchObject({ provider: 'model', compacted: true })
+          expect(runtimeFactoryMocks.createModelProfileRuntime).toHaveBeenCalledWith(
+            'C:\\Workspace', expect.objectContaining({ defaultModelProfileId: profile.id }),
+            source === 'profile' ? summary : profile
+          )
+          expect(compactor.dispose).toHaveBeenCalledOnce()
+          expect(database.updateTaskStatus).toHaveBeenCalledWith(expect.any(String), 'completed')
+        }
+      } finally {
+        await dispose()
+      }
+    }
+  )
+
   it('pins and unpins without attachment reconciliation or import checks', async () => {
     const root = await mkdtemp(join(tmpdir(), 'goodbuddy-pin-ipc-'))
     const database = new AssistantDatabase(join(root, 'assistant.sqlite'))

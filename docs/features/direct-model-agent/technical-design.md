@@ -451,6 +451,18 @@ type SubagentActor =
 处理。Continue 接收完整历史，已有有效摘要只替换其覆盖的前缀，剩余消息全部交给原生
 Runtime；GoodBuddy 不再额外保留最后 20 条或限制为 128,000 字符。
 
+### 10.1 本地直连手动压缩
+
+`agentCompactConversation` 接受 `model`，结果保留实际 provider，压缩策略为
+`goodbuddy-summary`。摘要来源为 `current` 时，IPC 使用 `applyRuntimeSelection`
+解析后的当前直连连接；来源为 `profile` 时，使用既有指定摘要连接配置。
+图像连接不进入文本摘要路径，SSH 执行空间仍由本地 IPC 拒绝。
+
+`ModelAgentRuntime.compactConversation` 复用 `prepareCompressedRequest` 的强制压缩，
+跳过自动开关和触发阈值，保留最新轮次。返回的 `contextCompressionState` 沿用会话保存，
+不删除历史正文。后续请求校验摘要覆盖范围后，用摘要替换已覆盖前缀；即使关闭自动压缩，
+已保存的有效摘要仍会使用。
+
 ## 11. 性能
 
 - Shell 探测按执行服务实例缓存，不在每轮模型调用重复探测。

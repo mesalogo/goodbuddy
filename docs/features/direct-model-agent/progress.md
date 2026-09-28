@@ -261,6 +261,29 @@ DeepSeek Harness 和托管 SSH 路径不注入这些工具。既有功能的 Win
   MCP 代理复用 Provider 发现快照规则，托管 SSH Runtime 不经过该本机构造路径。本次未
   修改远端 Agent、桥接或启动器。
 
+## 2026-09-28 本地直连手动压缩
+
+- 本地直连文本会话复用“压缩上下文”按钮、摘要状态和会话保存路径，支持关闭自动压缩时
+  手动执行。当前连接选择、图像排除、强制压缩和最新轮次保留规则见
+  [技术设计](./technical-design.md#101-本地直连手动压缩)。未修改远端 Agent、桥接或启动器；
+  model 入口排除远程会话与 SSH 项目，本地 IPC 仍拒绝 SSH 执行空间。
+- 三个目标文件 `App.test.tsx`、`ipc.test.ts`、`model-runtime.test.ts`：569 passed、2 skipped。
+  覆盖入口点击、自动关闭和低于阈值、运行中禁用、图像排除、摘要保存与后续请求、当前及指定
+  摘要连接选择。补入远程通道入口排除后，App 手动压缩专项复跑 7 passed；最终类型检查和
+  本次文件 ESLint 再次通过。
+- `manual-compaction.electron.test.ts`：真实 App、preload、IPC、模型工厂和 SQLite 路径通过。
+  2 次本机 HTTP fixture 请求验证较早历史被摘要替换、最新轮次保留、完整历史仍在数据库，
+  页面重载后摘要可读，新建 Runtime 实际使用该摘要。
+- `manual-compaction-live.electron.test.ts`：真实配置文本模型最终通过，2 次请求完成摘要及
+  新 Runtime 续问。三轮探针累计 6 次真实文本模型请求；前两轮失败来自探针用未转义摘要
+  匹配 JSON payload，修正断言后通过。原设置文件未改变，未记录凭据。
+- `npm run typecheck` 和本次涉及文件的 ESLint 通过。全仓 `npm run lint` 有 10 个错误，
+  位于已有侧栏探针 `sidebar-final-probe.ts`、`sidebar-final-run.mjs`，保留未修改。
+- 全量 `npm test`：5407 passed、85 skipped、2 failed。失败分别为已有侧栏探针的新建按钮
+  溢出断言（`magic-notes-capture.electron.test.ts`）及魔法笔记布局 Electron 超时
+  （`magic-notes-layout.electron.test.ts`）；手动压缩 Electron 回归通过。未执行构建或跨平台
+  真机测试，不将全仓验证记为全绿。
+
 ## 进度维护要求
 
 - 只有真实生产路径完成并验证后才能勾选实施项。
