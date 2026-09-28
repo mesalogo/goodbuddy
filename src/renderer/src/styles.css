@@ -5281,7 +5281,8 @@ button > svg {
   gap: var(--space-1);
 }
 
-.assistant-sidebar__browser-tool-button {
+.assistant-sidebar__browser-tool-button,
+.assistant-sidebar__browser-go {
   width: var(--control-height);
   padding: 0;
   flex: 0 0 var(--control-height);
@@ -5312,14 +5313,6 @@ button > svg {
     flex-basis: calc(100% - var(--control-height) - var(--space-1));
   }
 
-  .assistant-sidebar__browser-go {
-    width: var(--control-height);
-    padding: 0;
-  }
-
-  .assistant-sidebar__browser-go > span {
-    display: none;
-  }
 }
 
 .assistant-sidebar__browser-address input {
@@ -5337,11 +5330,6 @@ button > svg {
 
 .assistant-sidebar__browser-address input:focus-visible {
   border-color: var(--accent);
-}
-
-.assistant-sidebar__browser-go {
-  padding: 0 var(--space-2);
-  flex: 0 0 auto;
 }
 
 .assistant-sidebar__browser-tool-button:hover:not(:disabled),

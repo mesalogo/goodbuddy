@@ -639,7 +639,6 @@ function BrowserToolbar({
         type="submit"
       >
         <ArrowRight aria-hidden="true" size={13} />
-        <span>{t('sidebar.browser.toolbar.go')}</span>
       </button>
       <button
         aria-label={
