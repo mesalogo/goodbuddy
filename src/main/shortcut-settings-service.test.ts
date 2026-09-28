@@ -102,6 +102,23 @@ describe('ShortcutSettingsService', () => {
     )
   })
 
+  it.each(['disabled', 'conflict', 'failed'] as const)('reports an unavailable shortcut at startup when %s', async (status) => {
+    const fixture = createFixture({
+      enabled: status !== 'disabled',
+      accelerator: 'CommandOrControl+Shift+Space'
+    })
+    if (status === 'conflict') fixture.registry.register.mockReturnValueOnce(false)
+    if (status === 'failed') fixture.registry.register.mockImplementationOnce(() => { throw new Error('Registration failed') })
+
+    await expect(fixture.service.initialize()).resolves.toMatchObject({
+      registered: false,
+      displayAccelerator: 'Ctrl+Shift+Space',
+      status
+    })
+    expect(fixture.service.getSnapshot().registeredAccelerator).toBeUndefined()
+    if (status === 'disabled') expect(fixture.registry.register).not.toHaveBeenCalled()
+  })
+
   it.each([
     [
       'win32',

@@ -1,5 +1,56 @@
 # 应用导航实施进度
 
+## 2026-09-28: Composer shortcut initialization follow-up
+
+The composer now retains successful shortcut-settings snapshots independently of
+the startup app-info request. A failed or pending app-info read no longer drops a
+successful shortcut save, and a late startup response cannot restore a disabled
+hint. Registration remains authoritative; no default shortcut is advertised when
+registration is unavailable. This preserves the existing [composer rule](../../../UI-DESIGN.md#131-聊天).
+
+The failed/pending read regressions reproduced the missing hint before the fix.
+The reported screenshot's actual registration status and IPC result were not
+captured, so its specific runtime cause remains unconfirmed.
+
+Validation: App, sidebar layout, main IPC, and shortcut-service suites passed
+(500 tests, one skipped); `npm run typecheck`, ESLint on the four changed source
+and test files, and `git diff --check` passed. The first broader run hit the
+60-second command limit; the rerun completed in 95 seconds. No full-repository
+suite, native Electron screenshot reproduction, packaging, or OS registration
+probe was run for this follow-up.
+
+## 2026-09-28：新建对话与搜索共用一行
+
+已按[会话搜索](./ui-design.md#会话搜索)接入收起与展开状态，移除列表上方的常驻搜索头部。
+沿用会话创建、延迟搜索和项目过滤接口。后续按用户反馈恢复默认按钮的聊天加号图标、原有
+字号字重和整体左对齐；搜索展开后保留居中的同一图标。快捷键说明移至聊天输入框原生占位文案，
+具体规则见[聊天 UI 规范](../../../UI-DESIGN.md#131-聊天)。
+
+本次调整验证：`App.test.tsx` 与 `AppSidebarLayout.test.ts` 合计 316 项通过；最终长标签换行
+调整后，布局 5 项与 `magic-notes-capture.electron.test.ts` 1 项复验通过。Windows Electron
+在上述 6 种侧栏组合检查原字号字重、左对齐、图标居中、文字无溢出及搜索交互，并验证
+原生输入后占位提示隐藏、清空后恢复。App 回归覆盖中英文、生图提示、macOS 快捷键格式、
+全局快捷键缺省以及设置保存后的更新和停用。类型检查、修改文件 ESLint 与差异空白检查通过。
+未运行全仓测试、打包或 macOS/Linux 原生窗口验证。模型调用 0 次。
+
+此前搜索展开改动的验证记录：
+
+```text
+npm test -- src/renderer/src/App.test.tsx src/renderer/src/AppSidebarLayout.test.ts tests/magic-notes-capture.electron.test.ts
+npm run typecheck
+```
+
+三文件合计 311 项通过。最终动画边界与文字宽度调整后，布局及 Electron 共 5 项、App 搜索
+交互 1 项复跑通过，typecheck 通过。Electron 复用现有 App、生产 Preload、IPC 和临时 SQLite
+测试环境，以英文界面检查浅深主题下 220px、420px 侧栏和短窗口抽屉，共 6 种组合；检查
+展开过程及结束后的右边缘、列表位置、完整按钮文字、原生鼠标与 Escape、自动聚焦、关闭
+焦点恢复、点击列表保留关键词及减少动态效果。中文 App 回归同时覆盖标题、正文、项目
+过滤和加号创建。模型调用 0 次。
+
+修改文件的 ESLint 与 `git diff --check` 通过。全仓 ESLint 有 10 个错误，均来自本任务未修改
+的未跟踪 `sidebar-final-probe.ts` 和 `sidebar-final-run.mjs`。未跑全仓测试、打包程序或
+macOS／Linux 窗口验证。中文新增规则经 deai-writing 扫描无阻断项，并已人工核对。
+
 ## 2026-09-28：并行会话输出时保持列表顺序
 
 修复多个会话交替输出时，左侧列表随每个增量反复换位的问题。展示顺序统一使用消息创建

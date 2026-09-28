@@ -79,6 +79,7 @@ export const app = {
     label: '主侧栏',
     newConversation: '新建对话',
     searchLabel: '搜索对话',
+    closeSearch: '关闭并清除搜索',
     searchPlaceholder: '搜索标题或消息',
     recent: '最近会话',
     localWorkspace: '本地工作区',
@@ -471,7 +472,8 @@ export const app = {
     placeholder: '给 GoodBuddy 发消息…',
     imagePlaceholder: '描述你想生成的图片…',
     keyboardHint:
-      'Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴文件、图片或文本',
+      'Enter 发送 · Shift+Enter 换行 · {{pasteShortcut}} 粘贴',
+    newConversationHint: '{{shortcut}} 新建对话',
     addContent: '添加内容',
     addAttachment: '添加附件',
     attachmentProgress: {
@@ -524,7 +526,7 @@ export const app = {
       removeAria: '从待发送队列删除“{{title}}”',
       actionFailed: '待发送队列操作失败'
     },
-    shortcut: '快捷唤起：',
+    shortcut: '{{shortcut}} 快捷唤起',
     context: {
       confirmedTokenCount: '本次调用 {{used}}',
       tokenCount: '本次调用估算 ≈{{used}}',

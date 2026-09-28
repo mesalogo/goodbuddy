@@ -8,14 +8,28 @@ const stylesheet = readFileSync(
 ).replaceAll('\r\n', '\n')
 
 describe('primary sidebar layout', () => {
-  it('keeps search above an independently scrolling conversation list', () => {
+  it('keeps the original new conversation typography and left alignment, centering only its compact icon', () => {
+    const button = stylesheet.match(/\.new-chat\s*\{([^}]*)\}/u)?.[1]
+    const label = stylesheet.match(/\.new-chat span\s*\{([^}]*)\}/u)?.[1]
+    const compact = stylesheet.match(/\.sidebar-conversation-controls--searching \.new-chat\s*\{([^}]*)\}/u)?.[1]
+    expect(button).toContain('justify-content: flex-start;')
+    expect(button).toContain('padding: 0 var(--space-3);')
+    expect(label).toContain('font-size: 13px;')
+    expect(label).toContain('font-weight: 600;')
+    expect(label).not.toContain('white-space: nowrap;')
+    expect(compact).toContain('justify-content: center;')
+    expect(compact).toContain('padding: 0;')
+  })
+  it('keeps conversation controls fixed above an independently scrolling list', () => {
     const section = stylesheet.match(/\.sidebar-conversations\s*\{([^}]*)\}/u)?.[1]
-    const header = stylesheet.match(/\.sidebar-conversations__header\s*\{([^}]*)\}/u)?.[1]
+    const controls = stylesheet.match(/\.sidebar-conversation-controls\s*\{([^}]*)\}/u)?.[1]
     const list = stylesheet.match(/\.conversation-list\s*\{([^}]*)\}/u)?.[1]
     expect(section).toContain('min-height: 0;')
     expect(section).toContain('flex-direction: column;')
     expect(section).toContain('background: var(--surface-raised);')
-    expect(header).toContain('flex: 0 0 auto;')
+    expect(controls).toContain('flex: 0 0 44px;')
+    expect(controls).toContain('height: 44px;')
+    expect(stylesheet).not.toContain('.sidebar-conversations__header')
     expect(list).toContain('min-width: 0;')
     expect(list).toContain('min-height: 0;')
     expect(list).toContain('overflow: auto;')
@@ -23,6 +37,15 @@ describe('primary sidebar layout', () => {
     expect(shortWindow).toContain('overflow-y: auto;')
     expect(shortWindow).toContain('flex-shrink: 0;')
     expect(shortWindow).toContain('min-height: 200px;')
+  })
+
+  it('expands search within the row and disables its width animation for reduced motion', () => {
+    const slot = stylesheet.match(/\.sidebar-search-slot\s*\{([^}]*)\}/u)?.[1]
+    expect(slot).toContain('margin-left: auto;')
+    expect(slot).toContain('transition: width var(--motion-normal) ease-out;')
+    expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.sidebar-search-slot\s*\{\s*transition: none;/u)
+    const responsive = stylesheet.split('@media (max-width: 1020px) {')[1]?.split('@media')[0]
+    expect(responsive).not.toMatch(/\.(?:new-chat|sidebar-search),/u)
   })
 
   it('floats conversation actions outside list layout with viewport limits', () => {

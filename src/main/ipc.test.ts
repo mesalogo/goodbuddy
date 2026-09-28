@@ -520,7 +520,8 @@ describe('registerIpcHandlers computer capabilities', () => {
     let browserStateListener:
       | ((state: BrowserLiveState) => void)
       | undefined
-    const shortcutSnapshot = {
+    const shortcutSnapshot: import('../shared/shortcut').GlobalShortcutSettingsSnapshot = {
+      platform: 'win32',
       settings: {
         enabled: true,
         accelerator: 'Control+Alt+K'
@@ -609,6 +610,18 @@ describe('registerIpcHandlers computer capabilities', () => {
       shortcut: 'Ctrl + Alt + K',
       shortcutStatus: 'registered'
     })
+    for (const status of ['disabled', 'conflict', 'failed'] as const) {
+      shortcutSettingsService.getSnapshot.mockReturnValueOnce({
+        ...shortcutSnapshot,
+        registered: false,
+        registeredAccelerator: undefined,
+        status
+      })
+      expect(electronMocks.handlers.get(ipcChannels.appInfo)?.(event)).toMatchObject({
+        shortcut: '',
+        shortcutStatus: status
+      })
+    }
     expect(
       electronMocks.handlers.get(ipcChannels.shortcutSettingsGet)?.(
         event

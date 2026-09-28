@@ -8,6 +8,7 @@ import { registerIpcHandlers } from '../../src/main/ipc'
 import { AssistantDatabase } from '../../src/main/assistant/assistant-database'
 import { ApplicationSettingsStore } from '../../src/main/application-settings-store'
 import { defaultRuntimeSettings } from '../../src/shared/contracts'
+import { verifySidebarSearch } from './sidebar-search-probe'
 
 const directory = process.env.GB_CAPTURE_DIRECTORY!
 app.setPath('userData', join(directory, 'profile'))
@@ -84,6 +85,7 @@ app.whenReady().then(async () => {
     win.webContents.focus()
     await wait('document.hasFocus()', 'visible capture window focus')
     await wait('document.body.innerText.includes("CAPTURE_HISTORY_501_END")', 'App persisted history')
+    evidence.sidebarSearch = await verifySidebarSearch(win)
     assert.equal(await run('document.body.innerText.includes("CAPTURE_HISTORY_0_END")'), false, 'old history must initially be folded')
     // The last assistant reply is rendered by the real ChatTimeline.
     await run(`[...document.querySelectorAll('button')].filter(e => e.getAttribute('aria-label') === 'Add to note' || e.title === 'Add to note').at(-1).click()`)

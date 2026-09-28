@@ -82,6 +82,7 @@ export const app = {
     label: 'Main sidebar',
     newConversation: 'New conversation',
     searchLabel: 'Search conversations',
+    closeSearch: 'Close and clear search',
     searchPlaceholder: 'Search titles or messages',
     recent: 'Recent conversations',
     localWorkspace: 'Local workspace',
@@ -490,7 +491,8 @@ export const app = {
     placeholder: 'Message GoodBuddy…',
     imagePlaceholder: 'Describe the image you want to generate…',
     keyboardHint:
-      'Enter to send, Shift+Enter for a new line, Ctrl+V to paste files, images, or text',
+      'Enter to send · Shift+Enter for a new line · {{pasteShortcut}} to paste',
+    newConversationHint: '{{shortcut}} for a new conversation',
     addContent: 'Add content',
     addAttachment: 'Add attachment',
     attachmentProgress: {
@@ -547,7 +549,7 @@ export const app = {
       removeAria: 'Remove “{{title}}” from the send queue',
       actionFailed: 'Failed to update the send queue'
     },
-    shortcut: 'Quick access: ',
+    shortcut: '{{shortcut}} for quick access',
     context: {
       confirmedTokenCount: 'Latest call {{used}}',
       tokenCount: 'Estimated latest call ≈{{used}}',

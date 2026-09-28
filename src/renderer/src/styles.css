@@ -2581,7 +2581,7 @@ textarea:focus-visible {
 
 .sidebar > .brand,
 .sidebar > .project-switcher,
-.sidebar > .new-chat,
+.sidebar > .sidebar-conversation-controls,
 .sidebar > .primary-nav,
 .sidebar > .sidebar-conversations,
 .sidebar > .sidebar-footer {
@@ -2695,8 +2695,12 @@ textarea:focus-visible {
 .project-switcher__row {
   display: grid;
   align-items: center;
-  gap: 5px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1fr) 36px;
+}
+
+.project-switcher__row > .icon-button {
+  width: 100%;
 }
 
 .project-switcher__picker {
@@ -3483,14 +3487,52 @@ textarea:focus-visible {
   align-self: auto;
 }
 
+.sidebar-conversation-controls {
+  display: flex;
+  flex: 0 0 44px;
+  height: 44px;
+  min-width: 0;
+  margin-bottom: var(--space-3);
+  gap: var(--space-2);
+}
+
+.sidebar-search-slot {
+  width: 36px;
+  min-width: 0;
+  flex: 0 0 auto;
+  margin-left: auto;
+  transition: width var(--motion-normal) ease-out;
+}
+
+.sidebar-conversation-controls--searching .sidebar-search-slot {
+  width: calc(100% - 36px - var(--space-2));
+}
+
+.sidebar-conversation-controls--searching .sidebar-search-slot:only-child {
+  width: 100%;
+}
+
+.sidebar-search-slot .sidebar-search-trigger {
+  width: 100%;
+  height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-search-slot {
+    transition: none;
+  }
+}
+
 .new-chat {
   display: flex;
-  min-width: 248px;
+  overflow: hidden;
+  min-width: 36px;
+  flex: 1;
   align-items: center;
-  padding: var(--space-3);
+  justify-content: flex-start;
+  padding: 0 var(--space-3);
   border: 1px solid var(--accent-solid);
   border-radius: var(--radius-control);
-  margin-bottom: var(--space-3);
   background: var(--accent-solid);
   color: var(--text-on-accent);
   cursor: pointer;
@@ -3504,27 +3546,27 @@ textarea:focus-visible {
 }
 
 .new-chat span {
-  flex: 1;
   font-size: 13px;
   font-weight: 600;
 }
 
-.new-chat kbd {
-  padding: 2px 5px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-on-accent);
-  font-size: var(--font-caption);
+.new-chat > svg {
+  flex-shrink: 0;
+}
+
+.sidebar-conversation-controls--searching .new-chat {
+  justify-content: center;
+  padding: 0;
 }
 
 .sidebar-search {
   position: relative;
   display: flex;
   min-width: 0;
+  height: 36px;
+  margin-block: var(--space-1);
   align-items: center;
-  padding: 9px 11px;
-  padding-right: 40px;
+  padding: 0;
   border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   background: transparent;
@@ -3539,7 +3581,8 @@ textarea:focus-visible {
 
 .sidebar-search input {
   min-width: 0;
-  width: 100%;
+  width: calc(100% - 40px - var(--space-2));
+  margin-left: var(--space-2);
   border: 0;
   outline: 0;
   background: transparent;
@@ -3551,16 +3594,12 @@ textarea:focus-visible {
   color: var(--text-muted);
 }
 
-.sidebar-search > svg {
-  flex-shrink: 0;
-}
-
 .sidebar-search .sidebar-search__clear {
   position: absolute;
   top: 50%;
-  right: var(--space-2);
-  width: 24px;
-  height: 24px;
+  right: var(--space-1);
+  width: 32px;
+  height: 32px;
   transform: translateY(-50%);
 }
 
@@ -3650,11 +3689,6 @@ textarea:focus-visible {
   margin-top: var(--space-2);
   border-radius: var(--radius-control);
   background: var(--surface-raised);
-}
-
-.sidebar-conversations__header {
-  flex: 0 0 auto;
-  padding: var(--space-2) var(--space-1) var(--space-3);
 }
 
 .conversation-list {
@@ -7948,11 +7982,6 @@ button > svg {
 
 .composer-meta__error {
   color: var(--danger);
-}
-
-.composer-meta__shortcut {
-  color: var(--text-muted);
-  white-space: nowrap;
 }
 
 .composer-context-compact {
@@ -16833,8 +16862,6 @@ textarea.field-control {
 
   .brand,
   .project-switcher,
-  .new-chat,
-  .sidebar-search,
   .primary-nav,
   .conversation-list,
   .sidebar-footer {

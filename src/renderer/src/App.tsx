@@ -223,7 +223,7 @@ import { OverflowMarquee } from "./OverflowMarquee";
 import { findTaskSchedule } from "./TaskScheduleActions";
 import type { SettingsCategoryId } from "./settings-categories";
 import type { SettingsLeaveRequester } from "./SettingsPanel";
-import type { GlobalShortcutSettingsSnapshot } from "../../shared/shortcut";
+import { formatShortcutForDisplay, type GlobalShortcutSettingsSnapshot } from "../../shared/shortcut";
 import goodbuddyDarkIcon from "./assets/goodbuddy-dark.png";
 import goodbuddyLightIcon from "./assets/goodbuddy-light.png";
 import { loadBrandingPreferences, saveBrandingPreferences } from "./branding";
@@ -2036,6 +2036,18 @@ function App(): React.JSX.Element {
     [t],
   );
   const [appInfo, setAppInfo] = useState<AppInfo>();
+  const [savedShortcut, setSavedShortcut] = useState<GlobalShortcutSettingsSnapshot>();
+  const shortcutPlatform = savedShortcut?.platform ?? appInfo?.platform ?? "";
+  // A settings save is newer than the startup app-info request, even if it finishes first.
+  const composerShortcut = savedShortcut
+    ? savedShortcut.registered ? savedShortcut.displayAccelerator : ""
+    : appInfo?.shortcut;
+  const composerKeyboardHint = t("composer.keyboardHint", {
+    pasteShortcut: formatShortcutForDisplay("CommandOrControl+V", shortcutPlatform),
+  });
+  const composerConversationHint = t("composer.newConversationHint", {
+    shortcut: formatShortcutForDisplay("CommandOrControl+N", shortcutPlatform),
+  }) + (composerShortcut ? ` · ${t("composer.shortcut", { shortcut: composerShortcut })}` : "");
   const [narrowWindow, setNarrowWindow] = useState(
     () => window.innerWidth < 900,
   );
@@ -2215,15 +2227,7 @@ function App(): React.JSX.Element {
   );
   const handleShortcutSettingsChanged = useCallback(
     (snapshot: GlobalShortcutSettingsSnapshot): void => {
-      setAppInfo((current) =>
-        current
-          ? {
-              ...current,
-              shortcut: snapshot.registered ? snapshot.displayAccelerator : "",
-              shortcutStatus: snapshot.status,
-            }
-          : current,
-      );
+      setSavedShortcut(snapshot);
     },
     [],
   );
@@ -2339,7 +2343,13 @@ function App(): React.JSX.Element {
     }
   }, [applicationSettingsUnconfirmed, applyApplicationSettings, guardNoteDraft, setNoteDraft, t]);
   const [searchQuery, setSearchQuery] = useState("");
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchTriggerRef = useRef<HTMLButtonElement>(null);
+  const closeConversationSearch = (): void => {
+    setSearchQuery("");
+    setSearchOpen(false);
+    requestAnimationFrame(() => searchTriggerRef.current?.focus());
+  };
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [localSearchMatches, setLocalSearchMatches] =
     useState<{ query: string; ids: Set<string> }>({ query: "", ids: new Set() });
@@ -8723,13 +8733,63 @@ function App(): React.JSX.Element {
           onOpenConversation={openActivityConversation}
         />
 
-        {activeProject?.kind !== "channel" && (
-          <button className="new-chat" onClick={newConversation} type="button">
-            <MessageSquarePlus size={17} />
-            <span>{t("sidebar.newConversation")}</span>
-            <kbd>Ctrl N</kbd>
-          </button>
-        )}
+        <div
+          className={`sidebar-conversation-controls${searchOpen ? " sidebar-conversation-controls--searching" : ""}`}
+          onKeyDown={(event) => {
+            if (searchOpen && event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              closeConversationSearch();
+            }
+          }}
+        >
+          {activeProject?.kind !== "channel" && (
+            <button
+              className="new-chat"
+              onClick={newConversation}
+              type="button"
+              aria-label={t("sidebar.newConversation")}
+              title={t("sidebar.newConversation")}
+            >
+              <MessageSquarePlus aria-hidden="true" size={17} />
+              {!searchOpen && <span>{t("sidebar.newConversation")}</span>}
+            </button>
+          )}
+          <div className="sidebar-search-slot">
+            {searchOpen ? (
+              <div className="sidebar-search">
+                <input
+                  autoFocus
+                  aria-label={t("sidebar.searchLabel")}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder={t("sidebar.searchPlaceholder")}
+                  value={searchQuery}
+                />
+                <button
+                  aria-label={t("sidebar.closeSearch")}
+                  className="icon-button sidebar-search__clear"
+                  onClick={closeConversationSearch}
+                  title={t("sidebar.closeSearch")}
+                  type="button"
+                >
+                  <X aria-hidden="true" size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                ref={searchTriggerRef}
+                className="icon-button sidebar-search-trigger"
+                aria-label={t("sidebar.searchLabel")}
+                aria-expanded={false}
+                title={t("sidebar.searchLabel")}
+                onClick={() => setSearchOpen(true)}
+                type="button"
+              >
+                <Search aria-hidden="true" size={17} />
+              </button>
+            )}
+          </div>
+        </div>
 
         <nav className="primary-nav" aria-label={t("navigation.label")}>
           <button
@@ -8791,32 +8851,6 @@ function App(): React.JSX.Element {
         </nav>
 
         <section className="sidebar-conversations" aria-label={t("sidebar.recent")}>
-          <div className="sidebar-conversations__header">
-            <div className="sidebar-search">
-              <Search aria-hidden="true" size={15} />
-              <input
-                aria-label={t("sidebar.searchLabel")}
-                ref={searchInputRef}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder={t("sidebar.searchPlaceholder")}
-                value={searchQuery}
-              />
-              {searchQuery.length > 0 && (
-                <button
-                  aria-label={t("conversation.clearSearch")}
-                  className="icon-button sidebar-search__clear"
-                  onClick={() => {
-                    setSearchQuery("");
-                    searchInputRef.current?.focus();
-                  }}
-                  title={t("conversation.clearSearch")}
-                  type="button"
-                >
-                  <X aria-hidden="true" size={14} />
-                </button>
-              )}
-            </div>
-          </div>
         <div className="conversation-list">
           {!conversationLoadError &&
             filteredConversations.map((conversation) => {
@@ -9865,10 +9899,10 @@ function App(): React.JSX.Element {
                                 runtime?.capability === "image-generation"
                                   ? t("composer.imagePlaceholder")
                                   : t("composer.placeholder")
-                              }\n${t("composer.keyboardHint")}`}
+                              }\n${composerKeyboardHint}\n${composerConversationHint}`}
                               ref={inputRef}
                               rows={3}
-                              title={t("composer.keyboardHint")}
+                              title={`${composerKeyboardHint}\n${composerConversationHint}`}
                               value={input}
                               onChange={(event) => setInput(event.target.value)}
                               onPaste={(event) => {
@@ -10799,12 +10833,6 @@ function App(): React.JSX.Element {
                               role="alert"
                             >
                               {contextError}
-                            </span>
-                          )}
-                          {appInfo?.shortcut && (
-                            <span className="composer-meta__shortcut">
-                              {t("composer.shortcut")}
-                              <kbd>{appInfo.shortcut}</kbd>
                             </span>
                           )}
                         </div>

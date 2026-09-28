@@ -1416,6 +1416,7 @@ describe("App", () => {
       const initialTasks = deferred<AssistantTask[]>();
       vi.mocked(api.tasks.list).mockReturnValueOnce(initialTasks.promise);
       render(<App />);
+      fireEvent.click(await screen.findByRole("button", { name: "搜索对话" }));
       const search = await screen.findByLabelText("搜索对话");
       fireEvent.change(search, { target: { value: "no matching conversation" } });
       await act(async () => initialTasks.resolve([task, { ...task, id: "duplicate-task" }]));
@@ -1564,6 +1565,7 @@ describe("App", () => {
       fireEvent.click(await screen.findByLabelText("展开或折叠“Current discussion”中的 1 个任务"));
       fireEvent.click(screen.getByText("Current task", { selector: ".conversation-task-child__title" }).closest("button")!);
       expect(await screen.findByRole("region", { name: "当前会话的任务" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "搜索对话" }));
       fireEvent.change(screen.getByLabelText("搜索对话"), { target: { value: "Current discussion" } });
       const originalWidth = window.innerWidth;
       try {
@@ -1836,6 +1838,7 @@ describe("App", () => {
       .mockResolvedValueOnce(second);
     const { container } = render(<App />);
     expect(await screen.findByText("Opened body")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "搜索对话" }));
     fireEvent.change(screen.getByLabelText("搜索对话"), { target: { value: "rare searchable" } });
     const list = within(container.querySelector<HTMLElement>(".conversation-list")!);
     fireEvent.click(await list.findByText("Unopened"));
@@ -2031,11 +2034,11 @@ describe("App", () => {
       ).toBeInTheDocument();
       expect(screen.getByLabelText("Message GoodBuddy")).toHaveAttribute(
         "placeholder",
-        "Message GoodBuddy…\nEnter to send, Shift+Enter for a new line, Ctrl+V to paste files, images, or text",
+        "Message GoodBuddy…\nEnter to send · Shift+Enter for a new line · Ctrl+V to paste\nCtrl+N for a new conversation · Ctrl+Shift+Space for quick access",
       );
       expect(screen.getByLabelText("Message GoodBuddy")).toHaveAttribute(
         "title",
-        "Enter to send, Shift+Enter for a new line, Ctrl+V to paste files, images, or text",
+        "Enter to send · Shift+Enter for a new line · Ctrl+V to paste\nCtrl+N for a new conversation · Ctrl+Shift+Space for quick access",
       );
     } finally {
       cleanup();
@@ -3105,15 +3108,23 @@ describe("App", () => {
       },
     ]);
     const { container } = render(<App />);
-    const search = await screen.findByLabelText("搜索对话");
-    const conversationSection = search.closest(".sidebar-conversations");
-    expect(conversationSection).toBeInTheDocument();
+    const trigger = await screen.findByRole("button", { name: "搜索对话" });
+    expect(screen.queryByRole("textbox", { name: "搜索对话" })).not.toBeInTheDocument();
+    const controls = trigger.closest(".sidebar-conversation-controls")!;
+    const create = within(controls as HTMLElement).getByRole("button", { name: "新建对话" });
+    expect(create).toHaveTextContent("新建对话");
+    expect(create.querySelector(".lucide-message-square-plus")).not.toBeNull();
+    fireEvent.click(trigger);
+    let search = screen.getByRole("textbox", { name: "搜索对话" });
+    expect(search).toHaveFocus();
+    expect(create).toHaveAttribute("title", "新建对话");
+    expect(create).toHaveTextContent(/^$/);
+    expect(create.querySelector(".lucide-message-square-plus")).not.toBeNull();
+    expect(search.closest(".sidebar-conversation-controls")).toBe(controls);
+    expect(container.querySelector(".sidebar-conversations__header")).toBeNull();
+    expect(search.closest(".sidebar-conversations")).toBeNull();
     expect(search.closest(".conversation-list")).toBeNull();
-    expect(conversationSection?.querySelector(".conversation-list")).toBeInTheDocument();
-    const searchControls = within(search.parentElement!);
-    expect(
-      searchControls.queryByRole("button", { name: "清除搜索" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "关闭并清除搜索" })).toBeInTheDocument();
     const conversationList =
       container.querySelector<HTMLElement>(".conversation-list");
     if (!conversationList) {
@@ -3150,16 +3161,19 @@ describe("App", () => {
       ).not.toBeInTheDocument();
     });
 
-    const clearSearch = searchControls.getByRole("button", {
-      name: "清除搜索",
+    fireEvent.blur(search);
+    fireEvent.click(within(conversationList).getByText("标题里的 Alpha"));
+    expect(search).toHaveValue("ALPHA");
+    expect(search).toBeInTheDocument();
+
+    const clearSearch = screen.getByRole("button", {
+      name: "关闭并清除搜索",
     });
     clearSearch.focus();
     fireEvent.click(clearSearch);
-    expect(search).toHaveValue("");
-    expect(search).toHaveFocus();
-    expect(
-      searchControls.queryByRole("button", { name: "清除搜索" }),
-    ).not.toBeInTheDocument();
+    expect(search).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "搜索对话" })).toHaveFocus());
+    expect(create).toHaveTextContent("新建对话");
     await waitFor(() => {
       expect(
         within(conversationList).getByText("标题里的 Alpha"),
@@ -3171,10 +3185,14 @@ describe("App", () => {
         within(conversationList).queryByText("其他项目里的 Alpha"),
       ).not.toBeInTheDocument();
     });
+    fireEvent.click(screen.getByRole("button", { name: "搜索对话" }));
+    search = screen.getByRole("textbox", { name: "搜索对话" });
+    expect(search).toHaveValue("");
     fireEvent.change(search, { target: { value: "   " } });
-    fireEvent.click(
-      searchControls.getByRole("button", { name: "清除搜索" }),
-    );
+    fireEvent.keyDown(search, { key: "Escape" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "搜索对话" })).toHaveFocus());
+    fireEvent.click(screen.getByRole("button", { name: "搜索对话" }));
+    search = screen.getByRole("textbox", { name: "搜索对话" });
     expect(search).toHaveValue("");
 
     fireEvent.change(search, { target: { value: "missing topic" } });
@@ -3195,6 +3213,9 @@ describe("App", () => {
     expect(
       await within(conversationList).findByText("标题里的 Alpha"),
     ).toBeInTheDocument();
+    fireEvent.click(create);
+    await waitFor(() => expect(container.querySelector(".conversation-item--active")).toHaveTextContent("新对话"));
+    expect(search).toBeInTheDocument();
   });
 
   it("keeps Settings open when the interface language changes", async () => {
@@ -3535,8 +3556,8 @@ describe("App", () => {
       ),
     );
     expect(await screen.findByDisplayValue("本地语音结果")).toBeInTheDocument();
-    expect(screen.getByText("快捷唤起：", { exact: false })).toHaveTextContent(
-      "快捷唤起：Ctrl+Shift+Space",
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute(
+      "placeholder", expect.stringContaining("Ctrl+Shift+Space 快捷唤起"),
     );
     expect(screen.queryByText(/CommandOrControl/)).not.toBeInTheDocument();
   });
@@ -5301,9 +5322,8 @@ describe("App", () => {
       }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("只读问答，不修改文件")).not.toBeInTheDocument();
-    expect(
-      await screen.findByText("快捷唤起：", { exact: false }),
-    ).toHaveTextContent("快捷唤起：Ctrl+Shift+Space");
+    await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问"))
+      .toHaveAttribute("placeholder", expect.stringContaining("Ctrl+Shift+Space 快捷唤起")));
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "中".repeat(1_000) },
@@ -5712,7 +5732,27 @@ describe("App", () => {
     await waitFor(() => expect(composer).toHaveFocus());
   });
 
-  it("updates and removes the composer shortcut hint immediately after saving Settings", async () => {
+  it.each([
+    ["darwin", "Command", "Command+Alt+K"],
+    ["linux", "Ctrl", ""],
+  ])("formats composer shortcuts for %s using the actual available global shortcut", async (platform, modifier, shortcut) => {
+    const info = await api.app.getInfo();
+    vi.mocked(api.app.getInfo).mockResolvedValueOnce({ ...info, platform, shortcut });
+    render(<App />);
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+    await waitFor(() => expect(composer).toHaveAttribute("placeholder",
+      `给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · ${modifier}+V 粘贴\n${modifier}+N 新建对话${shortcut ? ` · ${shortcut} 快捷唤起` : ""}`));
+    expect(document.querySelector(".composer-meta__shortcut")).toBeNull();
+  });
+
+  it.each(["loaded", "failed", "pending"] as const)("updates and removes the composer shortcut hint after saving Settings with %s app info", async (infoState) => {
+    const initialInfo = await api.app.getInfo();
+    const pendingInfo = deferred<typeof initialInfo>();
+    if (infoState === "failed") {
+      vi.mocked(api.app.getInfo).mockRejectedValueOnce(new Error("App info unavailable"));
+    } else if (infoState === "pending") {
+      vi.mocked(api.app.getInfo).mockReturnValueOnce(pendingInfo.promise);
+    }
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
       desktopNotificationsEnabled: true,
@@ -5774,7 +5814,12 @@ describe("App", () => {
     };
     try {
       render(<App />);
-      expect(await screen.findByText("Ctrl+Shift+Space")).toBeInTheDocument();
+      const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+      await waitFor(() => expect(composer).toHaveAttribute("placeholder",
+        `给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话${infoState === "loaded" ? " · Ctrl+Shift+Space 快捷唤起" : ""}`));
+      expect(document.querySelector(".composer-meta__shortcut")).toBeNull();
+      fireEvent.change(composer, { target: { value: "草稿" } });
+      expect(composer).toHaveValue("草稿");
       fireEvent.click(await screen.findByRole('button', { name: '设置' }));
       await screen.findByRole("heading", { name: "设置中心" });
       fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
@@ -5790,7 +5835,9 @@ describe("App", () => {
         }),
       );
       fireEvent.click(screen.getByRole("button", { name: "对话" }));
-      expect(await screen.findByText("Ctrl+Alt+K")).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问"))
+        .toHaveAttribute("placeholder", expect.stringContaining("Ctrl+N 新建对话 · Ctrl+Alt+K 快捷唤起")));
+      expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue("草稿");
 
       fireEvent.click(await screen.findByRole('button', { name: '设置' }));
       await screen.findByRole("heading", { name: "设置中心" });
@@ -5809,6 +5856,13 @@ describe("App", () => {
       fireEvent.click(screen.getByRole("button", { name: "对话" }));
       await screen.findByLabelText("向 GoodBuddy 提问");
       expect(screen.queryByText("Ctrl+Alt+K")).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问"))
+        .toHaveAttribute("placeholder", "给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话"));
+      if (infoState === "pending") {
+        await act(async () => pendingInfo.resolve(initialInfo));
+        expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute("placeholder",
+          "给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话");
+      }
     } finally {
       delete api.shortcuts;
       delete api.updates;
@@ -7792,7 +7846,7 @@ describe("App", () => {
     ).toHaveTextContent(/^Ask$/u);
     expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute(
       "placeholder",
-      "给 GoodBuddy 发消息…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴文件、图片或文本",
+       "给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话 · Ctrl+Shift+Space 快捷唤起",
     );
     expect(
       within(conversationSettings).getByRole("button", {
@@ -9237,9 +9291,8 @@ describe("App", () => {
     });
     expect(mode).toBeEnabled();
     expect(mode.closest(".composer")).not.toBeNull();
-    expect(
-      await screen.findByText("快捷唤起：", { exact: false }),
-    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问"))
+      .toHaveAttribute("placeholder", expect.stringContaining("Ctrl+Shift+Space 快捷唤起")));
     selectComposerOption("工作模式", "Execute · 完全权限");
     expect(mode).toHaveAccessibleName("工作模式：Execute · 完全权限");
     expect(mode).toHaveTextContent(/^Execute$/u);
@@ -11477,7 +11530,7 @@ describe("App", () => {
     expect((await screen.findAllByText("生图")).length).toBeGreaterThan(0);
     expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute(
       "placeholder",
-      "描述你想生成的图片…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴文件、图片或文本",
+      "描述你想生成的图片…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话 · Ctrl+Shift+Space 快捷唤起",
     );
     await waitFor(() => expect(api.artifacts.list).toHaveBeenCalled());
 
