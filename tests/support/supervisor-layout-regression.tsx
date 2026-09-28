@@ -244,10 +244,12 @@ createRoot(document.getElementById('root')!).render(
           </a>
         ))}
       </div>
-      {params.has('sidebar') ? <div className="assistant-sidebar__section task-center">
+      {params.has('sidebar') ? <div className="assistant-sidebar__section task-center" style={{ overflowY: 'auto', minHeight: 0 }}>
         <SupervisionCard
           target={{ type: 'conversation', conversationId: 'simulated-conversation-uuid' }}
           conversationTitle={'模拟会话：核对项目交付清单与阶段回顾'.repeat(3)}
+          activeConversationId="simulated-conversation-uuid"
+          onContinueSupervision={async () => { throw new Error('Preview fixture must not send a message') }}
           pinned
           onTogglePinned={() => {}}
         />

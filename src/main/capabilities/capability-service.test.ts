@@ -165,6 +165,7 @@ describe('CapabilityService', () => {
     const stored = JSON.parse(await readFile(filePath, 'utf8'))
     delete stored.obsidian
     delete stored.builtinMcpServers.obsidian
+    delete stored.builtinMcpServers['story-graph']
     stored.version = version
     if (version === 5) delete stored.builtinMcpServers['builtin-browser']
     if (version === 1) {
@@ -322,6 +323,7 @@ describe('CapabilityService', () => {
 
     await expect(service.getSnapshot()).resolves.toMatchObject({
       builtinMcpServers: [
+        { id: 'story-graph', enabled: true, assignments: ['model', 'opencode', 'continue', 'deepseek-harness'] },
         {
           id: 'knowledge-base',
           enabled: true,
@@ -366,19 +368,23 @@ describe('CapabilityService', () => {
 
     await expect(
       service.getEnabledBuiltinMcpServerIds('model')
-    ).resolves.toEqual(['knowledge-base', 'goodbuddy-config'])
+    ).resolves.toEqual(['story-graph', 'knowledge-base', 'goodbuddy-config'])
     await expect(
       service.getEnabledBuiltinMcpServerIds('opencode')
-    ).resolves.toEqual(['goodbuddy-config'])
+    ).resolves.toEqual(['story-graph', 'goodbuddy-config'])
     await expect(
       service.getEnabledBuiltinMcpServerIds('continue')
     ).resolves.toEqual([
+      'story-graph',
       'goodbuddy-config',
       'builtin-browser'
     ])
     await expect(
       service.getEnabledBuiltinMcpServerIds('deepseek-harness')
-    ).resolves.toEqual([])
+    ).resolves.toEqual(['story-graph'])
+
+    await service.setBuiltinMcpServerAssignments('story-graph', ['deepseek-harness'])
+    await expect(service.getEnabledBuiltinMcpServerIds('model')).resolves.not.toContain('story-graph')
 
     const reloaded = new CapabilityService(
       filePath,
@@ -388,6 +394,7 @@ describe('CapabilityService', () => {
     )
     await expect(reloaded.getSnapshot()).resolves.toMatchObject({
       builtinMcpServers: expect.arrayContaining([
+        expect.objectContaining({ id: 'story-graph', assignments: ['deepseek-harness'] }),
         expect.objectContaining({
           id: 'knowledge-base',
           assignments: ['model']

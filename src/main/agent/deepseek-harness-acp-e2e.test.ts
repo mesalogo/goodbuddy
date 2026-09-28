@@ -43,6 +43,8 @@ import { defaultRuntimeSettings } from '../../shared/contracts'
 import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
 import { AssistantDatabase } from '../assistant/assistant-database'
 import { ImageGenerationService } from './image-generation-service'
+import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import type { KnowledgeService } from '../knowledge/knowledge-service'
 
 vi.mock('electron', () => ({ nativeImage: {} }))
 
@@ -101,6 +103,41 @@ it('generates and edits durable images through the controlled Harness Main proxy
 }, 60_000)
 
 const CREDENTIAL_REF = 'GOODBUDDY_HARNESS_MODEL_API_KEY'
+
+it('reads Story Graph through the controlled Harness ACP Main proxy in Ask and Execute, then removes it when disabled', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-graph-')))
+  const db = new AssistantDatabase(':memory:'); db.initialize(root)
+  let enabled = true
+  const projectId = db.listProjects()[0]!.id
+  const gateway = new KnowledgeMcpGateway({} as KnowledgeService, { storyGraphService: {
+    available: async () => enabled, read: db.readStoryGraph.bind(db)
+  } })
+  const signal = new AbortController().signal
+  const token = gateway.grant('harness-graph', [], signal, 'none', undefined, undefined, undefined, undefined, undefined,
+    { projectId, runtimeTarget: 'deepseek-harness' })!
+  const inProcess = createInProcessLaunch(root, { stream(options) {
+    const prompt = latestUserText(options)
+    const tool = options.tools?.find(tool => tool.name === 'story_graph_search')
+    if (!enabled) { expect(tool).toBeUndefined(); return textResponse('DISABLED') }
+    expect(tool).toBeDefined()
+    if (!toolResultText(options, prompt)) return toolCall(prompt, 'story_graph_search', { query: 'Decision' })
+    expect(toolResultText(options, prompt)).toContain(projectId)
+    return textResponse('GRAPH_READ')
+  } })
+  const provider = new ModelToolProvider(root, [], undefined, gateway)
+  const runtime = new DeepSeekHarnessRuntime({ defaultWorkspace: root, baseUrl: 'https://chat.test/v1', model: 'fixture',
+    launch: inProcess.launch, credentialRefs: { [CREDENTIAL_REF]: 'fixture' }, toolProvider: provider,
+    initializationTimeoutMs: 20_000, promptTimeoutMs: 20_000, shutdownTimeoutMs: 5_000 })
+  try {
+    for (const mode of ['ask', 'execute', 'disabled'] as const) {
+      enabled = mode !== 'disabled'
+      const events = await collect(runtime.run({ requestId: crypto.randomUUID(), conversationId: 'graph', prompt: mode,
+        workMode: mode === 'execute' ? 'execute' : 'ask', knowledgeCapabilityToken: token }, signal))
+      expect(events.at(-1)?.type).toBe('done')
+      expect(JSON.stringify(events)).toContain(enabled ? 'GRAPH_READ' : 'DISABLED')
+    }
+  } finally { await runtime.dispose(); await provider.dispose(); await gateway.dispose(); db.close(); await rm(root, { recursive: true, force: true }) }
+}, 60_000)
 const SKILL_CALL_ID = 'e2e-skill-call'
 const MCP_CALL_ID = 'e2e-mcp-call'
 const ASK_MCP_CALL_ID = 'e2e-ask-mcp-call'

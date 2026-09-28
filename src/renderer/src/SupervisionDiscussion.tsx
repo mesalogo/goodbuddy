@@ -9,8 +9,7 @@ export function SupervisionDiscussion({ resultId, sourceId, conversationId, titl
   onOpenConversation: (id: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation('heartbeat')
-  const [context, setContext] = useState<string>()
-  const [question, setQuestion] = useState('')
+  const [draft, setDraft] = useState<string>()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const busy = useRef(false)
@@ -26,18 +25,16 @@ export function SupervisionDiscussion({ resultId, sourceId, conversationId, titl
     setError('')
     try {
       if (send) {
-        if (!context || !question.trim()) return
-        await window.goodbuddy.supervision.continue({ conversationId, prompt: `${context}\n\n${question}` })
+        if (!draft?.trim()) return
+        await window.goodbuddy.supervision.continue({ conversationId, prompt: draft })
         if (!mounted.current) return
-        setContext(undefined)
-        setQuestion('')
+        setDraft(undefined)
         onOpenConversation(conversationId)
       } else {
         const preview = await window.goodbuddy.supervision.continueContext({ resultId, sourceId })
         if (!mounted.current) return
         if (typeof preview.prompt !== 'string' || !preview.prompt.trim()) throw new Error(t('supervisor.discussion.empty'))
-        setContext(preview.prompt)
-        setQuestion(t('supervisor.discussion.defaultQuestion'))
+        setDraft(preview.prompt)
       }
     } catch (reason) {
       if (mounted.current) setError(reason instanceof Error ? reason.message : t('common.operationFailed'))
@@ -47,15 +44,14 @@ export function SupervisionDiscussion({ resultId, sourceId, conversationId, titl
     }
   }
   return <div className="supervisor-discussion">
-    {context === undefined ? <button className="primary-button" disabled={pending} onClick={() => void perform(false)}>{t('supervisor.discussion.start')}</button> : <>
-      <p>{t('supervisor.discussion.target', { title })}</p>
-      <label className="field"><span>{t('supervisor.discussion.question')}</span><textarea rows={3} value={question} disabled={pending} onChange={event => setQuestion(event.target.value)} /></label>
-      <p>{t('supervisor.discussion.contextHint')}</p>
-      <div className="supervisor-workspace__actions">
-        <button className="secondary-button" disabled={pending} onClick={() => { setContext(undefined); setQuestion(''); setError('') }}>{t('supervisor.cancel')}</button>
-        <button className="primary-button" disabled={pending || !question.trim()} onClick={() => void perform(true)}>{t('supervisor.discussion.send')}</button>
-      </div>
-    </>}
+    {draft === undefined ? <button className="primary-button" disabled={pending} onClick={() => void perform(false)}>{t('supervisor.discussion.start')}</button> : <div className="supervision-discussion-editor">
+      <p className="supervision-discussion-editor__target">{t('supervisor.discussion.target', { title })}</p>
+      <label className="field"><span>{t('supervisor.discussion.message')}</span><textarea rows={10} value={draft} disabled={pending} onChange={event => setDraft(event.target.value)} /></label>
+      <footer className="custom-task-dialog__actions">
+        <button className="secondary-button" disabled={pending} onClick={() => { setDraft(undefined); setError('') }}>{t('supervisor.cancel')}</button>
+        <button className="primary-button" disabled={pending || !draft.trim()} onClick={() => void perform(true)}>{t(pending ? 'supervisor.discussion.sending' : 'supervisor.discussion.send')}</button>
+      </footer>
+    </div>}
     {pending && <p role="status">{t('supervisor.discussion.loading')}</p>}
     {error && <p role="alert">{error}</p>}
   </div>

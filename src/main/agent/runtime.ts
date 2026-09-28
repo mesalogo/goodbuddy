@@ -146,6 +146,7 @@ export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
   trustedInstructions?: string
   /** Main-process-only request-scoped authorization for built-in data tools. */
   knowledgeCapabilityToken?: string
+  storyGraphBinding?: import('./knowledge-mcp-gateway').StoryGraphRemoteBinding
   imageToolBinding?: ImageToolBinding
   /** Main-process-only browser tab fixed for this request. */
   browserTabId?: BrowserTabId

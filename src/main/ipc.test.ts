@@ -9211,6 +9211,32 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   })
 
+  it.each(['model', 'opencode', 'continue', 'deepseek-harness'])('binds Story Graph to the current project for %s and omits it when Supervisor is off', async runtimeId => {
+    const received: AgentExecutionRequest[] = []
+    const binding = { available: vi.fn(async () => true), call: vi.fn() }
+    const gateway = { grant: vi.fn(() => 'graph-capability'), getAvailableToolNames: vi.fn(() => ['story_graph_search', 'story_graph_get_context', 'story_graph_read_source']),
+      bindRemoteStoryGraph: vi.fn(() => binding), drainReferences: vi.fn(() => []), revoke: vi.fn() }
+    const harness = createHarness({ runtimeId, capability: 'chat', supportsToolExecution: true,
+      async *run(request: AgentExecutionRequest) { received.push(request); yield { requestId: request.requestId, type: 'done' } }
+    }, undefined, 'always', undefined, false, undefined, undefined, gateway, false, undefined, {
+      getEnabledBuiltinMcpServerIds: vi.fn(async () => ['story-graph'])
+    })
+    try {
+      const projectId = '00000000-0000-4000-8000-000000000088'
+      for (const enabled of [true, false]) {
+        harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: enabled })
+        const requestId = crypto.randomUUID()
+        await harness.handler!(trustedEvent(harness.webContents), { requestId, projectId, conversationId: 'graph-grant', prompt: 'Continue work', workMode: 'ask', knowledgeLibraryIds: [] })
+        await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
+      }
+      expect(gateway.grant).toHaveBeenCalledExactlyOnceWith(expect.any(String), [], expect.any(AbortSignal), 'none',
+        undefined, undefined, undefined, undefined, undefined, { projectId, runtimeTarget: runtimeId })
+      expect(received[0]).toMatchObject({ knowledgeCapabilityToken: 'graph-capability', storyGraphBinding: binding })
+      expect(received[1]).not.toHaveProperty('storyGraphBinding')
+      expect(gateway.bindRemoteStoryGraph).toHaveBeenCalledOnce()
+    } finally { await harness.dispose() }
+  })
+
   it('grants read-only Magic Notes tools in Ask and write tools in Execute', async () => {
     const runtime = {
       runtimeId: 'model',

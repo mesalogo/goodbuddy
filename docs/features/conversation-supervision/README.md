@@ -16,6 +16,7 @@
 | [UI 设计](./ui-design.md) | 应用导航、工作回顾、侧栏反馈及页面状态 |
 | [User Stories](./user-stories.md) | 监督者与故事线图谱的用户操作和验收场景 |
 | [技术设计](./technical-design.md) | Main/Renderer 分层、数据模型、IPC、安全边界和实施顺序 |
+| [时态 Story Graph MCP 设计](./story-graph-mcp-design.md) | 只读工具、时间与版本语义、Runtime 接入，以及后续跨范围事实复用和记忆过渡合同 |
 | [回顾分块调度设计](./review-scheduling-design.md) | 第 0 节定义生产分页、批次持久化、续跑、当前设置及剩余边界；其余章节保留改造前基线、目标设计和原型证据 |
 | [实施进度](./progress.md) | 已验证实现、验证证据和当前边界 |
 | [故事线图谱设计](../story-graph/prd.md) | 图谱对象、环绕时间轴与实体交互 |
@@ -23,3 +24,5 @@
 生产入口已接通完整来源分页、叶子持久化、持续处理至完成、活动页主动暂停/继续及批次详情；设置可调页大小、批次正文/消息上限、单次响应容量、两个模型超时和共享并发。实际合同及限制见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界)。真实 DeepSeek 验证已覆盖一个完整的 27 条消息会话；较早的 129 条消息实验仍未完成。两次实验共 5 次付费请求，详情见进度。原始 AbortError 原因尚未由日志确定。
 
 实施状态以代码和[实施进度](./progress.md)为准。逻辑待定项见[逻辑设计](./logic-design.md)，架构边界见[技术设计](./technical-design.md)。现有心跳行为见[智能心跳](../smart-heartbeat/README.md)，原型范围见[Story Graph 演示](../story-graph/README.md)。
+
+2026-09-28：Agent 可按需通过三个只读 MCP 工具读取决定、演变和来源；监督者关闭后不暴露工具并拒绝旧会话调用。本地与远程接线及验证边界见[实施进度](./progress.md#2026-09-28-story-graph-只读工具)。当前 memory 读取、精确 scope 增量进度和候选身份保留；跨 scope 叶子复用、读取入口切换及 `as_of` 仍属后续能力。

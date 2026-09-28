@@ -36,6 +36,7 @@ export type CapabilityAssignments = z.infer<
 >
 
 export const builtinMcpServerIdSchema = z.enum([
+  'story-graph',
   'knowledge-base',
   'magic-notes',
   'goodbuddy-config',
@@ -62,17 +63,19 @@ export const builtinMcpServerToggleInputSchema = z
 export const builtinMcpServerAssignmentsInputSchema = z
   .object({
     serverId: builtinMcpServerIdSchema,
-    assignments: builtinMcpAssignmentsSchema
+    assignments: capabilityAssignmentsSchema
   })
   .strict()
+  .refine(value => value.serverId === 'story-graph' || !value.assignments.includes('deepseek-harness'), 'DeepSeek Harness only supports the Story Graph built-in MCP')
 
 export const builtinMcpServerStateSummarySchema = z
   .object({
     id: builtinMcpServerIdSchema,
     enabled: z.boolean(),
-    assignments: builtinMcpAssignmentsSchema
+    assignments: capabilityAssignmentsSchema
   })
   .strict()
+  .refine(value => value.id === 'story-graph' || !value.assignments.includes('deepseek-harness'), 'DeepSeek Harness only supports the Story Graph built-in MCP')
 export type BuiltinMcpServerStateSummary = z.infer<
   typeof builtinMcpServerStateSummarySchema
 >
@@ -396,7 +399,7 @@ export const capabilitySnapshotSchema = z
       .optional(),
     builtinMcpServers: z
       .array(builtinMcpServerStateSummarySchema)
-      .max(5)
+      .max(6)
       .optional(),
     obsidian: obsidianSettingsSchema.default({ vaultPath: '' }),
     mcpServers: z.array(mcpServerSummarySchema).max(64),

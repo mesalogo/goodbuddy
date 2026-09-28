@@ -132,6 +132,9 @@ async function plugin(input?: {
         permission.push(...(child.data.permission ?? []).filter(rule => rule.permission !== '*'))
       }
       permission.push({ permission: 'goodbuddy_image_*', pattern: '*', action: 'deny' })
+      if (route.imageToolName) {
+        permission.push({ permission: `${route.imageToolName}_story_graph_*`, pattern: '*', action: 'allow' })
+      }
       if (route.workMode === 'execute' && route.imageToolName) {
         permission.push({ permission: `${route.imageToolName}_*`, pattern: '*', action: 'allow' })
       }

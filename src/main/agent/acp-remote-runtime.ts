@@ -1188,8 +1188,8 @@ export class AcpRemoteRuntime implements AgentRuntime {
       raw = await this.awaitOperation(
         context,
         '启动远端请求',
-        request.imageToolBinding
-          ? context.channel.preparePrompt(preparation, request.imageToolBinding, signal)
+        request.imageToolBinding || request.storyGraphBinding
+          ? context.channel.preparePrompt(preparation, request.imageToolBinding, signal, request.storyGraphBinding)
           : context.channel.preparePrompt(preparation),
         signal
       )

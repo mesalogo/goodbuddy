@@ -1270,9 +1270,7 @@ export class ContinueHostAdapter {
       )
     }
     const capabilityServers = [
-      ...(runOptions.workMode === 'execute'
-        ? runOptions.sessionMcpServers ?? []
-        : []),
+      ...(runOptions.sessionMcpServers ?? []),
       ...(knowledgeCapability
         ? [
             createLoopbackMcpServer(
@@ -1340,7 +1338,7 @@ export class ContinueHostAdapter {
         )
       }
       const retainedServers =
-        runOptions.workMode === 'ask' && Boolean(knowledgeCapability)
+        runOptions.workMode === 'ask' && Boolean(knowledgeCapability || runOptions.sessionMcpServers?.length)
           ? []
           : servers.filter(
               (server) =>
@@ -1524,7 +1522,7 @@ export class ContinueHostAdapter {
     }
     if (
       runOptions.workMode === 'ask' &&
-      runOptions.knowledgeCapability
+      (runOptions.knowledgeCapability || runOptions.sessionMcpServers?.length)
     ) {
       for (const toolName of scopedReadToolNames) {
         args.push('--allow', toolName)

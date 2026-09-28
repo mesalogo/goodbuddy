@@ -1252,7 +1252,10 @@ export class ModelToolProvider implements ModelToolProviderLike {
     signal: AbortSignal
   ): Promise<ModelToolDefinition[]> {
     signal.throwIfAborted()
-    const scopedTools = this.getScopedTools(context)
+    const grantedTools = this.getScopedTools(context)
+    const storyGraphAvailable = grantedTools.some(tool => tool.name.startsWith('story_graph_')) && context.knowledgeCapabilityToken && this.knowledgeGateway
+      ? await this.knowledgeGateway.isStoryGraphAvailable(context.knowledgeCapabilityToken) : false
+    const scopedTools = grantedTools.filter(tool => !tool.name.startsWith('story_graph_') || storyGraphAvailable)
     const imageTool = context.workMode === 'execute' ? await imageToolDefinition(context.imageToolBinding) : undefined
     const webTools = this.webSearchEnabled
       ? this.getWebSearchDefinitions()
@@ -1406,6 +1409,12 @@ export class ModelToolProvider implements ModelToolProviderLike {
   ): Promise<ModelToolResult> {
     signal.throwIfAborted()
     assertToolAuthorizedForWorkMode(name, context)
+    if (name.startsWith('story_graph_') && scopedDataToolByName.has(name as ScopedDataToolName)) {
+      if (!this.knowledgeGateway || !context.knowledgeCapabilityToken) throw new Error('Story Graph capability is unavailable')
+      return createTextToolResult(JSON.stringify(await this.knowledgeGateway.callStoryGraphTool(
+        context.knowledgeCapabilityToken, name as import('../../shared/story-graph-tools').StoryGraphToolName, argumentsValue, signal
+      )))
+    }
     if (name.startsWith('obsidian_') && scopedDataToolByName.has(name as ScopedDataToolName)) {
       if (!this.knowledgeGateway || !context.knowledgeCapabilityToken) {
         throw new Error('Obsidian 工具授权不可用')

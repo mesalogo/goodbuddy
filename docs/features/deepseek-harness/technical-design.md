@@ -19,7 +19,7 @@
 
 DeepSeek Harness 的底层库使用 Cordis 组合服务。GoodBuddy 不采用官方产品 profile，也不允许用户配置覆盖内部 Host 或控制服务；GoodBuddy 自行维护 Host、控制协议和生命周期，同时提供一个由 Main 管理、默认关闭的 npm 插件市场。用户显式开启后，市场只搜索带精确 `dsh-plugin` 关键字的公共 npm 包，不代表 GoodBuddy 审核、推荐或承诺兼容这些包。
 
-用户明确安装并启用的插件以当前用户权限运行。Ask/Execute 只控制模型经过 `tools/execute` 发起的工具调用：Ask 只允许 Host 中真实注册的 `read`、`skill` 和 Main 管理的 Web Search/Fetch 代理，Execute 放行 Host 中全部已注册工具。插件不能用同名工具冒充 Ask 允许项。插件安装脚本和初始化代码不属于模型工具调用，不能由 Ask 限制，因此界面在安装前必须明确确认这一边界。
+用户明确安装并启用的插件以当前用户权限运行。Ask/Execute 只控制模型经过 `tools/execute` 发起的工具调用：Ask 只允许 Host 中真实注册的 `read`、`skill` 和 Main 管理的 Web Search/Fetch、Story Graph 只读代理，Execute 放行 Host 中全部已注册工具。插件不能用同名工具冒充 Ask 允许项。插件安装脚本和初始化代码不属于模型工具调用，不能由 Ask 限制，因此界面在安装前必须明确确认这一边界。
 
 整体分成两个互相约束的部分：
 
@@ -386,11 +386,17 @@ Main 的 Web/MCP ToolProvider 按工作区保存，最后一个对应 Session �
 | Ask | 只允许 Host Registry 中真实注册的 `read` 与 `skill`；其他 Host/插件工具一律拒绝 | 能力启用时注册 Main 的精确代理对象，无逐次审批 | 不注册 | 模型工具调用保持只读 |
 | Execute | 放行 Host 中全部已注册的内置与插件工具 | 能力启用时注册 Main 代理 | 按分配注册并经过既有 RuntimeAuthorizer | 不增加插件权限层，以当前用户权限运行 |
 
+2026-09-28：内置 Story Graph 的三个读取工具在 Ask／Execute 均通过 Main 代理提供，
+Host 只接受 Main 注册的具体工具对象。Main 逐次检查监督者启用、Harness 分配及请求项目范围，
+不逐次审批。其他普通内置 MCP 仍不支持 Harness 分配；合同与证据见
+[Story Graph 设计](../conversation-supervision/story-graph-mcp-design.md)和
+[验证进度](../conversation-supervision/progress.md#2026-09-28-story-graph-只读工具)。
+
 ### 10.2 Ask 模式
 
 - Harness Control Plane 在 `tools/execute` 分发边界识别当前 Session 和在途请求。
-- 采用所有权感知的只读允许列表，只接受 Registry 中真实的 `read`、`skill` 和 Main 注册的 Web 代理对象；`write`、`edit`、Shell、MCP 及任意新插件工具默认拒绝。只比较工具名不足以授权，插件注册同名工具仍会被拒绝。
-- Ask 不注册 Main 代理的 MCP 工具。
+- 采用所有权感知的只读允许列表，只接受 Registry 中真实的 `read`、`skill` 和 Main 注册的 Web／Story Graph 代理对象；`write`、`edit`、Shell、自定义 MCP 及任意新插件工具默认拒绝。只比较工具名不足以授权，插件注册同名工具仍会被拒绝。
+- Ask 不注册 Main 代理的自定义 MCP；Story Graph 使用共享只读合同，scope 的互斥分支转换为 Harness 支持的 `oneOf`，完整参数仍由 Main 的 Zod schema 校验。
 - Web Search/Fetch 的凭据、传输与结果限制保留在 Main；Utility 只看到有界 schema 和结果。
 - 只读不等于无限输出，读取仍受字节和工具结果上限控制。
 - 插件安装脚本和 Cordis 初始化生命周期不经过 `tools/execute`。Ask 不能把已启用第三方代码变成沙箱，也不能保证第三方代码没有启动副作用。
@@ -405,7 +411,7 @@ Main 的 Web/MCP ToolProvider 按工作区保存，最后一个对应 Session �
   `goodbuddy/tools/list` 按 Session 保存本次发现的工具定义；`goodbuddy/tools/call` 复用该定义
   校验参数与授权，不因调用健康工具而重新等待故障 MCP 的发现。发现重试留在清单刷新，
   Session 释放及 Runtime dispose 清除内存定义，不持久化第二份能力状态。
-- 所有工具调用仍作为活动事件记录；Ask 和 delegation 路径继续固定拒绝。
+- 所有工具调用仍作为活动事件记录；自定义 MCP 的 Ask 和 delegation 路径继续固定拒绝。
 
 ### 10.4 Runtime OS 沙箱
 
@@ -689,11 +695,11 @@ Renderer 只接收公开 npm 元数据和受管插件状态。任何凭据、完
 - 二进制检测、版本解析和路径规范化。
 - ACP 握手、事件转换和请求关联。
 - 每个会话单请求、跨会话并行。
-- Ask 在工具分发边界只允许真实注册的 `read`、`skill` 与 Main Web 代理，并拒绝同名冒充和任意新插件工具；Execute 放行插件工具。
+- Ask 在工具分发边界只允许真实注册的 `read`、`skill` 与 Main Web／Story Graph 代理，并拒绝同名冒充和任意新插件工具；Execute 放行插件工具。
 - 握手只接受明确的 `execution.mode = 'host'`。
 - 未分配 Skill/MCP 不可见；分配后的 Skill catalog 可调用 `skill` 加载。
 - 原生能力快照只包含 Host/插件原生 Skills，不包含 GoodBuddy 分配的 Skills 或 MCP。
-- Ask 不注册 MCP 工具；Web 代理可用于 Ask 与 Execute；Execute 每轮刷新有界 MCP schema，并在调用前再次校验活动请求、模式、参数和 RuntimeAuthorizer 结果。
+- Ask 不注册自定义 MCP 工具；Web 和 Story Graph 代理可用于 Ask 与 Execute；Execute 每轮刷新有界自定义 MCP schema，并在调用前再次校验活动请求、模式、参数和 RuntimeAuthorizer 结果。
 - MCP URL、启动命令和凭据不进入 Utility 启动配置或协议结果。
 - 未知授权结果失败关闭。
 - 超时、取消、迟到帧和进程意外退出。
@@ -760,7 +766,7 @@ npm run build
 
 - `deepseek-harness` 可被保存、选择、检测和显示。
 - Runtime 详情卡内显示状态、路径、版本和当前用户执行权限。
-- Skills 与自定义 MCP 设置可把能力分配给 DeepSeek Harness；请求级 GoodBuddy 内置 MCP 当前不支持分配，并在内置 MCP 卡片中以置灰、未选择状态明确显示。布局、键盘语义、文案和保存回显通过真机检查。
+- 该阶段的 Skills 与自定义 MCP 设置可把能力分配给 DeepSeek Harness；当时请求级 GoodBuddy 内置 MCP 不支持分配，并在卡片中置灰。布局、键盘语义、文案和保存回显通过真机检查。2026-09-28 的 Story Graph 源码另接入 Harness 分配与 Main 只读代理，验证证据见上文专项记录。
 - DSH 市场初始关闭且不加载 npm 目录；显式开启后可以搜索、安装、启停、配置和移除插件，安装前只出现一次准确的当前用户权限确认。关闭市场后已有启用插件继续运行，重新开启后管理状态不变。
 - Ask 写入测试在 Runtime 边界失败。
 - Ask 可使用已启用的 Main Web Search/Fetch，且插件无法通过同名工具绕过所有权校验。

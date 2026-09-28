@@ -450,6 +450,7 @@ async function grantScopedDataCapability(input: {
   magicNotesAccess: MagicNotesCapabilityAccess
   configAccess?: MagicNotesCapabilityAccess
   obsidian?: { settings: ObsidianSettings; access: 'read' | 'write' }
+  storyGraph?: import('./agent/knowledge-mcp-gateway').StoryGraphBinding
   workspacePath?: string
   browserConversationId?: string
   browserTabId?: BrowserTabId
@@ -462,6 +463,7 @@ async function grantScopedDataCapability(input: {
 }): Promise<ScopedDataCapability> {
   const enabledServers = new Set(input.enabledServers)
   const obsidian = enabledServers.has('obsidian') ? input.obsidian : undefined
+  const storyGraph = enabledServers.has('story-graph') ? input.storyGraph : undefined
   const libraryIds = enabledServers.has('knowledge-base')
     ? input.libraryIds
     : []
@@ -480,7 +482,7 @@ async function grantScopedDataCapability(input: {
       magicNotesAccess === 'none' &&
       configAccess === 'none' &&
       !browserConversationId &&
-      !obsidian)
+      !obsidian && !storyGraph)
   ) {
     return { toolNames: [] }
   }
@@ -506,7 +508,10 @@ async function grantScopedDataCapability(input: {
           authorizeApply: input.authorizeConfigApply
         }
       : undefined
-  const token = obsidian
+  const token = storyGraph
+    ? input.gateway.grant(input.requestId, libraryIds, input.signal, magicNotesAccess, config,
+        browserConversationId, browserTabId, browserUsageLease, obsidian, storyGraph)
+    : obsidian
     ? input.gateway.grant(
         input.requestId,
         libraryIds,
@@ -2280,6 +2285,8 @@ export function registerIpcHandlers(
             )
         : []
       const notesCapability = await grantScopedDataCapability({
+        storyGraph: requestRuntimeTarget && (await applicationSettingsStore?.get())?.heartbeatEnabled
+          ? { runtimeTarget: requestRuntimeTarget, projectId: schedule.projectId ?? undefined } : undefined,
         obsidian: enabledBuiltinMcpServers.includes('obsidian')
           ? {
               settings: await capabilityService.getObsidianSettings(),
@@ -2397,7 +2404,8 @@ export function registerIpcHandlers(
         }),
         trustedInstructions,
         ...(knowledgeCapabilityToken
-          ? { knowledgeCapabilityToken }
+          ? { knowledgeCapabilityToken, ...(notesCapability.toolNames.includes('story_graph_search')
+            ? { storyGraphBinding: knowledgeGateway?.bindRemoteStoryGraph(knowledgeCapabilityToken) } : {}) }
           : {}),
         ...(notesCapability.browserTabId
           ? { browserTabId: notesCapability.browserTabId }
@@ -3807,6 +3815,8 @@ export function registerIpcHandlers(
       : undefined
     const imageToolAvailable = Boolean(await imageToolBinding?.describe())
     const scopedCapability = await grantScopedDataCapability({
+      storyGraph: selectedRuntimeTarget && applicationSettings?.heartbeatEnabled
+        ? { runtimeTarget: selectedRuntimeTarget, projectId: enrichedRequest.projectId } : undefined,
       obsidian: enabledBuiltinMcpServers.includes('obsidian')
         ? {
             settings: await capabilityService.getObsidianSettings(),
@@ -3873,7 +3883,8 @@ export function registerIpcHandlers(
         }
       : enrichedRequest
     const request: AgentExecutionRequest = knowledgeCapabilityToken
-      ? { ...baseRequest, knowledgeCapabilityToken }
+      ? { ...baseRequest, knowledgeCapabilityToken, ...(scopedCapability.toolNames.includes('story_graph_search')
+        ? { storyGraphBinding: knowledgeGateway?.bindRemoteStoryGraph(knowledgeCapabilityToken) } : {}) }
       : baseRequest
     if (scopedCapability.browserTabId) {
       request.browserTabId = scopedCapability.browserTabId

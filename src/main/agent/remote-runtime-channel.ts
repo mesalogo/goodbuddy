@@ -114,7 +114,8 @@ export interface RemoteRuntimeChannel {
   preparePrompt(
     preparation: RemotePromptOperationPreparation,
     imageToolBinding?: ImageToolBinding,
-    waitSignal?: AbortSignal
+    waitSignal?: AbortSignal,
+    storyGraphBinding?: import('./knowledge-mcp-gateway').StoryGraphRemoteBinding
   ): Promise<RemotePromptOperationAcceptance>
   /** Starts an Agent-owned ACP prompt exactly once for its stable operation. */
   startOwnedPrompt?(

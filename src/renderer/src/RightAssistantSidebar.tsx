@@ -255,8 +255,7 @@ function SupervisionCardContent({
   const [source, setSource] = useState<Record<string, unknown>>()
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
-  const [contextPrompt, setContextPrompt] = useState<string>()
-  const [question, setQuestion] = useState('')
+  const [draft, setDraft] = useState<string>()
   const busy = useRef(false)
   const targetKey = target ? JSON.stringify(target) : undefined
 
@@ -296,20 +295,19 @@ function SupervisionCardContent({
       const preview = await window.goodbuddy.supervision.continueContext({ sourceId, resultId: result.id })
       if (!mounted.current) return
       if (typeof preview.prompt !== 'string' || !preview.prompt.trim()) throw new Error(t('supervisor.discussion.empty'))
-      setContextPrompt(preview.prompt)
-      setQuestion(t('supervisor.discussion.defaultQuestion'))
+      setDraft(preview.prompt)
     } catch (error) { if (mounted.current) setMessage(error instanceof Error ? error.message : '继续讨论失败') }
     finally { busy.current = false; if (mounted.current) setLoading(false) }
   }
 
   const sendDiscussion = async (): Promise<void> => {
-    if (!contextPrompt || !question.trim() || !activeConversationId || !onContinue || busy.current) return
+    if (!draft?.trim() || !activeConversationId || !onContinue || busy.current) return
     busy.current = true
     setLoading(true); setMessage('')
     try {
-      await onContinue(`${contextPrompt}\n\n${question}`, activeConversationId)
+      await onContinue(draft, activeConversationId)
       if (!mounted.current) return
-      setContextPrompt(undefined); setQuestion('')
+      setDraft(undefined)
     } catch (error) { if (mounted.current) setMessage(error instanceof Error ? error.message : '继续讨论失败') }
     finally { busy.current = false; if (mounted.current) setLoading(false) }
   }
@@ -319,7 +317,7 @@ function SupervisionCardContent({
       <h3>监督反馈</h3>
       <div className="supervision-card__actions">
         {onTogglePinned && <button type="button" className={`icon-button${pinned ? ' icon-button--active' : ''}`} aria-label={pinned ? '取消固定监督目标' : '固定监督目标'} title={pinned ? '取消固定监督目标' : '固定监督目标'} aria-pressed={pinned} disabled={!target} onClick={onTogglePinned}><Pin aria-hidden="true" size={14} /></button>}
-        <button type="button" className="icon-button" aria-label="刷新监督回顾" title="刷新监督回顾" disabled={!target || loading} onClick={() => { setResult(undefined); setSource(undefined); setContextPrompt(undefined); setQuestion(''); setMessage(''); setRefresh((value) => value + 1) }}><RefreshCw aria-hidden="true" size={14} /></button>
+        <button type="button" className="icon-button" aria-label="刷新监督回顾" title="刷新监督回顾" disabled={!target || loading} onClick={() => { setResult(undefined); setSource(undefined); setDraft(undefined); setMessage(''); setRefresh((value) => value + 1) }}><RefreshCw aria-hidden="true" size={14} /></button>
       </div>
     </div>
     {target && <p className="supervision-card__target" title={target.type === 'conversation' ? target.conversationId : target.taskId}>{pinned ? '已固定 · ' : ''}{target.type === 'conversation' ? `会话：${conversationTitle?.trim() || '未命名会话'}` : `任务：${taskTitle?.trim() || '未命名任务'}`}</p>}
@@ -330,19 +328,18 @@ function SupervisionCardContent({
       <div className="supervision-card__actions">
         {onOpenSupervisionGraph && <button type="button" className="secondary-button" onClick={() => onOpenSupervisionGraph(result.id)}>{t('supervisor.viewInGraph')}</button>}
         <button type="button" className="secondary-button" disabled={loading} onClick={() => void openSource(String((result as Record<string, unknown>).sourceId ?? ''))}>查看来源</button>
-        <button type="button" className="primary-button" disabled={loading || !activeConversationId || !onContinue || contextPrompt !== undefined} title={!activeConversationId ? '没有当前会话，无法继续讨论' : undefined} onClick={() => void continueDiscussion()}>{t('supervisor.discussion.start')}</button>
+        <button type="button" className="primary-button" disabled={loading || !activeConversationId || !onContinue || draft !== undefined} title={!activeConversationId ? '没有当前会话，无法继续讨论' : undefined} onClick={() => void continueDiscussion()}>{t('supervisor.discussion.start')}</button>
       </div>
       {source && <div className="supervision-card__source"><strong>{String(source.title ?? '来源')}</strong><p>{String(source.content ?? source.error ?? '')}</p>{source.error !== undefined && <small>{String(source.error)}</small>}
         {source.contextType === 'conversation' && Boolean(source.conversationId) && onOpenConversation && <button type="button" className="secondary-button" disabled={loading} onClick={() => onOpenConversation(String(source.conversationId))}>{t('supervisor.openConversation')}</button>}
       </div>}
-      {contextPrompt !== undefined && <div className="supervision-card__source">
-        <p title={activeConversationId}>{t('supervisor.discussion.target', { title: conversationTitle?.trim() || '未命名会话' })}</p>
-        <label className="field"><span>{t('supervisor.discussion.question')}</span><textarea rows={3} value={question} disabled={loading} onChange={(event) => setQuestion(event.target.value)} /></label>
-        <p>{t('supervisor.discussion.contextHint')}</p>
-        <div className="supervision-card__actions">
-          <button type="button" className="secondary-button" disabled={loading} onClick={() => { setContextPrompt(undefined); setQuestion(''); setMessage('') }}>{t('supervisor.cancel')}</button>
-          <button type="button" className="primary-button" disabled={loading || !question.trim() || !activeConversationId || !onContinue} onClick={() => void sendDiscussion()}>{t(loading ? 'supervisor.discussion.sending' : 'supervisor.discussion.send')}</button>
-        </div>
+      {draft !== undefined && <div className="supervision-discussion-editor">
+        <p className="supervision-discussion-editor__target" title={activeConversationId}>{t('supervisor.discussion.target', { title: conversationTitle?.trim() || '未命名会话' })}</p>
+        <label className="field"><span>{t('supervisor.discussion.message')}</span><textarea rows={10} value={draft} disabled={loading} onChange={(event) => setDraft(event.target.value)} /></label>
+        <footer className="custom-task-dialog__actions">
+          <button type="button" className="secondary-button" disabled={loading} onClick={() => { setDraft(undefined); setMessage('') }}>{t('supervisor.cancel')}</button>
+          <button type="button" className="primary-button" disabled={loading || !draft.trim() || !activeConversationId || !onContinue} onClick={() => void sendDiscussion()}>{t(loading ? 'supervisor.discussion.sending' : 'supervisor.discussion.send')}</button>
+        </footer>
       </div>}
       {loading && <p role="status">{t('supervisor.discussion.loading')}</p>}
       {message && <p role="status">{message}</p>}

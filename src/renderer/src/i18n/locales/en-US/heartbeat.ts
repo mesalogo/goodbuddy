@@ -89,8 +89,8 @@ export const heartbeat = {
     listEmpty: 'No records of this type in this review.',
     openConversation: 'Open conversation',
     discussion: {
-      start: 'Continue discussion', question: 'What would you like to discuss?', defaultQuestion: 'Using the review context above, help me work out the next steps.',
-      target: 'Send to conversation: {{title}}', contextHint: 'Relevant review context and sources will be included.', send: 'Send', sending: 'Sending...', loading: 'Working...', empty: 'The review context is empty. Please retry.'
+      start: 'Continue discussion', message: 'Message to send',
+      target: 'Send to conversation: {{title}}', send: 'Send', sending: 'Sending...', loading: 'Working...', empty: 'The review context is empty. Please retry.'
     },
     events: 'Time events', entities: 'Knowledge entities', relations: 'Entity relations', eventSources: 'Event sources', sources: 'Related sources', noSources: 'No related sources are available.', selectHint: 'Select an event, entity, or relation to inspect it.', sourceSnapshot: 'Source details', sourceMissing: 'Source not found',
     confirm: 'Confirm', revise: 'Revise', remove: 'Remove relation', label: 'Entity name', save: 'Save revision', cancel: 'Cancel', removeHint: 'This changes graph organization only; the original source remains available.',

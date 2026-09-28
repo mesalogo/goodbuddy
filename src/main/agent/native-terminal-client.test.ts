@@ -91,4 +91,18 @@ describe('native terminal client', () => {
     expect(config.mcp.tools.url).toBe('http://127.0.0.1:12345/mcp')
     expect(await readFile(new URL(config.plugin[0]), 'utf8')).toContain('execute')
   })
+
+  it('allows only the bound read tools through native OpenCode Ask permissions and execution hook', async () => {
+    const { client, input } = await fixture()
+    await client.open(1, { ...input, mcpServers: [{ name: 'goodbuddy-0', url: 'http://127.0.0.1:12345/mcp', headers: {},
+      readOnlyTools: ['story_graph_search', 'story_graph_get_context', 'story_graph_read_source'] }] })
+    const config = JSON.parse(launches[0]!.spawnSpec.env.OPENCODE_CONFIG_CONTENT!)
+    expect(config.mcp['goodbuddy-0']).toBeDefined()
+    const hooks = await (await import(/* @vite-ignore */ new URL(config.plugin[0]).href)).default()
+    for (const name of ['story_graph_search', 'story_graph_get_context', 'story_graph_read_source']) {
+      expect(config.permission[`goodbuddy-0_${name}`]).toBe('allow')
+      await expect(hooks['tool.execute.before']({ tool: `goodbuddy-0_${name}` })).resolves.toBeUndefined()
+    }
+    await expect(hooks['tool.execute.before']({ tool: 'goodbuddy-0_generate_image' })).rejects.toThrow('read-only')
+  })
 })

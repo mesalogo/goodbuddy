@@ -13,6 +13,8 @@
 
 本文回答如何在现有 GoodBuddy 桌面端中实现监督者。它不改变产品范围，也不把模拟 Demo 当作生产数据模型。
 
+FR-S11 的读取架构见[时态 Story Graph 内置 MCP 设计](./story-graph-mcp-design.md)。三个只读工具通过 `readStoryGraph` 投影现有 SQLite，Main 在发现、调用和返回前检查监督者启用及 Runtime 分配。本地 MCP、Model、Harness Main 代理和远程受管工具通道共用此入口；无 schema 迁移。该文独立定义对象／版本合同、时间语义、配置映射及后续跨 scope 复用和记忆过渡。当前 memory 背景读取、精确 scope checkpoint 与候选身份保留；结果快照不支持 `as_of` 历史重建。
+
 生产入口由 `supervision-production.ts` 组装服务、SQLite、共享池和 ask Runtime。`supervision-review-store.ts` 保存冻结来源清单，按有界页和片段供 `SupervisorService` 派发；叶子及连续位置先提交，导航和完整结果之后发布。消息已有知识引用保留本地或外部 locator，已确认记忆通过独立背景输入提供。不会检索外部全库。详细存储、调度及当前限制统一见[分块调度第 0 节](./review-scheduling-design.md#0-生产接线与剩余边界)。
 
 模型实体 `id` 只在单次输出内有效。Main 从同一 scope 的故事线提供最多 100 个未撤销实体候选，生产提示只暴露 `candidateRef`（如 `known_1`）、名称和说明。模型显式选择候选后，Main 转换为严格 UUID 类型的内部 `persistedId`。服务校验候选集成员和重复映射，保存事务再次按实体主键校验故事线归属及撤销状态。没有有效候选引用时分配新 UUID，不按名称或裸模型 ID 合并。来源仍按每次结果分配 UUID，保留原始 `source_id` 和 locator。
@@ -33,7 +35,7 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 
 侧栏通过 `onOpenSupervisionGraph(resultId)` 交给 App 导航；App 遵守现有离页检查，向 HeartbeatCenter / SupervisorWorkspace 传递类型化 `graphNavigation`，复用 `heartbeat` 路由及 keepalive 页面。每次点击创建新的导航请求，打开 graph 页签并更新历史选择共用的 resultId。overview 未包含该 ID 时仍直接请求其 graph；旧 overview、graph、来源和操作响应通过同一请求序号失效，不覆盖新结果。没有新增 window 事件、页面或持久化字段。
 
-继续讨论入队时，无附件请求省略 `serializedContexts`；请求未指定 Runtime 时使用会话保存的选择。知识库预览与提交均检查目标库存在且为本地可写库，更新实体还检查其实际所属库。侧栏确认框展示 Main 返回的实体字段、目标库和来源正文，取消或写入失败后可以重新预览。
+继续讨论预览将 `supervision:continue-context` 返回的 `prompt` 直接作为可编辑草稿。侧栏与图谱入口发送当前草稿，不重新拼接原始上下文。`supervision:continue` 沿用现有正文校验（去除首尾空白，最多 12,000 字符），使用空 `attachments` 入队，无附件请求省略 `serializedContexts`；请求未指定 Runtime 时使用会话保存的选择。会话已有的记忆和知识库配置仍按普通会话发送规则处理。知识库预览与提交均检查目标库存在且为本地可写库，更新实体还检查其实际所属库。侧栏确认框展示 Main 返回的实体字段、目标库和来源正文，取消或写入失败后可以重新预览。
 
 监督来源清单将 UI 时间区间归一化为 UTC，先筛选再按稳定键分页。项目必须存在且 active；消息按闭区间筛选，任务按区间内创建或完成时间筛选。手动和自动监督共用该路径，自动清单另读取 supervisor checkpoint；手动心跳报告保留原有 collector。
 

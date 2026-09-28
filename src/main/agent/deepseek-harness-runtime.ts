@@ -350,6 +350,14 @@ function proxyToolInputSchema(
     ReturnType<ModelToolProviderLike['listTools']>
   >[number]
 ): Record<string, unknown> {
+  if (isStoryGraphTool(tool.name)) {
+    const schema = structuredClone(tool.inputSchema)
+    const scope = (schema.properties as Record<string, Record<string, unknown>>).scope!
+    // Scope is a discriminated union: Global and projects are mutually exclusive.
+    scope.oneOf = scope.anyOf
+    delete scope.anyOf
+    return dshCompatibleMainInputSchema(schema)
+  }
   return isMainWebTool(tool) || tool.name === 'generate_image'
     ? dshCompatibleMainInputSchema(tool.inputSchema)
     : tool.inputSchema
@@ -367,7 +375,7 @@ function boundedProxyToolCatalog(
 }> {
   const catalog = tools.filter(
     (tool) =>
-      isMainWebTool(tool) ||
+      isMainWebTool(tool) || isStoryGraphTool(tool.name) ||
       (workMode === 'execute' && (tool.source === 'mcp' || tool.name === 'generate_image'))
   )
   if (catalog.length > MAX_MCP_PROXY_TOOLS) {
@@ -856,7 +864,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 )
                 const catalog = boundedProxyToolCatalog(tools, context.workMode)
                 this.proxyToolCatalogs.set(params.sessionId, tools.filter(
-                  (tool) => tool.source === 'mcp' || isMainWebTool(tool) || tool.name === 'generate_image'
+                  (tool) => tool.source === 'mcp' || isMainWebTool(tool) || isStoryGraphTool(tool.name) || tool.name === 'generate_image'
                 ))
                 return { tools: catalog }
               }
@@ -897,7 +905,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 const tool = tools.find(
                   (candidate) =>
                     candidate.name === name &&
-                    (candidate.source === 'mcp' || candidate.name === 'generate_image' ||
+                    (candidate.source === 'mcp' || candidate.name === 'generate_image' || isStoryGraphTool(candidate.name) ||
                       isMainWebTool(candidate))
                 )
                 if (!tool) {
@@ -907,7 +915,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 }
                 const isWebTool = isMainWebTool(tool)
                 if (
-                  !isWebTool &&
+                  !isWebTool && !isStoryGraphTool(name) &&
                   (context.workMode !== 'execute' || !run.authorize)
                 ) {
                   throw new Error(
@@ -937,7 +945,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                       .slice(0, 1_000)}`
                   )
                 }
-                if (!isWebTool) {
+                if (!isWebTool && !isStoryGraphTool(name)) {
                   const approval =
                     run.toolProvider.getApproval(
                       tool,
@@ -1758,3 +1766,4 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
   }
 }
 import { imageToolDescriptionLimit } from '../../shared/image-generation-contracts'
+import { isStoryGraphTool } from '../../shared/story-graph-tools'

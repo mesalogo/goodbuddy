@@ -11298,6 +11298,38 @@ textarea.field-control {
   resize: vertical;
 }
 
+.supervision-discussion-editor {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+
+.supervision-discussion-editor > .supervision-discussion-editor__target {
+  margin: 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.supervision-discussion-editor > .field {
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.supervision-discussion-editor textarea {
+  line-height: 1.6;
+}
+
+.supervision-discussion-editor > .custom-task-dialog__actions {
+  padding: 0;
+  border-top: 0;
+}
+
 .field small {
   color: var(--text-muted);
   font-size: var(--font-caption);

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { storyGraphTools } from './story-graph-tools'
 import { obsidianScopedDataTools } from './obsidian-tools'
 import {
   goodbuddyConfigTools,
@@ -235,6 +236,7 @@ export const magicNoteScopedDataTools = [
 ] as const satisfies readonly ScopedDataToolDefinition[]
 
 export const scopedDataTools = [
+  ...storyGraphTools,
   ...knowledgeScopedDataTools,
   ...magicNoteScopedDataTools,
   ...obsidianScopedDataTools,

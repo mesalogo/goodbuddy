@@ -8742,6 +8742,10 @@ export class AssistantDatabase {
     }
   }
 
+  readStoryGraph(name: import('../../shared/story-graph-tools').StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal): Record<string, unknown> {
+    return readStoryGraph(this.requireDatabase(), name, input, projectId, signal)
+  }
+
   getSupervisionResult(id: string): { id: string; summary: string } | undefined {
     return this.requireDatabase().prepare('SELECT id, summary FROM supervision_results WHERE id = ?').get(id) as { id: string; summary: string } | undefined
   }
@@ -11488,3 +11492,4 @@ export class AssistantDatabase {
 }
 import type { ImageOperation } from '../../shared/image-generation-contracts'
 import { SupervisionReviewStore, supervisionReviewMigration } from './supervision-review-store'
+import { readStoryGraph } from './story-graph-reader'

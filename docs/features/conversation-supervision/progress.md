@@ -1,8 +1,51 @@
 # 监督者实施进度
 
-日期：2026-09-26。
+日期：2026-09-28。
 
 当前记录以已验证生产行为为准。监督者尚未覆盖全部 user stories。
+
+## 2026-09-28 Story Graph 只读工具
+
+对应 FR-S11、US-S28 至 US-S30 的 D1 读取实现。输入、分页与版本语义由[专项设计](./story-graph-mcp-design.md)负责。US-S31 的跨范围事实复用和 memory 读取切换仍待实现。
+
+实现路径：
+
+- [共享工具合同](../../../src/shared/story-graph-tools.ts)定义 `story_graph_search`、`story_graph_get_context`、`story_graph_read_source`。内置目录与能力设置支持 Model、OpenCode、Continue、DeepSeek Harness 分配；应用关闭时 Main 不签发图谱读取权限。
+- [只读 SQLite 投影](../../../src/main/assistant/story-graph-reader.ts)读取精确 scope 下的历史结果、当前对象、事件、变化、关系、来源和成功叶子描述。保留旧决定与修订依据，确认状态和有效性分别返回，未知有效性不按时间推断。没有新增 schema、业务写入或模型调用。
+- [Main gateway](../../../src/main/agent/knowledge-mcp-gateway.ts)在发现、读取前和返回前复核监督者开关及 Runtime 分配；IPC 将项目和 Runtime 固定到请求。Model 和 Harness 代理、本地 MCP、原生客户端共用此入口。Harness 的目录、scope schema 转换及 Host Ask 执行钩子均已接通。
+- 远程沿用 `ProtocolRemoteRuntimeChannel`、`MainImageToolSession`、`AgentImageToolMcp` 和 `RuntimeAcpBackend` 的现有工具通道。Ask 可以只有图谱描述，没有图像生成描述。OpenCode 根／子会话仅放行当前端点；Continue Ask 保留 Main 会话 MCP，并由原生只读工具名和 Main 双重校验。
+- 对象页为 10／50 项，正文页为 4,000／8,000 码点（默认／上限）。Context 用带位置的 JSON 片段续读长对象；游标绑定过滤、scope 和读取修订，变更后返回 `stale_cursor`。来源默认读保存片段；显式 current 通过 locator 读当前记录，version 仅接受可验证的现存版本。知识引用片段不声称是整份知识原文，来源迁出项目、删除、未知历史和响应过大均有明确结果。
+
+定向验证：
+
+```text
+npx vitest run src/main/assistant/story-graph-reader.test.ts src/agent-daemon/story-graph-integration.test.ts src/main/assistant/supervision-production.test.ts src/main/capabilities/capability-service.test.ts src/main/ipc.test.ts src/main/remote-agent/protocol-remote-runtime-channel.test.ts src/agent-daemon/runtime-acp-backend.test.ts src/agent-daemon/continue-acp-helper.test.ts src/agent-daemon/opencode-subagent-plugin.test.ts src/main/agent/native-terminal-client.test.ts
+```
+
+10 文件、337 项通过，1 项既有条件测试跳过。覆盖真实 SQLite、HTTP MCP、Main／Agent 消息往返、协议准备和释放、四个 Runtime 的 IPC 项目绑定、Supervisor 关闭后不再读取、取消、来源删除／迁移、旧游标、Unicode 正文续页、超长响应及 A → B 修订后 C 仍为选项。冷启动审查发现 current 来源读取依赖运行回顾后才注册的 SQLite 函数，改为按现存 context 直接计算同一修订；新连接回归通过。最终读取相关 3 文件、28 项再次通过。
+
+其他受影响路径也已定向验证：
+
+- `continue-runtime.test.ts`、`opencode-runtime.test.ts`、`deepseek-harness-runtime.test.ts`、`native-client-coordinator.test.ts`、`protocol-remote-runtime-channel.test.ts`、`knowledge-mcp-gateway.test.ts`：6 文件、243 项通过。
+- `goodbuddy-harness-control-plane.test.ts`、`continue-host-adapter.test.ts` 及相关桥接／读取测试：6 文件、98 项通过。`model-tool-provider.test.ts`、能力设置及 Continue helper 组合：3 文件、92 项通过。
+- `npx vitest run src/main/agent/deepseek-harness-acp-e2e.test.ts -t "reads Story Graph"`：1 项通过、13 项按名称跳过。真实受控 Harness Host 经 ACP 和 Main 代理执行 Ask／Execute 读取，随后关闭监督者并确认工具移除；推理使用测试实现，没有外部模型请求。
+- `npx tsc --noEmit -p tsconfig.node.json`、`tsconfig.agent.json`、`tsconfig.web.json` 均通过；最终 Main 类型检查再次通过。本次变更的 TypeScript 源码和测试定向 ESLint 通过，`git diff --check` 通过。
+
+### Linux Host 验证
+
+[SSH 探针](../../../scripts/story-graph-host-probe.ts)从当前源码临时打包，在共享 Linux x64 Host 运行 `AgentImageToolMcp`、`AgentOwnedAcpPrompt` 和 `ContinueHostAdapter`，使用 Host 安装的 OpenCode 和 Continue（1.5.47）。桌面启动隔离内存 SQLite、Main gateway 和 `MainImageToolSession`，通过 SSH 搬运工具通道消息；用户数据库、模型凭据和正文库没有复制到 Host。Host 临时运行目录在结束时清理。
+
+探针通过：HTTP 发现三个只读工具、搜索／上下文／来源读取及分页、`as_of` 拒绝、OpenCode Ask／Execute、Continue Ask／Execute 的实际工具调用，以及关闭后的发现和旧会话调用拦截。成功探针有 10 次本机确定性推理请求，其中 2 次为 Runtime 标题生成，桌面读取 10 次，付费调用 0 次。RPC blob framing 与 prompt 生命周期另由上述 `runtime-acp-backend` 和 `protocol-remote-runtime-channel` 测试覆盖；该 SSH 探针使用标准输入输出承载工具消息，没有执行安装包升级或完整桌面 UI 操作。
+
+复跑时在仓库使用 esbuild 将脚本输出到临时目录，再通过已有 SSH 身份传至 Host 的 GoodBuddy 测试目录。桌面命令参数为：
+
+```text
+node <local-probe.cjs> <ssh-host> <remote-probe.cjs> <host-opencode-path> <host-continue-cn.js-path>
+```
+
+### 保留边界
+
+没有执行全量测试、付费模型请求、提交、推送或发布。真实模型如何根据冲突证据形成最终建议、跨平台安装包和完整桌面 UI 仍未在本次验收；没有据此声明 US-S28 的建议质量已验证。查询目前同步扫描所选 scope 的已发布事实，大库延迟和运行中断粒度没有性能验收。`replaces`／`contradicts`、历史有效期、`as_of`、跨 scope 事实复用和 memory 消费切换均没有伪造实现；已有记忆与 checkpoint 保留。中文设计扫描无阻断项，复核项是时间、范围和证据限制，按技术含义保留。
 
 ## 已验证
 
@@ -423,10 +466,19 @@ npx eslint scripts/review-algorithm.mjs scripts/review-algorithm.test.mjs script
 - 结束时间收尾：手动心跳使用真实报告完成时间，下游失败单独记录结束时间。`npx vitest run src/main/assistant/supervision-activity.test.ts src/main/assistant/heartbeat-service.test.ts src/main/assistant/heartbeat-database.test.ts src/main/assistant/supervision-history.test.ts`：4 个文件、21 项通过，新增受控时钟用例区分 10:00 开始、10:02 报告完成、10:03 下游失败。随后 Node typecheck 和这 3 个改动源码/测试文件的 ESLint 通过。
 - 已存在的手动失败无法补回；旧心跳没有冻结范围和关联 ID，保留缺失提示。心跳仍按原保留期限清理，监督结果独立保存。取消和人工修改时间序列审计未实现；`no_change` 的后续接入见下节。
 
+### 2026-09-28 继续讨论正文与布局
+
+侧栏与图谱来源详情直接显示可编辑的发送正文，移除隐藏上下文拼接及附带提示。目标会话独立分隔，底部复用共享右对齐操作区。失败保留草稿，取消不发送，目标切换继续使旧预览失效。Main 的来源筛选与发送契约未修改。
+
+- `npx vitest run src/renderer/src/SupervisionDiscussion.test.tsx src/renderer/src/SupervisionCard.test.tsx`：10 项通过，覆盖正文可见、编辑后精确提交、删除引用后不补回、失败重试、取消、重复提交和目标切换。
+- `npx vitest run src/main/ipc.test.ts -t 'scopes supervision continuation|dispatches supervision continuation'`：2 项通过，使用真实 SQLite 与队列解析器核验来源范围及空附件发送。
+- `npx vitest run tests/supervisor-layout.electron.test.ts` 分别设置 `GOODBUDDY_SUPERVISOR_DISCUSSION=1`、`GOODBUDDY_SUPERVISOR_SIDEBAR=1` 运行通过。图谱覆盖 1440/390px，侧栏覆盖 480/300/200px，均含浅深主题；检查 16px 区块间距、8px 字段间距、目标分隔、右对齐及无横向溢出，侧栏另检查滚动后按钮可命中。截图与测量保存在临时目录 `opencode/discussion-feedback-graph`、`opencode/discussion-feedback-sidebar`。
+- Renderer 类型检查 `npx tsc --noEmit -p tsconfig.web.json`、8 个改动 TS/TSX/MJS 文件的定向 ESLint 与改动文件 `git diff --check` 通过。Electron 使用生产组件和模拟数据，未调用模型；未跑全套测试，未提交。
+
 ### 其他边界
 
 - 新批次来源读取按 messageId 返回已保存片段及版本；旧历史缺少消息 ID 时保留会话/时间定位。本地知识引用通过现有 `KnowledgeService` 解析文档/分块，失效时显示不可用；外部引用只使用已保存 locator，不调用远端全库。
-- 继续讨论和知识库写入使用现有本地会话队列与知识库实体接口，并要求先预览、再由用户确认提交。侧栏已支持结果直达图谱，尚无可编辑的上下文预览。
+- 继续讨论和知识库写入使用现有本地会话队列与知识库实体接口，并要求先预览、再由用户确认提交。侧栏支持结果直达图谱；继续讨论的侧栏与图谱入口均已提供可编辑的实际上下文正文，发送规则见 [UI 设计](./ui-design.md)。
 - 关系移除保留撤销状态及原始来源；界面没有提供恢复入口。
 - 候选集最多 100 个实体，复用依赖模型显式选择；不会自动合并历史重复实体或跨 scope 合并。结果级历史内容已保存，事件滑块仍不重建逐事件的实体演变。Experiment 和完整图谱回放尚未实现；批次暂停/继续已接通。
 

@@ -390,8 +390,10 @@ tool names; the Web adapter maps these through the official MCP naming contract.
 Custom MCP is exposed in Execute, matching the existing Runtime behavior; custom
 `readOnlyHint` annotations do not introduce a separate Ask permission rule.
 Assigned skill directories containing `SKILL.md` load through the official skill
-plugin. Continue/OpenCode native Ask currently omit MCP endpoints, including
-built-ins; extending their existing native name mappings remains separate work.
+plugin. Continue/OpenCode native Ask now retain Main-bound endpoints and map the
+granted read-tool names through both native permissions and execution hooks.
+OpenCode prefixes names with the bound MCP server name; Continue uses raw names.
+Story Graph additionally rechecks Supervisor enablement on every call.
 
 The coordinator remains local-only at this checkpoint. The remote implementation
 is being developed separately and must be connected and verified on the shared

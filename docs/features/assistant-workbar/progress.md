@@ -172,10 +172,16 @@ the final DS/coordinator and UI/preload/IPC paths were rerun separately and pass
 This is not a claim of a subsequent all-green full-suite run. Full output is in
 `native-full-tests.log` beside the live evidence.
 
-Remaining: remote coordinator wiring and real Host acceptance belong to the
+Remaining at this checkpoint: remote coordinator wiring and real Host acceptance belong to the
 concurrent remote implementation; Continue/OpenCode Ask built-in MCP mappings,
 managed standard Node distribution, full Electron/packaged UI acceptance and other
 platforms are not verified here. `ipc.ts` was not edited in this work.
+
+2026-09-28 update: native Continue/OpenCode Ask now pass Main-bound read-tool
+names to native permission flags and execution hooks. The Story Graph work also
+adds Supervisor enablement to native-client reuse keys and gateway checks.
+The OpenCode generated plugin is executed by a focused test; packaged native UI
+acceptance remains separate. See [Story Graph validation](../conversation-supervision/progress.md#2026-09-28-story-graph-只读工具).
 
 ## 2026-09-26 结构升级与历史回收分离（未发布）
 

@@ -976,6 +976,11 @@ if (hasSingleInstanceLock) {
     const startupKnowledgeGateway = new KnowledgeMcpGateway(
       startupKnowledgeService,
       {
+        storyGraphService: {
+          available: async ({ runtimeTarget }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
+            (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
+          read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraph(name, input, projectId, signal)
+        },
         magicNotesDatabase: startupAssistantDatabase,
         configService: goodbuddyConfigService,
         obsidianService,
@@ -1436,6 +1441,11 @@ if (hasSingleInstanceLock) {
       resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
       openExternal: (url) => shell.openExternal(url),
       createGateway: () => new KnowledgeMcpGateway(startupKnowledgeService, {
+        storyGraphService: {
+          available: async ({ runtimeTarget }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
+            (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
+          read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraph(name, input, projectId, signal)
+        },
         // This dedicated gateway lives until native-client disposal, not a chat request timeout.
         now: () => 0,
         magicNotesDatabase: startupAssistantDatabase, configService: goodbuddyConfigService,

@@ -57,10 +57,10 @@
 - **SSH Host 环境准备验证记录**：当前源码已在隔离 Linux x64 环境通过包安装、Ask/Execute、原生子代理工作区外写入、重连及 stop/bootstrap。现有记录未覆盖 Host 卡片的完整 GitHub、北京镜像、Linux x64/arm64、取消和离线 GoodBuddy 传输矩阵，候选 CI/原生打包与系统休眠唤醒也尚未验证；开发记录不代表版本已经发布。
 - [x] **远程工作区与长任务更新**：Agent `0.11.23` 新增远程文件/Git 管理和可选模型限额，随包 Runtime 不再施加固定十分钟 Prompt 时限；无限请求时长仍保留独立连接超时。请先升级 Desktop 至 `0.12.11`，再下载并更新 Host 上的 Agent。
 - [x] **远程原生问答与取消修复**：Agent `0.11.24` 修复远程原生问答转交和取消待答后同一会话续发，需要先升级 Desktop 至 `0.13.0`。
-- [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；优先使用管理员提供的连接，否则跟随兼容的默认模型或首个兼容连接，无需单独重复选择，设置页显示实际管理员或回退模型来源。Ask 只允许调用 Host 中真实注册的 `read`、`skill` 以及 Main 管理的 Web Search/Fetch 代理，拒绝插件同名冒充，Execute 放行全部已启用内置及插件工具，并以当前用户权限运行。图像输入跟随所选模型连接的能力声明，文本模型在 Host 或模型调用前拒绝图片，图片模型通过有界内联内容和临时 Attachment Store 接收 JPEG/PNG。Windows Host 启动和 ACP 会话共用规范工作区路径，同目录不同写法可复用正常 Runtime，不再因路径不一致而创建会话失败。
+- [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；优先使用管理员提供的连接，否则跟随兼容的默认模型或首个兼容连接，无需单独重复选择，设置页显示实际管理员或回退模型来源。Ask 只允许调用 Host 中真实注册的 `read`、`skill` 以及 Main 管理的 Web Search/Fetch 和已启用的 Story Graph 代理，拒绝插件同名冒充，Execute 放行全部已启用内置及插件工具，并以当前用户权限运行。图像输入跟随所选模型连接的能力声明，文本模型在 Host 或模型调用前拒绝图片，图片模型通过有界内联内容和临时 Attachment Store 接收 JPEG/PNG。Windows Host 启动和 ACP 会话共用规范工作区路径，同目录不同写法可复用正常 Runtime，不再因路径不一致而创建会话失败。
 - [x] **DSH npm 插件市场**：市场默认关闭，由用户显式开启后搜索公共 npm 的 `dsh-plugin` 包，使用捆绑 npm 执行精确版本安装和普通 lifecycle scripts，并支持启停、JSON 配置、移除、失败启动自动停用和离线管理已安装插件；关闭市场只隐藏目录与管理界面，不改变已有插件的启停状态，第三方代码不受 Ask 初始化隔离。
 - [x] **Ask 与 Execute 工作模式**：Ask 保持只读；Execute 是用户对当前本机或 SSH 账号可用工具、进程、网络和可写路径的完整授权，包括工作区外路径及原生子代理工作。
-- **本地 Runtime 原生客户端（预览）**：输入区可按当前本地项目与模型，在工作栏终端打开 Continue/OpenCode，或在系统浏览器打开官方 DS Web。客户端使用独立会话，不导入 GoodBuddy 对话历史；关闭 DS 网页不停止服务，可在 GoodBuddy 中停止。远程快捷入口未接通，托管标准 Node 交付、Continue/OpenCode Ask 内置 MCP 映射和完整跨平台安装包验收仍有缺口；Windows 真实模型证据不代表全部会话能力等价，详见[实现与剩余工作](./docs/features/assistant-workbar/progress.md#2026-09-27-local-native-client-validation)。
+- **本地 Runtime 原生客户端（预览）**：输入区可按当前本地项目与模型，在工作栏终端打开 Continue/OpenCode，或在系统浏览器打开官方 DS Web。客户端使用独立会话，不导入 GoodBuddy 对话历史；关闭 DS 网页不停止服务，可在 GoodBuddy 中停止。Continue/OpenCode Ask 已通过原生权限映射 Main 绑定的只读工具。远程快捷入口未接通，托管标准 Node 交付和完整跨平台安装包验收仍有缺口；Windows 真实模型证据不代表全部会话能力等价，详见[实现与剩余工作](./docs/features/assistant-workbar/progress.md#2026-09-27-local-native-client-validation)。
 - **Runtime 遥测关闭配置**：本地 DS Web、远程 Runtime 和模型桥启动共用遥测关闭环境，不限制模型、MCP 或用户主动联网。Continue 在自动更新关闭时跳过检查；远程改动随配套 Agent 新启动的 Runtime 生效，当前源码 Linux x64 Agent/model 验证见 [0.15.0 发布准备](./docs/development/release-preparation-0.15.0.md)。
 - [x] **Runtime 原生交互转交**：OpenCode 与 Continue 的选择、yes/no、自由文本回答和跳过使用现有问答卡片，本机与托管 SSH OpenCode 同时转交属于当前请求的子会话提问。托管 SSH OpenCode 问答需要 Desktop `0.13.0`、Agent `0.11.24` 和新启动的托管 Runtime，不扩展到任意 ACP 服务。回答或跳过成功后在原位置保留问题与答案，支持多轮记录和本地会话重载；旧版本已丢弃的答案不能恢复。并行问题按顺序等待回答，重复事件保留草稿，提交失败可重试；取消远程待答后可在同一会话继续发送。Execute 权限确认自动处理，不等待第二次审批；具体支持范围见[交互边界](./docs/features/assistant-workbar/runtime-interactions.md)。
 - [x] **原生执行清单**：OpenCode 和 Continue 在对话顶部更新只读执行清单，进度随会话保存。显式清空和远程重放保留请求归属，取消不把未完成条目标成完成；远程交付需要配套 Agent，详见[清单契约](./docs/features/assistant-workbar/runtime-checklist-technical-design.md)。
@@ -87,7 +87,7 @@
 - [x] **Skills 按需接入**：可分配给直连模型、OpenCode、Continue 和 DeepSeek Harness，并使用有界资源和受控 Runtime 边界。
 - [x] **本机工具执行环境源码链路**：在“能力与工具 > 工具执行环境”中为本机 Skills 与 stdio MCP 选择 GoodBuddy 托管 Node.js、按需安装的托管 Python，或经过真实验证的自定义解释器；提供独立的原生地址/OSS 镜像选择、诊断、安装进度、取消和删除。新的本机 Runtime 与 stdio MCP 获得不可变 PATH 快照，不修改普通终端、系统环境或远程 Host。Windows x64 托管 Node 与原生地址 Python 已通过真实安装验证；托管 Python 归档按目标文件系统验证，Linux 保留大小写不同的合法路径，所有目标仍拒绝完全重复路径和不安全条目。
 - **本机工具执行环境验证记录**：六个平台/架构的 OSS 镜像对象已完成字节、大小和 SHA-256 公开回读验证。托管 Python 保持按需下载，不向 Desktop 发行包额外带入许可证文件。每个标准打包任务使用目标架构原生 Runner，并在打包前真实安装托管 Python，验证 SSL、pip 与 venv。不可变的 `v0.12.0` 尝试在发布前通过 Windows 与 macOS，但暴露了 Linux TAR 大小写处理问题；`v0.12.1` 在同步 Agent 发布时于原生打包前取消。已发布的 `v0.12.2` 随后通过全部六个原生打包任务及其托管 Python 安装探针。现有记录未覆盖真实 Skill/MCP、自定义解释器和运行中进程协调。
-- [x] **内置 MCP 按需接入**：知识库、魔法笔记、GoodBuddy 配置与内置浏览器 MCP 可分别启停，并可分配给直连模型、GoodBuddy 管理的 OpenCode 和 Continue；DeepSeek Harness 在设置中明确显示为暂不支持。内置 MCP 仅通过当前请求的短期本机权限提供，Ask / Execute 读写边界不受用户配置放宽。
+- [x] **内置 MCP 按需接入**：知识库、魔法笔记、GoodBuddy 配置与内置浏览器 MCP 可分别启停，并可分配给直连模型、GoodBuddy 管理的 OpenCode 和 Continue；这些 Server 在 DeepSeek Harness 中仍不支持。Story Graph 另通过 Main 代理支持 Harness。内置 MCP 仅通过当前请求的短期本机权限提供，Ask / Execute 读写边界不受用户配置放宽。
 - **Obsidian 接入（源码已实现，验收中）**：默认关闭，默认发现全部本机注册仓库，也可指定文件夹并在保存或启用前测试。随包提供 MCPVault 0.16.0，19 个共享工具保留全部上游能力；生产组件自动化、Electron 托管 Node、Windows 设置与聊天 UI，以及受限网络下的 Windows x64 解包应用已验证。物理断网、安装器及其他系统验收待完成。DeepSeek Harness 与远程执行保持不可用，详见[功能文档与验证记录](./docs/features/obsidian/README.md)；此项不表示已发布。
 - [x] **MCP Tools**：显式启用的自定义 MCP 可按 Runtime 分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent Execute 和 DeepSeek Harness，并仅在 Execute 加载；Agent 子进程只获得按请求签发的本机回环权限，MCP 地址、命令和凭据保留在 Main，动态工具仍经过发现、执行记录与权限边界。直连模型与 Harness 的健康调用复用当前请求已发现的工具清单，不在每次调用前重复发现。
 - [x] **MCP Prompts 与 Resources 元数据**：MCP 测试仅在 Server 声明对应能力时发现有界的 Prompt、参数与 Resource 元数据，不读取 Resource 内容；Runtime 支持的 Prompt 可填入聊天草稿后继续编辑。OpenCode 可报告实验性 Resource 清单，Continue 当前版本明确不支持 Resources。
@@ -129,6 +129,7 @@
 - [ ] **监督后续能力**（规划中）：逐事件完整回放、Experiment 目标、人工修改时间序列审计、事件触发及更完整的执行观察仍未完成。当前自动回顾受输入预算和滚动窗口限制，删除报告不会重置处理进度或重建图谱。详见 [会话监督 PRD](./docs/features/conversation-supervision/prd.md)。
 - [ ] **批量运行与对比实验室**（规划中）：对模型、Prompt、角色和工作流配置执行批量对比，汇总质量、耗时、Token、费用、失败率和成果差异。
 - [ ] **时态记忆与事实冲突检测**（规划中）：为记忆和知识图谱增加有效期、当前事实、过期与矛盾检测、事实核验及证据回溯。
+- **Story Graph 只读工具（未发布源码）**：Agent 可搜索已保存的工作，读取当前主张或时间线，并分页核对来源。监督者应用开关及 Runtime 分配同时控制发现和调用，旧会话也受限制。Model、本地 Harness、本地与远程 OpenCode／Continue 共用桌面读取入口；查询不调用模型，不以较新回顾推断替代关系。跨 scope 事实复用及 `as_of` 仍待实现，详见[设计与验证](./docs/features/conversation-supervision/story-graph-mcp-design.md)。
 - [ ] **可视化受控工作流**（规划中）：提供版本化 DAG、条件分支、审批、取消和恢复，执行节点继续经过 Main Runtime 边界。
 - [ ] **统一 Run Graph 与回放**（规划中）：关联任务、Subagent、模型、知识、工具审批、用量和成果，支持失败定位、重试和脱敏导出。
 

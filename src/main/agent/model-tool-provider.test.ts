@@ -1015,6 +1015,7 @@ describe('ModelToolProvider', () => {
       listLibraries: vi.fn(() => []),
       search: vi.fn(async () => []),
       searchMagicNotes: vi.fn(() => []),
+      isStoryGraphAvailable: vi.fn(async () => true),
       getAvailableToolNames: vi.fn(() => [...scopedDataToolByName.keys()])
     } as unknown as KnowledgeMcpGateway
     const context = {
@@ -1072,6 +1073,7 @@ describe('ModelToolProvider', () => {
 
   it('rechecks cached and refreshed MCP catalogs against each request scope without shrinking the cache', async () => {
     const gateway = {
+      isStoryGraphAvailable: vi.fn(async () => true),
       getAvailableToolNames: vi.fn(() => [...scopedDataToolByName.keys()])
     } as unknown as KnowledgeMcpGateway
     const provider = new ModelToolProvider(await createWorkspace(), [createMcpServer(true)],
@@ -1117,6 +1119,7 @@ describe('ModelToolProvider', () => {
 
   it('enforces the aggregate MCP limit when a cached catalog gains scoped tools', async () => {
     const gateway = {
+      isStoryGraphAvailable: vi.fn(async () => true),
       getAvailableToolNames: vi.fn(() => [...scopedDataToolByName.keys()])
     } as unknown as KnowledgeMcpGateway
     mocks.client.listTools.mockResolvedValue({ tools: Array.from({ length: 40 }, (_, index) => ({

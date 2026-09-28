@@ -86,8 +86,8 @@ export const heartbeat = {
     listEmpty: '本次回顾暂无此类记录。',
     openConversation: '打开会话',
     discussion: {
-      start: '继续讨论', question: '继续讨论的问题', defaultQuestion: '请根据以上监督上下文，继续分析下一步行动。',
-      target: '发送到会话：{{title}}', contextHint: '发送时会附带相关回顾与来源。', send: '发送', sending: '正在发送...', loading: '正在处理...', empty: '监督上下文为空，请重试'
+      start: '继续讨论', message: '发送内容',
+      target: '发送到会话：{{title}}', send: '发送', sending: '正在发送...', loading: '正在处理...', empty: '监督上下文为空，请重试'
     },
     events: '时间事件', entities: '知识实体', relations: '实体关系', eventSources: '事件来源', sources: '关联来源', noSources: '没有可用的关联来源。', selectHint: '选择事件、实体或关系查看详情。', sourceSnapshot: '来源详情', sourceMissing: '来源不存在',
     confirm: '确认', revise: '修订', remove: '移除关系', label: '实体名称', save: '保存修订', cancel: '取消', removeHint: '这只改变图谱中的关系组织，原始来源仍然保留。',

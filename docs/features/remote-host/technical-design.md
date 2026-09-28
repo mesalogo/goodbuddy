@@ -27,6 +27,12 @@ Agent `0.11.23` 提供，显式请求期限与取消仍有效。当前问答源�
 
 ## 跨会话进程复用（未发布）
 
+2026-09-28 Story Graph 补充：远程 OpenCode／Continue 的 Ask 和 Execute
+通过现有受管 HTTP MCP、工具二进制通道读取桌面图谱。Main 固定项目范围并复核监督者
+开关及 Runtime 分配；图谱读取不复制数据库到 Host，也不调用模型。三个只读工具、
+分页和版本限制由[专项设计](../conversation-supervision/story-graph-mcp-design.md)定义，
+源码 Host 探针及协议测试见[验证记录](../conversation-supervision/progress.md#2026-09-28-story-graph-只读工具)。
+
 已发布版本的 `RuntimeAcpBackend` 按 binding 拥有原生进程，`AgentOwnedAcpPrompt` 的一条 ACP
 连接对应一个原生 Session；同一会话后续 Prompt 可复用，但不同会话不共用进程。
 上文“Host 共享 Runtime 环境”指安装与 Agent 环境，不代表原生 OpenCode 进程已共享。

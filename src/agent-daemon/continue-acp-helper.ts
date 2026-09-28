@@ -11,6 +11,7 @@ import { promptWithUntrustedConversationHistory } from '../main/agent/runtime-co
 import type { AgentExecutionRequest, AgentImage } from '../main/agent/runtime'
 import { createUnixModelBridgeExchange } from './model-bridge-broker'
 import { ModelBridgeLoopbackProxy, MODEL_BRIDGE_SDK_AUTH_SENTINEL, openCodeModelBridgeModelId, type ModelBridgeProtocol } from './model-bridge-helper'
+import { isStoryGraphTool } from '../shared/story-graph-tools'
 
 export async function runContinueAcpHelper(options: {
   socketPath: string
@@ -88,11 +89,11 @@ export async function runContinueAcpHelper(options: {
         return await response.json() as { operationId: string; workMode: 'ask' | 'execute' }
       }) : undefined
       const workMode = route?.workMode ?? options.workMode
-      const sessionMcpServers = workMode === 'execute' ? session.mcpServers.map(server => {
+      const sessionMcpServers = session.mcpServers.map(server => {
         if (!('type' in server) || server.type !== 'http') throw new Error('Continue remote MCP requires HTTP')
         return { name: server.name, type: 'streamable-http' as const, url: server.url,
           requestOptions: { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } }
-      }) : []
+      })
       const adapter = new ContinueHostAdapter({
         binaryPath: options.entrypoint, configPath: '', workspace: session.cwd, cacheRoot: root, mode: 'chat',
         modelProfile: { id: 'agent-bridge', name: 'GoodBuddy', modelName: options.model,
@@ -111,7 +112,7 @@ export async function runContinueAcpHelper(options: {
       session.active = { abort, adapter, finished: new Promise(resolve => { finish = resolve }) }
       try {
         const result = await adapter.run(promptWithUntrustedConversationHistory({ prompt: text, history: session.history }, true), abort.signal,
-          async () => workMode === 'execute' ? 'once' : 'deny', {
+          async approval => workMode === 'execute' || isStoryGraphTool(approval.toolName ?? '') ? 'once' : 'deny', {
             workMode, images, sessionMcpServers,
             onEvent: async event => {
               if (event.type === 'text') await connection.sessionUpdate({ sessionId, update: {

@@ -588,21 +588,23 @@ export class ProtocolRemoteRuntimeChannel
   async preparePrompt(
     preparation: z.input<typeof remotePromptOperationPreparationSchema>,
     imageToolBinding?: ImageToolBinding,
-    waitSignal?: AbortSignal
+    waitSignal?: AbortSignal,
+    storyGraphBinding?: import('../agent/knowledge-mcp-gateway').StoryGraphRemoteBinding
   ): Promise<
     z.infer<typeof remotePromptOperationAcceptanceSchema>
   > {
     this.#imageTool?.close()
     this.#imageTool = undefined
     const description = preparation.workMode === 'execute' ? await imageToolBinding?.describe() : undefined
+    const storyGraph = await storyGraphBinding?.available()
     waitSignal?.throwIfAborted()
     let imageTool: z.infer<typeof remotePromptOperationPreparationSchema>['imageTool']
-    if (description && imageToolBinding) {
+    if ((description && imageToolBinding) || storyGraph) {
       this.#assertCurrent()
       const binary = this.#state.client.allocateBinaryChannel?.({ kind: 'blob' })
       if (!binary) throw new Error('Remote image tool transport is unavailable')
-      imageTool = { channelId: binary.channelId, channelEpoch: binary.channelEpoch, description }
-      this.#imageTool = new MainImageToolSession(binary, imageToolBinding, waitSignal)
+      imageTool = { channelId: binary.channelId, channelEpoch: binary.channelEpoch, ...(description ? { description } : {}), ...(storyGraph ? { storyGraph: true } : {}) }
+      this.#imageTool = new MainImageToolSession(binary, imageToolBinding, waitSignal, storyGraphBinding)
     }
     try {
       const parsed = remotePromptOperationPreparationSchema.parse({ ...preparation, imageTool })

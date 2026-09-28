@@ -1173,7 +1173,7 @@ export class RuntimeAcpBackend {
         }
       }
     }
-    if (preparation.imageTool && (preparation.workMode !== 'execute' || !this.#options.blobSink)) {
+    if (preparation.imageTool && ((preparation.imageTool.description && preparation.workMode !== 'execute') || !this.#options.blobSink)) {
       throw new RuntimeAcpBackendError('Image tools require Execute and a desktop transport', 'identity')
     }
     if (requestedModelBridgePolicy !== undefined) {

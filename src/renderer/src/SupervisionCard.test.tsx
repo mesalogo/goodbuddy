@@ -55,7 +55,7 @@ it('supervision ignores old target responses and never falls back to a global re
   expect(screen.getByText('暂无监督回顾')).toBeInTheDocument()
 })
 
-it('prepares context without viewing source and sends the edited question only on Send', async () => {
+it('shows actual context in the editable message and sends exactly that message only on Send', async () => {
   const send = vi.fn(async () => undefined)
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
   const sourceContext = vi.fn()
@@ -63,18 +63,19 @@ it('prepares context without viewing source and sends the edited question only o
   window.goodbuddy = { supervision: { overview: async () => [result('A')], sourceContext, continueContext } } as never
   render(<SupervisionCard target={{ type: 'conversation', conversationId: 'fixed-A' }} activeConversationId="fixed-A" conversationTitle="Pinned A" onContinueSupervision={send} />)
   fireEvent.click(await screen.findByRole('button', { name: '继续讨论' }))
-  const question = await screen.findByRole('textbox', { name: '继续讨论的问题' })
+  const question = await screen.findByRole('textbox', { name: '发送内容' })
   expect(continueContext).toHaveBeenCalledWith({ sourceId: 'source-A', resultId: 'A' })
   expect(sourceContext).not.toHaveBeenCalled()
   expect(send).not.toHaveBeenCalled()
   expect(screen.getByText('发送到会话：Pinned A')).toHaveAttribute('title', 'fixed-A')
-  expect(screen.getByText('发送时会附带相关回顾与来源。')).toBeVisible()
-  expect(screen.queryByText(/Actual prompt/)).not.toBeInTheDocument()
-  fireEvent.change(question, { target: { value: 'What next?\nKeep this detail.' } })
+  expect(question).toHaveValue('Actual prompt\n  Exact context')
+  expect(screen.queryByText('发送时会附带相关回顾与来源。')).not.toBeInTheDocument()
+  const edited = 'Actual prompt\n  Edited context\n\nWhat next?\nKeep this detail.  '
+  fireEvent.change(question, { target: { value: edited } })
   expect(send).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '发送' }))
   await waitFor(() => expect(screen.queryByRole('textbox')).not.toBeInTheDocument())
-  expect(send).toHaveBeenCalledExactlyOnceWith('Actual prompt\n  Exact context\n\nWhat next?\nKeep this detail.', 'fixed-A')
+  expect(send).toHaveBeenCalledExactlyOnceWith(edited, 'fixed-A')
   expect(confirm).not.toHaveBeenCalled()
 })
 
@@ -91,7 +92,7 @@ it('preserves the question on send failure, blocks duplicate requests and suppor
   expect(start).toBeDisabled()
   expect(continueContext).toHaveBeenCalledTimes(1)
   await act(async () => resolveContext({ prompt: 'Context' }))
-  const question = screen.getByRole('textbox', { name: '继续讨论的问题' })
+  const question = screen.getByRole('textbox', { name: '发送内容' })
   fireEvent.change(question, { target: { value: '  ' } })
   expect(screen.getByRole('button', { name: '发送' })).toBeDisabled()
   fireEvent.change(question, { target: { value: 'My question' } })
@@ -105,7 +106,7 @@ it('preserves the question on send failure, blocks duplicate requests and suppor
   expect(question).toHaveValue('My question')
   fireEvent.click(screen.getByRole('button', { name: '发送' }))
   await waitFor(() => expect(screen.queryByRole('textbox')).not.toBeInTheDocument())
-  expect(send).toHaveBeenNthCalledWith(2, 'Context\n\nMy question', 'A')
+  expect(send).toHaveBeenNthCalledWith(2, 'My question', 'A')
   fireEvent.click(start)
   await screen.findByRole('textbox')
   fireEvent.click(screen.getByRole('button', { name: '取消' }))

@@ -634,6 +634,36 @@ describe('RuntimeAcpBackend', () => {
       expect(fixture.lifecycle).not.toContain('bridge-listen')
     } finally { await fixture.backend.dispose() }
   })
+
+  it('binds Story Graph Ask discovery and reads to authenticated blob frames', async () => {
+    const fixture = harness()
+    const client = new Client({ name: 'graph-backend-test', version: '1' })
+    try {
+      await open(fixture)
+      const accepted = await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
+        imageTool: { channelId: 'graph-channel', channelEpoch: '1', storyGraph: true }
+      })) as { imageToolUrl: string }
+      await client.connect(new StreamableHTTPClientTransport(new URL(accepted.imageToolUrl)))
+      const listing = client.listTools()
+      await vi.waitFor(() => expect(fixture.blobSink).toHaveBeenCalledOnce())
+      const reply = async (index: number, storyGraphResult: object) => {
+        const frame = fixture.blobSink.mock.calls[index]![0]
+        const call = remoteImageToolCallSchema.parse(decodeRemoteImageToolMessage(frame.payload))
+        const payload = encodeRemoteImageToolMessage({ callId: call.callId, storyGraphResult })
+        await fixture.backend.onBlobFrame({ header: { ...frame.header, direction: 'main-to-agent', payloadLength: payload.byteLength }, payload },
+          { ...fixture.context, channelId: 'graph-channel' })
+        return call
+      }
+      expect(await reply(0, { available: true })).toMatchObject({ name: 'story_graph_list' })
+      expect((await listing).tools).toHaveLength(3)
+      const reading = client.callTool({ name: 'story_graph_search', arguments: { query: 'Decision' } })
+      await vi.waitFor(() => expect(fixture.blobSink).toHaveBeenCalledTimes(2))
+      expect(await reply(1, { items: [], coverage: { status: 'unknown' } })).toMatchObject({ name: 'story_graph_search', input: { query: 'Decision' } })
+      expect(await reading).not.toHaveProperty('isError', true)
+      await invoke(fixture, 'runtime/completePrompt', { bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1' })
+      await expect(fetch(accepted.imageToolUrl)).rejects.toThrow()
+    } finally { await client.close(); await fixture.backend.dispose() }
+  })
   it.each([false, true])('allows mode changes only on a shared Session (shared=%s)', async (shared) => {
     const fixture = harness({ agentOwned: true, shareOwnedProcesses: shared, workMode: 'execute' })
     try {

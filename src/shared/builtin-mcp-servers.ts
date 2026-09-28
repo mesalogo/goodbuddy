@@ -10,6 +10,7 @@ import {
 import { goodbuddyConfigTools } from './goodbuddy-config-tools'
 import { builtinModelTools } from './builtin-model-tools'
 import { obsidianScopedDataTools } from './obsidian-tools'
+import { storyGraphTools } from './story-graph-tools'
 
 export type BuiltinMcpServerSummary = {
   id: BuiltinMcpServerId
@@ -28,6 +29,15 @@ export type BuiltinMcpServerSummary = {
 }
 
 export const builtinMcpServers = [
+  {
+    id: 'story-graph',
+    name: 'Story Graph',
+    description: 'Read stored work decisions, their evolution and source evidence while Supervisor is enabled.',
+    tools: storyGraphTools.map(({ name, summary, access }) => ({ name, description: summary, access })),
+    supportedAssignments: ['model', 'opencode', 'continue', 'deepseek-harness'],
+    access: 'read',
+    authorization: 'conversation-scoped'
+  },
   {
     id: 'obsidian',
     name: 'Obsidian',

@@ -32,7 +32,7 @@ export type NativeTerminalClientInput = {
   size?: TerminalSize
   skillPackages?: RuntimeSkillPackage[]
   /** Session-lived, Main-owned MCP endpoints, such as the existing knowledge gateway. */
-  mcpServers?: Array<{ name: string; url: string; headers: Record<string, string> }>
+  mcpServers?: Array<{ name: string; url: string; headers: Record<string, string>; readOnlyTools?: readonly string[] }>
 }
 
 export type NativeTerminalClientOptions = {
@@ -141,7 +141,9 @@ export class NativeTerminalClient {
       await mkdir(history, { recursive: true })
       const origin = await proxy.listen()
       const skills = input.skillPackages ?? []
-      const mcp = input.workMode === 'execute' ? input.mcpServers ?? [] : []
+      const mcp = input.mcpServers ?? []
+      const allowedContinueTools = [...continueReadTools, ...mcp.flatMap(server => server.readOnlyTools ?? [])]
+      const allowedOpenCodeTools = [...openCodeReadTools, 'skill', ...mcp.flatMap(server => (server.readOnlyTools ?? []).map(name => `${server.name}_${name}`))]
       if (input.runtime === 'continue') {
         // Reuse the pinned adapter's protocol, permission-order and Windows fixes.
         const adapter = new ContinueHostAdapter({ binaryPath: detection.path,
@@ -151,7 +153,7 @@ export class NativeTerminalClient {
         const bundle = await readFile(bundlePath, 'utf8')
         const executionMarker = 'async function hti(e,t={parallelToolCallCount:1}){'
         if (bundle.split(executionMarker).length !== 2) throw new Error('Continue native tool execution entry point is incompatible')
-        await writeFile(bundlePath, bundle.replace(executionMarker, `${executionMarker}if(${JSON.stringify(input.workMode)}==="ask"&&!${JSON.stringify(continueReadTools)}.includes(e.name))throw new Error("GoodBuddy Ask mode is read-only");`))
+        await writeFile(bundlePath, bundle.replace(executionMarker, `${executionMarker}if(${JSON.stringify(input.workMode)}==="ask"&&!${JSON.stringify(allowedContinueTools)}.includes(e.name))throw new Error("GoodBuddy Ask mode is read-only");`))
         args[0] = prepared.entryPath
         const configured = input.settings.continueConfigPath.trim()
           ? await loadContinueConfig(input.settings.continueConfigPath.trim()) : {}
@@ -172,7 +174,7 @@ export class NativeTerminalClient {
         Object.assign(env, { CONTINUE_GLOBAL_DIR: history, GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1', CONTINUE_CLI_AUTO_UPDATED: '1', CONTINUE_CLI_ENABLE_TELEMETRY: '0', CONTINUE_METRICS_ENABLED: '0', CONTINUE_CLI_DISABLE_COMMIT_SIGNATURE: '1' })
         args.push('--config', configPath)
         if (input.workMode === 'execute') args.push('--auto')
-        else args.push('--readonly', ...continueReadTools.flatMap(name => ['--allow', name]), '--exclude', '*')
+        else args.push('--readonly', ...allowedContinueTools.flatMap(name => ['--allow', name]), '--exclude', '*')
       } else {
         const configDirectory = join(temporary, 'config')
         if (this.options.bundledRuntimePaths.opencodeConfig) {
@@ -184,11 +186,11 @@ export class NativeTerminalClient {
           loopbackOrigin: origin, supportsImageInput: selected.supportsImageInput, workMode: input.workMode
         })
         const permission = input.workMode === 'execute' ? 'allow' : Object.fromEntries([
-          ['*', 'deny'], ...openCodeReadTools.map(name => [name, 'allow']), ['skill', 'allow']
+          ['*', 'deny'], ...allowedOpenCodeTools.map(name => [name, 'allow'])
         ])
         // A tool hook keeps the launch mode fixed even when the TUI changes agents.
         const pluginPath = join(temporary, 'work-mode.mjs')
-        await writeFile(pluginPath, `export default async () => ({'tool.execute.before': async ({tool}) => { if (${JSON.stringify(input.workMode)} === 'ask' && !${JSON.stringify([...openCodeReadTools, 'skill'])}.includes(tool)) throw new Error('GoodBuddy Ask mode is read-only'); }});`, { mode: 0o600 })
+        await writeFile(pluginPath, `export default async () => ({'tool.execute.before': async ({tool}) => { if (${JSON.stringify(input.workMode)} === 'ask' && !${JSON.stringify(allowedOpenCodeTools)}.includes(tool)) throw new Error('GoodBuddy Ask mode is read-only'); }});`, { mode: 0o600 })
         Object.assign(env, {
           OPENCODE_CONFIG_DIR: configDirectory,
           OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, permission,

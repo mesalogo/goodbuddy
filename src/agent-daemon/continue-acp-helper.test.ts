@@ -46,14 +46,19 @@ const server = (name: string) => ({
 
 // Keep the actual helper and adapter config builder together: mocking the
 // adapter constructor would miss the model-profile configuration-loss bug.
-it('delivers current ACP session MCP capabilities through the bridged model config, but not Ask', async () => {
+it('delivers current ACP session MCP capabilities in Execute and Ask with read-only Ask authorization', async () => {
   const configs: Array<Record<string, unknown>> = []
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({
     operationId: 'operation', workMode: transport.mode
   })))
   vi.spyOn(ContinueHostAdapter.prototype, 'run').mockImplementation(async function (
-    this: ContinueHostAdapter, _prompt, _signal, _authorize, options
+    this: ContinueHostAdapter, _prompt, _signal, authorize, options
   ) {
+    if (options?.workMode === 'ask') {
+      expect(await authorize!({ toolName: 'story_graph_search' } as never)).toBe('once')
+      expect(await authorize!({ toolName: 'generate_image' } as never)).toBe('deny')
+      expect(await authorize!({ toolName: 'write_file' } as never)).toBe('deny')
+    }
     const path = await (this as unknown as {
       createRunConfig(options: ContinueHostRunOptions): Promise<string>
     }).createRunConfig(options!)
@@ -83,7 +88,8 @@ it('delivers current ACP session MCP capabilities through the bridged model conf
         requestOptions: { headers: { Authorization: 'Bearer session-test-token' } } }],
       [{ name: 'replacement', type: 'streamable-http', url: server('replacement').url,
         requestOptions: { headers: { Authorization: 'Bearer session-test-token' } } }],
-      [], []
+      [{ name: 'replacement', type: 'streamable-http', url: server('replacement').url,
+        requestOptions: { headers: { Authorization: 'Bearer session-test-token' } } }], []
     ])
     expect(configs[0].models).toEqual([expect.objectContaining({ model: 'test-model' })])
   } finally {
@@ -92,7 +98,7 @@ it('delivers current ACP session MCP capabilities through the bridged model conf
   }
 })
 
-it('keeps local profile MCP scoping and filters explicit session servers in Ask at the adapter boundary', async () => {
+it('keeps local profile MCP scoping and includes Main-bound session servers in Ask', async () => {
   const root = await mkdtemp(join(tmpdir(), 'goodbuddy-cn-scope-'))
   try {
     const configPath = join(root, 'native.json')
@@ -112,7 +118,9 @@ it('keeps local profile MCP scoping and filters explicit session servers in Ask 
     const path = await create({ workMode: 'ask', sessionMcpServers: [{
       name: 'remote', type: 'streamable-http', url: 'http://127.0.0.1:12346', requestOptions: { headers: {} }
     }] })
-    expect(JSON.parse(await readFile(path, 'utf8')).mcpServers ?? []).toEqual([])
+    expect(JSON.parse(await readFile(path, 'utf8')).mcpServers).toEqual([{
+      name: 'remote', type: 'streamable-http', url: 'http://127.0.0.1:12346', requestOptions: { headers: {} }
+    }])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -1,4 +1,16 @@
 import { randomBytes } from 'node:crypto'
+import { isStoryGraphTool, storyGraphToolNames, type StoryGraphToolName } from '../../shared/story-graph-tools'
+import type { RuntimeTarget } from '../../shared/capability-contracts'
+
+export type StoryGraphBinding = { projectId?: string; runtimeTarget: RuntimeTarget }
+export type StoryGraphRemoteBinding = {
+  available(): Promise<boolean>
+  call(name: StoryGraphToolName, input: unknown, signal: AbortSignal): Promise<Record<string, unknown>>
+}
+export type StoryGraphService = {
+  available(binding: StoryGraphBinding): Promise<boolean>
+  read(name: StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal): Record<string, unknown>
+}
 import { knowledgeReferenceKey, toKnowledgeReference } from '../../shared/knowledge-reference'
 import {
   createServer,
@@ -191,6 +203,7 @@ export type KnowledgeLibraryListItem = {
 }
 
 type Capability = {
+  storyGraph?: StoryGraphBinding
   imageToolBinding?: ImageToolBinding
   requestId: string
   libraryIds: readonly string[]
@@ -242,6 +255,7 @@ type DownstreamMcpSession = {
 }
 
 export type KnowledgeMcpGatewayOptions = {
+  storyGraphService?: StoryGraphService
   capabilityTtlMs?: number
   maximumBodyBytes?: number
   now?: () => number
@@ -364,6 +378,7 @@ async function readBoundedJson(
 }
 
 export class KnowledgeMcpGateway {
+  private readonly storyGraphService?: StoryGraphService
   private readonly capabilities = new Map<string, Capability>()
   private readonly downstreamMcpSessions = new Map<
     string,
@@ -407,6 +422,7 @@ export class KnowledgeMcpGateway {
     this.maximumBodyBytes =
       options.maximumBodyBytes ?? MAX_REQUEST_BODY_BYTES
     this.now = options.now ?? Date.now
+    this.storyGraphService = options.storyGraphService
     this.magicNotesDatabase = options.magicNotesDatabase
     this.configService = options.configService
     this.obsidianService = options.obsidianService
@@ -466,7 +482,8 @@ export class KnowledgeMcpGateway {
     browserConversationId?: string,
     browserTabId?: BrowserTabId,
     browserUsageLease?: BrowserTabUsageLease,
-    obsidian?: { settings: ObsidianSettings; access: 'read' | 'write' }
+    obsidian?: { settings: ObsidianSettings; access: 'read' | 'write' },
+    storyGraph?: StoryGraphBinding
   ): string | undefined {
     const effectiveMagicNotesAccess = this.magicNotesDatabase
       ? magicNotesAccess
@@ -516,7 +533,8 @@ export class KnowledgeMcpGateway {
       effectiveMagicNotesAccess === 'none' &&
       effectiveConfigAccess === 'none' &&
       !effectiveBrowserConversationId &&
-      !effectiveObsidian
+      !effectiveObsidian &&
+      !(storyGraph && this.storyGraphService)
     ) {
       return undefined
     }
@@ -529,6 +547,7 @@ export class KnowledgeMcpGateway {
         magicNotesAccess: effectiveMagicNotesAccess,
         configAccess: effectiveConfigAccess,
         obsidian: effectiveObsidian,
+        storyGraph: this.storyGraphService ? storyGraph : undefined,
         browserConversationId: effectiveBrowserConversationId,
         browserTabId: effectiveBrowserTabId,
         browserUsageLease: effectiveBrowserUsageLease,
@@ -799,6 +818,7 @@ export class KnowledgeMcpGateway {
   getAvailableToolNames(token: string): GoodBuddyBuiltinToolName[] {
     const capability = this.getCapability(token)
     return [
+      ...(capability.storyGraph ? storyGraphToolNames : []),
       ...(capability.imageToolBinding ? ['generate_image' as const] : []),
       ...(capability.libraryIds.length > 0
         ? knowledgeToolNames
@@ -1544,6 +1564,29 @@ export class KnowledgeMcpGateway {
     return { deleted: true, noteId: parsed.noteId }
   }
 
+  async isStoryGraphAvailable(token: string): Promise<boolean> {
+    const binding = this.getCapability(token).storyGraph
+    return Boolean(binding && this.storyGraphService && await this.storyGraphService.available(binding))
+  }
+
+  bindRemoteStoryGraph(token: string): StoryGraphRemoteBinding | undefined {
+    if (!this.getCapability(token).storyGraph) return undefined
+    return { available: () => this.isStoryGraphAvailable(token), call: (name, input, signal) => this.callStoryGraphTool(token, name, input, signal) }
+  }
+
+  async callStoryGraphTool(token: string, name: StoryGraphToolName, input: unknown, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const capability = this.getCapability(token)
+    const effectiveSignal = AbortSignal.any([capability.signal, capability.brokerController.signal, ...(signal ? [signal] : [])])
+    effectiveSignal.throwIfAborted()
+    if (!await this.isStoryGraphAvailable(token)) throw new Error('story_graph_unavailable: Supervisor or runtime capability is disabled')
+    effectiveSignal.throwIfAborted()
+    const result = this.storyGraphService!.read(name, input, capability.storyGraph!.projectId, effectiveSignal)
+    effectiveSignal.throwIfAborted()
+    if (!await this.isStoryGraphAvailable(token)) throw new Error('story_graph_unavailable: Supervisor or runtime capability is disabled')
+    effectiveSignal.throwIfAborted()
+    return result
+  }
+
   private async callScopedTool(
     token: string,
     name: ScopedDataToolName,
@@ -1551,6 +1594,10 @@ export class KnowledgeMcpGateway {
     signal?: AbortSignal
   ): Promise<Record<string, unknown>> {
     switch (name) {
+      case 'story_graph_search':
+      case 'story_graph_get_context':
+      case 'story_graph_read_source':
+        return this.callStoryGraphTool(token, name, input, signal)
       case 'knowledge_list':
         return { libraries: this.listLibraries(token, input) }
       case 'knowledge_search':
@@ -1651,7 +1698,8 @@ export class KnowledgeMcpGateway {
           token,
           extra.signal
         )
-        const scopedTools = [...availableTools].flatMap(
+        const storyGraphAvailable = await this.isStoryGraphAvailable(token)
+        const scopedTools = [...availableTools].filter(name => !name.startsWith('story_graph_') || storyGraphAvailable).flatMap(
           (name): Tool[] => {
             const definition = scopedDataToolByName.get(
               name as ScopedDataToolName
@@ -1724,6 +1772,10 @@ export class KnowledgeMcpGateway {
       async (call, extra) => {
         const name = call.params.name
         const input = call.params.arguments ?? {}
+        if (isStoryGraphTool(name)) {
+          try { return { content: [{ type: 'text' as const, text: JSON.stringify(await this.callStoryGraphTool(token, name, input, extra.signal)) }] } }
+          catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Story Graph read failed' }] } }
+        }
         if (name === 'generate_image') {
           const capability = this.getCapability(token)
           if (!capability.imageToolBinding) throw new Error('Image capability is unavailable')

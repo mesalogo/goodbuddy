@@ -922,7 +922,7 @@ export class GoodBuddyHarnessControlPlane {
           definition,
           dispose
         })
-        if (MAIN_WEB_TOOL_NAMES.has(tool.name)) {
+        if (MAIN_WEB_TOOL_NAMES.has(tool.name) || isStoryGraphTool(tool.name)) {
           record.askToolDefinitions.set(tool.name, definition)
         }
       }
@@ -1454,3 +1454,4 @@ export class GoodBuddyHarnessControlPlane {
   }
 }
 import { imageToolDescriptionLimit } from '../../shared/image-generation-contracts'
+import { isStoryGraphTool } from '../../shared/story-graph-tools'

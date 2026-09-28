@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { imageToolInputSchema, imageToolName } from '../shared/image-generation-contracts'
+import { storyGraphTools, type StoryGraphToolName } from '../shared/story-graph-tools'
 import {
   decodeRemoteImageToolMessage, encodeRemoteImageToolMessage,
   remoteImageToolMaximumBytes, remoteImageToolReplySchema, type remoteImageToolSchema
@@ -44,12 +45,23 @@ export class AgentImageToolMcp {
         }
         const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
         const mcp = new McpServer({ name: 'goodbuddy-image', version: '1' }, { capabilities: { tools: {} } })
-        mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{
-          name: imageToolName, description: this.descriptor.description,
-          inputSchema: schema as { type: 'object' }
-        }] }))
+        mcp.setRequestHandler(ListToolsRequestSchema, async () => {
+          const available = this.descriptor.storyGraph ? await this.call({}, 'story_graph_list') : undefined
+          const graphEnabled = available?.content.some(part => part.type === 'text' && JSON.parse(part.text).available === true)
+          return { tools: [
+            ...(this.descriptor.description ? [{ name: imageToolName, description: this.descriptor.description, inputSchema: schema as { type: 'object' } }] : []),
+            ...(graphEnabled ? storyGraphTools.map(tool => ({ name: tool.name, description: tool.description,
+              inputSchema: z.toJSONSchema(tool.inputSchema, { target: 'draft-7', io: 'input' }) as { type: 'object' },
+              annotations: { readOnlyHint: true, destructiveHint: false } })) : [])
+          ] }
+        })
         mcp.setRequestHandler(CallToolRequestSchema, async (call, extra) => {
-          if (call.params.name !== imageToolName) throw new Error('Unknown image tool')
+          const graphTool = storyGraphTools.find(tool => tool.name === call.params.name)
+          if (graphTool && this.descriptor.storyGraph) {
+            try { return await this.call(call.params.arguments ?? {}, graphTool.name) }
+            catch (error) { return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'Story Graph read failed' }] } }
+          }
+          if (call.params.name !== imageToolName || !this.descriptor.description) throw new Error('Unknown image tool')
           const input = imageToolInputSchema.parse(call.params.arguments)
           // Repeated delivery of an MCP request returns the same outcome, including unknown delivery.
           const key = `${typeof extra.requestId}:${extra.requestId}`
@@ -87,8 +99,8 @@ export class AgentImageToolMcp {
     const reply = remoteImageToolReplySchema.parse(decodeRemoteImageToolMessage(payload))
     const pending = this.pending.get(reply.callId)
     if (!pending) return
-    if (reply.error || !reply.result) pending.reject(new Error(reply.error ?? 'Image tool response has no result'))
-    else pending.resolve({ content: [{ type: 'text', text: JSON.stringify(reply.result) }] })
+    if (reply.error || (!reply.result && !reply.storyGraphResult)) pending.reject(new Error(reply.error ?? 'Tool response has no result'))
+    else pending.resolve({ content: [{ type: 'text', text: JSON.stringify(reply.storyGraphResult ?? reply.result) }] })
   }
 
   close(): void {
@@ -100,7 +112,7 @@ export class AgentImageToolMcp {
     this.server?.close()
   }
 
-  private async call(input: z.infer<typeof imageToolInputSchema>): Promise<CallToolResult> {
+  private async call(input: Record<string, unknown>, name?: StoryGraphToolName | 'story_graph_list'): Promise<CallToolResult> {
     if (this.closed) throw new Error('Image tool prompt has ended')
     const callId = randomUUID()
     let timer: NodeJS.Timeout | undefined
@@ -110,7 +122,7 @@ export class AgentImageToolMcp {
       timer.unref()
     })
     // Register the wait before sending; send failures must not cause a retry.
-    void this.send(encodeRemoteImageToolMessage({ callId, input })).catch(() => {
+    void this.send(encodeRemoteImageToolMessage({ callId, input, ...(name ? { name } : {}) })).catch(() => {
       this.pending.get(callId)?.reject(new Error('Image tool delivery may be unknown. Do not retry automatically.'))
     })
     try { return await result } finally {

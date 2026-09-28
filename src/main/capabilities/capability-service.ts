@@ -134,6 +134,7 @@ const legacyBuiltinMcpServerStatesSchema = z
 
 const builtinMcpServerStatesSchema =
   legacyBuiltinMcpServerStatesSchema.extend({
+    'story-graph': builtinMcpServerStateSchema.extend({ assignments: capabilityAssignmentsSchema }).default({ enabled: true, assignments: ['model', 'opencode', 'continue', 'deepseek-harness'] }),
     'builtin-browser': builtinMcpServerStateSchema,
     obsidian: builtinMcpServerStateSchema.default({
       enabled: false,
@@ -317,6 +318,7 @@ function defaultBuiltinMcpServerStates(
   })
   return {
     'knowledge-base': defaultState(),
+    'story-graph': { enabled: true, assignments: ['model', 'opencode', 'continue', 'deepseek-harness'] },
     'magic-notes': defaultState(),
     'goodbuddy-config': defaultState(),
     obsidian: { ...defaultState(), enabled: false },
@@ -880,6 +882,7 @@ export class CapabilityService {
           version: 6,
           obsidian: { vaultPath: '' },
           builtinMcpServers: {
+            'story-graph': defaultBuiltinMcpServerStates()['story-graph'],
             obsidian: defaultBuiltinMcpServerStates().obsidian,
             ...legacy.builtinMcpServers,
             'builtin-browser': {
@@ -1750,7 +1753,7 @@ export class CapabilityService {
     assignments: CapabilityAssignments
   ): Promise<CapabilitySnapshot> {
     return this.updateBuiltinMcpServerState(serverId, {
-      assignments: builtinMcpAssignmentsSchema.parse(assignments)
+      assignments: (serverId === 'story-graph' ? capabilityAssignmentsSchema : builtinMcpAssignmentsSchema).parse(assignments)
     })
   }
 
@@ -2053,11 +2056,9 @@ export class CapabilityService {
     target: RuntimeTarget
   ): Promise<BuiltinMcpServerId[]> {
     const runtime = runtimeTargetSchema.parse(target)
-    if (runtime === 'deepseek-harness') {
-      return []
-    }
     const state = await this.load()
     return builtinMcpServerIdSchema.options.filter((id) => {
+      if (runtime === 'deepseek-harness' && id !== 'story-graph') return false
       const server = state.builtinMcpServers[id]
       if (!server.enabled || !server.assignments.includes(runtime)) {
         return false

@@ -101,7 +101,7 @@ export class NativeClientCoordinator {
       target: selected.target, profile: selected.target === 'deepseek-harness' ? selected.settings.deepseekHarnessModelProfile
         : selected.target === 'continue' ? selected.settings.continueModelProfile : selected.settings.opencodeModelProfile,
       workMode, skills, mcpServers, builtin,
-      libraries: conversation.knowledgeLibraryIds, magicNotes: application.magicNotesEnabled, obsidian,
+      libraries: conversation.knowledgeLibraryIds, magicNotes: application.magicNotesEnabled, supervisor: application.heartbeatEnabled, obsidian,
       node: application.localToolEnvironment.node,
       binary: selected.target === 'continue' ? selected.settings.continueBinaryPath
         : selected.target === 'opencode' ? selected.settings.opencodeBinaryPath : undefined,
@@ -162,9 +162,11 @@ export class NativeClientCoordinator {
       const token = gateway.grant(requestId, builtin.includes('knowledge-base') ? conversation.knowledgeLibraryIds ?? [] : [], signal,
         builtin.includes('magic-notes') && application.magicNotesEnabled ? access : 'none',
         builtin.includes('goodbuddy-config') ? { access, workspacePath: space.rootPath } : undefined,
-        undefined, undefined, undefined, builtin.includes('obsidian') ? { settings: obsidian, access } : undefined)
+        undefined, undefined, undefined, builtin.includes('obsidian') ? { settings: obsidian, access } : undefined,
+        builtin.includes('story-graph') && application.heartbeatEnabled ? { projectId: project.id, runtimeTarget: selected.target } : undefined)
       const customToken = workMode === 'execute' ? gateway.grantCustomMcp(requestId, mcpServers, signal) : undefined
-      const endpoints = [token, customToken].flatMap((value, index) => value ? [{ name: `goodbuddy-${index}`, url: gateway.getEndpoint()!, headers: { Authorization: `Bearer ${value}` } }] : [])
+      const endpoints = [token, customToken].flatMap((value, index) => value ? [{ name: `goodbuddy-${index}`, url: gateway.getEndpoint()!, headers: { Authorization: `Bearer ${value}` },
+        readOnlyTools: index === 0 && workMode === 'ask' ? gateway.getAvailableToolNames(value) : [] }] : [])
       if (selected.target === 'deepseek-harness') {
         const profile = selected.settings.deepseekHarnessModelProfile
         if (!profile) throw new Error('DS Web requires a text model connection')

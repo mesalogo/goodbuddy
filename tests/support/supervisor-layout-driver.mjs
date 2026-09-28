@@ -61,6 +61,29 @@ app
       await settle()
     }
     const reports = []
+    const checkDiscussion = async () => {
+      const report = await js(`(() => {
+        const editor = document.querySelector('.supervision-discussion-editor');
+        const box = e => { const r = e.getBoundingClientRect(); return {left:r.left, right:r.right, top:r.top, bottom:r.bottom}; };
+        const target = editor.querySelector('.supervision-discussion-editor__target');
+        const field = editor.querySelector('.field'), label = field.querySelector('span'), input = field.querySelector('textarea');
+        const footer = editor.querySelector('footer');
+        return { target:box(target), field:box(field), label:box(label), input:box(input), footer:box(footer),
+          buttons:[...footer.querySelectorAll('button')].map(box), align:getComputedStyle(footer).justifyContent,
+          clientWidth:editor.clientWidth, scrollWidth:editor.scrollWidth, value:input.value,
+          border:getComputedStyle(target).borderBottomWidth, disclosures:editor.querySelectorAll('details').length };
+      })()`)
+      assert(report.value.includes('本周已核对交付清单') && report.value.includes('原始依据：模拟会议记录'), 'Actual reference content is editable')
+      assert.equal(report.field.top - report.target.bottom, 16, 'Target to message spacing')
+      assert.equal(report.input.top - report.label.bottom, 8, 'Label to input spacing')
+      assert.equal(report.footer.top - report.field.bottom, 16, 'Message to footer spacing')
+      assert.equal(report.border, '1px', 'Destination is separated')
+      assert.equal(report.align, 'flex-end', 'Shared right aligned footer')
+      assert(Math.abs(report.buttons[1].right - report.footer.right) < 1, 'Send at right edge')
+      assert(report.buttons[0].right < report.buttons[1].left && report.buttons[0].top === report.buttons[1].top, 'Cancel then send')
+      assert(report.scrollWidth <= report.clientWidth && report.disclosures === 0, 'No overflow or redundant disclosure')
+      return report
+    }
     if (process.env.GOODBUDDY_SUPERVISOR_CONTENT_LAYOUT) {
       win.show()
       const controlsOnly = process.env.GOODBUDDY_SUPERVISOR_CONTENT_LAYOUT === 'controls'
@@ -276,8 +299,8 @@ app
       app.quit()
       return
     }
-    if (process.env.GOODBUDDY_SUPERVISOR_AUTOMATIC_OVERVIEW) {
-      for (const scenario of ['populated', 'empty', 'plan-only']) {
+    if (process.env.GOODBUDDY_SUPERVISOR_AUTOMATIC_OVERVIEW || process.env.GOODBUDDY_SUPERVISOR_DISCUSSION) {
+      for (const scenario of process.env.GOODBUDDY_SUPERVISOR_DISCUSSION ? [] : ['populated', 'empty', 'plan-only']) {
         const empty = scenario !== 'populated'
         await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + (scenario === 'populated' ? '?menu=1' : scenario === 'plan-only' ? '?plan-only=1' : ''))
         await wait('!!document.querySelector("#supervisor-tab-plans")')
@@ -372,7 +395,7 @@ app
             assert(report.controls.every(box => box.left >= 0 && box.right <= width && box.top >= 0 && box.bottom <= 1100), 'Preview controls fit viewport')
             assert(await js('!document.querySelector(".supervisor-discussion [role=alert]")'), 'Preview loads without error')
             assert(await js('!document.querySelector(".supervisor-discussion details")'), 'No redundant context disclosure')
-            previews.push({ theme, ...report })
+            previews.push({ theme, ...report, editor: await checkDiscussion() })
             await writeFile(join(artifacts, `discussion-preview-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
         }
       }
@@ -391,6 +414,9 @@ app
       await js('document.fonts.ready')
       win.show()
       win.focus()
+      await wait('[...document.querySelectorAll(".supervision-card button")].some(b => b.textContent === "继续讨论" && !b.disabled)')
+      await js('[...document.querySelectorAll(".supervision-card button")].find(b => b.textContent === "继续讨论").click()')
+      await wait('!!document.querySelector(".supervision-discussion-editor textarea")')
       for (const theme of ['light', 'dark']) {
         await js(`document.documentElement.dataset.theme = '${theme}'`)
         for (const width of [480, 300, 200]) {
@@ -419,7 +445,13 @@ app
           assert(report.buttons.every(b => b.width === 34 && b.height === 34), 'Compact shared buttons')
           assert.equal(report.focus, 'solid')
           assert(!report.text.includes('simulated-conversation-uuid'), 'Raw UUID visible')
-          reports.push({ theme, ...report })
+          reports.push({ theme, ...report, editor: await checkDiscussion() })
+          await js('document.querySelector(".supervision-discussion-editor footer").scrollIntoView({block:"end"})')
+          await settle()
+          assert(await js(`([...document.querySelectorAll('.supervision-discussion-editor footer button')].every(e => {
+            const r = e.getBoundingClientRect();
+            return r.top >= 0 && r.bottom <= innerHeight && e.contains(document.elementFromPoint(r.x+r.width/2, r.y+r.height/2));
+          }))`), 'Sidebar footer reachable and hittable after scrolling')
           await writeFile(join(artifacts, `sidebar-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
         }
       }

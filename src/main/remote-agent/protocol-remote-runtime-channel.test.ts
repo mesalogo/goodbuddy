@@ -525,9 +525,17 @@ describe('ProtocolRemoteRuntimeChannel', () => {
       expect(describe).toHaveBeenCalledTimes(2)
       expect(fixture.client.blobBinaries[1]!.closed).toBe(true)
       expect(fixture.client.requests.at(-1)!.params).not.toHaveProperty('imageTool', expect.anything())
+      const graph = { available: vi.fn(async () => true), call: vi.fn() }
+      await fixture.channel.preparePrompt(prepare('graph-ask', 'ask'), undefined, wait.signal, graph)
+      expect(fixture.client.requests.at(-1)!.params).toMatchObject({ imageTool: { storyGraph: true } })
+      expect((fixture.client.requests.at(-1)!.params as { imageTool: object }).imageTool).not.toHaveProperty('description')
+      graph.available.mockResolvedValue(false)
+      await fixture.channel.preparePrompt(prepare('graph-disabled', 'ask'), undefined, wait.signal, graph)
+      expect(fixture.client.blobBinaries[2]!.closed).toBe(true)
+      expect(fixture.client.requests.at(-1)!.params).not.toHaveProperty('imageTool', expect.anything())
       fixture.client.responder = () => { throw new Error('preparation response lost') }
       await expect(fixture.channel.preparePrompt(prepare('operation-4'), binding, wait.signal)).rejects.toThrow()
-      expect(fixture.client.blobBinaries[2]!.closed).toBe(true)
+      expect(fixture.client.blobBinaries[3]!.closed).toBe(true)
     } finally { await fixture.channel.close() }
   })
   it('sends question replies on the authenticated control channel and rejects foreign bindings', async () => {

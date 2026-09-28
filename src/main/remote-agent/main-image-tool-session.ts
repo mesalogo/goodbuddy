@@ -12,8 +12,9 @@ export class MainImageToolSession {
 
   constructor(
     private readonly channel: RuntimeProtocolBinaryChannel,
-    private readonly binding: ImageToolBinding,
-    signal?: AbortSignal
+    private readonly binding: ImageToolBinding | undefined,
+    signal?: AbortSignal,
+    private readonly storyGraph?: import('../agent/knowledge-mcp-gateway').StoryGraphRemoteBinding
   ) {
     this.unsubscribe = channel.onClose(() => this.close())
     const abort = (): void => this.close()
@@ -45,9 +46,17 @@ export class MainImageToolSession {
     let reply: ReturnType<typeof remoteImageToolReplySchema.parse>
     try {
       this.wait.signal.throwIfAborted()
-      if (this.binding.context.workMode !== 'execute') throw new Error('Image tools are unavailable in Ask mode')
-      const result = await this.binding.call(call.input, call.callId, this.wait.signal)
-      reply = remoteImageToolReplySchema.parse({ callId: call.callId, result })
+      if ('name' in call) {
+        if (!this.storyGraph) throw new Error('Story Graph capability unavailable')
+        const storyGraphResult = call.name === 'story_graph_list'
+          ? { available: await this.storyGraph.available() }
+          : await this.storyGraph.call(call.name, call.input, this.wait.signal)
+        reply = remoteImageToolReplySchema.parse({ callId: call.callId, storyGraphResult })
+      } else {
+        if (!this.binding || this.binding.context.workMode !== 'execute') throw new Error('Image tools are unavailable in Ask mode')
+        const result = await this.binding.call(call.input, call.callId, this.wait.signal)
+        reply = remoteImageToolReplySchema.parse({ callId: call.callId, result })
+      }
     } catch (error) {
       reply = { callId: call.callId, error: (error instanceof Error ? error.message : 'Image tool failed').slice(0, 4_000) }
     }

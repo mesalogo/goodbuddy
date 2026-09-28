@@ -379,7 +379,8 @@ records are listed separately and do not introduce another feature status.
   compatible connection without requiring a duplicate selection. Settings
   displays the actual administrator or fallback model source. Ask permits
   only real Host-registered `read` and `skill` tools plus Main-managed Web
-  Search/Fetch proxies, and rejects plugin impersonation of those names.
+  Search/Fetch and enabled Story Graph proxies, and rejects plugin impersonation
+  of those names.
   Execute allows all enabled built-in and plugin tools with the current user's
   permissions. Image input follows the selected model connection's declared
   capability: text models reject images before Host or model invocation, while
@@ -404,8 +405,9 @@ records are listed separately and do not introduce another feature status.
   browser, using the current local project and model. These are independent
   sessions, without imported GoodBuddy conversation history. Closing a DS page
   does not stop its service; use GoodBuddy's stop action. Remote shortcuts are
-  not connected. Managed standard Node delivery, Continue/OpenCode Ask built-in
-  MCP mappings, and full cross-platform package acceptance remain incomplete;
+  not connected. Continue/OpenCode Ask now map Main-bound read tools through
+  native permissions. Managed standard Node delivery and full cross-platform
+  package acceptance remain incomplete;
   existing Windows real-model evidence does not establish full capability parity.
   See the [implementation and remaining work](./docs/features/assistant-workbar/progress.md#2026-09-27-local-native-client-validation).
 - **Runtime telemetry opt-out**: Local DS Web and remote Runtime/model-bridge
@@ -598,8 +600,9 @@ records are listed separately and do not introduce another feature status.
   the applicable checks pass.
 - [x] **On-demand built-in MCP**: Knowledge, Magic Notes, GoodBuddy
   configuration, and built-in browser MCP can be enabled independently and assigned to direct
-  models, GoodBuddy-managed OpenCode, and Continue. Settings explicitly marks
-  DeepSeek Harness unsupported. Built-in MCP uses short-lived local authority
+  models, GoodBuddy-managed OpenCode, and Continue. DeepSeek Harness remains
+  unsupported for these servers; Story Graph supports it through the Main proxy.
+  Built-in MCP uses short-lived local authority
   for the current request, and user configuration cannot loosen Ask/Execute
   read/write boundaries.
 - **Obsidian integration (implemented in source, acceptance in progress)**:
@@ -830,6 +833,13 @@ records are listed separately and do not introduce another feature status.
 - [ ] **Batch runs and comparison lab** (planned): Compares model, Prompt,
   role, and workflow configurations in batches and summarizes quality,
   duration, tokens, cost, failure rate, and artifact differences.
+- **Story Graph read tools (unreleased source)**: Agents can search saved work,
+  read current claims or timelines, and page through source evidence. Supervisor
+  enablement and Runtime assignment control discovery and calls, including old
+  sessions. Model, local Harness, and local/remote OpenCode and Continue share
+  the desktop reader. Queries make no model calls and do not infer replacement
+  from newer reviews. Cross-scope fact reuse and `as_of` remain deferred; see the
+  [design and validation](./docs/features/conversation-supervision/story-graph-mcp-design.md).
 - [ ] **Temporal memory and fact-conflict detection** (planned): Adds validity
   periods, current/expired/conflicting fact detection, fact checking, and
   evidence tracing to memory and the knowledge graph.
