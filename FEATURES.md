@@ -64,7 +64,9 @@ records are listed separately and do not introduce another feature status.
 - [x] **Compact conversation controls**: Composer options share a compact
   settings panel while Runtime, mode, sending, and queue controls remain
   available. Conversation search has an inline clear action that restores the
-  scoped list and returns focus to the input.
+  scoped list and returns focus to the input. New conversation and expandable
+  search share one row. Composer shortcut hints reflect successful registration
+  and saved settings, without being overwritten by late startup responses.
 - [x] **On-demand conversation history**: Lists load lightweight summaries
   rather than every conversation's process metadata. Opened and active
   conversations retain full details; search, copy, export, continued requests,
@@ -142,7 +144,7 @@ records are listed separately and do not introduce another feature status.
   templates.
 - [x] **Application center and navigation**:
   The footer shows equal-height Apps and Settings buttons with visible labels and a subtle vertical divider.
-  Clicking Apps, marked with a downward chevron, opens a lightweight upward anchored popup with enabled apps,
+  Clicking Apps, marked with an upward chevron, opens a lightweight upward anchored popup with enabled apps,
   regardless of pinning or opening history, and no modal backdrop. Clicking an app row closes
   the popup; Local Inference Monitor opens a separate modal preserving the workspace, while other apps
   open their main content pages. Manage Apps uses a LayoutGrid icon and opens Application Center with searchable cards and settings details;
@@ -331,7 +333,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.0`, paired with the current Desktop release candidate `0.15.2`; formal
+  `0.15.0`, paired with the current Desktop release candidate `0.15.3`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -468,6 +470,8 @@ records are listed separately and do not introduce another feature status.
   direct models report their own backoff phase. Footer dots are static, and
   unsupported Runtime retry details are not invented. Conversation-list
   indicators and send/stop behavior remain unchanged.
+  Cancellation and failure retain existing replies and use a single status;
+  cancellation is neutral, and Edit again appears only when input can be restored.
 - [x] **Simplified Runtime selection**: Conversation and project menus no
   longer enumerate every Runtime/model combination. Configure Runtime models
   in system settings; saved fixed project selections remain usable and
@@ -496,7 +500,12 @@ records are listed separately and do not introduce another feature status.
   fields take precedence, and these ordinary connection settings must not be
   used to store API keys or other secrets. See
   [model request customization](./docs/features/model-connections/README.md).
-- [x] **Context usage and automatic compaction**: Direct models update usage
+- [x] **Context usage and compaction**: Local direct text-model conversations
+  also support manual compaction below the automatic threshold or with automatic
+  compaction disabled. The selected summary model may incur charges; recent turns
+  and full stored history remain available, and saved summaries are reused.
+  Image connections and remote direct-model entry points are excluded.
+  Direct models update usage
   from each successful provider call. Images and tool rounds use the same
   accounting, with estimation only when the provider omits usage. The UI
   distinguishes This Model Call from Post-Compaction Conversation Estimate,
@@ -834,7 +843,7 @@ records are listed separately and do not introduce another feature status.
 - [ ] **Batch runs and comparison lab** (planned): Compares model, Prompt,
   role, and workflow configurations in batches and summarizes quality,
   duration, tokens, cost, failure rate, and artifact differences.
-- **Story Graph read tools (unreleased source)**: Agents can search saved work,
+- **Story Graph read tools (Desktop 0.15.2 / Agent 0.15.0)**: Agents can search saved work,
   read current claims or timelines, and page through source evidence. Supervisor
   enablement and Runtime assignment control discovery and calls, including old
   sessions. Model, local Harness, and local/remote OpenCode and Continue share
@@ -921,9 +930,15 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.2` and the Agent candidate is `0.15.0`, with
+- The current Desktop candidate is `0.15.3`; published Agent `0.15.0` is unchanged, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.3` restores local direct-model manual compaction, retains tool
+  authorization for the request lifetime, clarifies cancellation and sidebar/note
+  controls, avoids redundant startup/storage work, and trims duplicated package
+  dependencies and development files. It does not claim a proven overall rendering
+  speedup. Office live editing remains a design, not a delivered capability.
+  See the [0.15.3 preparation record](./docs/development/release-preparation-0.15.3.md).
 - Desktop `0.15.1` carries forward the unpublished `0.15.0` Obsidian integration, conversation capture into Magic
   Notes, and preview local native clients, plus knowledge, Supervisor, and UI
   fixes. Schema 48 adds conversation-source metadata; older clients require a

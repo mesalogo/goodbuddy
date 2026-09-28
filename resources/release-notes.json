@@ -2,6 +2,46 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.3",
+      "releasedAt": "2026-09-28",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**恢复直连模型手动压缩**：本地直连文本模型现在可使用“压缩上下文”，即使自动压缩已关闭或尚未达到触发阈值。摘要随会话保存并用于后续对话，同时保留最近轮次和完整历史；图像模型及远程直连入口不在本次范围内。",
+            "**长请求不再丢失工具授权**：修复请求仍在执行时，知识、笔记、浏览器、配置及自定义 MCP 等工具在十分钟后失去访问权限的问题。授权随当前请求保持有效，取消或结束后仍会撤销，不改变 Ask 和 Execute 的权限边界。",
+            "**区分取消和失败，避免重复提示**：请求取消或失败时保留已有回复，并只显示一次对应状态；取消采用中性提示，不再显示为错误。历史恢复保留终止状态，只有能恢复输入时才提供“重新编辑”。",
+            "**减少聊天与笔记启动的重复处理**：置顶会话不再重复扫描附件，未变化的消息和附件引用不再重复写入，笔记启动复用正文检查结果。流式回复保留实时 Markdown、公式与代码显示，不以延迟富文本换取速度，也不宣称整体渲染耗时已显著下降。",
+            "**侧栏搜索与快捷键提示更清楚**：“新建对话”和可展开搜索共用一行，应用与设置入口、分隔线和滚动条保持一致布局。输入框提示只显示已成功注册的快捷键，设置保存后及时更新，较晚返回的启动信息不会恢复已关闭的提示。",
+            "**笔记和工作栏操作更紧凑**：笔记采集的按钮靠右排列，范围说明按需查看，输入校验贴近对应字段；窄窗口中的保存按钮不再拉伸。文件差异操作与路径分组，浏览器前往按钮使用图标并保留提示和可访问名称。",
+            "**精简桌面安装包内容**：已打入界面产物的依赖不再重复作为运行依赖分发，DS Web 资源排除类型声明、调试映射和调试符号。保留运行资源与许可证，减少重复内容和散落文件，具体安装包大小以各平台发布资产为准。"
+          ],
+          "notices": [
+            "本次仅更新 Desktop，继续使用已发布的 Agent **0.15.0**，无需为本版重新安装 Agent。",
+            "手动压缩会调用所选摘要模型，可能产生费用。数据库仍为 schema 48；从旧版升级前请备份完整数据库和相邻 `notes/` 目录。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Restore manual compaction for direct models**: Local direct text-model conversations can now use Compact context even when automatic compaction is disabled or its threshold has not been reached. Summaries are saved with the conversation and reused in subsequent requests while recent turns and full history remain available; image models and remote direct-model entry points are outside this change.",
+            "**Keep tool access during long requests**: Fixes active requests losing access to knowledge, notes, browser, configuration, and custom MCP tools after ten minutes. Authorization now lasts for the current request and is still revoked on cancellation or completion, without changing Ask or Execute permission boundaries.",
+            "**Distinguish cancellation from failure without duplicate notices**: Cancelled and failed requests retain existing replies and show a single terminal status; cancellation uses neutral feedback rather than an error. Restored history preserves that status, and Edit again is offered only when the input can be recovered.",
+            "**Avoid redundant chat and note startup work**: Pinning conversations no longer rescans attachments, unchanged messages and attachment references avoid repeat writes, and note startup reuses body inspection results. Streaming replies retain live Markdown, math, and code rendering without delaying rich text or claiming a proven overall rendering speedup.",
+            "**Clearer sidebar search and shortcut hints**: New conversation and expandable search share one row, with consistent Apps and Settings entries, dividers, and scrollbars. Composer hints show only successfully registered shortcuts, reflect saved settings, and cannot be restored by a late startup response after being disabled.",
+            "**More compact note and workbar actions**: Note capture uses right-aligned actions, on-demand scope help, and field-specific validation; Save buttons no longer stretch in narrow windows. File-diff actions are grouped with their path, and the browser Go button uses an icon while retaining its tooltip and accessible name.",
+            "**Trim desktop package contents**: Dependencies already bundled into the interface are no longer duplicated as runtime dependencies, and DS Web resources exclude type declarations, source maps, and debug symbols. Runtime assets and licenses remain included, reducing duplicate content and loose files; final sizes are listed with each platform's release assets."
+          ],
+          "notices": [
+            "This is a Desktop-only update and continues to use published Agent **0.15.0**. Reinstalling the Agent is not required for this release.",
+            "Manual compaction calls the selected summary model and may incur charges. The database remains on schema 48; back up the complete database and adjacent `notes/` directory before upgrading from older versions."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.2",
       "releasedAt": "2026-09-28",
       "notes": {
