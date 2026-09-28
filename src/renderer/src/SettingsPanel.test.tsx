@@ -257,44 +257,11 @@ const capabilitySnapshot = {
       )[]
     }
   ],
-  builtinMcpServers: [
-    {
-      id: 'knowledge-base' as const,
-      enabled: true,
-      assignments: ['model', 'opencode', 'continue'] as (
-        | 'model'
-        | 'opencode'
-        | 'continue'
-      )[]
-    },
-    {
-      id: 'magic-notes' as const,
-      enabled: true,
-      assignments: ['model', 'opencode', 'continue'] as (
-        | 'model'
-        | 'opencode'
-        | 'continue'
-      )[]
-    },
-    {
-      id: 'goodbuddy-config' as const,
-      enabled: true,
-      assignments: ['model', 'opencode', 'continue'] as (
-        | 'model'
-        | 'opencode'
-        | 'continue'
-      )[]
-    },
-    {
-      id: 'builtin-browser' as const,
-      enabled: false,
-      assignments: ['model', 'opencode', 'continue'] as (
-        | 'model'
-        | 'opencode'
-        | 'continue'
-      )[]
-    }
-  ],
+  builtinMcpServers: builtinMcpServers.map(server => ({
+    id: server.id,
+    enabled: server.id !== 'builtin-browser' && server.id !== 'obsidian',
+    assignments: [...server.supportedAssignments]
+  })),
   mcpServers: [] as CapabilitySnapshot['mcpServers'],
   obsidian: { vaultPath: '' },
   webSearch: {
@@ -5857,9 +5824,14 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(
       screen.getAllByRole('button', {
-        name: /(?:展开|收起)服务器 (?:知识库|笔记|Obsidian|GoodBuddy 配置|内置浏览器)/u
+        name: /^(?:展开|收起)服务器 /u
       })
     ).toHaveLength(builtinMcpServers.length)
+    for (const server of builtinMcpServers) {
+      expect(screen.getByRole('button', {
+        name: name => name === `展开服务器 ${server.name}` || name === `收起服务器 ${server.name}`
+      })).toBeInTheDocument()
+    }
     expect(
       screen.queryByText(/按请求提供，可分别控制启停与 Runtime 分配/)
     ).not.toBeInTheDocument()
