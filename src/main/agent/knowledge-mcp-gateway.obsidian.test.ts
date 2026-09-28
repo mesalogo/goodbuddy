@@ -151,7 +151,7 @@ describe('Obsidian gateway', () => {
     gateway.revokeObsidianCapabilities()
     gateway.revokeObsidianCapabilities()
     for (const revoked of [token, writeToken, mixedToken]) {
-      expect(() => gateway.getAvailableToolNames(revoked)).toThrow('unavailable or expired')
+      expect(() => gateway.getAvailableToolNames(revoked)).toThrow('Tool authorization is unavailable')
     }
     expect(gateway.getAvailableToolNames(knowledgeToken)).toEqual(['knowledge_list', 'knowledge_search'])
     const replacement = gateway.grant('replacement', [], signal, 'none', undefined, undefined, undefined, undefined,

@@ -103,8 +103,6 @@ const MAX_DOWNSTREAM_MCP_SESSIONS_PER_CAPABILITY = 8
 const CUSTOM_MCP_TIMEOUT_MS = 30_000
 const CUSTOM_MCP_MAX_TOTAL_TIMEOUT_MS = 5 * 60_000
 const CUSTOM_MCP_TASK_CANCEL_TIMEOUT_MS = 5_000
-const DEFAULT_CAPABILITY_TTL_MS = 10 * 60_000
-const MAX_CAPABILITY_TTL_MS = 15 * 60_000
 const customMcpJsonSchemaValidator = new AjvJsonSchemaValidator()
 
 export {
@@ -215,7 +213,6 @@ type Capability = {
   browserTabId?: BrowserTabId
   browserUsageLease?: BrowserTabUsageLease
   obsidian?: { settings: ObsidianSettings; access: 'read' | 'write' }
-  expiresAt: number
   signal: AbortSignal
   brokerController: AbortController
   customMcpServers: readonly ResolvedMcpServer[]
@@ -256,9 +253,7 @@ type DownstreamMcpSession = {
 
 export type KnowledgeMcpGatewayOptions = {
   storyGraphService?: StoryGraphService
-  capabilityTtlMs?: number
   maximumBodyBytes?: number
-  now?: () => number
   magicNotesDatabase?: MagicNotesDatabase
   configService?: GoodBuddyConfigService
   obsidianService?: ObsidianService
@@ -387,8 +382,6 @@ export class KnowledgeMcpGateway {
   private readonly downstreamMcpCleanups = new Set<Promise<void>>()
   private readonly customMcpCleanups = new Set<Promise<void>>()
   private readonly activeObsidianCalls = new Set<Promise<CallToolResult>>()
-  private readonly now: () => number
-  private readonly capabilityTtlMs: number
   private readonly maximumBodyBytes: number
   private readonly magicNotesDatabase?: MagicNotesDatabase
   private readonly configService?: GoodBuddyConfigService
@@ -410,18 +403,8 @@ export class KnowledgeMcpGateway {
     private readonly knowledgeService: KnowledgeService,
     options: KnowledgeMcpGatewayOptions = {}
   ) {
-    const ttl = options.capabilityTtlMs ?? DEFAULT_CAPABILITY_TTL_MS
-    if (
-      !Number.isSafeInteger(ttl) ||
-      ttl < 1 ||
-      ttl > MAX_CAPABILITY_TTL_MS
-    ) {
-      throw new RangeError('Knowledge capability TTL is invalid')
-    }
-    this.capabilityTtlMs = ttl
     this.maximumBodyBytes =
       options.maximumBodyBytes ?? MAX_REQUEST_BODY_BYTES
-    this.now = options.now ?? Date.now
     this.storyGraphService = options.storyGraphService
     this.magicNotesDatabase = options.magicNotesDatabase
     this.configService = options.configService
@@ -615,7 +598,6 @@ export class KnowledgeMcpGateway {
   private storeCapability(
     value: Omit<
       Capability,
-      | 'expiresAt'
       | 'references'
       | 'removeAbortListener'
       | 'brokerController'
@@ -628,10 +610,10 @@ export class KnowledgeMcpGateway {
     const abort = (): void => {
       this.revoke(token)
     }
+    // Capabilities live with the request; elapsed time must not interrupt long runs.
     value.signal.addEventListener('abort', abort, { once: true })
     this.capabilities.set(token, {
       ...value,
-      expiresAt: this.now() + this.capabilityTtlMs,
       brokerController,
       references: new Map(),
       removeAbortListener: () => {
@@ -713,13 +695,9 @@ export class KnowledgeMcpGateway {
 
   private getCapability(token: string): Capability {
     const capability = this.capabilities.get(token)
-    if (
-      !capability ||
-      capability.signal.aborted ||
-      capability.expiresAt <= this.now()
-    ) {
+    if (!capability || capability.signal.aborted) {
       this.revoke(token)
-      throw new Error('Knowledge capability is unavailable or expired')
+      throw new Error('Tool authorization is unavailable: the request has ended or the token is invalid')
     }
     return capability
   }

@@ -9041,7 +9041,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         rootDirectory: join(root, 'clients'), managedNodeDirectory: join(root, 'node'),
         bundledRuntimePaths: resolveBundledRuntimePaths({ appPath: process.cwd(), resourcesPath: '', packaged: false }),
         npmCliPath: resolveNpmCliPaths({ appPath: process.cwd(), resourcesPath: '', packaged: false }).npmCliPath,
-        createGateway: () => new KnowledgeMcpGateway({} as never, { now: () => 0 }),
+        createGateway: () => new KnowledgeMcpGateway({} as never),
         openExternal: async (url) => { opened.push(url) }
       })
       harness = createHarness({}, undefined, 'always', undefined, false, undefined, undefined, undefined,

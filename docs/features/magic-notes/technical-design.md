@@ -474,6 +474,13 @@ The built-in MCP gateway returns invalid scoped-tool arguments as an
 the model to correct its arguments without an MCP internal-error response.
 Validation failures do not execute the tool.
 
+Note tools can be authorized with the knowledge-base switch off. The shared
+desktop gateway binds authorization to each request, without a fixed elapsed-time
+expiry, so long-running requests retain tool access. Request completion,
+cancellation, failure cleanup, or gateway disposal revokes the token. Invalid or
+revoked tokens report unavailable tool authorization rather than a knowledge-base
+expiry error.
+
 These note tools run in the desktop gateway. Remote gbagent ACP sessions
 currently inject only the image MCP server, so this change requires no
 daemon implementation update.

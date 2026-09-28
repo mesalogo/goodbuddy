@@ -1446,8 +1446,6 @@ if (hasSingleInstanceLock) {
             (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
           read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraph(name, input, projectId, signal)
         },
-        // This dedicated gateway lives until native-client disposal, not a chat request timeout.
-        now: () => 0,
         magicNotesDatabase: startupAssistantDatabase, configService: goodbuddyConfigService,
         obsidianService, launchEnvironmentProvider: startupLocalToolEnvironmentService.launchEnvironmentProvider
       })

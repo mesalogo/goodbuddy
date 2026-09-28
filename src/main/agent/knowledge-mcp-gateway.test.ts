@@ -199,6 +199,7 @@ const temporaryDirectories: string[] = []
 const httpServers: Server[] = []
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(gateways.splice(0).map((gateway) => gateway.dispose()))
   for (const database of databases.splice(0)) {
     database.close()
@@ -663,13 +664,10 @@ describe('KnowledgeMcpGateway', () => {
     ).rejects.toThrow()
   })
 
-  it('creates no capability for empty scope and rejects revoked, aborted, and expired capabilities', async () => {
+  it('keeps long-running request capabilities valid until revoked or aborted', async () => {
     const { service } = createService()
-    let now = 1_000
-    const gateway = new KnowledgeMcpGateway(service, {
-      capabilityTtlMs: 10,
-      now: () => now
-    })
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const gateway = new KnowledgeMcpGateway(service)
     gateways.push(gateway)
     expect(
       gateway.grant('empty', [], new AbortController().signal)
@@ -680,10 +678,12 @@ describe('KnowledgeMcpGateway', () => {
       [firstLibraryId],
       new AbortController().signal
     )!
+    clock.mockReturnValue(1_000 + 24 * 60 * 60_000)
+    await expect(gateway.search(revoked, { query: 'x' })).resolves.toHaveLength(1)
     gateway.revoke(revoked)
     await expect(
       gateway.search(revoked, { query: 'x' })
-    ).rejects.toThrow('unavailable or expired')
+    ).rejects.toThrow('Tool authorization is unavailable')
 
     const abortController = new AbortController()
     const aborted = gateway.grant(
@@ -694,21 +694,23 @@ describe('KnowledgeMcpGateway', () => {
     abortController.abort()
     await expect(
       gateway.search(aborted, { query: 'x' })
-    ).rejects.toThrow('unavailable or expired')
+    ).rejects.toThrow('Tool authorization is unavailable')
 
-    const expired = gateway.grant(
-      'expired',
+    const nextRequest = gateway.grant(
+      'next-request',
       [firstLibraryId],
       new AbortController().signal
     )!
-    now += 11
+    expect(nextRequest).not.toBe(revoked)
     await expect(
-      gateway.search(expired, { query: 'x' })
-    ).rejects.toThrow('unavailable or expired')
+      gateway.search(nextRequest, { query: 'x' })
+    ).resolves.toHaveLength(1)
+    clock.mockRestore()
   })
 
-  it('grants bounded global Magic Notes search without a knowledge scope', () => {
+  it('keeps Magic Notes available during long requests without a knowledge scope', () => {
     const { service } = createService()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const searchMagicNotes = vi.fn(() => [
       {
         noteId: '00000000-0000-4000-8000-000000000701',
@@ -754,6 +756,7 @@ describe('KnowledgeMcpGateway', () => {
       'read'
     )!
 
+    clock.mockReturnValue(1_000 + 24 * 60 * 60_000)
     expect(gateway.getAvailableToolNames(token)).toEqual([
       'note_list',
       'note_get',
@@ -777,6 +780,9 @@ describe('KnowledgeMcpGateway', () => {
         noteIds: ['not-allowed']
       })
     ).toThrow()
+    gateway.revoke(token)
+    expect(() => gateway.getAvailableToolNames(token)).toThrow('Tool authorization is unavailable')
+    clock.mockRestore()
   })
 
   it('keeps Ask read-only and supports revision-safe Magic Notes CRUD in Execute', async () => {
@@ -980,6 +986,7 @@ describe('KnowledgeMcpGateway', () => {
   })
 
   it('proxies custom MCP through a request-scoped loopback token without exposing the upstream credential', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const upstreamAuthorizations: Array<string | undefined> = []
     const upstream = createServer(async (request, response) => {
       upstreamAuthorizations.push(request.headers.authorization)
@@ -1081,6 +1088,7 @@ describe('KnowledgeMcpGateway', () => {
       expect(JSON.stringify(listed)).not.toContain(
         `127.0.0.1:${address.port}`
       )
+      clock.mockReturnValue(1_000 + 24 * 60 * 60_000)
       const result = await client.callTool({
         name: listed.tools[0]!.name,
         arguments: { value: 'hello' }
@@ -1094,6 +1102,7 @@ describe('KnowledgeMcpGateway', () => {
     } finally {
       gateway.revoke(token)
       await client.close()
+      clock.mockRestore()
     }
   })
 
