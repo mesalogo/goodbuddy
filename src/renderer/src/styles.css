@@ -3573,7 +3573,7 @@ textarea:focus-visible {
   display: flex;
   min-width: 248px;
   flex-direction: column;
-  padding-bottom: var(--space-4);
+  padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-default);
   gap: var(--space-1);
 }
@@ -3652,7 +3652,7 @@ textarea:focus-visible {
   flex: 1;
   flex-direction: column;
   padding: var(--space-2);
-  margin-top: var(--space-4);
+  margin-top: var(--space-2);
   border-radius: var(--radius-control);
   background: var(--surface-raised);
 }
@@ -3841,8 +3841,8 @@ textarea:focus-visible {
 
 .sidebar-footer {
   min-width: 248px;
-  padding-top: var(--space-4);
-  margin-top: var(--space-4);
+  padding-top: var(--space-2);
+  margin-top: var(--space-2);
   border-top: 1px solid var(--border-default);
 }
 

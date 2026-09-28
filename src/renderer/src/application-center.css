@@ -218,5 +218,5 @@
 .sidebar-footer__divider {
   flex: 0 0 1px;
   height: var(--space-6);
-  background: var(--border-control);
+  background: var(--border-default);
 }
