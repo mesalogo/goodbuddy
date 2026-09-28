@@ -4674,6 +4674,23 @@ button > svg {
   justify-content: flex-end;
 }
 
+.workspace-files__diff-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.workspace-files__diff-heading > strong {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.workspace-files__diff-heading > .workspace-files__toolbar {
+  justify-content: flex-start;
+}
+
 .assistant-sidebar__body--browser {
   overflow: hidden;
 }

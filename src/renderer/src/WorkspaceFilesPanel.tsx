@@ -473,17 +473,19 @@ export function WorkspaceFilesPanel({
           setDiff(undefined)
           setActionError('')
         }}><ChevronLeft size={14} />{t('files.backToChanges')}</button>
-        <strong>{diff.path}</strong>
+        <div className="workspace-files__diff-heading">
+          <strong>{diff.path}</strong>
+          <div className="workspace-files__toolbar">
+            {!changedByPath.get(diff.path)?.status.includes('D') && <button type="button" className="secondary-button" onClick={() => onOpenFile(diff.path)}>{t('files.viewCurrentFile')}</button>}
+            <button type="button" className="secondary-button" disabled={!diff.value && !diff.error} onClick={() => openDiff(diff.path)}>{t(!diff.value && !diff.error ? 'sidebar.workspace.refreshing' : 'sidebar.workspace.refresh')}</button>
+            <button type="button" className="secondary-button" onClick={() => void copyPath(diff.path)}>{t('sidebar.workspace.copyPath')}</button>
+          </div>
+        </div>
       </header>
-      <div className="workspace-files__toolbar">
-        {!changedByPath.get(diff.path)?.status.includes('D') && <button type="button" className="secondary-button" onClick={() => onOpenFile(diff.path)}>{t('files.viewCurrentFile')}</button>}
-        <button type="button" className="secondary-button" disabled={!diff.value && !diff.error} onClick={() => openDiff(diff.path)}>{t(!diff.value && !diff.error ? 'sidebar.workspace.refreshing' : 'sidebar.workspace.refresh')}</button>
-        <button type="button" className="secondary-button" onClick={() => void copyPath(diff.path)}>{t('sidebar.workspace.copyPath')}</button>
-      </div>
       {diff.error ? <p role="alert">{diff.error}<button type="button" onClick={() => openDiff(diff.path)}>{t('files.retry')}</button></p>
         : !diff.value ? <p>{t('files.reading')}</p> : <>
           {diff.value.stagedPatch && <><h4>{t('files.staged')}</h4>{renderPatch(diff.value.stagedPatch)}</>}
-          {diff.value.patch && <><h4>{t('files.unstaged')}</h4>{renderPatch(diff.value.patch)}</>}
+          {diff.value.patch && <>{diff.value.stagedPatch && <h4>{t('files.unstaged')}</h4>}{renderPatch(diff.value.patch)}</>}
           {!diff.value.patch && !diff.value.stagedPatch && <p>{t('files.noDiff')}</p>}
           {diff.value.truncated && <p>{t('files.diffTruncated')}</p>}
         </>}
