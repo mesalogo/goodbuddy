@@ -5935,8 +5935,12 @@ describe("App", () => {
     expect(screen.getByText(toolError, { selector: ".tool-execution__error-preview" })).toBeVisible();
     expect(screen.queryByText(runtimeError)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "重新编辑并发送" }),
+      screen.getByRole("button", { name: "重新编辑" }),
     ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新编辑" }));
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue("读取演示文稿");
+    expect(run).toHaveBeenCalledOnce();
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "继续处理" },
@@ -5945,7 +5949,7 @@ describe("App", () => {
     await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
 
     expect(
-      screen.queryByRole("button", { name: "重新编辑并发送" }),
+      screen.queryByRole("button", { name: "重新编辑" }),
     ).not.toBeInTheDocument();
   });
 
@@ -8469,7 +8473,7 @@ describe("App", () => {
         screen.queryByText("上次运行意外中断，可以重新发送问题"),
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "重新编辑并发送" }),
+        screen.queryByRole("button", { name: "重新编辑" }),
       ).not.toBeInTheDocument();
       expect(api.conversationQueue.ready).not.toHaveBeenCalled();
 
@@ -10074,6 +10078,40 @@ describe("App", () => {
     expect(mode).toBeDisabled();
   });
 
+  it.each([
+    ["cancelled", ""], ["cancelled", "Partial answer"],
+    ["failed", ""], ["failed", "Partial answer"],
+  ] as const)("preserves reply content and persists a single %s status (%s)", async (status, content) => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "Test terminal reply" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    // Deliberately unrelated to cancellation copy: classification uses status.
+    const detail = "Terminal event detail";
+    act(() => {
+      if (content) agentListener?.({ requestId, type: "text", delta: content });
+      agentListener?.({ requestId, type: "error", status, message: detail });
+    });
+    const notice = await screen.findByRole(status === "cancelled" ? "status" : "alert", { name: detail });
+    expect(screen.getAllByText(detail)).toHaveLength(1);
+    expect(notice.classList.contains("message__status--error")).toBe(status === "failed");
+    const article = notice.closest("article")!;
+    expect(article.querySelector(".message__content")?.textContent ?? "").toBe(content);
+    await waitFor(() => {
+      const saved = vi.mocked(api.conversations.saveLocal).mock.calls
+        .flatMap(([batch]) => batch).flatMap(item => item.messages ?? [])
+        .findLast(message => message.terminalStatus === status);
+      expect(saved).toMatchObject({ state: "error", terminalStatus: status, content, status: detail });
+      expect(saved?.blocks?.filter(block => block.type === "text").map(block => block.content).join("") ?? "").toBe(content);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "重新编辑" }));
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue("Test terminal reply");
+    expect(run).toHaveBeenCalledOnce();
+  });
+
   it("terminalizes tools and activity when a request is cancelled", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: "opencode",
@@ -10111,15 +10149,17 @@ describe("App", () => {
     });
 
     expect(await screen.findByText("已取消")).toBeInTheDocument();
-    const cancelledStatus = screen
-      .getAllByText("请求已取消")
-      .find((element) => element.classList.contains("message__status"));
-    expect(cancelledStatus).toBeDefined();
+    const cancelledStatus = screen.getByRole("status", { name: "请求已取消" });
+    expect(screen.getAllByText("请求已取消")).toHaveLength(1);
+    expect(cancelledStatus).not.toHaveClass("message__status--error");
+    expect(cancelledStatus).toHaveAttribute("aria-live", "polite");
     const cancelledDot = cancelledStatus?.querySelector(".message__status-dot");
     expect(cancelledDot).toHaveClass("message__status-dot");
     expect(cancelledDot).not.toHaveClass("message__status-dot--active");
     fireEvent.click(screen.getByText("运行记录"));
     expect((await screen.findAllByText("已取消")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("任务已取消")).toBeInTheDocument();
+    expect(screen.queryByText("任务执行失败")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^进行中 \d+$/u }));
     expect(
       screen.getByText("当前没有等待中或正在运行的活动。"),
@@ -12364,7 +12404,7 @@ describe("App", () => {
         } else {
           expect(screen.queryByRole("button", { name: "提交回答" })).not.toBeInTheDocument();
           expect(screen.queryByText("Already queued?")).not.toBeInTheDocument();
-          if (outcome !== "done") expect(screen.getByRole("alert")).toHaveTextContent("Terminal queue result");
+          if (outcome !== "done") expect(screen.getByRole(outcome === "cancelled" ? "status" : "alert", { name: "Terminal queue result" })).toHaveTextContent("Terminal queue result");
         }
       }
     },

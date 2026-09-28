@@ -41,6 +41,7 @@ import { AgentQuestionCard } from './AgentQuestionCard'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { formatTime, type TimeFormatLocale } from './time-format'
 import { formatCompactTokens } from './token-format'
+import { isCancelledMessage } from './message-terminal-status'
 
 export type ToolActivity = ConversationToolActivity
 
@@ -61,6 +62,7 @@ export type Message = {
   displayCaptureTruncated?: boolean
   createdAt: number
   state: 'streaming' | 'complete' | 'error'
+  terminalStatus?: ConversationMessage['terminalStatus']
   status?: string
   runtimeChecklist?: RuntimeChecklist
   contextCompression?: ConversationMessage['contextCompression']
@@ -706,7 +708,19 @@ function ChatMessageRowView({
     subagent.state === 'queued' || subagent.state === 'running')
   const activeCompression = compressionMarkers.find((marker) =>
     marker.state === 'compressing')
-  const statusText = message.role === 'assistant' && message.state === 'streaming'
+  // Old snapshots may contain the fallback status as the entire reply. Keep
+  // the body (it could be genuine output) and omit only the duplicate status.
+  const duplicateLegacyStatus = message.role === 'assistant' &&
+    message.state === 'error' && message.terminalStatus === undefined &&
+    Boolean(message.status) && message.content === message.status &&
+    (!message.blocks?.length || (
+      message.blocks.at(-1)?.type === 'text' &&
+      message.blocks.every(block => block.type !== 'text' ||
+        (block === message.blocks?.at(-1) && block.content === message.status))
+    ))
+  const failed = message.state === 'error' && !isCancelledMessage(message)
+  const statusText = duplicateLegacyStatus ? undefined
+    : message.role === 'assistant' && message.state === 'streaming'
     ? question
       ? t('chat.status.waitingForAnswer')
       : message.approval
@@ -1233,21 +1247,21 @@ function ChatMessageRowView({
             aria-atomic="true"
             aria-label={statusText}
             aria-live={
-              message.knowledgeRetrieval || compressionMarkers.length > 0
+              message.state !== 'error' && (message.knowledgeRetrieval || compressionMarkers.length > 0)
                 ? undefined
-                : message.state === 'error'
+                : failed
                   ? 'assertive'
                   : 'polite'
             }
             className={
-              message.state === 'error'
+              failed
                 ? 'message__status message__status--error'
                 : 'message__status'
             }
             role={
-              message.knowledgeRetrieval || compressionMarkers.length > 0
+              message.state !== 'error' && (message.knowledgeRetrieval || compressionMarkers.length > 0)
                 ? undefined
-                : message.state === 'error'
+                : failed
                   ? 'alert'
                   : 'status'
             }
@@ -1259,7 +1273,7 @@ function ChatMessageRowView({
             {statusText}
           </div>
         )}
-        {canRetry && (
+        {canRetry && Boolean(retryContent?.trim()) && (
           <button
             className="message-retry"
             onClick={() => {

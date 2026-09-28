@@ -390,7 +390,7 @@ export const app = {
         graph: 'Graph'
       }
     },
-    retry: 'Edit and send again',
+    retry: 'Edit again',
     copyMessage: 'Copy this response',
     loadEarlierMessages: 'Load earlier messages ({{count}} remaining)',
     scrollToBottom: 'Scroll to bottom',
@@ -408,6 +408,7 @@ export const app = {
       savingImage: 'Image generated; saving the result',
       taskCompleted: 'Task completed',
       taskFailed: 'Task failed',
+      taskCancelled: 'Task cancelled',
       runtimeCompleted: 'Agent Runtime completed its response',
       activityIncomplete:
         'The parent request ended before this activity reported completion',

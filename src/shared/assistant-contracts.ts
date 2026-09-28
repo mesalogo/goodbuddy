@@ -395,6 +395,7 @@ export const conversationMessageSchema = z
     displayCaptureTruncated: z.boolean().optional(),
     createdAt: z.number().int().nonnegative(),
     state: z.enum(['streaming', 'complete', 'error']),
+    terminalStatus: z.enum(['failed', 'cancelled']).optional(),
     status: z.string().max(4_000).optional(),
     contextCompression:
       conversationContextCompressionMarkerSchema.optional(),

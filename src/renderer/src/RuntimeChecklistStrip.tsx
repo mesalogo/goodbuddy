@@ -2,6 +2,7 @@ import { CheckCircle2, ChevronDown, ChevronUp, Circle, CircleDashed, XCircle } f
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Message } from './ChatTimeline'
+import { isCancelledMessage } from './message-terminal-status'
 import './runtime-checklist.css'
 
 const statusIcons = {
@@ -34,7 +35,8 @@ function Checklist({ message }: { message: Message }): React.JSX.Element {
   const completed = items.reduce((count, item) => count + Number(item.status === 'completed'), 0)
   const current = items.find(item => item.status === 'in_progress')
   const result = message.state === 'streaming' ? undefined : message.status || t(
-    message.state === 'error' ? 'runtimeChecklist.failed' : 'runtimeChecklist.finished'
+    isCancelledMessage(message) ? 'chat.status.taskCancelled'
+      : message.state === 'error' ? 'runtimeChecklist.failed' : 'runtimeChecklist.finished'
   )
   const summary = t('runtimeChecklist.count', { completed, total: items.length })
   return (

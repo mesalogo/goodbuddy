@@ -1027,6 +1027,7 @@ function toConversationMessage(message: Message): ConversationMessage {
     displayCaptureTruncated: message.displayCaptureTruncated,
     createdAt: message.createdAt,
     state: message.state,
+    terminalStatus: message.terminalStatus,
     status: message.status,
     runtimeChecklist: message.runtimeChecklist,
     contextCompression: message.contextCompression,
@@ -4835,7 +4836,8 @@ function App(): React.JSX.Element {
           kind: "result",
           title:
             event.type === "error"
-              ? tRef.current("chat.status.taskFailed")
+              ? tRef.current(event.status === "cancelled"
+                  ? "chat.status.taskCancelled" : "chat.status.taskFailed")
               : tRef.current("chat.status.taskCompleted"),
           detail:
             event.type === "error"
@@ -4869,15 +4871,14 @@ function App(): React.JSX.Element {
                 ? ("cancelled" as const)
                 : ("failed" as const)
               : ("interrupted" as const);
-          const fallbackError =
-            event.type === "error" && !representedToolError && !message.content
-              ? event.message
-              : "";
           return {
             ...message,
             state: event.type === "error" ? "error" : "complete",
+            terminalStatus: event.type === "error"
+              ? event.status === "cancelled" ? "cancelled" : "failed"
+              : undefined,
             status:
-              event.type === "error" && !representedToolError
+              event.type === "error" && (event.status === "cancelled" || !representedToolError)
                 ? event.message
                 : event.type === "done"
                   ? tRef.current("chat.status.taskCompleted")
@@ -4928,21 +4929,7 @@ function App(): React.JSX.Element {
                   }
                 : subagent,
             ),
-            blocks: toolTerminalState
-              ? terminalizeMessageToolBlocks(
-                  appendMessageContentBlock(
-                    message.blocks,
-                    "text",
-                    fallbackError,
-                  ),
-                  toolTerminalState,
-                )
-              : appendMessageContentBlock(
-                  message.blocks,
-                  "text",
-                  fallbackError,
-                ),
-            content: fallbackError || message.content,
+            blocks: terminalizeMessageToolBlocks(message.blocks, toolTerminalState),
           };
         });
         activeRuns.current.delete(event.requestId);

@@ -373,7 +373,7 @@ export const app = {
         graph: '图谱'
       }
     },
-    retry: '重新编辑并发送',
+    retry: '重新编辑',
     copyMessage: '复制此回复',
     loadEarlierMessages: '加载更早的消息（还剩 {{count}} 条）',
     scrollToBottom: '到底部',
@@ -391,6 +391,7 @@ export const app = {
       savingImage: '图片已生成，正在保存结果',
       taskCompleted: '任务执行完成',
       taskFailed: '任务执行失败',
+      taskCancelled: '任务已取消',
       runtimeCompleted: 'Agent Runtime 已完成响应',
       activityIncomplete: '父请求已结束，但该活动未报告完成状态',
       answerSubmitted: '回答已提交，OpenCode 正在继续执行',

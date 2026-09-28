@@ -18,6 +18,17 @@ const message: Message = {
 }
 
 describe('RuntimeChecklistStrip', () => {
+  it('uses the structured cancellation result when no status text was saved', () => {
+    const { rerender } = render(<RuntimeChecklistStrip messages={[
+      { ...message, state: 'error', terminalStatus: 'cancelled' }
+    ]} />)
+    expect(screen.getByRole('button', { name: /执行清单/ })).toHaveTextContent('任务已取消')
+    rerender(<RuntimeChecklistStrip messages={[
+      { ...message, state: 'error', terminalStatus: 'failed' }
+    ]} />)
+    expect(screen.getByRole('button', { name: /执行清单/ })).not.toHaveTextContent('任务已取消')
+  })
+
   it('is read-only, preserves collapse and focus during full replacements, and retains terminal item states', () => {
     const { rerender } = render(<RuntimeChecklistStrip messages={[message]} />)
     const toggle = screen.getByRole('button', { name: /执行清单/ })

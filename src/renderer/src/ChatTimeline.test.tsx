@@ -80,6 +80,74 @@ function createMessages(): Message[] {
 }
 
 describe('ChatTimeline', () => {
+  it.each(['cancelled', 'failed'] as const)('renders saved %s status and offers editing only with usable input', (terminalStatus) => {
+    const props = {
+      ...callbacks, artifactById: new Map(), conversationId: 'terminal',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, totalMessageCount: 1
+    }
+    const message: Message = { id: 'reply', role: 'assistant', content: 'Existing reply',
+      state: 'error', terminalStatus, status: 'Terminal detail', createdAt: 1 }
+    const view = render(<ChatTimeline {...props} messages={[message]} />)
+    const status = screen.getByRole(terminalStatus === 'cancelled' ? 'status' : 'alert', { name: 'Terminal detail' })
+    expect(status.classList.contains('message__status--error')).toBe(terminalStatus === 'failed')
+    expect(screen.getByText('Existing reply')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '重新编辑' })).not.toBeInTheDocument()
+    for (const extra of [
+      { contextCompression: { state: 'completed' as const, estimatedBeforeTokens: 20_000, estimatedAfterTokens: 8_000 } },
+      { knowledgeRetrieval: { mode: 'always' as const, state: 'succeeded' as const, libraryCount: 1,
+        resultCount: 2, durationMs: 20, usedChannels: ['fts' as const], warnings: [] } }
+    ]) {
+      view.rerender(<ChatTimeline {...props} messages={[{ ...message, ...extra }]} />)
+      expect(screen.getByRole(terminalStatus === 'cancelled' ? 'status' : 'alert', { name: 'Terminal detail' }))
+        .toHaveAttribute('aria-live', terminalStatus === 'cancelled' ? 'polite' : 'assertive')
+    }
+    view.rerender(<ChatTimeline {...props} messages={[message]} retryContent="  " />)
+    expect(screen.queryByRole('button', { name: '重新编辑' })).not.toBeInTheDocument()
+    view.rerender(<ChatTimeline {...props} messages={[message]} retryContent="Original prompt" />)
+    fireEvent.click(screen.getByRole('button', { name: '重新编辑' }))
+    expect(callbacks.onRetry).toHaveBeenLastCalledWith('Original prompt')
+  })
+
+  it.each(['请求已取消', 'Provider failed'])('deduplicates only the exact legacy fallback shape (%s) without removing reply text', (detail) => {
+    const props = { ...callbacks, artifactById: new Map(), conversationId: 'legacy',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, totalMessageCount: 1 }
+    const message: Message = { id: 'old', role: 'assistant', content: detail,
+      state: 'error', status: detail, createdAt: 1 }
+    const view = render(<ChatTimeline {...props} messages={[message]} />)
+    expect(screen.getAllByText(detail)).toHaveLength(1)
+    expect(screen.getByText(detail).closest('.message__content')).not.toBeNull()
+    const blocks: Message['blocks'] = [
+      { id: 'reasoning', type: 'reasoning', content: 'Preserved reasoning' },
+      { id: 'fallback', type: 'text', content: message.content }
+    ]
+    view.rerender(<ChatTimeline {...props} messages={[{ ...message, blocks }]} />)
+    expect(screen.getAllByText(detail)).toHaveLength(1)
+    // A body that merely quotes or includes the status is never stripped.
+    view.rerender(<ChatTimeline {...props} messages={[{ ...message, content: `The message says ${detail}` }]} />)
+    expect(screen.getByText(`The message says ${detail}`)).toBeVisible()
+    const role = detail === '请求已取消' ? 'status' : 'alert'
+    expect(screen.getByRole(role, { name: detail }).classList.contains('message__status--error')).toBe(role === 'alert')
+    // Explicit failed events must override even the old cancellation labels.
+    view.rerender(<ChatTimeline {...props} messages={[{ ...message, terminalStatus: 'failed' }]} />)
+    expect(screen.getByRole('alert', { name: detail })).toHaveClass('message__status--error')
+    expect(screen.getByText(detail, { selector: '.message__content span' })).toBeVisible()
+    // Content and blocks disagree: do not treat this as the old fallback.
+    view.rerender(<ChatTimeline {...props} messages={[{ ...message, blocks: [{ id: 'real', type: 'text', content: 'Real output' }] }]} />)
+    expect(screen.getByText('Real output')).toBeVisible()
+    expect(screen.getByRole(role, { name: detail })).toBeVisible()
+    // Multiple text blocks or a non-final text block are not the old fallback.
+    for (const nextBlocks of [
+      [...blocks, { id: 'later', type: 'reasoning' as const, content: 'Later reasoning' }],
+      [{ id: 'earlier', type: 'text' as const, content: 'Earlier output' }, ...blocks]
+    ]) {
+      view.rerender(<ChatTimeline {...props} messages={[{ ...message, blocks: nextBlocks }]} />)
+      expect(screen.getByRole(role, { name: detail })).toBeVisible()
+      expect(screen.getByText(detail, { selector: '.message__content span' })).toBeVisible()
+    }
+  })
+
   it('captures only nonempty settled assistant replies, including incomplete replies', () => {
     const onAddToNote = vi.fn()
     const messages: Message[] = [

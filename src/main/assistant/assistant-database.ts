@@ -290,6 +290,7 @@ type MessageMetadata = {
   createdAt?: number
   queueItemId?: string
   status?: string
+  terminalStatus?: ConversationMessage['terminalStatus']
   reasoning?: ConversationSnapshot['messages'][number]['reasoning']
   runtimeChecklist?: ConversationMessage['runtimeChecklist']
   blocks?: ConversationSnapshot['messages'][number]['blocks']
@@ -1213,6 +1214,7 @@ function toConversationSnapshot(
         createdAt:
           metadata.createdAt ?? Date.parse(message.created_at),
         state: message.state,
+        terminalStatus: metadata.terminalStatus,
         status: metadata.status,
         contextCompression: metadata.contextCompression,
         contextCompressions: metadata.contextCompressions,
@@ -1240,6 +1242,7 @@ function serializeConversationMessageMetadata(
     createdAt: message.createdAt,
     queueItemId: message.queueItemId,
     status: message.status,
+    terminalStatus: message.terminalStatus,
     reasoning: message.reasoning,
     runtimeChecklist: message.runtimeChecklist,
     blocks: message.blocks,
@@ -1568,15 +1571,14 @@ function reduceRecoveredAgentEvent(
           ? ('cancelled' as const)
           : ('failed' as const)
         : ('interrupted' as const)
-    const fallback =
-      event.type === 'error' && !represented && !message.content
-        ? event.message
-        : ''
     next = {
       ...message,
       state: event.type === 'error' ? 'error' : 'complete',
+      terminalStatus: event.type === 'error'
+        ? event.status === 'cancelled' ? 'cancelled' : 'failed'
+        : undefined,
       status:
-        event.type === 'error' && !represented
+        event.type === 'error' && (event.status === 'cancelled' || !represented)
           ? event.message
           : undefined,
       contextCompression:
@@ -1620,10 +1622,9 @@ function reduceRecoveredAgentEvent(
           : subagent
       ),
       blocks: terminalizeRecoveredToolBlocks(
-        appendRecoveredMessageBlock(message.blocks, 'text', fallback),
+        message.blocks,
         toolState
-      ),
-      content: fallback || message.content
+      )
     }
   }
   return conversationMessageSchema.parse(next)
@@ -5443,6 +5444,7 @@ export class AssistantDatabase {
         state: row.state,
         createdAt: metadata.createdAt ?? Date.parse(row.created_at),
         status: metadata.status,
+        terminalStatus: metadata.terminalStatus,
         reasoning: metadata.reasoning,
         runtimeChecklist: metadata.runtimeChecklist,
         blocks: metadata.blocks,
@@ -5858,6 +5860,7 @@ export class AssistantDatabase {
         createdAt:
           metadata.createdAt ?? Date.parse(row.created_at),
         status: metadata.status,
+        terminalStatus: metadata.terminalStatus,
         reasoning: metadata.reasoning,
         runtimeChecklist: metadata.runtimeChecklist,
         blocks: metadata.blocks,

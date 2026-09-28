@@ -4428,6 +4428,7 @@ describe('AssistantDatabase', () => {
       id: assistantMessageId,
       content: recoveredText,
       state: 'error',
+      terminalStatus,
       runtimeChecklist: { source: 'opencode', items: [] },
       status: '远端请求已不存在'
     })
@@ -4553,7 +4554,7 @@ describe('AssistantDatabase', () => {
     } finally { database.close() }
   })
 
-  it('rolls back a recovered event when its message update fails', async () => {
+  it.each(['failed', 'cancelled'] as const)('rolls back and durably recovers a %s event without creating reply text', async (terminalStatus) => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-remote-event-atomic-')
     )
@@ -4617,7 +4618,7 @@ describe('AssistantDatabase', () => {
         event: {
           requestId: taskId,
           type: 'error',
-          status: 'failed',
+          status: terminalStatus,
           message: '远程失败'
         }
       })
@@ -4664,7 +4665,7 @@ describe('AssistantDatabase', () => {
         event: {
           requestId: taskId,
           type: 'error',
-          status: 'failed',
+          status: terminalStatus,
           message: '远程失败'
         }
       })
@@ -4687,17 +4688,24 @@ describe('AssistantDatabase', () => {
     expect(
       recovered.getConversation(conversationId).messages[1]
     ).toMatchObject({
-      content: '远程失败',
+      content: '',
       state: 'error',
+      terminalStatus,
       status: '远程失败'
     })
     expect(
       recovered.listTasks().find((task) => task.id === taskId)
     ).toMatchObject({
-      status: 'failed',
+      status: terminalStatus,
       error: '远程失败'
     })
     recovered.close()
+    const reopened = new AssistantDatabase(databasePath)
+    reopened.initialize('C:\\Workspace')
+    const message = reopened.getConversation(conversationId).messages[1]
+    expect(message).toMatchObject({ content: '', state: 'error', terminalStatus, status: '远程失败' })
+    expect(message?.blocks?.some(block => block.type === 'text')).toBe(false)
+    reopened.close()
   })
 
   it('persists and arbitrates a FIFO conversation input queue', async () => {
