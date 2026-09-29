@@ -8084,16 +8084,6 @@ button > svg {
   font-size: var(--font-caption);
 }
 
-.model-button--override .model-button__label::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  vertical-align: middle;
-}
 
 .send-button {
   display: grid;

@@ -469,6 +469,10 @@ describe('WorkspacePrimitives', () => {
       /\.composer__options\[hidden\]\s*\{[^}]*display:\s*none;/u
     )
   })
+  it('does not insert an override dot before the Runtime label', () => {
+    expect(stylesheet).not.toContain('model-button--override')
+    expect(stylesheet).not.toMatch(/\.model-button__label::before/u)
+  })
 
   it('keeps shared controls keyboard and pointer accessible at narrow widths', () => {
     expect(stylesheet).toMatch(

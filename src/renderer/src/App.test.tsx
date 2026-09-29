@@ -10407,6 +10407,12 @@ describe("App", () => {
       }),
     );
     expect(api.settings.updateRuntime).not.toHaveBeenCalled();
+    expect(runtimeButton).not.toHaveClass("model-button--override");
+    fireEvent.click(runtimeButton);
+    expect(screen.getByText("本会话单独选择")).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "恢复为项目默认" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "设置中心" }),
     ).not.toBeInTheDocument();

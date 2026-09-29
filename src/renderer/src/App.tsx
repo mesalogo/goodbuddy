@@ -10184,7 +10184,7 @@ function App(): React.JSX.Element {
                                   <button
                                     aria-expanded={runtimeMenuOpen}
                                     aria-haspopup="menu"
-                                    className={`model-button${activeConversation?.runtimeSelection ? " model-button--override" : ""}`}
+                                    className="model-button"
                                     disabled={isRunning || runtimeSwitching}
                                     onClick={() => {
                                       setComposerOptionsOpen(false);

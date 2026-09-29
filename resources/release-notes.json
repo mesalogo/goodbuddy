@@ -12,6 +12,7 @@
             "**分开查看系统任务 Token 用量**：运行记录新增“系统任务”页签，将监督者、自动监督、魔法笔记、知识库和后台委派等用量与会话统计分开。支持按来源查看、手动刷新，并在新用量记录写入后自动刷新。"
           ],
           "fixes": [
+            "**简化会话 Runtime 选择按钮**：移除图标与 Runtime 名称之间的圆点，避免选择模型后出现多余标记。菜单仍显示“本会话单独选择”和“恢复为项目默认”，选择规则不变。",
             "**补齐部分后台用量记录**：监督回顾、图片重新生成、知识图谱抽取和远程向量请求现在接入对应的用量记录。统计依据实际保存的供应商用量，不能补算过去未记录的调用或供应商未返回的 Token 数据。",
             "**避免 Runtime 重复携带指令与历史**：OpenCode 将受信任指令放入当前轮系统信息，复用 DeepSeek Harness 会话时不再重复注入已保留历史。Continue 识别已有历史封装并避免再次嵌套，保存用户轮次时移除工作模式前缀；远程 Continue 需要配套 Agent 更新。",
             "**减少失败请求对后续 OpenCode 对话的影响**：普通 OpenCode 请求失败且尚未产生回复记录时，会尝试清理该轮未回答的输入，避免下次复用会话时再次合并。已有回复、工具记录和其他并行会话保留。"
@@ -28,6 +29,7 @@
             "**Separate system-task Token usage**: Run history adds a System tasks tab that separates Supervisor, automatic supervision, Magic Notes, knowledge, and background delegation usage from conversation totals. Browse by source, refresh manually, or receive an automatic refresh when new usage is recorded."
           ],
           "fixes": [
+            "**Simplify the conversation Runtime button**: Remove the dot between the icon and Runtime name after choosing a model. The menu still identifies conversation overrides and offers Restore project defaults; selection rules are unchanged.",
             "**Capture additional background usage**: Supervisor reviews, image regeneration, knowledge-graph extraction, and remote embedding requests now feed their corresponding usage records. Statistics use stored provider usage and cannot reconstruct previously unrecorded calls or Token data omitted by a provider.",
             "**Avoid duplicate Runtime instructions and history**: OpenCode receives trusted instructions through the current turn's system information, and reused DeepSeek Harness sessions no longer receive history they already retain. Continue recognizes existing history envelopes instead of nesting them again and removes work-mode prefixes from stored user turns; remote Continue requires the matching Agent update.",
             "**Reduce carryover from failed OpenCode requests**: When a normal OpenCode request fails before producing a reply record, GoodBuddy attempts to remove its unanswered input so the next request does not merge it again. Existing replies, tool records, and other parallel conversations remain intact."
