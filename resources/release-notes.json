@@ -2,6 +2,44 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.4",
+      "releasedAt": "2026-09-29",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**按会话、项目和全局默认选择 Runtime 与模型**：执行方式和模型分别按“会话 → 项目 → 全局”解析，可在输入框两栏菜单中单独选择，或恢复跟随项目默认，并查看实际来源。项目设置与通道入口共用选择规则，排队请求在派发时重新解析；连接删除或不兼容时按规则回退，缺少密钥时保留选择并明确报错。",
+            "**分开查看系统任务 Token 用量**：运行记录新增“系统任务”页签，将监督者、自动监督、魔法笔记、知识库和后台委派等用量与会话统计分开。支持按来源查看、手动刷新，并在新用量记录写入后自动刷新。"
+          ],
+          "fixes": [
+            "**补齐部分后台用量记录**：监督回顾、图片重新生成、知识图谱抽取和远程向量请求现在接入对应的用量记录。统计依据实际保存的供应商用量，不能补算过去未记录的调用或供应商未返回的 Token 数据。",
+            "**避免 Runtime 重复携带指令与历史**：OpenCode 将受信任指令放入当前轮系统信息，复用 DeepSeek Harness 会话时不再重复注入已保留历史。Continue 识别已有历史封装并避免再次嵌套，保存用户轮次时移除工作模式前缀；远程 Continue 需要配套 Agent 更新。",
+            "**减少失败请求对后续 OpenCode 对话的影响**：普通 OpenCode 请求失败且尚未产生回复记录时，会尝试清理该轮未回答的输入，避免下次复用会话时再次合并。已有回复、工具记录和其他并行会话保留。"
+          ],
+          "notices": [
+            "首次启动会将数据库升级到 schema 49，迁移项目与会话的 Runtime/模型选择。升级前请关闭应用并备份完整用户数据，包括数据库和相邻 `notes/` 目录；旧客户端不能打开升级后的数据库，回退需恢复升级前备份。",
+            "远程用户请先升级 Desktop 至 **0.15.4**，再下载并更新 Host 上的 Agent **0.15.1**。Agent 独立发布，Node、OpenCode 和 Continue 的锁定版本不变；已有进程不会热更新。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Choose Runtime and model through conversation, project, and global defaults**: Runtime and model resolve independently in that order, with a two-column composer menu for overrides, restoring project defaults, and viewing the actual source. Project and channel settings share the rules, and queued requests resolve again at dispatch; deleted or incompatible connections fall back according to those rules, while missing credentials retain the selection and produce an explicit error.",
+            "**Separate system-task Token usage**: Run history adds a System tasks tab that separates Supervisor, automatic supervision, Magic Notes, knowledge, and background delegation usage from conversation totals. Browse by source, refresh manually, or receive an automatic refresh when new usage is recorded."
+          ],
+          "fixes": [
+            "**Capture additional background usage**: Supervisor reviews, image regeneration, knowledge-graph extraction, and remote embedding requests now feed their corresponding usage records. Statistics use stored provider usage and cannot reconstruct previously unrecorded calls or Token data omitted by a provider.",
+            "**Avoid duplicate Runtime instructions and history**: OpenCode receives trusted instructions through the current turn's system information, and reused DeepSeek Harness sessions no longer receive history they already retain. Continue recognizes existing history envelopes instead of nesting them again and removes work-mode prefixes from stored user turns; remote Continue requires the matching Agent update.",
+            "**Reduce carryover from failed OpenCode requests**: When a normal OpenCode request fails before producing a reply record, GoodBuddy attempts to remove its unanswered input so the next request does not merge it again. Existing replies, tool records, and other parallel conversations remain intact."
+          ],
+          "notices": [
+            "First launch upgrades the database to schema 49 and migrates project and conversation Runtime/model selections. Close the app and back up complete user data, including the database and adjacent `notes/` directory, before upgrading; older clients cannot open the upgraded database, so rollback requires restoring a pre-upgrade backup.",
+            "Remote users should upgrade Desktop to **0.15.4** before downloading and updating Hosts to Agent **0.15.1**. Agent releases remain separate, locked Node/OpenCode/Continue versions are unchanged, and existing processes are not hot-updated."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.3",
       "releasedAt": "2026-09-28",
       "notes": {

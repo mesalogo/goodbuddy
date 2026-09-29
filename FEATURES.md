@@ -333,7 +333,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.0`, paired with the current Desktop release candidate `0.15.3`; formal
+  `0.15.1`, paired with the current Desktop release candidate `0.15.4`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -472,10 +472,14 @@ records are listed separately and do not introduce another feature status.
   indicators and send/stop behavior remain unchanged.
   Cancellation and failure retain existing replies and use a single status;
   cancellation is neutral, and Edit again appears only when input can be restored.
-- [x] **Simplified Runtime selection**: Conversation and project menus no
-  longer enumerate every Runtime/model combination. Configure Runtime models
-  in system settings; saved fixed project selections remain usable and
-  explicitly display their fixed model.
+- [x] **Layered Runtime and model selection**: Resolve Runtime and model per
+  field through conversation, project, and global defaults. The two-column
+  composer picker shows sources and supports overrides or restoring project
+  defaults; project and channel settings share the same rules. Main resolves
+  each request again, including queued dispatch. Deleted or incompatible
+  connections fall back, while missing credentials remain explicit errors.
+  Schema 49 migrates stored choices. Purpose-specific models remain planned;
+  see the [selection design](./docs/features/model-connections/runtime-selection-design.md).
 - [x] **Role-bound model connections**: Each role can inherit the default model
   or select an independent text-model connection. Invalid connections safely
   fall back to the default; the synthesis role always inherits the default.
@@ -767,7 +771,11 @@ records are listed separately and do not introduce another feature status.
   model and normalizes the different OpenAI-compatible and Anthropic Messages
   cache-reporting semantics when showing cache hit rate. Project and conversation
   usage groups show collapsed totals by default and expand to Runtime/model child
-  rows; model grouping remains flat. Activity is grouped
+  rows; model grouping remains flat. A separate System tasks tab groups
+  background usage by source, with manual refresh and updates when usage is
+  recorded. Supervisor reviews, image regeneration, graph extraction, and remote
+  embeddings feed usage records; missing historical/provider data is not reconstructed.
+  Activity is grouped
   by conversation and collapsed by default so long histories do not fill the
   page.
 - [x] **Compact conversation tool records**: Expand individual tool records
@@ -930,9 +938,15 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.3`; published Agent `0.15.0` is unchanged, with
+- The current candidates are Desktop `0.15.4` and Agent `0.15.1`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.4` introduces layered Runtime/model choices and separate
+  system-task usage, and reduces duplicate Runtime instructions and history.
+  Schema 49 migrates project/conversation choices; rollback requires the complete
+  pre-upgrade database and adjacent notes backup. Agent `0.15.1` requires Desktop
+  `0.15.4` and fixes remote Continue history wrapping without changing locked
+  Runtime versions. See the [0.15.4 preparation record](./docs/development/release-preparation-0.15.4.md).
 - Desktop `0.15.3` restores local direct-model manual compaction, retains tool
   authorization for the request lifetime, clarifies cancellation and sidebar/note
   controls, avoids redundant startup/storage work, and trims duplicated package
