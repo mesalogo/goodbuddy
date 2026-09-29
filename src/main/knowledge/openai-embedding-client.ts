@@ -22,6 +22,8 @@ export interface OpenAIEmbeddingClientOptions {
   batchSize?: number
   timeoutMs?: number
   fetch?: typeof fetch
+  /** Receives provider-reported input tokens for each successful batch. */
+  onUsage?: (usage: { model: string; inputTokens: number }) => void
 }
 
 export type EmbeddingInputRole = 'query' | 'document'
@@ -268,8 +270,10 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
   private readonly batchSize: number
   private readonly timeoutMs: number
   private readonly transport: typeof fetch
+  private readonly onUsage?: OpenAIEmbeddingClientOptions['onUsage']
 
   constructor(options: OpenAIEmbeddingClientOptions) {
+    this.onUsage = options.onUsage
     this.endpoint = normalizedEndpoint(options.endpoint)
     this.model = requiredString(options.model, 'model', MAX_MODEL_LENGTH)
     this.apiKey = options.apiKey?.trim() || undefined
@@ -395,6 +399,26 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
     return embeddings
   }
 
+  private reportUsage(payload: unknown): void {
+    if (!this.onUsage || typeof payload !== 'object' || payload === null) {
+      return
+    }
+    const usage = (payload as { usage?: unknown }).usage
+    if (typeof usage !== 'object' || usage === null) {
+      return
+    }
+    const values = usage as Record<string, unknown>
+    const tokens = values.prompt_tokens ?? values.total_tokens
+    if (!Number.isSafeInteger(tokens) || (tokens as number) <= 0) {
+      return
+    }
+    try {
+      this.onUsage({ model: this.model, inputTokens: tokens as number })
+    } catch {
+      // Usage accounting must never fail an embedding request.
+    }
+  }
+
   private async embedBatch(
     input: readonly string[],
     signal?: AbortSignal
@@ -439,10 +463,9 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
           `Embedding request failed with HTTP ${response.status}`
         )
       }
-      const vectors = validateEmbeddings(
-        await readBoundedJson(response),
-        input.length
-      )
+      const payload = await readBoundedJson(response)
+      const vectors = validateEmbeddings(payload, input.length)
+      this.reportUsage(payload)
       if (
         this.dimensions !== undefined &&
         vectors.some((vector) => vector.length !== this.dimensions)

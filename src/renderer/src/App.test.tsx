@@ -640,6 +640,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
       },
       records: [],
     })),
+    onChanged: vi.fn(() => () => undefined),
   },
   artifacts: {
     list: vi.fn(async () => []),

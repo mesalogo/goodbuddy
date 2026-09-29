@@ -2159,6 +2159,8 @@ export type DesktopApi = {
   }
   usage: {
     getTokenSummary: () => Promise<TokenUsageSummary>
+    /** Fires (debounced) after any model usage is recorded. */
+    onChanged: (listener: () => void) => () => void
   }
   artifacts: {
     list: (projectId?: string) => Promise<AssistantArtifact[]>

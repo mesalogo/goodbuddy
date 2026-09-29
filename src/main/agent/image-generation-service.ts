@@ -115,7 +115,10 @@ export class ImageGenerationService {
 
   regenerate(context: ImageRequestContext, operationId: string, currentWorkMode?: () => 'ask' | 'execute'): Promise<ImageOperation> {
     const previous = this.getOperation(context.conversationId, operationId)
-    return this.bind(context, currentWorkMode).call({ ...previous.input, modelProfileId: previous.modelProfileId }, randomUUID())
+    // Keep the originating request so usage stays attached to its task row;
+    // the fresh call ID keeps the regenerated operation distinct.
+    return this.bind({ ...context, requestId: previous.requestId }, currentWorkMode)
+      .call({ ...previous.input, modelProfileId: previous.modelProfileId }, randomUUID())
   }
 
   cancelConversation(conversationId: string): void {

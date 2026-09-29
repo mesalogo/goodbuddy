@@ -1,6 +1,6 @@
 import type { TokenUsageSummary } from '../../shared/assistant-contracts'
 
-export type TokenUsageGroup = 'project' | 'conversation' | 'model'
+export type TokenUsageGroup = 'project' | 'conversation' | 'model' | 'source'
 
 export type TokenUsageTotals = {
   inputTokens: number
@@ -88,6 +88,15 @@ function groupIdentity(
     }
   }
 
+  if (group === 'source') {
+    return {
+      key: `source:${record.systemSource ?? 'unknown'}`,
+      label: '',
+      model: '',
+      runtime: ''
+    }
+  }
+
   if (group === 'conversation') {
     const conversationKey = record.conversationId
       ? `conversation:${record.conversationId}`
@@ -112,6 +121,41 @@ export function getTokenUsageTotals(
   tokenUsage: TokenUsageSummary
 ): TokenUsageTotals {
   return usageNumbers(tokenUsage.totals)
+}
+
+export function isSystemTokenUsageRecord(record: TokenUsageRecord): boolean {
+  return record.systemSource !== undefined
+}
+
+/** Splits a summary into conversation-only and system-only views. */
+export function splitTokenUsage(tokenUsage: TokenUsageSummary): {
+  conversation: TokenUsageSummary
+  system: TokenUsageSummary
+} {
+  const conversationRecords = tokenUsage.records.filter(
+    (record) => !isSystemTokenUsageRecord(record)
+  )
+  const systemRecords = tokenUsage.records.filter(isSystemTokenUsageRecord)
+  const emptyTotals = {
+    callCount: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    cacheInput: 0,
+    totalTokens: 0
+  }
+  return {
+    // Legacy summaries without split totals keep their overall totals.
+    conversation: {
+      totals: tokenUsage.conversationTotals ?? tokenUsage.totals,
+      records: conversationRecords
+    },
+    system: {
+      totals: tokenUsage.systemTotals ?? emptyTotals,
+      records: systemRecords
+    }
+  }
 }
 
 export function groupTokenUsage(

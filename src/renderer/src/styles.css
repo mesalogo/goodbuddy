@@ -14957,6 +14957,19 @@ textarea.field-control {
   font-size: var(--font-section-title);
 }
 
+.token-usage__refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.token-usage__description {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
+
 .token-usage__stats {
   display: grid;
   margin: 12px 0;

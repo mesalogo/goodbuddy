@@ -11,7 +11,8 @@ export const activity = {
     ariaLabel: 'Run history views',
     tasks: 'Tasks and conversations',
     timeline: 'Activity timeline',
-    usage: 'Usage analytics'
+    usage: 'Usage analytics',
+    system: 'System tasks'
   },
   clear: {
     confirmAriaLabel: 'Confirm clearing activity history',
@@ -71,11 +72,36 @@ export const activity = {
     },
     detailAriaLabel: 'Token usage details by {{group}}',
     empty: 'No token usage',
+    refresh: 'Refresh',
+    refreshing: 'Refreshing',
+    refreshHint: 'Reload saved token usage',
     fallbacks: {
       unassignedProject: 'Unassigned project',
       deletedConversation: 'Deleted conversation',
       unknownModel: 'Unknown model',
       unknownRuntime: 'Unknown Runtime'
+    }
+  },
+  systemUsage: {
+    title: 'System task usage',
+    description:
+      'Tokens used by the supervisor, auto-supervision, magic notes, knowledge base, and background delegation. Not counted in conversation usage.',
+    groupAriaLabel: 'Group system task usage',
+    statsAriaLabel: 'System task usage totals',
+    empty: 'No system task token usage',
+    groups: {
+      source: 'By source'
+    },
+    columns: {
+      source: 'Source'
+    },
+    sources: {
+      heartbeat: 'Auto-supervision',
+      supervision: 'Supervisor',
+      magicNotes: 'Magic notes',
+      knowledge: 'Knowledge base',
+      delegation: 'Background delegation',
+      unknown: 'Other system tasks'
     }
   },
   timeline: {

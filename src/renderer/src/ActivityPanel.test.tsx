@@ -932,4 +932,53 @@ describe('ActivityPanel', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText('goodbuddy')).not.toBeInTheDocument()
   })
+
+  it('moves system task usage into its own tab with separate totals', () => {
+    const usage = makeTokenUsage()
+    const systemRecord = (requestId: string, systemSource: 'heartbeat' | 'supervision', input: number) => ({
+      requestId, systemSource, conversationId: `${systemSource}:x`, runtime: 'model', provider: 'openai', model: 'gpt-sys',
+      callCount: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: input + 1
+    })
+    usage.records.push(systemRecord('sys-1', 'heartbeat', 7), systemRecord('sys-2', 'supervision', 9))
+    usage.conversationTotals = usage.totals
+    usage.systemTotals = { callCount: 2, input: 16, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 18 }
+
+    render(<ActivityPanel onClear={vi.fn()} onOpenConversation={vi.fn()} records={[]} tokenUsage={usage} />)
+    fireEvent.click(screen.getByRole('tab', { name: '用量统计' }))
+    fireEvent.click(screen.getByRole('button', { name: '按会话' }))
+    expect(screen.queryByText('heartbeat:x')).not.toBeInTheDocument()
+    expect(within(screen.getByLabelText('Token 用量统计')).getByText('150')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '系统任务' }))
+    const stats = screen.getByLabelText('系统任务用量统计')
+    expect(within(stats).getByText('18')).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: '自动监督 7 1 0 0 0% 8' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '监督者' }))
+    expect(screen.getByRole('row', { name: '直连模型 · gpt-sys 9 1 0 0 0% 10' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '按模型' }))
+    expect(screen.getByRole('row', { name: '直连模型 · gpt-sys 16 2 0 0 0% 18' })).toBeInTheDocument()
+  })
+
+  it('shows an empty system tab and refreshes usage on demand', async () => {
+    let resolveRefresh!: () => void
+    const onRefreshTokenUsage = vi.fn(() => new Promise<void>((resolve) => { resolveRefresh = resolve }))
+    render(<ActivityPanel onClear={vi.fn()} onOpenConversation={vi.fn()} onRefreshTokenUsage={onRefreshTokenUsage}
+      records={[]} tokenUsage={makeTokenUsage()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '系统任务' }))
+    expect(screen.getByText('暂无系统任务 Token 用量')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    expect(onRefreshTokenUsage).toHaveBeenCalledOnce()
+    const busy = screen.getByRole('button', { name: '正在刷新' })
+    expect(busy).toBeDisabled()
+    fireEvent.click(busy)
+    expect(onRefreshTokenUsage).toHaveBeenCalledOnce()
+    resolveRefresh()
+    expect(await screen.findByRole('button', { name: '刷新' })).toBeEnabled()
+  })
+
+  it('hides the refresh button when no refresh handler is provided', () => {
+    render(<ActivityPanel onClear={vi.fn()} onOpenConversation={vi.fn()} records={[]} tokenUsage={makeTokenUsage()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '用量统计' }))
+    expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument()
+  })
 })

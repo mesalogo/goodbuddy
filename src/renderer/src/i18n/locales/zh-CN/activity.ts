@@ -8,7 +8,8 @@ export const activity = {
     ariaLabel: '运行记录视图',
     tasks: '任务与会话',
     timeline: '活动时间线',
-    usage: '用量统计'
+    usage: '用量统计',
+    system: '系统任务'
   },
   clear: {
     confirmAriaLabel: '确认清空 {{formattedCount}} 条活动记录',
@@ -68,11 +69,36 @@ export const activity = {
     },
     detailAriaLabel: 'Token 用量{{group}}明细',
     empty: '暂无 Token 用量',
+    refresh: '刷新',
+    refreshing: '正在刷新',
+    refreshHint: '重新读取已保存的 Token 用量',
     fallbacks: {
       unassignedProject: '未归属项目',
       deletedConversation: '已删除会话',
       unknownModel: '未知模型',
       unknownRuntime: '未知 Runtime'
+    }
+  },
+  systemUsage: {
+    title: '系统任务用量',
+    description:
+      '监督者、自动监督、魔法笔记、知识库和后台委派等非会话任务消耗的 Token，不计入会话用量。',
+    groupAriaLabel: '系统任务用量分组',
+    statsAriaLabel: '系统任务用量统计',
+    empty: '暂无系统任务 Token 用量',
+    groups: {
+      source: '按来源'
+    },
+    columns: {
+      source: '来源'
+    },
+    sources: {
+      heartbeat: '自动监督',
+      supervision: '监督者',
+      magicNotes: '魔法笔记',
+      knowledge: '知识库',
+      delegation: '后台委派',
+      unknown: '其他系统任务'
     }
   },
   timeline: {

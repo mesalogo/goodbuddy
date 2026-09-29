@@ -1,4 +1,4 @@
-import { Activity, ChevronRight, Trash2 } from 'lucide-react'
+import { Activity, ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
 import { memo, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
@@ -11,7 +11,9 @@ import { type ActivityRecord } from './activity-store'
 import {
   getTokenUsageTotals,
   groupTokenUsage,
-  type TokenUsageGroup
+  splitTokenUsage,
+  type TokenUsageGroup,
+  type TokenUsageGroupRow
 } from './token-usage'
 import {
   DestructiveConfirmActions,
@@ -25,7 +27,9 @@ import {
 import { getProjectDisplayText } from './project-display'
 
 type ActivityFilter = 'all' | 'active' | 'failed'
-type ActivityView = 'tasks' | 'timeline' | 'usage'
+type ActivityView = 'tasks' | 'timeline' | 'usage' | 'system'
+type SystemTokenUsageGroup = Extract<TokenUsageGroup, 'source' | 'model'>
+type TokenUsageView = Extract<ActivityView, 'usage' | 'system'>
 type ActivityActorKind =
   | 'user'
   | 'assistant'
@@ -41,6 +45,8 @@ export type ActivityPanelProps = {
   tokenUsage: TokenUsageSummary
   onClear: () => void
   onOpenConversation: (conversationId: string) => void
+  /** Re-reads token usage from storage; the button is hidden when omitted. */
+  onRefreshTokenUsage?: () => Promise<void>
 }
 
 type ConversationActivityGroup = {
@@ -244,7 +250,8 @@ export const ActivityPanel = memo(function ActivityPanel({
   records,
   tokenUsage,
   onClear,
-  onOpenConversation
+  onOpenConversation,
+  onRefreshTokenUsage
 }: ActivityPanelProps): React.JSX.Element {
   const { t, i18n } = useTranslation('activity')
   const { t: tWorkspace } = useTranslation('workspace')
@@ -252,7 +259,10 @@ export const ActivityPanel = memo(function ActivityPanel({
     useState<ActivityView>('tasks')
   const [filter, setFilter] = useState<ActivityFilter>('all')
   const [tokenGroup, setTokenGroup] =
-    useState<TokenUsageGroup>('project')
+    useState<Exclude<TokenUsageGroup, 'source'>>('project')
+  const [systemTokenGroup, setSystemTokenGroup] =
+    useState<SystemTokenUsageGroup>('source')
+  const [refreshingTokenUsage, setRefreshingTokenUsage] = useState(false)
   const [expandedTokenRows, setExpandedTokenRows] = useState<Set<string>>(
     () => new Set()
   )
@@ -311,10 +321,27 @@ export const ActivityPanel = memo(function ActivityPanel({
   }> = [
     { id: 'tasks', label: t('tabs.tasks') },
     { id: 'timeline', label: t('tabs.timeline') },
-    { id: 'usage', label: t('tabs.usage') }
+    { id: 'usage', label: t('tabs.usage') },
+    { id: 'system', label: t('tabs.system') }
+  ]
+  const systemTokenGroups: ReadonlyArray<{
+    value: SystemTokenUsageGroup
+    label: string
+    columnLabel: string
+  }> = [
+    {
+      value: 'source',
+      label: t('systemUsage.groups.source'),
+      columnLabel: t('systemUsage.columns.source')
+    },
+    {
+      value: 'model',
+      label: t('tokenUsage.groups.model'),
+      columnLabel: t('tokenUsage.columns.model')
+    }
   ]
   const tokenGroups: ReadonlyArray<{
-    value: TokenUsageGroup
+    value: Exclude<TokenUsageGroup, 'source'>
     label: string
     columnLabel: string
   }> = [
@@ -452,17 +479,26 @@ export const ActivityPanel = memo(function ActivityPanel({
       })
     }
   ]
+  const splitUsage = useMemo(
+    () => splitTokenUsage(displayTokenUsage),
+    [displayTokenUsage]
+  )
   const tokenTotals = useMemo(
-    () => getTokenUsageTotals(tokenUsage),
-    [tokenUsage]
+    () => getTokenUsageTotals(splitUsage.conversation),
+    [splitUsage]
   )
   const tokenRows = useMemo(
-    () => groupTokenUsage(displayTokenUsage, tokenGroup),
-    [displayTokenUsage, tokenGroup]
+    () => groupTokenUsage(splitUsage.conversation, tokenGroup),
+    [splitUsage, tokenGroup]
   )
-  const tokenGroupLabel =
-    tokenGroups.find((item) => item.value === tokenGroup)?.columnLabel ??
-    t('tokenUsage.columns.project')
+  const systemTokenTotals = useMemo(
+    () => getTokenUsageTotals(splitUsage.system),
+    [splitUsage]
+  )
+  const systemTokenRows = useMemo(
+    () => groupTokenUsage(splitUsage.system, systemTokenGroup),
+    [splitUsage, systemTokenGroup]
+  )
   const emptyDescription =
     filter === 'active'
       ? t('empty.active')
@@ -530,8 +566,25 @@ export const ActivityPanel = memo(function ActivityPanel({
     { kind: 'tool', label: t('timeline.actors.tool') },
     { kind: 'approval', label: t('timeline.actors.approval') }
   ]
+  const systemSourceLabel = (key: string): string => {
+    switch (key) {
+      case 'source:heartbeat':
+        return t('systemUsage.sources.heartbeat')
+      case 'source:supervision':
+        return t('systemUsage.sources.supervision')
+      case 'source:magic-notes':
+        return t('systemUsage.sources.magicNotes')
+      case 'source:knowledge':
+        return t('systemUsage.sources.knowledge')
+      case 'source:delegation':
+        return t('systemUsage.sources.delegation')
+      default:
+        return t('systemUsage.sources.unknown')
+    }
+  }
   const localizeTokenRow = (
-    row: (typeof tokenRows)[number]
+    row: TokenUsageGroupRow,
+    group: TokenUsageGroup
   ): { label: string } => {
     const modelLabel =
       row.model || t('tokenUsage.fallbacks.unknownModel')
@@ -546,16 +599,29 @@ export const ActivityPanel = memo(function ActivityPanel({
               ? t('tokenUsage.runtimes.deepseekHarness')
               : row.runtime || t('tokenUsage.fallbacks.unknownRuntime')
     const label =
-      tokenGroup === 'project' &&
-      row.key === 'project:unassigned'
-        ? t('tokenUsage.fallbacks.unassignedProject')
-        : tokenGroup === 'conversation' &&
-            row.key === 'conversation:deleted'
-          ? t('tokenUsage.fallbacks.deletedConversation')
-          : !row.children
-            ? `${runtimeLabel} · ${modelLabel}`
-            : row.label
+      group === 'source' && row.children
+        ? systemSourceLabel(row.key)
+        : group === 'project' &&
+            row.key === 'project:unassigned'
+          ? t('tokenUsage.fallbacks.unassignedProject')
+          : group === 'conversation' &&
+              row.key === 'conversation:deleted'
+            ? t('tokenUsage.fallbacks.deletedConversation')
+            : !row.children
+              ? `${runtimeLabel} · ${modelLabel}`
+              : row.label
     return { label }
+  }
+  const refreshTokenUsage = async (): Promise<void> => {
+    if (!onRefreshTokenUsage || refreshingTokenUsage) {
+      return
+    }
+    setRefreshingTokenUsage(true)
+    try {
+      await onRefreshTokenUsage()
+    } finally {
+      setRefreshingTokenUsage(false)
+    }
   }
   const renderRecordCard = (
     record: ActivityRecord,
@@ -984,135 +1050,195 @@ export const ActivityPanel = memo(function ActivityPanel({
         </div>
       )}
 
-      {activeView === 'usage' && (
-        <div
-          aria-labelledby="activity-view-tab-usage"
-          className="activity-panel__tab-panel"
-          id="activity-view-panel-usage"
-          role="tabpanel"
-          tabIndex={0}
-        >
-          <section
-            aria-labelledby="token-usage-title"
-            className="token-usage"
-          >
-            <header className="token-usage__header">
-              <h2 id="token-usage-title">{t('tokenUsage.title')}</h2>
-              <SegmentedControl
-                ariaLabel={t('tokenUsage.groupAriaLabel')}
-                onChange={setTokenGroup}
-                options={tokenGroups}
-                value={tokenGroup}
-              />
-            </header>
+      {activeView === 'usage' &&
+        renderTokenUsagePanel({
+          view: 'usage',
+          title: t('tokenUsage.title'),
+          description: undefined,
+          group: tokenGroup,
+          groups: tokenGroups,
+          onGroupChange: setTokenGroup,
+          totals: tokenTotals,
+          rows: tokenRows,
+          empty: t('tokenUsage.empty')
+        })}
 
-            <dl
-              aria-label={t('tokenUsage.statsAriaLabel')}
-              className="token-usage__stats"
-            >
-              <div>
-                <dt>{t('tokenUsage.columns.input')}</dt>
-                <dd>
-                  {tokenCountFormatter.format(tokenTotals.inputTokens)}
-                </dd>
-              </div>
-              <div>
-                <dt>{t('tokenUsage.columns.output')}</dt>
-                <dd>
-                  {tokenCountFormatter.format(tokenTotals.outputTokens)}
-                </dd>
-              </div>
-              <div>
-                <dt>{t('tokenUsage.columns.cacheWrite')}</dt>
-                <dd>
-                  {tokenCountFormatter.format(
-                    tokenTotals.cacheWriteTokens
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt>{t('tokenUsage.columns.cacheRead')}</dt>
-                <dd>
-                  {tokenCountFormatter.format(
-                    tokenTotals.cacheReadTokens
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt>{t('tokenUsage.columns.cacheHitRate')}</dt>
-                <dd>
-                  {formatCacheHitRate(tokenTotals.cacheHitRate)}
-                </dd>
-              </div>
-              <div>
-                <dt>{t('tokenUsage.columns.total')}</dt>
-                <dd>
-                  {tokenCountFormatter.format(tokenTotals.totalTokens)}
-                </dd>
-              </div>
-            </dl>
+      {activeView === 'system' &&
+        renderTokenUsagePanel({
+          view: 'system',
+          title: t('systemUsage.title'),
+          description: t('systemUsage.description'),
+          group: systemTokenGroup,
+          groups: systemTokenGroups,
+          onGroupChange: setSystemTokenGroup,
+          totals: systemTokenTotals,
+          rows: systemTokenRows,
+          empty: t('systemUsage.empty')
+        })}
+    </section>
+  )
 
-            <div className="token-usage__table-scroll">
-              <table
-                aria-label={t('tokenUsage.detailAriaLabel', {
-                  group: tokenGroupLabel
-                })}
+  function renderTokenUsagePanel<Group extends TokenUsageGroup>({
+    view,
+    title,
+    description,
+    group,
+    groups,
+    onGroupChange,
+    totals,
+    rows,
+    empty
+  }: {
+    view: TokenUsageView
+    title: string
+    description: string | undefined
+    group: Group
+    groups: ReadonlyArray<{ value: Group; label: string; columnLabel: string }>
+    onGroupChange: (group: Group) => void
+    totals: ReturnType<typeof getTokenUsageTotals>
+    rows: TokenUsageGroupRow[]
+    empty: string
+  }): React.JSX.Element {
+    const titleId = view === 'usage' ? 'token-usage-title' : 'system-usage-title'
+    const groupLabel =
+      groups.find((item) => item.value === group)?.columnLabel ??
+      groups[0]!.columnLabel
+    const expansionPrefix = `${view}:`
+    return (
+      <div
+        aria-labelledby={`activity-view-tab-${view}`}
+        className="activity-panel__tab-panel"
+        id={`activity-view-panel-${view}`}
+        role="tabpanel"
+        tabIndex={0}
+      >
+        <section aria-labelledby={titleId} className="token-usage">
+          <header className="token-usage__header">
+            <h2 id={titleId}>{title}</h2>
+            <SegmentedControl
+              ariaLabel={
+                view === 'usage'
+                  ? t('tokenUsage.groupAriaLabel')
+                  : t('systemUsage.groupAriaLabel')
+              }
+              onChange={onGroupChange}
+              options={groups}
+              value={group}
+            />
+            {onRefreshTokenUsage && (
+              <button
+                aria-busy={refreshingTokenUsage}
+                className="secondary-button token-usage__refresh"
+                disabled={refreshingTokenUsage}
+                onClick={() => void refreshTokenUsage()}
+                title={t('tokenUsage.refreshHint')}
+                type="button"
               >
-                <thead>
+                <RefreshCw aria-hidden="true" size={13} />
+                {refreshingTokenUsage
+                  ? t('tokenUsage.refreshing')
+                  : t('tokenUsage.refresh')}
+              </button>
+            )}
+          </header>
+          {description && (
+            <p className="token-usage__description">{description}</p>
+          )}
+
+          <dl
+            aria-label={
+              view === 'usage'
+                ? t('tokenUsage.statsAriaLabel')
+                : t('systemUsage.statsAriaLabel')
+            }
+            className="token-usage__stats"
+          >
+            <div>
+              <dt>{t('tokenUsage.columns.input')}</dt>
+              <dd>{tokenCountFormatter.format(totals.inputTokens)}</dd>
+            </div>
+            <div>
+              <dt>{t('tokenUsage.columns.output')}</dt>
+              <dd>{tokenCountFormatter.format(totals.outputTokens)}</dd>
+            </div>
+            <div>
+              <dt>{t('tokenUsage.columns.cacheWrite')}</dt>
+              <dd>{tokenCountFormatter.format(totals.cacheWriteTokens)}</dd>
+            </div>
+            <div>
+              <dt>{t('tokenUsage.columns.cacheRead')}</dt>
+              <dd>{tokenCountFormatter.format(totals.cacheReadTokens)}</dd>
+            </div>
+            <div>
+              <dt>{t('tokenUsage.columns.cacheHitRate')}</dt>
+              <dd>{formatCacheHitRate(totals.cacheHitRate)}</dd>
+            </div>
+            <div>
+              <dt>{t('tokenUsage.columns.total')}</dt>
+              <dd>{tokenCountFormatter.format(totals.totalTokens)}</dd>
+            </div>
+          </dl>
+
+          <div className="token-usage__table-scroll">
+            <table
+              aria-label={t('tokenUsage.detailAriaLabel', {
+                group: groupLabel
+              })}
+            >
+              <thead>
+                <tr>
+                  <th scope="col">{groupLabel}</th>
+                  <th scope="col">{t('tokenUsage.columns.input')}</th>
+                  <th scope="col">{t('tokenUsage.columns.output')}</th>
+                  <th scope="col">{t('tokenUsage.columns.cacheWrite')}</th>
+                  <th scope="col">{t('tokenUsage.columns.cacheRead')}</th>
+                  <th scope="col">{t('tokenUsage.columns.cacheHitRate')}</th>
+                  <th scope="col">{t('tokenUsage.columns.total')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
                   <tr>
-                    <th scope="col">{tokenGroupLabel}</th>
-                    <th scope="col">{t('tokenUsage.columns.input')}</th>
-                    <th scope="col">{t('tokenUsage.columns.output')}</th>
-                    <th scope="col">
-                      {t('tokenUsage.columns.cacheWrite')}
-                    </th>
-                    <th scope="col">
-                      {t('tokenUsage.columns.cacheRead')}
-                    </th>
-                    <th scope="col">
-                      {t('tokenUsage.columns.cacheHitRate')}
-                    </th>
-                    <th scope="col">
-                      {t('tokenUsage.columns.total')}
-                    </th>
+                    <td className="token-usage__empty" colSpan={7}>
+                      {empty}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {tokenRows.length === 0 ? (
-                    <tr>
-                      <td className="token-usage__empty" colSpan={7}>
-                        {t('tokenUsage.empty')}
-                      </td>
-                    </tr>
-                  ) : (
-                    tokenRows.flatMap((parent) => [
+                ) : (
+                  rows
+                    .flatMap((parent) => [
                       { row: parent, isChild: false },
-                      ...(expandedTokenRows.has(parent.key)
+                      ...(expandedTokenRows.has(expansionPrefix + parent.key)
                         ? (parent.children ?? []).map((row) => ({
                             row: { ...row, key: `${parent.key}:${row.key}` },
                             isChild: true
                           }))
                         : [])
-                    ]).map(({ row, isChild }) => {
-                      const localizedRow = localizeTokenRow(row)
+                    ])
+                    .map(({ row, isChild }) => {
+                      const localizedRow = localizeTokenRow(row, group)
+                      const expansionKey = expansionPrefix + row.key
                       return (
                         <tr
                           key={row.key}
-                          className={isChild ? 'token-usage__model-row' : undefined}
+                          className={
+                            isChild ? 'token-usage__model-row' : undefined
+                          }
                         >
                           <th scope="row">
                             {row.children ? (
                               <button
                                 type="button"
                                 className="token-usage__expand"
-                                aria-expanded={expandedTokenRows.has(row.key)}
+                                aria-expanded={expandedTokenRows.has(
+                                  expansionKey
+                                )}
                                 onClick={() =>
                                   setExpandedTokenRows((current) => {
                                     const next = new Set(current)
-                                    if (next.has(row.key)) {
-                                      next.delete(row.key)
+                                    if (next.has(expansionKey)) {
+                                      next.delete(expansionKey)
                                     } else {
-                                      next.add(row.key)
+                                      next.add(expansionKey)
                                     }
                                     return next
                                   })
@@ -1125,44 +1251,25 @@ export const ActivityPanel = memo(function ActivityPanel({
                               <span>{localizedRow.label}</span>
                             )}
                           </th>
+                          <td>{tokenCountFormatter.format(row.inputTokens)}</td>
+                          <td>{tokenCountFormatter.format(row.outputTokens)}</td>
                           <td>
-                            {tokenCountFormatter.format(
-                              row.inputTokens
-                            )}
+                            {tokenCountFormatter.format(row.cacheWriteTokens)}
                           </td>
                           <td>
-                            {tokenCountFormatter.format(
-                              row.outputTokens
-                            )}
+                            {tokenCountFormatter.format(row.cacheReadTokens)}
                           </td>
-                          <td>
-                            {tokenCountFormatter.format(
-                              row.cacheWriteTokens
-                            )}
-                          </td>
-                          <td>
-                            {tokenCountFormatter.format(
-                              row.cacheReadTokens
-                            )}
-                          </td>
-                          <td>
-                            {formatCacheHitRate(row.cacheHitRate)}
-                          </td>
-                          <td>
-                            {tokenCountFormatter.format(
-                              row.totalTokens
-                            )}
-                          </td>
+                          <td>{formatCacheHitRate(row.cacheHitRate)}</td>
+                          <td>{tokenCountFormatter.format(row.totalTokens)}</td>
                         </tr>
                       )
                     })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-      )}
-    </section>
-  )
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    )
+  }
 })

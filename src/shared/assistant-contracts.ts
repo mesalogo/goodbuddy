@@ -781,8 +781,38 @@ export type ModelUsageCallInput = {
   cacheWrite: number
 }
 
+export const tokenUsageSystemSources = [
+  'heartbeat',
+  'supervision',
+  'magic-notes',
+  'knowledge',
+  'delegation'
+] as const
+
+export type TokenUsageSystemSource = (typeof tokenUsageSystemSources)[number]
+
+export type SystemModelUsageInput = Omit<
+  ModelUsageCallInput,
+  'requestId' | 'callId'
+> & {
+  source: Extract<TokenUsageSystemSource, 'knowledge'>
+  bucket: 'graph-extraction' | 'embedding'
+}
+
+export type TokenUsageTotals = {
+  callCount: number
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  cacheInput?: number
+  totalTokens: number
+}
+
 export type TokenUsageRecord = {
   requestId: string
+  /** Set when the usage came from background system work instead of a conversation. */
+  systemSource?: TokenUsageSystemSource
   projectId?: string
   projectName?: string
   conversationId?: string
@@ -800,15 +830,12 @@ export type TokenUsageRecord = {
 }
 
 export type TokenUsageSummary = {
-  totals: {
-    callCount: number
-    input: number
-    output: number
-    cacheRead: number
-    cacheWrite: number
-    cacheInput?: number
-    totalTokens: number
-  }
+  /** Totals across all recorded usage. */
+  totals: TokenUsageTotals
+  /** Totals for conversation work only; absent in legacy summaries. */
+  conversationTotals?: TokenUsageTotals
+  /** Totals for background system work only; absent in legacy summaries. */
+  systemTotals?: TokenUsageTotals
   records: TokenUsageRecord[]
 }
 

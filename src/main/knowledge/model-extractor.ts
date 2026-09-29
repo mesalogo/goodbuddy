@@ -158,10 +158,64 @@ function completionDetail(payload: unknown): string | undefined {
     : undefined
 }
 
+export type GraphExtractionUsage = {
+  provider: 'anthropic' | 'openai'
+  model: string
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+}
+
+function tokenCount(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+    ? value as number
+    : 0
+}
+
+/** Reads provider-reported token usage from a non-streaming response. */
+export function readGraphExtractionUsage(
+  payload: unknown,
+  protocol: string,
+  fallbackModel: string
+): GraphExtractionUsage | undefined {
+  const response = record(payload)
+  const usage = record(response?.usage)
+  if (!usage) {
+    return undefined
+  }
+  const model =
+    typeof response?.model === 'string' && response.model.length > 0
+      ? response.model.slice(0, 500)
+      : fallbackModel.slice(0, 500)
+  if (protocol === 'anthropic-messages') {
+    return {
+      provider: 'anthropic',
+      model,
+      input: tokenCount(usage.input_tokens),
+      output: tokenCount(usage.output_tokens),
+      cacheRead: tokenCount(usage.cache_read_input_tokens),
+      cacheWrite: tokenCount(usage.cache_creation_input_tokens)
+    }
+  }
+  const details = record(
+    usage.prompt_tokens_details ?? usage.input_tokens_details
+  )
+  return {
+    provider: 'openai',
+    model,
+    input: tokenCount(usage.prompt_tokens ?? usage.input_tokens),
+    output: tokenCount(usage.completion_tokens ?? usage.output_tokens),
+    cacheRead: tokenCount(details?.cached_tokens),
+    cacheWrite: 0
+  }
+}
+
 export function createModelGraphExtractor(
   settingsStore: RuntimeSettingsStore,
   fetcher: typeof fetch = fetch,
-  requestTimeoutMilliseconds = defaultGraphRequestTimeoutMilliseconds
+  requestTimeoutMilliseconds = defaultGraphRequestTimeoutMilliseconds,
+  onUsage?: (usage: GraphExtractionUsage) => void
 ): ExtractStructured {
   return async (prompt, signal) => {
     const settings = await settingsStore.getResolvedSettings()
@@ -288,6 +342,18 @@ export function createModelGraphExtractor(
           : '模型未返回有效 JSON 响应',
         { cause: error }
       )
+    }
+    const usage = readGraphExtractionUsage(
+      payload,
+      protocol,
+      settings.modelName
+    )
+    if (usage && onUsage) {
+      try {
+        onUsage(usage)
+      } catch {
+        // Usage accounting must never fail a successful extraction.
+      }
     }
     const text =
       protocol === 'anthropic-messages'

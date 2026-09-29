@@ -249,6 +249,7 @@ export const ipcChannels = {
   activityHistoryGet: 'activity-history:get',
   activityHistoryReplace: 'activity-history:replace',
   tokenUsageSummary: 'usage:token-summary',
+  tokenUsageChanged: 'usage:token-changed',
   artifactsList: 'artifacts:list',
   artifactsGet: 'artifacts:get',
   artifactsImportFiles: 'artifacts:import-files',

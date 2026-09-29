@@ -96,6 +96,25 @@ describe('createModelGraphExtractor', () => {
     }
   )
 
+  it.each([
+    ['anthropic-messages', { content: [{ type: 'text', text: '{}' }], model: 'claude-x',
+      usage: { input_tokens: 11, output_tokens: 3, cache_read_input_tokens: 2, cache_creation_input_tokens: 1 } },
+    { provider: 'anthropic', model: 'claude-x', input: 11, output: 3, cacheRead: 2, cacheWrite: 1 }],
+    ['openai-chat-completions', { choices: [{ message: { content: '{}' } }],
+      usage: { prompt_tokens: 9, completion_tokens: 4, prompt_tokens_details: { cached_tokens: 5 } } },
+    { provider: 'openai', model: 'intranet-model', input: 9, output: 4, cacheRead: 5, cacheWrite: 0 }]
+  ] as const)('reports %s token usage', async (protocol, payload, expected) => {
+    const onUsage = vi.fn()
+    const extract = createModelGraphExtractor(
+      store({ modelProtocol: protocol }),
+      vi.fn<typeof fetch>(async () => jsonResponse(payload)),
+      undefined,
+      onUsage
+    )
+    await expect(extract('extract this')).resolves.toEqual({})
+    expect(onUsage).toHaveBeenCalledWith(expected)
+  })
+
   it('uses an unauthenticated Anthropic endpoint with its path and query', async () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({

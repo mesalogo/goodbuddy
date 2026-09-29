@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import { defaultSupervisionTimeoutSeconds, defaultSupervisorModelConcurrency } from '../../shared/application-settings-contracts'
 import { supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
-import type { AgentRuntime } from '../agent/runtime'
+import type { AgentRuntime, RuntimeModelUsageEvent } from '../agent/runtime'
 import type { AssistantDatabase } from './assistant-database'
 import type { SupervisionModelPool } from './supervision-model-pool'
 import { SupervisorService } from './supervisor-service'
@@ -11,7 +11,11 @@ export function createProductionSupervisorService(
   database: AssistantDatabase,
   getSettings: () => Promise<Partial<ApplicationSettings> | undefined>,
   resolveRuntime: () => Promise<AgentRuntime>,
-  pool: SupervisionModelPool
+  pool: SupervisionModelPool,
+  persistUsage: (event: RuntimeModelUsageEvent) => void = event => database.upsertModelUsageCall({
+    requestId: event.requestId, callId: event.callId, runtime: event.runtime, provider: event.provider, model: event.model,
+    input: event.inputTokens, output: event.outputTokens, cacheRead: event.cacheReadTokens, cacheWrite: event.cacheWriteTokens
+  })
 ): SupervisorService {
   return new SupervisorService({ collect: async () => { throw new Error('Paged review collector required') } }, {
     summarize: async request => {
@@ -30,9 +34,13 @@ export function createProductionSupervisorService(
         }, timeoutSeconds * 1000)
         const responseKiB = settings?.supervisionReview?.responseKiB ?? 1024
         let output = '', completed = false
-        const conversationId = `supervision:${randomUUID()}`
+        const requestId = randomUUID()
+        const conversationId = `supervision:${requestId}`
+        // Hidden task row so model usage can be attributed to supervision.
+        database.createTask({ id: requestId, conversationId, title: '监督者回顾', instructions: '根据有界证据整理监督者回顾',
+          workMode: 'ask', origin: 'assistant', visible: false })
         try {
-          for await (const event of runtime.run({ requestId: randomUUID(), conversationId, workMode: 'ask',
+          for await (const event of runtime.run({ requestId, conversationId, workMode: 'ask',
             prompt: [request.systemInstruction, 'OUTPUT CONTRACT:', request.outputContract,
               'REVIEW TIME RANGE:', JSON.stringify(request.request.timeRange), 'KNOWN ENTITIES:', JSON.stringify(request.candidates.map((candidate, index) => ({
                 candidateRef: `known_${index + 1}`, label: candidate.label, description: candidate.description
@@ -48,14 +56,23 @@ export function createProductionSupervisorService(
                 modelSignal.throwIfAborted()
               }
             }
+            if (event.type === 'model-usage') persistUsage(event)
             if (event.type === 'tool') throw new Error('监督者只允许只读模型摘要，不允许工具调用')
             if (event.type === 'error') throw new Error(event.message)
             if (event.type === 'done') completed = true
           }
           modelSignal.throwIfAborted()
           if (!completed) throw new Error('监督者模型未报告完成')
+          database.updateTaskStatus(requestId, 'completed')
           return output
-        } catch (error) { throw timeoutError ?? error }
+        } catch (error) {
+          const failure = timeoutError ?? error
+          try {
+            database.updateTaskStatus(requestId, modelSignal.aborted ? 'cancelled' : 'failed',
+              failure instanceof Error ? failure.message.slice(0, 2_000) : '监督者模型调用失败')
+          } catch { /* status bookkeeping must not mask the model failure */ }
+          throw failure
+        }
         finally { clearTimeout(timeout); await runtime.releaseConversation?.(conversationId) }
       }, request.signal)
     }

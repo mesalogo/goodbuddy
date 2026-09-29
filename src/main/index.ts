@@ -86,6 +86,7 @@ import {
 import { FeedbackService } from './feedback/feedback-service'
 import { registerFeedbackIpcHandler } from './feedback/feedback-ipc'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
+import type { SystemModelUsageInput } from '../shared/assistant-contracts'
 import {
   runCleanupBeforeDeadline,
   settleCleanupPhases
@@ -237,6 +238,28 @@ let managedRemoteExecutionServices:
 let directModelSubagentScheduler: SubagentScheduler | undefined
 let localToolEnvironmentService: LocalToolEnvironmentService | undefined
 
+function recordKnowledgeUsage(
+  bucket: SystemModelUsageInput['bucket'],
+  usage: Omit<SystemModelUsageInput, 'source' | 'bucket'>
+): void {
+  try {
+    assistantDatabase?.recordSystemModelUsage({
+      ...usage,
+      source: 'knowledge',
+      bucket
+    })
+  } catch (error) {
+    void desktopDiagnostics
+      .recordFailure({
+        component: 'desktop',
+        stage: 'knowledge',
+        code: 'knowledge.usage.persist-failed',
+        error
+      })
+      .catch(() => undefined)
+  }
+}
+
 type ManagedEmbeddingProvider = EmbeddingProvider & {
   dispose?: () => void | Promise<void>
 }
@@ -259,7 +282,17 @@ async function createEmbeddingProvider(
     return new OpenAIEmbeddingClient({
       endpoint: connection.baseUrl,
       model: connection.modelName,
-      apiKey: connection.apiKey
+      apiKey: connection.apiKey,
+      onUsage: ({ model, inputTokens }) =>
+        recordKnowledgeUsage('embedding', {
+          runtime: 'embedding',
+          provider: 'openai-compatible',
+          model,
+          input: inputTokens,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0
+        })
     })
   }
   const snapshot = await manager.getSnapshot()
@@ -899,7 +932,16 @@ if (hasSingleInstanceLock) {
       credentialCipher: secureCipher,
       databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
       managedRoot: join(app.getPath('userData'), 'knowledge'),
-      extractStructured: createModelGraphExtractor(settingsStore),
+      extractStructured: createModelGraphExtractor(
+        settingsStore,
+        fetch,
+        undefined,
+        (usage) =>
+          recordKnowledgeUsage('graph-extraction', {
+            runtime: 'model',
+            ...usage
+          })
+      ),
       parseDocument: documentParsingService.parse
     })
     knowledgeService = startupKnowledgeService
@@ -935,6 +977,15 @@ if (hasSingleInstanceLock) {
               )
             }
           })
+        },
+        onModelUsageChanged: () => {
+          if (
+            mainWindow &&
+            !mainWindow.isDestroyed() &&
+            !mainWindow.webContents.isDestroyed()
+          ) {
+            mainWindow.webContents.send(ipcChannels.tokenUsageChanged)
+          }
         }
       }
     )

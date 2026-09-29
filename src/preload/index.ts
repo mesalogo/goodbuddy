@@ -1283,7 +1283,13 @@ const desktopApi: DesktopApi = {
     getTokenSummary: () =>
       ipcRenderer.invoke(
         ipcChannels.tokenUsageSummary
-      ) as Promise<TokenUsageSummary>
+      ) as Promise<TokenUsageSummary>,
+    onChanged: (listener) => {
+      const handler = (): void => listener()
+      ipcRenderer.on(ipcChannels.tokenUsageChanged, handler)
+      return () =>
+        ipcRenderer.removeListener(ipcChannels.tokenUsageChanged, handler)
+    }
   },
   artifacts: {
     list: (projectId?: string) =>

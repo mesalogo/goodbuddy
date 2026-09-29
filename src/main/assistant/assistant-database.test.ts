@@ -6900,16 +6900,19 @@ describe('AssistantDatabase', () => {
       cacheWrite: 12
     })
 
+    const usageTotals = {
+      callCount: 1,
+      input: 125,
+      output: 25,
+      cacheRead: 40,
+      cacheWrite: 12,
+      cacheInput: 177,
+      totalTokens: 150
+    }
     expect(database.getTokenUsageSummary()).toEqual({
-      totals: {
-        callCount: 1,
-        input: 125,
-        output: 25,
-        cacheRead: 40,
-        cacheWrite: 12,
-        cacheInput: 177,
-        totalTokens: 150
-      },
+      totals: usageTotals,
+      conversationTotals: usageTotals,
+      systemTotals: expect.objectContaining({ callCount: 0, totalTokens: 0 }),
       records: [
         expect.objectContaining({
           requestId: taskId,
@@ -7525,18 +7528,54 @@ describe('AssistantDatabase', () => {
     expect(database.listTasks()).toEqual([])
     expect(database.listArtifacts(project.id)).toEqual([])
     expect(database.listMagicNotes()).toEqual([])
+    const emptyTotals = {
+      callCount: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cacheInput: 0,
+      totalTokens: 0
+    }
     expect(database.getTokenUsageSummary()).toEqual({
-      totals: {
-        callCount: 0,
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        cacheInput: 0,
-        totalTokens: 0
-      },
+      totals: emptyTotals,
+      conversationTotals: emptyTotals,
+      systemTotals: emptyTotals,
       records: []
     })
+    database.close()
+  })
+
+  it('separates system task usage from conversation usage', async () => {
+    const database = await createDatabase()
+    const usage = { runtime: 'model', provider: 'openai', model: 'gpt', input: 10, output: 5, cacheRead: 0, cacheWrite: 0 }
+    const conversationTask = '00000000-0000-4000-8000-000000000401'
+    database.createTask({ id: conversationTask, conversationId: 'chat-1', title: 'Chat', instructions: 'Reply', workMode: 'ask' })
+    database.upsertModelUsageCall({ ...usage, requestId: conversationTask, callId: 'chat' })
+    const systemTasks = [
+      ['00000000-0000-4000-8000-000000000402', 'heartbeat:a', 'heartbeat'],
+      ['00000000-0000-4000-8000-000000000403', 'supervision:b', 'supervision'],
+      ['00000000-0000-4000-8000-000000000404', undefined, 'magic-notes']
+    ] as const
+    for (const [id, conversationId] of systemTasks) {
+      database.createTask({ id, conversationId, title: 'System', instructions: 'Run', workMode: 'ask', origin: 'assistant', visible: false })
+      database.upsertModelUsageCall({ ...usage, requestId: id, callId: 'system' })
+    }
+    database.recordSystemModelUsage({ ...usage, runtime: 'embedding', source: 'knowledge', bucket: 'embedding', output: 0 })
+    database.recordSystemModelUsage({ ...usage, runtime: 'embedding', source: 'knowledge', bucket: 'embedding', output: 0 })
+
+    const summary = database.getTokenUsageSummary()
+    expect(summary.conversationTotals).toMatchObject({ callCount: 1, input: 10, output: 5 })
+    expect(summary.systemTotals).toMatchObject({ callCount: 5, input: 50, output: 15 })
+    expect(summary.totals).toMatchObject({ callCount: 6, input: 60, output: 20 })
+    expect(summary.records.find(record => record.requestId === conversationTask)?.systemSource).toBeUndefined()
+    for (const [id, , source] of systemTasks) {
+      expect(summary.records.find(record => record.requestId === id)?.systemSource).toBe(source)
+    }
+    const knowledge = summary.records.filter(record => record.systemSource === 'knowledge')
+    expect(knowledge).toHaveLength(1)
+    expect(knowledge[0]).toMatchObject({ callCount: 2, input: 20, output: 0 })
+    expect(database.listTasks().map(task => task.id)).toEqual([conversationTask])
     database.close()
   })
 })

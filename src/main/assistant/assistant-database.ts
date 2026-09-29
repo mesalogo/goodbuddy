@@ -58,9 +58,13 @@ import type {
   ProjectChannel,
   ProjectCreateInput,
   ScheduleCreateInput,
+  SystemModelUsageInput,
   TokenUsageRecord,
-  TokenUsageSummary
+  TokenUsageSummary,
+  TokenUsageSystemSource,
+  TokenUsageTotals
 } from '../../shared/assistant-contracts'
+import { tokenUsageSystemSources } from '../../shared/assistant-contracts'
 import type { StoredSupervisionResult, SupervisionCandidate } from './supervisor-service'
 import { supervisionEntitySchema, supervisionResultViewSchema, type SupervisionTarget, type SupervisionGraphRequest, type SupervisionRunRequest, type SupervisionActivity } from '../../shared/supervision-contracts'
 import type { AgentEvent } from '../../shared/contracts'
@@ -466,6 +470,7 @@ type TokenUsageRecordRow = {
   project_name: string | null
   conversation_id: string | null
   conversation_title: string | null
+  system_source: string | null
   runtime: string
   provider: string
   model: string
@@ -1824,6 +1829,7 @@ export class AssistantDatabase {
   private subagentProgress?: SubagentProgressStorage
   private channelEventWrites = 0
   private channelOutboxWrites = 0
+  private modelUsageNotificationQueued = false
   private readonly executionStatsCache = new Map<
     string,
     { value: ExecutionStats; cachedAt: number; dataVersion: number; totalChanges: number }
@@ -1834,6 +1840,7 @@ export class AssistantDatabase {
     private readonly options: {
       onMagicNotesChanged?: () => void
       onMagicTodosChanged?: () => void
+      onModelUsageChanged?: () => void
     } = {}
   ) {
     this.noteStorage = new MagicNoteStorage(databasePath)
@@ -5577,53 +5584,121 @@ export class AssistantDatabase {
         now,
         now
       )
+    this.notifyModelUsageChanged()
+  }
+
+  /**
+   * Records usage for background work that has no request of its own, such as
+   * knowledge graph extraction or remote embeddings. Calls are grouped into one
+   * hidden task per source, bucket and UTC day so the foreign key to tasks holds.
+   */
+  recordSystemModelUsage(input: SystemModelUsageInput): void {
+    const day = new Date().toISOString().slice(0, 10)
+    const taskId = `${input.source}:${input.bucket}:${day}`
+    const now = new Date().toISOString()
+    this.requireDatabase()
+      .prepare(
+        `INSERT OR IGNORE INTO tasks
+          (id, project_id, conversation_id, title, instructions, origin,
+           status, priority, work_mode, created_at, started_at, completed_at,
+           visible)
+         VALUES (?, NULL, ?, ?, ?, 'assistant', 'completed', 0, 'ask', ?, ?, ?, 0)`
+      )
+      .run(
+        taskId,
+        taskId,
+        input.bucket === 'embedding' ? '知识库向量化' : '知识图谱抽取',
+        '后台知识库模型用量汇总',
+        now,
+        now,
+        now
+      )
+    this.upsertModelUsageCall({
+      ...input,
+      requestId: taskId,
+      callId: `system-call:${randomUUID()}`
+    })
+  }
+
+  private notifyModelUsageChanged(): void {
+    if (this.modelUsageNotificationQueued || !this.options.onModelUsageChanged) {
+      return
+    }
+    this.modelUsageNotificationQueued = true
+    // Coalesce bursts of per-call upserts into one renderer refresh.
+    const timer = setTimeout(() => {
+      this.modelUsageNotificationQueued = false
+      this.options.onModelUsageChanged?.()
+    }, 500)
+    timer.unref?.()
   }
 
   getTokenUsageSummary(): TokenUsageSummary {
-    const rows = this.requireDatabase()
-      .prepare(
-        `SELECT
-           usage.request_id,
-           tasks.project_id,
-           projects.name AS project_name,
-           tasks.conversation_id,
-           conversations.title AS conversation_title,
-           usage.runtime,
-           usage.provider,
-           usage.model,
-           COUNT(*) AS call_count,
-           SUM(usage.input_tokens) AS input_tokens,
-           SUM(usage.output_tokens) AS output_tokens,
-           SUM(usage.cache_read_tokens) AS cache_read_tokens,
-           SUM(usage.cache_write_tokens) AS cache_write_tokens,
-           SUM(
-             usage.input_tokens +
-             CASE
-               WHEN LOWER(usage.provider) LIKE '%anthropic%'
-               THEN usage.cache_read_tokens + usage.cache_write_tokens
-               ELSE 0
-             END
-           ) AS cache_input_tokens
-         FROM model_usage_calls usage
-         JOIN tasks ON tasks.id = usage.request_id
-         LEFT JOIN projects ON projects.id = tasks.project_id
-         LEFT JOIN conversations
-           ON conversations.id = tasks.conversation_id
-         GROUP BY
-           usage.request_id,
-           tasks.project_id,
-           projects.name,
-           tasks.conversation_id,
-           conversations.title,
-           usage.runtime,
-           usage.provider,
-           usage.model
-         ORDER BY MAX(usage.updated_at) DESC
-         LIMIT 500`
-      )
-      .all() as TokenUsageRecordRow[]
-    const records: TokenUsageRecord[] = rows.map((row) => ({
+    const systemSourceSql = `CASE
+             WHEN tasks.conversation_id LIKE 'heartbeat:%' THEN 'heartbeat'
+             WHEN tasks.conversation_id LIKE 'supervision:%' THEN 'supervision'
+             WHEN tasks.conversation_id LIKE 'knowledge:%' THEN 'knowledge'
+             WHEN tasks.conversation_id LIKE 'delegation:%' THEN 'delegation'
+             WHEN tasks.origin = 'assistant' AND tasks.conversation_id IS NULL
+               THEN 'magic-notes'
+           END`
+    const database = this.requireDatabase()
+    // Conversation and system rows are limited separately so frequent chat
+    // usage cannot hide background usage (or the reverse).
+    const selectRows = (system: boolean): TokenUsageRecordRow[] =>
+      database
+        .prepare(
+          `SELECT
+             usage.request_id,
+             tasks.project_id,
+             projects.name AS project_name,
+             tasks.conversation_id,
+             conversations.title AS conversation_title,
+             ${systemSourceSql} AS system_source,
+             usage.runtime,
+             usage.provider,
+             usage.model,
+             COUNT(*) AS call_count,
+             SUM(usage.input_tokens) AS input_tokens,
+             SUM(usage.output_tokens) AS output_tokens,
+             SUM(usage.cache_read_tokens) AS cache_read_tokens,
+             SUM(usage.cache_write_tokens) AS cache_write_tokens,
+             SUM(
+               usage.input_tokens +
+               CASE
+                 WHEN LOWER(usage.provider) LIKE '%anthropic%'
+                 THEN usage.cache_read_tokens + usage.cache_write_tokens
+                 ELSE 0
+               END
+             ) AS cache_input_tokens
+           FROM model_usage_calls usage
+           JOIN tasks ON tasks.id = usage.request_id
+           LEFT JOIN projects ON projects.id = tasks.project_id
+           LEFT JOIN conversations
+             ON conversations.id = tasks.conversation_id
+           WHERE (${systemSourceSql}) IS ${system ? 'NOT ' : ''}NULL
+           GROUP BY
+             usage.request_id,
+             tasks.project_id,
+             projects.name,
+             tasks.conversation_id,
+             conversations.title,
+             usage.runtime,
+             usage.provider,
+             usage.model
+           ORDER BY MAX(usage.updated_at) DESC
+           LIMIT 500`
+        )
+        .all() as TokenUsageRecordRow[]
+    const knownSources = new Set<string>(tokenUsageSystemSources)
+    const records: TokenUsageRecord[] = [
+      ...selectRows(false),
+      ...selectRows(true)
+    ].map((row) => ({
       requestId: row.request_id,
+      ...(row.system_source && knownSources.has(row.system_source)
+        ? { systemSource: row.system_source as TokenUsageSystemSource }
+        : {}),
       projectId: row.project_id ?? undefined,
       projectName: row.project_name ?? undefined,
       conversationId: row.conversation_id ?? undefined,
@@ -5639,28 +5714,8 @@ export class AssistantDatabase {
       cacheInput: row.cache_input_tokens,
       totalTokens: row.input_tokens + row.output_tokens
     }))
-    const totalRow = this.requireDatabase()
-      .prepare(
-        `SELECT
-           COUNT(*) AS call_count,
-           COALESCE(SUM(input_tokens), 0) AS input_tokens,
-           COALESCE(SUM(output_tokens), 0) AS output_tokens,
-           COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
-           COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
-           COALESCE(
-             SUM(
-               input_tokens +
-               CASE
-                 WHEN LOWER(provider) LIKE '%anthropic%'
-                 THEN cache_read_tokens + cache_write_tokens
-                 ELSE 0
-               END
-             ),
-             0
-           ) AS cache_input_tokens
-         FROM model_usage_calls`
-      )
-      .get() as {
+    type TotalRow = {
+      is_system: number | null
       call_count: number
       input_tokens: number
       output_tokens: number
@@ -5668,16 +5723,51 @@ export class AssistantDatabase {
       cache_write_tokens: number
       cache_input_tokens: number
     }
-    const totals = {
-      callCount: totalRow.call_count,
-      input: totalRow.input_tokens,
-      output: totalRow.output_tokens,
-      cacheRead: totalRow.cache_read_tokens,
-      cacheWrite: totalRow.cache_write_tokens,
-      cacheInput: totalRow.cache_input_tokens,
-      totalTokens: totalRow.input_tokens + totalRow.output_tokens
+    // Usage rows always reference a task (foreign key), so the join is lossless.
+    const totalRows = database
+      .prepare(
+        `SELECT
+           (${systemSourceSql}) IS NOT NULL AS is_system,
+           COUNT(*) AS call_count,
+           COALESCE(SUM(usage.input_tokens), 0) AS input_tokens,
+           COALESCE(SUM(usage.output_tokens), 0) AS output_tokens,
+           COALESCE(SUM(usage.cache_read_tokens), 0) AS cache_read_tokens,
+           COALESCE(SUM(usage.cache_write_tokens), 0) AS cache_write_tokens,
+           COALESCE(
+             SUM(
+               usage.input_tokens +
+               CASE
+                 WHEN LOWER(usage.provider) LIKE '%anthropic%'
+                 THEN usage.cache_read_tokens + usage.cache_write_tokens
+                 ELSE 0
+               END
+             ),
+             0
+           ) AS cache_input_tokens
+         FROM model_usage_calls usage
+         LEFT JOIN tasks ON tasks.id = usage.request_id
+         GROUP BY is_system`
+      )
+      .all() as TotalRow[]
+    const toTotals = (rows: TotalRow[]): TokenUsageTotals => {
+      const sum = (key: Exclude<keyof TotalRow, 'is_system'>): number =>
+        rows.reduce((total, row) => total + row[key], 0)
+      return {
+        callCount: sum('call_count'),
+        input: sum('input_tokens'),
+        output: sum('output_tokens'),
+        cacheRead: sum('cache_read_tokens'),
+        cacheWrite: sum('cache_write_tokens'),
+        cacheInput: sum('cache_input_tokens'),
+        totalTokens: sum('input_tokens') + sum('output_tokens')
+      }
     }
-    return { totals, records }
+    return {
+      totals: toTotals(totalRows),
+      conversationTotals: toTotals(totalRows.filter((row) => !row.is_system)),
+      systemTotals: toTotals(totalRows.filter((row) => row.is_system)),
+      records
+    }
   }
 
   updateTaskStatus(

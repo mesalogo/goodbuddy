@@ -131,6 +131,24 @@ function fixture(content = 'Atlas and Beacon are separate projects.') {
   return { db, request, respond, service }
 }
 
+it('records supervisor model usage under a hidden supervision task', async () => {
+  const f = fixture()
+  const run: AgentRuntime['run'] = async function* (input) {
+    yield { type: 'text', requestId: input.requestId, delta: JSON.stringify(f.respond(input.prompt)) }
+    yield { type: 'model-usage', requestId: input.requestId, callId: 'call-1', runtime: 'model', provider: 'openai',
+      model: 'gpt-review', inputTokens: 40, outputTokens: 8, cacheReadTokens: 0, cacheWriteTokens: 0 }
+    yield { type: 'done', requestId: input.requestId }
+  }
+  const service = createProductionSupervisorService(f.db, async () => ({ supervisorModelConcurrency: 1,
+    supervisionReview: { pageSize: 10, batchCharacters: 1000, batchMessages: 10, executionSeconds: 300, responseKiB: 1024 } }),
+    async () => ({ runtimeId: 'model', capability: 'chat', run } as AgentRuntime), new SupervisionModelPool())
+  await service.run(f.request)
+  const summary = f.db.getTokenUsageSummary()
+  expect(summary.records).toEqual([expect.objectContaining({ systemSource: 'supervision', model: 'gpt-review', input: 40, output: 8 })])
+  expect(summary.systemTotals).toMatchObject({ callCount: 1, input: 40 })
+  expect(f.db.listTasks()).toEqual([])
+})
+
 it('production factory normalizes two absent identities, then reuses exact candidate UUIDs without extra calls', async () => {
   const f = fixture()
   const first = await f.service().run(f.request)

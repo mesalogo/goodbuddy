@@ -2396,7 +2396,9 @@ export function registerIpcHandlers(
           conversationId: runtimeConversationId,
           projectId: schedule.projectId,
           workMode: schedule.workMode,
-          prompt: `${trustedInstructions}\n\n${schedule.prompt}`,
+          prompt: requestRuntime.consumesTrustedInstructions === true
+            ? schedule.prompt
+            : `${trustedInstructions}\n\n${schedule.prompt}`,
           knowledgeLibraryIds: [],
           ...(remoteContext?.contextIds?.length
             ? { contextIds: remoteContext.contextIds }
@@ -4317,7 +4319,7 @@ export function registerIpcHandlers(
             markManagedSshAccepted()
           }
           return selectedRuntime.run(
-            modeInstruction
+            modeInstruction && selectedRuntime.consumesTrustedInstructions !== true
               ? {
                   ...executionRequest,
                   prompt: `${modeInstruction}\n\n${executionRequest.prompt}`
@@ -6413,7 +6415,8 @@ export function registerIpcHandlers(
     }
   )
   const supervisorService = createProductionSupervisorService(assistantDatabase,
-    async () => applicationSettingsStore?.get(), () => resolveRequestRuntime({ workMode: 'ask' }), supervisionModelPool)
+    async () => applicationSettingsStore?.get(), () => resolveRequestRuntime({ workMode: 'ask' }), supervisionModelPool,
+    persistModelUsage)
 
   registerHandler(
     ipcChannels.conversationsBranchLocal,
@@ -6478,7 +6481,7 @@ export function registerIpcHandlers(
     const currentWorkMode = (): 'ask' | 'execute' => normalizeInteractiveWorkMode(assistantDatabase.getConversation(target.conversationId).workMode)
     return imageGenerationService.regenerate({
       conversationId: target.conversationId, messageId: previous.messageId,
-      requestId: randomUUID(), workMode: currentWorkMode()
+      requestId: previous.requestId, workMode: currentWorkMode()
     }, target.operationId, currentWorkMode)
   })
 

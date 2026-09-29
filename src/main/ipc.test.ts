@@ -5796,6 +5796,9 @@ describe('registerIpcHandlers agent terminal state', () => {
       const regenerated = await regenerate(event, { conversationId, operationId: original.id }) as typeof original
       expect(regenerated.id).not.toBe(original.id)
       expect(regenerated.messageId).toBe(messageId)
+      // Regeneration keeps the originating task so its usage satisfies the task foreign key.
+      expect(regenerated.requestId).toBe(original.requestId)
+      expect(regenerated.callId).not.toBe(original.callId)
       expect(fetcher).toHaveBeenCalledTimes(2)
       database.saveLocalConversations([{ header: { ...header, workMode: 'ask' }, messages: [] }])
       await expect(regenerate(event, { conversationId, operationId: original.id })).rejects.toThrow('Execute')
@@ -11357,6 +11360,47 @@ describe('registerIpcHandlers agent terminal state', () => {
       await harness.dispose()
     }
   )
+
+  it('sends the work-mode instruction only once to runtimes that consume trusted instructions', async () => {
+    let receivedRequest:
+      | { requestId: string; prompt: string; trustedInstructions?: string }
+      | undefined
+    const runtime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      consumesTrustedInstructions: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      async *run(request: {
+        requestId: string
+        prompt: string
+        trustedInstructions?: string
+      }) {
+        receivedRequest = request
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    const requestId = '5c3e1f7a-2b8d-4e6f-9a1c-7d2b4e6f8a10'
+
+    harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'conversation-1',
+      prompt: 'fix the bug',
+      workMode: 'execute'
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'completed')
+    )
+    expect(receivedRequest?.prompt).toBe('fix the bug')
+    expect(receivedRequest?.trustedInstructions).toContain('Work mode: Execute.')
+    await harness.dispose()
+  })
 
   it('routes eligible Ask requests through the persisted smart expert service and publishes child events', async () => {
     const runtime = {

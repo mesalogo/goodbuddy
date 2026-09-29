@@ -6096,8 +6096,27 @@ function App(): React.JSX.Element {
         }),
       );
     }, 0);
-    return () => clearTimeout(timeout);
+    // Background work (supervisor, heartbeat, knowledge, notes) records usage
+    // without a renderer request; main notifies so the view stays current.
+    const removeUsageListener = window.goodbuddy.usage.onChanged?.(() => {
+      void refreshTokenUsage().catch(() => undefined);
+    });
+    return () => {
+      clearTimeout(timeout);
+      removeUsageListener?.();
+    };
   }, [refreshTokenUsage, view]);
+
+  const manualRefreshTokenUsage = useCallback(async (): Promise<void> => {
+    try {
+      await refreshTokenUsage();
+    } catch {
+      notify({
+        tone: "error",
+        message: tRef.current("notices.tokenUsageReadFailed"),
+      });
+    }
+  }, [notify, refreshTokenUsage]);
 
   useEffect(() => {
     void window.goodbuddy.artifacts
@@ -11406,6 +11425,7 @@ function App(): React.JSX.Element {
                       <ActivityPanel
                         onClear={clearActivity}
                         onOpenConversation={openActivityConversation}
+                        onRefreshTokenUsage={manualRefreshTokenUsage}
                         projects={projects}
                         records={activityRecords}
                         tokenUsage={tokenUsage}

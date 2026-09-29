@@ -42,6 +42,16 @@ describe('OpenAIEmbeddingClient', () => {
     })
   })
 
+  it('reports provider token usage per batch without failing on observer errors', async () => {
+    const transport = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ data: [{ index: 0, embedding: [1, 2] }], usage: { prompt_tokens: 7, total_tokens: 7 } }))
+    )
+    const onUsage = vi.fn(() => { throw new Error('observer failed') })
+    const client = new OpenAIEmbeddingClient({ endpoint: 'http://127.0.0.1/v1/embeddings', model: 'embed', fetch: transport, onUsage })
+    await expect(client.embed(['alpha'])).resolves.toEqual([[1, 2]])
+    expect(onUsage).toHaveBeenCalledWith({ model: 'embed', inputTokens: 7 })
+  })
+
   it('accepts unauthenticated endpoints and restores response index order', async () => {
     const transport = vi.fn<typeof fetch>(async () =>
       new Response(
