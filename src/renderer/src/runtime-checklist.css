@@ -67,7 +67,12 @@
   white-space: nowrap;
 }
 .runtime-checklist__result { overflow-wrap: anywhere; }
-.runtime-checklist__content { flex: 0 1 auto; min-height: 0; max-height: 20vh; overflow: auto; }
+.runtime-checklist__content {
+  min-height: 0;
+  overflow: auto;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
 .runtime-checklist__content ol { margin: 0; padding: var(--space-2); list-style: none; }
 .runtime-checklist__content li {
   display: flex;

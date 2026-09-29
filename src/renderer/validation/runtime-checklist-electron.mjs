@@ -24,7 +24,20 @@ async function key(keyCode, modifiers = []) {
   await wait(100)
 }
 async function capture(name) {
-  await wait(150)
+  await window.webContents.capturePage()
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const settled = await evaluate(`(() => {
+      const panel = document.querySelector('.runtime-checklist__content');
+      if (!panel) return true;
+      const rect = panel.getBoundingClientRect();
+      const anchor = document.querySelector('.runtime-checklist__toggle').getBoundingClientRect();
+      return rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1
+        && Math.abs(rect.width - Math.min(anchor.width, visualViewport.width - 32)) < 1;
+    })()`)
+    if (settled) break
+    if (attempt === 49) throw new Error(`Floating panel did not settle for ${name}`)
+    await wait(100)
+  }
   const measurements = await evaluate(`(() => {
     const rect = selector => { const e = document.querySelector(selector); if (!e) return null; const r = e.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom,clientHeight:e.clientHeight,scrollHeight:e.scrollHeight,clientWidth:e.clientWidth,scrollWidth:e.scrollWidth } };
     return { viewport: {width:innerWidth,height:innerHeight,dpr:devicePixelRatio}, body:rect('body'), top:rect('.conversation-context-strips'), task:rect('.conversation-task-strip__toggle'), checklist:rect('.runtime-checklist__toggle'), list:rect('.runtime-checklist__content'), chat:rect('.chat'), input:rect('input'), focus:document.activeElement?.className };
@@ -101,15 +114,19 @@ app.whenReady().then(async () => {
   }
   await capture('01-wide-collapsed')
   await click('.conversation-task-strip__toggle')
+  await evaluate("window.checklistChatRect = document.querySelector('.chat').getBoundingClientRect().toJSON()")
   await click('.runtime-checklist__toggle')
   await capture('02-wide-both-expanded')
+  await check('expanded-checklist-does-not-move-chat', "(() => { const rect = document.querySelector('.chat').getBoundingClientRect(); return rect.y === window.checklistChatRect.y && rect.height === window.checklistChatRect.height && getComputedStyle(document.querySelector('.runtime-checklist__content')).position === 'fixed'; })()")
   await evaluate("document.querySelector('.runtime-checklist__toggle').focus()")
   await key('Space')
   await check('space-collapses-only-checklist', "document.querySelector('.runtime-checklist__toggle').getAttribute('aria-expanded') === 'false' && document.querySelector('.conversation-task-strip__toggle').getAttribute('aria-expanded') === 'true'")
   await key('Enter')
-  await check('enter-expands-checklist-keeps-focus', "document.querySelector('.runtime-checklist__toggle').getAttribute('aria-expanded') === 'true' && document.activeElement.matches('.runtime-checklist__toggle')")
+  await check('enter-expands-checklist-focuses-panel', "document.querySelector('.runtime-checklist__toggle').getAttribute('aria-expanded') === 'true' && document.activeElement.matches('.runtime-checklist__content')")
   await evaluate("document.querySelector('input').focus(); window.checklistHarness.update()")
   results.push({ name: 'update-keeps-input-focus', passed: await evaluate("document.activeElement === document.querySelector('input')") })
+  await check('outside-focus-closes-checklist', "!document.querySelector('.runtime-checklist__content')")
+  await click('.runtime-checklist__toggle')
   await evaluate("document.querySelector('.runtime-checklist__content').scrollTop = 100000")
   await capture('03-long-list-end')
   window.webContents.setZoomFactor(2)
@@ -119,17 +136,18 @@ app.whenReady().then(async () => {
   await capture('04-narrow-both-expanded')
   window.webContents.setZoomFactor(2)
   await capture('05-narrow-200-percent')
-  await evaluate("document.querySelector('.runtime-checklist__toggle').focus()")
-  await key('Tab')
-  await check('tab-reaches-checklist-scroll-region', "document.activeElement.matches('.runtime-checklist__content')")
+  await evaluate("document.querySelector('.runtime-checklist__content').focus()")
   await key('End', ['control'])
   await wait(300)
   await check('keyboard-reaches-last-item-at-200-percent', "(() => {const list=document.querySelector('.runtime-checklist__content'); const last=list.querySelector('li:last-child').getBoundingClientRect(); const r=list.getBoundingClientRect(); return document.activeElement === list && last.bottom <= r.bottom + 1 && last.bottom > r.top;})()")
+  await key('Escape')
+  await check('escape-closes-and-restores-toggle-focus', "!document.querySelector('.runtime-checklist__content') && document.activeElement.matches('.runtime-checklist__toggle')")
   await evaluate("document.querySelector('.conversation-task-details__actions button').focus()")
   await key('Enter')
   await check('task-run-action-at-200-percent', 'window.checklistHarness.runs === 1')
   await capture('05b-narrow-keyboard-task-action')
   await evaluate("window.checklistHarness.theme('dark')")
+  await click('.runtime-checklist__toggle')
   await check('dark-theme-applied-to-root', "document.documentElement.dataset.theme === 'dark' && getComputedStyle(document.documentElement).getPropertyValue('--surface-raised').trim() !== '#ffffff'")
   await capture('06-dark-narrow-200-percent')
   window.webContents.setZoomFactor(1)

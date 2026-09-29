@@ -3,11 +3,13 @@ import { flushSync } from 'react-dom'
 import { FloatingPortal } from './FloatingPortal'
 import './anchored-menu.css'
 
-export function AnchoredMenu({ anchorRef, id, label, width: preferredWidth = 280, onClose, children }: {
+export function AnchoredMenu({ anchorRef, id, label, width: preferredWidth = 280, role = 'menu', className = '', onClose, children }: {
   anchorRef: RefObject<HTMLButtonElement | null>
   id: string
   label: string
-  width?: number
+  width?: number | 'anchor'
+  role?: 'menu' | 'group'
+  className?: string
   onClose: () => void
   children: ReactNode
 }): React.JSX.Element {
@@ -23,12 +25,13 @@ export function AnchoredMenu({ anchorRef, id, label, width: preferredWidth = 280
     const width = viewport?.width ?? window.innerWidth
     const height = viewport?.height ?? window.innerHeight
     const rect = anchor.getBoundingClientRect()
-    const menuWidth = Math.max(0, Math.min(preferredWidth, width - 32))
+    const menuWidth = Math.max(0, Math.min(preferredWidth === 'anchor' ? rect.width : preferredWidth, width - 32))
     menu.style.width = `${menuWidth}px`
     const above = Math.max(0, Math.min(height - 32, rect.top - top - 24))
     const below = Math.max(0, Math.min(height - 32, top + height - rect.bottom - 24))
     const openBelow = menu.scrollHeight > above && below > above
-    menu.style.maxHeight = `${openBelow ? below : above}px`
+    const availableHeight = openBelow ? below : above
+    menu.style.maxHeight = `${role === 'group' ? Math.min(availableHeight, 400, height / 2) : availableHeight}px`
     menu.style.left = `${Math.max(left + 16, Math.min(rect.left, left + width - menuWidth - 16))}px`
     menu.style.top = `${Math.max(top + 16, openBelow ? rect.bottom + 8 : Math.min(rect.top - 8, top + height - 16) - menu.getBoundingClientRect().height)}px`
   })
@@ -60,7 +63,7 @@ export function AnchoredMenu({ anchorRef, id, label, width: preferredWidth = 280
         anchor?.focus()
         return
       }
-      if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+      if (role !== 'menu' || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
       event.preventDefault()
       const items = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)'))
       const index = items.indexOf(document.activeElement as HTMLElement)
@@ -90,7 +93,7 @@ export function AnchoredMenu({ anchorRef, id, label, width: preferredWidth = 280
       window.visualViewport?.removeEventListener('scroll', reposition)
       if (document.activeElement === document.body || menu.contains(document.activeElement)) anchor?.focus()
     }
-  }, [anchorRef])
-  return <FloatingPortal anchorRef={anchorRef}><div ref={menuRef} id={id} role="menu" aria-label={label}
-    tabIndex={-1} className="anchored-menu">{children}</div></FloatingPortal>
+  }, [anchorRef, role])
+  return <FloatingPortal anchorRef={anchorRef}><div ref={menuRef} id={id} role={role} aria-label={label}
+    tabIndex={-1} className={`anchored-menu ${className}`}>{children}</div></FloatingPortal>
 }

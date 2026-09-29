@@ -110,7 +110,9 @@ No SQLite schema migration or separate checklist store is needed.
 
 `ConversationTaskStrip` 与 `RuntimeChecklistStrip` 共用顶部容器，任务在上、清单在下，
 各自展开和折叠。没有 Task 时清单仍可显示；远程会话也保留清单入口。总高度不超过
-45vh，各自展开内容不超过 20vh 并内部滚动，标题不收缩。清单内容区可用键盘聚焦和滚动。
+45vh，Task 展开内容不超过 20vh 并内部滚动，标题不收缩。清单详情复用 `AnchoredMenu`
+的 `group` 语义和 `FloatingPortal`，宽度跟随摘要按钮并受视口约束，高度按可用空间限制，
+内部可用键盘滚动。展开不改变顶部容器或消息流的高度；点击外部、焦点移出或 Escape 收起。
 
 状态文字与条目首行按文字基线对齐，状态图标单独居中。CN 不推断进行中或优先级。
 新轮先选择本轮消息，再读取清单，不回溯寻找旧轮非空清单。后台更新保持展开状态和焦点。

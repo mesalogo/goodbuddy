@@ -1,8 +1,9 @@
 import { CheckCircle2, ChevronDown, ChevronUp, Circle, CircleDashed, XCircle } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Message } from './ChatTimeline'
 import { isCancelledMessage } from './message-terminal-status'
+import { AnchoredMenu } from './AnchoredMenu'
 import './runtime-checklist.css'
 
 const statusIcons = {
@@ -31,6 +32,7 @@ function Checklist({ message }: { message: Message }): React.JSX.Element {
   const { t } = useTranslation('app')
   const [expanded, setExpanded] = useState(false)
   const contentId = useId()
+  const anchorRef = useRef<HTMLButtonElement>(null)
   const items = message.runtimeChecklist!.items
   const completed = items.reduce((count, item) => count + Number(item.status === 'completed'), 0)
   const current = items.find(item => item.status === 'in_progress')
@@ -41,7 +43,7 @@ function Checklist({ message }: { message: Message }): React.JSX.Element {
   const summary = t('runtimeChecklist.count', { completed, total: items.length })
   return (
     <section className="runtime-checklist" aria-label={t('runtimeChecklist.title')}>
-      <button className="runtime-checklist__toggle" type="button"
+      <button ref={anchorRef} className="runtime-checklist__toggle" type="button"
         aria-expanded={expanded} aria-controls={contentId}
         onClick={() => setExpanded(value => !value)}>
         <strong>{t('runtimeChecklist.title')}</strong>
@@ -51,8 +53,8 @@ function Checklist({ message }: { message: Message }): React.JSX.Element {
         {expanded ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}
       </button>
       <span className="sr-only" role="status" aria-live="polite">{summary}{result ? ` · ${result}` : ''}</span>
-      <div id={contentId} hidden={!expanded} className="runtime-checklist__content"
-        tabIndex={0} role="group" aria-label={t('runtimeChecklist.title')}>
+      {expanded && <AnchoredMenu anchorRef={anchorRef} id={contentId} label={t('runtimeChecklist.title')}
+        role="group" width="anchor" className="runtime-checklist__content" onClose={() => setExpanded(false)}>
         <ol>
           {items.map((item, index) => {
             const Icon = statusIcons[item.status]
@@ -65,7 +67,7 @@ function Checklist({ message }: { message: Message }): React.JSX.Element {
             </li>
           })}
         </ol>
-      </div>
+      </AnchoredMenu>}
     </section>
   )
 }

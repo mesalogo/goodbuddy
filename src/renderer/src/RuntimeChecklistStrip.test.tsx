@@ -37,7 +37,9 @@ describe('RuntimeChecklistStrip', () => {
     toggle.focus()
     fireEvent.click(toggle)
     expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toBeVisible()
-    expect(screen.getByRole('group', { name: '执行清单' })).toHaveAttribute('tabindex', '0')
+    const panel = screen.getByRole('group', { name: '执行清单' })
+    expect(panel).toHaveFocus()
+    expect(screen.getByRole('region', { name: '执行清单' })).not.toContainElement(panel)
     expect(screen.getByText('高优先级')).toBeVisible()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     const updated: Message = { ...message, state: 'error', status: '已取消', runtimeChecklist: {
@@ -46,7 +48,7 @@ describe('RuntimeChecklistStrip', () => {
       ]
     } }
     rerender(<RuntimeChecklistStrip messages={[updated]} />)
-    expect(toggle).toHaveFocus()
+    expect(panel).toHaveFocus()
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(toggle).toHaveTextContent('已完成 1/2')
     expect(toggle).toHaveTextContent('已取消')
@@ -90,7 +92,7 @@ describe('RuntimeChecklistStrip', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Existing Task' }))
     expect(select).toHaveBeenCalledWith('task')
     fireEvent.click(taskToggle)
-    expect(within(screen.getByRole('region', { name: '执行清单' })).getByRole('list')).toBeVisible()
+    expect(within(screen.getByRole('group', { name: '执行清单' })).getByRole('list')).toBeVisible()
   })
 
   it('bounds combined height and long content while retaining wrapping and keyboard focus', () => {
@@ -98,9 +100,26 @@ describe('RuntimeChecklistStrip', () => {
     expect(css).toMatch(/\.conversation-context-strips\s*\{[^}]*max-height: 45vh;[^}]*overflow: auto;/s)
     expect(css).toMatch(/\.runtime-checklist__toggle\s*\{\s*flex: 0 0 auto;/s)
     expect(css).toMatch(/\.runtime-checklist__content\s*\{[^}]*min-height: 0;/s)
-    expect(css).toMatch(/\.runtime-checklist__content\s*\{[^}]*max-height: 20vh;[^}]*overflow: auto;/s)
+    expect(css).toMatch(/\.runtime-checklist__content\s*\{[^}]*overflow: auto;/s)
     expect(css).toContain('overflow-wrap: anywhere')
     expect(css).toContain('flex-wrap: wrap')
     expect(css).toContain(':focus-visible')
+  })
+
+  it('dismisses on Escape and outside interaction and leaves scrolling keys native', () => {
+    const { rerender } = render(<RuntimeChecklistStrip messages={[message]} />)
+    const toggle = screen.getByRole('button', { name: /执行清单/ })
+    fireEvent.click(toggle)
+    const panel = screen.getByRole('group', { name: '执行清单' })
+    expect(fireEvent.keyDown(panel, { key: 'End' })).toBe(true)
+    fireEvent.keyDown(panel, { key: 'Escape' })
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
+    expect(toggle).toHaveFocus()
+    fireEvent.click(toggle)
+    fireEvent.pointerDown(document.body)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    rerender(<RuntimeChecklistStrip messages={[{ ...message, id: 'other-request' }]} />)
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
   })
 })
