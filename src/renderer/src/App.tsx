@@ -13,6 +13,7 @@ import { PendingDocumentImports } from './PendingDocumentImports';
 import { AttachmentCapabilityNotice } from './AttachmentCapabilityNotice';
 import { DocumentConversationContext } from './DocumentConversationContext';
 import { maximumAttachmentsPerMessage } from '../../shared/attachment-limits';
+import { buildRuntimeHistory } from '../../shared/runtime-history';
 import {
   ApplicationAvailability,
   ApplicationCenter,
@@ -7091,9 +7092,7 @@ function App(): React.JSX.Element {
       8,
     );
     const historySnapshot = conversationSnapshot.messages;
-    const retainedHistorySnapshot = historySnapshot.filter(
-        (message) => message.state === "complete" && message.content.trim(),
-      );
+    const retainedHistorySnapshot = buildRuntimeHistory(historySnapshot);
     const projectIdSnapshot = queuedInput
       ? queuedInput.projectId
       : activeProjectId || undefined;
@@ -7435,9 +7434,7 @@ function App(): React.JSX.Element {
       notify({ tone: "error", message: t("notices.remoteConversationRefreshFailed") });
       return;
     }
-    const history = completeConversation.messages.filter(
-        (message) => message.state === "complete" && message.content.trim(),
-      );
+    const history = buildRuntimeHistory(completeConversation.messages);
     if (history.length < 2) {
       notify({
         tone: "info",

@@ -72,6 +72,8 @@ import {
 } from "./opencode-subagent";
 import { promptWithUntrustedConversationHistory } from "./runtime-conversation-history";
 
+const opencodeInterruptionNotice =
+  "[The user interrupted the previous turn before it finished. Its request may be incomplete; answer the new message below and do not resume or re-answer the interrupted request unless asked.]";
 const STARTUP_TIMEOUT_MS = 30_000;
 const STARTUP_POLL_INTERVAL_MS = 100;
 const STARTUP_PROBE_TIMEOUT_MS = 500;
@@ -732,7 +734,11 @@ export class OpenCodeRuntime implements AgentRuntime {
   private clientInitialization?: Promise<OpencodeClient>;
   private server?: OpenCodeServer;
   private startingChild?: SpawnedProcess;
-  private readonly sessions = new Map<string, { id: string; directory: string }>();
+  // `interrupted` marks a reused session whose last turn the user cancelled.
+  private readonly sessions = new Map<
+    string,
+    { id: string; directory: string; interrupted?: boolean }
+  >();
   private initializationController?: AbortController;
   private initializationWaiters = 0;
   private readonly sessionInitializations = new Map<string, Promise<string>>();
@@ -2461,6 +2467,14 @@ export class OpenCodeRuntime implements AgentRuntime {
           request,
           session.created,
         );
+        const sessionState = this.sessions.get(request.conversationId);
+        // The native transcript keeps a cancelled turn; tell the model it was
+        // interrupted so it answers the new message instead of merging both.
+        const interruptionNotice =
+          !session.created && sessionState?.id === sessionId && sessionState.interrupted
+            ? opencodeInterruptionNotice
+            : undefined;
+        if (sessionState?.id === sessionId) sessionState.interrupted = false;
         const imageParts = (request.images ?? []).map((image) => ({
           type: "file" as const,
           mime: image.mediaType,
@@ -2515,6 +2529,15 @@ export class OpenCodeRuntime implements AgentRuntime {
                         .join("\n\n") || undefined,
                     ...(toolOverrides ? { tools: toolOverrides } : {}),
                     parts: [
+                      ...(interruptionNotice
+                        ? [
+                            {
+                              type: "text" as const,
+                              text: interruptionNotice,
+                              synthetic: true,
+                            },
+                          ]
+                        : []),
                       { type: "text" as const, text: promptText },
                       ...imageParts,
                     ],
@@ -3065,8 +3088,14 @@ export class OpenCodeRuntime implements AgentRuntime {
         signal.removeEventListener("abort", abortSession);
         // Keep the conversation locked until its session-wide abort settles.
         await sessionAbort;
-        // A reused session would otherwise merge this unanswered prompt into the next turn.
-        if (
+        const currentSession = this.sessions.get(request.conversationId);
+        if (runFailed && signal.aborted && currentSession?.id === sessionId) {
+          // Keep the cancelled turn visible to the model, as it is to the user;
+          // the next prompt carries an interruption notice instead.
+          currentSession.interrupted = true;
+        } else if (
+          // A failed prompt is dropped from a reused session so it is not
+          // merged into the next turn.
           runFailed &&
           !selectedCommand &&
           checklistMessageIds.size === 0 &&

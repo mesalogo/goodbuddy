@@ -23,6 +23,7 @@ import {
   type ApplicationSettings,
 } from "../../shared/application-settings-contracts";
 import type { GlobalShortcutSettingsSnapshot } from "../../shared/shortcut";
+import { cancelledResponseMarker } from "../../shared/runtime-history";
 import type { TerminalSnapshot } from "../../shared/terminal-contracts";
 import type { RuntimeNativeClientApi } from "./RuntimeNativeClientActions";
 import { loadBrandingPreferences, saveBrandingPreferences } from "./branding";
@@ -6039,6 +6040,32 @@ describe("App", () => {
       { role: "user", content: "Continue" },
       { role: "assistant", content: "Continued reply" },
     ]);
+  });
+
+  it("sends a cancelled turn as interrupted instead of an unanswered user message", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "First question" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    act(() => {
+      agentListener?.({ requestId, type: "text", delta: "Partial reply" });
+      agentListener?.({ requestId, type: "error", status: "cancelled", message: "请求已取消" });
+    });
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "New question" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const history = run.mock.calls[1]?.[0].history ?? [];
+    expect(history.slice(-2)).toEqual([
+      { role: "user", content: "First question" },
+      { role: "assistant", content: `Partial reply\n\n${cancelledResponseMarker}` },
+    ]);
+    expect(run.mock.calls[1]?.[0].historyMessageIds).toHaveLength(history.length);
   });
 
   it("keeps a tool failure in details and hides retry after continuing", async () => {

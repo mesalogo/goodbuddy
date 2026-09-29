@@ -4188,6 +4188,53 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
+  it("keeps a cancelled prompt and marks the next reused-session turn as following an interruption", async () => {
+    const setup = runClient([]);
+    const controller = new AbortController();
+    let subscriptions = 0;
+    vi.mocked(setup.event.subscribe).mockImplementation(async (_input, init) => {
+      const first = ++subscriptions === 1;
+      const signal = (init as { signal: AbortSignal }).signal;
+      return {
+        stream: (async function* () {
+          if (first) {
+            await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+            return;
+          }
+          yield { type: "session.idle", properties: { sessionID: "session-1" } };
+        })(),
+      } as never;
+    });
+    const runtime = embeddedRuntime(setup.client);
+    const collect = async (prompt: string, signal: AbortSignal) => {
+      for await (const event of runtime.run({
+        requestId: crypto.randomUUID(), conversationId: "conversation-1", prompt, workMode: "ask",
+      }, signal)) void event;
+    };
+    try {
+      const first = collect("first question", controller.signal).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(setup.session.promptAsync).toHaveBeenCalledTimes(1));
+      controller.abort(new Error("cancelled"));
+      await expect(first).resolves.toMatchObject({ message: "cancelled" });
+      expect(setup.session.deleteMessage).not.toHaveBeenCalled();
+
+      await collect("new question", new AbortController().signal);
+      await collect("third question", new AbortController().signal);
+
+      const parts = vi.mocked(setup.session.promptAsync).mock.calls.map(
+        ([input]) => (input as { parts: { text?: string; synthetic?: boolean }[] }).parts,
+      );
+      expect(parts[1]).toEqual([
+        expect.objectContaining({ synthetic: true, text: expect.stringContaining("interrupted the previous turn") }),
+        { type: "text", text: "new question" },
+      ]);
+      expect(parts[2]).toEqual([{ type: "text", text: "third question" }]);
+      expect(setup.session.create).toHaveBeenCalledOnce();
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it("deletes an ephemeral OpenCode session when released", async () => {
     const { client, session } = runClient([
       {

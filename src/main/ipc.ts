@@ -1,6 +1,7 @@
 import { registerKnowledgeIpcHandlers } from './knowledge/knowledge-ipc'
 import { registerModelSettingsIpcHandlers } from './model-settings-ipc'
 import { knowledgeReferenceKey, toKnowledgeReference } from '../shared/knowledge-reference'
+import { buildRuntimeHistory } from '../shared/runtime-history'
 import { localInferenceService } from './local-inference-service'
 import { inferenceActionSchema, inferenceCancelSchema } from '../shared/local-inference-contracts'
 import type { NativeClientCoordinator } from './agent/native-client-coordinator'
@@ -4795,11 +4796,7 @@ export function registerIpcHandlers(
       ) {
         throw new Error('对话 Runtime 或 Project 已更改，请刷新后重试')
       }
-      const persistedHistory = conversation.messages
-        .filter(
-          (message) =>
-            message.state === 'complete' && message.content.trim()
-        )
+      const persistedHistory = buildRuntimeHistory(conversation.messages)
       if (
         persistedHistory.length !== request.history.length ||
         persistedHistory.some(
