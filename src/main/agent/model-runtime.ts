@@ -1637,6 +1637,7 @@ async function* readAnthropicToolStream(
 export class ModelAgentRuntime implements AgentRuntime {
   readonly runtimeId = 'model'
   readonly requiresToolApproval = false
+  readonly consumesTrustedInstructions = true
   private readonly conversations = new Map<string, ConversationMessage[]>()
   private readonly conversationSummaries = new Map<
     string,

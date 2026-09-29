@@ -228,7 +228,7 @@ import type {
   SshHostValidationResult
 } from './ssh-host-contracts'
 import {
-  agentRuntimeSelectionSchema,
+  optionalAgentRuntimeSelectionSchema,
   type AgentRuntimeSelection
 } from './runtime-selection-contracts'
 import {
@@ -343,7 +343,7 @@ export const agentRequestSchema = z
     teamMode: z.boolean().optional(),
     smartRouting: z.boolean().optional(),
     queueItemId: z.string().uuid().optional(),
-    runtimeSelection: agentRuntimeSelectionSchema.optional(),
+    runtimeSelection: optionalAgentRuntimeSelectionSchema,
     runtimeControl: runtimeControlSchema.optional(),
     workMode: legacyWorkModeSchema.optional(),
     prompt: z.string().trim().min(1).max(100_000),
@@ -386,7 +386,8 @@ export const conversationQueueUserInputSchema = z
   .object({
     conversationId: conversationIdSchema,
     projectId: z.string().uuid().optional(),
-    runtimeSelection: agentRuntimeSelectionSchema,
+    /** Informational only; the renderer re-resolves the selection at dispatch. */
+    runtimeSelection: optionalAgentRuntimeSelectionSchema,
     runtimeControl: runtimeControlSchema.optional(),
     expertId: z.string().uuid().optional(),
     teamMode: z.boolean().optional(),

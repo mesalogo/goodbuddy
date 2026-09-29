@@ -1348,17 +1348,17 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     state: HarnessState,
     conversationId: string,
     workspace: string
-  ): Promise<string> {
+  ): Promise<{ id: string; created: boolean }> {
     const current = this.sessions.get(conversationId)
     if (current?.workspace === workspace) {
-      return current.id
+      return { id: current.id, created: false }
     }
     if (current) {
       await this.releaseConversation(conversationId)
     }
     const pending = this.sessionInitializations.get(conversationId)
     if (pending) {
-      return pending
+      return { id: await pending, created: false }
     }
     const creation = state.agent
       .newSession({
@@ -1374,7 +1374,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
       })
     this.sessionInitializations.set(conversationId, creation)
     try {
-      return await creation
+      return { id: await creation, created: true }
     } finally {
       this.sessionInitializations.delete(conversationId)
     }
@@ -1496,11 +1496,14 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
       const workspace = request.executionWorkspace
         ? await realpath(request.executionWorkspace)
         : state.workspace
-      sessionId = await this.getSession(
+      const session = await this.getSession(
         state,
         request.conversationId,
         workspace
       )
+      sessionId = session.id
+      // A reused Harness session already retains earlier turns natively.
+      const includeHistory = session.created
       run = {
         request,
         toolProvider: this.toolsFor(workspace),
@@ -1557,7 +1560,10 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         prompt: [
           {
             type: 'text',
-            text: promptWithUntrustedConversationHistory(request, true)
+            text: promptWithUntrustedConversationHistory(
+              request,
+              includeHistory
+            )
           },
           ...(request.images ?? []).map((image) => ({
             type: 'image' as const,

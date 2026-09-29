@@ -1,7 +1,10 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AssistantProject } from '../../shared/assistant-contracts'
-import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
+import type {
+  AgentRuntimeSelection,
+  RuntimeSelectionLayer
+} from '../../shared/runtime-selection-contracts'
 import type { SshConnectionTarget } from '../ssh/ssh-host-store'
 import { verifyAgentInstallationId } from '../ssh/ssh-agent-command'
 import type { AgentInstallationIdentity } from './agent-installation-manager'
@@ -110,7 +113,7 @@ type HarnessOptions = {
   create?: () => AssistantProject
   update?: () => AssistantProject
   resolveRuntimeSelection?: (
-    selection: AgentRuntimeSelection
+    layer: RuntimeSelectionLayer | undefined
   ) => Promise<AgentRuntimeSelection>
 }
 
@@ -262,7 +265,7 @@ function harness(options: HarnessOptions = {}) {
     },
     resolveRuntimeSelection:
       options.resolveRuntimeSelection ??
-      (async (selection) => selection),
+      (async (layer) => ({ provider: layer?.provider === 'continue' ? 'continue' : 'opencode' }) as AgentRuntimeSelection),
     runtimeValidator: {
       validate: vi.fn(async () => {
         calls.push('runtime')

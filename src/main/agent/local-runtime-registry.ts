@@ -24,7 +24,7 @@ class LocalRuntimeEntry {
   private idle?: ReturnType<typeof setTimeout>
   readonly description: Pick<AgentRuntime,
     'runtimeId' | 'requiresToolApproval' | 'supportsToolExecution' |
-    'supportsScopedDataTools' | 'capability'>
+    'supportsScopedDataTools' | 'consumesTrustedInstructions' | 'capability'>
 
   constructor(
     readonly configuration: unknown,
@@ -38,6 +38,7 @@ class LocalRuntimeEntry {
       requiresToolApproval: runtime.requiresToolApproval,
       supportsToolExecution: runtime.supportsToolExecution,
       supportsScopedDataTools: runtime.supportsScopedDataTools,
+      consumesTrustedInstructions: runtime.consumesTrustedInstructions,
       capability: runtime.capability
     }
     this.scheduleIdle()
@@ -220,6 +221,7 @@ class WorkspaceRuntime implements AgentRuntime {
   get requiresToolApproval() { return this.entry.description.requiresToolApproval }
   get supportsToolExecution() { return this.entry.description.supportsToolExecution }
   get supportsScopedDataTools() { return this.entry.description.supportsScopedDataTools }
+  get consumesTrustedInstructions() { return this.entry.description.consumesTrustedInstructions }
   get capability() { return this.entry.description.capability }
 
   private check(): void {

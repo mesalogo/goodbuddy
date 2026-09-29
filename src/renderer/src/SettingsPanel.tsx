@@ -1645,7 +1645,9 @@ export function SettingsPanel({
               provider: agentRuntimeType,
               profileId: runtimeSource.profileId
             }
-          : { provider: agentRuntimeType }
+          : runtimeSource.kind === 'platform'
+            ? { provider: agentRuntimeType, runtimeConfig: true as const }
+            : { provider: agentRuntimeType }
       const status = testingModel
         ? await window.goodbuddy.settings.testModelConnection(profileId)
         : await window.goodbuddy.settings.testRuntime(runtimeSelection)
@@ -3563,10 +3565,10 @@ export function SettingsPanel({
                         'openai-images-generations'
                           ? t('model.profile.imageGeneration')
                           : t('model.profile.textChat'),
-                      continueCompatibility: isContinueCompatible(profile)
+                      continueCompatibility: isAgentRuntimeModelProtocol(profile.protocol)
                         ? t('model.profile.compatible')
                         : t('model.profile.incompatible'),
-                      openCodeCompatibility: isOpenCodeCompatible(profile)
+                      openCodeCompatibility: isAgentRuntimeModelProtocol(profile.protocol)
                         ? t('model.profile.compatible')
                         : t('model.profile.incompatibleImageProtocol'),
                       deepseekHarnessCompatibility:

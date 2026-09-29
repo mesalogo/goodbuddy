@@ -485,8 +485,10 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   重连时，工具及原生子代理的状态也以已提交的远端活动事件为准，覆盖消息终态处理派生的
   失败状态，避免将未完成活动误判为可恢复错误，保证终态重放内容一致。
 - 远程 context metrics 与对话级压缩后的估算值按本次请求实际使用的 Runtime 选择写入
-  `context_state_json`。实时接收与恢复入口都传入请求的选择；数据库在未传入时按对话、
-  项目、auto 顺序解析。继承项目设置的对话保持 `runtime_selection_json = NULL`，
+  `context_state_json`。实时接收与恢复入口都传入请求的选择；数据库在未传入时按对话层、
+  项目层解析，缺省执行方式为 OpenCode（规则见
+  [执行方式与模型选择设计](../model-connections/runtime-selection-design.md#4-执行时解析已实现)）。
+  继承项目设置的对话保持 `runtime_selection_json = NULL`，
   不为接收 usage 固定对话 Runtime；去重和消息/指标写入仍在同一 SQLite 事务中完成。
 - ACK 后 Agent 删除已确认事件，只保留小型操作终态与游标用于幂等核对；未 ACK 输出继续
   保留。Main 按 transcript page 的最高连续 sequence ACK，终态仍立即 ACK。单事件、单页、

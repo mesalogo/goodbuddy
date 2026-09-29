@@ -112,6 +112,10 @@ export class AgentRuntimeController implements AgentRuntime {
     return this.current.runtime.supportsScopedDataTools !== false
   }
 
+  get consumesTrustedInstructions(): boolean {
+    return this.current.runtime.consumesTrustedInstructions === true
+  }
+
   get capability(): AgentRuntime['capability'] {
     return this.current.runtime.capability
   }

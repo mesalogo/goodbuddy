@@ -207,6 +207,10 @@ function runClient(events: Record<string, unknown>[]) {
         data: true,
         error: undefined,
       }),
+      deleteMessage: vi.fn().mockResolvedValue({
+        data: true,
+        error: undefined,
+      }),
     },
     event: {
       subscribe: vi.fn().mockImplementation(async () => {
@@ -4151,6 +4155,35 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
 
     await expect(collectRun(runtime)).rejects.toThrow(
       "prompt rejected Authorization: Bearer secret-token",
+    );
+    await runtime.dispose();
+  });
+
+  it("removes an unanswered prompt from a reused session after failure", async () => {
+    const { client, session } = runClient([
+      {
+        id: "event-error",
+        type: "session.error",
+        properties: {
+          sessionID: "session-1",
+          error: { name: "UnknownError", data: { message: "model failed" } },
+        },
+      },
+    ]);
+    const runtime = embeddedRuntime(client);
+
+    await expect(collectRun(runtime)).rejects.toThrow("model failed");
+
+    const promptMessageId = vi.mocked(session.promptAsync).mock.calls[0]?.[0]
+      ?.messageID;
+    expect(promptMessageId).toMatch(/^msg_/);
+    expect(session.deleteMessage).toHaveBeenCalledWith(
+      {
+        sessionID: "session-1",
+        messageID: promptMessageId,
+        directory: process.cwd(),
+      },
+      { signal: expect.any(AbortSignal) },
     );
     await runtime.dispose();
   });

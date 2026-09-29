@@ -1,7 +1,10 @@
 import { z } from 'zod'
 import { runtimeChecklistSchema } from './runtime-checklist'
 import { externalKnowledgeLocatorSchema } from './external-knowledge-contracts'
-import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
+import {
+  runtimeSelectionLayerSchema,
+  type AgentRuntimeSelection
+} from './runtime-selection-contracts'
 import { sshHostIdSchema } from './ssh-host-contracts'
 
 export const assistantIdSchema = z.string().uuid()
@@ -143,7 +146,8 @@ export const projectCreateSchema = z
     description: z.string().trim().max(2_000),
     rootPath: z.string().trim().max(4_096),
     defaultWorkMode: workModeSchema,
-    runtimeSelection: agentRuntimeSelectionSchema.optional()
+    /** Project layer; absent means follow the global settings. */
+    runtimeSelection: runtimeSelectionLayerSchema.optional()
   })
   .strict()
 
@@ -579,7 +583,8 @@ export const conversationSnapshotSchema = z
   .object({
     id: assistantIdSchema,
     projectId: assistantIdSchema.optional(),
-    runtimeSelection: agentRuntimeSelectionSchema.optional(),
+    /** Conversation layer; absent means follow the project. */
+    runtimeSelection: runtimeSelectionLayerSchema.optional(),
     knowledgeLibraryIds: z.array(assistantIdSchema).max(20).optional(),
     workMode: workModeSchema.optional(),
     knowledgeRetrievalMode: z.enum(['auto', 'always']).optional(),
@@ -895,7 +900,8 @@ export type AssistantSchedule = Omit<z.output<typeof scheduleCreateSchema>, 'run
   id: string
   taskId: string
   conversationId: string
-  runtimeSelection?: ProjectCreateInput['runtimeSelection']
+  /** A concrete selection captured by legacy schedule templates. */
+  runtimeSelection?: AgentRuntimeSelection
   enabled: boolean
   lastRunAt?: string
   createdAt: string

@@ -32,6 +32,7 @@ import {
   applyRuntimeSelection,
   getConfiguredRuntimeTarget,
   resolveConfiguredAgentRuntimeSelection,
+  resolveLayeredRuntimeSelection,
   type SelectedRuntimeTarget
 } from './agent/runtime-selection'
 import { CapabilityService } from './capabilities/capability-service'
@@ -709,11 +710,13 @@ if (hasSingleInstanceLock) {
         appPath: app.getAppPath(),
         resourcesPath: process.resourcesPath,
         packaged: app.isPackaged,
-        resolveRuntimeSelection: async (selection) =>
-          resolveConfiguredAgentRuntimeSelection(
-            await settingsStore.getResolvedSettings(),
-            selection
-          ),
+        resolveRuntimeSelection: async (layer) => {
+          const settings = await settingsStore.getResolvedSettings()
+          return resolveConfiguredAgentRuntimeSelection(
+            settings,
+            resolveLayeredRuntimeSelection(settings, { project: layer }, { remote: true }).selection
+          )
+        },
         resolveModelProfile: async (selection) => {
           const resolved = applyRuntimeSelection(
             await settingsStore.getResolvedSettings(),

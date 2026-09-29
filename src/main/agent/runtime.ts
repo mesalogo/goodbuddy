@@ -94,6 +94,11 @@ export interface AgentRuntime {
   readonly supportsToolExecution: boolean
   /** Whether request-scoped GoodBuddy data tools can reach this runtime. */
   readonly supportsScopedDataTools?: boolean
+  /**
+   * Whether `trustedInstructions` reach the model's system layer for every
+   * turn. Runtimes without this guarantee receive them inside the prompt.
+   */
+  readonly consumesTrustedInstructions?: boolean
   readonly capability?: 'chat' | 'image-generation'
   getStatus(): Promise<AgentRuntimeStatus>
   testConnection?(): Promise<AgentRuntimeStatus>

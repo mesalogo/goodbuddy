@@ -18,7 +18,6 @@ import type {
   AssistantProject,
   ProjectCreateInput
 } from '../../shared/assistant-contracts'
-import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 import { ChannelSettingsSection } from './ChannelSettingsSection'
 import i18n from './i18n'
 
@@ -114,7 +113,7 @@ const projects: AssistantProject[] = [
     rootPath: 'C:\\Users\\tester'
   },
   defaultWorkMode: 'ask',
-  runtimeSelection: { provider: 'auto' },
+  runtimeSelection: { provider: 'model' },
   kind: 'channel',
   channel: channel as 'weixin' | 'wecom' | 'dingtalk',
   status: 'active',
@@ -239,13 +238,8 @@ describe('ChannelSettingsSection', () => {
     fireEvent.change(screen.getByLabelText('企业微信 默认工作目录'), {
       target: { value: 'C:\\RemoteWorkspace' }
     })
-    fireEvent.change(screen.getByLabelText('企业微信 消息处理后端'), {
-      target: {
-        value: agentRuntimeSelectionKey({
-          provider: 'model',
-          profileId: directProfileId
-        })
-      }
+    fireEvent.change(screen.getByLabelText('企业微信 模型'), {
+      target: { value: directProfileId }
     })
     fireEvent.click(
       within(
@@ -265,7 +259,7 @@ describe('ChannelSettingsSection', () => {
         defaultWorkMode: 'execute',
         runtimeSelection: {
           provider: 'model',
-          profileId: directProfileId
+          model: { kind: 'profile', profileId: directProfileId }
         }
       })
     )
@@ -495,56 +489,19 @@ describe('ChannelSettingsSection', () => {
     })
 
     renderChannelSettings()
-    const backend = await screen.findByLabelText(
-      '微信 ClawBot 消息处理后端'
-    )
-    expect(backend).toHaveValue(
-      agentRuntimeSelectionKey({
-        provider: 'model'
-      })
-    )
-    expect(
-      within(backend).queryByRole('option', {
-        name: /自动/u
-      })
-    ).not.toBeInTheDocument()
-    expect(
-      within(backend).getByRole('option', {
-        name: '默认模型 · text-model'
-      })
-    ).toBeInTheDocument()
-    expect(
-      within(backend).queryByRole('option', {
-        name: '图片模型 · image-model'
-      })
-    ).not.toBeInTheDocument()
-    expect(
-      within(backend).queryByRole('option', {
-        name: '未配置模型 · missing-key-model'
-      })
-    ).not.toBeInTheDocument()
-    expect(
-      within(backend).getByRole('option', { name: 'OpenCode' })
-    ).toBeInTheDocument()
-    expect(
-      within(backend).getByRole('option', { name: 'Continue' })
-    ).toBeInTheDocument()
-    expect(
-      within(backend).getByRole('option', {
-        name: 'DeepSeek Harness（预览 · OpenAI 兼容）'
-      })
-    ).toBeInTheDocument()
+    const backend = await screen.findByLabelText('微信 ClawBot 执行方式')
+    // Channel projects start on the direct model; the model follows global settings.
+    expect(backend).toHaveValue('model')
+    expect(within(backend).queryByRole('option', { name: /自动/u })).not.toBeInTheDocument()
+    for (const name of ['直连模型', 'OpenCode', 'Continue', 'DeepSeek Harness']) {
+      expect(within(backend).getByRole('option', { name })).toBeInTheDocument()
+    }
+    const model = screen.getByLabelText('微信 ClawBot 模型')
+    expect(within(model).getByRole('option', { name: '默认模型 · text-model' })).toBeInTheDocument()
+    expect(within(model).queryByRole('option', { name: /image-model/u })).not.toBeInTheDocument()
+    expect(within(model).getByRole('option', { name: /missing-key-model.*缺少 API Key/u })).toBeInTheDocument()
 
-    fireEvent.change(backend, {
-      target: {
-        value: agentRuntimeSelectionKey({ provider: 'opencode' })
-      }
-    })
-    expect(
-      screen.getByText(
-        '通过 OpenCode Agent Runtime 运行，并跟随“Agent Runtime”设置中的全局 OpenCode 配置。'
-      )
-    ).toBeInTheDocument()
+    fireEvent.change(backend, { target: { value: 'opencode' } })
     fireEvent.click(
       screen.getByRole('button', { name: '保存通道设置' })
     )

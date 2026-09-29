@@ -119,14 +119,18 @@ import {
 } from "../../shared/context-window";
 import {
   agentRuntimeSelectionKey,
-  agentRuntimeSelectionSchema,
-  getRuntimeSelectionProfileId,
-  type AgentRuntimeSelection,
+  compactRuntimeSelectionLayer,
+  resolveRuntimeChoice,
+  runtimeSelectionLayerSchema,
+  type ResolvedRuntimeChoice,
+  type RuntimeSelectionLayer,
 } from "../../shared/runtime-selection-contracts";
 import {
-  getDefaultRuntimeSelection,
-  getRuntimeSelectionForProvider,
+  runtimeModelDetail,
+  runtimeModelLabel,
+  runtimeProviderLabel,
 } from "./runtime-selection";
+import { RuntimeModelPicker } from "./RuntimeModelPicker";
 import { mergeMessageImageState } from "./message-image-state";
 import type {
   ActivityHistorySnapshot,
@@ -756,7 +760,7 @@ function isErrorRepresentedByFailedTool(
 
 function createConversation(
   projectId?: string,
-  runtimeSelection?: AgentRuntimeSelection,
+  runtimeSelection?: RuntimeSelectionLayer,
   greeting = "你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件，或使用知识库整理和检索信息。需要我操作文件或调用工具时，请选择合适的 Agent Runtime 和工作模式。",
 ): Conversation {
   const now = Date.now();
@@ -912,7 +916,7 @@ function isConversation(value: unknown): value is Conversation {
   return (
     typeof item.id === "string" &&
     (item.runtimeSelection === undefined ||
-      agentRuntimeSelectionSchema.safeParse(item.runtimeSelection).success) &&
+      runtimeSelectionLayerSchema.safeParse(item.runtimeSelection).success) &&
     (item.knowledgeLibraryIds === undefined ||
       (Array.isArray(item.knowledgeLibraryIds) &&
         item.knowledgeLibraryIds.length <= 20 &&
@@ -1239,18 +1243,17 @@ function mergePersistedConversations(
   return sortConversationsForDisplay(merged);
 }
 
-function getProjectDefaultRuntimeSelection(
+/** Resolves global → project → conversation layers into the selection a run uses. */
+function resolveConversationRuntime(
   project: AssistantProject | undefined,
+  conversationLayer: RuntimeSelectionLayer | undefined,
   settings: RuntimeSettings,
-): AgentRuntimeSelection {
-  if (isManagedSshProject(project)) {
-    return project.runtimeSelection?.provider === "opencode" || project.runtimeSelection?.provider === "continue"
-      ? project.runtimeSelection : getRuntimeSelectionForProvider("opencode", settings);
-  }
-  const selection = project?.runtimeSelection;
-  return !selection || selection.provider === "auto"
-    ? getDefaultRuntimeSelection(settings)
-    : selection;
+): ResolvedRuntimeChoice {
+  return resolveRuntimeChoice(
+    settings,
+    { project: project?.runtimeSelection, conversation: conversationLayer },
+    { remote: isManagedSshProject(project) },
+  );
 }
 
 type ManagedSshProject = AssistantProject & {
@@ -1292,109 +1295,22 @@ function isOrdinaryLocalProject(project: AssistantProject): boolean {
   return project.kind === "user" && project.executionSpace.kind === "local";
 }
 
-function resolveContextMetricsRuntimeSelection(
-  selection: AgentRuntimeSelection,
-  settings: RuntimeSettings,
-): AgentRuntimeSelection {
-  const effective = selection.provider !== "auto" ? selection : getRuntimeSelectionForProvider(
-    settings.provider === "auto" ? "opencode" : settings.provider,
-    settings,
-  );
-  const profileId = getRuntimeSelectionProfileId(effective, settings);
-  return profileId && effective.provider !== "auto" ? { ...effective, profileId } : effective;
-}
-
-function getRuntimeSelectionLabel(
-  selection: AgentRuntimeSelection | undefined,
+/** The button label: "Execution mode · Model". */
+function runtimeChoiceLabel(
+  resolved: ResolvedRuntimeChoice | undefined,
   settings: RuntimeSettings | undefined,
   status: AgentRuntimeStatus | undefined,
-  labels: {
-    directModel: string;
-    automatic: string;
-    automaticSelection: string;
-    modelUnavailable: string;
-  },
+  t: TFunction<"app">,
 ): string {
-  if (!selection || !settings) {
+  if (!resolved || !settings) {
     return status?.label ?? "Runtime";
   }
-  const profileId = getRuntimeSelectionProfileId(selection, settings);
-  const profile =
-    profileId
-      ? settings.modelProfiles.find(
-          (candidate) => candidate.id === profileId,
-        )
-      : undefined;
-  const requestedProfileMissing =
-    "profileId" in selection &&
-    Boolean(selection.profileId) &&
-    profile === undefined;
-  if (selection.provider === "model") {
-    return profile
-      ? `${profile.name} · ${profile.modelName}`
-      : requestedProfileMissing
-        ? labels.modelUnavailable
-        : (status?.label ?? labels.directModel);
-  }
-  if (selection.provider === "opencode") {
-    return profile
-      ? `OpenCode · ${profile.name}`
-      : requestedProfileMissing
-        ? `OpenCode · ${labels.modelUnavailable}`
-        : "OpenCode";
-  }
-  if (selection.provider === "continue") {
-    return profile
-      ? `Continue · ${profile.name}`
-      : requestedProfileMissing
-        ? `Continue · ${labels.modelUnavailable}`
-        : "Continue";
-  }
-  if (selection.provider === "deepseek-harness") {
-    return profile
-      ? `DeepSeek Harness · ${profile.name}`
-      : requestedProfileMissing
-        ? `DeepSeek Harness · ${labels.modelUnavailable}`
-        : "DeepSeek Harness";
-  }
-  return status
-    ? `${labels.automatic} · ${status.label}`
-    : labels.automaticSelection;
-}
-
-function getConfiguredAgentRuntimeSource(
-  settings: RuntimeSettings,
-  provider: "opencode" | "continue" | "deepseek-harness",
-  labels: {
-    modelUnavailable: string;
-    selectModel: string;
-    ownConfiguration: string;
-    useOwnConfiguration: (runtime: string) => string;
-  },
-): { label: string; detail: string } {
-  const profileId = getRuntimeSelectionProfileId({ provider }, settings);
-  const profile =
-    profileId
-      ? settings.modelProfiles.find(
-          (candidate) => candidate.id === profileId,
-        )
-      : undefined;
-  const runtimeLabel =
-    provider === "opencode"
-      ? "OpenCode"
-      : provider === "continue"
-        ? "Continue"
-        : "DeepSeek Harness";
-  if (profileId) {
-    return {
-      label: `${runtimeLabel} · ${profile?.name ?? labels.modelUnavailable}`,
-      detail: profile?.modelName ?? labels.selectModel,
-    };
-  }
-  return {
-    label: `${runtimeLabel} · ${labels.ownConfiguration}`,
-    detail: labels.useOwnConfiguration(runtimeLabel),
-  };
+  return `${runtimeProviderLabel(resolved.provider, t)} · ${runtimeModelLabel(
+    resolved.provider,
+    resolved.model,
+    settings,
+    t,
+  )}`;
 }
 
 function formatAttachmentSize(size: number): string {
@@ -3197,14 +3113,19 @@ function App(): React.JSX.Element {
     });
   }, [activeId, cachedConversationViews, conversations]);
 
-  const activeRuntimeSelection = useMemo(
+  const activeRuntimeResolution = useMemo(
     () =>
-      activeConversation?.runtimeSelection ??
-      (runtimeSettings
-        ? getProjectDefaultRuntimeSelection(activeProject, runtimeSettings)
-        : undefined),
+      runtimeSettings
+        ? resolveConversationRuntime(
+            activeProject,
+            activeConversation?.runtimeSelection,
+            runtimeSettings,
+          )
+        : undefined,
     [activeConversation?.runtimeSelection, activeProject, runtimeSettings],
   );
+  // Resolved selections are always concrete, so their key already reflects the model in effect.
+  const activeRuntimeSelection = activeRuntimeResolution?.selection;
   const activeRuntimeSelectionKey = activeRuntimeSelection
     ? agentRuntimeSelectionKey(activeRuntimeSelection)
     : "";
@@ -3212,61 +3133,22 @@ function App(): React.JSX.Element {
   useEffect(() => {
     activeRuntimeSelectionRef.current = activeRuntimeSelection;
   }, [activeRuntimeSelection]);
-  const runtimeLabels = useMemo(
-    () => ({
-      directModel: t("runtime.directModel"),
-      automatic: t("runtime.automatic"),
-      automaticSelection: t("runtime.automaticSelection"),
-      modelUnavailable: t("runtime.modelUnavailable"),
-    }),
-    [t],
-  );
-  const configuredRuntimeLabels = useMemo(
-    () => ({
-      modelUnavailable: t("runtime.modelUnavailable"),
-      selectModel: t("runtime.selectModel"),
-      ownConfiguration: t("runtime.ownConfiguration"),
-      useOwnConfiguration: (runtimeLabel: string) =>
-        t("runtime.useOwnConfiguration", { runtime: runtimeLabel }),
-    }),
-    [t],
-  );
-  const activeRuntimeLabel = getRuntimeSelectionLabel(
-    activeRuntimeSelection,
+  const activeRuntimeLabel = runtimeChoiceLabel(
+    activeRuntimeResolution,
     runtimeSettings,
     runtime,
-    runtimeLabels,
+    t,
   );
-  const openCodeMenuSelection = runtimeSettings
-    ? getRuntimeSelectionForProvider("opencode", runtimeSettings)
-    : undefined;
-  const continueMenuSelection = runtimeSettings
-    ? getRuntimeSelectionForProvider("continue", runtimeSettings)
-    : undefined;
-  const deepseekHarnessMenuSelection = runtimeSettings
-    ? getRuntimeSelectionForProvider("deepseek-harness", runtimeSettings)
-    : undefined;
-  const openCodeMenuSource = runtimeSettings
-    ? getConfiguredAgentRuntimeSource(
-        runtimeSettings,
-        "opencode",
-        configuredRuntimeLabels,
-      )
-    : undefined;
-  const continueMenuSource = runtimeSettings
-    ? getConfiguredAgentRuntimeSource(
-        runtimeSettings,
-        "continue",
-        configuredRuntimeLabels,
-      )
-    : undefined;
-  const deepseekHarnessMenuSource = runtimeSettings
-    ? getConfiguredAgentRuntimeSource(
-        runtimeSettings,
-        "deepseek-harness",
-        configuredRuntimeLabels,
-      )
-    : undefined;
+  // The model ID stays in the accessible name and tooltip; the visible label stays short.
+  const activeRuntimeModelDetail =
+    activeRuntimeResolution && runtimeSettings
+      ? runtimeModelDetail(
+          activeRuntimeResolution.provider,
+          activeRuntimeResolution.model,
+          runtimeSettings,
+          t,
+        )
+      : undefined;
 
   // Conversation refreshes replace the conversation object, so the runtime
   // selection identity changes without the selection itself changing. Keying
@@ -4058,16 +3940,19 @@ function App(): React.JSX.Element {
     }
   }, [refreshKnowledge]);
 
+  /** Writes the conversation layer (undefined = follow the project) and refreshes status. */
   const switchRuntime = useCallback(
-    async (selection: AgentRuntimeSelection): Promise<void> => {
-      if (
-        !runtimeSettings ||
-        !activeConversation ||
-        runtimeSwitching ||
-        (activeProjectUsesManagedSsh && selection.provider !== "opencode" && selection.provider !== "continue")
-      ) {
+    async (layer: RuntimeSelectionLayer | undefined): Promise<void> => {
+      if (!runtimeSettings || !activeConversation || runtimeSwitching) {
         return;
       }
+      const nextLayer = compactRuntimeSelectionLayer(layer);
+      const resolved = resolveConversationRuntime(
+        activeProject,
+        nextLayer,
+        runtimeSettings,
+      );
+      const selection = resolved.selection;
       runtimeMenuButtonRef.current?.focus();
       setRuntimeSwitching(true);
       setRuntimeMenuOpen(false);
@@ -4087,18 +3972,18 @@ function App(): React.JSX.Element {
           key: selectionKey,
           settings: runtimeSettings,
         };
-        const label = getRuntimeSelectionLabel(
-          selection,
+        const label = runtimeChoiceLabel(
+          resolved,
           runtimeSettings,
           status,
-          runtimeLabels,
+          tRef.current,
         );
         setConversations((current) =>
           current.map((conversation) =>
             conversation.id === activeConversation.id
               ? {
                   ...conversation,
-                  runtimeSelection: selection,
+                  runtimeSelection: nextLayer,
                   updatedAt: Date.now(),
                 }
               : conversation,
@@ -4145,8 +4030,7 @@ function App(): React.JSX.Element {
     },
     [
       activeConversation,
-      activeProjectUsesManagedSsh,
-      runtimeLabels,
+      activeProject,
       runtimeSettings,
       runtimeSwitching,
     ],
@@ -6211,7 +6095,7 @@ function App(): React.JSX.Element {
     ])
       .then(([settings, status]) => {
         const selectionKey = agentRuntimeSelectionKey(
-          getDefaultRuntimeSelection(settings),
+          resolveRuntimeChoice(settings).selection,
         );
         runtimeStatusCacheRef.current = {
           key: selectionKey,
@@ -6344,25 +6228,8 @@ function App(): React.JSX.Element {
         (selected.kind !== "channel" || candidate.remote !== undefined),
     );
     if (conversation) {
-      if (isManagedSshProject(selected)) {
-        const runtimeSelection = runtimeSettings
-          ? getProjectDefaultRuntimeSelection(selected, runtimeSettings)
-          : ({ provider: "opencode" } as const);
-        setConversations((current) =>
-          current.map((candidate) =>
-            candidate.projectId === selected.id &&
-            candidate.runtimeSelection !== undefined &&
-            candidate.runtimeSelection?.provider !== "opencode" &&
-            candidate.runtimeSelection?.provider !== "continue"
-              ? {
-                  ...candidate,
-                  runtimeSelection,
-                  updatedAt: Date.now(),
-                }
-              : candidate,
-          ),
-        );
-      }
+      // Remote projects ignore incompatible conversation choices at resolution time
+      // and say so in the picker, instead of silently rewriting saved conversations.
       setActiveId(conversation.id);
     } else if (selected.kind === "channel") {
       setActiveId("");
@@ -7095,8 +6962,9 @@ function App(): React.JSX.Element {
       const project = projectsRef.current.find(
         (candidate) => candidate.id === conversation?.projectId,
       );
-      const selection = conversation?.runtimeSelection ??
-        (runtimeSettings ? getProjectDefaultRuntimeSelection(project, runtimeSettings) : undefined);
+      const selection = runtimeSettings && conversation
+        ? resolveConversationRuntime(project, conversation.runtimeSelection, runtimeSettings).selection
+        : undefined;
       if (!conversation || !selection) {
         await window.goodbuddy.conversationQueue.releaseUser(queuedDispatch.item.id);
         return;
@@ -7233,15 +7101,27 @@ function App(): React.JSX.Element {
       queuedInput?.knowledgeRetrievalMode ??
       conversationSnapshot.knowledgeRetrievalMode ??
       "auto";
-    const runtimeSelectionSnapshot =
-      queuedInput?.runtimeSelection ?? activeRuntimeSelection;
+    // Queued messages follow the conversation's current choice at dispatch,
+    // so switching the model while messages wait applies to them too.
+    const runtimeSelectionSnapshot = queuedInput
+      ? runtimeSettings
+        ? resolveConversationRuntime(
+            projectsRef.current.find((project) => project.id === queuedInput!.projectId),
+            conversationSnapshot.runtimeSelection,
+            runtimeSettings,
+          ).selection
+        : queuedInput.runtimeSelection
+      : activeRuntimeSelection;
     if (!runtimeSelectionSnapshot) {
       notify({ tone: "info", message: t("runtime.notSelected") });
       await releaseQueuedItem();
       return;
     }
     const runtimeControlSnapshot: RuntimeControl | undefined = queuedInput
-      ? queuedInput.runtimeControl
+      ? // A queued agent/command/preset only applies to the Runtime it was chosen for.
+        queuedInput.runtimeControl?.provider === runtimeSelectionSnapshot.provider
+        ? queuedInput.runtimeControl
+        : undefined
       : runtimeSelectionSnapshot.provider === "opencode" &&
           (selectedRuntimeAgent || command)
         ? {
@@ -7388,14 +7268,7 @@ function App(): React.JSX.Element {
       messageId: assistantMessage.id,
       taskId: queuedDispatch?.scheduled ? queuedDispatch.item.taskId : undefined,
       projectId: projectIdSnapshot,
-      runtimeSelectionKey: agentRuntimeSelectionKey(
-        runtimeSettings
-          ? resolveContextMetricsRuntimeSelection(
-              runtimeSelectionSnapshot,
-              runtimeSettings,
-            )
-          : runtimeSelectionSnapshot,
-      ),
+      runtimeSelectionKey: agentRuntimeSelectionKey(runtimeSelectionSnapshot),
     });
     preparingConversations.current.delete(conversationId);
     const startedAt = new Date().toISOString();
@@ -7609,9 +7482,7 @@ function App(): React.JSX.Element {
                   ...conversation,
                   contextCompressionState: state,
                   contextMetrics: {
-                    runtimeSelectionKey: agentRuntimeSelectionKey(runtimeSettings
-                      ? resolveContextMetricsRuntimeSelection(activeRuntimeSelection, runtimeSettings)
-                      : activeRuntimeSelection),
+                    runtimeSelectionKey: agentRuntimeSelectionKey(activeRuntimeSelection),
                     contextTokens: estimatedAfterTokens,
                     source: "estimated",
                     basis: "conversation",
@@ -8533,7 +8404,7 @@ function App(): React.JSX.Element {
         activeProject?.executionSpace.kind !== "ssh" &&
         runtimeSettings?.modelProfiles.some(
           (profile) =>
-            profile.id === getRuntimeSelectionProfileId(activeRuntimeSelection, runtimeSettings) &&
+            profile.id === activeRuntimeSelection.profileId &&
             profile.protocol !== "openai-images-generations",
         ) === true
       : (activeRuntimeSelection?.provider === "opencode" ||
@@ -8557,7 +8428,7 @@ function App(): React.JSX.Element {
       setActiveId(conversation.id);
     }
     // Save the current selection before Main resolves the launch from its conversation ID.
-    const header = toLocalConversationHeader({ ...conversation, runtimeSelection: activeRuntimeSelection, workMode });
+    const header = toLocalConversationHeader({ ...conversation, workMode });
     const operation = conversationPersistenceQueueRef.current.then(() =>
       window.goodbuddy.conversations.saveLocal([{ header, messages: [] }]),
     );
@@ -8575,10 +8446,7 @@ function App(): React.JSX.Element {
     ) {
       return undefined;
     }
-    const resolvedRuntimeSelection = resolveContextMetricsRuntimeSelection(
-      activeRuntimeSelection,
-      runtimeSettings,
-    );
+    const resolvedRuntimeSelection = activeRuntimeSelection;
     const activeModelProfile =
       "profileId" in resolvedRuntimeSelection &&
       resolvedRuntimeSelection.profileId
@@ -10316,7 +10184,7 @@ function App(): React.JSX.Element {
                                   <button
                                     aria-expanded={runtimeMenuOpen}
                                     aria-haspopup="menu"
-                                    className="model-button"
+                                    className={`model-button${activeConversation?.runtimeSelection ? " model-button--override" : ""}`}
                                     disabled={isRunning || runtimeSwitching}
                                     onClick={() => {
                                       setComposerOptionsOpen(false);
@@ -10340,7 +10208,9 @@ function App(): React.JSX.Element {
                                     }}
                                     ref={runtimeMenuButtonRef}
                                     title={t("runtime.pickerTitle", {
-                                      label: activeRuntimeLabel,
+                                      label: activeRuntimeModelDetail
+                                        ? `${activeRuntimeLabel} (${activeRuntimeModelDetail})`
+                                        : activeRuntimeLabel,
                                     })}
                                     type="button"
                                   >
@@ -10350,6 +10220,9 @@ function App(): React.JSX.Element {
                                         ? t("runtime.switching")
                                         : activeRuntimeLabel}
                                     </span>
+                                    {!runtimeSwitching && activeRuntimeModelDetail && (
+                                      <span className="sr-only">{` (${activeRuntimeModelDetail})`}</span>
+                                    )}
                                     {runtime?.capability ===
                                       "image-generation" && (
                                       <span className="runtime-capability-badge">
@@ -10358,255 +10231,24 @@ function App(): React.JSX.Element {
                                     )}
                                     <ChevronDown aria-hidden="true" size={14} />
                                   </button>
-                                  {runtimeMenuOpen && (
-                                    <div
-                                      aria-label={t("runtime.picker")}
-                                      className="runtime-picker__menu"
-                                      onKeyDown={(event) => {
-                                        const items = Array.from(
-                                          event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                                            '[role="menuitemradio"], [role="menuitem"]',
-                                          ),
-                                        ).filter((item) => !item.disabled);
-                                        const currentIndex = items.indexOf(
-                                          document.activeElement as HTMLButtonElement,
-                                        );
-                                        let nextIndex: number | undefined;
-                                        if (event.key === "ArrowDown") {
-                                          nextIndex =
-                                            (currentIndex + 1) % items.length;
-                                        } else if (event.key === "ArrowUp") {
-                                          nextIndex =
-                                            (currentIndex - 1 + items.length) %
-                                            items.length;
-                                        } else if (event.key === "Home") {
-                                          nextIndex = 0;
-                                        } else if (event.key === "End") {
-                                          nextIndex = items.length - 1;
-                                        } else if (event.key === "Escape") {
-                                          event.preventDefault();
-                                          setRuntimeMenuOpen(false);
-                                          runtimeMenuButtonRef.current?.focus();
-                                        }
-                                        const nextItem =
-                                          nextIndex === undefined
-                                            ? undefined
-                                            : items.at(nextIndex);
-                                        if (nextItem) {
-                                          event.preventDefault();
-                                          items.forEach((item) => {
-                                            item.tabIndex =
-                                              item === nextItem ? 0 : -1;
-                                          });
-                                          nextItem.focus();
-                                        }
+                                  {runtimeMenuOpen && runtimeSettings && (
+                                    <RuntimeModelPicker
+                                      conversationLayer={activeConversation?.runtimeSelection}
+                                      onClose={() => {
+                                        setRuntimeMenuOpen(false);
+                                        runtimeMenuButtonRef.current?.focus();
                                       }}
+                                      onManage={() => {
+                                        setRuntimeMenuOpen(false);
+                                        setSettingsInitialCategory("model");
+                                        setView("settings");
+                                      }}
+                                      onSelect={(layer) => void switchRuntime(layer)}
+                                      projectLayer={activeProject?.runtimeSelection}
                                       ref={runtimeMenuRef}
-                                      role="menu"
-                                    >
-                                      {!activeProjectUsesManagedSsh && (
-                                        <>
-                                          <strong role="presentation">
-                                            {t("runtime.directModels")}
-                                          </strong>
-                                          <button
-                                            aria-checked={activeRuntimeSelectionKey === "model:default"}
-                                            onClick={() => void switchRuntime({ provider: "model" })}
-                                            role="menuitemradio"
-                                            tabIndex={activeRuntimeSelectionKey === "model:default" ? 0 : -1}
-                                            type="button"
-                                          >
-                                            <span>{t("runtime.defaultDirect")}</span>
-                                            <small>{runtimeSettings?.modelProfiles.find((profile) => profile.id === runtimeSettings.defaultModelProfileId)?.name}</small>
-                                          </button>
-                                          {runtimeSettings?.modelProfiles.map(
-                                            (profile) => (
-                                              <button
-                                                aria-checked={
-                                                  activeRuntimeSelectionKey ===
-                                                  `model:${profile.id}`
-                                                }
-                                                key={profile.id}
-                                                onClick={() =>
-                                                  void switchRuntime({
-                                                    provider: "model",
-                                                    profileId: profile.id,
-                                                  })
-                                                }
-                                                role="menuitemradio"
-                                                tabIndex={
-                                                  activeRuntimeSelectionKey ===
-                                                  `model:${profile.id}`
-                                                    ? 0
-                                                    : -1
-                                                }
-                                                type="button"
-                                              >
-                                                <span>
-                                                  {profile.name}
-                                                  {profile.protocol ===
-                                                    "openai-images-generations" && (
-                                                    <span className="runtime-capability-badge">
-                                                      {t(
-                                                        "runtime.imageGeneration",
-                                                      )}
-                                                    </span>
-                                                  )}
-                                                </span>
-                                                <small>
-                                                  {profile.modelName}
-                                                </small>
-                                              </button>
-                                            ),
-                                          )}
-                                          <div
-                                            className="runtime-picker__divider"
-                                            role="separator"
-                                          />
-                                        </>
-                                      )}
-                                      <strong role="presentation">
-                                        OpenCode Runtime
-                                      </strong>
-                                      {openCodeMenuSelection &&
-                                        openCodeMenuSource && (
-                                          <button
-                                            aria-checked={
-                                              activeRuntimeSelectionKey ===
-                                              agentRuntimeSelectionKey(
-                                                openCodeMenuSelection,
-                                              )
-                                            }
-                                            onClick={() =>
-                                              void switchRuntime(
-                                                openCodeMenuSelection,
-                                              )
-                                            }
-                                            role="menuitemradio"
-                                            tabIndex={
-                                              activeRuntimeSelectionKey ===
-                                              agentRuntimeSelectionKey(
-                                                openCodeMenuSelection,
-                                              )
-                                                ? 0
-                                                : -1
-                                            }
-                                            type="button"
-                                          >
-                                            <span>
-                                              {openCodeMenuSource.label}
-                                            </span>
-                                            <small>
-                                              {openCodeMenuSource.detail}
-                                            </small>
-                                          </button>
-                                        )}
-                                      <>
-                                          <div
-                                            className="runtime-picker__divider"
-                                            role="separator"
-                                          />
-                                          <strong role="presentation">
-                                            Continue Runtime
-                                          </strong>
-                                          {continueMenuSelection &&
-                                            continueMenuSource && (
-                                              <button
-                                                aria-checked={
-                                                  activeRuntimeSelectionKey ===
-                                                  agentRuntimeSelectionKey(
-                                                    continueMenuSelection,
-                                                  )
-                                                }
-                                                onClick={() =>
-                                                  void switchRuntime(
-                                                    continueMenuSelection,
-                                                  )
-                                                }
-                                                role="menuitemradio"
-                                                tabIndex={
-                                                  activeRuntimeSelectionKey ===
-                                                  agentRuntimeSelectionKey(
-                                                    continueMenuSelection,
-                                                  )
-                                                    ? 0
-                                                    : -1
-                                                }
-                                                type="button"
-                                              >
-                                                <span>
-                                                  {continueMenuSource.label}
-                                                </span>
-                                                <small>
-                                                  {continueMenuSource.detail}
-                                                </small>
-                                              </button>
-                                            )}
-                                      </>
-                                      {!activeProjectUsesManagedSsh && (
-                                        <>
-                                          <div
-                                            className="runtime-picker__divider"
-                                            role="separator"
-                                          />
-                                          <strong role="presentation">
-                                            {t("runtime.deepseekHarnessGroup")}
-                                          </strong>
-                                          {deepseekHarnessMenuSelection &&
-                                            deepseekHarnessMenuSource && (
-                                              <button
-                                                aria-checked={
-                                                  activeRuntimeSelectionKey ===
-                                                  agentRuntimeSelectionKey(
-                                                    deepseekHarnessMenuSelection,
-                                                  )
-                                                }
-                                                onClick={() =>
-                                                  void switchRuntime(
-                                                    deepseekHarnessMenuSelection,
-                                                  )
-                                                }
-                                                role="menuitemradio"
-                                                tabIndex={
-                                                  activeRuntimeSelectionKey ===
-                                                  agentRuntimeSelectionKey(
-                                                    deepseekHarnessMenuSelection,
-                                                  )
-                                                    ? 0
-                                                    : -1
-                                                }
-                                                type="button"
-                                              >
-                                                <span>
-                                                  {
-                                                    deepseekHarnessMenuSource.label
-                                                  }
-                                                </span>
-                                                <small>
-                                                  {
-                                                    deepseekHarnessMenuSource.detail
-                                                  }
-                                                </small>
-                                              </button>
-                                            )}
-                                        </>
-                                      )}
-                                      <div
-                                        className="runtime-picker__divider"
-                                        role="separator"
-                                      />
-                                      <button
-                                        onClick={() => {
-                                          setRuntimeMenuOpen(false);
-                                          setView("settings");
-                                        }}
-                                        role="menuitem"
-                                        tabIndex={-1}
-                                        type="button"
-                                      >
-                                        <span>{t("runtime.manage")}</span>
-                                      </button>
-                                    </div>
+                                      remote={activeProjectUsesManagedSsh}
+                                      runtimeSettings={runtimeSettings}
+                                    />
                                   )}
                                 </div>
                                 <ComposerMenuSelect

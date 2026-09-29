@@ -291,15 +291,21 @@ describe('runtime selection', () => {
     ).toEqual({ provider: 'deepseek-harness' })
   })
 
-  it('routes legacy automatic settings through local OpenCode when the Server is blank', () => {
-    expect(getConfiguredRuntimeTarget(settings())).toBe('opencode')
+  it('treats legacy automatic settings as the direct model, matching settings normalization', () => {
+    expect(getConfiguredRuntimeTarget(settings())).toBe('model')
     expect(
-      getConfiguredRuntimeTarget(
-        settings({ opencodeEmbedded: false })
-      )
+      getConfiguredRuntimeTarget(settings({ provider: 'opencode' }))
     ).toBe('opencode')
+  })
+
+  it('resolves own configuration explicitly instead of the configured profile', () => {
+    const configured = settings({
+      provider: 'opencode',
+      opencodeModelProfile: settings().modelProfiles[0]
+    })
     expect(
-      applyRuntimeSelection(settings(), { provider: 'auto' }).settings
-    ).toEqual(settings())
+      applyRuntimeSelection(configured, { provider: 'opencode', runtimeConfig: true })
+        .settings.opencodeModelProfile
+    ).toBeUndefined()
   })
 })

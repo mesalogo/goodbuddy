@@ -13,7 +13,6 @@ import {
   defaultRuntimeSettings,
   type RuntimeSettings
 } from '../../shared/contracts'
-import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 import type {
   SshDirectoryBrowseResult,
   SshHost,
@@ -66,7 +65,7 @@ const project: AssistantProject = {
     rootPath: 'C:\\Workspace'
   },
   defaultWorkMode: 'ask',
-  runtimeSelection: { provider: 'model', profileId },
+  runtimeSelection: { provider: 'model', model: { kind: 'profile', profileId } },
   kind: 'user',
   status: 'active',
   createdAt: '2026-08-04T00:00:00.000Z',
@@ -413,21 +412,10 @@ describe('ProjectSwitcher runtime fields', () => {
     fireEvent.change(within(dialog).getByLabelText('名称'), {
       target: { value: 'Harness project' }
     })
-    const runtime = within(dialog).getByLabelText(
-      '新对话默认 Runtime'
-    )
-    expect(
-      within(runtime).getByRole('option', {
-        name: 'DeepSeek Harness（预览 · OpenAI 兼容）'
-      })
-    ).toBeInTheDocument()
-    fireEvent.change(runtime, {
-      target: {
-        value: agentRuntimeSelectionKey({
-          provider: 'deepseek-harness'
-        })
-      }
-    })
+    const runtime = within(dialog).getByLabelText('执行方式')
+    // New projects start from a concrete execution mode.
+    expect(runtime).not.toHaveValue('')
+    fireEvent.change(runtime, { target: { value: 'deepseek-harness' } })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '创建' })
     )
@@ -450,16 +438,9 @@ describe('ProjectSwitcher runtime fields', () => {
       name: '管理项目 Local project'
     }))
     const dialog = screen.getByRole('dialog', { name: '项目设置' })
-    fireEvent.change(
-      within(dialog).getByLabelText('新对话默认 Runtime'),
-      {
-        target: {
-          value: agentRuntimeSelectionKey({
-            provider: 'deepseek-harness'
-          })
-        }
-      }
-    )
+    fireEvent.change(within(dialog).getByLabelText('执行方式'), {
+      target: { value: 'deepseek-harness' }
+    })
     const modeGroup = within(dialog)
       .getAllByRole('group', { name: '默认模式' })
       .find((candidate) =>
@@ -494,11 +475,8 @@ describe('ProjectSwitcher runtime fields', () => {
 
     fireEvent.click(screen.getByLabelText('New project'))
     const dialog = screen.getByRole('dialog', { name: 'New project' })
-    expect(
-      within(dialog).getByLabelText(
-        'Default Runtime for new conversations'
-      )
-    ).toBeInTheDocument()
+    expect(within(dialog).getByRole('group', { name: 'Default Runtime for new conversations' })).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('Execution mode')).not.toHaveValue('')
     expect(
       within(dialog)
         .getAllByRole('group', { name: 'Default mode' })
@@ -506,11 +484,7 @@ describe('ProjectSwitcher runtime fields', () => {
           candidate.classList.contains('segmented-control')
         )
     ).toBeInTheDocument()
-    expect(
-      within(dialog).getByRole('option', {
-        name: 'DeepSeek Harness (Preview · OpenAI-compatible)'
-      })
-    ).toBeInTheDocument()
+    expect(within(dialog).getByRole('option', { name: 'DeepSeek Harness' })).toBeInTheDocument()
   })
 })
 
@@ -1291,7 +1265,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     fireEvent.change(within(dialog).getByLabelText('远端工作目录'), {
       target: { value: '/srv/project' }
     })
-    fireEvent.change(within(dialog).getByRole('combobox', { name: '新对话默认 Runtime' }), {
+    fireEvent.change(within(dialog).getByRole('combobox', { name: '执行方式' }), {
       target: { value: provider }
     })
     const modeGroup = within(dialog)

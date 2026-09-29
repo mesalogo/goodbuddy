@@ -1,7 +1,10 @@
 import { join } from 'node:path'
 import { SqliteRuntimeSessionBindingStore } from '../agent/runtime-session-binding-store'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
-import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
+import type {
+  AgentRuntimeSelection,
+  RuntimeSelectionLayer
+} from '../../shared/runtime-selection-contracts'
 import type { SshHostStore } from '../ssh/ssh-host-store'
 import {
   resolveBundledRemoteRuntimeResourcePaths,
@@ -44,7 +47,7 @@ export type ManagedRemoteExecutionServicesOptions = {
     selection: AgentRuntimeSelection
   ): Promise<ResolvedModelProfile | undefined>
   resolveRuntimeSelection(
-    selection: AgentRuntimeSelection
+    layer: RuntimeSelectionLayer | undefined
   ): Promise<AgentRuntimeSelection>
 }
 

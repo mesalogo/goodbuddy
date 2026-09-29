@@ -4559,7 +4559,10 @@ describe('registerIpcHandlers local conversation persistence', () => {
       const database = {
         queueDueSchedules: vi.fn(() => []), listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => []),
-        getConversation: vi.fn(() => ({ id: conversationId, runtimeSelection: selection, messages })),
+        // Stored conversations hold a layer; the renderer sends the resolved selection.
+        getConversation: vi.fn(() => ({ id: conversationId, runtimeSelection: {
+          provider: 'model', model: { kind: 'profile', profileId: selection.profileId }
+        }, messages })),
         createTask: vi.fn(), updateTaskStatus: vi.fn()
       }
       const compactor = {
@@ -4714,7 +4717,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
         JSON.stringify({
           input: {
             conversationId,
-            runtimeSelection: { provider: 'auto' },
+            runtimeSelection: { provider: 'model' },
             workMode: 'ask',
             includeMemoryContext: true,
             prompt: queuedItem.label,
@@ -5229,7 +5232,8 @@ describe('registerIpcHandlers Runtime customization', () => {
       requestId,
       conversationId,
       projectId,
-      runtimeSelection: { provider: 'opencode' as const },
+      // The renderer sends the resolved selection; OpenCode here uses its own configuration.
+      runtimeSelection: { provider: 'opencode' as const, runtimeConfig: true as const },
       history: messages.map(({ role, content }) => ({
         role,
         content
@@ -5429,7 +5433,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           defaultWorkMode: 'ask',
           runtimeSelection: {
             provider: 'model',
-            profileId: '00000000-0000-4000-8000-000000000001'
+            model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000001' }
           },
           kind: 'channel',
           channel: 'wecom',
@@ -7316,8 +7320,18 @@ describe('registerIpcHandlers agent terminal state', () => {
       }
     }
     const { harness, projectId } = createManagedSshHarness(selectedRuntime)
+    harness.getResolvedSettings.mockResolvedValue({
+      provider: 'opencode', defaultModelProfileId: selection.profileId, opencodeBaseUrl: '',
+      modelProfiles: [{
+        id: selection.profileId, name: 'Remote', modelName: 'remote', baseUrl: 'https://models.example/v1',
+        protocol: 'openai-chat-completions', authentication: 'none'
+      }]
+    })
     const project = harness.assistantDatabase.getProject(projectId)
-    harness.assistantDatabase.getProject.mockReturnValue({ ...project, runtimeSelection: selection })
+    harness.assistantDatabase.getProject.mockReturnValue({
+      ...project,
+      runtimeSelection: { provider: 'opencode', model: { kind: 'profile', profileId: selection.profileId } }
+    })
     harness.assistantDatabase.getConversation.mockReturnValue({
       id: conversationId, projectId, messages: []
     })
@@ -8395,7 +8409,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       {
         requestId: '00000000-0000-4000-8000-000000000728',
         conversationId,
-        runtimeSelection: { provider: 'auto' },
+        runtimeSelection: { provider: 'model' },
         prompt: '等待 Runtime',
         workMode: 'ask',
         knowledgeLibraryIds: []
@@ -8409,7 +8423,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.handler?.(trustedEvent(harness.webContents), {
         requestId: '00000000-0000-4000-8000-000000000729',
         conversationId,
-        runtimeSelection: { provider: 'auto' },
+        runtimeSelection: { provider: 'model' },
         prompt: '不能并发',
         workMode: 'ask',
         knowledgeLibraryIds: []
@@ -8468,7 +8482,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const input = {
       conversationId,
-      runtimeSelection: { provider: 'auto' as const },
+      runtimeSelection: { provider: 'model' as const },
       workMode: 'ask' as const,
       includeMemoryContext: true,
       prompt: item.label,
@@ -8521,7 +8535,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     try {
       await expect(electronMocks.handlers.get(ipcChannels.conversationQueueEnqueueUser)?.(trustedEvent(harness.webContents), {
         conversationId: '00000000-0000-4000-8000-000000000731',
-        runtimeSelection: { provider: 'auto' }, workMode: 'ask', prompt: 'Read the picture',
+        workMode: 'ask', prompt: 'Read the picture',
         attachments: [{ id: '00000000-0000-4000-8000-000000000734', name: 'image.png', size: 10, preview: '', kind: 'image' }],
         knowledgeLibraryIds: [], knowledgeRetrievalMode: 'auto'
       })).rejects.toThrow('图片输入')
@@ -8550,7 +8564,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       '00000000-0000-4000-8000-000000000734'
     const input = {
       conversationId,
-      runtimeSelection: { provider: 'auto' as const },
+      runtimeSelection: { provider: 'model' as const },
       workMode: 'ask' as const,
       includeMemoryContext: true,
       prompt: '排队发送',
@@ -8655,7 +8669,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const itemId = '00000000-0000-4000-8000-000000000746'
     const input = {
       conversationId,
-      runtimeSelection: { provider: 'auto' as const },
+      runtimeSelection: { provider: 'model' as const },
       workMode: 'ask' as const,
       includeMemoryContext: true,
       prompt: '需要重新排队',
@@ -8721,7 +8735,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.handler?.(trustedEvent(harness.webContents), {
       requestId: '00000000-0000-4000-8000-000000000748',
       conversationId,
-      runtimeSelection: { provider: 'auto' },
+      runtimeSelection: { provider: 'model' },
       prompt: '失败后的新消息',
       workMode: 'ask',
       knowledgeLibraryIds: []
@@ -8750,7 +8764,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const createItem = (id: string, prompt: string) => {
       const input = {
         conversationId,
-        runtimeSelection: { provider: 'auto' as const },
+        runtimeSelection: { provider: 'model' as const },
         workMode: 'ask' as const,
         includeMemoryContext: true,
         prompt,
@@ -9095,7 +9109,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         defaultModelProfileId: profileId, deepseekHarnessModelSource: { kind: 'profile', profileId }
       }))
       const project = database.createProject({ name: 'Native UI', description: '', rootPath: root,
-        defaultWorkMode: 'ask', runtimeSelection: { provider: 'deepseek-harness', profileId } })
+        defaultWorkMode: 'ask', runtimeSelection: { provider: 'deepseek-harness', model: { kind: 'profile', profileId } } })
       const conversationId = '00000000-0000-4000-8000-000000000222'
       const now = Date.now()
       const save = async (): Promise<string> => {
@@ -9183,7 +9197,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             [`${provider}ModelSource`]: { kind: 'profile', profileId }
           }))
         }
-        database.updateProject(project.id, { ...project, runtimeSelection: { provider, profileId } })
+        database.updateProject(project.id, { ...project, runtimeSelection: { provider, model: { kind: 'profile', profileId } } })
         const onTerminal = vi.fn<(value: import('../shared/terminal-contracts').TerminalSnapshot) => void>()
         notify.mockClear()
         view.rerender(createElement(RuntimeNativeClientActions, { browser: false, contextKey: `${project.id}:${provider}`,
@@ -10661,8 +10675,10 @@ describe('registerIpcHandlers agent terminal state', () => {
     ).resolves.toEqual(
       expect.objectContaining({ label: 'model-two' })
     )
+    // Resolved selections name the model source explicitly.
     expect(selectedRuntimes.getStatus).toHaveBeenLastCalledWith({
-      provider: 'opencode'
+      provider: 'opencode',
+      runtimeConfig: true
     })
     expect(fallbackRuntime.getStatus).not.toHaveBeenCalled()
 
@@ -10726,21 +10742,36 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const harness = createHarness(requestRuntime, undefined, 'always', undefined, false, selectedRuntimes)
     const projectId = '00000000-0000-4000-8000-000000000101'
-    const fixed = { provider: 'continue', profileId: '00000000-0000-4000-8000-000000000042' }
+    const fixedProfileId = '00000000-0000-4000-8000-000000000042'
     const project = { id: projectId, rootPath: 'C:\\ProjectWorkspace' }
+    harness.getResolvedSettings.mockResolvedValue({
+      provider: 'model', defaultModelProfileId: fixedProfileId, opencodeBaseUrl: '',
+      modelProfiles: [{
+        id: fixedProfileId, name: 'Fixed', modelName: 'fixed', baseUrl: 'https://models.example/v1',
+        protocol: 'openai-chat-completions', authentication: 'none'
+      }]
+    })
     harness.assistantDatabase.getProject.mockReturnValue({ ...project, runtimeSelection: { provider: 'opencode' } })
     const event = trustedEvent(harness.webContents)
     await harness.handler?.(event, {
       projectId, conversationId: 'project-rule-one',
       requestId: '00000000-0000-4000-8000-000000000011', prompt: 'one', workMode: 'ask'
     })
-    expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith({ provider: 'opencode' }, expect.anything())
-    harness.assistantDatabase.getProject.mockReturnValue({ ...project, runtimeSelection: fixed })
+    // No project model: OpenCode uses its global default (own configuration here).
+    expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith(
+      { provider: 'opencode', runtimeConfig: true }, expect.anything()
+    )
+    harness.assistantDatabase.getProject.mockReturnValue({
+      ...project,
+      runtimeSelection: { provider: 'continue', model: { kind: 'profile', profileId: fixedProfileId } }
+    })
     await harness.handler?.(event, {
       projectId, conversationId: 'project-rule-two',
       requestId: '00000000-0000-4000-8000-000000000012', prompt: 'two', workMode: 'ask'
     })
-    expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith(fixed, expect.anything())
+    expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith(
+      { provider: 'continue', profileId: fixedProfileId }, expect.anything()
+    )
     await harness.handler?.(event, {
       projectId, conversationId: 'project-rule-three', runtimeSelection: { provider: 'model' },
       requestId: '00000000-0000-4000-8000-000000000013', prompt: 'three', workMode: 'ask'
@@ -11803,7 +11834,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           defaultWorkMode: 'ask',
           runtimeSelection: {
             provider: 'model',
-            profileId: '00000000-0000-4000-8000-000000000001'
+            model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000001' }
           },
           kind: 'channel',
           channel,
@@ -12231,15 +12262,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect.any(String),
       'waiting_approval'
     )
+    // Channel conversations inherit the project's choice instead of copying it.
     expect(
       harness.assistantDatabase.getOrCreateRemoteConversation
     ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runtimeSelection: {
-          provider: 'model',
-          profileId: '00000000-0000-4000-8000-000000000001'
-        }
-      })
+      expect.not.objectContaining({ runtimeSelection: expect.anything() })
     )
     await harness.dispose()
   })
@@ -12561,7 +12588,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       toolApproval: 'always',
       subagentSmartRoutingEnabled: false,
       continueModelProfile: { id: configuredProfileId },
-      modelProfiles: [{ id: configuredProfileId }]
+      modelProfiles: [{
+        id: configuredProfileId, baseUrl: 'https://models.example/v1',
+        protocol: 'openai-chat-completions', authentication: 'none'
+      }]
     })
     vi.mocked(
       harness.assistantDatabase.listProjects
@@ -12617,9 +12647,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(
       harness.assistantDatabase.getOrCreateRemoteConversation
     ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runtimeSelection: { provider: 'continue' }
-      })
+      expect.not.objectContaining({ runtimeSelection: expect.anything() })
     )
     expect(receivedAuthorize).toBeUndefined()
     expect(harness.approvalBroker.request).not.toHaveBeenCalled()

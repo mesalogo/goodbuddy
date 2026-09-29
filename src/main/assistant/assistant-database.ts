@@ -83,10 +83,14 @@ import {
 } from '../../shared/channel-contracts'
 import {
   agentRuntimeSelectionKey,
-  agentRuntimeSelectionSchema,
-  repairChannelRuntimeSelection,
+  compactRuntimeSelectionLayer,
+  optionalAgentRuntimeSelectionSchema,
+  repairRuntimeSelectionLayer,
+  runtimeSelectionLayerSchema,
+  withoutLegacyAutoSelection,
   type AgentRuntimeSelection,
-  type RuntimeSelectionRepairSettings
+  type RuntimeResolutionSettings,
+  type RuntimeSelectionLayer
 } from '../../shared/runtime-selection-contracts'
 import {
   MAGIC_NOTE_MAX_NOTE_EMBED_BYTES,
@@ -126,7 +130,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 48
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 49
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -318,20 +322,67 @@ type MessageMetadata = {
 const MAX_CHANNEL_OUTBOX_RETRY_BYTES = 20 * 1024 * 1024
 const MAX_CHANNEL_OUTBOX_MEDIA_ENTRIES = 8
 
-function parseRuntimeSelection(value: string | null):
-  | ConversationSnapshot['runtimeSelection']
-  | undefined {
+/** Rewrites pre-layer `{ provider, profileId }` and `{ provider: 'auto' }` rows. */
+function migrateRuntimeSelectionLayers(database: DatabaseSync): void {
+  for (const table of ['projects', 'conversations'] as const) {
+    const rows = database
+      .prepare(
+        `SELECT id, runtime_selection_json FROM ${table}
+         WHERE runtime_selection_json IS NOT NULL`
+      )
+      .all() as Array<{ id: string; runtime_selection_json: string }>
+    const update = database.prepare(
+      `UPDATE ${table} SET runtime_selection_json = ? WHERE id = ?`
+    )
+    for (const row of rows) {
+      const next = serializeRuntimeSelection(
+        parseRuntimeSelection(row.runtime_selection_json)
+      )
+      if (next !== row.runtime_selection_json) update.run(next, row.id)
+    }
+  }
+}
+
+/** Reads a stored layer; legacy concrete and `auto` selections upgrade on read. */
+function parseRuntimeSelection(
+  value: string | null
+): RuntimeSelectionLayer | undefined {
   if (!value) {
     return undefined
   }
   try {
-    const parsed = agentRuntimeSelectionSchema.safeParse(
-      JSON.parse(value)
-    )
-    return parsed.success ? parsed.data : undefined
+    const parsed = runtimeSelectionLayerSchema.safeParse(JSON.parse(value))
+    return parsed.success ? compactRuntimeSelectionLayer(parsed.data) : undefined
   } catch {
     return undefined
   }
+}
+
+function serializeRuntimeSelection(
+  layer: RuntimeSelectionLayer | undefined
+): string | null {
+  // Normalize legacy `{ provider, profileId }` input before storing it.
+  const parsed = runtimeSelectionLayerSchema.safeParse(layer)
+  const compact = parsed.success ? compactRuntimeSelectionLayer(parsed.data) : undefined
+  return compact ? JSON.stringify(compact) : null
+}
+
+/** Remote events record the concrete selection they ran with for context metrics keys. */
+function remoteEventSelectionKey(
+  requestSelection: AgentRuntimeSelection | undefined,
+  conversationLayer: RuntimeSelectionLayer | undefined,
+  projectLayer: RuntimeSelectionLayer | undefined
+): string {
+  if (requestSelection) return agentRuntimeSelectionKey(requestSelection)
+  const provider = conversationLayer?.provider ?? projectLayer?.provider ?? 'opencode'
+  const model = conversationLayer?.model ?? projectLayer?.model
+  return agentRuntimeSelectionKey(
+    model?.kind === 'profile'
+      ? { provider, profileId: model.profileId }
+      : model?.kind === 'runtime-config' && provider !== 'model'
+        ? { provider, runtimeConfig: true }
+        : { provider }
+  )
 }
 
 type ArtifactRow = {
@@ -576,18 +627,7 @@ function toProject(row: ProjectRow): AssistantProject {
   if (!executionSpace.success) {
     throw new Error(`项目 ${row.id} 的执行空间配置无效`)
   }
-  const runtimeSelection =
-    row.kind === 'channel'
-      ? parseRuntimeSelection(row.runtime_selection_json) ?? {
-          provider: 'auto' as const
-        }
-      : parseRuntimeSelection(row.runtime_selection_json)
-  if (
-    executionSpace.data.kind === 'ssh' &&
-    runtimeSelection === undefined
-  ) {
-    throw new Error(`项目 ${row.id} 缺少远程 Runtime 选择`)
-  }
+  const runtimeSelection = parseRuntimeSelection(row.runtime_selection_json)
   const rootPath =
     executionSpace.data.kind === 'local'
       ? executionSpace.data.rootPath
@@ -764,8 +804,8 @@ function toSchedule(row: ScheduleWithTaskRow): AssistantSchedule {
     workMode: LegacyWorkMode
     runtimeSelection?: unknown
   }
-  const runtimeSelection = agentRuntimeSelectionSchema.safeParse(
-    template.runtimeSelection
+  const runtimeSelection = optionalAgentRuntimeSelectionSchema.safeParse(
+    withoutLegacyAutoSelection(template.runtimeSelection)
   )
   const recurrence = JSON.parse(row.recurrence_json) as {
     type: AssistantSchedule['recurrence']
@@ -1666,9 +1706,6 @@ function normalizeSshProjectWrite(
   if (project.rootPath !== executionSpace.remoteRootPath) {
     throw new Error('项目目录与远程执行空间目录不匹配')
   }
-  if (project.runtimeSelection === undefined) {
-    throw new Error('远程项目必须选择 Runtime')
-  }
   if (typeof write.assertCurrent !== 'function') {
     throw new TypeError('缺少 SSH Host 事务前置校验')
   }
@@ -2334,8 +2371,10 @@ export class AssistantDatabase {
 
   ensureChannelProjects(
     defaultRootPath: string,
-    defaultModelProfileId: string
+    _defaultModelProfileId?: string
   ): AssistantProject[] {
+    // Kept for callers; channel projects no longer pin the current default model.
+    void _defaultModelProfileId
     const database = this.requireDatabase()
     const definitions: ReadonlyArray<{
       channel: ProjectChannel
@@ -2387,10 +2426,8 @@ export class AssistantDatabase {
           definition.name,
           definition.description,
           defaultRootPath,
-          JSON.stringify({
-            provider: 'model',
-            profileId: defaultModelProfileId
-          }),
+          // Unattended channels start on the direct model; the model follows global settings.
+          JSON.stringify({ provider: 'model' }),
           definition.channel,
           now,
           now
@@ -2441,9 +2478,7 @@ export class AssistantDatabase {
           input.description,
           input.rootPath,
           input.defaultWorkMode,
-          input.runtimeSelection
-            ? JSON.stringify(input.runtimeSelection)
-            : null,
+          serializeRuntimeSelection(input.runtimeSelection),
           builtInDefault ? 1 : 0,
           now,
           now
@@ -2493,11 +2528,8 @@ export class AssistantDatabase {
           input.description,
           input.rootPath,
           input.defaultWorkMode,
-          input.runtimeSelection || current.runtimeSelection
-            ? JSON.stringify(
-                input.runtimeSelection ?? current.runtimeSelection
-              )
-            : null,
+          // The settings form always sends the full layer; absent means follow global.
+          serializeRuntimeSelection(input.runtimeSelection),
           new Date().toISOString(),
           projectId
         )
@@ -2547,9 +2579,7 @@ export class AssistantDatabase {
           normalized.project.description,
           normalized.executionSpace.remoteRootPath,
           normalized.project.defaultWorkMode,
-          normalized.project.runtimeSelection
-            ? JSON.stringify(normalized.project.runtimeSelection)
-            : null,
+          serializeRuntimeSelection(normalized.project.runtimeSelection),
           now,
           now
         )
@@ -2640,9 +2670,7 @@ export class AssistantDatabase {
           normalized.project.description,
           normalized.executionSpace.remoteRootPath,
           normalized.project.defaultWorkMode,
-          normalized.project.runtimeSelection
-            ? JSON.stringify(normalized.project.runtimeSelection)
-            : null,
+          serializeRuntimeSelection(normalized.project.runtimeSelection),
           updatedAt,
           projectId,
           expectedUpdatedAt
@@ -2988,32 +3016,29 @@ export class AssistantDatabase {
     }
   }
 
+  /**
+   * Clears references to deleted model connections in every project and
+   * conversation so they fall back to the next layer instead of failing.
+   * Also rewrites legacy stored shapes to the layered form.
+   */
   repairConversationRuntimeSelections(
-    settings: RuntimeSelectionRepairSettings
+    settings: Pick<RuntimeResolutionSettings, 'modelProfiles'>
   ): number {
     const database = this.requireDatabase()
     const projects = database
       .prepare(
         `SELECT id, runtime_selection_json
          FROM projects
-         WHERE kind = 'channel'`
+         WHERE runtime_selection_json IS NOT NULL`
       )
-      .all() as Array<{
-        id: string
-        runtime_selection_json: string | null
-      }>
+      .all() as Array<{ id: string; runtime_selection_json: string }>
     const conversations = database
       .prepare(
-        `SELECT id, runtime_selection_json, channel
+        `SELECT id, runtime_selection_json
          FROM conversations
-         WHERE runtime_selection_json IS NOT NULL
-           AND channel IS NOT NULL`
+         WHERE runtime_selection_json IS NOT NULL`
       )
-      .all() as Array<{
-        id: string
-        runtime_selection_json: string
-        channel: ProjectChannel | null
-      }>
+      .all() as Array<{ id: string; runtime_selection_json: string }>
     const update = database.prepare(
       `UPDATE conversations
        SET runtime_selection_json = ?
@@ -3024,44 +3049,25 @@ export class AssistantDatabase {
        SET runtime_selection_json = ?, updated_at = ?
        WHERE id = ?`
     )
+    const repairedJson = (stored: string): string | null | false => {
+      const next = serializeRuntimeSelection(
+        repairRuntimeSelectionLayer(parseRuntimeSelection(stored), settings)
+      )
+      return next === stored ? false : next
+    }
     let repaired = 0
     database.exec('BEGIN IMMEDIATE')
     try {
       for (const project of projects) {
-        const stored = parseRuntimeSelection(
-          project.runtime_selection_json
-        )
-        const current = stored ?? { provider: 'auto' as const }
-        const next = repairChannelRuntimeSelection(current, settings)
-        if (
-          stored &&
-          agentRuntimeSelectionKey(next) ===
-            agentRuntimeSelectionKey(current)
-        ) {
-          continue
-        }
-        updateProject.run(
-          JSON.stringify(next),
-          new Date().toISOString(),
-          project.id
-        )
+        const next = repairedJson(project.runtime_selection_json)
+        if (next === false) continue
+        updateProject.run(next, new Date().toISOString(), project.id)
         repaired += 1
       }
       for (const conversation of conversations) {
-        const current = parseRuntimeSelection(
-          conversation.runtime_selection_json
-        )
-        if (!current) {
-          continue
-        }
-        const next = repairChannelRuntimeSelection(current, settings)
-        if (
-          agentRuntimeSelectionKey(next) ===
-          agentRuntimeSelectionKey(current)
-        ) {
-          continue
-        }
-        update.run(JSON.stringify(next), conversation.id)
+        const next = repairedJson(conversation.runtime_selection_json)
+        if (next === false) continue
+        update.run(next, conversation.id)
         repaired += 1
       }
       database.exec('COMMIT')
@@ -3107,9 +3113,7 @@ export class AssistantDatabase {
         insertConversation.run(
           conversation.id,
           conversation.projectId ?? null,
-          conversation.runtimeSelection
-            ? JSON.stringify(conversation.runtimeSelection)
-            : null,
+          serializeRuntimeSelection(conversation.runtimeSelection),
           conversation.knowledgeRetrievalMode ?? null,
           serializeConversationContextState(conversation),
           conversation.title,
@@ -3202,9 +3206,7 @@ export class AssistantDatabase {
         if (existingConversation) {
           const result = updateConversation.run(
             header.projectId ?? null,
-            header.runtimeSelection
-              ? JSON.stringify(header.runtimeSelection)
-              : null,
+            serializeRuntimeSelection(header.runtimeSelection),
             header.knowledgeRetrievalMode ?? null,
             serializeConversationContextState(header),
             header.title,
@@ -3220,9 +3222,7 @@ export class AssistantDatabase {
           insertConversation.run(
             header.id,
             header.projectId ?? null,
-            header.runtimeSelection
-              ? JSON.stringify(header.runtimeSelection)
-              : null,
+            serializeRuntimeSelection(header.runtimeSelection),
             header.knowledgeRetrievalMode ?? null,
             serializeConversationContextState(header),
             header.title,
@@ -3525,7 +3525,7 @@ export class AssistantDatabase {
     conversationType: 'direct' | 'group'
     title: string
     accountDisplay: string
-    runtimeSelection?: AgentRuntimeSelection
+    runtimeSelection?: RuntimeSelectionLayer
   }): ConversationSnapshot {
     const database = this.requireDatabase()
     const existing = database
@@ -3556,9 +3556,7 @@ export class AssistantDatabase {
           input.title,
           input.conversationType,
           input.accountDisplay,
-          input.runtimeSelection
-            ? JSON.stringify(input.runtimeSelection)
-            : null,
+          serializeRuntimeSelection(input.runtimeSelection),
           new Date().toISOString(),
           existing.id
         )
@@ -3578,9 +3576,7 @@ export class AssistantDatabase {
       .run(
         id,
         input.projectId,
-        input.runtimeSelection
-          ? JSON.stringify(input.runtimeSelection)
-          : null,
+        serializeRuntimeSelection(input.runtimeSelection),
         input.title,
         input.channel,
         input.accountId,
@@ -5873,9 +5869,7 @@ export class AssistantDatabase {
       input.assistantMessageId
     )
     const requestRuntimeSelection =
-      input.runtimeSelection === undefined
-        ? undefined
-        : agentRuntimeSelectionSchema.parse(input.runtimeSelection)
+      optionalAgentRuntimeSelectionSchema.parse(input.runtimeSelection)
     const publicEvent = stripRemoteEventProvenance(input.event)
     if (publicEvent.requestId !== input.taskId) {
       throw new Error('远程事件的请求 ID 与任务不匹配')
@@ -6012,17 +6006,16 @@ export class AssistantDatabase {
       let contextState = parseConversationContextState(
         conversation.context_state_json
       )
-      const runtimeSelection =
-        requestRuntimeSelection ??
-        parseRuntimeSelection(conversation.runtime_selection_json) ??
-        parseRuntimeSelection(conversation.project_runtime_selection_json) ??
-        { provider: 'auto' as const }
+      const runtimeSelectionKey = remoteEventSelectionKey(
+        requestRuntimeSelection,
+        parseRuntimeSelection(conversation.runtime_selection_json),
+        parseRuntimeSelection(conversation.project_runtime_selection_json)
+      )
       if (publicEvent.type === 'context-metrics') {
         contextState = {
           ...contextState,
           contextMetrics: {
-            runtimeSelectionKey:
-              agentRuntimeSelectionKey(runtimeSelection),
+            runtimeSelectionKey,
             contextTokens: publicEvent.contextTokens,
             source: publicEvent.source,
             basis: 'model-call'
@@ -6046,8 +6039,7 @@ export class AssistantDatabase {
           estimatedAfterTokens !== undefined
             ? {
                 contextMetrics: {
-                  runtimeSelectionKey:
-                    agentRuntimeSelectionKey(runtimeSelection),
+                  runtimeSelectionKey,
                   contextTokens: estimatedAfterTokens,
                   source: 'estimated' as const,
                   basis: 'conversation' as const
@@ -11567,6 +11559,13 @@ export class AssistantDatabase {
       try {
         database.exec('ALTER TABLE magic_note_entries ADD COLUMN source_json TEXT;')
         database.exec('PRAGMA user_version = 48; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+    if (version.user_version < 49) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        migrateRuntimeSelectionLayers(database)
+        database.exec('PRAGMA user_version = 49; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
   }

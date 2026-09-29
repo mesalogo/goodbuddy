@@ -246,6 +246,47 @@ export const app = {
       unavailable: '不可用'
     }
   },
+  runtimeSelection: {
+    providers: {
+      model: '直连模型',
+      opencode: 'OpenCode',
+      continue: 'Continue',
+      'deepseek-harness': 'DeepSeek Harness'
+    },
+    providerLabel: '执行方式',
+    followRuntimeDefault: '跟随 {{runtime}} 默认（{{value}}）',
+    effectiveModelSource: '模型来自{{model}}设置',
+    modelLabel: '模型',
+    runtimeConfig: '使用 {{runtime}} 自有配置',
+    runtimeConfigShort: '自有配置',
+    followGlobal: '跟随全局（{{value}}）',
+    followProject: '跟随项目（{{value}}）',
+    defaultModel: '默认（{{value}}）',
+    noModel: '无可用模型',
+    sources: {
+      global: '全局',
+      project: '项目',
+      conversation: '本会话'
+    },
+    effective: '实际生效：{{provider}} · {{model}}',
+    effectiveSources: '执行方式来自{{provider}}设置 · 模型来自{{model}}设置',
+    ignored: {
+      missing: '所选模型连接已删除，已回退到 {{fallback}}',
+      incompatible: '所选模型与当前执行方式不兼容，已回退到 {{fallback}}',
+      unavailable: '所选模型缺少 API Key，已回退到 {{fallback}}',
+      provider: '远程项目仅支持 OpenCode 和 Continue，已回退到 {{fallback}}'
+    },
+    followGlobalAction: '改为跟随默认模型',
+    missingProfile: '已删除的模型',
+    unavailableSuffix: '（缺少 API Key）',
+    conversationOnly: '仅对本会话生效',
+    resetToProject: '恢复为项目默认',
+    manage: '管理模型连接…',
+    menuLabel: '执行方式和模型',
+    providerListLabel: '执行方式',
+    modelListLabel: '模型',
+    conversationOverride: '本会话单独选择'
+  },
   chat: {
     heading: '对话内容',
     user: '用户',

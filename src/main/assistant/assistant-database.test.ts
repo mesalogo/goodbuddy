@@ -2388,7 +2388,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('fails closed when an SSH project lacks a Runtime selection', async () => {
+  it('lets an SSH project without a Runtime selection follow global settings', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-invalid-ssh-project-')
     )
@@ -2411,9 +2411,8 @@ describe('AssistantDatabase', () => {
       )
     raw.close()
 
-    expect(() => database.getProject(project.id)).toThrow(
-      '缺少远程 Runtime 选择'
-    )
+    // Resolution limits remote projects to OpenCode or Continue at run time.
+    expect(database.getProject(project.id).runtimeSelection).toBeUndefined()
     database.close()
   })
 
@@ -2477,12 +2476,6 @@ describe('AssistantDatabase', () => {
     expect(() =>
       database.createSshProject(rootMismatch)
     ).toThrow('目录不匹配')
-
-    const missingRuntime = validatedSshProjectWrite()
-    delete missingRuntime.project.runtimeSelection
-    expect(() =>
-      database.createSshProject(missingRuntime)
-    ).toThrow('必须选择 Runtime')
 
     expect(() =>
       database.createSshProject(
@@ -2727,10 +2720,8 @@ describe('AssistantDatabase', () => {
           rootPath: 'C:\\Users\\test'
         },
         defaultWorkMode: 'ask',
-        runtimeSelection: {
-          provider: 'model',
-          profileId: channelDefaultProfileId
-        },
+        // The model follows global settings instead of freezing today's default.
+        runtimeSelection: { provider: 'model' },
         kind: 'channel',
         channel: 'weixin'
       }),
@@ -2760,7 +2751,7 @@ describe('AssistantDatabase', () => {
       defaultWorkMode: 'execute',
       runtimeSelection: {
         provider: 'opencode',
-        profileId: '00000000-0000-4000-8000-000000000019'
+        model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000019' }
       }
     })
     expect(updated).toMatchObject({
@@ -2774,7 +2765,7 @@ describe('AssistantDatabase', () => {
       defaultWorkMode: 'execute',
       runtimeSelection: {
         provider: 'opencode',
-        profileId: '00000000-0000-4000-8000-000000000019'
+        model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000019' }
       }
     })
     expect(() =>
@@ -5159,7 +5150,7 @@ describe('AssistantDatabase', () => {
         projectId: project.id,
         runtimeSelection: {
           provider: 'model',
-          profileId: '00000000-0000-4000-8000-000000000299'
+          model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000299' }
         },
         knowledgeLibraryIds: [
           '00000000-0000-4000-8000-000000000214'
@@ -5264,7 +5255,7 @@ describe('AssistantDatabase', () => {
         projectId: project.id,
         runtimeSelection: {
           provider: 'model',
-          profileId: '00000000-0000-4000-8000-000000000299'
+          model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000299' }
         },
         knowledgeLibraryIds: [
           '00000000-0000-4000-8000-000000000214'
@@ -5654,7 +5645,7 @@ describe('AssistantDatabase', () => {
         projectId: project.id,
         runtimeSelection: {
           provider: 'model',
-          profileId: channelDefaultProfileId
+          model: { kind: 'profile', profileId: channelDefaultProfileId }
         },
         knowledgeLibraryIds: [
           '00000000-0000-4000-8000-000000000559'
@@ -5765,7 +5756,7 @@ describe('AssistantDatabase', () => {
       projectId: project.id,
       runtimeSelection: {
         provider: 'model',
-        profileId: channelDefaultProfileId
+        model: { kind: 'profile', profileId: channelDefaultProfileId }
       },
       knowledgeLibraryIds: [
         '00000000-0000-4000-8000-000000000559'
@@ -6322,99 +6313,47 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('repairs unattended channel selections without rebinding ordinary conversations', async () => {
+  it('clears deleted model connections from every project and conversation layer', async () => {
     const database = await createDatabase()
-    const removedProfileId =
-      '00000000-0000-4000-8000-000000000291'
-    const defaultProfileId =
-      '00000000-0000-4000-8000-000000000292'
-    const runtimeProfileId =
-      '00000000-0000-4000-8000-000000000293'
-    const imageProfileId =
-      '00000000-0000-4000-8000-000000000294'
+    const removedProfileId = '00000000-0000-4000-8000-000000000291'
+    const keptProfileId = '00000000-0000-4000-8000-000000000293'
+    const imageProfileId = '00000000-0000-4000-8000-000000000294'
     database.replaceConversations(
       ([
         ['model', removedProfileId],
         ['opencode', removedProfileId],
-        ['continue', removedProfileId],
-        ['model', runtimeProfileId]
+        ['continue', keptProfileId],
+        [undefined, removedProfileId]
       ] as const).map(([provider, profileId], index) => ({
         id: `00000000-0000-4000-8000-00000000030${index}`,
-        runtimeSelection: { provider, profileId },
+        runtimeSelection: {
+          ...(provider ? { provider } : {}),
+          model: { kind: 'profile' as const, profileId }
+        },
         title: `对话 ${index}`,
         updatedAt: index + 1,
         messages: []
       }))
     )
-    const channelProject = database.ensureChannelProjects(
-      'C:\\Users\\test',
-      defaultProfileId
-    )[0]!
-    database.updateProject(channelProject.id, {
-      name: channelProject.name,
-      description: channelProject.description,
-      rootPath: channelProject.rootPath,
-      defaultWorkMode: channelProject.defaultWorkMode,
-      runtimeSelection: {
-        provider: 'opencode',
-        profileId: runtimeProfileId
-      }
+    const [channelProject, imageChannelProject] = database.ensureChannelProjects('C:\\Users\\test')
+    database.updateProject(channelProject!.id, {
+      ...channelProject!,
+      runtimeSelection: { provider: 'opencode', model: { kind: 'profile', profileId: removedProfileId } }
     })
-    const imageChannelProject = database.ensureChannelProjects(
-      'C:\\Users\\test',
-      defaultProfileId
-    )[1]!
-    database.updateProject(imageChannelProject.id, {
-      name: imageChannelProject.name,
-      description: imageChannelProject.description,
-      rootPath: imageChannelProject.rootPath,
-      defaultWorkMode: imageChannelProject.defaultWorkMode,
-      runtimeSelection: {
-        provider: 'model',
-        profileId: imageProfileId
-      }
+    database.updateProject(imageChannelProject!.id, {
+      ...imageChannelProject!,
+      runtimeSelection: { provider: 'model', model: { kind: 'profile', profileId: imageProfileId } }
     })
-    const automaticChannelProject = database.ensureChannelProjects(
-      'C:\\Users\\test',
-      defaultProfileId
-    )[2]!
-    database.updateProject(automaticChannelProject.id, {
-      name: automaticChannelProject.name,
-      description: automaticChannelProject.description,
-      rootPath: automaticChannelProject.rootPath,
-      defaultWorkMode: automaticChannelProject.defaultWorkMode,
-      runtimeSelection: { provider: 'auto' }
+    const localProject = database.createProject({
+      name: '本地', description: '', rootPath: 'C:\\Local', defaultWorkMode: 'ask',
+      runtimeSelection: { model: { kind: 'profile', profileId: removedProfileId } }
     })
-    const automaticRemoteConversation =
-      database.getOrCreateRemoteConversation({
-        projectId: automaticChannelProject.id,
-        channel: 'dingtalk',
-        accountId: 'default',
-        externalConversationId: 'legacy-auto-conversation',
-        conversationType: 'direct',
-        title: '钉钉 · 旧版自动后端',
-        accountDisplay: '发送者 ****0001',
-        runtimeSelection: { provider: 'auto' }
-      })
 
     expect(
       database.repairConversationRuntimeSelections({
-        modelProfiles: [
-          { id: defaultProfileId },
-          { id: runtimeProfileId },
-          {
-            id: imageProfileId,
-            protocol: 'openai-images-generations'
-          }
-        ],
-        defaultModelProfileId: defaultProfileId,
-        opencodeModelSource: {
-          kind: 'profile',
-          profileId: runtimeProfileId
-        },
-        continueModelSource: { kind: 'platform' }
+        modelProfiles: [{ id: keptProfileId }, { id: imageProfileId, protocol: 'openai-images-generations' }]
       })
-    ).toBe(3)
+    ).toBe(5)
     expect(
       database
         .listConversations()
@@ -6422,33 +6361,47 @@ describe('AssistantDatabase', () => {
         .sort((left, right) => left.title.localeCompare(right.title))
         .map((conversation) => conversation.runtimeSelection)
     ).toEqual([
-      { provider: 'model', profileId: removedProfileId },
-      { provider: 'opencode', profileId: removedProfileId },
-      { provider: 'continue', profileId: removedProfileId },
-      { provider: 'model', profileId: runtimeProfileId }
+      { provider: 'model' },
+      { provider: 'opencode' },
+      { provider: 'continue', model: { kind: 'profile', profileId: keptProfileId } },
+      undefined
     ])
-    expect(database.getProject(channelProject.id).runtimeSelection).toEqual({
-      provider: 'opencode',
-      profileId: runtimeProfileId
+    expect(database.getProject(channelProject!.id).runtimeSelection).toEqual({ provider: 'opencode' })
+    // An existing but incompatible model is kept so the UI can explain the fallback.
+    expect(database.getProject(imageChannelProject!.id).runtimeSelection).toEqual({
+      provider: 'model', model: { kind: 'profile', profileId: imageProfileId }
     })
-    expect(
-      database.getProject(imageChannelProject.id).runtimeSelection
-    ).toEqual({
-      provider: 'model'
-    })
-    expect(
-      database.getProject(automaticChannelProject.id).runtimeSelection
-    ).toEqual({
-      provider: 'model'
-    })
-    expect(
-      database.getConversation(
-        automaticRemoteConversation.id
-      ).runtimeSelection
-    ).toEqual({
-      provider: 'model'
-    })
+    expect(database.getProject(localProject.id).runtimeSelection).toBeUndefined()
     database.close()
+  })
+
+  it('migrates legacy stored selections to layers', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-runtime-layer-migration-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const project = database.listProjects()[0]!
+    database.close()
+    const raw = new DatabaseSync(databasePath)
+    raw.prepare('UPDATE projects SET runtime_selection_json = ? WHERE id = ?')
+      .run(JSON.stringify({ provider: 'continue', profileId: '00000000-0000-4000-8000-000000000301' }), project.id)
+    raw.prepare(
+      `INSERT INTO conversations (id, project_id, runtime_selection_json, work_mode, title, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'ask', 'legacy', 'active', ?, ?)`
+    ).run('00000000-0000-4000-8000-000000000302', project.id, JSON.stringify({ provider: 'auto' }), '2026-01-01', '2026-01-01')
+    raw.exec('PRAGMA user_version = 48')
+    raw.close()
+
+    const reopened = new AssistantDatabase(databasePath)
+    reopened.initialize('C:\\Workspace')
+    const check = new DatabaseSync(databasePath)
+    expect(check.prepare('SELECT runtime_selection_json AS value FROM projects WHERE id = ?').get(project.id))
+      .toEqual({ value: JSON.stringify({ provider: 'continue', model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000301' } }) })
+    expect(check.prepare('SELECT runtime_selection_json AS value FROM conversations WHERE id = ?').get('00000000-0000-4000-8000-000000000302'))
+      .toEqual({ value: null })
+    check.close()
+    reopened.close()
   })
 
   it('durably interrupts active tool and subagent metadata during startup recovery', async () => {

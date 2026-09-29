@@ -4,7 +4,6 @@ import { mkdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { normalizeInteractiveWorkMode } from '../../shared/assistant-contracts'
-import { getDefaultRuntimeSelection } from '../../shared/runtime-selection-contracts'
 import type { RuntimeNativeClientResult } from '../../shared/runtime-native-client-contracts'
 import type { AssistantDatabase } from '../assistant/assistant-database'
 import type { ApplicationSettingsStore } from '../application-settings-store'
@@ -17,7 +16,7 @@ import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { NativeDshWebClientService } from './native-dsh-web-client'
 import { NativeTerminalClient } from './native-terminal-client'
-import { applyRuntimeSelection } from './runtime-selection'
+import { applyRuntimeSelection, resolveLayeredRuntimeSelection } from './runtime-selection'
 
 type Options = {
   database: AssistantDatabase
@@ -86,8 +85,11 @@ export class NativeClientCoordinator {
     if (!conversation.projectId) throw new Error('Native clients require a saved project conversation')
     const project = this.options.database.getProject(conversation.projectId)
     const settings = await this.options.settingsStore.getResolvedSettings()
-    const saved = conversation.runtimeSelection ?? project.runtimeSelection
-    const selected = applyRuntimeSelection(settings, saved && saved.provider !== 'auto' ? saved : getDefaultRuntimeSelection(settings))
+    const selected = applyRuntimeSelection(settings, resolveLayeredRuntimeSelection(
+      settings,
+      { project: project.runtimeSelection, conversation: conversation.runtimeSelection },
+      { remote: project.executionSpace?.kind === 'ssh' }
+    ).selection)
     const space = this.options.executionSpaceResolver.resolveProject(project)
     const workMode = normalizeInteractiveWorkMode(conversation.workMode ?? project.defaultWorkMode)
     const [skills, mcpServers, builtin, application, obsidian] = await Promise.all([

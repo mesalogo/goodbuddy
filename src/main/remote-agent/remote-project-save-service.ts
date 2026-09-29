@@ -11,7 +11,10 @@ import {
   remoteWorkspaceValidateResultSchema,
   type RemoteWorkspaceHandle
 } from '../../shared/remote-agent-contracts'
-import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
+import type {
+  AgentRuntimeSelection,
+  RuntimeSelectionLayer
+} from '../../shared/runtime-selection-contracts'
 import type {
   AssistantDatabase,
   SshProjectWrite
@@ -99,11 +102,11 @@ type ActiveSave = {
 type RemoteProjectPreparationDraft = Readonly<{
   hostId: string
   remoteRootPath: string
-  runtimeSelection: AgentRuntimeSelection
+  runtimeSelection?: RuntimeSelectionLayer
 }>
 
 type PreparedRemoteProject = Readonly<{
-  runtimeSelection: AgentRuntimeSelection
+  runtimeSelection?: RuntimeSelectionLayer
   target: SshConnectionTarget
   installation: AgentInstallationIdentity
   connection: RemoteAgentConnection
@@ -125,7 +128,7 @@ export type RemoteProjectSaveServiceOptions = {
   installationManager: Pick<AgentInstallationManager, 'activateInstalled'>
   connectionManager: Pick<RemoteAgentConnectionManager, 'acquire'>
   resolveRuntimeSelection(
-    selection: AgentRuntimeSelection
+    layer: RuntimeSelectionLayer | undefined
   ): Promise<AgentRuntimeSelection>
   runtimeValidator?: RemoteProjectRuntimeValidator
   notify?: (

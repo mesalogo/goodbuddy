@@ -36,7 +36,11 @@ import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
 } from "../../shared/assistant-contracts";
-import { agentRuntimeSelectionKey } from "../../shared/runtime-selection-contracts";
+import type { RuntimeSelectionLayer } from "../../shared/runtime-selection-contracts";
+
+/** Pre-layer stored selections, which the renderer and Main upgrade on read. */
+const legacySelection = (value: Record<string, string>): RuntimeSelectionLayer =>
+  value as unknown as RuntimeSelectionLayer;
 
 const defaultTestApplicationNavigation: ApplicationSettings["applicationNavigation"] = {
   ...defaultApplicationNavigation,
@@ -1094,6 +1098,33 @@ function selectComposerOption(
     throw new Error(`Missing ${label} option: ${optionLabel}`);
   }
   fireEvent.click(option);
+}
+
+function runtimeMenuColumns(): { menu: HTMLElement; providers: HTMLElement; models: HTMLElement } {
+  const menu = screen.getByRole("menu", { name: "执行方式和模型" });
+  return {
+    menu,
+    providers: within(menu).getByRole("group", { name: "执行方式" }),
+    models: within(menu).getByRole("group", { name: "模型" }),
+  };
+}
+
+/** Opens the composer picker and picks an execution mode, then optionally a model. */
+function pickRuntime(
+  provider: "直连模型" | "OpenCode" | "Continue" | "DeepSeek Harness",
+  model?: RegExp,
+): void {
+  if (!screen.queryByRole("menu", { name: "执行方式和模型" })) {
+    fireEvent.click(document.querySelector<HTMLButtonElement>(".composer__configuration > .runtime-picker:not(.composer-picker) > button")!);
+  }
+  const { providers, models } = runtimeMenuColumns();
+  const item = within(providers).getByRole("menuitemradio", { name: provider });
+  if (!model) {
+    fireEvent.click(item);
+    return;
+  }
+  fireEvent.mouseEnter(item);
+  fireEvent.click(within(models).getByRole("menuitemradio", { name: model }));
 }
 
 function selectProjectOption(projectName: string): void {
@@ -4721,8 +4752,10 @@ describe("App", () => {
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     const request = run.mock.calls[0]?.[0];
     expect(request?.prompt).toBe("帮我分析项目");
+    // The renderer always sends the concrete model it resolved from the layers.
     expect(request?.runtimeSelection).toEqual({
       provider: "model",
+      profileId: modelProfileId,
     });
     expect(
       screen
@@ -5901,10 +5934,10 @@ describe("App", () => {
       {
         id: conversationId,
         projectId,
-        runtimeSelection: {
+        runtimeSelection: legacySelection({
           provider: "model",
           profileId: profile.id,
-        },
+        }),
         contextMetrics: {
           runtimeSelectionKey: `model:${profile.id}`,
           contextTokens: 9_000,
@@ -8022,10 +8055,10 @@ describe("App", () => {
       {
         id: "00000000-0000-4000-8000-000000000319",
         projectId: remoteProject.id,
-        runtimeSelection: {
+        runtimeSelection: legacySelection({
           provider: "model",
           profileId: modelProfileId,
-        },
+        }),
         title: "旧直连模型会话",
         updatedAt: 1_775_000_000_000,
         messages: [],
@@ -8033,10 +8066,10 @@ describe("App", () => {
       {
         id: "00000000-0000-4000-8000-000000000419",
         projectId: remoteProject.id,
-        runtimeSelection: {
+        runtimeSelection: legacySelection({
           provider: "continue",
           profileId: modelProfileId,
-        },
+        }),
         title: "旧 Continue 会话",
         updatedAt: 1_774_000_000_000,
         messages: [],
@@ -8053,30 +8086,29 @@ describe("App", () => {
     );
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 
+    // The saved direct-model conversation choice is ignored for the remote project, not rewritten.
     const runtimeButton = await screen.findByRole("button", {
       name: /OpenCode · 默认模型/u,
     });
     fireEvent.click(runtimeButton);
     const runtimeMenu = screen.getByRole("menu", {
-      name: "Runtime 和模型",
+      name: "执行方式和模型",
     });
+    const providers = within(runtimeMenu).getByRole("group", { name: "执行方式" });
     expect(
-      within(runtimeMenu).getByRole("menuitemradio", {
-        name: /^OpenCode · 默认模型.*sonnet-5$/u,
-      }),
-    ).toBeInTheDocument();
-    expect(within(runtimeMenu).getAllByRole("menuitemradio")).toHaveLength(2);
-    expect(within(runtimeMenu).queryByText("直连模型")).not.toBeInTheDocument();
+      within(providers).getAllByRole("menuitemradio").map((item) => item.textContent),
+    ).toEqual(["OpenCode", "Continue"]);
+    const models = within(runtimeMenu).getByRole("group", { name: "模型" });
     expect(
-      within(runtimeMenu).queryByText("Continue Runtime"),
-    ).toBeInTheDocument();
+      // The conversation's saved model still applies to OpenCode; only its mode is ignored.
+      within(models).getByRole("menuitemradio", { name: /^默认模型 · sonnet-5/u }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(within(models).queryByText(/自有配置/u)).not.toBeInTheDocument();
+    expect(within(runtimeMenu).getByRole("status")).toHaveTextContent(
+      "远程项目仅支持 OpenCode 和 Continue",
+    );
     expect(
-      within(runtimeMenu).queryByText(/DeepSeek Harness/u),
-    ).not.toBeInTheDocument();
-    expect(
-      within(runtimeMenu).getByRole("menuitem", {
-        name: "管理 Runtime 和模型连接",
-      }),
+      within(runtimeMenu).getByRole("menuitem", { name: "管理模型连接…" }),
     ).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -8117,7 +8149,7 @@ describe("App", () => {
     await screen.findByRole("button", { name: "当前项目" });
     selectProjectOption(remoteProject.name);
     await waitFor(() => expect(api.agent.getStatus).toHaveBeenCalledWith(
-      remoteProject.runtimeSelection,
+      { provider, profileId: modelProfileId },
     ));
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "Verify inherited model" },
@@ -8377,7 +8409,7 @@ describe("App", () => {
     ): ConversationSnapshot => ({
       id: input.conversationId,
       projectId,
-      runtimeSelection: { provider: "model", profileId: modelProfileId },
+      runtimeSelection: legacySelection({ provider: "model", profileId: modelProfileId }),
       title: "断网期间继续执行",
       updatedAt: 1_000,
       messages: [
@@ -9111,11 +9143,9 @@ describe("App", () => {
       within(dialog).getByLabelText("微信 ClawBot 项目说明");
     expect(dialogDescription).toHaveFocus();
     const dialogBackend =
-      within(dialog).getByLabelText("微信 ClawBot 消息处理后端");
+      within(dialog).getByLabelText("微信 ClawBot 执行方式");
     expect(
-      within(dialogBackend).getByRole("option", {
-        name: "DeepSeek Harness（预览 · OpenAI 兼容）",
-      }),
+      within(dialogBackend).getByRole("option", { name: "DeepSeek Harness" }),
     ).toBeInTheDocument();
     fireEvent.change(dialogDescription, { target: { value: "从左上角更新" } });
     fireEvent.change(
@@ -9124,9 +9154,7 @@ describe("App", () => {
     );
     fireEvent.change(dialogBackend, {
       target: {
-        value: agentRuntimeSelectionKey({
-          provider: "opencode",
-        }),
+        value: "opencode",
       },
     });
     fireEvent.click(
@@ -9145,8 +9173,8 @@ describe("App", () => {
       expect(screen.getByLabelText("微信 ClawBot 默认工作目录")).toHaveValue(
         "C:\\FromSwitcher",
       );
-      expect(screen.getByLabelText("微信 ClawBot 消息处理后端")).toHaveValue(
-        agentRuntimeSelectionKey({ provider: "opencode" }),
+      expect(screen.getByLabelText("微信 ClawBot 执行方式")).toHaveValue(
+        "opencode",
       );
     });
 
@@ -9156,11 +9184,9 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("微信 ClawBot 默认工作目录"), {
       target: { value: "C:\\FromChannels" },
     });
-    fireEvent.change(screen.getByLabelText("微信 ClawBot 消息处理后端"), {
+    fireEvent.change(screen.getByLabelText("微信 ClawBot 执行方式"), {
       target: {
-        value: agentRuntimeSelectionKey({
-          provider: "continue",
-        }),
+        value: "continue",
       },
     });
     fireEvent.click(
@@ -9196,8 +9222,8 @@ describe("App", () => {
       within(dialog).getByLabelText("微信 ClawBot 默认工作目录"),
     ).toHaveValue("C:\\FromChannels");
     expect(
-      within(dialog).getByLabelText("微信 ClawBot 消息处理后端"),
-    ).toHaveValue(agentRuntimeSelectionKey({ provider: "continue" }));
+      within(dialog).getByLabelText("微信 ClawBot 执行方式"),
+    ).toHaveValue("continue");
     expect(
       within(
         within(dialog).getByRole("group", {
@@ -10046,7 +10072,8 @@ describe("App", () => {
         requestId: expect.any(String),
         conversationId,
         projectId,
-        runtimeSelection: { provider },
+        // Main receives the concrete model the conversation resolves to.
+        runtimeSelection: { provider, profileId: modelProfileId },
         history: messages.map(({ role, content }) => ({
           role,
           content,
@@ -10095,7 +10122,7 @@ describe("App", () => {
     });
     vi.mocked(api.conversations.list).mockResolvedValueOnce([{
       id: "00000000-0000-4000-8000-000000000738", projectId,
-      runtimeSelection: { provider: "model", profileId: imageProfile.id },
+      runtimeSelection: legacySelection({ provider: "model", profileId: imageProfile.id }),
       title: "Image conversation", updatedAt: Date.now(), messages: [],
     }]);
     render(<App />);
@@ -10106,12 +10133,13 @@ describe("App", () => {
   it("hides direct model manual compaction for remote channel conversations", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([{
       id: "00000000-0000-4000-8000-000000000740", projectId,
-      runtimeSelection: { provider: "model", profileId: modelProfileId },
+      runtimeSelection: legacySelection({ provider: "model", profileId: modelProfileId }),
       title: "Remote model conversation", updatedAt: Date.now(), messages: [],
       remote: { channel: "weixin", accountDisplay: "Remote account", conversationType: "direct" },
     }]);
     render(<App />);
-    await waitFor(() => expect(api.agent.getStatus).toHaveBeenCalledWith({ provider: "model", profileId: modelProfileId }));
+    // The resolved selection equals the startup default, so no extra status request is needed.
+    await screen.findByRole("button", { name: /sonnet-5/u });
     expect(screen.queryByRole("button", { name: "压缩上下文" })).not.toBeInTheDocument();
     expect(api.agent.compactConversation).not.toHaveBeenCalled();
   });
@@ -10148,12 +10176,8 @@ describe("App", () => {
     selectComposerOption("工作模式", "Execute · 完全权限");
     expect(mode).toHaveAccessibleName("工作模式：Execute · 完全权限");
 
-    fireEvent.click(await screen.findByRole("button", { name: /OpenCode/u }));
-    fireEvent.click(
-      screen.getByRole("menuitemradio", {
-        name: /^默认模型.*sonnet-5$/u,
-      }),
-    );
+    await screen.findByRole("button", { name: /^OpenCode ·/u });
+    pickRuntime("直连模型");
 
     await waitFor(() => {
       expect(mode).toHaveAccessibleName("工作模式：Ask · 只读问答");
@@ -10357,37 +10381,23 @@ describe("App", () => {
     render(<App />);
 
     const runtimeButton = await screen.findByRole("button", {
-      name: /sonnet-5/u,
+      name: "直连模型 · 默认模型(sonnet-5)",
     });
     fireEvent.click(runtimeButton);
+    const { providers, models } = runtimeMenuColumns();
+    expect(screen.queryByText(/自动/u)).not.toBeInTheDocument();
     expect(
-      await screen.findByRole("menu", { name: "Runtime 和模型" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("自动选择")).not.toBeInTheDocument();
+      within(providers).getAllByRole("menuitemradio").map((item) => item.textContent),
+    ).toEqual(["直连模型", "OpenCode", "Continue", "DeepSeek Harness"]);
     expect(
-      screen.getByRole("menuitemradio", {
-        name: /^默认模型.*sonnet-5$/u,
-      }),
-    ).toBeInTheDocument();
+      within(providers).getByRole("menuitemradio", { name: "直连模型" }),
+    ).toHaveAttribute("aria-checked", "true");
+    // With no conversation choice, "Default" is checked and names where it comes from.
     expect(
-      screen.getByRole("menuitemradio", {
-        name: /^OpenCode · 默认模型.*sonnet-5$/u,
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("menuitemradio", {
-        name: /^Continue · 默认模型.*sonnet-5$/u,
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("menuitemradio", {
-        name: /^DeepSeek Harness · 自身配置/u,
-      }),
-    ).toBeInTheDocument();
+      within(models).getByRole("menuitemradio", { name: "默认（默认模型） · 全局 · sonnet-5" }),
+    ).toHaveAttribute("aria-checked", "true");
     fireEvent.click(
-      screen.getByRole("menuitemradio", {
-        name: /^默认模型.*sonnet-5$/u,
-      }),
+      within(models).getByRole("menuitemradio", { name: /^默认模型 · sonnet-5/u }),
     );
 
     await waitFor(() =>
@@ -10404,17 +10414,10 @@ describe("App", () => {
 
   it("shows Runtime switches globally without replacing composer guidance", async () => {
     render(<App />);
-    const runtimeButton = await screen.findByRole("button", {
-      name: /sonnet-5/u,
-    });
+    await screen.findByRole("button", { name: /sonnet-5/u });
     vi.useFakeTimers();
     try {
-      fireEvent.click(runtimeButton);
-      fireEvent.click(
-        screen.getByRole("menuitemradio", {
-          name: /^OpenCode · 默认模型.*sonnet-5$/u,
-        }),
-      );
+      pickRuntime("OpenCode");
       await act(async () => {
         await Promise.resolve();
       });
@@ -10429,16 +10432,7 @@ describe("App", () => {
         }),
       ).toBeInTheDocument();
 
-      fireEvent.click(
-        screen.getByRole("button", {
-          name: /OpenCode · 默认模型/u,
-        }),
-      );
-      fireEvent.click(
-        screen.getByRole("menuitemradio", {
-          name: /^Continue · 默认模型.*sonnet-5$/u,
-        }),
-      );
+      pickRuntime("Continue");
       await act(async () => {
         await Promise.resolve();
       });
@@ -10465,7 +10459,7 @@ describe("App", () => {
     }
   });
 
-  it("shows one configured choice per Agent Runtime in a flat keyboard menu", async () => {
+  it("navigates the two-column picker by keyboard and lists models for the focused mode", async () => {
     const settings = await api.settings.getRuntime();
     const secondProfileId = "00000000-0000-4000-8000-000000000002";
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
@@ -10492,94 +10486,57 @@ describe("App", () => {
       name: /sonnet-5/u,
     });
     fireEvent.click(runtimeButton);
-    const runtimeMenu = screen.getByRole("menu", {
-      name: "Runtime 和模型",
-    });
-    const directModel = screen.getByRole("menuitemradio", {
-      name: /^默认模型.*sonnet-5$/u,
-    });
-    const secondDirectModel = screen.getByRole("menuitemradio", {
-      name: /^第二模型.*qwen3$/u,
-    });
-    const openCodeModel = screen.getByRole("menuitemradio", {
-      name: /^OpenCode · 默认模型.*sonnet-5$/u,
-    });
-    const continueModel = screen.getByRole("menuitemradio", {
-      name: /^Continue · 默认模型.*sonnet-5$/u,
-    });
-    const deepseekHarness = screen.getByRole("menuitemradio", {
-      name: /^DeepSeek Harness · 自身配置/u,
-    });
-    expect(directModel).toBeEnabled();
-    expect(secondDirectModel).toBeEnabled();
-    expect(openCodeModel).toBeEnabled();
-    expect(continueModel).toBeEnabled();
-    expect(deepseekHarness).toBeEnabled();
-    expect(screen.getAllByRole("menuitemradio")).toHaveLength(6);
-    expect(within(runtimeMenu).getAllByRole("separator")).toHaveLength(4);
-    expect(within(runtimeMenu).queryByRole("menu")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("menuitemradio", {
-        name: /^OpenCode · 第二模型/u,
-      }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("menuitemradio", {
-        name: /^Continue · 第二模型/u,
-      }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("menuitem", { name: /Agent Runtime/u }),
-    ).not.toBeInTheDocument();
+    const { providers, models } = runtimeMenuColumns();
+    const direct = within(providers).getByRole("menuitemradio", { name: "直连模型" });
+    await waitFor(() => expect(direct).toHaveFocus());
+    expect(within(models).getAllByRole("menuitemradio")).toHaveLength(3);
+    expect(within(models).queryByText(/自有配置/u)).not.toBeInTheDocument();
 
-    const defaultDirect = screen.getByRole("menuitemradio", { name: /^直连 · 跟随全局默认模型/u });
-    await waitFor(() => expect(defaultDirect).toHaveFocus());
-    fireEvent.keyDown(defaultDirect, { key: "ArrowDown" });
-    expect(directModel).toHaveAttribute("tabindex", "0");
-    expect(secondDirectModel).toHaveAttribute("tabindex", "-1");
-    fireEvent.keyDown(directModel, { key: "ArrowDown" });
-    expect(secondDirectModel).toHaveFocus();
-    expect(directModel).toHaveAttribute("tabindex", "-1");
-    expect(secondDirectModel).toHaveAttribute("tabindex", "0");
-    fireEvent.keyDown(secondDirectModel, { key: "ArrowDown" });
-    expect(openCodeModel).toHaveFocus();
+    fireEvent.keyDown(direct, { key: "ArrowDown" });
+    const openCode = within(providers).getByRole("menuitemradio", { name: "OpenCode" });
+    expect(openCode).toHaveFocus();
+    // Focusing a mode previews its models, including its own configuration.
+    expect(
+      within(models).getByRole("menuitemradio", { name: "使用 OpenCode 自有配置" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(openCode, { key: "ArrowRight" });
+    expect(
+      within(models).getByRole("menuitemradio", { name: /^默认（默认模型）/u }),
+    ).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    expect(
+      within(models).getByRole("menuitemradio", { name: /^默认模型 · sonnet-5/u }),
+    ).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+    expect(direct).toHaveFocus();
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(runtimeButton).toHaveFocus();
     expect(
-      screen.queryByRole("menu", { name: "Runtime 和模型" }),
+      screen.queryByRole("menu", { name: "执行方式和模型" }),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(runtimeButton);
-    fireEvent.click(
-      screen.getByRole("menuitemradio", {
-        name: /^OpenCode · 默认模型.*sonnet-5$/u,
-      }),
-    );
+    pickRuntime("OpenCode", /^第二模型 · qwen3/u);
     expect(runtimeButton).toHaveFocus();
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
         provider: "opencode",
+        profileId: secondProfileId,
       }),
     );
 
-    const selectedRuntimeButton = await screen.findByRole("button", {
-      name: /OpenCode · 默认模型/u,
-    });
-    fireEvent.click(selectedRuntimeButton);
-    const selectedOpenCodeModel = screen.getByRole("menuitemradio", {
-      name: /^OpenCode · 默认模型.*sonnet-5$/u,
-    });
-    await waitFor(() => expect(selectedOpenCodeModel).toHaveFocus());
-    expect(selectedOpenCodeModel).toHaveAttribute("aria-checked", "true");
-    expect(selectedOpenCodeModel).toHaveAttribute("tabindex", "0");
+    fireEvent.click(await screen.findByRole("button", { name: /^OpenCode · 第二模型/u }));
+    const reopened = runtimeMenuColumns();
+    expect(
+      within(reopened.models).getByRole("menuitemradio", { name: /^第二模型 · qwen3/u }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(within(reopened.menu).getByText("本会话单独选择")).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("menuitemradio", {
-        name: /^Continue · 默认模型.*sonnet-5$/u,
-      }),
+      within(reopened.menu).getByRole("menuitem", { name: "恢复为项目默认" }),
     );
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
-        provider: "continue",
+        provider: "model",
+        profileId: modelProfileId,
       }),
     );
   });
@@ -10594,24 +10551,24 @@ describe("App", () => {
 
     fireEvent.click(runtimeButton);
     expect(
-      screen.getByRole("menu", { name: "Runtime 和模型" }),
+      screen.getByRole("menu", { name: "执行方式和模型" }),
     ).toBeInTheDocument();
     fireEvent.pointerDown(composer);
     expect(
-      screen.queryByRole("menu", { name: "Runtime 和模型" }),
+      screen.queryByRole("menu", { name: "执行方式和模型" }),
     ).not.toBeInTheDocument();
 
     fireEvent.click(runtimeButton);
-    const selectedModel = screen.getByRole("menuitemradio", {
-      name: /^直连 · 跟随全局默认模型/u,
+    const selected = within(runtimeMenuColumns().providers).getByRole("menuitemradio", {
+      name: "直连模型",
     });
-    await waitFor(() => expect(selectedModel).toHaveFocus());
-    fireEvent.keyDown(selectedModel, { key: "Tab" });
+    await waitFor(() => expect(selected).toHaveFocus());
+    fireEvent.keyDown(selected, { key: "Tab" });
     composer.focus();
     expect(composer).toHaveFocus();
     await waitFor(() =>
       expect(
-        screen.queryByRole("menu", { name: "Runtime 和模型" }),
+        screen.queryByRole("menu", { name: "执行方式和模型" }),
       ).not.toBeInTheDocument(),
     );
   });
@@ -10626,21 +10583,25 @@ describe("App", () => {
     });
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /sonnet-5/u }));
+    await screen.findByRole("button", { name: /sonnet-5/u });
+    fireEvent.click(screen.getByRole("button", { name: /sonnet-5/u }));
+    const { providers, models } = runtimeMenuColumns();
+    fireEvent.mouseEnter(within(providers).getByRole("menuitemradio", { name: "Continue" }));
     expect(
-      screen.getByRole("menuitemradio", {
-        name: /^OpenCode · 自身配置.*使用 OpenCode 自身配置$/u,
+      within(models).getByRole("menuitemradio", {
+        name: "默认（自有配置） · 全局 · 使用 Continue 自有配置",
       }),
     ).toBeInTheDocument();
-    const continueChoice = screen.getByRole("menuitemradio", {
-      name: /^Continue · 自身配置.*使用 Continue 自身配置$/u,
-    });
-    fireEvent.click(continueChoice);
+    fireEvent.click(within(providers).getByRole("menuitemradio", { name: "Continue" }));
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
         provider: "continue",
+        runtimeConfig: true,
       }),
     );
+    expect(
+      await screen.findByRole("button", { name: /^Continue · 自有配置/u }),
+    ).toBeInTheDocument();
   });
 
   it("persists metadata-only retrieval and Runtime changes without rewriting messages", async () => {
@@ -10690,10 +10651,10 @@ describe("App", () => {
       {
         id: conversationId,
         projectId,
-        runtimeSelection: {
+        runtimeSelection: legacySelection({
           provider: "model",
           profileId: modelProfileId,
-        },
+        }),
         knowledgeLibraryIds: [libraryId],
         knowledgeRetrievalMode: "auto",
         title: "元数据会话",
@@ -10749,21 +10710,16 @@ describe("App", () => {
     );
 
     vi.mocked(api.conversations.saveLocal).mockClear();
-    fireEvent.click(screen.getByRole("button", { name: /sonnet-5/u }));
-    fireEvent.click(
-      screen.getByRole("menuitemradio", {
-        name: /^仅元数据模型.*qwen3$/u,
-      }),
-    );
+    pickRuntime("直连模型", /^仅元数据模型 · qwen3/u);
     await waitFor(
       () =>
         expect(api.conversations.saveLocal).toHaveBeenCalledWith([
           {
             header: expect.objectContaining({
               id: conversationId,
+              // The execution mode stays inherited; only the model is chosen here.
               runtimeSelection: {
-                provider: "model",
-                profileId: secondProfileId,
+                model: { kind: "profile", profileId: secondProfileId },
               },
               knowledgeRetrievalMode: "always",
             }),
@@ -10920,7 +10876,7 @@ describe("App", () => {
       {
         id: "00000000-0000-4000-8000-000000000020",
         projectId,
-        runtimeSelection: { provider: "auto" },
+        runtimeSelection: legacySelection({ provider: "auto" }),
         contextMetrics: {
           runtimeSelectionKey: "auto:default",
           contextTokens: 9_000,
@@ -10943,7 +10899,8 @@ describe("App", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("button", { name: /自动.*sonnet-5/u }),
+      // Legacy Auto now reads as "follow the project" and resolves to the direct model.
+      await screen.findByRole("button", { name: /^直连模型 · 默认模型/u }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/本次调用 9\.0K/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument();
@@ -10971,10 +10928,7 @@ describe("App", () => {
     });
     expect(screen.getByText(/本次调用 9\.0K/u)).toBeInTheDocument();
     expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument();
-    const currentRuntimeSelectionKey =
-      settings.opencodeModelSource.kind === "profile"
-        ? `opencode:${settings.opencodeModelSource.profileId}`
-        : "opencode:platform";
+    const currentRuntimeSelectionKey = `model:${modelProfileId}`;
     await waitFor(() =>
       expect(api.conversations.saveLocal).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -10994,10 +10948,10 @@ describe("App", () => {
       {
         id: "00000000-0000-4000-8000-000000000022",
         projectId,
-        runtimeSelection: {
+        runtimeSelection: legacySelection({
           provider: "model",
           profileId: removedProfileId,
-        },
+        }),
         title: "旧模型对话",
         updatedAt: 1,
         messages: [
@@ -11014,9 +10968,11 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("旧消息")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /模型配置不可用/u }),
-    ).toBeInTheDocument();
+    // The deleted model falls back visibly; the saved choice is kept until the user replaces it.
+    fireEvent.click(await screen.findByRole("button", { name: /^直连模型 · 默认模型/u }));
+    expect(within(runtimeMenuColumns().menu).getByRole("status")).toHaveTextContent(
+      "所选模型连接已删除，已回退到 默认模型",
+    );
     expect(api.conversations.replace).not.toHaveBeenCalled();
     expect(api.conversations.saveLocal).not.toHaveBeenCalled();
   });
@@ -11054,18 +11010,11 @@ describe("App", () => {
     }));
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /sonnet-5/u }));
-    fireEvent.click(
-      screen.getByRole("menuitemradio", {
-        name: /^第二模型.*qwen3$/u,
-      }),
-    );
+    await screen.findByRole("button", { name: /sonnet-5/u });
+    pickRuntime("直连模型", /^第二模型 · qwen3/u);
     expect(
       await screen.findByRole("button", { name: /第二模型/u }),
     ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /新建对话/u }));
-    expect(screen.getByRole("button", { name: /第二模型/u })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "第二模型对话" },
@@ -11115,8 +11064,7 @@ describe("App", () => {
               header: expect.objectContaining({
                 title: "第二模型对话",
                 runtimeSelection: {
-                  provider: "model",
-                  profileId: secondProfileId,
+                  model: { kind: "profile", profileId: secondProfileId },
                 },
               }),
               messages: expect.any(Array),
@@ -11401,19 +11349,14 @@ describe("App", () => {
     expect(within(dialog).getByLabelText("根目录")).toHaveValue(
       project.rootPath,
     );
-    expect(within(dialog).getByLabelText("新对话默认 Runtime")).toHaveValue(
-      agentRuntimeSelectionKey({
-        provider: "model",
-      }),
-    );
+    // Projects always show a concrete execution mode (older rows show what they resolve to).
+    expect(within(dialog).getByLabelText("执行方式")).toHaveValue("model");
     fireEvent.change(within(dialog).getByLabelText("说明"), {
       target: { value: "更新后的说明" },
     });
-    fireEvent.change(within(dialog).getByLabelText("新对话默认 Runtime"), {
+    fireEvent.change(within(dialog).getByLabelText("执行方式"), {
       target: {
-        value: agentRuntimeSelectionKey({
-          provider: "continue",
-        }),
+        value: "continue",
       },
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "保存项目" }));
@@ -11465,20 +11408,20 @@ describe("App", () => {
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       {
         ...project,
-        runtimeSelection: {
+        runtimeSelection: legacySelection({
           provider: "opencode",
           profileId: modelProfileId,
-        },
+        }),
       },
     ]);
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: "00000000-0000-4000-8000-000000000220",
         projectId,
-        runtimeSelection: {
+        runtimeSelection: legacySelection({
           provider: "model",
           profileId: modelProfileId,
-        },
+        }),
         title: "已有对话",
         updatedAt: 1,
         messages: [],
@@ -11489,8 +11432,9 @@ describe("App", () => {
     await screen.findAllByText("已有对话");
     fireEvent.click(screen.getByRole("button", { name: /新建对话/u }));
 
+    // The legacy project pin is read as a layer; the new conversation follows it.
     await waitFor(() =>
-      expect(api.agent.getStatus).toHaveBeenLastCalledWith({
+      expect(api.agent.getStatus).toHaveBeenCalledWith({
         provider: "opencode",
         profileId: modelProfileId,
       }),
@@ -11651,13 +11595,13 @@ describe("App", () => {
     ]);
     expect(run).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: '继续修改' }));
-    fireEvent.click(screen.getByRole('button', { name: /sonnet-5/u }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /^OpenCode · 默认模型/u }));
-    await waitFor(() => expect(api.agent.getStatus).toHaveBeenLastCalledWith({ provider: 'opencode' }));
+    pickRuntime('OpenCode');
+    const openCodeSelection = { provider: 'opencode', profileId: modelProfileId };
+    await waitFor(() => expect(api.agent.getStatus).toHaveBeenLastCalledWith(openCodeSelection));
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: 'Turn the circle red' } });
     fireEvent.click(screen.getByLabelText('发送'));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
-    expect(run.mock.calls[0]![0]).toMatchObject({ runtimeSelection: { provider: 'opencode' }, imageContextArtifactIds: [artifact.id] });
+    expect(run.mock.calls[0]![0]).toMatchObject({ runtimeSelection: openCodeSelection, imageContextArtifactIds: [artifact.id] });
     expect(api.conversationQueue.enqueueUser).toHaveBeenCalledWith(expect.objectContaining({ imageContextArtifactIds: [artifact.id] }));
     expect(api.context.addPastedImage).not.toHaveBeenCalled();
   });

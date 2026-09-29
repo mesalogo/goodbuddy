@@ -726,6 +726,8 @@ export class OpenCodeRuntime implements AgentRuntime {
   readonly runtimeId = "opencode";
   readonly requiresToolApproval = false;
   readonly supportsToolExecution = true;
+  // OpenCode applies the prompt `system` field to the current turn only.
+  readonly consumesTrustedInstructions = true;
   private client?: OpencodeClient;
   private clientInitialization?: Promise<OpencodeClient>;
   private server?: OpenCodeServer;
@@ -2453,6 +2455,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       const checklistCalls = new Map<string, unknown>();
       const submittedChecklistCalls = new Set<string>();
       const pendingChecklistUpdates: RuntimeChecklist[] = [];
+      let runFailed = false;
       try {
         const promptText = promptWithUntrustedConversationHistory(
           request,
@@ -2502,9 +2505,14 @@ export class OpenCodeRuntime implements AgentRuntime {
                       : undefined,
                     ...(selectedAgent ? { agent: selectedAgent } : {}),
                     system:
-                      nativeSkillIds.length > 0
-                        ? undefined
-                        : this.options.skillInstructions || undefined,
+                      [
+                        nativeSkillIds.length > 0
+                          ? undefined
+                          : this.options.skillInstructions,
+                        request.trustedInstructions,
+                      ]
+                        .filter(Boolean)
+                        .join("\n\n") || undefined,
                     ...(toolOverrides ? { tools: toolOverrides } : {}),
                     parts: [
                       { type: "text" as const, text: promptText },
@@ -3021,6 +3029,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         signal.throwIfAborted();
         throw new Error("OpenCode 事件流意外结束");
       } catch (error) {
+        runFailed = true;
         abortSession();
         for (const [callId, tool] of toolStates) {
           if (tool.state === "pending" || tool.state === "running") {
@@ -3056,6 +3065,22 @@ export class OpenCodeRuntime implements AgentRuntime {
         signal.removeEventListener("abort", abortSession);
         // Keep the conversation locked until its session-wide abort settles.
         await sessionAbort;
+        // A reused session would otherwise merge this unanswered prompt into the next turn.
+        if (
+          runFailed &&
+          !selectedCommand &&
+          checklistMessageIds.size === 0 &&
+          this.sessions.get(request.conversationId)?.id === sessionId
+        ) {
+          await Promise.resolve()
+            .then(() =>
+              client.session.deleteMessage(
+                { sessionID: sessionId, messageID: promptMessageId, directory },
+                { signal: AbortSignal.timeout(1_000) },
+              ),
+            )
+            .catch(() => undefined);
+        }
         for (const questionId of reportedQuestionIds.values()) {
           this.pendingQuestions.delete(questionId);
         }

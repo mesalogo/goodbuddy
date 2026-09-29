@@ -1,93 +1,55 @@
 import { describe, expect, it } from 'vitest'
 import type { RuntimeSettings } from '../../shared/contracts'
-import {
-  getDefaultRuntimeSelection,
-  getRuntimeSelectionProfileId,
-  repairChannelRuntimeSelection,
-  getRuntimeSelectionForProvider
-} from '../../shared/runtime-selection-contracts'
+import { resolveRuntimeChoice } from '../../shared/runtime-selection-contracts'
+import i18n from './i18n'
+import { ignoredChoiceMessage, runtimeModelLabel } from './runtime-selection'
 
-const harnessProfileId = '00000000-0000-4000-8000-000000000071'
+const imageId = '00000000-0000-4000-8000-000000000072'
+const anthropicId = '00000000-0000-4000-8000-000000000073'
+const openAiId = '00000000-0000-4000-8000-000000000074'
 
-function harnessSettings(
-  source: { kind: 'platform' } | { kind: 'profile'; profileId: string }
-): RuntimeSettings {
-  return {
-    provider: 'deepseek-harness',
-    deepseekHarnessModelSource: source
-  } as RuntimeSettings
-}
-
-describe('DeepSeek Harness runtime selection', () => {
-  it.each(['opencode', 'continue', 'deepseek-harness'] as const)(
-    'preserves an explicit %s channel profile even when it equals the old default', (provider) => {
-      const selection = { provider, profileId: harnessProfileId }
-      const settings = {
-        defaultModelProfileId: '00000000-0000-4000-8000-000000000072',
-        modelProfiles: [{
-          id: harnessProfileId,
-          baseUrl: 'https://gateway.example/v1',
-          protocol: 'openai-chat-completions',
-          authentication: 'api-key' as const,
-          apiKeyConfigured: true
-        }],
-        opencodeModelSource: { kind: 'default' as const },
-        continueModelSource: { kind: 'platform' as const }
-      }
-      expect(repairChannelRuntimeSelection(selection, settings)).toEqual(selection)
-      expect(repairChannelRuntimeSelection({ provider }, settings)).toEqual({ provider })
+const settings = {
+  provider: 'model',
+  defaultModelProfileId: imageId,
+  opencodeBaseUrl: '',
+  opencodeModelSource: { kind: 'default' },
+  continueModelSource: { kind: 'default' },
+  deepseekHarnessModelSource: { kind: 'platform' },
+  deepseekHarnessPlatformModel: { source: 'environment', name: '管理员预置模型', modelName: 'deepseek-chat' },
+  modelProfiles: [
+    { id: imageId, name: 'Image', modelName: 'image', protocol: 'openai-images-generations', authentication: 'none' },
+    { id: anthropicId, name: 'Claude', modelName: 'claude', protocol: 'anthropic-messages', authentication: 'none' },
+    {
+      id: openAiId, name: 'Gateway', modelName: 'gateway', baseUrl: 'https://gateway.example/v1',
+      protocol: 'openai-chat-completions', authentication: 'api-key', apiKeyConfigured: true
     }
-  )
+  ]
+} as unknown as RuntimeSettings
 
-  it('references the Runtime configuration without copying its profile', () => {
-    const selection = getRuntimeSelectionForProvider(
-      'deepseek-harness',
-      harnessSettings({
-        kind: 'profile',
-        profileId: harnessProfileId
-      })
-    )
-
-    expect(selection).toEqual({
-      provider: 'deepseek-harness'
-    } satisfies Record<string, string>)
+describe('renderer runtime labels', () => {
+  it('resolves "follow recommended" to the first compatible connection per mode', () => {
+    expect(resolveRuntimeChoice(settings, { project: { provider: 'opencode' } }).selection)
+      .toEqual({ provider: 'opencode', profileId: anthropicId })
+    expect(resolveRuntimeChoice(settings, { project: { provider: 'continue' } }).selection)
+      .toEqual({ provider: 'continue', profileId: anthropicId })
+    // An image-only global default is skipped for the direct model too.
+    expect(resolveRuntimeChoice(settings).selection)
+      .toEqual({ provider: 'model', profileId: anthropicId })
   })
 
-  it('uses platform settings without a profile id', () => {
-    const settings = harnessSettings({ kind: 'platform' })
+  it('names the model DeepSeek Harness actually uses for its own configuration', async () => {
+    await i18n.changeLanguage('zh-CN')
+    const t = i18n.getFixedT('zh-CN', 'app')
+    expect(runtimeModelLabel('deepseek-harness', { kind: 'runtime-config' }, settings, t))
+      .toBe('自有配置 · deepseek-chat')
+  })
 
-    expect(getDefaultRuntimeSelection(settings)).toEqual({
-      provider: 'deepseek-harness'
+  it('explains why a saved choice was not used', async () => {
+    const t = i18n.getFixedT('en-US', 'app')
+    const resolved = resolveRuntimeChoice(settings, {
+      conversation: { model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000099' } }
     })
-  })
-
-  it('resolves default references to the first Runtime-compatible profile', () => {
-    const imageId = '00000000-0000-4000-8000-000000000072'
-    const anthropicId = '00000000-0000-4000-8000-000000000073'
-    const openAiId = '00000000-0000-4000-8000-000000000074'
-    const settings = {
-      provider: 'model' as const,
-      defaultModelProfileId: imageId,
-      opencodeBaseUrl: '',
-      opencodeEmbedded: true,
-      opencodeModelSource: { kind: 'default' as const },
-      continueModelSource: { kind: 'default' as const },
-      deepseekHarnessModelSource: { kind: 'default' as const },
-      modelProfiles: [
-        { id: imageId, protocol: 'openai-images-generations' },
-        { id: anthropicId, protocol: 'anthropic-messages' },
-        {
-          id: openAiId,
-          baseUrl: 'https://gateway.example/v1',
-          protocol: 'openai-chat-completions',
-          authentication: 'api-key' as const,
-          apiKeyConfigured: true
-        }
-      ]
-    }
-
-    expect(getRuntimeSelectionProfileId({ provider: 'opencode' }, settings)).toBe(anthropicId)
-    expect(getRuntimeSelectionProfileId({ provider: 'continue' }, settings)).toBe(anthropicId)
-    expect(getRuntimeSelectionProfileId({ provider: 'deepseek-harness' }, settings)).toBe(openAiId)
+    expect(ignoredChoiceMessage(resolved, settings, t))
+      .toBe('The selected model connection was deleted. Using Claude instead.')
   })
 })

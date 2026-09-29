@@ -57,6 +57,12 @@ import type { BrandingPreferences } from './branding'
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
 const nativeImage = globalThis.Image
 
+function harnessModelSourceRadios(): HTMLElement[] {
+  return screen
+    .queryAllByRole('radio')
+    .filter((radio) => radio.getAttribute('name') !== 'runtime-default-provider')
+}
+
 function openCapabilitySettingsTab(
   tab: 'Skills' | 'MCP' | '工具执行环境'
 ): void {
@@ -3064,7 +3070,8 @@ describe('SettingsPanel runtime files', () => {
     const source = screen.getByLabelText(
       'DeepSeek Harness OpenAI 兼容模型连接'
     )
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    // Only the global execution-mode choice uses radios; Harness has no model-source radios.
+    expect(harnessModelSourceRadios()).toHaveLength(0)
     expect(
       screen.queryByText('使用管理员预置模型连接')
     ).not.toBeInTheDocument()
@@ -3147,7 +3154,7 @@ describe('SettingsPanel runtime files', () => {
         name: 'DeepSeek Harness（预览）'
       })
     )
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(harnessModelSourceRadios()).toHaveLength(0)
     if (sourceKind === 'environment') {
       expect(screen.getByText('此选项实际使用管理员预置：actual-administrator-model。')).toBeInTheDocument()
       expect(screen.queryByText(/已保存配置中的实际回退/)).not.toBeInTheDocument()
@@ -4930,7 +4937,8 @@ describe('SettingsPanel runtime files', () => {
     )
     await waitFor(() =>
       expect(testRuntime).toHaveBeenLastCalledWith({
-        provider: 'continue'
+        provider: 'continue',
+        runtimeConfig: true
       })
     )
     expect(testModelConnection).not.toHaveBeenCalled()

@@ -7,7 +7,11 @@ import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION, type Agent, type McpServer } from '@agentclientprotocol/sdk'
 import { ContinueHostAdapter } from '../main/agent/continue-host-adapter'
-import { promptWithUntrustedConversationHistory } from '../main/agent/runtime-conversation-history'
+import {
+  promptWithUntrustedConversationHistory,
+  splitUntrustedConversationHistory,
+  stripWorkModeInstruction
+} from '../main/agent/runtime-conversation-history'
 import type { AgentExecutionRequest, AgentImage } from '../main/agent/runtime'
 import { createUnixModelBridgeExchange } from './model-bridge-broker'
 import { ModelBridgeLoopbackProxy, MODEL_BRIDGE_SDK_AUTH_SENTINEL, openCodeModelBridgeModelId, type ModelBridgeProtocol } from './model-bridge-helper'
@@ -104,7 +108,12 @@ export async function runContinueAcpHelper(options: {
       })
       const abort = new AbortController()
       let finish!: () => void
-      const text = prompt.filter(part => part.type === 'text').map(part => part.text).join('\n')
+      // Desktop embeds its history only in the first prompt of a new process;
+      // this helper owns the transcript afterwards and must not wrap it twice.
+      const received = splitUntrustedConversationHistory(
+        prompt.filter(part => part.type === 'text').map(part => part.text).join('\n'))
+      if (received.history && session.history.length === 0) session.history.push(...received.history)
+      const text = received.prompt
       const images = prompt.filter(part => part.type === 'image').map<AgentImage>((part, index) => {
         if (part.mimeType !== 'image/png' && part.mimeType !== 'image/jpeg') throw new Error('Unsupported Continue image type')
         return { name: `image-${index}`, mediaType: part.mimeType, data: part.data }
@@ -143,7 +152,8 @@ export async function runContinueAcpHelper(options: {
         if (!result.streamedText && result.text) await connection.sessionUpdate({ sessionId, update: {
           sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: result.text }
         } })
-        session.history.push({ role: 'user', content: text }, { role: 'assistant', content: result.text })
+        session.history.push({ role: 'user', content: stripWorkModeInstruction(text) },
+          { role: 'assistant', content: result.text })
         return { stopReason: 'end_turn', ...(result.usage ? { usage: {
           inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
           totalTokens: result.usage.inputTokens + result.usage.outputTokens,

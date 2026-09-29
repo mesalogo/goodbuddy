@@ -43,8 +43,9 @@ import type {
 } from '../../shared/remote-project-recovery-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import {
-  getDefaultRuntimeSelection
-} from './runtime-selection'
+  resolveRuntimeChoice,
+  type RuntimeSelectionLayer
+} from '../../shared/runtime-selection-contracts'
 import {
   channelProjectDraft,
   ChannelProjectSettingsFields
@@ -889,6 +890,18 @@ export function ProjectSwitcher({
     setSettingsProjectId(undefined)
   }
 
+  // The project form always shows a concrete execution mode, so save exactly that mode.
+  const withProjectProvider = (
+    layer: RuntimeSelectionLayer | undefined,
+    remote: boolean
+  ): RuntimeSelectionLayer | undefined =>
+    runtimeSettings
+      ? {
+          ...layer,
+          provider: resolveRuntimeChoice(runtimeSettings, { project: layer }, { remote }).provider
+        }
+      : layer
+
   const openProjectSettings = (project: AssistantProject): void => {
     if (
       !remoteProjectsEnabled &&
@@ -917,11 +930,8 @@ export function ProjectSwitcher({
       defaultWorkMode: normalizeInteractiveWorkMode(
         project.defaultWorkMode
       ),
-      runtimeSelection:
-        project.runtimeSelection ??
-        (runtimeSettings
-          ? getDefaultRuntimeSelection(runtimeSettings)
-          : undefined)
+      // Keep "follow global" as absent so saving never freezes today's default.
+      runtimeSelection: project.runtimeSelection
     }
     setDraft(
       project.kind === 'channel' && runtimeSettings
@@ -965,10 +975,7 @@ export function ProjectSwitcher({
       const commonDraft = {
         name: draft.name,
         description: draft.description,
-        runtimeSelection:
-          draft.runtimeSelection?.provider === 'opencode' || draft.runtimeSelection?.provider === 'continue'
-            ? draft.runtimeSelection
-            : ({ provider: 'opencode' } as const),
+        runtimeSelection: withProjectProvider(draft.runtimeSelection, true),
         hostId: remoteHostId,
         remoteRootPath
       }
@@ -1010,13 +1017,10 @@ export function ProjectSwitcher({
     setSaving(true)
     setError(undefined)
     try {
-      const input =
-        draft.runtimeSelection || !runtimeSettings
-          ? draft
-          : {
-              ...draft,
-              runtimeSelection: getDefaultRuntimeSelection(runtimeSettings)
-            }
+      const input = {
+        ...draft,
+        runtimeSelection: withProjectProvider(draft.runtimeSelection, false)
+      }
       if (dialogMode === 'settings' && settingsProject) {
         await onUpdate(settingsProject.id, input)
       } else {
@@ -1394,10 +1398,7 @@ export function ProjectSwitcher({
               name: '',
               description: '',
               rootPath: '',
-              defaultWorkMode: 'ask',
-              runtimeSelection: runtimeSettings
-                ? getDefaultRuntimeSelection(runtimeSettings)
-                : undefined
+              defaultWorkMode: 'ask'
             })
             restoreFocusTarget.current = 'create'
             setDialogMode('create')
@@ -1597,10 +1598,10 @@ export function ProjectSwitcher({
                     {runtimeSettings && (
                       <>
                         <ProjectRuntimeSelector
-                          ariaLabel={t(
-                            'projectSwitcher.dialog.fields.defaultRuntime'
-                          )}
                           disabled={busy}
+                          help={t(
+                            'projectSwitcher.dialog.defaultRuntimeHelp'
+                          )}
                           label={t(
                             'projectSwitcher.dialog.fields.defaultRuntime'
                           )}
@@ -1613,11 +1614,6 @@ export function ProjectSwitcher({
                           runtimeSettings={runtimeSettings}
                           selection={draft.runtimeSelection}
                         />
-                        <small className="project-runtime-selector__scope-help">
-                          {t(
-                            'projectSwitcher.dialog.defaultRuntimeHelp'
-                          )}
-                        </small>
                       </>
                     )}
                   </>
@@ -1748,27 +1744,24 @@ export function ProjectSwitcher({
                         {t('projectSwitcher.remote.rootHelp')}
                       </small>
                     </label>
-                    <label className="remote-project-runtime">
-                      <span>
-                        {t(
+                    {runtimeSettings && (
+                      <ProjectRuntimeSelector
+                        disabled={remoteFieldsDisabled}
+                        help={t('projectSwitcher.remote.runtimeHelp')}
+                        label={t(
                           'projectSwitcher.dialog.fields.defaultRuntime'
                         )}
-                      </span>
-                      <select aria-label={t('projectSwitcher.dialog.fields.defaultRuntime')}
-                        disabled={remoteFieldsDisabled} value={draft.runtimeSelection?.provider ?? 'opencode'}
-                        onChange={event => {
-                          const provider = event.target.value === 'continue' ? 'continue' : 'opencode'
-                          setDraft(current => ({ ...current, runtimeSelection: { provider } }))
-                        }}>
-                        <option value="opencode">OpenCode</option>
-                        <option value="continue">Continue</option>
-                      </select>
-                      <small>
-                        {t(
-                          'projectSwitcher.remote.runtimeHelp'
-                        )}
-                      </small>
-                    </label>
+                        onChange={(runtimeSelection) =>
+                          setDraft((current) => ({
+                            ...current,
+                            runtimeSelection
+                          }))
+                        }
+                        remote
+                        runtimeSettings={runtimeSettings}
+                        selection={draft.runtimeSelection}
+                      />
+                    )}
                     <ProjectWorkModeFields
                       ariaLabel={t(
                         'projectSwitcher.dialog.fields.defaultMode'

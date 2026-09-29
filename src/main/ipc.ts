@@ -121,9 +121,10 @@ import {
 } from '../shared/document-parsing-contracts'
 import {
   agentRuntimeSelectionKey,
-  agentRuntimeSelectionSchema,
-  getDefaultRuntimeSelection,
-  type AgentRuntimeSelection
+  optionalAgentRuntimeSelectionSchema,
+  withoutLegacyAutoSelection,
+  type AgentRuntimeSelection,
+  type RuntimeSelectionLayer
 } from '../shared/runtime-selection-contracts'
 import { registerMagicNotesAnalysisIpcHandlers, registerMagicTodosAnalysisIpcHandlers } from './magic-notes/magic-notes-analysis-ipc'
 import { registerMagicNotesIpcHandlers, registerMagicTodosIpcHandlers } from './magic-notes/magic-notes-ipc'
@@ -146,6 +147,7 @@ import {
   expertCreateSchema,
   type AssistantSchedule,
   type AssistantArtifact,
+  type AssistantProject,
   type ConversationAttachment
 } from '../shared/assistant-contracts'
 import {
@@ -168,7 +170,8 @@ import {
 } from './agent/create-runtime'
 import {
   applyRuntimeSelection,
-  resolveConfiguredAgentRuntimeSelection
+  resolveConfiguredAgentRuntimeSelection,
+  resolveLayeredRuntimeSelection
 } from './agent/runtime-selection'
 import { safeToolErrorDetail } from './agent/approval-summary'
 import { ReasoningTagStreamParser } from './agent/reasoning-stream'
@@ -1177,6 +1180,24 @@ export function registerIpcHandlers(
         )
       }
     })
+  /** Resolves stored project and conversation layers against current settings. */
+  const resolveStoredRuntimeSelection = async (
+    input: {
+      projectId?: string
+      /** Callers that already loaded the project pass it to avoid a second read. */
+      project?: Pick<AssistantProject, 'runtimeSelection' | 'executionSpace'>
+      conversationLayer?: RuntimeSelectionLayer
+    }
+  ): Promise<AgentRuntimeSelection> => {
+    const project =
+      input.project ??
+      (input.projectId ? assistantDatabase.getProject(input.projectId) : undefined)
+    return resolveLayeredRuntimeSelection(
+      await settingsStore.getResolvedSettings(),
+      { project: project?.runtimeSelection, conversation: input.conversationLayer },
+      { remote: project?.executionSpace?.kind === 'ssh' }
+    ).selection
+  }
   const resolveRequestRuntime = async (
     request: Pick<
       AgentRequest,
@@ -1200,14 +1221,15 @@ export function registerIpcHandlers(
     if (executionSpace?.kind === 'ssh' && !selectedRuntimes) {
       throw new Error(REMOTE_EXECUTION_SPACE_UNAVAILABLE)
     }
-    let selection = request.runtimeSelection ?? project?.runtimeSelection
     if (
       !selectedRuntimes ||
-      (!selection && !executionSpace)
+      (!request.runtimeSelection && !project?.runtimeSelection && !executionSpace)
     ) {
       return runtime
     }
-    selection ??= { provider: 'auto' }
+    let selection =
+      request.runtimeSelection ??
+      (await resolveStoredRuntimeSelection({ projectId: project?.id }))
     if (request.followConfiguredAgentRuntime) {
       selection = resolveConfiguredAgentRuntimeSelection(
         await settingsStore.getResolvedSettings(),
@@ -1221,8 +1243,8 @@ export function registerIpcHandlers(
     if (selected.capability === 'image-generation') return
     const target = runtimeTargetFor(selected)
     const configured = await settingsStore.getResolvedSettings()
-    const projectSelection = request.projectId ? assistantDatabase.getProject(request.projectId).runtimeSelection : undefined
-    const selection = request.runtimeSelection ?? projectSelection
+    const selection = request.runtimeSelection ??
+      (request.projectId ? await resolveStoredRuntimeSelection({ projectId: request.projectId }) : undefined)
     const effective = selection ? applyRuntimeSelection(configured, selection).settings : configured
     const supported = target === 'model' ? effective.supportsImageInput
       : target === 'opencode' ? effective.opencodeModelProfile?.supportsImageInput
@@ -1695,11 +1717,10 @@ export function registerIpcHandlers(
     const toolStates = new Map(
       recoveredTools.map((tool) => [tool.callId, tool])
     )
-    const project = assistantDatabase.getProject(task.projectId)
-    const runtimeSelection =
-      conversation.runtimeSelection ??
-      project.runtimeSelection ??
-      ({ provider: 'auto' } as const)
+    const runtimeSelection = await resolveStoredRuntimeSelection({
+      projectId: task.projectId,
+      conversationLayer: conversation.runtimeSelection
+    })
     const controller = new AbortController()
     const lease = leaseActiveRequest(
       task.taskId,
@@ -2005,7 +2026,7 @@ export function registerIpcHandlers(
         input: unknown
         serializedContexts?: unknown
       }
-      const input = conversationQueueUserInputSchema.parse(stored.input)
+      const input = conversationQueueUserInputSchema.parse(withoutLegacyAutoSelection(stored.input))
       if (
         stored.serializedContexts !== undefined &&
         typeof stored.serializedContexts !== 'string'
@@ -2020,7 +2041,7 @@ export function registerIpcHandlers(
       }
       return input
     }
-    return conversationQueueUserInputSchema.parse(parsed)
+    return conversationQueueUserInputSchema.parse(withoutLegacyAutoSelection(parsed))
   }
   const pumpingConversationQueues = new Set<string>()
 
@@ -2166,7 +2187,7 @@ export function registerIpcHandlers(
     projectName: string
     rootPath: string
     conversationId: string
-    runtimeSelection: AgentRuntimeSelection
+    runtimeSelection?: AgentRuntimeSelection
     followConfiguredAgentRuntime?: boolean
     runtime?: AgentRuntime
     taskId: string
@@ -2958,9 +2979,10 @@ export function registerIpcHandlers(
       }
     }
     const channelLabel = projectChannelLabels[channel]
-    const runtimeSelection = project.runtimeSelection ?? {
-      provider: 'auto' as const
-    }
+    // Without a selected-runtime manager the configured runtime is used directly.
+    const runtimeSelection = selectedRuntimes
+      ? await resolveStoredRuntimeSelection({ project })
+      : undefined
     const identitySuffix = message.senderId.slice(-4)
     const senderDisplay = `发送者 ****${identitySuffix}`
     const contextIds: string[] = []
@@ -3016,8 +3038,7 @@ export function registerIpcHandlers(
           externalConversationId: message.conversationId,
           conversationType: message.conversationType,
           title: `${channelLabel} · ****${identitySuffix}`,
-          accountDisplay: senderDisplay,
-          runtimeSelection
+          accountDisplay: senderDisplay
         })
       const incomingMessageId = assistantDatabase.appendRemoteConversationMessage({
         conversationId: remoteConversation.id,
@@ -3329,15 +3350,12 @@ export function registerIpcHandlers(
 
   registerHandler(ipcChannels.agentStatus, async (event, input: unknown) => {
     assertTrustedSender(event, window)
-    const selection = agentRuntimeSelectionSchema.optional().parse(input)
+    const selection = optionalAgentRuntimeSelectionSchema.parse(withoutLegacyAutoSelection(input))
     if (!selectedRuntimes) {
       return runtime.getStatus()
     }
     const effectiveSelection =
-      selection ??
-      getDefaultRuntimeSelection(
-        await settingsStore.getResolvedSettings()
-      )
+      selection ?? (await resolveStoredRuntimeSelection({}))
     return selectedRuntimes.getStatus(effectiveSelection)
   })
 
@@ -3629,7 +3647,7 @@ export function registerIpcHandlers(
     if (executionPaused || shuttingDown) {
       throw new Error('本地数据维护期间暂不接受新任务')
     }
-    const parsedInput = agentRequestSchema.parse(input)
+    const parsedInput = agentRequestSchema.parse(withoutLegacyAutoSelection(input))
     if (
       activeRequests.has(parsedInput.requestId) ||
       preparingRequestConversations.has(parsedInput.requestId)
@@ -3727,7 +3745,8 @@ export function registerIpcHandlers(
       assistantDatabase.saveLocalConversations([{
         header: {
           id: conversation.id, projectId: conversation.projectId, title: conversation.title,
-          updatedAt: now, workMode: normalizedWorkMode, runtimeSelection: parsedRequest.runtimeSelection,
+          // The renderer owns the conversation layer; never pin the resolved selection here.
+          updatedAt: now, workMode: normalizedWorkMode, runtimeSelection: conversation.runtimeSelection,
           knowledgeLibraryIds: conversation.knowledgeLibraryIds,
           knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
           contextMetrics: conversation.contextMetrics, contextCompressionState: conversation.contextCompressionState,
@@ -3798,6 +3817,15 @@ export function registerIpcHandlers(
     const configExecutionSpace = configProject
       ? spaceResolver.resolveProject(configProject)
       : undefined
+    // Remote events key their context metrics by the selection actually used.
+    const remoteEventSelection =
+      enrichedRequest.runtimeSelection ??
+      (configExecutionSpace?.kind === 'ssh'
+        ? await resolveStoredRuntimeSelection({
+            projectId: configProject?.id,
+            conversationLayer: assistantDatabase.getConversation(enrichedRequest.conversationId).runtimeSelection
+          })
+        : undefined)
     const configWorkspacePath =
       configAccess === 'none'
         ? undefined
@@ -4062,7 +4090,7 @@ export function registerIpcHandlers(
           ? assistantDatabase.appendRemoteConversationTaskEventOnce({
               taskId: request.requestId,
               conversationId: request.conversationId,
-              runtimeSelection: request.runtimeSelection ?? configProject?.runtimeSelection,
+              runtimeSelection: remoteEventSelection,
               assistantMessageId:
                 remoteConversationRecovery.currentAssistantMessageId,
               bindingId: provenance.bindingId,
@@ -4090,7 +4118,7 @@ export function registerIpcHandlers(
           ? assistantDatabase.appendRemoteConversationTaskEventOnce({
               taskId: request.requestId,
               conversationId: request.conversationId,
-              runtimeSelection: request.runtimeSelection ?? configProject?.runtimeSelection,
+              runtimeSelection: remoteEventSelection,
               assistantMessageId:
                 remoteConversationRecovery.currentAssistantMessageId,
               bindingId: provenance.bindingId,
@@ -4405,7 +4433,7 @@ export function registerIpcHandlers(
               const contextMetricsEvent = runtimeUsageContextMetrics(
                 usageEvent as RuntimeModelUsageEvent,
                 runtimeSettings,
-                request.runtimeSelection
+                request.runtimeSelection ?? remoteEventSelection
               )!
               if (provenance === undefined) {
                 eventBuffer.push(contextMetricsEvent)
@@ -4756,12 +4784,10 @@ export function registerIpcHandlers(
       const project = conversation.projectId
         ? assistantDatabase.getProject(conversation.projectId)
         : undefined
-      const savedRuntimeSelection =
-        conversation.runtimeSelection ?? project?.runtimeSelection
-      const persistedRuntimeSelection =
-        savedRuntimeSelection && savedRuntimeSelection.provider !== 'auto'
-          ? savedRuntimeSelection
-          : getDefaultRuntimeSelection(settings)
+      const persistedRuntimeSelection = await resolveStoredRuntimeSelection({
+        projectId: conversation.projectId,
+        conversationLayer: conversation.runtimeSelection
+      })
       if (
         conversation.projectId !== request.projectId ||
         agentRuntimeSelectionKey(persistedRuntimeSelection) !==
@@ -5924,7 +5950,7 @@ export function registerIpcHandlers(
   const attachmentParsing = new Map<string, AbortController>()
   registerHandler(ipcChannels.contextImageCapability, async (event, input: unknown) => {
     assertTrustedSender(event, window)
-    const { conversationId, runtimeSelection } = z.object({ conversationId: z.string().uuid(), runtimeSelection: agentRuntimeSelectionSchema.optional() }).strict().parse(input)
+    const { conversationId, runtimeSelection } = z.object({ conversationId: z.string().uuid(), runtimeSelection: optionalAgentRuntimeSelectionSchema }).strict().parse(withoutLegacyAutoSelection(input))
     try {
       const conversation = assistantDatabase.getConversation(conversationId)
       await assertImageInputSupport({ requestId: randomUUID(), conversationId, projectId: conversation.projectId, runtimeSelection, prompt: '', workMode: 'ask' })
@@ -6502,7 +6528,7 @@ export function registerIpcHandlers(
       if (executionPaused || shuttingDown) {
         throw new Error('本地数据维护期间暂不接受新消息')
       }
-      const parsed = conversationQueueUserInputSchema.parse(input)
+      const parsed = conversationQueueUserInputSchema.parse(withoutLegacyAutoSelection(input))
       if (contextManager.assets) {
         parsed.attachments = parsed.attachments.map((attachment) => contextManager.assets!.has(attachment.id) ? contextManager.assets!.get(attachment.id) : attachment)
       }
@@ -7247,7 +7273,7 @@ export function registerIpcHandlers(
     const queueInput = conversationQueueUserInputSchema.parse({
       conversationId: conversation.id,
       projectId: request.projectId ?? conversation.projectId ?? undefined,
-      runtimeSelection: request.runtimeSelection ?? conversation.runtimeSelection,
+      runtimeSelection: request.runtimeSelection,
       workMode: conversation.workMode ?? 'ask',
       includeMemoryContext: true,
       prompt: request.prompt,

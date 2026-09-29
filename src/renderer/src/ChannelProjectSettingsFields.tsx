@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import type { ProjectCreateInput } from '../../shared/assistant-contracts'
 import type { RuntimeSettings } from '../../shared/contracts'
 import {
-  repairChannelRuntimeSelection
+  compactRuntimeSelectionLayer,
+  resolveRuntimeChoice
 } from '../../shared/runtime-selection-contracts'
 import { ProjectRuntimeSelector } from './ProjectRuntimeSelector'
 import { SegmentedControl } from './WorkspacePrimitives'
@@ -13,15 +14,17 @@ export function channelProjectDraft(
   project: ProjectCreateInput,
   runtimeSettings: RuntimeSettings
 ): ProjectCreateInput {
+  const layer = compactRuntimeSelectionLayer(project.runtimeSelection)
   return {
     name: project.name,
     description: project.description,
     rootPath: project.rootPath,
     defaultWorkMode: project.defaultWorkMode,
-    runtimeSelection: repairChannelRuntimeSelection(
-      project.runtimeSelection ?? { provider: 'auto' },
-      runtimeSettings
-    )
+    // Projects own their execution mode; fill in what older rows resolve to.
+    runtimeSelection: {
+      ...layer,
+      provider: resolveRuntimeChoice(runtimeSettings, { project: layer }).provider
+    }
   }
 }
 
@@ -96,9 +99,7 @@ export function ChannelProjectSettingsFields({
         <small>{t('channels.project.rootHelp')}</small>
       </label>
       <ProjectRuntimeSelector
-        ariaLabel={t('channels.project.backendAriaLabel', {
-          name: value.name
-        })}
+        ariaLabelPrefix={value.name}
         disabled={disabled}
         label={t('channels.project.backendLabel')}
         onChange={(runtimeSelection) =>
@@ -106,7 +107,7 @@ export function ChannelProjectSettingsFields({
         }
         runtimeSettings={runtimeSettings}
         selection={value.runtimeSelection}
-        selectionMode="channel"
+        textOnly
       />
       <fieldset className="project-work-mode">
         <legend><span className="inline-help-label">{t('channels.project.defaultMode')}<InlineHelp label={t('channels.project.defaultMode')}>{t('channels.project.overrideHelp')}</InlineHelp></span></legend>

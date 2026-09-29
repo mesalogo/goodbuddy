@@ -4,7 +4,7 @@ import {
   REMOTE_WORKSPACE_LIMITS,
   remoteAbsolutePathSchema
 } from './remote-agent-contracts'
-import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
+import { runtimeSelectionLayerSchema } from './runtime-selection-contracts'
 import { sshHostIdSchema } from './ssh-host-contracts'
 
 export const REMOTE_PROJECT_SAVE_LIMITS = {
@@ -30,7 +30,7 @@ const commonDraftFields = {
   name: projectCreateSchema.shape.name,
   description: projectCreateSchema.shape.description,
   defaultWorkMode: projectCreateSchema.shape.defaultWorkMode,
-  runtimeSelection: agentRuntimeSelectionSchema,
+  runtimeSelection: runtimeSelectionLayerSchema.optional(),
   hostId: sshHostIdSchema,
   remoteRootPath: remoteProjectRootPathSchema
 } as const

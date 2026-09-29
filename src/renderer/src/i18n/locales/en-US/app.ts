@@ -259,6 +259,47 @@ export const app = {
       unavailable: 'Unavailable'
     }
   },
+  runtimeSelection: {
+    providers: {
+      model: 'Direct model',
+      opencode: 'OpenCode',
+      continue: 'Continue',
+      'deepseek-harness': 'DeepSeek Harness'
+    },
+    providerLabel: 'Execution mode',
+    followRuntimeDefault: 'Follow {{runtime}} default ({{value}})',
+    effectiveModelSource: 'Model from {{model}} settings',
+    modelLabel: 'Model',
+    runtimeConfig: 'Use {{runtime}}’s own configuration',
+    runtimeConfigShort: 'Own configuration',
+    followGlobal: 'Follow global ({{value}})',
+    followProject: 'Follow project ({{value}})',
+    defaultModel: 'Default ({{value}})',
+    noModel: 'No model available',
+    sources: {
+      global: 'Global',
+      project: 'Project',
+      conversation: 'This conversation'
+    },
+    effective: 'In effect: {{provider}} · {{model}}',
+    effectiveSources: 'Execution mode from {{provider}} settings · model from {{model}} settings',
+    ignored: {
+      missing: 'The selected model connection was deleted. Using {{fallback}} instead.',
+      incompatible: 'The selected model does not work with this execution mode. Using {{fallback}} instead.',
+      unavailable: 'The selected model has no API key. Using {{fallback}} instead.',
+      provider: 'Remote projects support only OpenCode and Continue. Using {{fallback}} instead.'
+    },
+    followGlobalAction: 'Use the default model',
+    missingProfile: 'Deleted model',
+    unavailableSuffix: ' (no API key)',
+    conversationOnly: 'Applies to this conversation only',
+    resetToProject: 'Reset to project default',
+    manage: 'Manage model connections…',
+    menuLabel: 'Execution mode and model',
+    providerListLabel: 'Execution mode',
+    modelListLabel: 'Model',
+    conversationOverride: 'Chosen for this conversation'
+  },
   chat: {
     heading: 'Conversation',
     user: 'You',

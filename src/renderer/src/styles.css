@@ -7911,6 +7911,190 @@ button > svg {
   background: var(--border-subtle);
 }
 
+.runtime-picker__menu--columns {
+  display: grid;
+  width: min(480px, calc(100vw - 32px));
+  grid-template-columns: minmax(140px, 0.8fr) minmax(0, 1.2fr);
+  /* Columns size themselves; the footer sits below instead of overlapping them. */
+  max-height: none;
+  grid-template-rows: auto auto;
+  overflow: hidden;
+}
+
+.runtime-picker__menu--columns[style*="max-width"] {
+  grid-template-columns: minmax(110px, 0.7fr) minmax(0, 1.3fr);
+}
+
+.runtime-picker__column {
+  display: flex;
+  min-width: 0;
+  max-height: min(340px, 45vh);
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  gap: var(--space-1);
+}
+
+/* Fixed row height so the reserved space matches every mode's list exactly. */
+.runtime-picker__column--models > button {
+  height: 52px;
+  min-height: 52px;
+  flex: 0 0 52px;
+}
+
+.runtime-picker__column--models {
+  /* Header (~30px) + rows × (52px + 4px gap); capped and scrollable when long. */
+  height: min(
+    calc(30px + var(--runtime-model-rows, 1) * 56px),
+    min(340px, 45vh)
+  );
+}
+
+/* Rows have a fixed height, so long names truncate instead of wrapping into the detail line. */
+.runtime-picker__column--models > button > span {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.runtime-picker__column--models > button > span > .runtime-picker__label {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.runtime-picker__column--models > button > span > .runtime-picker__source {
+  flex: none;
+}
+
+.runtime-picker__column + .runtime-picker__column {
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--border-subtle);
+}
+
+.runtime-picker__column > strong {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.runtime-picker__column > button,
+.runtime-picker__footer button {
+  display: grid;
+  width: 100%;
+  height: auto;
+  min-height: 38px;
+  align-items: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  gap: 2px var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto;
+  text-align: left;
+}
+
+.runtime-picker__column > button:hover,
+.runtime-picker__column > button.runtime-picker__focused,
+.runtime-picker__footer button:hover {
+  background: var(--surface-muted);
+}
+
+.runtime-picker__column > button[aria-checked="true"] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.runtime-picker__column > button[aria-checked="true"]::after {
+  content: "✓";
+  font-weight: 700;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.runtime-picker__column > button:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.runtime-picker__column > button > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  font-size: var(--font-body);
+  font-weight: 600;
+  gap: var(--space-1);
+}
+
+.runtime-picker__column > button > small {
+  grid-column: 1;
+  grid-row: 2;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-picker__source {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 500;
+}
+
+.runtime-picker__footer {
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--space-1);
+  gap: var(--space-1);
+  grid-column: 1 / -1;
+}
+
+.runtime-picker__footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-2);
+  gap: var(--space-2);
+}
+
+.runtime-picker__footer-row small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.runtime-picker__footer-row button {
+  width: auto;
+  min-height: 30px;
+  color: var(--accent);
+}
+
+.runtime-picker__warning {
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--warning, #d97706) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-caption);
+}
+
+.model-button--override .model-button__label::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
 .send-button {
   display: grid;
   width: 36px;
@@ -10275,6 +10459,67 @@ details.settings-section > :not(summary) + :not(summary) {
   color: var(--text-muted);
   font-size: var(--font-caption);
   line-height: 1.45;
+}
+
+.project-runtime-selector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.project-runtime-selector > legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+  color: var(--text-primary);
+  font-size: var(--font-caption);
+  font-weight: 650;
+}
+
+.project-runtime-selector__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.project-runtime-selector__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.project-runtime-selector__summary--override {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.project-runtime-selector__summary small {
+  color: var(--text-muted);
+}
+
+.project-runtime-selector__warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--warning, var(--text-primary));
+  font-size: var(--font-caption);
+}
+
+@media (max-width: 719px) {
+  .project-runtime-selector__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 719px) {

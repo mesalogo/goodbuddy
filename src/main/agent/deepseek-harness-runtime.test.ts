@@ -838,6 +838,37 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
+  it('sends GoodBuddy history only when it creates the native session', async () => {
+    const harness = setup()
+    const history = [
+      { role: 'user' as const, content: 'earlier question' },
+      { role: 'assistant' as const, content: 'earlier answer' }
+    ]
+    for (const [index, prompt] of ['first', 'second'].entries()) {
+      const running = collect(
+        harness.runtime.run(
+          { ...request('reused'), requestId: `request-${prompt}`, prompt, history },
+          new AbortController().signal
+        )
+      )
+      await vi.waitFor(() =>
+        expect(harness.promptGates).toHaveLength(index + 1)
+      )
+      harness.promptGates[index]!.resolve({ stopReason: 'end_turn' })
+      await running
+    }
+
+    const texts = harness.requests
+      .filter(({ method }) => method === 'session/prompt')
+      .map(({ params }) =>
+        (params.prompt as Array<{ text?: string }>)[0]?.text
+      )
+    expect(texts[0]).toContain('<conversation-history>')
+    expect(texts[0]).toContain('earlier answer')
+    expect(texts[1]).toBe('second')
+    await harness.runtime.dispose()
+  })
+
   it('fails Ask closed and never calls the authorizer', async () => {
     const harness = setup()
     const authorize = vi.fn().mockResolvedValue('once')

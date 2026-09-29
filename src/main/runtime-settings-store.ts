@@ -430,6 +430,8 @@ export type ResolvedRuntimeSettings = {
   opencodeModelProfile?: ResolvedModelProfile
   continueModelProfile?: ResolvedModelProfile
   deepseekHarnessModelProfile?: ResolvedModelProfile
+  /** What DeepSeek Harness uses when its own configuration is selected. */
+  deepseekHarnessPlatformModelProfile?: ResolvedModelProfile
   opencodeBaseUrl: string
   opencodeEmbedded: boolean
   opencodeBinaryPath: string
@@ -1989,6 +1991,11 @@ export class RuntimeSettingsStore {
         : undefined
     const deepseekHarnessModelProfile =
       this.resolveDeepSeekHarnessModelProfile(settings, modelProfiles)
+    const deepseekHarnessPlatformModelProfile =
+      this.resolveDeepSeekHarnessModelProfile(
+        { ...settings, deepseekHarnessModelSource: { kind: 'platform' } },
+        modelProfiles
+      )
     const embeddingConnections =
       this.resolveEmbeddingConnections(settings)
     const activeEmbeddingConnection =
@@ -2014,6 +2021,7 @@ export class RuntimeSettingsStore {
       defaultImageModelProfileId: settings.defaultImageModelProfileId,
       continueModelProfile,
       deepseekHarnessModelProfile,
+      deepseekHarnessPlatformModelProfile,
       ...agent,
       subagentSmartRoutingEnabled:
         settings.subagentSmartRoutingEnabled,
@@ -2530,7 +2538,7 @@ export class RuntimeSettingsStore {
     const next: StoredSettings = {
       ...current,
       version: CURRENT_SETTINGS_VERSION,
-      provider: input.provider,
+      provider: input.provider === 'auto' ? 'model' : input.provider,
       modelProfiles,
       defaultModelProfileId,
       opencodeModelSource,

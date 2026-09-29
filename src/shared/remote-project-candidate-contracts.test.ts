@@ -14,7 +14,10 @@ const draft = {
   name: '远程项目',
   description: 'Awaited save',
   defaultWorkMode: 'ask' as const,
-  runtimeSelection: { provider: 'model' as const, profileId },
+  runtimeSelection: {
+    provider: 'opencode' as const,
+    model: { kind: 'profile' as const, profileId }
+  },
   hostId,
   remoteRootPath: '/srv/projects/goodbuddy'
 }
@@ -64,11 +67,12 @@ describe('remote project save contracts', () => {
     ).toThrow()
   })
 
-  it('requires a Runtime and a bounded absolute remote root', () => {
+  it('lets the Runtime follow global settings and bounds the absolute remote root', () => {
     const withoutRuntime: Partial<typeof draft> = { ...draft }
     delete withoutRuntime.runtimeSelection
+    expect(remoteProjectCreateDraftSchema.parse(withoutRuntime).runtimeSelection).toBeUndefined()
     expect(() =>
-      remoteProjectCreateDraftSchema.parse(withoutRuntime)
+      remoteProjectCreateDraftSchema.parse({ ...draft, runtimeSelection: { provider: 'auto-ish' } })
     ).toThrow()
     expect(() =>
       remoteProjectCreateDraftSchema.parse({

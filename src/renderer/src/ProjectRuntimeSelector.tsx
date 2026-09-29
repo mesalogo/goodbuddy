@@ -1,212 +1,217 @@
-﻿import type { TFunction } from 'i18next'
+import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RuntimeSettings } from '../../shared/contracts'
 import {
-  agentRuntimeSelectionKey,
-  getRuntimeSelectionForProvider,
-  isChannelModelProfileUsable,
-  repairChannelRuntimeSelection,
-  type AgentRuntimeSelection
+  allowedRuntimeProviders,
+  compactRuntimeSelectionLayer,
+  globalDefaultModel,
+  isResolvableStatus,
+  resolveRuntimeChoice,
+  runtimeModelChoiceStatus,
+  selectableModelProfiles,
+  supportsRuntimeConfig,
+  type AgentRuntimeProvider,
+  type RuntimeModelChoice,
+  type RuntimeSelectionLayer
 } from '../../shared/runtime-selection-contracts'
+import {
+  ignoredChoiceMessage,
+  runtimeModelLabel,
+  runtimeProviderLabel,
+  sourceLabel
+} from './runtime-selection'
 
 type ProjectRuntimeSelectorProps = {
-  ariaLabel: string
   disabled?: boolean
   label: string
-  onChange: (selection: AgentRuntimeSelection) => void
+  help?: string
+  onChange: (selection: RuntimeSelectionLayer | undefined) => void
   runtimeSettings: RuntimeSettings
-  selection?: AgentRuntimeSelection
-  selectionMode?: 'configured' | 'channel'
+  selection?: RuntimeSelectionLayer
+  /** Managed SSH projects accept only OpenCode and Continue with a GoodBuddy connection. */
+  remote?: boolean
+  /** Prefix for accessible names when several projects are edited on one page. */
+  ariaLabelPrefix?: string
+  /** Unattended channel projects cannot use image-generation connections. */
+  textOnly?: boolean
 }
 
-function runtimeSelectionDescription(
-  selection: AgentRuntimeSelection,
-  settings: RuntimeSettings,
-  t: TFunction<'integrations'>
-): string {
-  if (selection.provider === 'model') {
-    const profile = settings.modelProfiles.find(
-      (candidate) => candidate.id === (selection.profileId ?? settings.defaultModelProfileId)
-    )
-    if (!profile) {
-      return t('channels.project.missingSelection')
-    }
-    if (profile.protocol === 'openai-images-generations') {
-      return t('channels.project.imageOnlySelection')
-    }
-    if (
-      profile.authentication === 'api-key' &&
-      !profile.apiKeyConfigured
-    ) {
-      return t('channels.project.missingCredential')
-    }
-    return t('channels.project.directDescription', {
-      name: profile.name,
-      modelName: profile.modelName
-    })
-  }
-  if (selection.provider === 'auto') {
-    return t('channels.project.automaticDescription')
-  }
-  const runtimeLabel =
-    selection.provider === 'opencode'
-      ? 'OpenCode'
-      : selection.provider === 'continue'
-        ? 'Continue'
-        : 'DeepSeek Harness'
-  if (selection.profileId) {
-    const profile = settings.modelProfiles.find(
-      (candidate) => candidate.id === selection.profileId
-    )
-    return t('channels.project.fixedRuntimeDescription', {
-      runtime: runtimeLabel,
-      name: profile?.name ?? t('channels.project.missingProfile')
-    })
-  }
-  return t('channels.project.runtimeDescription', {
-    runtime: runtimeLabel
-  })
+const INHERIT = ''
+const RUNTIME_CONFIG = 'runtime-config'
+
+function modelValue(model: RuntimeModelChoice | undefined): string {
+  if (!model) return INHERIT
+  return model.kind === 'profile' ? model.profileId : RUNTIME_CONFIG
 }
 
+/**
+ * Project layer editor: an execution mode and a model, each defaulting to
+ * "Follow global (current value)". Saving keeps inheritance instead of
+ * freezing today's global value.
+ */
 export function ProjectRuntimeSelector({
-  ariaLabel,
   disabled = false,
   label,
+  help,
   onChange,
   runtimeSettings,
   selection,
-  selectionMode = 'configured'
+  remote = false,
+  ariaLabelPrefix,
+  textOnly = false
 }: ProjectRuntimeSelectorProps): React.JSX.Element {
-  const { t } = useTranslation('integrations')
-  const initialSelection =
-    selection ?? { provider: 'auto' as const }
-  const runtimeSelection =
-    selectionMode === 'channel'
-      ? repairChannelRuntimeSelection(initialSelection, runtimeSettings)
-      : initialSelection
-  const directProfiles = runtimeSettings.modelProfiles.filter(
-    isChannelModelProfileUsable
+  const { t } = useTranslation('app')
+  const id = useId()
+  const options = { remote }
+  const layer = compactRuntimeSelectionLayer(selection)
+  const resolved = resolveRuntimeChoice(runtimeSettings, { project: layer }, options)
+  const provider = resolved.provider
+  const inheritedModel = globalDefaultModel(provider, runtimeSettings, options)
+  const profiles = selectableModelProfiles(provider, runtimeSettings).filter(
+    (profile) => !textOnly || profile.protocol !== 'openai-images-generations'
   )
-  const selectedDirectProfileId =
-    runtimeSelection.provider === 'model'
-      ? runtimeSelection.profileId
-      : undefined
-  const selectedDirectProfile = runtimeSettings.modelProfiles.find(
-    (profile) => profile.id === selectedDirectProfileId
-  )
-  const selectedDirectUnavailable =
-    selectedDirectProfileId !== undefined &&
-    !directProfiles.some(
-      (profile) => profile.id === selectedDirectProfileId
-    )
-  const runtimeProviders = [
-    'opencode',
-    'continue',
-    'deepseek-harness'
-  ] as const
-  const runtimeSelections = runtimeProviders.map((provider) => {
-    return selectionMode === 'channel'
-      ? ({ provider } as AgentRuntimeSelection)
-      : getRuntimeSelectionForProvider(provider, runtimeSettings)
-  })
-  const directSelections = directProfiles.map((profile) => ({
-    provider: 'model' as const,
-    profileId: profile.id
-  }))
-  const inheritedSelections: AgentRuntimeSelection[] = [
-    ...(selectionMode === 'configured' ? [{ provider: 'auto' as const }] : []),
-    { provider: 'model' }
-  ]
-  const fixedRuntimeSelection = runtimeSelection.provider !== 'model' &&
-    'profileId' in runtimeSelection && runtimeSelection.profileId ? runtimeSelection : undefined
-  const selections = [...inheritedSelections, ...directSelections, ...runtimeSelections,
-    ...(fixedRuntimeSelection ? [fixedRuntimeSelection] : [])]
-  const selectionByKey = new Map(
-    selections.map((candidate) => [
-      agentRuntimeSelectionKey(candidate),
-      candidate
-    ])
-  )
+  const storedModel = layer?.model
+  const storedModelStatus = storedModel
+    ? runtimeModelChoiceStatus(provider, storedModel, runtimeSettings, options)
+    : 'ok'
+  const warning = ignoredChoiceMessage(resolved, runtimeSettings, t)
+  const accessible = (name: string): string =>
+    ariaLabelPrefix ? `${ariaLabelPrefix} ${name}` : name
+
+  const update = (next: RuntimeSelectionLayer): void => {
+    onChange(compactRuntimeSelectionLayer(next))
+  }
+
+  const changeProvider = (value: string): void => {
+    const nextProvider = value as AgentRuntimeProvider
+    const effective = nextProvider
+    // A model chosen for another execution mode rarely applies; keep it only when valid.
+    const keepModel =
+      storedModel &&
+      runtimeModelChoiceStatus(effective, storedModel, runtimeSettings, options) === 'ok'
+    update({
+      provider: nextProvider,
+      ...(keepModel ? { model: storedModel } : {})
+    })
+  }
+
+  const changeModel = (value: string): void => {
+    update({
+      ...(layer?.provider ? { provider: layer.provider } : {}),
+      ...(value === INHERIT
+        ? {}
+        : value === RUNTIME_CONFIG
+          ? { model: { kind: 'runtime-config' as const } }
+          : { model: { kind: 'profile' as const, profileId: value } })
+    })
+  }
+
+  const providerLabel = t('runtimeSelection.providerLabel')
+  const modelLabel = t('runtimeSelection.modelLabel')
+  const effectiveProvider = runtimeProviderLabel(resolved.provider, t)
+  const effectiveModel = runtimeModelLabel(resolved.provider, resolved.model, runtimeSettings, t)
+  const overridden = resolved.modelSource !== 'global'
 
   return (
-    <label className="field project-runtime-selector">
-      <span>{label}</span>
-      <select
-        aria-label={ariaLabel}
-        disabled={disabled}
-        onChange={(event) => {
-          const nextSelection = selectionByKey.get(event.target.value)
-          if (nextSelection) {
-            onChange(nextSelection)
-          }
-        }}
-        value={agentRuntimeSelectionKey(runtimeSelection)}
-      >
-        {inheritedSelections.map((candidate) => (
-          <option key={candidate.provider} value={agentRuntimeSelectionKey(candidate)}>
-            {t(candidate.provider === 'auto' ? 'channels.project.automaticDescription' : 'channels.project.defaultDirect')}
-          </option>
-        ))}
-        {fixedRuntimeSelection && (
-          <option value={agentRuntimeSelectionKey(fixedRuntimeSelection)}>
-            {fixedRuntimeSelection.provider} · {runtimeSettings.modelProfiles.find((profile) => profile.id === fixedRuntimeSelection.profileId)?.name ?? t('channels.project.missingProfile')}
-          </option>
-        )}
-        <optgroup label={t('channels.project.directModels')}>
-          {selectedDirectUnavailable && (
-            <option
-              disabled
-              value={agentRuntimeSelectionKey(runtimeSelection)}
-            >
-              {selectedDirectProfile
-                ? t('channels.project.unavailableProfile', {
-                    name: selectedDirectProfile.name,
-                    modelName: selectedDirectProfile.modelName
-                  })
-                : t('channels.project.missingProfile')}
-            </option>
-          )}
-          {directProfiles.length === 0 && (
-            <option disabled value="model:unavailable">
-              {t('channels.project.noTextModels')}
-            </option>
-          )}
-          {directSelections.map((candidate) => {
-            const profile = directProfiles.find(
-              (item) => item.id === candidate.profileId
-            )!
-            return (
-              <option
-                key={profile.id}
-                value={agentRuntimeSelectionKey(candidate)}
-              >
-                {profile.name} · {profile.modelName}
+    <fieldset className="project-runtime-selector" disabled={disabled}>
+      <legend>{label}</legend>
+      <div className="project-runtime-selector__fields">
+        <label className="field" htmlFor={`${id}-provider`}>
+          <span>{providerLabel}</span>
+          <select
+            aria-label={accessible(providerLabel)}
+            id={`${id}-provider`}
+            onChange={(event) => changeProvider(event.target.value)}
+            // The project owns its execution mode; older projects show what they resolve to.
+            value={provider}
+          >
+            {allowedRuntimeProviders(options).map((candidate) => (
+              <option key={candidate} value={candidate}>
+                {runtimeProviderLabel(candidate, t)}
               </option>
-            )
-          })}
-        </optgroup>
-        <optgroup label="Agent Runtime">
-          {runtimeSelections.map((candidate) => (
-            <option
-              key={candidate.provider}
-              value={agentRuntimeSelectionKey(candidate)}
-            >
-              {candidate.provider === 'opencode'
-                ? 'OpenCode'
-                : candidate.provider === 'continue'
-                  ? 'Continue'
-                  : t('channels.project.deepseekHarnessOption')}
+            ))}
+          </select>
+        </label>
+        <label className="field" htmlFor={`${id}-model`}>
+          <span>{modelLabel}</span>
+          <select
+            aria-label={accessible(modelLabel)}
+            id={`${id}-model`}
+            onChange={(event) => changeModel(event.target.value)}
+            value={modelValue(storedModel)}
+          >
+            <option value={INHERIT}>
+              {t('runtimeSelection.followRuntimeDefault', {
+                runtime: runtimeProviderLabel(provider, t),
+                value: runtimeModelLabel(provider, inheritedModel, runtimeSettings, t)
+              })}
             </option>
-          ))}
-        </optgroup>
-      </select>
-      <small>
-        {runtimeSelectionDescription(
-          runtimeSelection,
-          runtimeSettings,
-          t
-        )}
-      </small>
-    </label>
+            {storedModel && !isResolvableStatus(storedModelStatus) && (
+              <option disabled value={modelValue(storedModel)}>
+                {storedModel.kind === 'profile'
+                  ? `⚠ ${runtimeModelLabel(provider, storedModel, runtimeSettings, t)}`
+                  : `⚠ ${t('runtimeSelection.runtimeConfig', { runtime: runtimeProviderLabel(provider, t) })}`}
+              </option>
+            )}
+            {supportsRuntimeConfig(provider, options) && (
+              <option value={RUNTIME_CONFIG}>
+                {t('runtimeSelection.runtimeConfig', {
+                  runtime: runtimeProviderLabel(provider, t)
+                })}
+              </option>
+            )}
+            {profiles.map((profile) => {
+              const status = runtimeModelChoiceStatus(
+                provider,
+                { kind: 'profile', profileId: profile.id },
+                runtimeSettings,
+                options
+              )
+              return (
+                <option
+                  disabled={!isResolvableStatus(status) && profile.id !== modelValue(storedModel)}
+                  key={profile.id}
+                  value={profile.id}
+                >
+                  {profile.name}
+                  {profile.modelName ? ` · ${profile.modelName}` : ''}
+                  {status === 'unavailable' ? t('runtimeSelection.unavailableSuffix') : ''}
+                </option>
+              )
+            })}
+          </select>
+        </label>
+      </div>
+      <p
+        className={`project-runtime-selector__summary${overridden ? ' project-runtime-selector__summary--override' : ''}`}
+      >
+        <span>
+          {t('runtimeSelection.effective', {
+            provider: effectiveProvider,
+            model: effectiveModel
+          })}
+        </span>
+        <small>
+          {t('runtimeSelection.effectiveModelSource', {
+            model: sourceLabel(resolved.modelSource, t)
+          })}
+        </small>
+      </p>
+      {warning && (
+        <p className="project-runtime-selector__warning" role="status">
+          <span>{warning}</span>
+          {storedModel && !isResolvableStatus(storedModelStatus) && (
+            <button
+              className="secondary-button"
+              onClick={() => changeModel(INHERIT)}
+              type="button"
+            >
+              {t('runtimeSelection.followGlobalAction')}
+            </button>
+          )}
+        </p>
+      )}
+      {help && <small className="project-runtime-selector__scope-help">{help}</small>}
+    </fieldset>
   )
 }

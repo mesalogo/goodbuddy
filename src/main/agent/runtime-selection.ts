@@ -2,7 +2,14 @@ import {
   isAgentRuntimeModelProtocol,
   isDeepSeekHarnessModelProfile
 } from '../../shared/contracts'
-import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
+import {
+  resolveRuntimeChoice,
+  type AgentRuntimeSelection,
+  type ResolvedRuntimeChoice,
+  type RuntimeResolutionOptions,
+  type RuntimeResolutionSettings,
+  type RuntimeSelectionLayer
+} from '../../shared/runtime-selection-contracts'
 import type {
   ResolvedModelProfile,
   ResolvedRuntimeSettings
@@ -36,24 +43,62 @@ export function getConfiguredRuntimeTarget(
   if (settings.provider === 'deepseek-harness') {
     return 'deepseek-harness'
   }
-  if (
-    settings.provider === 'opencode' ||
-    settings.provider === 'auto'
-  ) {
+  if (settings.provider === 'opencode') {
     return 'opencode'
   }
   return 'model'
 }
 
+/** Presents resolved Main settings in the shape used by the shared resolver. */
+export function runtimeResolutionSettings(
+  settings: ResolvedRuntimeSettings
+): RuntimeResolutionSettings {
+  // Partial settings (early startup, narrow callers) resolve with no connections.
+  const modelProfiles = settings.modelProfiles ?? []
+  const known = (profile?: ResolvedModelProfile) =>
+    profile && modelProfiles.some((candidate) => candidate.id === profile.id)
+      ? ({ kind: 'profile', profileId: profile.id } as const)
+      : ({ kind: 'platform' } as const)
+  return {
+    provider: settings.provider,
+    defaultModelProfileId: settings.defaultModelProfileId,
+    modelProfiles: modelProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      modelName: profile.modelName,
+      baseUrl: profile.baseUrl,
+      protocol: profile.protocol,
+      authentication: profile.authentication,
+      apiKeyConfigured:
+        profile.authentication !== 'api-key' || Boolean(profile.apiKey)
+    })),
+    opencodeModelSource: known(settings.opencodeModelProfile),
+    continueModelSource: known(settings.continueModelProfile),
+    deepseekHarnessModelSource: known(settings.deepseekHarnessModelProfile),
+    opencodeBaseUrl: settings.opencodeBaseUrl
+  }
+}
+
+export function resolveLayeredRuntimeSelection(
+  settings: ResolvedRuntimeSettings,
+  layers: {
+    project?: RuntimeSelectionLayer
+    conversation?: RuntimeSelectionLayer
+  } = {},
+  options: RuntimeResolutionOptions = {}
+): ResolvedRuntimeChoice {
+  return resolveRuntimeChoice(runtimeResolutionSettings(settings), layers, options)
+}
+
+/** Pins the model a Runtime selection implies so remote validation sees one concrete profile. */
 export function resolveConfiguredAgentRuntimeSelection(
   settings: ResolvedRuntimeSettings,
   selection: AgentRuntimeSelection
 ): AgentRuntimeSelection {
-  if ('profileId' in selection && selection.profileId) return selection
   if (
-    selection.provider !== 'opencode' &&
-    selection.provider !== 'continue' &&
-    selection.provider !== 'deepseek-harness'
+    selection.provider === 'model' ||
+    selection.profileId ||
+    ('runtimeConfig' in selection && selection.runtimeConfig)
   ) {
     return selection
   }
@@ -80,13 +125,6 @@ export function applyRuntimeSelection(
   settings: ResolvedRuntimeSettings
   target: SelectedRuntimeTarget
 } {
-  if (selection.provider === 'auto') {
-    return {
-      settings,
-      target: getConfiguredRuntimeTarget(settings)
-    }
-  }
-
   if (selection.provider === 'model') {
     const profile = requireProfile(settings, selection.profileId ?? settings.defaultModelProfileId)
     return {
@@ -107,13 +145,16 @@ export function applyRuntimeSelection(
     }
   }
 
+  const runtimeConfig = selection.runtimeConfig === true
   const profile = selection.profileId
     ? requireProfile(settings, selection.profileId)
-    : selection.provider === 'opencode'
-      ? settings.opencodeModelProfile
-      : selection.provider === 'continue'
-        ? settings.continueModelProfile
-        : settings.deepseekHarnessModelProfile
+    : runtimeConfig
+      ? undefined
+      : selection.provider === 'opencode'
+        ? settings.opencodeModelProfile
+        : selection.provider === 'continue'
+          ? settings.continueModelProfile
+          : settings.deepseekHarnessModelProfile
   if (selection.provider === 'opencode') {
     if (profile && !isAgentRuntimeModelProtocol(profile.protocol)) {
       throw new Error(
@@ -137,8 +178,10 @@ export function applyRuntimeSelection(
   }
 
   if (selection.provider === 'deepseek-harness') {
-    const selectedProfile =
-      profile ?? settings.deepseekHarnessModelProfile
+    // DeepSeek Harness "own configuration" is the administrator-provided or fallback model.
+    const selectedProfile = runtimeConfig
+      ? settings.deepseekHarnessPlatformModelProfile
+      : profile
     if (
       selectedProfile &&
       !isDeepSeekHarnessModelProfile(selectedProfile)

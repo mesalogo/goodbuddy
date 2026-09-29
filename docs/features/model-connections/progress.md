@@ -1,5 +1,32 @@
 # 模型连接请求定制进度
 
+## 2026-09-29：执行方式与模型分层选择
+
+设计见[执行方式与模型选择设计](./runtime-selection-design.md)。
+
+### 已完成（未提交）
+
+- 共享选择层契约、`resolveRuntimeChoice` 分层解析及失效回退；移除 `auto`。
+- 数据库版本 49 迁移旧选择形状；连接删除后清理所有项目和会话的失效引用。
+- Main 每次请求按会话层、项目层重新解析，不回写会话；排队输入在派发时重新解析。
+- 项目设置 `ProjectRuntimeSelector`（本地、远程、通道共用），输入框两栏
+  `RuntimeModelPicker`；系统设置恢复各 Runtime 页签的默认模型选择。
+- 选择器修复：模型列不再与底栏重叠，长名称单行截断；“管理模型连接…”直接打开模型连接分类。
+
+### 已验证
+
+- `npm run typecheck` 与相关文件 eslint 通过。
+- Main、Shared、Daemon 测试集通过；`App.test.tsx` 与 `WorkspacePrimitives.test.tsx`
+  350 项中 349 项通过，唯一失败为既有不稳定用例“renders, saves and reloads OpenCode
+  answers across question rounds”，单独运行通过。
+
+### 待办
+
+- 在运行中的应用里目测两栏选择器（窄窗口、深色主题、长名称）。
+- 移除全局 `provider`，见[设计第 6 节](./runtime-selection-design.md#6-全局-provider历史遗留待移除)。
+- 用途模型，见[设计第 7 节](./runtime-selection-design.md#7-用途模型规划未实现)。
+
+
 ## 2026-09-27：窄容器协议显示
 
 连接管理布局改用命名容器查询，不超过 `640px` 时列表和表单上下排列；移除原先仅在
