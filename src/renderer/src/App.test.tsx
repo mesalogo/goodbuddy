@@ -12361,7 +12361,8 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "需要确认的任务" },
     });
-    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送"));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     const request = run.mock.calls[0]?.[0];
     if (!request) {
