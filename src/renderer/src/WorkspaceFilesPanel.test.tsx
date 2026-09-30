@@ -211,6 +211,9 @@ describe('WorkspaceFilesPanel', () => {
     expect(css).toMatch(/\.workspace-git__toolbar > \.segmented-control\s*\{[^}]*width: max-content;[^}]*border: 0/)
     expect(css).toMatch(/\.workspace-git__branch-trigger\s*\{[^}]*width: auto;[^}]*height: 32px;[^}]*flex: 0 1 auto;[^}]*text-align: left/)
     expect(css).toMatch(/\.workspace-files__header\s*\{[^}]*justify-content: space-between/)
+    expect(css).toMatch(/\.workspace-files__files-view\s*\{[^}]*flex: 1;[^}]*min-height: 0;[^}]*overflow: auto/)
+    expect(css).toContain('.workspace-files__navigation:has(.workspace-files__list:not([hidden]) .workspace-files__files-view:not([hidden]))')
+    expect(css).toMatch(/\.workspace-files__header,\s*\.workspace-files__actions,\s*\.workspace-files__breadcrumbs,[^{]*\{\s*flex-shrink: 0/)
     expect(css).toMatch(/\.workspace-git__branches\s*\{[^}]*width: min\(100%, 360px\);[^}]*border-radius: var\(--radius-control\)/)
     expect(css).toMatch(/\.workspace-git__branches\s*\{[^}]*position: fixed;[^}]*max-height: calc\(100vh - 32px\);[^}]*overflow: auto/)
     expect(css).toMatch(/\.workspace-git__branch-list\s*\{[^}]*max-height: 240px;[^}]*overflow: auto/)
@@ -535,6 +538,7 @@ describe('WorkspaceFilesPanel', () => {
     )
 
     await screen.findByText('工作区为空。')
+    expect(screen.getByRole('button', { name: '文件' })).toHaveAttribute('aria-pressed', 'true')
     expect(onListDirectory).toHaveBeenCalledOnce()
     await changeUiLocale('en-US')
 
@@ -705,6 +709,7 @@ describe('WorkspaceFilesPanel', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Git 工作区' })).not.toBeInTheDocument()
     rerender(<WorkspaceFilesPanel {...props} isRepository={false} />)
+    expect(screen.getByRole('button', { name: '文件' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByRole('button', { name: 'Git 工作区' })).not.toBeInTheDocument()
     rerender(<WorkspaceFilesPanel {...props} isRepository />)
     fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))

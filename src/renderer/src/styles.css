@@ -18639,13 +18639,14 @@ textarea.field-control {
 .workspace-git__history-dock > [role="separator"] { height: var(--space-2); flex: 0 0 auto; cursor: ns-resize; touch-action: none; }
 .workspace-git__history-scroll { flex: 1; overflow: auto; min-height: 0; }
 /* Keep the history header docked even when its content is collapsed. */
+.workspace-files__navigation:has(.workspace-files__list:not([hidden]) .workspace-files__files-view:not([hidden])),
 .workspace-files__navigation:has(.workspace-files__list:not([hidden]) .workspace-files__git-view:not([hidden]) .workspace-git__working:not([hidden])) {
   height: 100%;
   min-height: 0;
   padding-bottom: 0;
 }
-.workspace-files__navigation:has(.workspace-git) .workspace-files,
-.workspace-files__navigation:has(.workspace-git) .workspace-files__list:not([hidden]),
+.workspace-files__navigation .workspace-files,
+.workspace-files__navigation .workspace-files__list:not([hidden]),
 .workspace-files__git-view:not([hidden]),
 .workspace-git,
 .workspace-git__current {
@@ -18659,8 +18660,15 @@ textarea.field-control {
 .workspace-git__current { gap: var(--space-2); overflow: auto; }
 .workspace-git > [role="status"] { margin: 0; flex-shrink: 0; }
 .workspace-files__header,
+.workspace-files__actions,
+.workspace-files__breadcrumbs,
 .workspace-git__toolbar,
 .workspace-git__history-toggle { flex-shrink: 0; }
+.workspace-files__files-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 .workspace-git__changes {
   flex: 1;
   min-height: 0;

@@ -492,10 +492,10 @@ export function WorkspaceFilesPanel({
     </section>}
     <div className="workspace-files__list" hidden={showingDiff}>
       <div className="workspace-files__header">
-        {showGit && <div className="workspace-files__view-switch"><SegmentedControl ariaLabel={t('files.view')} value={activeView} onChange={setView} options={[
+        <div className="workspace-files__view-switch"><SegmentedControl ariaLabel={t('files.view')} value={activeView} onChange={setView} options={[
           { value: 'files', label: t('files.filesView') },
-          { value: 'changes', label: t('management.gitWorkspace') }
-        ]} /></div>}
+          ...(showGit ? [{ value: 'changes' as const, label: t('management.gitWorkspace') }] : [])
+        ]} /></div>
         <button ref={refreshRef} className="icon-button" type="button" disabled={refreshing} aria-label={t('sidebar.workspace.refreshAriaLabel')} title={t('sidebar.workspace.refresh')} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden="true" /></button>
       </div>
       {activeView === 'files' && root && <div className="workspace-files__toolbar workspace-files__actions">
@@ -555,7 +555,7 @@ export function WorkspaceFilesPanel({
         </div>
         </WorkspaceGitTools>}
         </div>
-      <div hidden={activeView !== 'files'}>
+      <div className="workspace-files__files-view" hidden={activeView !== 'files'}>
       {loadingPaths.has(browsedPath) && !root ? (
         <p className="assistant-sidebar__empty">
           {t('files.readingWorkspace')}
