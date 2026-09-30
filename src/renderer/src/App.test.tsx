@@ -730,7 +730,10 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     continueContext: vi.fn(async () => ({})),
     continue: vi.fn(async () => undefined),
     knowledgePreview: vi.fn(async () => ({})),
-    knowledgeCommit: vi.fn(async () => ({}))
+    knowledgeCommit: vi.fn(async () => ({})),
+    suggestions: vi.fn(async () => []),
+    suggestionAction: vi.fn(async () => { throw new Error('unused') }),
+    retrySuggestions: vi.fn(async () => 0)
   },
   experts: {
     list: vi.fn(async () => []),
@@ -13228,82 +13231,24 @@ describe("App", () => {
       await screen.findByRole("tab", { name: "工作回顾" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "回顾当前进展" }),
+      screen.getByRole("button", { name: "回顾" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("切换助手工作栏")).toBeInTheDocument();
   });
 
-  it("excludes ignored heartbeat suggestions from the navigation badge", async () => {
-    const heartbeatId = "00000000-0000-4000-8000-000000000701";
-    const cancelledTaskId = "00000000-0000-4000-8000-000000000801";
-    const pendingTaskId = "00000000-0000-4000-8000-000000000802";
-    vi.mocked(api.heartbeats.list).mockResolvedValue([
-      {
-        id: heartbeatId,
-        scope: { kind: "projects", projectIds: [projectId] },
-        name: "每日回顾",
-        timezone: "Asia/Shanghai",
-        recurrence: { type: "daily", localTime: "09:00" },
-        enabled: true,
-        lookbackHours: 24,
-        retentionDays: 30,
-        nextRunAt: "2026-08-05T01:00:00.000Z",
-        createdAt: "2026-08-01T00:00:00.000Z",
-        updatedAt: "2026-08-01T00:00:00.000Z",
-      },
+  it("counts only pending supervisor suggestions in the navigation badge", async () => {
+    vi.mocked(api.supervision.suggestions).mockResolvedValue([
+      { id: "00000000-0000-4000-8000-000000000901", resultId: null, heartbeatRunId: null, scope: { kind: "global" },
+        kind: "open_item", title: "待处理建议", detail: "继续处理此建议。", sourceIds: [], entityId: null,
+        relationId: null, taskId: null, status: "pending", createdAt: "2026-08-04T01:00:00.000Z" },
     ]);
-    vi.mocked(api.heartbeats.history).mockResolvedValue({
-      runs: [],
-      entries: [
-        {
-          id: "00000000-0000-4000-8000-000000000901",
-          configId: heartbeatId,
-          runId: "00000000-0000-4000-8000-000000000902",
-          scheduledFor: "2026-08-04T01:00:00.000Z",
-          summary: "建议处理两个后续行动。",
-          highlights: [],
-          proposedMemoryIds: [],
-          followUpTaskIds: [cancelledTaskId, pendingTaskId],
-          createdAt: "2026-08-04T01:00:00.000Z",
-        },
-      ],
-    });
-    vi.mocked(api.tasks.list).mockResolvedValue([
-      {
-        id: cancelledTaskId,
-        projectId,
-        title: "已忽略建议",
-        instructions: "无需继续处理。",
-        origin: "assistant",
-        status: "cancelled",
-        createdAt: "2026-08-04T01:00:00.000Z",
-      },
-      {
-        id: pendingTaskId,
-        projectId,
-        title: "待处理建议",
-        instructions: "继续处理此建议。",
-        origin: "assistant",
-        status: "paused",
-        createdAt: "2026-08-04T01:00:00.000Z",
-      },
-    ]);
-
     try {
       render(<App />);
-
-      expect(
-        await screen.findByLabelText("1 条待处理建议"),
-      ).toBeInTheDocument();
-      expect(screen.queryByLabelText("2 条待处理建议")).not.toBeInTheDocument();
+      expect(await screen.findByLabelText("1 条待处理建议")).toBeInTheDocument();
+      expect(api.supervision.suggestions).toHaveBeenCalledWith({ status: "pending", limit: 100 });
     } finally {
       cleanup();
-      vi.mocked(api.heartbeats.list).mockResolvedValue([]);
-      vi.mocked(api.heartbeats.history).mockResolvedValue({
-        runs: [],
-        entries: [],
-      });
-      vi.mocked(api.tasks.list).mockResolvedValue([]);
+      vi.mocked(api.supervision.suggestions).mockResolvedValue([]);
     }
   });
 
@@ -13409,7 +13354,7 @@ describe("App", () => {
     await waitFor(() =>
       expect(screen.queryByText("监督者加载失败")).not.toBeInTheDocument(),
     );
-    expect(screen.getByRole("button", { name: "回顾当前进展" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "回顾" })).toBeInTheDocument();
   });
 
   it("graph navigation opens the pinned sidebar result and reenters the keepalive heartbeat route", async () => {
@@ -13477,7 +13422,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "监督者" }));
-    fireEvent.click(await screen.findByRole("tab", { name: "自动监督" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "智能心跳" }));
     expect(await screen.findAllByText("旧项目心跳")).not.toHaveLength(0);
     selectProjectOption(secondProject.name);
     fireEvent.click(screen.getByRole("button", { name: "监督者" }));
@@ -13488,7 +13433,7 @@ describe("App", () => {
     expect(dialog.closest('.app-shell')).toBeNull();
     expect(document.querySelector('.app-shell')).toHaveProperty('inert', true);
     fireEvent.change(within(dialog).getByLabelText('计划名称'), { target: { value: 'Updated paused plan' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存自动监督计划' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存心跳计划' }));
     await waitFor(() => expect(api.heartbeats.update).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000701', expect.objectContaining({
       name: 'Updated paused plan', enabled: false, scope: { kind: 'projects', projectIds: [projectId] }
     })));
@@ -14493,19 +14438,18 @@ describe("App", () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '监督者' }))
     fireEvent.click(await screen.findByRole('tab', { name: '设置' }))
-    const report = await screen.findByLabelText('心跳报告超时（秒）')
-    await waitFor(() => expect(report).toBeEnabled())
-    expect(report).toHaveValue(240)
-    fireEvent.change(report, { target: { value: '600' } })
-    fireEvent.change(screen.getByLabelText('监督者整理超时（秒）'), { target: { value: '30' } })
+    const organize = await screen.findByLabelText('监督者整理超时（秒）')
+    await waitFor(() => expect(organize).toBeEnabled())
+    expect(organize).toHaveValue(240)
+    expect(screen.queryByLabelText('心跳报告超时（秒）')).not.toBeInTheDocument()
+    fireEvent.change(organize, { target: { value: '30' } })
     expect(screen.getByLabelText('监督模型并发数')).toHaveValue(1)
     fireEvent.change(screen.getByLabelText('监督模型并发数'), { target: { value: '2' } })
     fireEvent.click(screen.getByRole('button', { name: '保存模型设置' }))
-    await waitFor(() => expect(api.updates!.updateSettings).toHaveBeenLastCalledWith({ heartbeatReportTimeoutSeconds: 600, supervisorOrganizeTimeoutSeconds: 30, supervisorModelConcurrency: 2 }))
+    await waitFor(() => expect(api.updates!.updateSettings).toHaveBeenLastCalledWith({ supervisorOrganizeTimeoutSeconds: 30, supervisorModelConcurrency: 2 }))
     await waitFor(() => expect(screen.getByRole('button', { name: '保存模型设置' })).toBeDisabled())
     fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }))
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
-    expect(screen.getByLabelText('心跳报告超时（秒）')).toHaveValue(600)
     expect(screen.getByLabelText('监督者整理超时（秒）')).toHaveValue(30)
     expect(screen.getByLabelText('监督模型并发数')).toHaveValue(2)
     fireEvent.change(screen.getByLabelText(/每次读取来源条数/), { target: { value: '17' } })

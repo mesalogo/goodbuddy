@@ -89,11 +89,11 @@ void app.whenReady().then(async () => {
       fail: (id, error) => db.failSupervisionRun(id, error), noChange: (id) => db.noChangeSupervisionRun(id),
       candidates: async (input) => db.listSupervisionCandidates(input), save: async (result) => db.saveSupervisionResult(result)
     })
-    const heartbeat = new HeartbeatService(db, { summarize: async (input) => {
-      stage = 'heartbeat'
-      return call([input.systemInstruction, 'OUTPUT CONTRACT:', JSON.stringify(input.outputContract),
-        'BOUNDED INPUT:', JSON.stringify(input.input), 'Return only JSON. Do not propose memories or follow-up tasks for this simple release update.'].join('\n\n'))
-    } }, () => { throw new Error('Tools denied') }, async ({ run }) => { await supervisor.run(request, run.id) })
+    // The heartbeat reads no sources itself; it only triggers the shared review.
+    const heartbeat = new HeartbeatService(db, { review: async ({ run }) => {
+      const result = await supervisor.run(request, run.id)
+      return { status: result.status ?? 'completed', runId: result.runId }
+    } })
     const config = heartbeat.create({ name: 'Isolated live test', scope: request.scope, timezone: 'UTC',
       recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }, now)
     let tick = 0
@@ -102,23 +102,23 @@ void app.whenReady().then(async () => {
       await heartbeat.processDue(new Date())
     }
     await due()
-    assert.equal(observations.length, 2)
+    assert.equal(observations.length, 1, 'A heartbeat must make exactly one review request')
     assert.equal(db.listSupervisionActivity()[0]!.status, 'completed')
     const first = db.listSupervisionCandidates(request)
     assert(first.length > 0, 'Model did not create an entity')
     const firstGraph = db.getSupervisionGraph()
     await due()
-    assert.equal(observations.length, 2, 'Unchanged automatic run made a request')
+    assert.equal(observations.length, 1, 'Unchanged automatic run made a request')
     assert.equal(db.listSupervisionActivity()[0]!.status, 'no_change')
     assert.deepEqual(db.getSupervisionGraph(), firstGraph)
     sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run(
       'The same Atlas release has moved from October 4 to October 6. SQLite remains the storage choice. Update the existing Atlas release entity.', messageId)
     const changed = await supervisor.run(request)
-    assert.equal(observations.length, 3)
+    assert.equal(observations.length, 2)
     const reused = changed.output.entities.filter((entity) => entity.persistedId && first.some((candidate) => candidate.id === entity.persistedId))
     assert(reused.length > 0, 'Changed review did not reuse a known entity ID')
     assert.equal((await supervisor.run(request)).status, 'no_change')
-    assert.equal(observations.length, 3)
+    assert.equal(observations.length, 2)
     assert.deepEqual(sql.prepare('PRAGMA foreign_key_check').all(), [])
     assert(readFileSync(settingsPath).equals(original), 'Source settings changed')
     console.log(JSON.stringify({ model: settings.modelName, protocol: settings.modelProtocol, actualCalls: observations,

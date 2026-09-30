@@ -9,7 +9,7 @@
 | 产品设计 | [监督者应用产品设计](./supervisor-prd.md) |
 | 行为规则 | [监督者逻辑设计](./logic-design.md) |
 | 界面设计 | [监督者 UI 设计](./ui-design.md) |
-| 实施进度 | SQLite schema 47；当前算法、设置和验收边界见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界) |
+| 实施进度 | SQLite schema 50（心跳介入与监督建议见[心跳触发与建议](#心跳触发与建议2026-09-30)）；当前算法、设置和验收边界见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界) |
 
 本文回答如何在现有 GoodBuddy 桌面端中实现监督者。它不改变产品范围，也不把模拟 Demo 当作生产数据模型。
 
@@ -65,7 +65,18 @@ schema 47 的四张批次相关表使用外键随监督运行清理，未完成�
 
 Preload 暴露类型化 `execution`、`cancel`，取消输入使用 UUID schema 并校验可信 sender。活动 UI 用实时执行状态覆盖持久记录的停止显示；工作回顾挂载期间每两秒读取执行状态，发起前再次查询，Main 仍作最终准入判断。`resume` IPC 直到运行结束才返回，Renderer 发出请求后释放提交锁并独立处理结果，确保继续中的回顾仍可暂停或取消。状态条 X 仅修改本地显示状态。
 
+### 心跳触发与建议（2026-09-30）
+
+对应 FR-S12，规则见[心跳职责与介入](./logic-design.md#心跳职责与介入目标设计)。`HeartbeatService` 只依赖 `HeartbeatActions { review, suggest? }`：领取后 `completeHeartbeatTrigger` 立即提交心跳自身运行（租约 5 分钟，仅覆盖交接），再调用 `review`，由 `ipc.ts` 转为 `supervisorService.run({ trigger: 'heartbeat' }, heartbeatRunId)`。审查失败写 `projection_status/error`，结果为 `no_change` 时标记心跳无变化。心跳不再占用模型池，也不读取 `heartbeatReportTimeoutSeconds`；该设置字段保留兼容，界面不显示。下文关于心跳报告阶段、报告租约与报告增量的描述均为历史行为。
+
+`isIncrementalReview(request)` 统一判断：`trigger: heartbeat` 或未设 `reanalyze` 的手动请求读取并在发布事务中推进 `review_checkpoints`；`reanalyze: true` 从零读取且不写进度。`SupervisionReviewStore.unfinished` 只续跑 `failed/running` 的心跳运行，用户暂停的保持暂停。
+
+计划 `intervention` 为 `suggest` 时，`deriveSuggestions` 调用 `SupervisionSuggestionStore.candidates(supervisionRunId)`：读取该运行叶子批次的 `openItems`（按原始来源映射到本结果 `supervision_sources`）、`revised` 实体变化、快照内 `contrasts` 关系，以及事件关联中不同原始来源数不少于 3 的 `automatic` 实体。指纹按类型与实体、关系或规范化文本生成；依据键使用原始来源类型、ID 与内容哈希，不用每次结果新生成的来源行 ID。每次最多 20 条。有候选时 `createProductionSuggestionPhraser` 发起一次无工具请求，共享监督模型池与整理超时；模型只返回 `ref/title/detail`，未知 ref 丢弃，缺失措辞回退规则文本。建议失败写 `suggestion_status = 'failed'` 与错误，`supervision:retry-suggestions` 只重跑建议。
+
+IPC `supervision:suggestions`、`supervision:suggestion-action`、`supervision:retry-suggestions` 校验可信 sender 与 Zod 输入；监督者关闭时列表返回空、操作拒绝。接受未决事项创建暂停任务，接受候选约定确认迁入记忆或新建已确认记忆并确认实体。Schema 50 内容见[实施进度](./progress.md#2026-09-30-心跳职责收敛与监督建议)。
+
 ## 自动增量收集
+
 
 本节的 100 来源/2,000 码点批次查询现用于原心跳报告及旧服务测试；生产监督使用 schema 47 清单及批次位置，自动 checkpoint 只在完整发布时提交。已有 schema 46 指纹算法和 checkpoint 仍复用，不重置用户已处理位置。
 

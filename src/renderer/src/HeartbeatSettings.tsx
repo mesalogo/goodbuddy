@@ -9,6 +9,7 @@ import {
   type AssistantHeartbeatConfig,
   type AssistantProject,
   type HeartbeatCreateInput,
+  type HeartbeatIntervention,
   type HeartbeatUpdateInput
 } from '../../shared/assistant-contracts'
 import {
@@ -71,6 +72,7 @@ export function HeartbeatSettings({
   >([])
   const [lookbackHours, setLookbackHours] = useState(48)
   const [retentionDays, setRetentionDays] = useState(90)
+  const [intervention, setIntervention] = useState<HeartbeatIntervention>('suggest')
   const [pendingAction, setPendingAction] = useState<string>()
   const [error, setError] = useState<string>()
   const [confirmingRemoveId, setConfirmingRemoveId] =
@@ -108,6 +110,7 @@ export function HeartbeatSettings({
     setSelectedProjectIds([])
     setLookbackHours(48)
     setRetentionDays(90)
+    setIntervention('suggest')
   }
 
   const editHeartbeat = (heartbeat: AssistantHeartbeatConfig): void => {
@@ -132,6 +135,7 @@ export function HeartbeatSettings({
     )
     setLookbackHours(heartbeat.lookbackHours)
     setRetentionDays(heartbeat.retentionDays)
+    setIntervention(heartbeat.intervention ?? 'suggest')
   }
 
   const runAction = async (
@@ -173,7 +177,8 @@ export function HeartbeatSettings({
         : heartbeats.find((heartbeat) => heartbeat.id === editingId)
             ?.enabled ?? true,
     lookbackHours,
-    retentionDays
+    retentionDays,
+    intervention
   })
 
   const hasUnavailableProject = selectedProjectIds.some(
@@ -211,17 +216,17 @@ export function HeartbeatSettings({
   return (
     <div className="heartbeat-settings">
       <div className="heartbeat-settings__intro">
+        {heartbeats.length === 0
+          ? <p role="status">{t('settings.empty')}</p>
+          : heartbeats.every((heartbeat) => !heartbeat.enabled)
+            ? <p role="status">{t('settings.allPaused')}</p>
+            : <p>{t('settings.scheduleHelp')}</p>}
         <button className="primary-button" type="button" disabled={pendingAction !== undefined} onClick={() => {
           resetForm()
           setDirty(false)
           setError(undefined)
           setOpen(true)
         }}>{t('settings.createTitle')}</button>
-        <p>{t('settings.scheduleHelp')}</p>
-        {heartbeats.length === 0 && <p role="status">{t('settings.empty')}</p>}
-        {heartbeats.length > 0 && heartbeats.every((heartbeat) => !heartbeat.enabled) && (
-          <p role="status">{t('settings.allPaused')}</p>
-        )}
       </div>
       {open && createPortal(<div className="custom-task-dialog" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !confirmDiscard) close()
@@ -322,6 +327,27 @@ export function HeartbeatSettings({
               {t('settings.scope.removeArchived')}
             </small>
           )}
+        </fieldset>
+        <fieldset className="heartbeat-settings__scope">
+          <legend>
+            <span className="inline-help-label">
+              {t('settings.intervention.legend')}
+              <InlineHelp label={t('settings.intervention.legend')}>
+                {t('settings.intervention.help')}
+              </InlineHelp>
+            </span>
+          </legend>
+          <SegmentedControl
+            ariaLabel={t('settings.intervention.legend')}
+            disabled={pendingAction !== undefined}
+            onChange={(value) => { setIntervention(value); setDirty(true) }}
+            options={[
+              { label: t('settings.intervention.suggest'), value: 'suggest' },
+              { label: t('settings.intervention.memory'), value: 'memory' }
+            ]}
+            value={intervention}
+          />
+          <small>{t(`settings.intervention.${intervention}Hint`)}</small>
         </fieldset>
         <div
           className={`heartbeat-settings__form${
@@ -480,7 +506,7 @@ export function HeartbeatSettings({
                 </small>
                 <small>{t('settings.windowSummary', {
                   hours: heartbeat.lookbackHours, days: heartbeat.retentionDays
-                })}</small>
+                })} · {t(`settings.intervention.${heartbeat.intervention ?? 'suggest'}`)}</small>
                 <small>
                   {heartbeat.enabled
                     ? t('settings.running')

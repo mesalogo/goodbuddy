@@ -23,7 +23,7 @@ export const app = {
     confirmFailed: 'Could not confirm the save result. Reload settings before editing again.',
     descriptions: {
       'magic-notes': 'Write notes, organize to-dos, and receive AI comments.', knowledge: 'Manage knowledge sources and retrieve reference material for conversations.',
-      heartbeat: 'Review work evolution, explore the story graph, and configure automatic supervision.', 'local-inference': 'Inspect local inference tasks and execution services.'
+      heartbeat: 'Review work evolution, explore the story graph, and configure Smart heartbeat.', 'local-inference': 'Inspect local inference tasks and execution services.'
     }
   },
   notifications: {

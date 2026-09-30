@@ -3743,25 +3743,8 @@ function App(): React.JSX.Element {
         })),
     [activeProjectId, assistantArtifacts],
   );
-  const pendingHeartbeatSuggestionCount = useMemo(() => {
-    const memoryIds = new Set(
-      heartbeatEntries.flatMap((entry) => entry.proposedMemoryIds),
-    );
-    const taskIds = new Set(
-      heartbeatEntries.flatMap((entry) => entry.followUpTaskIds),
-    );
-    return (
-      heartbeatMemories.filter(
-        (memory) => memoryIds.has(memory.id) && memory.status === "proposed",
-      ).length +
-      assistantTasks.filter(
-        (task) =>
-          taskIds.has(task.id) &&
-          task.status !== "completed" &&
-          task.status !== "cancelled",
-      ).length
-    );
-  }, [assistantTasks, heartbeatEntries, heartbeatMemories]);
+  // Pending supervisor suggestions; earlier report proposals are migrated into them.
+  const [pendingHeartbeatSuggestionCount, setPendingHeartbeatSuggestionCount] = useState(0);
 
   const updateMessage = useCallback(
     (
@@ -5780,11 +5763,15 @@ function App(): React.JSX.Element {
       window.goodbuddy.memory.list(),
     ]);
     const history = await window.goodbuddy.heartbeats.history();
+    // Main returns no suggestions while the supervisor is disabled.
+    const suggestions = await window.goodbuddy.supervision?.suggestions?.({ status: "pending", limit: 100 })
+      .catch(() => []) ?? [];
     return {
       configs,
       memories,
       runs: history.runs,
       entries: history.entries,
+      pendingSuggestions: suggestions.length,
     };
   }, []);
 
@@ -5798,6 +5785,7 @@ function App(): React.JSX.Element {
     setHeartbeatMemories(result.memories);
     setHeartbeatRuns(result.runs);
     setHeartbeatEntries(result.entries);
+    setPendingHeartbeatSuggestionCount(result.pendingSuggestions);
   }, [loadHeartbeats]);
 
   useEffect(() => {
@@ -5823,6 +5811,7 @@ function App(): React.JSX.Element {
           setHeartbeatMemories(result.memories);
           setHeartbeatRuns(result.runs);
           setHeartbeatEntries(result.entries);
+          setPendingHeartbeatSuggestionCount(result.pendingSuggestions);
           setHeartbeatLoadError(undefined);
         })
         .catch((reason: unknown) => {

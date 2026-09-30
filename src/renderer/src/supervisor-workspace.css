@@ -31,6 +31,110 @@
 .supervisor-workspace__run-status > .icon-button {
   grid-column: 3;
 }
+.supervisor-workspace__confirm {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+.supervisor-workspace__confirm p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.supervisor-workspace__confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.supervision-suggestions__list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.supervision-suggestions__list > li {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+.supervision-suggestions__list > li > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
+.supervision-suggestions__kind {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.supervision-suggestions__list > li > strong {
+  overflow-wrap: anywhere;
+}
+.supervision-suggestions__list > li > p {
+  margin: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.supervision-suggestions__evidence,
+.supervision-suggestions__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.supervision-suggestions .link-button {
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.supervision-suggestions .link-button:hover {
+  background: var(--accent-subtle);
+}
+.supervision-suggestions .link-button:disabled {
+  color: var(--text-secondary);
+  cursor: default;
+}
+.supervision-suggestions__sources {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  list-style: none;
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+.supervision-suggestions__sources p {
+  max-height: 8em;
+  margin: var(--space-1) 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+.supervisor-activity__suggestion {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  color: var(--text-secondary);
+}
 .supervisor-workspace p,
 .supervisor-workspace time {
   overflow-wrap: anywhere;
@@ -626,10 +730,17 @@
   }
 }
 @container supervisor (max-width: 420px) {
+  /* Selects share the first row; review, refresh and the more menu share the second. */
   .supervisor-workspace__toolbar {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
     gap: var(--space-3);
+  }
+  .supervisor-workspace__toolbar > label:first-of-type {
+    grid-column: 1;
+  }
+  .supervisor-workspace__toolbar > label:nth-of-type(2) {
+    grid-column: 2 / -1;
   }
   .supervisor-workspace__recap,
   .supervisor-workspace__detail,

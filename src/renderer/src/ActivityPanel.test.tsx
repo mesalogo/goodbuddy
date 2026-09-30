@@ -952,7 +952,7 @@ describe('ActivityPanel', () => {
     fireEvent.click(screen.getByRole('tab', { name: '系统任务' }))
     const stats = screen.getByLabelText('系统任务用量统计')
     expect(within(stats).getByText('18')).toBeInTheDocument()
-    expect(screen.getByRole('row', { name: '自动监督 7 1 0 0 0% 8' })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: '智能心跳 7 1 0 0 0% 8' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '监督者' }))
     expect(screen.getByRole('row', { name: '直连模型 · gpt-sys 9 1 0 0 0% 10' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '按模型' }))

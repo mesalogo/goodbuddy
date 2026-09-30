@@ -243,7 +243,7 @@ app
               return { width: innerWidth, pageWidth: document.documentElement.scrollWidth,
                 clientWidth: panel.clientWidth, scrollWidth: panel.scrollWidth,
                 reports: !!panel.querySelector('#heartbeat-reports-title'),
-                suggestions: !!panel.querySelector('#heartbeat-panel-suggestions'),
+                suggestions: !!panel.querySelector('#supervision-suggestions-title'),
                 refresh: [...panel.querySelectorAll('button')].filter(b => b.getClientRects().length && b.textContent.includes('刷新')).length,
                 recap: !!recap && !!recap.getClientRects().length,
                 paragraphs: recap?.querySelectorAll('.supervisor-workspace__summary').length ?? 0,
@@ -256,21 +256,21 @@ app
             assert.equal(report.suggestions, tab === 'plans' && scenario === 'populated')
             assert.equal(report.recap, tab === 'overview' && scenario !== 'empty')
             if (tab === 'overview') {
-              assert(!report.text.includes('暂无自动监督报告') && !report.text.includes('待确认记忆'))
+              assert(!report.text.includes('暂无历史心跳报告') && !report.text.includes('待确认记忆') && !report.text.includes('监督建议'))
               if (scenario !== 'empty') {
                 assert.equal(report.paragraphs, 4)
                 assert(report.text.includes('外部评审时间') && report.text.includes('未解决事项'))
                 assert(report.clientWidth - report.proseWidth <= 50, 'Prose fills the panel within card padding')
               } else assert(report.text.includes('还没有成功回顾'))
             } else {
-              assert(!report.text.includes('暂无自动监督报告'))
-              assert.equal(report.text.includes('自动监督报告'), scenario === 'populated')
+              assert(!report.text.includes('暂无历史心跳报告'))
+              assert.equal(report.text.includes('历史心跳报告'), scenario === 'populated')
             }
             reports.push({ scenario, tab, ...report })
             const prefix = `recap-${scenario}-${tab}-${width}`
             await writeFile(join(artifacts, `${prefix}.png`), (await win.webContents.capturePage()).toPNG())
             if (tab === 'plans' && scenario === 'populated') {
-              for (const anchor of ['heartbeat-memory-title', 'heartbeat-reports-title', 'heartbeat-runs-title']) {
+              for (const anchor of ['supervision-suggestions-title', 'heartbeat-reports-title']) {
                 await js(`document.getElementById('${anchor}').scrollIntoView({block:'start'})`)
                 if (anchor === 'heartbeat-reports-title' && scenario === 'populated') await js(`document.querySelector('#heartbeat-panel-history button[aria-expanded=false]')?.click()`)
                 await settle()
@@ -281,6 +281,35 @@ app
         }
         if (scenario === 'populated') {
           await js('document.querySelector("#supervisor-tab-overview").click()')
+          // Toolbar: incremental review button, refresh, and the more menu holding re-analysis.
+          const toolbar = await js(`(() => {
+            const bar = document.querySelector('.supervisor-workspace__toolbar');
+            const rect = bar.getBoundingClientRect();
+            const more = bar.querySelector('[aria-haspopup=menu]');
+            // Rows are groups of items whose vertical ranges overlap.
+            const items = [...bar.children].filter(el => el.getClientRects().length).map(el => el.getBoundingClientRect()).sort((a, b) => a.top - b.top);
+            const tops = items.reduce((rows, rect) => { const last = rows.at(-1); if (last && rect.top < last.bottom) last.bottom = Math.max(last.bottom, rect.bottom); else rows.push({ top: Math.round(rect.top), bottom: rect.bottom }); return rows }, []).map(row => row.top);
+            return { primary: bar.querySelector('.primary-button').textContent, more: more?.getAttribute('aria-label'),
+              overflow: bar.scrollWidth > rect.width + 1, rows: new Set(tops).size };
+          })()`)
+          assert.equal(toolbar.primary, '回顾')
+          assert.equal(toolbar.more, '更多回顾操作')
+          assert.equal(toolbar.overflow, false, 'Recap toolbar overflows')
+          assert(toolbar.rows <= 2, `Recap toolbar wraps into ${toolbar.rows} rows`)
+          await js('document.querySelector(".supervisor-workspace__toolbar [aria-haspopup=menu]").click()')
+          await wait('!!document.querySelector("[role=menu] [role=menuitem]")')
+          assert.equal(await js('document.querySelector("[role=menu] [role=menuitem]").textContent'), '重新整理…')
+          await js('document.querySelector("[role=menu] [role=menuitem]").click()')
+          await wait('!!document.querySelector(".supervisor-workspace__confirm")')
+          const confirm = await js(`(() => { const el = document.querySelector('.supervisor-workspace__confirm'); const r = el.getBoundingClientRect();
+            return { width: r.width, overflow: el.scrollWidth > el.clientWidth + 1, text: el.textContent, buttons: [...el.querySelectorAll('button')].map(b => b.textContent) } })()`)
+          assert.equal(confirm.overflow, false, 'Re-analysis confirmation overflows')
+          assert.deepEqual(confirm.buttons, ['取消', '重新整理'])
+          assert(confirm.text.includes('可能产生较多模型用量'))
+          await settle()
+          await writeFile(join(artifacts, `recap-reanalyze-confirm-${win.getContentSize()[0]}.png`), (await win.webContents.capturePage()).toPNG())
+          await js('document.querySelector(".supervisor-workspace__confirm .secondary-button").click()')
+          await wait('!document.querySelector(".supervisor-workspace__confirm")')
           await js(`(() => { const s = document.querySelector('.supervisor-workspace__result-navigation select'); s.value = 'older-result'; s.dispatchEvent(new Event('change', {bubbles:true})); })()`)
           await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
           await js('document.querySelector(".supervisor-workspace__toolbar .primary-button").click(); document.querySelector(".page-shell").scrollTop = 0')
@@ -321,16 +350,20 @@ app
                 trend: !!panel.querySelector('#heartbeat-trend-title'),
                  audit: !!panel.querySelector('#heartbeat-runs-title'),
                  reports: !!panel.querySelector('#heartbeat-reports-title'),
-                 suggestions: !!panel.querySelector('#heartbeat-panel-suggestions'),
-                 emptyReports: panel.textContent.includes('暂无自动监督报告'),
+                 suggestions: !!panel.querySelector('#supervision-suggestions-title'),
+                 suggestionItems: panel.querySelectorAll('.supervision-suggestions__list > li').length,
+                 emptyReports: panel.textContent.includes('暂无历史心跳报告'),
                 plans: !!panel.querySelector('#heartbeat-panel-plans'),
-                create: [...panel.querySelectorAll('button')].filter(b => b.textContent === '创建自动监督计划').length,
+                create: [...panel.querySelectorAll('button')].filter(b => b.textContent === '创建心跳计划').length,
                 emptyStates: panel.querySelectorAll('#heartbeat-panel-overview .empty-state').length,
                 activity: panel.querySelectorAll('.supervisor-activity__item').length };
             })()`)
             assert(report.pageWidth <= width && report.scrollWidth <= report.panelWidth, 'Automatic panel overflow')
             for (const key of ['overview', 'plans']) assert.equal(report[key], tab === 'plans', key)
-            for (const key of ['metrics', 'trend', 'audit', 'reports', 'suggestions']) assert.equal(report[key], tab === 'plans' && !empty, key)
+            // Statistics, the trend and the run audit are gone; earlier reports stay readable.
+            for (const key of ['metrics', 'trend', 'audit']) assert.equal(report[key], false, key)
+            for (const key of ['reports', 'suggestions']) assert.equal(report[key], tab === 'plans' && !empty, key)
+            assert.equal(report.suggestionItems, tab === 'plans' && !empty ? 2 : 0)
             assert.equal(report.emptyReports, false)
             assert.equal(report.create, tab === 'plans' ? 1 : 0)
             assert.equal(report.emptyStates, 0)
@@ -339,15 +372,27 @@ app
             const prefix = `automatic-${scenario}-${tab}-light-${width}`
             await writeFile(join(artifacts, `${prefix}.png`), (await win.webContents.capturePage()).toPNG())
             if (tab === 'plans') {
-              for (const anchor of empty ? [] : ['heartbeat-trend-title', 'heartbeat-runs-title']) {
+              for (const anchor of empty ? [] : ['supervision-suggestions-title', 'heartbeat-reports-title']) {
                 await js(`document.getElementById('${anchor}').scrollIntoView({block:'start'})`)
                 await settle()
                 await writeFile(join(artifacts, `${prefix}-${anchor}.png`), (await win.webContents.capturePage()).toPNG())
               }
               await js('document.querySelector(".heartbeat-settings__intro button").click()')
               await wait('!!document.querySelector("[role=dialog]")')
-              assert(await js('document.querySelector("[role=dialog] > header button").getAttribute("aria-label") === "关闭自动监督计划"'))
+              assert(await js('document.querySelector("[role=dialog] > header button").getAttribute("aria-label") === "关闭心跳计划"'))
               assert.equal(await js('document.querySelector("[role=dialog] > footer").textContent'), '取消保存并启用计划')
+              const intervention = await js(`(() => {
+                const dialog = document.querySelector('[role=dialog]');
+                const group = [...dialog.querySelectorAll('fieldset')].find(f => f.textContent.includes('介入方式'));
+                const buttons = group ? [...group.querySelectorAll('button')].filter(b => b.textContent === '生成建议' || b.textContent === '仅更新记忆') : [];
+                const body = dialog.querySelector('.custom-task-dialog__body, [class*=body]') || dialog;
+                return { present: !!group, options: buttons.map(b => b.textContent), pressed: buttons.find(b => b.getAttribute('aria-pressed') === 'true' || b.getAttribute('aria-checked') === 'true')?.textContent,
+                  overflow: body.scrollWidth > body.clientWidth + 1 };
+              })()`)
+              assert.equal(intervention.present, true, 'Intervention field missing')
+              assert.deepEqual(intervention.options, ['生成建议', '仅更新记忆'])
+              assert.equal(intervention.overflow, false, 'Plan modal overflows horizontally')
+              if (width === 390) await writeFile(join(artifacts, `plan-modal-intervention-${scenario}-390.png`), (await win.webContents.capturePage()).toPNG())
               await js('document.querySelector("[role=dialog] > header button").click()')
               await wait('!document.querySelector("[role=dialog]")')
             }
@@ -503,7 +548,7 @@ app
             const before = await measure()
             assert(before.pageWidth <= width && before.bodyScrollWidth <= before.bodyWidth, 'No horizontal overflow')
             assert(before.dialog.top >= 0 && before.dialog.bottom <= height, 'Dialog fits viewport')
-            assert(before.headerButtons === 1 && before.closeLabel === '关闭自动监督计划' && before.tooltip === before.closeLabel, 'Accessible header X only')
+            assert(before.headerButtons === 1 && before.closeLabel === '关闭心跳计划' && before.tooltip === before.closeLabel, 'Accessible header X only')
             assert(before.title.right <= before.close.left && before.close.right > (before.dialog.left + before.dialog.right) / 2, 'Title left, close right')
             assert.equal(before.footerAlign, 'flex-end')
             assert.equal(before.text[0], '取消')
@@ -1039,7 +1084,7 @@ app
               headings: [...panel.querySelectorAll('h2')].map(e => e.textContent),
               refresh: [...panel.querySelectorAll('button')].some(e => e.textContent.includes('刷新')) };
           })()`)
-          assert.deepEqual(menuLayout.tabs, ['工作回顾', '故事线图谱', '自动监督', '活动记录', '设置'])
+          assert.deepEqual(menuLayout.tabs, ['工作回顾', '故事线图谱', '智能心跳', '活动记录', '设置'])
            assert.equal(menuLayout.nestedMenus, tab === 'graph' ? 1 : 0)
           assert(menuLayout.pageWidth <= width && menuLayout.scrollWidth <= menuLayout.panelWidth, 'Menu panel overflow')
            assert.equal(menuLayout.reports, tab === 'plans')

@@ -93,7 +93,7 @@ export const activity = {
       source: '来源'
     },
     sources: {
-      heartbeat: '自动监督',
+      heartbeat: '智能心跳',
       supervision: '监督者',
       magicNotes: '魔法笔记',
       knowledge: '知识库',

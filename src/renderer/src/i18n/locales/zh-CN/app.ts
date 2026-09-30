@@ -20,7 +20,7 @@ export const app = {
     confirmFailed: '无法确认保存结果，请重新读取后再修改。',
     descriptions: {
       'magic-notes': '记录笔记、整理待办并获取 AI 评论。', knowledge: '管理知识来源，为会话检索资料。',
-      heartbeat: '回顾工作演变、查看故事线图谱，并配置自动监督。', 'local-inference': '查看本机推理任务与执行服务。'
+      heartbeat: '回顾工作演变、查看故事线图谱，并配置智能心跳。', 'local-inference': '查看本机推理任务与执行服务。'
     }
   },
   notifications: {

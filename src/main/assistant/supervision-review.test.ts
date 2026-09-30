@@ -13,7 +13,8 @@ import { HeartbeatService } from './heartbeat-service'
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { vi.useRealTimers(); for (const cleanup of cleanups.splice(0)) await cleanup() })
 const time = Date.now()
-const request: SupervisionRunRequest = { trigger: 'manual', scope: { kind: 'global' }, timeRange: {
+// Explicit re-analysis: reads the whole interval and never moves automatic progress.
+const request: SupervisionRunRequest = { trigger: 'manual', reanalyze: true, scope: { kind: 'global' }, timeRange: {
   from: new Date(time - 10000).toISOString(), to: new Date(time + 10000).toISOString()
 } }
 const empty = { summary: 'Navigation', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
@@ -133,8 +134,10 @@ it('projects cancellation into heartbeat activity while runtime cleanup is still
   const service = f.service()
   const entered = deferred(), finish = deferred()
   f.summarize.mockImplementationOnce(async () => { entered.resolve(); await finish.promise; return empty })
-  const heartbeat = new HeartbeatService(f.db, { summarize: async () => ({ summary: 'Report', highlights: [], proposedMemories: [], followUpTasks: [] }) }, () => {},
-    async ({ run }) => { await service.run({ ...request, trigger: 'heartbeat' }, run.id) })
+  const heartbeat = new HeartbeatService(f.db, { review: async ({ run }) => {
+    const result = await service.run({ ...request, trigger: 'heartbeat' }, run.id)
+    return { status: result.status ?? 'completed', runId: result.runId }
+  } })
   const config = heartbeat.create({ name: 'Review', scope: request.scope, timezone: 'UTC',
     recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
   const pending = heartbeat.runNow({ id: config.id, idempotencyKey: randomUUID() })
@@ -355,4 +358,41 @@ it('keeps old-version facts but does not permanently block automatic review afte
   expect(result.runId).not.toBe(runId)
   expect(result.status).toBe('completed')
   expect(f.db.supervisionReviewStore().batches(runId)).toEqual(saved)
+})
+
+it('makes a manual review incremental by default and keeps explicit re-analysis out of shared progress', async () => {
+  const f = await fixture([['Atlas decision'], ['Beacon decision']])
+  const service = f.service()
+  const manual = { ...request, reanalyze: undefined }
+  expect((await service.run(manual)).status).toBe('completed')
+  const firstCalls = f.summarize.mock.calls.length
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints').get()!.n).toBe(2)
+  // Unchanged sources are skipped by both a manual review and the heartbeat.
+  expect((await service.run(manual)).status).toBe('no_change')
+  expect((await service.run({ ...manual, trigger: 'heartbeat' })).status).toBe('no_change')
+  expect(f.summarize).toHaveBeenCalledTimes(firstCalls)
+  // Re-analysis reads the interval again but neither resets nor advances progress.
+  const before = f.sql.prepare('SELECT * FROM review_checkpoints ORDER BY source').all()
+  expect((await service.run(request)).coverage).toMatchObject({ sources: 2, complete: true })
+  expect(f.sql.prepare('SELECT * FROM review_checkpoints ORDER BY source').all()).toEqual(before)
+  // Only the changed source is processed next time.
+  f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('Atlas decision revised', f.conversations[0]!.messages[0]!.id)
+  expect((await service.run(manual)).coverage).toMatchObject({ sources: 1, complete: true })
+})
+
+it('does not let a heartbeat silently resume a review the user paused', async () => {
+  const f = await fixture([['Evidence']])
+  const service = f.service()
+  const automatic = { ...request, reanalyze: undefined, trigger: 'heartbeat' as const }
+  const entered = deferred(), finish = deferred()
+  f.summarize.mockImplementationOnce(async () => { entered.resolve(); await finish.promise; return empty })
+  const pending = service.run(automatic)
+  await entered.promise
+  const pausedId = service.execution().runId!
+  service.pause(pausedId)
+  finish.resolve()
+  await expect(pending).resolves.toMatchObject({ status: 'paused' })
+  const next = await service.run(automatic)
+  expect(next.runId).not.toBe(pausedId)
+  expect(f.db.listSupervisionActivity().find(row => row.id === pausedId)?.status).toBe('paused')
 })

@@ -18,11 +18,48 @@ export const supervisionRunRequestSchema = z
   .object({
     trigger: supervisionTriggerSchema,
     scope: heartbeatScopeSchema,
-    timeRange: supervisionTimeRangeSchema
+    timeRange: supervisionTimeRangeSchema,
+    // Reviews skip processed, unchanged sources by default. Only an explicit
+    // user re-analysis reads the whole interval again; it never moves progress.
+    reanalyze: z.boolean().optional()
   })
   .strict()
 
 export type SupervisionRunRequest = z.infer<typeof supervisionRunRequestSchema>
+
+/** Whether a review reads and advances the shared incremental progress. */
+export function isIncrementalReview(request: Pick<SupervisionRunRequest, 'trigger' | 'reanalyze'>): boolean {
+  return request.trigger === 'heartbeat' || request.reanalyze !== true
+}
+
+export const supervisionSuggestionKindSchema = z.enum(['open_item', 'conflict', 'convention', 'revision'])
+export type SupervisionSuggestionKind = z.infer<typeof supervisionSuggestionKindSchema>
+export type SupervisionSuggestion = {
+  id: string
+  resultId: string | null
+  heartbeatRunId: string | null
+  scope: SupervisionRunRequest['scope']
+  kind: SupervisionSuggestionKind
+  title: string
+  detail: string
+  sourceIds: string[]
+  entityId: string | null
+  relationId: string | null
+  taskId: string | null
+  status: 'pending' | 'accepted' | 'dismissed'
+  createdAt: string
+}
+export const supervisionSuggestionListRequestSchema = z.object({
+  status: z.enum(['pending', 'all']).default('pending'),
+  limit: z.number().int().min(1).max(100).default(50),
+  offset: z.number().int().min(0).max(100_000).default(0)
+}).strict()
+export const supervisionSuggestionActionSchema = z.object({
+  id: z.string().uuid(),
+  action: z.enum(['accept', 'dismiss'])
+}).strict()
+export type SupervisionSuggestionAction = z.infer<typeof supervisionSuggestionActionSchema>
+export const supervisionSuggestionRetrySchema = z.object({ heartbeatRunId: z.string().min(1).max(256) }).strict()
 
 export const supervisionActivityRequestSchema = z.object({
   configId: z.string().min(1).max(256).optional(),
@@ -45,6 +82,10 @@ export type SupervisionActivity = {
   resultId: string | null
   heartbeatStatus: 'claimed' | 'completed' | 'failed' | 'skipped' | 'no_change' | null
   supervisionStatus: 'running' | 'completed' | 'failed' | 'no_change' | 'paused' | 'cancelled' | null
+  /** Intervention after an automatic review; null when not applicable. */
+  suggestionStatus?: 'running' | 'completed' | 'failed' | 'skipped' | null
+  suggestionError?: string | null
+  suggestionCount?: number
 }
 
 export const supervisionEvidenceSchema = z

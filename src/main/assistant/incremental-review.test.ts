@@ -109,12 +109,12 @@ it('keeps scope, inclusive time boundaries, task revisions and memory background
   expect((await supervisor.run({ ...request, scope: { kind: 'projects', projectIds: [second.id] } })).status).toBe('no_change')
 })
 
-it('skips both automatic paid stages and retries failed supervision without repeating the heartbeat model', async () => {
+it('triggers one incremental review per heartbeat and retries failed supervision without a report stage', async () => {
   const { db, sql, supervisor, summarize } = await fixture()
-  const heartbeatModel = vi.fn(async () => heartbeatOutput)
-  const heartbeat = new HeartbeatService(db, { summarize: heartbeatModel }, () => {}, async ({ run }) => {
-    await supervisor.run(request, run.id)
-  })
+  const heartbeat = new HeartbeatService(db, { review: async ({ run }) => {
+    const result = await supervisor.run(request, run.id)
+    return { status: result.status ?? 'completed', runId: result.runId }
+  } })
   const config = heartbeat.create({ name: 'Incremental', scope: request.scope, timezone: 'UTC',
     recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }, now)
   let tickNumber = 0
@@ -126,15 +126,12 @@ it('skips both automatic paid stages and retries failed supervision without repe
   await tick()
   expect(db.listSupervisionActivity()[0]).toMatchObject({ status: 'failed', heartbeatStatus: 'completed' })
   await tick()
-  expect(heartbeatModel).toHaveBeenCalledTimes(1)
   expect(summarize).toHaveBeenCalledTimes(2)
   await tick()
-  expect(heartbeatModel).toHaveBeenCalledTimes(1)
   expect(summarize).toHaveBeenCalledTimes(2)
   expect(db.listSupervisionActivity()[0]).toMatchObject({ status: 'no_change', heartbeatStatus: 'no_change', supervisionStatus: 'no_change' })
-  expect(db.listHeartbeatEntries(config.id)).toHaveLength(1)
+  expect(db.listHeartbeatEntries(config.id)).toHaveLength(0)
 })
-
 it('processes knowledge edits independently and ignores unrelated message metadata writes', async () => {
   const { db, sql, messages, supervisor, summarize } = await fixture()
   const reference = { libraryId: randomUUID(), documentId: randomUUID(), chunkId: randomUUID(),
@@ -149,25 +146,6 @@ it('processes knowledge edits independently and ignores unrelated message metada
   expect(changed.evidence).toEqual([expect.objectContaining({ sourceType: 'knowledge', sourceId: reference.chunkId,
     content: 'SQLite WAL supports readers', locator: expect.objectContaining({ documentId: reference.documentId, libraryId: reference.libraryId }) })])
   expect(db.listSupervisionCandidates(request)).toHaveLength(1)
-})
-
-it('rolls back heartbeat checkpoints with a failed report save and retries the same input', async () => {
-  const { db, sql } = await fixture()
-  const summarize = vi.fn(async () => heartbeatOutput)
-  const heartbeat = new HeartbeatService(db, { summarize }, () => {})
-  const config = heartbeat.create({ name: 'Failure boundary', scope: request.scope, timezone: 'UTC',
-    recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }, now)
-  sql.prepare('UPDATE heartbeat_configs SET next_run_at = ? WHERE id = ?').run(new Date(now.getTime() - 1000).toISOString(), config.id)
-  const initial = db.collectIncrementalReview(request, 'heartbeat', 12000)
-  sql.exec("CREATE TRIGGER fail_report BEFORE INSERT ON heartbeat_entries BEGIN SELECT RAISE(ABORT, 'Report save failed'); END")
-  expect((await heartbeat.processDue())[0]!.status).toBe('failed')
-  expect(db.collectIncrementalReview(request, 'heartbeat', 12000)).toEqual(initial)
-  expect(db.listHeartbeatEntries(config.id)).toEqual([])
-  sql.exec('DROP TRIGGER fail_report')
-  sql.prepare("UPDATE heartbeat_runs SET next_attempt_at = ? WHERE config_id = ?").run(new Date(Date.now() - 1000).toISOString(), config.id)
-  expect((await heartbeat.processDue())[0]!.status).toBe('completed')
-  expect(summarize).toHaveBeenCalledTimes(2)
-  expect(db.collectIncrementalReview(request, 'heartbeat', 12000).evidence).toEqual([])
 })
 
 it('preserves schema-45 plans, reports, IDs and foreign keys while extending status constraints', async () => {

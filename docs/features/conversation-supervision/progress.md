@@ -1,8 +1,31 @@
 # 监督者实施进度
 
-日期：2026-09-28。
+日期：2026-09-30。
 
 当前记录以已验证生产行为为准。监督者尚未覆盖全部 user stories。
+
+## 2026-09-30 心跳职责收敛与监督建议
+
+对应 FR-S4、FR-S12、US-S32、US-S33，规则见[心跳职责与介入](./logic-design.md#心跳职责与介入目标设计)。
+
+实现：
+
+- `HeartbeatService` 不再读取来源或调用模型。领取计划后立即完成自身运行，再通过 `review` 触发共享的 `SupervisorService.run({ trigger: 'heartbeat' })`；审查结果 `no_change` 时标记心跳为无变化。计划领取、单次补跑、单回顾排队和失败记录沿用原有机制。
+- 手动“回顾”默认增量：`supervisionRunRequestSchema` 新增可选 `reanalyze`，`isIncrementalReview` 决定是否读取、推进 `review_checkpoints`。只有 `reanalyze: true` 重读区间，且不推进也不重置共享进度。自动检查不再续跑用户主动暂停的回顾，改为新建运行处理未提交来源。
+- 计划新增 `intervention`（`suggest` / `memory`，默认 `suggest`）。`supervision-suggestions.ts` 从本次发布结果按规则挑选候选：批次未决事项、`revised` 实体变化、`contrasts` 关系、由至少三处不同原始来源支持的未确认实体。没有候选时不调用模型；有候选时 `supervision-suggester.ts` 只把候选文本交给一次建议调用，不读原文。待处理建议不重复，已处理建议仅在依据变化后再次提出。
+- 建议失败写入 `heartbeat_runs.suggestion_status/error`，图谱和进度保留；活动页显示“回顾已更新，建议生成失败”并可单独重试。
+- 接受未决事项生成暂停任务，接受候选约定确认为长期背景（记忆）并确认对应实体；分歧和修订标记已核对。
+- Schema 50：`heartbeat_configs.intervention`、`heartbeat_runs.suggestion_status/suggestion_error`、`supervision_suggestions` 表。升级时把旧心跳报告中仍为 `proposed` 的记忆迁入为待确认约定，不确认、不删除；旧报告只读保留。
+- 界面：工作回顾主按钮改为“回顾”，“更多 → 重新整理…”经确认后执行；计划 Modal 增加“介入方式”；自动监督页用“监督建议”替代成功率、趋势、记忆/行动建议和运行审计，建议可查看依据、打开会话、在图谱中查看；设置移除心跳报告超时；导航角标统计待处理建议。
+
+验证：
+
+- 定向单元与集成测试：`src/main/assistant`、`src/shared`、`src/preload` 共 589 项；`src/main/ipc.test.ts` 心跳与监督相关 29 项；Renderer 监督者、自动监督、活动、设置相关组件测试及 `App.test.tsx` 全文件均通过。新增覆盖：手动增量与重新整理不动进度、不续跑已暂停回顾、候选规则与去重、忽略后仅新证据重提、建议失败隔离、IPC 启停门控、Schema 49 升级迁移。
+- Electron 布局：`GOODBUDDY_SUPERVISOR_RECAP`、`AUTOMATIC_OVERVIEW`、`ACTIVITY`、`PLAN_MODAL` 场景通过，覆盖 1440/390px 下监督建议、介入方式字段、重新整理确认和工具栏两行布局，无横向溢出。
+- 真实模型（DeepSeek，`deepseek-flash`，隔离 SQLite，`scripts/heartbeat-deepseek.mjs`）：首次心跳 1 次回顾调用 + 1 次建议调用（建议输入约 1,150 字符，不含原文），生成分歧、修订、未决事项三条建议且依据均指向本次来源；无变化心跳与默认手动回顾均 0 次调用；追加一条消息后只处理 1 个来源，复用全部 5 个既有实体，再调用 1 次回顾、1 次建议。共 4 次付费请求。
+- 未运行全量测试。
+
+边界：主动介入（会话级实时）未实现，界面不显示；项目与全局仍各自维护处理进度（US-S31）。
 
 ## 2026-09-28 Story Graph 只读工具
 

@@ -2221,6 +2221,9 @@ export type DesktopApi = {
     knowledgeCommit: (input: import('./supervision-contracts').SupervisionKnowledgeCommitRequest) => Promise<Record<string, unknown>>
     entityAction: (input: import('./supervision-contracts').SupervisionEntityAction) => Promise<void>
     relationAction: (input: import('./supervision-contracts').SupervisionRelationAction) => Promise<void>
+    suggestions: (input?: { status?: 'pending' | 'all'; limit?: number; offset?: number }) => Promise<import('./supervision-contracts').SupervisionSuggestion[]>
+    suggestionAction: (input: import('./supervision-contracts').SupervisionSuggestionAction) => Promise<import('./supervision-contracts').SupervisionSuggestion>
+    retrySuggestions: (input: { heartbeatRunId: string }) => Promise<number>
   }
   experts: {
     list: () => Promise<AssistantExpert[]>

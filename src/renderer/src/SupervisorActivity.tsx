@@ -76,6 +76,20 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
     setRefresh((value) => value + 1)
   }
   const date = (value: string) => new Date(value).toLocaleString(i18n.resolvedLanguage)
+  // The review stays published; only the suggestion step is repeated.
+  const retrySuggestions = async (heartbeatRunId: string) => {
+    if (actionPending.current) return
+    actionPending.current = true
+    setPending(heartbeatRunId)
+    setError(undefined)
+    try { await api.retrySuggestions({ heartbeatRunId }) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
+    finally {
+      actionPending.current = false
+      setPending(undefined)
+      setRefresh(value => value + 1)
+    }
+  }
   const control = async (row: SupervisionActivity, action: 'pause' | 'cancel' | 'resume') => {
     if (actionPending.current || !row.reviewProgress) return
     const runId = row.reviewProgress.runId
@@ -147,7 +161,6 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
           <p className="supervisor-activity__scope">{!row.scope ? t('activity.unknownScope') : row.scope.kind === 'global' ? t('center.scope.global') : t('supervisor.projectScope', { names: row.scope.projectIds.map((id) => projects.find((project) => project.id === id)?.name ?? t('settings.scope.unavailableProject')).join(', ') })} · {t(`activity.triggers.${row.trigger}`)}</p>
           {!row.reviewProgress && <>
           <p className="supervisor-activity__stages">
-            {row.heartbeatStatus && <span>{t('activity.heartbeatStage')}: {t(`statuses.run.${row.heartbeatStatus}`)}</span>}
             <span>{t('activity.supervisionStage')}: {row.supervisionStatus ? t(`activity.status.${row.supervisionStatus}`) : t('activity.notRecorded')}</span>
           </p>
           </>}
@@ -170,6 +183,12 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
               <pre tabIndex={0} aria-label={t('reviewSettings.diagnostics')} style={{ userSelect: 'text' }}>{row.error}</pre>
             </details>
           </div>}
+          {row.suggestionStatus && <p className="supervisor-activity__suggestion" role={row.suggestionStatus === 'failed' ? 'alert' : undefined}>
+            {row.suggestionStatus === 'failed' ? t('activity.updatedSuggestionFailed')
+              : `${t('activity.suggestionStage')}: ${t(`activity.suggestionStates.${row.suggestionStatus}`, { count: row.suggestionCount ?? 0 })}`}
+            {row.suggestionStatus === 'failed' && typeof api?.retrySuggestions === 'function' && <button type="button" className="secondary-button" disabled={!!pending}
+              onClick={() => void retrySuggestions(row.id)}>{t('activity.retrySuggestions')}</button>}
+          </p>}
           {row.resultId && <div className="supervisor-workspace__actions">
             <button className="secondary-button" type="button" onClick={() => onOpenResult(row.resultId!, 'overview')}>{t('activity.openReview')}</button>
             <button className="secondary-button" type="button" onClick={() => onOpenResult(row.resultId!, 'graph')}>{t('supervisor.viewInGraph')}</button>
@@ -183,7 +202,6 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
             </dl>
             {row.reviewProgress && <p>{t('reviewSettings.progress', { batches: row.reviewProgress.batches, characters: row.reviewProgress.characters, remaining: row.reviewProgress.remainingSources })}</p>}
             {row.reviewProgress?.navigationNodes !== undefined && <p>{t('activity.navigationSaved', { count: row.reviewProgress.navigationNodes })}</p>}
-            {row.reviewProgress && row.heartbeatStatus && <p>{t('activity.heartbeatStage')}: {t(`statuses.run.${row.heartbeatStatus}`)}</p>}
             {row.summary && <p className="supervisor-activity__summary">{row.summary}</p>}
             {row.reviewProgress?.settings && <details><summary>{t('reviewSettings.configuration')}</summary>
               <p>{t('reviewSettings.configurationValues', row.reviewProgress.settings)}</p>

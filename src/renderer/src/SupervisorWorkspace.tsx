@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { BookOpen, Network, RefreshCw, X } from 'lucide-react'
+import { BookOpen, Ellipsis, Network, RefreshCw, X } from 'lucide-react'
+import { AnchoredMenu } from './AnchoredMenu'
 import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
 import { EmptyState, PageTabs } from './WorkspacePrimitives'
 import { SupervisionDiscussion } from './SupervisionDiscussion'
@@ -80,6 +81,10 @@ export function SupervisorWorkspace({
   const [running, setRunning] = useState(false)
   const runPending = useRef(false)
   const [dismissedNotice, setDismissedNotice] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [confirmReanalyze, setConfirmReanalyze] = useState(false)
+  const moreRef = useRef<HTMLButtonElement>(null)
+  const moreId = useId()
   const [resultId, setResultId] = useState<string | undefined>(graphNavigation?.resultId)
   const [appliedNavigation, setAppliedNavigation] = useState(graphNavigation)
   if (appliedNavigation !== graphNavigation) {
@@ -207,8 +212,10 @@ export function SupervisorWorkspace({
     return () => { disposed = true; clearTimeout(timer) }
   }, [api, t])
 
-  const run = async () => {
+  // A review is incremental by default. Only an explicit re-analysis reads the whole interval again.
+  const run = async (reanalyze = false) => {
     if (!api) return
+    setConfirmReanalyze(false)
     setDismissedNotice(false)
     if (runPending.current) return
     runPending.current = true
@@ -216,6 +223,7 @@ export function SupervisorWorkspace({
     const to = new Date()
     const request: SupervisionRunRequest = {
       trigger: 'manual',
+      ...(reanalyze ? { reanalyze: true } : {}),
       scope:
         projectId === 'global'
           ? { kind: 'global' }
@@ -517,7 +525,7 @@ export function SupervisorWorkspace({
                 className="secondary-button"
                 disabled={busy}
                 onClick={() =>
-                  errorAction === 'run' ? void run() : setError(undefined)
+                  errorAction === 'run' ? void run(lastRequest?.reanalyze === true) : setError(undefined)
                 }
               >
                 {errorAction === 'run'
@@ -571,7 +579,27 @@ export function SupervisorWorkspace({
                 >
                   {t('center.actions.refresh')}
                 </button>
+                <button ref={moreRef} type="button" className="icon-button" aria-label={t('supervisor.more')} title={t('supervisor.more')}
+                  aria-haspopup="menu" aria-expanded={moreOpen} aria-controls={moreOpen ? moreId : undefined}
+                  onClick={() => setMoreOpen(!moreOpen)}><Ellipsis size={16} aria-hidden="true" /></button>
+                {moreOpen && <AnchoredMenu anchorRef={moreRef} id={moreId} label={t('supervisor.more')} width={220} onClose={() => setMoreOpen(false)}>
+                  <button type="button" role="menuitem" onClick={() => {
+                    setMoreOpen(false)
+                    moreRef.current?.focus()
+                    setConfirmReanalyze(true)
+                  }}>{t('supervisor.reanalyze')}</button>
+                </AnchoredMenu>}
               </div>
+              {confirmReanalyze && <div className="supervisor-workspace__confirm" role="alertdialog" aria-labelledby={`${moreId}-title`}
+                aria-describedby={`${moreId}-description`} onKeyDown={(event) => { if (event.key === 'Escape') setConfirmReanalyze(false) }}>
+                <strong id={`${moreId}-title`}>{t('supervisor.reanalyzeTitle')}</strong>
+                <p id={`${moreId}-description`}>{t('supervisor.reanalyzeHint', { scope: projectId === 'global' ? t('center.scope.global')
+                  : projects.find(project => project.id === projectId)?.name ?? '', period: t('supervisor.days', { count: days }) })}</p>
+                <div>
+                  <button type="button" className="secondary-button" autoFocus onClick={() => setConfirmReanalyze(false)}>{t('supervisor.cancel')}</button>
+                  <button type="button" className="primary-button" onClick={() => void run(true)}>{t('supervisor.reanalyzeConfirm')}</button>
+                </div>
+              </div>}
               {results.length > 0 && <div className="supervisor-workspace__result-navigation">
                 <label>
                   {t('supervisor.history')}

@@ -64,7 +64,7 @@ import type {
   TokenUsageSystemSource,
   TokenUsageTotals
 } from '../../shared/assistant-contracts'
-import { tokenUsageSystemSources } from '../../shared/assistant-contracts'
+import { tokenUsageSystemSources, defaultHeartbeatIntervention } from '../../shared/assistant-contracts'
 import type { StoredSupervisionResult, SupervisionCandidate } from './supervisor-service'
 import { supervisionEntitySchema, supervisionResultViewSchema, type SupervisionTarget, type SupervisionGraphRequest, type SupervisionRunRequest, type SupervisionActivity } from '../../shared/supervision-contracts'
 import type { AgentEvent } from '../../shared/contracts'
@@ -130,7 +130,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 49
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 50
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -475,6 +475,7 @@ type HeartbeatConfigRow = {
   recurrence_json: string
   lookback_hours: number
   retention_days: number
+  intervention?: string | null
   enabled: number
   next_run_at: string
   last_run_at: string | null
@@ -917,6 +918,7 @@ function toHeartbeatConfig(
     enabled: row.enabled === 1,
     lookbackHours: row.lookback_hours,
     retentionDays: row.retention_days,
+    intervention: row.intervention === 'memory' ? 'memory' : 'suggest',
     nextRunAt: row.next_run_at,
     lastRunAt: row.last_run_at ?? undefined,
     lastStatus: row.last_status ?? undefined,
@@ -7847,8 +7849,8 @@ export class AssistantDatabase {
         `INSERT INTO heartbeat_configs
           (id, project_id, scope_kind, name, timezone, recurrence_json,
            lookback_hours, retention_days, enabled, next_run_at,
-           last_run_at, last_status, created_at, updated_at)
-         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`
+           last_run_at, last_status, created_at, updated_at, intervention)
+         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`
       ).run(
         id,
         input.scope.kind,
@@ -7860,7 +7862,8 @@ export class AssistantDatabase {
         input.enabled ? 1 : 0,
         nextRunAt,
         timestamp,
-        timestamp
+        timestamp,
+        input.intervention ?? defaultHeartbeatIntervention
       )
       this.insertHeartbeatProjectBindings(id, projectIds)
       database.exec('COMMIT')
@@ -7893,7 +7896,7 @@ export class AssistantDatabase {
          SET project_id = NULL, scope_kind = ?, name = ?, timezone = ?,
              recurrence_json = ?, lookback_hours = ?,
              retention_days = ?, enabled = ?, next_run_at = ?,
-             updated_at = ?
+             updated_at = ?, intervention = COALESCE(?, intervention)
          WHERE id = ?`
       ).run(
         input.scope.kind,
@@ -7905,6 +7908,7 @@ export class AssistantDatabase {
         input.enabled ? 1 : 0,
         nextRunAt,
         timestamp,
+        input.intervention ?? null,
         configId
       )
       if (result.changes !== 1) {
@@ -8611,6 +8615,42 @@ export class AssistantDatabase {
     return this.getHeartbeatRun(claim.run.id)
   }
 
+  /** Finish the heartbeat's own work: it has handed the trigger to the supervisor. */
+  completeHeartbeatTrigger(claim: ClaimedHeartbeatRun, now: Date): AssistantHeartbeatRun {
+    const database = this.requireDatabase()
+    const timestamp = now.toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const updated = database.prepare(`UPDATE heartbeat_runs SET status = 'completed', completed_at = ?, error = NULL,
+        lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ? AND status = 'claimed'
+        AND lease_owner = ? AND lease_expires_at > ?`).run(timestamp, timestamp, claim.run.id, claim.leaseOwner, timestamp)
+      if (updated.changes !== 1) throw new Error('Heartbeat lease is no longer active')
+      database.prepare("UPDATE heartbeat_configs SET last_status = 'completed', updated_at = ? WHERE id = ?").run(timestamp, claim.config.id)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    this.pruneHeartbeatHistory(claim.config.id, now)
+    return this.getHeartbeatRun(claim.run.id)
+  }
+
+  markHeartbeatNoChange(runId: string, configId: string): void {
+    const database = this.requireDatabase()
+    database.prepare("UPDATE heartbeat_runs SET status = 'no_change' WHERE id = ? AND status = 'completed'").run(runId)
+    database.prepare("UPDATE heartbeat_configs SET last_status = 'no_change' WHERE id = ?").run(configId)
+  }
+
+  setHeartbeatSuggestionStatus(runId: string, status: 'running' | 'completed' | 'failed' | 'skipped', error?: string): void {
+    this.requireDatabase().prepare('UPDATE heartbeat_runs SET suggestion_status = ?, suggestion_error = ? WHERE id = ?')
+      .run(status, error?.slice(0, 4000) ?? null, runId)
+  }
+
+  supervisionRunForHeartbeat(heartbeatRunId: string): string | undefined {
+    return this.requireDatabase().prepare(`SELECT s.id FROM supervision_runs s JOIN supervision_results r ON r.run_id = s.id
+      WHERE s.heartbeat_run_id = ? AND s.status = 'completed' LIMIT 1`).get(heartbeatRunId)?.id as string | undefined
+  }
+
   getHeartbeatEntry(entryId?: string): AssistantHeartbeatEntry | undefined {
     if (!entryId) return undefined
     const row = this.requireDatabase().prepare(
@@ -8661,7 +8701,8 @@ export class AssistantDatabase {
       SELECT s.id AS id, 'supervision' AS kind, s.trigger, s.status, s.scope_json AS scope,
         COALESCE(s.started_at, s.created_at) AS startedAt, s.completed_at AS completedAt,
         s.time_range_json AS timeRange, s.error, r.summary, r.id AS resultId,
-        NULL AS heartbeatStatus, s.status AS supervisionStatus, s.id AS supervisionRunId
+        NULL AS heartbeatStatus, s.status AS supervisionStatus, s.id AS supervisionRunId,
+        NULL AS suggestionStatus, NULL AS suggestionError, 0 AS suggestionCount
       FROM supervision_runs s LEFT JOIN supervision_results r ON r.run_id = s.id
       WHERE ? IS NULL AND (s.heartbeat_run_id IS NULL OR NOT EXISTS (SELECT 1 FROM heartbeat_runs h WHERE h.id = s.heartbeat_run_id))
       UNION ALL
@@ -8678,7 +8719,8 @@ export class AssistantDatabase {
           WHEN s.status = 'running' OR h.status = 'claimed' OR h.projection_status = 'running' THEN NULL
           ELSE COALESCE(s.completed_at, h.projection_completed_at, h.completed_at) END,
         s.time_range_json, COALESCE(s.error, h.projection_error, h.error), COALESCE(r.summary, e.summary), r.id,
-        h.status, s.status, s.id
+        h.status, s.status, s.id, h.suggestion_status, h.suggestion_error,
+        (SELECT COUNT(*) FROM supervision_suggestions g WHERE g.heartbeat_run_id = h.id)
       FROM heartbeat_runs h LEFT JOIN supervision_runs s ON s.heartbeat_run_id = h.id
         LEFT JOIN supervision_results r ON r.run_id = s.id LEFT JOIN heartbeat_entries e ON e.id = h.entry_id
       WHERE ? IS NULL OR h.config_id = ?
@@ -11568,10 +11610,99 @@ export class AssistantDatabase {
         database.exec('PRAGMA user_version = 49; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
+    if (version.user_version < 50) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // The heartbeat no longer writes its own report. It triggers the shared
+        // incremental review and, per plan, derives suggestions from the published graph.
+        const configColumns = database.prepare('PRAGMA table_info(heartbeat_configs)').all()
+        if (!configColumns.some((item) => item.name === 'intervention')) {
+          database.exec("ALTER TABLE heartbeat_configs ADD COLUMN intervention TEXT NOT NULL DEFAULT 'suggest'")
+        }
+        const runColumns = database.prepare('PRAGMA table_info(heartbeat_runs)').all()
+        for (const column of ['suggestion_status', 'suggestion_error']) {
+          if (!runColumns.some((item) => item.name === column)) database.exec(`ALTER TABLE heartbeat_runs ADD COLUMN ${column} TEXT`)
+        }
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS supervision_suggestions (
+            id TEXT PRIMARY KEY,
+            result_id TEXT REFERENCES supervision_results(id) ON DELETE SET NULL,
+            heartbeat_run_id TEXT,
+            scope_json TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('open_item', 'conflict', 'convention', 'revision')),
+            fingerprint TEXT NOT NULL,
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            source_reference_ids_json TEXT NOT NULL DEFAULT '[]',
+            entity_id TEXT,
+            relation_id TEXT,
+            memory_id TEXT,
+            task_id TEXT,
+            evidence_key TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'dismissed')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS supervision_suggestions_status ON supervision_suggestions(status, created_at DESC);
+          CREATE INDEX IF NOT EXISTS supervision_suggestions_fingerprint ON supervision_suggestions(scope_json, fingerprint);
+        `)
+        // Carry pending memory proposals from old heartbeat reports forward as
+        // unconfirmed conventions. Nothing is confirmed or deleted.
+        const timestamp = new Date().toISOString()
+        const proposals = database.prepare(`SELECT DISTINCT m.id, m.scope, m.scope_id, m.content FROM heartbeat_entries e
+          JOIN json_each(e.proposed_memory_ids_json) j JOIN memory_items m ON m.id = j.value
+          WHERE m.status = 'proposed'`).all() as Array<{ id: string; scope: string; scope_id: string | null; content: string }>
+        const insert = database.prepare(`INSERT INTO supervision_suggestions
+          (id, result_id, heartbeat_run_id, scope_json, kind, fingerprint, title, detail, memory_id, status, created_at, updated_at)
+          VALUES (?, NULL, NULL, ?, 'convention', ?, ?, ?, ?, 'pending', ?, ?)`)
+        for (const proposal of proposals) {
+          const scope = proposal.scope === 'project' && proposal.scope_id
+            ? { kind: 'projects', projectIds: [proposal.scope_id] } : { kind: 'global' }
+          insert.run(randomUUID(), JSON.stringify(scope), `memory:${proposal.id}`, proposal.content.slice(0, 200),
+            proposal.content, proposal.id, timestamp, timestamp)
+        }
+        database.exec('PRAGMA user_version = 50; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
   }
 
   supervisionReviewStore(): SupervisionReviewStore {
     return new SupervisionReviewStore(this.requireDatabase())
+  }
+
+  supervisionSuggestions(): SupervisionSuggestionStore {
+    return new SupervisionSuggestionStore(this.requireDatabase())
+  }
+
+  /**
+   * Act on a suggestion. Open items become paused follow-up tasks; conventions
+   * become confirmed long-term background; conflicts and revisions are marked reviewed.
+   */
+  resolveSupervisionSuggestion(id: string, action: 'accept' | 'dismiss'): SupervisionSuggestion {
+    const store = this.supervisionSuggestions()
+    const suggestion = store.get(id)
+    if (!suggestion) throw new Error('此建议已处理或不存在')
+    if (suggestion.status !== 'pending') throw new Error('此建议已处理或不存在')
+    const projectId = suggestion.scope.kind === 'projects' && suggestion.scope.projectIds.length === 1
+      ? suggestion.scope.projectIds[0] : undefined
+    if (action === 'dismiss') {
+      if (suggestion.memoryId) this.setMemoryStatus(suggestion.memoryId, 'rejected')
+      store.resolve(id, 'dismissed')
+      return store.get(id)!
+    }
+    if (suggestion.kind === 'open_item') {
+      const task = this.createTask({ id: randomUUID(), projectId, title: suggestion.title.slice(0, 200), instructions: suggestion.detail,
+        workMode: 'ask', origin: 'assistant', status: 'paused' })
+      store.resolve(id, 'accepted', { taskId: task.id })
+    } else if (suggestion.kind === 'convention') {
+      let memoryId = suggestion.memoryId ?? undefined
+      if (memoryId) this.setMemoryStatus(memoryId, 'confirmed')
+      else memoryId = this.createMemory({ scope: projectId ? 'project' : 'global', scopeId: projectId, type: 'preference',
+        content: suggestion.detail || suggestion.title }).id
+      if (suggestion.entityId) this.applySupervisionEntityAction({ entityId: suggestion.entityId, action: 'confirm' })
+      store.resolve(id, 'accepted', { memoryId })
+    } else store.resolve(id, 'accepted')
+    return store.get(id)!
   }
 
   private requireDatabase(): DatabaseSync {
@@ -11589,4 +11720,6 @@ export class AssistantDatabase {
 }
 import type { ImageOperation } from '../../shared/image-generation-contracts'
 import { SupervisionReviewStore, supervisionReviewMigration } from './supervision-review-store'
+import { SupervisionSuggestionStore } from './supervision-suggestions'
+import type { SupervisionSuggestion } from '../../shared/supervision-contracts'
 import { readStoryGraph } from './story-graph-reader'

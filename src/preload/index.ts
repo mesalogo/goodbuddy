@@ -1413,7 +1413,10 @@ const desktopApi: DesktopApi = {
     knowledgePreview: (input) => ipcRenderer.invoke(ipcChannels.supervisionKnowledgePreview, input) as Promise<Record<string, unknown>>,
     knowledgeCommit: (input) => ipcRenderer.invoke(ipcChannels.supervisionKnowledgeCommit, input) as Promise<Record<string, unknown>>,
     entityAction: (input) => ipcRenderer.invoke(ipcChannels.supervisionEntityAction, input) as Promise<void>,
-    relationAction: (input) => ipcRenderer.invoke(ipcChannels.supervisionRelationAction, input) as Promise<void>
+    relationAction: (input) => ipcRenderer.invoke(ipcChannels.supervisionRelationAction, input) as Promise<void>,
+    suggestions: (input) => ipcRenderer.invoke(ipcChannels.supervisionSuggestions, input ?? {}),
+    suggestionAction: (input) => ipcRenderer.invoke(ipcChannels.supervisionSuggestionAction, input),
+    retrySuggestions: (input) => ipcRenderer.invoke(ipcChannels.supervisionRetrySuggestions, input)
   },
   experts: {
     list: () =>

@@ -94,6 +94,18 @@ it('allows cancelling a resumed review before the resume request settles', async
   expect(screen.queryByRole('button', { name: '继续已保存回顾' })).not.toBeInTheDocument()
 })
 
+it('shows a failed suggestion step as an updated review and retries only suggestions', async () => {
+  const activity = vi.fn().mockResolvedValue([{ ...row, status: 'completed', supervisionStatus: 'completed', resultId: 'r1',
+    suggestionStatus: 'failed', suggestionError: 'Phrase failed', suggestionCount: 0, completedAt: '2026-09-23T10:00:01Z' }])
+  const retrySuggestions = vi.fn().mockResolvedValue(2)
+  vi.stubGlobal('goodbuddy', { supervision: { activity, execution: vi.fn().mockResolvedValue({ active: false }), retrySuggestions } })
+  render(<SupervisorActivity active projects={[]} onOpenResult={vi.fn()} />)
+  expect(await screen.findByRole('alert')).toHaveTextContent('回顾已更新，建议生成失败。')
+  expect(screen.getByRole('button', { name: '查看回顾' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: '重新生成建议' }))
+  await waitFor(() => expect(retrySuggestions).toHaveBeenCalledWith({ heartbeatRunId: row.id }))
+})
+
 it('shows no-change execution without a new result action', async () => {
   vi.stubGlobal('goodbuddy', { supervision: { activity: vi.fn().mockResolvedValue([{
     ...row, status: 'no_change', heartbeatStatus: 'no_change', supervisionStatus: 'no_change',
@@ -101,7 +113,9 @@ it('shows no-change execution without a new result action', async () => {
   }]) } })
   render(<SupervisorActivity active projects={[]} onOpenResult={vi.fn()} />)
   expect(await screen.findByText('无变化（未调用模型）')).toBeVisible()
-  expect(screen.getByText('心跳报告: 无变化（未调用模型）')).toBeVisible()
+  // The heartbeat has no report stage of its own; only the review stage is shown.
+  expect(screen.queryByText(/心跳报告/)).not.toBeInTheDocument()
+  expect(screen.getByText('监督回顾: 无变化（未调用模型）')).toBeVisible()
   expect(screen.queryByRole('button', { name: '查看回顾' })).not.toBeInTheDocument()
 })
 
@@ -176,7 +190,7 @@ it('polls sequentially only while active and ignores late responses after leavin
   const view = render(<SupervisorActivity {...props} />)
   await act(() => vi.advanceTimersByTimeAsync(0))
   expect(screen.getByText('运行中')).toBeVisible()
-  expect(screen.getByText('心跳报告: 已完成')).toBeVisible()
+  expect(screen.queryByText(/心跳报告/)).not.toBeInTheDocument()
   await act(() => vi.advanceTimersByTimeAsync(2000))
   expect(screen.getByRole('button', { name: '刷新' })).toBeDisabled()
   await act(() => vi.advanceTimersByTimeAsync(20000))

@@ -60,12 +60,12 @@ describe('SupervisorWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '故事线图谱' }))
     expect(onTabChange).toHaveBeenCalledWith('graph')
     expect(graph).toHaveBeenLastCalledWith({ resultId: 'old', storyLineId: 'story' })
-    fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' }))
+    fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(run).toHaveBeenCalledOnce())
     expect(recap.textContent).toBe(frozenText)
     expect(screen.getByText('Important final conclusion.')).toBeVisible()
     expect(screen.getByRole('status')).toHaveTextContent('新回顾正在整理')
-    expect(screen.getByRole('button', { name: '回顾当前进展' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '回顾' })).toBeEnabled()
     expect(screen.getByLabelText('关注范围')).toBeEnabled()
     expect(screen.getByLabelText('时间范围')).toBeEnabled()
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
@@ -75,7 +75,7 @@ describe('SupervisorWorkspace', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '刷新' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' }))
+    fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     expect(screen.getByRole('status')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '活动记录' }))
     expect(onOpenActivity).toHaveBeenCalledOnce()
@@ -97,11 +97,11 @@ describe('SupervisorWorkspace', () => {
     await act(() => vi.advanceTimersByTimeAsync(2000))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(cancel).not.toHaveBeenCalled()
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' })))
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: '回顾' })))
     expect(screen.getByRole('status')).toHaveTextContent('正在取消回顾')
     expect(run).not.toHaveBeenCalled()
     execution.mockResolvedValue({ active: false })
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' })))
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: '回顾' })))
     expect(run).toHaveBeenCalledOnce()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     view.unmount()
@@ -116,10 +116,10 @@ describe('SupervisorWorkspace', () => {
     window.goodbuddy = { supervision: { overview: async () => [], run } } as never
     render(<SupervisorWorkspace onOpenActivity={vi.fn()} />)
     await screen.findByText('还没有成功回顾')
-    fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' }))
+    fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('新回顾正在整理'))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '回顾当前进展' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '回顾' })).toBeEnabled()
   })
   it('graph navigation discards a late overview before it can request the old graph', async () => {
     let resolveOverview!: (value: unknown) => void
@@ -246,9 +246,32 @@ describe('SupervisorWorkspace', () => {
     } } as never
     render(<SupervisorWorkspace />)
     await waitFor(() => expect(screen.getByText('还没有成功回顾')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' }))
+    fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(window.goodbuddy.supervision.run).toHaveBeenCalledOnce())
     expect(window.goodbuddy.supervision.run).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'manual', scope: { kind: 'global' } }))
+    // The default review is incremental; it never asks to re-read the interval.
+    expect(vi.mocked(window.goodbuddy.supervision.run).mock.calls[0]![0]).not.toHaveProperty('reanalyze')
+  })
+
+  it('reanalyzes only after an explicit confirmation from the more menu', async () => {
+    const run = vi.fn(async () => undefined)
+    window.goodbuddy = { supervision: {
+      overview: vi.fn(async () => []), graph: vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] })),
+      run, source: vi.fn()
+    } } as never
+    render(<SupervisorWorkspace />)
+    await screen.findByText('还没有成功回顾')
+    fireEvent.click(screen.getByRole('button', { name: '更多回顾操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '重新整理…' }))
+    const dialog = screen.getByRole('alertdialog', { name: '重新整理这段时间？' })
+    expect(dialog).toHaveTextContent('可能产生较多模型用量')
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(run).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '更多回顾操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '重新整理…' }))
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '重新整理' }))
+    await waitFor(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'manual', reanalyze: true })))
   })
 
   it('keeps review failures retryable even with a selected graph event', async () => {
@@ -260,7 +283,7 @@ describe('SupervisorWorkspace', () => {
     } } as never
     render(<SupervisorWorkspace />)
     await screen.findByText('还没有成功回顾')
-    fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' }))
+    fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Review provider unavailable')
     fireEvent.click(screen.getByRole('button', { name: '重试回顾' }))
     await waitFor(() => expect(run).toHaveBeenCalledTimes(2))

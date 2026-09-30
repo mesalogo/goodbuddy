@@ -949,6 +949,12 @@ export const heartbeatScopeSchema = z.discriminatedUnion('kind', [
     .strict()
 ])
 
+// How the supervisor intervenes after an automatic review. Real-time
+// conversation intervention is not offered until it is implemented.
+export const heartbeatInterventionSchema = z.enum(['suggest', 'memory'])
+export type HeartbeatIntervention = z.infer<typeof heartbeatInterventionSchema>
+export const defaultHeartbeatIntervention: HeartbeatIntervention = 'suggest'
+
 export const heartbeatCreateSchema = z
   .object({
     scope: heartbeatScopeSchema,
@@ -957,7 +963,8 @@ export const heartbeatCreateSchema = z
     recurrence: heartbeatRecurrenceSchema,
     enabled: z.boolean(),
     lookbackHours: z.number().int().min(1).max(24 * 30),
-    retentionDays: z.number().int().min(1).max(365)
+    retentionDays: z.number().int().min(1).max(365),
+    intervention: heartbeatInterventionSchema.optional()
   })
   .strict()
 

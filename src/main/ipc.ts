@@ -84,7 +84,7 @@ import {
   dingTalkChannelSettingsInputSchema,
   weComChannelSettingsInputSchema
 } from '../shared/channel-settings-contracts'
-import { applicationSettingsUpdateSchema, defaultSupervisionTimeoutSeconds, defaultSupervisorModelConcurrency } from '../shared/application-settings-contracts'
+import { applicationSettingsUpdateSchema, defaultSupervisorModelConcurrency } from '../shared/application-settings-contracts'
 import { SupervisionModelPool } from './assistant/supervision-model-pool'
 import { localToolEnvironmentProgressSchema } from '../shared/local-tool-environment-contracts'
 import { registerLocalToolEnvironmentIpcHandlers } from './local-tool-environment/local-tool-environment-ipc'
@@ -255,11 +255,15 @@ import {
   resolveWorkspaceEntryPath
 } from './assistant/workspace-changes-service'
 import { HeartbeatService } from './assistant/heartbeat-service'
-import { createProductionSupervisorService } from './assistant/supervision-production'
+import { createProductionSuggestionPhraser, createProductionSupervisorService } from './assistant/supervision-production'
+import { deriveSuggestions } from './assistant/supervision-suggester'
 import { supervisionReviewIdSchema, supervisionBatchesRequestSchema } from '../shared/supervision-review-contracts'
 import {
   supervisionEntityActionSchema,
   supervisionActivityRequestSchema,
+  supervisionSuggestionActionSchema,
+  supervisionSuggestionListRequestSchema,
+  supervisionSuggestionRetrySchema,
   supervisionOverviewRequestSchema,
   supervisionGraphRequestSchema,
   supervisionRelationActionSchema,
@@ -1520,131 +1524,22 @@ export function registerIpcHandlers(
     }
   }
 
-  const heartbeatService = new HeartbeatService(
-    assistantDatabase,
-    {
-      summarize: async (request) => {
-        const requestRuntime = await resolveRequestRuntime({
-          projectId: request.projectId,
-          workMode: 'ask'
-        })
-        if (requestRuntime.capability === 'image-generation') {
-          throw new Error('智能心跳需要文本模型，当前默认连接仅支持图像生成')
-        }
-        const controller = new AbortController()
-        const modelSignal = AbortSignal.any([...(request.signal ? [request.signal] : []), controller.signal])
-        modelSignal.throwIfAborted()
-        request.onModelStart()
-        let timeoutError: Error | undefined
-        const timeout = setTimeout(
-          () => {
-            timeoutError = new Error(`心跳报告模型阶段超过 ${request.timeoutSeconds} 秒，已停止本次报告；未保存结果`)
-            controller.abort(timeoutError)
-          },
-          request.timeoutSeconds * 1000
-        )
-        const requestId = randomUUID()
-        const conversationId = `heartbeat:${requestId}`
-        let output = ''
-        let completed = false
-        try {
-          assistantDatabase.createTask({
-            id: requestId,
-            projectId: request.projectId,
-            conversationId,
-            title: '智能心跳回顾',
-            instructions: '根据有界本地输入生成智能心跳报告',
-            workMode: 'ask',
-            origin: 'assistant',
-            visible: false
-          })
-          for await (const event of requestRuntime.run(
-            {
-              requestId,
-              conversationId,
-              projectId: request.projectId,
-              workMode: 'ask',
-              prompt: [
-                request.systemInstruction,
-                'OUTPUT CONTRACT:',
-                JSON.stringify(request.outputContract),
-                'BOUNDED PRIVATE INPUT:',
-                JSON.stringify(request.input),
-                'Return only one JSON object. Do not wrap it in Markdown.'
-              ].join('\n\n')
-            },
-            modelSignal,
-            async (approval) => {
-              await request.authorizeTool({
-                name: approval.toolName ?? approval.scopeKey,
-                input: approval.argumentSummary
-              })
-              return 'deny'
-            }
-          )) {
-            if (event.type === 'text') {
-              output += event.delta
-              if (Buffer.byteLength(output) > 100_000) {
-                controller.abort()
-                throw new Error('Heartbeat output exceeds 100KB')
-              }
-            } else if (event.type === 'model-usage') {
-              persistModelUsage(event)
-            } else if (event.type === 'generated-image') {
-              throw new Error('智能心跳不支持图像生成模型')
-            } else if (event.type === 'tool') {
-              throw new Error('智能心跳只允许只读模型摘要，不允许工具调用')
-            } else if (event.type === 'error') {
-              throw new Error(event.message)
-            } else if (event.type === 'done') {
-              completed = true
-            }
-          }
-          modelSignal.throwIfAborted()
-          if (!completed) {
-            throw new Error('Heartbeat summarizer did not report completion')
-          }
-          if (!output.trim()) {
-            throw new Error('Heartbeat summarizer returned no output')
-          }
-          assistantDatabase.updateTaskStatus(requestId, 'completed')
-          return output
-        } catch (error) {
-          const message = safeRuntimeError(timeoutError ?? error, '心跳摘要失败')
-          assistantDatabase.updateTaskStatus(
-            requestId,
-            modelSignal.aborted ? 'cancelled' : 'failed',
-            message
-          )
-          throw new Error(message, { cause: error })
-        } finally {
-          clearTimeout(timeout)
-          await requestRuntime.releaseConversation?.(conversationId)
-        }
-      }
-    },
-    () => {
-      throw new Error('Heartbeat tool use is always denied')
-    },
-    async ({ config, run }) => {
-      if (!supervisorService || (run.status !== 'completed' && run.status !== 'no_change')) return
-      if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return
+  // The heartbeat only triggers the shared incremental review and, per plan,
+  // derives suggestions from what that review published. It reads no sources itself.
+  const heartbeatService = new HeartbeatService(assistantDatabase, {
+    review: async ({ config, run }) => {
+      if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return { status: 'cancelled' }
       const to = run.completedAt ?? run.scheduledFor
-      const from = new Date(
-        Date.parse(to) - config.lookbackHours * 3_600_000
-      ).toISOString()
-      await supervisorService.run({
-        trigger: 'heartbeat',
-        scope: config.scope,
-        timeRange: { from, to }
-      }, run.id)
+      const from = new Date(Date.parse(to) - config.lookbackHours * 3_600_000).toISOString()
+      const result = await supervisorService.run({ trigger: 'heartbeat', scope: config.scope, timeRange: { from, to } }, run.id)
+      return { status: result.status ?? 'completed', runId: result.runId }
     },
-    async () => (await applicationSettingsStore?.get())?.heartbeatReportTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
-    async () => {
-      supervisionModelPool.setLimit((await applicationSettingsStore?.get())?.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency)
-      return supervisionModelPool.acquire()
+    suggest: async ({ run, supervisionRunId }) => {
+      if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return 0
+      return deriveSuggestions(assistantDatabase.supervisionSuggestions(), suggestionPhraser,
+        { supervisionRunId, heartbeatRunId: run.id })
     }
-  )
+  })
   const publishRemoteActivity = (
     activity: RemoteChannelActivity
   ): void => {
@@ -6440,6 +6335,9 @@ export function registerIpcHandlers(
   const supervisorService = createProductionSupervisorService(assistantDatabase,
     async () => applicationSettingsStore?.get(), () => resolveRequestRuntime({ workMode: 'ask' }), supervisionModelPool,
     persistModelUsage)
+  const suggestionPhraser = createProductionSuggestionPhraser(assistantDatabase,
+    async () => applicationSettingsStore?.get(), () => resolveRequestRuntime({ workMode: 'ask' }), supervisionModelPool,
+    persistModelUsage)
 
   registerHandler(
     ipcChannels.conversationsBranchLocal,
@@ -7155,6 +7053,25 @@ export function registerIpcHandlers(
     if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return []
     return assistantDatabase.listSupervisionActivity(request.limit, request.offset, request.configId).map(row => ({ ...row,
       reviewProgress: row.reviewProgress ? supervisorService.progress(row.reviewProgress) : undefined }))
+  })
+  registerHandler(ipcChannels.supervisionSuggestions, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = supervisionSuggestionListRequestSchema.parse(input ?? {})
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return []
+    return assistantDatabase.supervisionSuggestions().list(request.status, request.limit, request.offset)
+  })
+  registerHandler(ipcChannels.supervisionSuggestionAction, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = supervisionSuggestionActionSchema.parse(input)
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) throw new Error('Supervisor is disabled')
+    return assistantDatabase.resolveSupervisionSuggestion(request.id, request.action)
+  })
+  registerHandler(ipcChannels.supervisionRetrySuggestions, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = supervisionSuggestionRetrySchema.parse(input)
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) throw new Error('Supervisor is disabled')
+    if (executionPaused || shuttingDown) throw new Error('本地数据维护期间暂不接受新任务')
+    return trackExecution(heartbeatService.retrySuggestions(request.heartbeatRunId))
   })
   registerHandler(ipcChannels.supervisionPause, async (event, input: unknown) => {
     assertTrustedSender(event, window)

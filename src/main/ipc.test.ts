@@ -5957,7 +5957,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
   })
 
-  it.each(['manual', 'scheduled'] as const)('admits %s reports before claiming after a queue longer than the lease', async (trigger) => {
+  it.each(['manual', 'scheduled'] as const)('a %s heartbeat waits for an active review and then only makes review requests', async (trigger) => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-23T12:00:00.000Z'))
     const database = new AssistantDatabase(':memory:')
@@ -5967,134 +5967,95 @@ describe('registerIpcHandlers agent terminal state', () => {
     let finishSupervisor!: () => void
     const supervisorWait = new Promise<void>(resolve => { finishSupervisor = resolve })
     let firstSupervisor = true
-    let reportSignal: AbortSignal | undefined
     const run = vi.fn(async function* (request: AgentExecutionRequest, signal: AbortSignal) {
-      const report = request.conversationId?.startsWith('heartbeat:')
-      if (report) {
-        reportSignal = signal
-        await new Promise<void>(resolve => setTimeout(resolve, 239_000))
-      } else if (firstSupervisor) {
+      if (firstSupervisor) {
         firstSupervisor = false
         await supervisorWait
       }
       signal.throwIfAborted()
-      yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify(report
-        ? { summary: 'Report', highlights: [], proposedMemories: [], followUpTasks: [] }
-        : { summary: 'Review', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
+      yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify(
+        { summary: 'Review', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
       yield { type: 'done' as const, requestId: request.requestId }
     })
     const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, 'always', undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     try {
-      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorOrganizeTimeoutSeconds: 600, heartbeatReportTimeoutSeconds: 240 })
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorOrganizeTimeoutSeconds: 600 })
       await vi.advanceTimersByTimeAsync(0)
       const supervisor = electronMocks.handlers.get(ipcChannels.supervisionRun)!(trustedEvent(harness.webContents), {
-        trigger: 'manual', scope: { kind: 'global' }, timeRange: { from: new Date(Date.now() - 1000).toISOString(), to: new Date().toISOString() }
+        trigger: 'manual', reanalyze: true, scope: { kind: 'global' }, timeRange: { from: new Date(Date.now() - 1000).toISOString(), to: new Date().toISOString() }
       })
       await vi.advanceTimersByTimeAsync(0)
       expect(run).toHaveBeenCalledOnce()
-      const config = database.createHeartbeatConfig({ name: 'Queued report', scope: { kind: 'global' }, timezone: 'UTC',
+      database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'New evidence', updatedAt: Date.now() },
+        messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'Review the next decision', createdAt: Date.now() }] }])
+      const config = database.createHeartbeatConfig({ name: 'Queued review', scope: { kind: 'global' }, timezone: 'UTC',
         recurrence: { type: 'daily', localTime: '11:00' }, enabled: trigger === 'scheduled', lookbackHours: 24, retentionDays: 30 }, new Date('2026-09-23T00:00:00.000Z'))
       const invoke = (key: string) => electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), { id: config.id, idempotencyKey: key })
       const manual = trigger === 'manual' ? invoke('first') : undefined
       const duplicate = trigger === 'manual' ? invoke('second') : undefined
-      await vi.advanceTimersByTimeAsync(360_000)
-      expect(database.listHeartbeatRuns(config.id)).toEqual([])
-      expect(reportSignal).toBeUndefined()
-      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorOrganizeTimeoutSeconds: 600, heartbeatReportTimeoutSeconds: 30 })
-      const admissionTime = Date.now()
-      const buildInput = database.buildHeartbeatInput.bind(database)
-      const collect = database.collectIncrementalReview.bind(database)
-      if (trigger === 'manual') vi.spyOn(database, 'buildHeartbeatInput').mockImplementationOnce((...args) => {
-        const result = buildInput(...args)
-        vi.setSystemTime(Date.now() + 90_000)
-        return result
-      })
-      else vi.spyOn(database, 'collectIncrementalReview').mockImplementationOnce((...args) => {
-        const result = collect(...args)
-        vi.setSystemTime(Date.now() + 90_000)
-        return result
-      })
+      await vi.advanceTimersByTimeAsync(trigger === 'scheduled' ? 30_000 : 0)
+      // The heartbeat finishes its own trigger at once; the review waits for the active one.
+      const [heartbeatRun] = database.listHeartbeatRuns(config.id)
+      expect(heartbeatRun).toMatchObject({ status: 'completed' })
+      expect(database.listSupervisionActivity().find(row => row.id === heartbeatRun!.id)?.status).toBe('running')
+      expect(run).toHaveBeenCalledOnce()
       finishSupervisor()
-      await vi.advanceTimersByTimeAsync(0)
       await supervisor
-      expect(reportSignal?.aborted).toBe(false)
-      database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'New evidence', updatedAt: Date.now() },
-        messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'Review the next decision', createdAt: Date.now() }] }])
-      expect(database.listHeartbeatRuns(config.id)).toEqual([expect.objectContaining({ status: 'claimed', attemptCount: 1, startedAt: new Date(admissionTime).toISOString() })])
-      await vi.advanceTimersByTimeAsync(238_999)
-      expect(reportSignal?.aborted).toBe(false)
-      const active = database.claimHeartbeatNow(config.id, 'competing-worker', 'other', new Date())
-      expect(active.acquired).toBe(false)
-      await vi.advanceTimersByTimeAsync(1)
-      const runs = database.listHeartbeatRuns(config.id)
-      expect(runs).toEqual([expect.objectContaining({ status: 'completed', attemptCount: 1 })])
-      expect(database.listHeartbeatEntries(config.id)).toHaveLength(1)
-      expect(run.mock.calls.filter(([request]) => request.conversationId?.startsWith('heartbeat:'))).toHaveLength(1)
+      await vi.waitFor(() => expect(database.listSupervisionActivity().find(row => row.id === heartbeatRun!.id)?.supervisionStatus).toBe('completed'))
       if (manual) {
-        await expect(manual).resolves.toMatchObject({ id: runs[0]!.id, status: 'completed' })
-        await expect(duplicate).resolves.toMatchObject({ id: runs[0]!.id, status: 'completed' })
+        await expect(manual).resolves.toMatchObject({ id: heartbeatRun!.id })
+        await expect(duplicate).resolves.toMatchObject({ id: heartbeatRun!.id })
       }
-      // Downstream supervision can acquire the same single slot after report completion.
-      expect(database.listSupervisionActivity().find(row => row.id === runs[0]!.id)?.supervisionStatus).toBe('completed')
-      // Manual leaf + report + two conversation leaves + one navigation merge.
-      expect(run).toHaveBeenCalledTimes(5)
+      expect(run.mock.calls.some(([request]) => request.conversationId?.startsWith('heartbeat:'))).toBe(false)
+      expect(database.listHeartbeatEntries(config.id)).toEqual([])
+      // Manual re-analysis leaf + two conversation leaves + one navigation merge; no report call.
+      expect(run).toHaveBeenCalledTimes(4)
     } finally { finishSupervisor(); await harness.dispose(); database.close(); vi.useRealTimers() }
   })
 
-  it.each([1, 2])('shares supervision concurrency %s across report and organize with timeouts starting after admission', async (concurrency) => {
+  it('times out a heartbeat-triggered review at the organize timeout and records it on the heartbeat', async () => {
     vi.useFakeTimers()
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
     database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'Evidence', updatedAt: Date.now() },
       messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'Review this decision', createdAt: Date.now() }] }])
-    const config = database.createHeartbeatConfig({ name: 'Report', scope: { kind: 'global' }, timezone: 'UTC',
+    const config = database.createHeartbeatConfig({ name: 'Review', scope: { kind: 'global' }, timezone: 'UTC',
       recurrence: { type: 'daily', localTime: '11:00' }, enabled: false, lookbackHours: 24, retentionDays: 30 })
-    const signals: AbortSignal[] = []
     const releaseConversation = vi.fn(async () => undefined)
-    const run = vi.fn(async function* (request: AgentExecutionRequest, signal: AbortSignal) {
-      signals.push(signal)
-      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
-      signal.throwIfAborted()
+    let signal: AbortSignal | undefined
+    const run = vi.fn(async function* (request: AgentExecutionRequest, inputSignal: AbortSignal) {
+      signal = inputSignal
+      await new Promise<void>(resolve => inputSignal.addEventListener('abort', () => resolve(), { once: true }))
+      inputSignal.throwIfAborted()
       yield { type: 'done' as const, requestId: request.requestId }
     })
     const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, 'always', undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     try {
-      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorModelConcurrency: concurrency,
-        heartbeatReportTimeoutSeconds: 60, supervisorOrganizeTimeoutSeconds: 30 })
-      const report = electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), { id: config.id, idempotencyKey: crypto.randomUUID() })
-      await vi.advanceTimersByTimeAsync(0)
-      const organize = electronMocks.handlers.get(ipcChannels.supervisionRun)!(trustedEvent(harness.webContents), {
-        trigger: 'manual', scope: { kind: 'global' }, timeRange: { from: new Date(Date.now() - 1000).toISOString(), to: new Date().toISOString() }
-      })
-      const rejected = expect(organize).rejects.toThrow('监督者整理模型阶段超过 30 秒')
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorOrganizeTimeoutSeconds: 30 })
+      const pending = electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), { id: config.id, idempotencyKey: crypto.randomUUID() })
       await vi.advanceTimersByTimeAsync(29_999)
-      expect(run).toHaveBeenCalledTimes(concurrency)
-      expect(signals.every(signal => !signal.aborted)).toBe(true)
-      await vi.advanceTimersByTimeAsync(30_001)
-      await expect(report).resolves.toMatchObject({ status: 'failed' })
-      expect(run).toHaveBeenCalledTimes(2)
-      expect(signals[1]!.aborted).toBe(concurrency === 2)
-      if (concurrency === 1) {
-        await vi.advanceTimersByTimeAsync(29_999)
-        expect(signals[1]!.aborted).toBe(false)
-        await vi.advanceTimersByTimeAsync(1)
-      }
-      await rejected
-      expect(releaseConversation).toHaveBeenCalledTimes(2)
+      expect(signal?.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      const heartbeatRun = await pending as { id: string }
+      expect(heartbeatRun).toMatchObject({ status: 'completed' })
+      expect(run).toHaveBeenCalledOnce()
+      expect(database.listSupervisionActivity().find(row => row.id === heartbeatRun.id)).toMatchObject({
+        status: 'failed', error: '监督者整理模型阶段超过 30 秒，已停止本次回顾；未保存结果' })
       expect(database.listSupervisionResults()).toEqual([])
       expect(database.listHeartbeatEntries()).toEqual([])
+      expect(releaseConversation).toHaveBeenCalledOnce()
     } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
   })
 
-  it('shutdown aborts active supervision and removes queued reports before runtime dispatch', async () => {
+  it('shutdown aborts active supervision and a queued heartbeat review before runtime dispatch', async () => {
     vi.useFakeTimers()
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
     database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'Evidence', updatedAt: Date.now() },
       messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'Review this decision', createdAt: Date.now() }] }])
-    const config = database.createHeartbeatConfig({ name: 'Report', scope: { kind: 'global' }, timezone: 'UTC',
+    const config = database.createHeartbeatConfig({ name: 'Review', scope: { kind: 'global' }, timezone: 'UTC',
       recurrence: { type: 'daily', localTime: '11:00' }, enabled: false, lookbackHours: 24, retentionDays: 30 })
     let signal: AbortSignal | undefined
     const releaseConversation = vi.fn(async () => undefined)
@@ -6113,55 +6074,19 @@ describe('registerIpcHandlers agent terminal state', () => {
       })
       const rejected = expect(organize).rejects.toThrow('shutting down')
       await vi.advanceTimersByTimeAsync(0)
-      const report = electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), { id: config.id, idempotencyKey: crypto.randomUUID() })
-      const reportRejected = expect(report).rejects.toThrow('shutting down')
+      const heartbeat = electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), { id: config.id, idempotencyKey: crypto.randomUUID() })
       await vi.advanceTimersByTimeAsync(0)
       expect(run).toHaveBeenCalledOnce()
       await harness.dispose()
       await rejected
-      await reportRejected
-      expect(database.listHeartbeatRuns()).toEqual([])
+      await heartbeat
       expect(signal?.aborted).toBe(true)
       expect(run).toHaveBeenCalledOnce()
       expect(releaseConversation).toHaveBeenCalledOnce()
       expect(database.listSupervisionResults()).toEqual([])
+      expect(database.listHeartbeatEntries()).toEqual([])
     } finally { database.close(); vi.useRealTimers() }
   })
-
-  it.each([
-    ['throw', undefined], ['return', 600], ['throw', 30], ['provider', 30]
-  ] as const)('uses the separate heartbeat report timeout and preserves errors (%s, %s)', async (ending, configuredTimeout) => {
-    vi.useFakeTimers()
-    const database = new AssistantDatabase(':memory:')
-    database.initialize(process.cwd())
-    const config = database.createHeartbeatConfig({ name: 'Report', scope: { kind: 'global' }, timezone: 'UTC',
-      recurrence: { type: 'daily', localTime: '11:00' }, enabled: false, lookbackHours: 24, retentionDays: 30 })
-    const releaseConversation = vi.fn(async () => undefined)
-    let signal: AbortSignal | undefined
-    const run = vi.fn(async function* (request: AgentExecutionRequest, inputSignal: AbortSignal) {
-      signal = inputSignal
-      if (ending === 'provider') throw new Error('Provider HTTP 429: retry later')
-      yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify({ summary: 'Late report', highlights: [], proposedMemories: [], followUpTasks: [] }) }
-      await new Promise<void>(resolve => inputSignal.addEventListener('abort', () => resolve(), { once: true }))
-      if (ending === 'throw') throw new DOMException('This operation was aborted', 'AbortError')
-      yield { type: 'done' as const, requestId: request.requestId }
-    })
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, 'always', undefined, false,
-      undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
-    try {
-      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, heartbeatReportTimeoutSeconds: configuredTimeout, supervisorOrganizeTimeoutSeconds: 60 })
-      const pending = electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), { id: config.id, idempotencyKey: crypto.randomUUID() })
-      const seconds = configuredTimeout ?? 240
-      await vi.advanceTimersByTimeAsync(seconds * 1000 - 1)
-      expect(signal?.aborted).toBe(false)
-      await vi.advanceTimersByTimeAsync(1)
-      const error = ending === 'provider' ? 'Provider HTTP 429: retry later' : `心跳报告模型阶段超过 ${seconds} 秒，已停止本次报告；未保存结果`
-      await expect(pending).resolves.toMatchObject({ status: 'failed', error })
-      expect(database.listHeartbeatEntries()).toEqual([])
-      expect(releaseConversation).toHaveBeenCalledOnce()
-    } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
-  })
-
   it('heartbeat enabled gates leave enabled startup and ticks idle without configured plans', async () => {
     vi.useFakeTimers()
     const database = new AssistantDatabase(':memory:')
@@ -6182,7 +6107,45 @@ describe('registerIpcHandlers agent terminal state', () => {
     } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
   })
 
-  it('heartbeat enabled gates follow live toggles and suppress supervision after an in-flight completion', async () => {
+  it('a suggest plan phrases rule-selected candidates once after the review and gates suggestion IPC', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const now = Date.now()
+    database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'Scheduling', updatedAt: now },
+      messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'Page size is still undecided', createdAt: now }] }])
+    const config = database.createHeartbeatConfig({ name: 'Review', scope: { kind: 'global' }, timezone: 'UTC',
+      recurrence: { type: 'daily', localTime: '11:00' }, enabled: false, lookbackHours: 24, retentionDays: 30 })
+    const prompts: string[] = []
+    const run = vi.fn(async function* (request: AgentExecutionRequest) {
+      prompts.push(request.prompt)
+      const output = request.prompt.includes('CANDIDATES:')
+        ? { suggestions: [{ ref: 'c1', title: 'Decide the page size', detail: 'Pick 50 or 100 next time.' }] }
+        : { summary: 'Review', changeDigest: '', openItems: ['Decide the page size'], events: [], entities: [], entityChanges: [], relations: [] }
+      yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify(output) }
+      yield { type: 'done' as const, requestId: request.requestId }
+    })
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, 'always', undefined, false,
+      undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
+    try {
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
+      await electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), { id: config.id, idempotencyKey: crypto.randomUUID() })
+      expect(run).toHaveBeenCalledTimes(2)
+      expect(prompts[1]).toContain('CANDIDATES:')
+      expect(prompts[1]).not.toContain('Page size is still undecided')
+      const list = electronMocks.handlers.get(ipcChannels.supervisionSuggestions)!
+      const [suggestion] = await list(trustedEvent(harness.webContents), {}) as Array<{ id: string; title: string; kind: string }>
+      expect(suggestion).toMatchObject({ kind: 'open_item', title: 'Decide the page size' })
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: false })
+      await expect(list(trustedEvent(harness.webContents), {})).resolves.toEqual([])
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionSuggestionAction)!(trustedEvent(harness.webContents),
+        { id: suggestion!.id, action: 'accept' })).rejects.toThrow('Supervisor is disabled')
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionSuggestionAction)!(trustedEvent(harness.webContents),
+        { id: suggestion!.id, action: 'accept' })).resolves.toMatchObject({ status: 'accepted', taskId: expect.any(String) })
+    } finally { await harness.dispose(); database.close() }
+  })
+
+  it('heartbeat enabled gates follow live toggles and suppress suggestions after an in-flight review', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-23T12:00:00.000Z'))
     const database = new AssistantDatabase(':memory:')
@@ -6199,10 +6162,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     const pending = new Promise<void>(resolve => { finish = resolve })
     const run = vi.fn(async function* (request: AgentExecutionRequest) {
       await pending
-      const output = request.conversationId?.startsWith('heartbeat:')
-        ? { summary: 'Review', highlights: [], proposedMemories: [], followUpTasks: [] }
-        : { summary: 'Review', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
-      yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify(output) }
+      yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify(
+        { summary: 'Review', changeDigest: '', openItems: ['Decide the page size'], events: [], entities: [], entityChanges: [], relations: [] }) }
       yield { type: 'done' as const, requestId: request.requestId }
     })
     const harness = createHarness({ capability: 'chat', run }, undefined, 'always', undefined, false,
@@ -6213,25 +6174,25 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
       await vi.advanceTimersByTimeAsync(30_000)
       expect(claimDue).toHaveBeenCalledOnce()
-      expect(database.listHeartbeatRuns()).toEqual([expect.objectContaining({ status: 'claimed' })])
       expect(run).toHaveBeenCalledOnce()
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: false })
       finish()
       await vi.advanceTimersByTimeAsync(30_000)
+      // An already running review may finish, but no suggestion step follows once disabled.
       expect(database.listHeartbeatRuns()).toEqual([expect.objectContaining({ status: 'completed' })])
-      expect(database.listSupervisionResults()).toEqual([])
+      expect(database.listSupervisionResults()).toHaveLength(1)
+      expect(database.supervisionSuggestions().list('all', 50, 0)).toEqual([])
       expect(run).toHaveBeenCalledOnce()
       expect(claimDue).toHaveBeenCalledOnce()
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
       const config = database.listHeartbeatConfigs()[0]!
+      // Nothing changed since the last review: no model call.
       await expect(electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), {
         id: config.id, idempotencyKey: crypto.randomUUID()
-      })).resolves.toMatchObject({ status: 'completed' })
-      expect(database.listSupervisionResults()).toHaveLength(1)
-      expect(run).toHaveBeenCalledTimes(3)
+      })).resolves.toMatchObject({ status: 'no_change' })
+      expect(run).toHaveBeenCalledOnce()
     } finally { finish(); await harness.dispose(); database.close(); vi.useRealTimers() }
   })
-
   it('production supervision IPC cancels the runtime and holds admission until conversation cleanup settles', async () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
@@ -6548,7 +6509,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
   })
 
-  it('skips automatic repeats through real supervision IPC while manual review reprocesses history', async () => {
+  it('skips unchanged sources for heartbeat and default manual reviews while explicit reanalysis reprocesses history', async () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
     const now = Date.now()
@@ -6570,7 +6531,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       const input = { trigger: 'heartbeat', scope: { kind: 'global' }, timeRange: {
         from: new Date(now - 1000).toISOString(), to: new Date(now + 1000).toISOString()
       } }
-      const invoke = (request = input) => electronMocks.handlers.get(ipcChannels.supervisionRun)!(trustedEvent(harness.webContents), request)
+      const invoke = (request: Record<string, unknown> = input) => electronMocks.handlers.get(ipcChannels.supervisionRun)!(trustedEvent(harness.webContents), request)
       await invoke()
       await expect(invoke()).resolves.toMatchObject({ status: 'no_change', evidence: [] })
       expect(run).toHaveBeenCalledTimes(1)
@@ -6578,12 +6539,15 @@ describe('registerIpcHandlers agent terminal state', () => {
       await invoke()
       expect(run).toHaveBeenCalledTimes(2)
       expect(run.mock.calls[1]![0].prompt).toContain('Atlas now uses WAL')
-      await invoke({ ...input, trigger: 'manual' })
-      await invoke({ ...input, trigger: 'manual' })
+      await expect(invoke({ ...input, trigger: 'manual' })).resolves.toMatchObject({ status: 'no_change' })
+      expect(run).toHaveBeenCalledTimes(2)
+      await invoke({ ...input, trigger: 'manual', reanalyze: true })
+      await invoke({ ...input, trigger: 'manual', reanalyze: true })
       expect(run).toHaveBeenCalledTimes(4)
+      // Re-analysis never moves shared progress, so the heartbeat still sees nothing new.
       await expect(invoke()).resolves.toMatchObject({ status: 'no_change' })
       expect(database.listSupervisionResults()).toHaveLength(4)
-      expect(database.listSupervisionActivity().filter((row) => row.status === 'no_change')).toHaveLength(2)
+      expect(database.listSupervisionActivity().filter((row) => row.status === 'no_change')).toHaveLength(3)
     } finally { await harness.dispose(); database.close() }
   })
 

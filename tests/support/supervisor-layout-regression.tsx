@@ -140,6 +140,8 @@ if (params.has('short')) {
   graph.eventEntities = graph.eventEntities.slice(0, 1)
   graph.eventSources = graph.eventSources.slice(0, 1)
 }
+const menu = params.has('menu')
+const createdAt = '2026-09-23T08:00:00.000Z'
 Object.defineProperty(window, 'goodbuddy', {
   value:
     state === 'unavailable'
@@ -205,6 +207,16 @@ Object.defineProperty(window, 'goodbuddy', {
             },
             entityAction: async () => {},
             relationAction: async () => {},
+            suggestions: async () => menu ? [
+              { id: '00000000-0000-4000-8000-000000000901', resultId: 'fixture-result', heartbeatRunId: 'run', scope: { kind: 'global' }, kind: 'open_item',
+                title: '模拟建议：确认外部评审时间', detail: '外部评审时间仍未确定，交付清单需要回填。下次回顾前可先确认这一项。', sourceIds: ['source-1', 'source-2'],
+                entityId: null, relationId: null, taskId: null, status: 'pending', createdAt },
+              { id: '00000000-0000-4000-8000-000000000902', resultId: 'fixture-result', heartbeatRunId: 'run', scope: { kind: 'global' }, kind: 'conflict',
+                title: '模拟建议：两种交付顺序尚未统一', detail: '一处记录先核验资料，另一处先确认日期，尚无明确取舍。', sourceIds: ['source-1'],
+                entityId: null, relationId: null, taskId: null, status: 'pending', createdAt }
+            ] : [],
+            suggestionAction: async () => { throw new Error('Preview fixture must not change suggestions') },
+            retrySuggestions: async () => 0,
             source: async () => ({
               ...(params.has('preview') ? { sourceType: 'conversation', sourceId: 'simulated-conversation-uuid' } : {}),
               title: '模拟会议记录',
@@ -215,8 +227,6 @@ Object.defineProperty(window, 'goodbuddy', {
         }
 })
 const noop = async () => {}
-const menu = params.has('menu')
-const createdAt = '2026-09-23T08:00:00.000Z'
 createRoot(document.getElementById('root')!).render(
   <UiLocaleProvider initialPreference="zh-CN">
     <div
@@ -259,7 +269,7 @@ createRoot(document.getElementById('root')!).render(
           onUpdateApplicationSettings={async () => true}
            configs={menu || params.has('plan-only') ? [{ id: 'plan', name: '模拟每日回顾', scope: { kind: 'global' }, timezone: 'Asia/Shanghai', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 48, retentionDays: 90, nextRunAt: '2026-09-24T01:00:00.000Z', createdAt, updatedAt: createdAt }] : []}
           runs={menu ? [{ id: 'run', configId: 'plan', trigger: 'scheduled', scheduledFor: createdAt, status: 'completed', attemptCount: 1, createdAt, updatedAt: createdAt }] : []}
-          entries={menu ? [{ id: 'report', configId: 'plan', runId: 'run', scheduledFor: createdAt, summary: '模拟自动监督报告：交付计划已更新，待核对负责人和验收日期。', highlights: ['保留原始依据，核对交付时间。'], proposedMemoryIds: ['memory'], followUpTaskIds: ['task'], createdAt }] : []}
+          entries={menu ? [{ id: 'report', configId: 'plan', runId: 'run', scheduledFor: createdAt, summary: '模拟历史心跳报告：交付计划已更新，待核对负责人和验收日期。', highlights: ['保留原始依据，核对交付时间。'], proposedMemoryIds: ['memory'], followUpTaskIds: ['task'], createdAt }] : []}
           memories={menu ? [{ id: 'memory', scope: 'global', type: 'preference', content: '模拟建议：周会总结保留负责人和下一次检查日期。', confidence: 0.9, salience: 0.8, status: 'proposed', createdAt, updatedAt: createdAt }] : []}
           projects={[]}
           tasks={menu ? [{ id: 'task', title: '模拟行动：核对交付清单', instructions: '核对负责人、验收日期和原始讨论依据。', origin: 'assistant', status: 'paused', createdAt }] : []}

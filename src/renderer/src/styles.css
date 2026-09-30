@@ -16457,13 +16457,26 @@ textarea.field-control {
   margin-top: 12px;
 }
 
+/* Plans sit directly in the section card; no second framed box. */
 .heartbeat-center__plans .heartbeat-settings {
   max-width: none;
-  padding: 18px;
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
-  background: var(--surface-raised);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
+
+.heartbeat-settings__intro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.heartbeat-settings__intro p {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
 
 .appearance-settings {
   gap: 14px;
@@ -16723,7 +16736,6 @@ textarea.field-control {
   .activity-item,
   .heartbeat-center__section,
   .heartbeat-center__metrics > div,
-  .heartbeat-center__plans .heartbeat-settings,
   .heartbeat-settings__item,
   .capability-card,
   .quick-actions button

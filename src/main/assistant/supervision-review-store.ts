@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import type { SupervisionEvidence, SupervisionRunRequest, SupervisionSummaryOutput } from '../../shared/supervision-contracts'
+import { isIncrementalReview, type SupervisionEvidence, type SupervisionRunRequest, type SupervisionSummaryOutput } from '../../shared/supervision-contracts'
 import type { SupervisionReviewBatch, SupervisionReviewProgress, SupervisionReviewSettings } from '../../shared/supervision-review-contracts'
 import { reviewScope } from './review-checkpoint'
 
@@ -84,7 +84,7 @@ export class SupervisionReviewStore {
           length(s.body), CASE WHEN c.revision = review_revision(s.context) THEN c.processed_offset ELSE 0 END,
           CASE WHEN c.revision = review_revision(s.context) THEN c.processed_offset ELSE 0 END
         FROM supervision_review_current s LEFT JOIN review_checkpoints c
-          ON ? = 'heartbeat' AND c.stage = 'supervisor' AND c.scope = ? AND c.source = s.source
+          ON ? = 1 AND c.stage = 'supervisor' AND c.scope = ? AND c.source = s.source
         WHERE ((s.occurred >= ? AND s.occurred <= ?) OR (s.alternate_time >= ? AND s.alternate_time <= ?))
           AND (? = 'global' OR s.project_id IN (SELECT value FROM json_each(?)))
           AND length(s.body) > 0
@@ -93,7 +93,7 @@ export class SupervisionReviewStore {
         ORDER BY s.project_id, s.conversation_id, s.sequence, s.source LIMIT ?`)
       let cursor: [string, string, number, string] = ['', '', -1, '']
       for (;;) {
-        const page = insertPage.run(runId, request.trigger, reviewScope(request.scope), request.timeRange.from, request.timeRange.to,
+        const page = insertPage.run(runId, isIncrementalReview(request) ? 1 : 0, reviewScope(request.scope), request.timeRange.from, request.timeRange.to,
           request.timeRange.from, request.timeRange.to, request.scope.kind,
           JSON.stringify(request.scope.kind === 'projects' ? request.scope.projectIds : []), ...cursor, state.config.pageSize)
         if (!page.changes) break
@@ -115,7 +115,7 @@ export class SupervisionReviewStore {
 
   unfinished(request: SupervisionRunRequest): string | undefined {
     return this.db.prepare(`SELECT s.id FROM supervision_runs s JOIN supervision_review_runs r ON r.run_id = s.id
-      WHERE s.trigger = 'heartbeat' AND s.scope_json = ? AND s.status IN ('paused', 'failed', 'running')
+      WHERE s.trigger = 'heartbeat' AND s.scope_json = ? AND s.status IN ('failed', 'running')
         AND COALESCE(json_extract(r.state_json, '$.restartRequired'), 0) = 0
       ORDER BY s.created_at LIMIT 1`).get(JSON.stringify(request.scope))?.id as string | undefined
   }
@@ -280,7 +280,7 @@ export class SupervisionReviewStore {
   commitCheckpoints(runId: string, request: SupervisionRunRequest): void {
     this.assertComplete(runId)
     if (!this.db.isTransaction) throw new Error('Review publication must be transactional')
-    if (request.trigger !== 'heartbeat') return
+    if (!isIncrementalReview(request)) return
     this.db.prepare(`INSERT INTO review_checkpoints (stage, scope, source, revision, processed_offset, source_length)
       SELECT 'supervisor', ?, source, revision, processed_offset, length FROM supervision_review_sources WHERE run_id = ?
       ON CONFLICT(stage, scope, source) DO UPDATE SET revision = excluded.revision,

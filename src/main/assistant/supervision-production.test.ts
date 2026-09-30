@@ -113,7 +113,7 @@ function fixture(content = 'Atlas and Beacon are separate projects.') {
   const now = Date.now()
   db.saveLocalConversations([{ header: { id: randomUUID(), projectId: db.listProjects()[0]!.id, title: 'Identity review', updatedAt: now },
     messages: [{ id: randomUUID(), role: 'user', state: 'complete', content, createdAt: now }] }])
-  const request: SupervisionRunRequest = { trigger: 'manual', scope: { kind: 'global' }, timeRange: {
+  const request: SupervisionRunRequest = { trigger: 'manual', reanalyze: true, scope: { kind: 'global' }, timeRange: {
     from: new Date(now - 1).toISOString(), to: new Date(now + 1).toISOString()
   } }
   const respond = vi.fn((prompt: string): unknown => {

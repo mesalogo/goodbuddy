@@ -64,8 +64,10 @@ it.each([false, true])('groups heartbeat and downstream supervision with truthfu
       if (failed) throw new Error('Downstream failed')
       return output
     })
-    const heartbeat = new HeartbeatService(db, { summarize: async () => ({ summary: 'Heartbeat saved', highlights: [], proposedMemories: [], followUpTasks: [] }) }, () => {},
-      async ({ run }) => { await supervisor.run({ ...request, trigger: 'heartbeat' }, run.id) })
+    const heartbeat = new HeartbeatService(db, { review: async ({ run }) => {
+      const result = await supervisor.run({ ...request, trigger: 'heartbeat' }, run.id)
+      return { status: result.status ?? 'completed', runId: result.runId }
+    } })
     const config = heartbeat.create({ name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }, new Date('2026-09-23T00:00:00Z'))
     const pending = failed ? heartbeat.runNow({ id: config.id, idempotencyKey: crypto.randomUUID() })
       : heartbeat.processDue(new Date('2026-09-23T09:00:00Z'))
@@ -78,25 +80,21 @@ it.each([false, true])('groups heartbeat and downstream supervision with truthfu
   } finally { db.close(); vi.useRealTimers() }
 })
 
-it('records heartbeat failures before downstream execution and projection callback failures', async () => {
+it('records supervision failures against the heartbeat that triggered them', async () => {
   const db = new AssistantDatabase(':memory:')
   db.initialize(process.cwd())
   try {
-    const heartbeat = new HeartbeatService(db, { summarize: async () => { throw new Error('Heartbeat failed') } }, () => {})
+    const heartbeat = new HeartbeatService(db, { review: async () => { throw new Error('Callback failed') } })
     const config = heartbeat.create({ name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
     await heartbeat.runNow({ id: config.id, idempotencyKey: crypto.randomUUID() })
-    expect(db.listSupervisionActivity()[0]).toMatchObject({ status: 'failed', error: 'Heartbeat failed', scope: request.scope, supervisionStatus: null })
-    const projection = new HeartbeatService(db, { summarize: async () => ({ summary: 'Report', highlights: [], proposedMemories: [], followUpTasks: [] }) }, () => {}, async () => { throw new Error('Callback failed') })
-    await projection.runNow({ id: config.id, idempotencyKey: crypto.randomUUID() })
-    expect(db.listSupervisionActivity().find((row) => row.error === 'Callback failed')).toMatchObject({ status: 'failed', heartbeatStatus: 'completed' })
+    expect(db.listSupervisionActivity()[0]).toMatchObject({ status: 'failed', error: 'Callback failed', scope: request.scope, heartbeatStatus: 'completed', supervisionStatus: null })
   } finally { db.close() }
 })
-
 it('filters by exact plan ID before pagination, including plans with the same name and scope', async () => {
   const db = new AssistantDatabase(':memory:')
   db.initialize(process.cwd())
   try {
-    const heartbeat = new HeartbeatService(db, { summarize: async () => { throw new Error('Expected failure') } }, () => {})
+    const heartbeat = new HeartbeatService(db, { review: async () => { throw new Error('Expected failure') } })
     const input = { name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily' as const, localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }
     const first = heartbeat.create(input)
     const second = heartbeat.create(input)
@@ -153,16 +151,13 @@ it('uses actual manual heartbeat and downstream finish times', async () => {
   const db = new AssistantDatabase(':memory:')
   db.initialize(process.cwd())
   try {
-    const heartbeat = new HeartbeatService(db, { summarize: async () => {
-      vi.setSystemTime(new Date('2026-09-23T10:02:00Z'))
-      return { summary: 'Report', highlights: [], proposedMemories: [], followUpTasks: [] }
-    } }, () => {}, async () => {
+    const heartbeat = new HeartbeatService(db, { review: async () => {
       vi.setSystemTime(new Date('2026-09-23T10:03:00Z'))
       throw new Error('Projection failed')
-    })
+    } })
     const config = heartbeat.create({ name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
     const run = await heartbeat.runNow({ id: config.id, idempotencyKey: crypto.randomUUID() })
-    expect(run.completedAt).toBe('2026-09-23T10:02:00.000Z')
+    expect(run.completedAt).toBe('2026-09-23T10:00:00.000Z')
     expect(db.listSupervisionActivity()[0]).toMatchObject({ startedAt: '2026-09-23T10:00:00.000Z', completedAt: '2026-09-23T10:03:00.000Z', status: 'failed' })
   } finally { db.close(); vi.useRealTimers() }
 })
