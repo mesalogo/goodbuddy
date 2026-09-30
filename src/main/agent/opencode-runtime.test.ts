@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { KnowledgeMcpGateway } from "./knowledge-mcp-gateway";
 import type { RuntimeEvent } from "./runtime";
 import {
+  createTemporaryMcpName,
   OpenCodeRuntime,
   type OpenCodeRuntimeDependencies,
 } from "./opencode-runtime";
@@ -2265,7 +2266,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     expect(setup.client.mcp.add).toHaveBeenCalledWith(
       {
         directory: process.cwd(),
-        name: expect.stringMatching(/^goodbuddy-custom-[a-f0-9]{20}$/u),
+        name: expect.stringMatching(/^gbc-[a-f0-9]{6}$/u),
         config: {
           type: "remote",
           url: "http://127.0.0.1:4567/mcp",
@@ -3164,7 +3165,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     expect(setup.client.mcp.add).toHaveBeenCalledWith(
       {
         directory: process.cwd(),
-        name: expect.stringMatching(/^goodbuddy-data-[a-f0-9]{20}$/u),
+        name: expect.stringMatching(/^gbd-[a-f0-9]{6}$/u),
         config: {
           type: "remote",
           url: "http://127.0.0.1:4567/mcp",
@@ -3201,8 +3202,8 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           read: false,
           write: false,
           bash: false,
-          "goodbuddy-data-*": false,
-          "goodbuddy-custom-*": false,
+          "gbd-*": false,
+          "gbc-*": false,
           [knowledgeToolId]: true,
         },
       }),
@@ -3210,13 +3211,130 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     );
     expect(setup.client.mcp.disconnect).toHaveBeenCalledWith(
       {
-        name: expect.stringMatching(/^goodbuddy-data-/u),
+        name: expect.stringMatching(/^gbd-/u),
         directory: process.cwd(),
       },
       { signal: expect.any(AbortSignal) },
     );
     expect(events.at(-1)).toMatchObject({ type: "done" });
     await runtime.dispose();
+  });
+
+  it("keeps temporary MCP names stable within a conversation and short enough for providers", async () => {
+    const setup = runClient([
+      { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    const runtime = embeddedRuntime(setup.client, {
+      knowledgeGateway: {
+        getEndpoint: () => "http://127.0.0.1:4567/mcp",
+        getAvailableToolNames: () => ["goodbuddy_config_capabilities"],
+      } as unknown as KnowledgeMcpGateway,
+    });
+    const runOnce = async (requestId: string, conversationId: string) => {
+      for await (const _event of runtime.run(
+        {
+          requestId,
+          conversationId,
+          prompt: "search",
+          workMode: "ask",
+          knowledgeCapabilityToken: requestId,
+        },
+        new AbortController().signal,
+      )) {
+        void _event;
+      }
+    };
+    try {
+      await runOnce("request-1", "conversation-1");
+      await runOnce("request-2", "conversation-1");
+      await runOnce("request-3", "conversation-2");
+      const add = setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>;
+      const names = add.mock.calls.map(
+        (call) => (call[0] as { name: string }).name,
+      );
+      expect(names[0]).toMatch(/^gbd-[a-f0-9]{6}$/u);
+      expect(names[1]).toBe(names[0]);
+      expect(names[2]).toMatch(/^gbd-[a-f0-9]{6}$/u);
+      expect(names[2]).not.toBe(names[0]);
+      expect(`${names[0]}_goodbuddy_config_capabilities`.length).toBeLessThanOrEqual(64);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("does not reuse a temporary MCP name whose disconnect failed", async () => {
+    const setup = runClient([
+      { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    const disconnect = setup.client.mcp.disconnect as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    disconnect
+      .mockRejectedValueOnce(new Error("disconnect timed out"))
+      .mockResolvedValueOnce({ data: undefined, error: { name: "BadRequest" } });
+    const runtime = embeddedRuntime(setup.client, {
+      knowledgeGateway: {
+        getEndpoint: () => "http://127.0.0.1:4567/mcp",
+        getAvailableToolNames: () => ["knowledge_search"],
+      } as unknown as KnowledgeMcpGateway,
+    });
+    const runOnce = async (requestId: string) => {
+      for await (const _event of runtime.run(
+        {
+          requestId,
+          conversationId: "conversation-1",
+          prompt: "search",
+          workMode: "ask",
+          knowledgeCapabilityToken: requestId,
+        },
+        new AbortController().signal,
+      )) {
+        void _event;
+      }
+    };
+    try {
+      await runOnce("request-1");
+      await runOnce("request-2");
+      await runOnce("request-3");
+      await runOnce("request-4");
+      const add = setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>;
+      const names = add.mock.calls.map(
+        (call) => (call[0] as { name: string }).name,
+      );
+      const base = names[0]!;
+      expect(base).toMatch(/^gbd-[a-f0-9]{6}$/u);
+      // request-1 failed to disconnect (rejected) -> slot 1 stays leased.
+      expect(names[1]).toBe(`${base}-2`);
+      // request-2 disconnect returned an error -> slot 2 stays leased.
+      expect(names[2]).toBe(`${base}-3`);
+      // request-3 disconnected cleanly -> slot 3 is reusable.
+      expect(names[3]).toBe(`${base}-3`);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("leases distinct temporary MCP slots for concurrent holders and caps them", () => {
+    const setup = runClient([]);
+    const runtime = embeddedRuntime(setup.client) as unknown as {
+      acquireTemporaryMcpSlot: (client: unknown, key: string) => number;
+      releaseTemporaryMcpSlot: (client: unknown, key: string, slot: number) => void;
+    };
+    const otherClient = {};
+    const slots = Array.from({ length: 9 }, () =>
+      runtime.acquireTemporaryMcpSlot(setup.client, "abc123"),
+    );
+    expect(slots).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(() => runtime.acquireTemporaryMcpSlot(setup.client, "abc123")).toThrow(
+      /并行的 OpenCode 请求过多/u,
+    );
+    // Other conversation keys and other OpenCode clients are independent.
+    expect(runtime.acquireTemporaryMcpSlot(setup.client, "def456")).toBe(1);
+    expect(runtime.acquireTemporaryMcpSlot(otherClient, "abc123")).toBe(1);
+    runtime.releaseTemporaryMcpSlot(setup.client, "abc123", 4);
+    expect(runtime.acquireTemporaryMcpSlot(setup.client, "abc123")).toBe(4);
+    expect(createTemporaryMcpName("gbd-", "abc123", 1)).toBe("gbd-abc123");
+    expect(createTemporaryMcpName("gbc-", "abc123", 4)).toBe("gbc-abc123-4");
   });
 
   it("enables the deterministic MCP tool name when tool ids omit dynamic tools", async () => {
@@ -3694,8 +3812,8 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
             write: false,
             bash: false,
             task: false,
-            "goodbuddy-data-*": false,
-            "goodbuddy-custom-*": false,
+            "gbd-*": false,
+            "gbc-*": false,
             skill: true,
           },
         }),
@@ -3767,12 +3885,12 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         permission: [
           { permission: "*", pattern: "*", action: "allow" },
           {
-            permission: "goodbuddy-data-*",
+            permission: "gbd-*",
             pattern: "*",
             action: "deny",
           },
           {
-            permission: "goodbuddy-custom-*",
+            permission: "gbc-*",
             pattern: "*",
             action: "deny",
           },
@@ -3783,8 +3901,8 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     expect(session.promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         tools: {
-          "goodbuddy-data-*": false,
-          "goodbuddy-custom-*": false,
+          "gbd-*": false,
+          "gbc-*": false,
         },
       }),
       expect.anything(),
@@ -4334,8 +4452,8 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           write: false,
           bash: false,
           task: false,
-          "goodbuddy-data-*": false,
-          "goodbuddy-custom-*": false,
+          "gbd-*": false,
+          "gbc-*": false,
         },
       }),
       expect.anything(),
@@ -4483,7 +4601,7 @@ describe("OpenCodeRuntime native customization", () => {
             "webfetch",
             "websearch",
             "write",
-            "goodbuddy-data-123_search",
+            "gbd-123_search",
             "extension_tool",
           ],
           error: undefined,
@@ -4513,7 +4631,7 @@ describe("OpenCodeRuntime native customization", () => {
               hints: [],
             },
             {
-              name: "goodbuddy-data-123",
+              name: "gbd-123",
               source: "mcp",
               template: "temporary prompt",
               hints: [],
@@ -4548,7 +4666,7 @@ describe("OpenCodeRuntime native customization", () => {
         status: vi.fn().mockResolvedValue({
           data: {
             public: { status: "failed", error: "private failure" },
-            "goodbuddy-custom-123": { status: "connected" },
+            "gbc-123": { status: "connected" },
           },
         }),
       },
@@ -4566,7 +4684,7 @@ describe("OpenCodeRuntime native customization", () => {
               temporary: {
                 name: "Temporary resource",
                 uri: "docs://temporary",
-                client: "goodbuddy-data-123",
+                client: "gbd-123",
               },
             },
           }),
@@ -4697,8 +4815,8 @@ describe("OpenCodeRuntime native customization", () => {
     expect(serialized).not.toContain("must not be exposed");
     expect(serialized).not.toContain("C:\\private");
     expect(serialized).not.toContain("assigned-skill");
-    expect(serialized).not.toContain("goodbuddy-data-");
-    expect(serialized).not.toContain("goodbuddy-custom-");
+    expect(serialized).not.toContain("gbd-");
+    expect(serialized).not.toContain("gbc-");
     expect(serialized).not.toContain('"invalid"');
 
     vi.mocked(client.tool.ids).mockRejectedValueOnce(

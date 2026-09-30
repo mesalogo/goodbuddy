@@ -77,7 +77,7 @@ import type {
   ResolvedMcpServer
 } from '../capabilities/capability-service'
 import {
-  createMcpToolName,
+  createGatewayMcpToolName,
   isValidMcpToolName,
   listAllMcpTools,
   normalizeMcpToolSchema
@@ -848,7 +848,7 @@ export class KnowledgeMcpGateway {
             >(normalizeMcpToolSchema(tool.outputSchema))
           : undefined,
         exposedTool: {
-          name: createMcpToolName(server.id, tool.name),
+          name: createGatewayMcpToolName(server.id, tool.name),
           title: `${server.name} / ${tool.name}`.slice(0, 200),
           description: [
             `GoodBuddy 代理的自定义 MCP Server「${server.name}」工具。`,

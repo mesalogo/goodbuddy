@@ -105,6 +105,48 @@ export function createMcpToolName(
   return `mcp_${serverHash}_${toolHash}_${readable}`.slice(0, 64)
 }
 
+// Budget for tools re-exposed through a GoodBuddy gateway MCP. Runtimes such as
+// OpenCode prepend "<MCP name>_" (up to 13 characters, e.g. "gbc-a1b2c3-9_")
+// and common provider APIs reject tool names longer than 64 characters.
+export const MAXIMUM_GATEWAY_MCP_TOOL_NAME_LENGTH = 51
+const GATEWAY_SERVER_HASH_LENGTH = 4
+const GATEWAY_TOOL_HASH_LENGTH = 4
+
+/**
+ * Compact name for a custom MCP tool exposed through the GoodBuddy gateway:
+ * "<server hash>_<original name>". The original name is kept verbatim when it
+ * is already provider-safe and fits; otherwise the readable part is sanitized
+ * and truncated, and a short hash of the original name keeps it unique.
+ */
+export function createGatewayMcpToolName(
+  serverId: string,
+  originalName: string
+): string {
+  const serverHash = createHash('sha256')
+    .update(serverId)
+    .digest('hex')
+    .slice(0, GATEWAY_SERVER_HASH_LENGTH)
+  const prefix = `${serverHash}_`
+  const available = MAXIMUM_GATEWAY_MCP_TOOL_NAME_LENGTH - prefix.length
+  if (
+    /^[a-zA-Z0-9_-]+$/u.test(originalName) &&
+    originalName.length <= available
+  ) {
+    return `${prefix}${originalName}`
+  }
+  const toolHash = createHash('sha256')
+    .update(originalName)
+    .digest('hex')
+    .slice(0, GATEWAY_TOOL_HASH_LENGTH)
+  const readable =
+    originalName
+      .replace(/[^a-zA-Z0-9_-]+/gu, '_')
+      .replace(/^_+|_+$/gu, '')
+      .slice(0, available - GATEWAY_TOOL_HASH_LENGTH - 1)
+      .replace(/_+$/u, '') || 'tool'
+  return `${prefix}${readable}_${toolHash}`
+}
+
 export function normalizeMcpToolSchema(
   value: unknown
 ): Record<string, unknown> & { type: 'object' } {

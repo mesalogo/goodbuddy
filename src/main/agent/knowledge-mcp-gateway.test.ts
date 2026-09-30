@@ -1079,7 +1079,7 @@ describe('KnowledgeMcpGateway', () => {
       expect(listed.tools).toEqual([
         expect.objectContaining({
           name: expect.stringMatching(
-            /^mcp_[a-f0-9]{8}_[a-f0-9]{8}_echo_private$/u
+            /^[a-f0-9]{4}_echo_private$/u
           ),
           description: expect.stringContaining('Private MCP')
         })

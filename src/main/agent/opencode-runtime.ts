@@ -95,10 +95,16 @@ const MAX_NATIVE_RESOURCES = runtimeNativeInventoryLimits.resources;
 const COMPACTION_USAGE_EVENT_GRACE_MS = 1_000;
 const EMBEDDED_SERVER_USERNAME = "goodbuddy";
 const OPENCODE_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+// Keep temporary MCP names short: OpenCode exposes tools as
+// "<MCP name>_<tool name>" and common provider APIs cap tool names at 64.
+const KNOWLEDGE_MCP_PREFIX = "gbd-";
+const CUSTOM_MCP_PREFIX = "gbc-";
 const TEMPORARY_MCP_PREFIXES = [
-  "goodbuddy-data-",
-  "goodbuddy-custom-",
+  KNOWLEDGE_MCP_PREFIX,
+  CUSTOM_MCP_PREFIX,
 ] as const;
+const TEMPORARY_MCP_CONVERSATION_HASH_LENGTH = 6;
+const MAX_TEMPORARY_MCP_SLOTS = 9;
 const temporaryMcpToolOverrides = Object.fromEntries(
   TEMPORARY_MCP_PREFIXES.map((prefix) => [`${prefix}*`, false]),
 );
@@ -534,6 +540,21 @@ function isTemporaryMcpName(value: string): boolean {
   return TEMPORARY_MCP_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
 
+function temporaryMcpConversationKey(conversationId: string): string {
+  return createHash("sha256")
+    .update(conversationId)
+    .digest("hex")
+    .slice(0, TEMPORARY_MCP_CONVERSATION_HASH_LENGTH);
+}
+
+export function createTemporaryMcpName(
+  prefix: (typeof TEMPORARY_MCP_PREFIXES)[number],
+  conversationKey: string,
+  slot: number,
+): string {
+  return `${prefix}${conversationKey}${slot === 1 ? "" : `-${slot}`}`;
+}
+
 function isTemporaryMcpInventoryItem(
   ...values: Array<string | undefined>
 ): boolean {
@@ -753,6 +774,15 @@ export class OpenCodeRuntime implements AgentRuntime {
   >();
   private readonly conversationRunTails = new Map<string, Promise<void>>();
   private mcpMutationTail: Promise<void> = Promise.resolve();
+  // Temporary MCP name slots per OpenCode client and conversation. A slot is
+  // held while a request owns its MCP connections and is only freed after
+  // every disconnect succeeds, so a request never reuses a name that may still
+  // be bound to another request's capability token. A new client (restarted
+  // server) starts with a clean MCP registry and therefore fresh slots.
+  private readonly temporaryMcpSlots = new WeakMap<
+    OpencodeClient,
+    Map<string, Set<number>>
+  >();
   private readonly dependencies: OpenCodeRuntimeDependencies;
 
   constructor(
@@ -826,6 +856,47 @@ export class OpenCodeRuntime implements AgentRuntime {
       throw error;
     } finally {
       signal.removeEventListener("abort", abort);
+    }
+  }
+
+  private acquireTemporaryMcpSlot(
+    client: OpencodeClient,
+    conversationKey: string,
+  ): number {
+    let byConversation = this.temporaryMcpSlots.get(client);
+    if (!byConversation) {
+      byConversation = new Map();
+      this.temporaryMcpSlots.set(client, byConversation);
+    }
+    let occupied = byConversation.get(conversationKey);
+    if (!occupied) {
+      occupied = new Set();
+      byConversation.set(conversationKey, occupied);
+    }
+    for (let slot = 1; slot <= MAX_TEMPORARY_MCP_SLOTS; slot += 1) {
+      if (!occupied.has(slot)) {
+        occupied.add(slot);
+        return slot;
+      }
+    }
+    throw new Error(
+      `同一会话中并行的 OpenCode 请求过多（最多 ${MAX_TEMPORARY_MCP_SLOTS} 个），请等待其他请求结束后重试`,
+    );
+  }
+
+  private releaseTemporaryMcpSlot(
+    client: OpencodeClient,
+    conversationKey: string,
+    slot: number,
+  ): void {
+    const byConversation = this.temporaryMcpSlots.get(client);
+    const occupied = byConversation?.get(conversationKey);
+    if (!byConversation || !occupied) {
+      return;
+    }
+    occupied.delete(slot);
+    if (occupied.size === 0) {
+      byConversation.delete(conversationKey);
     }
   }
 
@@ -2169,6 +2240,16 @@ export class OpenCodeRuntime implements AgentRuntime {
     let customMcpName: string | undefined;
     let customMcpToken: string | undefined;
     const attemptedMcpNames: string[] = [];
+    const mcpConversationKey = temporaryMcpConversationKey(
+      request.conversationId,
+    );
+    let mcpSlot: number | undefined;
+    const temporaryMcpName = (
+      prefix: (typeof TEMPORARY_MCP_PREFIXES)[number],
+    ): string => {
+      mcpSlot ??= this.acquireTemporaryMcpSlot(client, mcpConversationKey);
+      return createTemporaryMcpName(prefix, mcpConversationKey, mcpSlot);
+    };
     const subscriptionController = new AbortController();
     const imageCapabilityToken = request.imageToolBinding && request.workMode === 'execute'
       ? this.options.knowledgeGateway?.bindImageTool(request.imageToolBinding, signal, request.knowledgeCapabilityToken)
@@ -2181,10 +2262,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         this.options.knowledgeGateway?.getEndpoint()
       ) {
         const knowledgeEndpoint = this.options.knowledgeGateway.getEndpoint()!;
-        knowledgeMcpName = `goodbuddy-data-${createHash("sha256")
-          .update(`${request.conversationId}\0${request.requestId}`)
-          .digest("hex")
-          .slice(0, 20)}`;
+        knowledgeMcpName = temporaryMcpName(KNOWLEDGE_MCP_PREFIX);
         const added = await this.mutateMcp(signal, () =>
           this.controlRequest(
             "连接内置只读工具",
@@ -2246,10 +2324,7 @@ export class OpenCodeRuntime implements AgentRuntime {
               customMcpToken,
               signal,
             );
-          customMcpName = `goodbuddy-custom-${createHash("sha256")
-            .update(`${request.conversationId}\0${request.requestId}`)
-            .digest("hex")
-            .slice(0, 20)}`;
+          customMcpName = temporaryMcpName(CUSTOM_MCP_PREFIX);
           const added = await this.mutateMcp(signal, () =>
             this.controlRequest(
               "连接自定义 MCP 工具",
@@ -3117,18 +3192,31 @@ export class OpenCodeRuntime implements AgentRuntime {
     } finally {
       subscriptionController.abort();
       if (imageCapabilityToken && imageCapabilityToken !== request.knowledgeCapabilityToken) this.options.knowledgeGateway?.revoke(imageCapabilityToken);
+      let allMcpDisconnected = true;
       for (const name of attemptedMcpNames) {
-        await this.mutateMcp(new AbortController().signal, () => {
-          // Queue wait must not consume the disconnect timeout.
-          const cleanupSignal = AbortSignal.timeout(1_000);
-          return awaitWithAbort(
-            client.mcp.disconnect(
-              { name, directory },
-              { signal: cleanupSignal },
-            ),
-            cleanupSignal,
-          );
-        }).catch(() => undefined);
+        const disconnected = await this.mutateMcp(
+          new AbortController().signal,
+          () => {
+            // Queue wait must not consume the disconnect timeout.
+            const cleanupSignal = AbortSignal.timeout(1_000);
+            return awaitWithAbort(
+              client.mcp.disconnect(
+                { name, directory },
+                { signal: cleanupSignal },
+              ),
+              cleanupSignal,
+            );
+          },
+        ).then(
+          (result) => !(result as { error?: unknown } | undefined)?.error,
+          () => false,
+        );
+        allMcpDisconnected &&= disconnected;
+      }
+      // A slot whose connection may still be alive stays occupied so a later
+      // request cannot reuse a name bound to this request's token.
+      if (mcpSlot !== undefined && allMcpDisconnected) {
+        this.releaseTemporaryMcpSlot(client, mcpConversationKey, mcpSlot);
       }
       if (customMcpToken) {
         this.options.knowledgeGateway?.revoke(customMcpToken);
