@@ -149,7 +149,7 @@ records are listed separately and do not introduce another feature status.
   the popup; Local Inference Monitor opens a separate modal preserving the workspace, while other apps
   open their main content pages. Manage Apps uses a LayoutGrid icon and opens Application Center with searchable cards and settings details;
   layout and interaction rules are defined in the [UI design](./docs/features/application-tool-navigation/ui-design.md).
-  All four application cards support arrow and drag reordering regardless of enablement or pinning.
+  All five application rows support arrow and drag reordering regardless of enablement or pinning.
   Cards, the launcher, and the filtered sidebar share one persisted order. Knowledge
   is always enabled and pinned, with Open and reorder controls. Supervisor, Notes,
   and Local Inference Monitor have enablement and pinning settings. Supervisor uses
@@ -171,6 +171,14 @@ records are listed separately and do not introduce another feature status.
   local-engine checks, and remaining platform/package coverage. Historical
   failures are not the current full-suite result. See the
   [validation progress](./docs/features/application-tool-navigation/progress.md).
+- [x] **Local device-sharing metadata** (implemented in source): Open Device Sharing
+  from Apps or Application Center, save a service URL and device name, register the
+  device, browse returned records, publish capability or knowledge metadata, and
+  revoke this device ID's entries. The default service is `http://127.0.0.1:8787`.
+  This unauthenticated local service uses IDs for identification only. Server source
+  mode does not upload or sync content, and independent knowledge search/read/download
+  flags are declarations, not content access or remote execution. See
+  [scope and validation](./docs/features/device-sharing/README.md).
 - [ ] **Privately deployable application marketplace** (planned): Extends
   application management with an organization-owned catalog and application
   distribution. Current management covers built-in apps only, not marketplace

@@ -23,7 +23,7 @@ describe('GoodBuddy configuration contracts', () => {
       operation: 'application.update',
       updates: { applicationNavigation: {
         ...defaultApplicationNavigation,
-        order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'],
+        order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge', 'device-sharing'],
       } },
     }
     expect(goodbuddyConfigOperationSchema.parse(operation)).toEqual(operation)

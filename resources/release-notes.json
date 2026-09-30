@@ -8,9 +8,11 @@
         "zh-CN": {
           "highlights": [],
           "features": [
-            "**可选的透明磨砂外观**：在外观设置中开启“透明磨砂特效”，聊天内容可滚动经过顶栏背后，执行清单浮层也使用磨砂背景。默认关闭，选择会保存并在重启后恢复；效果只作用于应用内部，不透出操作系统桌面。"
+            "**可选的透明磨砂外观**：在外观设置中开启“透明磨砂特效”，聊天内容可滚动经过顶栏背后，执行清单浮层也使用磨砂背景。默认关闭，选择会保存并在重启后恢复；效果只作用于应用内部，不透出操作系统桌面。",
+            "**设备共享元数据入口**：从应用菜单或应用管理打开“设备共享”，连接另行运行的 ShareServer 服务后，可注册本机、浏览设备和发布目录、发布能力或知识的元数据并撤销本机 ID 的条目。首期面向本地未认证服务，设备 ID 不是所有权认证；不执行远程能力，不搜索、读取或下载知识正文，权限选项仅为元数据声明。"
           ],
           "fixes": [
+            "**新建笔记入口保持可见**：“新建笔记”统一放在魔法笔记页面标题栏，不再藏在列表工具栏中。打开详情或待办时仍可发起新建，并沿用未保存草稿保护。",
             "**改善本地 OpenCode 工具连接恢复**：明确的暂时性 MCP 传输故障会在清理成功后最多重试一次，超时或取消后结果不确定的连接名称不再复用，避免晚到初始化覆盖新连接。鉴权、协议和未知错误不会自动重试，Prompt 与工具调用不会重放；该修正不代表远程 Agent 新增恢复能力。",
             "**减少输入和切换会话时的重复处理**：输入时未变化的消息历史及任务条不再反复渲染，切换已缓存会话时复用稳定的消息回调。实时输出、滚动位置、草稿和异步附件归属保持不变，执行统计索引也减少了轮询时对事件记录的扫描。",
             "**草稿和队列图片可直接放大预览**：点击图片缩略图即可打开共享查看器，无需先执行 OCR。队列附件保持只读，不再展示解析来源和设置入口；草稿仍可显式提取文字。",
@@ -25,9 +27,11 @@
         "en-US": {
           "highlights": [],
           "features": [
-            "**Optional frosted-glass appearance**: Enable the effect in Appearance to let chat content scroll behind the header and give execution-checklist panels a frosted background. It is off by default and your choice persists across restarts; the effect is internal to the app and does not reveal the operating-system desktop."
+            "**Optional frosted-glass appearance**: Enable the effect in Appearance to let chat content scroll behind the header and give execution-checklist panels a frosted background. It is off by default and your choice persists across restarts; the effect is internal to the app and does not reveal the operating-system desktop.",
+            "**Device-sharing metadata entry**: Open Device Sharing from the application menu or manager and connect to a separately running ShareServer to register this device, browse device and publication catalogs, publish capability or knowledge metadata, and revoke entries associated with this device ID. This first stage targets a local unauthenticated service, and device IDs are not ownership authentication; it does not execute remote capabilities or search, read, or download knowledge content, and permission options are metadata declarations only."
           ],
           "fixes": [
+            "**Keep New note visible**: New note now stays in the Magic Notes page header rather than the list toolbar. You can start a note while viewing details or to-dos, with existing unsaved-draft protection retained.",
             "**Improve local OpenCode tool connection recovery**: Explicit transient MCP transport failures receive at most one retry after successful cleanup, and names with uncertain timeout or cancellation outcomes are retired so late initialization cannot replace a live connection. Authentication, protocol, and unknown errors are not retried, and prompts or tool calls are not replayed; this is not a new remote Agent recovery capability.",
             "**Reduce repeated work while typing and switching conversations**: Unchanged message history and task strips avoid repeated renders during typing, with stable callbacks reused across cached conversation switches. Streaming, scroll positions, drafts, and asynchronous attachment ownership remain intact, while execution-statistics indexes reduce event scans during polling.",
             "**Preview draft and queued images directly**: Click an image thumbnail to open the shared viewer without running OCR first. Queued attachments remain read-only and no longer show parsing-source or settings entries; drafts retain explicit text extraction.",

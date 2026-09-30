@@ -22,6 +22,7 @@ type WorkspaceView =
   | 'knowledge'
   | 'heartbeat'
   | 'local-inference'
+  | 'device-sharing'
   | 'activity'
   | 'settings'
 ```
@@ -31,7 +32,7 @@ type WorkspaceView =
 实现以[浏览器多实例技术设计](../assistant-workbar/browser-tabs-technical-design.md)为准。代码中尚无资源指标采集和资源监控
 面板。侧栏底部已替换为应用中心与独立设置按钮。
 
-应用中心、四应用共享排序、可选应用常驻及启用联动、共同设置页和本机推理监控已接入生产源码；本机资源监控的
+应用中心、五应用共享排序、可选应用常驻及启用联动、共同设置页和本机推理监控已接入生产源码；本机资源监控的
 Main/Preload/Renderer 实现仍待交付。系统工具只使用右侧工作栏已有 Tab 和“+”链路。
 行为由[功能逻辑](./logic-design.md)定义，验证范围见[实施进度](./progress.md)。
 
@@ -61,7 +62,7 @@ Main/Preload/Renderer 实现仍待交付。系统工具只使用右侧工作栏�
 ### 3.1 内置应用清单
 
 ```ts
-type BuiltInApplicationId = 'magic-notes' | 'knowledge' | 'heartbeat' | 'local-inference'
+type BuiltInApplicationId = 'magic-notes' | 'knowledge' | 'heartbeat' | 'local-inference' | 'device-sharing'
 
 type BuiltInApplicationDefinition = {
   id: BuiltInApplicationId
@@ -81,7 +82,7 @@ type BuiltInApplicationDefinition = {
 
 应用中心调用既有 `navigateFromSidebar` 或同一页面导航函数，沿用未保存离开检查和焦点
 策略。打开前检查确认的启用值；未常驻但已启用的应用不附带常驻写入。本机推理监控从常驻入口、菜单及管理 Modal 均经 `setView('local-inference')` 打开独立 Modal，保留底层工作区与设置草稿；其他应用继续页面导航。
-`ApplicationMenu` 按四个应用共用的持久化顺序派生清单，仅按启用过滤，不读取常驻或打开历史。应用行先关闭菜单再导航；底部“管理应用”关闭菜单、恢复锚点焦点并打开既有 `ApplicationCenter` Modal。
+`ApplicationMenu` 按五个应用共用的持久化顺序派生清单，仅按启用过滤，不读取常驻或打开历史。应用行先关闭菜单再导航；底部“管理应用”关闭菜单、恢复锚点焦点并打开既有 `ApplicationCenter` Modal。设备共享始终启用，进入主内容区页面，无常驻字段；业务边界见[设备共享技术设计](../device-sharing/technical-design.md#当前首期实现)。
 应用中心对应行的设置操作仅接受 `EditableApplicationId`；应用页和全局设置不提供重复入口。知识库的管理行提供“打开”和排序，原工作区实际配置保留，不添加通用空设置页。
 共同页复用设置 Modal 容器、配置读取及更新方法，不建立独立配置存储或重复表单。
 
@@ -124,9 +125,9 @@ type ApplicationNavigationSettings = {
 }
 ```
 
-`applicationNavigation` 保存四个应用的完整顺序和三个可选应用的常驻布尔值。默认顺序为
-`knowledge`、`heartbeat`、`magic-notes`、`local-inference`；心跳和魔法笔记常驻默认 `true`，本机推理监控默认 `false`。
-权威返回 schema 和更新 schema 均要求四个 ID 各出现一次，拒绝重复、未知和缺失 ID；`pinned` 包含三个可选应用，缺失 `heartbeat` 时补 `true`，显式布尔值保留。Renderer 直接读取该顺序，再按各入口的可见性过滤。知识库始终启用、常驻，无可写开关键。
+`applicationNavigation` 保存五个应用的完整顺序和三个可选应用的常驻布尔值。默认顺序为
+`knowledge`、`heartbeat`、`magic-notes`、`local-inference`、`device-sharing`；心跳和魔法笔记常驻默认 `true`，本机推理监控默认 `false`，设备共享无常驻开关。
+权威返回 schema 和更新 schema 均要求五个 ID 各出现一次，拒绝重复、未知和缺失 ID；`pinned` 包含三个可选应用，缺失 `heartbeat` 时补 `true`，显式布尔值保留。Renderer 直接读取该顺序，再按各入口的可见性过滤。知识库始终启用、常驻，无可写开关键。
 按[排序规则](./logic-design.md#3-主导航组合规则)提交完整顺序；不持久化可推导的可见 ID 列表。
 首期不预建插件字段，也不为未发布的旧隐藏 ID 草案增加迁移读取器。
 
@@ -166,7 +167,7 @@ Main 继续校验可信 sender、Zod 输入，复用 `ApplicationSettingsStore` 
 `true`、`false`、单选值和无关设置，不迁移或清理笔记、知识及会话业务数据。
 新安装和升级时缺失整个 `applicationNavigation` 均使用共享默认值，本机推理监控启用但不常驻；本次不增加存储版本。已保存的常驻值均保留，无法区分旧默认 `true` 与用户主动固定，不强制改为 `false`。
 
-仅存储读取允许补齐旧数据：缺失的 `knowledge`、`heartbeat` 按此顺序前置，再保留已有 ID 的相对顺序，最后按默认顺序追加缺失的可选应用。旧 `[local-inference, magic-notes]` 因此变为 `[knowledge, heartbeat, local-inference, magic-notes]`；完整四项顺序原样保留。缺失或空顺序采用默认顺序，部分 `pinned` 映射仅补缺失键，显式 `false` 保留。重复或未知 ID 仍按现有损坏文件处理规则处理，不静默去重或丢弃。版本 11 迁移时写入归一化结果；版本 12 读取时归一化，下一次设置保存时写入完整结果。IPC 和配置工具写入不接受这些部分数据。
+仅存储读取允许补齐旧数据：缺失的 `knowledge`、`heartbeat` 按此顺序前置，再保留已有 ID 的相对顺序，最后按默认顺序追加缺失项。旧 `[local-inference, magic-notes]` 因此变为 `[knowledge, heartbeat, local-inference, magic-notes, device-sharing]`；旧完整四项顺序保留并在末尾追加 `device-sharing`。缺失或空顺序采用默认顺序，部分 `pinned` 映射仅补缺失键，显式 `false` 保留。重复或未知 ID 仍按现有损坏文件处理规则处理，不静默去重或丢弃。版本 11 迁移时写入归一化结果；版本 12 读取时归一化，下一次设置保存时写入完整结果。IPC 和配置工具写入不接受这些部分数据。
 
 版本 12 属于未发布的分支格式，原草案 `knowledgeEnabled` 已移除，不增加兼容读取器。`heartbeatEnabled` 是当前应用启用字段，由 Store 归一化缺失值并保留显式保存值。
 
@@ -352,7 +353,7 @@ resourceMonitor.getLocalSnapshot(input: {
 
 ### 10.2 Main 与契约测试
 
-- 顺序包含四个应用 ID 各一次；公开写入拒绝重复、缺失、未知 ID 及无效常驻字段；旧存储顺序按迁移规则补齐，不为未发布的 `knowledgeEnabled` 添加迁移。
+- 顺序包含五个应用 ID 各一次；公开写入拒绝重复、缺失、未知 ID 及无效常驻字段；旧存储顺序按迁移规则补齐，不为未发布的 `knowledgeEnabled` 添加迁移。
 - 未配置的心跳应用默认关闭，其余应用启用及笔记布尔项默认开启，本机推理监控默认不常驻；已保存的启用、常驻值和评论单选值经迁移及重启保留。
 - 更新常驻或顺序不修改启用、计划或业务数据；笔记既有配置键保持语义。
 - 串行 patch 在 Main 最新快照上合并，原子写入失败不发布目标状态；响应丢失后重读实际结果。

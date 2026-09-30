@@ -1,5 +1,13 @@
 # 应用导航实施进度
 
+## 2026-10-01：设备共享入口
+
+新增 `device-sharing`，应用菜单及管理 Modal 均进入主内容区页面；管理行可排序，不提供启用
+或常驻开关。旧顺序通过现有存储归一化追加新项，保留原设置；权威写入要求五项完整顺序。
+ApplicationCenter、ApplicationMenu、设置迁移以及 App 入口／排序回归已通过，真实 Electron
+从应用中心进入页面并完成后端流程。精确命令、完整范围及全仓测试记录见
+[设备共享实施进度](../device-sharing/progress.md)。下方历史四应用记录保留原验证时的范围。
+
 ## 2026-09-28: Composer shortcut initialization follow-up
 
 The composer now retains successful shortcut-settings snapshots independently of
