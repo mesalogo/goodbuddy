@@ -707,6 +707,18 @@ export function MagicNotesWorkspace({
     return () => cancelAnimationFrame(frame)
   }, [detail?.id, detailView])
 
+  useLayoutEffect(() => {
+    const entryId = requestedEntryIdRef.current
+    if (!entryId || detail?.id !== requestedNoteIdRef.current || detailView !== 'notes') return
+    const frame = requestAnimationFrame(() => {
+      const entry = document.getElementById(`magic-note-entry-${entryId}`)
+      if (!entry) return
+      entry.scrollIntoView({ block: 'center' })
+      requestedEntryIdRef.current = undefined
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [detail, detailView])
+
   useEffect(() => {
     const layout = todoLayoutRef.current
     if (!layout) return
@@ -1168,16 +1180,7 @@ export function MagicNotesWorkspace({
       if (libraryView === 'notes') overviewFocusRef.current = `magic-note-select-${target.noteId}`
       setDetailView('notes')
       focusSwitchTarget(target)
-      void loadDetail(target.noteId, target.entryId).then(() => {
-        if (!target.entryId || requestedNoteIdRef.current !== target.noteId) {
-          return
-        }
-        requestAnimationFrame(() =>
-          document
-            .getElementById(`magic-note-entry-${target.entryId}`)
-            ?.scrollIntoView({ block: 'center' })
-        )
-      })
+      void loadDetail(target.noteId, target.entryId)
     },
     [
       createNote,

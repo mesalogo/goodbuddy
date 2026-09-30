@@ -48,7 +48,7 @@ void app.whenReady().then(async () => {
   database.initialize(directory)
   const project = database.listProjects()[0]!
   const header = { id: randomUUID(), title: 'Manual compaction', projectId: project.id,
-    runtimeSelection: { provider: 'model' as const, profileId }, updatedAt: Date.now() }
+    runtimeSelection: { provider: 'model' as const, model: { kind: 'profile' as const, profileId } }, updatedAt: Date.now() }
   const messages = ['Remember the project codename is Cedar.', 'Codename recorded.', 'Meeting is Tuesday.', 'Tuesday recorded.']
     .map((content, index) => ({ id: randomUUID(), role: index % 2 ? 'assistant' as const : 'user' as const,
       content, state: 'complete' as const, createdAt: Date.now() + index }))
@@ -73,6 +73,7 @@ void app.whenReady().then(async () => {
   }
   try {
     await win.loadURL(process.env.GB_COMPACT_URL!)
+    await wait(() => run(`document.body.innerText.includes('Tuesday recorded.')`), 'selected conversation history rendered')
     const button = `[...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'Compact context')`
     await wait(() => run(`Boolean(${button}) && !${button}.disabled`), 'manual button with auto disabled')
     await run(`${button}.click()`)
@@ -94,7 +95,7 @@ void app.whenReady().then(async () => {
     const next = createModelProfileRuntime(directory, settings, settings.modelProfiles[0]!)
     try {
       for await (const event of next.run({ requestId: randomUUID(), conversationId: header.id,
-        runtimeSelection: header.runtimeSelection, prompt: 'What is the codename?',
+        runtimeSelection: { provider: 'model', profileId }, prompt: 'What is the codename?',
         history: messages.map(({ role, content }) => ({ role, content })), historyMessageIds: messages.map(({ id }) => id),
         contextCompressionState: restored.contextCompressionState
       }, AbortSignal.timeout(10000))) {

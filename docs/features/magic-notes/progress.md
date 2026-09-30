@@ -1,5 +1,13 @@
 # Magic Notes Progress
 
+## 2026-09-30: Navigate After Record Mount
+
+Quick Notes navigation now scrolls after React commits the target record, rather
+than scheduling from the data request's completion. A regression that runs the
+animation-frame callback immediately fails before this fix and passes afterward.
+The complete App/workspace tests and Electron navigation/compaction checks pass:
+450 tests across four files, plus typecheck and lint. No provider calls were made.
+
 ## 2026-09-30: Manual Note Tags
 
 Implemented FR-7 to FR-10 as described in

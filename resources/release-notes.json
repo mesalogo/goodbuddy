@@ -14,6 +14,7 @@
             "**手动回顾默认只处理新增与变化内容**：点击“回顾”会沿用处理进度，无变化时不再调用模型；需要重读所选区间时，可从“更多”选择“重新整理…”并确认。重新整理不会推进或重置共享进度，自动回顾也不会续跑用户主动暂停的运行。"
           ],
           "fixes": [
+            "**从快速笔记打开记录时可靠定位**：进入完整工作区后，等待目标记录挂载再滚动到对应内容。避免加载较慢时页面已打开却没有定位到所选记录。",
             "**再次在终端中打开 OpenCode 更快**：插件依赖改为在用户数据目录中缓存复用，不再每次启动都复制完整依赖树；随包版本变化后会更新缓存。首次准备和 OpenCode 自身启动仍需时间，模型配置、Skills 和 Ask 模式插件仍按每次启动生成。",
             "**减少 OpenCode 工具名称过长导致的失败**：缩短临时 MCP 名称及转发的自定义工具名称，并在同一会话中尽量保持稳定。并行请求仍使用独立占用的名称，不改变工具权限或执行范围。",
             "**滚动文件列表时保留工作区操作栏**：文件列表独立滚动，视图切换、刷新、新建和目录导航保持可见。没有 Git 的项目也保留“文件”入口。",
@@ -35,6 +36,7 @@
             "**Manual review defaults to new and changed content**: Review resumes from saved processing progress and makes no model calls when nothing has changed; choose Reanalyze from More and confirm to reread the selected period. Reanalysis neither advances nor resets shared progress, and automatic reviews no longer resume runs you explicitly paused."
           ],
           "fixes": [
+            "**Reliably locate records opened from Quick Notes**: The full workspace now waits until the target record is mounted before scrolling to it. This avoids opening the page without locating the selected record when rendering is delayed.",
             "**Reopen OpenCode in the terminal faster**: Plugin dependencies are cached under user data instead of copying the entire tree on every launch, and refreshed when the bundled version changes. Initial preparation and OpenCode startup still take time; model settings, Skills, and Ask-mode plugins remain launch-specific.",
             "**Reduce failures from long OpenCode tool names**: Temporary MCP names and forwarded custom tool names are shorter and remain stable within a conversation where possible. Parallel requests retain separately leased names, with no changes to tool permissions or execution scope.",
             "**Keep workspace controls visible while scrolling**: The file list scrolls independently while view selection, refresh, creation actions, and directory navigation stay visible. Projects without Git retain the Files entry.",

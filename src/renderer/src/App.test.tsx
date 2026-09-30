@@ -14254,6 +14254,10 @@ describe("App", () => {
     const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
     const scrollIntoView = vi.fn()
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    const animationFrame = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => {
+      callback(0)
+      return 0
+    })
     try {
       fireEvent.click(within(added).getByRole('button', { name: '在完整工作区打开' }))
       await waitFor(() => {
@@ -14261,6 +14265,7 @@ describe("App", () => {
         expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
       })
     } finally {
+      animationFrame.mockRestore()
       if (originalScroll) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScroll)
       else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
     }
