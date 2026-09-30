@@ -903,6 +903,18 @@ describe('KnowledgeMcpGateway', () => {
     expect(canvasEntry).toMatchObject({ content: 'Canvas text', contentKind: 'paged-canvas', contentVersion: 2, plainTextEditable: false })
     expect(() => gateway.updateMagicNoteEntry(writeToken, { entryId: canvasEntry.id, expectedRevision: canvasEntry.revision, content: 'overwrite' })).toThrow('画布记录不能')
     expect(database.getMagicNote(canvas.id)).toEqual(canvas)
+
+    // Tags: normalized on write, AND-filtered on list, replaced as a whole on update.
+    const tagged = gateway.createMagicNote(writeToken, { title: 'Tagged', tags: ['  Work ', 'work', 'Q4'] })
+    expect(tagged.tags).toEqual(['Work', 'Q4'])
+    expect(gateway.listMagicNotes(readToken, { tags: ['WORK', 'q4'] })).toEqual([
+      expect.objectContaining({ id: tagged.id, tags: ['Work', 'Q4'] })
+    ])
+    expect(gateway.listMagicNotes(readToken, { tags: ['Work', 'missing'] })).toEqual([])
+    expect(() => gateway.createMagicNote(writeToken, { title: 'Bad', tags: ['a,b'] })).toThrow()
+    const cleared = gateway.updateMagicNote(writeToken, { noteId: tagged.id, tags: [], expectedRevision: tagged.revision })
+    expect(cleared.tags).toEqual([])
+    expect(database.listMagicNoteTags()).toEqual([])
   })
 
   it('searches more than ten notes over MCP and returns recoverable argument errors', async () => {

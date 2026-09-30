@@ -306,11 +306,45 @@ export const magicNoteSearchSchema = z.object({
 }).strict()
 export type MagicNoteSearchInput = z.infer<typeof magicNoteSearchSchema>
 
+export const MAGIC_NOTE_TAG_MAX_LENGTH = 24
+export const MAGIC_NOTE_MAX_TAGS = 10
+
+/** Tags compare case-insensitively after trimming and NFC normalization. */
+export function magicNoteTagKey(name: string): string {
+  return name.normalize('NFC').trim().toLowerCase()
+}
+
+export const magicNoteTagNameSchema = z
+  .string()
+  .transform((value) => value.normalize('NFC').trim().replace(/\s+/g, ' '))
+  .pipe(
+    z
+      .string()
+      .min(1, '标签不能为空')
+      .max(MAGIC_NOTE_TAG_MAX_LENGTH, `标签最长 ${MAGIC_NOTE_TAG_MAX_LENGTH} 个字`)
+      .refine((value) => !/[\p{Cc},，#]/u.test(value), '标签不能包含逗号、# 或控制字符')
+  )
+
+/** Deduplicates case-insensitively and keeps the first spelling and order. */
+export const magicNoteTagListSchema = z
+  .array(magicNoteTagNameSchema)
+  .transform((tags) => {
+    const seen = new Set<string>()
+    return tags.filter((tag) => {
+      const key = magicNoteTagKey(tag)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  })
+  .pipe(z.array(z.string()).max(MAGIC_NOTE_MAX_TAGS, `每篇笔记最多 ${MAGIC_NOTE_MAX_TAGS} 个标签`))
+
 export const magicNoteCreateSchema = z
   .object({
     title: z.string().trim().min(1).max(100),
     content: magicNoteContentSchema.optional(),
-    source: magicNoteSourceSchema.optional()
+    source: magicNoteSourceSchema.optional(),
+    tags: magicNoteTagListSchema.optional()
   })
   .strict()
   .refine((input) => !input.source || !!input.content, {
@@ -323,13 +357,29 @@ export const magicNoteUpdateSchema = z
     noteId: magicNoteIdSchema,
     title: z.string().trim().min(1).max(100).optional(),
     pinned: z.boolean().optional(),
+    tags: magicNoteTagListSchema.optional(),
     expectedRevision: z.number().int().nonnegative()
   })
   .strict()
-  .refine((input) => input.title !== undefined || input.pinned !== undefined, {
-    message: '没有可更新的笔记字段'
-  })
+  .refine(
+    (input) => input.title !== undefined || input.pinned !== undefined || input.tags !== undefined,
+    { message: '没有可更新的笔记字段' }
+  )
 export type MagicNoteUpdateInput = z.infer<typeof magicNoteUpdateSchema>
+
+export const magicNoteTagIdSchema = magicNoteIdSchema
+
+export const magicNoteTagRenameSchema = z
+  .object({
+    tagId: magicNoteTagIdSchema,
+    name: magicNoteTagNameSchema
+  })
+  .strict()
+export type MagicNoteTagRenameInput = z.infer<typeof magicNoteTagRenameSchema>
+
+export const magicNoteTagDeleteSchema = z
+  .object({ tagId: magicNoteTagIdSchema })
+  .strict()
 
 export const magicNoteDeleteSchema = z
   .object({
@@ -485,9 +535,23 @@ export type MagicNoteSummary = {
   preview: string
   entryCount: number
   pinned: boolean
+  /** Display names in the order the user added them. */
+  tags: string[]
   revision: number
   createdAt: string
   updatedAt: string
+}
+
+export type MagicNoteTag = {
+  id: string
+  name: string
+  noteCount: number
+}
+
+export type MagicNoteTagRenameResult = {
+  tag: MagicNoteTag
+  /** True when the new name matched another tag and the two were merged. */
+  merged: boolean
 }
 
 export type MagicNoteDetail = MagicNoteSummary & {
@@ -504,6 +568,7 @@ export type MagicNoteCreateResult = MagicNoteDetail & {
 
 export type MagicNotesSnapshot = {
   notes: MagicNoteSummary[]
+  tags: MagicNoteTag[]
 }
 
 export type MagicTodoItem = {

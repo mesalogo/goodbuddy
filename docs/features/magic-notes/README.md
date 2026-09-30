@@ -6,9 +6,12 @@ metadata and indexes, and local files for entry bodies and binary assets.
 The open workbench subscribes to successful writes so users can see external
 changes without leaving the page or clicking a refresh button.
 
-The workbench opens on a responsive note-card overview. Opening a note replaces
-the overview with a continuous record stream, a narrow left index and independent
-right AI comments. Both side panes can collapse. Index items show one real
+The desktop workbench keeps a compact all-notes list on the left and the selected
+note on the right. The list supports search, creation, pin/delete menus, resizing
+and collapse. Switching notes preserves list position and remembers each note's
+reading position while the workspace remains mounted. Narrow workspaces switch
+between list and detail. Note detail contains a continuous record stream, a narrow
+record index and independent AI comments. Both detail side panes can collapse. Index items show one real
 first-page canvas thumbnail with page count, or a text summary; clicking scrolls
 without replacing the editor or losing a draft. Opening a note shows a blank composer
 above the history, with text/canvas selection and Save. Creating a record resets
@@ -19,7 +22,8 @@ comments. The divider can be dragged and remembers its width; each note group
 can independently collapse its tasks while retaining its title and count.
 Narrow containers use on-demand detail with an explicit return to the
 mounted list. One content-sized button switches to the other view in the page
-header immediately before New note; status filters sit beside search and wrap
+header when note detail is closed; New note lives in the notes list heading or the
+To-dos page header. Status filters sit beside search and wrap
 when needed. Note detail removes the surrounding frame and stream padding while
 keeping editor borders and the AI divider. Returning from a source note restores the task
 context and protects unsaved editor changes. A successful save followed by no

@@ -895,7 +895,11 @@ const api: DesktopApi & RuntimeNativeClientApi = {
   },
   magicNotes: {
     search: vi.fn(async () => []),
-    list: vi.fn(async () => ({ notes: [] })),
+    list: vi.fn(async () => ({ notes: [], tags: [] })),
+    renameTag: vi.fn(async () => {
+      throw new Error("not used");
+    }),
+    removeTag: vi.fn(async () => undefined),
     get: vi.fn(async () => {
       throw new Error("not used");
     }),
@@ -14223,14 +14227,14 @@ describe("App", () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([conversation])
     const noteId = crypto.randomUUID()
     const oldEntry = { id: crypto.randomUUID(), noteId, content: { version: 1 as const, ops: [{ insert: 'Keep existing entry\n' }] }, plainText: 'Keep existing entry', comments: [], revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z' }
-    const note = { id: noteId, title: 'Collected answers', preview: oldEntry.plainText, entryCount: 1, pinned: false, revision: 1, createdAt: oldEntry.createdAt, updatedAt: oldEntry.updatedAt, entries: [oldEntry] }
+    const note = { id: noteId, title: 'Collected answers', preview: oldEntry.plainText, entryCount: 1, pinned: false, tags: [], revision: 1, createdAt: oldEntry.createdAt, updatedAt: oldEntry.updatedAt, entries: [oldEntry] }
     const createdEntryId = crypto.randomUUID()
     const saved = { ...note, entryCount: 2, entries: [oldEntry, { ...oldEntry, id: createdEntryId, content: { version: 1 as const, ops: [{ insert: `${message.content}\n` }] }, plainText: message.content }], createdEntryId }
     vi.mocked(api.magicNotes.search).mockResolvedValue([note])
     vi.mocked(api.magicNotes.get).mockResolvedValue(note)
     vi.mocked(api.magicNotes.createEntry).mockImplementationOnce(async () => {
       vi.mocked(api.magicNotes.get).mockResolvedValue(saved)
-      vi.mocked(api.magicNotes.list).mockResolvedValue({ notes: [saved] })
+      vi.mocked(api.magicNotes.list).mockResolvedValue({ notes: [saved], tags: [] })
       return saved
     })
     render(<App />)
@@ -14290,7 +14294,7 @@ describe("App", () => {
     const conversation = { id: crypto.randomUUID(), projectId, title: 'Source discussion', updatedAt: 1_775_000_000_502, messages }
     vi.mocked(api.conversations.list).mockResolvedValueOnce([conversation])
     const noteId = crypto.randomUUID()
-    const note = { id: noteId, title: 'Source note', preview: '', entryCount: 1, pinned: false, revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z', entries: [{ id: crypto.randomUUID(), noteId, content: { version: 1 as const, ops: [{ insert: 'Saved text\n' }] }, plainText: 'Saved text', comments: [], revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z', source: { kind: 'message' as const, conversationId: conversation.id, messageIds: [messages[1]!.id], capturedAt: '2026-09-26T00:00:00Z', conversationTitle: conversation.title } }] }
+    const note = { id: noteId, title: 'Source note', preview: '', entryCount: 1, pinned: false, tags: [], revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z', entries: [{ id: crypto.randomUUID(), noteId, content: { version: 1 as const, ops: [{ insert: 'Saved text\n' }] }, plainText: 'Saved text', comments: [], revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z', source: { kind: 'message' as const, conversationId: conversation.id, messageIds: [messages[1]!.id], capturedAt: '2026-09-26T00:00:00Z', conversationTitle: conversation.title } }] }
     vi.mocked(api.magicNotes.search).mockResolvedValue([note])
     vi.mocked(api.magicNotes.get).mockResolvedValue(note)
     render(<App />)
@@ -14350,10 +14354,10 @@ describe("App", () => {
     await api.updates!.updateSettings({ magicNotesEnabled: true })
     const note = {
       id: '00000000-0000-4000-8000-000000000601', title: 'Navigation note', preview: '',
-      entryCount: 0, pinned: false, revision: 1, createdAt: '2026-08-01T00:00:00.000Z',
+      entryCount: 0, pinned: false, tags: [], revision: 1, createdAt: '2026-08-01T00:00:00.000Z',
       updatedAt: '2026-08-01T00:00:00.000Z', entries: [],
     }
-    vi.mocked(api.magicNotes.list).mockResolvedValue({ notes: [note] })
+    vi.mocked(api.magicNotes.list).mockResolvedValue({ notes: [note], tags: [] })
     vi.mocked(api.magicNotes.get).mockResolvedValue(note)
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '魔法笔记' }))

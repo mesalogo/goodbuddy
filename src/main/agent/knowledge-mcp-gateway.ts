@@ -62,6 +62,7 @@ import type {
   MagicNoteSearchResult,
   MagicNoteSummary
 } from '../../shared/magic-notes-contracts'
+import { magicNoteTagListSchema } from '../../shared/magic-notes-contracts'
 import {
   magicNotePlainText,
   validateMagicNoteRichContent
@@ -136,18 +137,20 @@ const {
 } = magicNoteScopedDataToolCatalog
 
 export type MagicNotesDatabase = {
-  listMagicNotes(): MagicNoteSummary[]
+  listMagicNotes(input?: { tags?: string[] }): MagicNoteSummary[]
   getMagicNote(noteId: string): MagicNoteDetail
   getMagicNoteEntry(entryId: string): MagicNoteEntry
   searchMagicNotes(query: string, limit: number): MagicNoteSearchResult[]
   createMagicNote(input: {
     title: string
     content?: MagicNoteContent
+    tags?: string[]
   }): MagicNoteDetail
   updateMagicNote(input: {
     noteId: string
     title?: string
     pinned?: boolean
+    tags?: string[]
     expectedRevision: number
   }): MagicNoteDetail
   deleteMagicNote(noteId: string): void
@@ -173,6 +176,7 @@ export type MagicNoteToolSummary = {
   preview: string
   entryCount: number
   pinned: boolean
+  tags: string[]
   revision: number
   createdAt: string
   updatedAt: string
@@ -278,6 +282,7 @@ function toMagicNoteToolSummary(
     preview: note.preview.slice(0, 500),
     entryCount: note.entryCount,
     pinned: note.pinned,
+    tags: note.tags ?? [],
     revision: note.revision,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt
@@ -1376,9 +1381,11 @@ export class KnowledgeMcpGateway {
     input: unknown = {}
   ): MagicNoteToolSummary[] {
     const { database } = this.requireMagicNotes(token, 'read')
-    const { limit } = magicNoteListTool.inputSchema.parse(input)
+    const { limit, tags } = magicNoteListTool.inputSchema.parse(input)
+    const filter = tags ? magicNoteTagListSchema.parse(tags) : undefined
     const notes: MagicNoteToolSummary[] = []
-    for (const note of database.listMagicNotes().slice(0, limit)) {
+    const listed = database.listMagicNotes(filter?.length ? { tags: filter } : {})
+    for (const note of listed.slice(0, limit)) {
       const item = toMagicNoteToolSummary(note)
       if (
         Buffer.byteLength(JSON.stringify({ notes: [...notes, item] })) >
@@ -1467,7 +1474,8 @@ export class KnowledgeMcpGateway {
       {
         noteId: database.createMagicNote({
           title: parsed.title,
-          ...(content ? { content } : {})
+          ...(content ? { content } : {}),
+          ...(parsed.tags ? { tags: magicNoteTagListSchema.parse(parsed.tags) } : {})
         }).id
       }
     )
@@ -1476,7 +1484,10 @@ export class KnowledgeMcpGateway {
   updateMagicNote(token: string, input: unknown): MagicNoteToolDetail {
     const { database } = this.requireMagicNotes(token, 'write')
     const parsed = magicNoteUpdateTool.inputSchema.parse(input)
-    database.updateMagicNote(parsed)
+    database.updateMagicNote({
+      ...parsed,
+      ...(parsed.tags ? { tags: magicNoteTagListSchema.parse(parsed.tags) } : {})
+    })
     return this.getMagicNote(token, { noteId: parsed.noteId })
   }
 

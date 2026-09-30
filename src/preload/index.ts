@@ -159,6 +159,7 @@ import type {
   MagicNoteCreateResult,
   MagicNoteSummary,
   MagicNoteEntryCreateResult,
+  MagicNoteTagRenameResult,
   MagicNotesSnapshot,
   MagicTodoItem,
   MagicTodoStatus,
@@ -1666,6 +1667,14 @@ const desktopApi: DesktopApi = {
       ) as Promise<MagicNoteDetail>,
     remove: async (noteId: string) => {
       await ipcRenderer.invoke(ipcChannels.magicNotesDelete, { noteId })
+    },
+    renameTag: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.magicNotesRenameTag,
+        input
+      ) as Promise<MagicNoteTagRenameResult>,
+    removeTag: async (tagId: string) => {
+      await ipcRenderer.invoke(ipcChannels.magicNotesDeleteTag, { tagId })
     },
     createEntry: (input) =>
       ipcRenderer.invoke(

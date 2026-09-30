@@ -1,5 +1,7 @@
 import {
   ArrowLeft,
+  ListTree,
+  Pencil,
   Bot,
   BookOpen,
   CheckCircle2,
@@ -43,9 +45,20 @@ import type {
   MagicNoteEntry,
   MagicNoteContent as NoteContent,
   MagicNoteSummary,
+  MagicNoteTag,
+  MagicNoteTagRenameResult,
   MagicTodoItem,
   MagicTodoAnalysisOptions
 } from '../../shared/magic-notes-contracts'
+import { magicNoteTagKey } from '../../shared/magic-notes-contracts'
+import {
+  MagicNoteActiveTagFilter,
+  MagicNoteTagChips,
+  MagicNoteTagEditor,
+  MagicNoteTagFilter,
+  MagicNoteTagManager,
+  MagicNoteTagManagerButton
+} from './MagicNoteTags'
 import type { ApplicationSettings, MagicNoteCommentMode } from '../../shared/application-settings-contracts'
 import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text'
 import { MagicNoteContent } from './MagicNoteContent'
@@ -83,6 +96,7 @@ type ValidationTarget =
   | 'new-entry'
   | 'edit-entry'
 type DraftSwitchTarget =
+  | { kind: 'delete-note'; remove: () => void }
   | { kind: 'leave'; leave: () => void }
   | { kind: 'select-entry'; entry: MagicNoteEntry }
   | { kind: 'entry-type'; value: 'text' | 'canvas' }
@@ -106,18 +120,22 @@ const magicNotesLayoutStorageKey =
   'goodbuddy.magic-notes-layout.v1'
 
 type MagicNotesLayoutPreferences = {
-  indexPaneOpen: boolean
+  notesPaneOpen: boolean
+  notesPaneWidth: number
+  recordIndexOpen: boolean
   indexPaneWidth: number
-  aiPaneOpen: boolean
+  aiPanePinned: boolean
   aiPaneWidth: number
   todoPaneWidth: number
 }
 
 function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
   const defaults = {
-    indexPaneOpen: true,
+    notesPaneOpen: true,
+    notesPaneWidth: 280,
+    recordIndexOpen: false,
     indexPaneWidth: defaultIndexPaneWidth,
-    aiPaneOpen: true,
+    aiPanePinned: false,
     aiPaneWidth: defaultAiPaneWidth,
     todoPaneWidth: 320
   }
@@ -130,13 +148,17 @@ function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
       MagicNotesLayoutPreferences
     >
     return {
+      notesPaneOpen: parsed.notesPaneOpen !== false,
+      notesPaneWidth: typeof parsed.notesPaneWidth === 'number' && Number.isFinite(parsed.notesPaneWidth)
+        ? Math.min(420, Math.max(240, parsed.notesPaneWidth)) : defaults.notesPaneWidth,
       todoPaneWidth: typeof parsed.todoPaneWidth === 'number' && Number.isFinite(parsed.todoPaneWidth)
         ? Math.max(240, parsed.todoPaneWidth) : defaults.todoPaneWidth,
-      indexPaneOpen: parsed.indexPaneOpen !== false,
+      // Older layouts stored always-open panes; the compact defaults ignore those flags.
+      recordIndexOpen: parsed.recordIndexOpen === true,
       indexPaneWidth: typeof parsed.indexPaneWidth === 'number' && Number.isFinite(parsed.indexPaneWidth)
         ? Math.min(maximumIndexPaneWidth, Math.max(minimumIndexPaneWidth, parsed.indexPaneWidth))
         : defaults.indexPaneWidth,
-      aiPaneOpen: parsed.aiPaneOpen !== false,
+      aiPanePinned: parsed.aiPanePinned === true,
       aiPaneWidth:
         typeof parsed.aiPaneWidth === 'number' &&
         Number.isFinite(parsed.aiPaneWidth)
@@ -201,6 +223,7 @@ function noteSummary(note: MagicNoteDetail): MagicNoteSummary {
     preview: note.preview,
     entryCount: note.entryCount,
     pinned: note.pinned,
+    tags: note.tags ?? [],
     revision: note.revision,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt
@@ -418,7 +441,20 @@ export function MagicNotesWorkspace({
       ),
     [currentLocale]
   )
+  // Compact list dates: time for today, month/day otherwise.
+  const relativeDate = useMemo(() => {
+    const time = new Intl.DateTimeFormat(currentLocale, { hour: '2-digit', minute: '2-digit' })
+    const day = new Intl.DateTimeFormat(currentLocale, { month: 'numeric', day: 'numeric' })
+    return (value: string): string => {
+      const date = new Date(value)
+      return date.toDateString() === new Date().toDateString() ? time.format(date) : day.format(date)
+    }
+  }, [currentLocale])
   const [notes, setNotes] = useState<MagicNoteSummary[]>([])
+  const [noteTags, setNoteTags] = useState<MagicNoteTag[]>([])
+  // Selected tag keys; a note must carry every one of them.
+  const [tagFilter, setTagFilter] = useState<string[]>([])
+  const [tagManagerOpen, setTagManagerOpen] = useState(false)
   const [todos, setTodos] = useState<MagicTodoItem[]>([])
   const [libraryView, setLibraryView] = useState<LibraryView>('notes')
   const [detailView, setDetailView] = useState<'notes'>()
@@ -468,18 +504,22 @@ export function MagicNotesWorkspace({
     () => loadMagicNotesLayoutPreferences(),
     []
   )
-  const [aiPaneOpen, setAiPaneOpen] = useState(
-    initialLayoutPreferences.aiPaneOpen
-  )
+  // AI comments open automatically when the note has comment activity; pinning keeps them open.
+  const [aiPanePinned, setAiPanePinned] = useState(initialLayoutPreferences.aiPanePinned)
+  const [aiDismissedNoteId, setAiDismissedNoteId] = useState('')
   const [aiPaneWidth, setAiPaneWidth] = useState(
     initialLayoutPreferences.aiPaneWidth
   )
-  const [indexPaneOpen, setIndexPaneOpen] = useState(initialLayoutPreferences.indexPaneOpen)
+  const [indexPaneOpen, setIndexPaneOpen] = useState(initialLayoutPreferences.recordIndexOpen)
+  const [composerHasDraft, setComposerHasDraft] = useState(false)
   const [indexPaneWidth, setIndexPaneWidth] = useState(initialLayoutPreferences.indexPaneWidth)
   const [todoPaneWidth, setTodoPaneWidth] = useState(initialLayoutPreferences.todoPaneWidth)
+  const [notesPaneOpen, setNotesPaneOpen] = useState(initialLayoutPreferences.notesPaneOpen)
+  const [notesPaneWidth, setNotesPaneWidth] = useState(initialLayoutPreferences.notesPaneWidth)
+  const [workspaceWidth, setWorkspaceWidth] = useState(window.innerWidth)
   const [todoLayoutWidth, setTodoLayoutWidth] = useState(window.innerWidth)
   const [narrowIndexOpen, setNarrowIndexOpen] = useState(false)
-  const [resizingPane, setResizingPane] = useState<'ai' | 'index' | 'todo'>()
+  const [resizingPane, setResizingPane] = useState<'ai' | 'index' | 'todo' | 'notes'>()
   const [magicNotesLayoutWidth, setMagicNotesLayoutWidth] = useState(
     window.innerWidth
   )
@@ -499,6 +539,26 @@ export function MagicNotesWorkspace({
     direction: MagicNoteCommentDirection
     format: MagicNoteCommentFormat
   }>()
+  const hasAiActivity = Boolean(
+    liveAnalysis || draftAnalysisRunning || canvasDraftAnalysis || draftAnalyses.length > 0 ||
+    detail?.entries.some((entry) => entry.comments.length > 0)
+  )
+  const aiPaneOpen = aiPanePinned || (hasAiActivity && aiDismissedNoteId !== detail?.id)
+  const aiAnalysisStarted = Boolean(liveAnalysis || draftAnalysisRunning)
+  const [previousAiAnalysisStarted, setPreviousAiAnalysisStarted] = useState(aiAnalysisStarted)
+  if (aiAnalysisStarted !== previousAiAnalysisStarted) {
+    // A new analysis request reopens comments that were dismissed for this note.
+    setPreviousAiAnalysisStarted(aiAnalysisStarted)
+    if (aiAnalysisStarted) setAiDismissedNoteId('')
+  }
+  const toggleAiPane = (): void => {
+    if (aiPaneOpen) {
+      setAiPanePinned(false)
+      setAiDismissedNoteId(detail?.id ?? '')
+    } else {
+      setAiPanePinned(true)
+    }
+  }
   const [validation, setValidation] = useState<{
     target: ValidationTarget
     message: string
@@ -508,6 +568,7 @@ export function MagicNotesWorkspace({
   const detailRequestRef = useRef(0)
   const todoSourceRequestRef = useRef(0)
   const requestedNoteIdRef = useRef('')
+  const requestedEntryIdRef = useRef<string | undefined>(undefined)
   const refreshRequestRef = useRef(0)
   const hasLoadedRef = useRef(false)
   const busyRef = useRef('')
@@ -533,8 +594,11 @@ export function MagicNotesWorkspace({
   const draftAnalysisContextRef = useRef(0)
   const lastDraftAnalysisStartedAtRef = useRef(0)
   const magicNotesLayoutRef = useRef<HTMLDivElement>(null)
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const streamRef = useRef<HTMLElement>(null)
+  const noteScrollPositions = useRef(new Map<string, number>())
   const todoLayoutRef = useRef<HTMLDivElement>(null)
-  const paneResizeRef = useRef<{ pane: 'ai' | 'index' | 'todo'; pointerId: number; width: number } | undefined>(undefined)
+  const paneResizeRef = useRef<{ pane: 'ai' | 'index' | 'todo' | 'notes'; pointerId: number; width: number } | undefined>(undefined)
   const composerRef = useRef<HTMLDivElement>(null)
   const continueEditingRef = useRef<HTMLButtonElement>(null)
   const discardDraftRef = useRef<HTMLButtonElement>(null)
@@ -613,13 +677,35 @@ export function MagicNotesWorkspace({
 
   useEffect(() => {
     persistMagicNotesLayoutPreferences({
-      indexPaneOpen,
+      notesPaneOpen,
+      notesPaneWidth,
+      recordIndexOpen: indexPaneOpen,
       indexPaneWidth,
-      aiPaneOpen,
+      aiPanePinned,
       aiPaneWidth,
       todoPaneWidth
     })
-  }, [indexPaneOpen, indexPaneWidth, aiPaneOpen, aiPaneWidth, todoPaneWidth])
+  }, [indexPaneOpen, indexPaneWidth, aiPanePinned, aiPaneWidth, todoPaneWidth, notesPaneOpen, notesPaneWidth])
+
+  useEffect(() => {
+    const workspace = workspaceRef.current
+    if (!workspace) return
+    const update = (): void => setWorkspaceWidth(workspace.getBoundingClientRect().width || window.innerWidth)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(workspace)
+    return () => observer.disconnect()
+  }, [loadStatus])
+
+  useLayoutEffect(() => {
+    const stream = streamRef.current
+    if (!stream || !detail?.id) return
+    const position = noteScrollPositions.current.get(detail.id) ?? 0
+    if (requestedEntryIdRef.current) return
+    // Read-only rich text mounts in an effect; restore after it has laid out.
+    const frame = requestAnimationFrame(() => { stream.scrollTop = position })
+    return () => cancelAnimationFrame(frame)
+  }, [detail?.id, detailView])
 
   useEffect(() => {
     const layout = todoLayoutRef.current
@@ -868,6 +954,7 @@ export function MagicNotesWorkspace({
     async (noteId: string, entryId?: string): Promise<void> => {
       const requestId = ++detailRequestRef.current
       requestedNoteIdRef.current = noteId
+      requestedEntryIdRef.current = entryId
       setDetailLoadError(undefined)
       try {
         const nextDetail = await window.goodbuddy.magicNotes.get(noteId)
@@ -875,6 +962,7 @@ export function MagicNotesWorkspace({
           clearDraftAnalysis()
           composerContentRef.current = undefined
           setComposerKey((current) => current + 1)
+          setComposerHasDraft(false)
           setEditingEntry(undefined)
           setSelectedEntryId(nextDetail.entries.find((entry) => entry.id === entryId)?.id ?? nextDetail.entries.at(-1)?.id ?? '')
           editingContentRef.current = undefined
@@ -900,6 +988,7 @@ export function MagicNotesWorkspace({
     clearDraftAnalysis()
     composerContentRef.current = undefined
     setComposerKey((current) => current + 1)
+    setComposerHasDraft(false)
   }, [clearDraftAnalysis])
 
   const discardEditingDraft = useCallback((): void => {
@@ -938,6 +1027,7 @@ export function MagicNotesWorkspace({
         applyDetail(created)
         detailRequestRef.current += 1
         requestedNoteIdRef.current = created.id
+        requestedEntryIdRef.current = undefined
         setSelectedNoteId(created.id)
         setSelectedEntryId('')
         setDetailView('notes')
@@ -978,7 +1068,8 @@ export function MagicNotesWorkspace({
             : target.kind === 'library-view'
               ? document.getElementById('magic-library-switch')
                : target.kind === 'note'
-                ? document.getElementById('magic-notes-back')
+                ? document.getElementById('magic-notes-back') ??
+                  document.getElementById(`magic-note-select-${target.noteId}`)
                 : target.kind === 'edit-entry'
                   ? document
                       .getElementById(
@@ -1000,6 +1091,10 @@ export function MagicNotesWorkspace({
     (target: DraftSwitchTarget): void => {
       setPendingDraftSwitch(undefined)
       setValidation(undefined)
+      if (target.kind === 'delete-note') {
+        target.remove()
+        return
+      }
       if (target.kind === 'leave') {
         discardComposerDraft()
         discardEditingDraft()
@@ -1044,6 +1139,7 @@ export function MagicNotesWorkspace({
         if (target.value === 'todos') {
           discardComposerDraft()
           discardEditingDraft()
+          setDetailView(undefined)
         }
         setLibraryView(target.value)
         setCreating(false)
@@ -1069,7 +1165,7 @@ export function MagicNotesWorkspace({
         return
       }
       setDeletingNote(false)
-      if (!detailView && libraryView === 'notes') overviewFocusRef.current = `magic-note-select-${target.noteId}`
+      if (libraryView === 'notes') overviewFocusRef.current = `magic-note-select-${target.noteId}`
       setDetailView('notes')
       focusSwitchTarget(target)
       void loadDetail(target.noteId, target.entryId).then(() => {
@@ -1086,7 +1182,6 @@ export function MagicNotesWorkspace({
     [
       createNote,
       detail,
-      detailView,
       discardComposerDraft,
       discardEditingDraft,
       focusSwitchTarget,
@@ -1138,7 +1233,7 @@ export function MagicNotesWorkspace({
       if (
         (wouldClearComposer && hasContent(composerContentRef.current)) ||
         (target.kind !== 'entry-type' && hasDirtyEditingDraft()) ||
-        ((target.kind === 'overview' || target.kind === 'leave') && current.detail && current.titleDraft !== current.detail.title)
+        ((target.kind === 'overview' || target.kind === 'leave' || target.kind === 'library-view' || target.kind === 'note' || target.kind === 'create-note' || target.kind === 'delete-note') && current.detail && current.titleDraft !== current.detail.title)
       ) {
         setPendingDraftSwitch(target)
         return
@@ -1231,6 +1326,7 @@ export function MagicNotesWorkspace({
         const preserveNewerSelection =
           detailRequestRef.current !== detailRequestAtStart
         setNotes(snapshot.notes)
+        setNoteTags(snapshot.tags ?? [])
         setTodos(todoSnapshot.todos)
         setSelectedTodoId((current) =>
           todoSnapshot.todos.some((todo) => todo.id === current)
@@ -1336,22 +1432,90 @@ export function MagicNotesWorkspace({
     }
   }, [refreshNotes])
 
+  // Filter keys whose tag was renamed away or deleted stop applying.
+  const activeTagFilter = useMemo(() => {
+    const known = new Set(noteTags.map((tag) => magicNoteTagKey(tag.name)))
+    return tagFilter.filter((key) => known.has(key))
+  }, [noteTags, tagFilter])
+  const activeTagFilterNames = useMemo(
+    () => activeTagFilter.map((key) => noteTags.find((tag) => magicNoteTagKey(tag.name) === key)?.name ?? key),
+    [activeTagFilter, noteTags]
+  )
+
   const visibleNotes = useMemo(() => {
     const query = search.trim().toLocaleLowerCase()
-    return query
-      ? notes.filter(
-          (note) =>
-            note.title.toLocaleLowerCase().includes(query) ||
-            note.preview.toLocaleLowerCase().includes(query)
-        )
-      : notes
-  }, [notes, search])
+    return notes.filter((note) => {
+      const keys = new Set((note.tags ?? []).map(magicNoteTagKey))
+      if (!activeTagFilter.every((key) => keys.has(key))) return false
+      return !query ||
+        note.title.toLocaleLowerCase().includes(query) ||
+        note.preview.toLocaleLowerCase().includes(query) ||
+        (note.tags ?? []).some((tag) => tag.toLocaleLowerCase().includes(query))
+    })
+  }, [activeTagFilter, notes, search])
+
+  const updateNoteTags = async (next: string[]): Promise<boolean> => {
+    if (!detail) return false
+    const operation = 'update-tags'
+    if (!beginBusy(operation)) return false
+    try {
+      const updated = await window.goodbuddy.magicNotes.update({
+        noteId: detail.id,
+        tags: next,
+        expectedRevision: detail.revision
+      })
+      applyDetail(updated)
+      return true
+    } catch (error) {
+      notifyError(error)
+      return false
+    } finally {
+      endBusy(operation)
+    }
+  }
+
+  const renameNoteTag = async (tag: MagicNoteTag, name: string): Promise<MagicNoteTagRenameResult | undefined> => {
+    const operation = 'rename-tag'
+    if (!beginBusy(operation)) return undefined
+    try {
+      const result = await window.goodbuddy.magicNotes.renameTag({ tagId: tag.id, name })
+      const fromKey = magicNoteTagKey(tag.name)
+      const toKey = magicNoteTagKey(result.tag.name)
+      setTagFilter((current) => [...new Set(current.map((key) => key === fromKey ? toKey : key))])
+      notifySuccess(result.merged ? t('tags.merged', { name: result.tag.name }) : t('tags.renamed'))
+      await refreshNotes(requestedNoteIdRef.current, true)
+      return result
+    } catch (error) {
+      notifyError(error)
+      return undefined
+    } finally {
+      endBusy(operation)
+    }
+  }
+
+  const deleteNoteTag = async (tag: MagicNoteTag): Promise<boolean> => {
+    const operation = 'delete-tag'
+    if (!beginBusy(operation)) return false
+    try {
+      await window.goodbuddy.magicNotes.removeTag(tag.id)
+      const key = magicNoteTagKey(tag.name)
+      setTagFilter((current) => current.filter((item) => item !== key))
+      notifySuccess(t('tags.deleted'))
+      await refreshNotes(requestedNoteIdRef.current, true)
+      return true
+    } catch (error) {
+      notifyError(error)
+      return false
+    } finally {
+      endBusy(operation)
+    }
+  }
 
   const actionNote = useMemo(
-    () => !detailView && libraryView === 'notes' && !pendingDraftSwitch
+    () => libraryView === 'notes' && !pendingDraftSwitch
       ? visibleNotes.find((note) => note.id === noteActionsId)
       : undefined,
-    [libraryView, detailView, noteActionsId, pendingDraftSwitch, visibleNotes]
+    [libraryView, noteActionsId, pendingDraftSwitch, visibleNotes]
   )
   if (noteActionsId && !actionNote) {
     setNoteActionsId('')
@@ -1423,8 +1587,13 @@ export function MagicNotesWorkspace({
       await window.goodbuddy.magicNotes.remove(note.id)
       notifySuccess(t('notifications.noteDeleted'))
       closeNoteActions()
-      await refreshNotes()
-      requestAnimationFrame(() => document.getElementById('magic-note-new')?.focus({ preventScroll: true }))
+      if (note.id === requestedNoteIdRef.current) {
+        performDraftSwitch({ kind: 'overview' })
+        await refreshNotes()
+        requestAnimationFrame(() => document.getElementById('magic-note-new')?.focus({ preventScroll: true }))
+      } else {
+        await refreshNotes(requestedNoteIdRef.current, true)
+      }
     } catch (error) {
       notifyError(error)
     } finally {
@@ -1537,7 +1706,17 @@ export function MagicNotesWorkspace({
     return (editingEntry && !entries.some((entry) => entry.id === editingEntry.id)
       ? [...entries, editingEntry] : [...entries]).reverse()
   }, [detail, editingEntry])
+  // Detail tiers: >800 three columns; 601-800 editor + AI with a record drawer; <=600 AI stacks below.
   const isNarrowLayout = magicNotesLayoutWidth <= 800
+  const isStackedLayout = magicNotesLayoutWidth <= 600
+  const isNarrowWorkspace = workspaceWidth <= 900
+  const paneResizeDisabled = (pane: 'ai' | 'index' | 'todo' | 'notes'): boolean =>
+    pane === 'notes' ? isNarrowWorkspace : pane === 'todo' ? todoLayoutWidth <= 700 : pane === 'ai' ? isStackedLayout : isNarrowLayout
+  const notesPaneWidthLimits = { minimum: 240, maximum: Math.min(420, Math.max(240, workspaceWidth - minimumMagicNotesEditorWidth - magicNotesResizeHandleWidth)) }
+  const displayedNotesWidth = clampMagicNotesPaneWidth(notesPaneWidth, notesPaneWidthLimits)
+  // Overview shows every note full width; the split list appears only beside an open note.
+  const notesExpanded = isNarrowWorkspace ? !detailView : notesPaneOpen || !detailView
+  const notesSplit = libraryView === 'notes' && Boolean(detailView) && !isNarrowWorkspace && notesPaneOpen
   const todoPaneWidthLimits = { minimum: 240, maximum: Math.max(240, todoLayoutWidth - 301) }
   const displayedTodoWidth = clampMagicNotesPaneWidth(todoPaneWidth, todoPaneWidthLimits)
   const indexExpanded = isNarrowLayout ? narrowIndexOpen : indexPaneOpen
@@ -1550,7 +1729,7 @@ export function MagicNotesWorkspace({
       (aiPaneOpen ? minimumAiPaneWidth + magicNotesResizeHandleWidth : 0)))
   })
   const aiPaneWidthLimits = getAiPaneWidthLimits(
-    layoutInnerWidth, indexPaneOpen ? displayedIndexWidth + magicNotesResizeHandleWidth : 0
+    layoutInnerWidth, indexPaneOpen && !isNarrowLayout ? displayedIndexWidth + magicNotesResizeHandleWidth : 0
   )
   const displayedAiWidth = clampMagicNotesPaneWidth(aiPaneWidth, aiPaneWidthLimits)
   const indexPaneWidthLimits = {
@@ -1567,6 +1746,7 @@ export function MagicNotesWorkspace({
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     if (resize.pane === 'ai') setAiPaneWidth(resize.width)
+    else if (resize.pane === 'notes') setNotesPaneWidth(resize.width)
     else if (resize.pane === 'todo') setTodoPaneWidth(resize.width)
     else setIndexPaneWidth(resize.width)
     setResizingPane(undefined)
@@ -1576,39 +1756,41 @@ export function MagicNotesWorkspace({
     if (!resize || resize.pointerId !== event.pointerId) return
     const isAi = resize.pane === 'ai'
     const isTodo = resize.pane === 'todo'
-    const limits = isTodo ? todoPaneWidthLimits : isAi ? aiPaneWidthLimits : indexPaneWidthLimits
-    if (isTodo ? magicNotesLayoutWidth <= 700 : isNarrowLayout) { finishPaneResize(event); return }
-    const bounds = isTodo ? todoLayoutRef.current!.getBoundingClientRect() : getLayoutBounds()
+    const isNotes = resize.pane === 'notes'
+    const limits = isNotes ? notesPaneWidthLimits : isTodo ? todoPaneWidthLimits : isAi ? aiPaneWidthLimits : indexPaneWidthLimits
+    if (paneResizeDisabled(resize.pane)) { finishPaneResize(event); return }
+    const bounds = isNotes ? workspaceRef.current!.getBoundingClientRect() : isTodo ? todoLayoutRef.current!.getBoundingClientRect() : getLayoutBounds()
     resize.width = clampMagicNotesPaneWidth(isAi ? bounds.right - 1 - event.clientX : event.clientX - bounds.left - 1, limits)
-    const layout = isTodo ? todoLayoutRef.current : magicNotesLayoutRef.current
+    const layout = isNotes ? workspaceRef.current : isTodo ? todoLayoutRef.current : magicNotesLayoutRef.current
     layout?.style.setProperty(`--magic-notes-${resize.pane}-width`, `${resize.width}px`)
     event.currentTarget.setAttribute('aria-valuenow', String(resize.width))
-    event.currentTarget.setAttribute('aria-valuetext', t(isTodo ? 'accessibility.todoPaneWidth' : isAi ? 'accessibility.aiPaneWidth' : 'accessibility.indexPaneWidth', { width: resize.width }))
+    event.currentTarget.setAttribute('aria-valuetext', t(isNotes ? 'accessibility.notesPaneWidth' : isTodo ? 'accessibility.todoPaneWidth' : isAi ? 'accessibility.aiPaneWidth' : 'accessibility.indexPaneWidth', { width: resize.width }))
   }
-  const startPaneResize = (pane: 'ai' | 'index' | 'todo', event: React.PointerEvent<HTMLDivElement>): void => {
-    const limits = pane === 'todo' ? todoPaneWidthLimits : pane === 'ai' ? aiPaneWidthLimits : indexPaneWidthLimits
-    if (event.button !== 0 || (pane === 'todo' ? magicNotesLayoutWidth <= 700 : isNarrowLayout) || limits.maximum <= limits.minimum) return
+  const startPaneResize = (pane: 'ai' | 'index' | 'todo' | 'notes', event: React.PointerEvent<HTMLDivElement>): void => {
+    const limits = pane === 'notes' ? notesPaneWidthLimits : pane === 'todo' ? todoPaneWidthLimits : pane === 'ai' ? aiPaneWidthLimits : indexPaneWidthLimits
+    if (event.button !== 0 || paneResizeDisabled(pane) || limits.maximum <= limits.minimum) return
     event.preventDefault()
-    paneResizeRef.current = { pane, pointerId: event.pointerId, width: pane === 'todo' ? displayedTodoWidth : pane === 'ai' ? displayedAiWidth : displayedIndexWidth }
+    paneResizeRef.current = { pane, pointerId: event.pointerId, width: pane === 'notes' ? displayedNotesWidth : pane === 'todo' ? displayedTodoWidth : pane === 'ai' ? displayedAiWidth : displayedIndexWidth }
     event.currentTarget.setPointerCapture(event.pointerId)
     setResizingPane(pane)
   }
-  const renderPaneSeparator = (pane: 'ai' | 'index' | 'todo'): React.JSX.Element => {
+  const renderPaneSeparator = (pane: 'ai' | 'index' | 'todo' | 'notes'): React.JSX.Element => {
     const isAi = pane === 'ai'
     const isTodo = pane === 'todo'
-    const limits = isTodo ? todoPaneWidthLimits : isAi ? aiPaneWidthLimits : indexPaneWidthLimits
-    const width = isTodo ? displayedTodoWidth : isAi ? displayedAiWidth : displayedIndexWidth
-    const enabled = (isTodo ? magicNotesLayoutWidth > 700 : !isNarrowLayout) && limits.maximum > limits.minimum
-    const setWidth = isTodo ? setTodoPaneWidth : isAi ? setAiPaneWidth : setIndexPaneWidth
+    const isNotes = pane === 'notes'
+    const limits = isNotes ? notesPaneWidthLimits : isTodo ? todoPaneWidthLimits : isAi ? aiPaneWidthLimits : indexPaneWidthLimits
+    const width = isNotes ? displayedNotesWidth : isTodo ? displayedTodoWidth : isAi ? displayedAiWidth : displayedIndexWidth
+    const enabled = !paneResizeDisabled(pane) && limits.maximum > limits.minimum
+    const setWidth = isNotes ? setNotesPaneWidth : isTodo ? setTodoPaneWidth : isAi ? setAiPaneWidth : setIndexPaneWidth
     return <div
-      aria-controls={isTodo ? 'magic-todo-list' : isAi ? 'magic-notes-ai-pane' : 'magic-notes-index'}
+      aria-controls={isNotes ? 'magic-library-panel-notes' : isTodo ? 'magic-todo-list' : isAi ? 'magic-notes-ai-pane' : 'magic-notes-index'}
       aria-disabled={!enabled}
-      aria-label={t(isTodo ? 'accessibility.resizeTodoPane' : isAi ? 'accessibility.resizeAiPane' : 'accessibility.resizeIndexPane')}
+      aria-label={t(isNotes ? 'accessibility.resizeNotesPane' : isTodo ? 'accessibility.resizeTodoPane' : isAi ? 'accessibility.resizeAiPane' : 'accessibility.resizeIndexPane')}
       aria-orientation="vertical"
       aria-valuemax={limits.maximum}
       aria-valuemin={limits.minimum}
       aria-valuenow={width}
-      aria-valuetext={t(isTodo ? 'accessibility.todoPaneWidth' : isAi ? 'accessibility.aiPaneWidth' : 'accessibility.indexPaneWidth', { width })}
+      aria-valuetext={t(isNotes ? 'accessibility.notesPaneWidth' : isTodo ? 'accessibility.todoPaneWidth' : isAi ? 'accessibility.aiPaneWidth' : 'accessibility.indexPaneWidth', { width })}
       className={`magic-notes-pane-resize-handle magic-notes-${pane}-resize-handle`}
       onKeyDown={(event) => {
         if (!enabled) return
@@ -1793,6 +1975,7 @@ export function MagicNotesWorkspace({
       setPendingDraftSwitch(undefined)
       clearDraftAnalysis()
       setComposerKey((current) => current + 1)
+      setComposerHasDraft(false)
       notifySuccess(t('notifications.entrySaved'))
       if (analysisPreparationError !== undefined) notifyError(t('canvas.savedAnalysisFailed', { error: analysisPreparationError }))
       try {
@@ -1969,51 +2152,16 @@ export function MagicNotesWorkspace({
         actions={
           <>
             {detailView && (
-            <button
-              id="magic-notes-back"
-              className="secondary-button"
-              onClick={() => requestDraftSwitch({ kind: 'overview' })}
-              disabled={Boolean(busy)}
-              type="button"
-            >
-              <ArrowLeft aria-hidden="true" size={15} />
-               {t(libraryView === 'todos' ? 'actions.backToTodos' : 'actions.backToOverview')}
-            </button>
-            )}
-            {detailView && (
-            <button
-              id="magic-notes-index-toggle"
-              type="button"
-              className="secondary-button"
-              aria-controls="magic-notes-index"
-              aria-expanded={indexExpanded}
-              aria-label={t(indexExpanded ? 'records.hide' : 'records.show')}
-              title={t(indexExpanded ? 'records.hide' : 'records.show')}
-              onClick={() => isNarrowLayout
-                ? setNarrowIndexOpen((current) => !current)
-                : setIndexPaneOpen((current) => !current)}
-            >
-              {indexExpanded ? <PanelLeftClose aria-hidden="true" size={15} /> : <PanelLeftOpen aria-hidden="true" size={15} />}
-              {t(indexExpanded ? 'records.hide' : 'records.show')}
-            </button>
-            )}
-            {detailView && (
-            <button
-              aria-controls="magic-notes-ai-pane"
-              aria-expanded={aiPaneOpen}
-              aria-label={t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
-              className="secondary-button"
-              onClick={() => setAiPaneOpen((current) => !current)}
-              title={t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
-              type="button"
-            >
-              {aiPaneOpen ? (
-                <PanelRightClose aria-hidden="true" size={15} />
-              ) : (
-                <PanelRightOpen aria-hidden="true" size={15} />
-              )}
-              {t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
-            </button>
+              <button
+                id="magic-notes-back"
+                className="secondary-button"
+                onClick={() => requestDraftSwitch({ kind: 'overview' })}
+                disabled={Boolean(busy)}
+                type="button"
+              >
+                <ArrowLeft aria-hidden="true" size={15} />
+                {t(libraryView === 'todos' ? 'actions.backToTodos' : 'actions.backToOverview')}
+              </button>
             )}
             {!detailView && (
               <>
@@ -2027,7 +2175,7 @@ export function MagicNotesWorkspace({
                 {libraryView === 'notes' ? <ListTodo aria-hidden="true" size={15} /> : <BookOpen aria-hidden="true" size={15} />}
                 {t(libraryView === 'notes' ? 'actions.switchToTodos' : 'actions.switchToNotes')}
               </button>
-              <button
+              {libraryView === 'todos' && <button
                 id="magic-note-new"
                 className="primary-button"
                 disabled={Boolean(busy)}
@@ -2040,16 +2188,16 @@ export function MagicNotesWorkspace({
               >
                 <Plus aria-hidden="true" size={15} />
                 {t('actions.newNote')}
-              </button>
+              </button>}
               </>
             )}
           </>
         }
-        help={detailView ? undefined : t('page.description')}
+        help={t('page.description')}
         headingId="magic-notes-title"
         icon={<Sparkles size={20} />}
         scope={{ kind: 'global' }}
-        title={detailView && detail ? detail.title : t('page.title')}
+        title={t('page.title')}
       />
 
       {loadStatus === 'error' ? (
@@ -2087,29 +2235,10 @@ export function MagicNotesWorkspace({
             </div>
           )}
       <div
-        ref={magicNotesLayoutRef}
+        ref={workspaceRef}
         aria-busy={Boolean(busy)}
-        className={`magic-notes-layout${
-          detailView ? ' magic-notes-layout--detail' : ' magic-notes-layout--overview'
-        }${
-          aiPaneOpen ? '' : ' magic-notes-layout--ai-hidden'
-        }${
-          indexExpanded ? '' : ' magic-notes-layout--index-hidden'
-        }${
-          (resizingPane && !isNarrowLayout)
-            ? ' magic-notes-layout--resizing'
-            : ''
-        }${
-          resizingPane && !isNarrowLayout
-            ? ` magic-notes-layout--${resizingPane}-resizing`
-            : ''
-        }`}
-        style={
-          {
-            '--magic-notes-ai-width': `${displayedAiWidth}px`,
-            '--magic-notes-index-width': `${displayedIndexWidth}px`
-          } as React.CSSProperties
-        }
+        className={`magic-notes-workspace${notesSplit ? ' magic-notes-workspace--notes' : ''}${libraryView === 'notes' && !detailView ? ' magic-notes-workspace--overview' : ''}${notesExpanded ? '' : ' magic-notes-workspace--list-hidden'}${isNarrowWorkspace ? ' magic-notes-workspace--narrow' : ''}${resizingPane === 'notes' ? ' magic-notes-layout--resizing' : ''}`}
+        style={{ '--magic-notes-notes-width': `${displayedNotesWidth}px` } as React.CSSProperties}
       >
         <section
           aria-label={t(
@@ -2118,7 +2247,7 @@ export function MagicNotesWorkspace({
               : 'todos.listLabel'
           )}
            className={`magic-notes-overview${libraryView === 'todos' ? ' magic-notes-overview--todos' : ''}`}
-          hidden={Boolean(detailView)}
+          hidden={libraryView === 'notes' ? !notesExpanded : Boolean(detailView)}
         >
           {libraryView === 'notes' ? (
             <div
@@ -2128,6 +2257,16 @@ export function MagicNotesWorkspace({
           <div className="magic-notes-pane-heading">
             <strong>{t('notes.heading')}</strong>
             <span>{notes.length}</span>
+            <MagicNoteTagManagerButton
+              compact={Boolean(detailView)}
+              disabled={Boolean(busy)}
+              onClick={() => setTagManagerOpen(true)}
+            />
+            <button id="magic-note-new" type="button" className="icon-button"
+              disabled={Boolean(busy)} aria-label={t('actions.newNote')} title={t('actions.newNote')}
+              onClick={() => { setValidation(undefined); setCreating(true) }}>
+              <Plus size={15} />
+            </button>
           </div>
           <label className="magic-notes-search">
             <span className="sr-only">{t('notes.searchLabel')}</span>
@@ -2138,6 +2277,15 @@ export function MagicNotesWorkspace({
               onChange={(event) => setSearch(event.target.value)}
             />
           </label>
+          {detailView ? (
+            <MagicNoteActiveTagFilter names={activeTagFilterNames} onClear={() => setTagFilter([])} />
+          ) : (
+            <MagicNoteTagFilter
+              tags={noteTags}
+              selected={activeTagFilter}
+              onChange={setTagFilter}
+            />
+          )}
           {creating && (
             <form
               className="magic-notes-create"
@@ -2202,14 +2350,14 @@ export function MagicNotesWorkspace({
             ) : visibleNotes.length === 0 ? (
               <>
                 <p className="magic-notes-muted">
-                  {search.trim()
+                  {search.trim() || activeTagFilter.length > 0
                     ? t('notes.noMatches')
                     : t('notes.empty')}
                 </p>
-                {search.trim() && (
+                {(search.trim() || activeTagFilter.length > 0) && (
                   <button
                     className="secondary-button"
-                    onClick={() => setSearch('')}
+                    onClick={() => { setSearch(''); setTagFilter([]) }}
                     type="button"
                   >
                     {t('actions.clearFilters')}
@@ -2222,9 +2370,10 @@ export function MagicNotesWorkspace({
                 <button
                   id={`magic-note-select-${note.id}`}
                   className="magic-note-list-item"
+                  aria-current={selectedNoteId === note.id ? 'true' : undefined}
                   type="button"
                   onClick={() =>
-                    requestDraftSwitch({
+                    selectedNoteId !== note.id && requestDraftSwitch({
                       kind: 'note',
                       noteId: note.id
                     })
@@ -2234,27 +2383,22 @@ export function MagicNotesWorkspace({
                     {note.pinned && (
                       <Pin aria-label={t('status.pinned')} size={12} />
                     )}
-                    {note.title}
+                    <span className="magic-note-list-item__title-text">{note.title}</span>
+                    <time dateTime={note.updatedAt} title={t('notes.updatedAt', { date: dateFormatter.format(new Date(note.updatedAt)) })}>
+                      {relativeDate(note.updatedAt)}
+                    </time>
                   </span>
                   <span className="magic-note-list-item__preview">
                     {note.preview || t('notes.noPreview')}
                   </span>
-                  <span className="magic-note-list-item__meta">
-                    <span>
-                      {t(
-                        note.entryCount === 1
-                          ? 'notes.entryCountOne'
-                          : 'notes.entryCountOther',
-                        { count: note.entryCount }
-                      )}
-                    </span>
-                    <time dateTime={note.updatedAt}>
-                      {t('notes.updatedAt', {
-                        date: dateFormatter.format(
-                          new Date(note.updatedAt)
-                        )
-                      })}
-                    </time>
+                  {!detailView && <MagicNoteTagChips tags={note.tags ?? []} />}
+                  <span className={detailView ? 'sr-only' : 'magic-note-list-item__meta magic-note-list-item__meta--overview'}>
+                    {t(
+                      note.entryCount === 1
+                        ? 'notes.entryCountOne'
+                        : 'notes.entryCountOther',
+                      { count: note.entryCount }
+                    )}
                   </span>
                 </button>
                 <button
@@ -2313,7 +2457,13 @@ export function MagicNotesWorkspace({
                   message={t('confirmations.deleteNote', { title: actionNote.title })}
                   onCancel={() => setDeletingNote(false)}
                   onRequestConfirm={() => setDeletingNote(true)}
-                  onConfirm={() => void deleteNote(actionNote)}
+                  onConfirm={() => {
+                    if (actionNote.id === requestedNoteIdRef.current) {
+                      void requestDraftSwitch({ kind: 'delete-note', remove: () => { void deleteNote(actionNote) } })
+                    } else {
+                      void deleteNote(actionNote)
+                    }
+                  }}
                 />
               </div>, document.body
             )}
@@ -2486,6 +2636,13 @@ export function MagicNotesWorkspace({
           )}
         </section>
 
+        {notesSplit && renderPaneSeparator('notes')}
+        <div className="magic-notes-detail-container" hidden={!detailView}>
+        <div
+          ref={magicNotesLayoutRef}
+          className={`magic-notes-layout${detailView ? ' magic-notes-layout--detail' : ' magic-notes-layout--overview'}${aiPaneOpen ? '' : ' magic-notes-layout--ai-hidden'}${indexExpanded ? '' : ' magic-notes-layout--index-hidden'}${resizingPane && !paneResizeDisabled(resizingPane) ? ` magic-notes-layout--resizing magic-notes-layout--${resizingPane}-resizing` : ''}`}
+          style={{ '--magic-notes-ai-width': `${displayedAiWidth}px`, '--magic-notes-index-width': `${displayedIndexWidth}px` } as React.CSSProperties}
+        >
         {detailView && (
         <>
         <aside className={`magic-notes-index-pane${narrowIndexOpen ? ' magic-notes-index-pane--drawer-open' : ''}`} hidden={!indexExpanded} aria-label={t('records.pane')} onKeyDown={(event) => {
@@ -2503,7 +2660,51 @@ export function MagicNotesWorkspace({
         <section
           aria-label={t('notes.streamLabel')}
           className="magic-notes-stream-pane"
+          ref={streamRef}
+          onScroll={(event) => {
+            if (detail) noteScrollPositions.current.set(detail.id, event.currentTarget.scrollTop)
+          }}
         >
+          <div className="magic-note-detail-toolbar" role="toolbar" aria-label={t('notes.toolbarLabel')}>
+            {libraryView === 'notes' && !isNarrowWorkspace && (
+              <button type="button" className="icon-button" aria-controls="magic-library-panel-notes"
+                aria-expanded={notesExpanded} aria-label={t(notesExpanded ? 'actions.hideNotes' : 'actions.showNotes')}
+                title={t(notesExpanded ? 'actions.hideNotes' : 'actions.showNotes')}
+                onClick={() => setNotesPaneOpen((current) => !current)}>
+                {notesExpanded ? <PanelLeftClose aria-hidden="true" size={16} /> : <PanelLeftOpen aria-hidden="true" size={16} />}
+              </button>
+            )}
+            <button
+              id="magic-notes-index-toggle"
+              type="button"
+              className="icon-button"
+              aria-controls="magic-notes-index"
+              aria-expanded={indexExpanded}
+              aria-label={t(indexExpanded ? 'records.hide' : 'records.show')}
+              title={t(indexExpanded ? 'records.hide' : 'records.show')}
+              onClick={() => isNarrowLayout
+                ? setNarrowIndexOpen((current) => !current)
+                : setIndexPaneOpen((current) => !current)}
+            >
+              <ListTree aria-hidden="true" size={16} />
+            </button>
+            {detail && <span className="magic-note-detail-toolbar__meta">
+              {t(detail.entries.length === 1 ? 'notes.entryCountOne' : 'notes.entryCountOther', { count: detail.entries.length })}
+              {' · '}
+              <time dateTime={detail.updatedAt}>{t('notes.updatedAt', { date: dateFormatter.format(new Date(detail.updatedAt)) })}</time>
+            </span>}
+            <button
+              aria-controls="magic-notes-ai-pane"
+              aria-expanded={aiPaneOpen}
+              aria-label={t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
+              className="icon-button magic-note-detail-toolbar__ai"
+              onClick={toggleAiPane}
+              title={t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
+              type="button"
+            >
+              {aiPaneOpen ? <PanelRightClose aria-hidden="true" size={16} /> : <PanelRightOpen aria-hidden="true" size={16} />}
+            </button>
+          </div>
           {!detail ? (
             <EmptyState
               action={detailLoadError ? (
@@ -2546,6 +2747,7 @@ export function MagicNotesWorkspace({
               )}
               <header className="magic-note-detail-header">
                 <input
+                  className="magic-note-detail-title"
                   aria-describedby={
                     validation?.target === 'note-title'
                       ? 'magic-note-title-error'
@@ -2583,8 +2785,19 @@ export function MagicNotesWorkspace({
                   {validation.message}
                 </p>
               )}
+              <MagicNoteTagEditor
+                key={detail.id}
+                tags={detail.tags ?? []}
+                allTags={noteTags}
+                disabled={Boolean(busy)}
+                onChange={updateNoteTags}
+              />
 
-              {!editingEntry && <div className="magic-note-composer" ref={composerRef} inert={Boolean(busy)}>
+              {!editingEntry && <div
+                className={`magic-note-composer${composerHasDraft || entryType === 'canvas' || validation?.target === 'new-entry' ? ' magic-note-composer--active' : ''}`}
+                ref={composerRef}
+                inert={Boolean(busy)}
+              >
                 <div className="magic-note-composer__header">
                 <div className="magic-note-entry-type" role="group" aria-label={t('canvas.entryType')}>
                   {(['text', 'canvas'] as const).map((value) => <button key={value} type="button" className="secondary-button" aria-pressed={entryType === value} disabled={Boolean(busy) || entryType === value} onClick={() => void requestDraftSwitch({ kind: 'entry-type', value })}>{t(`canvas.${value}`)}</button>)}
@@ -2621,6 +2834,7 @@ export function MagicNotesWorkspace({
                   ariaLabel={t('notes.newEntryLabel')}
                   onChange={(content) => {
                     composerContentRef.current = content
+                    setComposerHasDraft(hasContent(content))
                     clearValidation('new-entry')
                     if (
                       commentMode === 'immediate' &&
@@ -2730,24 +2944,23 @@ export function MagicNotesWorkspace({
                           <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(true)}>{t('canvas.analyzeDraft')}</button>
                           <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void requestDraftSwitch({ kind: 'cancel-edit' })}>{t('actions.cancel')}</button>
                           <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={() => void saveEditedEntry()}>{t('actions.saveChanges')}</button>
-                        </div> : <div>
+                        </div> : <div className="magic-note-entry__actions">
                           {(commentMode === 'after-save-manual' || entry.content.version === 2) && editingEntry?.id !== entry.id && (
                             <button
-                              className="secondary-button"
+                              className="icon-button"
+                              aria-label={t(busy === `analyze-${entry.id}` ? 'actions.analyzing' : entry.analyzedAt ? 'actions.analyzeAgain' : 'actions.analyze')}
+                              title={t(busy === `analyze-${entry.id}` ? 'actions.analyzing' : entry.analyzedAt ? 'actions.analyzeAgain' : 'actions.analyze')}
                               disabled={Boolean(busy)}
                               type="button"
                               onClick={() => void analyzeEntry(entry.id)}
                             >
-                              <Bot size={14} />
-                              {busy === `analyze-${entry.id}`
-                                ? t('actions.analyzing')
-                                : entry.analyzedAt
-                                  ? t('actions.analyzeAgain')
-                                  : t('actions.analyze')}
+                              <Bot aria-hidden="true" size={15} />
                             </button>
                           )}
                           <button
-                            className="secondary-button"
+                            className="icon-button"
+                            aria-label={t(entry.content.version === 2 ? 'canvas.edit' : 'actions.edit')}
+                            title={t(entry.content.version === 2 ? 'canvas.edit' : 'actions.edit')}
                             disabled={Boolean(busy) || editingEntry?.id === entry.id}
                             type="button"
                             onClick={() =>
@@ -2757,11 +2970,12 @@ export function MagicNotesWorkspace({
                               })
                             }
                           >
-                            {t(entry.content.version === 2 ? 'canvas.edit' : 'actions.edit')}
+                            <Pencil aria-hidden="true" size={15} />
                           </button>
                           <button
                             aria-label={t('actions.deleteEntry')}
-                            className="danger-button danger-button--quiet"
+                            title={t('actions.deleteEntry')}
+                            className="icon-button magic-note-entry__delete-button"
                             disabled={Boolean(busy) || Boolean(editingEntry)}
                             type="button"
                             onClick={() => {
@@ -2771,8 +2985,7 @@ export function MagicNotesWorkspace({
                               setDeletingEntryId(entry.id)
                             }}
                           >
-                            <Trash2 aria-hidden="true" size={14} />
-                            {t('actions.deleteEntry')}
+                            <Trash2 aria-hidden="true" size={15} />
                           </button>
                         </div>}
                       </header>
@@ -3054,8 +3267,18 @@ export function MagicNotesWorkspace({
         </aside>
         </>
         )}
+        </div>
+        </div>
       </div>
         </>
+      )}
+      {tagManagerOpen && (
+        <MagicNoteTagManager
+          tags={noteTags}
+          onClose={() => setTagManagerOpen(false)}
+          onRename={renameNoteTag}
+          onDelete={deleteNoteTag}
+        />
       )}
     </div>
   )

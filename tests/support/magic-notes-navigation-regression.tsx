@@ -49,14 +49,14 @@ async function notesNavigationRegression() {
     }
     throw new Error('Timed out waiting for notes UI')
   }
-  const button = (text: string) => [...host.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === text)!
+  const button = (text: string) => [...host.querySelectorAll<HTMLButtonElement>('button')].find(item => (item.getAttribute('aria-label') ?? item.textContent?.trim()) === text)!
   const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
   await wait(() => host.querySelector('[id^="magic-note-select-"]'))
   host.querySelector<HTMLButtonElement>('[id^="magic-note-select-"]')!.click()
   await wait(() => button('Analyze with AI'))
   button('Analyze with AI').click()
   await wait(() => finishAnalysis)
-  const title = host.querySelector<HTMLInputElement>('.magic-note-detail-header input')!
+  const title = host.querySelector<HTMLInputElement>('.magic-note-detail-title')!
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(title, 'Title during AI')
   title.dispatchEvent(new Event('input', { bubbles: true }))
   await frame()

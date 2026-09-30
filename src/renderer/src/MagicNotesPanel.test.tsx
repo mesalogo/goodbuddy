@@ -9,7 +9,7 @@ import { useMagicNoteDraft } from './use-magic-note-draft'
 import { MagicNoteSource as SourceBar } from './MagicNoteSource'
 import i18n from './i18n'
 
-const note: MagicNoteDetail = { id: '00000000-0000-4000-8000-000000000601', title: 'Release decisions', preview: 'Existing text', entryCount: 0, entries: [], pinned: true, revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z' }
+const note: MagicNoteDetail = { id: '00000000-0000-4000-8000-000000000601', title: 'Release decisions', preview: 'Existing text', entryCount: 0, entries: [], pinned: true, tags: [], revision: 1, createdAt: '2026-09-26T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z' }
 const source: MagicNoteSource = { kind: 'message', conversationId: 'conversation-a', messageIds: ['message-a'], capturedAt: '2026-09-26T00:00:00Z', conversationTitle: 'Discussion A', projectName: 'Project A' }
 const entry = { id: '00000000-0000-4000-8000-000000000602', noteId: note.id, content: capturedNoteContent('Captured text'), plainText: 'Captured text', comments: [], revision: 1, createdAt: note.createdAt, updatedAt: note.updatedAt, source }
 const search = vi.fn<DesktopApi['magicNotes']['search']>()

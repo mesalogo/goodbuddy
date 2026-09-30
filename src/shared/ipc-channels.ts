@@ -332,6 +332,8 @@ export const ipcChannels = {
   magicNotesCreate: 'magic-notes:create',
   magicNotesUpdate: 'magic-notes:update',
   magicNotesDelete: 'magic-notes:delete',
+  magicNotesRenameTag: 'magic-notes:rename-tag',
+  magicNotesDeleteTag: 'magic-notes:delete-tag',
   magicNotesCreateEntry: 'magic-notes:create-entry',
   magicNotesUpdateEntry: 'magic-notes:update-entry',
   magicNotesDeleteEntry: 'magic-notes:delete-entry',

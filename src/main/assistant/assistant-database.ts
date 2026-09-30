@@ -105,6 +105,9 @@ import {
   type MagicNoteContent,
   type MagicNoteSearchResult,
   type MagicNoteSummary,
+  type MagicNoteTag,
+  type MagicNoteTagRenameResult,
+  magicNoteTagKey,
   type MagicTodoItem,
   type MagicTodoStatus,
   type MagicTodoUpdateInput
@@ -130,7 +133,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 50
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 51
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -261,7 +264,27 @@ type MagicNoteRow = {
   updated_at: string
   entry_count: number
   latest_plain_text: string | null
+  tags_json: string | null
 }
+
+type MagicNoteTagRow = {
+  id: string
+  name: string
+  note_count: number
+}
+
+/** Shared SELECT list for note summaries; the caller supplies FROM/WHERE. */
+const MAGIC_NOTE_SUMMARY_COLUMNS = `n.*,
+  (SELECT COUNT(*) FROM magic_note_entries e
+   WHERE e.note_id = n.id) AS entry_count,
+  (SELECT plain_text FROM magic_note_entries e
+   WHERE e.note_id = n.id
+   ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS latest_plain_text,
+  (SELECT json_group_array(name) FROM (
+     SELECT t.name FROM magic_note_tag_links l
+     JOIN magic_note_tags t ON t.id = l.tag_id
+     WHERE l.note_id = n.id
+     ORDER BY l.position ASC, t.name_key ASC)) AS tags_json`
 
 type MagicNoteEntryRow = {
   id: string
@@ -762,10 +785,38 @@ function toMagicNoteSummary(row: MagicNoteRow): MagicNoteSummary {
     preview: magicNotePreview(row.latest_plain_text ?? ''),
     entryCount: row.entry_count,
     pinned: row.pinned === 1,
+    tags: parseMagicNoteTags(row.tags_json),
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
+}
+
+/** AND-filter: a note must link to every requested tag key. */
+function magicNoteTagFilter(tags: string[] | undefined): {
+  clause: string
+  params: string[]
+} {
+  const keys = [...new Set((tags ?? []).map(magicNoteTagKey).filter(Boolean))]
+  if (keys.length === 0) return { clause: '', params: [] }
+  return {
+    clause: `(SELECT COUNT(DISTINCT t.name_key) FROM magic_note_tag_links l
+              JOIN magic_note_tags t ON t.id = l.tag_id
+              WHERE l.note_id = n.id AND t.name_key IN (${keys.map(() => '?').join(', ')})) = ${keys.length}`,
+    params: keys
+  }
+}
+
+function parseMagicNoteTags(value: string | null): string[] {
+  if (!value) return []
+  const parsed: unknown = JSON.parse(value)
+  return Array.isArray(parsed)
+    ? parsed.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
+function toMagicNoteTag(row: MagicNoteTagRow): MagicNoteTag {
+  return { id: row.id, name: row.name, noteCount: row.note_count }
 }
 
 function toArtifact(row: ArtifactRow): AssistantArtifact {
@@ -2305,6 +2356,8 @@ export class AssistantDatabase {
     try {
       for (const table of [
         'magic_todos',
+        'magic_note_tag_links',
+        'magic_note_tags',
         'magic_note_entries',
         'magic_notes',
         'heartbeat_configs',
@@ -3866,36 +3919,164 @@ export class AssistantDatabase {
     }))
   }
 
-  listMagicNotes(): MagicNoteSummary[] {
+  /**
+   * Lists notes, pinned first. `tags` keeps only notes carrying every listed tag
+   * (compared by key), so selecting more tags narrows the result.
+   */
+  listMagicNotes(input: { tags?: string[]; limit?: number } = {}): MagicNoteSummary[] {
     const database = this.requireDatabase()
+    const { clause, params } = magicNoteTagFilter(input.tags)
     const rows = database
       .prepare(
-        `SELECT n.*,
-           (SELECT COUNT(*) FROM magic_note_entries e
-            WHERE e.note_id = n.id) AS entry_count,
-           (SELECT plain_text FROM magic_note_entries e
-            WHERE e.note_id = n.id
-            ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1)
-             AS latest_plain_text
+        `SELECT ${MAGIC_NOTE_SUMMARY_COLUMNS}
          FROM magic_notes n
+         ${clause ? `WHERE ${clause}` : ''}
          ORDER BY n.pinned DESC, n.updated_at DESC, n.rowid DESC
-         LIMIT 200`
+         LIMIT ?`
       )
-      .all() as MagicNoteRow[]
+      .all(...params, input.limit ?? 200) as MagicNoteRow[]
     return rows.map(toMagicNoteSummary)
+  }
+
+  listMagicNoteTags(): MagicNoteTag[] {
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT t.id, t.name, COUNT(l.note_id) AS note_count
+         FROM magic_note_tags t
+         LEFT JOIN magic_note_tag_links l ON l.tag_id = t.id
+         GROUP BY t.id
+         HAVING note_count > 0
+         ORDER BY note_count DESC, t.name_key ASC`
+      )
+      .all() as MagicNoteTagRow[]
+    return rows.map(toMagicNoteTag)
+  }
+
+  /**
+   * Renames a tag across every note. When the new name matches another tag,
+   * the two merge: links move to the existing tag and the old tag is removed.
+   * Affected notes get a new revision so open editors detect the change.
+   */
+  renameMagicNoteTag(input: { tagId: string; name: string }): MagicNoteTagRenameResult {
+    const database = this.requireDatabase()
+    const now = new Date().toISOString()
+    const key = magicNoteTagKey(input.name)
+    let targetId = input.tagId
+    let merged = false
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const current = database
+        .prepare('SELECT id FROM magic_note_tags WHERE id = ?')
+        .get(input.tagId) as { id: string } | undefined
+      if (!current) throw new Error('标签不存在')
+      const other = database
+        .prepare('SELECT id FROM magic_note_tags WHERE name_key = ? AND id <> ?')
+        .get(key, input.tagId) as { id: string } | undefined
+      const noteIds = (
+        database
+          .prepare('SELECT note_id FROM magic_note_tag_links WHERE tag_id = ?')
+          .all(input.tagId) as Array<{ note_id: string }>
+      ).map((row) => row.note_id)
+      if (other) {
+        merged = true
+        targetId = other.id
+        // Notes that already had both tags keep the target's position.
+        database
+          .prepare(
+            `INSERT OR IGNORE INTO magic_note_tag_links (note_id, tag_id, position, created_at)
+             SELECT note_id, ?, position, created_at FROM magic_note_tag_links WHERE tag_id = ?`
+          )
+          .run(other.id, input.tagId)
+        database.prepare('DELETE FROM magic_note_tags WHERE id = ?').run(input.tagId)
+        database
+          .prepare('UPDATE magic_note_tags SET updated_at = ? WHERE id = ?')
+          .run(now, other.id)
+      } else {
+        database
+          .prepare('UPDATE magic_note_tags SET name = ?, name_key = ?, updated_at = ? WHERE id = ?')
+          .run(input.name, key, now, input.tagId)
+      }
+      this.touchMagicNotes(database, noteIds, now)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    const tag = this.listMagicNoteTags().find((item) => item.id === targetId)
+    this.options.onMagicNotesChanged?.()
+    return { tag: tag ?? { id: targetId, name: input.name, noteCount: 0 }, merged }
+  }
+
+  /** Removes a tag from every note. Notes and their entries are kept. */
+  deleteMagicNoteTag(tagId: string): void {
+    const database = this.requireDatabase()
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const noteIds = (
+        database
+          .prepare('SELECT note_id FROM magic_note_tag_links WHERE tag_id = ?')
+          .all(tagId) as Array<{ note_id: string }>
+      ).map((row) => row.note_id)
+      const result = database.prepare('DELETE FROM magic_note_tags WHERE id = ?').run(tagId)
+      if (result.changes !== 1) throw new Error('标签不存在')
+      this.touchMagicNotes(database, noteIds, now)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    this.options.onMagicNotesChanged?.()
+  }
+
+  private touchMagicNotes(database: DatabaseSync, noteIds: string[], now: string): void {
+    const statement = database.prepare(
+      'UPDATE magic_notes SET revision = revision + 1, updated_at = ? WHERE id = ?'
+    )
+    for (const noteId of noteIds) statement.run(now, noteId)
+  }
+
+  /** Replaces a note's tags, creating missing tags and removing orphans. */
+  private replaceMagicNoteTags(
+    database: DatabaseSync,
+    noteId: string,
+    tags: string[],
+    now: string
+  ): void {
+    database.prepare('DELETE FROM magic_note_tag_links WHERE note_id = ?').run(noteId)
+    const findTag = database.prepare('SELECT id FROM magic_note_tags WHERE name_key = ?')
+    const insertTag = database.prepare(
+      `INSERT INTO magic_note_tags (id, name, name_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    const insertLink = database.prepare(
+      `INSERT OR IGNORE INTO magic_note_tag_links (note_id, tag_id, position, created_at)
+       VALUES (?, ?, ?, ?)`
+    )
+    tags.forEach((name, position) => {
+      const key = magicNoteTagKey(name)
+      let tag = findTag.get(key) as { id: string } | undefined
+      if (!tag) {
+        tag = { id: randomUUID() }
+        insertTag.run(tag.id, name, key, now, now)
+      }
+      insertLink.run(noteId, tag.id, position, now)
+    })
+    this.deleteOrphanMagicNoteTags(database)
+  }
+
+  private deleteOrphanMagicNoteTags(database: DatabaseSync): void {
+    database.exec(
+      `DELETE FROM magic_note_tags
+       WHERE NOT EXISTS (SELECT 1 FROM magic_note_tag_links l WHERE l.tag_id = magic_note_tags.id)`
+    )
   }
 
   getMagicNote(noteId: string): MagicNoteDetail {
     const database = this.requireDatabase()
     const row = database
       .prepare(
-        `SELECT n.*,
-           (SELECT COUNT(*) FROM magic_note_entries e
-            WHERE e.note_id = n.id) AS entry_count,
-           (SELECT plain_text FROM magic_note_entries e
-            WHERE e.note_id = n.id
-            ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1)
-             AS latest_plain_text
+        `SELECT ${MAGIC_NOTE_SUMMARY_COLUMNS}
          FROM magic_notes n
          WHERE n.id = ?`
       )
@@ -3942,6 +4123,7 @@ export class AssistantDatabase {
     title: string
     content?: MagicNoteContent
     source?: MagicNoteSource
+    tags?: string[]
   }): MagicNoteCreateResult {
     const id = randomUUID()
     const entryId = input.content ? randomUUID() : undefined
@@ -3970,6 +4152,9 @@ export class AssistantDatabase {
            VALUES (?, ?, ?, 0, ?, ?, ?)`
         )
         .run(id, null, input.title, input.content ? 1 : 0, now, now)
+      if (input.tags?.length) {
+        this.replaceMagicNoteTags(database, id, input.tags, now)
+      }
       if (input.content && entryId) {
         const pointer = this.writeMagicNoteBody(id, entryId, input.content, 0, now)
         database
@@ -4016,27 +4201,39 @@ export class AssistantDatabase {
     noteId: string
     title?: string
     pinned?: boolean
+    tags?: string[]
     expectedRevision: number
   }): MagicNoteDetail {
     const now = new Date().toISOString()
-    const result = this.requireDatabase()
-      .prepare(
-        `UPDATE magic_notes
-         SET title = COALESCE(?, title),
-             pinned = COALESCE(?, pinned),
-             revision = revision + 1,
-             updated_at = ?
-         WHERE id = ? AND revision = ?`
-      )
-      .run(
-        input.title ?? null,
-        input.pinned === undefined ? null : input.pinned ? 1 : 0,
-        now,
-        input.noteId,
-        input.expectedRevision
-      )
-    if (result.changes !== 1) {
-      throw new Error('笔记已被更新，请刷新后重试')
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = database
+        .prepare(
+          `UPDATE magic_notes
+           SET title = COALESCE(?, title),
+               pinned = COALESCE(?, pinned),
+               revision = revision + 1,
+               updated_at = ?
+           WHERE id = ? AND revision = ?`
+        )
+        .run(
+          input.title ?? null,
+          input.pinned === undefined ? null : input.pinned ? 1 : 0,
+          now,
+          input.noteId,
+          input.expectedRevision
+        )
+      if (result.changes !== 1) {
+        throw new Error('笔记已被更新，请刷新后重试')
+      }
+      if (input.tags !== undefined) {
+        this.replaceMagicNoteTags(database, input.noteId, input.tags, now)
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
     }
     const detail = this.getMagicNote(input.noteId)
     this.options.onMagicNotesChanged?.()
@@ -4044,11 +4241,20 @@ export class AssistantDatabase {
   }
 
   deleteMagicNote(noteId: string): void {
-    const result = this.requireDatabase()
-      .prepare('DELETE FROM magic_notes WHERE id = ?')
-      .run(noteId)
-    if (result.changes !== 1) {
-      throw new Error('笔记不存在')
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = database
+        .prepare('DELETE FROM magic_notes WHERE id = ?')
+        .run(noteId)
+      if (result.changes !== 1) {
+        throw new Error('笔记不存在')
+      }
+      this.deleteOrphanMagicNoteTags(database)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
     }
     this.reconcileMagicNoteFiles(noteId)
     this.options.onMagicNotesChanged?.()
@@ -4318,17 +4524,17 @@ export class AssistantDatabase {
   searchMagicNoteSummaries(query: string, limit = 200): MagicNoteSummary[] {
     const pattern = `%${query.replace(/[\\%_]/gu, '\\$&')}%`
     const rows = this.requireDatabase().prepare(
-      `SELECT n.*,
-         (SELECT COUNT(*) FROM magic_note_entries e WHERE e.note_id = n.id) AS entry_count,
-         (SELECT plain_text FROM magic_note_entries e WHERE e.note_id = n.id
-          ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS latest_plain_text
+      `SELECT ${MAGIC_NOTE_SUMMARY_COLUMNS}
        FROM magic_notes n
        WHERE n.title LIKE ? ESCAPE '\\'
           OR EXISTS (SELECT 1 FROM magic_note_entries e
                      WHERE e.note_id = n.id AND e.plain_text LIKE ? ESCAPE '\\')
+          OR EXISTS (SELECT 1 FROM magic_note_tag_links l
+                     JOIN magic_note_tags t ON t.id = l.tag_id
+                     WHERE l.note_id = n.id AND t.name LIKE ? ESCAPE '\\')
        ORDER BY n.pinned DESC, n.updated_at DESC, n.rowid DESC
        LIMIT ?`
-    ).all(pattern, pattern, limit) as MagicNoteRow[]
+    ).all(pattern, pattern, pattern, limit) as MagicNoteRow[]
     return rows.map(toMagicNoteSummary)
   }
 
@@ -11662,6 +11868,31 @@ export class AssistantDatabase {
             proposal.content, proposal.id, timestamp, timestamp)
         }
         database.exec('PRAGMA user_version = 50; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+    if (version.user_version < 51) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // Manual note tags. Names compare by name_key (NFC, trimmed, lower-case);
+        // a tag with no remaining links is removed by the write that orphaned it.
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS magic_note_tags (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            name_key TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS magic_note_tag_links (
+            note_id TEXT NOT NULL REFERENCES magic_notes(id) ON DELETE CASCADE,
+            tag_id TEXT NOT NULL REFERENCES magic_note_tags(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (note_id, tag_id)
+          );
+          CREATE INDEX IF NOT EXISTS magic_note_tag_links_tag_idx ON magic_note_tag_links(tag_id, note_id);
+        `)
+        database.exec('PRAGMA user_version = 51; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
   }

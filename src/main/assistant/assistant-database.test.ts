@@ -7337,6 +7337,63 @@ describe('AssistantDatabase', () => {
     }
   })
 
+  it('stores manual note tags, filters by all tags, and renames, merges or deletes them', async () => {
+    const onMagicNotesChanged = vi.fn()
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-note-tags-'))
+    temporaryDirectories.push(directory)
+    const database = new AssistantDatabase(join(directory, 'assistant.sqlite'), { onMagicNotesChanged })
+    database.initialize('C:\\Workspace')
+    try {
+      const work = database.createMagicNote({ title: 'Work', tags: ['Work', 'Project A'] })
+      const personal = database.createMagicNote({ title: 'Personal', tags: ['personal'] })
+      const both = database.createMagicNote({ title: 'Both', tags: ['work', 'Personal'] })
+      expect(work.tags).toEqual(['Work', 'Project A'])
+      // The first spelling wins; later notes reuse the tag case-insensitively.
+      expect(both.tags).toEqual(['Work', 'personal'])
+      expect(database.listMagicNoteTags().map((tag) => [tag.name, tag.noteCount])).toEqual([
+        ['personal', 2], ['Work', 2], ['Project A', 1]
+      ])
+      expect(database.listMagicNotes({ tags: ['WORK'] }).map((note) => note.title).sort()).toEqual(['Both', 'Work'])
+      expect(database.listMagicNotes({ tags: ['work', 'personal'] }).map((note) => note.title)).toEqual(['Both'])
+      expect(database.listMagicNotes({ tags: ['missing'] })).toEqual([])
+      expect(database.searchMagicNoteSummaries('project').map((note) => note.title)).toEqual(['Work'])
+
+      const retagged = database.updateMagicNote({ noteId: work.id, tags: ['Work'], expectedRevision: work.revision })
+      expect(retagged.tags).toEqual(['Work'])
+      expect(retagged.revision).toBe(work.revision + 1)
+      // "Project A" lost its last note and is removed.
+      expect(database.listMagicNoteTags().map((tag) => tag.name)).not.toContain('Project A')
+      expect(() => database.updateMagicNote({ noteId: work.id, tags: [], expectedRevision: work.revision })).toThrow()
+      expect(database.getMagicNote(work.id).tags).toEqual(['Work'])
+
+      const workTag = database.listMagicNoteTags().find((tag) => tag.name === 'Work')!
+      const renamed = database.renameMagicNoteTag({ tagId: workTag.id, name: 'Job' })
+      expect(renamed).toMatchObject({ merged: false, tag: { name: 'Job', noteCount: 2 } })
+      expect(database.getMagicNote(both.id).tags).toEqual(['Job', 'personal'])
+      expect(database.getMagicNote(both.id).revision).toBe(both.revision + 1)
+
+      // Renaming onto an existing name merges; a note carrying both keeps one link.
+      const merged = database.renameMagicNoteTag({ tagId: workTag.id, name: 'Personal' })
+      expect(merged).toMatchObject({ merged: true, tag: { name: 'personal', noteCount: 3 } })
+      expect(database.getMagicNote(both.id).tags).toEqual(['personal'])
+      expect(database.listMagicNoteTags()).toHaveLength(1)
+
+      const calls = onMagicNotesChanged.mock.calls.length
+      database.deleteMagicNoteTag(merged.tag.id)
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(calls + 1)
+      expect(database.listMagicNoteTags()).toEqual([])
+      expect(database.getMagicNote(personal.id)).toMatchObject({ title: 'Personal', tags: [] })
+      expect(() => database.deleteMagicNoteTag(merged.tag.id)).toThrow('标签不存在')
+      expect(() => database.renameMagicNoteTag({ tagId: merged.tag.id, name: 'x' })).toThrow('标签不存在')
+
+      database.updateMagicNote({ noteId: personal.id, tags: ['Solo'], expectedRevision: database.getMagicNote(personal.id).revision })
+      database.deleteMagicNote(personal.id)
+      expect(database.listMagicNoteTags()).toEqual([])
+    } finally {
+      database.close()
+    }
+  })
+
   it('counts incomplete todos and publishes todo-changing writes', async () => {
     const onMagicTodosChanged = vi.fn()
     const database = await createDatabase({ onMagicTodosChanged })

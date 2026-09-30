@@ -1,5 +1,82 @@
 # Magic Notes Progress
 
+## 2026-09-30: Manual Note Tags
+
+Implemented FR-7 to FR-10 as described in
+[Note Tags](./technical-design.md#note-tags): schema 51 tag tables, tag
+replacement on note update, AND filtering, rename/merge/delete with note
+revision bumps, IPC and preload methods, the overview filter row, card chips,
+note-header tag editor, the "Manage tags" dialog, and tag support in
+`note_create`, `note_update` and `note_list`. No colours or hierarchy.
+
+- New tests: database tag lifecycle (`assistant-database.test.ts`), MCP tag
+  normalization and filtering (`knowledge-mcp-gateway.test.ts`), and four
+  workspace tag tests (filtering, search, keyboard add/remove, manager
+  rename/merge/delete).
+- `npx vitest run` over the workspace, panel, `src/main/agent`,
+  `src/main/magic-notes`, `src/main/assistant`, storage startup, preload, shared
+  and the five Magic Notes Electron tests: 142 files passed (4 skipped), 1706
+  tests passed. `App.test.tsx -t note`: 4 passed.
+- The Electron layout test checks the overview filter row and card chips fit
+  their containers; screenshots of the overview, tag manager and note header
+  checked at 1280px.
+- `npm run typecheck` and eslint on the changed files passed. Full `npm test`
+  was not rerun.
+
+## 2026-09-30: Overview Page And Header Back Button
+
+"Back to overview" returned to the page header's top-right as a labelled button.
+It now leads to a full-width all-notes card grid instead of a list beside an
+empty detail pane; the split list appears only while a note is open.
+`MagicNotesWorkspace.test.tsx` (129) and the Electron layout, analysis and
+navigation tests passed; screenshots checked at 1280 and 720px.
+
+## 2026-09-30: Compact Note Detail
+
+The note detail now prioritizes content: the notes list uses two-line rows
+(about 54px instead of 88px); note controls moved from text buttons in the page
+header to a sticky icon toolbar; the title appears once as the stream heading;
+the record index starts collapsed; AI opens only with comment activity or a pin;
+the idle composer is one line; entry actions are hover icons. At 1280x800 with
+the list open the stream is about 990px wide (content capped at 880px), versus
+525px before, and the first entry starts about 240px from the top of the stream.
+
+- Electron screenshots checked at 1280 (light/dark), 1000 and 720px, with and
+  without the index and AI panes.
+- `MagicNotesWorkspace.test.tsx` 129 tests, `App.test.tsx` 315 tests, and the
+  Electron layout, analysis, navigation, footer and capture tests passed.
+  The analysis and navigation fixtures now locate icon buttons by `aria-label`.
+- `npm run typecheck` and eslint on the changed files passed. Full `npm test`
+  was not rerun.
+
+## 2026-09-30: Persistent Notes List
+
+Desktop notes now retain the all-notes list beside the current note. The list
+supports independent scrolling, selected state, creation, action menus, resizing
+and collapse. Narrow workspaces switch between the mounted list and detail.
+Switching notes restores reading positions within the mounted workspace and
+protects unsaved titles and bodies. Current-note deletion uses the same draft
+guard; failed deletion and deleting another note retain current drafts.
+
+- Workspace, Electron layout, navigation and analysis regression tests passed:
+  4 files, 132 tests. The analysis fixture no longer waits for Cancel after Save
+  changes has already closed the editor.
+- The full-suite run also passed the production App/preload/IPC/SQLite note-capture
+  scenario, including reopening the database and returning to conversation sources.
+- `npm run typecheck`, `npm run lint` and `git diff --check` passed.
+- Full `npm test` did not finish within 600 seconds. It reported two analysis
+  failures subsequently fixed and passed above, and one supervisor-layout failure.
+  There is no all-green full-suite result for this change.
+- Layout fix, same day: with the list occupying 289px, a 930-1100px window left
+  the detail container under 800px, so AI stacked below a short stream. At about
+  880px a CSS container query and the React width state disagreed, briefly
+  rendering the list above the stacked detail. AI now stays beside the editor
+  down to a 600px detail width; the record index uses a drawer from 800px; the
+  list/detail switch uses only the measured workspace width. Electron screenshots
+  were checked at 1280, 1100, 1000, 930, 880, 700 and 560px.
+  `MagicNotesWorkspace.test.tsx`, the Electron layout test and the analysis
+  regression passed: 3 files, 131 tests.
+
 ## 2026-09-28: Startup Body Read Reuse
 
 Startup repair now reuses the asset references collected during revision

@@ -8,6 +8,8 @@ import {
   magicNoteEntryCreateSchema,
   magicNoteEntryDeleteSchema,
   magicNoteEntryUpdateSchema,
+  magicNoteTagDeleteSchema,
+  magicNoteTagRenameSchema,
   magicNoteUpdateSchema,
   magicTodoUpdateSchema
 } from '../../shared/magic-notes-contracts'
@@ -49,7 +51,21 @@ export function registerMagicNotesIpcHandlers(
 
   registerHandler(ipcChannels.magicNotesList, (event) => {
     assertTrustedSender(event, window)
-    return { notes: assistantDatabase.listMagicNotes() }
+    return {
+      notes: assistantDatabase.listMagicNotes(),
+      tags: assistantDatabase.listMagicNoteTags()
+    }
+  })
+
+  registerHandler(ipcChannels.magicNotesRenameTag, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.renameMagicNoteTag(magicNoteTagRenameSchema.parse(input))
+  })
+
+  registerHandler(ipcChannels.magicNotesDeleteTag, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { tagId } = magicNoteTagDeleteSchema.parse(input)
+    assistantDatabase.deleteMagicNoteTag(tagId)
   })
 
   registerHandler(ipcChannels.magicNotesGet, (event, input: unknown) => {

@@ -44,7 +44,7 @@ async function notesAnalysisRegression() {
     }
     throw new Error(`Timed out: ${predicate}`)
   }
-  const button = (label: string, parent: ParentNode = host) => [...parent.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.trim() === label)!
+  const button = (label: string, parent: ParentNode = host) => [...parent.querySelectorAll<HTMLButtonElement>('button')].find(node => (node.getAttribute('aria-label') ?? node.textContent?.trim()) === label)!
   const click = async (label: string, parent: ParentNode = host) => {
     await wait(() => button(label, parent) && !button(label, parent).disabled)
     button(label, parent).click()
@@ -77,7 +77,6 @@ async function notesAnalysisRegression() {
   await click('Save changes')
   await wait(async () => (await entry()).revision >= manualRevision + 2)
   const editedRevision = (await entry()).revision
-  await click('Cancel')
   await wait(() => host.querySelector('.magic-note-composer'))
   await click('Canvas', host.querySelector('.magic-note-composer')!)
   const composer = () => host.querySelector<HTMLElement>('.magic-note-composer')!

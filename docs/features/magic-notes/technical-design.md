@@ -20,6 +20,18 @@ stream events, error causes and nested release/dispose cleanup.
 
 ## Continuous Record Workspace
 
+The outer workspace separates the persistent notes list from the detail container.
+The list defaults to 280px, resizes within 240-420px and stores `notesPaneWidth`
+and `notesPaneOpen` in `goodbuddy.magic-notes-layout.v1`. At workspace widths up to
+900px, selection replaces the visible list with detail while retaining the mounted
+list. The right-hand `magic-notes-detail` query container and its ResizeObserver
+measure the detail width for two breakpoints: at 800px or less the record index
+becomes a drawer while AI stays beside the editor; at 600px or less AI stacks
+below the stream. The 900px list/detail switch is driven by the same measured
+workspace width in both CSS class and React state, so the two cannot disagree.
+Per-note stream scroll positions live in a workspace-local map; explicit entry
+navigation takes precedence over reading-position restoration.
+
 The detail mounts every entry in a continuous newest-first stream. The left index
 and AI source buttons scroll to an entry ID without changing the active editor,
 clearing a composer, flushing content or invoking the draft-switch guard. Opening
@@ -67,22 +79,38 @@ content and streamed draft comments through the shared draft-analysis cleanup.
 The context counter rejects late results and prevents dispatch after abandoned
 settings preparation. This cleanup does not clear the new-entry composer's content.
 
-The left index defaults to 168px and resizes from its right edge between 140px
+The left index is collapsed by default (`recordIndexOpen`, default `false`); when
+open it defaults to 168px and resizes from its right edge between 140px
 and 320px. It shares the AI pane's pointer-capture handlers, separator styling
 and keyboard semantics (16px arrow steps, Home/End limits). Both widths are
 stored in `goodbuddy.magic-notes-layout.v1`; missing index width defaults to
 168px. Displayed widths clamp together to reserve at least 300px for the stream,
-without overwriting saved widths when the window shrinks. The page header places
-the index toggle immediately after the back button, followed by the AI toggle.
-All three use icons and visible localized text; pane toggle labels reflect their
-current show/hide action. Collapsing hides the entire index and removes its grid column,
-border, resize separator and occupied width. AI has a separate
-right pane with its existing resize separator and header toggle. Both panes scroll
-independently and persist independent desktop visibility. At container widths of
-800px or less, the index defaults to hidden and the same header toggle opens or
-closes a fixed 168px drawer below the header, without reserving a rail or showing
+without overwriting saved widths when the window shrinks. The legacy
+`indexPaneOpen`/`aiPaneOpen` flags are ignored so existing users get the compact
+defaults once. With no note open the workspace renders only the list, full
+width, as a card grid (`magic-notes-workspace--overview`); the split layout
+(`--notes`) exists only while a note is open on a wide workspace. The page
+header shows the library switch in the overview and a labelled "Back to
+overview" button while a note is open. Note controls live in a sticky icon
+toolbar at the top of the stream (notes list, record index, entry count/updated
+time, AI). Collapsing hides the entire
+index and removes its grid column, border, resize separator and occupied width.
+
+AI visibility is derived, not stored directly: `aiPaneOpen = aiPanePinned ||
+(hasAiActivity && dismissedNoteId !== detail.id)`, where activity means saved
+comments, draft analyses, or a running/streaming analysis. Hiding records the
+current note as dismissed and clears the pin; starting a new analysis clears the
+dismissal. Opening AI with no activity sets `aiPanePinned`, which is persisted.
+
+The new-entry composer stays mounted. It collapses with CSS
+(`:not(.magic-note-composer--active):not(:focus-within)`) so drafts, focus
+management and the unsaved-draft guard are unchanged; `composerHasDraft` tracks
+non-empty text so a draft never collapses after blur. At container widths of
+800px or less, the index defaults to hidden and the same toolbar toggle opens or
+closes a fixed 168px drawer over the stream, without reserving a rail or showing
 an index resize separator; choosing
-an item or pressing Escape closes it. AI moves below the stream, limited to 40%
+an item or pressing Escape closes it. AI remains a resizable right column until the
+detail container is 600px or less, then moves below the stream, limited to 40%
 of layout height and 280px. Overview search, scroll, task selection and return
 focus stay mounted.
 
@@ -375,8 +403,9 @@ objects and returns a function removing that listener. The existing
 
 The overview's `libraryView` and the optional note-only `detailView` are independent:
 opening a todo's source note does not lose the originating task view.
-The overview remains mounted but hidden while detail is open, retaining scroll
-position and filters. Returning restores the initiating control's focus and
+The notes list remains visible beside detail on desktop unless collapsed. On
+narrow screens, or when opening a source note from To-dos, the originating list
+remains mounted but hidden, retaining scroll position and filters. Returning restores the initiating control's focus and
 invalidates outstanding detail requests. Initial loading fetches summaries and
 todos without selecting the first note or task. Navigation away from unsaved content or
 an unsaved title uses the existing draft confirmation; active writes finish
@@ -436,7 +465,7 @@ Groups start expanded and can independently hide their mounted rows without
 clearing the selected detail. Collapse state lasts while the group is mounted.
 Note detail retains its existing AI pane preferences.
 
-A single secondary button lives in `PageHeader.actions` before New note. Its
+A single secondary button lives in `PageHeader.actions` while note detail is closed. Its
 label and icon describe the destination, and `requestDraftSwitch` retains the
 existing draft guard. Focus returns to the same `magic-library-switch` button
 after switching. The overview section keeps its localized list `aria-label`;
@@ -446,12 +475,15 @@ search in one wrapping toolbar.
 
 Only note detail applies `magic-notes-layout--detail` to remove the layout frame
 and corner radius. Its stream pane has no extra padding; editor borders and the
-AI divider remain. Overview cards and the independent todo layout keep their
-existing frame and spacing. These changes do not affect Main, preload or storage.
+AI divider remain. The compact notes list and independent todo layout retain their
+own spacing. These changes do not affect Main, preload or storage.
 
 ## Note List Actions
 
-Each overview card has an open-detail button and a sibling action-menu button. The menu
+Each notes-list row has an open-detail button and a sibling action-menu button,
+available while detail is open. Deleting the selected note passes through the
+existing draft guard; drafts clear only after deletion succeeds. Deleting another
+note retains current selection and drafts. The menu
 uses the conversation action styles and shared `DestructiveConfirmActions`, and
 is portalled to `document.body`. Its position follows the trigger on scrolling,
 window resizing and confirmation-size changes. Entering detail, filtering out the
@@ -463,6 +495,58 @@ title, composer or entry-edit drafts. Deleting uses the explicitly confirmed
 target ID and refreshes the overview after success, without opening another note.
 These actions are available only in the overview. Database and Agent contracts
 are unchanged.
+
+## Note Tags
+
+Implements [FR-7 to FR-10](./prd.md#功能要求). Schema 51 adds two tables:
+
+- `magic_note_tags(id, name, name_key UNIQUE, created_at, updated_at)`. `name_key`
+  is the NFC-normalized, trimmed, lower-cased name, so `Work` and `work` share one
+  row and the first spelling is kept.
+- `magic_note_tag_links(note_id, tag_id, position, created_at)` with a composite
+  primary key and `ON DELETE CASCADE` on both sides. `position` keeps the order
+  the user added tags in.
+
+`magicNoteTagNameSchema` and `magicNoteTagListSchema` in
+`src/shared/magic-notes-contracts.ts` hold all name rules: collapse whitespace,
+1–24 characters, no commas, `#` or control characters; case-insensitive dedup;
+at most 10 per note. IPC and MCP inputs go through these schemas before reaching
+the database. The MCP tool schemas stay plain string arrays so the published
+JSON schema remains simple; the gateway normalizes them.
+
+Database behavior (`AssistantDatabase`):
+
+- Summaries carry `tags: string[]` via one `json_group_array` subquery shared by
+  list, get and summary search. The summary search also matches tag names.
+- `updateMagicNote({ tags })` replaces the full list inside the same
+  `BEGIN IMMEDIATE` transaction as the revision check, so a stale revision
+  changes nothing. `createMagicNote` accepts initial tags.
+- Tags with no remaining links are deleted by the write that orphaned them
+  (tag replacement and note deletion). `listMagicNoteTags()` returns only
+  linked tags with `noteCount`, ordered by count then name.
+- `listMagicNotes({ tags })` is an AND filter on `name_key`.
+- `renameMagicNoteTag` updates the name, or merges when the new key belongs to
+  another tag: links move with `INSERT OR IGNORE`, then the source tag is
+  deleted. `deleteMagicNoteTag` removes the tag and its links. Both bump the
+  revision and `updated_at` of every affected note so open editors do not save
+  over the change, and both emit one `onMagicNotesChanged`.
+
+IPC: `magic-notes:list` now returns `{ notes, tags }`; new channels
+`magic-notes:rename-tag` and `magic-notes:delete-tag`; `magic-notes:update`
+accepts `tags`. Preload exposes `renameTag` and `removeTag`.
+
+Renderer: tag UI lives in `MagicNoteTags.tsx`. The workspace filters the loaded
+summaries on the client (AND by tag key, plus tag names in the search box), so
+filter changes do not refetch. Filter keys that no longer exist after a refresh
+are ignored; renaming a filtered tag carries the filter to the new key. Tag edits
+from the note header use the detail revision and `applyDetail`, so title and
+composer drafts are kept.
+
+Agent tools: `note_create` and `note_update` accept `tags` (update replaces the
+list; `[]` clears it), `note_list` accepts a `tags` AND filter, and note
+summaries returned to tools include `tags`. Descriptions tell the model to change
+tags only when the user asks. The conversation capture panel does not edit tags
+in this version.
 
 ## Agent Search Contract
 
