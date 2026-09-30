@@ -33,7 +33,7 @@ app.whenReady().then(async () => {
     let off
     for (const state of [null, 'true', null, 'false']) {
       const label = `${theme}/${state ?? 'absent'}`
-      const result = await win.webContents.executeJavaScript(`(() => {
+      const result = await win.webContents.executeJavaScript(`(async () => {
         document.documentElement.dataset.theme = ${JSON.stringify(theme)};
         const shell = document.querySelector('.app-shell');
         const state = ${JSON.stringify(state)};
@@ -41,6 +41,9 @@ app.whenReady().then(async () => {
           if (state === null) node.removeAttribute('data-frosted-glass');
           else node.dataset.frostedGlass = state;
         }
+        await Promise.all(document.getAnimations()
+          .filter(animation => animation instanceof CSSTransition)
+          .map(animation => animation.finished));
         const panel = document.querySelector('.runtime-checklist__content');
         if (shell.contains(panel) || !panel.closest('.floating-portal').matches(':popover-open'))
           throw new Error('Checklist must render outside app-shell in the top layer');
