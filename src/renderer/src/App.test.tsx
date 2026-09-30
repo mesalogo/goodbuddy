@@ -1211,6 +1211,7 @@ function installRemoteProjectsSetting(enabled: boolean): {
   let settings: ApplicationSettings = {
     checkUpdatesOnStartup: false,
     desktopNotificationsEnabled: true,
+    transparentFrostedEffectEnabled: false,
     updateSource: "github",
     modelDownloadSource: "modelscope",
     localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3291,6 +3292,7 @@ describe("App", () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3395,6 +3397,7 @@ describe("App", () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3411,6 +3414,7 @@ describe("App", () => {
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3513,6 +3517,7 @@ describe("App", () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -3529,6 +3534,7 @@ describe("App", () => {
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -5922,6 +5928,7 @@ describe("App", () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
       desktopNotificationsEnabled: true,
+      transparentFrostedEffectEnabled: false,
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -7834,6 +7841,77 @@ describe("App", () => {
     expect(document.documentElement.style.colorScheme).toBe("dark");
     expect(localStorage.getItem("goodbuddy.appearance-theme")).toBe("dark");
   });
+
+  it('applies frosted glass only after saving and removes it when disabled', async () => {
+    const updates = api.updates!
+    const { container, unmount } = render(<App />)
+    const shell = container.querySelector('.app-shell')
+    expect(shell).not.toHaveAttribute('data-frosted-glass')
+    expect(document.documentElement).not.toHaveAttribute('data-frosted-glass')
+    fireEvent.click(await screen.findByRole('button', { name: '设置' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '外观' }))
+    const toggle = screen.getByRole('switch', { name: '透明磨砂特效' })
+    expect(toggle.closest('.toggle-row')?.firstElementChild).toHaveTextContent('透明磨砂特效')
+    expect(toggle.closest('.toggle-row')?.lastElementChild).toBe(toggle)
+    await waitFor(() => expect(toggle).toBeEnabled())
+    const saved = { ...await updates.getSettings(), transparentFrostedEffectEnabled: true }
+    let resolveSave!: (settings: ApplicationSettings) => void
+    vi.mocked(updates.updateSettings).mockImplementationOnce(() => new Promise(resolve => { resolveSave = resolve }))
+    fireEvent.click(toggle)
+    expect(toggle).toBeDisabled()
+    expect(toggle).not.toBeChecked()
+    expect(shell).not.toHaveAttribute('data-frosted-glass')
+    expect(document.documentElement).not.toHaveAttribute('data-frosted-glass')
+    expect(updates.updateSettings).toHaveBeenLastCalledWith({ transparentFrostedEffectEnabled: true })
+    await act(async () => resolveSave(saved))
+    expect(toggle).toBeChecked()
+    expect(toggle).toBeEnabled()
+    expect(shell).toHaveAttribute('data-frosted-glass', 'true')
+    expect(document.documentElement).toHaveAttribute('data-frosted-glass', 'true')
+    fireEvent.click(toggle)
+    await waitFor(() => {
+      expect(toggle).not.toBeChecked()
+      expect(toggle).toBeEnabled()
+      expect(shell).not.toHaveAttribute('data-frosted-glass')
+      expect(document.documentElement).not.toHaveAttribute('data-frosted-glass')
+    })
+    expect(updates.updateSettings).toHaveBeenLastCalledWith({ transparentFrostedEffectEnabled: false })
+    fireEvent.click(toggle)
+    await waitFor(() => expect(shell).toHaveAttribute('data-frosted-glass', 'true'))
+    unmount()
+    expect(document.documentElement).not.toHaveAttribute('data-frosted-glass')
+    const reloaded = render(<App />)
+    await waitFor(() => expect(reloaded.container.querySelector('.app-shell')).toHaveAttribute('data-frosted-glass', 'true'))
+    expect(document.documentElement).toHaveAttribute('data-frosted-glass', 'true')
+  })
+
+  it('retains confirmed frosted glass after a failed save and allows rereading locked settings', async () => {
+    const updates = api.updates!
+    await updates.updateSettings({ transparentFrostedEffectEnabled: true })
+    const { container } = render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '设置' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '外观' }))
+    const toggle = screen.getByRole('switch', { name: '透明磨砂特效' })
+    await waitFor(() => {
+      expect(toggle).toBeEnabled()
+      expect(toggle).toBeChecked()
+    })
+    vi.mocked(updates.updateSettings).mockRejectedValueOnce(new Error('response lost'))
+    vi.mocked(updates.getSettings).mockRejectedValueOnce(new Error('read unavailable'))
+    fireEvent.click(toggle)
+    await screen.findByText('无法确认保存结果，请重新读取后再修改。')
+    expect(toggle).toBeChecked()
+    expect(toggle).toBeDisabled()
+    expect(container.querySelector('.app-shell')).toHaveAttribute('data-frosted-glass', 'true')
+    expect(document.documentElement).toHaveAttribute('data-frosted-glass', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(toggle).toBeEnabled())
+    fireEvent.click(toggle)
+    await waitFor(() => {
+      expect(toggle).not.toBeChecked()
+      expect(container.querySelector('.app-shell')).not.toHaveAttribute('data-frosted-glass')
+    })
+  })
 
   it("loads token usage in activity and refreshes it when a run finishes", async () => {
     vi.mocked(api.usage.getTokenSummary).mockResolvedValueOnce({
@@ -13848,6 +13926,7 @@ describe("App", () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13864,6 +13943,7 @@ describe("App", () => {
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13917,6 +13997,7 @@ describe("App", () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -13977,6 +14058,7 @@ describe("App", () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -14014,6 +14096,7 @@ describe("App", () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -14030,6 +14113,7 @@ describe("App", () => {
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -14092,6 +14176,7 @@ describe("App", () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
       desktopNotificationsEnabled: true,
+      transparentFrostedEffectEnabled: false,
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -14151,6 +14236,7 @@ describe("App", () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
       desktopNotificationsEnabled: true,
+      transparentFrostedEffectEnabled: false,
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,

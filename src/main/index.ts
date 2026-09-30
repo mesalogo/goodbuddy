@@ -1030,6 +1030,7 @@ if (hasSingleInstanceLock) {
     const startupKnowledgeGateway = new KnowledgeMcpGateway(
       startupKnowledgeService,
       {
+        observeFailure: observeDesktopFailure,
         storyGraphService: {
           available: async ({ runtimeTarget }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
             (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
@@ -1078,6 +1079,7 @@ if (hasSingleInstanceLock) {
             : Promise.resolve([])
         ])
       return createAgentRuntime(defaultWorkspace, settings, {
+        observeFailure: observeDesktopFailure,
         localRuntimeRegistry,
         skillInstructions: skillContext.instructions,
         skillPackages: skillContext.packages,
@@ -1495,6 +1497,7 @@ if (hasSingleInstanceLock) {
       resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
       openExternal: (url) => shell.openExternal(url),
       createGateway: () => new KnowledgeMcpGateway(startupKnowledgeService, {
+        observeFailure: observeDesktopFailure,
         storyGraphService: {
           available: async ({ runtimeTarget }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
             (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),

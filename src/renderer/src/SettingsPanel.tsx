@@ -235,6 +235,12 @@ type SettingsPanelProps = {
   onExpertsChanged?: (experts: AssistantExpert[]) => void
   onClearLocalData: () => Promise<void>
   appearanceTheme?: AppearanceTheme
+  transparentFrostedEffectEnabled?: boolean
+  applicationSettingsPending?: boolean
+  applicationSettingsLocked?: boolean
+  applicationSettingsError?: string
+  onTransparentFrostedEffectEnabledChange?: (enabled: boolean) => Promise<boolean>
+  onRetryApplicationSettings?: () => void
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
   brandingPreferences?: BrandingPreferences
   brandingFallbackLogo?: string
@@ -648,6 +654,12 @@ export function SettingsPanel({
   onClearLocalData,
   onExpertsChanged = () => {},
   appearanceTheme = 'system',
+  transparentFrostedEffectEnabled = false,
+  applicationSettingsPending = false,
+  applicationSettingsLocked = false,
+  applicationSettingsError,
+  onTransparentFrostedEffectEnabledChange,
+  onRetryApplicationSettings,
   onAppearanceThemeChange = () => {},
   brandingPreferences = defaultBrandingPreferences,
   brandingFallbackLogo,
@@ -2339,6 +2351,32 @@ export function SettingsPanel({
                     )
                   )}
                 </div>
+              </div>
+              <div className="settings-section">
+                <label className="toggle-row">
+                  <span>{t('appearance.frostedGlass.label')}</span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={transparentFrostedEffectEnabled}
+                    disabled={applicationSettingsPending || applicationSettingsLocked || !onTransparentFrostedEffectEnabledChange}
+                    aria-describedby="frosted-glass-description"
+                    onChange={(event) => {
+                      void onTransparentFrostedEffectEnabledChange?.(event.target.checked)
+                    }}
+                  />
+                </label>
+                <p id="frosted-glass-description" className="settings-panel__description">
+                  {t('appearance.frostedGlass.description')}
+                </p>
+                {applicationSettingsError && (
+                  <div role="alert">
+                    <p>{applicationSettingsError}</p>
+                    <button className="secondary-button" disabled={applicationSettingsPending} onClick={onRetryApplicationSettings} type="button">
+                      {t('appearance.frostedGlass.retry')}
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="settings-section appearance-settings">
                 <div className="settings-section__title">

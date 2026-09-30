@@ -1996,6 +1996,14 @@ function App(): React.JSX.Element {
   const [applicationMenuOpen, setApplicationMenuOpen] = useState(false);
   const applicationMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const [applicationSettings, setApplicationSettings] = useState<ApplicationSettings>();
+  useLayoutEffect(() => {
+    // FloatingPortal surfaces live outside app-shell, including in the top layer.
+    delete document.documentElement.dataset.frostedGlass;
+    if (applicationSettings?.transparentFrostedEffectEnabled) {
+      document.documentElement.dataset.frostedGlass = 'true';
+    }
+    return () => { delete document.documentElement.dataset.frostedGlass; };
+  }, [applicationSettings?.transparentFrostedEffectEnabled]);
   const [applicationSettingsPending, setApplicationSettingsPending] = useState(false);
   const [applicationSettingsUnconfirmed, setApplicationSettingsUnconfirmed] = useState(false);
   const applicationSettingsPendingRef = useRef(0);
@@ -8559,7 +8567,7 @@ function App(): React.JSX.Element {
   };
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-frosted-glass={applicationSettings?.transparentFrostedEffectEnabled ? 'true' : undefined}>
       <DocumentConversationContext value={{
         activeId: activeConversation?.remote ? undefined : activeId,
         create: () => new Promise((resolve, reject) => {
@@ -10971,6 +10979,12 @@ function App(): React.JSX.Element {
                   <Suspense fallback={null}>
                     <SettingsPanel
                       appearanceTheme={appearanceTheme}
+                      transparentFrostedEffectEnabled={applicationSettings?.transparentFrostedEffectEnabled ?? false}
+                      applicationSettingsPending={applicationSettingsPending}
+                      applicationSettingsLocked={applicationSettingsUnconfirmed || !applicationSettings}
+                      applicationSettingsError={applicationSettingsError}
+                      onTransparentFrostedEffectEnabledChange={(enabled) => updateApplicationSettings({ transparentFrostedEffectEnabled: enabled })}
+                      onRetryApplicationSettings={() => void reloadApplicationSettings()}
                       brandingFallbackLogo={
                         resolvedAppearanceTheme === "dark"
                           ? goodbuddyDarkIcon

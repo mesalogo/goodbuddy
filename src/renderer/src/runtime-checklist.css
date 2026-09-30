@@ -74,6 +74,12 @@
   font-size: var(--font-caption);
 }
 .runtime-checklist__content ol { margin: 0; padding: var(--space-2); list-style: none; }
+:root[data-frosted-glass='true'] .runtime-checklist__content {
+  background: var(--surface-glass-panel);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: var(--text-primary);
+}
 .runtime-checklist__content li {
   display: flex;
   align-items: baseline;

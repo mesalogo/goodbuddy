@@ -1,5 +1,25 @@
 # 工作栏实现与验证进度
 
+## 2026-09-30：本地 MCP 连接诊断与恢复
+
+已实现[本地 MCP 初始化失败恢复](./runtime-process-reuse-technical-design.md#41-本地-mcp-初始化失败恢复)。
+常驻 HTTP 网关和请求级授权保留；内置及自定义 MCP 对明确的暂时性传输故障最多重试一次，
+必须先成功清理失败连接。SDK 返回错误和抛出错误均有覆盖，未知失败、HTTP/API 拒绝和
+鉴权错误不重试。界面保留脱敏错误详情，两端失败诊断通过令牌摘要关联。
+网关初始化异常也会回收未完成会话。
+
+最终定向验证：`npx vitest run` 指定 `opencode-runtime`、`opencode-runtime-lifecycle`、
+`opencode-runtime-permissions`、`knowledge-mcp-gateway`、`knowledge-mcp-gateway.obsidian`、
+`create-runtime`、`desktop-diagnostics`、`feedback-service` 八个测试文件，222 项全部通过。
+`npm run typecheck` 和 `npm run lint` 通过。真实 OpenCode 与实际网关的恢复用例在连接成功后
+注入响应丢失，验证断开先于重连、授权不变、请求完成和网关继续监听；该用例每轮产生一次
+本地合成模型请求，外部模型调用为 0。另有真实 HTTP 初始化连续失败后的会话回收测试。
+
+全量 `npm test` 在 600 秒后超时，未取得汇总；超时前报告 `SettingsPanel.test.tsx` 中
+中英文磨砂玻璃开关两个用例失败。这些文件存在并行修改，未判定失败归因，全量验证不记为通过。
+本次未发布或替换已安装应用。远程 Agent 的 ACP 和 Agent MCP 连接路径未修改，
+不将本地测试结果作为远程恢复验证。
+
 ## 2026-09-30：OpenCode 终端启动准备
 
 原先每次“在终端中打开” OpenCode 都会把随包插件依赖目录（约 3,600 个文件、52 MB）

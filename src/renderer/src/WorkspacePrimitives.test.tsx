@@ -105,6 +105,9 @@ describe('WorkspacePrimitives', () => {
     expect(toggleRowStyles).toMatch(/align-items:\s*center;/u)
     expect(toggleRowStyles).not.toMatch(/border-top:/u)
     expect(toggleRowStyles).not.toMatch(/padding-top:/u)
+    expect(stylesheet).toMatch(
+      /\.toggle-row > input\[role='switch'\]\s*\{[^}]*order:\s*1;[^}]*margin-inline-start:\s*auto;/u
+    )
   })
 
   it('keeps Platform Features tabs visible in scrollable Settings', () => {
@@ -558,7 +561,7 @@ describe('WorkspacePrimitives', () => {
       /\.settings-backdrop \.settings-tabs button strong\s*\{[^}]*font-size:\s*var\(--font-body\);/u
     )
     expect(stylesheet).toMatch(
-      /\.settings-backdrop \.settings-tabs button small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+      /\.settings-tabs__group-label\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
     )
   })
 

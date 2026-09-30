@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -8,10 +9,110 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2'
 import { expect, it } from 'vitest'
 import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { OpenCodeRuntime } from './opencode-runtime'
+import type { DesktopDiagnosticFailure } from '../desktop-diagnostics'
 
 const binaryPath = join(
   process.cwd(), '.runtime-resources', process.arch,
   process.platform === 'win32' ? 'opencode.exe' : 'opencode'
+)
+
+it.skipIf(!existsSync(binaryPath))(
+  'recovers a lost MCP add response with the real OpenCode binary and gateway',
+  async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-mcp-retry-'))
+    let modelCalls = 0
+    const model = createServer((_request, response) => {
+      modelCalls++
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(`data: ${JSON.stringify({
+        id: 'retry', object: 'chat.completion.chunk', created: 1, model: 'retry',
+        choices: [{ index: 0, delta: { role: 'assistant', content: 'RETRY_OK' }, finish_reason: 'stop' }]
+      })}\n\ndata: [DONE]\n\n`)
+    })
+    await new Promise<void>(resolve => model.listen(0, '127.0.0.1', resolve))
+    const address = model.address()
+    if (!address || typeof address === 'string') throw new Error('No model port')
+    const gateway = new KnowledgeMcpGateway({} as never)
+    await gateway.start()
+    const controller = new AbortController()
+    const requestId = crypto.randomUUID()
+    const token = gateway.grant(requestId, [crypto.randomUUID()], controller.signal)!
+    const records: DesktopDiagnosticFailure[] = []
+    const operations: string[] = []
+    const registrations: Array<{ name: string; config: { headers: { Authorization: string } } }> = []
+    const runtime = new OpenCodeRuntime({
+      embedded: true, binaryPath: '', bundledBinaryPath: binaryPath,
+      configPath: '', defaultWorkspace: workspace, knowledgeGateway: gateway,
+      observeFailure: failure => records.push(failure),
+      modelProfile: {
+        id: crypto.randomUUID(), name: 'Retry fixture', modelName: 'retry',
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        protocol: 'openai-chat-completions', authentication: 'none'
+      }
+    }, {
+      createClient: options => createOpencodeClient({
+        ...options,
+        fetch: async (input, init) => {
+          const request = input instanceof Request ? input : new Request(input, init)
+          const pathname = new URL(request.url).pathname
+          if (pathname === '/mcp' && request.method === 'POST') {
+            const registration = await request.clone().json() as typeof registrations[number]
+            registrations.push(registration)
+            const response = await fetch(request, init)
+            const status = await response.clone().json() as Record<string, { status: string }>
+            expect(status[registration.name]?.status).toBe('connected')
+            operations.push('add-connected')
+            if (registrations.length === 1) {
+              // The server and gateway are already connected when the response is lost.
+              await response.body?.cancel()
+              throw new TypeError('fetch failed', { cause: Object.assign(new Error('socket reset'), { code: 'ECONNRESET' }) })
+            }
+            return response
+          }
+          const response = await fetch(request, init)
+          if (pathname.endsWith('/disconnect')) {
+            expect(await response.clone().json()).toBe(true)
+            operations.push('disconnect-succeeded')
+          }
+          return response
+        }
+      })
+    })
+    const deadline = setTimeout(() => controller.abort(), 30_000)
+    try {
+      let text = ''
+      for await (const event of runtime.run({
+        requestId, conversationId: crypto.randomUUID(), workMode: 'ask',
+        prompt: 'Reply RETRY_OK without tools.', knowledgeCapabilityToken: token
+      }, controller.signal)) {
+        if (event.type === 'text') text += event.delta
+      }
+      expect(text).toBe('RETRY_OK')
+      expect(modelCalls).toBe(1)
+      expect(operations).toEqual(['add-connected', 'disconnect-succeeded', 'add-connected', 'disconnect-succeeded'])
+      expect(registrations).toHaveLength(2)
+      expect(registrations[1]).toEqual(registrations[0])
+      expect(registrations[0]?.config.headers.Authorization).toBe(`Bearer ${token}`)
+      expect(records).toHaveLength(1)
+      expect(records[0]?.mcp).toMatchObject({
+        phase: 'connect', category: 'transport-failure', attempt: 1, kind: 'builtin',
+        correlationId: `sha256:${createHash('sha256').update(token).digest('hex')}`
+      })
+      expect(JSON.stringify(records)).not.toContain(token)
+      const unauthorized = await fetch(gateway.getEndpoint()!, { method: 'POST' })
+      expect(unauthorized.status).toBe(401)
+      await unauthorized.body?.cancel()
+    } finally {
+      clearTimeout(deadline)
+      await runtime.dispose()
+      gateway.revoke(token)
+      await gateway.dispose()
+      model.closeAllConnections()
+      await new Promise<void>(resolve => model.close(() => resolve()))
+      await rm(workspace, { recursive: true, force: true })
+    }
+  },
+  60_000
 )
 
 it.skipIf(!existsSync(binaryPath))(

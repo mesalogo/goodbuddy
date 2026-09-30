@@ -35,6 +35,7 @@ const allowedCodes = new Set([
   'desktop.startup.failed',
   'runtime.operation.failed',
   'runtime.run.failed',
+  'runtime.mcp.failed',
   'remote.connection.network',
   'remote.connection.host-invalidated',
   'remote.connection.host-identity',
@@ -68,6 +69,35 @@ export type DesktopDiagnosticComponent =
   | 'runtime'
   | 'remote-agent'
 
+export type DesktopMcpDiagnosticMetadata = Readonly<{
+  phase: 'request' | 'authentication' | 'session' | 'initialize' | 'tool-discovery' | 'connect' | 'disconnect'
+  category: 'http-rejection' | 'handler-failure' | 'transport-failure' | 'initialization-failure' | 'cleanup-failure' | 'cancelled'
+  elapsedMs: number
+  status?: number
+  correlationId?: string
+  attempt?: 1 | 2
+  kind?: 'builtin' | 'custom'
+}>
+
+function normalizeMcpMetadata(value: unknown): DesktopMcpDiagnosticMetadata | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const candidate = value as DesktopMcpDiagnosticMetadata
+  if (!['request', 'authentication', 'session', 'initialize', 'tool-discovery', 'connect', 'disconnect'].includes(candidate.phase) ||
+    !['http-rejection', 'handler-failure', 'transport-failure', 'initialization-failure', 'cleanup-failure', 'cancelled'].includes(candidate.category) ||
+    !Number.isSafeInteger(candidate.elapsedMs) || candidate.elapsedMs < 0) return undefined
+  return Object.freeze({
+    phase: candidate.phase,
+    category: candidate.category,
+    elapsedMs: candidate.elapsedMs,
+    ...(candidate.attempt === 1 || candidate.attempt === 2 ? { attempt: candidate.attempt } : {}),
+    ...(candidate.kind === 'builtin' || candidate.kind === 'custom' ? { kind: candidate.kind } : {}),
+    ...(Number.isInteger(candidate.status) && candidate.status! >= 100 && candidate.status! <= 599
+      ? { status: candidate.status } : {}),
+    ...(typeof candidate.correlationId === 'string' && /^sha256:[a-f0-9]{64}$/.test(candidate.correlationId)
+      ? { correlationId: candidate.correlationId } : {})
+  })
+}
+
 export type DesktopDiagnosticFailure = Readonly<{
   component: DesktopDiagnosticComponent
   stage: string
@@ -75,6 +105,7 @@ export type DesktopDiagnosticFailure = Readonly<{
   error: unknown
   reason?: string
   exitCode?: number
+  mcp?: DesktopMcpDiagnosticMetadata
 }>
 
 export type DesktopDiagnosticFailureObserver = (
@@ -90,6 +121,7 @@ export type DesktopDiagnosticRecord = Readonly<{
   message: string
   reason?: string
   exitCode?: number
+  mcp?: DesktopMcpDiagnosticMetadata
 }>
 
 export type DesktopDiagnosticsOptions = Readonly<{
@@ -178,6 +210,8 @@ export function normalizeDesktopDiagnosticRecord(
   const component = safeComponent(candidate.component)
   const stage = safeStage(candidate.stage)
   const code = safeCode(candidate.code)
+  const mcp = component === 'runtime' && code === 'runtime.mcp.failed'
+    ? normalizeMcpMetadata(candidate.mcp) : undefined
   const rendererGone = component === 'desktop' && stage === 'renderer' &&
     code === 'desktop.renderer.gone'
   return Object.freeze({
@@ -187,6 +221,7 @@ export function normalizeDesktopDiagnosticRecord(
     code,
     errorType: safeStoredErrorType(candidate.errorType),
     message: fixedMessage(component, stage),
+    ...(mcp ? { mcp } : {}),
     ...(rendererGone && typeof candidate.reason === 'string' &&
       rendererExitReasons.has(candidate.reason) ? { reason: candidate.reason } : {}),
     ...(rendererGone && Number.isSafeInteger(candidate.exitCode)
@@ -266,7 +301,8 @@ export class DesktopDiagnostics {
         code: failure.code,
         errorType: safeErrorType(failure.error),
         reason: failure.reason,
-        exitCode: failure.exitCode
+        exitCode: failure.exitCode,
+        mcp: failure.mcp
       })
       if (normalized === undefined) {
         return Promise.reject(

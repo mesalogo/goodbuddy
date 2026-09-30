@@ -251,6 +251,7 @@ export const resolveLegacyLocalToolEnvironmentPaths: LegacyLocalToolEnvironmentR
 export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   desktopNotificationsEnabled: true,
+  transparentFrostedEffectEnabled: false,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -291,6 +292,7 @@ export class ApplicationSettingsStore {
       StoredApplicationSettings,
       | 'conversationHtmlRenderingEnabled'
       | 'desktopNotificationsEnabled'
+      | 'transparentFrostedEffectEnabled'
       | 'localToolEnvironment'
       | 'version'
       | 'applicationNavigation'
@@ -526,6 +528,7 @@ export class ApplicationSettingsStore {
     return {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
       desktopNotificationsEnabled: stored.desktopNotificationsEnabled,
+      transparentFrostedEffectEnabled: stored.transparentFrostedEffectEnabled,
       updateSource: stored.updateSource,
       modelDownloadSource: stored.modelDownloadSource,
       localToolEnvironment: stored.localToolEnvironment,
@@ -572,6 +575,7 @@ export class ApplicationSettingsStore {
       const settings: ApplicationSettings = {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
         desktopNotificationsEnabled: next.desktopNotificationsEnabled,
+        transparentFrostedEffectEnabled: next.transparentFrostedEffectEnabled,
         updateSource: next.updateSource,
         modelDownloadSource: next.modelDownloadSource,
         localToolEnvironment: next.localToolEnvironment,

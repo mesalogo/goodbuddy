@@ -104,6 +104,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   const { t } = useTranslation("app");
   const headingId = `chat-heading-${conversation.id}`;
   const scrollRef = useRef<HTMLElement>(null);
+  const contextRef = useRef<HTMLDivElement>(null);
   const pinnedToBottomRef = useRef(scrollSnapshot?.pinnedToBottom ?? true);
   const latestScrollSnapshotRef = useRef(scrollSnapshot);
   const restorePendingRef = useRef(true);
@@ -129,6 +130,29 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     [conversation.messages, visibleMessageStartIndex],
   );
   const hiddenMessageCount = visibleMessageStartIndex;
+
+  useLayoutEffect(() => {
+    const context = contextRef.current;
+    const scrollContainer = scrollRef.current;
+    const content = scrollContainer?.querySelector<HTMLElement>('.chat-content');
+    if (!active || !context || !scrollContainer || !content) return;
+    const measure = (): void => {
+      // The fixed context strip also needs space inside the scrolling content.
+      context.parentElement?.style.setProperty(
+        '--chat-context-height', `${context.getBoundingClientRect().height}px`,
+      );
+    };
+    measure();
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(() => {
+      measure();
+      if (restorePendingRef.current || !pinnedToBottomRef.current) return;
+      scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: 'auto' });
+    });
+    observer.observe(context);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [active]);
 
   useEffect(() => {
     if (!active || noteMessageNavigation?.conversationId !== conversation.id) return;
@@ -233,29 +257,6 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   }, [active, conversation.messages, scrollSnapshot, visibleMessageCount]);
 
   useLayoutEffect(() => {
-    if (!active || typeof ResizeObserver !== "function") {
-      return;
-    }
-    const scrollContainer = scrollRef.current;
-    const messageList =
-      scrollContainer?.querySelector<HTMLElement>(".message-list");
-    if (!scrollContainer || !messageList) {
-      return;
-    }
-    const observer = new ResizeObserver(() => {
-      if (restorePendingRef.current || !pinnedToBottomRef.current) {
-        return;
-      }
-      scrollContainer.scrollTo({
-        top: scrollContainer.scrollHeight,
-        behavior: "auto",
-      });
-    });
-    observer.observe(messageList);
-    return () => observer.disconnect();
-  }, [active]);
-
-  useLayoutEffect(() => {
     const previous = prependScrollPositionRef.current;
     if (!previous) {
       return;
@@ -330,7 +331,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       <h1 className="sr-only" id={headingId}>
         {t("chat.heading")}
       </h1>
-      {taskStrip}
+      <div className="chat-history-context" ref={contextRef}>{taskStrip}</div>
       <section
         aria-labelledby={headingId}
         className="chat"
@@ -338,59 +339,61 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
         onScroll={updateScrollPosition}
         ref={handleScrollRef}
       >
-        {isUnusedConversation(conversation) && (
-          <div className="welcome">
-            <div className="welcome__badge">
-              <Sparkles size={18} />
+        <div className="chat-content">
+          {isUnusedConversation(conversation) && (
+            <div className="welcome">
+              <div className="welcome__badge">
+                <Sparkles size={18} />
+              </div>
+              <h2>{t("chat.welcome.title")}</h2>
+              <div className="quick-actions">
+                {quickActions.map((action) => (
+                  <button
+                    key={action.title}
+                    onClick={() => onSetInput(action.prompt)}
+                    type="button"
+                  >
+                    <span className="quick-actions__icon">
+                      <FileText size={17} />
+                    </span>
+                    <strong>{action.title}</strong>
+                    <small>{action.description}</small>
+                  </button>
+                ))}
+              </div>
             </div>
-            <h2>{t("chat.welcome.title")}</h2>
-            <div className="quick-actions">
-              {quickActions.map((action) => (
-                <button
-                  key={action.title}
-                  onClick={() => onSetInput(action.prompt)}
-                  type="button"
-                >
-                  <span className="quick-actions__icon">
-                    <FileText size={17} />
-                  </span>
-                  <strong>{action.title}</strong>
-                  <small>{action.description}</small>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <ChatTimeline
-          onOpenImageModelSettings={onOpenImageModelSettings}
-          onReselectImageSources={onReselectImageSources}
-          onEditImage={onEditImage}
-          artifactById={artifactById}
-          conversationId={conversation.id}
-          hiddenMessageCount={hiddenMessageCount}
-          isUnusedConversation={isUnusedConversation(conversation)}
-          locale={locale}
-          messages={visibleMessages}
-          messageStartIndex={visibleMessageStartIndex}
-          onArticleRef={handleArticleRef}
-          onCopyMessage={onCopyMessage}
-          onAddToNote={onAddToNote}
-          onDownloadImage={onDownloadImage}
-          onOpenCitationContext={onOpenCitationContext}
-          onOpenCitationSource={onOpenCitationSource}
-          onOpenImage={onOpenImage}
-          onRespondApproval={onRespondApproval}
-          onRespondQuestion={onRespondQuestion}
-          onRetry={onRetry}
-          onRevealEarlier={revealEarlierMessages}
-          renderAssistantHtml={conversationHtmlRenderingEnabled}
-          retryContent={
-            conversation.messages.at(-2)?.role === "user"
-              ? conversation.messages.at(-2)?.content
-              : undefined
-          }
-          totalMessageCount={conversation.messages.length}
-        />
+          )}
+          <ChatTimeline
+            onOpenImageModelSettings={onOpenImageModelSettings}
+            onReselectImageSources={onReselectImageSources}
+            onEditImage={onEditImage}
+            artifactById={artifactById}
+            conversationId={conversation.id}
+            hiddenMessageCount={hiddenMessageCount}
+            isUnusedConversation={isUnusedConversation(conversation)}
+            locale={locale}
+            messages={visibleMessages}
+            messageStartIndex={visibleMessageStartIndex}
+            onArticleRef={handleArticleRef}
+            onCopyMessage={onCopyMessage}
+            onAddToNote={onAddToNote}
+            onDownloadImage={onDownloadImage}
+            onOpenCitationContext={onOpenCitationContext}
+            onOpenCitationSource={onOpenCitationSource}
+            onOpenImage={onOpenImage}
+            onRespondApproval={onRespondApproval}
+            onRespondQuestion={onRespondQuestion}
+            onRetry={onRetry}
+            onRevealEarlier={revealEarlierMessages}
+            renderAssistantHtml={conversationHtmlRenderingEnabled}
+            retryContent={
+              conversation.messages.at(-2)?.role === "user"
+                ? conversation.messages.at(-2)?.content
+                : undefined
+            }
+            totalMessageCount={conversation.messages.length}
+          />
+        </div>
       </section>
       {active && showScrollToBottom && (
         <button

@@ -59,6 +59,7 @@ const applicationPreferencesSchema = z
   .object({
     checkUpdatesOnStartup: z.boolean(),
     desktopNotificationsEnabled: z.boolean().default(true),
+    transparentFrostedEffectEnabled: z.boolean().default(false),
     updateSource: updateSourceSchema,
     modelDownloadSource: modelDownloadSourceSchema,
     localToolEnvironment: localToolEnvironmentSettingsSchema,
@@ -90,6 +91,7 @@ export const applicationSettingsUpdateSchema = applicationPreferencesSchema
   .extend({
     applicationNavigation: applicationNavigationSchema.optional(),
     desktopNotificationsEnabled: z.boolean().optional(),
+    transparentFrostedEffectEnabled: z.boolean().optional(),
     localInferenceEnabled: z.boolean().optional(),
     magicNotesEnabled: z.boolean().optional(),
     heartbeatEnabled: z.boolean().optional(),

@@ -427,9 +427,12 @@ describe('execution duration evidence', () => {
       const pairMs = (performance.now() - start) / 5
       const query = prepare.mock.calls.find(([sql]) => sql.includes('WITH scoped AS MATERIALIZED'))![0]
       const plan = raw.prepare(`EXPLAIN QUERY PLAN ${query}`).all(projectId).map(row => row.detail as string)
-      for (const alias of ['proof', 'remote', 'tail', 'previous', 'e']) {
+      for (const alias of ['proof', 'tail', 'previous']) {
         expect(plan.some(detail => detail.includes(`SEARCH ${alias} USING INDEX task_events_task_idx`))).toBe(true)
       }
+      // Filtering these through task_events_task_idx would read every payload row.
+      expect(plan.some(detail => detail.includes('SEARCH remote USING INDEX task_events_remote_task_idx'))).toBe(true)
+      expect(plan.some(detail => detail.includes('SEARCH e USING INDEX task_events_lifecycle_idx'))).toBe(true)
       // Malformed bodies make accidental JSON extraction fail deterministically.
       raw.prepare("UPDATE task_events SET payload_json = '{unparsed' WHERE task_id = ? AND kind IN ('text', 'tool')").run(id)
       expect(database.getExecutionStats({ conversationId })).toMatchObject({ durationMs: 5000, requestCount: 1, incompleteRequestCount: 1 })

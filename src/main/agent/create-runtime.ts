@@ -44,6 +44,7 @@ import {
   type ExecutionSpaceDescriptor
 } from '../execution-space'
 import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
+import type { DesktopDiagnosticFailureObserver } from '../desktop-diagnostics'
 
 const noModelTaskTools: ModelToolProviderLike = {
   listTools: async () => [],
@@ -58,6 +59,7 @@ const noModelTaskTools: ModelToolProviderLike = {
 }
 
 export type AgentCapabilityContext = {
+  observeFailure?: DesktopDiagnosticFailureObserver
   localRuntimeRegistry?: LocalRuntimeRegistry
   skillInstructions?: string
   skillPackages?: RuntimeSkillPackage[]
@@ -306,6 +308,7 @@ export function createAgentRuntime(
       )
     }
     const options: OpenCodeRuntimeOptions = {
+      observeFailure: capabilities.observeFailure,
       baseUrl,
       embedded,
       binaryPath:

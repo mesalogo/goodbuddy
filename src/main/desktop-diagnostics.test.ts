@@ -34,6 +34,52 @@ afterEach(async () => {
 })
 
 describe('DesktopDiagnostics', () => {
+  it('gates MCP metadata and discards unknown or unsafe fields', () => {
+    const record = { timestamp: '2026-09-30T00:00:00Z', component: 'runtime', stage: 'connect', code: 'runtime.mcp.failed' }
+    const mcp = { phase: 'initialize', category: 'http-rejection', elapsedMs: 25, status: 406, correlationId: `sha256:${'a'.repeat(64)}`, token: 'private-token', headers: { authorization: 'private-token' } }
+    expect(normalizeDesktopDiagnosticRecord({ ...record, mcp })?.mcp).toEqual({ phase: 'initialize', category: 'http-rejection', elapsedMs: 25, status: 406, correlationId: mcp.correlationId })
+    expect(normalizeDesktopDiagnosticRecord({ ...record, code: 'runtime.run.failed', mcp })).not.toHaveProperty('mcp')
+    expect(normalizeDesktopDiagnosticRecord({ ...record, component: 'desktop', mcp })).not.toHaveProperty('mcp')
+    for (const invalid of [{ phase: 'private-url' }, { category: 'private-body' }, { elapsedMs: -1 }, { elapsedMs: Infinity }, { elapsedMs: 1.5 }]) {
+      expect(normalizeDesktopDiagnosticRecord({ ...record, mcp: { ...mcp, ...invalid } })).not.toHaveProperty('mcp')
+    }
+    expect(normalizeDesktopDiagnosticRecord({ ...record, mcp: { ...mcp, status: 999, correlationId: 'raw-token' } })?.mcp)
+      .toEqual({ phase: 'initialize', category: 'http-rejection', elapsedMs: 25 })
+  })
+
+  it('renormalizes stored MCP metadata during export after restart', async () => {
+    const directory = await temporaryDirectory()
+    const diagnostics = new DesktopDiagnostics(directory)
+    const mcp = { phase: 'tool-discovery' as const, category: 'handler-failure' as const, elapsedMs: 42, correlationId: `sha256:${'b'.repeat(64)}` }
+    await diagnostics.recordFailure({ component: 'runtime', stage: 'connect', code: 'runtime.mcp.failed', error: new Error('private-error'), mcp })
+    await diagnostics.dispose()
+    const path = join(directory, 'desktop-diagnostics.ndjson')
+    const stored = JSON.parse(await readFile(path, 'utf8'))
+    expect(stored.mcp).toEqual(mcp)
+    await writeFile(path, JSON.stringify({ ...stored, message: 'private-body', mcp: { ...mcp, token: 'private-token', url: 'private-url', stack: 'private-stack', status: 'private-status' } }) + '\n')
+    const restarted = new DesktopDiagnostics(directory)
+    try {
+      const exported = (await restarted.exportRecent()).toString('utf8')
+      expect(JSON.parse(exported).mcp).toEqual(mcp)
+      expect(exported).not.toContain('private-')
+    } finally { await restarted.dispose() }
+  })
+
+  it.each(['connect', 'disconnect'])('allowlists runtime MCP %s attempts', (phase) => {
+    const record = { timestamp: '2026-09-30T00:00:00Z', component: 'runtime', stage: phase, code: 'runtime.mcp.failed' }
+    const mcp = { phase, category: 'transport-failure', elapsedMs: 1000, attempt: 2, kind: 'custom', correlationId: `sha256:${'c'.repeat(64)}` }
+    expect(normalizeDesktopDiagnosticRecord({ ...record, mcp: { ...mcp, error: 'private-error', token: 'private-token' } })?.mcp).toEqual(mcp)
+    for (const category of ['initialization-failure', 'cleanup-failure', 'cancelled']) {
+      expect(normalizeDesktopDiagnosticRecord({ ...record, mcp: { ...mcp, category } })?.mcp?.category).toBe(category)
+    }
+    for (const attempt of [0, 3, 1.5, '1']) {
+      const normalized = normalizeDesktopDiagnosticRecord({ ...record, mcp: { ...mcp, attempt, kind: 'private-kind' } })?.mcp
+      expect(normalized).not.toHaveProperty('attempt')
+      expect(normalized).not.toHaveProperty('kind')
+      expect(normalized?.correlationId).toBe(mcp.correlationId)
+    }
+  })
+
   it('preserves renderer exit details on disk and in exports after restart', async () => {
     const directory = await temporaryDirectory()
     const diagnostics = new DesktopDiagnostics(directory)

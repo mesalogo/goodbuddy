@@ -44,6 +44,34 @@ afterEach(async () => {
 })
 
 describe('ApplicationSettingsStore', () => {
+  it.each([11, 12])('defaults missing frosted glass to off in version %s', async (version) => {
+    const { filePath, store } = await createStore()
+    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null, checkUpdatesOnStartup: false }
+    delete legacy.transparentFrostedEffectEnabled
+    await writeFile(filePath, JSON.stringify(legacy))
+    expect(await store.get()).toEqual({ ...defaultApplicationSettings, checkUpdatesOnStartup: false })
+    expect(applicationSettingsSchema.parse({ ...defaultApplicationSettings, transparentFrostedEffectEnabled: undefined }).transparentFrostedEffectEnabled).toBe(false)
+  })
+
+  it('persists and publishes both frosted glass choices across unrelated updates and reloads', async () => {
+    const { filePath, store } = await createStore()
+    expect((await store.get()).transparentFrostedEffectEnabled).toBe(false)
+    const changed = vi.fn()
+    store.onChanged(changed)
+    for (const transparentFrostedEffectEnabled of [true, false]) {
+      const saved = await store.update({ transparentFrostedEffectEnabled })
+      expect(saved.transparentFrostedEffectEnabled).toBe(transparentFrostedEffectEnabled)
+      expect(changed).toHaveBeenLastCalledWith(saved)
+      await store.update({ checkUpdatesOnStartup: false })
+      expect((await createApplicationSettingsStore(filePath).get()).transparentFrostedEffectEnabled).toBe(transparentFrostedEffectEnabled)
+      expect(JSON.parse(await readFile(filePath, 'utf8')).transparentFrostedEffectEnabled).toBe(transparentFrostedEffectEnabled)
+    }
+    expect(applicationSettingsUpdateSchema.parse({ checkUpdatesOnStartup: false })).toEqual({ checkUpdatesOnStartup: false })
+    for (const transparentFrostedEffectEnabled of ['false', 0, null]) {
+      await expect(store.update({ transparentFrostedEffectEnabled })).rejects.toThrow()
+    }
+  })
+
   it.each([11, 12])('defaults missing desktop notifications to on in version %s', async (version) => {
     const { filePath, store } = await createStore()
     const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null, checkUpdatesOnStartup: false }

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import {
   mkdir,
@@ -11,11 +12,12 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
-import type { createOpencodeClient } from "@opencode-ai/sdk/v2";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import type spawn from "cross-spawn";
 import { describe, expect, it, vi } from "vitest";
 import type { KnowledgeMcpGateway } from "./knowledge-mcp-gateway";
 import type { RuntimeEvent } from "./runtime";
+import { DesktopDiagnostics, type DesktopDiagnosticFailureObserver } from "../desktop-diagnostics";
 import {
   createTemporaryMcpName,
   OpenCodeRuntime,
@@ -3220,6 +3222,370 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
+  it.each(["knowledge", "custom"].flatMap<{
+    kind: string; scenario: string; detail: string; attempts: number;
+    succeeds?: boolean; thrown?: boolean; status?: string; apiError?: boolean;
+  }>((kind) => [
+    { kind, scenario: "retry success", detail: "MCP error -32001: Request timed out", attempts: 2, succeeds: true },
+    { kind, scenario: "retry exhausted", detail: "connect ECONNREFUSED", attempts: 2 },
+    { kind, scenario: "thrown connect error", detail: "connect ECONNRESET", attempts: 2, succeeds: true, thrown: true },
+    { kind, scenario: "auth", detail: "HTTP 401 Unauthorized; ECONNRESET", attempts: 1 },
+    { kind, scenario: "OAuth", detail: "OAuth error: request timed out", attempts: 1 },
+    { kind, scenario: "protocol", detail: "Invalid protocol response; connection closed", attempts: 1 },
+    { kind, scenario: "unknown", detail: "Unexpected initialization failure", attempts: 1 },
+    { kind, scenario: "plain failed", detail: "failed", attempts: 1 },
+    { kind, scenario: "needs auth", detail: "needs_auth", attempts: 1, status: "needs_auth" },
+    { kind, scenario: "missing status", detail: "unknown", attempts: 1, status: "missing" },
+    { kind, scenario: "API error", detail: "HTTP 403 Forbidden", attempts: 1, apiError: true },
+  ]))("handles $kind MCP initialization: $scenario", async ({ kind, detail, attempts, succeeds, thrown, status, apiError }) => {
+    const setup = runClient([
+      { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    const add = vi.mocked(setup.client.mcp.add);
+    const disconnect = vi.mocked(setup.client.mcp.disconnect);
+    const secret = "request-private-capability";
+    const failure = `${detail}\nAuthorization: Bearer ${secret}\npassword=private-password\nhttps://user:private-password@example.com/ECONNRESET?token=private-query\n${"x".repeat(3_000)}`;
+    const fail = async (input?: { name?: string }) => {
+      if (thrown) throw new Error(failure);
+      if (apiError) return { error: { name: "UnknownError", data: { message: failure } }, response: { status: 403 } };
+      return { data: status === "missing" ? {} : {
+        [input!.name!]: { status: status ?? "failed", error: failure },
+      } };
+    };
+    // The SDK returns a map keyed by the registered name, not a top-level status.
+    if (succeeds) add.mockImplementationOnce(fail as never);
+    else add.mockImplementation(fail as never);
+    const gateway = {
+      getEndpoint: () => "http://127.0.0.1:4567/mcp",
+      getAvailableToolNames: () => ["knowledge_search"],
+      grantCustomMcp: vi.fn(() => secret),
+      prepareCustomMcpTools: vi.fn(async () => [{ name: "custom_tool" }]),
+      revoke: vi.fn(),
+    };
+    const observeFailure = vi.fn<DesktopDiagnosticFailureObserver>();
+    const runtime = embeddedRuntime(setup.client, {
+      observeFailure,
+      knowledgeGateway: gateway as unknown as KnowledgeMcpGateway,
+      mcpServers: kind === "custom" ? [{
+        id: "custom", name: "Custom", description: "", transport: "http",
+        url: "https://example.com/mcp", enabled: true, allowDynamicTools: false,
+        assignments: ["opencode"], secretConfigured: false,
+      }] : [],
+    });
+    const collect = async () => {
+      const events: RuntimeEvent[] = [];
+      for await (const event of runtime.run({
+        requestId: "request-1", conversationId: "conversation-1", prompt: "test",
+        workMode: kind === "custom" ? "execute" : "ask",
+        ...(kind === "knowledge" ? { knowledgeCapabilityToken: secret } : {}),
+      }, new AbortController().signal)) events.push(event);
+      return events;
+    };
+    try {
+      if (succeeds) {
+        await expect(collect()).resolves.toContainEqual(expect.objectContaining({ type: "done" }));
+        expect(setup.session.promptAsync).toHaveBeenCalledOnce();
+      } else {
+        const error = await collect().catch((error: unknown) => error) as Error;
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain(detail);
+        expect(error.message).not.toMatch(/request-private-capability|private-password|private-query/);
+        expect(error.message.length).toBeLessThan(2_100);
+        expect(setup.session.promptAsync).not.toHaveBeenCalled();
+      }
+      expect(add).toHaveBeenCalledTimes(attempts);
+      expect(disconnect).toHaveBeenCalledTimes(attempts);
+      expect(observeFailure).toHaveBeenCalledTimes(succeeds ? 1 : attempts);
+      for (const [index, [record]] of observeFailure.mock.calls.entries()) {
+        expect(record).toMatchObject({
+          component: "runtime", stage: "connect", code: "runtime.mcp.failed",
+          mcp: {
+            phase: "connect", attempt: index + 1, kind: kind === "knowledge" ? "builtin" : "custom",
+            correlationId: `sha256:${createHash("sha256").update(secret).digest("hex")}`,
+            elapsedMs: expect.any(Number),
+            category: apiError ? "http-rejection" : thrown ? "transport-failure" : "initialization-failure",
+            ...(apiError ? { status: 403 } : {}),
+          },
+        });
+        expect(record.mcp!.elapsedMs).toBeGreaterThanOrEqual(0);
+        expect(JSON.stringify(record)).not.toMatch(/request-private-capability|private-password|private-query|example.com|ECONNRESET/);
+        expect((record.error as Error).message).toBe("Local MCP operation failed");
+      }
+      if (attempts === 2) {
+        expect(add.mock.calls[1]![0]).toEqual(add.mock.calls[0]![0]);
+        expect(disconnect.mock.invocationCallOrder[0]).toBeGreaterThan(add.mock.invocationCallOrder[0]!);
+        expect(disconnect.mock.invocationCallOrder[0]).toBeLessThan(add.mock.invocationCallOrder[1]!);
+      }
+      expect(add.mock.calls[0]![0]?.config).toMatchObject({
+        headers: { Authorization: `Bearer ${secret}` }, oauth: false,
+      });
+      if (kind === "custom") {
+        expect(gateway.grantCustomMcp).toHaveBeenCalledOnce();
+        expect(gateway.prepareCustomMcpTools).toHaveBeenCalledOnce();
+        expect(gateway.revoke).toHaveBeenCalledExactlyOnceWith(secret);
+      }
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it.each(["recovered", "exhausted", "cleanup-false", "cleanup-transport", "cleanup-timeout", "http-401", "http-503", "unknown"])(
+    "handles installed SDK fetch results: %s", async (scenario) => {
+      const setup = runClient([
+        { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
+      ]);
+      const token = "private-sdk-capability";
+      const cause = Object.assign(new Error(`socket reset\nAuthorization: Bearer ${token}\npassword=private-password\nhttps://user:private-password@example.com/private-path`), { code: "ECONNRESET" });
+      // A circular cause must not cause unbounded traversal or expose a stack.
+      Object.assign(cause, { cause });
+      const failure = new TypeError("fetch failed", { cause });
+      const order: string[] = [];
+      const signals: AbortSignal[] = [];
+      let adds = 0;
+      const sdk = createOpencodeClient({
+        baseUrl: "http://127.0.0.1:4096", throwOnError: false,
+        fetch: async (input, init) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          if (new URL(request.url).pathname.endsWith("/disconnect")) {
+            order.push("disconnect");
+            signals.push(request.signal);
+            if (scenario === "cleanup-transport") throw failure;
+            if (scenario === "cleanup-timeout") return new Promise<Response>(() => {});
+            return Response.json(scenario !== "cleanup-false");
+          }
+          order.push("add");
+          adds++;
+          if (scenario.startsWith("http-")) {
+            return Response.json({ name: "UnknownError", data: { message: `ECONNRESET password=private-password` } }, { status: Number(scenario.slice(5)) });
+          }
+          if (scenario === "unknown") throw new TypeError("fetch failed");
+          if (adds === 1 || scenario === "exhausted") throw failure;
+          const { name } = await request.json() as { name: string };
+          return Response.json({ [name]: { status: "connected" } });
+        },
+      });
+      Object.assign(setup.client, { mcp: sdk.mcp });
+      const add = vi.spyOn(sdk.mcp, "add");
+      const observeFailure = vi.fn<DesktopDiagnosticFailureObserver>();
+      const runtime = embeddedRuntime(setup.client, {
+        observeFailure,
+        knowledgeGateway: {
+          getEndpoint: () => "http://127.0.0.1:4567/mcp",
+          getAvailableToolNames: () => ["knowledge_search"],
+        } as unknown as KnowledgeMcpGateway,
+      });
+      const collect = async () => {
+        for await (const event of runtime.run({
+          requestId: "sdk-request", conversationId: "sdk-conversation", prompt: "test", workMode: "ask",
+          knowledgeCapabilityToken: token,
+        }, new AbortController().signal)) void event;
+      };
+      try {
+        if (scenario === "recovered") {
+          await collect();
+          expect(setup.session.promptAsync).toHaveBeenCalledOnce();
+        } else {
+          const error = await collect().catch((error: unknown) => error) as Error;
+          expect(error).toBeInstanceOf(Error);
+          expect(error.message).toContain(scenario === "unknown" ? "fetch failed" : "ECONNRESET");
+          expect(error.message).not.toMatch(/private-|example\.com|socket reset.*at /);
+          expect(error.message.length).toBeLessThan(2_100);
+          expect(setup.session.promptAsync).not.toHaveBeenCalled();
+        }
+        const first = await add.mock.results[0]!.value;
+        if (scenario.startsWith("http-")) {
+          expect(first.response.status).toBe(Number(scenario.slice(5)));
+          expect(observeFailure.mock.calls[0]![0].mcp).toMatchObject({ category: "http-rejection", status: Number(scenario.slice(5)) });
+        } else {
+          expect(first.response).toBeUndefined();
+          expect(first.error).toBeInstanceOf(TypeError);
+          if (scenario !== "unknown") expect(first.error).toBe(failure);
+          expect(observeFailure.mock.calls[0]![0].mcp).toMatchObject({ category: "transport-failure" });
+        }
+        expect(add).toHaveBeenCalledTimes(scenario === "recovered" || scenario === "exhausted" ? 2 : 1);
+        expect(order).toEqual(scenario === "recovered" || scenario === "exhausted"
+          ? ["add", "disconnect", "add", "disconnect"]
+          : scenario.startsWith("cleanup-") ? ["add", "disconnect", "disconnect"] : ["add", "disconnect"]);
+        if (scenario === "cleanup-timeout") expect(signals.every(signal => signal.aborted)).toBe(true);
+        const records = observeFailure.mock.calls.map(([record]) => record);
+        expect(JSON.stringify(records)).not.toMatch(/private-|ECONNRESET|socket reset|example\.com/);
+        expect(records.every(record => record.mcp?.correlationId === `sha256:${createHash("sha256").update(token).digest("hex")}`)).toBe(true);
+      } finally {
+        await runtime.dispose();
+      }
+    },
+  );
+
+  it("persists a recovered MCP attempt even when the observer throws", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "goodbuddy-mcp-diagnostics-"));
+    const diagnostics = new DesktopDiagnostics(directory);
+    const setup = runClient([
+      { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    const token = "private-correlation-token";
+    vi.mocked(setup.client.mcp.add).mockImplementationOnce((async (input: { name: string }) => ({
+      data: { [input.name]: { status: "failed", error: `connect ECONNRESET Authorization: Bearer ${token}` } },
+    })) as never);
+    const writes: Promise<void>[] = [];
+    const observer = vi.fn<DesktopDiagnosticFailureObserver>((failure) => {
+      writes.push(diagnostics.recordFailure(failure));
+      throw new Error("observer failed");
+    });
+    const runtime = embeddedRuntime(setup.client, {
+      observeFailure: observer,
+      knowledgeGateway: {
+        getEndpoint: () => "http://127.0.0.1:4567/mcp",
+        getAvailableToolNames: () => ["knowledge_search"],
+      } as unknown as KnowledgeMcpGateway,
+    });
+    try {
+      for await (const event of runtime.run({
+        requestId: "request-1", conversationId: "conversation-1", prompt: "test", workMode: "ask",
+        knowledgeCapabilityToken: token,
+      }, new AbortController().signal)) void event;
+      expect(setup.client.mcp.add).toHaveBeenCalledTimes(2);
+      expect(setup.session.promptAsync).toHaveBeenCalledOnce();
+      expect(observer).toHaveBeenCalledOnce();
+      await Promise.all(writes);
+      await diagnostics.dispose();
+      const restarted = new DesktopDiagnostics(directory);
+      try {
+        const records = await restarted.readRecent();
+        expect(records).toHaveLength(1);
+        expect(records[0]?.mcp).toMatchObject({
+          phase: "connect", attempt: 1, kind: "builtin",
+          correlationId: `sha256:${createHash("sha256").update(token).digest("hex")}`,
+        });
+        expect((await restarted.exportRecent()).toString()).not.toMatch(/private-|ECONNRESET|Authorization|127\.0\.0\.1/);
+      } finally { await restarted.dispose(); }
+    } finally {
+      await runtime.dispose();
+      await diagnostics.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["reject", "error", "false", "timeout"])("does not retry or reuse the slot after MCP cleanup %s", async (failure) => {
+    const setup = runClient([
+      { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    const add = vi.mocked(setup.client.mcp.add);
+    add.mockImplementationOnce((async (input: { name: string }) => ({
+      data: { [input.name]: { status: "failed", error: "connect ECONNREFUSED" } },
+    })) as never);
+    const disconnect = vi.mocked(setup.client.mcp.disconnect);
+    if (failure === "reject") disconnect.mockRejectedValue(new Error("cleanup failed"));
+    if (failure === "error") disconnect.mockResolvedValue({ error: { message: "cleanup failed" } } as never);
+    if (failure === "false") disconnect.mockResolvedValue({ data: false } as never);
+    if (failure === "timeout") disconnect.mockImplementation((() => new Promise(() => {})) as never);
+    const observeFailure = vi.fn<DesktopDiagnosticFailureObserver>(() => { throw new Error("observer failed"); });
+    const runtime = embeddedRuntime(setup.client, {
+      observeFailure,
+      knowledgeGateway: {
+        getEndpoint: () => "http://127.0.0.1:4567/mcp",
+        getAvailableToolNames: () => ["knowledge_search"],
+      } as unknown as KnowledgeMcpGateway,
+    });
+    const collect = async (requestId: string) => {
+      for await (const event of runtime.run({
+        requestId, conversationId: "conversation-1", prompt: "test", workMode: "ask",
+        knowledgeCapabilityToken: requestId,
+      }, new AbortController().signal)) void event;
+    };
+    try {
+      await expect(collect("first")).rejects.toThrow("ECONNREFUSED");
+      expect(add).toHaveBeenCalledOnce();
+      expect(setup.session.promptAsync).not.toHaveBeenCalled();
+      expect(observeFailure).toHaveBeenCalledTimes(3);
+      expect(observeFailure.mock.calls.slice(1).map(([record]) => record.mcp)).toEqual([
+        expect.objectContaining({ phase: "disconnect", attempt: 1, kind: "builtin", category: failure === "false" ? "cleanup-failure" : "transport-failure" }),
+        expect.objectContaining({ phase: "disconnect", attempt: 1, kind: "builtin" }),
+      ]);
+      expect(new Set(observeFailure.mock.calls.map(([record]) => record.mcp?.correlationId)).size).toBe(1);
+      disconnect.mockResolvedValue({ data: true } as never);
+      await collect("second");
+      expect(add.mock.calls[1]![0]?.name).toBe(`${add.mock.calls[0]![0]?.name}-2`);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it.each(["add", "disconnect", "retry"])("respects cancellation during MCP %s", async (phase) => {
+    const setup = runClient([]);
+    const controller = new AbortController();
+    const add = vi.mocked(setup.client.mcp.add);
+    add.mockImplementation((async (input: { name: string }) => {
+      if (phase === "add" || (phase === "retry" && add.mock.calls.length === 2)) {
+        controller.abort(new Error("cancel initialization"));
+      }
+      return { data: { [input.name]: { status: "failed", error: "connect ECONNRESET" } } };
+    }) as never);
+    const disconnect = vi.mocked(setup.client.mcp.disconnect);
+    disconnect.mockImplementation((async () => {
+      if (phase === "disconnect") controller.abort(new Error("cancel initialization"));
+      return { data: true };
+    }) as never);
+    const runtime = embeddedRuntime(setup.client, {
+      knowledgeGateway: {
+        getEndpoint: () => "http://127.0.0.1:4567/mcp",
+        getAvailableToolNames: () => ["knowledge_search"],
+      } as unknown as KnowledgeMcpGateway,
+    });
+    try {
+      await expect((async () => {
+        for await (const event of runtime.run({
+          requestId: "request-1", conversationId: "conversation-1", prompt: "test", workMode: "ask",
+          knowledgeCapabilityToken: "private-token",
+        }, controller.signal)) void event;
+      })()).rejects.toThrow("cancel initialization");
+      expect(add).toHaveBeenCalledTimes(phase === "retry" ? 2 : 1);
+      expect(disconnect).toHaveBeenCalledTimes(phase === "retry" ? 2 : 1);
+      expect(setup.session.promptAsync).not.toHaveBeenCalled();
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("does not retry MCP initialization or the prompt after a transient tool execution error", async () => {
+    const setup = runClient([
+      {
+        id: "tool-error", type: "message.part.updated",
+        properties: {
+          sessionID: "session-1",
+          part: {
+            id: "part-1", callID: "call-1", type: "tool", tool: "knowledge_search",
+            state: {
+              status: "error", input: {}, error: "connect ECONNRESET",
+              time: { start: 1, end: 2 },
+            },
+          },
+        },
+      },
+      { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    const runtime = embeddedRuntime(setup.client, {
+      knowledgeGateway: {
+        getEndpoint: () => "http://127.0.0.1:4567/mcp",
+        getAvailableToolNames: () => ["knowledge_search"],
+      } as unknown as KnowledgeMcpGateway,
+    });
+    try {
+      const events: RuntimeEvent[] = [];
+      await expect((async () => {
+        for await (const event of runtime.run({
+          requestId: "request-1", conversationId: "conversation-1", prompt: "test", workMode: "ask",
+          knowledgeCapabilityToken: "private-token",
+        }, new AbortController().signal)) events.push(event);
+      })()).rejects.toThrow("connect ECONNRESET");
+      expect(events).toContainEqual(expect.objectContaining({ type: "tool", state: "failed" }));
+      expect(setup.client.mcp.add).toHaveBeenCalledOnce();
+      expect(setup.client.mcp.disconnect).toHaveBeenCalledOnce();
+      expect(setup.session.promptAsync).toHaveBeenCalledOnce();
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it("keeps temporary MCP names stable within a conversation and short enough for providers", async () => {
     const setup = runClient([
       { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
@@ -3400,7 +3766,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
-  it("runs embedded conversations concurrently while serializing MCP registrations", async () => {
+  it.each([false, true])("runs embedded conversations concurrently while serializing MCP registrations (retry=%s)", async (retry) => {
     const setup = runClient([
       {
         id: "idle",
@@ -3437,7 +3803,9 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         await firstAdd;
         return {
           data: {
-            [input.name]: { status: "connected" },
+            [input.name]: retry
+              ? { status: "failed", error: "connect ECONNRESET" }
+              : { status: "connected" },
           },
           error: undefined,
         };
@@ -3500,7 +3868,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     } finally {
       resolveFirstAdd();
     }
-    await vi.waitFor(() => expect(mcpAdd).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mcpAdd).toHaveBeenCalledTimes(retry ? 3 : 2));
     await Promise.all([first, second]);
     expect(
       mcpAdd.mock.calls.map(
@@ -3511,8 +3879,10 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
             }
           ).config.headers.Authorization,
       ),
-    ).toEqual(["Bearer first-token", "Bearer second-token"]);
-    expect(setup.client.mcp.disconnect).toHaveBeenCalledTimes(2);
+    ).toEqual(retry
+      ? ["Bearer first-token", "Bearer first-token", "Bearer second-token"]
+      : ["Bearer first-token", "Bearer second-token"]);
+    expect(setup.client.mcp.disconnect).toHaveBeenCalledTimes(retry ? 3 : 2);
     await runtime.dispose();
   });
 

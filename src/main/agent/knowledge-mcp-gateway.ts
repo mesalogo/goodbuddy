@@ -1,4 +1,5 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
+import type { DesktopDiagnosticFailureObserver, DesktopMcpDiagnosticMetadata } from '../desktop-diagnostics'
 import { isStoryGraphTool, storyGraphToolNames, type StoryGraphToolName } from '../../shared/story-graph-tools'
 import type { RuntimeTarget } from '../../shared/capability-contracts'
 
@@ -256,6 +257,7 @@ type DownstreamMcpSession = {
 }
 
 export type KnowledgeMcpGatewayOptions = {
+  observeFailure?: DesktopDiagnosticFailureObserver
   storyGraphService?: StoryGraphService
   maximumBodyBytes?: number
   magicNotesDatabase?: MagicNotesDatabase
@@ -401,6 +403,7 @@ export class KnowledgeMcpGateway {
     ): BrowserTabUsageLease
   }
   private readonly launchEnvironmentProvider?: LaunchEnvironmentProvider
+  private readonly observeFailure?: DesktopDiagnosticFailureObserver
   private server?: Server
   private endpoint?: string
 
@@ -416,6 +419,18 @@ export class KnowledgeMcpGateway {
     this.obsidianService = options.obsidianService
     this.browserService = options.browserService
     this.launchEnvironmentProvider = options.launchEnvironmentProvider
+    this.observeFailure = options.observeFailure
+  }
+
+  private observeMcpFailure(mcp: DesktopMcpDiagnosticMetadata): void {
+    try {
+      this.observeFailure?.({
+        component: 'runtime', stage: 'connect', code: 'runtime.mcp.failed',
+        error: new Error('Local MCP request failed'), mcp
+      })
+    } catch {
+      // Diagnostics must not change the HTTP response or session lifecycle.
+    }
   }
 
   async start(): Promise<void> {
@@ -423,7 +438,23 @@ export class KnowledgeMcpGateway {
       return
     }
     const server = createServer((request, response) => {
-      void this.handleRequest(request, response).catch(() => {
+      const context = { phase: 'request' as DesktopMcpDiagnosticMetadata['phase'], startedAt: performance.now(), correlationId: undefined as string | undefined }
+      let failed = false
+      response.once('finish', () => {
+        if (!failed && response.statusCode >= 400) {
+          this.observeMcpFailure({
+            phase: context.phase, category: 'http-rejection', status: response.statusCode,
+            elapsedMs: Math.round(performance.now() - context.startedAt), correlationId: context.correlationId
+          })
+        }
+      })
+      void this.handleRequest(request, response, context).catch(() => {
+        failed = true
+        this.observeMcpFailure({
+          phase: context.phase, category: 'handler-failure',
+          ...(response.headersSent ? {} : { status: 500 }),
+          elapsedMs: Math.round(performance.now() - context.startedAt), correlationId: context.correlationId
+        })
         sendJson(response, 500, {
           jsonrpc: '2.0',
           error: { code: -32603, message: 'Internal server error' },
@@ -1683,76 +1714,86 @@ export class KnowledgeMcpGateway {
     mcp.setRequestHandler(
       ListToolsRequestSchema,
       async (_request, extra) => {
-        const customBindings = await this.getCustomMcpBindings(
-          token,
-          extra.signal
-        )
-        const storyGraphAvailable = await this.isStoryGraphAvailable(token)
-        const scopedTools = [...availableTools].filter(name => !name.startsWith('story_graph_') || storyGraphAvailable).flatMap(
-          (name): Tool[] => {
-            const definition = scopedDataToolByName.get(
-              name as ScopedDataToolName
-            )
-            if (!definition) {
-              return []
-            }
-            const inputSchema = z.toJSONSchema(
-              definition.inputSchema,
-              { target: 'draft-7' }
-            ) as Tool['inputSchema'] & { $schema?: string }
-            Reflect.deleteProperty(inputSchema, '$schema')
-            return [
-              {
-                name,
-                title: definition.title,
-                description: definition.description,
-                inputSchema,
-                annotations: {
-                  readOnlyHint: definition.access === 'read',
-                  destructiveHint:
-                    name === 'goodbuddy_config_apply' ||
-                    name === 'note_delete' ||
-                    name === 'note_entry_delete'
-                }
+        const startedAt = performance.now()
+        try {
+          const customBindings = await this.getCustomMcpBindings(
+            token,
+            extra.signal
+          )
+          const storyGraphAvailable = await this.isStoryGraphAvailable(token)
+          const scopedTools = [...availableTools].filter(name => !name.startsWith('story_graph_') || storyGraphAvailable).flatMap(
+            (name): Tool[] => {
+              const definition = scopedDataToolByName.get(
+                name as ScopedDataToolName
+              )
+              if (!definition) {
+                return []
               }
+              const inputSchema = z.toJSONSchema(
+                definition.inputSchema,
+                { target: 'draft-7' }
+              ) as Tool['inputSchema'] & { $schema?: string }
+              Reflect.deleteProperty(inputSchema, '$schema')
+              return [
+                {
+                  name,
+                  title: definition.title,
+                  description: definition.description,
+                  inputSchema,
+                  annotations: {
+                    readOnlyHint: definition.access === 'read',
+                    destructiveHint:
+                      name === 'goodbuddy_config_apply' ||
+                      name === 'note_delete' ||
+                      name === 'note_entry_delete'
+                  }
+                }
+              ]
+            }
+          )
+          const capability = this.getCapability(token)
+          const imageTool = await imageToolDefinition(capability.imageToolBinding)
+          const browserTools = capability.browserConversationId && capability.browserTabId
+            ? new BrowserModelTools({
+                service: this.browserService!,
+                conversationId: capability.browserConversationId,
+                browserTabId: capability.browserTabId
+              })
+            : undefined
+          const browserDefinitions = browserTools
+            ? browserTools.listTools().map(
+                (definition): Tool => ({
+                  name: definition.name,
+                  title: definition.displayName,
+                  description: definition.description,
+                  inputSchema: definition.inputSchema as Tool['inputSchema'],
+                  annotations: {
+                    readOnlyHint:
+                      definition.name === 'browser_snapshot' ||
+                      definition.name === 'browser_screenshot',
+                    destructiveHint: false
+                  }
+                })
+              )
+            : []
+          session.listedTools = true
+          return {
+            tools: [
+              ...(imageTool ? [{ name: imageTool.name, description: imageTool.description, inputSchema: imageTool.inputSchema as Tool['inputSchema'], annotations: { readOnlyHint: false, destructiveHint: false } }] : []),
+              ...scopedTools,
+              ...browserDefinitions,
+              ...[...customBindings.values()].map(
+                (binding) => binding.exposedTool
+              )
             ]
           }
-        )
-        const capability = this.getCapability(token)
-        const imageTool = await imageToolDefinition(capability.imageToolBinding)
-        const browserTools = capability.browserConversationId && capability.browserTabId
-          ? new BrowserModelTools({
-              service: this.browserService!,
-              conversationId: capability.browserConversationId,
-              browserTabId: capability.browserTabId
-            })
-          : undefined
-        const browserDefinitions = browserTools
-          ? browserTools.listTools().map(
-              (definition): Tool => ({
-                name: definition.name,
-                title: definition.displayName,
-                description: definition.description,
-                inputSchema: definition.inputSchema as Tool['inputSchema'],
-                annotations: {
-                  readOnlyHint:
-                    definition.name === 'browser_snapshot' ||
-                    definition.name === 'browser_screenshot',
-                  destructiveHint: false
-                }
-              })
-            )
-          : []
-        session.listedTools = true
-        return {
-          tools: [
-            ...(imageTool ? [{ name: imageTool.name, description: imageTool.description, inputSchema: imageTool.inputSchema as Tool['inputSchema'], annotations: { readOnlyHint: false, destructiveHint: false } }] : []),
-            ...scopedTools,
-            ...browserDefinitions,
-            ...[...customBindings.values()].map(
-              (binding) => binding.exposedTool
-            )
-          ]
+        } catch (error) {
+          this.observeMcpFailure({
+            phase: 'tool-discovery', category: 'handler-failure',
+            elapsedMs: Math.round(performance.now() - startedAt),
+            correlationId: `sha256:${createHash('sha256').update(token).digest('hex')}`
+          })
+          throw error
         }
       }
     )
@@ -1921,7 +1962,8 @@ export class KnowledgeMcpGateway {
 
   private async handleRequest(
     request: IncomingMessage,
-    response: ServerResponse
+    response: ServerResponse,
+    context: { phase: DesktopMcpDiagnosticMetadata['phase']; startedAt: number; correlationId?: string }
   ): Promise<void> {
     if (request.url !== '/mcp') {
       sendJson(response, 404, { error: 'Not found' })
@@ -1940,6 +1982,8 @@ export class KnowledgeMcpGateway {
       })
       return
     }
+    context.phase = 'authentication'
+    context.startedAt = performance.now()
     const authorization = request.headers.authorization
     if (
       typeof authorization !== 'string' ||
@@ -1949,6 +1993,7 @@ export class KnowledgeMcpGateway {
       return
     }
     const token = authorization.slice('Bearer '.length)
+    context.correlationId = `sha256:${createHash('sha256').update(token).digest('hex')}`
     try {
       this.getCapability(token)
     } catch {
@@ -1956,6 +2001,8 @@ export class KnowledgeMcpGateway {
       return
     }
 
+    context.phase = 'request'
+    context.startedAt = performance.now()
     let body: unknown
     if (request.method === 'POST') {
       try {
@@ -1971,6 +2018,8 @@ export class KnowledgeMcpGateway {
       }
     }
 
+    context.phase = 'session'
+    context.startedAt = performance.now()
     const sessionId = request.headers['mcp-session-id']
     let createdSession = false
     let session =
@@ -2020,15 +2069,21 @@ export class KnowledgeMcpGateway {
       const availableTools = new Set(
         this.getAvailableToolNames(token)
       )
+      context.phase = 'initialize'
+      context.startedAt = performance.now()
       session = this.createDownstreamMcpSession(
         token,
         availableTools
       )
       createdSession = true
       this.downstreamMcpSessions.set(session.registryKey, session)
-      await session.mcp.connect(session.transport)
     }
     try {
+      if (createdSession) await session.mcp.connect(session.transport)
+      if (body && typeof body === 'object' && 'method' in body && body.method === 'tools/list') {
+        context.phase = 'tool-discovery'
+        context.startedAt = performance.now()
+      }
       await session.transport.handleRequest(request, response, body)
     } finally {
       if (createdSession && session.id === undefined) {

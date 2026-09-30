@@ -133,7 +133,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 51
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 52
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -11893,6 +11893,20 @@ export class AssistantDatabase {
           CREATE INDEX IF NOT EXISTS magic_note_tag_links_tag_idx ON magic_note_tag_links(tag_id, note_id);
         `)
         database.exec('PRAGMA user_version = 51; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+    if (version.user_version < 52) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // Execution stats poll every few seconds. Filtering lifecycle and remote
+        // rows through task_events_task_idx reads every large stream payload row.
+        database.exec(`
+          CREATE INDEX IF NOT EXISTS task_events_lifecycle_idx
+            ON task_events(task_id, id) WHERE kind IN ('status', 'done', 'error');
+          CREATE INDEX IF NOT EXISTS task_events_remote_task_idx
+            ON task_events(task_id) WHERE remote_operation_id IS NOT NULL;
+        `)
+        database.exec('PRAGMA user_version = 52; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
   }

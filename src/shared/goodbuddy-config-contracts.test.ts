@@ -153,6 +153,7 @@ describe('GoodBuddy configuration contracts', () => {
       application: {
         checkUpdatesOnStartup: true,
         desktopNotificationsEnabled: true,
+        transparentFrostedEffectEnabled: false,
         updateSource: 'github',
         modelDownloadSource: 'modelscope',
         localToolEnvironment: defaultLocalToolEnvironmentSettings,

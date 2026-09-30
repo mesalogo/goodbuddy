@@ -5,6 +5,9 @@
   --surface-raised: #fff;
   --surface-subtle: #f4f8fb;
   --surface-muted: #e5edf3;
+  --surface-glass: rgb(255 255 255 / 65%);
+  --surface-glass-panel: rgb(255 255 255 / 75%);
+  --border-glass: rgb(116 138 159 / 16%);
   --text-primary: #17263a;
   --text-secondary: #4f6278;
   --text-muted: #60748a;
@@ -4591,6 +4594,30 @@ textarea:focus-visible {
   -webkit-app-region: no-drag;
 }
 
+.app-shell[data-frosted-glass='true'] .topbar {
+  position: relative;
+  z-index: 3;
+  background: var(--surface-glass);
+  border-bottom-color: var(--border-glass);
+  backdrop-filter: blur(18px);
+}
+
+/* Extend only the active chat; the workbar and other routes keep their grid row. */
+.app-shell[data-frosted-glass='true'] .workspace:has(> [data-route='chat']:not([hidden]) .chat-history-pane[data-active='true']) {
+  margin-top: -58px;
+}
+
+.app-shell[data-frosted-glass='true'] .chat-history-context {
+  position: absolute;
+  z-index: 2;
+  top: 58px;
+  width: 100%;
+}
+
+.app-shell[data-frosted-glass='true'] .chat-content {
+  padding-top: calc(58px + var(--chat-context-height, 0px) + var(--page-gutter));
+}
+
 /*
  * Overlays are portalled to document.body and cover the whole window, so they
  * paint over the .brand and .topbar drag regions. Without no-drag the native
@@ -6216,7 +6243,13 @@ button > svg {
 }
 
 .chat-history-pane {
+  position: relative;
   height: 100%;
+  min-height: 0;
+}
+
+.chat-history-context {
+  flex: 0 0 auto;
   min-height: 0;
 }
 
@@ -6251,6 +6284,14 @@ button > svg {
   background: var(--surface-raised);
   scrollbar-color: var(--border-default) transparent;
   scrollbar-width: thin;
+}
+
+.chat-history-pane > .chat {
+  padding: 0;
+}
+
+.chat-content {
+  padding: var(--page-gutter) 0 10px;
 }
 
 .chat-scroll-to-bottom {
@@ -6383,7 +6424,7 @@ button > svg {
   line-height: 1.5;
 }
 
-.chat > .welcome,
+.chat-content > .welcome,
 .message-list {
   /* Keep the scrollbar inside the outer gutter without adding trailing scroll padding. */
   width: calc(100cqw - 2 * var(--chat-inline-padding));
@@ -17313,6 +17354,9 @@ textarea.field-control {
   --surface-raised: #0d1d2c;
   --surface-subtle: #12283a;
   --surface-muted: #1a3448;
+  --surface-glass: rgb(7 16 31 / 70%);
+  --surface-glass-panel: rgb(7 16 31 / 75%);
+  --border-glass: rgb(143 166 185 / 18%);
   --text-primary: #edf7ff;
   --text-secondary: #b5c6d5;
   --text-muted: #8fa6b9;

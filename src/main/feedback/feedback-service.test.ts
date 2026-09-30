@@ -113,6 +113,23 @@ describe('FeedbackService', () => {
         code: 'runtime.run.failed',
         errorType: 'TimeoutError',
         message: 'password=hunter2'
+      },
+      {
+        timestamp: '2026-08-25T01:02:04.000Z',
+        component: 'runtime' as const,
+        stage: 'connect',
+        code: 'runtime.mcp.failed',
+        errorType: 'Error',
+        message: 'private-mcp-message',
+        mcp: {
+          phase: 'tool-discovery' as const,
+          category: 'handler-failure' as const,
+          elapsedMs: 123,
+          correlationId: `sha256:${'a'.repeat(64)}`,
+          token: 'private-mcp-token',
+          headers: { authorization: 'private-mcp-auth' },
+          url: 'private-mcp-url'
+        }
       }
     ])
     const fixture = service(
@@ -146,6 +163,11 @@ describe('FeedbackService', () => {
       '{"timestamp":"2026-08-25T01:02:03.000Z","component":"runtime","stage":"run","code":"runtime.run.failed","errorType":"TimeoutError","message":"Runtime request failed"}'
     )
     expect(payload.description).not.toContain('hunter2')
+    expect(payload.description).toContain(JSON.stringify({
+      phase: 'tool-discovery', category: 'handler-failure', elapsedMs: 123,
+      correlationId: `sha256:${'a'.repeat(64)}`
+    }))
+    expect(payload.description).not.toContain('private-mcp-')
     expect(payload.description).toMatch(
       /\n\[GOODBUDDY_DESKTOP_DIAGNOSTICS_V1_END\]$/u
     )

@@ -826,6 +826,11 @@ export const settings = {
     }
   },
   appearance: {
+    frostedGlass: {
+      label: '透明磨砂特效',
+      description: '应用于顶栏和展开的运行待办卡片，保存后立即生效。',
+      retry: '重试'
+    },
     theme: {
       title: '界面主题',
       description: '选择后立即应用，并保存在此设备',

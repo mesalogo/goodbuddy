@@ -24,6 +24,7 @@ describe('UpdateSettingsSection', () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: true,
       desktopNotificationsEnabled: true,
+      transparentFrostedEffectEnabled: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,

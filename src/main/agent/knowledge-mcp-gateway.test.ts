@@ -24,6 +24,8 @@ import {
 } from './knowledge-mcp-gateway'
 import { browserTabIdSchema } from '../../shared/contracts'
 import { BrowserService } from '../browser/browser-service'
+import { createHash } from 'node:crypto'
+import { DesktopDiagnostics, type DesktopDiagnosticFailureObserver } from '../desktop-diagnostics'
 
 const firstLibraryId = '11111111-1111-4111-8111-111111111111'
 const secondLibraryId = '22222222-2222-4222-8222-222222222222'
@@ -177,6 +179,90 @@ function testTool(name: string): Tool {
 }
 
 const gateways: KnowledgeMcpGateway[] = []
+
+it('records safe HTTP rejection phases and isolates throwing observers', async () => {
+  const observeFailure = vi.fn<DesktopDiagnosticFailureObserver>(() => { throw new Error('observer failed') })
+  const gateway = new KnowledgeMcpGateway(createService().service, { observeFailure })
+  gateways.push(gateway)
+  await gateway.start()
+  const token = gateway.grant('private-request', [firstLibraryId], new AbortController().signal)!
+  const correlationId = `sha256:${createHash('sha256').update(token).digest('hex')}`
+  const cases = [
+    { headers: {}, body: '{}', status: 401, phase: 'authentication' },
+    { headers: { authorization: `Bearer ${token}` }, body: 'private-invalid-json', status: 400, phase: 'request' },
+    { headers: { authorization: `Bearer ${token}`, 'mcp-session-id': 'private-session' }, body: '{}', status: 404, phase: 'session' },
+    { headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: LATEST_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: 'test', version: '1' } } }), status: 406, phase: 'initialize' }
+  ]
+  for (const entry of cases) {
+    const response = await fetch(gateway.getEndpoint()!, { method: 'POST', headers: { 'content-type': 'application/json', ...entry.headers }, body: entry.body })
+    await response.text()
+    expect(response.status).toBe(entry.status)
+    expect(observeFailure).toHaveBeenLastCalledWith(expect.objectContaining({
+      code: 'runtime.mcp.failed', mcp: expect.objectContaining({ phase: entry.phase, category: 'http-rejection', status: entry.status, elapsedMs: expect.any(Number) })
+    }))
+  }
+  expect(observeFailure.mock.calls.at(-1)?.[0]).toMatchObject({ mcp: { correlationId } })
+  expect(JSON.stringify(observeFailure.mock.calls)).not.toContain(token)
+  expect(JSON.stringify(observeFailure.mock.calls)).not.toContain('private-')
+})
+
+it('cleans up failed HTTP initialization and allows a subsequent connection', async () => {
+  const observeFailure = vi.fn()
+  const gateway = new KnowledgeMcpGateway(createService().service, { observeFailure })
+  gateways.push(gateway)
+  await gateway.start()
+  const token = gateway.grant('request', [firstLibraryId], new AbortController().signal)!
+  const connect = vi.spyOn(McpProtocolServer.prototype, 'connect').mockRejectedValue(new Error('private-connect-error'))
+  const close = vi.spyOn(McpProtocolServer.prototype, 'close')
+  for (let index = 0; index < 9; index += 1) {
+    const response = await fetch(gateway.getEndpoint()!, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: index, method: 'initialize', params: { protocolVersion: LATEST_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: 'test', version: '1' } } })
+    })
+    await response.text()
+    expect(response.status).toBe(500)
+  }
+  expect(close).toHaveBeenCalledTimes(9)
+  expect(observeFailure).toHaveBeenCalledTimes(9)
+  expect(observeFailure).toHaveBeenLastCalledWith(expect.objectContaining({ mcp: expect.objectContaining({ phase: 'initialize', category: 'handler-failure', status: 500 }) }))
+  connect.mockRestore()
+  const client = new Client({ name: 'test', version: '1' })
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
+    await client.listTools()
+    await client.callTool({ name: 'knowledge_list', arguments: {} })
+    expect(observeFailure).toHaveBeenCalledTimes(9)
+  } finally { await client.close() }
+})
+
+it('persists asynchronous HTTP tool discovery failures without private error details', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gateway-diagnostics-'))
+  temporaryDirectories.push(directory)
+  const diagnostics = new DesktopDiagnostics(directory)
+  const pending: Promise<void>[] = []
+  let clock = 100
+  vi.spyOn(performance, 'now').mockImplementation(() => clock)
+  const gateway = new KnowledgeMcpGateway(createService().service, {
+    observeFailure: failure => { pending.push(diagnostics.recordFailure(failure)) },
+    storyGraphService: { available: async () => { clock = 145; throw new Error('private-url-token-body') }, read: () => ({}) }
+  })
+  gateways.push(gateway)
+  await gateway.start()
+  const token = gateway.grant('private-request', [firstLibraryId], new AbortController().signal, 'none', undefined, undefined, undefined, undefined, undefined, { runtimeTarget: 'opencode' })!
+  const client = new Client({ name: 'test', version: '1' })
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
+    await expect(client.listTools()).rejects.toThrow()
+    await Promise.all(pending)
+    const exported = (await diagnostics.exportRecent()).toString('utf8')
+    expect(JSON.parse(exported)).toMatchObject({ code: 'runtime.mcp.failed', mcp: { phase: 'tool-discovery', category: 'handler-failure', elapsedMs: 45 } })
+    expect(exported).not.toContain('private-')
+    expect(exported).not.toContain(token)
+  } finally {
+    await client.close()
+    await diagnostics.dispose()
+  }
+})
 
 it('honors a requested knowledge result count above eight', async () => {
   const { service, retrieveMany } = createService()

@@ -56,7 +56,8 @@ import {
   runtimePrivacyEnvironment,
 } from "./process-environment";
 import type { LaunchEnvironmentProvider } from "../local-tool-environment/launch-environment-provider";
-import { boundedToolDetail, safeToolErrorDetail } from "./approval-summary";
+import type { DesktopDiagnosticFailureObserver, DesktopMcpDiagnosticMetadata } from "../desktop-diagnostics";
+import { boundedToolDetail, redactSensitiveText, safeToolErrorDetail } from "./approval-summary";
 import type {
   ResolvedMcpServer,
   RuntimeSkillPackage,
@@ -503,6 +504,7 @@ export type OpenCodeRuntimeDependencies = {
 };
 
 export type OpenCodeRuntimeOptions = {
+  observeFailure?: DesktopDiagnosticFailureObserver;
   baseUrl?: string;
   embedded: boolean;
   binaryPath: string;
@@ -2239,7 +2241,8 @@ export class OpenCodeRuntime implements AgentRuntime {
     let knowledgeToolIds: string[] = [];
     let customMcpName: string | undefined;
     let customMcpToken: string | undefined;
-    const attemptedMcpNames: string[] = [];
+    type McpAttempt = Pick<DesktopMcpDiagnosticMetadata, "correlationId" | "kind" | "attempt">;
+    const attemptedMcpNames = new Map<string, McpAttempt>();
     const mcpConversationKey = temporaryMcpConversationKey(
       request.conversationId,
     );
@@ -2255,6 +2258,96 @@ export class OpenCodeRuntime implements AgentRuntime {
       ? this.options.knowledgeGateway?.bindImageTool(request.imageToolBinding, signal, request.knowledgeCapabilityToken)
       : undefined;
     const scopedCapabilityToken = imageCapabilityToken ?? request.knowledgeCapabilityToken;
+    const observeMcpFailure = (mcp: DesktopMcpDiagnosticMetadata): void => {
+      try {
+        this.options.observeFailure?.({
+          component: "runtime", stage: mcp.phase, code: "runtime.mcp.failed",
+          error: new Error("Local MCP operation failed"), mcp,
+        });
+      } catch {
+        // Diagnostics must not affect retry, cancellation, or cleanup.
+      }
+    };
+    const disconnectMcp = async (name: string, metadata: McpAttempt): Promise<boolean> => {
+      // Called under the mutation lock; queue wait does not consume this budget.
+      const cleanupSignal = AbortSignal.timeout(1_000);
+      const startedAt = performance.now();
+      let category: DesktopMcpDiagnosticMetadata["category"] = "transport-failure";
+      let status: number | undefined;
+      try {
+        const result = await awaitWithAbort(
+          client.mcp.disconnect({ name, directory }, { signal: cleanupSignal }),
+          cleanupSignal,
+        );
+        if (result.data === true && !result.error) return true;
+        status = result.response?.status;
+        category = result.error && !result.response ? "transport-failure"
+          : status && status >= 400 ? "http-rejection" : "cleanup-failure";
+      } catch {
+        // The uncertain connection keeps its slot until cleanup succeeds.
+      }
+      observeMcpFailure({ ...metadata, phase: "disconnect", category, status,
+        elapsedMs: Math.round(performance.now() - startedAt) });
+      return false;
+    };
+    const addMcp = (name: string, url: string, token: string, label: string) =>
+      this.mutateMcp(signal, async () => {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          signal.throwIfAborted();
+          const startedAt = performance.now();
+          const metadata: McpAttempt = {
+            correlationId: `sha256:${createHash("sha256").update(token).digest("hex")}`,
+            kind: name.startsWith(KNOWLEDGE_MCP_PREFIX) ? "builtin" : "custom",
+            attempt: attempt === 0 ? 1 : 2,
+          };
+          let failure: unknown;
+          let retryableStatus = true;
+          let category: DesktopMcpDiagnosticMetadata["category"] = "transport-failure";
+          let httpStatus: number | undefined;
+          try {
+            const added = await this.controlRequest(label, (controlSignal) => {
+              attemptedMcpNames.set(name, metadata);
+              return client.mcp.add({
+                directory, name,
+                config: {
+                  type: "remote", url, enabled: true,
+                  headers: { Authorization: `Bearer ${token}` },
+                  oauth: false,
+                },
+              }, { signal: controlSignal });
+            }, signal);
+            const status = added.data?.[name];
+            httpStatus = added.response?.status;
+            const httpRejected = httpStatus !== undefined && httpStatus >= 400;
+            if (!httpRejected && !added.error && status?.status === "connected") return;
+            // With throwOnError:false the SDK resolves fetch failures without a response.
+            const transportFailure = !!added.error && !added.response;
+            category = transportFailure ? "transport-failure"
+              : httpRejected ? "http-rejection" : "initialization-failure";
+            retryableStatus = transportFailure || (!httpRejected && !added.error && status?.status === "failed");
+            failure = added.error ?? (status && "error" in status
+              ? `${status.status}: ${status.error}`
+              : status?.status ?? "unknown");
+          } catch (error) {
+            failure = error;
+          }
+          observeMcpFailure({ ...metadata, phase: "connect",
+            category: signal.aborted ? "cancelled" : category, status: httpStatus,
+            elapsedMs: Math.round(performance.now() - startedAt) });
+          signal.throwIfAborted();
+          const failureDetail = safeToolErrorDetail(failure) ?? "unknown";
+          const detail = redactSensitiveText(
+            failureDetail.split(token).join("[REDACTED]"),
+          ).replace(/https?:\/\/[^\s<>"']+/giu, "[URL]");
+          const error = new Error(`OpenCode ${label}失败（${httpStatus && httpStatus >= 400 ? `HTTP ${httpStatus}: ` : ""}${detail}）`);
+          // Only explicit transport failures during initialization may be retried.
+          const transient = /\b(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE)\b|\b(?:connection closed|socket hang up|request timed out)\b/iu.test(detail)
+            && !/\b(?:auth(?:entication|orization)?\s+(?:failed|required|error|denied)|oauth|credentials|unauthorized|forbidden|401|403|protocol|invalid|parse|json|method)\b/iu.test(failureDetail);
+          if (attempt > 0 || !retryableStatus || !transient) throw error;
+          if (!await disconnectMcp(name, metadata)) throw error;
+          attemptedMcpNames.delete(name);
+        }
+      });
     try {
       if (
         scopedCapabilityToken &&
@@ -2263,42 +2356,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       ) {
         const knowledgeEndpoint = this.options.knowledgeGateway.getEndpoint()!;
         knowledgeMcpName = temporaryMcpName(KNOWLEDGE_MCP_PREFIX);
-        const added = await this.mutateMcp(signal, () =>
-          this.controlRequest(
-            "连接内置只读工具",
-            (controlSignal) => {
-              attemptedMcpNames.push(knowledgeMcpName!);
-              return client.mcp.add(
-                {
-                  directory,
-                  name: knowledgeMcpName,
-                  config: {
-                    type: "remote",
-                    url: knowledgeEndpoint,
-                    enabled: true,
-                    headers: {
-                      Authorization: `Bearer ${scopedCapabilityToken}`,
-                    },
-                    oauth: false,
-                  },
-                },
-                { signal: controlSignal },
-              );
-            },
-            signal,
-          ),
-        );
-        if (added.error || !added.data) {
-          throw new Error(
-            opencodeErrorMessage(added.error, "OpenCode 内置只读工具连接失败"),
-          );
-        }
-        const addedStatus = added.data[knowledgeMcpName];
-        if (!addedStatus || addedStatus.status !== "connected") {
-          throw new Error(
-            `OpenCode 内置只读工具连接失败（${addedStatus?.status ?? "unknown"}）`,
-          );
-        }
+        await addMcp(knowledgeMcpName, knowledgeEndpoint, scopedCapabilityToken, "连接内置只读工具");
         // OpenCode 1.18.x does not include dynamically added MCP tools in
         // experimental/tool/ids. Its model tool namespace is deterministic:
         // "<MCP server name>_<declared tool name>".
@@ -2325,42 +2383,7 @@ export class OpenCodeRuntime implements AgentRuntime {
               signal,
             );
           customMcpName = temporaryMcpName(CUSTOM_MCP_PREFIX);
-          const added = await this.mutateMcp(signal, () =>
-            this.controlRequest(
-              "连接自定义 MCP 工具",
-              (controlSignal) => {
-                attemptedMcpNames.push(customMcpName!);
-                return client.mcp.add(
-                  {
-                    directory,
-                    name: customMcpName,
-                    config: {
-                      type: "remote",
-                      url: customMcpEndpoint,
-                      enabled: true,
-                      headers: {
-                        Authorization: `Bearer ${customMcpToken}`,
-                      },
-                      oauth: false,
-                    },
-                  },
-                  { signal: controlSignal },
-                );
-              },
-              signal,
-            ),
-          );
-          const addedStatus = added.data?.[customMcpName];
-          if (
-            added.error ||
-            !added.data ||
-            !addedStatus ||
-            addedStatus.status !== "connected"
-          ) {
-            throw new Error(
-              `OpenCode 自定义 MCP 连接失败（${addedStatus?.status ?? "unknown"}）`,
-            );
-          }
+          await addMcp(customMcpName, customMcpEndpoint, customMcpToken, "连接自定义 MCP 工具");
           knowledgeToolIds.push(
             ...tools.map((tool) => `${customMcpName}_${tool.name}`),
           );
@@ -3193,23 +3216,10 @@ export class OpenCodeRuntime implements AgentRuntime {
       subscriptionController.abort();
       if (imageCapabilityToken && imageCapabilityToken !== request.knowledgeCapabilityToken) this.options.knowledgeGateway?.revoke(imageCapabilityToken);
       let allMcpDisconnected = true;
-      for (const name of attemptedMcpNames) {
+      for (const [name, metadata] of attemptedMcpNames) {
         const disconnected = await this.mutateMcp(
           new AbortController().signal,
-          () => {
-            // Queue wait must not consume the disconnect timeout.
-            const cleanupSignal = AbortSignal.timeout(1_000);
-            return awaitWithAbort(
-              client.mcp.disconnect(
-                { name, directory },
-                { signal: cleanupSignal },
-              ),
-              cleanupSignal,
-            );
-          },
-        ).then(
-          (result) => !(result as { error?: unknown } | undefined)?.error,
-          () => false,
+          () => disconnectMcp(name, metadata),
         );
         allMcpDisconnected &&= disconnected;
       }

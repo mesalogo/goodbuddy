@@ -177,6 +177,22 @@ SelectedRuntimeManager
 健康检查也读取 owner 的总 activeRequests，不能从一个空闲 adapter 判断整个 Server
 无任务后重启。异常退出使该 owner 的全部绑定失效，明确结算受影响请求，不重放已执行工具。
 
+### 4.1 本地 MCP 初始化失败恢复
+
+桌面 HTTP 工具网关保持监听，MCP 注册和授权仍按请求创建、清理。本地 OpenCode 的内置
+工具和自定义 MCP 共用连接逻辑：仅对明确的连接拒绝、连接重置、断管或传输超时，在
+一秒内成功断开失败连接后重试一次。SDK 返回的无 HTTP response 网络错误和抛出的网络
+错误采用同一判定；HTTP/API 错误、鉴权或协议错误、未知失败不自动重试。
+取消立即终止后续尝试，断开失败的名称槽位保持占用。Prompt 和工具调用不重放。
+
+界面显示有界、脱敏的失败详情。`runtime.mcp.failed` 诊断记录连接或断开阶段、失败类别、
+耗时、尝试次数、内置或自定义类型及可用的 HTTP 状态；通过本轮令牌的 SHA-256 摘要与
+网关鉴权、初始化和工具发现失败记录关联。日志不保存令牌、地址、请求正文或原始错误。
+网关初始化抛错时也清理未完成会话，防止失败会话累积。
+
+此恢复逻辑属于本地 `OpenCodeRuntime`。远程 Agent 使用 `RuntimeAcpBackend` 和
+`AgentImageToolMcp`，不经过本地 MCP 注册或网关 HTTP 处理；本节不代表远程恢复能力。
+
 ## 5. DeepSeek Harness
 
 ### 5.1 共享 Host 的最小改法

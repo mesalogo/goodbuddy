@@ -891,6 +891,11 @@ export const settings = {
     }
   },
   appearance: {
+    frostedGlass: {
+      label: 'Frosted glass effect',
+      description: 'Applies to the top bar and expanded runtime checklist. Takes effect as soon as it is saved.',
+      retry: 'Retry'
+    },
     theme: {
       title: 'Interface theme',
       description: 'Applies immediately and is saved on this device',

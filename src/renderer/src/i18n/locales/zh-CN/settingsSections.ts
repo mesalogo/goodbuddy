@@ -840,7 +840,7 @@ export const settingsSections = {
     diagnostics: {
       label: '附加最近桌面诊断记录',
       description:
-        '默认关闭。选中后仅附加最近桌面诊断的时间、组件、阶段、稳定错误码、错误类型和固定短消息；不包含对话、Prompt、凭据、文件内容、路径、Provider 原始响应或远端 Agent 日志。'
+        '默认关闭。选中后附加最近桌面诊断的时间、组件、阶段、错误码、错误类型和固定短消息，以及工具连接失败的类别、耗时、HTTP 状态、尝试次数、工具类型和匿名关联标识；不包含对话、Prompt、凭据、文件内容、路径、Provider 原始响应或远端 Agent 日志。'
     },
     screenshot: {
       title: '截图（可选）',

@@ -895,7 +895,7 @@ export const settingsSections = {
     diagnostics: {
       label: 'Attach recent desktop diagnostics',
       description:
-        'Off by default. When selected, this adds only timestamps, components, stages, stable error codes, error types, and fixed short messages from recent desktop diagnostics. It does not include conversations, prompts, credentials, file contents, paths, raw provider responses, or remote Agent logs.'
+        'Off by default. When selected, this adds timestamps, components, stages, error codes, error types, and fixed short messages from recent desktop diagnostics, plus tool connection failure categories, timing, HTTP status, attempt counts, tool kinds, and anonymous correlation IDs. It does not include conversations, prompts, credentials, file contents, paths, raw provider responses, or remote Agent logs.'
     },
     screenshot: {
       title: 'Screenshot (optional)',

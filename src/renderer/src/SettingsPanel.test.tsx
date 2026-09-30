@@ -520,6 +520,7 @@ const removeEmbeddingModel = vi.fn(
 let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   desktopNotificationsEnabled: true,
+  transparentFrostedEffectEnabled: false,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -814,6 +815,7 @@ describe('SettingsPanel runtime files', () => {
     applicationSettings = {
       checkUpdatesOnStartup: true,
       desktopNotificationsEnabled: true,
+      transparentFrostedEffectEnabled: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -1547,6 +1549,36 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByRole('tab', { name: '远程项目' })
     ).toBeInTheDocument()
+  })
+
+  it.each([
+    ['zh-CN', '外观', '透明磨砂特效', '应用于顶栏和展开的运行待办卡片，保存后立即生效。'],
+    ['en-US', 'Appearance', 'Frosted glass effect', 'Applies to the top bar and expanded runtime checklist. Takes effect as soon as it is saved.']
+  ] as const)('exposes the frosted glass Switch under Appearance in %s', async (locale, category, label, description) => {
+    await changeUiLocale(locale)
+    const onChange = vi.fn(async () => true)
+    const props = {
+      ...heartbeatSettingsProps,
+      open: true,
+      onClearLocalData: vi.fn(async () => {}),
+      onClose: vi.fn(),
+      onSaved: vi.fn(),
+      onTransparentFrostedEffectEnabledChange: onChange
+    }
+    const { rerender } = render(<SettingsPanel {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: category }))
+    const toggle = screen.getByRole('switch', { name: label })
+    expect(toggle).not.toBeChecked()
+    expect(toggle).toHaveAccessibleDescription(description)
+    expect(toggle.closest('label')).toHaveClass('toggle-row')
+    fireEvent.click(toggle)
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(true)
+    rerender(<SettingsPanel {...props} transparentFrostedEffectEnabled applicationSettingsPending />)
+    expect(toggle).toBeChecked()
+    expect(toggle).toBeDisabled()
+    rerender(<SettingsPanel {...props} transparentFrostedEffectEnabled />)
+    fireEvent.click(toggle)
+    expect(onChange).toHaveBeenLastCalledWith(false)
   })
 
   it.each([

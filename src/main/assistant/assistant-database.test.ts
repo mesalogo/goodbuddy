@@ -3709,6 +3709,8 @@ describe('AssistantDatabase', () => {
       ALTER TABLE tasks DROP COLUMN current_user_message_id;
       ALTER TABLE tasks DROP COLUMN remote_recoverable;
       DROP INDEX task_events_remote_provenance_unique;
+      DROP INDEX task_events_remote_task_idx;
+      DROP INDEX task_events_lifecycle_idx;
       ALTER TABLE task_events DROP COLUMN remote_event_index;
       ALTER TABLE task_events DROP COLUMN remote_semantic_sequence;
       ALTER TABLE task_events DROP COLUMN remote_operation_id;

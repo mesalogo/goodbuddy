@@ -73,6 +73,16 @@ function settings(
 }
 
 describe('createAgentRuntime model compatibility', () => {
+  it('passes the desktop failure observer to local OpenCode', async () => {
+    const observeFailure = vi.fn()
+    const runtime = createAgentRuntime(process.cwd(), settings({ provider: 'opencode' }), { observeFailure })
+    try {
+      expect(runtime).toMatchObject({ options: { observeFailure } })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('does not treat the default model profile as the platform DeepSeek source', () => {
     const defaultProfile = {
       id: '00000000-0000-4000-8000-000000000001',
