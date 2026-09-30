@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -80,6 +80,26 @@ describe('native terminal client', () => {
     await expect(client.open(1, input)).rejects.toThrow('PTY unavailable')
     expect((await readdir(root)).filter(name => name.startsWith('launch-'))).toEqual([])
     await expect(client.open(1, input)).resolves.toMatchObject({ state: 'running' })
+  })
+
+  it('copies the bundled OpenCode config once and reuses it for later launches', async () => {
+    const { root, create, fetcher, input } = await fixture()
+    const bundled = join(root, 'bundled-config')
+    await mkdir(join(bundled, 'node_modules', 'plugin'), { recursive: true })
+    await writeFile(join(bundled, '.goodbuddy-ready.json'), '{"version":"1"}')
+    await writeFile(join(bundled, 'node_modules', 'plugin', 'index.js'), 'export {}')
+    const client = new NativeTerminalClient({
+      terminalManager: { create }, rootDirectory: root, fetcher,
+      bundledRuntimePaths: { opencode: process.execPath, opencodeConfig: bundled, continue: process.execPath, ripgrep: '', deepseekHarness: '' }
+    })
+    await client.open(1, input)
+    const configDirectory = launches[0]!.spawnSpec.env.OPENCODE_CONFIG_DIR!
+    expect(configDirectory).toBe(join(root, 'opencode-config'))
+    const copied = (await stat(join(configDirectory, 'node_modules', 'plugin', 'index.js'))).mtimeMs
+    await launches[0]!.dispose()
+    await client.open(1, { ...input, workMode: 'execute' })
+    expect(launches[1]!.spawnSpec.env.OPENCODE_CONFIG_DIR).toBe(configDirectory)
+    expect((await stat(join(configDirectory, 'node_modules', 'plugin', 'index.js'))).mtimeMs).toBe(copied)
   })
 
   it('uses Execute permissions and explicit session MCP endpoints', async () => {

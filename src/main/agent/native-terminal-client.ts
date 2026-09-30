@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -49,6 +49,29 @@ export type NativeTerminalClientOptions = {
 // Same native read permissions as the existing remote OpenCode adapter.
 const openCodeReadTools = ['read', 'glob', 'grep', 'list', 'lsp', 'webfetch', 'websearch', 'codesearch', 'question', 'external_directory']
 const continueReadTools = ['Read', 'List', 'Search', 'Fetch', 'Diff', 'AskQuestion', 'CheckBackgroundJob', 'Skills']
+const sharedOpenCodeConfigs = new Map<string, Promise<string>>()
+
+/** Copies the bundled OpenCode plugin tree once instead of on every terminal launch. */
+function prepareSharedOpenCodeConfig(source: string, target: string): Promise<string> {
+  const existing = sharedOpenCodeConfigs.get(target)
+  if (existing) return existing
+  const operation = (async () => {
+    const marker = '.goodbuddy-ready.json'
+    const expected = await readFile(join(source, marker), 'utf8').catch(() => undefined)
+    if (expected !== undefined && await readFile(join(target, marker), 'utf8').catch(() => undefined) === expected) return target
+    const staging = `${target}.staging-${randomUUID()}`
+    try {
+      await cp(source, staging, { recursive: true })
+      await rm(target, { recursive: true, force: true })
+      await rename(staging, target)
+    } finally {
+      await rm(staging, { recursive: true, force: true })
+    }
+    return target
+  })().catch(error => { sharedOpenCodeConfigs.delete(target); throw error })
+  sharedOpenCodeConfigs.set(target, operation)
+  return operation
+}
 
 export class NativeTerminalClient {
   private readonly pending = new Map<string, Promise<TerminalSnapshot>>()
@@ -176,11 +199,12 @@ export class NativeTerminalClient {
         if (input.workMode === 'execute') args.push('--auto')
         else args.push('--readonly', ...allowedContinueTools.flatMap(name => ['--allow', name]), '--exclude', '*')
       } else {
-        const configDirectory = join(temporary, 'config')
-        if (this.options.bundledRuntimePaths.opencodeConfig) {
-          await cp(this.options.bundledRuntimePaths.opencodeConfig, configDirectory, { recursive: true })
-        }
-        const skillsRoot = await stageRuntimeSkillPackages(configDirectory, skills, 'OpenCode')
+        const bundledConfig = this.options.bundledRuntimePaths.opencodeConfig
+        const configDirectory = bundledConfig
+          ? await prepareSharedOpenCodeConfig(bundledConfig, join(root, 'opencode-config'))
+          : join(temporary, 'config')
+        await mkdir(configDirectory, { recursive: true })
+        const skillsRoot = await stageRuntimeSkillPackages(join(temporary, 'opencode'), skills, 'OpenCode')
         const config = createOpenCodeModelBridgeProviderConfig({
           protocol: managed.profile.protocol, model: selected.modelName, name: selected.name,
           loopbackOrigin: origin, supportsImageInput: selected.supportsImageInput, workMode: input.workMode

@@ -1,5 +1,17 @@
 # 工作栏实现与验证进度
 
+## 2026-09-30：OpenCode 终端启动准备
+
+原先每次“在终端中打开” OpenCode 都会把随包插件依赖目录（约 3,600 个文件、52 MB）
+复制到临时目录，Windows 本机每次约 2.2–2.4 秒。现在该目录只复制一次到用户数据下的
+`terminal/opencode-config`，按 `.goodbuddy-ready.json` 判断是否需要刷新；Skills、Ask
+插件和模型配置仍按每次启动单独生成，关闭时清理。
+
+Windows 本机实测启动准备：首次 2.9 秒，之后 19–44 ms。OpenCode 自身 TUI 从进程启动
+到显示输入框约 2.9–3.3 秒，由 OpenCode 程序决定，本次未改变。验证：原生终端单元测试
+5 项通过；已安装 OpenCode 的 Ask／Execute 真实 PTY 测试 2 项通过（合成模型，真实模型
+调用 0 次）。远程 Agent 使用独立的 OpenCode 启动路径，不受本次修改影响。
+
 ## 2026-09-28：消息取消与失败展示
 
 消息终态按[Runtime 交互边界](./runtime-interactions.md)保存和展示。取消使用结构化
