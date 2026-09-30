@@ -8,32 +8,42 @@
         "zh-CN": {
           "highlights": [],
           "features": [
+            "**用标签整理魔法笔记**：可以手动给笔记添加标签，组合多个标签筛选时只显示同时匹配的笔记，并通过标签管理器重命名、合并或删除标签。笔记工具也支持创建、更新标签及按标签查找，标签变更仍需用户提出要求，不会自动分类。",
+            "**打开笔记时保留列表和阅读空间**：当前笔记旁保留可调宽、可收起的笔记列表，详情使用紧凑的固定工具栏，切换笔记保留阅读位置并保护未保存草稿。“返回概览”回到全宽笔记卡片网格，窄窗口在列表与详情间切换。",
             "**智能心跳按变化回顾并提供有依据的建议**：心跳计划现在触发共享的增量回顾，不再另外生成一份心跳报告；可选择只更新记忆图谱，或根据本次回顾中的未决事项、分歧、修订和候选约定生成监督建议。建议支持核对来源、接受或忽略，接受未决事项会创建暂停任务，确认候选约定才会写为长期背景；建议生成失败可单独重试，不撤销已完成的回顾。",
             "**手动回顾默认只处理新增与变化内容**：点击“回顾”会沿用处理进度，无变化时不再调用模型；需要重读所选区间时，可从“更多”选择“重新整理…”并确认。重新整理不会推进或重置共享进度，自动回顾也不会续跑用户主动暂停的运行。"
           ],
           "fixes": [
+            "**再次在终端中打开 OpenCode 更快**：插件依赖改为在用户数据目录中缓存复用，不再每次启动都复制完整依赖树；随包版本变化后会更新缓存。首次准备和 OpenCode 自身启动仍需时间，模型配置、Skills 和 Ask 模式插件仍按每次启动生成。",
+            "**减少 OpenCode 工具名称过长导致的失败**：缩短临时 MCP 名称及转发的自定义工具名称，并在同一会话中尽量保持稳定。并行请求仍使用独立占用的名称，不改变工具权限或执行范围。",
+            "**滚动文件列表时保留工作区操作栏**：文件列表独立滚动，视图切换、刷新、新建和目录导航保持可见。没有 Git 的项目也保留“文件”入口。",
             "**取消后不再把上一轮问题并入新请求**：模型可见历史保留中断回复的已有文字，并明确标记取消或失败，避免用户问题成为没有回应的孤立输入。本地 OpenCode 复用会话时保留取消轮次，在下一轮附带一次中断说明，失败请求仍按原规则清理。",
             "**展开执行清单不再挤动聊天内容**：OpenCode 与 Continue 的清单详情改在锚定浮层中展开，长清单可在浮层内滚动。点击外部可关闭，按 Escape 关闭后焦点回到入口，进度保存规则不变。",
             "**笔记保存成功后退出编辑**：文字和画布记录保存修改后回到只读内容，自动评论完成后不会重新打开编辑器。保存失败时保留草稿，便于修改和重试。"
           ],
           "notices": [
-            "首次启动升级到 schema 50，将旧心跳报告中仍待确认的记忆迁为待处理约定，不自动确认或删除原记录。升级前请关闭应用并备份完整数据库及相邻 `notes/` 目录；旧客户端不能打开升级后的库，回退需恢复完整升级前备份。",
+            "首次启动升级到 schema 51，增加笔记标签存储，并将旧心跳报告中仍待确认的记忆迁为待处理约定，不自动确认或删除原记录。升级前请关闭应用并备份完整数据库及相邻 `notes/` 目录；旧客户端不能打开升级后的库，回退需恢复完整升级前备份。",
             "本轮只更新 Desktop，Agent 保持 **0.15.1**，无需重新下载 Agent 包。心跳回顾及有候选时的建议生成可能产生模型费用；项目与全局仍分别维护处理进度，会话级实时主动介入尚未实现。"
           ]
         },
         "en-US": {
           "highlights": [],
           "features": [
+            "**Organize Magic Notes with tags**: Add tags manually, combine filters to find notes matching every selected tag, and rename, merge, or delete tags in the manager. Note tools also support creating, updating, and filtering tags when requested by the user; notes are not tagged automatically.",
+            "**Keep the note list beside your reading area**: Open notes retain a resizable, collapsible list beside compact details with a sticky toolbar; switching notes preserves reading positions and protects unsaved drafts. Back to overview restores the full-width card grid, while narrow windows switch between list and detail.",
             "**Smart heartbeat reviews changes and offers evidence-backed suggestions**: Plans now trigger the shared incremental review instead of generating a separate heartbeat report; choose between updating memory and graphs only or generating suggestions from open items, disagreements, revisions, and candidate conventions. Inspect sources, accept, or dismiss suggestions; accepting an open item creates a paused task, and only confirming a convention saves it as long-term background. Suggestion generation can be retried independently without undoing a completed review.",
             "**Manual review defaults to new and changed content**: Review resumes from saved processing progress and makes no model calls when nothing has changed; choose Reanalyze from More and confirm to reread the selected period. Reanalysis neither advances nor resets shared progress, and automatic reviews no longer resume runs you explicitly paused."
           ],
           "fixes": [
+            "**Reopen OpenCode in the terminal faster**: Plugin dependencies are cached under user data instead of copying the entire tree on every launch, and refreshed when the bundled version changes. Initial preparation and OpenCode startup still take time; model settings, Skills, and Ask-mode plugins remain launch-specific.",
+            "**Reduce failures from long OpenCode tool names**: Temporary MCP names and forwarded custom tool names are shorter and remain stable within a conversation where possible. Parallel requests retain separately leased names, with no changes to tool permissions or execution scope.",
+            "**Keep workspace controls visible while scrolling**: The file list scrolls independently while view selection, refresh, creation actions, and directory navigation stay visible. Projects without Git retain the Files entry.",
             "**Keep cancelled questions out of the next request**: Model-visible history retains partial replies with explicit interruption or failure markers, rather than leaving their user messages unanswered. Reused local OpenCode sessions retain cancelled turns and receive a one-time interruption notice on the next turn; failed requests retain their existing cleanup behavior.",
             "**Expand execution checklists without shifting chat content**: OpenCode and Continue checklist details now open in an anchored floating panel with internal scrolling for long lists. Click outside to close, or press Escape to close and return focus to the trigger; saved progress behavior is unchanged.",
             "**Leave note editing after a successful save**: Saved text and canvas records return to read-only content, and automatic comments no longer reopen the editor. Failed saves retain your draft for correction and retry."
           ],
           "notices": [
-            "First launch upgrades to schema 50 and carries still-proposed memories from older heartbeat reports into pending conventions, without automatically confirming or deleting the original records. Close the app and back up the complete database and adjacent `notes/` directory first; older clients cannot open the upgraded database, so rollback requires the complete pre-upgrade backup.",
+            "First launch upgrades to schema 51, adds note-tag storage, and carries still-proposed memories from older heartbeat reports into pending conventions without automatically confirming or deleting the original records. Close the app and back up the complete database and adjacent `notes/` directory first; older clients cannot open the upgraded database, so rollback requires the complete pre-upgrade backup.",
             "This is a Desktop-only update; Agent remains **0.15.1**, with no Agent package download required. Heartbeat reviews and suggestion generation when candidates exist may incur model charges; project and global processing progress remain separate, and real-time conversation-level proactive intervention is not implemented."
           ]
         }

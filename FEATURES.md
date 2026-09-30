@@ -956,8 +956,11 @@ records are listed separately and do not introduce another feature status.
   Desktop and Agent release channels.
 - Desktop `0.15.5` updates Smart heartbeat and incremental review, preserves
   cancelled-turn history, floats checklist details, and exits note editing after
-  saving. Schema 50 carries pending legacy memory proposals into unconfirmed
-  conventions; back up the database and adjacent notes before upgrading.
+  saving. It also adds manual note tags with AND filtering and rename/merge/delete,
+  a persistent two-pane note layout with a full-width overview, sticky workspace
+  file controls, cached OpenCode terminal dependencies, and shorter MCP names.
+  Schema 51 adds tag storage alongside the migration of pending legacy memory
+  proposals into unconfirmed conventions; back up the database and adjacent notes before upgrading.
   See the [preparation record](./docs/development/release-preparation-0.15.5.md).
 - Desktop `0.15.4` introduces layered Runtime/model choices and separate
   system-task usage, and reduces duplicate Runtime instructions and history.

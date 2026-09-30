@@ -1077,7 +1077,8 @@ app
               nestedMenus: panel.querySelectorAll('[role=tablist]').length,
               reports: !!panel.querySelector('#heartbeat-reports-title'),
               reportWidth: panel.querySelector('#heartbeat-panel-history > section')?.getBoundingClientRect().width,
-              suggestions: !!panel.querySelector('#heartbeat-memory-title'),
+              suggestions: !!panel.querySelector('#supervision-suggestions-title'),
+              suggestionItems: panel.querySelectorAll('.supervision-suggestions__list > li').length,
               audit: !!panel.querySelector('#heartbeat-runs-title'),
               plans: !!panel.querySelector('#heartbeat-panel-plans'),
               settingsBadge: !!panel.querySelector('.scope-badge'),
@@ -1090,7 +1091,8 @@ app
            assert.equal(menuLayout.reports, tab === 'plans')
            if (tab === 'plans') assert(Math.abs(menuLayout.reportWidth - menuLayout.panelWidth) <= 1, 'Reports must use full reading width')
            assert.equal(menuLayout.suggestions, tab === 'plans')
-          assert.equal(menuLayout.audit, tab === 'plans')
+          assert.equal(menuLayout.suggestionItems, tab === 'plans' ? 2 : 0)
+          assert.equal(menuLayout.audit, false, 'Run audit belongs to Activity, not Smart heartbeat')
           assert.equal(menuLayout.plans, tab === 'plans')
           if (tab === 'settings') {
             assert(!menuLayout.settingsBadge && !menuLayout.refresh, 'Redundant settings badge/refresh')
@@ -1099,7 +1101,7 @@ app
           reports.push({ scenario: 'menu-placement', theme, tab, ...menuLayout })
           await writeFile(join(artifacts, `menu-${tab}-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
           const anchors = tab === 'settings' ? ['.heartbeat-settings__editor:last-child']
-             : tab === 'plans' ? ['#heartbeat-panel-overview', '#heartbeat-panel-suggestions', '#heartbeat-panel-history', '[aria-labelledby=heartbeat-runs-title]'] : []
+             : tab === 'plans' ? ['#heartbeat-panel-overview', '.supervision-suggestions', '#heartbeat-panel-history'] : []
           for (const [index, anchor] of anchors.entries()) {
             await js(`document.querySelector('${anchor}').scrollIntoView({block:'start'})`)
             await settle()
