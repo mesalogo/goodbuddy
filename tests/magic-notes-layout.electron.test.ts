@@ -30,6 +30,7 @@ it('resizes record columns with native Electron input and preserves desktop widt
       const fs = require('node:fs');
       const assert = require('node:assert/strict');
       app.commandLine.appendSwitch('force-device-scale-factor', '1');
+      app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
       app.setPath('userData', ${JSON.stringify(join(directory, 'profile'))});
       app.whenReady().then(async () => {
         const win = new BrowserWindow({ show: true, width: 1280, height: 800, useContentSize: true,
@@ -126,6 +127,21 @@ it('resizes record columns with native Electron input and preserves desktop widt
         assert.equal((await rect(saveButton)).width, 0);
         assert.equal(await js('document.querySelector(".magic-notes-ai-pane")?.checkVisibility() ?? false'), false, 'AI stays closed for notes without comments');
         assert.equal((await rect('.magic-notes-index-pane')).width, 0, 'Record index starts collapsed');
+        await click('.magic-note-entry button[aria-label="Edit"]');
+        await wait('!!document.querySelector(".magic-note-entry__editor .ql-editor")');
+        const entryBox = await rect('.magic-note-entry');
+        const entryHeader = await rect('.magic-note-entry > header');
+        const editToolbar = await rect('.magic-note-entry__editor .ql-toolbar');
+        const editInput = await rect('.magic-note-entry__editor .ql-container');
+        for (const box of [editToolbar, editInput]) {
+          assert(Math.abs(box.x - entryBox.x - 1) <= 1 && Math.abs(box.width - entryBox.width + 2) <= 1, 'Editor fills the card inside its border: ' + JSON.stringify({ box, entryBox }));
+        }
+        assert(Math.abs(editToolbar.y - entryHeader.y - entryHeader.height) <= 1, 'Toolbar directly follows the entry header');
+        assert(Math.abs(editInput.y - editToolbar.y - editToolbar.height) <= 1, 'Input directly follows the toolbar');
+        await screenshot('magic-notes-entry-editor');
+        await click('.magic-note-entry__editor-actions .secondary-button');
+        await wait('!document.querySelector(".magic-note-entry__editor")');
+        await js('document.querySelector(".magic-notes-stream-pane").scrollTop = 0');
         const focusComposer = async () => { await js('document.querySelector(' + JSON.stringify(editor) + ').focus()'); await settle(); };
         await focusComposer();
         const emptyHeight = (await rect(editor)).height;
@@ -141,6 +157,14 @@ it('resizes record columns with native Electron input and preserves desktop widt
         const index = '.magic-notes-index-pane', handle = '.magic-notes-index-resize-handle', stream = '.magic-notes-stream-pane';
         await click('#magic-notes-index-toggle');
         await click('button[aria-controls="magic-notes-ai-pane"]');
+        const listHeading = await rect('#magic-library-panel-notes > .magic-notes-pane-heading');
+        const detailToolbar = await rect('.magic-note-detail-toolbar');
+        const aiHeading = await rect('.magic-notes-ai-pane .inline-help-label');
+        for (const heading of [listHeading, aiHeading]) {
+          assert(Math.abs(heading.y - detailToolbar.y) <= 1, 'Pane headings share a top edge: ' + JSON.stringify({ heading, detailToolbar }));
+          assert(Math.abs(heading.height - detailToolbar.height) <= 1, 'Pane headings share a row height: ' + JSON.stringify({ heading, detailToolbar }));
+        }
+        await screenshot('magic-notes-aligned-headings');
         assert.equal((await rect(index)).width, 168);
         const firstRecord = await rect('.magic-note-record');
         assert.equal(firstRecord.x, (await rect(index)).x, 'Thumbnails align with the left pane edge');

@@ -1248,6 +1248,7 @@
 }
 
 .magic-notes-page {
+  --magic-notes-heading-height: 40px;
   color-scheme: light;
   display: flex;
   min-width: 0;
@@ -1321,6 +1322,14 @@
 
 .magic-notes-workspace--notes .magic-notes-library-panel {
   gap: var(--space-2);
+}
+
+.magic-notes-workspace--notes .magic-notes-pane-heading {
+  min-height: var(--magic-notes-heading-height);
+}
+
+.magic-notes-workspace--notes .magic-notes-pane-heading :is(.icon-button, .magic-note-tag-manager-button) {
+  margin-block: 0;
 }
 
 .magic-notes-workspace--notes .magic-notes-card-grid {
@@ -1929,7 +1938,16 @@
 }
 
 .magic-notes-ai-pane {
-  padding: var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.magic-notes-ai-pane > .magic-notes-ai-controls {
+  padding-top: 0;
+}
+
+.magic-notes-ai-pane > .magic-notes-ai-controls .inline-help-label {
+  min-height: var(--magic-notes-heading-height);
+  margin-bottom: 0;
 }
 
 .magic-todo-source-entry {
@@ -2481,7 +2499,7 @@
   z-index: 2;
   top: 0;
   display: flex;
-  min-height: 40px;
+  min-height: var(--magic-notes-heading-height);
   align-items: center;
   margin-inline: calc(-1 * var(--magic-note-stream-gutter, var(--space-4)));
   padding: var(--space-1) var(--magic-note-stream-gutter, var(--space-4));
@@ -2752,7 +2770,15 @@
 
 .magic-note-entry__editor {
   min-width: 0;
+}
+
+.magic-note-entry--canvas-editing > .magic-note-entry__editor {
   padding: var(--space-3);
+}
+
+.magic-note-entry__editor > .magic-note-editor,
+.magic-note-composer > .magic-note-editor {
+  border-radius: 0;
 }
 
 .magic-note-entry__delete {
@@ -2771,7 +2797,8 @@
 }
 
 .magic-note-entry__editor-actions {
-  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .magic-note-editor {
