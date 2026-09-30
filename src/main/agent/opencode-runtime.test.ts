@@ -240,6 +240,7 @@ function runClient(events: Record<string, unknown>[]) {
           [input.name]: { status: "connected" },
         },
         error: undefined,
+        response: { status: 200 },
       })),
       disconnect: vi.fn().mockResolvedValue({ data: true, error: undefined }),
     },
@@ -3248,7 +3249,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     const fail = async (input?: { name?: string }) => {
       if (thrown) throw new Error(failure);
       if (apiError) return { error: { name: "UnknownError", data: { message: failure } }, response: { status: 403 } };
-      return { data: status === "missing" ? {} : {
+      return { response: { status: 200 }, data: status === "missing" ? {} : {
         [input!.name!]: { status: status ?? "failed", error: failure },
       } };
     };
@@ -3312,9 +3313,21 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         expect((record.error as Error).message).toBe("Local MCP operation failed");
       }
       if (attempts === 2) {
-        expect(add.mock.calls[1]![0]).toEqual(add.mock.calls[0]![0]);
+        expect(add.mock.calls[1]![0]?.config).toEqual(add.mock.calls[0]![0]?.config);
+        if (thrown) expect(add.mock.calls[1]![0]?.name).not.toBe(add.mock.calls[0]![0]?.name);
+        else expect(add.mock.calls[1]![0]?.name).toBe(add.mock.calls[0]![0]?.name);
         expect(disconnect.mock.invocationCallOrder[0]).toBeGreaterThan(add.mock.invocationCallOrder[0]!);
         expect(disconnect.mock.invocationCallOrder[0]).toBeLessThan(add.mock.invocationCallOrder[1]!);
+      }
+      if (succeeds) {
+        const name = add.mock.calls.at(-1)![0]!.name;
+        const toolId = `${name}_${kind === "custom" ? "custom_tool" : "knowledge_search"}`;
+        expect(setup.session.create).toHaveBeenCalledWith(expect.objectContaining({
+          permission: expect.arrayContaining([{ permission: toolId, pattern: "*", action: "allow" }]),
+        }), expect.anything());
+        expect(setup.session.promptAsync).toHaveBeenCalledWith(expect.objectContaining({
+          tools: expect.objectContaining({ [toolId]: true }),
+        }), expect.anything());
       }
       expect(add.mock.calls[0]![0]?.config).toMatchObject({
         headers: { Authorization: `Bearer ${secret}` }, oauth: false,
@@ -3403,6 +3416,9 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           expect(observeFailure.mock.calls[0]![0].mcp).toMatchObject({ category: "transport-failure" });
         }
         expect(add).toHaveBeenCalledTimes(scenario === "recovered" || scenario === "exhausted" ? 2 : 1);
+        if (add.mock.calls.length === 2) {
+          expect(add.mock.calls[1]![0]?.name).not.toBe(add.mock.calls[0]![0]?.name);
+        }
         expect(order).toEqual(scenario === "recovered" || scenario === "exhausted"
           ? ["add", "disconnect", "add", "disconnect"]
           : scenario.startsWith("cleanup-") ? ["add", "disconnect", "disconnect"] : ["add", "disconnect"]);
@@ -3465,12 +3481,13 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     }
   });
 
-  it.each(["reject", "error", "false", "timeout"])("does not retry or reuse the slot after MCP cleanup %s", async (failure) => {
+  it.each(["reject", "error", "false", "timeout"])("does not retry or reuse the name after MCP cleanup %s", async (failure) => {
     const setup = runClient([
       { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
     ]);
     const add = vi.mocked(setup.client.mcp.add);
     add.mockImplementationOnce((async (input: { name: string }) => ({
+      response: { status: 200 },
       data: { [input.name]: { status: "failed", error: "connect ECONNREFUSED" } },
     })) as never);
     const disconnect = vi.mocked(setup.client.mcp.disconnect);
@@ -3504,7 +3521,9 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       expect(new Set(observeFailure.mock.calls.map(([record]) => record.mcp?.correlationId)).size).toBe(1);
       disconnect.mockResolvedValue({ data: true } as never);
       await collect("second");
-      expect(add.mock.calls[1]![0]?.name).toBe(`${add.mock.calls[0]![0]?.name}-2`);
+      expect(add.mock.calls[1]![0]?.name).not.toBe(add.mock.calls[0]![0]?.name);
+      await collect("third");
+      expect(add.mock.calls[2]![0]?.name).toBe(add.mock.calls[1]![0]?.name);
     } finally {
       await runtime.dispose();
     }
@@ -3669,12 +3688,10 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       );
       const base = names[0]!;
       expect(base).toMatch(/^gbd-[a-f0-9]{6}$/u);
-      // request-1 failed to disconnect (rejected) -> slot 1 stays leased.
-      expect(names[1]).toBe(`${base}-2`);
-      // request-2 disconnect returned an error -> slot 2 stays leased.
-      expect(names[2]).toBe(`${base}-3`);
-      // request-3 disconnected cleanly -> slot 3 is reusable.
-      expect(names[3]).toBe(`${base}-3`);
+      expect(new Set(names.slice(0, 3)).size).toBe(3);
+      expect(names.every(name => name.length <= 12)).toBe(true);
+      // Successful cleanup preserves the replacement name for the same slot.
+      expect(names[3]).toBe(names[2]);
     } finally {
       await runtime.dispose();
     }
@@ -3701,6 +3718,81 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     expect(runtime.acquireTemporaryMcpSlot(setup.client, "abc123")).toBe(4);
     expect(createTemporaryMcpName("gbd-", "abc123", 1)).toBe("gbd-abc123");
     expect(createTemporaryMcpName("gbc-", "abc123", 4)).toBe("gbc-abc123-4");
+    for (const generation of [1, 35, 36, 36 ** 8 - 1]) {
+      const name = createTemporaryMcpName("gbc-", "abc123", 9, generation);
+      expect(`${name}_${"x".repeat(51)}`).toHaveLength(64);
+      expect(name).not.toBe(createTemporaryMcpName("gbc-", "abc123", 9));
+    }
+    expect(() => createTemporaryMcpName("gbc-", "abc123", 9, 36 ** 8)).toThrow("generations exhausted");
+  });
+
+  it.each(["throw", "no-response", "timeout", "abort"])("retires an uncertain MCP add after %s despite successful disconnect", async (failure) => {
+    const setup = runClient([
+      { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    const controller = new AbortController();
+    const add = vi.mocked(setup.client.mcp.add);
+    add.mockImplementationOnce((async () => {
+      if (failure === "throw") throw new Error("unknown initialization failure");
+      if (failure === "no-response") return { error: new Error("unknown initialization failure") };
+      if (failure === "abort") controller.abort(new Error("cancel initialization"));
+      return new Promise(() => {});
+    }) as never);
+    const runtime = embeddedRuntime(setup.client, {
+      knowledgeGateway: {
+        getEndpoint: () => "http://127.0.0.1:4567/mcp",
+        getAvailableToolNames: () => ["knowledge_search"],
+      } as unknown as KnowledgeMcpGateway,
+    }, { controlRequestTimeoutMs: 50 });
+    const run = async (signal: AbortSignal) => {
+      for await (const event of runtime.run({
+        requestId: crypto.randomUUID(), conversationId: "uncertain", prompt: "test", workMode: "ask",
+        knowledgeCapabilityToken: "token",
+      }, signal)) void event;
+    };
+    try {
+      await expect(run(controller.signal)).rejects.toThrow();
+      expect(setup.client.mcp.disconnect).toHaveBeenCalledOnce();
+      await run(new AbortController().signal);
+      await run(new AbortController().signal);
+      const names = add.mock.calls.map(([input]) => input!.name);
+      expect(names[1]).not.toBe(names[0]);
+      expect(names[2]).toBe(names[1]);
+      expect(vi.mocked(setup.client.mcp.disconnect).mock.calls.map(([input]) => input!.name)).toEqual(names);
+    } finally { await runtime.dispose(); }
+  });
+
+  it("releases active slots after more than nine failed cleanups and isolates replacement generations", async () => {
+    const setup = runClient([
+      { id: "idle", type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    const disconnect = vi.mocked(setup.client.mcp.disconnect);
+    disconnect.mockResolvedValue({ data: false } as never);
+    const runtime = embeddedRuntime(setup.client, {
+      knowledgeGateway: {
+        getEndpoint: () => "http://127.0.0.1:4567/mcp",
+        getAvailableToolNames: () => ["knowledge_search"],
+      } as unknown as KnowledgeMcpGateway,
+    });
+    const run = async (conversationId: string) => {
+      for await (const event of runtime.run({
+        requestId: crypto.randomUUID(), conversationId, prompt: "test", workMode: "ask",
+        knowledgeCapabilityToken: "token",
+      }, new AbortController().signal)) void event;
+    };
+    try {
+      for (let i = 0; i < 12; i++) await run("cleanup-failures");
+      await run("other-conversation");
+      disconnect.mockResolvedValue({ data: true } as never);
+      await run("other-conversation");
+      await run("cleanup-failures");
+      await run("cleanup-failures");
+      const names = vi.mocked(setup.client.mcp.add).mock.calls.map(([input]) => input!.name);
+      expect(new Set(names.slice(0, 15)).size).toBe(15);
+      expect(names[15]).toBe(names[14]);
+      expect(names.every(name => name !== undefined && name.length <= 12)).toBe(true);
+      expect(disconnect.mock.calls.map(([input]) => input!.name)).toEqual(names);
+    } finally { await runtime.dispose(); }
   });
 
   it("enables the deterministic MCP tool name when tool ids omit dynamic tools", async () => {

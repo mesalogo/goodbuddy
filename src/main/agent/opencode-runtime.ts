@@ -553,7 +553,13 @@ export function createTemporaryMcpName(
   prefix: (typeof TEMPORARY_MCP_PREFIXES)[number],
   conversationKey: string,
   slot: number,
+  generation = 0,
 ): string {
+  if (generation > 0) {
+    // Eight base-36 digits keep the registration within the 12-character budget.
+    if (generation >= 36 ** 8) throw new Error("OpenCode MCP name generations exhausted");
+    return `${prefix}${generation.toString(36).padStart(8, "0")}`;
+  }
   return `${prefix}${conversationKey}${slot === 1 ? "" : `-${slot}`}`;
 }
 
@@ -776,14 +782,11 @@ export class OpenCodeRuntime implements AgentRuntime {
   >();
   private readonly conversationRunTails = new Map<string, Promise<void>>();
   private mcpMutationTail: Promise<void> = Promise.resolve();
-  // Temporary MCP name slots per OpenCode client and conversation. A slot is
-  // held while a request owns its MCP connections and is only freed after
-  // every disconnect succeeds, so a request never reuses a name that may still
-  // be bound to another request's capability token. A new client (restarted
-  // server) starts with a clean MCP registry and therefore fresh slots.
+  // Slots bound active requests; generations retire uncertain names without
+  // retaining a slot forever. Replacement names are unique across this client.
   private readonly temporaryMcpSlots = new WeakMap<
     OpencodeClient,
-    Map<string, Set<number>>
+    { generation: number; conversations: Map<string, Map<number, { active: boolean; generation: number }>> }
   >();
   private readonly dependencies: OpenCodeRuntimeDependencies;
 
@@ -865,19 +868,20 @@ export class OpenCodeRuntime implements AgentRuntime {
     client: OpencodeClient,
     conversationKey: string,
   ): number {
-    let byConversation = this.temporaryMcpSlots.get(client);
-    if (!byConversation) {
-      byConversation = new Map();
-      this.temporaryMcpSlots.set(client, byConversation);
+    let state = this.temporaryMcpSlots.get(client);
+    if (!state) {
+      state = { generation: 0, conversations: new Map() };
+      this.temporaryMcpSlots.set(client, state);
     }
-    let occupied = byConversation.get(conversationKey);
+    let occupied = state.conversations.get(conversationKey);
     if (!occupied) {
-      occupied = new Set();
-      byConversation.set(conversationKey, occupied);
+      occupied = new Map();
+      state.conversations.set(conversationKey, occupied);
     }
     for (let slot = 1; slot <= MAX_TEMPORARY_MCP_SLOTS; slot += 1) {
-      if (!occupied.has(slot)) {
-        occupied.add(slot);
+      const entry = occupied.get(slot);
+      if (!entry?.active) {
+        occupied.set(slot, { active: true, generation: entry?.generation ?? 0 });
         return slot;
       }
     }
@@ -891,12 +895,14 @@ export class OpenCodeRuntime implements AgentRuntime {
     conversationKey: string,
     slot: number,
   ): void {
-    const byConversation = this.temporaryMcpSlots.get(client);
+    const byConversation = this.temporaryMcpSlots.get(client)?.conversations;
     const occupied = byConversation?.get(conversationKey);
     if (!byConversation || !occupied) {
       return;
     }
-    occupied.delete(slot);
+    const entry = occupied.get(slot);
+    if (entry?.generation) entry.active = false;
+    else occupied.delete(slot);
     if (occupied.size === 0) {
       byConversation.delete(conversationKey);
     }
@@ -2251,7 +2257,17 @@ export class OpenCodeRuntime implements AgentRuntime {
       prefix: (typeof TEMPORARY_MCP_PREFIXES)[number],
     ): string => {
       mcpSlot ??= this.acquireTemporaryMcpSlot(client, mcpConversationKey);
-      return createTemporaryMcpName(prefix, mcpConversationKey, mcpSlot);
+      const entry = this.temporaryMcpSlots.get(client)!.conversations.get(mcpConversationKey)!.get(mcpSlot)!;
+      return createTemporaryMcpName(prefix, mcpConversationKey, mcpSlot, entry.generation);
+    };
+    const retireMcpName = (name: string): void => {
+      const state = this.temporaryMcpSlots.get(client)!;
+      const entry = state.conversations.get(mcpConversationKey)!.get(mcpSlot!)!;
+      const prefix = name.startsWith(KNOWLEDGE_MCP_PREFIX) ? KNOWLEDGE_MCP_PREFIX : CUSTOM_MCP_PREFIX;
+      // A late cleanup of an already retired name must not retire its successor.
+      if (createTemporaryMcpName(prefix, mcpConversationKey, mcpSlot!, entry.generation) === name) {
+        entry.generation = ++state.generation;
+      }
     };
     const subscriptionController = new AbortController();
     const imageCapabilityToken = request.imageToolBinding && request.workMode === 'execute'
@@ -2284,15 +2300,17 @@ export class OpenCodeRuntime implements AgentRuntime {
         category = result.error && !result.response ? "transport-failure"
           : status && status >= 400 ? "http-rejection" : "cleanup-failure";
       } catch {
-        // The uncertain connection keeps its slot until cleanup succeeds.
+        // The name is retired below; the active request can still release its slot.
       }
+      retireMcpName(name);
       observeMcpFailure({ ...metadata, phase: "disconnect", category, status,
         elapsedMs: Math.round(performance.now() - startedAt) });
       return false;
     };
-    const addMcp = (name: string, url: string, token: string, label: string) =>
+    const addMcp = (prefix: (typeof TEMPORARY_MCP_PREFIXES)[number], url: string, token: string, label: string) =>
       this.mutateMcp(signal, async () => {
-        for (let attempt = 0; attempt < 2; attempt++) {
+        let name = temporaryMcpName(prefix);
+        for (let attempt = 0; ; attempt++) {
           signal.throwIfAborted();
           const startedAt = performance.now();
           const metadata: McpAttempt = {
@@ -2304,9 +2322,12 @@ export class OpenCodeRuntime implements AgentRuntime {
           let retryableStatus = true;
           let category: DesktopMcpDiagnosticMetadata["category"] = "transport-failure";
           let httpStatus: number | undefined;
+          let attempted = false;
+          let confirmed = false;
           try {
             const added = await this.controlRequest(label, (controlSignal) => {
               attemptedMcpNames.set(name, metadata);
+              attempted = true;
               return client.mcp.add({
                 directory, name,
                 config: {
@@ -2316,10 +2337,11 @@ export class OpenCodeRuntime implements AgentRuntime {
                 },
               }, { signal: controlSignal });
             }, signal);
+            confirmed = !!added.response;
             const status = added.data?.[name];
             httpStatus = added.response?.status;
             const httpRejected = httpStatus !== undefined && httpStatus >= 400;
-            if (!httpRejected && !added.error && status?.status === "connected") return;
+            if (!httpRejected && !added.error && status?.status === "connected") return name;
             // With throwOnError:false the SDK resolves fetch failures without a response.
             const transportFailure = !!added.error && !added.response;
             category = transportFailure ? "transport-failure"
@@ -2330,6 +2352,9 @@ export class OpenCodeRuntime implements AgentRuntime {
               : status?.status ?? "unknown");
           } catch (error) {
             failure = error;
+          } finally {
+            // Aborting the HTTP client does not cancel OpenCode's pending add.
+            if (attempted && !confirmed) retireMcpName(name);
           }
           observeMcpFailure({ ...metadata, phase: "connect",
             category: signal.aborted ? "cancelled" : category, status: httpStatus,
@@ -2346,6 +2371,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           if (attempt > 0 || !retryableStatus || !transient) throw error;
           if (!await disconnectMcp(name, metadata)) throw error;
           attemptedMcpNames.delete(name);
+          name = temporaryMcpName(prefix);
         }
       });
     try {
@@ -2355,8 +2381,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         this.options.knowledgeGateway?.getEndpoint()
       ) {
         const knowledgeEndpoint = this.options.knowledgeGateway.getEndpoint()!;
-        knowledgeMcpName = temporaryMcpName(KNOWLEDGE_MCP_PREFIX);
-        await addMcp(knowledgeMcpName, knowledgeEndpoint, scopedCapabilityToken, "连接内置只读工具");
+        knowledgeMcpName = await addMcp(KNOWLEDGE_MCP_PREFIX, knowledgeEndpoint, scopedCapabilityToken, "连接内置只读工具");
         // OpenCode 1.18.x does not include dynamically added MCP tools in
         // experimental/tool/ids. Its model tool namespace is deterministic:
         // "<MCP server name>_<declared tool name>".
@@ -2382,8 +2407,7 @@ export class OpenCodeRuntime implements AgentRuntime {
               customMcpToken,
               signal,
             );
-          customMcpName = temporaryMcpName(CUSTOM_MCP_PREFIX);
-          await addMcp(customMcpName, customMcpEndpoint, customMcpToken, "连接自定义 MCP 工具");
+          customMcpName = await addMcp(CUSTOM_MCP_PREFIX, customMcpEndpoint, customMcpToken, "连接自定义 MCP 工具");
           knowledgeToolIds.push(
             ...tools.map((tool) => `${customMcpName}_${tool.name}`),
           );
@@ -3215,17 +3239,13 @@ export class OpenCodeRuntime implements AgentRuntime {
     } finally {
       subscriptionController.abort();
       if (imageCapabilityToken && imageCapabilityToken !== request.knowledgeCapabilityToken) this.options.knowledgeGateway?.revoke(imageCapabilityToken);
-      let allMcpDisconnected = true;
       for (const [name, metadata] of attemptedMcpNames) {
-        const disconnected = await this.mutateMcp(
+        await this.mutateMcp(
           new AbortController().signal,
           () => disconnectMcp(name, metadata),
         );
-        allMcpDisconnected &&= disconnected;
       }
-      // A slot whose connection may still be alive stays occupied so a later
-      // request cannot reuse a name bound to this request's token.
-      if (mcpSlot !== undefined && allMcpDisconnected) {
+      if (mcpSlot !== undefined) {
         this.releaseTemporaryMcpSlot(client, mcpConversationKey, mcpSlot);
       }
       if (customMcpToken) {

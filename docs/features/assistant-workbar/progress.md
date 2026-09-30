@@ -1,5 +1,22 @@
 # 工作栏实现与验证进度
 
+## 2026-10-01：本地 MCP 晚到初始化覆盖新连接
+
+根因修复见[本地 MCP 初始化失败恢复](./runtime-process-reuse-technical-design.md#41-本地-mcp-初始化失败恢复)。
+已核对随包 OpenCode 1.18.29：`MCP.add` 的初始化不随客户端取消而中止，完成后写入同名状态，
+并关闭该名称下已有的连接；`disconnect` 只处理当时已登记的客户端。旧实现在 `mcp.add`
+超时或取消后仍复用同一名称，前一轮的晚到初始化（授权已撤销，结果为 `failed`）会覆盖下一轮
+刚建立的连接。现在响应不确定的名称作废，后续改用唯一替代名称。
+
+验证：新增真实 OpenCode＋实际网关用例，通过本地代理挂起第一次 MCP `initialize`，
+使第一轮在 3 秒控制超时后结束，第二轮建立连接后再放行挂起的初始化。修复前该用例
+复现为第二轮连接状态从 `connected` 变为 `failed`；修复后第二轮连接保持 `connected`
+且请求完成。`opencode-runtime`、`opencode-runtime-lifecycle`、`knowledge-mcp-gateway`
+三个测试文件 180 项通过；`npm run typecheck` 通过；相关文件 ESLint 通过。模型为本地合成
+服务，外部模型调用 0 次。9 月 30 日那次失败的原始时序没有底层日志，未确认就是这一竞态；
+本次修复的是已复现的同类失败路径。尚未发布或替换已安装应用。
+
+
 ## 2026-09-30：本地 MCP 连接诊断与恢复
 
 已实现[本地 MCP 初始化失败恢复](./runtime-process-reuse-technical-design.md#41-本地-mcp-初始化失败恢复)。

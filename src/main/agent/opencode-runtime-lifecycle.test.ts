@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { createServer } from 'node:http'
+import { createServer, request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createOpencodeClient } from '@opencode-ai/sdk/v2'
@@ -91,7 +91,8 @@ it.skipIf(!existsSync(binaryPath))(
       expect(modelCalls).toBe(1)
       expect(operations).toEqual(['add-connected', 'disconnect-succeeded', 'add-connected', 'disconnect-succeeded'])
       expect(registrations).toHaveLength(2)
-      expect(registrations[1]).toEqual(registrations[0])
+      expect(registrations[1]?.name).not.toBe(registrations[0]?.name)
+      expect(registrations[1]?.config).toEqual(registrations[0]?.config)
       expect(registrations[0]?.config.headers.Authorization).toBe(`Bearer ${token}`)
       expect(records).toHaveLength(1)
       expect(records[0]?.mcp).toMatchObject({
@@ -113,6 +114,143 @@ it.skipIf(!existsSync(binaryPath))(
     }
   },
   60_000
+)
+
+it.skipIf(!existsSync(binaryPath))(
+  'keeps a later MCP connection when a timed-out OpenCode add settles afterwards',
+  async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-mcp-late-add-'))
+    let releaseModel!: () => void
+    const modelReleased = new Promise<void>(resolve => { releaseModel = resolve })
+    let modelStarted!: () => void
+    const modelPending = new Promise<void>(resolve => { modelStarted = resolve })
+    const model = createServer((_request, response) => {
+      modelStarted()
+      void modelReleased.then(() => {
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(`data: ${JSON.stringify({
+          id: 'late', object: 'chat.completion.chunk', created: 1, model: 'late',
+          choices: [{ index: 0, delta: { role: 'assistant', content: 'LATE_OK' }, finish_reason: 'stop' }]
+        })}\n\ndata: [DONE]\n\n`)
+      })
+    })
+    await new Promise<void>(resolve => model.listen(0, '127.0.0.1', resolve))
+    const modelAddress = model.address()
+    if (!modelAddress || typeof modelAddress === 'string') throw new Error('No model port')
+    const gateway = new KnowledgeMcpGateway({} as never)
+    await gateway.start()
+    const upstream = new URL(gateway.getEndpoint()!)
+    // Holds the first MCP initialize so OpenCode keeps initializing after the client gives up.
+    let releaseInitialize!: () => void
+    const initializeReleased = new Promise<void>(resolve => { releaseInitialize = resolve })
+    let heldInitializeSettled!: () => void
+    const heldInitializeDone = new Promise<void>(resolve => { heldInitializeSettled = resolve })
+    let heldInitialize = false
+    const proxy = createServer((request, response) => {
+      void (async () => {
+        const chunks: Buffer[] = []
+        for await (const chunk of request) chunks.push(chunk as Buffer)
+        const body = Buffer.concat(chunks)
+        const hold = !heldInitialize && request.method === 'POST' && body.toString().includes('"initialize"')
+        if (hold) {
+          heldInitialize = true
+          await initializeReleased
+        }
+        const forwarded = httpRequest({
+          host: upstream.hostname, port: upstream.port, path: request.url,
+          method: request.method, headers: request.headers
+        }, upstreamResponse => {
+          response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers)
+          upstreamResponse.pipe(response)
+          if (hold) upstreamResponse.on('end', heldInitializeSettled)
+        })
+        forwarded.on('error', () => response.destroy())
+        response.on('close', () => forwarded.destroy())
+        forwarded.end(body)
+      })().catch(() => response.destroy())
+    })
+    await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve))
+    const proxyAddress = proxy.address()
+    if (!proxyAddress || typeof proxyAddress === 'string') throw new Error('No proxy port')
+    const proxiedGateway = new Proxy(gateway, {
+      get: (target, key, receiver) => key === 'getEndpoint'
+        ? () => `http://127.0.0.1:${proxyAddress.port}/mcp`
+        : Reflect.get(target, key, receiver)
+    })
+    let client: ReturnType<typeof createOpencodeClient> | undefined
+    const added: string[] = []
+    const runtime = new OpenCodeRuntime({
+      embedded: true, binaryPath: '', bundledBinaryPath: binaryPath,
+      configPath: '', defaultWorkspace: workspace, knowledgeGateway: proxiedGateway,
+      modelProfile: {
+        id: crypto.randomUUID(), name: 'Late add fixture', modelName: 'late',
+        baseUrl: `http://127.0.0.1:${modelAddress.port}/v1`,
+        protocol: 'openai-chat-completions', authentication: 'none'
+      }
+    }, {
+      controlRequestTimeoutMs: 3_000,
+      createClient: options => {
+        client = createOpencodeClient({
+          ...options,
+          fetch: async (input, init) => {
+            const request = input instanceof Request ? input : new Request(input, init)
+            if (new URL(request.url).pathname === '/mcp' && request.method === 'POST') {
+              added.push((await request.clone().json() as { name: string }).name)
+            }
+            return fetch(request, init)
+          }
+        })
+        return client
+      }
+    })
+    const conversationId = crypto.randomUUID()
+    const run = async (): Promise<string> => {
+      const controller = new AbortController()
+      const token = gateway.grant(crypto.randomUUID(), [crypto.randomUUID()], controller.signal)!
+      const deadline = setTimeout(() => controller.abort(), 30_000)
+      let text = ''
+      try {
+        for await (const event of runtime.run({
+          requestId: crypto.randomUUID(), conversationId, workMode: 'ask',
+          prompt: 'Reply LATE_OK without tools.', knowledgeCapabilityToken: token
+        }, controller.signal)) {
+          if (event.type === 'text') text += event.delta
+        }
+        return text
+      } finally {
+        clearTimeout(deadline)
+        gateway.revoke(token)
+      }
+    }
+    try {
+      await expect(run()).rejects.toThrow('超时')
+      expect(added).toHaveLength(1)
+      const second = run()
+      await modelPending
+      expect(added).toHaveLength(2)
+      expect((await client!.mcp.status({ directory: workspace })).data?.[added[1]!]?.status).toBe('connected')
+      // The late add now finishes with a revoked token while the second request is live.
+      releaseInitialize()
+      await heldInitializeDone
+      await new Promise(resolve => setTimeout(resolve, 500))
+      const status = await client!.mcp.status({ directory: workspace })
+      expect(status.data?.[added[1]!]?.status).toBe('connected')
+      expect(added[1]).not.toBe(added[0])
+      releaseModel()
+      await expect(second).resolves.toBe('LATE_OK')
+    } finally {
+      releaseInitialize()
+      releaseModel()
+      await runtime.dispose()
+      await gateway.dispose()
+      proxy.closeAllConnections()
+      model.closeAllConnections()
+      await new Promise<void>(resolve => proxy.close(() => resolve()))
+      await new Promise<void>(resolve => model.close(() => resolve()))
+      await rm(workspace, { recursive: true, force: true })
+    }
+  },
+  90_000
 )
 
 it.skipIf(!existsSync(binaryPath))(
