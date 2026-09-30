@@ -1163,7 +1163,7 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByRole('tab', { name: '上下文控制' })
-    ).toHaveTextContent('直连模型的历史压缩与原文保留')
+    ).toHaveTextContent(/^上下文控制$/)
     const enabled = screen.getByRole('switch', {
       name: '自动压缩较早的对话'
     })
@@ -1796,15 +1796,22 @@ describe('SettingsPanel runtime files', () => {
     expect(content.parentElement).toBe(navigation.parentElement)
     expect(content).toHaveClass('settings-panel__content')
     expect(
-      screen.getByText('管理模型、Runtime、平台能力、消息通道与本地数据。')
-    ).toBeInTheDocument()
+      screen.queryByText('管理模型、Runtime、平台能力、消息通道与本地数据。')
+    ).not.toBeInTheDocument()
     const runtimeTab = screen.getByRole('tab', {
       name: 'Agent Runtime'
     })
-    expect(runtimeTab).toHaveTextContent('Agent Runtime')
-    expect(runtimeTab).toHaveTextContent(
-      '配置 Agent Runtime、默认工作区与原生能力'
-    )
+    expect(runtimeTab).toHaveTextContent(/^Agent Runtime$/)
+    expect(
+      Array.from(navigation.querySelectorAll('.settings-tabs__group-label'), node => node.textContent)
+    ).toEqual(['常规', '模型与执行', '功能与扩展', '系统'])
+    expect(within(navigation).getAllByRole('tab').map(tab => tab.id)).toEqual([
+      'settings-tab-appearance', 'settings-tab-platform-features',
+      'settings-tab-model', 'settings-tab-context-control', 'settings-tab-runtime',
+      'settings-tab-ssh-hosts',
+      'settings-tab-document-parsing', 'settings-tab-channels', 'settings-tab-roles',
+      'settings-tab-capabilities', 'settings-tab-security', 'settings-tab-about'
+    ])
   })
 
   it('omits the redundant close-only footer on passive settings pages', () => {

@@ -9021,9 +9021,10 @@ button > svg {
 }
 
 .settings-panel__description {
-  margin: 6px 0 0;
-  color: var(--text-muted);
-  font-size: 10px;
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  line-height: 1.6;
 }
 
 .settings-panel__body {
@@ -9038,15 +9039,12 @@ button > svg {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-6);
 }
 
 .settings-tabs {
-  display: grid;
-  padding: 3px;
-  border-radius: 9px;
-  background: var(--surface-muted);
-  grid-template-columns: repeat(10, 1fr);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
 }
 
 .settings-tabs button {
@@ -9055,23 +9053,31 @@ button > svg {
   justify-content: center;
   flex-direction: column;
   min-height: 34px;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 11px;
-  font-weight: 650;
+  font-size: var(--font-body);
+  font-weight: 500;
 }
 
-.settings-tabs button strong {
-  font-size: 11px;
+.settings-tabs button:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
 }
 
-.settings-tabs button small {
-  display: none;
+.settings-tabs__group-label {
+  flex: 0 0 auto;
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-1);
   color: var(--text-muted);
-  font-size: 9px;
-  font-weight: 400;
+  font-size: var(--font-caption);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings-tabs__group-label:first-child {
+  margin-top: 0;
 }
 
 .settings-page .settings-panel__body,
@@ -9288,7 +9294,7 @@ button > svg {
   display: flex;
   min-height: 0;
   max-height: 100%;
-  padding: 6px;
+  padding: var(--space-2);
   overflow-y: auto;
   align-self: stretch;
   flex-direction: column;
@@ -9371,8 +9377,8 @@ button > svg {
 .settings-page .settings-tabs button,
 .settings-backdrop .settings-tabs button {
   flex: 0 0 auto;
-  min-height: 58px;
-  padding: 10px 12px;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
   align-items: flex-start;
   justify-content: center;
   text-align: left;
@@ -9381,20 +9387,14 @@ button > svg {
 .settings-page .settings-tabs button strong,
 .settings-backdrop .settings-tabs button strong {
   font-size: var(--font-body);
-  line-height: 1.35;
-}
-
-.settings-page .settings-tabs button small,
-.settings-backdrop .settings-tabs button small {
-  display: block;
-  margin-top: 3px;
-  font-size: var(--font-caption);
+  font-weight: inherit;
   line-height: 1.35;
 }
 
 .settings-page .settings-tabs button[aria-selected='true'],
 .settings-backdrop .settings-tabs button[aria-selected='true'] {
   background: var(--accent-subtle);
+  font-weight: 650;
   box-shadow: none;
 }
 
@@ -9407,18 +9407,26 @@ button > svg {
 .settings-section {
   display: flex;
   flex-direction: column;
-  padding: 16px;
+  padding: var(--space-4);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-subtle);
-  gap: 13px;
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  gap: var(--space-4);
+}
+
+.settings-panel .settings-section .settings-section {
+  padding: var(--space-4) 0 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
 }
 
 .settings-section__title {
   display: flex;
   align-items: center;
-  color: var(--accent);
-  gap: 9px;
+  color: var(--text-secondary);
+  gap: var(--space-2);
 }
 
 .settings-section__title > div {
@@ -9440,12 +9448,14 @@ button > svg {
 
 .settings-section__title strong {
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-section-title);
 }
 
 .settings-section__title small {
-  color: var(--text-muted);
-  font-size: 9px;
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  line-height: 1.5;
 }
 
 .ssh-hosts-settings {
@@ -13123,6 +13133,11 @@ textarea.field-control {
   cursor: pointer;
   font-size: var(--font-body);
   gap: var(--space-3);
+}
+
+.toggle-row > input[role='switch'] {
+  order: 1;
+  margin-inline-start: auto;
 }
 
 .toggle-row input {
@@ -17785,13 +17800,9 @@ textarea.field-control {
   }
 
   .settings-page .settings-tabs button {
-    min-height: 52px;
+    min-height: 40px;
     align-items: flex-start;
     text-align: left;
-  }
-
-  .settings-page .settings-tabs button small {
-    display: block;
   }
 
   .heartbeat-center__metrics {
@@ -17839,10 +17850,6 @@ textarea.field-control {
   .settings-backdrop .settings-tabs button {
     min-height: 40px;
     padding: var(--space-2);
-  }
-
-  .settings-backdrop .settings-tabs button small {
-    display: none;
   }
 
   .settings-backdrop .settings-panel__header {
@@ -17905,7 +17912,7 @@ textarea.field-control {
     text-align: center;
   }
 
-  .settings-page .settings-tabs button small {
+  .settings-page .settings-tabs__group-label {
     display: none;
   }
 

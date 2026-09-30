@@ -10,6 +10,7 @@ import {
   X
 } from 'lucide-react'
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -2124,7 +2125,6 @@ export function SettingsPanel({
                   <X aria-hidden="true" size={19} />
                 </button>
               }
-              description={t('center.description')}
               headingId="settings-title"
               title={t('center.title')}
             />
@@ -2142,34 +2142,35 @@ export function SettingsPanel({
             className="settings-tabs"
             role="tablist"
           >
-            {visibleSettingsCategories.map((category) => (
-              <button
-                aria-controls={`settings-panel-${category.id}`}
-                aria-label={t(
-                  `categories.${category.translationKey}.label`
+            {visibleSettingsCategories.map((category, index) => (
+              <Fragment key={category.id}>
+                {visibleSettingsCategories[index - 1]?.group !== category.group && (
+                  <span className="settings-tabs__group-label" aria-hidden="true">
+                    {t(`categoryGroups.${category.group}`)}
+                  </span>
                 )}
-                aria-selected={activeTab === category.id}
-                id={`settings-tab-${category.id}`}
-                key={category.id}
-                onClick={(event) => {
-                  requestTabChange(category.id, event.currentTarget)
-                }}
-                onKeyDown={(event) =>
-                  handleTabKeyDown(event, category.id)
-                }
-                role="tab"
-                tabIndex={activeTab === category.id ? 0 : -1}
-                type="button"
-              >
-                <strong>
-                  {t(`categories.${category.translationKey}.label`)}
-                </strong>
-                <small>
-                  {t(
-                    `categories.${category.translationKey}.navigationDescription`
+                <button
+                  aria-controls={`settings-panel-${category.id}`}
+                  aria-label={t(
+                    `categories.${category.translationKey}.label`
                   )}
-                </small>
-              </button>
+                  aria-selected={activeTab === category.id}
+                  id={`settings-tab-${category.id}`}
+                  onClick={(event) => {
+                    requestTabChange(category.id, event.currentTarget)
+                  }}
+                  onKeyDown={(event) =>
+                    handleTabKeyDown(event, category.id)
+                  }
+                  role="tab"
+                  tabIndex={activeTab === category.id ? 0 : -1}
+                  type="button"
+                >
+                  <strong>
+                    {t(`categories.${category.translationKey}.label`)}
+                  </strong>
+                </button>
+              </Fragment>
             ))}
           </nav>
 

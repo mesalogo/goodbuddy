@@ -58,7 +58,6 @@ export function CapabilitiesAndToolsSettingsSection({
                 }
               ]}
               value={activeTab}
-              variant="segmented"
             />
           </div>
         }

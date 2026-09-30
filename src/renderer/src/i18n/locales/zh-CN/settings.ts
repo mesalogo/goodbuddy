@@ -17,6 +17,12 @@ export const settings = {
     close: '关闭设置',
     categoriesAriaLabel: '设置分类'
   },
+  categoryGroups: {
+    general: '常规',
+    execution: '模型与执行',
+    extensions: '功能与扩展',
+    system: '系统'
+  },
   categories: {
     appearance: {
       label: '外观',
@@ -26,7 +32,7 @@ export const settings = {
     platformFeatures: {
       label: '平台功能',
       navigationDescription: '功能入口与工作区能力',
-      description: '控制 GoodBuddy 工作区中显示的功能入口'
+      description: '管理快捷键、会话与通知、默认工作目录和远程项目'
     },
     model: {
       label: '模型连接',
@@ -47,7 +53,7 @@ export const settings = {
     runtime: {
       label: 'Agent Runtime',
       navigationDescription: '配置 Agent Runtime、默认工作区与原生能力',
-      description: '配置 Agent Runtime、默认工作区与原生能力'
+      description: '配置 Agent Runtime、模型来源与原生能力'
     },
     sshHosts: {
       label: '主机与远程执行',

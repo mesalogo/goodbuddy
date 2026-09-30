@@ -108,11 +108,34 @@ app.whenReady().then(async () => {
         await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&locale=${locale}&theme=${theme}`)
         await wait('!!document.querySelector(".model-connection-detail select")')
         await js('document.fonts.ready')
-        for (const [width, height, panelWidth] of [[680, 560], [720, 560], [721, 560], [740, 560], [960, 560], [1180, 760], [1180, 560, 740]]) {
+        const navigation = await js(`(() => {
+          const nav = document.querySelector('.settings-tabs');
+          return { ids: [...nav.querySelectorAll('[role=tab]')].map(e => e.id),
+            groups: nav.querySelectorAll('.settings-tabs__group-label').length,
+            descriptions: nav.querySelectorAll('small').length,
+            font: getComputedStyle(nav.querySelector('strong')).fontSize };
+        })()`)
+        assert.deepEqual(navigation.ids, ['appearance', 'platform-features', 'model', 'context-control', 'runtime',
+          'document-parsing', 'channels', 'roles', 'capabilities', 'security', 'about'].map(id => `settings-tab-${id}`))
+        assert.equal(navigation.groups, 4)
+        assert.equal(navigation.descriptions, 0)
+        assert.equal(navigation.font, '13px')
+        await js('document.querySelector("#settings-tab-model").focus()')
+        await key('Down')
+        await wait('document.activeElement.id === "settings-tab-context-control"')
+        await key('Up')
+        await wait('document.activeElement.id === "settings-tab-model" && !!document.querySelector(".model-connection-detail select")')
+        observations.push({ locale, theme, navigation })
+        for (const [width, height, panelWidth] of [[640, 420], [680, 560], [720, 640], [721, 560], [740, 560], [960, 720], [1280, 800], [1180, 560, 740]]) {
           win.setContentSize(width, height)
           await wait(`innerWidth === ${width} && innerHeight === ${height}`)
           await settle()
           await js(`document.querySelector('.settings-panel').style.width=${JSON.stringify(panelWidth ? `${panelWidth}px` : '')}`)
+          if (width === 1280 || width === 640) {
+            await js("document.querySelector('.settings-panel__content').scrollTop=0")
+            await settle()
+            await screenshot(`${locale}-${theme}-settings-overview-${width}`)
+          }
           await js("document.querySelector('.model-connection-detail select').scrollIntoView({block:'center'})")
           const result = await js(`(() => {
             const e=document.querySelector('.model-connection-detail select'),s=getComputedStyle(e),r=e.getBoundingClientRect();
@@ -136,6 +159,37 @@ app.whenReady().then(async () => {
           await wait('document.querySelector(".model-connection-detail select").value==="openai-chat-completions"')
           observations.push({ locale, theme, width, height, panelWidth, ...result })
           await screenshot(`${locale}-${theme}-settings-${width}${panelWidth ? '-narrow-container' : ''}`)
+          const switchSelector = '.model-connection-detail .toggle-row input[role="switch"]'
+          await js(`document.querySelector(${JSON.stringify(switchSelector)}).scrollIntoView({block:'center'})`)
+          await settle()
+          const switchLayout = await js(`(() => {
+            const input=document.querySelector(${JSON.stringify(switchSelector)}),row=input.closest('.toggle-row'),
+              control=input.getBoundingClientRect(),label=row.querySelector('span').getBoundingClientRect(),bounds=row.getBoundingClientRect();
+            return {labelBeforeSwitch:label.right<=control.left,rightAligned:Math.abs(control.right-bounds.right)<1,
+              width:control.width,height:control.height};
+          })()`)
+          assert.deepEqual(switchLayout, { labelBeforeSwitch: true, rightAligned: true, width: 38, height: 22 })
+          await click(`${switchSelector} + span`)
+          await wait(`document.querySelector(${JSON.stringify(switchSelector)}).checked`)
+          await js(`document.querySelector(${JSON.stringify(switchSelector)}).focus()`)
+          await key('Space')
+          await wait(`!document.querySelector(${JSON.stringify(switchSelector)}).checked`)
+          observations.push({ locale, theme, width, height, panelWidth, switchLayout })
+          if (width === 640 || width === 1280) await screenshot(`${locale}-${theme}-settings-switch-${width}`)
+          if (width === 1280 || width === 640) {
+            await js("document.querySelector('.model-connection-detail details.settings-section > summary').scrollIntoView({block:'center'})")
+            await click('.model-connection-detail details.settings-section > summary')
+            await wait('document.querySelector(".model-connection-detail details.settings-section").open')
+            const nested = await js(`(() => {
+              const e=document.querySelector('.model-connection-detail details.settings-section'),s=getComputedStyle(e);
+              return {borderLeft:s.borderLeftWidth,background:s.backgroundColor,radius:s.borderRadius,
+                overflow:e.scrollWidth>e.clientWidth+1};
+            })()`)
+            assert.deepEqual(nested, { borderLeft: '0px', background: 'rgba(0, 0, 0, 0)', radius: '0px', overflow: false })
+            await screenshot(`${locale}-${theme}-settings-nested-${width}`)
+            await click('.model-connection-detail details.settings-section > summary')
+            observations.push({ locale, theme, width, nested })
+          }
         }
       }
     }

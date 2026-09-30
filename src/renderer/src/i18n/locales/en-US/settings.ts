@@ -21,6 +21,12 @@ export const settings = {
     close: 'Close settings',
     categoriesAriaLabel: 'Settings categories'
   },
+  categoryGroups: {
+    general: 'General',
+    execution: 'Models and execution',
+    extensions: 'Features and extensions',
+    system: 'System'
+  },
   categories: {
     appearance: {
       label: 'Appearance',
@@ -30,7 +36,7 @@ export const settings = {
     platformFeatures: {
       label: 'Platform features',
       navigationDescription: 'Workspace features and navigation',
-      description: 'Choose which features appear in your GoodBuddy workspace'
+      description: 'Manage shortcuts, conversations, notifications, the default workspace, and remote projects'
     },
     model: {
       label: 'Model connections',
@@ -56,7 +62,7 @@ export const settings = {
       navigationDescription:
         'Configure Agent Runtimes, the default workspace, and native capabilities',
       description:
-        'Configure Agent Runtimes, the default workspace, and native capabilities'
+        'Configure Agent Runtimes, model sources, and native capabilities'
     },
     sshHosts: {
       label: 'Hosts and remote execution',
