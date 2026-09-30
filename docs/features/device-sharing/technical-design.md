@@ -11,6 +11,37 @@
 | 功能逻辑 | [功能逻辑设计](./logic-design.md) |
 | 共享协议 | [共享网络总体设计](../../architecture/share-network-architecture.md) |
 
+## 当前首期实现
+
+本节实现 [FR-M1 至 FR-M5](./prd.md#当前首期本地元数据)。后文模块树、SQLite 表、共享协议包、
+局域网与网关协议都是后续设计，当前不创建这些基础设施。
+
+`src/shared/device-sharing-contracts.ts` 定义严格输入和返回类型；`DesktopApi.sharing` 暴露
+`getSettings`、`saveSettings`、`registerDevice`、`getCatalog`、`publish`、`revoke` 六个方法。
+生产 preload 对应六个固定 IPC 通道，`device-sharing-ipc.ts` 对每次调用检查可信主窗口主帧，
+对变更输入进行 Zod 校验，不暴露通用网络入口。
+
+`DeviceSharingService` 在 Main 内使用 `fetch`，每个请求含响应体读取采用 10 秒超时，非成功
+响应保留 HTTP 状态；响应再经 Zod 校验。请求只在页面读取或用户动作时发出，不启动后台发现。
+URL 接受 HTTP／HTTPS，禁止内嵌凭据、查询和片段。没有令牌或 Agent／Runtime 改动。
+
+| 方法 | HTTP 请求 |
+| --- | --- |
+| 注册 | `POST /api/v1/sharing/devices/register`，字段为 `id,name,platform,appVersion` |
+| 设备列表 | `GET /api/v1/sharing/devices`，读取 `{devices:[]}` |
+| 发布列表 | `GET /api/v1/sharing/publications`，读取 `{publications:[]}` |
+| 发布 | `POST /api/v1/sharing/publications`，Main 生成条目 ID 并填入本机设备 ID |
+| 撤销 | 先按 `?deviceId=` 获取本机条目，再 `POST /api/v1/sharing/publications/:id/revoke` |
+
+设备 ID、名称与服务 URL 存在用户数据目录的 `device-sharing-settings.json`，版本为 1；
+复用 `writeJsonFileAtomically`，加载 Promise 去重、保存串行。损坏设置报错而不重置 ID。
+此文件不保存目录副本或凭据。导航沿用已有存储归一化，把 `device-sharing` 追加到旧顺序，
+保留既有应用相对顺序与设置；新入口可排序，无启用或常驻开关，始终可从应用菜单进入。
+
+服务测试使用真实 loopback HTTP，验证契约、独立权限、识别范围、持久化、错误和超时；
+Electron 测试通过环境变量选择相邻真实 ShareServer 源码，使用临时服务数据与桌面设置。
+具体命令和实测边界见[实施进度](./progress.md)。
+
 ## 1. 进程边界
 
 ```text

@@ -37,12 +37,12 @@ export const defaultSupervisorModelConcurrency = 1
 export const supervisorModelConcurrencySchema = z.number().int().min(1).max(4)
 export const supervisionTimeoutSecondsSchema = z.number().int().min(30).max(600)
 
-export const builtInApplicationIds = ['magic-notes', 'knowledge', 'heartbeat', 'local-inference'] as const
+export const builtInApplicationIds = ['magic-notes', 'knowledge', 'heartbeat', 'local-inference', 'device-sharing'] as const
 export type BuiltInApplicationId = typeof builtInApplicationIds[number]
 export const editableApplicationIds = ['magic-notes', 'heartbeat', 'local-inference'] as const
 export type EditableApplicationId = typeof editableApplicationIds[number]
 export const defaultApplicationNavigation = {
-  order: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference'] as BuiltInApplicationId[],
+  order: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference', 'device-sharing'] as BuiltInApplicationId[],
   pinned: { 'magic-notes': true, heartbeat: true, 'local-inference': false }
 }
 export const applicationNavigationSchema = z.object({

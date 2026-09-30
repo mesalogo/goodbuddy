@@ -1,4 +1,10 @@
 export const ipcChannels = {
+  sharingSettingsGet: 'sharing:settings-get',
+  sharingSettingsSave: 'sharing:settings-save',
+  sharingRegister: 'sharing:register',
+  sharingCatalog: 'sharing:catalog',
+  sharingPublish: 'sharing:publish',
+  sharingRevoke: 'sharing:revoke',
   localInferenceGet: 'local-inference:get',
   localInferenceAct: 'local-inference:act',
   localInferenceCancel: 'local-inference:cancel',

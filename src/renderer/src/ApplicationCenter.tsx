@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   ArrowUp,
   Cpu,
+  Network,
   HeartPulse,
   Library,
   Settings,
@@ -31,6 +32,7 @@ import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
 import './application-center.css'
 
 export const applicationDefinitions = {
+  'device-sharing': { icon: Network, title: 'sharing.title' },
   'magic-notes': {
     icon: Sparkles,
     title: 'navigation.magicNotes',
@@ -56,7 +58,7 @@ export function isApplicationEnabled(
   settings: ApplicationSettings | undefined,
   id: BuiltInApplicationId,
 ): boolean {
-  if (id === 'knowledge') return true
+  if (id === 'knowledge' || id === 'device-sharing') return true
   if (id === 'heartbeat') return settings?.heartbeatEnabled === true
   return (
     settings !== undefined &&
@@ -449,7 +451,7 @@ export function ApplicationCenter({
                         <div className="application-center__title">
                           <strong>{t(definition.title)}</strong>
                           <small>
-                            {alwaysShown
+                            {id === 'device-sharing' ? t('applications.builtin') : alwaysShown
                               ? t('applications.alwaysShown')
                               : `${t('applications.optional')} · ${t(enabled ? 'applications.enabled' : 'applications.disabled')}`}
                           </small>
@@ -466,7 +468,7 @@ export function ApplicationCenter({
                       >
                         {t('applications.open')}
                       </button>
-                      {!alwaysShown && (
+                      {id !== 'knowledge' && id !== 'device-sharing' && (
                         <button
                           className="secondary-button"
                           type="button"

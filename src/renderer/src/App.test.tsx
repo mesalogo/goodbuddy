@@ -245,6 +245,12 @@ const terminalSnapshot: TerminalSnapshot = {
 };
 
 const api: DesktopApi & RuntimeNativeClientApi = {
+  sharing: {
+    getSettings: vi.fn(async () => ({ deviceId: 'test-device', name: 'Test device', serverUrl: 'http://127.0.0.1:8787' })),
+    saveSettings: vi.fn(), registerDevice: vi.fn(),
+    getCatalog: vi.fn(async () => ({ devices: [], publications: [] })),
+    publish: vi.fn(), revoke: vi.fn()
+  },
   openRuntimeNativeClient: vi.fn(async () => ({ kind: "terminal" as const, terminal: terminalSnapshot })),
   getRuntimeNativeClient: vi.fn(async () => null),
   stopRuntimeNativeClient: vi.fn(async () => undefined),
@@ -14322,24 +14328,40 @@ describe("App", () => {
     await waitFor(() => expect(move).toBeEnabled())
     fireEvent.click(move)
     await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '监督者', '知识库', '魔法笔记', '本机推理监控',
+      '监督者', '知识库', '魔法笔记', '本机推理监控', '设备共享',
     ]))
     await waitFor(() => expect(screen.getByRole('button', { name: '上移 本机推理监控' })).toBeEnabled())
     const cards = within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article')
     fireEvent.dragStart(cards[3]!)
     fireEvent.drop(cards[1]!)
     await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '监督者', '本机推理监控', '知识库', '魔法笔记',
+      '监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享',
     ]))
-    expect((await updates.getSettings()).applicationNavigation.order).toEqual(['heartbeat', 'local-inference', 'knowledge', 'magic-notes'])
+    expect((await updates.getSettings()).applicationNavigation.order).toEqual(['heartbeat', 'local-inference', 'knowledge', 'magic-notes', 'device-sharing'])
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
     expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual([
       '对话', '监督者', '知识库', '魔法笔记', '运行记录',
     ])
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
-    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '管理应用'])
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享', '管理应用'])
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记'])
+    expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享'])
+  })
+
+  it('opens device sharing from Application Center while keeping the Settings entry available', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: '监督者' })
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+    const row = screen.getByText('设备共享', { exact: true }).closest('article')!
+    fireEvent.click(within(row).getByRole('button', { name: '打开' }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: '设备共享' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '注册本机' })).toBeEnabled()
+    })
+    expect(screen.queryByRole('dialog', { name: '应用中心' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument()
   })
 
   it('refreshes externally changed all-app order before editing and filters sidebar pins', async () => {

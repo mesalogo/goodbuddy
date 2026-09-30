@@ -86,6 +86,8 @@ import {
 } from './feedback/feedback-http-client'
 import { FeedbackService } from './feedback/feedback-service'
 import { registerFeedbackIpcHandler } from './feedback/feedback-ipc'
+import { registerDeviceSharingIpc } from './device-sharing-ipc'
+import { DeviceSharingService } from './device-sharing-service'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 import type { SystemModelUsageInput } from '../shared/assistant-contracts'
 import {
@@ -211,6 +213,7 @@ let tray: Tray | undefined
 let isQuitting = false
 let removeIpcHandlers: (() => Promise<void>) | undefined
 let removeFeedbackIpcHandler: (() => void) | undefined
+let removeDeviceSharingIpc: (() => void) | undefined
 let runtime: AgentRuntimeController | undefined
 let selectedRuntimeManager: SelectedRuntimeManager | undefined
 const localRuntimeRegistry = new LocalRuntimeRegistry()
@@ -1576,6 +1579,8 @@ if (hasSingleInstanceLock) {
       startupFeedbackService
     )
     loadMainWindow(mainWindow)
+    removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow,
+      new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion()))
     setImmediate(() => {
       void repairStaleWindowsNotificationShortcuts({
         platform: process.platform,
@@ -1664,6 +1669,7 @@ app.on('before-quit', (event) => {
           () => storageUpgrade,
           () => feedbackService?.dispose(),
           () => removeFeedbackIpcHandler?.(),
+          () => removeDeviceSharingIpc?.(),
           () => dshExtensionInstaller?.dispose(),
           () => imageGenerationService?.dispose(),
           () => knowledgeService?.beginShutdown(),

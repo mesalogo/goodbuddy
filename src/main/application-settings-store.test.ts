@@ -220,7 +220,7 @@ describe('ApplicationSettingsStore', () => {
     const settings = await store.get()
     expect(settings.warnings).toBeUndefined()
     expect(settings.magicNotesEnabled).toBe(false)
-    expect(settings.applicationNavigation).toEqual({ order: expected, pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false } })
+    expect(settings.applicationNavigation).toEqual({ order: [...expected, 'device-sharing'], pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false } })
     expect(applicationSettingsSchema.parse(settings)).toEqual(settings)
     await store.update({ checkUpdatesOnStartup: false })
     expect(JSON.parse(await readFile(filePath, 'utf8')).applicationNavigation).toEqual(settings.applicationNavigation)
@@ -230,7 +230,7 @@ describe('ApplicationSettingsStore', () => {
   it('validates full-order writes, persists and publishes them, and rejects partial writes without mutation', async () => {
     const { store, filePath } = await createStore()
     const applicationNavigation = {
-      order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'],
+      order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge', 'device-sharing'],
       pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false },
     }
     const changed = vi.fn()
@@ -275,7 +275,7 @@ describe('ApplicationSettingsStore', () => {
       pinned: { 'magic-notes': false, 'local-inference': pinned }
     }
     await writeFile(filePath, JSON.stringify({ ...defaultApplicationSettings, applicationNavigation, version: 11, lastSeenReleaseNotesVersion: null }), 'utf8')
-    const normalized = { ...applicationNavigation, pinned: { ...applicationNavigation.pinned, heartbeat: true }, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] }
+    const normalized = { ...applicationNavigation, pinned: { ...applicationNavigation.pinned, heartbeat: true }, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing'] }
     expect((await store.get()).applicationNavigation).toEqual(normalized)
     await store.update({ checkUpdatesOnStartup: false })
     expect((await createApplicationSettingsStore(filePath).get()).applicationNavigation).toEqual(normalized)

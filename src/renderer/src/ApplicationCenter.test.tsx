@@ -102,7 +102,7 @@ describe('Application Center', () => {
     fireEvent.drop(card)
       expect(handlers.onUpdate).toHaveBeenCalledWith({ applicationNavigation: {
       ...defaultApplicationNavigation,
-        order: ['magic-notes', 'knowledge', 'heartbeat', 'local-inference'],
+        order: ['magic-notes', 'knowledge', 'heartbeat', 'local-inference', 'device-sharing'],
       } })
   })
 
@@ -214,7 +214,7 @@ describe('Application Center', () => {
     fireEvent.dragStart(notes)
     fireEvent.drop(inference)
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({ applicationNavigation: {
-      ...defaultApplicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'],
+      ...defaultApplicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing'],
     } })
     fireEvent.click(within(inference).getByRole('button', { name: '打开' }))
     expect(handlers.onOpen).not.toHaveBeenCalled()
@@ -238,9 +238,9 @@ describe('Application Center', () => {
     const handlers = props()
     const { rerender } = render(<ApplicationCenter {...handlers} settings={pinnedSettings} />)
     const displayedOrder = () => screen.getAllByRole('article').map((row) => row.querySelector('strong')?.textContent)
-    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控'])
+    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控', '设备共享'])
     expect(screen.getByRole('button', { name: '上移 知识库' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '下移 本机推理监控' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下移 设备共享' })).toBeDisabled()
     const moveUp = screen.getByRole('button', { name: '上移 本机推理监控' })
     expect(moveUp.closest('article')).not.toBeNull()
     expect(moveUp).toHaveAttribute('title', '上移 本机推理监控')
@@ -248,18 +248,18 @@ describe('Application Center', () => {
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({
       applicationNavigation: {
         ...pinnedSettings.applicationNavigation,
-        order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'],
+        order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing'],
       },
     })
-    expect(screen.getByRole('button', { name: '下移 本机推理监控' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下移 设备共享' })).toBeDisabled()
     expect(await screen.findByRole('status')).not.toBeEmptyDOMElement()
-    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控'])
+    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控', '设备共享'])
     rerender(<ApplicationCenter {...handlers} settings={{
       ...pinnedSettings,
-      applicationNavigation: { ...pinnedSettings.applicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] },
+      applicationNavigation: { ...pinnedSettings.applicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing'] },
     }} />)
-    expect(displayedOrder()).toEqual(['知识库', '监督者', '本机推理监控', '魔法笔记'])
-    expect(screen.getByRole('button', { name: '下移 魔法笔记' })).toBeDisabled()
+    expect(displayedOrder()).toEqual(['知识库', '监督者', '本机推理监控', '魔法笔记', '设备共享'])
+    expect(screen.getByRole('button', { name: '下移 设备共享' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '下移 本机推理监控' }))
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({ applicationNavigation: pinnedSettings.applicationNavigation })
     fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
@@ -281,7 +281,7 @@ describe('Application Center', () => {
     expect(handlers.onUpdate).toHaveBeenCalledWith({
       applicationNavigation: {
         ...pinnedSettings.applicationNavigation,
-        order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'],
+        order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing'],
       },
     })
   })
@@ -322,12 +322,12 @@ describe('Application Center', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '推理' } })
     const card = screen.getByRole('article')
     expect(card).toHaveAttribute('draggable', 'false')
-    expect(within(card).getByRole('button', { name: '下移 本机推理监控' })).toBeDisabled()
+    expect(within(card).getByRole('button', { name: '下移 本机推理监控' })).toBeEnabled()
     fireEvent.click(within(card).getByRole('button', { name: '上移 本机推理监控' }))
     expect(handlers.onUpdate).toHaveBeenCalledWith({
       applicationNavigation: {
         ...pinnedSettings.applicationNavigation,
-        order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'],
+        order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing'],
       },
     })
   })
@@ -342,7 +342,7 @@ describe('Application Center', () => {
     })
     expect(screen.getByText('未找到相关应用')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
-    expect(screen.getAllByRole('article')).toHaveLength(4)
+    expect(screen.getAllByRole('article')).toHaveLength(5)
   })
 
   it('edits all notes preferences through the shared settings form', () => {

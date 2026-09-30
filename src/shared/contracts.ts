@@ -1767,6 +1767,7 @@ export type KnowledgeSearchReference = {
 }
 
 export type DesktopApi = {
+  sharing: import('./device-sharing-contracts').DeviceSharingApi
   openRuntimeNativeClient: (input: import('./runtime-native-client-contracts').RuntimeNativeClientInput) => Promise<import('./runtime-native-client-contracts').RuntimeNativeClientResult>
   getRuntimeNativeClient: (input: import('./runtime-native-client-contracts').RuntimeNativeClientInput) => Promise<import('./runtime-native-client-contracts').RuntimeNativeClientService | null>
   stopRuntimeNativeClient: (input: import('./runtime-native-client-contracts').RuntimeNativeClientService) => Promise<void>

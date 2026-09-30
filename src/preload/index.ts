@@ -808,6 +808,14 @@ const desktopApi: DesktopApi = {
     act: (input) => ipcRenderer.invoke(ipcChannels.localInferenceAct, input),
     cancel: (taskId) => ipcRenderer.invoke(ipcChannels.localInferenceCancel, { taskId })
   },
+  sharing: {
+    getSettings: () => ipcRenderer.invoke(ipcChannels.sharingSettingsGet),
+    saveSettings: input => ipcRenderer.invoke(ipcChannels.sharingSettingsSave, input),
+    registerDevice: () => ipcRenderer.invoke(ipcChannels.sharingRegister),
+    getCatalog: () => ipcRenderer.invoke(ipcChannels.sharingCatalog),
+    publish: input => ipcRenderer.invoke(ipcChannels.sharingPublish, input),
+    revoke: id => ipcRenderer.invoke(ipcChannels.sharingRevoke, id)
+  },
   speechModels: {
     getSnapshot: () =>
       ipcRenderer.invoke(

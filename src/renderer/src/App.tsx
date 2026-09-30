@@ -14,6 +14,7 @@ import { AttachmentCapabilityNotice } from './AttachmentCapabilityNotice';
 import { DocumentConversationContext } from './DocumentConversationContext';
 import { maximumAttachmentsPerMessage } from '../../shared/attachment-limits';
 import { buildRuntimeHistory } from '../../shared/runtime-history';
+import { DeviceSharingPage } from './DeviceSharingPage';
 import {
   ApplicationAvailability,
   ApplicationCenter,
@@ -542,7 +543,7 @@ type ActiveRun = {
 };
 
 type WorkspaceView =
-  "chat" | "magic-notes" | "knowledge" | "heartbeat" | "local-inference" | "activity" | "settings";
+  "chat" | "magic-notes" | "knowledge" | "heartbeat" | "local-inference" | "device-sharing" | "activity" | "settings";
 
 const intentRoutePreloaders: Partial<
   Record<WorkspaceView, () => Promise<unknown>>
@@ -10923,6 +10924,7 @@ function App(): React.JSX.Element {
                 </PageShell>
               </KeepAliveRoute>
             )}
+            {view === 'device-sharing' && <DeviceSharingPage notify={notify} />}
             {localInferenceOpen && (
               <LocalInferencePage
                 enabled={isApplicationEnabled(applicationSettings, "local-inference")}

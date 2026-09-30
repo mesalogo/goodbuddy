@@ -1,0 +1,10 @@
+.device-sharing { display: grid; gap: var(--space-6); overflow-wrap: anywhere; }
+.device-sharing section { border-top: 1px solid var(--border-subtle); padding-top: var(--space-4); }
+.device-sharing h2, .device-sharing h3 { font-size: var(--font-section-title); }
+.device-sharing small, .device-sharing p { color: var(--text-secondary); }
+.device-sharing form, .device-sharing fieldset { display: grid; gap: var(--space-3); min-width: 0; }
+.device-sharing fieldset { border: 0; padding: 0; margin: 0; }
+.device-sharing form > button { justify-self: start; }
+.device-sharing article { padding-block: var(--space-3); border-bottom: 1px solid var(--border-subtle); }
+.device-sharing__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.device-sharing__permission { display: flex; align-items: center; gap: var(--space-2); }

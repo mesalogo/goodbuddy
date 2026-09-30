@@ -1,4 +1,17 @@
 export const app = {
+  sharing: {
+    title: '设备共享', boundary: '本地未认证的元数据服务。设备 ID 仅用于识别，不代表身份认证；注册记录不代表设备在线。此页不提供远程执行或知识内容访问。',
+    refresh: '刷新列表', working: '正在处理…', loadFailed: '列表读取失败，已有列表可能过期。请检查服务地址并刷新。',
+    thisDevice: '本机', deviceId: '设备 ID', serverUrl: '服务地址', deviceName: '设备名称', save: '保存设置', saved: '共享设置已保存',
+    register: '注册本机', registered: '本机注册信息已保存到服务', saveFirst: '请先保存设置，再注册或发布。',
+    devices: '已注册设备', noDevices: '暂无注册设备', registerFirst: '注册本机后即可发布元数据。', updatedAt: '更新时间',
+    publishMetadata: '发布元数据', sourceHelp: '来源模式只描述条目来源。选择“服务器”不会上传或同步内容；知识权限只保存声明。',
+    name: '条目名称', description: '描述', kind: '类型', capability: '能力', knowledge: '知识', sourceMode: '来源模式', device: '设备', server: '服务器',
+    permissions: '知识权限声明', search: '搜索', read: '读取', download: '下载', target: '发布到', publishedNotice: '元数据已发布',
+    publications: '发布目录', noPublications: '暂无发布条目', publishHelp: '填写名称、类型与来源后发布一条元数据。',
+    published: '已发布', revoked: '已撤销', yes: '允许', no: '不允许', revoke: '撤销发布', confirmRevoke: '确认撤销发布', cancel: '取消',
+    revokeHelp: '撤销后保留目录记录并标记为已撤销。此操作只修改元数据，不删除本机内容。', revokedNotice: '发布条目已撤销'
+  },
   runtimeChecklist: {
     title: '执行清单', count: '已完成 {{completed}}/{{total}}',
     finished: '请求已完成', failed: '请求失败',
@@ -19,6 +32,7 @@ export const app = {
     orderUpdated: '应用顺序已更新', loadFailed: '无法读取应用设置', saveFailed: '应用设置保存失败',
     confirmFailed: '无法确认保存结果，请重新读取后再修改。',
     descriptions: {
+      'device-sharing': '注册设备，发布和撤销能力或知识的元数据。',
       'magic-notes': '记录笔记、整理待办并获取 AI 评论。', knowledge: '管理知识来源，为会话检索资料。',
       heartbeat: '回顾工作演变、查看故事线图谱，并配置智能心跳。', 'local-inference': '查看本机推理任务与执行服务。'
     }

@@ -2,6 +2,19 @@ import type { TranslationShape } from '../../resource-types'
 import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
+  sharing: {
+    title: 'Device Sharing', boundary: 'Local unauthenticated metadata service. Device IDs identify records, not authenticated owners; registration does not indicate online status. Remote execution and knowledge content access are not provided here.',
+    refresh: 'Refresh lists', working: 'Working…', loadFailed: 'Could not load the lists. Previous results may be stale. Check the service URL and refresh.',
+    thisDevice: 'This device', deviceId: 'Device ID', serverUrl: 'Service URL', deviceName: 'Device name', save: 'Save settings', saved: 'Sharing settings saved',
+    register: 'Register this device', registered: 'Device registration saved to the service', saveFirst: 'Save settings before registering or publishing.',
+    devices: 'Registered devices', noDevices: 'No registered devices', registerFirst: 'Register this device to publish metadata.', updatedAt: 'Updated at',
+    publishMetadata: 'Publish metadata', sourceHelp: 'Source mode describes the entry only. Selecting Server does not upload or sync content; knowledge permissions are declarations only.',
+    name: 'Entry name', description: 'Description', kind: 'Kind', capability: 'Capability', knowledge: 'Knowledge', sourceMode: 'Source mode', device: 'Device', server: 'Server',
+    permissions: 'Knowledge permission declarations', search: 'Search', read: 'Read', download: 'Download', target: 'Publish to', publishedNotice: 'Metadata published',
+    publications: 'Publication catalog', noPublications: 'No publications', publishHelp: 'Enter a name, kind and source to publish metadata.',
+    published: 'Published', revoked: 'Revoked', yes: 'Allowed', no: 'Not allowed', revoke: 'Revoke publication', confirmRevoke: 'Confirm revocation', cancel: 'Cancel',
+    revokeHelp: 'The catalog record will remain with a revoked status. This changes metadata only and does not delete local content.', revokedNotice: 'Publication revoked'
+  },
   runtimeChecklist: {
     title: 'Execution checklist', count: '{{completed}}/{{total}} completed',
     finished: 'Request completed', failed: 'Request failed',
@@ -22,6 +35,7 @@ export const app = {
     orderUpdated: 'Application order updated', loadFailed: 'Could not load application settings', saveFailed: 'Could not save application settings',
     confirmFailed: 'Could not confirm the save result. Reload settings before editing again.',
     descriptions: {
+      'device-sharing': 'Register devices, publish and revoke capability or knowledge metadata.',
       'magic-notes': 'Write notes, organize to-dos, and receive AI comments.', knowledge: 'Manage knowledge sources and retrieve reference material for conversations.',
       heartbeat: 'Review work evolution, explore the story graph, and configure Smart heartbeat.', 'local-inference': 'Inspect local inference tasks and execution services.'
     }
