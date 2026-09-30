@@ -1,5 +1,15 @@
 # Magic Notes Progress
 
+## 2026-10-01: Header New Note Action
+
+New note is now one primary page-header button that always follows the view
+switch (overview, to-dos) or Back to overview (note detail). The `+` icon in the
+notes list heading was removed; the heading keeps only Manage tags. From note
+detail the button opens the list's title form (desktop reopens a collapsed list;
+narrow returns to the list first). Workspace tests (133) and the Electron layout
+test pass, with overview and detail screenshots checked at 1280px; the App note
+subset (11), typecheck, and lint on changed files pass.
+
 ## 2026-09-30: Navigate After Record Mount
 
 Quick Notes navigation now scrolls after React commits the target record, rather

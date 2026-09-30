@@ -2178,22 +2178,26 @@ export function MagicNotesWorkspace({
                 {libraryView === 'notes' ? <ListTodo aria-hidden="true" size={15} /> : <BookOpen aria-hidden="true" size={15} />}
                 {t(libraryView === 'notes' ? 'actions.switchToTodos' : 'actions.switchToNotes')}
               </button>
-              {libraryView === 'todos' && <button
-                id="magic-note-new"
-                className="primary-button"
-                disabled={Boolean(busy)}
-                type="button"
-                onClick={() => {
-                  setValidation(undefined)
-                  setLibraryView('notes')
-                  setCreating(true)
-                }}
-              >
-                <Plus aria-hidden="true" size={15} />
-                {t('actions.newNote')}
-              </button>}
               </>
             )}
+            <button
+              id="magic-note-new"
+              className="primary-button"
+              disabled={Boolean(busy)}
+              type="button"
+              onClick={() => {
+                setValidation(undefined)
+                setLibraryView('notes')
+                setCreating(true)
+                if (detailView) {
+                  if (isNarrowWorkspace) void requestDraftSwitch({ kind: 'overview' })
+                  else setNotesPaneOpen(true)
+                }
+              }}
+            >
+              <Plus aria-hidden="true" size={15} />
+              {t('actions.newNote')}
+            </button>
           </>
         }
         help={t('page.description')}
@@ -2265,11 +2269,6 @@ export function MagicNotesWorkspace({
               disabled={Boolean(busy)}
               onClick={() => setTagManagerOpen(true)}
             />
-            <button id="magic-note-new" type="button" className="icon-button"
-              disabled={Boolean(busy)} aria-label={t('actions.newNote')} title={t('actions.newNote')}
-              onClick={() => { setValidation(undefined); setCreating(true) }}>
-              <Plus size={15} />
-            </button>
           </div>
           <label className="magic-notes-search">
             <span className="sr-only">{t('notes.searchLabel')}</span>

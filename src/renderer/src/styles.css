@@ -1408,19 +1408,14 @@
   .magic-note-list-item[aria-current='true'] { border-color: Highlight; }
 }
 
-/* Heading: title and count grouped left, new-note action right. */
+/* Heading: title and count grouped left, tag management right. New note lives in the page header. */
 #magic-library-panel-notes > .magic-notes-pane-heading {
   justify-content: flex-start;
   gap: var(--space-2);
 }
 
-#magic-library-panel-notes > .magic-notes-pane-heading > .icon-button,
 #magic-library-panel-notes > .magic-notes-pane-heading > #magic-note-tag-manager {
   margin-left: auto;
-}
-
-#magic-library-panel-notes > .magic-notes-pane-heading > #magic-note-tag-manager + .icon-button {
-  margin-left: var(--space-1);
 }
 
 .magic-note-tag-manager-button {

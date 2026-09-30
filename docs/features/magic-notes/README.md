@@ -22,8 +22,9 @@ comments. The divider can be dragged and remembers its width; each note group
 can independently collapse its tasks while retaining its title and count.
 Narrow containers use on-demand detail with an explicit return to the
 mounted list. One content-sized button switches to the other view in the page
-header when note detail is closed; New note lives in the notes list heading or the
-To-dos page header. Status filters sit beside search and wrap
+header when note detail is closed; New note is always the primary page-header
+action to the right of the view switch or Back to overview. The notes list
+heading keeps only Manage tags. Status filters sit beside search and wrap
 when needed. Note detail removes the surrounding frame and stream padding while
 keeping editor borders and the AI divider. Returning from a source note restores the task
 context and protects unsaved editor changes. A successful save followed by no
