@@ -4,7 +4,7 @@ import {
   CircleAlert,
   ClockFading
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantSchedule,
@@ -31,7 +31,7 @@ type ConversationTaskStripProps = {
   tasks: AssistantTask[]
 }
 
-export function ConversationTaskStrip({
+export const ConversationTaskStrip = memo(function ConversationTaskStrip({
   conversationMode,
   locale,
   onRemoveSchedule,
@@ -213,4 +213,4 @@ export function ConversationTaskStrip({
       )}
     </section>
   )
-}
+})

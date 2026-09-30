@@ -1,5 +1,5 @@
 import { CheckCircle2, ChevronDown, ChevronUp, Circle, CircleDashed, XCircle } from 'lucide-react'
-import { useId, useRef, useState } from 'react'
+import { memo, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Message } from './ChatTimeline'
 import { isCancelledMessage } from './message-terminal-status'
@@ -13,7 +13,7 @@ const statusIcons = {
   cancelled: XCircle
 }
 
-export function RuntimeChecklistStrip({ messages, activeMessageId }: {
+export const RuntimeChecklistStrip = memo(function RuntimeChecklistStrip({ messages, activeMessageId }: {
   messages: readonly Message[]
   activeMessageId?: string
 }): React.JSX.Element | null {
@@ -26,7 +26,7 @@ export function RuntimeChecklistStrip({ messages, activeMessageId }: {
     : messages.at(-1)
   if (message?.role !== 'assistant' || !message.runtimeChecklist?.items.length) return null
   return <Checklist key={message.id} message={message} />
-}
+})
 
 function Checklist({ message }: { message: Message }): React.JSX.Element {
   const { t } = useTranslation('app')

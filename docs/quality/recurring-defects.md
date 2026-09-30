@@ -293,6 +293,14 @@ Modal，兼顾 top layer 绘制、辅助技术的模态归属及焦点循环；�
 **注意**：React 允许在渲染期用守卫调用 `setState` 来响应 props 变化，这是官方推荐做法，不要
 把它改写成 `useEffect`。仓库 lint 规则 `react-hooks/set-state-in-effect` 会拒绝后者。
 
+2026-09-30 的 App 回归还确认两类关联开销：内联 JSX、回调和空数组使 memo 失效；
+`useRef(hasConversationMigrationStorage())` 在每次输入时执行存储读取。初始化读取应延迟到
+首次初始化，缓存面板的 props 应保持稳定。即时用户动作可在调用时读取当前会话；异步
+草稿恢复、语音和附件操作须保留发起会话，不能统一改成完成时读取活动会话。
+App 集成回归应计数 memo 边界内的真实渲染，覆盖输入、热切换和后续流式更新；仅测独立
+消息组件无法发现父组件传入的不稳定 props。测量结果见
+[PERF-10](../roadmap/product-performance-experience-improvement-plan.md#perf-10-keep-alive-轻量优化)。
+
 ## 解析警告被当作提取正文
 
 **症状**：OCR 没有识别文字，但缺图警告让图片附件切成文字发送，或让仅图片结果被判为

@@ -1,5 +1,6 @@
 import { ArrowDown, FileText, Sparkles } from "lucide-react";
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -34,7 +35,7 @@ export type ChatScrollSnapshot = {
   scrollTop: number;
 };
 
-export function ChatHistoryPane({
+export const ChatHistoryPane = memo(function ChatHistoryPane({
   onAddToNote,
   noteMessageNavigation,
   onOpenImageModelSettings,
@@ -405,4 +406,4 @@ export function ChatHistoryPane({
       )}
     </div>
   );
-}
+});

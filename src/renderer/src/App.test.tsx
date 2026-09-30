@@ -55,6 +55,34 @@ const speechRecognitionMocks = vi.hoisted(() => ({
 const messageRenderProbe = vi.hoisted(() => vi.fn());
 const assistantTasksProbe = vi.hoisted(() => vi.fn());
 const activityRenderProbe = vi.hoisted(() => vi.fn());
+const historyRenderProbes = vi.hoisted(() => ({
+  pane: vi.fn(), task: vi.fn(), checklist: vi.fn(),
+  instrument<T>(component: T, probe: () => void): T {
+    const wrap = (render: (...args: never[]) => unknown) => new Proxy(render, {
+      apply(target, receiver, args) {
+        probe();
+        return Reflect.apply(target, receiver, args);
+      },
+    });
+    // Preserve the production memo boundary, and count calls inside it.
+    return (typeof component === 'function'
+      ? wrap(component as (...args: never[]) => unknown)
+      : { ...component, type: wrap((component as { type: (...args: never[]) => unknown }).type) }) as T;
+  },
+}));
+
+vi.mock('./ChatHistoryPane', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ChatHistoryPane')>();
+  return { ...original, ChatHistoryPane: historyRenderProbes.instrument(original.ChatHistoryPane, historyRenderProbes.pane) };
+});
+vi.mock('./ConversationTaskStrip', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ConversationTaskStrip')>();
+  return { ...original, ConversationTaskStrip: historyRenderProbes.instrument(original.ConversationTaskStrip, historyRenderProbes.task) };
+});
+vi.mock('./RuntimeChecklistStrip', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./RuntimeChecklistStrip')>();
+  return { ...original, RuntimeChecklistStrip: historyRenderProbes.instrument(original.RuntimeChecklistStrip, historyRenderProbes.checklist) };
+});
 
 vi.mock("./WorkspacePrimitives", async (importOriginal) => {
   const original = await importOriginal<typeof import("./WorkspacePrimitives")>();
@@ -4498,7 +4526,88 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "到底部" })).toBeInTheDocument();
   });
 
-  it("keeps each conversation history window and reader position", async () => {
+  it('retries into the active draft after warm conversation switches', async () => {
+    const histories: ConversationSnapshot[] = ['First retry', 'Second retry'].map((title, index) => ({
+      id: crypto.randomUUID(), projectId, title, updatedAt: 2 - index,
+      messages: [
+        { id: crypto.randomUUID(), role: 'user', content: `${title} prompt`, createdAt: 1, state: 'complete' },
+        { id: crypto.randomUUID(), role: 'assistant', content: `${title} failed`, createdAt: 2, state: 'error' },
+      ],
+    }));
+    vi.mocked(api.conversations.list).mockResolvedValueOnce(histories);
+    render(<App />);
+    await screen.findByText('First retry failed');
+    fireEvent.click(screen.getByText('Second retry').closest('button')!);
+    await screen.findByText('Second retry failed');
+    fireEvent.click(screen.getByRole('button', { name: '重新编辑' }));
+    const composer = screen.getByLabelText('向 GoodBuddy 提问');
+    expect(composer).toHaveValue('Second retry prompt');
+    expect(composer).toHaveFocus();
+    fireEvent.click(screen.getByText('First retry').closest('button')!);
+    expect(composer).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: '重新编辑' }));
+    expect(composer).toHaveValue('First retry prompt');
+    fireEvent.click(screen.getByText('Second retry').closest('button')!);
+    expect(composer).toHaveValue('Second retry prompt');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("isolates history and task strips while typing during a running request", async () => {
+    const conversationId = crypto.randomUUID();
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([{
+      id: conversationId, projectId, title: 'Running render isolation', updatedAt: 2, messages: [],
+    }]);
+    vi.mocked(api.tasks.list).mockResolvedValue([{
+      id: crypto.randomUUID(), conversationId, projectId, title: 'Running scheduled task',
+      instructions: 'Keep task details live', origin: 'schedule', status: 'running',
+      createdAt: '2026-09-30T00:00:00.000Z',
+    }]);
+    render(<App />);
+    const taskStrip = await screen.findByRole('region', { name: '当前会话的任务' });
+    fireEvent.click(within(taskStrip).getByRole('button'));
+    expect(within(taskStrip).getByText('运行中')).toBeVisible();
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(composer, { target: { value: 'Running render isolation' } });
+    await waitFor(() => expect(screen.getByLabelText('加入待发送队列')).toBeEnabled());
+    fireEvent.click(screen.getByLabelText('加入待发送队列'));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    act(() => agentListener?.({ requestId, type: 'text', delta: 'Live response' }));
+    await screen.findByText('Live response');
+    act(() => agentListener?.({ requestId, type: 'checklist', checklist: {
+      source: 'opencode', items: [{ content: 'Working while typing', status: 'in_progress' }],
+    } }));
+    await screen.findByText('Working while typing');
+    expect(taskStrip).toBeVisible();
+    historyRenderProbes.pane.mockClear();
+    historyRenderProbes.task.mockClear();
+    historyRenderProbes.checklist.mockClear();
+    messageRenderProbe.mockClear();
+    const storageReads = vi.spyOn(Storage.prototype, 'getItem');
+    for (const value of ['a', 'ab', 'abc']) {
+      fireEvent.change(composer, { target: { value } });
+    }
+    expect.soft(historyRenderProbes.pane).toHaveBeenCalledTimes(0);
+    expect.soft(historyRenderProbes.task).toHaveBeenCalledTimes(0);
+    expect.soft(historyRenderProbes.checklist).toHaveBeenCalledTimes(0);
+    expect.soft(messageRenderProbe).toHaveBeenCalledTimes(0);
+    expect.soft(storageReads.mock.calls.filter(([key]) => key === 'goodbuddy.conversations.v1')).toHaveLength(0);
+    storageReads.mockRestore();
+    act(() => agentListener?.({ requestId, type: 'text', delta: ' continues' }));
+    await screen.findByText('Live response continues');
+    expect(historyRenderProbes.pane).toHaveBeenCalled();
+    expect(historyRenderProbes.checklist).toHaveBeenCalled();
+    expect(historyRenderProbes.task).toHaveBeenCalledTimes(0);
+    act(() => agentListener?.({ requestId, type: 'checklist', checklist: {
+      source: 'opencode', items: [{ content: 'Checklist updated live', status: 'in_progress' }],
+    } }));
+    await screen.findByText('Checklist updated live');
+    expect(composer).toHaveValue('abc');
+    fireEvent.click(screen.getByLabelText('停止生成'));
+    await waitFor(() => expect(api.agent.cancel).toHaveBeenCalledWith(requestId));
+  });
+
+  it("keeps each conversation history window and reader position on warm switches without rerendering messages", async () => {
     const firstConversationId = "00000000-0000-4000-8000-000000000461";
     const secondConversationId = "00000000-0000-4000-8000-000000000462";
     const draftAttachment = {
@@ -4602,6 +4711,21 @@ describe("App", () => {
       "第一段会话草稿",
     );
     expect(screen.getByText(draftAttachment.name)).toBeInTheDocument();
+    messageRenderProbe.mockClear();
+    historyRenderProbes.task.mockClear();
+    historyRenderProbes.checklist.mockClear();
+    fireEvent.click(screen.getByText("第二段会话").closest("button")!);
+    await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue("第二段会话草稿"));
+    fireEvent.click(screen.getByText("第一段长会话").closest("button")!);
+    await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue("第一段会话草稿"));
+    expect(messageRenderProbe).toHaveBeenCalledTimes(0);
+    expect(historyRenderProbes.task).toHaveBeenCalledTimes(0);
+    expect(historyRenderProbes.checklist).toHaveBeenCalledTimes(0);
+    expect(firstChat.scrollTop).toBe(225);
+    expect(reasoningDetails).toHaveAttribute('open');
+    historyRenderProbes.pane.mockClear();
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: 'Warm cached draft' } });
+    expect(historyRenderProbes.pane).toHaveBeenCalledTimes(0);
   });
 
   it("requires an accessible confirmation before permanently deleting a conversation", async () => {
@@ -11651,6 +11775,7 @@ describe("App", () => {
 
   it('recovers failed image editing through settings and composer attachments without resubmitting the operation', async () => {
     const conversationId = crypto.randomUUID();
+    const otherId = crypto.randomUUID();
     const operation: import('../../shared/image-generation-contracts').ImageOperation = {
       id: crypto.randomUUID(), conversationId, messageId: crypto.randomUUID(), requestId: crypto.randomUUID(), callId: 'failed-edit',
       modelProfileId: crypto.randomUUID(), modelName: 'original-image-model', modelProfileName: 'Original image connection',
@@ -11659,14 +11784,23 @@ describe("App", () => {
     };
     vi.mocked(api.conversations.list).mockResolvedValueOnce([{ id: conversationId, projectId, title: 'Failed image editing', updatedAt: 2, workMode: 'execute', messages: [
       { id: operation.messageId, role: 'assistant', content: '', createdAt: 1, state: 'complete', imageOperations: [operation] },
-    ] }]);
+    ] }, { id: otherId, projectId, title: 'Other image draft', updatedAt: 1, messages: [] }]);
     const source = { id: crypto.randomUUID(), name: 'replacement.png', size: 64, preview: 'Replacement image', kind: 'image' as const, contentUrl: 'data:image/png;base64,iVBORw0KGgo=' };
-    vi.mocked(api.context.selectFiles).mockResolvedValueOnce([source]);
+    const selection = deferred<ContextAttachment[]>();
+    vi.mocked(api.context.selectFiles).mockReturnValueOnce(selection.promise);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: '重新选择素材' }));
     const composer = screen.getByLabelText('向 GoodBuddy 提问');
     expect(composer).toHaveValue('使用图片模型“Original image connection”：Change the background');
     expect(composer).toHaveFocus();
+    await waitFor(() => expect(api.context.selectFiles).toHaveBeenCalledWith(conversationId));
+    fireEvent.click(screen.getByText('Other image draft').closest('button')!);
+    fireEvent.change(composer, { target: { value: 'Keep other image draft' } });
+    await act(async () => selection.resolve([source]));
+    expect(composer).toHaveValue('Keep other image draft');
+    expect(within(composer.closest<HTMLElement>('.composer')!).queryByText('replacement.png')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Failed image editing').closest('button')!);
+    expect(composer).toHaveValue('使用图片模型“Original image connection”：Change the background');
     expect(await within(composer.closest<HTMLElement>('.composer')!).findByText('replacement.png')).toBeVisible();
     expect(api.context.selectFiles).toHaveBeenCalledOnce();
     expect(run).not.toHaveBeenCalled();

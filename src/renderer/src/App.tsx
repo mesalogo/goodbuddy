@@ -575,6 +575,7 @@ const emptyTokenUsage: TokenUsageSummary = {
 };
 
 const storageKey = "goodbuddy.conversations.v1";
+const emptyConversationTasks: AssistantTask[] = [];
 
 const activeProjectStorageKey = "goodbuddy.active-project.v1";
 
@@ -1657,9 +1658,8 @@ function App(): React.JSX.Element {
     tRef.current = t;
   }, [t]);
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
-  const conversationMigrationStoragePresent = useRef(
-    hasConversationMigrationStorage(),
-  );
+  const [initialConversationMigrationStoragePresent] = useState(hasConversationMigrationStorage);
+  const conversationMigrationStoragePresent = useRef(initialConversationMigrationStoragePresent);
   const [conversations, setConversations] = useState(() =>
     loadConversations(
       t("conversation.greeting"),
@@ -1773,10 +1773,10 @@ function App(): React.JSX.Element {
     Record<string, string>
   >({});
   const input = conversationDrafts[activeId] ?? "";
-  const setInput = useCallback(
-    (update: SetStateAction<string>): void => {
+  const setConversationInput = useCallback(
+    (conversationId: string, update: SetStateAction<string>): void => {
       setConversationDrafts((current) => {
-        const currentValue = current[activeId] ?? "";
+        const currentValue = current[conversationId] ?? "";
         const nextValue =
           typeof update === "function" ? update(currentValue) : update;
         if (nextValue === currentValue) {
@@ -1784,13 +1784,18 @@ function App(): React.JSX.Element {
         }
         if (!nextValue) {
           const next = { ...current };
-          delete next[activeId];
+          delete next[conversationId];
           return next;
         }
-        return { ...current, [activeId]: nextValue };
+        return { ...current, [conversationId]: nextValue };
       });
     },
-    [activeId],
+    [],
+  );
+  // Async composer operations retain the conversation that started them.
+  const setInput = useCallback(
+    (update: SetStateAction<string>): void => setConversationInput(activeId, update),
+    [activeId, setConversationInput],
   );
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceRecording, setVoiceRecording] = useState(false);
@@ -2449,11 +2454,15 @@ function App(): React.JSX.Element {
   >({});
   const retryMessage = useCallback(
     (content: string): void => {
-      setInput(content);
+      setConversationInput(activeConversationIdRef.current, content);
       inputRef.current?.focus();
     },
-    [setInput],
+    [setConversationInput],
   );
+  const setQuickActionInput = useCallback((value: string): void => {
+    setConversationInput(activeConversationIdRef.current, value);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [setConversationInput]);
   useEffect(
     () =>
       scheduleIdleRoutePreload(
@@ -7690,14 +7699,14 @@ function App(): React.JSX.Element {
   }, [setView]);
 
   const reselectImageSources = useCallback((operation: ImageOperation): void => {
-    if (operation.conversationId !== activeId) return;
-    setInput(current => current || t("chat.images.recoveryPrompt", {
+    if (operation.conversationId !== activeConversationIdRef.current) return;
+    setConversationInput(operation.conversationId, current => current || t("chat.images.recoveryPrompt", {
       model: operation.modelProfileName ?? operation.modelName,
       prompt: operation.input.prompt,
     }));
     inputRef.current?.focus();
     attachmentButtonRef.current?.click();
-  }, [activeId, setInput, t]);
+  }, [setConversationInput, t]);
 
   const selectContextFiles = async (paths?: string[]): Promise<void> => {
     if (selectingContextFilesRef.current) {
@@ -8206,16 +8215,16 @@ function App(): React.JSX.Element {
     return schedule;
   };
 
-  const runAssistantSchedule = async (scheduleId: string): Promise<void> => {
+  const runAssistantSchedule = useCallback(async (scheduleId: string): Promise<void> => {
     await window.goodbuddy.schedules.runNow(scheduleId);
     setAssistantTasks(await window.goodbuddy.tasks.list());
     notify({
       tone: "success",
       message: t("notices.scheduleStarted"),
     });
-  };
+  }, [notify, t]);
 
-  const setAssistantScheduleEnabled = async (
+  const setAssistantScheduleEnabled = useCallback(async (
     scheduleId: string,
     enabled: boolean,
   ): Promise<void> => {
@@ -8225,14 +8234,39 @@ function App(): React.JSX.Element {
         schedule.id === scheduleId ? { ...schedule, enabled } : schedule,
       ),
     );
-  };
+  }, []);
 
-  const removeAssistantSchedule = async (scheduleId: string): Promise<void> => {
+  const removeAssistantSchedule = useCallback(async (scheduleId: string): Promise<void> => {
     await window.goodbuddy.schedules.remove(scheduleId);
     setAssistantSchedules((current) =>
       current.filter((schedule) => schedule.id !== scheduleId),
     );
-  };
+  }, []);
+
+  const conversationTaskStrips = useMemo(() => new Map(cachedConversations.map(conversation => {
+    const tasks = tasksByConversation.get(conversation.id) ?? emptyConversationTasks;
+    return [conversation.id, (
+      <div className="conversation-context-strips">
+        {!conversation.remote && (
+          <ConversationTaskStrip
+            conversationMode={conversation.id === activeId
+              ? effectiveWorkMode
+              : normalizeInteractiveWorkMode(conversation.workMode ?? projects.find(project => project.id === conversation.projectId)?.defaultWorkMode)}
+            locale={locale}
+            onRemoveSchedule={removeAssistantSchedule}
+            onRunSchedule={runAssistantSchedule}
+            onSelectTask={setSelectedAssistantTaskId}
+            onSetScheduleEnabled={setAssistantScheduleEnabled}
+            schedules={assistantSchedules}
+            selectedTaskId={tasks.some(task => task.id === selectedAssistantTaskId) ? selectedAssistantTaskId : undefined}
+            tasks={tasks}
+          />
+        )}
+        <RuntimeChecklistStrip messages={conversation.messages} activeMessageId={conversation.activeRequest?.messageId} />
+      </div>
+    )];
+  })), [cachedConversations, tasksByConversation, activeId, effectiveWorkMode, projects, locale,
+    removeAssistantSchedule, runAssistantSchedule, setAssistantScheduleEnabled, assistantSchedules, selectedAssistantTaskId]);
 
   const clearLocalData = async (): Promise<void> => {
     conversationPersistencePausedRef.current = true;
@@ -9504,55 +9538,13 @@ function App(): React.JSX.Element {
                         onRespondQuestion={respondToQuestion}
                         onRetry={retryMessage}
                         onScrollSnapshotChange={handleChatScrollSnapshotChange}
-                        onSetInput={(value) => {
-                          setInput(value);
-                          requestAnimationFrame(() =>
-                            inputRef.current?.focus(),
-                          );
-                        }}
+                        onSetInput={setQuickActionInput}
                         onVisibleMessageCountChange={
                           handleVisibleMessageCountChange
                         }
                         quickActions={quickActions}
                         scrollSnapshot={chatScrollSnapshots[conversation.id]}
-                        taskStrip={
-                          <div className="conversation-context-strips">
-                          {!conversation.remote ? (
-                            <ConversationTaskStrip
-                              conversationMode={
-                                conversation.id === activeId
-                                  ? effectiveWorkMode
-                                  : normalizeInteractiveWorkMode(
-                                      conversation.workMode ??
-                                      projects.find((project) => project.id === conversation.projectId)?.defaultWorkMode
-                                    )
-                              }
-                              locale={locale}
-                              onRemoveSchedule={removeAssistantSchedule}
-                              onRunSchedule={runAssistantSchedule}
-                              onSelectTask={setSelectedAssistantTaskId}
-                              onSetScheduleEnabled={setAssistantScheduleEnabled}
-                              schedules={assistantSchedules}
-                              selectedTaskId={
-                                (
-                                  tasksByConversation.get(conversation.id) ?? []
-                                ).some(
-                                  (task) => task.id === selectedAssistantTaskId,
-                                )
-                                  ? selectedAssistantTaskId
-                                  : undefined
-                              }
-                              tasks={
-                                tasksByConversation.get(conversation.id) ?? []
-                              }
-                            />
-                          ) : undefined}
-                            <RuntimeChecklistStrip
-                              messages={conversation.messages}
-                              activeMessageId={conversation.activeRequest?.messageId}
-                            />
-                          </div>
-                        }
+                        taskStrip={conversationTaskStrips.get(conversation.id)}
                         visibleMessageCount={
                           visibleMessageCounts[conversation.id] ??
                           messageRenderBatchSize
