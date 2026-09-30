@@ -212,7 +212,7 @@
   justify-content: center;
   white-space: nowrap;
 }
-.sidebar-footer--applications > .nav-item > span {
+.sidebar-footer--applications > .nav-item > span:nth-child(2) {
   flex: 0 0 auto;
 }
 .sidebar-footer__divider {

@@ -333,7 +333,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.1`, paired with the current Desktop release candidate `0.15.5`; formal
+  `0.15.1`, paired with the current Desktop release candidate `0.15.6`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -951,9 +951,18 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.5`; published Agent `0.15.1` is unchanged, with
+- The current Desktop candidate is `0.15.6`; published Agent `0.15.1` is unchanged, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.6` adds optional, persisted frosted-glass header/checklist surfaces
+  (off by default, without OS desktop transparency), reduces repeated chat renders,
+  and supports direct previews for draft/queued images. Settings are grouped with
+  right-aligned switches, and note headers/editor spacing are tighter.
+  Local OpenCode retries explicit transient MCP transport failures once after
+  cleanup and retires uncertain names; it does not replay prompts or tool calls.
+  Redacted MCP diagnostics support feedback. Schema 52 adds execution-statistics
+  indexes; back up the database and notes before upgrading.
+  See the [preparation record](./docs/development/release-preparation-0.15.6.md).
 - Desktop `0.15.5` updates Smart heartbeat and incremental review, preserves
   cancelled-turn history, floats checklist details, and exits note editing after
   saving. It also adds manual note tags with AND filtering and rename/merge/delete,
