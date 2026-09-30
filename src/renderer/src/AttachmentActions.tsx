@@ -31,24 +31,24 @@ export function AttachmentActions({ attachment, conversationId, onBusyChange, re
   return <>
     <button type="button" className="icon-button attachment-action" title="更多附件操作" data-tooltip="更多附件操作" ref={anchor} aria-haspopup="menu" aria-expanded={menu} aria-controls={menu ? id : undefined}
       aria-label={`更多附件操作：${attachment.name}`} disabled={Boolean(operation)} onClick={() => {
-        if (!menu) {
+        if (!menu && !readOnly) {
           setProvider('正在读取已保存的解析来源')
           void window.goodbuddy.documentParsing!.getSnapshot().then((snapshot) => setProvider(snapshot.settings.ocrProvider === 'paddleocr-vl' ? '解析来源：HTTP PaddleOCR-VL（远程服务）' : '解析来源：本地 OCR'), () => setProvider('来源读取失败；操作仍使用已保存的解析设置'))
         }
         setMenu((value) => !value)
       }}><Ellipsis size={16} aria-hidden="true" /></button>
     {menu && <AnchoredMenu anchorRef={anchor} id={id} label={`附件操作：${attachment.name}`} onClose={() => setMenu(false)}>
-      <small>{provider}</small>
+      {!readOnly && <small>{provider}</small>}
       <button type="button" role="menuitem" onClick={() => run(() => window.goodbuddy.context.openOriginal(attachment.resourceId!))}>打开原文件：{attachment.originalName ?? attachment.name}</button>
-      {conversationId && <button type="button" role="menuitem" onClick={() => run((operationId) => window.goodbuddy.context.reparseDraft(conversationId, attachment.id, operationId))}>
+      {!readOnly && conversationId && <button type="button" role="menuitem" onClick={() => run((operationId) => window.goodbuddy.context.reparseDraft(conversationId, attachment.id, operationId))}>
         {attachment.sendMode ? '提取图片文字' : '使用当前设置重新解析'}：{attachment.originalName ?? attachment.name}
       </button>}
-      {conversationId && attachment.sendMode === 'text' && <button type="button" role="menuitem" onClick={() => run(() => window.goodbuddy.context.sendOriginal(conversationId, attachment.id))}>改为发送原图：{attachment.originalName}</button>}
+      {!readOnly && conversationId && attachment.sendMode === 'text' && <button type="button" role="menuitem" onClick={() => run(() => window.goodbuddy.context.sendOriginal(conversationId, attachment.id))}>改为发送原图：{attachment.originalName}</button>}
       {!readOnly && !conversationId && target?.activeId && <button type="button" role="menuitem" onClick={() => run(async (operationId) => {
         await window.goodbuddy.context.copyToDraft(target.activeId!, attachment.resourceId!, operationId)
         target.notify('已按当前设置解析并添加到目标会话草稿')
       })}>{attachment.sendMode ? '添加到当前草稿并提取文字' : '添加到当前草稿重新解析'}：{attachment.originalName ?? attachment.name}</button>}
-      <button type="button" role="menuitem" onClick={() => { setMenu(false); void window.goodbuddy.localInference.openSettings('document-parsing') }}>前往文档解析设置</button>
+      {!readOnly && <button type="button" role="menuitem" onClick={() => { setMenu(false); void window.goodbuddy.localInference.openSettings('document-parsing') }}>前往文档解析设置</button>}
     </AnchoredMenu>}
     {operation && <span role="status">正在处理附件<button type="button" className="secondary-button" onClick={() => void window.goodbuddy.context.cancelParsing(operation)}>取消解析</button></span>}
     {error && <span role="alert">{error}</span>}

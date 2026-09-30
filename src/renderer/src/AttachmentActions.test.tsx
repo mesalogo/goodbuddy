@@ -60,10 +60,11 @@ it('keeps attachment actions icon-only and named, and restores keyboard focus af
 })
 
 it('keeps queued attachments read-only and exposes no action for legacy attachments without assets', async () => {
-  const { rerender } = render(<AttachmentActions attachment={attachment} readOnly />)
+  const { rerender } = render(<AttachmentActions attachment={{ ...attachment, sendMode: 'text' }} conversationId="conversation" readOnly />)
   fireEvent.click(screen.getByRole('button'))
-  await screen.findByText('解析来源：HTTP PaddleOCR-VL（远程服务）')
-  expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+  expect(screen.queryByText(/解析来源/)).not.toBeInTheDocument()
+  expect(window.goodbuddy.documentParsing!.getSnapshot).not.toHaveBeenCalled()
+  expect(screen.getAllByRole('menuitem')).toHaveLength(1)
   fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
   rerender(<AttachmentActions attachment={{ ...attachment, resourceId: undefined }} />)
   expect(screen.queryByRole('button')).not.toBeInTheDocument()

@@ -7752,9 +7752,15 @@ button > svg {
   cursor: pointer;
 }
 
-.context-chip > button:hover {
+.context-chip > button:not(.message-image-button):hover {
   background: var(--danger-subtle);
   color: var(--danger);
+}
+
+.context-chip > .message-image-button {
+  width: auto;
+  height: auto;
+  cursor: zoom-in;
 }
 
 .attachment-metadata,

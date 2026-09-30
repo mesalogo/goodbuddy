@@ -9656,12 +9656,19 @@ function App(): React.JSX.Element {
                                   title={attachment.preview}
                                 >
                                   {attachment.kind === "image" &&
-                                  attachment.thumbnailUrl ? (
+                                   (attachment.thumbnailUrl || attachment.contentUrl) ? (
+                                    <button
+                                      type="button"
+                                      className="message-image-button"
+                                      aria-label={t('chat.images.viewNamed', { title: attachment.name })}
+                                      onClick={(event) => openImageViewer({ src: attachment.contentUrl ?? attachment.thumbnailUrl!, title: attachment.name }, event.currentTarget)}
+                                    >
                                     <img
                                       alt=""
                                       className="context-chip__thumbnail"
-                                      src={attachment.thumbnailUrl}
+                                      src={attachment.thumbnailUrl ?? attachment.contentUrl}
                                     />
+                                    </button>
                                   ) : (
                                     <FileText size={14} />
                                   )}

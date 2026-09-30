@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ContextAttachment } from '../../shared/contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { AttachmentResultButton } from './AttachmentResultButton'
 import { AttachmentActions, AttachmentStatus } from './AttachmentActions'
 import { InlineHelp } from './InlineHelp'
+import { DocumentConversationContext } from './DocumentConversationContext'
 
 export function QueuedAttachmentsDialog({ itemId, onClose }: { itemId: string; onClose: () => void }): React.JSX.Element {
   const close = useRef<HTMLButtonElement>(null)
+  const conversationContext = useContext(DocumentConversationContext)
   const [items, setItems] = useState<ContextAttachment[]>()
   const [error, setError] = useState('')
   useEffect(() => activateModalFocus(() => close.current), [])
@@ -29,6 +31,10 @@ export function QueuedAttachmentsDialog({ itemId, onClose }: { itemId: string; o
       {items?.length === 0 && <p>此输入没有附件。</p>}
       <div className="document-result-panel">{items?.map((item) => <article key={item.id}>
         <h3>{item.name}</h3>
+        {item.kind === 'image' && (item.thumbnailUrl || item.contentUrl) && <div className="document-result-image"><button
+          type="button" className="message-image-button" aria-label={`查看图片 ${item.name}`}
+          onClick={(event) => conversationContext?.openImage(item.contentUrl ?? item.thumbnailUrl!, item.name, event.currentTarget)}
+        ><img src={item.thumbnailUrl ?? item.contentUrl} alt={item.name} loading="lazy" /></button></div>}
         <div className="attachment-metadata"><AttachmentStatus attachment={item} /></div>
         <div className="attachment-actions">
         {item.resultId && <AttachmentResultButton resultId={item.resultId} name={item.name} readOnly />}

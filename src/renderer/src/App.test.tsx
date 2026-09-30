@@ -6953,6 +6953,12 @@ describe("App", () => {
       await within(composer).findByText("需求说明.md"),
     ).toBeInTheDocument();
     expect(within(composer).getByText("页面截图.png")).toBeInTheDocument();
+    const draftImage = within(composer).getByRole("button", { name: "查看图片 页面截图.png" });
+    fireEvent.click(draftImage);
+    const draftViewer = await screen.findByRole("dialog", { name: "页面截图.png" });
+    expect(within(draftViewer).getByRole("img")).toHaveAttribute("src", imageAttachment.contentUrl);
+    fireEvent.click(within(draftViewer).getByRole("button", { name: "关闭图片查看器" }));
+    await waitFor(() => expect(draftImage).toHaveFocus());
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "分析这些附件" },
     });
