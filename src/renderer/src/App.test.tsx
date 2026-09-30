@@ -7265,6 +7265,9 @@ describe("App", () => {
     });
     fireEvent.click(screen.getByLabelText("发送"));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(document.querySelector(".message--user")).toHaveTextContent("已有内容"),
+    );
     const requestId = run.mock.calls[0]?.[0].requestId;
     act(() => {
       if (requestId) {

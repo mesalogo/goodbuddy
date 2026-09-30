@@ -333,7 +333,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.1`, paired with the current Desktop release candidate `0.15.4`; formal
+  `0.15.1`, paired with the current Desktop release candidate `0.15.5`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -446,6 +446,8 @@ records are listed separately and do not introduce another feature status.
   waiting for another approval. See the [interaction boundaries](./docs/features/assistant-workbar/runtime-interactions.md).
 - [x] **Native execution checklists**: OpenCode and Continue update a
   read-only checklist above the conversation, with progress saved in history.
+  Details expand in an anchored, scrollable floating panel without shifting chat
+  content; outside clicks close it and Escape restores focus to its trigger.
   Explicit clears and remote replay retain request ownership; cancellation
   does not mark unfinished items complete. Remote delivery requires the matching
   Agent package. See the
@@ -472,6 +474,9 @@ records are listed separately and do not introduce another feature status.
   indicators and send/stop behavior remain unchanged.
   Cancellation and failure retain existing replies and use a single status;
   cancellation is neutral, and Edit again appears only when input can be restored.
+  Model-visible history preserves interrupted partial replies or placeholders
+  so cancelled questions are not merged into later requests. Reused local
+  OpenCode sessions receive a one-time interruption notice.
 - [x] **Layered Runtime and model selection**: Resolve Runtime and model per
   field through conversation, project, and global defaults. The two-column
   composer picker shows sources and supports overrides or restoring project
@@ -703,7 +708,9 @@ records are listed separately and do not introduce another feature status.
   records without replacing editors. Successful saves establish the editor's
    normalized baseline; only unsaved changes require confirmation on leaving. Opening
    a note shows a blank text/canvas composer above the history, and creation resets it
-   for the next record. Explicit editing updates a saved record. The separate To-dos view offers search, status filters,
+   for the next record. Explicit editing updates a saved record and exits after a
+   successful save; automatic comments do not reopen the editor, and failed saves
+   retain drafts. The separate To-dos view offers search, status filters,
   grouped tasks and direct completion, with instructions, source entries and AI
   comments in a right detail pane beside a stable task list. Narrow views offer
   on-demand detail with an explicit return to the list. Wide views support a
@@ -807,16 +814,19 @@ records are listed separately and do not introduce another feature status.
   [Scheduled Task PRD](./docs/features/task-and-job/scheduled-task-prd.md).
   Status counts and filters identify running tasks and those needing attention;
   task approvals remain actionable in their task cards.
-- [x] **Memory and Smart Heartbeat**: Provides periodic review, suggested
-  memories, insights, follow-up tasks, and auditable run history.
-- [x] **Automatic supervision settings and scope**: Supervisor / Automatic supervision is
-  the sole authoritative plan configuration, automatic report, and suggestion entry. Daily or weekly plans can be
-  created and edited for Global or one or more selected Projects. Legacy
-  single-project settings migrate without loss, and project-level memory and
-  action output must explicitly target a Project in scope. Task Center and
-  Settings no longer duplicate the form. Partition-aware review, candidate
-  generation, and recall triggers remain to be designed. See the
-  [Smart Heartbeat PRD](./docs/features/smart-heartbeat/prd.md).
+- [x] **Memory and Smart Heartbeat**: Plans trigger shared incremental reviews
+  instead of separate heartbeat reports. Choose memory/graph updates only or
+  evidence-backed suggestions for open items, disagreements, revisions, and
+  candidate conventions. Accepted open items create paused tasks; confirmed
+  conventions become long-term background. Suggestion failures can be retried
+  independently without undoing reviews.
+- [x] **Smart heartbeat settings and scope**: Supervisor / Smart heartbeat
+  manages daily or weekly Global or selected-Project plans and suggestions.
+  Task Center and Settings do not duplicate this form. Pending suggestions are
+  not repeated; dismissed suggestions can return with changed evidence.
+  Project/global processing progress remain separate and real-time conversation
+  intervention remains planned. See the
+  [implemented rules](./docs/features/conversation-supervision/logic-design.md).
 - [x] **Supervisor reviews, story graphs, and activity**: Review a selected scope
   and period, read dated supervision results and history in Work review, inspect saved result graphs and sources, confirm or revise entities,
   and continue a discussion with source-linked review context. Sidebar feedback follows or pins a
@@ -825,8 +835,10 @@ records are listed separately and do not introduce another feature status.
   focus in narrow sidebars. Activity combines heartbeat
   and downstream review stages, including failures and links to older results.
   Automatic stages process only new, changed, or unprocessed source portions;
-  no-change checks skip model calls. Manual review pages through the selected history
-  and saves batches with their facts and sources. Runs can pause and resume from
+  no-change checks skip model calls. Manual review is also incremental by default;
+  explicit reanalysis rereads the period without changing shared progress.
+  Automatic reviews do not resume user-paused runs. Reviews save batches with
+  their facts and sources. Runs can pause and resume from
   saved progress, without fixed-duration automatic pauses; settings expose
   concurrency, per-request timeouts, batch sizes, and response capacity.
   Activity emphasizes connected stages and saved-batch coverage, with secondary
@@ -841,7 +853,8 @@ records are listed separately and do not introduce another feature status.
   Continue discussion opens directly from feedback or graph sources, with an
   editable question and explicit target-conversation navigation. The UI no
   longer exposes knowledge-entity writeback controls or redundant context
-  explanations, and Automatic supervision hides empty metrics until activity exists.
+  explanations. Smart heartbeat shows actionable suggestions rather than report
+  metrics and trends.
 - [ ] **Further supervision capabilities** (planned): Full event-by-event replay,
   Experiment targets, chronological manual-edit audits, event
   triggers, and broader execution observation remain incomplete. Current automatic
@@ -938,9 +951,14 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current candidates are Desktop `0.15.4` and Agent `0.15.1`, with
+- The current Desktop candidate is `0.15.5`; published Agent `0.15.1` is unchanged, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.5` updates Smart heartbeat and incremental review, preserves
+  cancelled-turn history, floats checklist details, and exits note editing after
+  saving. Schema 50 carries pending legacy memory proposals into unconfirmed
+  conventions; back up the database and adjacent notes before upgrading.
+  See the [preparation record](./docs/development/release-preparation-0.15.5.md).
 - Desktop `0.15.4` introduces layered Runtime/model choices and separate
   system-task usage, and reduces duplicate Runtime instructions and history.
   Schema 49 migrates project/conversation choices; rollback requires the complete
