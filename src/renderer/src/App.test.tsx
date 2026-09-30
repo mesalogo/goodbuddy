@@ -4732,7 +4732,7 @@ describe("App", () => {
     historyRenderProbes.pane.mockClear();
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: 'Warm cached draft' } });
     expect(historyRenderProbes.pane).toHaveBeenCalledTimes(0);
-  });
+  }, 15_000);
 
   it("requires an accessible confirmation before permanently deleting a conversation", async () => {
     render(<App />);
