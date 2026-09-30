@@ -351,12 +351,13 @@ describe('MagicNotesWorkspace overview navigation', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await openNote()
     newEntry()
-    fireEvent.click(within(document.getElementById(`magic-note-entry-${createdEntryId}`)!).getByRole('button', { name: '编辑' }))
     for (let count = 1; count <= 2; count++) {
+      fireEvent.click(within(document.getElementById(`magic-note-entry-${createdEntryId}`)!).getByRole('button', { name: '编辑' }))
       fireEvent.click(screen.getByTestId('magic-note-editor'))
       fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
       await waitFor(() => expect(updateEntry).toHaveBeenCalledTimes(count))
-      await waitFor(() => expect(screen.getByRole('button', { name: '保存修改' })).toBeEnabled())
+      await waitFor(() => expect(within(document.getElementById(`magic-note-entry-${createdEntryId}`)!).getByRole('button', { name: '编辑' })).toBeEnabled())
+      expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
     }
     expect(createEntry).toHaveBeenCalledOnce()
     expect(updateEntry).toHaveBeenLastCalledWith({ entryId: createdEntryId, content, expectedRevision: auto ? 4 : 2 })
@@ -515,6 +516,7 @@ describe('MagicNotesWorkspace overview navigation', () => {
     get.mockResolvedValue({ ...detail, entries: [...detail.entries, anotherEntry] })
     act(() => changeListener?.())
     await waitFor(() => expect(document.querySelectorAll('.magic-note-record')).toHaveLength(2))
+    fireEvent.click(original.getByRole('button', { name: '编辑' }))
     fireEvent.click(original.getByTestId('magic-note-editor'))
     fireEvent.click(document.querySelectorAll<HTMLButtonElement>('.magic-note-record')[1]!)
     back()
@@ -677,6 +679,70 @@ describe('MagicNotesWorkspace overview navigation', () => {
 })
 
 describe('MagicNotesWorkspace detail behavior', () => {
+  it.each(['text', 'canvas'] as const)('exits %s editing after saving and stays out when automatic analysis completes', async (kind) => {
+    getSettings.mockResolvedValue({ ...settings, magicNoteCommentMode: 'after-save-auto' })
+    const originalContent = kind === 'canvas' ? canvasContent : detail.entries[0]!.content
+    const editedContent = kind === 'canvas' ? { ...canvasContent, flow: { ops: [{ insert: 'Changed body\n' }] } } : content
+    get.mockResolvedValue({ ...detail, entries: [{ ...detail.entries[0]!, content: originalContent }] })
+    const saved = { ...detail, revision: 2, entries: [{ ...detail.entries[0]!, content: editedContent, revision: 2 }] }
+    updateEntry.mockResolvedValue(saved)
+    canvas.flush.mockResolvedValue(editedContent)
+    let finish!: (value: MagicNoteDetail) => void
+    analyze.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    const entry = within(screen.getByRole('article'))
+    const editLabel = kind === 'canvas' ? '展开编辑画布' : '编辑'
+    const editorId = kind === 'canvas' ? 'canvas-editor' : 'magic-note-editor'
+    fireEvent.click(entry.getByRole('button', { name: editLabel }))
+    fireEvent.click(entry.getByTestId(editorId))
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(analyze).toHaveBeenCalledWith(entryId, expect.objectContaining({ expectedRevision: 2 })))
+    expect(updateEntry).toHaveBeenCalledWith({ entryId, content: editedContent, expectedRevision: 1 })
+    expect(entry.queryByTestId(editorId)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
+    expect(entry.getByRole('button', { name: editLabel })).toBeVisible()
+    await act(async () => finish({ ...saved, revision: 3, entries: [{ ...saved.entries[0]!, revision: 3 }] }))
+    expect(entry.queryByTestId(editorId)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
+    expect(entry.getByRole('button', { name: editLabel })).toBeEnabled()
+    fireEvent.click(entry.getByRole('button', { name: editLabel }))
+    expect(entry.getByTestId(editorId)).toBeVisible()
+  })
+
+  it.each(['text', 'canvas'] as const)('retains the %s editor and draft after a failed save and exits after retry', async (kind) => {
+    getSettings.mockResolvedValue({ ...settings, magicNoteCommentMode: 'after-save-auto' })
+    const originalContent = kind === 'canvas' ? canvasContent : detail.entries[0]!.content
+    const editedContent = kind === 'canvas' ? { ...canvasContent, flow: { ops: [{ insert: 'Unsaved body\n' }] } } : content
+    get.mockResolvedValue({ ...detail, entries: [{ ...detail.entries[0]!, content: originalContent }] })
+    const saved = { ...detail, revision: 2, entries: [{ ...detail.entries[0]!, content: editedContent, revision: 2 }] }
+    updateEntry.mockRejectedValueOnce(new Error('save failed')).mockResolvedValue(saved)
+    analyze.mockResolvedValue(saved)
+    canvas.flush.mockResolvedValue(editedContent)
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    const entry = within(screen.getByRole('article'))
+    const editLabel = kind === 'canvas' ? '展开编辑画布' : '编辑'
+    const editorId = kind === 'canvas' ? 'canvas-editor' : 'magic-note-editor'
+    fireEvent.click(entry.getByRole('button', { name: editLabel }))
+    const editor = entry.getByTestId(editorId)
+    fireEvent.click(editor)
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ message: 'save failed' })))
+    expect(entry.getByTestId(editorId)).toBe(editor)
+    expect(screen.getByRole('button', { name: '保存修改' })).toBeEnabled()
+    if (kind === 'text') expect(entry.getByRole('button', { name: editLabel })).toBeDisabled()
+    else expect(entry.queryByRole('button', { name: editLabel })).not.toBeInTheDocument()
+    expect(analyze).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(entry.getByRole('button', { name: editLabel })).toBeEnabled())
+    expect(entry.queryByTestId(editorId)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
+    expect(updateEntry).toHaveBeenCalledTimes(2)
+    expect(updateEntry).toHaveBeenNthCalledWith(1, { entryId, content: editedContent, expectedRevision: 1 })
+    expect(updateEntry).toHaveBeenNthCalledWith(2, { entryId, content: editedContent, expectedRevision: 1 })
+  })
+
   it('selects the explicitly created ID when an Agent appends before the local create completes', async () => {
     const agentEntry = { ...detail.entries[0]!, id: 'agent-entry', plainText: 'Agent A' }
     const localEntry = { ...detail.entries[0]!, id: createdEntryId, content, plainText: 'Local B' }
@@ -711,7 +777,7 @@ describe('MagicNotesWorkspace detail behavior', () => {
     } else await act(async () => { fireEvent.click(screen.getByRole('button', { name: '保存修改' })) })
     await act(() => vi.advanceTimersByTimeAsync(6000))
     expect(analyzeDraft).not.toHaveBeenCalled()
-    if (action === 'save') fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
     newEntry()
     fireEvent.click(screen.getByTestId('magic-note-editor'))
     await act(() => vi.advanceTimersByTimeAsync(5000))
@@ -1037,7 +1103,8 @@ describe('MagicNotesWorkspace detail behavior', () => {
       expect(screen.getByRole('button', { name: '保存记录' })).toBeVisible()
     } else {
       expect(updateEntry).toHaveBeenCalledWith({ entryId, content, expectedRevision: 1 })
-      expect(screen.getByRole('button', { name: '保存修改' })).toBeVisible()
+      expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '编辑' })).toBeEnabled()
     }
   })
 
@@ -1191,7 +1258,9 @@ describe('MagicNotesWorkspace canvas integration', () => {
     await openNote()
     fireEvent.click(screen.getByRole('button', { name: '展开编辑画布' }))
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存修改' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: '展开编辑画布' })).toBeEnabled())
+    expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开编辑画布' }))
     const normalized = { ...canvasContent, flow: { version: 1 as const, ops: [{ insert: '\n' }] } }
     act(() => canvas.ready?.(normalized))
     canvas.flush.mockResolvedValue(normalized)
@@ -1376,7 +1445,8 @@ describe('MagicNotesWorkspace canvas integration', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ message: '记录已保存，但自动分析失败：capture failed。可稍后重新分析。' })))
     expect(updateEntry).toHaveBeenCalledOnce()
-    expect(screen.getByRole('button', { name: '保存修改' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument()
     expect(analyze).not.toHaveBeenCalled()
   })
 
@@ -1420,7 +1490,8 @@ describe('MagicNotesWorkspace canvas integration', () => {
     await screen.findByTestId('canvas-editor')
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(updateEntry).toHaveBeenCalledOnce())
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存修改' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存记录' })).toBeEnabled())
+    expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
     expect(analyze).toHaveBeenCalledTimes(expected ? 1 : 0)
     expect(canvas.capture).toHaveBeenCalledTimes(expected ? 1 : 0)
   })
@@ -1438,7 +1509,8 @@ describe('MagicNotesWorkspace canvas integration', () => {
     await screen.findByTestId('canvas-editor')
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(updateEntry).toHaveBeenCalledOnce())
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存修改' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存记录' })).toBeEnabled())
+    expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
     expect(analyze).toHaveBeenCalledTimes(semanticChange ? 1 : 0)
   })
 
@@ -1480,9 +1552,10 @@ describe('MagicNotesWorkspace canvas integration', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(updateEntry).toHaveBeenCalledOnce())
     expect(analyze).not.toHaveBeenCalled()
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存修改' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: '展开编辑画布' })).toBeEnabled())
+    expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument()
     showAi()
-    await screen.findByTestId('canvas-editor')
+    fireEvent.click(screen.getByRole('button', { name: '展开编辑画布' }))
     get.mockResolvedValue({ ...detail, entries: [{ ...entry, comments: [{ ...entry.comments[0]!, inputMode: 'text-fallback' }] }] })
     act(() => changeListener?.())
     await screen.findByText('仅文字分析（未使用画布图像）')
@@ -1491,7 +1564,8 @@ describe('MagicNotesWorkspace canvas integration', () => {
     canvas.flush.mockResolvedValue(moved)
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(updateEntry).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存修改' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: '展开编辑画布' })).toBeEnabled())
+    expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument()
     expect(analyze).not.toHaveBeenCalled()
   })
 
@@ -1681,7 +1755,8 @@ describe('MagicNotesWorkspace canvas integration', () => {
     canvas.flush.mockResolvedValue(moved)
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(updateEntry).toHaveBeenCalledWith({ entryId, content: moved, expectedRevision: 1 }))
-    await screen.findByTestId('canvas-editor')
+    await screen.findByTestId('canvas-content')
+    expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument()
     expect(analyze).toHaveBeenCalledOnce()
     expect(canvas.capture).not.toHaveBeenCalled()
   })

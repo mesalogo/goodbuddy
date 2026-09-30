@@ -1869,9 +1869,9 @@ export function MagicNotesWorkspace({
       })
       applyDetail(updated)
       const savedEntry = updated.entries.find((entry) => entry.id === editingEntry.id)
-      setEditingEntry(savedEntry)
-      editingBaselineRef.current = savedEntry?.content
-      editingContentRef.current = savedEntry?.content
+      setEditingEntry(undefined)
+      editingBaselineRef.current = undefined
+      editingContentRef.current = undefined
       clearDraftAnalysis()
       notifySuccess(t('notifications.entryUpdated'))
       if (analysisPreparationError !== undefined) notifyError(t('canvas.savedAnalysisFailed', { error: analysisPreparationError }))
@@ -1892,8 +1892,6 @@ export function MagicNotesWorkspace({
             ...options, expectedRevision: savedEntry.revision
           })
           applyDetail(analyzed)
-          const analyzedEntry = analyzed.entries.find((entry) => entry.id === editingEntry.id)
-          setEditingEntry(analyzedEntry)
           notifySuccess(t('notifications.aiCommentAdded'))
         } catch (analysisError) {
           notifyError(analysisError)
