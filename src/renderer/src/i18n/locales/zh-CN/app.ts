@@ -525,7 +525,6 @@ export const app = {
   composer: {
     menuSelection: '{{label}}：{{selection}}',
     inputLabel: '向 GoodBuddy 提问',
-    placeholder: '给 GoodBuddy 发消息…',
     imagePlaceholder: '描述你想生成的图片…',
     keyboardHint:
       'Enter 发送 · Shift+Enter 换行 · {{pasteShortcut}} 粘贴',

@@ -544,7 +544,6 @@ export const app = {
   composer: {
     menuSelection: '{{label}}: {{selection}}',
     inputLabel: 'Message GoodBuddy',
-    placeholder: 'Message GoodBuddy…',
     imagePlaceholder: 'Describe the image you want to generate…',
     keyboardHint:
       'Enter to send · Shift+Enter for a new line · {{pasteShortcut}} to paste',

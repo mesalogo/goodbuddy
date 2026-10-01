@@ -9966,9 +9966,9 @@ function App(): React.JSX.Element {
                               aria-label={t("composer.inputLabel")}
                               placeholder={`${
                                 runtime?.capability === "image-generation"
-                                  ? t("composer.imagePlaceholder")
-                                  : t("composer.placeholder")
-                              }\n${composerKeyboardHint}\n${composerConversationHint}`}
+                                  ? `${t("composer.imagePlaceholder")}\n`
+                                  : ""
+                              }${composerKeyboardHint}\n${composerConversationHint}`}
                               ref={inputRef}
                               rows={3}
                               title={`${composerKeyboardHint}\n${composerConversationHint}`}

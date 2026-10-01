@@ -2118,7 +2118,7 @@ describe("App", () => {
       ).toBeInTheDocument();
       expect(screen.getByLabelText("Message GoodBuddy")).toHaveAttribute(
         "placeholder",
-        "Message GoodBuddy…\nEnter to send · Shift+Enter for a new line · Ctrl+V to paste\nCtrl+N for a new conversation · Ctrl+Shift+Space for quick access",
+        "Enter to send · Shift+Enter for a new line · Ctrl+V to paste\nCtrl+N for a new conversation · Ctrl+Shift+Space for quick access",
       );
       expect(screen.getByLabelText("Message GoodBuddy")).toHaveAttribute(
         "title",
@@ -5985,7 +5985,7 @@ describe("App", () => {
     render(<App />);
     const composer = await screen.findByLabelText("向 GoodBuddy 提问");
     await waitFor(() => expect(composer).toHaveAttribute("placeholder",
-      `给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · ${modifier}+V 粘贴\n${modifier}+N 新建对话${shortcut ? ` · ${shortcut} 快捷唤起` : ""}`));
+      `Enter 发送 · Shift+Enter 换行 · ${modifier}+V 粘贴\n${modifier}+N 新建对话${shortcut ? ` · ${shortcut} 快捷唤起` : ""}`));
     expect(document.querySelector(".composer-meta__shortcut")).toBeNull();
   });
 
@@ -6061,7 +6061,7 @@ describe("App", () => {
       render(<App />);
       const composer = await screen.findByLabelText("向 GoodBuddy 提问");
       await waitFor(() => expect(composer).toHaveAttribute("placeholder",
-        `给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话${infoState === "loaded" ? " · Ctrl+Shift+Space 快捷唤起" : ""}`));
+        `Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话${infoState === "loaded" ? " · Ctrl+Shift+Space 快捷唤起" : ""}`));
       expect(document.querySelector(".composer-meta__shortcut")).toBeNull();
       fireEvent.change(composer, { target: { value: "草稿" } });
       expect(composer).toHaveValue("草稿");
@@ -6102,11 +6102,11 @@ describe("App", () => {
       await screen.findByLabelText("向 GoodBuddy 提问");
       expect(screen.queryByText("Ctrl+Alt+K")).not.toBeInTheDocument();
       await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问"))
-        .toHaveAttribute("placeholder", "给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话"));
+        .toHaveAttribute("placeholder", "Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话"));
       if (infoState === "pending") {
         await act(async () => pendingInfo.resolve(initialInfo));
         expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute("placeholder",
-          "给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话");
+          "Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话");
       }
     } finally {
       delete api.shortcuts;
@@ -8254,7 +8254,7 @@ describe("App", () => {
     ).toHaveTextContent(/^Ask$/u);
     expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute(
       "placeholder",
-       "给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话 · Ctrl+Shift+Space 快捷唤起",
+       "Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话 · Ctrl+Shift+Space 快捷唤起",
     );
     expect(
       within(conversationSettings).getByRole("button", {
