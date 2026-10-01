@@ -345,7 +345,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.1`, paired with the current Desktop release candidate `0.15.6`; formal
+  `0.15.1`, paired with the current Desktop release candidate `0.15.7`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -966,9 +966,17 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.6`; published Agent `0.15.1` is unchanged, with
+- The current Desktop candidate is `0.15.7`; published Agent `0.15.1` is unchanged, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.7` reuses completed streaming Markdown blocks and conversation
+  derived values without changing the default streaming cadence. Activity records
+  load on entry, refresh every 15 seconds while visible, and offer manual refresh.
+  Local custom MCP discovery failures are isolated per service. Managed model
+  source selection moves to a confirmation dialog in Model Connections, and Device
+  Sharing becomes an opt-in test feature. Schema remains 52. Exact-candidate CI
+  and packaging are still required; component benchmarks are not full-App results.
+  See the [preparation record](./docs/development/release-preparation-0.15.7.md).
 - Desktop `0.15.6` adds optional, persisted frosted-glass header/checklist surfaces
   (off by default, without OS desktop transparency), reduces repeated chat renders,
   and supports direct previews for draft/queued images. Settings are grouped with

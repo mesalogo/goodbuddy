@@ -2,6 +2,40 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.7",
+      "releasedAt": "2026-10-01",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**减少流式回复期间的重复渲染**：较长回答持续输出时，已完成的 Markdown 块可复用，仅重新解析增长中的尾部，并减少会话侧栏和活动摘要的重复计算。涉及全文语义的内容仍使用完整解析，默认流式刷新节奏保持不变；性能测量来自限定的组件场景，不代表所有设备或完整应用的提速比例。",
+            "**运行记录按需刷新**：进入运行记录页面时读取快照，页面可见期间每 15 秒刷新一次，也可使用页头统一刷新按钮更新记录与 Token 用量。页面不再随每个实时事件重新计算，显示可能存在短暂延迟。",
+            "**单个自定义 MCP 故障不再拖垮正常工具**：本地 Runtime 发现工具时，失败服务的工具被排除，正常服务仍可使用；动态目录刷新失败会清空该服务的旧工具，避免继续使用失效目录。首次连接失败的服务在下一请求重试，取消与授权撤销继续生效；这不是远程 Agent 的新恢复能力。",
+            "**在模型连接中统一选择下载源**：模型类型页签右侧显示当前受管模型下载源，可打开弹窗选择 ModelScope 或 Hugging Face，确认后才保存，取消不改变已保存选择。向量、语音和 OCR 的更换来源入口直接打开同一弹窗；设置只影响后续受管本地模型下载，不会静默换源或修改模型 API、应用更新和 Agent 包来源。",
+            "**设备共享测试功能改为显式启用**：先在应用中心启用设备共享，再从应用菜单或应用中心进入；缺失启用设置时默认关闭，已明确保存的选择保留。关闭会退出页面，但不清除目录或撤销已发布记录；仍需另行运行 ShareServer，仅管理元数据，不提供远程执行或知识正文访问。"
+          ],
+          "notices": [
+            "本轮只更新 Desktop，Agent 保持 **0.15.1**，无需重新下载 Agent 包。数据库仍为 schema 52；从较旧版本升级前，请关闭应用并备份完整数据库及相邻 `notes/` 目录，降级需恢复升级前备份。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Reduce repeated rendering during streamed replies**: Completed Markdown blocks can be reused while only the growing tail is parsed, with less repeated work for conversation rows and activity summaries. Content with document-wide semantics still uses full parsing, and the default streaming cadence is unchanged; component benchmarks do not establish a speedup for every device or the complete application.",
+            "**Refresh activity records on demand**: Opening the activity page loads a snapshot, refreshes it every 15 seconds while visible, and offers one header button to refresh records and token usage. The page no longer recalculates for every live event, so displayed records may briefly lag behind.",
+            "**Keep healthy tools available when one custom MCP service fails**: Local Runtime tool discovery excludes failed services while retaining healthy ones, and a failed dynamic catalog refresh clears that service's stale tools. Initially failed connections are retried on the next request, while cancellation and authorization revocation remain effective; this is not a new remote Agent recovery capability.",
+            "**Choose managed model download sources in Model Connections**: The model-type tab row shows the current source and opens a dialog to select ModelScope or Hugging Face, saving only on confirmation and preserving the saved choice on cancel. Embedding, speech, and OCR source-change entries open the same dialog; this affects subsequent managed local model downloads only, without silent source fallback or changes to model APIs, application updates, or Agent package sources.",
+            "**Explicitly enable the device-sharing test feature**: Enable Device Sharing in Application Center before opening it from the application menu or manager; a missing preference defaults to off, while explicitly saved choices are preserved. Disabling it exits the page without clearing catalogs or revoking publications; a separately running ShareServer is still required, and this remains metadata management without remote execution or knowledge-content access."
+          ],
+          "notices": [
+            "This is a Desktop-only update; Agent remains **0.15.1**, with no Agent package download required. The database remains at schema 52; before upgrading from older releases, close the app and back up the complete database and adjacent `notes/` directory, and restore a pre-upgrade backup to downgrade."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.6",
       "releasedAt": "2026-10-01",
       "notes": {
