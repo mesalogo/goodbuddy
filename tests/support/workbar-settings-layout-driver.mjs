@@ -28,6 +28,19 @@ app.whenReady().then(async () => {
     throw new Error(`Timeout: ${code}\n${errors.join('\n')}`)
   }
   const settle = () => js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+  const scrollSettingsControl = async selector => {
+    await js(`(() => {
+      const e=document.querySelector(${JSON.stringify(selector)});
+      e.scrollIntoView({block:'center'});
+      const pane=e.closest('.settings-panel__content'),p=pane.getBoundingClientRect();
+      const header=pane.querySelector('.settings-category-header--sticky');
+      const top=Math.max(p.top,header?.getBoundingClientRect().bottom??p.top),bottom=Math.min(p.bottom,innerHeight);
+      const r=e.getBoundingClientRect();
+      if(bottom-top<r.height)throw new Error('No unobscured space for settings control');
+      pane.scrollTop+=r.top+r.height/2-(top+bottom)/2;
+    })()`)
+    await settle()
+  }
   const point = selector => js(`(() => {
     const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw new Error('Missing control: '+${JSON.stringify(selector)});const r=e.getBoundingClientRect();
     return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),hit:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};
@@ -180,7 +193,7 @@ app.whenReady().then(async () => {
             await settle()
             await screenshot(`${locale}-${theme}-settings-overview-${width}`)
           }
-          await js("document.querySelector('.model-connection-detail select').scrollIntoView({block:'center'})")
+          await scrollSettingsControl('.model-connection-detail select')
           const result = await js(`(() => {
             const e=document.querySelector('.model-connection-detail select'),s=getComputedStyle(e),r=e.getBoundingClientRect();
             const c=document.createElement('canvas').getContext('2d');c.font=s.font;
@@ -205,7 +218,7 @@ app.whenReady().then(async () => {
           observations.push({ locale, theme, width, height, panelWidth, ...result })
           await screenshot(`${locale}-${theme}-settings-${width}${panelWidth ? '-narrow-container' : ''}`)
           const switchSelector = '.model-connection-detail .toggle-row input[role="switch"]'
-          await js(`document.querySelector(${JSON.stringify(switchSelector)}).scrollIntoView({block:'center'})`)
+          await scrollSettingsControl(switchSelector)
           await settle()
           const switchLayout = await js(`(() => {
             const input=document.querySelector(${JSON.stringify(switchSelector)}),row=input.closest('.toggle-row'),
@@ -222,7 +235,7 @@ app.whenReady().then(async () => {
           observations.push({ locale, theme, width, height, panelWidth, switchLayout })
           if (width === 640 || width === 1280) await screenshot(`${locale}-${theme}-settings-switch-${width}`)
           if (width === 1280 || width === 640) {
-            await js("document.querySelector('.model-connection-detail details.settings-section > summary').scrollIntoView({block:'center'})")
+            await scrollSettingsControl('.model-connection-detail details.settings-section > summary')
             await click('.model-connection-detail details.settings-section > summary')
             await wait('document.querySelector(".model-connection-detail details.settings-section").open')
             const nested = await js(`(() => {

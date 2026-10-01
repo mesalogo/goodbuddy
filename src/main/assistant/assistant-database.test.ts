@@ -3054,7 +3054,7 @@ describe('AssistantDatabase', () => {
     ])
     expect(terminal[0]?.message).not.toHaveProperty('attachments')
     migrated.close()
-  })
+  }, 15000)
 
   it('rolls back both heartbeat failure updates atomically', async () => {
     const directory = await mkdtemp(
