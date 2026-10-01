@@ -50,11 +50,14 @@ async function setup(timeout = 1000) {
 }
 
 it('persists one identity across concurrent first reads, saves and restarts without accepting renderer identity', async () => {
-  const { service, file, url } = await setup()
+  const setupResult = await setup()
+  const file = `${setupResult.file}.first-read`
+  const url = setupResult.url
+  const service = new DeviceSharingService(file, 'test-version')
   const [first, second] = await Promise.all([service.getSettings(), service.getSettings()])
   expect(first.deviceId).toBe(second.deviceId)
   await service.saveSettings({ name: 'Renamed', serverUrl: `${url}/` })
-  expect(await new DeviceSharingService(file, 'v2').getSettings()).toEqual({ ...first, name: 'Renamed' })
+  expect(await new DeviceSharingService(file, 'v2').getSettings()).toEqual({ ...first, name: 'Renamed', serverUrl: url })
   await expect(service.saveSettings({ name: 'Bad', serverUrl: url, deviceId: 'forged' })).rejects.toThrow()
   expect(JSON.parse(await readFile(file, 'utf8')).deviceId).toBe(first.deviceId)
   await writeFile(file, '{broken')

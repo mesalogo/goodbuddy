@@ -560,8 +560,10 @@ describe('MagicNotesWorkspace overview navigation', () => {
     // Back to overview lives in the page header's top-right actions while a note is open.
     expect(screen.getByRole('button', { name: '返回总览' }).closest('.page-header__actions')).not.toBeNull()
     expect(screen.getByRole('button', { name: '返回总览' }).nextElementSibling).toBe(screen.getByRole('button', { name: '新建笔记' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '返回总览' })).toHaveFocus())
     fireEvent.click(screen.getByRole('button', { name: '新建笔记' }))
     expect(within(overview).getByLabelText('笔记标题')).toBeVisible()
+    expect(within(overview).getByLabelText('笔记标题')).toHaveFocus()
     fireEvent.click(within(overview).getByRole('button', { name: '取消' }))
     expect(screen.queryByRole('button', { name: '切换到待办' })).not.toBeInTheDocument()
     expect(screen.getByRole('searchbox')).toBeVisible()
@@ -571,7 +573,6 @@ describe('MagicNotesWorkspace overview navigation', () => {
     const css = readFileSync('src/renderer/src/styles.css', 'utf8')
     expect(css).toMatch(/\.magic-notes-layout--detail\s*\{\s*border: 0;\s*border-radius: 0;/)
     expect(css).toMatch(/\.magic-notes-stream-pane\s*\{[^}]*padding: 0 var\(--magic-note-stream-gutter\)/)
-    await waitFor(() => expect(screen.getByRole('button', { name: '返回总览' })).toHaveFocus())
     back()
     expect(overview).toBeVisible()
     expect(screen.getByRole('heading', { level: 1, name: '魔法笔记' })).toBeVisible()
