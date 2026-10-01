@@ -44,6 +44,37 @@ afterEach(async () => {
 })
 
 describe('ApplicationSettingsStore', () => {
+  it.each([11, 12])('defaults missing device sharing to off and preserves explicit choices in version %s', async (version) => {
+    for (const deviceSharingEnabled of [undefined, false, true]) {
+      const { filePath, store } = await createStore()
+      await writeFile(filePath, JSON.stringify({ ...defaultApplicationSettings, version,
+        lastSeenReleaseNotesVersion: null, deviceSharingEnabled, checkUpdatesOnStartup: false }))
+      expect(await store.get()).toMatchObject({ deviceSharingEnabled: deviceSharingEnabled ?? false, checkUpdatesOnStartup: false })
+      await store.update({ magicNotesEnabled: false })
+      expect((await createApplicationSettingsStore(filePath).get()).deviceSharingEnabled).toBe(deviceSharingEnabled ?? false)
+    }
+  })
+
+  it('persists and publishes device sharing toggles without resetting them on unrelated updates', async () => {
+    const { filePath, store } = await createStore()
+    expect((await store.get()).deviceSharingEnabled).toBe(false)
+    expect(applicationSettingsSchema.parse({ ...defaultApplicationSettings, deviceSharingEnabled: undefined }).deviceSharingEnabled).toBe(false)
+    const changed = vi.fn()
+    store.onChanged(changed)
+    for (const deviceSharingEnabled of [true, false]) {
+      const saved = await store.update({ deviceSharingEnabled })
+      expect(saved.deviceSharingEnabled).toBe(deviceSharingEnabled)
+      expect(changed).toHaveBeenLastCalledWith(saved)
+      await store.update({ checkUpdatesOnStartup: false })
+      expect((await createApplicationSettingsStore(filePath).get()).deviceSharingEnabled).toBe(deviceSharingEnabled)
+      expect(JSON.parse(await readFile(filePath, 'utf8')).deviceSharingEnabled).toBe(deviceSharingEnabled)
+    }
+    expect(applicationSettingsUpdateSchema.parse({ checkUpdatesOnStartup: false })).toEqual({ checkUpdatesOnStartup: false })
+    for (const deviceSharingEnabled of ['false', 0, null]) {
+      await expect(store.update({ deviceSharingEnabled })).rejects.toThrow()
+    }
+  })
+
   it.each([11, 12])('defaults missing frosted glass to off in version %s', async (version) => {
     const { filePath, store } = await createStore()
     const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null, checkUpdatesOnStartup: false }

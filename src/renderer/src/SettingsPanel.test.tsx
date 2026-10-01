@@ -40,6 +40,7 @@ import type {
   EmbeddingSettingsSnapshot
 } from '../../shared/embedding-contracts'
 import type { SpeechModelSnapshot } from '../../shared/speech-model-contracts'
+import type { DocumentParsingSnapshot } from '../../shared/document-parsing-contracts'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
 import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
 import {
@@ -524,7 +525,7 @@ let applicationSettings: ApplicationSettings = {
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
-applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
   conversationHtmlRenderingEnabled: true,
   remoteProjectsEnabled: false,
   magicNotesEnabled: false,
@@ -819,7 +820,7 @@ describe('SettingsPanel runtime files', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
-    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
@@ -1403,7 +1404,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(
       screen.getByRole('tab', { name: /Platform Features/i })
     )
-    expect(screen.getByText('Workspace & downloads')).toBeInTheDocument()
+    expect(screen.getByText('Workspace')).toBeInTheDocument()
     expect(
       screen.getByLabelText('Default workspace folder')
     ).toBeInTheDocument()
@@ -1507,7 +1508,7 @@ describe('SettingsPanel runtime files', () => {
     expect(applicationSettings).toEqual(storedSettings)
   })
 
-  it('switches the global model download source from General settings', async () => {
+  it('confirms the model download source beside the model types, below save actions', async () => {
     const onNotify = vi.fn()
     render(
       <SettingsPanel
@@ -1520,8 +1521,15 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    const modelScope = await screen.findByRole('radio', {
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    const trigger = screen.getByRole('button', { name: '模型下载源' })
+    expect(trigger.closest('.model-type-navigation')).toContainElement(screen.getByRole('group', { name: '模型类型' }))
+    expect(trigger.closest('.settings-category-header__navigation')?.previousElementSibling).toHaveClass('settings-category-header__actions')
+    expect(await screen.findByText('当前来源：ModelScope')).toBeInTheDocument()
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: '模型下载源' })
+    const modelScope = within(dialog).getByRole('radio', {
       name: /ModelScope/u
     })
     const huggingFace = screen.getByRole('radio', {
@@ -1534,21 +1542,28 @@ describe('SettingsPanel runtime files', () => {
     ).not.toBeInTheDocument()
 
     fireEvent.click(huggingFace)
+    expect(updateApplicationSettings).not.toHaveBeenCalled()
+    expect(screen.getByText('当前来源：ModelScope')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认' }))
     await waitFor(() =>
       expect(updateApplicationSettings).toHaveBeenCalledWith({
         modelDownloadSource: 'hugging-face'
       })
     )
-    expect(huggingFace).toBeChecked()
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '模型下载源' })).not.toBeInTheDocument()
+      expect(screen.getByText('当前来源：Hugging Face')).toBeInTheDocument()
+      expect(trigger).toHaveFocus()
+    })
     expect(onNotify).toHaveBeenCalledWith({
       tone: 'success',
       message: '模型下载源已切换为 Hugging Face。',
       dedupeKey: 'model-download-source'
     })
 
-    expect(
-      screen.getByRole('tab', { name: '远程项目' })
-    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    expect(screen.queryByRole('radio', { name: /ModelScope/u })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '模型下载源' })).not.toBeInTheDocument()
   })
 
   it.each([
@@ -1630,9 +1645,9 @@ describe('SettingsPanel runtime files', () => {
     const conversation = await screen.findByRole('article', { name: '会话与通知' })
     expect(within(conversation).getByRole('switch', { name: '桌面通知' })).not.toBeChecked()
     expect(within(conversation).getByRole('switch', { name: '在会话中渲染 HTML' })).toBeChecked()
-    const workspace = screen.getByRole('article', { name: '工作目录与下载' })
+    const workspace = screen.getByRole('article', { name: '工作目录' })
     expect(within(workspace).getByRole('textbox')).toHaveValue(runtimeSettings.workspacePath)
-    expect(within(workspace).getByRole('radio', { name: /ModelScope/u })).toBeChecked()
+    expect(within(workspace).queryByRole('radio')).not.toBeInTheDocument()
     expect(updateApplicationSettings).not.toHaveBeenCalled()
   })
 
@@ -1708,7 +1723,7 @@ describe('SettingsPanel runtime files', () => {
     expect(toggle).not.toBeChecked()
   })
 
-  it('does not guess a model download source when settings fail to load', async () => {
+  it('does not guess platform settings when they fail to load', async () => {
     getApplicationSettings.mockRejectedValueOnce(
       new Error('read failed')
     )
@@ -1744,7 +1759,7 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
-  it('keeps the confirmed model download source when saving fails', async () => {
+  it('keeps the source draft after a failed confirmation and allows retry', async () => {
     updateApplicationSettings.mockRejectedValueOnce(
       new Error('save failed')
     )
@@ -1758,7 +1773,9 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByText('当前来源：ModelScope')
+    fireEvent.click(screen.getByRole('button', { name: '模型下载源' }))
     const modelScope = await screen.findByRole('radio', {
       name: /ModelScope/u
     })
@@ -1766,12 +1783,164 @@ describe('SettingsPanel runtime files', () => {
       name: /Hugging Face/u
     })
     fireEvent.click(huggingFace)
+    fireEvent.click(screen.getByRole('button', { name: '确认' }))
 
     expect(
       await screen.findByText('保存模型下载源失败，请重试')
     ).toBeInTheDocument()
-    expect(modelScope).toBeChecked()
-    expect(huggingFace).not.toBeChecked()
+    expect(modelScope).not.toBeChecked()
+    expect(huggingFace).toBeChecked()
+    expect(screen.getByText('当前来源：ModelScope')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '确认' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '模型下载源' })).not.toBeInTheDocument()
+      expect(screen.getByText('当前来源：Hugging Face')).toBeInTheDocument()
+      expect(updateApplicationSettings).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it.each(['cancel', 'escape', 'close', 'backdrop'])('discards source selection on %s without saving', async (method) => {
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByText('当前来源：ModelScope')
+    const trigger = screen.getByRole('button', { name: '模型下载源' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: '模型下载源' })
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Hugging Face/u }))
+    if (method === 'escape') fireEvent.keyDown(dialog, { key: 'Escape' })
+    else if (method === 'backdrop') fireEvent.mouseDown(dialog.parentElement!)
+    else fireEvent.click(within(dialog).getByRole('button', { name: method === 'cancel' ? '取消' : '关闭模型下载源' }))
+    expect(screen.queryByRole('dialog', { name: '模型下载源' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    expect(updateApplicationSettings).not.toHaveBeenCalled()
+    fireEvent.click(trigger)
+    expect(screen.getByRole('radio', { name: /ModelScope/u })).toBeChecked()
+  })
+
+  it('locks the source dialog during confirmation and keeps the confirmed label until saved', async () => {
+    let resolveSave!: (value: ApplicationSettings) => void
+    updateApplicationSettings.mockImplementationOnce(() => new Promise((resolve) => { resolveSave = resolve }))
+    const onClose = vi.fn()
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={onClose} onSaved={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByText('当前来源：ModelScope')
+    fireEvent.click(screen.getByRole('button', { name: '模型下载源' }))
+    const dialog = screen.getByRole('dialog', { name: '模型下载源' })
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Hugging Face/u }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认' }))
+    expect(within(dialog).getByRole('button', { name: '保存中…' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: '取消' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: '关闭模型下载源' })).toBeDisabled()
+    expect(within(dialog).getByRole('radio', { name: /ModelScope/u })).toBeDisabled()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    fireEvent.mouseDown(dialog.parentElement!)
+    expect(dialog).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(updateApplicationSettings).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('当前来源：ModelScope')).toBeInTheDocument()
+    await act(async () => resolveSave({ ...applicationSettings, modelDownloadSource: 'hugging-face' }))
+    expect(screen.queryByRole('dialog', { name: '模型下载源' })).not.toBeInTheDocument()
+    expect(screen.getByText('当前来源：Hugging Face')).toBeInTheDocument()
+  })
+
+  it('retries loading the source without guessing a selected radio', async () => {
+    getApplicationSettings.mockRejectedValueOnce(new Error('read failed'))
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByText('读取模型下载源失败，请重试')
+    fireEvent.click(screen.getByRole('button', { name: '模型下载源' }))
+    const dialog = screen.getByRole('dialog', { name: '模型下载源' })
+    expect(within(dialog).queryByRole('radio')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '确认' })).toBeDisabled()
+    fireEvent.click(within(dialog).getByRole('button', { name: '重试' }))
+    await waitFor(() => {
+      expect(within(dialog).getByRole('radio', { name: /ModelScope/u })).toBeChecked()
+      expect(within(dialog).getByRole('button', { name: '确认' })).toBeEnabled()
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认' }))
+    expect(updateApplicationSettings).not.toHaveBeenCalled()
+  })
+
+  it.each(['embedding', 'speech'])('opens the shared source dialog from %s and updates download availability after confirm', async (kind) => {
+    const downloadAvailability = [
+      { source: 'modelscope' as const, available: false, unavailableReason: '当前来源缺少完整文件' },
+      { source: 'hugging-face' as const, available: true, totalBytes: 1 }
+    ]
+    getEmbeddingSnapshot.mockResolvedValueOnce({
+      ...embeddingSnapshot,
+      models: { ...embeddingSnapshot.models, catalog: [{ ...embeddingCatalogEntry, downloadAvailability }] }
+    })
+    speechModelSnapshot = {
+      ...createSpeechModelSnapshot(null),
+      installed: [],
+      catalog: [{ ...speechCatalog[0]!, downloadAvailability }]
+    }
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: kind === 'embedding' ? '向量模型' : '语音输入' }))
+    if (kind === 'embedding') {
+      fireEvent.click(await screen.findByRole('button', { name: '编辑向量模型连接 GoodBuddy 内置向量模型' }))
+    }
+    await screen.findByText('当前来源不可下载')
+    const entry = screen.getAllByRole('button', { name: '模型下载源' }).find((button) => !button.closest('.model-type-navigation'))!
+    entry.focus()
+    fireEvent.click(entry)
+    const dialog = screen.getByRole('dialog', { name: '模型下载源' })
+    expect(document.getElementById('settings-tab-model')).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Hugging Face/u }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认' }))
+    const modelName = kind === 'embedding' ? embeddingCatalogEntry.displayName : speechCatalog[0]!.displayName
+    const download = await screen.findByRole('button', { name: `下载 ${modelName}` })
+    expect(screen.queryByText('当前来源不可下载')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '模型下载源' })).toHaveFocus()
+    fireEvent.click(download)
+    await waitFor(() => {
+      if (kind === 'embedding') expect(installEmbeddingModel).toHaveBeenCalledWith(embeddingCatalogEntry.id, 'hugging-face')
+      else expect(window.goodbuddy.speechModels!.install).toHaveBeenCalledWith(speechCatalog[0]!.id, 'hugging-face')
+    })
+  })
+
+  it.each([false, true])('opens the source dialog on the model page from OCR, respecting dirty draft = %s', async (dirty) => {
+    const snapshot: DocumentParsingSnapshot = {
+      settings: { chatWorkflow: 'auto', knowledgeWorkflow: 'complete-index', localOcrModelId: 'pp-ocrv6-tiny', maximumPages: 100, pageTimeoutSeconds: 60 },
+      status: { nativeParsingAvailable: true, conversionAvailable: false, localOcr: {
+        id: 'pp-ocrv6-tiny', displayName: 'PP-OCRv6 Tiny', available: false, verified: false, runtime: 'onnxruntime-web-wasm', detail: '模型尚未安装'
+      } },
+      ocrModels: {
+        rootDirectory: 'C:\\models\\ocr', selectedDownloadSource: 'modelscope', installed: [], operations: [],
+        catalog: [{
+          id: 'pp-ocrv6-tiny', displayName: 'PP-OCRv6 Tiny', description: 'OCR', languages: ['中文'],
+          runtime: 'onnxruntime-web-wasm', quality: 'basic', speed: 'fast', recommended: true,
+          license: { name: 'Apache-2.0', notice: 'Apache-2.0', url: 'https://example.com/license' }, files: [],
+          downloadAvailability: [{ source: 'modelscope', available: false, unavailableReason: '当前来源缺少完整文件' }]
+        }]
+      }
+    }
+    Object.defineProperty(window.goodbuddy, 'documentParsing', {
+      configurable: true,
+      value: { getSnapshot: vi.fn(async () => snapshot), getOcrModelProgress: vi.fn(async () => ({ operations: [] })) }
+    })
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '文档解析' }))
+    const entry = await screen.findByRole('button', { name: '模型下载源' })
+    if (dirty) fireEvent.change(screen.getByRole('combobox', { name: '聊天与成果文件' }), { target: { value: 'fast-text' } })
+    entry.focus()
+    fireEvent.click(entry)
+    if (dirty) {
+      expect(screen.queryByRole('dialog', { name: '模型下载源' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+      expect(screen.getByRole('combobox', { name: '聊天与成果文件' })).toHaveValue('fast-text')
+      fireEvent.click(entry)
+      fireEvent.click(screen.getByRole('button', { name: '放弃更改并切换' }))
+    }
+    const dialog = await screen.findByRole('dialog', { name: '模型下载源' })
+    expect(document.getElementById('settings-tab-model')).toHaveAttribute('aria-selected', 'true')
+    expect(await within(dialog).findByRole('radio', { name: /ModelScope/u })).toBeChecked()
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+    expect(screen.getByRole('button', { name: '模型下载源' })).toHaveFocus()
+    expect(updateApplicationSettings).not.toHaveBeenCalled()
   })
 
   it('refreshes built-in Notes MCP after enabling Magic Notes', async () => {

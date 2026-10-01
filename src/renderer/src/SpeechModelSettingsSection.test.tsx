@@ -275,7 +275,7 @@ describe('SpeechModelSettingsSection', () => {
     )
   })
 
-  it('keeps an unavailable source explicit and offers General settings', async () => {
+  it('keeps an unavailable source explicit and offers source settings', async () => {
     await changeUiLocale('zh-CN')
     const onOpenModelDownloadSourceSettings = vi.fn()
     const unavailableSnapshot: SpeechModelSnapshot = {
@@ -338,7 +338,7 @@ describe('SpeechModelSettingsSection', () => {
       })
     ).toBeDisabled()
     fireEvent.click(
-      screen.getByRole('button', { name: '前往通用设置' })
+      screen.getByRole('button', { name: '模型下载源' })
     )
     expect(onOpenModelDownloadSourceSettings).toHaveBeenCalledOnce()
   })

@@ -86,7 +86,7 @@ async function run() {
     for (let round = 0; round < 4; round++) {
       render(current.MarkdownRenderer, '')
       flushSync(() => originalRoot.render(<UiLocaleProvider initialPreference="en-US">
-        <original.MarkdownRenderer>{''}</original.MarkdownRenderer>
+        <original.UnsegmentedMarkdownRenderer>{''}</original.UnsegmentedMarkdownRenderer>
       </UiLocaleProvider>))
       for (const [index, length] of prefixLengths.entries()) {
         const prefix = longAnswerCorpus.slice(0, length)
@@ -98,7 +98,7 @@ async function run() {
           const start = performance.now()
           if (variant === 'original') {
             flushSync(() => originalRoot.render(<UiLocaleProvider initialPreference="en-US">
-              <original.MarkdownRenderer>{prefix}</original.MarkdownRenderer>
+              <original.UnsegmentedMarkdownRenderer>{prefix}</original.UnsegmentedMarkdownRenderer>
             </UiLocaleProvider>))
             void originalHost.offsetHeight
           } else {
@@ -119,6 +119,48 @@ async function run() {
     flushSync(() => originalRoot.unmount())
     originalHost.remove()
   }
+  // Streaming shape: small deltas appended to an already long answer, on
+  // persistent roots, as ChatTimeline receives them. Alternate variant order.
+  const deltaSamples = { original: [] as number[], current: [] as number[] }
+  const deltaHost = document.createElement('div')
+  deltaHost.className = host.className
+  deltaHost.style.cssText = host.style.cssText
+  document.body.append(deltaHost)
+  const deltaRoot = createRoot(deltaHost)
+  const deltaStart = Math.floor(longAnswerCorpus.length * 0.8)
+  const deltaSize = 120
+  try {
+    const renderDelta = (variant: 'original' | 'current', prefix: string) => {
+      if (variant === 'original') {
+        flushSync(() => deltaRoot.render(<UiLocaleProvider initialPreference="en-US">
+          <original.UnsegmentedMarkdownRenderer>{prefix}</original.UnsegmentedMarkdownRenderer>
+        </UiLocaleProvider>))
+        void deltaHost.offsetHeight
+      } else {
+        render(current.MarkdownRenderer, prefix)
+        void host.offsetHeight
+      }
+    }
+    renderDelta('original', longAnswerCorpus.slice(0, deltaStart))
+    renderDelta('current', longAnswerCorpus.slice(0, deltaStart))
+    for (let step = 1; step <= 60; step++) {
+      const prefix = longAnswerCorpus.slice(0, deltaStart + step * deltaSize)
+      const order = step % 2 === 0 ? ['original', 'current'] as const : ['current', 'original'] as const
+      for (const variant of order) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        const start = performance.now()
+        renderDelta(variant, prefix)
+        if (step > 5) deltaSamples[variant].push(performance.now() - start)
+      }
+      if (step % 10 === 0 && snapshot() !== snapshot(deltaHost)) throw new Error(`Delta DOM mismatch: ${step}`)
+    }
+  } finally {
+    flushSync(() => deltaRoot.unmount())
+    deltaHost.remove()
+  }
+  const streamingDelta = { startCharacters: deltaStart, deltaCharacters: deltaSize,
+    samplesPerVariant: deltaSamples.current.length,
+    wholeDocumentMs: stats(deltaSamples.original), segmentedMs: stats(deltaSamples.current) }
   const longAnswer = { characters: longAnswerCorpus.length, bytes: new TextEncoder().encode(longAnswerCorpus).length,
     prefixLengths, warmupSweeps: 1, measuredSweeps: 3, samplesPerVariant: longSamples.current.length,
     originalRenderMs: stats(longSamples.original), currentRenderMs: stats(longSamples.current),
@@ -131,7 +173,7 @@ async function run() {
       if (normalize(prefix) !== originalNormalize(prefix)) throw new Error(`Normalizer mismatch: ${JSON.stringify(prefix)}`)
       prefixesChecked++
       for (const renderHtml of [false, true]) {
-        render(original.MarkdownRenderer, prefix, renderHtml)
+        render(original.UnsegmentedMarkdownRenderer, prefix, renderHtml)
         const expected = snapshot()
         render(current.MarkdownRenderer, prefix, renderHtml)
         if (snapshot() !== expected) throw new Error(`DOM mismatch (${renderHtml}): ${JSON.stringify(prefix)}`)
@@ -143,7 +185,7 @@ async function run() {
   if (!host.querySelector('h1') || !host.querySelector('strong') || !host.querySelector('.katex')) {
     throw new Error('Real Markdown formatting missing')
   }
-  return { results, longAnswer, prefixesChecked, domChecks }
+  return { results, longAnswer, streamingDelta, prefixesChecked, domChecks }
 }
 
 Object.assign(window, { streamingMarkdown: run })

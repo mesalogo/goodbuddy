@@ -300,7 +300,7 @@ export const settingsSections = {
       delete: 'Delete',
       confirmDelete: 'Confirm delete',
       download: 'Download',
-      openDownloadSourceSettings: 'Open General settings',
+      openDownloadSourceSettings: 'Model download source',
       importZip: 'Import ZIP',
       exportZip: 'Export ZIP'
     },
@@ -320,7 +320,7 @@ export const settingsSections = {
       removed: 'Speech model deleted'
     },
     sourceUnavailableDescription:
-      '{{source}} does not currently provide the complete verified files for this model. You can still import a ZIP archive or explicitly change the source in General settings.',
+      '{{source}} does not currently provide the complete verified files for this model. You can still import a ZIP archive or click Model download source to change sources.',
     languages: {
       中文: 'Chinese',
       粤语: 'Cantonese',
@@ -393,7 +393,7 @@ export const settingsSections = {
       download: 'Download',
       cancel: 'Cancel',
       importZip: 'Import ZIP',
-      openDownloadSourceSettings: 'Go to General settings',
+      openDownloadSourceSettings: 'Model download source',
       remove: 'Remove model',
       clearCredential: 'Clear credential',
       clearAfterSave: 'Credential will be cleared on save'
@@ -564,7 +564,7 @@ export const settingsSections = {
     },
     groups: {
       conversation: 'Conversations & notifications',
-      workspace: 'Workspace & downloads'
+      workspace: 'Workspace'
     },
     desktopNotifications: {
       enabled: 'Desktop notifications',
@@ -678,6 +678,11 @@ export const settingsSections = {
     },
     modelDownloadSource: {
       title: 'Model download source',
+      current: 'Current source: {{source}}',
+      readFailed: 'Could not load the model download source. Try again.',
+      retry: 'Retry',
+      close: 'Close model download source',
+      confirm: 'Confirm',
       description:
         'Choose the platform for future GoodBuddy-managed local model downloads. Installed models, ZIP imports, Ollama models, and app updates are not affected.',
       options: {

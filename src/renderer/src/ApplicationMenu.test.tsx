@@ -22,6 +22,19 @@ function Harness({ value = settings, pending = false, error, onOpen = vi.fn(), o
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
+it('only shows device sharing when explicitly enabled and removes it on disable', () => {
+  const onOpen = vi.fn()
+  const { rerender } = render(<Harness onOpen={onOpen} />)
+  fireEvent.click(screen.getByText('Launcher'))
+  expect(screen.queryByRole('menuitem', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()
+  rerender(<Harness value={{ ...settings, deviceSharingEnabled: true }} onOpen={onOpen} />)
+  fireEvent.click(screen.getByRole('menuitem', { name: '设备共享（技术预览）' }))
+  expect(onOpen).toHaveBeenCalledWith('device-sharing')
+  fireEvent.click(screen.getByText('Launcher'))
+  rerender(<Harness value={{ ...settings, deviceSharingEnabled: false }} onOpen={onOpen} />)
+  expect(screen.queryByRole('menuitem', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()
+})
+
 it('filters the shared order by enablement only, including reordered always-shown apps', () => {
   const value = { ...settings, magicNotesEnabled: true, localInferenceEnabled: true, heartbeatEnabled: true,
     applicationNavigation: { order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'] as ApplicationSettings['applicationNavigation']['order'],

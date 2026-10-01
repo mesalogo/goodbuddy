@@ -39,7 +39,7 @@ export const supervisionTimeoutSecondsSchema = z.number().int().min(30).max(600)
 
 export const builtInApplicationIds = ['magic-notes', 'knowledge', 'heartbeat', 'local-inference', 'device-sharing'] as const
 export type BuiltInApplicationId = typeof builtInApplicationIds[number]
-export const editableApplicationIds = ['magic-notes', 'heartbeat', 'local-inference'] as const
+export const editableApplicationIds = ['magic-notes', 'heartbeat', 'local-inference', 'device-sharing'] as const
 export type EditableApplicationId = typeof editableApplicationIds[number]
 export const defaultApplicationNavigation = {
   order: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference', 'device-sharing'] as BuiltInApplicationId[],
@@ -67,6 +67,7 @@ const applicationPreferencesSchema = z
     remoteProjectsEnabled: z.boolean(),
     applicationNavigation: applicationNavigationSchema.default(defaultApplicationNavigation),
     localInferenceEnabled: z.boolean().default(true),
+    deviceSharingEnabled: z.boolean().default(false),
     magicNotesEnabled: z.boolean().default(true),
     heartbeatEnabled: z.boolean().optional(),
     heartbeatReportTimeoutSeconds: supervisionTimeoutSecondsSchema.optional(),
@@ -93,6 +94,7 @@ export const applicationSettingsUpdateSchema = applicationPreferencesSchema
     desktopNotificationsEnabled: z.boolean().optional(),
     transparentFrostedEffectEnabled: z.boolean().optional(),
     localInferenceEnabled: z.boolean().optional(),
+    deviceSharingEnabled: z.boolean().optional(),
     magicNotesEnabled: z.boolean().optional(),
     heartbeatEnabled: z.boolean().optional(),
     magicNotesShowIncompleteTodoCount: z.boolean().optional(),

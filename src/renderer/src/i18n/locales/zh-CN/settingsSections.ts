@@ -284,7 +284,7 @@ export const settingsSections = {
       delete: '删除',
       confirmDelete: '确认删除',
       download: '下载',
-      openDownloadSourceSettings: '前往通用设置',
+      openDownloadSourceSettings: '模型下载源',
       importZip: '导入 ZIP',
       exportZip: '导出 ZIP'
     },
@@ -304,7 +304,7 @@ export const settingsSections = {
       removed: '语音模型已删除'
     },
     sourceUnavailableDescription:
-      '{{source}} 暂不提供此模型的完整已验证文件。你仍可从 ZIP 导入，或前往通用设置明确更换下载源。',
+      '{{source}} 暂不提供此模型的完整已验证文件。你仍可从 ZIP 导入，或点击“模型下载源”更换来源。',
     languages: {
       中文: '中文',
       粤语: '粤语',
@@ -377,7 +377,7 @@ export const settingsSections = {
       download: '下载',
       cancel: '取消',
       importZip: '导入 ZIP',
-      openDownloadSourceSettings: '前往通用设置',
+      openDownloadSourceSettings: '模型下载源',
       remove: '移除模型',
       clearCredential: '清除凭据',
       clearAfterSave: '保存后清除凭据'
@@ -534,7 +534,7 @@ export const settingsSections = {
     },
     groups: {
       conversation: '会话与通知',
-      workspace: '工作目录与下载'
+      workspace: '工作目录'
     },
     desktopNotifications: {
       enabled: '桌面通知',
@@ -634,6 +634,11 @@ export const settingsSections = {
     },
     modelDownloadSource: {
       title: '模型下载源',
+      current: '当前来源：{{source}}',
+      readFailed: '读取模型下载源失败，请重试',
+      retry: '重试',
+      close: '关闭模型下载源',
+      confirm: '确认',
       description:
         '选择 GoodBuddy 托管本地模型后续下载使用的平台。已安装模型、ZIP 导入、Ollama 模型和应用更新不受影响。',
       options: {

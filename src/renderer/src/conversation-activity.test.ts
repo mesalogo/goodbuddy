@@ -78,3 +78,22 @@ describe('deriveConversationActivity', () => {
     expect(summary.activities.map(row => row.status)).toEqual(['completed', 'running', 'completed'])
   })
 })
+
+describe('conversation activity reuse', () => {
+  it('reflects replaced message arrays and compares summaries by content', async () => {
+    const { sameActivitySummary } = await import('./conversation-activity')
+    const messages = [{ state: 'complete' }]
+    const conversation = { id: 'a', title: 'A', projectId: 'local', messages }
+    const first = deriveConversationActivity([conversation], [], new Set(), projects, 'Unknown')
+    expect(first.activities).toEqual([])
+    // A new message array (the immutable update path) is rescanned.
+    const streaming = { ...conversation, messages: [...messages, { state: 'streaming' }] }
+    const second = deriveConversationActivity([streaming], [], new Set(), projects, 'Unknown')
+    expect(second.activities.map(({ status }) => status)).toEqual(['running'])
+    const third = deriveConversationActivity([{ ...streaming, messages: [...streaming.messages] }], [], new Set(), projects, 'Unknown')
+    expect(sameActivitySummary(second, third)).toBe(true)
+    expect(sameActivitySummary(first, second)).toBe(false)
+    const renamed = deriveConversationActivity([{ ...streaming, title: 'B' }], [], new Set(), projects, 'Unknown')
+    expect(sameActivitySummary(second, renamed)).toBe(false)
+  })
+})

@@ -65,6 +65,50 @@ app.whenReady().then(async () => {
     for (const locale of ['zh-CN', 'en-US']) {
       for (const theme of ['light', 'dark']) {
         win.setContentSize(1000, 720)
+        if (process.env.GB_LAYOUT_MODE === 'source') {
+          await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&locale=${locale}&theme=${theme}`)
+          await wait('!!document.querySelector(".model-download-source-control small") && !document.querySelector(".model-download-source-control [role=status]")')
+          await js('document.fonts.ready')
+          for (const [width, height] of [[640, 420], [960, 720], [1280, 800]]) {
+            win.setContentSize(width, height)
+            await wait(`innerWidth === ${width} && innerHeight === ${height}`)
+            await js("document.querySelector('.settings-panel__content').scrollTop=0")
+            await settle()
+            const layout = await js(`(() => {
+              const row=document.querySelector('.model-connections-navigation'),tabs=row.querySelector('.segmented-control'),button=row.querySelector('.model-download-source-control button');
+              const r=row.getBoundingClientRect(),t=tabs.getBoundingClientRect(),b=button.getBoundingClientRect();
+              return {rightAligned:Math.abs(r.right-b.right)<1,sameRow:Math.abs(t.y+t.height/2-b.y-b.height/2)<1,
+                noOverlap:t.right<=b.left,overflow:row.scrollWidth>row.clientWidth+1,hit:button.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2))};
+            })()`)
+            assert.deepEqual(layout, {rightAligned:true,sameRow:true,noOverlap:true,overflow:false,hit:true}, JSON.stringify({locale,theme,width,layout}))
+            const trigger = '.model-download-source-control button'
+            const dialog = '[aria-labelledby="model-download-source-title"]'
+            await click(trigger)
+            await wait(`!!document.querySelector('${dialog}') && document.activeElement.matches('${dialog} .icon-button')`)
+            await click(`${dialog} input[value="hugging-face"]`)
+            assert.equal(await js('window.sourceFixture.writes.length'), 0)
+            await click(`${dialog} .custom-task-dialog__actions .secondary-button`)
+            await wait(`!document.querySelector('${dialog}') && document.activeElement.matches('${trigger}')`)
+            assert.equal(await js('window.sourceFixture.source'), 'modelscope')
+            await click(trigger)
+            await wait(`!!document.querySelector('${dialog} input[value="modelscope"]:checked')`)
+            await click(`${dialog} input[value="hugging-face"]`)
+            await click(`${dialog} .custom-task-dialog__actions .primary-button`)
+            await wait(`!document.querySelector('${dialog}') && document.activeElement.matches('${trigger}') && document.querySelector('.model-download-source-control small').textContent.includes('Hugging Face')`)
+            assert.deepEqual(await js('window.sourceFixture.writes'), [{modelDownloadSource:'hugging-face'}])
+            await click(trigger)
+            await wait(`!!document.querySelector('${dialog} input[value="hugging-face"]:checked')`)
+            await key('Escape')
+            await wait(`!document.querySelector('${dialog}') && document.activeElement.matches('${trigger}')`)
+            await screenshot(`${locale}-${theme}-source-${width}`)
+            observations.push({locale,theme,width,height,layout,dialog:'native selection, cancel without write, confirm, reopen, Escape and focus restoration'})
+            // Reload the fixture to reset its in-memory settings and write log.
+            await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&locale=${locale}&theme=${theme}`)
+            await wait('!!document.querySelector(".model-download-source-control small") && !document.querySelector(".model-download-source-control [role=status]")')
+            await js('document.fonts.ready')
+          }
+          continue
+        }
         await win.loadURL(`${process.env.GB_LAYOUT_URL}?locale=${locale}&theme=${theme}`)
         await wait('!!document.querySelector(".workbar-shell__scroll-button")')
         await js('document.fonts.ready')
@@ -144,12 +188,13 @@ app.whenReady().then(async () => {
             return {containerWidth:manager.clientWidth,stacked:detail.top>=list.bottom-1,selectWidth:e.clientWidth,
               textWidth:c.measureText(e.selectedOptions[0].textContent).width,available:e.clientWidth-parseFloat(s.paddingLeft)-parseFloat(s.paddingRight)-20,
               overflow:['.settings-panel__content','.model-connection-manager','.model-connection-detail'].filter(sel=>{const n=document.querySelector(sel);return n.scrollWidth>n.clientWidth+1}),
-              hit:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),value:e.value};
+              hit:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),value:e.value,
+              bounds:r.toJSON(),cover:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,500)};
           })()`)
           assert.equal(result.stacked, result.containerWidth <= 640, JSON.stringify(result))
           assert.deepEqual(result.overflow, [], JSON.stringify(result))
           assert(result.textWidth <= result.available, 'Protocol truncated: ' + JSON.stringify(result))
-          assert(result.hit, 'Protocol is occluded')
+          assert(result.hit, 'Protocol is occluded: ' + JSON.stringify({width,height,...result}))
           await js("document.querySelector('.model-connection-detail select').closest('.field').previousElementSibling.querySelector('input').focus()")
           await key('Tab')
           await wait('document.activeElement.matches(".model-connection-detail select")')

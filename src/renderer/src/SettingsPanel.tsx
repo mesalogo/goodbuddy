@@ -54,6 +54,8 @@ import { CapabilitiesAndToolsSettingsSection } from './CapabilitiesAndToolsSetti
 import { ChannelSettingsSection } from './ChannelSettingsSection'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
 import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSection'
+import { ModelDownloadSourceSettings } from './ModelDownloadSourceSettings'
+import type { ModelDownloadSource } from '../../shared/application-settings-contracts'
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 import { DshMarketplaceSection } from './DshMarketplaceSection'
@@ -779,7 +781,7 @@ export function SettingsPanel({
   const [testing, setTesting] = useState(false)
   const [embeddingSnapshot, setEmbeddingSnapshot] =
     useState<EmbeddingSettingsSnapshot>()
-  const [embeddingModels, setEmbeddingModels] =
+  const [embeddingModelSnapshot, setEmbeddingModels] =
     useState<EmbeddingModelSnapshot>()
   const [embeddingDiagnostic, setEmbeddingDiagnostic] =
     useState<EmbeddingDiagnosticResult>()
@@ -808,6 +810,11 @@ export function SettingsPanel({
       ? 'platform-features'
       : selectedTab
   const [modelType, setModelType] = useState<ModelType>('llm')
+  const [modelDownloadSourceOpen, setModelDownloadSourceOpen] = useState(false)
+  const [modelDownloadSource, setModelDownloadSource] = useState<ModelDownloadSource>()
+  const embeddingModels = embeddingModelSnapshot && modelDownloadSource
+    ? { ...embeddingModelSnapshot, selectedDownloadSource: modelDownloadSource }
+    : embeddingModelSnapshot
   const [speechModelDraftId, setSpeechModelDraftId] = useState<
     string | null | undefined
   >()
@@ -828,7 +835,7 @@ export function SettingsPanel({
   const [sshHostsDirty, setSshHostsDirty] = useState(false)
   const [pendingLeave, setPendingLeave] = useState<
     | { kind: 'close' }
-    | { kind: 'navigate'; category: SettingsCategoryId }
+    | { kind: 'navigate'; category: SettingsCategoryId; openModelDownloadSource?: boolean }
     | { kind: 'external'; proceed: () => void }
   >()
   const runtimeCustomizationRef =
@@ -1053,7 +1060,8 @@ export function SettingsPanel({
 
   const requestTabChange = (
     category: SettingsCategoryId,
-    trigger?: HTMLElement
+    trigger?: HTMLElement,
+    openModelDownloadSource = false
   ): boolean => {
     if (category === activeTab) {
       return true
@@ -1064,13 +1072,17 @@ export function SettingsPanel({
         (document.activeElement instanceof HTMLElement
           ? document.activeElement
           : undefined)
-      setPendingLeave({ kind: 'navigate', category })
+      setPendingLeave({ kind: 'navigate', category, openModelDownloadSource })
       return false
     }
     setPendingLeave(undefined)
     setError(undefined)
     setActiveTab(category)
     return true
+  }
+
+  const openModelDownloadSource = (): void => {
+    if (requestTabChange('model', undefined, true)) setModelDownloadSourceOpen(true)
   }
 
   const visibleSettingsCategories = getSettingsCategoryList(
@@ -1328,6 +1340,10 @@ export function SettingsPanel({
     setError(undefined)
     if (leave?.kind === 'navigate') {
       setActiveTab(leave.category)
+      if (leave.openModelDownloadSource) {
+        setModelDownloadSourceOpen(true)
+        return
+      }
       requestAnimationFrame(() =>
         document
           .getElementById(`settings-tab-${leave.category}`)
@@ -2285,7 +2301,7 @@ export function SettingsPanel({
                     />
                   </div>
                 ) : activeTab === 'model' ? (
-                <div className="model-type-navigation">
+                <div className="model-type-navigation model-connections-navigation">
                   <SegmentedControl
                     ariaLabel={t('model.typeAriaLabel')}
                     onChange={setModelType}
@@ -2296,6 +2312,13 @@ export function SettingsPanel({
                       { label: t('model.types.speech.label'), value: 'speech' }
                     ]}
                     value={modelType}
+                  />
+                  <ModelDownloadSourceSettings
+                    open={modelDownloadSourceOpen}
+                    onSourceChanged={setModelDownloadSource}
+                    onOpen={openModelDownloadSource}
+                    onClose={() => setModelDownloadSourceOpen(false)}
+                    onNotify={onNotify}
                   />
                 </div>
               ) : undefined
@@ -3769,9 +3792,7 @@ export function SettingsPanel({
                   })
                 )
               }}
-              onOpenModelDownloadSourceSettings={() =>
-                requestTabChange('platform-features')
-              }
+              onOpenModelDownloadSourceSettings={openModelDownloadSource}
               onSelectConnection={setEditingEmbeddingConnectionId}
               onSetCurrent={setActiveEmbeddingConnectionId}
               onTestConnection={(connectionId) => {
@@ -3917,10 +3938,9 @@ export function SettingsPanel({
           )}
           {modelType === 'speech' && (
             <SpeechModelSettingsSection
+              downloadSource={modelDownloadSource}
               onNotify={onNotify}
-              onOpenModelDownloadSourceSettings={() =>
-                requestTabChange('platform-features')
-              }
+              onOpenModelDownloadSourceSettings={openModelDownloadSource}
               onSelectedModelIdChange={(modelId, changed) => {
                 setSpeechModelDraftId(modelId)
                 setSpeechModelSelectionDirty(changed)
@@ -4127,9 +4147,7 @@ export function SettingsPanel({
               onBusyChange={setTesting}
               onDirtyChange={setDocumentParsingDirty}
               onNotify={onNotify}
-              onOpenModelDownloadSourceSettings={() =>
-                requestTabChange('platform-features')
-              }
+              onOpenModelDownloadSourceSettings={openModelDownloadSource}
             />
           )}
 

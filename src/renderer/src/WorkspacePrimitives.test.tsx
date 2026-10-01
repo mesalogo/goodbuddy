@@ -125,6 +125,12 @@ describe('WorkspacePrimitives', () => {
     expect(segmentedStyles).toBeDefined()
     expect(segmentedStyles).toMatch(/flex:\s*0 0 auto;/u)
   })
+  it('keeps model download source on the model navigation row and aligned right', () => {
+    expect(stylesheet).toMatch(/\.model-type-navigation\s*\{[^}]*flex:\s*0 0 auto;/u)
+    expect(stylesheet).toMatch(/\.model-type-navigation\.model-connections-navigation\s*\{[^}]*flex-direction:\s*row;/u)
+    expect(stylesheet).toMatch(/\.model-connections-navigation > \.segmented-control\s*\{[^}]*flex-shrink:\s*1;[^}]*min-width:\s*0;/u)
+    expect(stylesheet).toMatch(/\.model-download-source-control\s*\{[^}]*flex:\s*0 0 auto;[^}]*margin-left:\s*auto;/u)
+  })
   it('bounds knowledge library cards before truncating long names', () => {
     expect(stylesheet).toMatch(
       /\.knowledge-workspace__library-list\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/u

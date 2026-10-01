@@ -8,6 +8,7 @@ import { applyAppearanceTheme } from '../../src/renderer/src/theme'
 import { installBundledUiFonts } from '../../src/renderer/src/fonts'
 import { defaultRuntimeSettings, type DesktopApi } from '../../src/shared/contracts'
 import type { WorkbarTabInstance } from '../../src/shared/workbar-contracts'
+import type { ApplicationSettingsUpdate, ModelDownloadSource } from '../../src/shared/application-settings-contracts'
 import '../../src/renderer/src/styles.css'
 
 const query = new URLSearchParams(location.search)
@@ -16,7 +17,18 @@ const longName = locale === 'en-US'
   ? 'Organization shared model connection for document processing and analysis'
   : '\u7ec4\u7ec7\u5185\u90e8\u6587\u6863\u5904\u7406\u4e0e\u5206\u6790\u4e13\u7528\u5171\u4eab\u6a21\u578b\u8fde\u63a5'
 const profileId = '10000000-0000-4000-8000-000000000001'
+const sourceFixture = { source: 'modelscope' as ModelDownloadSource, writes: [] as ApplicationSettingsUpdate[] }
+Object.defineProperty(window, 'sourceFixture', { value: sourceFixture })
 Object.defineProperty(window, 'goodbuddy', { value: {
+  updates: {
+    getSettings: async () => ({ modelDownloadSource: sourceFixture.source }),
+    onSettingsChanged: () => () => {},
+    updateSettings: async (input: ApplicationSettingsUpdate) => {
+      sourceFixture.writes.push(input)
+      if (input.modelDownloadSource) sourceFixture.source = input.modelDownloadSource
+      return { modelDownloadSource: sourceFixture.source }
+    }
+  },
   settings: {
     getRuntime: async () => ({ ...defaultRuntimeSettings, modelProfiles: [{
       id: profileId, name: longName, baseUrl: 'http://fixture.invalid/v1', modelName: 'fixture-model',

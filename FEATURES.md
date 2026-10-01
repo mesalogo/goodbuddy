@@ -57,7 +57,7 @@ records are listed separately and do not introduce another feature status.
 - [x] **Optional desktop task notifications**: A default-on switch under
   Platform Features / General immediately controls system task reminders.
   In-app notifications remain available independently; General settings group
-  shortcuts, conversations and notifications, and workspace and downloads.
+  shortcuts, conversations and notifications, and the working directory.
 - [x] **On-demand contextual help**: Supplementary page and settings
   explanations use shared title- or field-adjacent help controls with mouse
   and keyboard access. Important operation consequences and errors remain visible.
@@ -152,7 +152,9 @@ records are listed separately and do not introduce another feature status.
   All five application rows support arrow and drag reordering regardless of enablement or pinning.
   Cards, the launcher, and the filtered sidebar share one persisted order. Knowledge
   is always enabled and pinned, with Open and reorder controls. Supervisor, Notes,
-  and Local Inference Monitor have enablement and pinning settings. Supervisor uses
+  and Local Inference Monitor have enablement and pinning settings. Device Sharing
+  is optional and off by default during testing, with an enable switch but no pinning.
+  Supervisor uses
   the existing Heartbeat identity and defaults to off when no preference is saved;
   explicit saved choices are preserved. Disabling it retains plans and history,
   blocks new reviews, and hides sidebar feedback; in-flight work may finish.
@@ -171,8 +173,10 @@ records are listed separately and do not introduce another feature status.
   local-engine checks, and remaining platform/package coverage. Historical
   failures are not the current full-suite result. See the
   [validation progress](./docs/features/application-tool-navigation/progress.md).
-- [x] **Local device-sharing metadata** (implemented in source): Open Device Sharing
-  from Apps or Application Center, save a service URL and device name, register the
+- [x] **Local device-sharing metadata** (implemented in source): Enable Device Sharing
+  in Application Center first; it is off by default during testing. Saved explicit
+  enablement is preserved. Disabling leaves the page without clearing catalog records
+  or revoking publications. Open it from Apps or Application Center, save a service URL and device name, register the
   device, browse returned records, publish capability or knowledge metadata, and
   revoke this device ID's entries. The default service is `http://127.0.0.1:8787`.
   This unauthenticated local service uses IDs for identification only. Server source
@@ -928,9 +932,12 @@ records are listed separately and do not introduce another feature status.
 - [x] **WeCom and DingTalk connections**: Main-only encrypted settings,
   read-only environment-variable overrides, connection tests, dynamic
   enable/disable, sender scope, and status diagnostics.
-- [x] **Managed local-model download source**: Platform Features / General
-  selects ModelScope (default) or Hugging Face globally for future speech-input
-  and OCR model downloads. A source without a complete verified file is
+- [x] **Managed local-model download source**: The Model Connections header shows
+  the current source and a secondary button, right-aligned on the same row as the
+  model-type tabs below Save. Its dialog selects ModelScope (default) or Hugging Face
+  globally for future managed local-model downloads; changes save only on Confirm,
+  Cancel leaves the saved source unchanged, and errors allow retry. Embedding, speech,
+  and OCR source links open this dialog directly. A source without a complete verified file is
   explicitly unavailable and never silently falls back or combines files.
 - [x] **Optional local speech-model management**: Model weights are not bundled.
   Provides verified downloads, progress and cancellation, source links, ZIP or

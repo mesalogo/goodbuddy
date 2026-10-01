@@ -45,8 +45,11 @@ export type ActivityPanelProps = {
   tokenUsage: TokenUsageSummary
   onClear: () => void
   onOpenConversation: (conversationId: string) => void
-  /** Re-reads token usage from storage; the button is hidden when omitted. */
-  onRefreshTokenUsage?: () => Promise<void>
+  /**
+   * Reloads the activity snapshot and token usage. The page does not follow
+   * live updates; the header refresh button is hidden when omitted.
+   */
+  onRefresh?: () => Promise<void>
 }
 
 type ConversationActivityGroup = {
@@ -251,7 +254,7 @@ export const ActivityPanel = memo(function ActivityPanel({
   tokenUsage,
   onClear,
   onOpenConversation,
-  onRefreshTokenUsage
+  onRefresh
 }: ActivityPanelProps): React.JSX.Element {
   const { t, i18n } = useTranslation('activity')
   const { t: tWorkspace } = useTranslation('workspace')
@@ -262,7 +265,7 @@ export const ActivityPanel = memo(function ActivityPanel({
     useState<Exclude<TokenUsageGroup, 'source'>>('project')
   const [systemTokenGroup, setSystemTokenGroup] =
     useState<SystemTokenUsageGroup>('source')
-  const [refreshingTokenUsage, setRefreshingTokenUsage] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [expandedTokenRows, setExpandedTokenRows] = useState<Set<string>>(
     () => new Set()
   )
@@ -612,15 +615,15 @@ export const ActivityPanel = memo(function ActivityPanel({
               : row.label
     return { label }
   }
-  const refreshTokenUsage = async (): Promise<void> => {
-    if (!onRefreshTokenUsage || refreshingTokenUsage) {
+  const refresh = async (): Promise<void> => {
+    if (!onRefresh || refreshing) {
       return
     }
-    setRefreshingTokenUsage(true)
+    setRefreshing(true)
     try {
-      await onRefreshTokenUsage()
+      await onRefresh()
     } finally {
-      setRefreshingTokenUsage(false)
+      setRefreshing(false)
     }
   }
   const renderRecordCard = (
@@ -760,6 +763,21 @@ export const ActivityPanel = memo(function ActivityPanel({
       className="activity-panel"
     >
       <PageHeader
+        actions={
+          onRefresh && (
+            <button
+              aria-busy={refreshing}
+              className="secondary-button activity-panel__refresh"
+              disabled={refreshing}
+              onClick={() => void refresh()}
+              title={t('refresh.hint')}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={13} />
+              {refreshing ? t('refresh.refreshing') : t('refresh.label')}
+            </button>
+          )
+        }
         help={t('header.description')}
         headingId="activity-panel-title"
         icon={<Activity size={20} />}
@@ -1125,21 +1143,6 @@ export const ActivityPanel = memo(function ActivityPanel({
               options={groups}
               value={group}
             />
-            {onRefreshTokenUsage && (
-              <button
-                aria-busy={refreshingTokenUsage}
-                className="secondary-button token-usage__refresh"
-                disabled={refreshingTokenUsage}
-                onClick={() => void refreshTokenUsage()}
-                title={t('tokenUsage.refreshHint')}
-                type="button"
-              >
-                <RefreshCw aria-hidden="true" size={13} />
-                {refreshingTokenUsage
-                  ? t('tokenUsage.refreshing')
-                  : t('tokenUsage.refresh')}
-              </button>
-            )}
           </header>
           {description && (
             <p className="token-usage__description">{description}</p>

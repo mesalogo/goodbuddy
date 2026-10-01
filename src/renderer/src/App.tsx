@@ -75,6 +75,7 @@ import {
 } from "lucide-react";
 import {
   Component,
+  memo,
   Suspense,
   useCallback,
   useDeferredValue,
@@ -207,7 +208,12 @@ import {
 } from "./WorkspacePrimitives";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { ProjectActivity } from "./ProjectActivity";
-import { deriveConversationActivity } from "./conversation-activity";
+import {
+  deriveConversationActivity,
+  sameActivitySummary,
+  type ConversationActivity,
+} from "./conversation-activity";
+import { sameArrayItems, sameMapEntries, useStableDerivedValue, useStableHandlers } from "./stable-derived-value";
 import { useUnviewedCompletions } from "./use-unviewed-completions";
 import { useExecutionStats } from "./use-execution-stats";
 import {
@@ -257,7 +263,7 @@ import type { RemoteProjectRecoveryState } from "../../shared/remote-project-rec
 import { ReleaseNotesDialog } from "./ReleaseNotesDialog";
 import { scheduleIdleRoutePreload } from "./idle-route-preload";
 import { createPreloadableComponent } from "./preloadable-component";
-import { formatConversationListTime } from "./time-format";
+import { formatConversationListTime, type TimeFormatLocale } from "./time-format";
 import { formatMediumDateTime } from "./locale-formatters";
 import { formatCompactTokens } from "./token-format";
 import {
@@ -290,6 +296,7 @@ const settingsPanelRoute = createPreloadableComponent(
   () => import("./SettingsPanel"),
   (module) => module.SettingsPanel,
 );
+const activityPanelRefreshIntervalMs = 15_000;
 const activityPanelRoute = createPreloadableComponent(
   () => import("./ActivityPanel"),
   (module) => module.ActivityPanel,
@@ -575,8 +582,32 @@ const emptyTokenUsage: TokenUsageSummary = {
   records: [],
 };
 
+// Message arrays are replaced, never mutated: unchanged conversations reuse
+// their scan while another conversation streams.
+const approvalMessagesByArray = new WeakMap<readonly Message[], Message[]>();
+function messagesWithApprovals(messages: readonly Message[]): Message[] {
+  let found = approvalMessagesByArray.get(messages);
+  if (!found) {
+    found = messages.filter((message) => message.approval);
+    approvalMessagesByArray.set(messages, found);
+  }
+  return found;
+}
+
+function samePendingSidebarApprovals(
+  left: readonly PendingSidebarApproval[],
+  right: readonly PendingSidebarApproval[],
+): boolean {
+  return sameArrayItems(left, right, (a, b) =>
+    a.conversationId === b.conversationId && a.projectId === b.projectId &&
+    a.messageId === b.messageId && a.taskId === b.taskId &&
+    a.approvalId === b.approvalId && a.title === b.title &&
+    a.description === b.description && a.toolName === b.toolName);
+}
+
 const storageKey = "goodbuddy.conversations.v1";
 const emptyConversationTasks: AssistantTask[] = [];
+const emptyAssistantSchedules: AssistantSchedule[] = [];
 
 const activeProjectStorageKey = "goodbuddy.active-project.v1";
 
@@ -1651,6 +1682,437 @@ function ComposerMenuSelect<T extends string>({
   );
 }
 
+
+type ConversationListRowHandlers = {
+  toggleTasks: (conversationId: string) => void;
+  select: (conversationId: string) => void;
+  toggleActions: (conversationId: string) => void;
+  registerActionTrigger: (conversationId: string, element: HTMLButtonElement | null) => void;
+  closeActions: (conversationId: string) => void;
+  pin: (conversation: Conversation) => void;
+  branch: (conversation: Conversation, disabledReason: string | undefined) => void;
+  startRename: (conversationId: string) => void;
+  copy: (conversation: Conversation) => void;
+  exportConversation: (conversation: Conversation) => void;
+  cancelDelete: () => void;
+  confirmDelete: (conversationId: string) => void;
+  requestDelete: (conversationId: string) => void;
+  saveTitle: (conversationId: string, title: string) => void;
+  cancelRename: (conversationId: string) => void;
+  openTask: (task: AssistantTask) => void;
+  viewAllTasks: (conversationId: string, firstTaskId: string | undefined) => void;
+};
+
+type ConversationListRowProps = {
+  conversation: Conversation;
+  conversationTitle: string;
+  conversationTasks: readonly AssistantTask[];
+  tasksExpanded: boolean;
+  activity: ConversationActivity | undefined;
+  branchSourceTitle: string | undefined;
+  branchDisabledReason: string | undefined;
+  branching: boolean;
+  active: boolean;
+  unread: boolean;
+  actionsOpen: boolean;
+  menuVisible: boolean;
+  pinDisabled: boolean;
+  renaming: boolean;
+  confirmingDelete: boolean;
+  deleting: boolean;
+  selectedTaskId: string | undefined;
+  schedules: readonly AssistantSchedule[];
+  locale: TimeFormatLocale;
+  /** Current calendar day; re-renders rows so "today" times stay correct. */
+  listTimeDay: string;
+  actionsRef: React.RefObject<HTMLDivElement | null>;
+  handlers: ConversationListRowHandlers;
+};
+
+// Rows skip re-rendering unless their own props change, so streaming into one
+// conversation re-renders only that row instead of the whole list.
+const ConversationListRow = memo(function ConversationListRow({
+  conversation,
+  conversationTitle,
+  conversationTasks,
+  tasksExpanded,
+  activity,
+  branchSourceTitle,
+  branchDisabledReason,
+  branching,
+  active,
+  unread,
+  actionsOpen,
+  menuVisible,
+  pinDisabled,
+  renaming,
+  confirmingDelete,
+  deleting,
+  selectedTaskId,
+  schedules,
+  locale,
+  listTimeDay,
+  actionsRef,
+  handlers,
+}: ConversationListRowProps): React.JSX.Element {
+  void listTimeDay;
+  const { t } = useTranslation("app");
+  const { t: tWorkspace } = useTranslation("workspace");
+  const branchDisabledReasonId = `conversation-branch-disabled-${conversation.id}`;
+  return (
+    <div className="conversation-entry" key={conversation.id}>
+      <div className="conversation-row">
+        {conversationTasks.length > 0 && (
+          <button
+            aria-expanded={tasksExpanded}
+            aria-label={t("conversation.tasks.toggle", {
+              title: conversationTitle,
+              count: conversationTasks.length,
+            })}
+            className="conversation-task-toggle"
+            onClick={() => handlers.toggleTasks(conversation.id)}
+            type="button"
+          >
+            {tasksExpanded ? (
+              <ChevronDown aria-hidden="true" size={13} />
+            ) : (
+              <ChevronRight aria-hidden="true" size={13} />
+            )}
+          </button>
+        )}
+        <button
+          className={
+            active
+              ? "conversation-item conversation-item--active"
+              : "conversation-item"
+          }
+          type="button"
+          onClick={() => handlers.select(conversation.id)}
+        >
+          <span className="conversation-item__primary">
+            {conversation.pinned && (
+              <span className="conversation-pin">
+                <Pin size={13} role="img" aria-label={t("conversation.actions.pinned")}><title>{t("conversation.actions.pinned")}</title></Pin>
+              </span>
+            )}
+            {branchSourceTitle && (
+              <ConversationBranchBadge
+                sourceTitle={branchSourceTitle}
+              />
+            )}
+            {conversation.remote && (
+              <b className="conversation-source-badge">
+                {projectChannelLabels[conversation.remote.channel]}
+              </b>
+            )}
+            <OverflowMarquee
+              className="conversation-item__title"
+              text={conversationTitle}
+            />
+            {unread && (
+              <i
+                aria-label={t("conversation.unread")}
+                className="conversation-unread"
+                title={t("conversation.unreadRemote")}
+              />
+            )}
+          </span>
+          <small>
+            <time
+              dateTime={new Date(
+                conversation.updatedAt,
+              ).toISOString()}
+              title={formatMediumDateTime(
+                conversation.updatedAt,
+                locale,
+              )}
+            >
+              {formatConversationListTime(
+                conversation.updatedAt,
+                locale,
+              )}
+            </time>
+          </small>
+        </button>
+        {activity && (
+          <span
+            aria-label={activity.status === "running"
+              ? t("conversation.active")
+              : tWorkspace(`projectActivity.status.${activity.status}`)}
+            className={activity.status === "running"
+              ? "conversation-activity-indicator"
+              : "conversation-activity-indicator conversation-activity-indicator--attention"}
+            role="status"
+            title={tWorkspace(`projectActivity.status.${activity.status}`)}
+          />
+        )}
+        <button
+          aria-controls={`conversation-actions-${conversation.id}`}
+          aria-haspopup="menu"
+          aria-expanded={actionsOpen}
+          aria-label={t("conversation.actions.more", {
+            title: conversationTitle,
+          })}
+          className="conversation-more"
+          onClick={() => handlers.toggleActions(conversation.id)}
+          ref={(element) => handlers.registerActionTrigger(conversation.id, element)}
+          type="button"
+        >
+          <MoreHorizontal size={14} />
+        </button>
+      </div>
+      {menuVisible && createPortal(
+        <div
+          ref={actionsRef}
+          role="menu"
+          onKeyDown={(event) => {
+            if (event.defaultPrevented) return;
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              handlers.closeActions(conversation.id);
+              return;
+            }
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([aria-disabled="true"])'));
+            const index = items.indexOf(document.activeElement as HTMLButtonElement);
+            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+            items[next]?.focus();
+          }}
+          aria-label={t("conversation.actions.region", {
+            title: conversationTitle,
+          })}
+          className="conversation-actions"
+          id={`conversation-actions-${conversation.id}`}
+        >
+          <button role="menuitem" type="button" disabled={pinDisabled} onClick={() => handlers.pin(conversation)}>
+            {conversation.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+            {t(conversation.pinned ? "conversation.actions.unpin" : "conversation.actions.pin")}
+          </button>
+          {!conversation.remote && (
+            <>
+              <button
+                role="menuitem"
+                aria-describedby={
+                  branchDisabledReason
+                    ? branchDisabledReasonId
+                    : undefined
+                }
+                aria-disabled={
+                  branchDisabledReason ? true : undefined
+                }
+                onClick={() => handlers.branch(conversation, branchDisabledReason)}
+                title={branchDisabledReason}
+                type="button"
+              >
+                <GitFork
+                  aria-hidden="true"
+                  className="conversation-branch-icon"
+                  size={14}
+                />
+                {branching
+                  ? t("conversation.branch.creating")
+                  : t("conversation.actions.branch")}
+              </button>
+              {branchDisabledReason && (
+                <span
+                  className="sr-only"
+                  id={branchDisabledReasonId}
+                >
+                  {branchDisabledReason}
+                </span>
+              )}
+            </>
+          )}
+          {!conversation.remote && (
+            <button
+              role="menuitem"
+              onClick={() => handlers.startRename(conversation.id)}
+              type="button"
+            >
+              <Edit3 size={14} />
+              {t("conversation.actions.rename")}
+            </button>
+          )}
+          <button
+            role="menuitem"
+            onClick={() => handlers.copy(conversation)}
+            type="button"
+          >
+            <Copy size={14} />
+            {t("conversation.actions.copy")}
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => handlers.exportConversation(conversation)}
+            type="button"
+          >
+            <Download size={14} />
+            {t("conversation.actions.export")}
+          </button>
+          {!conversation.remote && (
+            <DestructiveConfirmActions
+              triggerRole="menuitem"
+              cancelAriaLabel={t("conversation.delete.cancelAria", {
+                title: conversationTitle,
+              })}
+              confirmAriaLabel={t(
+                "conversation.delete.confirmAria",
+                {
+                  title: conversationTitle,
+                },
+              )}
+              confirmLabel={t("conversation.delete.confirm")}
+              confirming={confirmingDelete}
+              disabled={deleting}
+              icon={<Trash2 aria-hidden="true" size={14} />}
+              onCancel={handlers.cancelDelete}
+              onConfirm={() => handlers.confirmDelete(conversation.id)}
+              onRequestConfirm={() => handlers.requestDelete(conversation.id)}
+              triggerAriaLabel={t(
+                "conversation.delete.triggerAria",
+                {
+                  title: conversationTitle,
+                },
+              )}
+              triggerLabel={t("conversation.delete.trigger")}
+            />
+          )}
+        </div>, document.body
+      )}
+      {!conversation.remote &&
+        renaming && (
+          <form
+            className="conversation-rename"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const input =
+                event.currentTarget.elements.namedItem("title");
+              if (input instanceof HTMLInputElement) {
+                handlers.saveTitle(conversation.id, input.value);
+              }
+            }}
+          >
+            <input
+              aria-label={t("conversation.renameAria", {
+                title: conversationTitle,
+              })}
+              autoFocus
+              defaultValue={conversation.title}
+              maxLength={80}
+              name="title"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  handlers.cancelRename(conversation.id);
+                }
+              }}
+              pattern=".*\S.*"
+              required
+            />
+            <button
+              aria-label={t("conversation.saveName")}
+              type="submit"
+            >
+              <Check size={14} />
+            </button>
+            <button
+              aria-label={t("conversation.cancelRename")}
+              onClick={() => {
+                handlers.cancelRename(conversation.id);
+              }}
+              type="button"
+            >
+              <X size={14} />
+            </button>
+          </form>
+        )}
+      {tasksExpanded && conversationTasks.length > 0 && (
+        <ul
+          aria-label={t("conversation.tasks.list", {
+            title: conversationTitle,
+          })}
+          className="conversation-task-children"
+        >
+          {conversationTasks.slice(0, 3).map((task) => {
+            const schedule = findTaskSchedule(task, schedules);
+            const statusLabel = tWorkspace(
+              `task.status.${task.status}`,
+            );
+            const metadata = schedule
+              ? [
+                  tWorkspace(
+                    `sidebar.tasks.schedule.recurrence.${schedule.recurrence}`,
+                  ),
+                  task.status === "completed"
+                    ? undefined
+                    : statusLabel,
+                ]
+                  .filter((value) => value !== undefined)
+                  .join(" · ")
+              : task.status === "completed"
+                ? ""
+                : statusLabel;
+            return (
+              <li key={task.id}>
+                <button
+                  className={
+                    selectedTaskId === task.id
+                      ? "conversation-task-child conversation-task-child--active"
+                      : "conversation-task-child"
+                  }
+                  onClick={() => handlers.openTask(task)}
+                  type="button"
+                >
+                  <span className="conversation-task-child__title">
+                    {task.title}
+                  </span>
+                  {metadata && (
+                    <small className="conversation-task-child__meta">
+                      {metadata}
+                    </small>
+                  )}
+                  {task.status === "completed" ? (
+                    <span
+                      className="task-status-dot task-status-dot--completed conversation-task-child__completed-status"
+                      title={statusLabel}
+                    >
+                      <Check
+                        aria-hidden="true"
+                        size={7}
+                        strokeWidth={3}
+                      />
+                      <span className="sr-only">{statusLabel}</span>
+                    </span>
+                  ) : (
+                    <span
+                      aria-hidden="true"
+                      className={`task-status-dot task-status-dot--${task.status}`}
+                    />
+                  )}
+                </button>
+              </li>
+            );
+          })}
+          {conversationTasks.length > 3 && (
+            <li>
+              <button
+                className="conversation-task-view-all"
+                onClick={() => handlers.viewAllTasks(conversation.id, conversationTasks[0]?.id)}
+                type="button"
+              >
+                {t("conversation.tasks.viewAll", {
+                  count: conversationTasks.length,
+                })}
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+});
+
 function App(): React.JSX.Element {
   const { i18n, t } = useTranslation("app");
   const { t: tWorkspace } = useTranslation("workspace");
@@ -2204,6 +2666,9 @@ function App(): React.JSX.Element {
   ), [applicationNavigation, applicationSettings, magicNotesEnabled]);
   const applyApplicationSettings = useCallback((settings: ApplicationSettings): void => {
     setApplicationSettings(settings);
+    if (viewRef.current === 'device-sharing' && !isApplicationEnabled(settings, 'device-sharing')) {
+      setView('chat');
+    }
     if (settings.magicNotesEnabled) setMagicNotesEnabled(true);
     else {
       const revision = applicationSettingsRevisionRef.current;
@@ -2220,7 +2685,7 @@ function App(): React.JSX.Element {
     setMagicNotesShowIncompleteTodoCount(settings.magicNotesShowIncompleteTodoCount);
     setConversationHtmlRenderingEnabled(settings.conversationHtmlRenderingEnabled !== false);
     setRemoteProjectsEnabled(settings.remoteProjectsEnabled);
-  }, [guardNoteDraft, setNoteDraft]);
+  }, [guardNoteDraft, setNoteDraft, setView]);
   const reloadApplicationSettings = useCallback(async (): Promise<void> => {
     const revision = ++applicationSettingsRevisionRef.current;
     applicationSettingsPendingRef.current++;
@@ -2429,6 +2894,10 @@ function App(): React.JSX.Element {
     setLegacyActivityHistoryMayBeIncomplete,
   ] = useState(legacyActivityHistory.historyMayBeIncomplete);
   const [activityHistoryReady, setActivityHistoryReady] = useState(false);
+  // The Activity page shows a snapshot instead of live records so streaming
+  // runs do not re-render it; it refreshes on entry, periodically, or manually.
+  const [activityPanelRecords, setActivityPanelRecords] =
+    useState<ActivityRecord[]>(activityRecords);
   const activityRecordsRef = useRef(activityRecords);
   const legacyActivityHistoryMayBeIncompleteRef = useRef(
     legacyActivityHistoryMayBeIncomplete,
@@ -2492,9 +2961,11 @@ function App(): React.JSX.Element {
     undefined,
   );
   const assistantSidebarToggleRef = useRef<HTMLButtonElement>(null);
-  const conversationActionTriggerRefs = useRef(
-    new Map<string, HTMLButtonElement>(),
+  // One map for the App lifetime, shared by row ref callbacks and focus code.
+  const [conversationActionTriggers] = useState(
+    () => new Map<string, HTMLButtonElement>(),
   );
+  const conversationActionTriggerRefs = useRef(conversationActionTriggers);
   const conversationActionsRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const surface = conversationActionsRef.current;
@@ -3668,7 +4139,9 @@ function App(): React.JSX.Element {
     }
     return grouped;
   }, [productAssistantTasks]);
-  const conversationTitles = useMemo(
+  // Streaming replaces the conversation array on every delta; keep derived
+  // values whose content is unchanged so memoized consumers skip re-rendering.
+  const conversationTitles = useStableDerivedValue(useMemo(
     () =>
       new Map(
         conversations.map((conversation) => [
@@ -3680,7 +4153,7 @@ function App(): React.JSX.Element {
         ]),
       ),
     [conversations, t],
-  );
+  ), sameMapEntries);
   const projectNames = useMemo(
     () =>
       new Map(
@@ -3695,7 +4168,7 @@ function App(): React.JSX.Element {
     useUnviewedCompletions(assistantTasks,
       view === "chat" && !settingsOpen && !applicationCenterOpen && activeConversation && !activeConversation.messageSummary
         ? activeId : undefined);
-  const projectActivity = useMemo(
+  const projectActivity = useStableDerivedValue(useMemo(
     () => deriveConversationActivity(
       conversations.map((conversation) => ({
         ...conversation,
@@ -3712,7 +4185,7 @@ function App(): React.JSX.Element {
     ),
     [conversations, conversationTitles, assistantTasks, activeConversationIds,
       projects, projectNames, tWorkspace, completedConversationIds],
-  );
+  ), sameActivitySummary);
   const activityByConversationId = useMemo(
     () =>
       new Map(
@@ -3723,28 +4196,22 @@ function App(): React.JSX.Element {
       ),
     [projectActivity],
   );
-  const pendingSidebarApprovals = useMemo<PendingSidebarApproval[]>(
+  const pendingSidebarApprovals = useStableDerivedValue(useMemo<PendingSidebarApproval[]>(
     () =>
       conversations.flatMap((conversation) =>
-        conversation.messages.flatMap((message) =>
-          message.approval
-            ? [
-                {
-                  conversationId: conversation.id,
-                  projectId: conversation.projectId,
-                  messageId: message.id,
-                  taskId: message.approval.taskId ?? message.task?.id,
-                  approvalId: message.approval.id,
-                  title: message.approval.title,
-                  description: message.approval.description,
-                  toolName: message.approval.toolName,
-                },
-              ]
-            : [],
-        ),
+        messagesWithApprovals(conversation.messages).map((message) => ({
+          conversationId: conversation.id,
+          projectId: conversation.projectId,
+          messageId: message.id,
+          taskId: message.approval!.taskId ?? message.task?.id,
+          approvalId: message.approval!.id,
+          title: message.approval!.title,
+          description: message.approval!.description,
+          toolName: message.approval!.toolName,
+        })),
       ),
     [conversations],
-  );
+  ), samePendingSidebarApprovals);
   const sidebarArtifacts = useMemo<SidebarArtifact[]>(
     () =>
       assistantArtifacts
@@ -4248,14 +4715,6 @@ function App(): React.JSX.Element {
             notify({
               tone: "error",
               message: tRef.current("notices.workspaceChangesReadFailed"),
-            }),
-          );
-        }
-        if (viewRef.current === "activity") {
-          void refreshTokenUsage().catch(() =>
-            notify({
-              tone: "error",
-              message: tRef.current("notices.tokenUsageReadFailed"),
             }),
           );
         }
@@ -4841,7 +5300,6 @@ function App(): React.JSX.Element {
     [
       recordActivity,
       loadWorkspaceChanges,
-      refreshTokenUsage,
       releaseConversationQueueAfterRun,
       setConversationActivity,
       updateMessage,
@@ -5409,6 +5867,30 @@ function App(): React.JSX.Element {
     legacyActivityHistoryMayBeIncomplete,
     persistActivityHistory,
   ]);
+
+  const refreshActivityPanelRecords = useCallback((): void => {
+    setActivityPanelRecords(activityRecordsRef.current);
+  }, []);
+
+  // Layout effect so entering the page never paints a stale snapshot.
+  useLayoutEffect(() => {
+    if (view !== "activity") {
+      return;
+    }
+    refreshActivityPanelRecords();
+    const interval = window.setInterval(
+      refreshActivityPanelRecords,
+      activityPanelRefreshIntervalMs,
+    );
+    return () => window.clearInterval(interval);
+  }, [refreshActivityPanelRecords, view]);
+
+  // Runs after the ref sync effect above, so the loaded history is visible.
+  useEffect(() => {
+    if (activityHistoryReady && viewRef.current === "activity") {
+      refreshActivityPanelRecords();
+    }
+  }, [activityHistoryReady, refreshActivityPanelRecords]);
 
   useEffect(
     () => () => {
@@ -5988,18 +6470,19 @@ function App(): React.JSX.Element {
         }),
       );
     }, 0);
-    // Background work (supervisor, heartbeat, knowledge, notes) records usage
-    // without a renderer request; main notifies so the view stays current.
-    const removeUsageListener = window.goodbuddy.usage.onChanged?.(() => {
+    // Usage is polled while the page is visible instead of following every
+    // usage change, so background and streaming work stay off this page.
+    const interval = window.setInterval(() => {
       void refreshTokenUsage().catch(() => undefined);
-    });
+    }, activityPanelRefreshIntervalMs);
     return () => {
       clearTimeout(timeout);
-      removeUsageListener?.();
+      window.clearInterval(interval);
     };
   }, [refreshTokenUsage, view]);
 
-  const manualRefreshTokenUsage = useCallback(async (): Promise<void> => {
+  const manualRefreshActivity = useCallback(async (): Promise<void> => {
+    refreshActivityPanelRecords();
     try {
       await refreshTokenUsage();
     } catch {
@@ -6008,7 +6491,7 @@ function App(): React.JSX.Element {
         message: tRef.current("notices.tokenUsageReadFailed"),
       });
     }
-  }, [notify, refreshTokenUsage]);
+  }, [notify, refreshActivityPanelRecords, refreshTokenUsage]);
 
   useEffect(() => {
     void window.goodbuddy.artifacts
@@ -8068,6 +8551,7 @@ function App(): React.JSX.Element {
     legacyActivityHistoryMayBeIncompleteRef.current = false;
     setLegacyActivityHistoryMayBeIncomplete(false);
     setActivityRecords([]);
+    setActivityPanelRecords([]);
   }, []);
 
   const openActivityConversation = useCallback((conversationId: string): void => {
@@ -8252,29 +8736,155 @@ function App(): React.JSX.Element {
     );
   }, []);
 
-  const conversationTaskStrips = useMemo(() => new Map(cachedConversations.map(conversation => {
+  // Row actions always run the latest App closures, while the handlers object
+  // passed to memoized rows keeps one identity for the App lifetime.
+  const conversationListRowHandlers = useStableHandlers<ConversationListRowHandlers>({
+      toggleTasks: (conversationId) =>
+        setExpandedTaskConversationIds((current) => {
+          const next = new Set(current);
+          if (next.has(conversationId)) {
+            next.delete(conversationId);
+          } else {
+            next.add(conversationId);
+          }
+          return next;
+        }),
+      select: (conversationId) => {
+        setConversationActionsId("");
+        setSelectedAssistantTaskId(undefined);
+        setActiveId(conversationId);
+        setUnreadConversationIds((current) => {
+          if (!current.has(conversationId)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(conversationId);
+          return next;
+        });
+        setView("chat");
+        if (narrowWindow) {
+          closeNarrowSidebar();
+        }
+      },
+      toggleActions: (conversationId) => {
+        setRenamingConversationId("");
+        setConfirmingConversationId("");
+        setConversationActionsId((current) =>
+          current === conversationId ? "" : conversationId,
+        );
+      },
+      // Ref callbacks run during commit, before the latest handlers are
+      // published, so this only touches the lifetime-stable trigger map.
+      registerActionTrigger: (conversationId, element) => {
+        if (element) {
+          conversationActionTriggers.set(conversationId, element);
+        } else {
+          conversationActionTriggers.delete(conversationId);
+        }
+      },
+      closeActions: (conversationId) => {
+        setConversationActionsId("");
+        setConfirmingConversationId("");
+        focusConversationActions(conversationId);
+      },
+      pin: (conversation) => {
+        setConversationActionsId("");
+        focusConversationActions(conversation.id);
+        void setConversationPinned(conversation);
+      },
+      branch: (conversation, disabledReason) => {
+        if (disabledReason) {
+          notify({ tone: "info", message: disabledReason });
+          return;
+        }
+        setConversationActionsId("");
+        void branchConversation(conversation);
+      },
+      startRename: (conversationId) => {
+        setConversationActionsId("");
+        setRenamingConversationId(conversationId);
+      },
+      copy: (conversation) => {
+        setConversationActionsId("");
+        void copyConversation(conversation).finally(() =>
+          focusConversationActions(conversation.id),
+        );
+      },
+      exportConversation: (conversation) => {
+        setConversationActionsId("");
+        void exportConversation(conversation);
+        focusConversationActions(conversation.id);
+      },
+      cancelDelete: () => setConfirmingConversationId(""),
+      confirmDelete: (conversationId) => void deleteConversation(conversationId),
+      requestDelete: (conversationId) => setConfirmingConversationId(conversationId),
+      saveTitle,
+      cancelRename: (conversationId) => {
+        setRenamingConversationId("");
+        focusConversationActions(conversationId);
+      },
+      openTask: (task) => {
+        openAssistantTask(task);
+        if (narrowWindow) {
+          closeNarrowSidebar();
+        }
+      },
+      viewAllTasks: (conversationId, firstTaskId) => {
+        setSelectedAssistantTaskId(firstTaskId);
+        setActiveId(conversationId);
+        setView("chat");
+        if (narrowWindow) {
+          closeNarrowSidebar();
+        }
+      },
+  });
+
+  // Reuse each strip element while its inputs are unchanged: streaming into
+  // one conversation must not hand every cached history pane a new taskStrip.
+  const [taskStripCache] = useState(() => new Map<string, { inputs: readonly unknown[]; element: React.JSX.Element }>());
+  const conversationTaskStrips = useMemo(() => new Map(cachedConversations.map((conversation): [string, React.JSX.Element] => {
     const tasks = tasksByConversation.get(conversation.id) ?? emptyConversationTasks;
-    return [conversation.id, (
+    const conversationMode = conversation.id === activeId
+      ? effectiveWorkMode
+      : normalizeInteractiveWorkMode(conversation.workMode ?? projects.find(project => project.id === conversation.projectId)?.defaultWorkMode);
+    const selectedTaskId = tasks.some(task => task.id === selectedAssistantTaskId) ? selectedAssistantTaskId : undefined;
+    const inputs = [Boolean(conversation.remote), conversationMode, locale, removeAssistantSchedule, runAssistantSchedule,
+      setAssistantScheduleEnabled, assistantSchedules, selectedTaskId, tasks, conversation.messages,
+      conversation.activeRequest?.messageId];
+    const cached = taskStripCache.get(conversation.id);
+    if (cached && sameArrayItems(cached.inputs, inputs)) {
+      return [conversation.id, cached.element];
+    }
+    const element = (
       <div className="conversation-context-strips">
         {!conversation.remote && (
           <ConversationTaskStrip
-            conversationMode={conversation.id === activeId
-              ? effectiveWorkMode
-              : normalizeInteractiveWorkMode(conversation.workMode ?? projects.find(project => project.id === conversation.projectId)?.defaultWorkMode)}
+            conversationMode={conversationMode}
             locale={locale}
             onRemoveSchedule={removeAssistantSchedule}
             onRunSchedule={runAssistantSchedule}
             onSelectTask={setSelectedAssistantTaskId}
             onSetScheduleEnabled={setAssistantScheduleEnabled}
             schedules={assistantSchedules}
-            selectedTaskId={tasks.some(task => task.id === selectedAssistantTaskId) ? selectedAssistantTaskId : undefined}
+            selectedTaskId={selectedTaskId}
             tasks={tasks}
           />
         )}
         <RuntimeChecklistStrip messages={conversation.messages} activeMessageId={conversation.activeRequest?.messageId} />
       </div>
-    )];
-  })), [cachedConversations, tasksByConversation, activeId, effectiveWorkMode, projects, locale,
+    );
+    taskStripCache.set(conversation.id, { inputs, element });
+    return [conversation.id, element];
+  }).filter((_entry, index, entries) => {
+    // Forget evicted conversations; the cache stays bounded by the pane cache.
+    if (index === entries.length - 1) {
+      const live = new Set(entries.map(([id]) => id));
+      for (const id of taskStripCache.keys()) {
+        if (!live.has(id)) taskStripCache.delete(id);
+      }
+    }
+    return true;
+  })), [taskStripCache, cachedConversations, tasksByConversation, activeId, effectiveWorkMode, projects, locale,
     removeAssistantSchedule, runAssistantSchedule, setAssistantScheduleEnabled, assistantSchedules, selectedAssistantTaskId]);
 
   const clearLocalData = async (): Promise<void> => {
@@ -8771,7 +9381,7 @@ function App(): React.JSX.Element {
           {!conversationLoadError &&
             filteredConversations.map((conversation) => {
               const conversationTasks =
-                tasksByConversation.get(conversation.id) ?? [];
+                tasksByConversation.get(conversation.id) ?? emptyConversationTasks;
               const tasksExpanded = expandedTaskConversationIds.has(
                 conversation.id,
               );
@@ -8797,454 +9407,32 @@ function App(): React.JSX.Element {
                   : branchUnavailable
                     ? t("conversation.branch.unavailable")
                     : undefined;
-              const branchDisabledReasonId = `conversation-branch-disabled-${conversation.id}`;
               return (
-                <div className="conversation-entry" key={conversation.id}>
-                  <div className="conversation-row">
-                    {conversationTasks.length > 0 && (
-                      <button
-                        aria-expanded={tasksExpanded}
-                        aria-label={t("conversation.tasks.toggle", {
-                          title: conversationTitle,
-                          count: conversationTasks.length,
-                        })}
-                        className="conversation-task-toggle"
-                        onClick={() =>
-                          setExpandedTaskConversationIds((current) => {
-                            const next = new Set(current);
-                            if (next.has(conversation.id)) {
-                              next.delete(conversation.id);
-                            } else {
-                              next.add(conversation.id);
-                            }
-                            return next;
-                          })
-                        }
-                        type="button"
-                      >
-                        {tasksExpanded ? (
-                          <ChevronDown aria-hidden="true" size={13} />
-                        ) : (
-                          <ChevronRight aria-hidden="true" size={13} />
-                        )}
-                      </button>
-                    )}
-                    <button
-                      className={
-                        conversation.id === activeId
-                          ? "conversation-item conversation-item--active"
-                          : "conversation-item"
-                      }
-                      type="button"
-                      onClick={() => {
-                        setConversationActionsId("");
-                        setSelectedAssistantTaskId(undefined);
-                        setActiveId(conversation.id);
-                        setUnreadConversationIds((current) => {
-                          if (!current.has(conversation.id)) {
-                            return current;
-                          }
-                          const next = new Set(current);
-                          next.delete(conversation.id);
-                          return next;
-                        });
-                        setView("chat");
-                        if (narrowWindow) {
-                          closeNarrowSidebar();
-                        }
-                      }}
-                    >
-                      <span className="conversation-item__primary">
-                        {conversation.pinned && (
-                          <span className="conversation-pin">
-                            <Pin size={13} role="img" aria-label={t("conversation.actions.pinned")}><title>{t("conversation.actions.pinned")}</title></Pin>
-                          </span>
-                        )}
-                        {branchSourceTitle && (
-                          <ConversationBranchBadge
-                            sourceTitle={branchSourceTitle}
-                          />
-                        )}
-                        {conversation.remote && (
-                          <b className="conversation-source-badge">
-                            {projectChannelLabels[conversation.remote.channel]}
-                          </b>
-                        )}
-                        <OverflowMarquee
-                          className="conversation-item__title"
-                          text={conversationTitle}
-                        />
-                        {unreadConversationIds.has(conversation.id) && (
-                          <i
-                            aria-label={t("conversation.unread")}
-                            className="conversation-unread"
-                            title={t("conversation.unreadRemote")}
-                          />
-                        )}
-                      </span>
-                      <small>
-                        <time
-                          dateTime={new Date(
-                            conversation.updatedAt,
-                          ).toISOString()}
-                          title={formatMediumDateTime(
-                            conversation.updatedAt,
-                            locale,
-                          )}
-                        >
-                          {formatConversationListTime(
-                            conversation.updatedAt,
-                            locale,
-                          )}
-                        </time>
-                      </small>
-                    </button>
-                    {activity && (
-                      <span
-                        aria-label={activity.status === "running"
-                          ? t("conversation.active")
-                          : tWorkspace(`projectActivity.status.${activity.status}`)}
-                        className={activity.status === "running"
-                          ? "conversation-activity-indicator"
-                          : "conversation-activity-indicator conversation-activity-indicator--attention"}
-                        role="status"
-                        title={tWorkspace(`projectActivity.status.${activity.status}`)}
-                      />
-                    )}
-                    <button
-                      aria-controls={`conversation-actions-${conversation.id}`}
-                      aria-haspopup="menu"
-                      aria-expanded={conversationActionsId === conversation.id}
-                      aria-label={t("conversation.actions.more", {
-                        title: conversationTitle,
-                      })}
-                      className="conversation-more"
-                      onClick={() => {
-                        setRenamingConversationId("");
-                        setConfirmingConversationId("");
-                        setConversationActionsId((current) =>
-                          current === conversation.id ? "" : conversation.id,
-                        );
-                      }}
-                      ref={(element) => {
-                        if (element) {
-                          conversationActionTriggerRefs.current.set(
-                            conversation.id,
-                            element,
-                          );
-                        } else {
-                          conversationActionTriggerRefs.current.delete(
-                            conversation.id,
-                          );
-                        }
-                      }}
-                      type="button"
-                    >
-                      <MoreHorizontal size={14} />
-                    </button>
-                  </div>
-                  {sidebarOpen && conversationActionsId === conversation.id && createPortal(
-                    <div
-                      ref={conversationActionsRef}
-                      role="menu"
-                      onKeyDown={(event) => {
-                        if (event.defaultPrevented) return;
-                        if (event.key === "Escape") {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setConversationActionsId("");
-                          setConfirmingConversationId("");
-                          focusConversationActions(conversation.id);
-                          return;
-                        }
-                        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-                        event.preventDefault();
-                        const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([aria-disabled="true"])'));
-                        const index = items.indexOf(document.activeElement as HTMLButtonElement);
-                        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-                        items[next]?.focus();
-                      }}
-                      aria-label={t("conversation.actions.region", {
-                        title: conversationTitle,
-                      })}
-                      className="conversation-actions"
-                      id={`conversation-actions-${conversation.id}`}
-                    >
-                      <button role="menuitem" type="button" disabled={!conversationStoreReady || Boolean(pinningConversationId)} onClick={() => {
-                        setConversationActionsId("");
-                        focusConversationActions(conversation.id);
-                        void setConversationPinned(conversation);
-                      }}>
-                        {conversation.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-                        {t(conversation.pinned ? "conversation.actions.unpin" : "conversation.actions.pin")}
-                      </button>
-                      {!conversation.remote && (
-                        <>
-                          <button
-                            role="menuitem"
-                            aria-describedby={
-                              branchDisabledReason
-                                ? branchDisabledReasonId
-                                : undefined
-                            }
-                            aria-disabled={
-                              branchDisabledReason ? true : undefined
-                            }
-                            onClick={() => {
-                              if (branchDisabledReason) {
-                                notify({
-                                  tone: "info",
-                                  message: branchDisabledReason,
-                                });
-                                return;
-                              }
-                              setConversationActionsId("");
-                              void branchConversation(conversation);
-                            }}
-                            title={branchDisabledReason}
-                            type="button"
-                          >
-                            <GitFork
-                              aria-hidden="true"
-                              className="conversation-branch-icon"
-                              size={14}
-                            />
-                            {branchingConversationId === conversation.id
-                              ? t("conversation.branch.creating")
-                              : t("conversation.actions.branch")}
-                          </button>
-                          {branchDisabledReason && (
-                            <span
-                              className="sr-only"
-                              id={branchDisabledReasonId}
-                            >
-                              {branchDisabledReason}
-                            </span>
-                          )}
-                        </>
-                      )}
-                      {!conversation.remote && (
-                        <button
-                          role="menuitem"
-                          onClick={() => {
-                            setConversationActionsId("");
-                            setRenamingConversationId(conversation.id);
-                          }}
-                          type="button"
-                        >
-                          <Edit3 size={14} />
-                          {t("conversation.actions.rename")}
-                        </button>
-                      )}
-                      <button
-                        role="menuitem"
-                        onClick={() => {
-                          setConversationActionsId("");
-                          void copyConversation(conversation).finally(() =>
-                            focusConversationActions(conversation.id),
-                          );
-                        }}
-                        type="button"
-                      >
-                        <Copy size={14} />
-                        {t("conversation.actions.copy")}
-                      </button>
-                      <button
-                        role="menuitem"
-                        onClick={() => {
-                          setConversationActionsId("");
-                          exportConversation(conversation);
-                          focusConversationActions(conversation.id);
-                        }}
-                        type="button"
-                      >
-                        <Download size={14} />
-                        {t("conversation.actions.export")}
-                      </button>
-                      {!conversation.remote && (
-                        <DestructiveConfirmActions
-                          triggerRole="menuitem"
-                          cancelAriaLabel={t("conversation.delete.cancelAria", {
-                            title: conversationTitle,
-                          })}
-                          confirmAriaLabel={t(
-                            "conversation.delete.confirmAria",
-                            {
-                              title: conversationTitle,
-                            },
-                          )}
-                          confirmLabel={t("conversation.delete.confirm")}
-                          confirming={
-                            confirmingConversationId === conversation.id
-                          }
-                          disabled={deletingConversationId === conversation.id}
-                          icon={<Trash2 aria-hidden="true" size={14} />}
-                          onCancel={() => setConfirmingConversationId("")}
-                          onConfirm={() =>
-                            void deleteConversation(conversation.id)
-                          }
-                          onRequestConfirm={() =>
-                            setConfirmingConversationId(conversation.id)
-                          }
-                          triggerAriaLabel={t(
-                            "conversation.delete.triggerAria",
-                            {
-                              title: conversationTitle,
-                            },
-                          )}
-                          triggerLabel={t("conversation.delete.trigger")}
-                        />
-                      )}
-                    </div>, document.body
-                  )}
-                  {!conversation.remote &&
-                    renamingConversationId === conversation.id && (
-                      <form
-                        className="conversation-rename"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          const input =
-                            event.currentTarget.elements.namedItem("title");
-                          if (input instanceof HTMLInputElement) {
-                            saveTitle(conversation.id, input.value);
-                          }
-                        }}
-                      >
-                        <input
-                          aria-label={t("conversation.renameAria", {
-                            title: conversationTitle,
-                          })}
-                          autoFocus
-                          defaultValue={conversation.title}
-                          maxLength={80}
-                          name="title"
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") {
-                              setRenamingConversationId("");
-                              focusConversationActions(conversation.id);
-                            }
-                          }}
-                          pattern=".*\S.*"
-                          required
-                        />
-                        <button
-                          aria-label={t("conversation.saveName")}
-                          type="submit"
-                        >
-                          <Check size={14} />
-                        </button>
-                        <button
-                          aria-label={t("conversation.cancelRename")}
-                          onClick={() => {
-                            setRenamingConversationId("");
-                            focusConversationActions(conversation.id);
-                          }}
-                          type="button"
-                        >
-                          <X size={14} />
-                        </button>
-                      </form>
-                    )}
-                  {tasksExpanded && conversationTasks.length > 0 && (
-                    <ul
-                      aria-label={t("conversation.tasks.list", {
-                        title: conversationTitle,
-                      })}
-                      className="conversation-task-children"
-                    >
-                      {conversationTasks.slice(0, 3).map((task) => {
-                        const schedule = findTaskSchedule(
-                          task,
-                          assistantSchedules,
-                        );
-                        const statusLabel = tWorkspace(
-                          `task.status.${task.status}`,
-                        );
-                        const metadata = schedule
-                          ? [
-                              tWorkspace(
-                                `sidebar.tasks.schedule.recurrence.${schedule.recurrence}`,
-                              ),
-                              task.status === "completed"
-                                ? undefined
-                                : statusLabel,
-                            ]
-                              .filter((value) => value !== undefined)
-                              .join(" · ")
-                          : task.status === "completed"
-                            ? ""
-                            : statusLabel;
-                        return (
-                          <li key={task.id}>
-                            <button
-                              className={
-                                selectedAssistantTaskId === task.id
-                                  ? "conversation-task-child conversation-task-child--active"
-                                  : "conversation-task-child"
-                              }
-                              onClick={() => {
-                                openAssistantTask(task);
-                                if (narrowWindow) {
-                                  closeNarrowSidebar();
-                                }
-                              }}
-                              type="button"
-                            >
-                              <span className="conversation-task-child__title">
-                                {task.title}
-                              </span>
-                              {metadata && (
-                                <small className="conversation-task-child__meta">
-                                  {metadata}
-                                </small>
-                              )}
-                              {task.status === "completed" ? (
-                                <span
-                                  className="task-status-dot task-status-dot--completed conversation-task-child__completed-status"
-                                  title={statusLabel}
-                                >
-                                  <Check
-                                    aria-hidden="true"
-                                    size={7}
-                                    strokeWidth={3}
-                                  />
-                                  <span className="sr-only">{statusLabel}</span>
-                                </span>
-                              ) : (
-                                <span
-                                  aria-hidden="true"
-                                  className={`task-status-dot task-status-dot--${task.status}`}
-                                />
-                              )}
-                            </button>
-                          </li>
-                        );
-                      })}
-                      {conversationTasks.length > 3 && (
-                        <li>
-                          <button
-                            className="conversation-task-view-all"
-                            onClick={() => {
-                              setSelectedAssistantTaskId(
-                                conversationTasks[0]?.id,
-                              );
-                              setActiveId(conversation.id);
-                              setView("chat");
-                              if (narrowWindow) {
-                                closeNarrowSidebar();
-                              }
-                            }}
-                            type="button"
-                          >
-                            {t("conversation.tasks.viewAll", {
-                              count: conversationTasks.length,
-                            })}
-                          </button>
-                        </li>
-                      )}
-                    </ul>
-                  )}
-                </div>
+                <ConversationListRow
+                  key={conversation.id}
+                  actionsOpen={conversationActionsId === conversation.id}
+                  actionsRef={conversationActionsRef}
+                  active={conversation.id === activeId}
+                  activity={activity}
+                  branchDisabledReason={branchDisabledReason}
+                  branchSourceTitle={branchSourceTitle}
+                  branching={branchingConversationId === conversation.id}
+                  confirmingDelete={confirmingConversationId === conversation.id}
+                  conversation={conversation}
+                  conversationTasks={conversationTasks}
+                  conversationTitle={conversationTitle}
+                  deleting={deletingConversationId === conversation.id}
+                    handlers={conversationListRowHandlers}
+                    listTimeDay={new Date().toDateString()}
+                    locale={locale}
+                  menuVisible={sidebarOpen && conversationActionsId === conversation.id}
+                  pinDisabled={!conversationStoreReady || Boolean(pinningConversationId)}
+                  renaming={renamingConversationId === conversation.id}
+                  schedules={tasksExpanded ? assistantSchedules : emptyAssistantSchedules}
+                  selectedTaskId={tasksExpanded && conversationTasks.some((task) => task.id === selectedAssistantTaskId) ? selectedAssistantTaskId : undefined}
+                  tasksExpanded={tasksExpanded}
+                  unread={unreadConversationIds.has(conversation.id)}
+                />
               );
             })}
           {conversationLoadError ? (
@@ -10924,7 +11112,7 @@ function App(): React.JSX.Element {
                 </PageShell>
               </KeepAliveRoute>
             )}
-            {view === 'device-sharing' && <DeviceSharingPage notify={notify} />}
+            {view === 'device-sharing' && isApplicationEnabled(applicationSettings, 'device-sharing') && <DeviceSharingPage notify={notify} />}
             {localInferenceOpen && (
               <LocalInferencePage
                 enabled={isApplicationEnabled(applicationSettings, "local-inference")}
@@ -11068,9 +11256,9 @@ function App(): React.JSX.Element {
                       <ActivityPanel
                         onClear={clearActivity}
                         onOpenConversation={openActivityConversation}
-                        onRefreshTokenUsage={manualRefreshTokenUsage}
+                        onRefresh={manualRefreshActivity}
                         projects={projects}
-                        records={activityRecords}
+                        records={activityPanelRecords}
                         tokenUsage={tokenUsage}
                       />
                     </Suspense>

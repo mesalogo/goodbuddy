@@ -911,8 +911,8 @@ Endpoint、编码配置或服务端稳定模型摘要变化。
 
 - 目录只包含元数据，不包含模型权重。
 - 每个来源的文件固定不可变 Revision、URL、字节数和 SHA-256。
-- 实际下载使用“平台功能 → 通用设置”中显式选择的 ModelScope 或 Hugging Face，完整
-  来源契约以[平台功能页签与模型下载源设计](../../architecture/model-download-source-design.md)为准。
+- 实际下载使用“模型连接”页头的模型下载源弹窗中确认保存的 ModelScope 或 Hugging Face；
+  向量模型的下载源入口直接打开该弹窗，完整来源契约以[平台功能页签与模型下载源设计](../../architecture/model-download-source-design.md)为准。
 - 下载写入随机暂存目录和 `.partial` 文件。
 - 禁止未声明重定向到其他主机。
 - 每个文件边下载边计算摘要。

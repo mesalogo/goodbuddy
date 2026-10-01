@@ -1333,7 +1333,7 @@ describe('KnowledgeMcpGateway', () => {
     expect(outputValidator).toHaveBeenCalledWith({ value: 'done' })
   })
 
-  it('rejects cyclic cursors and custom MCP tool counts over 100', async () => {
+  it('omits servers with cyclic cursors or custom MCP tool counts over 100', async () => {
     const cyclicUpstream = await startToolUpstream(
       (cursor: string | undefined) => ({
         tools: [testTool(cursor ? 'second' : 'first')],
@@ -1366,18 +1366,63 @@ describe('KnowledgeMcpGateway', () => {
 
     await expect(
       gateway.prepareCustomMcpTools(cycleToken)
-    ).rejects.toMatchObject({
-      cause: expect.objectContaining({
-        message: expect.stringContaining('分页游标发生循环')
-      })
-    })
+    ).resolves.toEqual([])
     await expect(
       gateway.prepareCustomMcpTools(excessiveToken)
-    ).rejects.toMatchObject({
-      cause: expect.objectContaining({
-        message: expect.stringContaining('工具数量超过安全限制')
-      })
+    ).resolves.toEqual([])
+  })
+
+  it('keeps healthy tools available when another upstream fails discovery', async () => {
+    const healthyList = vi.fn(() => ({ tools: [testTool('healthy')] }))
+    const healthy = await startToolUpstream(healthyList)
+    const failedList = vi.fn(() => { throw new Error('private-upstream-failure') })
+    const failed = await startToolUpstream(failedList)
+    const observeFailure = vi.fn()
+    const gateway = new KnowledgeMcpGateway(createService().service, { observeFailure })
+    gateways.push(gateway)
+    await gateway.start()
+    const controller = new AbortController()
+    const token = gateway.grantCustomMcp('partial-discovery', [
+      customMcpServer(healthy.url),
+      customMcpServer(failed.url, '00000000-0000-4000-8000-000000000093')
+    ], controller.signal)!
+    await expect(gateway.prepareCustomMcpTools(token)).resolves.toEqual([
+      expect.objectContaining({ name: expect.stringMatching(/_healthy$/u) })
+    ])
+    const client = new Client({ name: 'partial-discovery', version: '1.0.0' })
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      }))
+      const listed = await client.listTools()
+      expect(listed.tools.map(tool => tool.name)).toEqual([
+        expect.stringMatching(/_healthy$/u)
+      ])
+      expect(healthyList).toHaveBeenCalledTimes(1)
+      expect(failedList).toHaveBeenCalledTimes(1)
+      expect(observeFailure).toHaveBeenCalledWith(expect.objectContaining({
+        mcp: expect.objectContaining({ phase: 'tool-discovery' })
+      }))
+      expect(JSON.stringify(observeFailure.mock.calls)).not.toContain('private-upstream-failure')
+    } finally {
+      await client.close()
+    }
+  })
+
+  it.each(['abort', 'revoke'] as const)('does not swallow %s during discovery', async action => {
+    const controller = new AbortController()
+    const reason = new Error('request cancelled')
+    const gateway = new KnowledgeMcpGateway(createService().service)
+    gateways.push(gateway)
+    const upstream = await startToolUpstream(() => {
+      if (action === 'abort') controller.abort(reason)
+      else gateway.revoke(token)
+      return { tools: [testTool('late')] }
     })
+    const token = gateway.grantCustomMcp('cancel-discovery', [customMcpServer(upstream.url)], controller.signal)!
+    const preparation = gateway.prepareCustomMcpTools(token)
+    if (action === 'abort') await expect(preparation).rejects.toBe(reason)
+    else await expect(preparation).rejects.toThrow('MCP capability was revoked')
   })
 
   it('releases rejected initialize attempts before enforcing the session limit', async () => {
@@ -1542,6 +1587,12 @@ describe('KnowledgeMcpGateway', () => {
       })
       await new Promise((resolve) => setTimeout(resolve, 25))
       expect(listChanged).not.toHaveBeenCalled()
+      await expect(client.listTools()).resolves.toMatchObject({ tools: [] })
+      failRefresh = false
+      const recovered = await client.listTools()
+      expect(recovered.tools.map(tool => tool.name)).toEqual([
+        expect.stringMatching(/_stable$/u)
+      ])
     } finally {
       await client.close()
     }

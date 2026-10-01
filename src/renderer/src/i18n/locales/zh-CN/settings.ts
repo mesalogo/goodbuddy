@@ -587,14 +587,14 @@ export const settings = {
       confirmDelete: '确认删除',
       cancel: '取消',
       openRepository: '打开 {{source}}',
-      openDownloadSourceSettings: '前往通用设置',
+      openDownloadSourceSettings: '模型下载源',
       catalogUnavailable: '当前版本没有可用的 OCR 模型目录。',
       selectedModelUnavailable:
         '已保存的 OCR 模型在当前版本不可用，请从上方选择并安装其他模型。',
       installBeforeSelecting:
         '请先下载或导入该模型；安装完成后会自动设为当前模型。',
       sourceUnavailableDescription:
-        '{{source}} 暂不提供此模型的完整已验证文件。你仍可从 ZIP 导入，或前往通用设置明确更换下载源。',
+        '{{source}} 暂不提供此模型的完整已验证文件。你仍可从 ZIP 导入，或点击“模型下载源”更换来源。',
       privacyNotice:
         'OCR 只在需要时由上方场景模式启用，并始终在本机通过 ONNX Runtime WebAssembly 运行，不会上传文档。',
       operations: {

@@ -259,6 +259,7 @@ export const defaultApplicationSettings: ApplicationSettings = {
   remoteProjectsEnabled: false,
   applicationNavigation: defaultApplicationNavigation,
   localInferenceEnabled: true,
+  deviceSharingEnabled: false,
   magicNotesEnabled: true,
   heartbeatEnabled: false,
   heartbeatReportTimeoutSeconds: defaultSupervisionTimeoutSeconds,
@@ -297,6 +298,7 @@ export class ApplicationSettingsStore {
       | 'version'
       | 'applicationNavigation'
        | 'localInferenceEnabled'
+       | 'deviceSharingEnabled'
        | 'heartbeatEnabled'
       | 'magicNoteCanvasPageCount'
     > & {
@@ -537,6 +539,7 @@ export class ApplicationSettingsStore {
       remoteProjectsEnabled: stored.remoteProjectsEnabled,
       applicationNavigation: stored.applicationNavigation,
       localInferenceEnabled: stored.localInferenceEnabled,
+      deviceSharingEnabled: stored.deviceSharingEnabled,
       magicNotesEnabled: stored.magicNotesEnabled,
       heartbeatEnabled: stored.heartbeatEnabled ?? false,
       heartbeatReportTimeoutSeconds: stored.heartbeatReportTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
@@ -584,6 +587,7 @@ export class ApplicationSettingsStore {
         remoteProjectsEnabled: next.remoteProjectsEnabled,
         applicationNavigation: next.applicationNavigation,
         localInferenceEnabled: next.localInferenceEnabled,
+        deviceSharingEnabled: next.deviceSharingEnabled,
         magicNotesEnabled: next.magicNotesEnabled,
         heartbeatEnabled: next.heartbeatEnabled ?? false,
         heartbeatReportTimeoutSeconds: next.heartbeatReportTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,

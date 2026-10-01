@@ -959,21 +959,30 @@ describe('ActivityPanel', () => {
     expect(screen.getByRole('row', { name: '直连模型 · gpt-sys 16 2 0 0 0% 18' })).toBeInTheDocument()
   })
 
-  it('shows an empty system tab and refreshes usage on demand', async () => {
+  it('shows an empty system tab and refreshes from the header on demand', async () => {
     let resolveRefresh!: () => void
-    const onRefreshTokenUsage = vi.fn(() => new Promise<void>((resolve) => { resolveRefresh = resolve }))
-    render(<ActivityPanel onClear={vi.fn()} onOpenConversation={vi.fn()} onRefreshTokenUsage={onRefreshTokenUsage}
+    const onRefresh = vi.fn(() => new Promise<void>((resolve) => { resolveRefresh = resolve }))
+    render(<ActivityPanel onClear={vi.fn()} onOpenConversation={vi.fn()} onRefresh={onRefresh}
       records={[]} tokenUsage={makeTokenUsage()} />)
     fireEvent.click(screen.getByRole('tab', { name: '系统任务' }))
     expect(screen.getByText('暂无系统任务 Token 用量')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
-    expect(onRefreshTokenUsage).toHaveBeenCalledOnce()
+    const header = screen.getByRole('heading', { level: 1, name: '运行记录' }).closest('header')!
+    fireEvent.click(within(header).getByRole('button', { name: '刷新' }))
+    expect(onRefresh).toHaveBeenCalledOnce()
     const busy = screen.getByRole('button', { name: '正在刷新' })
     expect(busy).toBeDisabled()
     fireEvent.click(busy)
-    expect(onRefreshTokenUsage).toHaveBeenCalledOnce()
+    expect(onRefresh).toHaveBeenCalledOnce()
     resolveRefresh()
     expect(await screen.findByRole('button', { name: '刷新' })).toBeEnabled()
+  })
+
+  it('offers the header refresh on the task tab too', () => {
+    const onRefresh = vi.fn(async () => {})
+    render(<ActivityPanel onClear={vi.fn()} onOpenConversation={vi.fn()} onRefresh={onRefresh}
+      records={[makeRecord(1)]} tokenUsage={makeTokenUsage()} />)
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    expect(onRefresh).toHaveBeenCalledOnce()
   })
 
   it('hides the refresh button when no refresh handler is provided', () => {

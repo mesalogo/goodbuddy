@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, LoaderCircle } from 'lucide-react'
-import { useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type { ConversationActivity } from './conversation-activity'
@@ -241,7 +241,9 @@ function ActivityMenu({
   )
 }
 
-export function ProjectActivity({
+// Memoized: App re-renders on every streaming delta and keystroke, while the
+// activity summary it passes keeps its identity unless an activity changes.
+export const ProjectActivity = memo(function ProjectActivity({
   activities,
   projects,
   visible = true,
@@ -292,4 +294,4 @@ export function ProjectActivity({
       )}
     </>
   )
-}
+})

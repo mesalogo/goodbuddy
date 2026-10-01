@@ -4,6 +4,11 @@ export const activity = {
     description:
       '按项目、任务与会话查看执行详情，或浏览活动时间线和模型用量。'
   },
+  refresh: {
+    label: '刷新',
+    refreshing: '正在刷新',
+    hint: '运行记录每 15 秒自动更新，点击立即刷新'
+  },
   tabs: {
     ariaLabel: '运行记录视图',
     tasks: '任务与会话',
@@ -69,9 +74,6 @@ export const activity = {
     },
     detailAriaLabel: 'Token 用量{{group}}明细',
     empty: '暂无 Token 用量',
-    refresh: '刷新',
-    refreshing: '正在刷新',
-    refreshHint: '重新读取已保存的 Token 用量',
     fallbacks: {
       unassignedProject: '未归属项目',
       deletedConversation: '已删除会话',

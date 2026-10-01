@@ -7,6 +7,11 @@ export const activity = {
     description:
       'Review execution details by project, task, and conversation, or browse the activity timeline and model usage.'
   },
+  refresh: {
+    label: 'Refresh',
+    refreshing: 'Refreshing',
+    hint: 'Run history updates every 15 seconds; click to refresh now'
+  },
   tabs: {
     ariaLabel: 'Run history views',
     tasks: 'Tasks and conversations',
@@ -72,9 +77,6 @@ export const activity = {
     },
     detailAriaLabel: 'Token usage details by {{group}}',
     empty: 'No token usage',
-    refresh: 'Refresh',
-    refreshing: 'Refreshing',
-    refreshHint: 'Reload saved token usage',
     fallbacks: {
       unassignedProject: 'Unassigned project',
       deletedConversation: 'Deleted conversation',

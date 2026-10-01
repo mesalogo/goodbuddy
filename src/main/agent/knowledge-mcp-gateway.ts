@@ -960,6 +960,7 @@ export class KnowledgeMcpGateway {
           capability.brokerController.signal
         ])
     const changeVersion = connection.dynamicToolsChangeVersion
+    const startedAt = performance.now()
     let refreshSucceeded = false
     const refresh = (async () => {
       try {
@@ -979,10 +980,15 @@ export class KnowledgeMcpGateway {
         refreshSucceeded = true
         await this.publishCustomMcpToolListChanged(capability)
       } catch (error) {
+        connection.bindings = []
         connection.dynamicToolsChanged = true
         if (effectiveSignal.aborted) {
           throw effectiveSignal.reason
         }
+        this.observeMcpFailure({
+          phase: 'tool-discovery', category: 'handler-failure', kind: 'custom',
+          elapsedMs: Math.round(performance.now() - startedAt)
+        })
         throw new Error(
           `无法刷新 MCP Server「${connection.server.name}」的工具`,
           { cause: error }
@@ -1008,6 +1014,7 @@ export class KnowledgeMcpGateway {
     capability: Capability,
     server: ResolvedMcpServer
   ): Promise<CustomMcpConnection> {
+    const startedAt = performance.now()
     let connection: CustomMcpConnection | undefined
     let dynamicToolsChangeVersion = 0
     const client = new Client(
@@ -1079,6 +1086,11 @@ export class KnowledgeMcpGateway {
       return connection
     } catch (error) {
       await client.close().catch(() => undefined)
+      signal.throwIfAborted()
+      this.observeMcpFailure({
+        phase: 'tool-discovery', category: 'handler-failure', kind: 'custom',
+        elapsedMs: Math.round(performance.now() - startedAt)
+      })
       throw new Error(
         `无法加载 MCP Server「${server.name}」的工具`,
         { cause: error }
@@ -1092,6 +1104,12 @@ export class KnowledgeMcpGateway {
     refreshDynamic = true
   ): Promise<Map<string, CustomMcpBinding>> {
     const capability = this.getCapability(token)
+    const effectiveSignal = AbortSignal.any([
+      capability.signal,
+      capability.brokerController.signal,
+      ...(signal ? [signal] : [])
+    ])
+    effectiveSignal.throwIfAborted()
     if (capability.customMcpServers.length === 0) {
       return new Map()
     }
@@ -1105,15 +1123,6 @@ export class KnowledgeMcpGateway {
         const connections = results.flatMap((result) =>
           result.status === 'fulfilled' ? [result.value] : []
         )
-        const failure = results.find(
-          (result) => result.status === 'rejected'
-        )
-        if (failure?.status === 'rejected') {
-          await Promise.allSettled(
-            connections.map((connection) => connection.client.close())
-          )
-          throw failure.reason
-        }
         return connections
       })()
     }
@@ -1124,6 +1133,7 @@ export class KnowledgeMcpGateway {
       capability.customMcpConnections = undefined
       throw error
     }
+    effectiveSignal.throwIfAborted()
     if (refreshDynamic) {
       for (const connection of connections) {
         if (
@@ -1133,13 +1143,19 @@ export class KnowledgeMcpGateway {
         ) {
           continue
         }
-        await this.refreshDynamicTools(
-          capability,
-          connection,
-          signal
-        )
+        try {
+          await this.refreshDynamicTools(
+            capability,
+            connection,
+            signal
+          )
+        } catch {
+          // Failed catalogs are cleared by refresh; healthy servers remain usable.
+          effectiveSignal.throwIfAborted()
+        }
       }
     }
+    effectiveSignal.throwIfAborted()
     const bindings = new Map<string, CustomMcpBinding>()
     for (const connection of connections) {
       for (const binding of connection.bindings) {

@@ -1,5 +1,6 @@
 import {
   Children,
+  Fragment,
   isValidElement,
   lazy,
   memo,
@@ -254,10 +255,154 @@ function standaloneHtmlSource(content: string): string | undefined {
   return undefined
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({
+// Link reference and footnote definitions resolve across the whole document,
+// even from inside lists or block quotes, so their presence disables splitting.
+const documentScopedMarkdown = /\]:|\[\^/u
+// Constructs that may legally span blank lines in ways a line scanner cannot
+// track: raw HTML blocks and `$$` lines carrying other text.
+const unsafeSegmentLine = /^ {0,3}(?:<|\$\$.*\S)/u
+// CommonMark: a backtick fence's info string cannot contain backticks.
+const segmentFenceOpening = /^ {0,3}(?:(`{3,})(?!.*`)|(~{3,}))/u
+const segmentMathFence = /^ {0,3}\$\$\s*$/u
+// A block after a blank line belongs to the previous top-level block when it
+// is indented (list item or indented code continuation), a list marker (the
+// list may continue and its looseness may change), or a block quote marker.
+const continuationLine = /^(?:\s|[-*+](?:\s|$)|\d{1,9}[.)](?:\s|$)|>)/u
+
+/**
+ * Splits Markdown at top-level boundaries where parsing each segment
+ * independently produces exactly the same blocks as parsing the whole text:
+ * a blank line, outside fenced code and math, followed by a line that starts
+ * a new top-level block. Returns a single segment whenever any construct
+ * could make that unsafe.
+ */
+export function splitMarkdownSegments(content: string): string[] {
+  if (documentScopedMarkdown.test(content) || content.includes('\r')) {
+    return [content]
+  }
+  const segments: string[] = []
+  let fence: { character: '`' | '~'; length: number } | undefined
+  let inMath = false
+  let segmentStart = 0
+  let segmentHasBlock = false
+  let previousBlank = false
+  let lineStart = 0
+
+  while (lineStart <= content.length) {
+    const newline = content.indexOf('\n', lineStart)
+    const lineEnd = newline === -1 ? content.length : newline
+    const line = content.slice(lineStart, lineEnd)
+
+    if (fence) {
+      const closing = new RegExp(
+        `^ {0,3}${fence.character}{${fence.length},}\\s*$`,
+        'u'
+      )
+      if (closing.test(line)) {
+        fence = undefined
+      }
+      previousBlank = false
+    } else if (inMath) {
+      if (segmentMathFence.test(line)) {
+        inMath = false
+      }
+      previousBlank = false
+    } else if (line.trim() === '') {
+      previousBlank = true
+    } else {
+      if (unsafeSegmentLine.test(line)) {
+        return [content]
+      }
+      // Leading blank lines render nothing; a segment of them would add an
+      // extra separator, so split only after the segment has a block.
+      if (
+        previousBlank &&
+        segmentHasBlock &&
+        !continuationLine.test(line)
+      ) {
+        segments.push(content.slice(segmentStart, lineStart))
+        segmentStart = lineStart
+      }
+      segmentHasBlock = true
+      const opening = segmentFenceOpening.exec(line)
+      if (opening) {
+        const marker = (opening[1] ?? opening[2])!
+        fence = { character: marker[0] as '`' | '~', length: marker.length }
+      } else if (/^ {0,3}`{3,}/u.test(line)) {
+        // Backtick run with a backtick in its info string: inline code that
+        // the line scanner cannot model, so keep the document whole.
+        return [content]
+      } else if (segmentMathFence.test(line)) {
+        inMath = true
+      }
+      previousBlank = false
+    }
+
+    if (newline === -1) {
+      break
+    }
+    lineStart = newline + 1
+  }
+
+  segments.push(content.slice(segmentStart))
+  return segments
+}
+
+const markdownRehypePlugins: NonNullable<
+  React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']
+> = [
+  [
+    rehypeKatex,
+    {
+      output: 'htmlAndMathml',
+      strict: 'warn',
+      trust: false
+    }
+  ]
+]
+const markdownRemarkPlugins: NonNullable<
+  React.ComponentProps<typeof ReactMarkdown>['remarkPlugins']
+> = [remarkGfm, [remarkMath, { singleDollarTextMath: true }]]
+
+const MarkdownSegment = memo(function MarkdownSegment({
+  components,
+  content
+}: {
+  components: Components
+  content: string
+}): React.JSX.Element {
+  return (
+    <ReactMarkdown
+      components={components}
+      rehypePlugins={markdownRehypePlugins}
+      remarkPlugins={markdownRemarkPlugins}
+      skipHtml
+    >
+      {content}
+    </ReactMarkdown>
+  )
+})
+
+export const MarkdownRenderer = memo(function MarkdownRenderer(
+  props: MarkdownRendererProps
+): React.JSX.Element {
+  return <MarkdownDocument {...props} segmented />
+})
+
+/** Whole-document reference rendering; used to verify segmentation. */
+export const UnsegmentedMarkdownRenderer = memo(
+  function UnsegmentedMarkdownRenderer(
+    props: MarkdownRendererProps
+  ): React.JSX.Element {
+    return <MarkdownDocument {...props} segmented={false} />
+  }
+)
+
+function MarkdownDocument({
   children,
-  renderHtml = false
-}: MarkdownRendererProps): React.JSX.Element {
+  renderHtml = false,
+  segmented
+}: MarkdownRendererProps & { segmented: boolean }): React.JSX.Element {
   const { t } = useTranslation('app')
   const normalizedContent = normalizeLatexDelimiters(
     unwrapMarkdownFence(children)
@@ -283,26 +428,20 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
     )
   }
 
+  // Completed segments keep identical strings, so streaming updates re-parse
+  // only the growing tail. The "\n" matches the text node ReactMarkdown
+  // places between top-level blocks, keeping the DOM identical.
+  const segments = segmented
+    ? splitMarkdownSegments(normalizedContent)
+    : [normalizedContent]
   return (
-    <ReactMarkdown
-      components={components}
-      rehypePlugins={[
-        [
-          rehypeKatex,
-          {
-            output: 'htmlAndMathml',
-            strict: 'warn',
-            trust: false
-          }
-        ]
-      ]}
-      remarkPlugins={[
-        remarkGfm,
-        [remarkMath, { singleDollarTextMath: true }]
-      ]}
-      skipHtml
-    >
-      {normalizedContent}
-    </ReactMarkdown>
+    <>
+      {segments.map((segment, index) => (
+        <Fragment key={index}>
+          {index > 0 && '\n'}
+          <MarkdownSegment components={components} content={segment} />
+        </Fragment>
+      ))}
+    </>
   )
-})
+}

@@ -77,7 +77,7 @@ const settings: ApplicationSettings = {
   transparentFrostedEffectEnabled: false,
   checkUpdatesOnStartup: false, updateSource: 'github', modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings, applicationNavigation: defaultApplicationNavigation,
-  localInferenceEnabled: true, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false,
+  localInferenceEnabled: true, deviceSharingEnabled: false, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false,
   magicNotesEnabled: true, magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate', magicNoteCommentFormat: 'combined', magicNoteCanvasPageCount: 1
 }

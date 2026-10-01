@@ -17,12 +17,14 @@ import type {
   SpeechModelSnapshot
 } from '../../shared/speech-model-contracts'
 import type { AppNotificationInput } from './notifications'
+import type { ModelDownloadSource } from '../../shared/application-settings-contracts'
 import {
   formatModelPackageBytes,
   modelOperationPercent
 } from './model-download-presentation'
 
 type SpeechModelSettingsSectionProps = {
+  downloadSource?: ModelDownloadSource
   onNotify?: (notification: AppNotificationInput) => void
   persistedSelectedModelId?: string | null
   selectedModelId?: string | null
@@ -64,6 +66,7 @@ function operationLabel(
 }
 
 export function SpeechModelSettingsSection({
+  downloadSource,
   onNotify,
   persistedSelectedModelId,
   selectedModelId,
@@ -258,6 +261,7 @@ export function SpeechModelSettingsSection({
     )
   }
 
+  const selectedDownloadSource = downloadSource ?? snapshot.selectedDownloadSource
   const installedById = new Map(
     snapshot.installed.map((model) => [model.id, model])
   )
@@ -299,7 +303,7 @@ export function SpeechModelSettingsSection({
     : undefined
   const downloadAvailability = model?.downloadAvailability.find(
     (availability) =>
-      availability.source === snapshot.selectedDownloadSource
+      availability.source === selectedDownloadSource
   )
   const size = installed
     ? installed.files.reduce(
@@ -386,7 +390,7 @@ export function SpeechModelSettingsSection({
                   : entry.downloadAvailability.some(
                         (availability) =>
                           availability.source ===
-                            snapshot.selectedDownloadSource &&
+                            selectedDownloadSource &&
                           availability.available
                       )
                     ? t('speech.status.availableToDownload')
@@ -421,7 +425,7 @@ export function SpeechModelSettingsSection({
                     {
                       name: displayName,
                       source: t(
-                        `modelDownloadSources.${snapshot.selectedDownloadSource}`
+                        `modelDownloadSources.${selectedDownloadSource}`
                       )
                     }
                   )}
@@ -437,7 +441,7 @@ export function SpeechModelSettingsSection({
                     {
                       name: displayName,
                       source: t(
-                        `modelDownloadSources.${snapshot.selectedDownloadSource}`
+                        `modelDownloadSources.${selectedDownloadSource}`
                       )
                     }
                   )}
@@ -450,7 +454,7 @@ export function SpeechModelSettingsSection({
               <div className="document-ocr-model__tags">
                 <span className="speech-model-tag">
                   {t(
-                    `modelDownloadSources.${snapshot.selectedDownloadSource}`
+                    `modelDownloadSources.${selectedDownloadSource}`
                   )}
                 </span>
                 <span className="speech-model-tag">
@@ -577,7 +581,7 @@ export function SpeechModelSettingsSection({
                         () =>
                           window.goodbuddy.speechModels!.install(
                             model.id,
-                            snapshot.selectedDownloadSource
+                            selectedDownloadSource
                           ),
                         t('speech.notifications.installed', {
                           name: displayName
@@ -637,7 +641,7 @@ export function SpeechModelSettingsSection({
             <p className="settings-warning">
               {t('speech.sourceUnavailableDescription', {
                 source: t(
-                  `modelDownloadSources.${snapshot.selectedDownloadSource}`
+                  `modelDownloadSources.${selectedDownloadSource}`
                 )
               })}
             </p>

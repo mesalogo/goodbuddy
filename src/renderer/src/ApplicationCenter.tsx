@@ -32,7 +32,7 @@ import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
 import './application-center.css'
 
 export const applicationDefinitions = {
-  'device-sharing': { icon: Network, title: 'sharing.title' },
+  'device-sharing': { icon: Network, title: 'sharing.title', enabled: 'deviceSharingEnabled' },
   'magic-notes': {
     icon: Sparkles,
     title: 'navigation.magicNotes',
@@ -58,7 +58,8 @@ export function isApplicationEnabled(
   settings: ApplicationSettings | undefined,
   id: BuiltInApplicationId,
 ): boolean {
-  if (id === 'knowledge' || id === 'device-sharing') return true
+  if (id === 'knowledge') return true
+  if (id === 'device-sharing') return settings?.deviceSharingEnabled === true
   if (id === 'heartbeat') return settings?.heartbeatEnabled === true
   return (
     settings !== undefined &&
@@ -121,7 +122,7 @@ export function ApplicationSettingsView({
           />
           <span>{t('applications.enable')}</span>
         </label>
-        <div className="inline-help-label">
+        {id !== 'device-sharing' && <div className="inline-help-label">
           <label className="toggle-row">
             <input
               role="switch"
@@ -141,8 +142,8 @@ export function ApplicationSettingsView({
             <span>{t('applications.pin')}</span>
           </label>
           <InlineHelp label={t('applications.pin')} id="application-pin-help">{t('applications.pinHelp')}</InlineHelp>
-        </div>
-        <p className="settings-notice">{t('applications.disableHelp')}</p>
+        </div>}
+        <p className="settings-notice">{t(id === 'device-sharing' ? 'applications.deviceSharingHelp' : 'applications.disableHelp')}</p>
         {id === 'magic-notes' && (
           <label className="toggle-row">
             <input
@@ -451,7 +452,7 @@ export function ApplicationCenter({
                         <div className="application-center__title">
                           <strong>{t(definition.title)}</strong>
                           <small>
-                            {id === 'device-sharing' ? t('applications.builtin') : alwaysShown
+                            {alwaysShown
                               ? t('applications.alwaysShown')
                               : `${t('applications.optional')} · ${t(enabled ? 'applications.enabled' : 'applications.disabled')}`}
                           </small>
@@ -468,7 +469,7 @@ export function ApplicationCenter({
                       >
                         {t('applications.open')}
                       </button>
-                      {id !== 'knowledge' && id !== 'device-sharing' && (
+                      {id !== 'knowledge' && (
                         <button
                           className="secondary-button"
                           type="button"

@@ -79,6 +79,15 @@ vi.mock('./ConversationTaskStrip', async (importOriginal) => {
   const original = await importOriginal<typeof import('./ConversationTaskStrip')>();
   return { ...original, ConversationTaskStrip: historyRenderProbes.instrument(original.ConversationTaskStrip, historyRenderProbes.task) };
 });
+const sidebarRenderProbes = vi.hoisted(() => ({ row: vi.fn(), projectActivity: vi.fn() }));
+vi.mock('./OverflowMarquee', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./OverflowMarquee')>();
+  return { ...original, OverflowMarquee: historyRenderProbes.instrument(original.OverflowMarquee, sidebarRenderProbes.row) };
+});
+vi.mock('./ProjectActivity', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ProjectActivity')>();
+  return { ...original, ProjectActivity: historyRenderProbes.instrument(original.ProjectActivity, sidebarRenderProbes.projectActivity) };
+});
 vi.mock('./RuntimeChecklistStrip', async (importOriginal) => {
   const original = await importOriginal<typeof import('./RuntimeChecklistStrip')>();
   return { ...original, RuntimeChecklistStrip: historyRenderProbes.instrument(original.RuntimeChecklistStrip, historyRenderProbes.checklist) };
@@ -1221,7 +1230,7 @@ function installRemoteProjectsSetting(enabled: boolean): {
     updateSource: "github",
     modelDownloadSource: "modelscope",
     localToolEnvironment: defaultLocalToolEnvironmentSettings,
-    applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+    applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
     heartbeatEnabled: true,
     conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: enabled,
@@ -3098,8 +3107,11 @@ describe("App", () => {
       await screen.findByText(new RegExp(delta.trim(), "u"));
     }
     expect.soft(activityRenderProbe).toHaveBeenCalledTimes(0);
+    activityRenderProbe.mockClear();
     act(() => agentListener?.({ requestId, type: "done" }));
-    await waitFor(() => expect(activityRenderProbe.mock.calls.length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.queryByLabelText("停止生成")).not.toBeInTheDocument());
+    // The hidden page keeps its snapshot; it refreshes when shown again.
+    expect.soft(activityRenderProbe).toHaveBeenCalledTimes(0);
     expect(route).toHaveAttribute("hidden");
     fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
     expect(screen.getByRole("heading", { name: "运行记录" })).toBe(heading);
@@ -3302,7 +3314,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -3407,7 +3419,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -3424,7 +3436,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -3527,7 +3539,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -3544,7 +3556,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -4562,6 +4574,60 @@ describe("App", () => {
     fireEvent.click(screen.getByText('Second retry').closest('button')!);
     expect(composer).toHaveValue('Second retry prompt');
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("re-renders only the streaming conversation row and keeps sidebar actions live", async () => {
+    const otherConversations = Array.from({ length: 30 }, (_, c) => ({
+      id: `00000000-0000-4000-9${String(c).padStart(3, "0")}-000000000000`,
+      projectId, title: `Sidebar row ${c}`, updatedAt: 1_000 + c,
+      messages: Array.from({ length: 40 }, (_, index) => ({
+        id: `00000000-0000-4000-9${String(c).padStart(3, "0")}-${String(index).padStart(12, "0")}`,
+        role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        content: `history ${index}`, createdAt: 1_000 + index, state: "complete" as const,
+      })),
+    }));
+    vi.mocked(api.conversations.list).mockResolvedValueOnce(otherConversations);
+    render(<App />);
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+    await screen.findByText("Sidebar row 29");
+    fireEvent.change(composer, { target: { value: "Row isolation" } });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    act(() => agentListener?.({ requestId, type: "text", delta: "Streaming" }));
+    await screen.findByText("Streaming");
+    const rows = () => [...document.querySelectorAll<HTMLElement>(".conversation-entry")];
+    expect(rows().length).toBeGreaterThanOrEqual(30);
+    const rowNodes = rows().map((row) => row.querySelector(".conversation-item__title")!);
+    sidebarRenderProbes.row.mockClear();
+    sidebarRenderProbes.projectActivity.mockClear();
+    for (const delta of [" one", " two", " three"]) {
+      act(() => agentListener?.({ requestId, type: "text", delta }));
+    }
+    await screen.findByText("Streaming one two three");
+    // Only the streaming conversation's own row may re-render per delta.
+    expect(sidebarRenderProbes.row.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(sidebarRenderProbes.projectActivity).toHaveBeenCalledTimes(0);
+    expect(rows().map((row) => row.querySelector(".conversation-item__title"))).toEqual(rowNodes);
+    sidebarRenderProbes.row.mockClear();
+    for (const value of ["a", "ab", "abc"]) {
+      fireEvent.change(composer, { target: { value } });
+    }
+    expect(sidebarRenderProbes.row).toHaveBeenCalledTimes(0);
+
+    // Row actions still run the latest App state after the rows were skipped.
+    const target = screen.getByText("Sidebar row 3").closest(".conversation-entry")!;
+    fireEvent.click(within(target as HTMLElement).getByRole("button", { name: "更多会话操作 Sidebar row 3" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^重命名/u }));
+    const renameInput = within(target as HTMLElement).getByRole("textbox");
+    fireEvent.change(renameInput, { target: { value: "Renamed while streaming" } });
+    fireEvent.submit(renameInput.closest("form")!);
+    const renamedTitle = () => within(target as HTMLElement).getByText("Renamed while streaming");
+    await waitFor(() => expect(renamedTitle()).toBeInTheDocument());
+    fireEvent.click(renamedTitle());
+    await waitFor(() => expect(renamedTitle().closest(".conversation-item")).toHaveClass("conversation-item--active"));
+    expect(document.querySelector(".conversation-title__text")).toHaveTextContent("Renamed while streaming");
+    expect(composer).toHaveValue("");
   });
 
   it("isolates history and task strips while typing during a running request", async () => {
@@ -5938,7 +6004,7 @@ describe("App", () => {
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
@@ -7919,7 +7985,7 @@ describe("App", () => {
     })
   })
 
-  it("loads token usage in activity and refreshes it when a run finishes", async () => {
+  it("loads token usage in activity and refreshes it on demand after a run", async () => {
     vi.mocked(api.usage.getTokenSummary).mockResolvedValueOnce({
       totals: {
         callCount: 1,
@@ -8009,11 +8075,68 @@ describe("App", () => {
         type: "done",
       });
     });
+    await waitFor(() =>
+      expect(screen.queryByLabelText("停止生成")).not.toBeInTheDocument(),
+    );
+    expect(api.usage.getTokenSummary).toHaveBeenCalledOnce();
+    expect(within(stats).getByText("120")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
     await waitFor(() =>
       expect(api.usage.getTokenSummary).toHaveBeenCalledTimes(2),
     );
-    expect(within(stats).getByText("345")).toBeInTheDocument();
+    expect(await within(stats).findByText("345")).toBeInTheDocument();
+  });
+
+  it("refreshes visible activity records every 15 seconds without following live updates", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "定时刷新运行记录" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    const realSetInterval = window.setInterval.bind(window);
+    const refreshTicks: Array<() => void> = [];
+    const intervalSpy = vi
+      .spyOn(window, "setInterval")
+      .mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        if (timeout === 15_000 && typeof handler === "function") {
+          refreshTicks.push(handler as () => void);
+        }
+        return realSetInterval(handler, timeout, ...args);
+      }) as typeof window.setInterval);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
+      await screen.findByRole("heading", { level: 1, name: "运行记录" });
+      await waitFor(() =>
+        expect(api.usage.getTokenSummary).toHaveBeenCalledOnce(),
+      );
+      const items = () =>
+        document.querySelectorAll(".activity-list__item").length;
+      const baseline = items();
+      expect(baseline).toBeGreaterThan(0);
+      act(() =>
+        agentListener?.({
+          requestId,
+          type: "tool",
+          callId: "interval-tool",
+          name: "read",
+          state: "running",
+          summary: "定时刷新工具",
+        }),
+      );
+      // The page keeps its snapshot until the next periodic refresh.
+      expect(items()).toBe(baseline);
+      expect(refreshTicks).toHaveLength(2);
+      act(() => refreshTicks.forEach((tick) => tick()));
+      expect(items()).toBeGreaterThan(baseline);
+      await waitFor(() =>
+        expect(api.usage.getTokenSummary).toHaveBeenCalledTimes(2),
+      );
+    } finally {
+      intervalSpy.mockRestore();
+    }
   });
 
   it("offers only Ask and Execute in visible work mode controls", async () => {
@@ -13936,7 +14059,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -13953,7 +14076,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -14007,7 +14130,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -14068,7 +14191,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -14106,7 +14229,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -14123,7 +14246,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
@@ -14186,7 +14309,7 @@ describe("App", () => {
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
@@ -14246,7 +14369,7 @@ describe("App", () => {
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
-       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
        heartbeatEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
@@ -14328,14 +14451,14 @@ describe("App", () => {
     await waitFor(() => expect(move).toBeEnabled())
     fireEvent.click(move)
     await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '监督者', '知识库', '魔法笔记', '本机推理监控', '设备共享',
+      '监督者', '知识库', '魔法笔记', '本机推理监控', '设备共享（技术预览）',
     ]))
     await waitFor(() => expect(screen.getByRole('button', { name: '上移 本机推理监控' })).toBeEnabled())
     const cards = within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article')
     fireEvent.dragStart(cards[3]!)
     fireEvent.drop(cards[1]!)
     await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享',
+      '监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）',
     ]))
     expect((await updates.getSettings()).applicationNavigation.order).toEqual(['heartbeat', 'local-inference', 'knowledge', 'magic-notes', 'device-sharing'])
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
@@ -14343,23 +14466,67 @@ describe("App", () => {
       '对话', '监督者', '知识库', '魔法笔记', '运行记录',
     ])
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
-    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享', '管理应用'])
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '管理应用'])
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享'])
+    expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）'])
   })
 
-  it('opens device sharing from Application Center while keeping the Settings entry available', async () => {
+  it('leaves device sharing on an external settings event and keeps it closed when re-enabled', async () => {
+    const updates = api.updates!
+    await updates.updateSettings({ deviceSharingEnabled: true })
+    let changed!: Parameters<typeof updates.onSettingsChanged>[0]
+    vi.mocked(updates.onSettingsChanged).mockImplementation(listener => { changed = listener; return vi.fn() })
     render(<App />)
     await screen.findByRole('button', { name: '监督者' })
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '设备共享（技术预览）' }))
+    await screen.findByRole('button', { name: '注册本机' })
+    await act(async () => changed(await updates.updateSettings({ deviceSharingEnabled: false })))
+    expect(screen.queryByRole('heading', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '对话' })).toHaveAttribute('aria-current', 'page')
+    await act(async () => changed(await updates.updateSettings({ deviceSharingEnabled: true })))
+    expect(screen.queryByRole('heading', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    expect(screen.getByRole('menuitem', { name: '设备共享（技术预览）' })).toBeInTheDocument()
+  })
+
+  it('enables device sharing from Application Center and leaves its page when disabled', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: '监督者' })
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    expect(screen.queryByRole('menuitem', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    const row = screen.getByText('设备共享', { exact: true }).closest('article')!
-    fireEvent.click(within(row).getByRole('button', { name: '打开' }))
+    const row = screen.getByText('设备共享（技术预览）', { exact: true }).closest('article')!
+    expect(within(row).getByRole('button', { name: '打开' })).toBeDisabled()
+    fireEvent.click(within(row).getByRole('button', { name: '设备共享（技术预览） 应用设置' }))
+    const enable = screen.getByRole('switch', { name: '启用应用' })
+    await waitFor(() => expect(enable).toBeEnabled())
+    expect(enable).not.toBeChecked()
+    expect(screen.queryByRole('switch', { name: '常驻左侧菜单' })).not.toBeInTheDocument()
+    fireEvent.click(enable)
+    await waitFor(() => expect(enable).toBeChecked())
+    expect(api.updates!.updateSettings).toHaveBeenCalledWith({ deviceSharingEnabled: true })
+    fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '设备共享（技术预览）' }))
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: '设备共享' })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: '设备共享（技术预览）' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: '注册本机' })).toBeEnabled()
     })
     expect(screen.queryByRole('dialog', { name: '应用中心' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '设备共享（技术预览） 应用设置' }))
+    const disable = screen.getByRole('switch', { name: '启用应用' })
+    await waitFor(() => expect(disable).toBeEnabled())
+    fireEvent.click(disable)
+    await waitFor(() => expect(disable).not.toBeChecked())
+    fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
+    expect(screen.queryByRole('heading', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '注册本机' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    expect(screen.queryByRole('menuitem', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument()
   })

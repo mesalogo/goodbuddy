@@ -159,6 +159,7 @@ describe('GoodBuddy configuration contracts', () => {
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         applicationNavigation: defaultApplicationNavigation,
         localInferenceEnabled: true,
+        deviceSharingEnabled: false,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,

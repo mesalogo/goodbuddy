@@ -636,7 +636,7 @@ export const settings = {
       confirmDelete: 'Confirm delete',
       cancel: 'Cancel',
       openRepository: 'Open {{source}}',
-      openDownloadSourceSettings: 'Open General settings',
+      openDownloadSourceSettings: 'Model download source',
       catalogUnavailable:
         'No OCR model catalog is available in this version.',
       selectedModelUnavailable:
@@ -644,7 +644,7 @@ export const settings = {
       installBeforeSelecting:
         'Download or import this model first. It will become the current model after installation.',
       sourceUnavailableDescription:
-        '{{source}} does not currently provide the complete verified files for this model. You can still import a ZIP archive or explicitly change the source in General settings.',
+        '{{source}} does not currently provide the complete verified files for this model. You can still import a ZIP archive or click Model download source to change sources.',
       privacyNotice:
         'OCR is enabled only when required by the scenario modes above. It always runs locally through ONNX Runtime WebAssembly and never uploads documents.',
       operations: {

@@ -16,8 +16,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
 import type {
-  ApplicationSettings,
-  ModelDownloadSource
+  ApplicationSettings
 } from '../../shared/application-settings-contracts'
 import type {
   AgentPackageDownloadProgress,
@@ -94,7 +93,6 @@ export function PlatformFeaturesSettingsSection({
         : t('platformFeatures.shortcut.errors.serviceUnavailable')
   )
   const [saving, setSaving] = useState(false)
-  const [sourceError, setSourceError] = useState<string>()
   const [agentInventory, setAgentInventory] =
     useState<AgentPackageInventory>()
   const [agentInventoryLoading, setAgentInventoryLoading] =
@@ -426,45 +424,6 @@ export function PlatformFeaturesSettingsSection({
     }
   }
 
-  const changeModelDownloadSource = async (
-    modelDownloadSource: ModelDownloadSource
-  ): Promise<void> => {
-    const updates = window.goodbuddy.updates
-    if (
-      !updates ||
-      !settings ||
-      settings.modelDownloadSource === modelDownloadSource
-    ) {
-      return
-    }
-    setSaving(true)
-    setSourceError(undefined)
-    try {
-      const nextSettings = await updates.updateSettings({
-        modelDownloadSource
-      })
-      setSettings(nextSettings)
-      onNotify?.({
-        tone: 'success',
-        message: t(
-          'platformFeatures.modelDownloadSource.notification',
-          {
-            source: t(
-              `modelDownloadSources.${nextSettings.modelDownloadSource}`
-            )
-          }
-        ),
-        dedupeKey: 'model-download-source'
-      })
-    } catch {
-      setSourceError(
-        t('platformFeatures.errors.saveModelDownloadSourceFailed')
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const changeConversationHtmlRendering = async (
     enabled: boolean
   ): Promise<void> => {
@@ -780,69 +739,6 @@ export function PlatformFeaturesSettingsSection({
               </button>
             </div>
           </label>
-          {settings ? (
-            <>
-              <div className="capability-card__header">
-                <span className="inline-help-label">
-                  <strong>
-                    {t('platformFeatures.modelDownloadSource.title')}
-                  </strong>
-                  <InlineHelp label={t('platformFeatures.modelDownloadSource.title')}>
-                    {t(
-                      'platformFeatures.modelDownloadSource.description'
-                    )}
-                  </InlineHelp>
-                </span>
-              </div>
-              <fieldset className="model-download-source">
-                <legend className="sr-only">
-                  {t('platformFeatures.modelDownloadSource.title')}
-                </legend>
-                {(
-                  ['modelscope', 'hugging-face'] as const
-                ).map((source) => (
-                  <label
-                    className={
-                      source === settings.modelDownloadSource
-                        ? 'model-download-source__option model-download-source__option--selected'
-                        : 'model-download-source__option'
-                    }
-                    key={source}
-                  >
-                    <input
-                      checked={source === settings.modelDownloadSource}
-                      disabled={saving}
-                      name="model-download-source"
-                      onChange={() =>
-                        void changeModelDownloadSource(source)
-                      }
-                      type="radio"
-                      value={source}
-                    />
-                    <span>
-                      <strong>{t(`modelDownloadSources.${source}`)}</strong>
-                      <small>
-                        {t(
-                          `platformFeatures.modelDownloadSource.options.${source}`
-                        )}
-                      </small>
-                    </span>
-                  </label>
-                ))}
-              </fieldset>
-              {sourceError && (
-                <p className="settings-warning" role="alert">
-                  {sourceError}
-                </p>
-              )}
-            </>
-          ) : (
-            !error && (
-              <p className="settings-notice" role="status">
-                {t('platformFeatures.loading')}
-              </p>
-            )
-          )}
         </article>
         </section>
       )}

@@ -14,6 +14,51 @@ export type ConversationActivitySummary = {
   completed: number
 }
 
+type ActivityMessage = { state?: string; approval?: unknown; pendingQuestions?: readonly unknown[] }
+type MessageStatus = 'running' | 'approval' | 'question' | undefined
+const statusPriority = { completed: -1, running: 0, attention: 1, approval: 2, question: 3 }
+
+// Message arrays are replaced rather than mutated, so unchanged conversations
+// reuse their scan while one conversation streams.
+const messageStatuses = new WeakMap<readonly ActivityMessage[], MessageStatus>()
+
+function highestMessageStatus(messages: readonly ActivityMessage[]): MessageStatus {
+  if (messageStatuses.has(messages)) return messageStatuses.get(messages)
+  let status: MessageStatus
+  for (const message of messages) {
+    const candidate = message.pendingQuestions?.length
+      ? 'question'
+      : message.approval
+        ? 'approval'
+        : message.state === 'streaming'
+          ? 'running'
+          : undefined
+    if (candidate && (!status || statusPriority[candidate] > statusPriority[status])) {
+      status = candidate
+    }
+  }
+  messageStatuses.set(messages, status)
+  return status
+}
+
+export function sameActivitySummary(left: ConversationActivitySummary, right: ConversationActivitySummary): boolean {
+  if (left.running !== right.running || left.attention !== right.attention ||
+    left.completed !== right.completed || left.activities.length !== right.activities.length) return false
+  for (let index = 0; index < left.activities.length; index++) {
+    const a = left.activities[index]!
+    const b = right.activities[index]!
+    if (a.conversationId !== b.conversationId || a.projectId !== b.projectId || a.title !== b.title ||
+      a.projectName !== b.projectName || a.status !== b.status) return false
+  }
+  const leftProjects = Object.keys(left.byProjectId)
+  if (leftProjects.length !== Object.keys(right.byProjectId).length) return false
+  return leftProjects.every((projectId) => {
+    const a = left.byProjectId[projectId]!
+    const b = right.byProjectId[projectId]
+    return b !== undefined && a.running === b.running && a.attention === b.attention && a.completed === b.completed
+  })
+}
+
 export function deriveConversationActivity(
   conversations: readonly {
     id: string
@@ -35,23 +80,15 @@ export function deriveConversationActivity(
   const projectNames = new Map(projects.map((project) => [project.id, project.name]))
   const metadata = new Map(conversations.map((conversation) => [conversation.id, conversation]))
   const rows = new Map<string, ConversationActivity>()
-  const priority = { completed: -1, running: 0, attention: 1, approval: 2, question: 3 }
+  const priority = statusPriority
 
   for (const conversation of conversations) {
     let status: ConversationActivity['status'] | undefined =
       activeConversationIds.has(conversation.id) ? 'running'
         : completedConversationIds.has(conversation.id) ? 'completed' : undefined
-    for (const message of conversation.messages) {
-      const candidate = message.pendingQuestions?.length
-        ? 'question'
-        : message.approval
-          ? 'approval'
-          : message.state === 'streaming'
-            ? 'running'
-            : undefined
-      if (candidate && (!status || priority[candidate] > priority[status])) {
-        status = candidate
-      }
+    const candidate = highestMessageStatus(conversation.messages)
+    if (candidate && (!status || priority[candidate] > priority[status])) {
+      status = candidate
     }
     if (status) {
       rows.set(conversation.id, {

@@ -3,7 +3,7 @@ import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
   sharing: {
-    title: 'Device Sharing', boundary: 'Local unauthenticated metadata service. Device IDs identify records, not authenticated owners; registration does not indicate online status. Remote execution and knowledge content access are not provided here.',
+    title: 'Device Sharing (Technical Preview)', boundary: 'Local unauthenticated metadata service. Device IDs identify records, not authenticated owners; registration does not indicate online status. Remote execution and knowledge content access are not provided here.',
     refresh: 'Refresh lists', working: 'Working…', loadFailed: 'Could not load the lists. Previous results may be stale. Check the service URL and refresh.',
     thisDevice: 'This device', deviceId: 'Device ID', serverUrl: 'Service URL', deviceName: 'Device name', save: 'Save settings', saved: 'Sharing settings saved',
     register: 'Register this device', registered: 'Device registration saved to the service', saveFirst: 'Save settings before registering or publishing.',
@@ -29,13 +29,14 @@ export const app = {
     localInference: 'Local Inference Monitor', settings: 'Application settings', enable: 'Enable application', pin: 'Pin to sidebar',
     pinHelp: 'Pinning only controls the sidebar shortcut.',
     disableHelp: 'Disabling preserves data and pins without stopping existing requests or background services.',
+    deviceSharingHelp: 'Off by default during testing. Enable to open the page and register devices or publish metadata to the configured ShareServer. Disabling hides the entry and leaves the page without clearing the catalog, revoking publications, or stopping existing requests.',
     disabledPage: 'Application is disabled', close: 'Close application center', retry: 'Reload settings', back: 'Back to application center',
     search: 'Search built-in applications', noResults: 'No matching applications', clear: 'Clear search', builtin: 'Built-in',
     enabled: 'Enabled', disabled: 'Disabled', open: 'Open', moveUp: 'Move {{name}} up', moveDown: 'Move {{name}} down',
     orderUpdated: 'Application order updated', loadFailed: 'Could not load application settings', saveFailed: 'Could not save application settings',
     confirmFailed: 'Could not confirm the save result. Reload settings before editing again.',
     descriptions: {
-      'device-sharing': 'Register devices, publish and revoke capability or knowledge metadata.',
+      'device-sharing': 'Test feature, off by default. Register devices, publish and revoke capability or knowledge metadata.',
       'magic-notes': 'Write notes, organize to-dos, and receive AI comments.', knowledge: 'Manage knowledge sources and retrieve reference material for conversations.',
       heartbeat: 'Review work evolution, explore the story graph, and configure Smart heartbeat.', 'local-inference': 'Inspect local inference tasks and execution services.'
     }

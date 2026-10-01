@@ -268,7 +268,7 @@ describe('EmbeddingSettingsSection', () => {
     ).not.toHaveAttribute('value')
   })
 
-  it('keeps an unavailable source explicit and opens General settings', () => {
+  it('keeps an unavailable source explicit and opens source settings', () => {
     const onOpenModelDownloadSourceSettings = vi.fn()
     renderSection({
       models: {
@@ -298,7 +298,7 @@ describe('EmbeddingSettingsSection', () => {
       })
     ).not.toBeInTheDocument()
     fireEvent.click(
-      screen.getByRole('button', { name: '前往通用设置' })
+      screen.getByRole('button', { name: '模型下载源' })
     )
     expect(onOpenModelDownloadSourceSettings).toHaveBeenCalledOnce()
   })

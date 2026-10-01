@@ -9,12 +9,13 @@ import '../../src/renderer/src/styles.css'
 const settings = applicationSettingsSchema.parse({ checkUpdatesOnStartup: false, updateSource: 'github', modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false })
 function Harness(): React.JSX.Element {
+  const [currentSettings, setSettings] = useState(settings)
   const [open, setOpen] = useState(true)
   const [page, setPage] = useState(false)
   return <UiLocaleProvider initialPreference="en-US">
-    {open && <ApplicationCenter settings={settings} pending={false} onClose={() => setOpen(false)}
+    {open && <ApplicationCenter settings={currentSettings} pending={false} onClose={() => setOpen(false)}
       onOpen={id => { if (id === 'device-sharing') { setPage(true); setOpen(false) } }}
-      onUpdate={async () => false} onRetry={() => undefined} />}
+      onUpdate={async patch => { setSettings(current => ({ ...current, ...patch })); return true }} onRetry={() => undefined} />}
     {page && <DeviceSharingPage notify={input => { document.documentElement.dataset.notification = input.message }} />}
   </UiLocaleProvider>
 }

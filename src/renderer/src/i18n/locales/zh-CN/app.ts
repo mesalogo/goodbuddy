@@ -1,6 +1,6 @@
 export const app = {
   sharing: {
-    title: '设备共享', boundary: '本地未认证的元数据服务。设备 ID 仅用于识别，不代表身份认证；注册记录不代表设备在线。此页不提供远程执行或知识内容访问。',
+    title: '设备共享（技术预览）', boundary: '本地未认证的元数据服务。设备 ID 仅用于识别，不代表身份认证；注册记录不代表设备在线。此页不提供远程执行或知识内容访问。',
     refresh: '刷新列表', working: '正在处理…', loadFailed: '列表读取失败，已有列表可能过期。请检查服务地址并刷新。',
     thisDevice: '本机', deviceId: '设备 ID', serverUrl: '服务地址', deviceName: '设备名称', save: '保存设置', saved: '共享设置已保存',
     register: '注册本机', registered: '本机注册信息已保存到服务', saveFirst: '请先保存设置，再注册或发布。',
@@ -26,13 +26,14 @@ export const app = {
     localInference: '本机推理监控', settings: '应用设置', enable: '启用应用', pin: '常驻左侧菜单',
     pinHelp: '常驻只控制左侧捷径。',
     disableHelp: '关闭应用保留数据和常驻偏好，不停止已有请求或后台服务。',
+    deviceSharingHelp: '测试阶段默认关闭。启用后可打开页面，向配置的 ShareServer 注册设备和发布元数据。关闭只隐藏入口并退出页面，不清除目录或撤销已发布记录，也不停止已有请求。',
     disabledPage: '应用已关闭', close: '关闭应用中心', retry: '重新读取', back: '返回应用中心',
     search: '搜索内置应用', noResults: '未找到相关应用', clear: '清除搜索', builtin: '内置',
     enabled: '已启用', disabled: '已关闭', open: '打开', moveUp: '上移 {{name}}', moveDown: '下移 {{name}}',
     orderUpdated: '应用顺序已更新', loadFailed: '无法读取应用设置', saveFailed: '应用设置保存失败',
     confirmFailed: '无法确认保存结果，请重新读取后再修改。',
     descriptions: {
-      'device-sharing': '注册设备，发布和撤销能力或知识的元数据。',
+      'device-sharing': '测试功能，默认关闭。注册设备，发布和撤销能力或知识的元数据。',
       'magic-notes': '记录笔记、整理待办并获取 AI 评论。', knowledge: '管理知识来源，为会话检索资料。',
       heartbeat: '回顾工作演变、查看故事线图谱，并配置智能心跳。', 'local-inference': '查看本机推理任务与执行服务。'
     }

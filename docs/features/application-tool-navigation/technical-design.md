@@ -82,7 +82,7 @@ type BuiltInApplicationDefinition = {
 
 应用中心调用既有 `navigateFromSidebar` 或同一页面导航函数，沿用未保存离开检查和焦点
 策略。打开前检查确认的启用值；未常驻但已启用的应用不附带常驻写入。本机推理监控从常驻入口、菜单及管理 Modal 均经 `setView('local-inference')` 打开独立 Modal，保留底层工作区与设置草稿；其他应用继续页面导航。
-`ApplicationMenu` 按五个应用共用的持久化顺序派生清单，仅按启用过滤，不读取常驻或打开历史。应用行先关闭菜单再导航；底部“管理应用”关闭菜单、恢复锚点焦点并打开既有 `ApplicationCenter` Modal。设备共享始终启用，进入主内容区页面，无常驻字段；业务边界见[设备共享技术设计](../device-sharing/technical-design.md#当前首期实现)。
+`ApplicationMenu` 按五个应用共用的持久化顺序派生清单，仅按启用过滤，不读取常驻或打开历史。应用行先关闭菜单再导航；底部“管理应用”关闭菜单、恢复锚点焦点并打开既有 `ApplicationCenter` Modal。设备共享使用默认 `false` 的 `deviceSharingEnabled`，启用后进入主内容区页面，无常驻字段；迁移与关闭规则见[设备共享技术设计](../device-sharing/technical-design.md#当前首期实现)。
 应用中心对应行的设置操作仅接受 `EditableApplicationId`；应用页和全局设置不提供重复入口。知识库的管理行提供“打开”和排序，原工作区实际配置保留，不添加通用空设置页。
 共同页复用设置 Modal 容器、配置读取及更新方法，不建立独立配置存储或重复表单。
 

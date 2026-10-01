@@ -18,8 +18,11 @@ import { changeUiLocale } from './i18n'
 import {
   InlineMarkdown,
   MarkdownRenderer,
-  normalizeLatexDelimiters
+  normalizeLatexDelimiters,
+  splitMarkdownSegments,
+  UnsegmentedMarkdownRenderer
 } from './MarkdownRenderer'
+
 
 const mermaidMock = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -719,5 +722,98 @@ ${'A'.repeat(20_001)}
       })
     ).toBeInTheDocument()
     await changeUiLocale('zh-CN')
+  })
+})
+
+describe('segmented Markdown rendering', () => {
+  afterEach(() => cleanup())
+
+  const prose = ('A growing paragraph with **emphasis**, `inline code`, and [a link](https://example.com).\n\n' +
+    '- First item\n- Second item\n\n> A quoted explanation.\n\n').repeat(8)
+  const segmentationCorpus = [
+    '# Heading\n\n**bold** and [link](https://example.com)\n- [x] ready\n',
+    'Inline \\(a+b\\), $x$ and \\\\(escaped\\).\n$x^2$\n\\(y\\)\n\\[z\\]\n\\[\na+b\n\\]\n',
+    '`\\(code\\)` ``a ` \\(b\\)`` and \\(x\\)\n```tex\n\\(x\\)\n```\n~~~\n$y$\n~~~\n',
+    '````tex\n```\n\\[x\\]\n````\n   ~~~txt\n\\(y\\)\n  ~~~~\n\\(z\\)\n',
+    'a\r\nb\r\n$x$\r\n```txt\r\n\\(code\\)\r\n```\r\nend\r',
+    'partial \\(x + \\) then `code \\( and `` and \\[\n\\',
+    '\n\nplain\rtext\r\n\n    $indented$\n    \\(indented\\)\n',
+    '# Streaming answer\n\n' + prose,
+    prose.slice(0, 600) + '\n\\(x^2 + y^2\\)\n\n```ts\nconst value = "\\(literal\\)"\n```\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n',
+    '# 标题\n\n第一段 **粗体**。\n\n第二段 `code`。\n\n## 小节\n\n最后一段。',
+    '- a\n- b\n\n- c\n\nafter list\n\n1. one\n2. two\n\n3) three\n\npara',
+    '- item\n\n  continued paragraph\n\n      indented code in item\n\nend',
+    '> quote\n\n> second quote\n\nplain\n\n>lazy\ncontinuation',
+    'para\n\n    indented code\n\n    more code\n\nafter',
+    '```ts\nconst a = 1\n\nconst b = 2\n```\n\ntext\n\n~~~\n\n~~~\n\nend',
+    '````\n```\n\ninner\n```\n````\n\nafter fence\n\n```\nunterminated\n\nstill code',
+    '$$\na^2\n\n+ b^2\n$$\n\ntext with $x$ math\n\n\\[\ny\n\\]\n\nend',
+    '| a | b |\n| - | - |\n| 1 | 2 |\n\n| c |\n| - |\n| 3 |\n\nafter',
+    'Setext\n===\n\nAnother\n---\n\n***\n\n- - -\n\nend',
+    'see [ref] and [^note]\n\n[ref]: https://example.com\n\n[^note]: footnote body',
+    '- [ ] task\n- [x] done\n\n~~strike~~ and https://example.com autolink',
+    '<div>\n\nraw html block\n\n</div>\n\nafter html',
+    '\n\n\nleading blanks\n\n\n\nmany blanks\n\n',
+    '   indented by three\n\n\tafter tab\n\n  - nested\n\ntrailing',
+    '```a`b\n\ntext\n\n```\n\ncode?\n\n```\n\nend',
+    '- item\n\n  ```\n  x\n\n  y\n  ```\n\nafter\n\n> ```\n\nq',
+    '1. one\n\n   $$\n   a\n\n   $$\n\nb\n\n10. ten\n\nc'
+  ]
+
+  function canonicalHtml(element: HTMLElement): string {
+    const ids = new Map<string, string>()
+    const clone = element.cloneNode(true) as HTMLElement
+    for (const node of clone.querySelectorAll('*')) {
+      for (const name of ['id', 'aria-controls', 'aria-labelledby', 'aria-describedby', 'href']) {
+        const value = node.getAttribute(name)
+        if (value && /_r_[a-z0-9]+_|user-content-fn/u.test(value)) {
+          if (!ids.has(value)) ids.set(value, `id-${ids.size}`)
+          node.setAttribute(name, ids.get(value)!)
+        }
+      }
+    }
+    return clone.innerHTML
+  }
+
+  it('renders every streaming prefix identically to whole-document parsing', () => {
+    const segmented = render(<div />)
+    const reference = render(<div />)
+    let prefixes = 0
+    let multiSegment = 0
+    for (const content of segmentationCorpus) {
+      const step = Math.max(1, Math.floor(content.length / 120))
+      for (let end = 0; end <= content.length; end += step) {
+        const prefix = content.slice(0, end)
+        segmented.rerender(<div><MarkdownRenderer>{prefix}</MarkdownRenderer></div>)
+        reference.rerender(<div><UnsegmentedMarkdownRenderer>{prefix}</UnsegmentedMarkdownRenderer></div>)
+        expect(canonicalHtml(segmented.container), JSON.stringify(prefix))
+          .toBe(canonicalHtml(reference.container))
+        prefixes++
+        if (splitMarkdownSegments(normalizeLatexDelimiters(prefix)).length > 1) multiSegment++
+      }
+    }
+    expect(prefixes).toBeGreaterThan(1500)
+    expect(multiSegment).toBeGreaterThan(500)
+  })
+
+  it('keeps completed segments intact and falls back for document-scoped syntax', () => {
+    // List markers never start a segment: the list may continue or turn loose.
+    expect(splitMarkdownSegments('a\n\nb\n\n- c\n\n- d\n\ne')).toEqual(['a\n\n', 'b\n\n- c\n\n- d\n\n', 'e'])
+    expect(splitMarkdownSegments('```\n\nx\n\n```\n\ny')).toEqual(['```\n\nx\n\n```\n\n', 'y'])
+    expect(splitMarkdownSegments('a\n\n[x]: https://example.com')).toHaveLength(1)
+    expect(splitMarkdownSegments('a\n\n<div>\n\nb\n\n</div>')).toHaveLength(1)
+    expect(splitMarkdownSegments('a\r\n\r\nb')).toHaveLength(1)
+  })
+
+  it('re-parses only the growing tail when completed segments are unchanged', () => {
+    const base = Array.from({ length: 30 }, (_, i) => `段落 ${i} **粗体** $x_${i}$`).join('\n\n')
+    const { rerender, container } = render(<MarkdownRenderer>{base}</MarkdownRenderer>)
+    const firstParagraph = container.querySelector('p')!
+    rerender(<MarkdownRenderer>{`${base} 追加`}</MarkdownRenderer>)
+    rerender(<MarkdownRenderer>{`${base} 追加\n\n新段落`}</MarkdownRenderer>)
+    // Untouched blocks keep their DOM nodes: they were not re-rendered.
+    expect(container.querySelector('p')).toBe(firstParagraph)
+    expect(container.querySelectorAll('p')).toHaveLength(31)
+    expect(container.querySelectorAll('.katex')).toHaveLength(30)
   })
 })

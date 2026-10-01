@@ -9,11 +9,13 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import type { KnowledgeService } from '../knowledge/knowledge-service'
 import {
   ContinueHostRunError,
   type ContinueHostAdapterOptions
 } from './continue-host-adapter'
-import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 
 const mocks = vi.hoisted(() => ({
   detectRuntimeBinary: vi.fn(),
@@ -462,6 +464,70 @@ describe('ContinueAgentRuntime', () => {
     mocks.runHost.mockResolvedValue({ text: 'Continue response' })
     await collectEvents(runtime, 'ask')
     expect(gateway.grantCustomMcp).not.toHaveBeenCalled()
+  })
+
+  it('completes the Continue run when an assigned custom MCP server returns HTTP 503', async () => {
+    const requests = vi.fn((_request: IncomingMessage, response: ServerResponse) => {
+      response.writeHead(503, { Connection: 'close' })
+      response.end('Service unavailable')
+    })
+    const upstream = createServer(requests)
+    const gateway = new KnowledgeMcpGateway({} as KnowledgeService)
+    let runtime: ContinueAgentRuntime | undefined
+    try {
+      await new Promise<void>((resolve, reject) => {
+        upstream.once('error', reject)
+        upstream.listen(0, '127.0.0.1', resolve)
+      })
+      const address = upstream.address()
+      if (!address || typeof address === 'string') {
+        throw new Error('Custom MCP test server did not bind a TCP port')
+      }
+      await gateway.start()
+      runtime = new ContinueAgentRuntime({
+        binaryPath: '',
+        configPath: 'C:\\safe config\\continue.yaml',
+        defaultWorkspace: process.cwd(),
+        hostCacheRoot: 'C:\\safe\\continue-host',
+        knowledgeGateway: gateway,
+        mcpServers: [{
+          id: randomUUID(),
+          name: 'Unavailable MCP',
+          description: '',
+          enabled: true,
+          allowDynamicTools: false,
+          assignments: ['continue'],
+          secretConfigured: false,
+          transport: 'http',
+          url: `http://127.0.0.1:${address.port}/mcp`
+        }],
+        createHostAdapter: () => ({
+          getPreparedHost: mocks.prepareHost,
+          run: mocks.runHost,
+          dispose: mocks.disposeHost
+        })
+      })
+
+      const events = await collectEvents(runtime, 'execute')
+
+      expect(requests).toHaveBeenCalled()
+      expect(mocks.runHost).toHaveBeenCalledOnce()
+      expect(events).toContainEqual({
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        type: 'text',
+        delta: 'Continue response'
+      })
+      expect(events.at(-1)).toMatchObject({ type: 'done' })
+    } finally {
+      await Promise.all([
+        runtime?.dispose(),
+        gateway.dispose(),
+        new Promise<void>((resolve) => {
+          upstream.close(() => resolve())
+          upstream.closeAllConnections()
+        })
+      ])
+    }
   })
 
   it.each([undefined, 'existing-capability'])('cleans up image capabilities after custom MCP preparation fails (existing=%s)', async existingToken => {

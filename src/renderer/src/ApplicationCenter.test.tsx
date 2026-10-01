@@ -48,6 +48,31 @@ afterEach(async () => {
 })
 
 describe('Application Center', () => {
+  it('offers device sharing enablement without pinning and waits for confirmed settings', () => {
+    const handlers = props()
+    const { rerender } = render(<ApplicationCenter {...handlers} />)
+    expect(isApplicationEnabled(undefined, 'device-sharing')).toBe(false)
+    const card = screen.getByText('设备共享（技术预览）', { exact: true }).closest('article')!
+    expect(within(card).getByText('可选 · 已关闭')).toBeVisible()
+    expect(within(card).getByRole('button', { name: '打开' })).toBeDisabled()
+    fireEvent.click(within(card).getByRole('button', { name: '设备共享（技术预览） 应用设置' }))
+    const enable = screen.getByRole('switch', { name: '启用应用' })
+    expect(enable).not.toBeChecked()
+    expect(screen.queryByRole('switch', { name: '常驻左侧菜单' })).not.toBeInTheDocument()
+    fireEvent.click(enable)
+    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ deviceSharingEnabled: true })
+    expect(enable).not.toBeChecked()
+    rerender(<ApplicationCenter {...handlers} pending />)
+    expect(enable).toBeDisabled()
+    rerender(<ApplicationCenter {...handlers} settings={{ ...settings, deviceSharingEnabled: true }} />)
+    expect(enable).toBeChecked()
+    fireEvent.click(enable)
+    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ deviceSharingEnabled: false })
+    fireEvent.click(screen.getByRole('button', { name: '返回应用中心' }))
+    fireEvent.click(within(screen.getByText('设备共享（技术预览）', { exact: true }).closest('article')!).getByRole('button', { name: '打开' }))
+    expect(handlers.onOpen).toHaveBeenCalledWith('device-sharing')
+  })
+
   it.each(['zh-CN', 'en-US'] as const)('keeps disable consequences visible and pin help separate in %s', async (locale) => {
     await changeUiLocale(locale)
     const onUpdate = vi.fn(async () => true)
@@ -238,9 +263,9 @@ describe('Application Center', () => {
     const handlers = props()
     const { rerender } = render(<ApplicationCenter {...handlers} settings={pinnedSettings} />)
     const displayedOrder = () => screen.getAllByRole('article').map((row) => row.querySelector('strong')?.textContent)
-    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控', '设备共享'])
+    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控', '设备共享（技术预览）'])
     expect(screen.getByRole('button', { name: '上移 知识库' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '下移 设备共享' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下移 设备共享（技术预览）' })).toBeDisabled()
     const moveUp = screen.getByRole('button', { name: '上移 本机推理监控' })
     expect(moveUp.closest('article')).not.toBeNull()
     expect(moveUp).toHaveAttribute('title', '上移 本机推理监控')
@@ -251,15 +276,15 @@ describe('Application Center', () => {
         order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing'],
       },
     })
-    expect(screen.getByRole('button', { name: '下移 设备共享' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下移 设备共享（技术预览）' })).toBeDisabled()
     expect(await screen.findByRole('status')).not.toBeEmptyDOMElement()
-    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控', '设备共享'])
+    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控', '设备共享（技术预览）'])
     rerender(<ApplicationCenter {...handlers} settings={{
       ...pinnedSettings,
       applicationNavigation: { ...pinnedSettings.applicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing'] },
     }} />)
-    expect(displayedOrder()).toEqual(['知识库', '监督者', '本机推理监控', '魔法笔记', '设备共享'])
-    expect(screen.getByRole('button', { name: '下移 设备共享' })).toBeDisabled()
+    expect(displayedOrder()).toEqual(['知识库', '监督者', '本机推理监控', '魔法笔记', '设备共享（技术预览）'])
+    expect(screen.getByRole('button', { name: '下移 设备共享（技术预览）' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '下移 本机推理监控' }))
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({ applicationNavigation: pinnedSettings.applicationNavigation })
     fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))

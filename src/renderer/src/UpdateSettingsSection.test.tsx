@@ -28,7 +28,7 @@ describe('UpdateSettingsSection', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
-    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true, deviceSharingEnabled: false,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,

@@ -185,6 +185,14 @@ SelectedRuntimeManager
 错误采用同一判定；HTTP/API 错误、鉴权或协议错误、未知失败不自动重试。
 取消立即终止后续尝试。Prompt 和工具调用不重放。
 
+自定义 MCP 上游发现由 `KnowledgeMcpGateway.getCustomMcpBindings` 按服务隔离失败。
+某个服务连接、列举或校验工具失败时，记录脱敏诊断并跳过该服务，保留正常服务的连接；
+全部失败时返回空的自定义工具列表，Continue 和内置 OpenCode 仍可开始回复。
+首次发现的结果在当前授权内复用，初次失败的服务在下一次请求创建授权时重试。
+动态刷新失败会清空该服务的工具列表，下次发现时再刷新，不阻断其他服务。
+请求取消和授权撤销仍终止操作，工具总数和名称冲突检查保留。发现仍等待连接尝试结束，
+因此连接超时可能延迟首个回复；失败隔离不等于后台加载。
+
 OpenCode 1.18.x 的 `mcp.add` 在服务端独立执行：客户端超时或取消不会中止初始化，
 `disconnect` 也只清理当时已登记的连接。晚到的初始化完成后会按名称写入状态，并关闭同名
 的现有连接。因此，`mcp.add` 未得到 HTTP 响应（抛错、超时、取消或无 response 的网络错误），
@@ -199,6 +207,7 @@ OpenCode 1.18.x 的 `mcp.add` 在服务端独立执行：客户端超时或取�
 
 此恢复逻辑属于本地 `OpenCodeRuntime`。远程 Agent 使用 `RuntimeAcpBackend` 和
 `AgentImageToolMcp`，不经过本地 MCP 注册或网关 HTTP 处理；本节不代表远程恢复能力。
+远程 Story Graph 通过网关的独立绑定调用，不经过上述自定义 MCP 发现方法。
 
 ## 5. DeepSeek Harness
 

@@ -17,6 +17,95 @@ const binaryPath = join(
 )
 
 it.skipIf(!existsSync(binaryPath))(
+  'completes Execute with the real OpenCode binary when an assigned custom MCP returns HTTP 503',
+  async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-mcp-unavailable-'))
+    let modelCalls = 0
+    const model = createServer((_request, response) => {
+      modelCalls++
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(`data: ${JSON.stringify({
+        id: 'unavailable', object: 'chat.completion.chunk', created: 1, model: 'unavailable',
+        choices: [{ index: 0, delta: { role: 'assistant', content: 'MCP_UNAVAILABLE_OK' }, finish_reason: 'stop' }]
+      })}\n\ndata: [DONE]\n\n`)
+    })
+    let mcpRequests = 0
+    const failureBody = 'private-mcp-failure-detail'
+    const upstream = createServer((_request, response) => {
+      mcpRequests++
+      response.writeHead(503, { Connection: 'close' })
+      response.end(failureBody)
+    })
+    const records: DesktopDiagnosticFailure[] = []
+    const gateway = new KnowledgeMcpGateway({} as never, {
+      observeFailure: failure => records.push(failure)
+    })
+    const controller = new AbortController()
+    const deadline = setTimeout(() => controller.abort(), 30_000)
+    let runtime: OpenCodeRuntime | undefined
+    try {
+      await new Promise<void>(resolve => model.listen(0, '127.0.0.1', resolve))
+      await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
+      const modelAddress = model.address()
+      const mcpAddress = upstream.address()
+      if (!modelAddress || typeof modelAddress === 'string') throw new Error('No model port')
+      if (!mcpAddress || typeof mcpAddress === 'string') throw new Error('No MCP port')
+      await gateway.start()
+      const secret = 'private-mcp-fixture-secret'
+      const url = `http://127.0.0.1:${mcpAddress.port}/mcp`
+      runtime = new OpenCodeRuntime({
+        embedded: true, binaryPath: '', bundledBinaryPath: binaryPath,
+        configPath: '', defaultWorkspace: workspace, knowledgeGateway: gateway,
+        mcpServers: [{
+          id: crypto.randomUUID(), name: 'Unavailable MCP', description: '',
+          enabled: true, allowDynamicTools: false, assignments: ['opencode'],
+          secretConfigured: true, secret, transport: 'http', url
+        }],
+        modelProfile: {
+          id: crypto.randomUUID(), name: 'Unavailable MCP fixture', modelName: 'unavailable',
+          baseUrl: `http://127.0.0.1:${modelAddress.port}/v1`,
+          protocol: 'openai-chat-completions', authentication: 'none'
+        }
+      })
+      let text = ''
+      let lastEventType: string | undefined
+      for await (const event of runtime.run({
+        requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), workMode: 'execute',
+        prompt: 'Reply MCP_UNAVAILABLE_OK without tools.'
+      }, controller.signal)) {
+        if (event.type === 'text') text += event.delta
+        lastEventType = event.type
+      }
+      expect(mcpRequests).toBeGreaterThan(0)
+      expect(text).toBe('MCP_UNAVAILABLE_OK')
+      expect(lastEventType).toBe('done')
+      expect(modelCalls).toBe(1)
+      expect(records).toHaveLength(1)
+      expect(records[0]).toMatchObject({
+        code: 'runtime.mcp.failed',
+        mcp: { phase: 'tool-discovery', category: 'handler-failure' }
+      })
+      const diagnostics = JSON.stringify(records, (_key, value) => value instanceof Error
+        ? { message: value.message, stack: value.stack, cause: value.cause }
+        : value)
+      expect(diagnostics).not.toContain(secret)
+      expect(diagnostics).not.toContain(url)
+      expect(diagnostics).not.toContain(failureBody)
+    } finally {
+      clearTimeout(deadline)
+      await runtime?.dispose()
+      await gateway.dispose()
+      upstream.closeAllConnections()
+      model.closeAllConnections()
+      await new Promise<void>(resolve => upstream.close(() => resolve()))
+      await new Promise<void>(resolve => model.close(() => resolve()))
+      await rm(workspace, { recursive: true, force: true })
+    }
+  },
+  60_000
+)
+
+it.skipIf(!existsSync(binaryPath))(
   'recovers a lost MCP add response with the real OpenCode binary and gateway',
   async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-mcp-retry-'))

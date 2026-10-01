@@ -8,7 +8,10 @@ import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
 
-it('keeps workbar add reachable and model protocols readable at narrow container widths', async () => {
+it.each([
+  { mode: 'layout', name: 'keeps workbar add reachable and model protocols readable at narrow container widths' },
+  { mode: 'source', name: 'aligns the model download source button and supports native dialog confirm and cancel' }
+])('$name', async ({ mode }) => {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-responsive-controls-'))
   const server = await createServer({
     configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
@@ -26,7 +29,7 @@ it('keeps workbar add reachable and model protocols readable at narrow container
     await server.listen()
     const driver = join(directory, 'driver.mjs')
     await copyFile(resolve('tests/support/workbar-settings-layout-driver.mjs'), driver)
-    const env: NodeJS.ProcessEnv = { ...process.env, GB_LAYOUT_DIRECTORY: directory,
+    const env: NodeJS.ProcessEnv = { ...process.env, GB_LAYOUT_DIRECTORY: directory, GB_LAYOUT_MODE: mode,
       GB_LAYOUT_URL: server.resolvedUrls!.local[0] + 'responsive.html' }
     delete env.ELECTRON_RUN_AS_NODE
     const child = spawn(createRequire(import.meta.url)('electron'), [driver], { env, stdio: ['ignore', 'pipe', 'pipe'] })
