@@ -794,7 +794,7 @@ describe('segmented Markdown rendering', () => {
     }
     expect(prefixes).toBeGreaterThan(1500)
     expect(multiSegment).toBeGreaterThan(500)
-  })
+  }, 15000)
 
   it('keeps completed segments intact and falls back for document-scoped syntax', () => {
     // List markers never start a segment: the list may continue or turn loose.

@@ -38,11 +38,12 @@ export async function verifySidebarSearch(win: BrowserWindow): Promise<number> {
     assert.equal(await run(`(async () => {
       const input = document.querySelector('.composer textarea');
       const info = await window.goodbuddy.app.getInfo();
-      return input.placeholder.split('\\n').length === 3 &&
+      return input.placeholder.split('\\n').length === 2 &&
+        input.placeholder.startsWith('Enter to send · Shift+Enter for a new line') &&
         input.placeholder.includes((info.platform === 'darwin' ? 'Command' : 'Ctrl') + '+N for a new conversation') &&
         (!info.shortcut || input.placeholder.includes(info.shortcut + ' for quick access')) &&
         !document.querySelector('.composer-meta__shortcut');
-    })()`), true)
+    })()`), true, 'Text composer keeps two shortcut-hint lines without the removed greeting')
     win.show()
     win.focus()
     win.webContents.focus()
