@@ -24,6 +24,7 @@ import { SupervisorWorkspace, type SupervisionGraphNavigation } from './Supervis
 import { SupervisorActivity } from './SupervisorActivity'
 import './supervisor-workspace.css'
 import { getProjectDisplayText } from './project-display'
+import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
 import {
   EmptyState,
   PageHeader,
@@ -155,8 +156,8 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
           }}
         />}
         <HeartbeatSections {...props} pageTab={pageTab}
-          onOpenResult={(resultId) => {
-            setActivityNavigation({ resultId, tab: 'graph' })
+          onOpenResult={(resultId, focus) => {
+            setActivityNavigation({ resultId, tab: 'graph', ...(focus ? { focus } : {}) })
             setPageTab('graph')
           }}
           onOpenActivity={(id) => {
@@ -187,6 +188,7 @@ function SupervisionModelSettings(props: HeartbeatCenterProps): React.JSX.Elemen
     setParallel(String(concurrency))
     setOrganize(String(supervisor))
   }
+  useWorkspaceUnsavedChanges(organize !== String(supervisor) || parallel !== String(concurrency))
   const valid = supervisionTimeoutSecondsSchema.safeParse(Number(organize)).success &&
     supervisorModelConcurrencySchema.safeParse(Number(parallel)).success
   const disabled = props.applicationSettingsPending || props.applicationSettingsLocked || !props.applicationSettings || !props.onUpdateApplicationSettings
@@ -238,7 +240,7 @@ function HeartbeatSections({
 }: HeartbeatCenterProps & {
   pageTab: 'overview' | 'graph' | 'plans' | 'activity' | 'settings'
   onOpenActivity: (id: string) => void
-  onOpenResult: (resultId: string) => void
+  onOpenResult: (resultId: string, focus?: SupervisionGraphNavigation['focus']) => void
 }): React.JSX.Element | null {
   const { t, i18n } = useTranslation('heartbeat')
   const { t: tWorkspace } = useTranslation('workspace')

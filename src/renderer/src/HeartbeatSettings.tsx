@@ -17,6 +17,7 @@ import {
   SegmentedControl
 } from './WorkspacePrimitives'
 import { getProjectDisplayText } from './project-display'
+import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
 
 type HeartbeatSettingsProps = {
   onOpenActivity?: (id: string) => void
@@ -50,6 +51,7 @@ export function HeartbeatSettings({
   const [open, setOpen] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+  useWorkspaceUnsavedChanges(open && dirty)
   const nameRef = useRef<HTMLInputElement>(null)
   const keepEditingRef = useRef<HTMLButtonElement>(null)
   const dialogId = useId()

@@ -8,6 +8,11 @@ export type KeepAlivePruneOptions<Key extends string> = {
   expiresAfterMs: number
   maximumEntries: number
   now: number
+  /**
+   * Entries that are always retained and do not consume capacity, for panes
+   * that must stay resident (the primary pane, or panes with unsaved edits).
+   */
+  pinnedKeys?: ReadonlySet<Key>
   protectedKeys?: ReadonlySet<Key>
   recentEntries: number
 }
@@ -98,11 +103,12 @@ export function pruneKeepAliveEntries<Key extends string>(
 /**
  * Prunes pane cache membership without modifying the pane data itself.
  *
- * Capacity is absolute. Candidates are selected in this exact order:
- * the current pane, the globally newest `recentEntries`, the newest
- * protected panes, then all other unexpired panes by recency. Overlapping
- * categories do not consume capacity twice. Equal timestamps retain their
- * input order.
+ * Pinned panes are always kept, never expire, and sit outside capacity.
+ * For all other panes capacity is absolute. Candidates are selected in this
+ * exact order: the current pane, the globally newest `recentEntries`, the
+ * newest protected panes, then all other unexpired panes by recency.
+ * Overlapping categories do not consume capacity twice. Equal timestamps
+ * retain their input order.
  */
 export function pruneKeepAliveEntries<Key extends string>(
   entries: readonly KeepAliveCacheEntry<Key>[],
@@ -111,11 +117,22 @@ export function pruneKeepAliveEntries<Key extends string>(
     expiresAfterMs,
     maximumEntries,
     now,
+    pinnedKeys,
     protectedKeys,
     recentEntries
   }: KeepAlivePruneOptions<Key>
 ): readonly KeepAliveCacheEntry<Key>[] {
+  const pinned: KeepAliveCacheEntry<Key>[] = []
+  const pinnedSeen = new Set<Key>()
   const newestFirst = entries
+    .filter((entry) => {
+      if (!pinnedKeys?.has(entry.key)) return true
+      if (!pinnedSeen.has(entry.key)) {
+        pinnedSeen.add(entry.key)
+        pinned.push(entry)
+      }
+      return false
+    })
     .map((entry, index) => ({ entry, index }))
     .sort(
       (left, right) =>
@@ -152,9 +169,11 @@ export function pruneKeepAliveEntries<Key extends string>(
     )
     .forEach(add)
 
+  pinned.forEach((entry) => selectedKeys.add(entry.key))
+  const retained = [...pinned, ...selected]
   const unchanged =
-    selected.length === entries.length &&
+    retained.length === entries.length &&
     selectedKeys.size === entries.length &&
     entries.every((entry) => selectedKeys.has(entry.key))
-  return unchanged ? entries : selected
+  return unchanged ? entries : retained
 }

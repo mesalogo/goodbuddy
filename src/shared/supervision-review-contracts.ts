@@ -12,10 +12,13 @@ export const supervisionReviewSettingsSchema = z.object({
   // A feature splits into sub-threads only once it holds at least this many events.
   storyThreadEvents: z.number().int().min(4).max(500).optional(),
   // A story is offered to experience extraction only once it holds at least this many events.
-  experienceMinEvents: z.number().int().min(2).max(200).optional()
+  experienceMinEvents: z.number().int().min(2).max(200).optional(),
+  // A heartbeat suggests looking at an active story with no new events for this many days.
+  stalledDays: z.number().int().min(1).max(365).optional()
 }).strict()
 export const defaultStoryThreadEvents = 20
 export const defaultExperienceMinEvents = 5
+export const defaultStalledDays = 14
 export type SupervisionReviewSettings = z.infer<typeof supervisionReviewSettingsSchema>
 export const defaultSupervisionReviewSettings = supervisionReviewSettingsSchema.parse({})
 export const supervisionReviewIdSchema = z.object({ runId: z.string().uuid() }).strict()

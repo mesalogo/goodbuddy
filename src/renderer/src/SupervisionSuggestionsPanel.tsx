@@ -14,7 +14,8 @@ export function SupervisionSuggestionsPanel({ tasks, onUseFollowUpTask, onOpenRe
   reloadKey?: number
   tasks: AssistantTask[]
   onUseFollowUpTask: (task: AssistantTask) => void
-  onOpenResult?: (resultId: string) => void
+  /** Story and experience suggestions open that story or experience in the graph lists. */
+  onOpenResult?: (resultId: string, focus?: { kind: 'story' | 'experience'; id: string }) => void
   onOpenConversation?: (conversationId: string) => void
 }): React.JSX.Element | null {
   const { t, i18n } = useTranslation('heartbeat')
@@ -82,7 +83,8 @@ export function SupervisionSuggestionsPanel({ tasks, onUseFollowUpTask, onOpenRe
         <div className="supervision-suggestions__evidence">
           <button type="button" className="link-button" aria-expanded={evidence?.suggestionId === item.id}
             disabled={!item.sourceIds.length} onClick={() => void showEvidence(item)}>{t('suggestions.evidence', { count: item.sourceIds.length })}</button>
-          {item.resultId && onOpenResult && <button type="button" className="link-button" onClick={() => onOpenResult(item.resultId!)}>{t('supervisor.viewInGraph')}</button>}
+          {item.resultId && onOpenResult && <button type="button" className="link-button" onClick={() => onOpenResult(item.resultId!, item.experienceId ? { kind: 'experience', id: item.experienceId }
+              : item.storyId ? { kind: 'story', id: item.storyId } : undefined)}>{t('supervisor.viewInGraph')}</button>}
         </div>
         {evidence?.suggestionId === item.id && <ul className="supervision-suggestions__sources">
           {evidence.sources.map(source => <li key={source.id}>

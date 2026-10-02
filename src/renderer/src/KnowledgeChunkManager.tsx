@@ -25,6 +25,7 @@ import type {
 } from '../../shared/knowledge-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { DestructiveConfirmActions } from './WorkspacePrimitives'
+import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
 
 export type KnowledgeChunkRole = SharedKnowledgeChunkRole
 export type KnowledgeManagedChunk = SharedKnowledgeManagedChunk
@@ -102,6 +103,12 @@ export function KnowledgeChunkManager({
   const draftContent = selectedChunk
     ? (contentDrafts[selectedChunk.id] ?? selectedChunk.content)
     : ''
+  useWorkspaceUnsavedChanges(
+    Object.entries(contentDrafts).some(([id, text]) => {
+      const chunk = page.items.find((item) => item.id === id)
+      return chunk ? text !== chunk.content : false
+    })
+  )
   const isSavingSelected = savingChunkId === selectedChunk?.id
   const totalPages = Math.max(1, Math.ceil(page.totalItems / page.pageSize))
 

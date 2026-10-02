@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { useMemo, useState } from 'react'
 import { resolvedLocale } from './formatting'
 import { parseAliases } from './helpers'
+import { useWorkspaceUnsavedChanges } from '../workspace-unsaved-changes'
 
 export function EntityEditor({
   node,
@@ -45,6 +46,13 @@ export function EntityEditor({
   const [description, setDescription] = useState(node?.description ?? '')
   const [aliases, setAliases] = useState(
     (node?.aliases ?? []).join(t('format.listSeparator'))
+  )
+  const [initial] = useState(() => ({ label, type, description, aliases }))
+  useWorkspaceUnsavedChanges(
+    label !== initial.label ||
+      type !== initial.type ||
+      description !== initial.description ||
+      aliases !== initial.aliases
   )
 
   return (
@@ -155,6 +163,13 @@ export function RelationForm({
   )
   const [description, setDescription] = useState(
     relation?.description ?? ''
+  )
+  const [initial] = useState(() => ({ source, target, type, description }))
+  useWorkspaceUnsavedChanges(
+    source !== initial.source ||
+      target !== initial.target ||
+      type !== initial.type ||
+      description !== initial.description
   )
   const sourceNode = nodes.find((node) => node.id === source)
   const targetNode = nodes.find((node) => node.id === target)

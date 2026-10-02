@@ -11,6 +11,7 @@ import { InlineHelp } from '../InlineHelp'
 import { LoaderCircle, Check, AlertCircle, Trash2 } from 'lucide-react'
 import { activateModalFocus, trapTabFocus } from '../dialog-focus'
 import { createPortal } from 'react-dom'
+import { useWorkspaceUnsavedChanges } from '../workspace-unsaved-changes'
 
 export function CreateLibraryWizard({
   onCancel,
@@ -31,6 +32,13 @@ export function CreateLibraryWizard({
     useState<KnowledgeGraphStrategy>('rules')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
+  useWorkspaceUnsavedChanges(
+    name.trim() !== '' ||
+      description.trim() !== '' ||
+      storageMode !== 'reference' ||
+      graphEnabled ||
+      graphStrategy !== 'rules'
+  )
 
   const submit = async (
     event: React.FormEvent<HTMLFormElement>
@@ -229,6 +237,9 @@ export function EditLibraryDialog({
   const { t } = useTranslation('knowledge')
   const [name, setName] = useState(library.name)
   const [description, setDescription] = useState(library.description ?? '')
+  useWorkspaceUnsavedChanges(
+    name !== library.name || description !== (library.description ?? '')
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const dialogRef = useRef<HTMLDivElement>(null)

@@ -39,6 +39,7 @@ import type {
 } from '../../shared/assistant-contracts'
 import { AgentQuestionCard } from './AgentQuestionCard'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { useLiveMessage } from './live-message-store'
 import { formatTime, type TimeFormatLocale } from './time-format'
 import { formatCompactTokens } from './token-format'
 import { isCancelledMessage } from './message-terminal-status'
@@ -1335,7 +1336,12 @@ function ChatMessageRowView({
   )
 }
 
-export const ChatMessageRow = memo(ChatMessageRowView)
+// Streaming deltas reach only this row through the live message store.
+export const ChatMessageRow = memo(function ChatMessageRow(
+  props: ChatMessageRowProps
+): React.JSX.Element {
+  return <ChatMessageRowView {...props} message={useLiveMessage(props.message)} />
+})
 
 type ChatTimelineProps = {
   onAddToNote?: ChatMessageRowProps['onAddToNote']

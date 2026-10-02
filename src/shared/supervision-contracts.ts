@@ -32,7 +32,7 @@ export function isIncrementalReview(request: Pick<SupervisionRunRequest, 'trigge
   return request.trigger === 'heartbeat' || request.reanalyze !== true
 }
 
-export const supervisionSuggestionKindSchema = z.enum(['open_item', 'conflict', 'convention', 'revision'])
+export const supervisionSuggestionKindSchema = z.enum(['open_item', 'conflict', 'convention', 'revision', 'stalled', 'experience'])
 export type SupervisionSuggestionKind = z.infer<typeof supervisionSuggestionKindSchema>
 export type SupervisionSuggestion = {
   id: string
@@ -48,6 +48,9 @@ export type SupervisionSuggestion = {
   taskId: string | null
   status: 'pending' | 'accepted' | 'dismissed'
   createdAt: string
+  /** Story the suggestion is about (stalled story, or where an experience may apply). */
+  storyId?: string | null
+  experienceId?: string | null
 }
 export const supervisionSuggestionListRequestSchema = z.object({
   status: z.enum(['pending', 'all']).default('pending'),

@@ -7,6 +7,7 @@ export const heartbeat = {
     responseKiB: 'Response capacity, KiB (default 1024)',
     storyThreadEvents: 'Minimum events before a feature splits into sub-threads (default 20)',
     experienceMinEvents: 'Minimum events before a story is considered for experiences (default 5)',
+    stalledDays: 'Days without new events before a story is flagged (default 14)',
     save: 'Save review algorithm',
     help: 'Page size controls database reads, not total coverage. Batch limits split work without dropping remaining text. These settings and the organize timeout are frozen for each new review; continuing uses its saved configuration. Response capacity uses the current setting for each request; increase it before continuing a failed review.',
     pageSize: 'Sources read at a time (default 50)', batchCharacters: 'Text size per batch (default 8000)',
@@ -32,9 +33,9 @@ export const heartbeat = {
   },
   suggestions: {
     title: 'Supervisor suggestions',
-    kind: { open_item: 'Open item', conflict: 'Disagreement', convention: 'Possible convention', revision: 'Important revision' },
+    kind: { open_item: 'Open item', conflict: 'Disagreement', convention: 'Possible convention', revision: 'Important revision', stalled: 'No recent progress', experience: 'Relevant experience' },
     evidence: 'Evidence ({{count}})', moreEvidence: '{{count}} more in the story graph',
-    accept: { open_item: 'Create task', conflict: 'Reviewed', convention: 'Keep as convention', revision: 'Noted' },
+    accept: { open_item: 'Create task', conflict: 'Reviewed', convention: 'Keep as convention', revision: 'Noted', stalled: 'Create task', experience: 'Noted' },
     dismiss: 'Dismiss'
   },
   timeouts: {

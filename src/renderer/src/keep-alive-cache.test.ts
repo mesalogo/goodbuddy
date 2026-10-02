@@ -172,6 +172,53 @@ describe('keep-alive cache', () => {
     }
   )
 
+  it('keeps pinned entries outside capacity and expiry', () => {
+    const entries = [
+      { key: 'chat', lastVisitedAt: 1 },
+      { key: 'one', lastVisitedAt: 10 },
+      { key: 'two', lastVisitedAt: 20 },
+      { key: 'three', lastVisitedAt: 30 },
+      { key: 'four', lastVisitedAt: 40 }
+    ]
+    const options = {
+      currentKey: 'four',
+      expiresAfterMs: 1_000,
+      maximumEntries: 3,
+      now: 50,
+      pinnedKeys: new Set(['chat']),
+      recentEntries: 3
+    }
+
+    expect(
+      pruneKeepAliveEntries(entries, options).map((entry) => entry.key)
+    ).toEqual(['chat', 'four', 'three', 'two'])
+    expect(
+      pruneKeepAliveEntries(entries, {
+        ...options,
+        now: 10_000,
+        recentEntries: 0
+      }).map((entry) => entry.key)
+    ).toEqual(['chat', 'four'])
+  })
+
+  it('preserves reference equality when pinned entries are unchanged', () => {
+    const entries = [
+      { key: 'chat', lastVisitedAt: 1 },
+      { key: 'knowledge', lastVisitedAt: 20 }
+    ]
+
+    expect(
+      pruneKeepAliveEntries(entries, {
+        currentKey: 'knowledge',
+        expiresAfterMs: 100,
+        maximumEntries: 1,
+        now: 30,
+        pinnedKeys: new Set(['chat']),
+        recentEntries: 1
+      })
+    ).toBe(entries)
+  })
+
   it('expires an unprotected entry after one hour', () => {
     const entries = [{ key: 'knowledge', lastVisitedAt: 1_000 }]
     const options = {

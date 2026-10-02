@@ -19,7 +19,8 @@ import {
 // Three.js loads only when the spiral view is opened.
 const StoryGraph3D = lazy(() => import('./StoryGraph3D'))
 type Selection = { kind: 'event' | 'entity' | 'relation' | 'story' | 'experience'; id: string }
-export type SupervisionGraphNavigation = { resultId: string; tab?: 'overview' | 'graph' }
+/** `focus` opens a story or experience in the graph lists, such as from a heartbeat suggestion. */
+export type SupervisionGraphNavigation = { resultId: string; tab?: 'overview' | 'graph'; focus?: { kind: 'story' | 'experience'; id: string } }
 type Props = {
   graphNavigation?: SupervisionGraphNavigation
   tab?: 'overview' | 'graph' | 'plans' | 'activity' | 'settings'
@@ -67,8 +68,8 @@ export function SupervisorWorkspace({
   const [pending, setPending] = useState<string>()
   const [error, setError] = useState<string>()
   const [errorAction, setErrorAction] = useState<'run' | 'source' | 'action'>()
-  const [selection, setSelection] = useState<Selection>()
-  const [listTab, setListTab] = useState<Selection['kind']>('event')
+  const [selection, setSelection] = useState<Selection | undefined>(graphNavigation?.focus)
+  const [listTab, setListTab] = useState<Selection['kind']>(graphNavigation?.focus?.kind ?? 'event')
   const [graphMode, setGraphMode] = useState<'flat' | 'spiral'>('flat')
   const [source, setSource] = useState<{
     id: string
@@ -97,7 +98,8 @@ export function SupervisorWorkspace({
     setGraph(emptyGraph)
     setLoading(true)
     setSource(undefined)
-    setSelection(undefined)
+    setSelection(graphNavigation?.focus)
+    if (graphNavigation?.focus) setListTab(graphNavigation.focus.kind)
     setPending(undefined)
     setError(undefined)
     setLoadError(undefined)

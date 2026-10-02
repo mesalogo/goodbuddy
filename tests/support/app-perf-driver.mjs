@@ -169,7 +169,12 @@ const probeSource = `(() => {
   requestAnimationFrame(frame);
   const observe = (type, sink, options = {}) => { try { new PerformanceObserver(list => { if (s.recording) for (const e of list.getEntries()) sink(e); }).observe({ type, ...options }); } catch {} };
   observe('longtask', e => s.longTasks.push({ at: e.startTime - s.startedAt, duration: e.duration }));
-  observe('long-animation-frame', e => s.loafs.push({ duration: e.duration, blocking: e.blockingDuration }));
+  // Split each long frame into script time and rendering (style + layout + paint) time.
+  observe('long-animation-frame', e => s.loafs.push({ duration: e.duration, blocking: e.blockingDuration,
+    scriptMs: e.scripts.reduce((a, x) => a + x.duration, 0),
+    renderMs: e.renderStart ? e.startTime + e.duration - e.renderStart : 0,
+    styleLayoutMs: e.styleAndLayoutStart ? e.startTime + e.duration - e.styleAndLayoutStart : 0,
+    forcedLayoutMs: e.scripts.reduce((a, x) => a + (x.forcedStyleAndLayoutDuration || 0), 0) }));
   observe('event', e => { if (e.name === 'keydown' || e.name === 'keypress' || e.name === 'input' || e.name === 'pointerdown' || e.name === 'click' || e.name === 'mousedown') s.events.push({ name: e.name, duration: e.duration }); }, { durationThreshold: 16 });
   document.addEventListener('keydown', e => { if (!s.recording) return; const t = e.timeStamp; requestAnimationFrame(() => s.latencies.push(performance.now() - t)); }, true);
   document.addEventListener('mousedown', e => { s.pointerDown = e.timeStamp; }, true);
@@ -238,7 +243,11 @@ async function measure(id, description, body) {
     durationMs,
     renderer: {
       longTasks: { count: raw.longTasks.length, totalMs: longTaskTotal, maxMs: longTaskDurations.length ? Math.max(...longTaskDurations) : 0, shareOfDuration: longTaskTotal / raw.elapsed, msByQuarter: quarters.map(Math.round) },
-      longAnimationFrames: { count: raw.loafs.length, blockingMs: raw.loafs.reduce((a, b) => a + b.blocking, 0), maxMs: raw.loafs.length ? Math.max(...raw.loafs.map(l => l.duration)) : 0 },
+      longAnimationFrames: { count: raw.loafs.length, blockingMs: raw.loafs.reduce((a, b) => a + b.blocking, 0), maxMs: raw.loafs.length ? Math.max(...raw.loafs.map(l => l.duration)) : 0,
+        scriptMs: Math.round(raw.loafs.reduce((a, b) => a + b.scriptMs, 0)),
+        forcedLayoutMs: Math.round(raw.loafs.reduce((a, b) => a + b.forcedLayoutMs, 0)),
+        styleLayoutMs: Math.round(raw.loafs.reduce((a, b) => a + b.styleLayoutMs, 0)),
+        renderMs: Math.round(raw.loafs.reduce((a, b) => a + b.renderMs, 0)) },
       frames: { count: frames.length, ...summarize(frames), baselineMs: baseline, jankRatio: frames.length ? frames.filter(f => f > baseline * 1.5).length / frames.length : null },
       slowEvents: { countOver16ms: raw.events.length, maxMs: raw.events.length ? Math.max(...raw.events.map(e => e.duration)) : 0, byName: raw.events.reduce((acc, e) => ({ ...acc, [e.name]: (acc[e.name] ?? 0) + 1 }), {}) },
       domMutationBatches: raw.mutations,
@@ -516,7 +525,7 @@ try {
   }))
   await js(`(() => { const t = document.querySelector(${JSON.stringify(composer)}); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, ''); t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`)
 
-  await measure('switch-conversations', `Click ${config.switches} different seeded conversations (${config.seedMessagesPerConversation} messages each), first visit`, async () => {
+  await measure('switch-conversations', `Click ${config.switches} different seeded conversations (${config.seedMessagesPerConversation} messages each), first visit`, () => withRendererProfile('switch-conversations', async () => {
     const samples = []
     for (let index = 0; index < config.switches; index += 1) {
       const target = index * 3 + 1
@@ -525,9 +534,9 @@ try {
       await sleep(250)
     }
     return { latency: summarize(samples), fields: { switchSamplesMs: samples } }
-  })
+  }))
 
-  await measure('switch-conversations-warm', 'Revisit the same conversations (keep-alive cache warm)', async () => {
+  await measure('switch-conversations-warm', 'Revisit the same conversations (keep-alive cache warm)', () => withRendererProfile('switch-conversations-warm', async () => {
     const samples = []
     for (let index = 0; index < Math.min(config.switches, 10); index += 1) {
       const target = index * 3 + 1
@@ -536,7 +545,27 @@ try {
       await sleep(250)
     }
     return { latency: summarize(samples), fields: { switchSamplesMs: samples } }
-  })
+  }))
+
+  // The warm scenario above revisits more conversations than the pane cache
+  // holds, so in LRU order most revisits miss. This one alternates between
+  // three conversations that are certainly still mounted.
+  await measure('switch-conversations-hot', 'Alternate between 3 recently opened conversations (panes mounted)', () => withRendererProfile('switch-conversations-hot', async () => {
+    const targets = [1, 4, 7]
+    for (const target of targets) {
+      await clickConversation(seeded.titles[target])
+      await js(`window.__gbPerf.paneShownSinceMouseDown(${JSON.stringify(seeded.ids[target])})`)
+      await sleep(250)
+    }
+    const samples = []
+    for (let index = 0; index < 12; index += 1) {
+      const target = targets[index % targets.length]
+      await clickConversation(seeded.titles[target])
+      samples.push(await js(`window.__gbPerf.paneShownSinceMouseDown(${JSON.stringify(seeded.ids[target])})`))
+      await sleep(250)
+    }
+    return { latency: summarize(samples), fields: { switchSamplesMs: samples } }
+  }))
 
   await measure('open-long-conversation', `Open a conversation with ${config.longConversationMessages} messages`, async () => {
     await clickConversation(seeded.longTitle)

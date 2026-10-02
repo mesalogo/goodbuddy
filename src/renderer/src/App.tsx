@@ -76,6 +76,7 @@ import {
 import {
   Component,
   memo,
+  startTransition,
   Suspense,
   useCallback,
   useDeferredValue,
@@ -188,6 +189,17 @@ import {
 } from "./ChatHistoryPane";
 import { isUnusedConversation, sortConversationsForDisplay, type Conversation } from "./chat-conversation";
 import {
+  ComposerDraftEffect,
+  ComposerDraftHasText,
+  ComposerDraftText,
+  createComposerDraftStore,
+} from "./composer-draft-store";
+import {
+  createLiveMessageStore,
+  LiveMessageStoreContext,
+  type ConversationsUpdate,
+} from "./live-message-store";
+import {
   clearLegacyActivityHistory,
   loadLegacyActivityHistory,
   mergeActivityRecords,
@@ -272,6 +284,10 @@ import {
   touchAndPruneKeepAliveEntries,
   type KeepAliveCacheEntry,
 } from "./keep-alive-cache";
+import {
+  WorkspaceUnsavedChangesContext,
+  type ReportWorkspaceUnsavedChanges,
+} from "./workspace-unsaved-changes";
 import { activateModalFocus, trapTabFocus } from "./dialog-focus";
 import { FloatingPortal } from "./FloatingPortal";
 import {
@@ -310,13 +326,18 @@ const SettingsPanel = settingsPanelRoute.Component;
 const ActivityPanel = activityPanelRoute.Component;
 
 const conversationPersistenceIntervalMs = 500;
+// How often streaming deltas are absorbed into App state; rows render them live.
+const liveMessageFlushIntervalMs = 250;
 const conversationSearchSnapshotDelayMs = 250;
 const keepAliveExpirationMs = 60 * 60 * 1_000;
 const keepAliveSweepIntervalMs = 5 * 60 * 1_000;
 const maximumCachedConversations = 12;
 const recentCachedConversations = 5;
-const maximumCachedWorkspaceViews = 4;
-const recentCachedWorkspaceViews = 3;
+// Chat is the primary route and stays resident outside the capacity below,
+// together with any route that reports unsaved edits.
+const pinnedWorkspaceViews = ["chat"] as const;
+const maximumCachedWorkspaceViews = 3;
+const recentCachedWorkspaceViews = 2;
 
 function sameConversationQueueItems(
   current: ConversationQueueItem[],
@@ -404,10 +425,12 @@ function RouteLoadingStatus({ label }: { label: string }): React.JSX.Element {
 function KeepAliveRoute({
   active,
   children,
+  onUnsavedChanges,
   route,
 }: {
   active: boolean;
   children: ReactNode;
+  onUnsavedChanges?: ReportWorkspaceUnsavedChanges;
   route: string;
 }): React.JSX.Element {
   return (
@@ -418,7 +441,9 @@ function KeepAliveRoute({
       hidden={!active}
       inert={!active}
     >
-      {children}
+      <WorkspaceUnsavedChangesContext.Provider value={onUnsavedChanges}>
+        {children}
+      </WorkspaceUnsavedChangesContext.Provider>
     </div>
   );
 }
@@ -552,6 +577,37 @@ type ActiveRun = {
 type WorkspaceView =
   "chat" | "magic-notes" | "knowledge" | "heartbeat" | "local-inference" | "device-sharing" | "activity" | "settings";
 
+// Tracks which kept-alive routes currently report unsaved edits. Reads happen
+// only in event handlers and the sweep timer, so this is not React state.
+function createUnsavedWorkspaceTracker(): {
+  pinnedViews: () => Set<WorkspaceView>;
+  reporters: Record<
+    "knowledge" | "heartbeat" | "magic-notes" | "activity",
+    ReportWorkspaceUnsavedChanges
+  >;
+} {
+  const sources = new Map<WorkspaceView, Set<string>>();
+  const reporterFor =
+    (route: WorkspaceView): ReportWorkspaceUnsavedChanges =>
+    (sourceId, dirty) => {
+      const routeSources = sources.get(route) ?? new Set<string>();
+      if (dirty) routeSources.add(sourceId);
+      else routeSources.delete(sourceId);
+      if (routeSources.size > 0) sources.set(route, routeSources);
+      else sources.delete(route);
+    };
+  return {
+    pinnedViews: () =>
+      new Set<WorkspaceView>([...pinnedWorkspaceViews, ...sources.keys()]),
+    reporters: {
+      knowledge: reporterFor("knowledge"),
+      heartbeat: reporterFor("heartbeat"),
+      "magic-notes": reporterFor("magic-notes"),
+      activity: reporterFor("activity"),
+    },
+  };
+}
+
 const intentRoutePreloaders: Partial<
   Record<WorkspaceView, () => Promise<unknown>>
 > = {
@@ -662,31 +718,6 @@ function loadPrimarySidebarWidth(): number {
   } catch {
     return clampPrimarySidebarWidth(fallback, window.innerWidth);
   }
-}
-
-function appendMessageContentBlock(
-  blocks: ConversationMessageBlock[] | undefined,
-  type: "text" | "reasoning",
-  delta: string,
-): ConversationMessageBlock[] | undefined {
-  if (!blocks || !delta) {
-    return blocks;
-  }
-  const current = [...blocks];
-  const previous = current.at(-1);
-  if (previous?.type === type) {
-    current[current.length - 1] = {
-      ...previous,
-      content: `${previous.content}${delta}`,
-    };
-    return current;
-  }
-  current.push({
-    id: crypto.randomUUID(),
-    type,
-    content: delta,
-  });
-  return current;
 }
 
 function upsertMessageToolBlock(
@@ -2159,12 +2190,39 @@ function App(): React.JSX.Element {
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
   const [initialConversationMigrationStoragePresent] = useState(hasConversationMigrationStorage);
   const conversationMigrationStoragePresent = useRef(initialConversationMigrationStoragePresent);
-  const [conversations, setConversations] = useState(() =>
+  const [conversations, setConversationsState] = useState(() =>
     loadConversations(
       t("conversation.greeting"),
       t("conversation.interrupted"),
     ),
   );
+  // Streaming deltas render through this store; App state absorbs them on a
+  // slow cadence or with the next conversations update (see live-message-store).
+  const [{ liveMessages, setConversations, cancelLiveMessageFlush }] = useState(() => {
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+    const update = (next: ConversationsUpdate): void => {
+      const captured = store.capture();
+      setConversationsState((current) => store.applyUpdate(current, next, captured));
+    };
+    const store = createLiveMessageStore({
+      onPending: () => {
+        if (flushTimer !== undefined) return;
+        flushTimer = setTimeout(() => {
+          flushTimer = undefined;
+          if (!store.hasEntries()) return;
+          startTransition(() => update((current) => current));
+        }, liveMessageFlushIntervalMs);
+      },
+    });
+    return {
+      liveMessages: store,
+      setConversations: update,
+      cancelLiveMessageFlush: () => {
+        clearTimeout(flushTimer);
+        flushTimer = undefined;
+      },
+    };
+  });
   const [activeId, setActiveIdState] = useState(
     () => conversations[0]?.id ?? "",
   );
@@ -2268,29 +2326,16 @@ function App(): React.JSX.Element {
   >(undefined);
   const viewRef = useRef<WorkspaceView>("chat");
   const heartbeatLoadRequestRef = useRef(0);
-  const [conversationDrafts, setConversationDrafts] = useState<
-    Record<string, string>
-  >({});
-  const input = conversationDrafts[activeId] ?? "";
+  // Drafts live outside App state: typing re-renders only the composer input.
+  const [composerDrafts] = useState(createComposerDraftStore);
   const setConversationInput = useCallback(
-    (conversationId: string, update: SetStateAction<string>): void => {
-      setConversationDrafts((current) => {
-        const currentValue = current[conversationId] ?? "";
-        const nextValue =
-          typeof update === "function" ? update(currentValue) : update;
-        if (nextValue === currentValue) {
-          return current;
-        }
-        if (!nextValue) {
-          const next = { ...current };
-          delete next[conversationId];
-          return next;
-        }
-        return { ...current, [conversationId]: nextValue };
-      });
-    },
-    [],
+    (conversationId: string, update: SetStateAction<string>): void =>
+      composerDrafts.set(conversationId, update),
+    [composerDrafts],
   );
+  const resizeActiveComposer = useCallback((): void => {
+    resizeComposerTextarea(inputRef.current);
+  }, []);
   // Async composer operations retain the conversation that started them.
   const setInput = useCallback(
     (update: SetStateAction<string>): void => setConversationInput(activeId, update),
@@ -2535,6 +2580,10 @@ function App(): React.JSX.Element {
   const [cachedWorkspaceViews, setCachedWorkspaceViews] = useState<
     KeepAliveCacheEntry<WorkspaceView>[]
   >(() => [{ key: "chat", lastVisitedAt: Date.now() }]);
+  // Routes with unsaved edits are pinned so eviction never drops them silently.
+  const [unsavedWorkspaceTracker] = useState(createUnsavedWorkspaceTracker);
+  const workspaceUnsavedChangesReporters = unsavedWorkspaceTracker.reporters;
+  const getPinnedWorkspaceViews = unsavedWorkspaceTracker.pinnedViews;
   const [cachedConversationViews, setCachedConversationViews] = useState<
     KeepAliveCacheEntry<string>[]
   >(() => (activeId ? [{ key: activeId, lastVisitedAt: Date.now() }] : []));
@@ -2575,10 +2624,12 @@ function App(): React.JSX.Element {
       protectedWorkspaceViews.add("activity");
     }
     viewRef.current = next;
+    const pinnedViews = getPinnedWorkspaceViews();
     setCachedWorkspaceViews((current) =>
       touchAndPruneKeepAliveEntries(current, next, now, {
         expiresAfterMs: keepAliveExpirationMs,
         maximumEntries: maximumCachedWorkspaceViews,
+        pinnedKeys: pinnedViews,
         protectedKeys: protectedWorkspaceViews,
         recentEntries: recentCachedWorkspaceViews,
       }),
@@ -2602,7 +2653,7 @@ function App(): React.JSX.Element {
         target?.focus();
       });
     }
-  }, []);
+  }, [getPinnedWorkspaceViews]);
   const requestWorkspaceLeave = useCallback((next: WorkspaceView, leave: () => void): void => {
     const leaveNotes = (): void => {
       if (viewRef.current === "magic-notes" && next !== "magic-notes" && notesLeaveRequesterRef.current) {
@@ -3215,12 +3266,14 @@ function App(): React.JSX.Element {
           },
         ),
       );
+      const pinnedViews = getPinnedWorkspaceViews();
       setCachedWorkspaceViews((current) =>
         pruneKeepAliveEntries(current, {
           currentKey: view,
           expiresAfterMs: keepAliveExpirationMs,
           maximumEntries: maximumCachedWorkspaceViews,
           now,
+          pinnedKeys: pinnedViews,
           protectedKeys: protectedWorkspaceViews,
           recentEntries: recentCachedWorkspaceViews,
         }),
@@ -3228,7 +3281,7 @@ function App(): React.JSX.Element {
     };
     const interval = window.setInterval(sweep, keepAliveSweepIntervalMs);
     return () => window.clearInterval(interval);
-  }, [activeId, assistantTasks, knowledgeOperationCount, view]);
+  }, [activeId, assistantTasks, getPinnedWorkspaceViews, knowledgeOperationCount, view]);
 
   useEffect(() => {
     livePrimarySidebarWidthRef.current = primarySidebarWidth;
@@ -3349,7 +3402,10 @@ function App(): React.JSX.Element {
 
   useLayoutEffect(() => {
     conversationsRef.current = conversations;
-  }, [conversations]);
+    liveMessages.prune(conversations);
+  }, [conversations, liveMessages]);
+
+  useEffect(() => cancelLiveMessageFlush, [cancelLiveMessageFlush]);
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -3395,10 +3451,6 @@ function App(): React.JSX.Element {
   useEffect(() => {
     assistantTasksRef.current = assistantTasks;
   }, [assistantTasks]);
-
-  useLayoutEffect(() => {
-    resizeComposerTextarea(inputRef.current);
-  }, [input]);
 
   useEffect(() => {
     saveAppearanceTheme(appearanceTheme);
@@ -3597,7 +3649,7 @@ function App(): React.JSX.Element {
         }),
       );
     },
-    [activeId],
+    [activeId, setConversations],
   );
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
@@ -4119,7 +4171,7 @@ function App(): React.JSX.Element {
       else { setActiveId(conversation.id); showChatAndFocusComposer(); }
       return true;
     },
-    [notify, projects, setActiveId, setView, showChatAndFocusComposer],
+    [notify, projects, setActiveId, setView, showChatAndFocusComposer, setConversations],
   );
   const activeProjectDisplayName = activeProject
     ? getProjectDisplayText(activeProject, tWorkspace).name
@@ -4305,7 +4357,7 @@ function App(): React.JSX.Element {
         return next;
       });
     },
-    [],
+    [setConversations],
   );
 
   const recordActivity = useCallback(
@@ -4446,7 +4498,7 @@ function App(): React.JSX.Element {
         throw reason;
       }
     },
-    [],
+    [setConversations],
   );
 
   const retryKnowledgeLoad = useCallback(async (): Promise<void> => {
@@ -4554,6 +4606,7 @@ function App(): React.JSX.Element {
       activeProject,
       runtimeSettings,
       runtimeSwitching,
+      setConversations,
     ],
   );
 
@@ -4809,35 +4862,16 @@ function App(): React.JSX.Element {
             ? { ...message, runtimeChecklist: event.checklist }
             : message,
         );
-      } else if (event.type === "text") {
-        updateMessage(run.conversationId, run.messageId, (message) => {
-          const blocks = appendMessageContentBlock(
-            message.blocks,
-            "text",
-            event.delta,
-          );
-          return {
-            ...message,
-            content: `${message.content}${event.delta}`,
-            blocks,
-            status: undefined,
-          };
-        });
-      } else if (event.type === "reasoning") {
-        updateMessage(run.conversationId, run.messageId, (message) => {
-          const currentReasoning = message.reasoning ?? "";
-          const blocks = appendMessageContentBlock(
-            message.blocks,
-            "reasoning",
-            event.delta,
-          );
-          return {
-            ...message,
-            reasoning: `${currentReasoning}${event.delta}`,
-            status: undefined,
-            blocks,
-          };
-        });
+      } else if (event.type === "text" || event.type === "reasoning") {
+        // Rendered by the message row from the live store; App state absorbs
+        // the deltas later (see live-message-store.ts).
+        liveMessages.append(
+          run.conversationId,
+          run.messageId,
+          event.type,
+          event.delta,
+          liveMessage,
+        );
       } else if (event.type === "context-metrics") {
         setConversations((current) =>
           current.map((conversation) =>
@@ -5357,6 +5391,8 @@ function App(): React.JSX.Element {
       updateMessage,
       updateRequestActivity,
       markConversationCompleted,
+      liveMessages,
+      setConversations,
     ],
   );
 
@@ -5405,7 +5441,7 @@ function App(): React.JSX.Element {
       });
       return changed ? next : current;
     });
-  }, [retainedConversationDetailIds]);
+  }, [retainedConversationDetailIds, setConversations]);
 
   const persistLocalConversationChanges = useCallback((): void => {
     const operation = conversationPersistenceQueueRef.current.then(async () => {
@@ -5465,7 +5501,7 @@ function App(): React.JSX.Element {
     }).finally(() => { conversationHistoryRequests.current.delete(conversationId); });
     conversationHistoryRequests.current.set(conversationId, request);
     return request;
-  }, [retainedConversationDetailIds]);
+  }, [retainedConversationDetailIds, setConversations]);
 
   useEffect(() => {
     if (!conversationStoreReady) return;
@@ -5741,6 +5777,7 @@ function App(): React.JSX.Element {
     retainedConversationDetailIds,
     setConversationActivity,
     markConversationCompleted,
+    setConversations,
   ]);
 
   useEffect(() => {
@@ -6203,7 +6240,7 @@ function App(): React.JSX.Element {
     return () => {
       active = false;
     };
-  }, [conversationLoadRetry, setActiveId]);
+  }, [conversationLoadRetry, setActiveId, setConversations]);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -6691,7 +6728,7 @@ function App(): React.JSX.Element {
       removeImageListener();
       removeOpenSettingsListener();
     };
-  }, [handleAgentEvent, setView]);
+  }, [handleAgentEvent, setView, setConversations]);
 
   useEffect(() => {
     const browserApi = window.goodbuddy.browser;
@@ -7148,11 +7185,7 @@ function App(): React.JSX.Element {
       delete next[conversationId];
       return next;
     });
-    setConversationDrafts((current) => {
-      const next = { ...current };
-      delete next[conversationId];
-      return next;
-    });
+    composerDrafts.delete(conversationId);
     setChatScrollSnapshots((current) => {
       const next = { ...current };
       delete next[conversationId];
@@ -7578,7 +7611,9 @@ function App(): React.JSX.Element {
             (candidate) => candidate.id === selectedRuntimeCommand,
           )
         : undefined;
-    const commandArguments = queuedInput ? "" : (promptOverride ?? input).trim();
+    const commandArguments = queuedInput
+      ? ""
+      : (promptOverride ?? composerDrafts.get(activeId)).trim();
     const prompt =
       queuedInput?.prompt ??
       (command
@@ -8641,7 +8676,7 @@ function App(): React.JSX.Element {
       if (narrowWindow) closeNarrowSidebar();
     };
     requestWorkspaceLeave("chat", () => { void open(); });
-  }, [closeNarrowSidebar, commitView, narrowWindow, requestWorkspaceLeave, setActiveId, t]);
+  }, [closeNarrowSidebar, commitView, narrowWindow, requestWorkspaceLeave, setActiveId, t, setConversations]);
 
   const openAssistantTask = (task: AssistantTask): void => {
     if (!task.conversationId) {
@@ -9230,6 +9265,7 @@ function App(): React.JSX.Element {
 
   return (
     <div className="app-shell" data-frosted-glass={applicationSettings?.transparentFrostedEffectEnabled ? 'true' : undefined}>
+      <LiveMessageStoreContext value={liveMessages}>
       <DocumentConversationContext value={{
         activeId: activeConversation?.remote ? undefined : activeId,
         create: () => new Promise((resolve, reject) => {
@@ -10007,6 +10043,12 @@ function App(): React.JSX.Element {
                             </div>
                           )}
                           <div className="composer__input">
+                            <ComposerDraftText
+                              conversationId={activeId}
+                              store={composerDrafts}
+                            >
+                            {(draft) => (
+                            <>
                             <textarea
                               aria-describedby={
                                 contextError
@@ -10023,7 +10065,7 @@ function App(): React.JSX.Element {
                               ref={inputRef}
                               rows={3}
                               title={`${composerKeyboardHint}\n${composerConversationHint}`}
-                              value={input}
+                              value={draft}
                               onChange={(event) => setInput(event.target.value)}
                               onPaste={(event) => {
                                 const files = Array.from(event.clipboardData.files);
@@ -10096,6 +10138,14 @@ function App(): React.JSX.Element {
                                 }
                               }}
                             />
+                            {/* After the textarea, so its ref is attached first. */}
+                            <ComposerDraftEffect
+                              draft={draft}
+                              onCommit={resizeActiveComposer}
+                            />
+                            </>
+                            )}
+                            </ComposerDraftText>
                           </div>
                           <div className="composer__toolbar">
                             <div className="composer__controls">
@@ -10523,6 +10573,11 @@ function App(): React.JSX.Element {
                               <span className="sr-only" id={runtimeDetailId}>
                                 {runtimeDetail}
                               </span>
+                              <ComposerDraftHasText
+                                conversationId={activeId}
+                                store={composerDrafts}
+                              >
+                              {(draftHasText) => (
                               <button
                                 aria-describedby={
                                   runtimeState !== "ready"
@@ -10537,7 +10592,7 @@ function App(): React.JSX.Element {
                                     : t("composer.send")
                                 }
                                 disabled={
-                                  (!input.trim() &&
+                                  (!draftHasText &&
                                     !(
                                       activeRuntimeSelection?.provider ===
                                         "opencode" &&
@@ -10561,6 +10616,8 @@ function App(): React.JSX.Element {
                               >
                                 <Send aria-hidden="true" size={17} />
                               </button>
+                              )}
+                              </ComposerDraftHasText>
                             </div>
                           </div>
                         </div>
@@ -10740,6 +10797,7 @@ function App(): React.JSX.Element {
                 cachedWorkspaceViewKeys.has("magic-notes")) && (
                 <KeepAliveRoute
                   active={view === "magic-notes"}
+                  onUnsavedChanges={workspaceUnsavedChangesReporters["magic-notes"]}
                   route="magic-notes"
                 >
                   <ApplicationAvailability enabled={magicNotesEnabled}>
@@ -10767,7 +10825,11 @@ function App(): React.JSX.Element {
               )}
             {(view === "knowledge" ||
               cachedWorkspaceViewKeys.has("knowledge")) && (
-              <KeepAliveRoute active={view === "knowledge"} route="knowledge">
+              <KeepAliveRoute
+                active={view === "knowledge"}
+                onUnsavedChanges={workspaceUnsavedChangesReporters.knowledge}
+                route="knowledge"
+              >
                 <PageShell variant="master-detail">
                   <RouteErrorBoundary
                     key="knowledge"
@@ -11110,7 +11172,11 @@ function App(): React.JSX.Element {
             )}
             {(view === "heartbeat" ||
               cachedWorkspaceViewKeys.has("heartbeat")) && (
-              <KeepAliveRoute active={view === "heartbeat"} route="heartbeat">
+              <KeepAliveRoute
+                active={view === "heartbeat"}
+                onUnsavedChanges={workspaceUnsavedChangesReporters.heartbeat}
+                route="heartbeat"
+              >
                 <PageShell variant="supervisor">
                   <RouteErrorBoundary
                     key="heartbeat"
@@ -11285,7 +11351,11 @@ function App(): React.JSX.Element {
             )}
             {(view === "activity" ||
               cachedWorkspaceViewKeys.has("activity")) && (
-              <KeepAliveRoute active={view === "activity"} route="activity">
+              <KeepAliveRoute
+                active={view === "activity"}
+                onUnsavedChanges={workspaceUnsavedChangesReporters.activity}
+                route="activity"
+              >
                 <PageShell variant="dashboard">
                   <RouteErrorBoundary
                     key="activity"
@@ -11545,6 +11615,7 @@ function App(): React.JSX.Element {
       </div>
       {noteDraft.confirmation}
       </DocumentConversationContext>
+      </LiveMessageStoreContext>
     </div>
   );
 }

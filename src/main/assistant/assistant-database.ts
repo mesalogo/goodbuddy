@@ -133,7 +133,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 55
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 56
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -11964,6 +11964,46 @@ export class AssistantDatabase {
         database.exec('PRAGMA user_version = 55; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
+    if (version.user_version < 56) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // Story-level suggestions: stalled stories and experiences that may apply elsewhere.
+        // The kind CHECK widens by rebuilding the table; existing rows are copied unchanged.
+        database.exec(`
+          CREATE TABLE supervision_suggestions_v56 (
+            id TEXT PRIMARY KEY,
+            result_id TEXT REFERENCES supervision_results(id) ON DELETE SET NULL,
+            heartbeat_run_id TEXT,
+            scope_json TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('open_item', 'conflict', 'convention', 'revision', 'stalled', 'experience')),
+            fingerprint TEXT NOT NULL,
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            source_reference_ids_json TEXT NOT NULL DEFAULT '[]',
+            entity_id TEXT,
+            relation_id TEXT,
+            memory_id TEXT,
+            task_id TEXT,
+            evidence_key TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'dismissed')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            story_id TEXT,
+            experience_id TEXT
+          );
+          INSERT INTO supervision_suggestions_v56 (id, result_id, heartbeat_run_id, scope_json, kind, fingerprint, title, detail,
+            source_reference_ids_json, entity_id, relation_id, memory_id, task_id, evidence_key, status, created_at, updated_at)
+          SELECT id, result_id, heartbeat_run_id, scope_json, kind, fingerprint, title, detail,
+            source_reference_ids_json, entity_id, relation_id, memory_id, task_id, evidence_key, status, created_at, updated_at
+          FROM supervision_suggestions;
+          DROP TABLE supervision_suggestions;
+          ALTER TABLE supervision_suggestions_v56 RENAME TO supervision_suggestions;
+          CREATE INDEX IF NOT EXISTS supervision_suggestions_status ON supervision_suggestions(status, created_at DESC);
+          CREATE INDEX IF NOT EXISTS supervision_suggestions_fingerprint ON supervision_suggestions(scope_json, fingerprint);
+        `)
+        database.exec('PRAGMA user_version = 56; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
   }
 
   supervisionExperiences(): SupervisionExperienceStore {
@@ -11998,7 +12038,8 @@ export class AssistantDatabase {
       store.resolve(id, 'dismissed')
       return store.get(id)!
     }
-    if (suggestion.kind === 'open_item') {
+    // A stalled story is resumed through a paused follow-up task, like an open item.
+    if (suggestion.kind === 'open_item' || suggestion.kind === 'stalled') {
       const task = this.createTask({ id: randomUUID(), projectId, title: suggestion.title.slice(0, 200), instructions: suggestion.detail,
         workMode: 'ask', origin: 'assistant', status: 'paused' })
       store.resolve(id, 'accepted', { taskId: task.id })

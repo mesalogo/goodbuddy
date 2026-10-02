@@ -4,6 +4,7 @@ export const heartbeat = {
     responseKiB: '单次响应容量，KiB（默认 1024）',
     storyThreadEvents: '功能拆分子线索的最少事件数（默认 20）',
     experienceMinEvents: '故事参与经验整理的最少事件数（默认 5）',
+    stalledDays: '故事多少天没有新进展时提醒（默认 14）',
     save: '保存回顾算法',
     help: '每页条数只控制数据库读取量，不限制回顾总量。分批上限用于拆分工作，剩余正文会继续处理。这些设置及整理超时在新回顾开始时固定；继续回顾沿用已保存的配置。响应容量按每次请求的当前设置生效，调高后可继续失败的回顾。',
     pageSize: '每次读取来源条数（默认 50）', batchCharacters: '每批文本量（默认 8000）',
@@ -29,9 +30,9 @@ export const heartbeat = {
   },
   suggestions: {
     title: '监督建议',
-    kind: { open_item: '未决事项', conflict: '分歧', convention: '候选约定', revision: '重要修订' },
+    kind: { open_item: '未决事项', conflict: '分歧', convention: '候选约定', revision: '重要修订', stalled: '暂无进展', experience: '可用经验' },
     evidence: '查看依据（{{count}} 处）', moreEvidence: '另有 {{count}} 处依据，可在图谱中查看',
-    accept: { open_item: '转为任务', conflict: '已核对', convention: '确认为长期约定', revision: '已知悉' },
+    accept: { open_item: '转为任务', conflict: '已核对', convention: '确认为长期约定', revision: '已知悉', stalled: '转为任务', experience: '已参考' },
     dismiss: '忽略'
   },
   timeouts: {

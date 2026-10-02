@@ -140,9 +140,13 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     if (!active || !context || !scrollContainer || !content) return;
     const measure = (): void => {
       // The fixed context strip also needs space inside the scrolling content.
-      context.parentElement?.style.setProperty(
-        '--chat-context-height', `${context.getBoundingClientRect().height}px`,
-      );
+      // Only write on change: the variable lives on the shared scroll region,
+      // so every write restyles all kept-alive panes.
+      const parent = context.parentElement;
+      const height = `${context.getBoundingClientRect().height}px`;
+      if (parent && parent.style.getPropertyValue('--chat-context-height') !== height) {
+        parent.style.setProperty('--chat-context-height', height);
+      }
     };
     measure();
     if (typeof ResizeObserver !== 'function') return;

@@ -31,7 +31,7 @@ it('saves validated algorithm controls and retains the draft until saved setting
   const cross = screen.getByRole('switch', { name: '跨项目关联' })
   expect(cross).not.toBeChecked()
   fireEvent.click(screen.getByRole('button', { name: '保存回顾算法' }))
-  expect(save).toHaveBeenCalledWith({ supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300, responseKiB: 2048, crossProject: false, storyThreadEvents: 20, experienceMinEvents: 5 } })
+  expect(save).toHaveBeenCalledWith({ supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300, responseKiB: 2048, crossProject: false, storyThreadEvents: 20, experienceMinEvents: 5, stalledDays: 14 } })
   expect(screen.getByLabelText(/每次读取来源条数/)).toHaveValue(17)
 })
 

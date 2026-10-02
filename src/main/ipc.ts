@@ -257,7 +257,7 @@ import {
 import { HeartbeatService } from './assistant/heartbeat-service'
 import { createProductionSuggestionPhraser, createProductionSupervisorService } from './assistant/supervision-production'
 import { deriveSuggestions } from './assistant/supervision-suggester'
-import { supervisionReviewIdSchema, supervisionBatchesRequestSchema } from '../shared/supervision-review-contracts'
+import { defaultStalledDays, supervisionReviewIdSchema, supervisionBatchesRequestSchema } from '../shared/supervision-review-contracts'
 import { supervisionStoryActionSchema, supervisionStoryListSchema } from '../shared/supervision-story-contracts'
 import {
   supervisionEntityActionSchema,
@@ -1536,9 +1536,10 @@ export function registerIpcHandlers(
       return { status: result.status ?? 'completed', runId: result.runId }
     },
     suggest: async ({ run, supervisionRunId }) => {
-      if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return 0
+      const settings = await applicationSettingsStore?.get()
+      if (settings?.heartbeatEnabled !== true) return 0
       return deriveSuggestions(assistantDatabase.supervisionSuggestions(), suggestionPhraser,
-        { supervisionRunId, heartbeatRunId: run.id })
+        { supervisionRunId, heartbeatRunId: run.id, stalledDays: settings.supervisionReview?.stalledDays ?? defaultStalledDays })
     }
   })
   const publishRemoteActivity = (

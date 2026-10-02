@@ -15,6 +15,7 @@ import { PageShell } from './WorkspacePrimitives'
 import { KnowledgeGraphChartLoader } from './knowledge-workspace/KnowledgeGraphChartLoader'
 import type { KnowledgeWorkspaceProps } from './knowledge-workspace/types'
 import i18n from './i18n'
+import { WorkspaceUnsavedChangesContext } from './workspace-unsaved-changes'
 import {
   defaultKnowledgeOntologySettings
 } from '../../shared/knowledge-ontology'
@@ -1281,6 +1282,24 @@ describe('KnowledgeWorkspace', () => {
       )
     )
     expect(onRebuildLibrary).not.toHaveBeenCalled()
+  })
+
+  it('reports unsaved settings edits to the workspace route cache', () => {
+    const report = vi.fn()
+    const { unmount } = render(
+      <WorkspaceUnsavedChangesContext.Provider value={report}>
+        <KnowledgeWorkspace {...createProps()} />
+      </WorkspaceUnsavedChangesContext.Provider>
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '高级设置' }))
+    expect(report).not.toHaveBeenCalledWith(expect.any(String), true)
+    fireEvent.change(screen.getByLabelText('分块方式'), {
+      target: { value: 'parent-child' }
+    })
+    expect(report).toHaveBeenLastCalledWith(expect.any(String), true)
+    unmount()
+    expect(report).toHaveBeenLastCalledWith(expect.any(String), false)
   })
 
   it('saves library ontology definitions without rebuilding implicitly', async () => {

@@ -3149,6 +3149,25 @@ describe("App", () => {
     expect(document.querySelector('[data-route="settings"]')).toBeNull();
   });
 
+  it("keeps the chat workspace resident while other workspaces rotate", async () => {
+    await api.updates!.updateSettings({ magicNotesEnabled: true });
+    let now = 3_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => ++now);
+    render(<App />);
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+    const chatRoute = composer.closest('[data-route="chat"]');
+    expect(chatRoute).not.toBeNull();
+
+    for (const label of ["魔法笔记", "知识库", "监督者", "运行记录"]) {
+      fireEvent.click(await screen.findByRole("button", { name: label }));
+      await screen.findByRole("heading", { name: label });
+    }
+
+    expect(document.querySelector('[data-route="chat"]')).toBe(chatRoute);
+    expect(document.querySelector('[data-route="magic-notes"]')).toBeNull();
+    expect(document.querySelectorAll(".workspace-route-cache")).toHaveLength(4);
+  });
+
   it("preserves title, message, and project filtering with deferred search", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
@@ -4527,12 +4546,14 @@ describe("App", () => {
       });
     }
     expect(await screen.findByText(/第三段/u)).toBeInTheDocument();
+    // Deltas render live; App state absorbs them on the next flush, which
+    // follows the bottom once.
+    await waitFor(() => expect(scrollTo).toHaveBeenCalled(), { timeout: 2_000 });
     await act(
       () =>
         new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
     );
 
-    expect(scrollTo).toHaveBeenCalled();
     expect(scrollTo.mock.calls.length).toBeLessThanOrEqual(2);
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 1_500, behavior: "auto" });
   });
@@ -4735,9 +4756,10 @@ describe("App", () => {
     expect.soft(storageReads.mock.calls.filter(([key]) => key === 'goodbuddy.conversations.v1')).toHaveLength(0);
     storageReads.mockRestore();
     act(() => agentListener?.({ requestId, type: 'text', delta: ' continues' }));
-    await screen.findByText('Live response continues');
-    expect(historyRenderProbes.pane).toHaveBeenCalled();
-    expect(historyRenderProbes.checklist).toHaveBeenCalled();
+    // Streaming text re-renders only the message row, not the history pane.
+    expect(screen.getByText('Live response continues')).toBeInTheDocument();
+    expect(historyRenderProbes.pane).toHaveBeenCalledTimes(0);
+    expect(historyRenderProbes.checklist).toHaveBeenCalledTimes(0);
     expect(historyRenderProbes.task).toHaveBeenCalledTimes(0);
     act(() => agentListener?.({ requestId, type: 'checklist', checklist: {
       source: 'opencode', items: [{ content: 'Checklist updated live', status: 'in_progress' }],
@@ -14975,7 +14997,7 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText(/每批消息数/), { target: { value: '30' } })
     fireEvent.click(screen.getByRole('button', { name: '保存回顾算法' }))
     await waitFor(() => expect(api.updates!.updateSettings).toHaveBeenLastCalledWith({
-      supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300, responseKiB: 1024 }
+      supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300, responseKiB: 1024, crossProject: false, storyThreadEvents: 20, experienceMinEvents: 5, stalledDays: 14 }
     }))
     await waitFor(() => expect(screen.getByRole('button', { name: '保存回顾算法' })).toBeDisabled())
     fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }))

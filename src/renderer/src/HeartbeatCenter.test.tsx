@@ -23,6 +23,7 @@ import { HeartbeatCenter, type HeartbeatCenterProps } from './HeartbeatCenter'
 import { supervisionRunRequestSchema } from '../../shared/supervision-contracts'
 import { PageShell } from './WorkspacePrimitives'
 import i18n from './i18n'
+import { WorkspaceUnsavedChangesContext } from './workspace-unsaved-changes'
 import { applicationSettingsSchema, defaultLocalToolEnvironmentSettings } from '../../shared/application-settings-contracts'
 
 afterEach(cleanup)
@@ -881,6 +882,24 @@ describe('HeartbeatCenter', () => {
     }
     expect(props.onCreate).not.toHaveBeenCalled()
     expect(props.onUpdate).not.toHaveBeenCalled()
+  })
+
+  it('reports an edited plan draft as unsaved until the dialog closes', () => {
+    const report = vi.fn()
+    renderComponent(
+      <WorkspaceUnsavedChangesContext.Provider value={report}>
+        <HeartbeatCenter {...createProps()} />
+      </WorkspaceUnsavedChangesContext.Provider>
+    )
+    fireEvent.click(screen.getByRole('tab', { name: i18n.t('supervisor.automatic', { ns: 'heartbeat' }) }))
+    fireEvent.click(screen.getByRole('button', { name: '创建心跳计划' }))
+    expect(report).not.toHaveBeenCalledWith(expect.any(String), true)
+    fireEvent.change(screen.getByLabelText('计划名称'), { target: { value: 'Draft plan' } })
+    expect(report).toHaveBeenLastCalledWith(expect.any(String), true)
+    fireEvent.click(screen.getByRole('button', { name: '关闭心跳计划' }))
+    fireEvent.click(screen.getByRole('button', { name: /放弃/ }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(report).toHaveBeenLastCalledWith(expect.any(String), false)
   })
 
   it('locks every close action and duplicate submission while saving, then keeps the failed draft', async () => {

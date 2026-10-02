@@ -4,6 +4,8 @@ import { z } from 'zod'
 import type { HeartbeatScope } from '../../shared/assistant-contracts'
 import { storyGraphContextSchema, storyGraphSearchSchema, storyGraphSourceSchema, type StoryGraphToolName } from '../../shared/story-graph-tools'
 import type { SupervisionEvidence, SupervisionSummaryOutput } from '../../shared/supervision-contracts'
+import { SupervisionExperienceStore } from './supervision-experiences'
+import { SupervisionStoryStore } from './supervision-stories'
 
 type Row = Record<string, unknown>
 type Fact = {
@@ -177,7 +179,28 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     const result = results.get(String(event.result_id)) ?? db.prepare('SELECT * FROM supervision_results WHERE id = ?').get(String(event.result_id))
     add('event', { ...event, entity_ids: entities }, result, sources)
   }
-  const revision = digest(facts)
+  // Long-lived stories and experiences of the shared timeline (storyline model). Stories follow the
+  // requested projects; experiences are global and kept when formed or applied in a requested project.
+  const storyList = new SupervisionStoryStore(db).list(scope)
+  for (const story of storyList) {
+    signal?.throwIfAborted()
+    const { events, ...rest } = story
+    // A feature's own events plus those of its threads; a cross story's linked events.
+    const own = events.filter(event => event.primary || story.level === 'cross').map(event => event.id)
+    const threads = storyList.filter(child => child.parentId === story.id).flatMap(child => child.events.filter(event => event.primary).map(event => event.id))
+    add('story', { ...rest, event_ids: [...new Set([...own, ...threads])], thread_ids: storyList.filter(child => child.parentId === story.id).map(child => child.id), event_count: own.length + threads.length },
+      undefined, [])
+    const fact = facts[facts.length - 1]!
+    fact.event_time = timestamp(story.startedAt)
+    fact.confirmation_state = story.userEdited ? 'user_edited' : 'automatic'
+  }
+  for (const experience of new SupervisionExperienceStore(db).list(scope.kind === 'projects' ? scope.projectIds : undefined)) {
+    signal?.throwIfAborted()
+    add('experience', { ...experience, event_ids: experience.events.map(event => event.id) }, undefined, [])
+    const fact = facts[facts.length - 1]!
+    fact.event_time = timestamp(experience.events.find(event => event.role === 'formed')?.at)
+    fact.confirmation_state = experience.userEdited ? 'user_edited' : 'automatic'
+  }  const revision = digest(facts)
   checkRevision(revision)
   const timed = args as z.infer<typeof storyGraphSearchSchema>
   const matchesTime = (fact: Fact): boolean => !timed.time_range || Boolean(fact[timed.time_basis] &&
@@ -194,7 +217,7 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     const context = storyGraphContextSchema.parse(input)
     const targets = facts.filter(fact => fact.object_ref.type === context.object_ref.type && fact.object_ref.id === context.object_ref.id)
     if (!targets.length) {
-      const tables = { story_line: 'story_lines', event: 'supervision_events', entity: 'supervision_entities',
+      const tables = { story_line: 'story_lines', story: 'supervision_stories', experience: 'supervision_experiences', event: 'supervision_events', entity: 'supervision_entities',
         entity_change: 'supervision_entity_changes', relation: 'supervision_relations', summary: 'supervision_results', source_reference: 'supervision_sources' }
       const leafId = context.object_ref.id.startsWith('leaf:') ? context.object_ref.id.split(':')[1] : undefined
       const exists = leafId ? db.prepare('SELECT id FROM supervision_review_batches WHERE id = ?').get(leafId)
@@ -208,6 +231,11 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     const targetResults = new Set(targets.flatMap(fact => fact.result_id ? [fact.result_id] : []))
     selected = facts.filter(fact => {
       if (context.object_ref.type === 'story_line') return true
+      // A story or experience brings its own events; their sources stay one get_context or read_source away.
+      if (context.object_ref.type === 'story' || context.object_ref.type === 'experience') {
+        const ids = new Set(targets.flatMap(target => Array.isArray(target.data.event_ids) ? target.data.event_ids : []))
+        return targets.includes(fact) || (fact.object_ref.type === 'event' && ids.has(fact.object_ref.id))
+      }
       if (related.includes(fact) || (fact.object_ref.type === 'entity' && entityIds.has(fact.object_ref.id))) return true
       if (context.object_ref.type === 'summary') return fact.result_id !== null && targetResults.has(fact.result_id)
       return fact.source_reference_ids.some(id => targetSources.has(id))
@@ -217,7 +245,7 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
   selected = selected.filter(matchesTime)
   const score = (fact: Fact): number => {
     if (name !== 'story_graph_search') return 0
-    return Object.entries(fact.data).reduce((sum, [field, value]) => sum + (JSON.stringify(value).toLowerCase().includes(query) ? (['title', 'canonical_label', 'summary'].includes(field) ? 3 : 1) : 0), 0)
+    return Object.entries(fact.data).reduce((sum, [field, value]) => sum + (JSON.stringify(value).toLowerCase().includes(query) ? (['title', 'canonical_label', 'summary', 'name', 'statement'].includes(field) ? 3 : 1) : 0), 0)
   }
   selected.sort((a, b) => score(b) - score(a) || (name === 'story_graph_get_context' && 'mode' in args && args.mode === 'timeline'
     ? (a.event_time ?? '\uffff').localeCompare(b.event_time ?? '\uffff') : 0) ||

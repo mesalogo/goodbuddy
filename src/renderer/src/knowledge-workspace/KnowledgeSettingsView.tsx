@@ -1,6 +1,7 @@
 import type { KnowledgeLibrary, KnowledgeWorkspaceProps, KnowledgeGraphStrategy } from './types'
 import { useTranslation } from 'react-i18next'
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useWorkspaceUnsavedChanges } from '../workspace-unsaved-changes'
 import type { KnowledgeEmbeddingIndexSnapshot } from '../../../shared/embedding-contracts'
 import { defaultKnowledgeChunkingSettings, type KnowledgeChunkingSettings } from '../../../shared/knowledge-contracts'
 import {
@@ -55,6 +56,17 @@ export function KnowledgeSettingsView({
     library.ontologySettings ?? defaultKnowledgeOntologySettings
   )
   const [ontologyError, setOntologyError] = useState<string>()
+  const savedChunking = library.chunkingSettings ?? defaultKnowledgeChunkingSettings
+  const savedOntology = library.ontologySettings ?? defaultKnowledgeOntologySettings
+  const unsavedChanges = useMemo(
+    () =>
+      (chunking !== savedChunking &&
+        JSON.stringify(chunking) !== JSON.stringify(savedChunking)) ||
+      (ontology !== savedOntology &&
+        JSON.stringify(ontology) !== JSON.stringify(savedOntology)),
+    [chunking, ontology, savedChunking, savedOntology]
+  )
+  useWorkspaceUnsavedChanges(unsavedChanges)
 
   const requestEmbeddingIndex = useCallback(
     () => Promise.resolve(onGetEmbeddingIndex(library.id)),
