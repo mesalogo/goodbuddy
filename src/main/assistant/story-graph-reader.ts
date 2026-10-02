@@ -30,6 +30,23 @@ const bounded = (output: Row): Row => {
   return output
 }
 
+/** Words split on spaces and punctuation; CJK runs become overlapping pairs, so "回顾调度" matches "回顾" and "调度". */
+export function queryTerms(query: string): string[] {
+  const terms = new Set<string>()
+  for (const word of query.toLowerCase().split(/[\s\p{P}\p{S}]+/u)) {
+    if (!word) continue
+    for (const run of word.split(/(\p{Script=Han}+)/u)) {
+      if (!run) continue
+      if (/^\p{Script=Han}+$/u.test(run)) {
+        const chars = Array.from(run)
+        if (chars.length === 1) terms.add(run)
+        for (let i = 0; i + 1 < chars.length; i++) terms.add(chars[i]! + chars[i + 1]!)
+      } else if (run.length >= 2 || /\d/.test(run)) terms.add(run)
+    }
+  }
+  return [...terms]
+}
+
 // This is a projection of existing storage, not a second graph or a historical state store.
 export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal): Record<string, unknown> {
   signal?.throwIfAborted()
@@ -209,10 +226,17 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     time_range: timed.time_range ? { from: timestamp(timed.time_range.from), to: timestamp(timed.time_range.to) } : null,
     interpretation: 'Stored claims within the selected evidence scope; no inferred supersession, completion, or historical state.' }
   const query = 'query' in args ? args.query.toLowerCase() : ''
+  // Agents phrase queries as several words ("监督者回顾调度", "review pause 300s"), so match terms, not the whole string.
+  const terms = queryTerms(query)
+  const textOf = new Map<Fact, string>()
+  const lower = (fact: Fact) => { let text = textOf.get(fact); if (text === undefined) { text = JSON.stringify(fact.data).toLowerCase(); textOf.set(fact, text) } return text }
+  const hits = (text: string) => terms.filter(term => text.includes(term)).length
+  // A fact matches the whole query, or at least half its terms (and at least one).
+  const matches = (fact: Fact) => { const text = lower(fact); return text.includes(query) || hits(text) >= Math.max(1, Math.ceil(terms.length / 2)) }
   let selected: Fact[]
   if (name === 'story_graph_search') {
     const search = storyGraphSearchSchema.parse(input)
-    selected = facts.filter(fact => (!search.object_types || search.object_types.includes(fact.object_ref.type as typeof search.object_types[number])) && JSON.stringify(fact.data).toLowerCase().includes(query))
+    selected = facts.filter(fact => (!search.object_types || search.object_types.includes(fact.object_ref.type as typeof search.object_types[number])) && matches(fact))
   } else {
     const context = storyGraphContextSchema.parse(input)
     const targets = facts.filter(fact => fact.object_ref.type === context.object_ref.type && fact.object_ref.id === context.object_ref.id)
@@ -245,7 +269,12 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
   selected = selected.filter(matchesTime)
   const score = (fact: Fact): number => {
     if (name !== 'story_graph_search') return 0
-    return Object.entries(fact.data).reduce((sum, [field, value]) => sum + (JSON.stringify(value).toLowerCase().includes(query) ? (['title', 'canonical_label', 'summary', 'name', 'statement'].includes(field) ? 3 : 1) : 0), 0)
+    // Whole-query hits first, then term hits; named fields weigh more. Stories and experiences lead ties.
+    return Object.entries(fact.data).reduce((sum, [field, value]) => {
+      const text = JSON.stringify(value).toLowerCase()
+      const weight = ['title', 'canonical_label', 'summary', 'name', 'statement'].includes(field) ? 3 : 1
+      return sum + (text.includes(query) ? weight * (terms.length + 1) : 0) + hits(text) * weight
+    }, 0) + (fact.object_ref.type === 'story' || fact.object_ref.type === 'experience' ? 0.5 : 0)
   }
   selected.sort((a, b) => score(b) - score(a) || (name === 'story_graph_get_context' && 'mode' in args && args.mode === 'timeline'
     ? (a.event_time ?? '\uffff').localeCompare(b.event_time ?? '\uffff') : 0) ||
@@ -259,8 +288,12 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     const { data, ...fact } = selected[index]!
     const text = Array.from(JSON.stringify(data))
     if (name === 'story_graph_search') {
-      const fields = Object.keys(data).filter(field => JSON.stringify(data[field]).toLowerCase().includes(query))
-      items.push({ ...fact, matched_fields: fields, preview: text.slice(0, 400).join(''), preview_is_excerpt: true })
+      const fields = Object.keys(data).filter(field => { const text = JSON.stringify(data[field]).toLowerCase(); return text.includes(query) || hits(text) > 0 })
+      // Readable fields first, so the model sees what the object says, not its IDs.
+      const readable = ['name', 'statement', 'title', 'canonical_label', 'summary', 'description', 'conditions', 'boundaries', 'event_type', 'level',
+        'project_name', 'projectName', 'started_at', 'startedAt', 'occurred_at', 'content'].filter(field => typeof data[field] === 'string' && data[field])
+      const preview = Array.from(readable.length ? readable.map(field => `${field}: ${String(data[field])}`).join(' | ') : JSON.stringify(data))
+      items.push({ ...fact, matched_fields: fields, preview: preview.slice(0, 400).join(''), preview_is_excerpt: preview.length > 400 || readable.length > 0 })
     } else {
       const size = storyGraphContextSchema.parse(input).content_page_size
       const end = Math.min(text.length, offset + size)

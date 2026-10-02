@@ -9,6 +9,7 @@ import { AssistantDatabase } from './assistant-database'
 import { extractExperiences } from './supervision-experiences'
 import { assignStories } from './supervision-stories'
 import { deriveSuggestions } from './supervision-suggester'
+import { queryTerms } from './story-graph-reader'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -135,6 +136,17 @@ it('lets agents search stories and experiences and read their events through the
   expect((f.db.readStoryGraph('story_graph_search', { query: 'long jobs', object_types: ['experience'] }, other.id) as Page).items).toEqual([])
 })
 
+it('matches multi-word and Chinese queries by terms, ranking stories and experiences first', async () => {
+  expect(queryTerms('监督者回顾调度')).toEqual(['监督', '督者', '者回', '回顾', '顾调', '调度'])
+  expect(queryTerms('review pause 300s, a')).toEqual(['review', 'pause', '300s'])
+  const f = await fixture()
+  await f.publish('Review scheduling', ['Pause after 300 seconds', 'Users clicked continue repeatedly', 'Run until complete'], '2026-09-20')
+  type Page = { items: Array<{ object_ref: { type: string } }> }
+  // No stored text contains the whole phrase; enough of its words do.
+  const hits = f.db.readStoryGraph('story_graph_search', { query: 'review scheduling decision', page_size: 5 }, f.project.id) as Page
+  expect(hits.items[0]!.object_ref.type).toBe('story')
+  expect((f.db.readStoryGraph('story_graph_search', { query: 'billing invoices tax', page_size: 5 }, f.project.id) as Page).items).toEqual([])
+})
 it('upgrades schema 55 suggestions to 56 without losing rows', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-suggestions-56-'))
   const path = join(directory, 'assistant.sqlite')
