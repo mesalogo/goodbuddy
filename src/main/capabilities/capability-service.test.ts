@@ -261,29 +261,29 @@ describe('CapabilityService', () => {
     ).rejects.toThrow('Injected profile load failure')
     await expect(
       retrying.getComputerCapabilityStatus('host-browser-control')
-    ).resolves.toEqual({ enabled: false, supported: true })
+    ).resolves.toEqual({ enabled: true, supported: true })
     expect(profileLoads).toBe(2)
   })
 
-  it('reports safe enabled and supported capability status', async () => {
+  it('enables the browser by default and synchronizes its switch', async () => {
     const { service } = await createService()
 
     await expect(
       service.getComputerCapabilityStatus('host-browser-control')
-    ).resolves.toEqual({ enabled: false, supported: true })
+    ).resolves.toEqual({ enabled: true, supported: true })
 
     await service.setComputerCapabilityEnabled(
       'host-browser-control',
-      true
+      false
     )
     await expect(
       service.getComputerCapabilityStatus('host-browser-control')
-    ).resolves.toEqual({ enabled: true, supported: true })
+    ).resolves.toEqual({ enabled: false, supported: true })
     await expect(service.getSnapshot()).resolves.toMatchObject({
       builtinMcpServers: expect.arrayContaining([
         expect.objectContaining({
           id: 'builtin-browser',
-          enabled: true
+          enabled: false
         })
       ])
     })
@@ -341,7 +341,7 @@ describe('CapabilityService', () => {
         },
         {
           id: 'builtin-browser',
-          enabled: false,
+          enabled: true,
           assignments: ['model', 'opencode', 'continue']
         },
         {
@@ -385,6 +385,7 @@ describe('CapabilityService', () => {
 
     await service.setBuiltinMcpServerAssignments('story-graph', ['deepseek-harness'])
     await expect(service.getEnabledBuiltinMcpServerIds('model')).resolves.not.toContain('story-graph')
+    await service.setBuiltinMcpServerEnabled('builtin-browser', false)
 
     const reloaded = new CapabilityService(
       filePath,
@@ -405,7 +406,7 @@ describe('CapabilityService', () => {
         }),
         expect.objectContaining({
           id: 'builtin-browser',
-          enabled: true,
+          enabled: false,
           assignments: ['continue']
         })
       ])
@@ -1014,7 +1015,7 @@ describe('CapabilityService', () => {
       computerCapabilities: [
         expect.objectContaining({
           id: 'host-browser-control',
-          enabled: false
+          enabled: true
         }),
         expect.objectContaining({
           id: 'linux-desktop-control',
@@ -1158,7 +1159,7 @@ describe('CapabilityService', () => {
     expect(await readFile(filePath, 'utf8')).toContain('"version": 6')
   })
 
-  it('migrates the legacy browser switch into the built-in browser assignment', async () => {
+  it.each([true, false])('preserves the legacy browser switch (%s) during migration', async (enabled) => {
     const { filePath, builtinRoot, importedRoot } = await createService()
     await writeFile(
       filePath,
@@ -1183,7 +1184,7 @@ describe('CapabilityService', () => {
         webSearch: { enabled: true },
         computerCapabilities: {
           'host-browser-control': {
-            enabled: true,
+            enabled,
             browserProfileId: null
           },
           'linux-desktop-control': {
@@ -1205,7 +1206,7 @@ describe('CapabilityService', () => {
       builtinMcpServers: expect.arrayContaining([
         {
           id: 'builtin-browser',
-          enabled: true,
+          enabled,
           assignments: ['model', 'opencode', 'continue']
         }
       ])
@@ -1520,6 +1521,7 @@ describe('CapabilityService', () => {
       ),
       diagnostics
     })
+    await outsideElectron.service.setComputerCapabilityEnabled('host-browser-control', false)
     await expect(
       outsideElectron.service.setComputerCapabilityEnabled(
         'host-browser-control',

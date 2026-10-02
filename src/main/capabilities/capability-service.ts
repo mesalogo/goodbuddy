@@ -299,7 +299,7 @@ export type CapabilityServiceOptions = Readonly<{
 function defaultComputerCapabilityStates(): StoredCapabilities['computerCapabilities'] {
   return {
     'host-browser-control': {
-      enabled: false,
+      enabled: true,
       browserProfileId: null
     },
     'linux-desktop-control': {
@@ -310,7 +310,7 @@ function defaultComputerCapabilityStates(): StoredCapabilities['computerCapabili
 }
 
 function defaultBuiltinMcpServerStates(
-  browserEnabled = false
+  browserEnabled = true
 ): StoredCapabilities['builtinMcpServers'] {
   const defaultState = (): z.infer<typeof builtinMcpServerStateSchema> => ({
     enabled: true,

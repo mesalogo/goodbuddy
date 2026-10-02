@@ -718,7 +718,7 @@ export function McpSettingsSection({
             const panelId = `mcp-server-tools-${server.id}`
             const state = builtinMcpStates.get(server.id) ?? {
               id: server.id,
-              enabled: server.id !== 'builtin-browser' && server.id !== 'obsidian',
+              enabled: server.id !== 'obsidian',
               assignments:
                 [...server.supportedAssignments] as CapabilityAssignments
             }
