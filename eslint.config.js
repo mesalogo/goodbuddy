@@ -80,8 +80,9 @@ const rendererIpcSubscriptionAllowlist = [
 const rendererIpcSubscriptionMessage = 'Components must not subscribe to window.goodbuddy.*.on* directly (PERF-17). Move the subscription into a domain store and read it with a selector (PERF-13).'
 
 // PERF-13 goal: App.tsx shrinks to a layout shell. 11,635 lines on
-// 2026-10-02, ceiling rounded up to the next 100. Only ever lower this number.
-const appTsxMaxLines = 11700
+// 2026-10-02; 9,567 on 2026-10-03 after moving persistence, refresh and agent
+// events out. Ceiling rounded up to the next 100. Only ever lower this number.
+const appTsxMaxLines = 9600
 
 export default tseslint.config(
   {

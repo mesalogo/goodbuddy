@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import type { AssistantTask } from "../../shared/assistant-contracts";
 import type { Message } from "./ChatTimeline";
-import { getConversationDisplayTitle, type Conversation } from "./chat-conversation";
+import { getConversationDisplayTitle, isUnusedConversation, type Conversation } from "./chat-conversation";
 import {
   deriveConversationActivity,
   sameActivitySummary,
@@ -119,6 +119,107 @@ export function useConversationActivitySummary(
     [activeConversationIds, completedConversationIds, defaultTitle, fallbackProjectName, projects, tasks],
   );
   return useConversationStoreSelector(store, selector, sameActivitySummary);
+}
+
+/**
+ * What App shows of the active conversation: its header fields plus a few
+ * values derived from its messages. Message content is not part of it, so a
+ * streaming flush or tool update in the active conversation does not
+ * re-render App; the history pane subscribes to the conversation itself.
+ */
+export type ActiveConversationView = Pick<
+  Conversation,
+  | "id" | "title" | "projectId" | "workMode" | "runtimeSelection" | "knowledgeLibraryIds"
+  | "knowledgeRetrievalMode" | "remote" | "branch" | "contextMetrics" | "contextCompressionState"
+> & {
+  /** Untouched greeting-only conversation: shown with the default title. */
+  unused: boolean;
+  /** Messages are loaded (not a summary placeholder). */
+  historyLoaded: boolean;
+  /** Any message is still streaming. */
+  running: boolean;
+  messageCount: number;
+  /** Artifact IDs referenced by messages, for hydration. */
+  artifactIds: readonly string[];
+};
+
+const artifactIdsByMessages = new WeakMap<readonly Message[], string[]>();
+function referencedArtifactIds(messages: readonly Message[]): string[] {
+  let ids = artifactIdsByMessages.get(messages);
+  if (!ids) {
+    ids = [...new Set(messages.flatMap((message) => [
+      ...(message.artifactIds ?? []),
+      ...(message.imageOperations?.flatMap((operation) => operation.artifactIds) ?? []),
+    ]))];
+    artifactIdsByMessages.set(messages, ids);
+  }
+  return ids;
+}
+
+export function selectActiveConversationView(
+  conversation: Conversation | undefined,
+): ActiveConversationView | undefined {
+  if (!conversation) return undefined;
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    projectId: conversation.projectId,
+    workMode: conversation.workMode,
+    runtimeSelection: conversation.runtimeSelection,
+    knowledgeLibraryIds: conversation.knowledgeLibraryIds,
+    knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+    remote: conversation.remote,
+    branch: conversation.branch,
+    contextMetrics: conversation.contextMetrics,
+    contextCompressionState: conversation.contextCompressionState,
+    unused: isUnusedConversation(conversation),
+    historyLoaded: !conversation.messageSummary,
+    running: conversation.messages.some((message) => message.state === "streaming"),
+    messageCount: conversation.messageSummary?.count ?? conversation.messages.length,
+    artifactIds: referencedArtifactIds(conversation.messages),
+  };
+}
+
+// Small plain-data fields: persisted refreshes replace them with equal copies.
+function sameData(left: unknown, right: unknown): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function sameActiveConversationView(
+  left: ActiveConversationView | undefined,
+  right: ActiveConversationView | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.id === right.id && left.title === right.title &&
+    left.projectId === right.projectId && left.workMode === right.workMode &&
+    left.knowledgeRetrievalMode === right.knowledgeRetrievalMode &&
+    left.unused === right.unused && left.historyLoaded === right.historyLoaded &&
+    left.running === right.running && left.messageCount === right.messageCount &&
+    sameArrayItems(left.knowledgeLibraryIds ?? [], right.knowledgeLibraryIds ?? []) &&
+    (left.knowledgeLibraryIds === undefined) === (right.knowledgeLibraryIds === undefined) &&
+    sameArrayItems(left.artifactIds, right.artifactIds) &&
+    sameData(left.runtimeSelection, right.runtimeSelection) &&
+    sameData(left.remote, right.remote) && sameData(left.branch, right.branch) &&
+    sameData(left.contextMetrics, right.contextMetrics) &&
+    sameData(left.contextCompressionState, right.contextCompressionState);
+}
+
+export function useActiveConversationView(
+  store: ConversationStore,
+  conversationId: string,
+): ActiveConversationView | undefined {
+  const selector = useCallback(
+    (conversations: Conversation[]) => selectActiveConversationView(
+      conversations.find((conversation) => conversation.id === conversationId),
+    ),
+    [conversationId],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribeConversation(conversationId, listener),
+    [conversationId, store],
+  );
+  return useConversationStoreSelector(store, selector, sameActiveConversationView, subscribe);
 }
 
 /** The conversations with these IDs, in this order; stable while unchanged. */

@@ -12,7 +12,9 @@ import {
   type ConversationStore,
 } from "./conversation-store";
 import {
+  sameActiveConversationView,
   selectPendingSidebarApprovals,
+  useActiveConversationView,
   usePendingSidebarApprovals,
   useConversationsById,
 } from "./conversation-selectors";
@@ -177,6 +179,33 @@ describe("conversation store hooks", () => {
     expect(view.container.textContent).toBe("a,b");
     act(() => store.set((current) => current.map((item) => ({ ...item, title: item.id.toUpperCase() }))));
     expect(view.container.textContent).toBe("A,B");
+  });
+
+  it("re-renders the active conversation view only for header or derived changes", () => {
+    const store = setup([conversation("a", [message({ state: "complete", content: "x" })]), conversation("b")]);
+    const seen: unknown[] = [];
+    function Header() {
+      const view = useActiveConversationView(store, "a");
+      seen.push(view);
+      return <span>{view?.title}:{String(view?.running)}</span>;
+    }
+    const view = render(<Header />);
+    const editMessage = (content: string) => store.set((current) => current.map((item) => item.id === "a"
+      ? { ...item, updatedAt: item.updatedAt + 1, messages: item.messages.map((entry) => ({ ...entry, content })) }
+      : item));
+    act(() => editMessage("streamed text"));
+    act(() => store.set((current) => current.map((item) => item.id === "a"
+      ? { ...item, runtimeSelection: item.runtimeSelection ? { ...item.runtimeSelection } : undefined }
+      : item)));
+    expect(seen).toHaveLength(1);
+    act(() => store.set((current) => current.map((item) => item.id === "a" ? { ...item, title: "A" } : item)));
+    expect(view.container.textContent).toBe("A:false");
+    act(() => store.set((current) => current.map((item) => item.id === "a"
+      ? { ...item, messages: [...item.messages, message({ id: "m2", state: "streaming" })] }
+      : item)));
+    expect(view.container.textContent).toBe("A:true");
+    expect(seen).toHaveLength(3);
+    expect(sameActiveConversationView(seen[1] as never, seen[2] as never)).toBe(false);
   });
 
   it("prunes absorbed deltas and runs the commit callback after list commits", () => {

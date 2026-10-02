@@ -4842,6 +4842,34 @@ describe("App", () => {
     expect(sidebarRenderProbes.row.mock.calls.length).toBeLessThanOrEqual(4);
   });
 
+  it("does not re-render the App root when the active conversation's streaming text is flushed", async () => {
+    render(<App />);
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(composer, { target: { value: "Render counter" } });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    act(() => agentListener?.({ requestId, type: "text", delta: "First chunk" }));
+    await screen.findByText("First chunk");
+    // Let the first flush land and the run settle into a steady state.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+    // useUnviewedCompletions runs once per App render: it counts App renders.
+    assistantTasksProbe.mockClear();
+    historyRenderProbes.pane.mockClear();
+    for (const delta of [" second", " third"]) {
+      act(() => agentListener?.({ requestId, type: "text", delta }));
+    }
+    expect(screen.getByText("First chunk second third")).toBeInTheDocument();
+    // The 250 ms flush absorbs the deltas into the conversation store.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+    expect(screen.getByText("First chunk second third")).toBeInTheDocument();
+    expect(assistantTasksProbe).not.toHaveBeenCalled();
+    // The history pane takes the absorbed conversation through its own subscription.
+    expect(historyRenderProbes.pane).toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText("停止生成"));
+    await waitFor(() => expect(api.agent.cancel).toHaveBeenCalledWith(requestId));
+  });
+
   it("isolates history and task strips while typing during a running request", async () => {
     const conversationId = crypto.randomUUID();
     vi.mocked(api.conversations.list).mockResolvedValueOnce([{
@@ -12608,7 +12636,8 @@ describe("App", () => {
           expect(within(process).queryByText(`Progress snapshot ${step - 1}`)).not.toBeInTheDocument();
           expect(within(process).queryByText(`Reading file ${step - 1}`)).not.toBeInTheDocument();
         }
-        expect(assistantTasksProbe).toHaveBeenCalled();
+        // Progress changes only the message: App may skip rendering entirely
+        // (PERF-13), and any render it does make keeps the same task list.
         for (const [tasks] of assistantTasksProbe.mock.calls) {
           expect(tasks).toBe(runningTasks);
         }

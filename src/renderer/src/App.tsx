@@ -80,7 +80,6 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
-import { knowledgeReferenceKey } from "../../shared/knowledge-reference";
 import type { TFunction } from "i18next";
 import type {
   ApprovalDecision,
@@ -124,7 +123,6 @@ import {
   runtimeProviderLabel,
 } from "./runtime-selection";
 import { RuntimeModelPicker } from "./RuntimeModelPicker";
-import { mergeMessageImageState } from "./message-image-state";
 import type {
   ActivityHistorySnapshot,
   AssistantProject,
@@ -139,15 +137,9 @@ import type {
   AssistantExpert,
   AssistantTask,
   TokenUsageSummary,
-  ConversationMessage,
   ConversationQueueItem,
   ConversationSnapshot,
-  ConversationListSnapshot,
   ConversationAttachment,
-  ConversationContextCompressionMarker,
-  ConversationMessageBlock,
-  LocalConversationHeader,
-  LocalConversationSaveBatch,
   ProjectCreateInput,
   InteractiveWorkMode,
   ProjectChannel,
@@ -168,26 +160,22 @@ import {
 import type {
   ImageViewerItem,
   Message,
-  SubagentActivity,
-  ToolActivity,
 } from "./ChatTimeline";
 import {
-  ChatHistoryPane,
   messageRenderBatchSize,
   type ChatScrollSnapshot,
 } from "./ChatHistoryPane";
 import { reconcilePaneOrder } from "./pane-order";
-import { getConversationDisplayTitle, isUnusedConversation, sortConversationsForDisplay, type Conversation } from "./chat-conversation";
+import { getConversationDisplayTitle, isUnusedConversation, type Conversation } from "./chat-conversation";
 import {
   ConversationListView,
   ConversationStoreEffects,
   createConversationStores,
-  useConversation,
 } from "./conversation-store";
 import {
+  useActiveConversationView,
   useConversationActivitySummary,
   useConversationCount,
-  useConversationsById,
   useConversationTitles,
   usePendingSidebarApprovals,
 } from "./conversation-selectors";
@@ -204,6 +192,21 @@ import {
   createComposerDraftStore,
 } from "./composer-draft-store";
 import { LiveMessageStoreContext } from "./live-message-store";
+import {
+  createConversationPersistence,
+  createLocalConversationSaveBatch,
+  mergePersistedConversations,
+  toConversationMessage,
+  toLocalConversationHeader,
+  withRecoveredQuestions,
+} from "./conversation-persistence";
+import { startConversationRefresh } from "./conversation-refresh";
+import {
+  handleAgentEvent as applyAgentEvent,
+  mergeArtifacts,
+  type ActiveRun,
+  type AgentEventDependencies,
+} from "./agent-event-handler";
 import {
   clearLegacyActivityHistory,
   loadLegacyActivityHistory,
@@ -224,7 +227,7 @@ import {
 } from "./WorkspacePrimitives";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { ProjectActivity } from "./ProjectActivity";
-import { sameArrayItems, useStableHandlers } from "./stable-derived-value";
+import { useStableHandlers } from "./stable-derived-value";
 import { useUnviewedCompletions } from "./use-unviewed-completions";
 import { useExecutionStats } from "./use-execution-stats";
 import {
@@ -237,9 +240,7 @@ import {
   type CustomTaskCreateOptions,
   type CustomTaskDestination,
 } from "./CustomTaskDialog";
-import { ConversationTaskStrip } from "./ConversationTaskStrip";
-import { RuntimeChecklistStrip } from "./RuntimeChecklistStrip";
-import { appendConversationQuestionBlock } from "../../shared/conversation-question-blocks";
+import { ConversationHistorySlot } from "./ConversationHistorySlot";
 import { ConversationInputQueue } from "./ConversationInputQueue";
 import type { SettingsCategoryId } from "./settings-categories";
 import type { SettingsLeaveRequester } from "./SettingsPanel";
@@ -559,14 +560,6 @@ function supportsSubagentSmartRouting(workMode: string): boolean {
   return workMode === "ask";
 }
 
-type ActiveRun = {
-  conversationId: string;
-  messageId: string;
-  taskId?: string;
-  projectId?: string;
-  runtimeSelectionKey: string;
-};
-
 type WorkspaceView =
   "chat" | "magic-notes" | "knowledge" | "heartbeat" | "local-inference" | "device-sharing" | "activity" | "settings";
 
@@ -689,109 +682,6 @@ function loadPrimarySidebarWidth(): number {
   }
 }
 
-function upsertMessageToolBlock(
-  blocks: ConversationMessageBlock[] | undefined,
-  tool: ToolActivity,
-): ConversationMessageBlock[] | undefined {
-  if (!blocks) {
-    return blocks;
-  }
-  const callId = tool.callId;
-  const index = callId
-    ? blocks.findIndex(
-        (block) => block.type === "tool" && block.tool.callId === callId,
-      )
-    : -1;
-  if (index >= 0) {
-    return blocks.map((block, blockIndex) =>
-      blockIndex === index && block.type === "tool"
-        ? { ...block, tool }
-        : block,
-    );
-  }
-  return [
-    ...blocks,
-    {
-      id: crypto.randomUUID(),
-      type: "tool",
-      tool,
-    },
-  ];
-}
-
-function upsertMessageSubagentBlock(
-  blocks: ConversationMessageBlock[] | undefined,
-  childTaskId: string,
-  runtimeCallId?: string,
-): ConversationMessageBlock[] | undefined {
-  if (!blocks) {
-    return blocks;
-  }
-  if (
-    blocks.some(
-      (block) => block.type === "subagent" && block.childTaskId === childTaskId,
-    )
-  ) {
-    return blocks;
-  }
-  const provisionalIndex = runtimeCallId
-    ? blocks.findIndex(
-        (block) => block.type === "tool" && block.tool.callId === runtimeCallId,
-      )
-    : -1;
-  if (provisionalIndex >= 0) {
-    return blocks.map((block, index) =>
-      index === provisionalIndex
-        ? {
-            id: block.id,
-            type: "subagent" as const,
-            childTaskId,
-          }
-        : block,
-    );
-  }
-  return [
-    ...blocks,
-    {
-      id: crypto.randomUUID(),
-      type: "subagent",
-      childTaskId,
-    },
-  ];
-}
-
-function terminalizeMessageToolBlocks(
-  blocks: ConversationMessageBlock[] | undefined,
-  state: "failed" | "cancelled" | "interrupted",
-): ConversationMessageBlock[] | undefined {
-  return blocks?.map((block) =>
-    block.type === "tool" &&
-    (block.tool.state === "pending" || block.tool.state === "running")
-      ? {
-          ...block,
-          tool: {
-            ...block.tool,
-            state,
-          },
-        }
-      : block,
-  );
-}
-
-function isErrorRepresentedByFailedTool(
-  tools: ToolActivity[] | undefined,
-  errorMessage: string,
-): boolean {
-  return Boolean(
-    tools?.some(
-      (tool) =>
-        tool.state === "failed" &&
-        ((tool.error && errorMessage.includes(tool.error)) ||
-          (tool.callId && errorMessage.includes(tool.callId))),
-    ),
-  );
-}
-
 function createConversation(
   projectId?: string,
   runtimeSelection?: RuntimeSelectionLayer,
@@ -827,30 +717,6 @@ function createConversationBranchTitle(
     return suffix.slice(0, 200);
   }
   return `${sourceTitle.slice(0, 200 - trailing.length).trimEnd()}${trailing}`;
-}
-
-function ConversationHistoryLoader({ conversationId, active, load }: {
-  conversationId: string;
-  active: boolean;
-  load: (id: string) => Promise<Conversation>;
-}): React.JSX.Element {
-  const { t } = useTranslation("app");
-  const [error, setError] = useState<string>();
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    let mounted = true;
-    void load(conversationId).catch(reason => {
-      if (mounted) setError(displayErrorMessage(reason, t("conversation.historyLoadFailed")));
-    });
-    return () => { mounted = false; };
-  }, [conversationId, load, attempt, t]);
-  return <section hidden={!active} className="empty-state" aria-busy={!error}>
-    <p role={error ? "alert" : "status"}>{error ?? t("conversation.historyLoading")}</p>
-    {error && <button type="button" className="secondary-button" onClick={() => {
-      setError(undefined);
-      setAttempt(value => value + 1);
-    }}>{t("conversation.historyRetry")}</button>}
-  </section>;
 }
 
 function isConversationAttachment(
@@ -1026,228 +892,6 @@ function toConversationSnapshots(
       updatedAt: conversation.updatedAt,
       messages: conversation.messages.map(toConversationMessage),
     }));
-}
-
-function toConversationMessage(message: Message): ConversationMessage {
-  return {
-    id: message.id,
-    queueItemId: message.queueItemId,
-    role: message.role,
-    content: message.content,
-    reasoning: message.reasoning,
-    blocks: message.blocks,
-    displayCaptureTruncated: message.displayCaptureTruncated,
-    createdAt: message.createdAt,
-    state: message.state,
-    terminalStatus: message.terminalStatus,
-    status: message.status,
-    runtimeChecklist: message.runtimeChecklist,
-    contextCompression: message.contextCompression,
-    contextCompressions: message.contextCompressions,
-    tools: message.tools,
-    subagents: message.subagents,
-    sources: message.sources,
-    sourceReferences: message.sourceReferences,
-    knowledgeRetrieval: message.knowledgeRetrieval,
-    artifactIds: message.artifactIds,
-    imageOperations: message.imageOperations,
-    imageSourceArtifactIds: message.imageSourceArtifactIds,
-    imageContextNotice: message.imageContextNotice,
-    task: message.task,
-    attachments: message.attachments,
-    answeredQuestions: message.answeredQuestions,
-  };
-}
-
-function toLocalConversationHeader(
-  conversation: Conversation,
-): LocalConversationHeader {
-  return {
-    id: conversation.id,
-    projectId: conversation.projectId,
-    runtimeSelection: conversation.runtimeSelection,
-    workMode: conversation.workMode,
-    knowledgeLibraryIds: conversation.knowledgeLibraryIds,
-    knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
-    contextMetrics: conversation.contextMetrics,
-    contextCompressionState: conversation.contextCompressionState,
-    ...(conversation.branch ? { branch: conversation.branch } : {}),
-    title: conversation.title,
-    updatedAt: conversation.updatedAt,
-  };
-}
-
-function createLocalConversationSaveBatch(
-  conversations: readonly Conversation[],
-  persisted: ReadonlyMap<string, Conversation>,
-  deletingConversationIds: ReadonlySet<string>,
-): {
-  batch: LocalConversationSaveBatch;
-  acknowledgements: Conversation[];
-} {
-  const batch: LocalConversationSaveBatch = [];
-  const acknowledgements: Conversation[] = [];
-  for (const conversation of conversations) {
-    if (
-      conversation.remote ||
-      deletingConversationIds.has(conversation.id) ||
-      persisted.get(conversation.id) === conversation
-    ) {
-      continue;
-    }
-    const previous = persisted.get(conversation.id);
-    const previousMessages = new Map(
-      previous?.messages.map((message) => [message.id, message]) ?? [],
-    );
-    batch.push({
-      header: toLocalConversationHeader(conversation),
-      messages: conversation.messages
-        .filter((message) => previousMessages.get(message.id) !== message)
-        .map(toConversationMessage),
-    });
-    acknowledgements.push(conversation);
-    if (batch.length === 100) {
-      break;
-    }
-  }
-  return { batch, acknowledgements };
-}
-
-function mergeArtifacts(
-  current: AssistantArtifact[],
-  incoming: AssistantArtifact[],
-): AssistantArtifact[] {
-  const merged = new Map(current.map((artifact) => [artifact.id, artifact]));
-  for (const artifact of incoming) {
-    const existing = merged.get(artifact.id);
-    merged.set(artifact.id, {
-      ...existing,
-      ...artifact,
-      content: artifact.content ?? existing?.content,
-    });
-  }
-  return [...merged.values()].sort((left, right) =>
-    right.createdAt.localeCompare(left.createdAt),
-  );
-}
-
-/**
- * The persisted store is the authority for a message's terminal state.
- * A locally streaming message (or a locally interrupted one that the
- * remote recovery later completed) must never shadow a persisted
- * terminal state, even when the local conversation was touched later.
- */
-function persistedTerminalStateOverridesLocal(
-  local: Message,
-  persisted: Message,
-): boolean {
-  return persisted.state !== "streaming" && local.state !== "complete";
-}
-
-function withRecoveredQuestions(conversation: Conversation): Conversation {
-  const active = conversation.activeRequest;
-  if (!active) return conversation;
-  return {
-    ...conversation,
-    messages: conversation.messages.map(message =>
-      message.id === active.messageId && message.state === "streaming"
-        ? { ...message, pendingQuestions: active.questions }
-        : message,
-    ),
-  };
-}
-
-function mergePersistedConversations(
-  current: readonly Conversation[],
-  incoming: readonly ConversationListSnapshot[],
-  persistedLocal: Map<string, Conversation>,
-  retainDetails: ReadonlySet<string> = new Set(),
-): Conversation[] {
-  const incomingById = new Map(
-    incoming.map((conversation) => [conversation.id, conversation]),
-  );
-  const currentById = new Map(
-    current.map((conversation) => [conversation.id, conversation]),
-  );
-  const merged = incoming.map((conversation): Conversation => {
-    if (conversation.messageSummary) {
-      const local = currentById.get(conversation.id);
-      const acknowledged = persistedLocal.get(conversation.id);
-      const dirtyMessages = local &&
-        local.messages.some(message => !acknowledged?.messages.includes(message));
-      const keepMessages = local && (dirtyMessages ||
-        local.messages.some(message => message.approval || message.pendingQuestions?.length || message.state === "streaming") ||
-        (!local.messageSummary && retainDetails.has(conversation.id)));
-      const next = local && local.updatedAt > conversation.updatedAt
-        ? { ...local, pinned: conversation.pinned, messageSummary: conversation.messageSummary, messages: [] }
-        : conversation;
-      if (keepMessages) {
-        // A list reply started before navigation must not unload the newly
-        // opened history, or any messages not acknowledged by Main yet.
-        return {
-          ...next, messages: local.messages,
-          messageSummary: local.messageSummary ? conversation.messageSummary : undefined,
-        };
-      }
-      if (!conversation.remote) persistedLocal.set(conversation.id, conversation);
-      return next;
-    }
-    if (conversation.remote) {
-      return conversation;
-    }
-    const local = currentById.get(conversation.id);
-    if (!local || local.remote) {
-      persistedLocal.set(conversation.id, conversation);
-      return withRecoveredQuestions(conversation);
-    }
-    const localMessageById = new Map(
-      local.messages.map((message) => [message.id, message]),
-    );
-    const localIsNewer = local.updatedAt > conversation.updatedAt;
-    const serverMessageIds = new Set(
-      conversation.messages.map((message) => message.id),
-    );
-    const messages = [
-      ...conversation.messages.map((persistedMessage) => {
-        const localMessage = localMessageById.get(persistedMessage.id);
-        const message = mergeMessageImageState(persistedMessage, persistedMessage, localMessage);
-        // A newer conversation timestamp can still contain an older message
-        // snapshot while a terminal event is being persisted.
-        if (localMessage && localMessage.state !== "streaming" && message.state === "streaming") {
-          return mergeMessageImageState(localMessage, persistedMessage, localMessage);
-        }
-        if (!conversation.activeRequest && local.activeRequest?.messageId === message.id) {
-          return { ...message, pendingQuestions: undefined };
-        }
-        if (!localIsNewer) {
-          // Pending prompts are live-only and are omitted from persisted messages.
-          if (localMessage?.state === "streaming" && message.state === "streaming") {
-            return mergeMessageImageState(localMessage, persistedMessage, localMessage);
-          }
-          return message;
-        }
-        if (
-          !localMessage ||
-          persistedTerminalStateOverridesLocal(localMessage, message)
-        ) {
-          return message;
-        }
-        return mergeMessageImageState(localMessage, persistedMessage, localMessage);
-      }),
-      ...local.messages.filter((message) => !serverMessageIds.has(message.id)),
-    ];
-    const next = localIsNewer
-      ? { ...local, pinned: conversation.pinned, messages, messageSummary: undefined, activeRequest: conversation.activeRequest }
-      : { ...conversation, messages };
-    persistedLocal.set(conversation.id, conversation);
-    return withRecoveredQuestions(next);
-  });
-  for (const conversation of current) {
-    if (!incomingById.has(conversation.id)) {
-      merged.push(conversation);
-    }
-  }
-  return sortConversationsForDisplay(merged);
 }
 
 /** Resolves global → project → conversation layers into the selection a run uses. */
@@ -1718,15 +1362,12 @@ function App(): React.JSX.Element {
     () => conversationStore.getState()[0]?.id ?? "",
   );
   const activeConversationIdRef = useRef(activeId);
-  const persistedLocalConversationsRef = useRef(
-    new Map<string, Conversation>(),
-  );
-  const conversationPersistenceQueueRef = useRef<Promise<void>>(
-    Promise.resolve(),
-  );
-  const conversationPersistencePausedRef = useRef(false);
-  const deletingLocalConversationIdsRef = useRef(new Set<string>());
-  const flushConversationPersistenceAfterRenderRef = useRef(false);
+  // Local saves, the save queue and history loading (conversation-persistence.ts);
+  // App connects its refs after each commit.
+  const [conversationPersistence] = useState(() => createConversationPersistence({
+    store: conversationStore,
+    intervalMs: conversationPersistenceIntervalMs,
+  }));
   const [unreadConversationIds, setUnreadConversationIds] = useState<
     Set<string>
   >(() => new Set());
@@ -2375,10 +2016,10 @@ function App(): React.JSX.Element {
       const current = attachmentsRef.current.get(activeId) ?? [];
       const next = typeof update === "function" ? update(current) : update;
       attachmentSaveQueue.current = attachmentSaveQueue.current.catch(() => undefined).then(async () => {
-        await conversationPersistenceQueueRef.current;
+        await conversationPersistence.idle();
         const owner = conversationStore.getState().find((conversation) => conversation.id === activeId);
         if (!owner || owner.remote) throw new Error('附件目标会话不可编辑');
-        if (next.length && !persistedLocalConversationsRef.current.has(activeId)) {
+        if (next.length && !conversationPersistence.acknowledged().has(activeId)) {
           await window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(owner), messages: [] }]);
         }
         await window.goodbuddy.context.saveDraft(activeId, next.map((attachment) => attachment.id));
@@ -2398,7 +2039,7 @@ function App(): React.JSX.Element {
         return remaining;
       });
     },
-    [activeId, conversationStore],
+    [activeId, conversationStore, conversationPersistence],
   );
   const [contextError, setContextError] = useState<string>();
   const [fileSelectionProgress, setFileSelectionProgress] =
@@ -3067,7 +2708,9 @@ function App(): React.JSX.Element {
     };
   }, []);
 
-  const activeConversation = useConversation(conversationStore, activeId);
+  // Header fields of the active conversation, value-compared: message updates
+  // (streaming flushes, tool events) do not re-render App.
+  const activeConversation = useActiveConversationView(conversationStore, activeId);
   const enabledKnowledgeLibraryIds =
     activeConversation?.knowledgeLibraryIds ?? [];
   const setEnabledKnowledgeLibraryIds = useCallback(
@@ -3146,9 +2789,6 @@ function App(): React.JSX.Element {
   if (conversationPaneOrder !== conversationPaneOrderState) {
     setConversationPaneOrderState(conversationPaneOrder);
   }
-  // App re-renders for changes to these conversations only.
-  const cachedConversations = useConversationsById(conversationStore, conversationPaneOrder);
-
   const activeRuntimeResolution = useMemo(
     () =>
       runtimeSettings
@@ -3625,7 +3265,7 @@ function App(): React.JSX.Element {
   );
   const statsConversation = activeConversation?.projectId === activeProjectId
     ? activeConversation : undefined;
-  const statsMessageCount = statsConversation?.messageSummary?.count ?? statsConversation?.messages.length ?? 0;
+  const statsMessageCount = statsConversation?.messageCount ?? 0;
   const executionStats = useExecutionStats(
     statsConversation?.id,
     activeProjectId || undefined,
@@ -3668,7 +3308,7 @@ function App(): React.JSX.Element {
   );
   const { completedConversationIds, markConversationCompleted, clearConversationCompleted } =
     useUnviewedCompletions(assistantTasks,
-      view === "chat" && !settingsOpen && !applicationCenterOpen && activeConversation && !activeConversation.messageSummary
+      view === "chat" && !settingsOpen && !applicationCenterOpen && activeConversation?.historyLoaded
         ? activeId : undefined);
   const activityProjects = useMemo(
     () => projects.map((project) => ({
@@ -4048,734 +3688,25 @@ function App(): React.JSX.Element {
     [notify],
   );
 
-  const handleAgentEvent = useCallback(
-    (event: AgentEvent): void => {
-      const run = activeRuns.current.get(event.requestId);
-      if (!run) {
-        if (event.type !== "approval") {
-          return;
-        }
-        const attachScheduledApproval = (
-          task: AssistantTask | undefined,
-        ): void => {
-          if (!task?.conversationId || task.origin !== "schedule") {
-            return;
-          }
-          setAssistantTasks((current) =>
-            current.map((candidate) =>
-              candidate.id === task.id
-                ? { ...candidate, status: "waiting_approval" }
-                : candidate,
-            ),
-          );
-          if (activeConversationIdRef.current !== task.conversationId) {
-            setUnreadConversationIds((current) => {
-              const next = new Set(current);
-              next.add(task.conversationId!);
-              return next;
-            });
-          }
-          setConversations((current) =>
-            current.map((conversation) => {
-              if (conversation.id !== task.conversationId) {
-                return conversation;
-              }
-              const existing = conversation.messages.find(
-                (message) => message.approval?.id === event.approvalId,
-              );
-              if (existing) {
-                return conversation;
-              }
-              return {
-                ...conversation,
-                updatedAt: Date.now(),
-                messages: [
-                  ...conversation.messages,
-                  {
-                    id: crypto.randomUUID(),
-                    role: "assistant",
-                    content: event.title,
-                    createdAt: Date.now(),
-                    state: "complete",
-                    task: {
-                      id: task.id,
-                      title: task.title,
-                    },
-                    approval: {
-                      id: event.approvalId,
-                      title: event.title,
-                      description: event.description,
-                      toolName: event.toolName,
-                      argumentSummary: event.argumentSummary,
-                      allowPermanent: event.allowPermanent,
-                    },
-                  },
-                ],
-              };
-            }),
-          );
-        };
-        const task = assistantTasksRef.current.find(
-          (candidate) => candidate.id === event.requestId,
-        );
-        if (task) {
-          attachScheduledApproval(task);
-        } else {
-          void window.goodbuddy.tasks
-            .list()
-            .then((tasks) => {
-              setAssistantTasks(tasks);
-              assistantTasksRef.current = tasks;
-              attachScheduledApproval(
-                tasks.find((candidate) => candidate.id === event.requestId),
-              );
-            })
-            .catch(() => undefined);
-        }
-        return;
-      }
-
-      const liveMessage = conversationStore.getState()
-        .find((conversation) => conversation.id === run.conversationId)
-        ?.messages.find((message) => message.id === run.messageId);
-      if (event.type === "question-resolved") {
-        updateMessage(run.conversationId, run.messageId, (message) => {
-          if (!message.pendingQuestions?.some((question) => question.questionId === event.questionId)) return message;
-          const pendingQuestions = message.pendingQuestions.filter((question) => question.questionId !== event.questionId);
-          if (!pendingQuestions.length && !message.approval && message.state === "streaming") {
-            setAssistantTasks((current) => current.map((task) =>
-              task.id === event.requestId && task.status === "waiting_approval" ? { ...task, status: "running" } : task,
-            ));
-          }
-          return { ...message, pendingQuestions };
-        });
-        return;
-      }
-      if (event.type === "question" && (
-        liveMessage?.state !== "streaming" ||
-        liveMessage.pendingQuestions?.some((question) => question.questionId === event.questionId) ||
-        liveMessage.answeredQuestions?.some((question) => question.questionId === event.questionId)
-      )) return;
-      setAssistantTasks((current) => {
-        let changed = false;
-        const updated = current.map((task) => {
-          if (task.id !== event.requestId) {
-            return task;
-          }
-          const status: AssistantTask["status"] =
-            event.type === "approval" || event.type === "question"
-              ? "waiting_approval"
-              : event.type === "done"
-                ? "completed"
-                : event.type === "error"
-                  ? event.status
-                  : liveMessage?.pendingQuestions?.length || liveMessage?.approval
-                    ? "waiting_approval"
-                    : "running";
-          const completedAt =
-            event.type === "done" || event.type === "error"
-              ? new Date().toISOString()
-              : task.completedAt;
-          const error = event.type === "error" ? event.message : task.error;
-          if (
-            task.status === status &&
-            task.completedAt === completedAt &&
-            task.error === error
-          ) {
-            return task;
-          }
-          changed = true;
-          return {
-            ...task,
-            status,
-            completedAt,
-            error,
-          };
-        });
-        return changed ? updated : current;
-      });
-      if (event.type === "done") {
-        if (run.projectId && activeProjectIdRef.current === run.projectId) {
-          void loadWorkspaceChanges(run.projectId).catch(() =>
-            notify({
-              tone: "error",
-              message: tRef.current("notices.workspaceChangesReadFailed"),
-            }),
-          );
-        }
-        void window.goodbuddy.artifacts
-          .list()
-          .then((artifacts) =>
-            setAssistantArtifacts((current) =>
-              mergeArtifacts(current, artifacts),
-            ),
-          )
-          .catch(() =>
-            notify({
-              tone: "error",
-              message: tRef.current("notices.resultsRefreshFailed"),
-            }),
-          );
-      } else if (event.type === "artifact") {
-        hydratingArtifactIds.current.add(event.artifactId);
-        void window.goodbuddy.artifacts
-          .get(event.artifactId)
-          .then((artifact) =>
-            setAssistantArtifacts((current) =>
-              mergeArtifacts(current, [artifact]),
-            ),
-          )
-          .catch(() =>
-            notify({
-              tone: "error",
-              message: tRef.current("notices.generatedImageReadFailed"),
-            }),
-          )
-          .finally(() => {
-            hydratingArtifactIds.current.delete(event.artifactId);
-          });
-      }
-
-      if (event.type === "checklist") {
-        updateMessage(run.conversationId, run.messageId, (message) =>
-          message.state === "streaming"
-            ? { ...message, runtimeChecklist: event.checklist }
-            : message,
-        );
-      } else if (event.type === "text" || event.type === "reasoning") {
-        // Rendered by the message row from the live store; App state absorbs
-        // the deltas later (see live-message-store.ts).
-        liveMessages.append(
-          run.conversationId,
-          run.messageId,
-          event.type,
-          event.delta,
-          liveMessage,
-        );
-      } else if (event.type === "context-metrics") {
-        setConversations((current) =>
-          current.map((conversation) =>
-            conversation.id === run.conversationId
-              ? {
-                  ...conversation,
-                  contextMetrics: {
-                    contextTokens: event.contextTokens,
-                    source: event.source,
-                    basis: "model-call",
-                    runtimeSelectionKey: run.runtimeSelectionKey,
-                  },
-                }
-              : conversation,
-          ),
-        );
-      } else if (event.type === "context-compression") {
-        const estimatedAfterTokens = event.estimatedAfterTokens;
-        const conversationScoped = event.scope !== "agent-run";
-        const scope = event.scope ?? "conversation";
-        const marker: ConversationContextCompressionMarker = {
-          state: event.state === "started" ? "compressing" : event.state,
-          scope,
-          estimatedBeforeTokens: event.estimatedBeforeTokens,
-          estimatedAfterTokens: event.estimatedAfterTokens,
-          compressionCount: event.compressionCount,
-        };
-        updateMessage(run.conversationId, run.messageId, (message) => {
-          const current =
-            message.contextCompressions ??
-            (message.contextCompression ? [message.contextCompression] : []);
-          const existingIndex = current.findIndex(
-            (compression) => (compression.scope ?? "conversation") === scope,
-          );
-          const contextCompressions =
-            existingIndex >= 0
-              ? [
-                  ...current.filter(
-                    (_compression, index) => index !== existingIndex,
-                  ),
-                  marker,
-                ]
-              : [...current, marker];
-          return {
-            ...message,
-            contextCompression: undefined,
-            contextCompressions,
-          };
-        });
-        if (
-          conversationScoped &&
-          event.state === "completed" &&
-          estimatedAfterTokens !== undefined
-        ) {
-          setConversations((current) =>
-            current.map((conversation) =>
-              conversation.id === run.conversationId
-                ? {
-                    ...conversation,
-                    contextMetrics: {
-                      runtimeSelectionKey: run.runtimeSelectionKey,
-                      contextTokens: estimatedAfterTokens,
-                      source: "estimated",
-                      basis: "conversation",
-                    },
-                    contextCompressionState:
-                      event.conversationState ??
-                      conversation.contextCompressionState,
-                  }
-                : conversation,
-            ),
-          );
-        } else if (conversationScoped && event.conversationState) {
-          setConversations((current) =>
-            current.map((conversation) =>
-              conversation.id === run.conversationId
-                ? {
-                    ...conversation,
-                    contextCompressionState: event.conversationState,
-                  }
-                : conversation,
-            ),
-          );
-        }
-      } else if (event.type === "status") {
-        updateMessage(run.conversationId, run.messageId, (message) => ({
-          ...message,
-          status: event.message,
-        }));
-      } else if (event.type === "tool") {
-        recordActivity({
-          conversationId: run.conversationId,
-          requestId: event.requestId,
-          callId: event.callId.slice(0, 256),
-          kind: "tool",
-          title: event.name,
-          detail: [event.summary, event.error].filter(Boolean).join("\n"),
-          status:
-            event.state === "pending"
-              ? "pending"
-              : event.state === "running"
-                ? "running"
-                : event.state === "failed"
-                  ? "failed"
-                  : "completed",
-        });
-        updateMessage(run.conversationId, run.messageId, (message) => {
-          const tools = [...(message.tools ?? [])];
-          const index = tools.findIndex(
-            (tool) => tool.callId === event.callId.slice(0, 256),
-          );
-          const tool = {
-            callId: event.callId.slice(0, 256),
-            name: event.name,
-            state: event.state,
-            summary: event.summary,
-            input: event.input,
-            output: event.output,
-            error: event.error,
-          };
-          if (index >= 0) {
-            tools[index] = tool;
-          } else {
-            tools.push(tool);
-          }
-          const blocks = upsertMessageToolBlock(message.blocks, tool);
-          return {
-            ...message,
-            tools,
-            blocks,
-            status: undefined,
-          };
-        });
-      } else if (event.type === "subagent") {
-        const actor =
-          "actor" in event
-            ? event.actor
-            : {
-                kind: "expert" as const,
-                expertId: event.expertId,
-                expertName: event.expertName,
-              };
-        const actorLabel =
-          actor.kind === "direct-model"
-            ? tRef.current("chat.subagents.directModelLabel")
-            : actor.expertName;
-        const childStatus = event.state;
-        const completedAt =
-          event.state === "completed" ||
-          event.state === "failed" ||
-          event.state === "cancelled"
-            ? new Date().toISOString()
-            : undefined;
-        if (actor.kind === "expert") {
-          setAssistantTasks((current) => {
-            const existing = current.find(
-              (task) => task.id === event.childTaskId,
-            );
-            const childTask: AssistantTask = {
-              id: event.childTaskId,
-              projectId: run.projectId,
-              conversationId: run.conversationId,
-              parentTaskId: event.requestId,
-              expertId: actor.expertId,
-              routingMode:
-                event.routingMode === "native" ? undefined : event.routingMode,
-              title: actor.expertName,
-              instructions:
-                event.reason ??
-                tRef.current("chat.subagents.fallbackTask", {
-                  name: actor.expertName,
-                }),
-              origin: "subagent",
-              status: childStatus,
-              createdAt: existing?.createdAt ?? new Date().toISOString(),
-              startedAt:
-                event.state === "running"
-                  ? (existing?.startedAt ?? new Date().toISOString())
-                  : existing?.startedAt,
-              completedAt: completedAt ?? existing?.completedAt,
-              error: event.error,
-            };
-            if (
-              existing &&
-              (Object.keys(childTask) as (keyof AssistantTask)[]).every(
-                (key) => existing[key] === childTask[key],
-              )
-            ) {
-              return current;
-            }
-            return existing
-              ? current.map((task) =>
-                  task.id === event.childTaskId ? childTask : task,
-                )
-              : [...current, childTask];
-          });
-        }
-        if (event.runtimeCallId) {
-          setActivityRecords((current) => {
-            const remaining = current.filter(
-              (record) =>
-                !(
-                  record.requestId === event.requestId &&
-                  record.kind === "tool" &&
-                  record.callId === event.runtimeCallId
-                ),
-            );
-            return remaining.length === current.length ? current : remaining;
-          });
-        }
-        recordActivity({
-          conversationId: run.conversationId,
-          requestId: event.requestId,
-          callId: event.childTaskId,
-          kind: "subagent",
-          title: actorLabel,
-          detail: [
-            actor.kind === "direct-model"
-              ? tRef.current("chat.subagents.directModel")
-              : event.routingMode === "smart"
-                ? tRef.current("chat.subagents.smart")
-                : event.routingMode === "native"
-                  ? tRef.current("chat.subagents.native")
-                  : tRef.current("chat.subagents.manual"),
-            actor.kind === "direct-model" && event.workMode
-              ? event.workMode === "execute"
-                ? "Execute"
-                : "Ask"
-              : undefined,
-            event.reason,
-            event.error,
-          ]
-            .filter(Boolean)
-            .join(" · "),
-          status: event.state === "queued" ? "pending" : event.state,
-        });
-        updateMessage(run.conversationId, run.messageId, (message) => {
-          const subagents = [...(message.subagents ?? [])];
-          const index = subagents.findIndex(
-            (subagent) => subagent.childTaskId === event.childTaskId,
-          );
-          const commonSubagent = {
-            childTaskId: event.childTaskId,
-            routingMode: event.routingMode,
-            runtimeCallId: event.runtimeCallId,
-            workMode: event.workMode,
-            state: event.state,
-            reason: event.reason,
-            progress: event.progress,
-            output: event.output,
-            error: event.error,
-          };
-          const subagent: SubagentActivity =
-            "actor" in event
-              ? { ...commonSubagent, actor: event.actor }
-              : {
-                  ...commonSubagent,
-                  expertId: event.expertId,
-                  expertName: event.expertName,
-                };
-          if (index >= 0) {
-            subagents[index] = subagent;
-          } else {
-            subagents.push(subagent);
-          }
-          const runtimeCallId = event.runtimeCallId;
-          const blocks = upsertMessageSubagentBlock(
-            message.blocks,
-            event.childTaskId,
-            runtimeCallId,
-          );
-          return {
-            ...message,
-            subagents,
-            tools: runtimeCallId
-              ? message.tools?.filter((tool) => tool.callId !== runtimeCallId)
-              : message.tools,
-            blocks,
-          };
-        });
-      } else if (event.type === "approval") {
-        recordActivity({
-          conversationId: run.conversationId,
-          requestId: event.requestId,
-          kind: "approval",
-          title: event.title,
-          detail: event.description,
-          status: "pending",
-        });
-        updateMessage(run.conversationId, run.messageId, (message) => ({
-          ...message,
-          status: undefined,
-          approval: {
-            id: event.approvalId,
-            taskId: run.taskId,
-            title: event.title,
-            description: event.description,
-            toolName: event.toolName,
-            argumentSummary: event.argumentSummary,
-            allowPermanent: event.allowPermanent,
-          },
-        }));
-      } else if (event.type === "question") {
-        updateMessage(run.conversationId, run.messageId, (message) => {
-          if (message.state !== "streaming" ||
-            message.pendingQuestions?.some((question) => question.questionId === event.questionId) ||
-            message.answeredQuestions?.some((question) => question.questionId === event.questionId)) {
-            return message;
-          }
-          return {
-            ...message,
-            status: undefined,
-            blocks: appendConversationQuestionBlock(message.blocks, event.questionId),
-            pendingQuestions: [...(message.pendingQuestions ?? []), event],
-          };
-        });
-      } else if (event.type === "artifact") {
-        updateMessage(run.conversationId, run.messageId, (message) => ({
-          ...message,
-          artifactIds: [
-            ...new Set([...(message.artifactIds ?? []), event.artifactId]),
-          ].slice(-8),
-          imageContextNotice: event.imageContextNotice,
-          status: tRef.current("chat.status.savingImage"),
-        }));
-      } else if (event.type === "knowledge-retrieval") {
-        updateMessage(run.conversationId, run.messageId, (message) => ({
-          ...message,
-          knowledgeRetrieval: {
-            mode: event.mode,
-            state: event.state,
-            libraryCount: event.libraryCount,
-            resultCount: event.resultCount,
-            durationMs: event.durationMs,
-            usedChannels: event.usedChannels,
-            warnings: event.warnings,
-          },
-          status:
-            event.state === "searching"
-              ? tRef.current("chat.knowledgeRetrieval.searching")
-              : undefined,
-        }));
-      } else if (event.type === "source-references") {
-        updateMessage(run.conversationId, run.messageId, (message) => {
-          const incoming = [
-            ...new Map(
-              event.references.map((reference) => [
-                knowledgeReferenceKey(reference),
-                reference,
-              ]),
-            ).values(),
-          ];
-          const incomingKeys = new Set(incoming.map(knowledgeReferenceKey));
-          const references = [
-            ...incoming,
-            ...(message.sourceReferences ?? []).filter(
-              (reference) => !incomingKeys.has(knowledgeReferenceKey(reference)),
-            ),
-          ].slice(0, 20);
-          return {
-            ...message,
-            sourceReferences: references,
-          };
-        });
-      } else if (event.type === "done" || event.type === "error") {
-        const terminalStatus =
-          event.type === "error"
-            ? event.status === "cancelled"
-              ? "cancelled"
-              : "failed"
-            : "completed";
-        const incompleteSubagentError = tRef.current(
-          "chat.subagents.incomplete",
-        );
-        const incompleteActivityDetail = tRef.current(
-          "chat.status.activityIncomplete",
-        );
-        updateRequestActivity(
-          event.requestId,
-          terminalStatus,
-          event.type === "error"
-            ? event.message
-            : tRef.current("chat.status.taskCompleted"),
-        );
-        setActivityRecords((current) =>
-          current.map((record) =>
-            record.requestId === event.requestId &&
-            record.kind !== "request" &&
-            (record.status === "pending" || record.status === "running")
-              ? {
-                  ...record,
-                  status:
-                    event.type === "done" ? "interrupted" : terminalStatus,
-                  detail: `${record.detail}\n${
-                    event.type === "done"
-                      ? incompleteActivityDetail
-                      : event.message
-                  }`,
-                }
-              : record,
-          ),
-        );
-        recordActivity({
-          conversationId: run.conversationId,
-          requestId: event.requestId,
-          kind: "result",
-          title:
-            event.type === "error"
-              ? tRef.current(event.status === "cancelled"
-                  ? "chat.status.taskCancelled" : "chat.status.taskFailed")
-              : tRef.current("chat.status.taskCompleted"),
-          detail:
-            event.type === "error"
-              ? event.message
-              : tRef.current("chat.status.runtimeCompleted"),
-          status: terminalStatus,
-        });
-        setAssistantTasks((current) =>
-          current.map((task) =>
-            task.parentTaskId === event.requestId &&
-            (task.status === "queued" || task.status === "running")
-              ? {
-                  ...task,
-                  status: event.type === "done" ? "failed" : terminalStatus,
-                  completedAt: new Date().toISOString(),
-                  error:
-                    event.type === "error"
-                      ? event.message
-                      : incompleteSubagentError,
-                }
-              : task,
-          ),
-        );
-        updateMessage(run.conversationId, run.messageId, (message) => {
-          const representedToolError =
-            event.type === "error" &&
-            isErrorRepresentedByFailedTool(message.tools, event.message);
-          const toolTerminalState =
-            event.type === "error"
-              ? event.status === "cancelled"
-                ? ("cancelled" as const)
-                : ("failed" as const)
-              : ("interrupted" as const);
-          return {
-            ...message,
-            state: event.type === "error" ? "error" : "complete",
-            terminalStatus: event.type === "error"
-              ? event.status === "cancelled" ? "cancelled" : "failed"
-              : undefined,
-            status:
-              event.type === "error" && (event.status === "cancelled" || !representedToolError)
-                ? event.message
-                : event.type === "done"
-                  ? tRef.current("chat.status.taskCompleted")
-                  : undefined,
-            contextCompression:
-              event.type === "error" &&
-              message.contextCompression?.state === "compressing"
-                ? {
-                    ...message.contextCompression,
-                    state: "failed" as const,
-                  }
-                : message.contextCompression,
-            contextCompressions:
-              event.type === "error"
-                ? message.contextCompressions?.map((compression) =>
-                    compression.state === "compressing"
-                      ? {
-                          ...compression,
-                          state: "failed" as const,
-                        }
-                      : compression,
-                  )
-                : message.contextCompressions,
-            approval: undefined,
-            pendingQuestions: undefined,
-            tools: toolTerminalState
-              ? message.tools?.map((tool) =>
-                  tool.state === "pending" || tool.state === "running"
-                    ? { ...tool, state: toolTerminalState }
-                    : tool,
-                )
-              : message.tools,
-            subagents: message.subagents?.map((subagent) =>
-              subagent.state === "queued" || subagent.state === "running"
-                ? {
-                    ...subagent,
-                    state:
-                      event.type === "error"
-                        ? event.status === "cancelled"
-                          ? ("cancelled" as const)
-                          : ("failed" as const)
-                        : ("failed" as const),
-                    ...(event.type === "error" && event.status !== "cancelled"
-                      ? { error: event.message.slice(0, 1_000) }
-                      : event.type === "done"
-                        ? { error: incompleteSubagentError }
-                        : {}),
-                  }
-                : subagent,
-            ),
-            blocks: terminalizeMessageToolBlocks(message.blocks, toolTerminalState),
-          };
-        });
-        activeRuns.current.delete(event.requestId);
-        if (event.type === "done") markConversationCompleted(run.conversationId);
-        setConversationActivity(run.conversationId, false);
-        releaseConversationQueueAfterRun(run);
-        flushConversationPersistenceAfterRenderRef.current = true;
-      }
-    },
-    [
-    conversationStore,
-      recordActivity,
-      loadWorkspaceChanges,
+  // Event handling lives in agent-event-handler.ts; the listener stays
+  // subscribed and reads the latest setters and refs, updated after commit.
+  const agentEventDependenciesRef = useRef<AgentEventDependencies | undefined>(undefined);
+  useLayoutEffect(() => {
+    agentEventDependenciesRef.current = {
+      activeRuns, activeConversationIdRef, activeProjectIdRef, assistantTasksRef, hydratingArtifactIds,
+      requestPersistenceFlush: conversationPersistence.requestFlushAfterCommit, tRef,
+      conversationStore, liveMessages, setConversations, setAssistantTasks, setAssistantArtifacts,
+      setActivityRecords, setUnreadConversationIds, notify, updateMessage, recordActivity,
+      updateRequestActivity, loadWorkspaceChanges, markConversationCompleted, setConversationActivity,
       releaseConversationQueueAfterRun,
-      setConversationActivity,
-      updateMessage,
-      updateRequestActivity,
-      markConversationCompleted,
-      liveMessages,
-      setConversations,
-    ],
-  );
+    };
+  }, [conversationPersistence, conversationStore, liveMessages, setConversations, updateMessage,
+    recordActivity, updateRequestActivity, loadWorkspaceChanges, markConversationCompleted,
+    setConversationActivity, releaseConversationQueueAfterRun]);
+  const handleAgentEvent = useCallback((event: AgentEvent): void => {
+    const dependencies = agentEventDependenciesRef.current;
+    if (dependencies) applyAgentEvent(event, dependencies);
+  }, []);
 
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
@@ -4798,90 +3729,24 @@ function App(): React.JSX.Element {
     ...[...activeRuns.current.values()].map(run => run.conversationId),
     ...preparingConversations.current,
   ].filter(Boolean)), []);
-  const conversationHistoryRequests = useRef(new Map<string, Promise<Conversation>>());
-  const releaseUnretainedConversationHistories = useCallback((): void => {
-    const retained = retainedConversationDetailIds();
-    setConversations(current => {
-      let changed = false;
-      const next = current.map(conversation => {
-        if (conversation.messageSummary || retained.has(conversation.id) ||
-          conversationHistoryRequests.current.has(conversation.id) ||
-          conversation.activeRequest ||
-          (!conversation.remote && persistedLocalConversationsRef.current.get(conversation.id) !== conversation) ||
-          conversation.messages.some(message => message.state === "streaming" ||
-            message.approval || message.pendingQuestions?.length) ||
-          assistantTasksRef.current.some(task => task.conversationId === conversation.id &&
-            (task.status === "running" || task.status === "waiting_approval"))) return conversation;
-        changed = true;
-        const summary: Conversation = {
-          ...conversation, messages: [],
-          messageSummary: { count: conversation.messages.length, firstRole: conversation.messages[0]?.role },
-        };
-        if (!conversation.remote) persistedLocalConversationsRef.current.set(conversation.id, summary);
-        return summary;
-      });
-      return changed ? next : current;
-    });
-  }, [retainedConversationDetailIds, setConversations]);
-
-  const persistLocalConversationChanges = useCallback((): void => {
-    const operation = conversationPersistenceQueueRef.current.then(async () => {
-      if (conversationPersistencePausedRef.current) {
-        return;
-      }
-      const { batch, acknowledgements } = createLocalConversationSaveBatch(
-        conversationStore.getState(),
-        persistedLocalConversationsRef.current,
-        deletingLocalConversationIdsRef.current,
-      );
-      if (batch.length === 0) {
-        releaseUnretainedConversationHistories();
-        return;
-      }
-      await window.goodbuddy.conversations.saveLocal(batch);
-      for (const conversation of acknowledgements) {
-        persistedLocalConversationsRef.current.set(
-          conversation.id,
-          conversation,
-        );
-      }
-      releaseUnretainedConversationHistories();
-    });
-    conversationPersistenceQueueRef.current = operation.catch(() => undefined);
-    void operation.catch(() => {
-      notify({
+  useLayoutEffect(() => {
+    conversationPersistence.connect({
+      retainedConversationIds: retainedConversationDetailIds,
+      hasBusyTask: (conversationId) => assistantTasksRef.current.some(task => task.conversationId === conversationId &&
+        (task.status === "running" || task.status === "waiting_approval")),
+      pinState: () => ({ revision: conversationPinRevisionRef.current, pending: conversationPinPendingRef.current }),
+      historyUnavailableError: () => new Error(tRef.current("notices.remoteConversationRefreshFailed")),
+      onSaveFailed: () => notify({
         tone: "error",
         message: tRef.current("notices.conversationPersistenceFailed"),
         dedupeKey: "conversation-persistence",
-      });
+      }),
     });
-  }, [releaseUnretainedConversationHistories, conversationStore]);
-  const ensureConversationHistory = useCallback((conversationId: string): Promise<Conversation> => {
-    const current = conversationStore.getState().find(item => item.id === conversationId);
-    if (!current) return Promise.reject(new Error(tRef.current("notices.remoteConversationRefreshFailed")));
-    if (!current.messageSummary) return Promise.resolve(current);
-    const pending = conversationHistoryRequests.current.get(conversationId);
-    if (pending) return pending;
-    const pinRevision = conversationPinRevisionRef.current;
-    const request = window.goodbuddy.conversations.get(conversationId).then(snapshot => {
-      const latest = conversationStore.getState().find(item => item.id === conversationId);
-      if (!latest || deletingLocalConversationIdsRef.current.has(conversationId)) {
-        throw new Error(tRef.current("notices.remoteConversationRefreshFailed"));
-      }
-      if (!latest.messageSummary) return latest;
-      if (pinRevision !== conversationPinRevisionRef.current || conversationPinPendingRef.current) {
-        snapshot = { ...snapshot, pinned: latest.pinned };
-      }
-      const next = mergePersistedConversations(
-        conversationStore.getState(), [snapshot], persistedLocalConversationsRef.current,
-        retainedConversationDetailIds(),
-      );
-      setConversations(next);
-      return next.find(item => item.id === conversationId)!;
-    }).finally(() => { conversationHistoryRequests.current.delete(conversationId); });
-    conversationHistoryRequests.current.set(conversationId, request);
-    return request;
-  }, [retainedConversationDetailIds, setConversations, conversationStore]);
+  }, [conversationPersistence, retainedConversationDetailIds]);
+  // Saves, history loading and the save queue live in conversation-persistence.ts.
+  const persistLocalConversationChanges = conversationPersistence.persist;
+  const ensureConversationHistory = conversationPersistence.ensureHistory;
+  const flushConversationPersistenceAfterCommit = conversationPersistence.flushAfterCommit;
 
   useEffect(() => {
     if (!conversationStoreReady) return;
@@ -4894,30 +3759,10 @@ function App(): React.JSX.Element {
     if (!conversationStoreReady) {
       return;
     }
-    persistLocalConversationChanges();
-    const interval = window.setInterval(
-      persistLocalConversationChanges,
-      conversationPersistenceIntervalMs,
-    );
-    return () => {
-      window.clearInterval(interval);
-      persistLocalConversationChanges();
-    };
-  }, [conversationStoreReady, persistLocalConversationChanges]);
-
-  // Runs after each committed conversation change (ConversationStoreEffects)
-  // and when the store becomes ready.
-  const flushConversationPersistenceAfterCommit = useCallback((): void => {
-    if (
-      !conversationStoreReady ||
-      !flushConversationPersistenceAfterRenderRef.current
-    ) {
-      return;
-    }
-    flushConversationPersistenceAfterRenderRef.current = false;
-    persistLocalConversationChanges();
-  }, [conversationStoreReady, persistLocalConversationChanges]);
-  useEffect(flushConversationPersistenceAfterCommit, [flushConversationPersistenceAfterCommit]);
+    const stop = conversationPersistence.start();
+    conversationPersistence.flushAfterCommit();
+    return stop;
+  }, [conversationStoreReady, conversationPersistence]);
 
   const persistActivityHistory = useCallback(async (): Promise<void> => {
     if (!activityHistoryReady) {
@@ -4944,224 +3789,70 @@ function App(): React.JSX.Element {
         if (!conversationStoreReady) {
           return;
         }
-        flushConversationPersistenceAfterRenderRef.current = false;
-        persistLocalConversationChanges();
-        await conversationPersistenceQueueRef.current;
+        await conversationPersistence.flushForQuit();
         await attachmentSaveQueue.current;
       }),
-    [
-      conversationStoreReady,
-      persistActivityHistory,
-      persistLocalConversationChanges,
-    ],
+    [conversationStoreReady, persistActivityHistory, conversationPersistence],
   );
 
+  // Main's "data changed" notifications: conversation-refresh.ts re-reads
+  // tasks, schedules and summaries and merges them into the store.
   useEffect(() => {
     if (!conversationStoreReady) {
       return;
     }
-    let active = true;
-    let refreshSequence = 0;
-    let refreshTimer: number | undefined;
-    let refreshInFlight = false;
-    let refreshQueued = false;
-    const queueRefresh = (): void => {
-      refreshSequence += 1;
-      refreshQueued = true;
-      if (refreshInFlight || refreshTimer !== undefined) {
-        return;
-      }
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = undefined;
-        refresh();
-      }, 50);
-    };
-    // A run whose assistant message has already reached a persisted
-    // terminal state (for example a remote task that finished while the
-    // desktop was disconnected) must stop counting as in-flight, otherwise
-    // the renderer keeps showing "processing" forever.
-    const settleActiveRunsFromPersistedMessages = (
-      persisted: readonly ConversationSnapshot[],
-    ): void => {
-      if (activeRuns.current.size === 0) {
-        return;
-      }
-      const persistedMessageStates = new Map<string, Message["state"]>();
-      for (const conversation of persisted) {
-        for (const message of conversation.messages) {
-          persistedMessageStates.set(
-            `${conversation.id}\0${message.id}`,
-            message.state,
-          );
-        }
-      }
-      for (const [requestId, run] of activeRuns.current) {
-        const state = persistedMessageStates.get(
-          `${run.conversationId}\0${run.messageId}`,
+    return startConversationRefresh({
+      store: conversationStore,
+      persistence: conversationPersistence,
+      activeRuns: activeRuns.current,
+      activeConversationId: () => activeConversationIdRef.current,
+      retainedConversationIds: retainedConversationDetailIds,
+      pinState: () => ({
+        revision: conversationPinRevisionRef.current,
+        pending: conversationPinPendingRef.current,
+      }),
+      onTasks: (tasks) => {
+        setAssistantTasks(tasks);
+        setActivityRecords((current) =>
+          reconcileActivityRecords(current, tasks, new Set(activeRuns.current.keys())),
         );
-        if (state !== undefined && state !== "streaming") {
-          activeRuns.current.delete(requestId);
-          if (state === "complete") markConversationCompleted(run.conversationId);
-          setConversationActivity(run.conversationId, false);
-          releaseConversationQueueAfterRun(run);
-        }
-      }
-    };
-    const refresh = (): void => {
-      if (refreshInFlight) {
-        refreshQueued = true;
-        return;
-      }
-      refreshInFlight = true;
-      refreshQueued = false;
-      const sequence = refreshSequence;
-      const pinRevision = conversationPinRevisionRef.current;
-      const tasksRefresh = window.goodbuddy.tasks
-        .list()
-        .then((tasks) => {
-          if (!active || sequence !== refreshSequence) {
-            return;
-          }
-          setAssistantTasks(tasks);
-          setActivityRecords((current) =>
-            reconcileActivityRecords(
-              current,
-              tasks,
-              new Set(activeRuns.current.keys()),
-            ),
-          );
-        })
-        .catch(() => {
-          if (active && sequence === refreshSequence) {
-            notify({
-              tone: "error",
-              message: tRef.current("notices.taskHistoryReadFailed"),
-              dedupeKey: "task-lifecycle-refresh",
-            });
-          }
+      },
+      onSchedules: setAssistantSchedules,
+      onUnread: (unread) => {
+        setUnreadConversationIds((current) => {
+          const next = new Set(current);
+          unread.forEach((conversation) => next.add(conversation.id));
+          return next;
         });
-      const schedulesRefresh = window.goodbuddy.schedules
-        .list()
-        .then((schedules) => {
-          if (active && sequence === refreshSequence) {
-            setAssistantSchedules(schedules);
-          }
-        })
-        .catch(() => {
-          if (active && sequence === refreshSequence) {
-            notify({
-              tone: "error",
-              message: tRef.current("notices.schedulesReadFailed"),
-              dedupeKey: "schedule-lifecycle-refresh",
-            });
-          }
+        notify({
+          tone: "info",
+          message: tRef.current("notices.remoteMessage", {
+            channel: projectChannelLabels[unread[0]!.remote!.channel],
+          }),
+          dedupeKey: "remote-channel-message",
         });
-      const conversationsRefresh = window.goodbuddy.conversations
-        .listSummaries([...retainedConversationDetailIds()])
-        .then((persisted) => {
-          if (!active || sequence !== refreshSequence) {
-            return;
-          }
-          if (pinRevision !== conversationPinRevisionRef.current) {
-            queueRefresh();
-            return;
-          }
-          if (conversationPinPendingRef.current) {
-            const currentPins = new Map(conversationStore.getState().map(item => [item.id, item.pinned]));
-            persisted = persisted.map(item => ({ ...item, pinned: currentPins.has(item.id) ? currentPins.get(item.id) : item.pinned }));
-          }
-          const remote = persisted.filter(
-            (conversation) => conversation.remote,
-          );
-          const previousById = new Map(
-            conversationStore.getState().map((conversation) => [
-              conversation.id,
-              conversation,
-            ]),
-          );
-          const updated = remote.filter((conversation) => {
-            const previous = previousById.get(conversation.id);
-            return (
-              previous === undefined ||
-              conversation.updatedAt > previous.updatedAt
-            );
-          });
-          const unread = updated.filter(
-            (conversation) =>
-              conversation.id !== activeConversationIdRef.current,
-          );
-          if (unread.length > 0) {
-            setUnreadConversationIds((current) => {
-              const next = new Set(current);
-              unread.forEach((conversation) => next.add(conversation.id));
-              return next;
-            });
-            notify({
-              tone: "info",
-              message: tRef.current("notices.remoteMessage", {
-                channel: projectChannelLabels[unread[0]!.remote!.channel],
-              }),
-              dedupeKey: "remote-channel-message",
-            });
-          }
-          setConversations((current) =>
-            mergePersistedConversations(
-              current,
-              persisted,
-              persistedLocalConversationsRef.current,
-              retainedConversationDetailIds(),
-            ),
-          );
-          settleActiveRunsFromPersistedMessages(persisted);
-        })
-        .catch(() => {
-          if (active && sequence === refreshSequence) {
-            notify({
-              tone: "error",
-              message: tRef.current("notices.remoteConversationRefreshFailed"),
-              dedupeKey: "remote-conversation-refresh",
-            });
-          }
-        });
-      void Promise.allSettled([
-        tasksRefresh,
-        schedulesRefresh,
-        conversationsRefresh,
-      ]).finally(() => {
-        refreshInFlight = false;
-        if (active && refreshQueued) {
-          queueRefresh();
-        }
-      });
-    };
-    const refreshWhenVisible = (): void => {
-      if (document.visibilityState !== "hidden") {
-        queueRefresh();
-      }
-    };
-    const remove = window.goodbuddy.conversations.onChanged(queueRefresh);
-    const removeQueueListener =
-      window.goodbuddy.conversationQueue.onChanged(queueRefresh);
-    window.addEventListener("focus", refreshWhenVisible);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      active = false;
-      if (refreshTimer !== undefined) {
-        window.clearTimeout(refreshTimer);
-      }
-      remove();
-      removeQueueListener();
-      window.removeEventListener("focus", refreshWhenVisible);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
+      },
+      onRunSettled: (_requestId, run, state) => {
+        if (state === "complete") markConversationCompleted(run.conversationId);
+        setConversationActivity(run.conversationId, false);
+        releaseConversationQueueAfterRun(run);
+      },
+      onError: (kind) => {
+        notify(kind === "tasks"
+          ? { tone: "error", message: tRef.current("notices.taskHistoryReadFailed"), dedupeKey: "task-lifecycle-refresh" }
+          : kind === "schedules"
+            ? { tone: "error", message: tRef.current("notices.schedulesReadFailed"), dedupeKey: "schedule-lifecycle-refresh" }
+            : { tone: "error", message: tRef.current("notices.remoteConversationRefreshFailed"), dedupeKey: "remote-conversation-refresh" });
+      },
+    });
   }, [
     conversationStore,
+    conversationPersistence,
     conversationStoreReady,
     releaseConversationQueueAfterRun,
     retainedConversationDetailIds,
     setConversationActivity,
     markConversationCompleted,
-    setConversations,
   ]);
 
   useEffect(() => {
@@ -5596,7 +4287,7 @@ function App(): React.JSX.Element {
       if (!active) {
         return;
       }
-      persistedLocalConversationsRef.current = acknowledgedLocalConversations;
+      conversationPersistence.replaceAcknowledged(acknowledgedLocalConversations);
       setConversations(nextConversations);
       setActiveId(projectConversation?.id ?? "");
       try {
@@ -5607,10 +4298,7 @@ function App(): React.JSX.Element {
       }
       setConversationStoreReady(true);
     });
-    conversationPersistenceQueueRef.current = initialization.then(
-      () => undefined,
-      () => undefined,
-    );
+    conversationPersistence.chain(initialization);
     void initialization.catch((reason: unknown) => {
       if (active) {
         setConversationLoadError(
@@ -5624,7 +4312,7 @@ function App(): React.JSX.Element {
     return () => {
       active = false;
     };
-  }, [conversationLoadRetry, setActiveId, setConversations]);
+  }, [conversationLoadRetry, setActiveId, setConversations, conversationPersistence]);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -5982,11 +4670,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const missingIds = [
-      ...new Set(
-        (activeConversation?.messages ?? []).flatMap(
-          (message) => [...(message.artifactIds ?? []), ...(message.imageOperations?.flatMap(operation => operation.artifactIds) ?? [])],
-        ),
-      ),
+      ...(activeConversation?.artifactIds ?? []),
     ]
       .filter(
         (artifactId) =>
@@ -6015,7 +4699,7 @@ function App(): React.JSX.Element {
         hydratingArtifactIds.current.delete(artifactId);
       }
     });
-  }, [activeConversation, assistantArtifactById]);
+  }, [activeConversation?.artifactIds, assistantArtifactById]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -6470,15 +5154,15 @@ function App(): React.JSX.Element {
     setPinningConversationId(conversation.id);
     try {
       if (!conversation.remote) {
-        await conversationPersistenceQueueRef.current;
-        if (!persistedLocalConversationsRef.current.has(conversation.id)) {
+        await conversationPersistence.idle();
+        if (!conversationPersistence.acknowledged().has(conversation.id)) {
           const draft = conversationStore.getState().find(item => item.id === conversation.id);
           if (!draft) return;
           await window.goodbuddy.conversations.saveLocal([{
             header: toLocalConversationHeader(draft),
             messages: draft.messages.map(toConversationMessage),
           }]);
-          persistedLocalConversationsRef.current.set(draft.id, draft);
+          conversationPersistence.acknowledged().set(draft.id, draft);
         }
       }
       const pinned = !conversation.pinned;
@@ -6520,14 +5204,14 @@ function App(): React.JSX.Element {
       (conversation) => conversation.id === conversationId,
     );
     if (deletingConversation && !deletingConversation.remote) {
-      deletingLocalConversationIdsRef.current.add(conversationId);
+      conversationPersistence.markDeleting(conversationId, true);
       try {
-        await conversationPersistenceQueueRef.current;
+        await conversationPersistence.idle();
         await attachmentSaveQueue.current;
         await window.goodbuddy.conversations.deleteLocal(conversationId);
-        persistedLocalConversationsRef.current.delete(conversationId);
+        conversationPersistence.acknowledged().delete(conversationId);
       } catch {
-        deletingLocalConversationIdsRef.current.delete(conversationId);
+        conversationPersistence.markDeleting(conversationId, false);
         notify({
           tone: "error",
           message: t("notices.deleteConversationPersistenceFailed"),
@@ -6583,7 +5267,7 @@ function App(): React.JSX.Element {
     const remaining = conversationStore.getState().filter(
       (conversation) => conversation.id !== conversationId,
     );
-    deletingLocalConversationIdsRef.current.delete(conversationId);
+    conversationPersistence.markDeleting(conversationId, false);
     const projectRemaining = remaining.filter(
       (conversation) => conversation.projectId === activeProjectId,
     );
@@ -6622,9 +5306,9 @@ function App(): React.JSX.Element {
     setBranchingConversationId(sourceConversation.id);
     try {
       persistLocalConversationChanges();
-      await conversationPersistenceQueueRef.current;
+      await conversationPersistence.idle();
       if (
-        persistedLocalConversationsRef.current.get(sourceConversation.id) !==
+        conversationPersistence.acknowledged().get(sourceConversation.id) !==
           sourceConversation ||
         conversationStore.getState().find(
           (conversation) => conversation.id === sourceConversation.id,
@@ -6644,7 +5328,7 @@ function App(): React.JSX.Element {
         ),
       });
       const nextBranch: Conversation = branch;
-      persistedLocalConversationsRef.current.set(nextBranch.id, nextBranch);
+      conversationPersistence.acknowledged().set(nextBranch.id, nextBranch);
       setConversations((current) => [
         nextBranch,
         ...current.filter((conversation) => conversation.id !== nextBranch.id),
@@ -6956,11 +5640,9 @@ function App(): React.JSX.Element {
         });
       }
     };
-    let conversationSnapshot = queuedInput
-      ? conversationStore.getState().find(
-          (conversation) => conversation.id === queuedInput.conversationId,
-        )
-      : activeConversation;
+    let conversationSnapshot = conversationStore.getConversation(
+      queuedInput ? queuedInput.conversationId : activeId,
+    );
     if (conversationSnapshot?.messageSummary) {
       try {
         conversationSnapshot = await ensureConversationHistory(conversationSnapshot.id);
@@ -7145,9 +5827,9 @@ function App(): React.JSX.Element {
       };
       try {
         persistLocalConversationChanges();
-        await conversationPersistenceQueueRef.current;
+        await conversationPersistence.idle();
         if (
-          !persistedLocalConversationsRef.current.has(conversationSnapshot.id)
+          !conversationPersistence.acknowledged().has(conversationSnapshot.id)
         ) {
           throw new Error(t("notices.conversationPersistenceFailed"));
         }
@@ -7271,7 +5953,7 @@ function App(): React.JSX.Element {
       ),
     );
     try {
-      const saveOrigin = conversationPersistenceQueueRef.current.then(async () => {
+      const saveOrigin = conversationPersistence.enqueue(async () => {
         const origin = {
           ...conversationSnapshot,
           title: conversationSnapshot.title === "新对话" ? prompt.slice(0, 24) : conversationSnapshot.title,
@@ -7283,9 +5965,8 @@ function App(): React.JSX.Element {
           header: toLocalConversationHeader(origin),
           messages: [toConversationMessage(userMessage), toConversationMessage(assistantMessage)],
         }]);
-        persistedLocalConversationsRef.current.set(conversationId, origin);
+        conversationPersistence.acknowledged().set(conversationId, origin);
       });
-      conversationPersistenceQueueRef.current = saveOrigin.catch(() => undefined);
       await saveOrigin;
       await window.goodbuddy.agent.run({
         requestId,
@@ -7615,8 +6296,8 @@ function App(): React.JSX.Element {
     const conversationId = activeId;
     setContextError(undefined);
     try {
-      await conversationPersistenceQueueRef.current;
-      if (!persistedLocalConversationsRef.current.has(conversationId)) {
+      await conversationPersistence.idle();
+      if (!conversationPersistence.acknowledged().has(conversationId)) {
         const owner = conversationStore.getState().find((conversation) => conversation.id === conversationId);
         if (!owner || owner.remote) throw new Error('附件目标会话不可编辑');
         await window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(owner), messages: owner.messages.map(toConversationMessage) }]);
@@ -7974,7 +6655,7 @@ function App(): React.JSX.Element {
       if (!text.trim()) return;
       // Main validates source IDs against persisted messages, including newly completed replies.
       persistLocalConversationChanges();
-      await conversationPersistenceQueueRef.current;
+      await conversationPersistence.idle();
       if (!await guardNoteDraft()) return;
       const title = conversation.title.slice(0, 100);
       setNoteDraft({ text, initialText: text, title, initialTitle: title, targetId: '', newNote: false,
@@ -7985,7 +6666,7 @@ function App(): React.JSX.Element {
       openQuickNotes();
     } catch (reason) { notify({ tone: 'error', message: displayErrorMessage(reason, t('magicNotes:errors.operationFailed')) }); }
     finally { noteCapturePending.current = false; setNoteCaptureLoading(false); }
-  }, [magicNotesEnabled, noteDraft.saving, ensureConversationHistory, persistLocalConversationChanges, guardNoteDraft, setNoteDraft, projectNames, openQuickNotes, notify, t, conversationStore]);
+  }, [magicNotesEnabled, noteDraft.saving, ensureConversationHistory, persistLocalConversationChanges, guardNoteDraft, setNoteDraft, projectNames, openQuickNotes, notify, t, conversationStore, conversationPersistence]);
   const openNoteSource = async (source: MagicNoteSource, messageId?: string): Promise<'opened' | 'missing'> => {
     let snapshot;
     try { snapshot = await window.goodbuddy.conversations.get(source.conversationId); }
@@ -7994,7 +6675,7 @@ function App(): React.JSX.Element {
       throw reason;
     }
     requestWorkspaceLeave('chat', () => {
-      const next = mergePersistedConversations(conversationStore.getState(), [snapshot], persistedLocalConversationsRef.current, new Set([source.conversationId, ...retainedConversationDetailIds()]));
+      const next = mergePersistedConversations(conversationStore.getState(), [snapshot], conversationPersistence.acknowledged(), new Set([source.conversationId, ...retainedConversationDetailIds()]));
       setConversations(next);
       setActiveProjectId(snapshot.projectId ?? '');
       setActiveId(source.conversationId);
@@ -8031,7 +6712,7 @@ function App(): React.JSX.Element {
           conversation = await window.goodbuddy.conversations.get(conversationId);
           const persisted = [conversation];
           setConversations((current) => mergePersistedConversations(
-            current, persisted, persistedLocalConversationsRef.current,
+            current, persisted, conversationPersistence.acknowledged(),
           ));
         } catch {
           notify({ tone: "error", message: t("notices.remoteConversationRefreshFailed") });
@@ -8057,7 +6738,7 @@ function App(): React.JSX.Element {
       if (narrowWindow) closeNarrowSidebar();
     };
     requestWorkspaceLeave("chat", () => { void open(); });
-  }, [closeNarrowSidebar, commitView, narrowWindow, requestWorkspaceLeave, setActiveId, t, setConversations, conversationStore]);
+  }, [closeNarrowSidebar, commitView, narrowWindow, requestWorkspaceLeave, setActiveId, t, setConversations, conversationStore, conversationPersistence]);
 
   const openAssistantTask = (task: AssistantTask): void => {
     if (!task.conversationId) {
@@ -8112,7 +6793,7 @@ function App(): React.JSX.Element {
     }
     if (input.conversationId) {
       persistLocalConversationChanges();
-      await conversationPersistenceQueueRef.current;
+      await conversationPersistence.idle();
     }
     const schedule = await window.goodbuddy.schedules.create({
       ...input,
@@ -8140,7 +6821,7 @@ function App(): React.JSX.Element {
         mergePersistedConversations(
           current,
           conversationResult.value,
-          persistedLocalConversationsRef.current,
+          conversationPersistence.acknowledged(),
           retainedConversationDetailIds(),
         ),
       );
@@ -8315,58 +6996,10 @@ function App(): React.JSX.Element {
     notify,
   });
 
-  // Reuse each strip element while its inputs are unchanged: streaming into
-  // one conversation must not hand every cached history pane a new taskStrip.
-  const [taskStripCache] = useState(() => new Map<string, { inputs: readonly unknown[]; element: React.JSX.Element }>());
-  const conversationTaskStrips = useMemo(() => new Map(cachedConversations.map((conversation): [string, React.JSX.Element] => {
-    const tasks = tasksByConversation.get(conversation.id) ?? emptyConversationTasks;
-    const conversationMode = conversation.id === activeId
-      ? effectiveWorkMode
-      : normalizeInteractiveWorkMode(conversation.workMode ?? projects.find(project => project.id === conversation.projectId)?.defaultWorkMode);
-    const selectedTaskId = tasks.some(task => task.id === selectedAssistantTaskId) ? selectedAssistantTaskId : undefined;
-    const inputs = [Boolean(conversation.remote), conversationMode, locale, removeAssistantSchedule, runAssistantSchedule,
-      setAssistantScheduleEnabled, assistantSchedules, selectedTaskId, tasks, conversation.messages,
-      conversation.activeRequest?.messageId];
-    const cached = taskStripCache.get(conversation.id);
-    if (cached && sameArrayItems(cached.inputs, inputs)) {
-      return [conversation.id, cached.element];
-    }
-    const element = (
-      <div className="conversation-context-strips">
-        {!conversation.remote && (
-          <ConversationTaskStrip
-            conversationMode={conversationMode}
-            locale={locale}
-            onRemoveSchedule={removeAssistantSchedule}
-            onRunSchedule={runAssistantSchedule}
-            onSelectTask={setSelectedAssistantTaskId}
-            onSetScheduleEnabled={setAssistantScheduleEnabled}
-            schedules={assistantSchedules}
-            selectedTaskId={selectedTaskId}
-            tasks={tasks}
-          />
-        )}
-        <RuntimeChecklistStrip messages={conversation.messages} activeMessageId={conversation.activeRequest?.messageId} />
-      </div>
-    );
-    taskStripCache.set(conversation.id, { inputs, element });
-    return [conversation.id, element];
-  }).filter((_entry, index, entries) => {
-    // Forget evicted conversations; the cache stays bounded by the pane cache.
-    if (index === entries.length - 1) {
-      const live = new Set(entries.map(([id]) => id));
-      for (const id of taskStripCache.keys()) {
-        if (!live.has(id)) taskStripCache.delete(id);
-      }
-    }
-    return true;
-  })), [taskStripCache, cachedConversations, tasksByConversation, activeId, effectiveWorkMode, projects, locale,
-    removeAssistantSchedule, runAssistantSchedule, setAssistantScheduleEnabled, assistantSchedules, selectedAssistantTaskId]);
-
   const clearLocalData = async (): Promise<void> => {
-    conversationPersistencePausedRef.current = true;
+    conversationPersistence.setPaused(true);
     try {
-      await conversationPersistenceQueueRef.current;
+      await conversationPersistence.idle();
       for (const requestId of activeRuns.current.keys()) {
         await window.goodbuddy.agent.cancel(requestId);
       }
@@ -8388,7 +7021,7 @@ function App(): React.JSX.Element {
         undefined,
         t("conversation.greeting"),
       );
-      persistedLocalConversationsRef.current.clear();
+      conversationPersistence.acknowledged().clear();
       setConversations([conversation]);
       setActiveId(conversation.id);
       legacyActivityHistoryMayBeIncompleteRef.current = false;
@@ -8419,15 +7052,12 @@ function App(): React.JSX.Element {
         message: t("notices.localDataCleared"),
       });
     } finally {
-      conversationPersistencePausedRef.current = false;
+      conversationPersistence.setPaused(false);
       persistLocalConversationChanges();
     }
   };
 
-  const isRunning =
-    activeConversation?.messages.some(
-      (message) => message.state === "streaming",
-    ) ?? false;
+  const isRunning = activeConversation?.running ?? false;
   const [composerContext, setComposerContext] = useState({ activeId, isRunning, view });
   if (composerContext.activeId !== activeId || composerContext.isRunning !== isRunning || composerContext.view !== view) {
     setComposerContext({ activeId, isRunning, view });
@@ -8532,7 +7162,7 @@ function App(): React.JSX.Element {
     activeId, activeProjectId, activeRuntimeSelection, workMode, runtimeSettings,
   ]), [activeId, activeProjectId, activeRuntimeSelection, workMode, runtimeSettings]);
   const prepareNativeClientConversation = async (): Promise<string> => {
-    let conversation = activeConversation;
+    let conversation = conversationStore.getConversation(activeId);
     if (!conversation) {
       conversation = await new Promise<Conversation>((resolve, reject) => {
         if (!startNewConversation(activeProjectId || undefined, { ready: resolve })) {
@@ -8543,11 +7173,9 @@ function App(): React.JSX.Element {
     }
     // Save the current selection before Main resolves the launch from its conversation ID.
     const header = toLocalConversationHeader({ ...conversation, workMode });
-    const operation = conversationPersistenceQueueRef.current.then(() =>
+    await conversationPersistence.enqueue(() =>
       window.goodbuddy.conversations.saveLocal([{ header, messages: [] }]),
     );
-    conversationPersistenceQueueRef.current = operation.catch(() => undefined);
-    await operation;
     return conversation.id;
   };
 
@@ -9004,10 +7632,9 @@ function App(): React.JSX.Element {
               >
                 <span className="conversation-title__text">
                   {activeConversation
-                    ? getConversationDisplayTitle(
-                        activeConversation,
-                        t("conversation.defaultTitle"),
-                      )
+                    ? activeConversation.unused
+                      ? t("conversation.defaultTitle")
+                      : activeConversation.title
                     : activeProject?.kind === "channel"
                       ? t("conversation.remoteTitle")
                       : t("conversation.defaultTitle")}
@@ -9102,22 +7729,16 @@ function App(): React.JSX.Element {
               <KeepAliveRoute active={view === "chat"} route="chat">
                 <PageShell variant="reading">
                   <div className="chat-scroll-region">
-                    {cachedConversations.map((conversation) => conversation.messageSummary ? (
-                      <ConversationHistoryLoader
-                        key={conversation.id}
-                        conversationId={conversation.id}
-                        active={view === "chat" && conversation.id === activeId}
-                        load={ensureConversationHistory}
-                      />
-                    ) : (
-                      <ChatHistoryPane
-                        active={view === "chat" && conversation.id === activeId}
+                    {conversationPaneOrder.map((conversationId) => (
+                      <ConversationHistorySlot
+                        active={view === "chat" && conversationId === activeId}
                         artifactById={assistantArtifactById}
                         conversationHtmlRenderingEnabled={
                           conversationHtmlRenderingEnabled
                         }
-                        conversation={conversation}
-                        key={conversation.id}
+                        conversationId={conversationId}
+                        key={conversationId}
+                        loadHistory={ensureConversationHistory}
                         locale={locale}
                         onCopyMessage={copyMessage}
                         onAddToNote={magicNotesEnabled ? captureToNote : undefined}
@@ -9129,21 +7750,30 @@ function App(): React.JSX.Element {
                         onOpenCitationContext={openCitationContext}
                         onOpenCitationSource={openCitationSource}
                         onOpenImage={openImageViewer}
+                        onRemoveSchedule={removeAssistantSchedule}
                         onRespondApproval={respondToApproval}
                         onRespondQuestion={respondToQuestion}
                         onRetry={retryMessage}
+                        onRunSchedule={runAssistantSchedule}
                         onScrollSnapshotChange={handleChatScrollSnapshotChange}
+                        onSelectTask={setSelectedAssistantTaskId}
                         onSetInput={setQuickActionInput}
+                        onSetScheduleEnabled={setAssistantScheduleEnabled}
                         onVisibleMessageCountChange={
                           handleVisibleMessageCountChange
                         }
+                        projects={projects}
                         quickActions={quickActions}
-                        scrollSnapshot={chatScrollSnapshots[conversation.id]}
-                        taskStrip={conversationTaskStrips.get(conversation.id)}
+                        schedules={assistantSchedules}
+                        scrollSnapshot={chatScrollSnapshots[conversationId]}
+                        selectedAssistantTaskId={selectedAssistantTaskId}
+                        store={conversationStore}
+                        tasks={tasksByConversation.get(conversationId) ?? emptyConversationTasks}
                         visibleMessageCount={
-                          visibleMessageCounts[conversation.id] ??
+                          visibleMessageCounts[conversationId] ??
                           messageRenderBatchSize
                         }
+                        workModeOverride={conversationId === activeId ? effectiveWorkMode : undefined}
                       />
                     ))}
                     {activeProject?.kind === "channel" &&
