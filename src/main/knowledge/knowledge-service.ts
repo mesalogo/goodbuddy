@@ -159,6 +159,8 @@ export type KnowledgeServiceOptions = {
   embeddingProvider?: EmbeddingProvider
   rerankProvider?: RerankProvider
   embeddingBatchSize?: number
+  /** Read-only query worker bundle; searches run off the Main thread when set. */
+  readonlyQueryWorkerPath?: string
   parseDocument?: (
     name: string,
     buffer: Buffer,
@@ -263,9 +265,11 @@ export class KnowledgeService {
     EmbeddingIndexCoordinator
   >()
   private readonly lifecycleController = new AbortController()
+  private readonly readonlyQueryWorkerPath?: string
 
   constructor(options: KnowledgeServiceOptions) {
     this.database = new KnowledgeDatabase(options.databasePath)
+    this.readonlyQueryWorkerPath = options.readonlyQueryWorkerPath
     this.external = new ExternalKnowledgeService(this.database, options.credentialCipher, options.externalFetcher)
     this.managedRoot = resolve(options.managedRoot)
     this.documentResults = options.documentResults
@@ -297,6 +301,9 @@ export class KnowledgeService {
   async initialize(): Promise<void> {
     await mkdir(this.managedRoot, { recursive: true })
     this.database.initialize()
+    if (this.readonlyQueryWorkerPath) {
+      this.database.enableReadonlyWorker(this.readonlyQueryWorkerPath)
+    }
     await this.reconcileDocumentResults()
     for (const library of this.database.listKnowledgeBases()) {
       for (const source of this.database.listSourcesForSnapshot(library.id)) {
@@ -1352,7 +1359,7 @@ export class KnowledgeService {
       100,
       settings.topK * settings.candidateMultiplier
     )
-    const searchPage = this.database.hybridSearchWithDiagnostics({
+    const searchPage = await this.database.hybridSearchWithDiagnosticsAsync({
       knowledgeBaseId: library.id,
       query: input.query,
       limit: candidateLimit,
@@ -1892,7 +1899,7 @@ export class KnowledgeService {
     const library = this.requireLibrary(knowledgeBaseId)
     const settings = library.retrievalSettings
     const vector = await this.embedQuery(query, signal)
-    return this.database.hybridSearch({
+    return this.database.hybridSearchAsync({
       knowledgeBaseId,
       query,
       limit: Math.min(limit, settings.topK),

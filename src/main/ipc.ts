@@ -6343,7 +6343,7 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.conversationsSearch, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const { query } = conversationSearchRequestSchema.parse(input)
-    return assistantDatabase.searchConversations(query)
+    return assistantDatabase.searchConversationsAsync(query)
   })
 
   registerHandler(

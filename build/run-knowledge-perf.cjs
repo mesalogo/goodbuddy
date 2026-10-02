@@ -8,9 +8,24 @@ const { createHash } = require('node:crypto')
 const { mkdtempSync, rmSync, writeFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
-const { performance } = require('node:perf_hooks')
+const { monitorEventLoopDelay, performance } = require('node:perf_hooks')
 
 const root = resolve(__dirname, '..')
+
+// Measure on the project's Electron (the production runtime). Older runtimes
+// (Node 24.18 / Electron 43) stall worker threads for hundreds of ms on many
+// small ArrayBuffer allocations (SQLite BLOB rows); GB_KPERF_NODE=1 opts out.
+if (process.env.GB_KPERF_NODE !== '1') {
+  let electron
+  let version
+  try { electron = require('electron'); version = require('electron/package.json').version } catch { electron = undefined }
+  if (typeof electron === 'string' && process.versions.electron !== version) {
+    const { status } = require('node:child_process').spawnSync(electron, [__filename], {
+      stdio: 'inherit', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    })
+    process.exit(status ?? 1)
+  }
+}
 const sizes = (process.env.GB_KPERF_SIZES || '5000,20000,50000').split(',').map(Number)
 const dimensions = Number(process.env.GB_KPERF_DIMENSIONS || 384)
 const chunksPerDocument = 100
@@ -18,15 +33,23 @@ const queries = Number(process.env.GB_KPERF_QUERIES || 15)
 
 const directory = mkdtempSync(join(tmpdir(), 'goodbuddy-knowledge-perf-'))
 const bundle = join(directory, 'knowledge-database.cjs')
-buildSync({
-  entryPoints: [join(root, 'src/main/knowledge/knowledge-database.ts')],
-  bundle: true,
-  platform: 'node',
-  format: 'cjs',
-  target: 'node22',
-  outfile: bundle,
-  logLevel: 'error'
-})
+const workerBundle = join(directory, 'readonly-query-worker.cjs')
+for (const [entry, outfile] of [
+  ['src/main/knowledge/knowledge-database.ts', bundle],
+  ['src/main/readonly-query-worker.ts', workerBundle]
+]) {
+  buildSync({
+    entryPoints: [join(root, entry)],
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    target: 'node22',
+    outfile,
+    logLevel: 'error',
+    // The worker reuses AssistantDatabase, which imports Electron-only modules lazily.
+    external: ['electron']
+  })
+}
 const { KnowledgeDatabase } = require(bundle)
 
 // Deterministic pseudo-random generator so runs are comparable.
@@ -53,8 +76,30 @@ function time(body) {
 }
 const round = value => Math.round(value * 10) / 10
 
+// Main event-loop delay while `queries` searches run back to back. A sync
+// search blocks the loop for its whole duration; a worker search should not.
+async function loopDelay(body) {
+  const histogram = monitorEventLoopDelay({ resolution: 5 })
+  await body() // warm worker / caches outside the measurement
+  // Let the warm-up's blocked interval drain before sampling.
+  await new Promise(resolve => setTimeout(resolve, 50))
+  histogram.enable()
+  const started = performance.now()
+  for (let index = 0; index < queries; index += 1) {
+    await body()
+    // Yield like a real IPC handler, so the histogram samples between queries.
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  const wallMs = performance.now() - started
+  await new Promise(resolve => setTimeout(resolve, 20))
+  histogram.disable()
+  const ms = value => round(value / 1e6)
+  return { p50: ms(histogram.percentile(50)), p99: ms(histogram.percentile(99)), max: ms(histogram.max), perQueryMs: round(wallMs / queries) }
+}
+
 const results = []
-try {
+async function main() {
+  console.log(`[kperf] runtime: node ${process.version}${process.versions.electron ? ` (electron ${process.versions.electron})` : ''}`)
   for (const size of sizes) {
     const path = join(directory, `knowledge-${size}.sqlite`)
     const database = new KnowledgeDatabase(path)
@@ -82,15 +127,22 @@ try {
       seedSeconds: round(seedMs / 1000),
       ftsMs: time(() => reopened.search({ knowledgeBaseId: library.id, query: 'lighthouse budget', limit: 40 })),
       vectorMs: time(() => reopened.vectorSearch({ knowledgeBaseId: library.id, provider: 'perf', model: 'perf-model', vector: query, limit: 40 })),
-      hybridMs: time(() => reopened.hybridSearchWithDiagnostics({ knowledgeBaseId: library.id, query: 'lighthouse budget', limit: 40, provider: 'perf', model: 'perf-model', vector: query, graphEnabled: false, candidateMultiplier: 1 }))
+      hybridMs: time(() => reopened.hybridSearchWithDiagnostics(hybridOptions(library.id, query)))
     }
+    // Main event-loop delay: synchronous search on Main vs the readonly worker.
+    entry.mainLoopDelaySyncMs = await loopDelay(async () => reopened.hybridSearchWithDiagnostics(hybridOptions(library.id, query)))
+    reopened.enableReadonlyWorker(workerBundle)
+    entry.mainLoopDelayWorkerMs = await loopDelay(() => reopened.hybridSearchWithDiagnosticsAsync(hybridOptions(library.id, query)))
     reopened.close()
     results.push(entry)
     console.log(`[kperf] ${size} chunks: fts p95 ${entry.ftsMs.p95} ms, vector p95 ${entry.vectorMs.p95} ms, hybrid p95 ${entry.hybridMs.p95} ms (seed ${entry.seedSeconds} s)`)
+    console.log(`[kperf] ${size} chunks: Main loop delay max sync ${entry.mainLoopDelaySyncMs.max} ms vs worker ${entry.mainLoopDelayWorkerMs.max} ms (p99 ${entry.mainLoopDelaySyncMs.p99} / ${entry.mainLoopDelayWorkerMs.p99} ms; per query ${entry.mainLoopDelaySyncMs.perQueryMs} / ${entry.mainLoopDelayWorkerMs.perQueryMs} ms)`)
   }
   const output = process.env.GB_KPERF_OUTPUT
   if (output) writeFileSync(output, JSON.stringify({ kind: 'goodbuddy-knowledge-retrieval-benchmark', node: process.version, results }, null, 2))
-  console.table(results.map(r => ({ chunks: r.chunks, 'fts p50/p95': `${r.ftsMs.p50} / ${r.ftsMs.p95}`, 'vector p50/p95': `${r.vectorMs.p50} / ${r.vectorMs.p95}`, 'hybrid p50/p95': `${r.hybridMs.p50} / ${r.hybridMs.p95}` })))
-} finally {
-  rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  console.table(results.map(r => ({ chunks: r.chunks, 'fts p50/p95': `${r.ftsMs.p50} / ${r.ftsMs.p95}`, 'vector p50/p95': `${r.vectorMs.p50} / ${r.vectorMs.p95}`, 'hybrid p50/p95': `${r.hybridMs.p50} / ${r.hybridMs.p95}`, 'loop max sync/worker': `${r.mainLoopDelaySyncMs.max} / ${r.mainLoopDelayWorkerMs.max}` })))
 }
+const hybridOptions = (knowledgeBaseId, vector) => ({ knowledgeBaseId, query: 'lighthouse budget', limit: 40, provider: 'perf', model: 'perf-model', vector, graphEnabled: false, candidateMultiplier: 1 })
+main().catch(error => { process.exitCode = 1; console.error(error) }).finally(() => {
+  rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+})

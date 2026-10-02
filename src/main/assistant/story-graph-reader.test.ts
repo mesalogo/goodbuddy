@@ -138,3 +138,25 @@ it('pages Unicode snapshots, reads explicit current versions, and reports deleti
   f.sql.prepare('UPDATE supervision_sources SET locator_json = ? WHERE id = ?').run(JSON.stringify({ detail: 'x'.repeat(100_001) }), source.id!)
   expect(() => f.read('story_graph_read_source', { source_reference_id: source.id })).toThrow('response_too_large')
 })
+
+it('prefilters story lines by scope in SQL with the exact normalized match, and caps the scanned objects', async () => {
+  const f = await fixture()
+  f.save('Decision A', '2026-09-01T00:00:00Z')
+  const insert = f.sql.prepare('INSERT INTO story_lines (id, scope_json, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+  const now = '2026-09-01T00:00:00.000Z'
+  // Unsorted / duplicate ids still normalize to the requested scope; supersets and other kinds do not.
+  insert.run('dup', JSON.stringify({ kind: 'projects', projectIds: [f.project.id, f.project.id] }), 'Decision dup', now, now)
+  insert.run('superset', JSON.stringify({ kind: 'projects', projectIds: [f.other.id, f.project.id] }), 'Decision superset', now, now)
+  insert.run('global', JSON.stringify({ kind: 'global' }), 'Decision global', now, now)
+  const lines = (scope?: unknown) => ((f.read('story_graph_search', { query: 'Decision', page_size: 50, object_types: ['story_line'], ...(scope ? { scope } : {}) }) as Page)
+    .items.map(item => item.object_ref.id)).sort()
+  const all = f.sql.prepare('SELECT id FROM story_lines').all().map(row => String(row.id))
+  expect(lines()).toEqual(expect.arrayContaining(['dup']))
+  expect(lines()).not.toContain('superset')
+  expect(lines()).not.toContain('global')
+  expect(lines({ kind: 'global' })).toEqual(['global'])
+  expect(lines({ kind: 'projects', projectIds: [f.project.id, f.other.id] })).toEqual(['superset'])
+  expect(all.length).toBeGreaterThanOrEqual(4)
+  expect(() => readStoryGraph(f.sql, 'story_graph_search', { query: 'Decision' }, f.project.id, undefined, 2)).toThrow('scan_limit_exceeded')
+  expect(readStoryGraph(f.sql, 'story_graph_search', { query: 'Decision' }, f.project.id)).toMatchObject({ page: { complete: true } })
+})

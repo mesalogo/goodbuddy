@@ -47,6 +47,7 @@ import {
   knowledgeRetrievalTerms
 } from './retrieval-text'
 import { normalizeEntityAlias } from './graph-extractor'
+import { ReadonlyQueryReader, readWithFallback } from '../readonly-query-reader'
 import type {
   Chunk,
   ChunkEmbeddingInput,
@@ -742,6 +743,7 @@ function mapKnowledgeTask(row: Row): KnowledgeTaskItem {
 export class KnowledgeDatabase {
   externalStore!: ExternalKnowledgeStore
   private database?: DatabaseSync
+  private readonlyReader?: ReadonlyQueryReader
   private readonly taskPrunedLibraries = new Set<string>()
   private readonly taskPrunePending = new Set<string>()
 
@@ -779,7 +781,57 @@ export class KnowledgeDatabase {
     }
   }
 
+  /**
+   * Opens a read-only connection for the readonly query worker. No migration,
+   * no task recovery: the Main connection owns the schema and all writes.
+   */
+  openReadOnly(): void {
+    if (this.database) {
+      throw new Error('Knowledge database is already open')
+    }
+    const database = new DatabaseSync(this.databasePath, {
+      readOnly: true,
+      timeout: 5_000
+    })
+    this.database = database
+    this.externalStore = new ExternalKnowledgeStore(database)
+  }
+
+  /**
+   * Routes the async search methods through a read-only worker thread. In-memory
+   * databases cannot be shared with a worker and keep the synchronous path.
+   */
+  enableReadonlyWorker(workerPath: string): void {
+    if (this.databasePath === ':memory:' || this.readonlyReader) return
+    this.readonlyReader = new ReadonlyQueryReader('knowledge', this.databasePath, workerPath)
+  }
+
+  /** Test hook for the worker crash and cancellation paths. */
+  get readonlyWorkerForTest(): ReadonlyQueryReader | undefined {
+    return this.readonlyReader
+  }
+
+  searchAsync(options: SearchOptions, signal?: AbortSignal): Promise<SearchResult[]> {
+    this.requireDatabase()
+    return readWithFallback(this.readonlyReader, 'search', [options], signal,
+      () => this.search(options))
+  }
+
+  hybridSearchAsync(options: HybridSearchOptions): Promise<HybridSearchResult[]> {
+    return this.hybridSearchWithDiagnosticsAsync(options).then(page => page.results)
+  }
+
+  hybridSearchWithDiagnosticsAsync(options: HybridSearchOptions): Promise<HybridSearchResultPage> {
+    this.requireDatabase()
+    // AbortSignal is not cloneable; the reader forwards it as a shared cancel flag.
+    const { signal, ...cloneable } = options
+    return readWithFallback(this.readonlyReader, 'hybridSearchWithDiagnostics', [cloneable], signal,
+      () => this.hybridSearchWithDiagnostics(options))
+  }
+
   close(): void {
+    this.readonlyReader?.close()
+    this.readonlyReader = undefined
     if (!this.database) {
       return
     }

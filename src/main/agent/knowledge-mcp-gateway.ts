@@ -10,7 +10,7 @@ export type StoryGraphRemoteBinding = {
 }
 export type StoryGraphService = {
   available(binding: StoryGraphBinding): Promise<boolean>
-  read(name: StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal): Record<string, unknown>
+  read(name: StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal): Record<string, unknown> | Promise<Record<string, unknown>>
 }
 import { knowledgeReferenceKey, toKnowledgeReference } from '../../shared/knowledge-reference'
 import {
@@ -1611,7 +1611,7 @@ export class KnowledgeMcpGateway {
     effectiveSignal.throwIfAborted()
     if (!await this.isStoryGraphAvailable(token)) throw new Error('story_graph_unavailable: Supervisor or runtime capability is disabled')
     effectiveSignal.throwIfAborted()
-    const result = this.storyGraphService!.read(name, input, capability.storyGraph!.projectId, effectiveSignal)
+    const result = await this.storyGraphService!.read(name, input, capability.storyGraph!.projectId, effectiveSignal)
     effectiveSignal.throwIfAborted()
     if (!await this.isStoryGraphAvailable(token)) throw new Error('story_graph_unavailable: Supervisor or runtime capability is disabled')
     effectiveSignal.throwIfAborted()

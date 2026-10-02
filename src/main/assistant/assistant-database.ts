@@ -5,6 +5,7 @@ import { knowledgeReferenceKey } from '../../shared/knowledge-reference'
 import { appendConversationQuestionBlock } from '../../shared/conversation-question-blocks'
 import { DatabaseSync } from 'node:sqlite'
 import { ExecutionStatsReader } from './execution-stats-reader'
+import { ReadonlyQueryReader, readWithFallback } from '../readonly-query-reader'
 import { statSync } from 'node:fs'
 import { MagicNoteStorage } from '../magic-notes/magic-note-storage'
 import type { AssistantStorageProgress } from '../../shared/assistant-storage-contracts'
@@ -1964,6 +1965,9 @@ export class AssistantDatabase {
   private database?: DatabaseSync
   private activityHistoryCache?: { records: Map<string, string>; dataVersion: number }
   private executionStatsReader?: ExecutionStatsReader
+  private readonlyReader?: ReadonlyQueryReader
+  private readonlyWorkerPath?: string
+  private foldedSearchConnection?: DatabaseSync
   private readonly noteStorage: MagicNoteStorage
   private readonly dirtyMagicNotes = new Set<string>()
   private readonly pendingMagicNoteCleanup = new Set<string | undefined>()
@@ -2393,6 +2397,9 @@ export class AssistantDatabase {
   close(): void {
     this.executionStatsReader?.close()
     this.executionStatsReader = undefined
+    this.readonlyReader?.close()
+    this.readonlyReader = undefined
+    this.foldedSearchConnection = undefined
     this.executionStatsCache.clear()
     this.activityHistoryCache = undefined
     this.database?.close()
@@ -3021,61 +3028,99 @@ export class AssistantDatabase {
   private readConversationList(detailIds?: ReadonlySet<string>): import('../../shared/assistant-contracts').ConversationListSnapshot[] {
     const database = this.requireDatabase()
     const conversations = this.listConversationRows()
-    const messageStatement = database.prepare(
-      `SELECT id, conversation_id, role, content, state, metadata_json,
-              created_at
-       FROM (
-         SELECT id, conversation_id, role, content, state, metadata_json,
-                created_at, sequence
-         FROM messages
-         WHERE conversation_id = ?
-         ORDER BY sequence DESC
-       )
-       ORDER BY sequence ASC`
-    )
-    const summaryStatement = database.prepare(
-      `SELECT count(*) AS count,
-              max(state = 'streaming') AS streaming,
-              max(created_at) AS latestMessageAt,
-              (SELECT role FROM messages WHERE conversation_id = ? ORDER BY sequence LIMIT 1) AS firstRole
-       FROM messages WHERE conversation_id = ?`
-    )
+    type MessageSummaryRow = {
+      conversation_id: string; count: number; streaming: number | null
+      firstRole: ConversationMessage['role'] | null; latestMessageAt: string | null
+    }
     const activeIds = new Set(
       (database.prepare(`SELECT conversation_id FROM (${activeVisibleTaskSelect})`).all() as
         { conversation_id: string }[]).map(row => row.conversation_id)
     )
+    // Batched reads (PERF-15): one aggregate for every summary and one ordered
+    // scan for every detailed conversation, instead of 1-2 statements each.
+    const summaries = new Map<string, MessageSummaryRow>()
+    if (detailIds) {
+      for (const row of database.prepare(
+        `SELECT m.conversation_id AS conversation_id, count(*) AS count,
+                max(m.state = 'streaming') AS streaming,
+                max(m.created_at) AS latestMessageAt,
+                (SELECT f.role FROM messages f WHERE f.conversation_id = m.conversation_id
+                 ORDER BY f.sequence LIMIT 1) AS firstRole
+         FROM messages m JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.status = 'active'
+         GROUP BY m.conversation_id`
+      ).all() as MessageSummaryRow[]) summaries.set(row.conversation_id, row)
+    }
+    const summaryOf = (id: string): MessageSummaryRow => summaries.get(id) ??
+      { conversation_id: id, count: 0, streaming: null, firstRole: null, latestMessageAt: null }
+    const detailed = conversations.filter(conversation =>
+      !detailIds || detailIds.has(conversation.id) || activeIds.has(conversation.id) ||
+      Boolean(summaryOf(conversation.id).streaming))
+    const messagesByConversation = new Map<string, MessageRow[]>()
+    if (detailed.length > 0) {
+      for (const row of database.prepare(
+        `SELECT id, conversation_id, role, content, state, metadata_json, created_at
+         FROM messages
+         WHERE conversation_id IN (SELECT value FROM json_each(?))
+         ORDER BY conversation_id, sequence ASC`
+      ).all(JSON.stringify(detailed.map(conversation => conversation.id))) as MessageRow[]) {
+        const list = messagesByConversation.get(row.conversation_id)
+        if (list) list.push(row)
+        else messagesByConversation.set(row.conversation_id, [row])
+      }
+    }
+    const detailedIds = new Set(detailed.map(conversation => conversation.id))
     return conversations.map((conversation) => {
-      if (detailIds && !detailIds.has(conversation.id) && !activeIds.has(conversation.id)) {
-        const summary = summaryStatement.get(conversation.id, conversation.id) as {
-          count: number; streaming: number | null; firstRole: ConversationMessage['role'] | null; latestMessageAt: string | null
-        }
-        if (!summary.streaming) {
-          return {
-            ...toConversationSnapshot(conversation, []),
-            messageSummary: {
-              count: summary.count,
-              firstRole: summary.firstRole ?? undefined,
-              latestMessageAt: summary.latestMessageAt === null ? undefined : Date.parse(summary.latestMessageAt)
-            }
+      if (!detailedIds.has(conversation.id)) {
+        const summary = summaryOf(conversation.id)
+        return {
+          ...toConversationSnapshot(conversation, []),
+          messageSummary: {
+            count: summary.count,
+            firstRole: summary.firstRole ?? undefined,
+            latestMessageAt: summary.latestMessageAt === null ? undefined : Date.parse(summary.latestMessageAt)
           }
         }
       }
-      return toConversationSnapshot(conversation, messageStatement.all(conversation.id) as MessageRow[])
+      return toConversationSnapshot(conversation, messagesByConversation.get(conversation.id) ?? [])
     })
+  }
+
+  /** Registers the Unicode case-folding matcher used by conversation search. */
+  private foldedSearchDatabase(): DatabaseSync {
+    const database = this.requireDatabase()
+    if (this.foldedSearchConnection !== database) {
+      // Same folding as the renderer's search (String#toLocaleLowerCase), which
+      // SQLite's ASCII-only lower()/LIKE cannot reproduce for non-ASCII text.
+      database.function('goodbuddy_folded_includes', { deterministic: true }, (text, needle) =>
+        typeof text === 'string' && typeof needle === 'string' &&
+        text.toLocaleLowerCase().includes(needle) ? 1 : 0)
+      this.foldedSearchConnection = database
+    }
+    return database
   }
 
   searchConversations(query: string): string[] {
     const normalized = query.trim().toLocaleLowerCase()
     if (!normalized) return []
-    const database = this.requireDatabase()
-    // Read only searchable text, never tool/subagent/image metadata. Use the
-    // same Unicode case folding as the renderer's existing search.
-    const messages = database.prepare('SELECT content FROM messages WHERE conversation_id = ?')
-    return this.listConversationRows().filter(conversation =>
-      conversation.title.toLocaleLowerCase().includes(normalized) ||
-      (messages.all(conversation.id) as { content: string }[]).some(message =>
-        message.content.toLocaleLowerCase().includes(normalized))
-    ).map(conversation => conversation.id)
+    // Read only searchable text, never tool/subagent/image metadata. One query
+    // with the same Unicode case folding as the renderer's existing search.
+    return (this.foldedSearchDatabase().prepare(
+      `SELECT c.id FROM conversations c
+       WHERE c.status = 'active' AND (
+         goodbuddy_folded_includes(c.title, ?1)
+         OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id
+                    AND goodbuddy_folded_includes(m.content, ?1)))
+       ORDER BY c.pinned DESC, c.updated_at DESC`
+    ).all(normalized) as { id: string }[]).map(row => row.id)
+  }
+
+  /** Conversation search on the readonly worker; falls back to the synchronous query. */
+  searchConversationsAsync(query: string, signal?: AbortSignal): Promise<string[]> {
+    this.requireDatabase()
+    if (!query.trim()) return Promise.resolve([])
+    return readWithFallback(this.readonlyQueryReader(), 'searchConversations', [query], signal,
+      () => this.searchConversations(query))
   }
 
   getConversation(conversationId: string): ConversationSnapshot {
@@ -4922,6 +4967,25 @@ export class AssistantDatabase {
   openReadOnly(): void {
     if (this.database) throw new Error('Database already open')
     this.database = new DatabaseSync(this.databasePath, { readOnly: true, timeout: 5_000 })
+  }
+
+  /**
+   * Routes heavy read-only queries (story graph, conversation search) through a
+   * read-only worker thread. In-memory databases keep the synchronous path.
+   */
+  enableReadonlyWorker(workerPath: string): void {
+    this.readonlyWorkerPath = workerPath
+  }
+
+  private readonlyQueryReader(): ReadonlyQueryReader | undefined {
+    if (!this.readonlyWorkerPath || this.databasePath === ':memory:') return undefined
+    this.readonlyReader ??= new ReadonlyQueryReader('assistant', this.databasePath, this.readonlyWorkerPath)
+    return this.readonlyReader
+  }
+
+  /** Test hook for the worker crash and cancellation paths. */
+  get readonlyWorkerForTest(): ReadonlyQueryReader | undefined {
+    return this.readonlyQueryReader()
   }
 
   private readExecutionStatsSnapshot(
@@ -9234,6 +9298,13 @@ export class AssistantDatabase {
 
   readStoryGraph(name: import('../../shared/story-graph-tools').StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal): Record<string, unknown> {
     return readStoryGraph(this.requireDatabase(), name, input, projectId, signal)
+  }
+
+  /** Story graph read on the readonly worker; falls back to the synchronous read. */
+  readStoryGraphAsync(name: import('../../shared/story-graph-tools').StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    this.requireDatabase()
+    return readWithFallback(this.readonlyQueryReader(), 'readStoryGraph', [name, input, projectId], signal,
+      () => this.readStoryGraph(name, input, projectId, signal))
   }
 
   getSupervisionResult(id: string): { id: string; summary: string } | undefined {

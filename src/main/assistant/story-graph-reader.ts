@@ -21,6 +21,8 @@ type Fact = {
   source_reference_ids: string[]
   data: Row
 }
+/** Upper bound on projected objects per read (PERF-15). Normal scopes are far below it. */
+export const STORY_GRAPH_MAX_FACTS = 50_000
 const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const cursorSchema = z.object({ key: z.string(), revision: z.string(), index: z.number().int().nonnegative(), offset: z.number().int().nonnegative() }).strict()
 const normalizeScope = (scope: HeartbeatScope): HeartbeatScope => scope.kind === 'global' ? scope : { kind: 'projects', projectIds: [...new Set(scope.projectIds)].sort() }
@@ -48,7 +50,8 @@ export function queryTerms(query: string): string[] {
 }
 
 // This is a projection of existing storage, not a second graph or a historical state store.
-export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal): Record<string, unknown> {
+export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal,
+  maxFacts = STORY_GRAPH_MAX_FACTS): Record<string, unknown> {
   signal?.throwIfAborted()
   if (input && typeof input === 'object' && ('as_of' in input || ('mode' in input && input.mode === 'as_of'))) throw new Error('unsupported_mode: as_of is not supported')
   const args = name === 'story_graph_search' ? storyGraphSearchSchema.parse(input)
@@ -139,8 +142,18 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
   }
   const facts: Fact[] = []
   const results = new Map<string, Row>()
-  const stories = db.prepare('SELECT * FROM story_lines ORDER BY id').all().filter(row => sameScope(row.scope_json))
+  // SQL prefilter on the scope kind and project membership (a superset of exact
+  // matches); the exact normalized comparison still runs in JS.
+  const stories = db.prepare(`SELECT * FROM story_lines
+    WHERE json_extract(scope_json, '$.kind') = ?
+      AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(?) requested
+        WHERE requested.value NOT IN (SELECT value FROM json_each(story_lines.scope_json, '$.projectIds'))))
+    ORDER BY id`).all(scope.kind, scope.kind === 'projects' ? 1 : null, scope.kind === 'projects' ? JSON.stringify(scope.projectIds) : '[]')
+    .filter(row => sameScope(row.scope_json))
   const add = (type: string, data: Row, result?: Row, sources?: string[]): void => {
+    // Bound the in-memory projection; a scope this large must be narrowed rather than truncated,
+    // since a partial projection would yield misleading revisions and cursors.
+    if (facts.length >= maxFacts) throw new Error(`scan_limit_exceeded: more than ${maxFacts} stored objects in scope; narrow the scope`)
     facts.push({ object_ref: { type, id: String(data.id) }, object_revision: digest(data), result_id: result ? String(result.id) : null, scope,
       event_time: type === 'event' ? timestamp(data.occurred_at) : null,
       review_generated_at: result ? timestamp(result.created_at) : null,

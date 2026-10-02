@@ -933,11 +933,13 @@ if (hasSingleInstanceLock) {
         onExtensionStartupFailures: (extensionIds) =>
           runtimeExtensionStore.markStartupFailed(extensionIds)
       })
+    const readonlyQueryWorkerPath = join(app.getAppPath(), 'out/main/readonly-query-worker.js')
     const startupKnowledgeService = new KnowledgeService({
       documentResults: documentParsingService.results,
       credentialCipher: secureCipher,
       databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
       managedRoot: join(app.getPath('userData'), 'knowledge'),
+      readonlyQueryWorkerPath,
       extractStructured: createModelGraphExtractor(
         settingsStore,
         fetch,
@@ -1037,7 +1039,7 @@ if (hasSingleInstanceLock) {
         storyGraphService: {
           available: async ({ runtimeTarget }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
             (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
-          read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraph(name, input, projectId, signal)
+          read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraphAsync(name, input, projectId, signal)
         },
         magicNotesDatabase: startupAssistantDatabase,
         configService: goodbuddyConfigService,
@@ -1246,6 +1248,7 @@ if (hasSingleInstanceLock) {
         createConfiguredRuntime(initialResolvedSettings),
       initializeAssistant: () => {
         startupAssistantDatabase.initialize(defaultWorkspace)
+        startupAssistantDatabase.enableReadonlyWorker(readonlyQueryWorkerPath)
         imageGenerationService!.initialize()
         startupAssistantDatabase.ensureChannelProjects(
           defaultWorkspace,
@@ -1504,7 +1507,7 @@ if (hasSingleInstanceLock) {
         storyGraphService: {
           available: async ({ runtimeTarget }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
             (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
-          read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraph(name, input, projectId, signal)
+          read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraphAsync(name, input, projectId, signal)
         },
         magicNotesDatabase: startupAssistantDatabase, configService: goodbuddyConfigService,
         obsidianService, launchEnvironmentProvider: startupLocalToolEnvironmentService.launchEnvironmentProvider
