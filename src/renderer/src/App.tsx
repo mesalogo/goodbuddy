@@ -3594,18 +3594,26 @@ function App(): React.JSX.Element {
     () => new Set(cachedWorkspaceViews.map((entry) => entry.key)),
     [cachedWorkspaceViews],
   );
+  // Kept panes must keep a stable DOM order. Reordering keyed siblings makes
+  // React detach and reinsert scroll containers, which resets their scrollTop.
+  const conversationPaneOrderRef = useRef<string[]>([]);
   const cachedConversations = useMemo(() => {
     const conversationById = new Map(
       conversations.map((conversation) => [conversation.id, conversation]),
     );
-    const cachedIds = [
-      activeId,
-      ...cachedConversationViews.map((entry) => entry.key),
-    ].filter(
-      (conversationId, index, values) =>
-        conversationId && values.indexOf(conversationId) === index,
+    const cachedIds = new Set(
+      [activeId, ...cachedConversationViews.map((entry) => entry.key)].filter(
+        Boolean,
+      ),
     );
-    return cachedIds.flatMap((conversationId) => {
+    const paneOrder = conversationPaneOrderRef.current.filter((id) =>
+      cachedIds.has(id),
+    );
+    cachedIds.forEach((id) => {
+      if (!paneOrder.includes(id)) paneOrder.push(id);
+    });
+    conversationPaneOrderRef.current = paneOrder;
+    return paneOrder.flatMap((conversationId) => {
       const conversation = conversationById.get(conversationId);
       return conversation ? [conversation] : [];
     });

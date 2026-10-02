@@ -4777,9 +4777,16 @@ describe("App", () => {
     });
     expect(messageRenderProbe).not.toHaveBeenCalled();
     expect(firstPane?.querySelectorAll(".message")).toHaveLength(160);
+    const paneOrder = (): string[] =>
+      [...container.querySelectorAll<HTMLElement>(".chat-history-pane")].map(
+        (pane) => pane.dataset.conversationId ?? "",
+      );
+    const warmPaneOrder = paneOrder();
     fireEvent.click(screen.getByText("第一段长会话").closest("button")!);
 
     expect(await screen.findByText("第一段历史 001")).toBeInTheDocument();
+    // Chromium resets scrollTop when React moves a kept pane; jsdom does not.
+    expect(paneOrder()).toEqual(warmPaneOrder);
     const restoredFirstPane = container.querySelector<HTMLElement>(
       `[data-conversation-id="${firstConversationId}"]`,
     );

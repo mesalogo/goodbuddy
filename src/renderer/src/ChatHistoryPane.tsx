@@ -108,6 +108,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   const pinnedToBottomRef = useRef(scrollSnapshot?.pinnedToBottom ?? true);
   const latestScrollSnapshotRef = useRef(scrollSnapshot);
   const restorePendingRef = useRef(true);
+  const wasActiveRef = useRef(false);
   const prependScrollPositionRef = useRef<
     | {
         scrollHeight: number;
@@ -234,17 +235,28 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
 
   useLayoutEffect(() => {
     if (!active) {
+      wasActiveRef.current = false;
       return;
     }
     const scrollContainer = scrollRef.current;
     if (!scrollContainer) {
       return;
     }
+    const activated = !wasActiveRef.current;
+    wasActiveRef.current = true;
     if (restorePendingRef.current) {
       restorePendingRef.current = false;
       if (scrollSnapshot && !scrollSnapshot.pinnedToBottom) {
         pinnedToBottomRef.current = false;
         scrollContainer.scrollTop = scrollSnapshot.scrollTop;
+        return;
+      }
+    } else if (activated && !pinnedToBottomRef.current) {
+      // Hidden panes may lose scrollTop when the browser detaches or re-lays
+      // them out; restore the reader's last position instead of the top.
+      const saved = latestScrollSnapshotRef.current;
+      if (saved && !saved.pinnedToBottom) {
+        scrollContainer.scrollTop = saved.scrollTop;
         return;
       }
     }
