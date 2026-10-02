@@ -22,6 +22,13 @@ import { isUnusedConversation, type Conversation } from "./chat-conversation";
 import type { TimeFormatLocale } from "./time-format";
 
 export const messageRenderBatchSize = 80;
+/**
+ * A freshly mounted pane first renders only this many trailing messages, which
+ * fill the viewport, and renders the rest of its batch right after the first
+ * paint. Opening a long conversation then costs roughly a quarter of
+ * the Markdown and layout work before anything is shown.
+ */
+export const initialMessageRenderCount = 20;
 const chatBottomProximity = 96;
 
 type ChatQuickAction = {
@@ -123,15 +130,62 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   const [showScrollToBottom, setShowScrollToBottom] = useState(
     scrollSnapshot ? !scrollSnapshot.pinnedToBottom : false,
   );
+  // Only a pane that opens at the bottom renders in two steps. A saved scroll
+  // position or a note target refers to the full batch, so those render it
+  // at once.
+  const [initialRenderLimit, setInitialRenderLimit] = useState<
+    number | undefined
+  >(() =>
+    (scrollSnapshot === undefined || scrollSnapshot.pinnedToBottom) &&
+    noteMessageNavigation?.conversationId !== conversation.id &&
+    Math.min(visibleMessageCount, conversation.messages.length) >
+      initialMessageRenderCount
+      ? initialMessageRenderCount
+      : undefined,
+  );
+  const initialRenderScrollRef = useRef<
+    { scrollHeight: number; scrollTop: number } | undefined
+  >(undefined);
+  useEffect(() => {
+    if (initialRenderLimit === undefined) return;
+    // Render the rest once the first step has been painted. A plain update,
+    // not a transition: streaming rows commit synchronously many times per
+    // second and would keep restarting a transition (see live-message-store).
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const frame = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        const scrollContainer = scrollRef.current;
+        initialRenderScrollRef.current = scrollContainer
+          ? {
+              scrollHeight: scrollContainer.scrollHeight,
+              scrollTop: scrollContainer.scrollTop,
+            }
+          : undefined;
+        setInitialRenderLimit(undefined);
+      }, 0);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [initialRenderLimit]);
+  const renderedMessageCount =
+    initialRenderLimit === undefined
+      ? visibleMessageCount
+      : Math.min(visibleMessageCount, initialRenderLimit);
   const visibleMessageStartIndex = Math.max(
     0,
-    conversation.messages.length - visibleMessageCount,
+    conversation.messages.length - renderedMessageCount,
   );
   const visibleMessages = useMemo(
     () => conversation.messages.slice(visibleMessageStartIndex),
     [conversation.messages, visibleMessageStartIndex],
   );
-  const hiddenMessageCount = visibleMessageStartIndex;
+  // The "load earlier" control reflects the real batch, not the first step.
+  const hiddenMessageCount =
+    initialRenderLimit === undefined
+      ? visibleMessageStartIndex
+      : Math.max(0, conversation.messages.length - visibleMessageCount);
 
   useLayoutEffect(() => {
     const context = contextRef.current;
@@ -323,7 +377,22 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     }
   }, [visibleMessageCount]);
 
+  // The rest of the first batch lands above what the reader sees: stay at the
+  // bottom, or keep the reader's place if they already scrolled up.
+  useLayoutEffect(() => {
+    if (initialRenderLimit !== undefined) return;
+    const previous = initialRenderScrollRef.current;
+    initialRenderScrollRef.current = undefined;
+    const scrollContainer = scrollRef.current;
+    if (!previous || !scrollContainer) return;
+    scrollContainer.scrollTop = pinnedToBottomRef.current
+      ? scrollContainer.scrollHeight
+      : previous.scrollTop +
+        (scrollContainer.scrollHeight - previous.scrollHeight);
+  }, [initialRenderLimit]);
+
   const revealEarlierMessages = useCallback((): void => {
+    setInitialRenderLimit(undefined);
     const scrollContainer = scrollRef.current;
     if (scrollContainer) {
       prependScrollPositionRef.current = {

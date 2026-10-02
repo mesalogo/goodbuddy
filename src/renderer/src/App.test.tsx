@@ -4474,8 +4474,16 @@ describe("App", () => {
     const { container } = render(<App />);
 
     expect(await screen.findByText("历史消息 160")).toBeInTheDocument();
+    // The first paint shows only the trailing messages; the rest of the batch
+    // follows right after.
+    expect(container.querySelectorAll(".message").length).toBeLessThanOrEqual(20);
+    expect(
+      screen.getByRole("button", { name: "加载更早的消息（还剩 81 条）" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(container.querySelectorAll(".message")).toHaveLength(80),
+    );
     expect(screen.queryByText("历史消息 080")).not.toBeInTheDocument();
-    expect(container.querySelectorAll(".message")).toHaveLength(80);
     const chat = container.querySelector<HTMLElement>(".chat");
     if (!chat) {
       throw new Error("Missing chat scroll container");
