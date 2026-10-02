@@ -73,6 +73,15 @@ export function stableMainEntryFileName(chunk: {
     : '[name].js'
 }
 
+// The renderer CSP has no font-src, so fonts fall back to default-src 'self'.
+// Small fonts (e.g. KaTeX) must stay files rather than data: URLs, or Chromium
+// refuses them. Other assets keep Vite's default inline threshold.
+export function rendererAssetInlineLimit(
+  filePath: string
+): false | undefined {
+  return /\.(?:woff2?|ttf|otf)(?:$|\?)/iu.test(filePath) ? false : undefined
+}
+
 export default defineConfig({
   main: {
     plugins: [
@@ -191,6 +200,9 @@ export default defineConfig({
     },
     worker: {
       format: 'es'
+    },
+    build: {
+      assetsInlineLimit: rendererAssetInlineLimit
     },
     plugins: [react()]
   }

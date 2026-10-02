@@ -757,7 +757,16 @@ describe('segmented Markdown rendering', () => {
     '   indented by three\n\n\tafter tab\n\n  - nested\n\ntrailing',
     '```a`b\n\ntext\n\n```\n\ncode?\n\n```\n\nend',
     '- item\n\n  ```\n  x\n\n  y\n  ```\n\nafter\n\n> ```\n\nq',
-    '1. one\n\n   $$\n   a\n\n   $$\n\nb\n\n10. ten\n\nc'
+    '1. one\n\n   $$\n   a\n\n   $$\n\nb\n\n10. ten\n\nc',
+    // Single-line display math is a paragraph with inline math, not a block.
+    'Display math:\n\n$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$\n\nafter\n\n$$x^2$$ trailing text\n\n$$a$ odd\n\nend',
+    '$$$\na\n\n$$\nstill math\n$$$\n\nafter\n\n$$ meta\nx\n\n$$$$\n\nnext\n\n$$\nunclosed\n\nstill unclosed',
+    '- item with $$x$$\n\n  $$\n  y\n  $$\n\n> $$\n> q\n\n$$z$$\n\nend',
+    // Document-scoped syntax only inside unindented code fences.
+    '# Notes\n\n```md\n[ref]: https://example.com\nsee [^1]\n\n[^1]: body\n```\n\nafter [ref]\n\n~~~\n]:\n~~~\n\nend',
+    '- list\n\n  ```\n  [ref]: https://example.com\n\n  ```\n\n[ref]\n\nend',
+    'text `a]: b` inline\n\nmore\n\n```\ncode\n```\n\n[x]\n\n[x]: https://example.com',
+    '````\n```\n[r]: https://example.com\n```\n````\n\n[r]\n\nend'
   ]
 
   function canonicalHtml(element: HTMLElement): string {
@@ -796,6 +805,37 @@ describe('segmented Markdown rendering', () => {
     expect(multiSegment).toBeGreaterThan(500)
   }, 15000)
 
+  it('renders random block combinations and their prefixes identically to whole-document parsing', () => {
+    // Deterministic generator over lines that stress segment boundaries.
+    const lines = [
+      'para', 'para $x$', '# h', '- a', '1. one', '  indented', '    code4', '> q',
+      '$$', '$$x$$', '$$$', '  $$', '$$ meta', '$$x$$ tail', '```', '  ```', '~~~', '````', '```md',
+      '[r]: https://e.com', '  [r]: https://e.com', 'see [r]', '[^1]', '[^1]: fn',
+      '| a |', '| - |', '***', '---', '===', '<div>', 'x'
+    ]
+    let seed = 20261002
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    }
+    let multiSegment = 0
+    for (let index = 0; index < 1200; index++) {
+      const full = Array.from(
+        { length: 3 + Math.floor(random() * 14) },
+        () => random() < 0.4 ? '' : lines[Math.floor(random() * lines.length)]!
+      ).join('\n')
+      const content = index % 2 ? full.slice(0, Math.floor(random() * (full.length + 1))) : full
+      const segmented = render(<div><MarkdownRenderer>{content}</MarkdownRenderer></div>)
+      const reference = render(<div><UnsegmentedMarkdownRenderer>{content}</UnsegmentedMarkdownRenderer></div>)
+      expect(canonicalHtml(segmented.container), JSON.stringify(content))
+        .toBe(canonicalHtml(reference.container))
+      segmented.unmount()
+      reference.unmount()
+      if (splitMarkdownSegments(normalizeLatexDelimiters(content)).length > 1) multiSegment++
+    }
+    expect(multiSegment).toBeGreaterThan(100)
+  }, 60000)
+
   it('keeps completed segments intact and falls back for document-scoped syntax', () => {
     // List markers never start a segment: the list may continue or turn loose.
     expect(splitMarkdownSegments('a\n\nb\n\n- c\n\n- d\n\ne')).toEqual(['a\n\n', 'b\n\n- c\n\n- d\n\n', 'e'])
@@ -803,6 +843,17 @@ describe('segmented Markdown rendering', () => {
     expect(splitMarkdownSegments('a\n\n[x]: https://example.com')).toHaveLength(1)
     expect(splitMarkdownSegments('a\n\n<div>\n\nb\n\n</div>')).toHaveLength(1)
     expect(splitMarkdownSegments('a\r\n\r\nb')).toHaveLength(1)
+  })
+
+  it('splits around single-line display math and literal code fences', () => {
+    expect(splitMarkdownSegments('a\n\n$$x^2$$\n\nb')).toEqual(['a\n\n', '$$x^2$$\n\n', 'b'])
+    expect(splitMarkdownSegments('$$\nx\n\ny\n$$\n\nb')).toEqual(['$$\nx\n\ny\n$$\n\n', 'b'])
+    // A longer opening run needs an equally long closing run.
+    expect(splitMarkdownSegments('$$$\nx\n$$\n\ny\n$$$\n\nb')).toEqual(['$$$\nx\n$$\n\ny\n$$$\n\n', 'b'])
+    expect(splitMarkdownSegments('```md\n[r]: https://example.com\n```\n\nb')).toEqual(['```md\n[r]: https://example.com\n```\n\n', 'b'])
+    // Indented fences may belong to a container that ends earlier.
+    expect(splitMarkdownSegments('- a\n\n  ```\n  [r]: https://example.com\n  ```\n\nb')).toHaveLength(1)
+    expect(splitMarkdownSegments('a `[r]: x`\n\nb')).toHaveLength(1)
   })
 
   it('re-parses only the growing tail when completed segments are unchanged', () => {

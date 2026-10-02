@@ -474,7 +474,8 @@ frame rate, heap measurements and 500KB/1MB scenarios remain unmeasured.
 - 有历史时侧栏一次渲染全部 302 行，DOM 约 4,400 节点；访问过若干会话后约 1.6 万；两次
   流式后约 4 万，JS heap 最高约 210 MB（keep-alive 缓存持续增长）。
 - 长会话只渲染最近 80 条，打开耗时主要是一次约 100 ms 的 Long Task。
-- KaTeX 的 `data:` 字体被 CSP 拒绝（缺少 `font-src`），每轮 8 条控制台错误，字体回退。
+- KaTeX 的 `data:` 字体被 CSP 拒绝（缺少 `font-src`），每轮 8 条控制台错误，字体回退
+  （已在 `PERF-12` 第一步修复）。
 - `app.getAppMetrics()` 的 CPU 百分比在 Windows 上按全部逻辑核归一，只作相对比较。
 
 **归因（剖析运行）：** 流式期间 Renderer 自身 CPU 约 74% 在应用 bundle 中，热点是
@@ -499,12 +500,39 @@ p95 从约 36 ms 降到 15.5 ms。
 
 ### PERF-12 流式与输入快速止血
 
-- **优先级 / 状态：** P1 / 待开始
+- **优先级 / 状态：** P1 / 进行中（Markdown 分段已完成）
 - **范围：** 流式 delta 在 Renderer 按 `requestAnimationFrame` 合并后提交，并以 transition
   降低优先级；缓存 Markdown 预处理结果；`RightAssistantSidebar`、`ProjectSwitcher` 和
   keep-alive 路由使用 memo 并稳定回调；滚动跟随只在需要时执行。
 - **验收：** `PERF-11` 流式与输入场景的 Long Tasks 和输入延迟下降；事件顺序、停止、重试、
   工具与 Subagent 块不回退。该项吸收 `PERF-04` 的范围。
+
+#### 2026-10-02 第一步：Markdown 分段与 KaTeX 字体
+
+- **分段（`MarkdownRenderer.tsx`）：** `splitMarkdownSegments` 按 micromark-extension-math
+  的实际规则识别块级公式：`$$` 等两个以上 `$` 开头、其后不含 `$` 的行才开启公式块，并需要
+  不短于开启长度的 `$` 行关闭；`$$x^2$$` 这类单行公式按普通段落处理，不再使整篇退回单段。
+  链接定义和脚注改为逐行检查，位于顶格代码围栏内的行视为字面内容。原始 HTML 行、`\r`、
+  缩进围栏内的定义仍整篇退回。
+- **字体（`electron.vite.config.ts`）：** Renderer 构建不再把字体内联为 `data:` URL。CSP
+  没有 `font-src`，原先 4 个小于 4 KB 的 KaTeX 字体被拒绝并回退；现在 60 个 KaTeX 字体
+  全部作为同源文件输出，CSP 不变。
+- **等价性验证：** 现有逐前缀对照语料新增单行公式、长 `$` 围栏、代码围栏内的定义等用例；
+  新增 1,200 份确定性随机文档（半数取随机前缀）对照，要求分段渲染与整篇渲染的 DOM 完全
+  一致。开发期另跑了约 4.8 万份随机文档与前缀，其中约 6,300 份走分段路径，全部一致。
+- **`npm run perf:app` 对比（同机，各 3 次，`80579ee` + 本改动）：**
+
+| 场景 | 改动前 | 改动后 |
+| --- | --- | --- |
+| 流式 40 KB：Long Tasks | 126–137 次 / 8.6–9.3 s | 1 次 / 0.16 s |
+| 流式 40 KB：帧间隔 p95 / 掉帧 | 83 ms / 45–48% | 8.6–8.9 ms / 3–5% |
+| 流式期间输入：按键→帧 p50 / p95 | 12.5–13.5 / 35–36 ms | 11.7–11.9 / 19–21 ms |
+| 流式期间输入：掉帧 | 50–52% | 7.7–8.5% |
+| KaTeX 字体 CSP 错误 | 每轮 8 条 | 0 |
+
+  输入、切换、长会话和滚动场景与基线持平。流式期间输入仍有约 8% 掉帧、按键 p95 约 20 ms，
+  剩余开销属于 App 级重渲染，留给 `PERF-12` 后续项和 `PERF-13`。
+- **剩余：** 流式 delta 按帧合并、大面板 memo、滚动跟随优化仍待实施。
 
 ### PERF-13 Renderer 领域 Store 迁移
 

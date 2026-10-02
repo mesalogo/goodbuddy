@@ -257,13 +257,17 @@ function standaloneHtmlSource(content: string): string | undefined {
 
 // Link reference and footnote definitions resolve across the whole document,
 // even from inside lists or block quotes, so their presence disables splitting.
+// Lines inside an unindented code fence are literal and are not checked.
 const documentScopedMarkdown = /\]:|\[\^/u
-// Constructs that may legally span blank lines in ways a line scanner cannot
-// track: raw HTML blocks and `$$` lines carrying other text.
-const unsafeSegmentLine = /^ {0,3}(?:<|\$\$.*\S)/u
+// Raw HTML blocks may legally span blank lines in ways a line scanner cannot
+// track.
+const unsafeSegmentLine = /^ {0,3}</u
 // CommonMark: a backtick fence's info string cannot contain backticks.
 const segmentFenceOpening = /^ {0,3}(?:(`{3,})(?!.*`)|(~{3,}))/u
-const segmentMathFence = /^ {0,3}\$\$\s*$/u
+// micromark-extension-math: a run of two or more `$` opens a math block only
+// when the rest of the line (the optional meta) has no `$`. Otherwise, as in
+// `$$x^2$$`, the line is an ordinary paragraph containing inline math.
+const segmentMathFenceOpening = /^ {0,3}(\${2,})(.*)$/u
 // A block after a blank line belongs to the previous top-level block when it
 // is indented (list item or indented code continuation), a list marker (the
 // list may continue and its looseness may change), or a block quote marker.
@@ -277,12 +281,12 @@ const continuationLine = /^(?:\s|[-*+](?:\s|$)|\d{1,9}[.)](?:\s|$)|>)/u
  * could make that unsafe.
  */
 export function splitMarkdownSegments(content: string): string[] {
-  if (documentScopedMarkdown.test(content) || content.includes('\r')) {
+  if (content.includes('\r')) {
     return [content]
   }
   const segments: string[] = []
-  let fence: { character: '`' | '~'; length: number } | undefined
-  let inMath = false
+  let fence: { closing: RegExp; literal: boolean } | undefined
+  let math: { closing: RegExp } | undefined
   let segmentStart = 0
   let segmentHasBlock = false
   let previousBlank = false
@@ -293,18 +297,21 @@ export function splitMarkdownSegments(content: string): string[] {
     const lineEnd = newline === -1 ? content.length : newline
     const line = content.slice(lineStart, lineEnd)
 
+    // An unindented fence line always opens a top-level code block, so its
+    // content is literal until the matching close. Indented fences may sit in
+    // a container that ends earlier, so their lines are still checked.
+    if (!fence?.literal && documentScopedMarkdown.test(line)) {
+      return [content]
+    }
+
     if (fence) {
-      const closing = new RegExp(
-        `^ {0,3}${fence.character}{${fence.length},}\\s*$`,
-        'u'
-      )
-      if (closing.test(line)) {
+      if (fence.closing.test(line)) {
         fence = undefined
       }
       previousBlank = false
-    } else if (inMath) {
-      if (segmentMathFence.test(line)) {
-        inMath = false
+    } else if (math) {
+      if (math.closing.test(line)) {
+        math = undefined
       }
       previousBlank = false
     } else if (line.trim() === '') {
@@ -325,15 +332,27 @@ export function splitMarkdownSegments(content: string): string[] {
       }
       segmentHasBlock = true
       const opening = segmentFenceOpening.exec(line)
+      const mathOpening = segmentMathFenceOpening.exec(line)
       if (opening) {
         const marker = (opening[1] ?? opening[2])!
-        fence = { character: marker[0] as '`' | '~', length: marker.length }
+        fence = {
+          closing: new RegExp(
+            `^ {0,3}${marker[0]}{${marker.length},}[ \\t]*$`,
+            'u'
+          ),
+          literal: line.startsWith(marker)
+        }
       } else if (/^ {0,3}`{3,}/u.test(line)) {
         // Backtick run with a backtick in its info string: inline code that
         // the line scanner cannot model, so keep the document whole.
         return [content]
-      } else if (segmentMathFence.test(line)) {
-        inMath = true
+      } else if (mathOpening && !mathOpening[2]!.includes('$')) {
+        math = {
+          closing: new RegExp(
+            `^ {0,3}\\\${${mathOpening[1]!.length},}[ \\t]*$`,
+            'u'
+          )
+        }
       }
       previousBlank = false
     }
