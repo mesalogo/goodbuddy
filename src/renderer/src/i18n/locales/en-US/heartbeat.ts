@@ -122,7 +122,10 @@ export const heartbeat = {
       experiences: 'Experiences across staves',
       legend: 'Height is time, one turn is {{turn}} ({{count}} turns); radius is conversation density at the time and only shows how concentrated the work was. A stave spans its story from first to last event. Diamonds outside the barrel are experiences; arcs run from the stave they formed in to the stave that later used them.',
       turns: { 3: '3 hours', 6: '6 hours', 12: '12 hours', 24: '1 day', 168: '1 week', 720: '1 month', 2160: '1 quarter', 8760: '1 year' },
-      unsupported: 'This device cannot show 3D. Use the flat view and the story list.'
+      unsupported: 'This device cannot show 3D. Use the flat view and the story list.',
+      failed: 'The time spiral did not load, possibly because the system is busy. The lists and the flat view still work.',
+      lost: 'The graphics card interrupted the time spiral. The lists and the flat view still work.',
+      retry: 'Reload the time spiral'
     },
     stories: {
       empty: 'No stories yet. After the next review, events are grouped into features and sub-threads under each project.',

@@ -1,5 +1,6 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Component, lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { ReactNode } from 'react'
 import { BookOpen, Ellipsis, Network, RefreshCw, X } from 'lucide-react'
 import { AnchoredMenu } from './AnchoredMenu'
 import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
@@ -19,7 +20,17 @@ import {
 } from '../../shared/supervision-contracts'
 
 // Three.js loads only when the spiral view is opened.
-const StoryGraph3D = lazy(() => import('./StoryGraph3D'))
+// A failed chunk load (busy disk or renderer, interrupted update) is retried once before reporting.
+const StoryGraph3D = lazy(() => import('./StoryGraph3D').catch(() => new Promise<typeof import('./StoryGraph3D')>((resolve, reject) =>
+  setTimeout(() => { import('./StoryGraph3D').then(resolve, reject) }, 800))))
+
+/** Keeps a failure of the spiral view inside the canvas; the flat view, lists and page stay usable. */
+class SpiralBoundary extends Component<{ children: ReactNode; fallback: (retry: () => void) => ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError(): { failed: boolean } { return { failed: true } }
+  componentDidCatch(error: unknown): void { console.error('GoodBuddy spiral view failed', error) }
+  render(): ReactNode { return this.state.failed ? this.props.fallback(() => this.setState({ failed: false })) : this.props.children }
+}
 type Selection = { kind: 'event' | 'entity' | 'relation' | 'story' | 'experience'; id: string }
 /** `focus` opens a story or experience in the graph lists, such as from a heartbeat suggestion. */
 export type SupervisionGraphNavigation = { resultId: string; tab?: 'overview' | 'graph'; focus?: { kind: 'story' | 'experience'; id: string } }
@@ -848,6 +859,11 @@ export function SupervisorWorkspace({
                       </div>}
                     </div>
                     {graphMode === 'spiral' ? (
+                      <SpiralBoundary fallback={(retry) => <div className="supervisor-workspace__inline-error" role="alert">
+                        <strong>{t('supervisor.graph3d.failed')}</strong>
+                        <button type="button" className="secondary-button" onClick={retry}>{t('supervisor.graph3d.retry')}</button>
+                        <button type="button" className="link-button" onClick={() => setGraphMode('flat')}>{t('supervisor.graph3d.modes.flat')}</button>
+                      </div>}>
                       <Suspense fallback={<p className="supervisor-workspace__muted" role="status">{t('supervisor.loading')}</p>}>
                         <StoryGraph3D stories={storyState.view.stories} attention={graph.attention ?? []}
                           selectedEventId={selection?.kind === 'event' ? selection.id : undefined}
@@ -857,6 +873,7 @@ export function SupervisorWorkspace({
                           selectedExperienceId={selection?.kind === 'experience' ? selection.id : undefined}
                           onSelectExperience={(id) => select({ kind: 'experience', id })} />
                       </Suspense>
+                      </SpiralBoundary>
                     ) : <>
                     <figure className="supervisor-workspace__figure">
                       <div

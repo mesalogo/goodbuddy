@@ -42,6 +42,9 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const [supported] = useState(webglAvailable)
+  // Context creation failed or the GPU dropped the context; `attempt` recreates the scene on retry.
+  const [failure, setFailure] = useState<'create' | 'lost'>()
+  const [attempt, setAttempt] = useState(0)
   const tree = useMemo(() => buildStoryTree(stories, new Map()), [stories])
   const [focusId, setFocusId] = useState('root')
   const focus = findNode(tree, focusId) ?? tree
@@ -63,7 +66,12 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
   useEffect(() => {
     const canvas = canvasRef.current, overlay = overlayRef.current
     if (!supported || !canvas || !overlay || !range) return
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
+    // Under load the browser can refuse a new WebGL context; show a local error instead of failing the page.
+    let renderer: THREE.WebGLRenderer
+    try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true }) }
+    catch (error) { console.error('GoodBuddy 3D view failed', error); queueMicrotask(() => setFailure('create')); return }
+    const lost = (event: Event) => { event.preventDefault(); setFailure('lost') }
+    canvas.addEventListener('webglcontextlost', lost)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     const scene = new THREE.Scene()
     const host = canvas.parentElement!
@@ -232,11 +240,13 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
         return hit && { node: hit.object.userData.node as StoryNode | undefined, cluster: hit.object.userData.cluster as StoryCluster | undefined,
           link: hit.object.userData.link as ExperienceLink | undefined }
       },
-      dispose: () => { canvas.removeEventListener('wheel', zoom); resize.disconnect(); disposables.forEach(item => item.dispose()); renderer.dispose() }
+      // Release the GPU context too: browsers keep only a few, and reopening the view must not use them up.
+      dispose: () => { canvas.removeEventListener('wheel', zoom); canvas.removeEventListener('webglcontextlost', lost); resize.disconnect()
+        disposables.forEach(item => item.dispose()); renderer.dispose(); renderer.forceContextLoss() }
     }
     return () => { engine.current?.dispose(); engine.current = undefined }
-    // Focus, hover and selection are pushed through update() below; only data and locale recreate the scene.
-  }, [supported, range, attention, i18n.resolvedLanguage]) // eslint-disable-line react-hooks/exhaustive-deps
+    // Focus, hover and selection are pushed through update() below; only data, locale and a retry recreate the scene.
+  }, [supported, range, attention, i18n.resolvedLanguage, attempt]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { engine.current?.update({ focus, hovered, selected: selectedEventId, experiences, experience: selectedExperienceId }) },
     [focus, hovered, selectedEventId, range, attention, experiences, selectedExperienceId])
 
@@ -265,6 +275,10 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
     return [event.clientX - rect.left, event.clientY - rect.top] as const
   }
   if (!supported) return <p className="supervisor-workspace__muted" role="status">{t('supervisor.graph3d.unsupported')}</p>
+  if (failure) return <div className="supervisor-workspace__inline-error" role="alert">
+    <strong>{t(failure === 'lost' ? 'supervisor.graph3d.lost' : 'supervisor.graph3d.failed')}</strong>
+    <button type="button" className="secondary-button" onClick={() => { setFailure(undefined); setAttempt(value => value + 1) }}>{t('supervisor.graph3d.retry')}</button>
+  </div>
   if (!range) return <p className="supervisor-workspace__muted">{t('supervisor.stories.empty')}</p>
   return <div className="story-graph-3d">
     <div className="story-graph-3d__toolbar">
