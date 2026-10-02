@@ -825,14 +825,20 @@ describe('MagicNotesWorkspace overview navigation', () => {
   it('cancels a new entry only after confirming that its draft will be discarded', async () => {
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
+    await waitFor(() => expect(screen.getByRole('button', { name: '返回总览' })).toHaveFocus())
     newEntry()
     const composer = document.querySelector('.magic-note-composer')!
     fireEvent.click(screen.getByTestId('magic-note-editor'))
-    fireEvent.click(within(composer as HTMLElement).getByRole('button', { name: '取消' }))
+    const cancel = within(composer as HTMLElement).getByRole('button', { name: '取消' })
+    // fireEvent.click does not focus like a native click; the modal must restore its actual opener.
+    cancel.focus()
+    fireEvent.click(cancel)
     expect(await screen.findByRole('alertdialog')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+    await waitFor(() => expect(screen.getByTestId('magic-note-editor')).toHaveFocus())
     expect(document.querySelector('.magic-note-composer')).toHaveClass('magic-note-composer--active')
-    fireEvent.click(within(document.querySelector('.magic-note-composer') as HTMLElement).getByRole('button', { name: '取消' }))
+    cancel.focus()
+    fireEvent.click(cancel)
     fireEvent.click(await screen.findByRole('button', { name: '放弃草稿并切换' }))
     await waitFor(() => expect(document.querySelector('.magic-note-composer')).not.toHaveClass('magic-note-composer--active'))
     await waitFor(() => expect(document.getElementById(`magic-note-entry-${entryId}`)).toHaveFocus())
