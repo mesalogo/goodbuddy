@@ -245,7 +245,8 @@ import type { ToolApprovalBroker } from './tool-approval-broker'
 import { registerClipboardIpcHandlers, registerWindowIpcHandlers } from './window-ipc'
 import type {
   AssistantDatabase,
-  RecoverableRemoteTask
+  RecoverableRemoteTask,
+  RemoteConversationTaskEventInput
 } from './assistant/assistant-database'
 import { RemoteDelegationService } from './assistant/remote-delegation-service'
 import {
@@ -316,6 +317,10 @@ import type { GoodBuddyConfigService } from './goodbuddy-config-service'
 import { weixinVerificationInputSchema } from '../shared/weixin-channel-contracts'
 import type { RemoteChannelActivity } from '../shared/remote-channel-contracts'
 import { AgentEventBuffer } from './agent-event-buffer'
+import {
+  RemoteEventBatcher,
+  type RemoteEventBatchEntry
+} from './remote-event-batcher'
 import { withImageConversationContext } from './agent/image-conversation-context'
 import type { ImageGenerationService } from './agent/image-generation-service'
 import { imageOperationTargetSchema } from '../shared/image-operation-ipc'
@@ -609,6 +614,47 @@ function stripRemoteSemanticProvenance(
   }
   delete publicEvent.remoteProvenance
   return publicEvent
+}
+
+type RemoteBatchEvent = Exclude<
+  RemoteConversationTaskEventInput['event'],
+  { type: 'checkpoint' }
+>
+
+/**
+ * Remote events are committed in one transaction per remote semantic
+ * checkpoint. The owned-prompt poller yields a checkpoint after each transcript
+ * entry and may acknowledge the page as soon as it is resumed after one, so a
+ * checkpoint is the latest point at which buffered events can still be
+ * committed before the Agent ACK.
+ */
+function remoteTaskEventBatchInputs(
+  taskId: string,
+  entries: readonly RemoteEventBatchEntry<RemoteBatchEvent>[]
+): Parameters<AssistantDatabase['appendRemoteTaskEventsOnce']>[0] {
+  return entries.map(({ provenance, event }) => ({
+    taskId,
+    bindingId: provenance.bindingId,
+    operationId: provenance.operationId,
+    semanticSequence: provenance.semanticSequence,
+    eventIndex: provenance.eventIndex,
+    kind: event.type,
+    payload: event
+  }))
+}
+
+function remoteConversationBatchEvents(
+  entries: readonly RemoteEventBatchEntry<RemoteBatchEvent>[]
+): Parameters<
+  AssistantDatabase['appendRemoteConversationTaskEventsBatch']
+>[0]['events'] {
+  return entries.map(({ provenance, event }) => ({
+    bindingId: provenance.bindingId,
+    operationId: provenance.operationId,
+    semanticSequence: provenance.semanticSequence,
+    eventIndex: provenance.eventIndex,
+    event
+  }))
 }
 
 function createPromiseTracker(): {
@@ -1580,6 +1626,18 @@ export function registerIpcHandlers(
     lease.detachOnApplicationExit = true
     lease.recoveredMessageId = task.currentAssistantMessageId
     let sawTerminal = false
+    // Replayed transcript entries commit in one transaction per checkpoint.
+    const remoteEventBatcher = new RemoteEventBatcher<RemoteBatchEvent>({
+      onError: (error) => controller.abort(error),
+      persist: (entries) =>
+        assistantDatabase.appendRemoteConversationTaskEventsBatch({
+          taskId: task.taskId,
+          conversationId: task.conversationId,
+          runtimeSelection,
+          assistantMessageId: task.currentAssistantMessageId,
+          events: remoteConversationBatchEvents(entries)
+        })
+    })
     try {
       publishRemoteProjectRecovery({
         projectId: task.projectId,
@@ -1631,6 +1689,7 @@ export function registerIpcHandlers(
         controller.signal
       )) {
         if (rawEvent.type === 'question' || rawEvent.type === 'question-resolved') {
+          remoteEventBatcher.flush()
           if (rawEvent.type === 'question') {
             assistantDatabase.recordRemoteTaskQuestionArrival(task.taskId, rawEvent.questionId)
             pendingAgentQuestions.set(rawEvent.questionId, {
@@ -1710,17 +1769,15 @@ export function registerIpcHandlers(
             }
           }
         }
-        assistantDatabase.appendRemoteConversationTaskEventOnce({
-          taskId: task.taskId,
-          conversationId: task.conversationId,
-          runtimeSelection,
-          assistantMessageId: task.currentAssistantMessageId,
-          bindingId: provenance.bindingId,
-          operationId: provenance.operationId,
-          semanticSequence: provenance.semanticSequence,
-          eventIndex: provenance.eventIndex,
-          event
-        })
+        remoteEventBatcher.add(provenance, event)
+        if (
+          event.type === 'remote-semantic-checkpoint' ||
+          event.type === 'done' ||
+          event.type === 'error'
+        ) {
+          // Commit before the Agent ACK (checkpoint) or terminal handling.
+          remoteEventBatcher.flush()
+        }
         if (event.type === 'remote-semantic-checkpoint') {
           publishRemoteProjectRecovery({
             projectId: task.projectId,
@@ -1734,10 +1791,16 @@ export function registerIpcHandlers(
           sawTerminal = true
         }
       }
+      remoteEventBatcher.flush()
       if (!sawTerminal) {
         throw new Error('远端 Agent 恢复流未提供任务终态')
       }
     } catch (error) {
+      try {
+        remoteEventBatcher.flush()
+      } catch {
+        // The original error decides the outcome; nothing was acknowledged.
+      }
       if (sawTerminal) {
         return
       }
@@ -1757,6 +1820,7 @@ export function registerIpcHandlers(
       }
       throw error
     } finally {
+      remoteEventBatcher.dispose()
       for (const [id, pending] of pendingAgentQuestions) {
         if (pending.requestId === task.taskId) pendingAgentQuestions.delete(id)
       }
@@ -2127,6 +2191,15 @@ export function registerIpcHandlers(
         )
       }
     })
+    // Remote semantic events commit in one transaction per checkpoint (see
+    // remoteTaskEventBatchInputs) instead of one transaction per event.
+    const remoteEventBatcher = new RemoteEventBatcher<RemoteBatchEvent>({
+      onError: (error) => controller.abort(error),
+      persist: (entries) =>
+        assistantDatabase.appendRemoteTaskEventsOnce(
+          remoteTaskEventBatchInputs(taskId, entries)
+        )
+    })
     try {
       const requestRuntime =
         remoteContext?.runtime ??
@@ -2292,20 +2365,16 @@ export function registerIpcHandlers(
         const provenance = remoteSemanticProvenance(agentEvent)
         if (provenance !== undefined) {
           activeRequestLease.detachOnApplicationExit = true
+        } else {
+          remoteEventBatcher.flush()
         }
         if (agentEvent.type === 'remote-semantic-checkpoint') {
-          assistantDatabase.appendRemoteTaskEventOnce({
-            taskId,
-            bindingId: provenance!.bindingId,
-            operationId: provenance!.operationId,
-            semanticSequence: provenance!.semanticSequence,
-            eventIndex: provenance!.eventIndex,
-            kind: agentEvent.type,
-            payload: {
-              requestId: agentEvent.requestId,
-              type: agentEvent.type
-            }
+          // The Agent may acknowledge this entry once the generator resumes.
+          remoteEventBatcher.add(provenance!, {
+            requestId: agentEvent.requestId,
+            type: agentEvent.type
           })
+          remoteEventBatcher.flush()
           continue
         }
         if (agentEvent.type === 'model-usage') {
@@ -2315,17 +2384,9 @@ export function registerIpcHandlers(
             callId: agentEvent.callId
           })
           if (provenance !== undefined) {
-            assistantDatabase.appendRemoteTaskEventOnce({
-              taskId,
-              bindingId: provenance.bindingId,
-              operationId: provenance.operationId,
-              semanticSequence: provenance.semanticSequence,
-              eventIndex: provenance.eventIndex,
-              kind: 'remote-semantic-checkpoint',
-              payload: {
-                requestId: agentEvent.requestId,
-                type: 'remote-semantic-checkpoint'
-              }
+            remoteEventBatcher.add(provenance, {
+              requestId: agentEvent.requestId,
+              type: 'remote-semantic-checkpoint'
             })
           }
           continue
@@ -2378,6 +2439,7 @@ export function registerIpcHandlers(
           artifactIds.push(taskEvent.artifactId)
         }
         if (taskEvent.type === 'question') {
+          remoteEventBatcher.flush()
           const error = new Error(
             '后台任务无法回答 Runtime 交互提问。请改为在 GoodBuddy 对话中运行，或调整提示词和工具配置以避免交互提问。'
           )
@@ -2411,15 +2473,10 @@ export function registerIpcHandlers(
         if (provenance === undefined) {
           eventBuffer.push(taskEvent)
         } else {
-          assistantDatabase.appendRemoteTaskEventOnce({
-            taskId,
-            bindingId: provenance.bindingId,
-            operationId: provenance.operationId,
-            semanticSequence: provenance.semanticSequence,
-            eventIndex: provenance.eventIndex,
-            kind: taskEvent.type,
-            payload: taskEvent
-          })
+          remoteEventBatcher.add(provenance, taskEvent)
+          if (taskEvent.type === 'done' || taskEvent.type === 'error') {
+            remoteEventBatcher.flush()
+          }
         }
         if (taskEvent.type === 'tool' && remoteContext) {
           publishRemoteActivity({
@@ -2456,6 +2513,7 @@ export function registerIpcHandlers(
           completed = true
         }
       }
+      remoteEventBatcher.flush()
       if (!completed) {
         throw new Error('Agent Runtime 未报告任务完成，定时任务已失败')
       }
@@ -2511,6 +2569,11 @@ export function registerIpcHandlers(
         ...(artifactIds.length > 0 ? { artifactIds } : {})
       }
     } catch (error) {
+      try {
+        remoteEventBatcher.flush()
+      } catch {
+        // The original error already fails the task; nothing was acknowledged.
+      }
       eventBuffer.flush()
       const message = backgroundQuestionError
         ? backgroundQuestionError.message
@@ -2539,6 +2602,7 @@ export function registerIpcHandlers(
         error: message
       }
     } finally {
+      remoteEventBatcher.dispose()
       eventBuffer.close()
       externalSignal?.removeEventListener(
         'abort',
@@ -3919,76 +3983,81 @@ export function registerIpcHandlers(
           publicEventBuffer.flush()
         }
       }
+      // Remote semantic events are committed in batches. A batch is closed
+      // (one SQLite transaction) at the next remote semantic checkpoint, before
+      // any non-batched event, at the size cap, or by a short safety timer.
+      let remoteEventBatchClosed = false
+      const remoteEventBatcher = new RemoteEventBatcher<RemoteBatchEvent>({
+        onError: (error) => controller.abort(error),
+        persist: (entries) =>
+          remoteConversationRecovery
+            ? assistantDatabase.appendRemoteConversationTaskEventsBatch({
+                taskId: request.requestId,
+                conversationId: request.conversationId,
+                runtimeSelection: remoteEventSelection,
+                assistantMessageId:
+                  remoteConversationRecovery.currentAssistantMessageId,
+                events: remoteConversationBatchEvents(entries)
+              })
+            : assistantDatabase.appendRemoteTaskEventsOnce(
+                remoteTaskEventBatchInputs(request.requestId, entries)
+              )
+      })
+      const flushRemoteEvents = (): void => {
+        if (!remoteEventBatchClosed) {
+          remoteEventBatcher.flush()
+        }
+      }
       const eventBuffer = {
         push: (event: AgentEvent): void => {
+          flushRemoteEvents()
           pushPublicEvent(event)
           persistedEventBuffer.push(event)
         },
         pushPublic: pushPublicEvent,
         flush: (): void => {
+          flushRemoteEvents()
           publicStreamType = undefined
           publicEventBuffer.flush()
           persistedEventBuffer.flush()
         },
         close: (): void => {
+          remoteEventBatchClosed = true
+          remoteEventBatcher.dispose()
           publicEventBuffer.close()
           persistedEventBuffer.close()
         }
       }
+      /**
+       * Queues a remote public event. It is forwarded to the renderer only
+       * after its batch commits, and only when it was newly stored. With
+       * `immediate`, the batch (including this event) is committed before
+       * returning so callers can rely on its durability right away.
+       */
       const persistRemotePublicEvent = (
         provenance: RemoteSemanticEventProvenance,
-        publicEvent: AgentEvent
-      ): boolean =>
-        remoteConversationRecovery
-          ? assistantDatabase.appendRemoteConversationTaskEventOnce({
-              taskId: request.requestId,
-              conversationId: request.conversationId,
-              runtimeSelection: remoteEventSelection,
-              assistantMessageId:
-                remoteConversationRecovery.currentAssistantMessageId,
-              bindingId: provenance.bindingId,
-              operationId: provenance.operationId,
-              semanticSequence: provenance.semanticSequence,
-              eventIndex: provenance.eventIndex,
-              event: publicEvent
-            })
-          : assistantDatabase.appendRemoteTaskEventOnce({
-              taskId: request.requestId,
-              bindingId: provenance.bindingId,
-              operationId: provenance.operationId,
-              semanticSequence: provenance.semanticSequence,
-              eventIndex: provenance.eventIndex,
-              kind: publicEvent.type,
-              payload: publicEvent
-            })
+        publicEvent: AgentEvent,
+        immediate: boolean
+      ): void => {
+        remoteEventBatcher.add(provenance, publicEvent, (event, inserted) => {
+          if (inserted) {
+            eventBuffer.pushPublic(event as AgentEvent)
+          }
+        })
+        if (immediate) {
+          flushRemoteEvents()
+        }
+      }
+      // The Agent may acknowledge the transcript entry once the generator is
+      // resumed after its checkpoint, so the checkpoint always commits the
+      // whole pending batch together with itself.
       const persistRemoteCheckpoint = (
         provenance: RemoteSemanticEventProvenance,
         requestId: string,
         type: 'remote-semantic-checkpoint'
-      ): boolean => {
-        const checkpoint = { requestId, type } as const
-        return remoteConversationRecovery
-          ? assistantDatabase.appendRemoteConversationTaskEventOnce({
-              taskId: request.requestId,
-              conversationId: request.conversationId,
-              runtimeSelection: remoteEventSelection,
-              assistantMessageId:
-                remoteConversationRecovery.currentAssistantMessageId,
-              bindingId: provenance.bindingId,
-              operationId: provenance.operationId,
-              semanticSequence: provenance.semanticSequence,
-              eventIndex: provenance.eventIndex,
-              event: checkpoint
-            })
-          : assistantDatabase.appendRemoteTaskEventOnce({
-              taskId: request.requestId,
-              bindingId: provenance.bindingId,
-              operationId: provenance.operationId,
-              semanticSequence: provenance.semanticSequence,
-              eventIndex: provenance.eventIndex,
-              kind: type,
-              payload: checkpoint
-            })
+      ): void => {
+        remoteEventBatcher.add(provenance, { requestId, type })
+        flushRemoteEvents()
       }
       activeEventBuffers.set(request.requestId, eventBuffer)
       const toolStates = new Map<
@@ -4263,6 +4332,11 @@ export function registerIpcHandlers(
             : runSmartRoute()
         for await (const agentEvent of splitTaggedReasoning(eventStream)) {
           const provenance = remoteSemanticProvenance(agentEvent)
+          if (provenance === undefined) {
+            // Keep renderer and storage order: earlier remote events commit
+            // and publish before any event that bypasses the remote batch.
+            flushRemoteEvents()
+          }
           if (agentEvent.type === 'remote-semantic-checkpoint') {
             persistRemoteCheckpoint(
               agentEvent.remoteProvenance,
@@ -4290,13 +4364,12 @@ export function registerIpcHandlers(
               )!
               if (provenance === undefined) {
                 eventBuffer.push(contextMetricsEvent)
-              } else if (
+              } else {
                 persistRemotePublicEvent(
                   provenance,
-                  contextMetricsEvent
+                  contextMetricsEvent,
+                  false
                 )
-              ) {
-                eventBuffer.pushPublic(contextMetricsEvent)
               }
             } else if (provenance !== undefined) {
               persistRemoteCheckpoint(
@@ -4332,6 +4405,9 @@ export function registerIpcHandlers(
             toolStates.delete(publicEvent.runtimeCallId)
           }
           if (publicEvent.type === 'question') {
+            // The arrival rewrites the assistant message; commit earlier
+            // remote events first so message blocks keep their order.
+            flushRemoteEvents()
             assistantDatabase.recordRemoteTaskQuestionArrival(request.requestId, publicEvent.questionId)
             pendingAgentQuestions.set(publicEvent.questionId, {
               requestId: request.requestId,
@@ -4378,10 +4454,14 @@ export function registerIpcHandlers(
             } else {
               eventBuffer.push(publicEvent)
             }
-          } else if (
-            persistRemotePublicEvent(provenance, publicEvent)
-          ) {
-            eventBuffer.pushPublic(publicEvent)
+          } else {
+            // Terminal events commit immediately: task status, notification
+            // and failure handling below rely on them being durable.
+            persistRemotePublicEvent(
+              provenance,
+              publicEvent,
+              publicEvent.type === 'done' || publicEvent.type === 'error'
+            )
           }
           if (
             provenance !== undefined &&
@@ -4415,10 +4495,19 @@ export function registerIpcHandlers(
             }
           }
         }
+        flushRemoteEvents()
         if (!completed) {
           throw new Error('Agent Runtime 未报告任务完成，任务已标记为失败')
         }
       } catch (error) {
+        try {
+          // Commit what the remote Agent already produced. Nothing of a
+          // failed batch was acknowledged, so recovery can replay it.
+          flushRemoteEvents()
+        } catch {
+          remoteEventBatchClosed = true
+          remoteEventBatcher.dispose()
+        }
         publishReferences()
         eventBuffer.flush()
         const cancelled =

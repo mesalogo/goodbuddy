@@ -4103,6 +4103,204 @@ describe('AssistantDatabase', () => {
     raw.close()
   })
 
+  describe('remote conversation event batches', () => {
+    const conversationId = '00000000-0000-4000-8000-000000000711'
+    const taskId = '00000000-0000-4000-8000-000000000712'
+    const assistantMessageId = '00000000-0000-4000-8000-000000000714'
+    type BatchEvent = Parameters<
+      AssistantDatabase['appendRemoteConversationTaskEventsBatch']
+    >[0]['events'][number]
+
+    const openRecoverableTask = (): AssistantDatabase => {
+      const database = new AssistantDatabase(':memory:')
+      database.initialize('C:\\Workspace')
+      const project = database.createSshProject(validatedSshProjectWrite())
+      database.saveLocalConversations([{
+        header: { id: conversationId, projectId: project.id, title: '批量', updatedAt: 0 },
+        messages: []
+      }])
+      database.createTask({
+        id: taskId, projectId: project.id, conversationId,
+        title: '批量', instructions: '回复', workMode: 'execute',
+        remoteRecovery: {
+          recoverable: true,
+          currentUserMessageId: '00000000-0000-4000-8000-000000000713',
+          currentAssistantMessageId: assistantMessageId
+        }
+      })
+      return database
+    }
+    const entry = (
+      semanticSequence: string,
+      eventIndex: number,
+      event: BatchEvent['event']
+    ): BatchEvent => ({
+      bindingId: 'batch-binding', operationId: taskId,
+      semanticSequence, eventIndex, event
+    })
+    const taskEvents = (database: AssistantDatabase, id = taskId) =>
+      ((database as unknown as { requireDatabase(): DatabaseSync }).requireDatabase()
+        .prepare('SELECT kind, payload_json FROM task_events WHERE task_id = ? AND remote_semantic_sequence IS NOT NULL ORDER BY id')
+        .all(id) as Array<{ kind: string; payload_json: string }>)
+        .map(({ kind, payload_json }) => ({ kind, payload: JSON.parse(payload_json) as unknown }))
+    const page: BatchEvent[] = [
+      entry('1', 0, { requestId: taskId, type: 'reasoning', delta: 'plan ' }),
+      entry('1', 1, { requestId: taskId, type: 'text', delta: 'Hello' }),
+      entry('1', 2, { requestId: taskId, type: 'remote-semantic-checkpoint' }),
+      entry('2', 0, {
+        requestId: taskId, type: 'tool', callId: 'read', name: 'Read',
+        state: 'running', summary: 'Read file', input: '{"path":"a"}'
+      }),
+      entry('2', 1, { requestId: taskId, type: 'status', message: 'working' }),
+      entry('2', 2, {
+        requestId: taskId, type: 'context-metrics', contextTokens: 77,
+        effectiveTriggerTokens: 1000, compressionEnabled: false, source: 'provider'
+      }),
+      entry('2', 3, { requestId: taskId, type: 'remote-semantic-checkpoint' }),
+      entry('3', 0, {
+        requestId: taskId, type: 'tool', callId: 'read', name: 'Read',
+        state: 'completed', summary: 'Read file', output: 'contents'
+      }),
+      entry('3', 1, { requestId: taskId, type: 'text', delta: ' world' }),
+      entry('3', 2, { requestId: taskId, type: 'reasoning', delta: 'done' }),
+      entry('3', 3, { requestId: taskId, type: 'done', sessionId: 'session' }),
+      entry('3', 4, { requestId: taskId, type: 'remote-semantic-checkpoint' })
+    ]
+    const owner = { taskId, conversationId, assistantMessageId }
+    // Block ids are random per reduction; compare everything else.
+    const comparable = (database: AssistantDatabase) => {
+      const conversation = database.getConversation(conversationId)
+      const message = conversation.messages.find(
+        (candidate) => candidate.id === assistantMessageId
+      )!
+      return {
+        message: {
+          ...message,
+          createdAt: undefined,
+          blocks: message.blocks?.map((block) => ({ ...block, id: undefined }))
+        },
+        contextMetrics: conversation.contextMetrics,
+        status: database.getTask(taskId).status,
+        error: database.getTask(taskId).error,
+        events: taskEvents(database),
+        cursor: database.getHighestCommittedRemoteTaskEventSequenceForTask(taskId)
+      }
+    }
+
+    it('matches sequential per-event persistence with one message rewrite and terminalizes at its checkpoint', () => {
+      const sequential = openRecoverableTask()
+      const batched = openRecoverableTask()
+      try {
+        for (const item of page) {
+          expect(sequential.appendRemoteConversationTaskEventOnce({ ...owner, ...item })).toBe(true)
+        }
+        const prepare = vi.spyOn(
+          (batched as unknown as { requireDatabase(): DatabaseSync }).requireDatabase(),
+          'prepare'
+        )
+        expect(batched.appendRemoteConversationTaskEventsBatch({ ...owner, events: page }))
+          .toEqual(page.map(() => true))
+        const statements = prepare.mock.calls.map(([sql]) => sql.replace(/\s+/gu, ' ').trim())
+        prepare.mockRestore()
+        expect(statements.filter((sql) => sql.startsWith('UPDATE messages'))).toHaveLength(1)
+        expect(statements.filter((sql) => sql.startsWith('SELECT id, role, content'))).toHaveLength(1)
+        expect(statements.filter((sql) => sql.startsWith('UPDATE conversations'))).toHaveLength(1)
+
+        expect(comparable(batched)).toEqual(comparable(sequential))
+        expect(comparable(batched)).toMatchObject({
+          message: {
+            content: 'Hello world', reasoning: 'plan done', state: 'complete',
+            tools: [expect.objectContaining({ callId: 'read', state: 'completed' })]
+          },
+          contextMetrics: expect.objectContaining({ contextTokens: 77 }),
+          status: 'completed',
+          cursor: '3'
+        })
+      } finally {
+        sequential.close()
+        batched.close()
+      }
+    })
+
+    it('deduplicates replayed events within and across batches and keeps their order', () => {
+      const database = openRecoverableTask()
+      try {
+        expect(database.appendRemoteConversationTaskEventsBatch({
+          ...owner, events: page.slice(0, 3)
+        })).toEqual([true, true, true])
+        // A reconnect replays page 1 before delivering page 2.
+        expect(database.appendRemoteConversationTaskEventsBatch({
+          ...owner, events: [...page.slice(0, 3), ...page.slice(3, 7)]
+        })).toEqual([false, false, false, true, true, true, true])
+        expect(database.appendRemoteConversationTaskEventsBatch({
+          ...owner, events: page.slice(0, 7)
+        })).toEqual(page.slice(0, 7).map(() => false))
+        const message = database.getConversation(conversationId).messages
+          .find((candidate) => candidate.id === assistantMessageId)!
+        expect(message).toMatchObject({ content: 'Hello', reasoning: 'plan ', status: 'working' })
+        expect(message.blocks?.map((block) => block.type)).toEqual(['reasoning', 'text', 'tool'])
+        expect(taskEvents(database).map(({ kind }) => kind)).toEqual([
+          'reasoning', 'text', 'remote-semantic-checkpoint',
+          'tool', 'status', 'context-metrics', 'remote-semantic-checkpoint'
+        ])
+        expect(database.getTask(taskId).status).toBe('running')
+      } finally {
+        database.close()
+      }
+    })
+
+    it('rolls back the whole batch when one event conflicts', () => {
+      const database = openRecoverableTask()
+      try {
+        database.appendRemoteConversationTaskEventsBatch({ ...owner, events: page.slice(0, 3) })
+        const before = comparable(database)
+        expect(() => database.appendRemoteConversationTaskEventsBatch({
+          ...owner,
+          events: [
+            page[3]!,
+            entry('1', 1, { requestId: taskId, type: 'text', delta: 'conflict' })
+          ]
+        })).toThrow('conflicts')
+        expect(comparable(database)).toEqual(before)
+      } finally {
+        database.close()
+      }
+    })
+  })
+
+  it('appends plain remote task event batches in one transaction with replay dedupe', () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize('C:\\Workspace')
+    try {
+      const taskId = '00000000-0000-4000-8000-000000000721'
+      database.createTask({ id: taskId, title: '批量', instructions: '回复', workMode: 'ask' })
+      const event = (semanticSequence: string, eventIndex: number, delta: string) => ({
+        taskId, bindingId: 'plain-batch', operationId: taskId, semanticSequence, eventIndex,
+        kind: 'text', payload: { requestId: taskId, type: 'text', delta }
+      })
+      const exec = vi.spyOn(
+        (database as unknown as { requireDatabase(): DatabaseSync }).requireDatabase(),
+        'exec'
+      )
+      expect(database.appendRemoteTaskEventsOnce([event('1', 0, 'a'), event('1', 1, 'b')]))
+        .toEqual([true, true])
+      expect(exec.mock.calls.map(([sql]) => sql)).toEqual(['BEGIN IMMEDIATE', 'COMMIT'])
+      exec.mockRestore()
+      expect(database.appendRemoteTaskEventsOnce([event('1', 1, 'b'), event('2', 0, 'c')]))
+        .toEqual([false, true])
+      expect(() => database.appendRemoteTaskEventsOnce([event('3', 0, 'd'), event('2', 0, 'x')]))
+        .toThrow('conflicts')
+      expect(((database as unknown as { requireDatabase(): DatabaseSync }).requireDatabase()
+        .prepare('SELECT payload_json FROM task_events WHERE task_id = ? AND remote_semantic_sequence IS NOT NULL ORDER BY id')
+        .all(taskId) as Array<{ payload_json: string }>)
+        .map(({ payload_json }) => (JSON.parse(payload_json) as { delta: string }).delta))
+        .toEqual(['a', 'b', 'c'])
+      expect(database.appendRemoteTaskEventsOnce([])).toEqual([])
+    } finally {
+      database.close()
+    }
+  })
+
   it.each(['failed', 'cancelled'] as const)('creates and recovers a remote-authoritative conversation task, then ends it as %s', async (terminalStatus) => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-remote-conversation-recovery-')

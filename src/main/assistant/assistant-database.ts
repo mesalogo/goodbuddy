@@ -161,6 +161,21 @@ export type RemoteConversationTaskEventInput = Omit<
       }
 }
 
+export type RemoteConversationTaskEventsBatchInput = Pick<
+  RemoteConversationTaskEventInput,
+  'taskId' | 'conversationId' | 'assistantMessageId' | 'runtimeSelection'
+> & {
+  events: ReadonlyArray<
+    Pick<
+      RemoteConversationTaskEventInput,
+      'bindingId' | 'operationId' | 'semanticSequence' | 'eventIndex' | 'event'
+    >
+  >
+}
+
+/** Upper bound for one live remote persistence transaction. */
+export const REMOTE_TASK_EVENT_BATCH_MAXIMUM_EVENTS = 512
+
 export type RecoverableRemoteTask = {
   taskId: string
   projectId: string
@@ -1728,6 +1743,42 @@ function reduceRecoveredAgentEvent(
   return conversationMessageSchema.parse(next)
 }
 
+/**
+ * Projects the assistant-message fields that remote event persistence reads
+ * back from storage before reducing the next remote event.
+ */
+function storedRemoteAssistantMessage(
+  id: string,
+  content: string,
+  state: ConversationMessage['state'],
+  createdAt: number,
+  metadata: MessageMetadata
+): ConversationMessage {
+  return {
+    id,
+    role: 'assistant',
+    content,
+    state,
+    createdAt,
+    status: metadata.status,
+    terminalStatus: metadata.terminalStatus,
+    reasoning: metadata.reasoning,
+    runtimeChecklist: metadata.runtimeChecklist,
+    blocks: metadata.blocks,
+    displayCaptureTruncated: metadata.displayCaptureTruncated,
+    contextCompression: metadata.contextCompression,
+    contextCompressions: metadata.contextCompressions,
+    tools: metadata.tools,
+    subagents: metadata.subagents,
+    sources: metadata.sources,
+    sourceReferences: metadata.sourceReferences,
+    knowledgeRetrieval: metadata.knowledgeRetrieval,
+    artifactIds: metadata.artifactIds,
+    task: metadata.task,
+    attachments: metadata.attachments,
+    answeredQuestions: metadata.answeredQuestions
+  }
+}
 function stripRemoteEventProvenance(
   event: RemoteConversationTaskEventInput['event']
 ): RemoteConversationTaskEventInput['event'] {
@@ -6069,28 +6120,92 @@ export class AssistantDatabase {
     )
   }
 
+  /**
+   * Appends many remote semantic events in ONE task-event transaction.
+   * Returns one flag per input event: true when the event was newly stored,
+   * false when the same provenance was already stored (replay dedupe).
+   */
+  appendRemoteTaskEventsOnce(
+    events: readonly RemoteTaskEventInput[]
+  ): boolean[] {
+    if (events.length === 0) {
+      return []
+    }
+    if (events.length > REMOTE_TASK_EVENT_BATCH_MAXIMUM_EVENTS) {
+      throw new RangeError(
+        `Remote task event batch must contain at most ${REMOTE_TASK_EVENT_BATCH_MAXIMUM_EVENTS} events`
+      )
+    }
+    const validated = events.map(validateRemoteTaskEvent)
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const inserted = validated.map((event) =>
+        this.insertRemoteTaskEventOnce(database, event)
+      )
+      database.exec('COMMIT')
+      return inserted
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   appendRemoteConversationTaskEventOnce(
     input: RemoteConversationTaskEventInput
   ): boolean {
+    return this.appendRemoteConversationTaskEventsBatch({
+      taskId: input.taskId,
+      conversationId: input.conversationId,
+      assistantMessageId: input.assistantMessageId,
+      runtimeSelection: input.runtimeSelection,
+      events: [input]
+    })[0]!
+  }
+
+  /**
+   * Persists remote semantic events of one recoverable task in ONE
+   * transaction. The assistant message and conversation row are read at most
+   * once and written at most once per batch, while events are still reduced
+   * one by one in their original order. Already stored events (same remote
+   * provenance) are skipped and reported as false.
+   */
+  appendRemoteConversationTaskEventsBatch(
+    input: RemoteConversationTaskEventsBatchInput
+  ): boolean[] {
+    if (input.events.length === 0) {
+      return []
+    }
+    if (input.events.length > REMOTE_TASK_EVENT_BATCH_MAXIMUM_EVENTS) {
+      throw new RangeError(
+        `Remote task event batch must contain at most ${REMOTE_TASK_EVENT_BATCH_MAXIMUM_EVENTS} events`
+      )
+    }
     const conversationId = assistantIdSchema.parse(input.conversationId)
     const assistantMessageId = assistantIdSchema.parse(
       input.assistantMessageId
     )
     const requestRuntimeSelection =
       optionalAgentRuntimeSelectionSchema.parse(input.runtimeSelection)
-    const publicEvent = stripRemoteEventProvenance(input.event)
-    if (publicEvent.requestId !== input.taskId) {
-      throw new Error('远程事件的请求 ID 与任务不匹配')
-    }
-    const event = validateRemoteTaskEvent({
-      taskId: input.taskId,
-      bindingId: input.bindingId,
-      operationId: input.operationId,
-      semanticSequence: input.semanticSequence,
-      eventIndex: input.eventIndex,
-      kind: publicEvent.type,
-      payload: publicEvent
+    const prepared = input.events.map((item) => {
+      const publicEvent = stripRemoteEventProvenance(item.event)
+      if (publicEvent.requestId !== input.taskId) {
+        throw new Error('远程事件的请求 ID 与任务不匹配')
+      }
+      return {
+        publicEvent,
+        event: validateRemoteTaskEvent({
+          taskId: input.taskId,
+          bindingId: item.bindingId,
+          operationId: item.operationId,
+          semanticSequence: item.semanticSequence,
+          eventIndex: item.eventIndex,
+          kind: publicEvent.type,
+          payload: publicEvent
+        })
+      }
     })
+    const taskId = prepared[0]!.event.taskId
     const database = this.requireDatabase()
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -6101,7 +6216,7 @@ export class AssistantDatabase {
            FROM tasks
            WHERE id = ? AND remote_recoverable = 1`
         )
-        .get(event.taskId) as
+        .get(taskId) as
         | {
             project_id: string | null
             conversation_id: string | null
@@ -6115,162 +6230,190 @@ export class AssistantDatabase {
       ) {
         throw new Error('远程事件与可恢复任务的消息归属不匹配')
       }
-      const inserted = this.insertRemoteTaskEventOnce(database, event)
-      if (!inserted) {
-        database.exec('COMMIT')
-        return false
-      }
-      if (publicEvent.type === 'remote-semantic-checkpoint') {
-        this.terminalizeRemoteTaskAtCheckpoint(database, event)
-        database.exec('COMMIT')
-        return true
-      }
-      const row = database
-        .prepare(
-          `SELECT id, role, content, state, metadata_json, created_at
-           FROM messages
-           WHERE id = ? AND conversation_id = ? AND request_id = ?`
-        )
-        .get(
-          assistantMessageId,
-          conversationId,
-          event.taskId
-        ) as
+      const inserted: boolean[] = []
+      let message: ConversationMessage | undefined
+      let lastReduced: ConversationMessage | undefined
+      let conversationState:
         | {
-            id: string
-            role: MessageRow['role']
-            content: string
-            state: ConversationMessage['state']
-            metadata_json: string
-            created_at: string
+            contextState: ReturnType<typeof parseConversationContextState>
+            runtimeSelectionKey: ReturnType<typeof remoteEventSelectionKey>
           }
         | undefined
-      if (!row || row.role !== 'assistant') {
-        throw new Error('远程事件的助理消息不存在或不受任务管理')
-      }
-      const metadata = JSON.parse(row.metadata_json) as MessageMetadata
-      const message = conversationMessageSchema.parse({
-        id: row.id,
-        role: 'assistant',
-        content: row.content,
-        state: row.state,
-        createdAt:
-          metadata.createdAt ?? Date.parse(row.created_at),
-        status: metadata.status,
-        terminalStatus: metadata.terminalStatus,
-        reasoning: metadata.reasoning,
-        runtimeChecklist: metadata.runtimeChecklist,
-        blocks: metadata.blocks,
-        displayCaptureTruncated:
-          metadata.displayCaptureTruncated,
-        contextCompression: metadata.contextCompression,
-        contextCompressions: metadata.contextCompressions,
-        tools: metadata.tools,
-        subagents: metadata.subagents,
-        sources: metadata.sources,
-        sourceReferences: metadata.sourceReferences,
-        knowledgeRetrieval: metadata.knowledgeRetrieval,
-        artifactIds: metadata.artifactIds,
-        task: metadata.task,
-        attachments: metadata.attachments,
-        answeredQuestions: metadata.answeredQuestions
-      })
-      const reduced = reduceRecoveredAgentEvent(message, publicEvent)
-      const messageUpdate = database
-        .prepare(
-          `UPDATE messages
-           SET content = ?, state = ?, metadata_json = ?
-           WHERE id = ? AND conversation_id = ? AND request_id = ?`
+      const loadMessage = (): ConversationMessage => {
+        if (message) {
+          return message
+        }
+        const row = database
+          .prepare(
+            `SELECT id, role, content, state, metadata_json, created_at
+             FROM messages
+             WHERE id = ? AND conversation_id = ? AND request_id = ?`
+          )
+          .get(
+            assistantMessageId,
+            conversationId,
+            taskId
+          ) as
+          | {
+              id: string
+              role: MessageRow['role']
+              content: string
+              state: ConversationMessage['state']
+              metadata_json: string
+              created_at: string
+            }
+          | undefined
+        if (!row || row.role !== 'assistant') {
+          throw new Error('远程事件的助理消息不存在或不受任务管理')
+        }
+        const metadata = JSON.parse(row.metadata_json) as MessageMetadata
+        message = conversationMessageSchema.parse(
+          storedRemoteAssistantMessage(
+            row.id,
+            row.content,
+            row.state,
+            metadata.createdAt ?? Date.parse(row.created_at),
+            metadata
+          )
         )
-        .run(
+        return message
+      }
+      const loadConversationState = (): NonNullable<
+        typeof conversationState
+      > => {
+        if (conversationState) {
+          return conversationState
+        }
+        const conversation = database
+          .prepare(
+            `SELECT c.runtime_selection_json, c.context_state_json,
+                    p.runtime_selection_json AS project_runtime_selection_json
+             FROM conversations c
+             LEFT JOIN projects p ON p.id = c.project_id
+             WHERE c.id = ?`
+          )
+          .get(conversationId) as
+          | {
+              runtime_selection_json: string | null
+              project_runtime_selection_json: string | null
+              context_state_json: string | null
+            }
+          | undefined
+        if (!conversation) {
+          throw new Error('远程事件的对话不存在')
+        }
+        conversationState = {
+          contextState: parseConversationContextState(
+            conversation.context_state_json
+          ),
+          runtimeSelectionKey: remoteEventSelectionKey(
+            requestRuntimeSelection,
+            parseRuntimeSelection(conversation.runtime_selection_json),
+            parseRuntimeSelection(
+              conversation.project_runtime_selection_json
+            )
+          )
+        }
+        return conversationState
+      }
+      for (const { event, publicEvent } of prepared) {
+        if (!this.insertRemoteTaskEventOnce(database, event)) {
+          inserted.push(false)
+          continue
+        }
+        inserted.push(true)
+        if (publicEvent.type === 'remote-semantic-checkpoint') {
+          this.terminalizeRemoteTaskAtCheckpoint(database, event)
+          continue
+        }
+        const reduced = reduceRecoveredAgentEvent(loadMessage(), publicEvent)
+        lastReduced = reduced
+        // Match sequential single-event writes exactly: each of them re-read
+        // only the stored metadata fields before reducing the next event.
+        message = storedRemoteAssistantMessage(
+          reduced.id,
           reduced.content,
           reduced.state,
-          serializeConversationMessageMetadata(reduced),
-          assistantMessageId,
-          conversationId,
-          event.taskId
+          reduced.createdAt,
+          reduced
         )
-      if (messageUpdate.changes !== 1) {
-        throw new Error('远程事件的助理消息写入失败')
-      }
-      const conversation = database
-        .prepare(
-          `SELECT c.runtime_selection_json, c.context_state_json,
-                  p.runtime_selection_json AS project_runtime_selection_json
-           FROM conversations c
-           LEFT JOIN projects p ON p.id = c.project_id
-           WHERE c.id = ?`
-        )
-        .get(conversationId) as
-        | {
-            runtime_selection_json: string | null
-            project_runtime_selection_json: string | null
-            context_state_json: string | null
+        const state = loadConversationState()
+        if (publicEvent.type === 'context-metrics') {
+          state.contextState = {
+            ...state.contextState,
+            contextMetrics: {
+              runtimeSelectionKey: state.runtimeSelectionKey,
+              contextTokens: publicEvent.contextTokens,
+              source: publicEvent.source,
+              basis: 'model-call'
+            }
           }
-        | undefined
-      if (!conversation) {
-        throw new Error('远程事件的对话不存在')
-      }
-      let contextState = parseConversationContextState(
-        conversation.context_state_json
-      )
-      const runtimeSelectionKey = remoteEventSelectionKey(
-        requestRuntimeSelection,
-        parseRuntimeSelection(conversation.runtime_selection_json),
-        parseRuntimeSelection(conversation.project_runtime_selection_json)
-      )
-      if (publicEvent.type === 'context-metrics') {
-        contextState = {
-          ...contextState,
-          contextMetrics: {
-            runtimeSelectionKey,
-            contextTokens: publicEvent.contextTokens,
-            source: publicEvent.source,
-            basis: 'model-call'
-          }
-        }
-      } else if (
-        publicEvent.type === 'context-compression' &&
-        publicEvent.scope !== 'agent-run'
-      ) {
-        const estimatedAfterTokens =
-          publicEvent.estimatedAfterTokens
-        contextState = {
-          ...contextState,
-          ...(publicEvent.conversationState
-            ? {
-                contextCompressionState:
-                  publicEvent.conversationState
-              }
-            : {}),
-          ...(publicEvent.state === 'completed' &&
-          estimatedAfterTokens !== undefined
-            ? {
-                contextMetrics: {
-                  runtimeSelectionKey,
-                  contextTokens: estimatedAfterTokens,
-                  source: 'estimated' as const,
-                  basis: 'conversation' as const
+        } else if (
+          publicEvent.type === 'context-compression' &&
+          publicEvent.scope !== 'agent-run'
+        ) {
+          const estimatedAfterTokens =
+            publicEvent.estimatedAfterTokens
+          state.contextState = {
+            ...state.contextState,
+            ...(publicEvent.conversationState
+              ? {
+                  contextCompressionState:
+                    publicEvent.conversationState
                 }
-              }
-            : {})
+              : {}),
+            ...(publicEvent.state === 'completed' &&
+            estimatedAfterTokens !== undefined
+              ? {
+                  contextMetrics: {
+                    runtimeSelectionKey: state.runtimeSelectionKey,
+                    contextTokens: estimatedAfterTokens,
+                    source: 'estimated' as const,
+                    basis: 'conversation' as const
+                  }
+                }
+              : {})
+          }
         }
       }
-      database
-        .prepare(
-          `UPDATE conversations
-           SET context_state_json = ?, updated_at = ?
-           WHERE id = ?`
-        )
-        .run(
-          serializeConversationContextState(
-            conversationContextStateSchema.parse(contextState)
-          ),
-          new Date().toISOString(),
-          conversationId
-        )
+      if (lastReduced) {
+        const messageUpdate = database
+          .prepare(
+            `UPDATE messages
+             SET content = ?, state = ?, metadata_json = ?
+             WHERE id = ? AND conversation_id = ? AND request_id = ?`
+          )
+          .run(
+            lastReduced.content,
+            lastReduced.state,
+            serializeConversationMessageMetadata(lastReduced),
+            assistantMessageId,
+            conversationId,
+            taskId
+          )
+        if (messageUpdate.changes !== 1) {
+          throw new Error('远程事件的助理消息写入失败')
+        }
+      }
+      if (conversationState) {
+        database
+          .prepare(
+            `UPDATE conversations
+             SET context_state_json = ?, updated_at = ?
+             WHERE id = ?`
+          )
+          .run(
+            serializeConversationContextState(
+              conversationContextStateSchema.parse(
+                conversationState.contextState
+              )
+            ),
+            new Date().toISOString(),
+            conversationId
+          )
+      }
       database.exec('COMMIT')
-      return true
+      return inserted
     } catch (error) {
       database.exec('ROLLBACK')
       throw error

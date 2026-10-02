@@ -5383,13 +5383,25 @@ describe('registerIpcHandlers agent terminal state', () => {
     nativeTerminalManager?: Parameters<typeof registerIpcHandlers>[41],
     applicationSettingsStore?: ApplicationSettingsStore
   ) {
+    const appendRemoteTaskEventOnce = vi.fn<
+      (input: RemoteTaskEventMockInput) => boolean
+    >(() => true)
+    const appendRemoteConversationTaskEventOnce =
+      vi.fn<AssistantDatabase['appendRemoteConversationTaskEventOnce']>(() => true)
     const assistantDatabase = {
       createTask: vi.fn(),
       appendTaskEvent: vi.fn(),
-      appendRemoteTaskEventOnce: vi.fn<
-        (input: RemoteTaskEventMockInput) => boolean
-      >(() => true),
-      appendRemoteConversationTaskEventOnce: vi.fn<AssistantDatabase['appendRemoteConversationTaskEventOnce']>(() => true),
+      appendRemoteTaskEventOnce,
+      appendRemoteConversationTaskEventOnce,
+      // Batch writes delegate to the per-event mocks by default so tests can
+      // assert both per-event payloads and the number of transactions.
+      appendRemoteTaskEventsOnce: vi.fn<
+        (inputs: RemoteTaskEventMockInput[]) => boolean[]
+      >((inputs): boolean[] => inputs.map((input): boolean => appendRemoteTaskEventOnce(input))),
+      appendRemoteConversationTaskEventsBatch: vi.fn<AssistantDatabase['appendRemoteConversationTaskEventsBatch']>(
+        ({ events, ...owner }): boolean[] => events.map((event): boolean =>
+          appendRemoteConversationTaskEventOnce({ ...owner, ...event }))
+      ),
       listConversations: vi.fn<() => ConversationSnapshot[]>(() => []),
       listConversationSummaries: vi.fn<(ids?: string[]) => ConversationSnapshot[]>(() => []),
       listRecoverableRemoteTasks: vi.fn<
@@ -7342,7 +7354,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('durably commits remote text before resume, deduplicates it, and preserves its semantic payload', async () => {
+  it('durably commits remote text at its checkpoint before resume, deduplicates it, and preserves its semantic payload', async () => {
     const requestId = '00000000-0000-4000-8000-000000000763'
     const provenance = {
       source: 'remote-semantic-transcript' as const,
@@ -7364,24 +7376,43 @@ describe('registerIpcHandlers agent terminal state', () => {
           delta: taggedDelta,
           remoteProvenance: provenance
         } as const
+        const checkpoint = {
+          requestId: request.requestId,
+          type: 'remote-semantic-checkpoint',
+          remoteProvenance: { ...provenance, eventIndex: 1 }
+        } as const
         yield remoteText
+        yield checkpoint
+        // The Agent may ACK the entry here: text and checkpoint must already
+        // be committed, together, in one batch.
         expect(
-          harness.assistantDatabase.appendRemoteTaskEventOnce
-        ).toHaveBeenCalledWith({
-          taskId: request.requestId,
-          bindingId: provenance.bindingId,
-          operationId: provenance.operationId,
-          semanticSequence: provenance.semanticSequence,
-          eventIndex: provenance.eventIndex,
-          kind: 'text',
-          payload: {
-            requestId: request.requestId,
-            type: 'text',
-            delta: taggedDelta
-          }
-        })
+          harness.assistantDatabase.appendRemoteTaskEventsOnce
+        ).toHaveBeenCalledOnce()
+        expect(
+          harness.assistantDatabase.appendRemoteTaskEventsOnce
+        ).toHaveBeenLastCalledWith([
+          {
+            taskId: request.requestId,
+            bindingId: provenance.bindingId,
+            operationId: provenance.operationId,
+            semanticSequence: provenance.semanticSequence,
+            eventIndex: provenance.eventIndex,
+            kind: 'text',
+            payload: {
+              requestId: request.requestId,
+              type: 'text',
+              delta: taggedDelta
+            }
+          },
+          expect.objectContaining({
+            eventIndex: 1,
+            kind: 'remote-semantic-checkpoint'
+          })
+        ])
         resumed('first')
+        // Reconnect replay of the same transcript entry.
         yield remoteText
+        yield checkpoint
         resumed('duplicate')
         yield {
           requestId: request.requestId,
@@ -7397,6 +7428,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     const { harness } = fixture
     harness.assistantDatabase.appendRemoteTaskEventOnce
       .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(true)
 
@@ -7415,6 +7448,10 @@ describe('registerIpcHandlers agent terminal state', () => {
     )
 
     expect(resumed.mock.calls).toEqual([['first'], ['duplicate']])
+    // One transaction per checkpoint plus one for the terminal event.
+    expect(
+      harness.assistantDatabase.appendRemoteTaskEventsOnce
+    ).toHaveBeenCalledTimes(3)
     const persistedTextCalls =
       harness.assistantDatabase.appendRemoteTaskEventOnce.mock.calls.filter(
         ([input]) => input.kind === 'text'
@@ -7441,6 +7478,136 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(
       publicEvents.some((event) => 'remoteProvenance' in event)
     ).toBe(false)
+    await harness.dispose()
+  })
+
+  it('batches a remote transcript page into one transaction and keeps order with local events', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000767'
+    const conversationId = 'managed-ssh-remote-batch'
+    const remote = (semanticSequence: string, eventIndex: number) => ({
+      source: 'remote-semantic-transcript' as const,
+      bindingId: 'binding-remote-batch',
+      operationId: requestId,
+      semanticSequence,
+      eventIndex
+    })
+    const lifecycle: string[] = []
+    const selectedRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        const id = request.requestId
+        yield { requestId: id, type: 'reasoning', delta: 'think', remoteProvenance: remote('1', 0) } as const
+        yield { requestId: id, type: 'text', delta: 'A', remoteProvenance: remote('1', 1) } as const
+        yield { requestId: id, type: 'text', delta: 'B', remoteProvenance: remote('1', 2) } as const
+        // Replayed event from an earlier page: already stored.
+        yield { requestId: id, type: 'text', delta: 'old', remoteProvenance: remote('1', 3) } as const
+        lifecycle.push('before-checkpoint')
+        yield { requestId: id, type: 'remote-semantic-checkpoint', remoteProvenance: remote('1', 4) } as const
+        lifecycle.push('after-checkpoint')
+        yield { requestId: id, type: 'text', delta: 'C', remoteProvenance: remote('2', 0) } as const
+        // A local event forces the pending remote batch to commit first.
+        yield { requestId: id, type: 'status', message: 'local status' } as const
+        lifecycle.push('after-local')
+        yield { requestId: id, type: 'remote-semantic-checkpoint', remoteProvenance: remote('2', 1) } as const
+        yield { requestId: id, type: 'done', remoteProvenance: remote('3', 0) } as const
+        yield { requestId: id, type: 'remote-semantic-checkpoint', remoteProvenance: remote('3', 1) } as const
+      }
+    }
+    const { harness, projectId } = createManagedSshHarness(selectedRuntime)
+    harness.assistantDatabase.getConversation.mockReturnValue({
+      id: conversationId, projectId, messages: []
+    })
+    harness.assistantDatabase.appendRemoteConversationTaskEventsBatch.mockImplementation(
+      ({ events }) => {
+        lifecycle.push(`batch:${events.map(({ event }) => event.type).join(',')}`)
+        return events.map(({ event }) => !(event.type === 'text' && event.delta === 'old'))
+      }
+    )
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      ...managedSshRequest(projectId, requestId, conversationId),
+      currentUserMessageId: '00000000-0000-4000-8000-000000000768',
+      currentAssistantMessageId: '00000000-0000-4000-8000-000000000769'
+    })
+    await vi.waitFor(() => expect(lifecycle).toContain('batch:remote-semantic-checkpoint'))
+
+    expect(lifecycle).toEqual([
+      'before-checkpoint',
+      'batch:reasoning,text,text,text,remote-semantic-checkpoint',
+      'after-checkpoint',
+      'batch:text',
+      'after-local',
+      'batch:remote-semantic-checkpoint',
+      'batch:done',
+      'batch:remote-semantic-checkpoint'
+    ])
+    expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce).not.toHaveBeenCalled()
+    expect(harness.assistantDatabase.appendRemoteTaskEventOnce).not.toHaveBeenCalled()
+    const publicEvents = harness.webContents.send.mock.calls
+      .filter(([channel]) => channel === ipcChannels.agentEvent)
+      .map(([, event]) => event)
+      .filter((event) => event.requestId === requestId)
+    // Renderer coalescing may merge adjacent text deltas; compare the stream.
+    const stream: string[] = []
+    for (const event of publicEvents) {
+      const previous = stream.at(-1)
+      if ((event.type === 'text' || event.type === 'reasoning') && previous?.startsWith(`${event.type}:`)) {
+        stream[stream.length - 1] = `${previous}${event.delta}`
+      } else {
+        stream.push(event.type === 'text' || event.type === 'reasoning'
+          ? `${event.type}:${event.delta}`
+          : event.type === 'status' ? `status:${event.message}` : event.type)
+      }
+    }
+    expect(stream).toEqual(['reasoning:think', 'text:ABC', 'status:local status', 'done'])
+    expect(publicEvents.some((event) => event.type === 'text' && event.delta.includes('old'))).toBe(false)
+    await harness.dispose()
+  })
+
+  it('fails the run without forwarding or acknowledging when a remote batch commit fails', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000770'
+    const remote = (eventIndex: number) => ({
+      source: 'remote-semantic-transcript' as const,
+      bindingId: 'binding-remote-batch-failure',
+      operationId: requestId,
+      semanticSequence: '1',
+      eventIndex
+    })
+    const resumedAfterCheckpoint = vi.fn()
+    const selectedRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'text', delta: 'lost', remoteProvenance: remote(0) } as const
+        yield { requestId: request.requestId, type: 'remote-semantic-checkpoint', remoteProvenance: remote(1) } as const
+        resumedAfterCheckpoint()
+      }
+    }
+    const fixture = createManagedSshHarness(selectedRuntime)
+    const { harness } = fixture
+    harness.assistantDatabase.appendRemoteTaskEventsOnce.mockImplementation(() => {
+      throw new Error('disk full')
+    })
+    await harness.handler?.(
+      trustedEvent(harness.webContents),
+      managedSshRequest(fixture.projectId, requestId, 'managed-ssh-batch-failure')
+    )
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        expect.stringMatching(/^(failed|interrupted)$/u),
+        expect.any(String)
+      )
+    )
+    expect(resumedAfterCheckpoint).not.toHaveBeenCalled()
+    const publicEvents = harness.webContents.send.mock.calls
+      .filter(([channel]) => channel === ipcChannels.agentEvent)
+      .map(([, event]) => event)
+      .filter((event) => event.requestId === requestId)
+    expect(publicEvents.some((event) => event.type === 'text')).toBe(false)
+    expect(publicEvents.at(-1)).toMatchObject({ type: 'error' })
     await harness.dispose()
   })
 
