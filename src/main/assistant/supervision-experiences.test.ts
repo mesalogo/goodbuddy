@@ -23,13 +23,18 @@ async function fixture() {
   cleanups.push(async () => { sql.close(); db.close(); await rm(directory, { recursive: true, force: true }) })
   const project = db.listProjects()[0]!
   // Publishes events of one project in time order, then places them all in one feature story.
-  const publish = async (items: Array<[string, Kind]>, day: number, story = 'Review scheduling') => {
+  // Every event mentions the entity `topic`; an application must share an entity with the formation.
+  const publish = async (items: Array<[string, Kind]>, day: number, story = 'Review scheduling', topic = 'Long jobs') => {
+    const request = { trigger: 'manual' as const, scope: { kind: 'projects' as const, projectIds: [project.id] }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-10-01T00:00:00Z' } }
+    const candidates = db.listSupervisionCandidates(request)
+    const known = candidates.find(entity => entity.label === topic)
     db.saveSupervisionResult({
-      request: { trigger: 'manual', scope: { kind: 'projects', projectIds: [project.id] }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-10-01T00:00:00Z' } },
+      request, candidates,
       evidence: items.map(([title], index) => ({ id: `s${index}`, sourceType: 'conversation' as const, sourceId: 'c', title, content: title,
         occurredAt: `2026-09-${day}T0${index}:00:00.000Z`, locator: { source: `message:${randomUUID()}`, revision: 'r', projectId: project.id, start: 0, end: title.length } })),
-      output: { summary: 'x', changeDigest: '', openItems: [], entities: [], entityChanges: [], relations: [],
-        events: items.map(([title, eventType], index) => ({ title, description: title, occurredAt: `2026-09-${day}T0${index}:00:00.000Z`, eventType, entityIds: [], sourceReferenceIds: [`s${index}`] })) }
+      output: { summary: 'x', changeDigest: '', openItems: [], entityChanges: [], relations: [],
+        entities: [{ id: 'topic', label: topic, description: topic, sourceReferenceIds: ['s0'], ...(known ? { persistedId: known.id } : {}) }],
+        events: items.map(([title, eventType], index) => ({ title, description: title, occurredAt: `2026-09-${day}T0${index}:00:00.000Z`, eventType, entityIds: ['topic'], sourceReferenceIds: [`s${index}`] })) }
     })
     const existing = db.supervisionStories().candidates(project.id, false).find(row => row.name === story)
     await assignStories(db.supervisionStories(), async prompt => {
@@ -98,6 +103,12 @@ it('rejects invented evidence and saves nothing from a rejected answer; drops ap
   await f.publish([['D', 'decision']], 19)
   await extractExperiences(f.store, async () => JSON.stringify({ applications: [{ experience: 'x_1', event: 'e_1' }] }), options)
   expect(f.store.list()[0]!.events.map(event => [event.role, event.title])).toEqual([['formed', 'B'], ['applied', 'C']])
+  // A later event about unrelated knowledge is not recorded as an application.
+  await f.publish([['Unrelated decision', 'decision']], 25, 'Review scheduling', 'Billing')
+  await expect(extractExperiences(f.store, async prompt => {
+    const ref = prompt.split('\n').find(line => line.includes('Unrelated decision'))!.match(/"ref":"(e_\d+)"/)![1]
+    return JSON.stringify({ applications: [{ experience: 'x_1', event: ref, note: 'loosely related' }] })
+  }, options)).resolves.toMatchObject({ applied: 0 })
 })
 
 it('protects edits, keeps removed experiences removed and undoes adjustments', async () => {

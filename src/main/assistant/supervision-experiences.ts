@@ -139,9 +139,20 @@ export class SupervisionExperienceStore {
     }
     // An application must come after the experience formed; the real model sometimes cites earlier events. Those
     // citations are dropped, the rest of the answer is kept.
+    // An application must also touch the same knowledge as the formation: share an entity with one of its
+    // formation events. The real model otherwise records loosely related events as applications.
+    const entitiesOf = this.db.prepare('SELECT entity_id FROM supervision_event_entities WHERE event_id = ?')
+    const formedEvents = new Map<string, string[]>()
+    for (const item of output.experiences) formedEvents.set(item.key, item.formed.map(ref => refs.get(ref)!.id))
+    const formedOf = this.db.prepare("SELECT event_id FROM supervision_experience_events WHERE experience_id = ? AND role = 'formed'")
+    for (const [ref, row] of xRefs) formedEvents.set(ref, formedOf.all(String(row.id)).map(item => String(item.event_id)))
+    const related = (experience: string, eventId: string) => {
+      const formed = new Set((formedEvents.get(experience) ?? []).flatMap(id => entitiesOf.all(id).map(item => String(item.entity_id))))
+      return entitiesOf.all(eventId).some(item => formed.has(String(item.entity_id)))
+    }
     const timely = output.applications.filter(application => {
       const since = formedAt.get(application.experience)
-      return !since || refs.get(application.event)!.at > since
+      return (!since || refs.get(application.event)!.at > since) && related(application.experience, refs.get(application.event)!.id)
     })
     const removed = this.db.prepare("SELECT id, statement FROM supervision_experiences WHERE status = 'removed'").all()
     const removedStatements = new Set(removed.map(row => statementKey(String(row.statement))))
