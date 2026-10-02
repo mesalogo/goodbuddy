@@ -54,7 +54,6 @@ export function OverflowMarquee({
   }, [])
 
   useLayoutEffect(() => {
-    measureOverflow()
     const container = containerRef.current
     const track = trackRef.current
     if (
@@ -62,11 +61,15 @@ export function OverflowMarquee({
       !track ||
       typeof ResizeObserver !== 'function'
     ) {
+      measureOverflow()
       window.addEventListener('resize', measureOverflow)
       return () =>
         window.removeEventListener('resize', measureOverflow)
     }
 
+    // The observer reports both elements once after layout (before paint),
+    // so mounting many rows does not force a synchronous layout per row. A
+    // text change re-creates the observer, whose first report re-measures.
     const observer = new ResizeObserver(measureOverflow)
     observer.observe(container)
     observer.observe(track)

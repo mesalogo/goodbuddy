@@ -632,9 +632,13 @@ export const ConversationSidebar = memo(function ConversationSidebar({
     listScope,
     Boolean(conversationActionsId),
   );
+  // Same ids keep the same array: conversations change on every streamed
+  // update, and a new array would rerun the window's layout effect, which
+  // reads scrollTop and forces a synchronous layout mid-stream.
+  const filteredIdsKey = filteredConversations.map((conversation) => conversation.id).join("\n");
   const filteredIds = useMemo(
-    () => filteredConversations.map((conversation) => conversation.id),
-    [filteredConversations],
+    () => (filteredIdsKey ? filteredIdsKey.split("\n") : []),
+    [filteredIdsKey],
   );
   const listWindow = useConversationListWindow({
     ids: filteredIds,

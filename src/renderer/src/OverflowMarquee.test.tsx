@@ -54,6 +54,37 @@ describe('OverflowMarquee', () => {
     ).toBe('')
   })
 
+  it('measures from the resize observer instead of forcing layout on mount', () => {
+    let callback: ResizeObserverCallback | undefined
+    class FakeResizeObserver {
+      constructor(next: ResizeObserverCallback) { callback = next }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    const original = globalThis.ResizeObserver
+    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const text = '这是一个明显超过会话列表宽度的完整会话名称'
+      let reads = 0
+      const scrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth')
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => { reads += 1; return 280 } })
+      try {
+        render(<OverflowMarquee text={text} />)
+        const container = screen.getByTitle(text)
+        setMeasuredWidth(container, 'clientWidth', 120)
+        expect(reads).toBe(0)
+        callback?.([], {} as ResizeObserver)
+        expect(reads).toBe(1)
+        expect(container).toHaveAttribute('data-overflowing', 'true')
+      } finally {
+        if (scrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidth)
+        else Reflect.deleteProperty(HTMLElement.prototype, 'scrollWidth')
+      }
+    } finally {
+      globalThis.ResizeObserver = original
+    }
+  })
+
   it('keeps one readable text copy while its visual track moves', () => {
     render(<OverflowMarquee text="完整会话名称" />)
 
