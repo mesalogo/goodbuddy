@@ -107,7 +107,11 @@ export function createLiveMessageStore(options: {
   const listeners = new Map<string, Set<Listener>>();
   /** Last delta sequence contained by message objects this store produced. */
   const absorbed = new WeakMap<Message, number>();
-  const resolved = new WeakMap<Message, { snapshot: LiveMessageSnapshot; message: Message }>();
+  /** Last display per committed message, extended incrementally per delta. */
+  const resolved = new WeakMap<
+    Message,
+    { snapshot: LiveMessageSnapshot; message: Message; count: number }
+  >();
   let seq = 0;
   let version = 0;
   let resolvedConversations:
@@ -244,11 +248,27 @@ export function createLiveMessageStore(options: {
       if (!snapshot) return message;
       const cached = resolved.get(message);
       if (cached?.snapshot === snapshot) return cached.message;
-      const count = containedCount(message, snapshot);
-      const display = count < snapshot.deltas.length
-        ? foldLiveDeltas(message, snapshot.deltas.slice(count))
-        : message;
-      resolved.set(message, { snapshot, message: display });
+      const total = snapshot.deltas.length;
+      let display: Message;
+      let count: number;
+      if (
+        cached &&
+        cached.snapshot.messageId === snapshot.messageId &&
+        cached.snapshot.deltas.length <= total &&
+        cached.snapshot.deltas[cached.snapshot.deltas.length - 1] ===
+          snapshot.deltas[cached.snapshot.deltas.length - 1]
+      ) {
+        // Same buffer, more deltas: extend the previous display.
+        count = total;
+        display = foldLiveDeltas(cached.message, snapshot.deltas.slice(cached.count));
+      } else {
+        const contained = containedCount(message, snapshot);
+        count = total;
+        display = contained < total
+          ? foldLiveDeltas(message, snapshot.deltas.slice(contained))
+          : message;
+      }
+      resolved.set(message, { snapshot, message: display, count });
       return display;
     },
     /** Conversations with every pending delta applied, without changing state. */
@@ -285,15 +305,22 @@ export function createLiveMessageStore(options: {
       }
       return next;
     },
-    /** Drops deltas fully contained in committed state, and orphaned entries. */
+    /** Drops deltas contained in committed state, and orphaned entries. */
     prune(conversations: readonly Conversation[]): void {
       for (const snapshot of [...entries.values()]) {
         const message = findMessage(conversations, snapshot);
-        if (message && containedCount(message, snapshot) < snapshot.deltas.length) continue;
-        entries.delete(snapshot.messageId);
+        const contained = message ? containedCount(message, snapshot) : snapshot.deltas.length;
+        if (contained === 0) continue;
         version += 1;
+        if (contained >= snapshot.deltas.length) {
+          entries.delete(snapshot.messageId);
+        } else {
+          // Keep the buffer short while a long reply keeps streaming.
+          entries.set(snapshot.messageId, { ...snapshot, deltas: snapshot.deltas.slice(contained) });
+        }
         notify(snapshot.messageId);
       }
+      if (entries.size) options.onPending?.();
     },
   };
 }

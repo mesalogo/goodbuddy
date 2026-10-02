@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as THREE from 'three'
 import type { SupervisionAttentionSlot } from '../../shared/supervision-contracts'
-import type { SupervisionStory } from '../../shared/supervision-story-contracts'
-import { buildStoryTree, clusterEvents, findNode, radiusLevels, storyWindow, visibleLevel, type StoryCluster, type StoryNode } from './story-graph-3d-model'
+import type { SupervisionExperience, SupervisionStory } from '../../shared/supervision-story-contracts'
+import { buildStoryTree, clusterEvents, experienceLinks, findNode, radiusLevels, storyWindow, visibleLevel, type ExperienceLink, type StoryCluster, type StoryNode } from './story-graph-3d-model'
 
 /*
  * 3D story view: one helix of time inside, story staves on the outer cylinder.
@@ -16,8 +16,14 @@ type Props = {
   selectedEventId?: string
   onSelectEvent: (id: string) => void
   onSelectStory: (id: string) => void
+  /** Experiences (W) drawn outside the barrel, linking the staves they formed in and were applied to. */
+  experiences?: SupervisionExperience[]
+  selectedExperienceId?: string
+  onSelectExperience?: (id: string) => void
 }
-const TAU = Math.PI * 2, HEIGHT = 430, STAVE_R = 188, DIST = 900, CLUSTER_PX = 9
+const TAU = Math.PI * 2, HEIGHT = 430, STAVE_R = 188, DIST = 900, CLUSTER_PX = 9, W_R = 232
+const noExperiences: SupervisionExperience[] = []
+type EngineState = { focus: StoryNode; hovered?: string; selected?: string; experiences: SupervisionExperience[]; experience?: string }
 const VIEWS = { oblique: { yaw: -0.4, tilt: 0.38 }, side: { yaw: -0.4, tilt: 0 }, top: { yaw: -0.4, tilt: Math.PI / 2 - 1e-3 } } as const
 type ViewName = keyof typeof VIEWS | 'free'
 // Existing graph tokens, so light and dark themes keep the same story colours as the flat view.
@@ -31,7 +37,7 @@ function webglAvailable(): boolean {
   catch { return false }
 }
 
-export default function StoryGraph3D({ stories, attention, selectedEventId, onSelectEvent, onSelectStory }: Props) {
+export default function StoryGraph3D({ stories, attention, selectedEventId, onSelectEvent, onSelectStory, experiences = noExperiences, selectedExperienceId, onSelectExperience }: Props) {
   const { t, i18n } = useTranslation('heartbeat')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -42,12 +48,13 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
   const [view, setView] = useState<ViewName>('oblique')
   const [hovered, setHovered] = useState<string>()
   const camera = useRef<{ yaw: number; tilt: number; zoom: number; pan: number }>({ yaw: VIEWS.oblique.yaw, tilt: VIEWS.oblique.tilt, zoom: 1, pan: 0 })
-  const engine = useRef<{ draw: () => void; update: (next: { focus: StoryNode; hovered?: string; selected?: string }) => void; dispose: () => void; hit: (x: number, y: number) => { node?: StoryNode; cluster?: StoryCluster } | undefined }>(undefined)
+  const engine = useRef<{ draw: () => void; update: (next: EngineState) => void; dispose: () => void; hit: (x: number, y: number) => { node?: StoryNode; cluster?: StoryCluster; link?: ExperienceLink } | undefined }>(undefined)
   const range = useMemo(() => {
     const times = tree.events.map(event => event.t)
     return times.length ? storyWindow(Math.min(...times) - 1_800_000, Math.max(...times) + 1_800_000) : undefined
   }, [tree])
   const level = visibleLevel(focus)
+  const shownLinks = useMemo(() => experienceLinks(experiences, level.children), [experiences, level])
   const trail: StoryNode[] = []
   for (let node: StoryNode | undefined = focus; node; node = node.parent) trail.unshift(node)
   const dateText = (value: number) => new Date(value).toLocaleString(i18n.resolvedLanguage, range && range.turnHours >= 24
@@ -89,10 +96,11 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
     const ticks = Array.from({ length: Math.floor(range.turns + 1e-6) + 1 }, (_, d) => range.from + d * range.turnHours * 3_600_000).filter(time => time < range.to)
     scene.add(base)
     // What is shown; the renderer and scene persist while focus, hover and selection change.
-    const state: { focus: StoryNode; hovered?: string; selected?: string } = { focus }
+    const state: EngineState = { focus, experiences }
     let staves = visibleLevel(focus).children
     const meshes: THREE.Mesh[] = []
     const groups = new Map<string, StoryCluster[]>()
+    const wisdom = cssColor(host, '--graph-node-4-border', '#b45309')
     const world = new THREE.Group(); scene.add(world)
     const clusterSpan = () => CLUSTER_PX / (HEIGHT * Math.min(width / 500, height / 560) * camera.current.zoom) * (range.to - range.from)
     let builtSpan = -1
@@ -131,6 +139,23 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
           dot.position.copy(p); dot.userData.cluster = cluster; dot.userData.node = stave
           world.add(dot); meshes.push(dot)
         }
+      }
+      // Experiences: a diamond outside the barrel, arcs from the forming stave to it and on to the applying stave.
+      for (const link of experienceLinks(state.experiences, staves)) {
+        const active = link.id === state.experience
+        const node = on(link.t, link.angle, W_R)
+        const arc = (end: { stave: StoryNode; t: number }) => {
+          const start = on(end.t, center(end.stave), STAVE_R + 1)
+          const mid = start.clone().add(node).multiplyScalar(0.5)
+          mid.setLength(mid.length() + 26)
+          return new THREE.QuadraticBezierCurve3(start, mid, node).getPoints(24)
+        }
+        const material = solid(wisdom, active ? 1 : 0.55)
+        world.add(tube(arc(link.from), active ? 0.9 : 0.55, material, 24))
+        world.add(tube(arc(link.to).reverse(), active ? 0.9 : 0.55, material, 24))
+        const diamond = new THREE.Mesh(own(new THREE.OctahedronGeometry(active ? 7 : 5.5)), solid(wisdom))
+        diamond.position.copy(node); diamond.userData.link = link
+        world.add(diamond); meshes.push(diamond)
       }
     }
     const project = (point: THREE.Vector3) => { const v = point.clone().project(view3d); return { x: (v.x + 1) / 2 * width, y: (1 - v.y) / 2 * height, behind: v.z > 1 } }
@@ -172,6 +197,15 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
         const p = project(mesh.position); if (p.behind) continue
         const label = String(cluster.events.length); ctx.fillText(label, p.x - ctx.measureText(label).width / 2, p.y + 3)
       }
+      // Only the selected experience is named on the canvas; the list below names all of them.
+      ctx.font = '600 11px system-ui'; ctx.fillStyle = wisdom
+      for (const mesh of meshes) {
+        const link = mesh.userData.link as ExperienceLink | undefined
+        if (!link || link.id !== state.experience) continue
+        const p = project(mesh.position); if (p.behind) continue
+        const text = link.statement.length > 28 ? `${link.statement.slice(0, 27)}…` : link.statement
+        ctx.fillText(text, Math.max(4, Math.min(width - ctx.measureText(text).width - 4, p.x + 10)), p.y + 4)
+      }
     }
     const resize = new ResizeObserver(() => {
       const rect = canvas.getBoundingClientRect(); width = rect.width; height = rect.height
@@ -195,14 +229,16 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
       hit: (x, yPos) => {
         raycaster.setFromCamera(new THREE.Vector2(x / width * 2 - 1, 1 - yPos / height * 2), view3d)
         const hit = raycaster.intersectObjects(meshes, false)[0]
-        return hit && { node: hit.object.userData.node as StoryNode, cluster: hit.object.userData.cluster as StoryCluster | undefined }
+        return hit && { node: hit.object.userData.node as StoryNode | undefined, cluster: hit.object.userData.cluster as StoryCluster | undefined,
+          link: hit.object.userData.link as ExperienceLink | undefined }
       },
       dispose: () => { canvas.removeEventListener('wheel', zoom); resize.disconnect(); disposables.forEach(item => item.dispose()); renderer.dispose() }
     }
     return () => { engine.current?.dispose(); engine.current = undefined }
     // Focus, hover and selection are pushed through update() below; only data and locale recreate the scene.
   }, [supported, range, attention, i18n.resolvedLanguage]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { engine.current?.update({ focus, hovered, selected: selectedEventId }) }, [focus, hovered, selectedEventId, range, attention])
+  useEffect(() => { engine.current?.update({ focus, hovered, selected: selectedEventId, experiences, experience: selectedExperienceId }) },
+    [focus, hovered, selectedEventId, range, attention, experiences, selectedExperienceId])
 
   const animate = (goal: Partial<typeof camera.current>) => {
     const from = { ...camera.current }
@@ -268,7 +304,8 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
           drag.current = undefined
           if (!start || Math.hypot(x - start.sx, y - start.sy) >= 5) return
           const hit = engine.current?.hit(x, y)
-          if (hit?.cluster) { if (hit.cluster.events.length === 1) onSelectEvent(hit.cluster.events[0]!.id); else open(hit.node!) }
+          if (hit?.link) onSelectExperience?.(hit.link.id)
+          else if (hit?.cluster) { if (hit.cluster.events.length === 1) onSelectEvent(hit.cluster.events[0]!.id); else open(hit.node!) }
           else if (hit?.node) open(hit.node)
         }}
         onPointerLeave={() => { if (!drag.current) setHovered(undefined) }}
@@ -286,6 +323,12 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
     </div>
     <p className="supervisor-workspace__muted">{t('supervisor.graph3d.legend', { turn: t(`supervisor.graph3d.turns.${range.turnHours}`), count: Math.round(range.turns * 10) / 10 })}</p>
     {/* The same staves as a list, for keyboard and screen readers. */}
+    {shownLinks.length > 0 && <ul className="story-graph-3d__list" aria-label={t('supervisor.graph3d.experiences')}>
+      {shownLinks.map(link => <li key={link.id}><button type="button" className="link-button" aria-pressed={link.id === selectedExperienceId}
+        onClick={() => onSelectExperience?.(link.id)}>
+        {link.statement} <small>{link.from.stave.name} → {link.to.stave.name}</small>
+      </button></li>)}
+    </ul>}
     <ul className="story-graph-3d__list" aria-label={t('supervisor.graph3d.staves')}>
       {level.children.map(node => <li key={node.id}><button type="button" className="link-button" aria-pressed={node.id === focus.id} onClick={() => open(node)}>
         {node.name} <small>{t('supervisor.stories.count', { count: node.events.length })} · {dateText(node.start)} – {dateText(node.end)}</small>

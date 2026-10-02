@@ -76,7 +76,6 @@ import {
 import {
   Component,
   memo,
-  startTransition,
   Suspense,
   useCallback,
   useDeferredValue,
@@ -227,6 +226,7 @@ import {
 } from "./conversation-activity";
 import { sameArrayItems, sameMapEntries, useStableDerivedValue, useStableHandlers } from "./stable-derived-value";
 import { useUnviewedCompletions } from "./use-unviewed-completions";
+import { useConversationListOrder } from "./use-conversation-list-order";
 import { useExecutionStats } from "./use-execution-stats";
 import {
   RightAssistantSidebar,
@@ -2207,10 +2207,12 @@ function App(): React.JSX.Element {
     const store = createLiveMessageStore({
       onPending: () => {
         if (flushTimer !== undefined) return;
+        // A plain update: a transition would keep being interrupted by the
+        // row's synchronous store updates and might never absorb anything.
         flushTimer = setTimeout(() => {
           flushTimer = undefined;
           if (!store.hasEntries()) return;
-          startTransition(() => update((current) => current));
+          update((current) => current);
         }, liveMessageFlushIntervalMs);
       },
     });
@@ -4180,9 +4182,9 @@ function App(): React.JSX.Element {
     () => new Set(conversationQueueItems.map((item) => item.conversationId)),
     [conversationQueueItems],
   );
-  const filteredConversations = useMemo(() => {
+  const matchingConversations = useMemo(() => {
     const query = deferredSearchQuery.trim().toLocaleLowerCase();
-    return sortConversationsForDisplay(conversations.filter(
+    return conversations.filter(
       (conversation) =>
         (!activeProjectId || conversation.projectId === activeProjectId) &&
         (activeProject?.kind !== "channel" ||
@@ -4191,7 +4193,7 @@ function App(): React.JSX.Element {
           (persistedSearchMatches.query === query && persistedSearchMatches.ids.has(conversation.id)) ||
           conversation.title.toLocaleLowerCase().includes(query) ||
           (localSearchMatches.query === query && localSearchMatches.ids.has(conversation.id))),
-    ));
+    );
   }, [
     activeProject,
     activeProjectId,
@@ -4200,6 +4202,11 @@ function App(): React.JSX.Element {
     localSearchMatches,
     persistedSearchMatches,
   ]);
+  const { conversations: filteredConversations, listProps: conversationListProps } = useConversationListOrder(
+    matchingConversations,
+    JSON.stringify([activeProjectId, activeProject?.kind, deferredSearchQuery.trim().toLocaleLowerCase()]),
+    Boolean(conversationActionsId),
+  );
   const productAssistantTasks = useMemo(
     () =>
       assistantTasks.filter(
@@ -9464,7 +9471,7 @@ function App(): React.JSX.Element {
         </nav>
 
         <section className="sidebar-conversations" aria-label={t("sidebar.recent")}>
-        <div className="conversation-list">
+        <div className="conversation-list" {...conversationListProps}>
           {!conversationLoadError &&
             filteredConversations.map((conversation) => {
               const conversationTasks =

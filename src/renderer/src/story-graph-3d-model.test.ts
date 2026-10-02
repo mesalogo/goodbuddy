@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SupervisionStory } from '../../shared/supervision-story-contracts'
-import { buildStoryTree, clusterEvents, radiusLevels, storyWindow, visibleLevel } from './story-graph-3d-model'
+import { buildStoryTree, clusterEvents, experienceLinks, radiusLevels, storyWindow, visibleLevel } from './story-graph-3d-model'
 
 const day = 86_400_000
 const at = (d: number) => new Date(Date.parse('2026-09-01T00:00:00Z') + d * day).toISOString()
@@ -54,5 +54,21 @@ describe('story graph 3d model', () => {
     const events = [0, 1, 2, 50].map(t => ({ id: String(t), title: '', t }))
     expect(clusterEvents(events, 5).map(cluster => cluster.events.length)).toEqual([3, 1])
     expect(clusterEvents(events, 0).map(cluster => cluster.events.length)).toEqual([1, 1, 1, 1])
+  })
+it('links an experience from the stave it formed in to the first later stave that applied it, once', () => {
+    const tree = buildStoryTree([story('a', 'feature', [1, 2]), story('b', 'feature', [3, 6]), story('c', 'feature', [4])], new Map())
+    const staves = tree.children[0]!.children
+    const event = (id: string, role: 'formed' | 'applied', d: number) => ({ id, role, note: '', title: id, projectId: 'p1', at: at(d), storyId: null, storyName: null })
+    const experience = (id: string, events: ReturnType<typeof event>[]) => ({ id, statement: id, conditions: '', boundaries: '', userEdited: false, events })
+    const links = experienceLinks([
+      experience('reused', [event('a-0', 'formed', 1), event('a-1', 'applied', 2), event('c-0', 'applied', 4), event('b-1', 'applied', 6)]),
+      experience('same story only', [event('a-0', 'formed', 1), event('a-1', 'applied', 2)]),
+      experience('applied before formed', [event('b-1', 'formed', 6), event('a-0', 'applied', 1)]),
+      experience('outside the level', [event('zzz', 'formed', 1), event('b-0', 'applied', 3)])
+    ], staves)
+    expect(links.map(link => [link.id, link.from.stave.name, link.to.stave.name])).toEqual([['reused', 'a', 'c']])
+    const [link] = links
+    expect(link!.t).toBe((Date.parse(at(1)) + Date.parse(at(4))) / 2)
+    expect(experienceLinks([experience('reused', [event('a-0', 'formed', 1), event('c-0', 'applied', 4)])], staves, 0)).toEqual([])
   })
 })

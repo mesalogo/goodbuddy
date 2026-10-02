@@ -145,6 +145,24 @@ describe("live message store", () => {
     expect(store.resolve(committed).content).toBe("prefix that is longhello");
   });
 
+  it("trims absorbed deltas while a reply keeps streaming", () => {
+    const h = harness();
+    for (let index = 0; index < 50; index += 1) {
+      h.append("text", `${index},`);
+      const captured = h.store.capture();
+      h.append("text", "x");
+      // An update dispatched before the newest delta absorbs only older ones.
+      const next = h.store.applyUpdate(h.state, (current) => current, captured);
+      h.setConversations(next);
+      expect(h.store.getSnapshot("m1")?.deltas.length ?? 0).toBeLessThanOrEqual(1);
+    }
+    const expected = Array.from({ length: 50 }, (_, index) => `${index},x`).join("");
+    expect(h.displayed().content).toBe(expected);
+    h.setConversations((current) => current);
+    expect(h.committed().content).toBe(expected);
+    expect(h.store.hasEntries()).toBe(false);
+  });
+
   it("drops entries for messages that no longer exist", () => {
     const h = harness();
     h.append("text", "gone");

@@ -1,5 +1,5 @@
 import type { SupervisionAttentionSlot } from '../../shared/supervision-contracts'
-import type { SupervisionStory } from '../../shared/supervision-story-contracts'
+import type { SupervisionExperience, SupervisionStory } from '../../shared/supervision-story-contracts'
 
 /*
  * Pure model for the 3D story view (storyline model step 3), shared by the renderer and tests.
@@ -136,4 +136,43 @@ export function findNode(root: StoryNode, id: string): StoryNode | undefined {
   if (root.id === id) return root
   for (const child of root.children) { const hit = findNode(child, id); if (hit) return hit }
   return undefined
+}
+
+export type ExperienceLink = {
+  id: string
+  statement: string
+  /** Visible stave and event time where the experience formed (earliest) and where it was applied. */
+  from: { stave: StoryNode; t: number }
+  to: { stave: StoryNode; t: number }
+  /** Node position outside the barrel: between the two staves in angle, between the two times in height. */
+  angle: number
+  t: number
+}
+
+/**
+ * Experiences that link two different staves of the shown level: formed in one, applied later in another.
+ * Each experience appears once, from its earliest formation to its earliest later application elsewhere.
+ * At most `limit`, most-applied first, so the barrel never fills with arcs.
+ */
+export function experienceLinks(experiences: SupervisionExperience[], staves: StoryNode[], limit = 6): ExperienceLink[] {
+  const owner = new Map<string, StoryNode>()
+  for (const stave of staves) for (const event of stave.events) owner.set(event.id, stave)
+  const links: Array<{ link: ExperienceLink; weight: number }> = []
+  for (const experience of experiences) {
+    const at = (event: SupervisionExperience['events'][number]) => ({ stave: owner.get(event.id), t: Date.parse(event.at) })
+    const formed = experience.events.filter(event => event.role === 'formed').map(at).filter(item => item.stave).sort((a, b) => a.t - b.t)[0]
+    if (!formed) continue
+    const applied = experience.events.filter(event => event.role === 'applied').map(at)
+      .filter(item => item.stave && item.stave !== formed.stave && item.t > formed.t).sort((a, b) => a.t - b.t)
+    const to = applied[0]
+    if (!to) continue
+    const a = (formed.stave!.a0 + formed.stave!.a1) / 2, b = (to.stave!.a0 + to.stave!.a1) / 2
+    // Midpoint along the shorter way round the barrel.
+    let delta = b - a
+    if (delta > Math.PI) delta -= TAU
+    if (delta < -Math.PI) delta += TAU
+    links.push({ link: { id: experience.id, statement: experience.statement, from: { stave: formed.stave!, t: formed.t }, to: { stave: to.stave!, t: to.t },
+      angle: a + delta / 2, t: (formed.t + to.t) / 2 }, weight: new Set(applied.map(item => item.stave)).size })
+  }
+  return links.sort((x, y) => y.weight - x.weight || x.link.from.t - y.link.from.t).slice(0, limit).map(item => item.link)
 }

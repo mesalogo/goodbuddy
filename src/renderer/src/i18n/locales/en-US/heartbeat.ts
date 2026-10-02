@@ -119,7 +119,8 @@ export const heartbeat = {
       levels: 'Stave levels', all: 'All', views: 'Viewpoint', canvas: 'Time spiral. Keys 1, 2 and 3 switch the viewpoint, arrow keys rotate, Esc goes up a level; the list below offers the same staves.',
       view: { oblique: 'Oblique', side: 'Side', top: 'Top', free: 'Free' },
       staves: 'Staves at this level',
-      legend: 'Height is time, one turn is {{turn}} ({{count}} turns); radius is conversation density at the time and only shows how concentrated the work was. A stave spans its story from first to last event.',
+      experiences: 'Experiences across staves',
+      legend: 'Height is time, one turn is {{turn}} ({{count}} turns); radius is conversation density at the time and only shows how concentrated the work was. A stave spans its story from first to last event. Diamonds outside the barrel are experiences; arcs run from the stave they formed in to the stave that later used them.',
       turns: { 3: '3 hours', 6: '6 hours', 12: '12 hours', 24: '1 day', 168: '1 week', 720: '1 month', 2160: '1 quarter', 8760: '1 year' },
       unsupported: 'This device cannot show 3D. Use the flat view and the story list.'
     },

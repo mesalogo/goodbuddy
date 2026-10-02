@@ -849,7 +849,10 @@ export function SupervisorWorkspace({
                         <StoryGraph3D stories={storyState.view.stories} attention={graph.attention ?? []}
                           selectedEventId={selection?.kind === 'event' ? selection.id : undefined}
                           onSelectEvent={(id) => { if (layout.eventMap.has(id)) select({ kind: 'event', id }) }}
-                          onSelectStory={(id) => select({ kind: 'story', id })} />
+                          onSelectStory={(id) => select({ kind: 'story', id })}
+                          experiences={storyState.view.experiences}
+                          selectedExperienceId={selection?.kind === 'experience' ? selection.id : undefined}
+                          onSelectExperience={(id) => select({ kind: 'experience', id })} />
                       </Suspense>
                     ) : <>
                     <figure className="supervisor-workspace__figure">
