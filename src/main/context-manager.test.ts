@@ -4,13 +4,16 @@ import { basename, join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { createFromBuffer, getSources, showOpenDialog } = vi.hoisted(() => ({
+const { createFromBuffer, getSources, showOpenDialog, readText, readClipboard } = vi.hoisted(() => ({
+  readText: vi.fn(),
+  readClipboard: vi.fn(),
   createFromBuffer: vi.fn(),
   getSources: vi.fn(),
   showOpenDialog: vi.fn()
 }))
 
 vi.mock('electron', () => ({
+  clipboard: { readText, read: readClipboard },
   desktopCapturer: {
     getSources
   },
@@ -31,6 +34,8 @@ import { defaultDocumentParsingSettings } from './document-parsing-settings-stor
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {
+  readText.mockReset()
+  readClipboard.mockReset()
   getSources.mockReset()
   showOpenDialog.mockReset()
   createFromBuffer.mockReset()
@@ -42,6 +47,40 @@ afterEach(async () => {
 })
 
 describe('ContextManager', () => {
+  it('awaits clipboard text and prefers it over images', async () => {
+    readText.mockResolvedValue('  clipboard text  ')
+    const manager = new ContextManager()
+    const attachment = await manager.readClipboard()
+    expect(attachment.kind).toBe('text')
+    expect(attachment.preview).toContain('clipboard text')
+    expect(readClipboard).not.toHaveBeenCalled()
+  })
+
+  it('decodes an asynchronous clipboard PNG when text is empty', async () => {
+    readText.mockResolvedValue('')
+    const data = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+    const getType = vi.fn().mockResolvedValue(new Blob([data]))
+    readClipboard.mockResolvedValue([{ types: ['image/png'], getType }])
+    const image = {
+      isEmpty: () => false,
+      getSize: () => ({ width: 640, height: 480 }),
+      resize: vi.fn(),
+      toJPEG: () => Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+    }
+    image.resize.mockReturnValue(image)
+    createFromBuffer.mockReturnValue(image)
+    const attachment = await new ContextManager().readClipboard()
+    expect(getType).toHaveBeenCalledWith('image/png')
+    expect(createFromBuffer).toHaveBeenCalledWith(data)
+    expect(attachment.kind).toBe('image')
+  })
+
+  it('rejects a clipboard without text or a supported image', async () => {
+    readText.mockResolvedValue('')
+    readClipboard.mockResolvedValue([{ types: ['text/html'] }])
+    await expect(new ContextManager().readClipboard()).rejects.toThrow('剪贴板中没有可用的文本或图片')
+  })
+
   it('preserves logical attachment identity and frozen message bytes across a draft reparse', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-reparse-'))
     temporaryDirectories.push(directory)

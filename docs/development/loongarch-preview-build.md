@@ -10,7 +10,7 @@ Debian `loong64` 桌面，不代表 GoodBuddy 已将龙芯纳入正式发布支�
 均为 LoongArch ELF。
 
 预览版使用社区维护的 Electron 42.3.0 LoongArch 构建。GoodBuddy 正式版本
-当前使用 Electron 43.2.0，因此该预览包只用于移植和真机验证，不能作为正式
+当前使用 Electron 44.5.1，因此该预览包只用于移植和真机验证，不能作为正式
 发布基线。Electron 官方目前也不提供 Linux LoongArch 预编译包。
 
 已完成的实际构建结果：

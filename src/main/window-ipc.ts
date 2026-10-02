@@ -10,12 +10,12 @@ export function registerClipboardIpcHandlers(
 ): void {
   registerHandler(ipcChannels.clipboardReadText, (event) => {
     assertTrustedSender(event, window)
-    return clipboardTextSchema.parse(clipboard.readText())
+    return clipboard.readText().then((text) => clipboardTextSchema.parse(text))
   })
 
   registerHandler(ipcChannels.clipboardWriteText, (event, input) => {
     assertTrustedSender(event, window)
-    clipboard.writeText(clipboardTextSchema.parse(input))
+    return clipboard.writeText(clipboardTextSchema.parse(input))
   })
 }
 

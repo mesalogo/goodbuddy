@@ -568,14 +568,18 @@ export class ContextManager {
     )
   }
 
-  readClipboard(): ContextAttachment {
-    const text = clipboard.readText().trim()
+  async readClipboard(): Promise<ContextAttachment> {
+    const text = (await clipboard.readText()).trim()
     if (text) {
       return this.storeText('剪贴板文本.txt', text)
     }
-    const image = clipboard.readImage()
-    if (!image.isEmpty()) {
-      return this.storeImage('剪贴板图片.png', image)
+    for (const item of await clipboard.read()) {
+      if (!item.types.includes('image/png')) continue
+      const blob = await item.getType('image/png')
+      const image = nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer()))
+      if (!image.isEmpty()) {
+        return this.storeImage('剪贴板图片.png', image)
+      }
     }
     throw new Error('剪贴板中没有可用的文本或图片')
   }

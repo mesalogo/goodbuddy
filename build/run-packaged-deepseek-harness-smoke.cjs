@@ -148,7 +148,7 @@ async function main() {
       [
         'appId: live.digiman.goodbuddy.harness-smoke',
         'productName: GoodBuddyHarnessSmoke',
-        'electronVersion: "43.2.0"',
+        `electronVersion: "${require('electron/package.json').version}"`,
         'asar: true',
         'npmRebuild: false',
         'files:',

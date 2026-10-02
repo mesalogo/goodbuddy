@@ -264,9 +264,9 @@ describe('terminal IPC boundary', () => {
       snapshot.sessionId
     )
 
-    expect(
+    await expect(
       electronMocks.handlers.get(ipcChannels.clipboardReadText)?.(event)
-    ).toBe('Get-Location\r')
+    ).resolves.toBe('Get-Location\r')
     expect(electronMocks.readClipboardText).toHaveBeenCalledOnce()
 
     electronMocks.handlers.get(ipcChannels.clipboardWriteText)?.(
@@ -353,8 +353,8 @@ const electronMocks = vi.hoisted(() => {
     openPath: vi.fn(async () => ''),
     showItemInFolder: vi.fn(),
     openExternal: vi.fn(async () => undefined),
-    readClipboardText: vi.fn(() => 'Get-Location\r'),
-    writeClipboardText: vi.fn()
+    readClipboardText: vi.fn(async () => 'Get-Location\r'),
+    writeClipboardText: vi.fn(async () => {})
   }
 })
 
