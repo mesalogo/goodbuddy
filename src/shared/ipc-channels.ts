@@ -254,6 +254,7 @@ export const ipcChannels = {
   tasksSetStatus: 'tasks:set-status',
   activityHistoryGet: 'activity-history:get',
   activityHistoryReplace: 'activity-history:replace',
+  activityHistoryUpdate: 'activity-history:update',
   tokenUsageSummary: 'usage:token-summary',
   tokenUsageChanged: 'usage:token-changed',
   artifactsList: 'artifacts:list',

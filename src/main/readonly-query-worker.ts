@@ -31,7 +31,12 @@ if (kind === 'knowledge') {
   handlers = {
     readStoryGraph: ([name, input, projectId], signal) => database.readStoryGraph(
       name as Parameters<AssistantDatabase['readStoryGraph']>[0], input, projectId as string | undefined, signal),
-    searchConversations: ([query]) => database.searchConversations(query as string)
+    searchConversations: ([query]) => database.searchConversations(query as string),
+    // Several statements each: read them from one snapshot.
+    listConversationSummaries: ([detailIds]) => database.readSnapshot(() =>
+      database.listConversationSummaries(detailIds as string[])),
+    getConversation: ([conversationId]) => database.readSnapshot(() =>
+      database.getConversation(conversationId as string))
   }
 }
 

@@ -45,6 +45,7 @@ import {
   type ExecutionStats,
   type ExecutionStatsInput,
   type ActivityHistorySnapshot,
+  type ActivityHistoryUpdate,
   type ActivityRecord,
   type TokenUsageSummary,
   type ConversationSnapshot,
@@ -2158,6 +2159,12 @@ export type DesktopApi = {
       records: ActivityRecord[],
       legacyHistoryMayBeIncomplete: boolean
     ) => Promise<void>
+    /**
+     * Incremental save (PERF-15): only the changed records cross IPC and are
+     * written. Optional until renderer mocks adopt it; the preload always
+     * provides it.
+     */
+    update?: (update: ActivityHistoryUpdate) => Promise<void>
   }
   usage: {
     getTokenSummary: () => Promise<TokenUsageSummary>

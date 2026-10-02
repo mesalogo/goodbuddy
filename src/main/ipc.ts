@@ -132,7 +132,6 @@ import { registerMagicNotesIpcHandlers, registerMagicTodosIpcHandlers } from './
 import {
   assistantIdSchema,
   executionStatsInputSchema,
-  activityHistorySnapshotSchema,
   conversationBranchInputSchema,
   conversationSnapshotsSchema,
   conversationListRequestSchema,
@@ -6329,16 +6328,19 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     return projectConversationRequests(assistantDatabase.listConversations())
   })
-  registerHandler(ipcChannels.conversationsListSummaries, (event, input: unknown) => {
+  // PERF-15: both reads run on the readonly worker. All writes are synchronous
+  // on Main, so a read issued after a write observes it; request projection
+  // uses the in-memory state current when the result arrives.
+  registerHandler(ipcChannels.conversationsListSummaries, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     const { detailIds } = conversationListRequestSchema.parse(input)
-    return projectConversationRequests(assistantDatabase.listConversationSummaries([
+    return projectConversationRequests(await assistantDatabase.listConversationSummariesAsync([
       ...detailIds, ...[...activeRequests.values()].map(request => request.conversationId)
     ]))
   })
-  registerHandler(ipcChannels.conversationsGet, (event, input: unknown) => {
+  registerHandler(ipcChannels.conversationsGet, async (event, input: unknown) => {
     assertTrustedSender(event, window)
-    return projectConversationRequests([assistantDatabase.getConversation(assistantIdSchema.parse(input))])[0]
+    return projectConversationRequests([await assistantDatabase.getConversationAsync(assistantIdSchema.parse(input))])[0]
   })
   registerHandler(ipcChannels.conversationsSearch, (event, input: unknown) => {
     assertTrustedSender(event, window)
@@ -6830,9 +6832,15 @@ export function registerIpcHandlers(
     ipcChannels.activityHistoryReplace,
     (event, input: unknown) => {
       assertTrustedSender(event, window)
-      assistantDatabase.replaceActivityHistory(
-        activityHistorySnapshotSchema.parse(input)
-      )
+      // Validation happens inside, reusing already validated unchanged records.
+      assistantDatabase.replaceActivityHistory(input)
+    }
+  )
+  registerHandler(
+    ipcChannels.activityHistoryUpdate,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      assistantDatabase.updateActivityHistory(input)
     }
   )
 

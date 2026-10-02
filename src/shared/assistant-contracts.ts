@@ -100,10 +100,42 @@ export const activityHistorySnapshotSchema = z
   })
   .strict()
 
+/**
+ * Incremental activity history change (PERF-15). Changes apply in order to the
+ * stored, newest-first list; the result is identical to `replace` with the
+ * same final list. A record is identified by its `id` (first occurrence when
+ * legacy history contains duplicate IDs).
+ * - `upsert` + `position: 'front'` inserts the record, or moves the existing
+ *   record to the front with the new content (renderer `upsertActivityRecord`).
+ * - `upsert` + `position: 'in-place'` replaces the existing record where it
+ *   is; a record that does not exist yet is inserted at the front.
+ * - `remove` deletes every record with the ID.
+ */
+export const activityHistoryChangeSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('upsert'),
+    record: activityRecordSchema,
+    position: z.enum(['front', 'in-place'])
+  }).strict(),
+  z.object({
+    type: z.literal('remove'),
+    id: z.string().min(1).max(256)
+  }).strict()
+])
+
+export const activityHistoryUpdateSchema = z
+  .object({
+    changes: z.array(activityHistoryChangeSchema).max(20_000),
+    legacyHistoryMayBeIncomplete: z.boolean().optional()
+  })
+  .strict()
+
 export type ActivityRecord = z.infer<typeof activityRecordSchema>
 export type ActivityHistorySnapshot = z.infer<
   typeof activityHistorySnapshotSchema
 >
+export type ActivityHistoryChange = z.infer<typeof activityHistoryChangeSchema>
+export type ActivityHistoryUpdate = z.infer<typeof activityHistoryUpdateSchema>
 
 export const projectExecutionSpaceSchema = z.discriminatedUnion(
   'kind',

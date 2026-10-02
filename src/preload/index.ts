@@ -68,6 +68,7 @@ import type {
   AssistantTask,
   ExecutionStats,
   ActivityHistorySnapshot,
+  ActivityHistoryUpdate,
   ActivityRecord,
   TokenUsageSummary,
   ConversationBranchInput,
@@ -1286,6 +1287,9 @@ const desktopApi: DesktopApi = {
         records,
         legacyHistoryMayBeIncomplete
       })
+    },
+    update: async (update: ActivityHistoryUpdate) => {
+      await ipcRenderer.invoke(ipcChannels.activityHistoryUpdate, update)
     }
   },
   usage: {

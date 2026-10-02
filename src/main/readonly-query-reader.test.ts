@@ -194,6 +194,59 @@ describe('assistant readonly worker', () => {
     } finally { database.close() }
   }, 60_000)
 
+  it('serves conversation summaries and full history from the worker with the synchronous results', async () => {
+    const root = await mkdtemp(join(directory, 'assistant-'))
+    const database = new AssistantDatabase(join(root, 'assistant.sqlite'))
+    database.initialize(root)
+    try {
+      const project = database.listProjects()[0]!
+      const message = (content: string, createdAt: number, state: 'complete' | 'streaming' = 'complete', role: 'user' | 'assistant' = 'assistant') =>
+        ({ id: randomUUID(), role, state, content, createdAt })
+      const conversations = Array.from({ length: 12 }, (_, index) => ({
+        id: randomUUID(), projectId: index % 2 === 0 ? project.id : undefined, title: `Conversation ${index}`,
+        updatedAt: 100 - index, pinned: index === 7,
+        messages: index === 0 ? [] : Array.from({ length: index }, (_, at) =>
+          message(`m${index}-${at} 跨平台`, index * 10 + at, index === 5 && at === index - 1 ? 'streaming' : 'complete', at === 0 ? 'user' : 'assistant'))
+      }))
+      database.replaceConversations(conversations)
+      const detailSets = [[], [conversations[3]!.id], conversations.map(item => item.id), [randomUUID()]]
+      const expected = detailSets.map(ids => database.listConversationSummaries(ids))
+      const expectedFull = conversations.map(item => database.getConversation(item.id))
+      // Summaries without details carry messageSummary; retained/streaming ones carry messages.
+      expect(expected[0]!.find(item => item.id === conversations[4]!.id)?.messageSummary).toEqual({ count: 4, firstRole: 'user', latestMessageAt: 43 })
+      expect(expected[0]!.find(item => item.id === conversations[5]!.id)?.messages).toHaveLength(5)
+      expect(expected[1]!.find(item => item.id === conversations[3]!.id)).toEqual(expectedFull[3])
+
+      database.enableReadonlyWorker(workerPath)
+      expect(await Promise.all(detailSets.map(ids => database.listConversationSummariesAsync(ids)))).toEqual(expected)
+      expect(await Promise.all(conversations.map(item => database.getConversationAsync(item.id)))).toEqual(expectedFull)
+      expect(database.readonlyWorkerForTest?.pendingCount).toBe(0)
+      // Missing conversations reject with the synchronous error.
+      await expect(database.getConversationAsync(randomUUID())).rejects.toThrow('对话不存在')
+
+      // Read after write: a synchronous write on Main is visible to the next worker read.
+      database.saveLocalConversations([{ header: { id: conversations[1]!.id, title: 'Renamed', updatedAt: 500 },
+        messages: [message('fresh', 999)] }])
+      const afterWrite = await database.listConversationSummariesAsync([])
+      expect(afterWrite).toEqual(database.listConversationSummaries([]))
+      expect(afterWrite[0]!.title).toBe('Renamed')
+      expect(await database.getConversationAsync(conversations[1]!.id)).toEqual(database.getConversation(conversations[1]!.id))
+
+      // Inside an open transaction the synchronous path keeps read-your-writes.
+      const raw = (database as unknown as { database: import('node:sqlite').DatabaseSync }).database
+      raw.exec('BEGIN IMMEDIATE')
+      try {
+        raw.prepare('UPDATE conversations SET title = ? WHERE id = ?').run('Uncommitted', conversations[2]!.id)
+        expect((await database.getConversationAsync(conversations[2]!.id)).title).toBe('Uncommitted')
+      } finally { raw.exec('ROLLBACK') }
+
+      // Worker crash: served synchronously, identical.
+      const inFlight = database.listConversationSummariesAsync([conversations[3]!.id])
+      await database.readonlyWorkerForTest!.terminateWorkerForTest()
+      expect(await inFlight).toEqual(database.listConversationSummaries([conversations[3]!.id]))
+    } finally { database.close() }
+  }, 60_000)
+
   it('serves story graph reads from the worker with the synchronous result and errors', async () => {
     const root = await mkdtemp(join(directory, 'assistant-'))
     const database = new AssistantDatabase(join(root, 'assistant.sqlite'))

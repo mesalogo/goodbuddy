@@ -5404,6 +5404,9 @@ describe('registerIpcHandlers agent terminal state', () => {
       ),
       listConversations: vi.fn<() => ConversationSnapshot[]>(() => []),
       listConversationSummaries: vi.fn<(ids?: string[]) => ConversationSnapshot[]>(() => []),
+      // The readonly-worker variants delegate to the synchronous mocks.
+      listConversationSummariesAsync: vi.fn(async (ids?: string[]) => assistantDatabase.listConversationSummaries(ids)),
+      getConversationAsync: vi.fn(async (conversationId: string) => assistantDatabase.getConversation(conversationId)),
       listRecoverableRemoteTasks: vi.fn<
         () => Array<{
           taskId: string
@@ -8221,10 +8224,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.recoveryGetHandler?.(event)
       await vi.waitFor(() => expect(ready.size).toBe(2))
       await vi.waitFor(() => expect(list().every(c => c.activeRequest?.questions.length === 1)).toBe(true))
-      const summaries = electronMocks.handlers.get(ipcChannels.conversationsListSummaries)!(event, { detailIds: [] }) as ConversationSnapshot[]
+      const summaries = await electronMocks.handlers.get(ipcChannels.conversationsListSummaries)!(event, { detailIds: [] }) as ConversationSnapshot[]
       expect(summaries).toEqual(list())
       for (const snapshot of summaries) {
-        expect(electronMocks.handlers.get(ipcChannels.conversationsGet)!(event, snapshot.id)).toEqual(snapshot)
+        expect(await electronMocks.handlers.get(ipcChannels.conversationsGet)!(event, snapshot.id)).toEqual(snapshot)
       }
       expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce).not.toHaveBeenCalled()
       const update = settingsKind === 'runtime'

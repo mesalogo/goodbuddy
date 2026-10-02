@@ -6,6 +6,14 @@ import { appendConversationQuestionBlock } from '../../shared/conversation-quest
 import { DatabaseSync } from 'node:sqlite'
 import { ExecutionStatsReader } from './execution-stats-reader'
 import { ReadonlyQueryReader, readWithFallback } from '../readonly-query-reader'
+import {
+  isActivityHistoryPlanEmpty,
+  parseActivityHistorySnapshot,
+  planActivityHistoryReplace,
+  planActivityHistoryUpdate,
+  type ActivityHistoryPlan,
+  type ActivityHistoryState
+} from './activity-history-plan'
 import { statSync } from 'node:fs'
 import { MagicNoteStorage } from '../magic-notes/magic-note-storage'
 import type { AssistantStorageProgress } from '../../shared/assistant-storage-contracts'
@@ -1963,7 +1971,7 @@ export class AssistantDatabase {
   private static readonly executionStatsCacheTtlMs = 30_000
   private static readonly executionStatsCacheLimit = 8
   private database?: DatabaseSync
-  private activityHistoryCache?: { records: Map<string, string>; dataVersion: number }
+  private activityHistoryCache?: { state: ActivityHistoryState; dataVersion: number }
   private executionStatsReader?: ExecutionStatsReader
   private readonlyReader?: ReadonlyQueryReader
   private readonlyWorkerPath?: string
@@ -3006,6 +3014,25 @@ export class AssistantDatabase {
 
   listConversationSummaries(detailIds: string[] = []): import('../../shared/assistant-contracts').ConversationListSnapshot[] {
     return this.readConversationList(new Set(detailIds))
+  }
+
+  /**
+   * Conversation summaries on the readonly worker (PERF-15). Every write runs
+   * synchronously on Main, so once no transaction is open, everything written
+   * before this call is committed and visible to the worker. Inside an open
+   * transaction the synchronous path keeps read-your-writes semantics.
+   */
+  listConversationSummariesAsync(detailIds: string[] = [], signal?: AbortSignal): Promise<import('../../shared/assistant-contracts').ConversationListSnapshot[]> {
+    const database = this.requireDatabase()
+    return readWithFallback(database.isTransaction ? undefined : this.readonlyQueryReader(),
+      'listConversationSummaries', [detailIds], signal, () => this.listConversationSummaries(detailIds))
+  }
+
+  /** Full conversation history on the readonly worker; same rules as listConversationSummariesAsync. */
+  getConversationAsync(conversationId: string, signal?: AbortSignal): Promise<ConversationSnapshot> {
+    const database = this.requireDatabase()
+    return readWithFallback(database.isTransaction ? undefined : this.readonlyQueryReader(),
+      'getConversation', [conversationId], signal, () => this.getConversation(conversationId))
   }
 
   private listConversationRows(): ConversationRow[] {
@@ -4970,6 +4997,25 @@ export class AssistantDatabase {
   }
 
   /**
+   * Runs multi-statement reads against one WAL snapshot. Used by the readonly
+   * worker, where Main may commit between statements; on Main itself the
+   * event loop already serializes reads and writes.
+   */
+  readSnapshot<T>(read: () => T): T {
+    const database = this.requireDatabase()
+    if (database.isTransaction) return read()
+    database.exec('BEGIN')
+    try {
+      const result = read()
+      database.exec('COMMIT')
+      return result
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /**
    * Routes heavy read-only queries (story graph, conversation search) through a
    * read-only worker thread. In-memory databases keep the synchronous path.
    */
@@ -5255,67 +5301,108 @@ export class AssistantDatabase {
     })
   }
 
-  replaceActivityHistory(input: ActivityHistorySnapshot): void {
-    const snapshot = activityHistorySnapshotSchema.parse(input)
+  /**
+   * Persists the whole newest-first list. Unchanged records are neither
+   * re-validated, re-serialized nor written; a fully unchanged snapshot does
+   * not open a write transaction (PERF-15).
+   */
+  replaceActivityHistory(input: unknown): void {
     const database = this.requireDatabase()
+    // Reuse is safe even from a stale cache: cached records are validated copies.
+    const { items, incomplete } = parseActivityHistorySnapshot(input, this.activityHistoryCache?.state)
+    const committed = this.committedActivityHistoryState(database)
+    const planned = committed && planActivityHistoryReplace(items, incomplete, committed)
+    if (planned && isActivityHistoryPlanEmpty(planned)) return
+    this.writeActivityHistoryPlan(database, (previous) => previous === committed && planned
+      ? planned : planActivityHistoryReplace(items, incomplete, previous))
+  }
+
+  /** Applies incremental changes in one transaction (PERF-15). */
+  updateActivityHistory(input: unknown): void {
+    const database = this.requireDatabase()
+    this.writeActivityHistoryPlan(database, (previous) => planActivityHistoryUpdate(input, previous))
+  }
+
+  /** The cached committed state, when no other connection committed since. */
+  private committedActivityHistoryState(database: DatabaseSync): ActivityHistoryState | undefined {
+    const cache = this.activityHistoryCache
+    if (!cache || database.isTransaction) return undefined
+    const { data_version: dataVersion } = database.prepare('PRAGMA data_version').get() as { data_version: number }
+    return cache.dataVersion === dataVersion ? cache.state : undefined
+  }
+
+  private writeActivityHistoryPlan(
+    database: DatabaseSync,
+    plan: (previous: ActivityHistoryState) => ActivityHistoryPlan
+  ): void {
     database.exec('BEGIN IMMEDIATE')
     try {
       const { data_version: dataVersion } = database.prepare('PRAGMA data_version').get() as { data_version: number }
       const previous = this.activityHistoryCache?.dataVersion === dataVersion
-        ? this.activityHistoryCache.records : undefined
-      const records = this.writeActivityHistory(database, snapshot, undefined, previous)
+        ? this.activityHistoryCache.state : this.readActivityHistoryState(database)
+      const result = plan(previous)
+      this.applyActivityHistoryPlan(database, result)
       database.exec('COMMIT')
       // Publish only committed records; a failed save must remain retryable.
-      this.activityHistoryCache = { records, dataVersion }
+      this.activityHistoryCache = { state: result.next, dataVersion }
     } catch (error) {
       database.exec('ROLLBACK')
       throw error
     }
   }
 
+  private readActivityHistoryState(database: DatabaseSync): ActivityHistoryState {
+    const rows = database.prepare(
+      'SELECT record_key, record_json FROM activity_history_records'
+    ).all() as Array<{ record_key: string; record_json: string }>
+    const header = database.prepare(
+      'SELECT record_order_json, legacy_history_may_be_incomplete FROM activity_history WHERE singleton = 1'
+    ).get() as { record_order_json: string; legacy_history_may_be_incomplete: number } | undefined
+    const order = header ? JSON.parse(header.record_order_json) as unknown : undefined
+    return {
+      entries: new Map(rows.map((row) => [row.record_key, { json: row.record_json }])),
+      ...(Array.isArray(order) && order.every((key) => typeof key === 'string')
+        ? { order, orderJson: header!.record_order_json } : {}),
+      ...(header ? { incomplete: header.legacy_history_may_be_incomplete === 1 } : {})
+    }
+  }
+
+  private applyActivityHistoryPlan(database: DatabaseSync, plan: ActivityHistoryPlan): void {
+    if (plan.upserts.length > 0) {
+      const upsert = database.prepare(
+        `INSERT INTO activity_history_records (record_key, record_json) VALUES (?, ?)
+         ON CONFLICT(record_key) DO UPDATE SET record_json = excluded.record_json`
+      )
+      for (const [key, json] of plan.upserts) upsert.run(key, json)
+    }
+    if (plan.removes.length > 0) {
+      const remove = database.prepare('DELETE FROM activity_history_records WHERE record_key = ?')
+      for (const key of plan.removes) remove.run(key)
+    }
+    if (plan.headerChanged) {
+      database.prepare(
+        `UPDATE activity_history
+         SET record_order_json = ?, legacy_history_may_be_incomplete = ?
+         WHERE singleton = 1`
+      ).run(plan.next.orderJson, Number(plan.next.incomplete))
+    }
+  }
+
+  /** Schema-44 migration: writes a parsed legacy snapshot into the new tables. */
   private writeActivityHistory(
     database: DatabaseSync,
     snapshot: ActivityHistorySnapshot,
-    onProgress?: (processed: number) => void,
-    previous?: ReadonlyMap<string, string>
-  ): Map<string, string> {
-    if (!previous) {
-      const rows = database.prepare(
-        'SELECT record_key, record_json FROM activity_history_records'
-      ).all() as Array<{ record_key: string; record_json: string }>
-      previous = new Map(rows.map((row) => [row.record_key, row.record_json]))
+    onProgress?: (processed: number) => void
+  ): void {
+    const rows = database.prepare(
+      'SELECT record_key, record_json FROM activity_history_records'
+    ).all() as Array<{ record_key: string; record_json: string }>
+    // The order column still holds the legacy records; always rewrite it.
+    const previous: ActivityHistoryState = {
+      entries: new Map(rows.map((row) => [row.record_key, { json: row.record_json }]))
     }
-    const records = new Map<string, string>()
-    const occurrences = new Map<string, number>()
-    const order: string[] = []
-    const upsert = database.prepare(
-      `INSERT INTO activity_history_records (record_key, record_json) VALUES (?, ?)
-       ON CONFLICT(record_key) DO UPDATE SET record_json = excluded.record_json`
-    )
-    for (const record of snapshot.records) {
-      if (order.length % 128 === 0) onProgress?.(order.length)
-      // IDs were never unique in the snapshot schema; retain every occurrence.
-      const occurrence = occurrences.get(record.id) ?? 0
-      occurrences.set(record.id, occurrence + 1)
-      const key = JSON.stringify([record.id, occurrence])
-      const json = JSON.stringify(record)
-      order.push(key)
-      if (previous.get(key) !== json) upsert.run(key, json)
-      records.set(key, json)
-    }
-    const remove = database.prepare('DELETE FROM activity_history_records WHERE record_key = ?')
-    for (const key of previous.keys()) {
-      if (!records.has(key)) remove.run(key)
-    }
-    const orderJson = JSON.stringify(order)
-    const incomplete = Number(snapshot.legacyHistoryMayBeIncomplete)
-    database.prepare(
-      `UPDATE activity_history
-       SET record_order_json = ?, legacy_history_may_be_incomplete = ?
-       WHERE singleton = 1
-         AND (record_order_json != ? OR legacy_history_may_be_incomplete != ?)`
-    ).run(orderJson, incomplete, orderJson, incomplete)
-    return records
+    this.applyActivityHistoryPlan(database, planActivityHistoryReplace(
+      snapshot.records.map((record) => ({ record })), snapshot.legacyHistoryMayBeIncomplete, previous, onProgress))
   }
 
   createTask(input: {
