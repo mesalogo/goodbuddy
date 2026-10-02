@@ -345,7 +345,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.1`, paired with the current Desktop release candidate `0.15.7`; formal
+  `0.15.2`, paired with the current Desktop release candidate `0.15.8`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -966,9 +966,18 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.7`; published Agent `0.15.1` is unchanged, with
+- The current Desktop candidate is `0.15.8`; Agent candidate `0.15.2` requires Desktop `0.15.8`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.8` and Agent `0.15.2` add Execute-only saving of conversation
+  images to absolute local or Host paths, with explicit overwrite and no WebP
+  conversion. MCP settings list image tools without promising availability in
+  every mode. Notes gain new-entry cancellation, edit-focus restoration and full
+  available content width. Missing browser and frosted-appearance preferences
+  default to enabled; saved choices remain unchanged. Schema stays at 52.
+  Real Linux x64 Host tool-layer evidence and remaining exact-candidate CI and
+  package checks are separated in the
+  [preparation record](./docs/development/release-preparation-0.15.8.md).
 - Desktop `0.15.7` reuses completed streaming Markdown blocks and conversation
   derived values without changing the default streaming cadence. Activity records
   load on entry, refresh every 15 seconds while visible, and offer manual refresh.

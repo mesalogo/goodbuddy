@@ -2,6 +2,42 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.8",
+      "releasedAt": "2026-10-02",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**把会话图片保存为文件**：在 Execute 模式下，可让支持工具调用的 Runtime 使用 `save_image`，把当前会话已上传或生成的图片保存到指定绝对路径；远程项目保存到 Host，需配套 Agent 0.15.2。默认不覆盖已有文件，覆盖需明确指定；支持 PNG、JPEG 和原格式 WebP，不支持转换为 WebP，Ask 模式不提供写入能力。",
+            "**查看内置图像工具**：MCP 设置现在列出内置图像工具及说明，便于区分生成图片和保存已有图片。实际可用性仍由当前 Runtime、工作模式、模型配置及会话图片决定，列出工具不代表所有模式都能调用。"
+          ],
+          "fixes": [
+            "**取消新笔记记录并恢复编辑焦点**：新建记录提供取消操作，未保存内容沿用草稿确认；退出已有记录编辑后，焦点回到对应编辑入口。笔记正文不再受 880px 最大宽度限制，使用可用内容区宽度。",
+            "**内置浏览器默认可用**：新配置和缺少内置浏览器设置的旧配置默认启用，并分配给直连模型、OpenCode 和 Continue；已明确保存的启停与分配选择保持不变。仍需 Execute 模式才能让 Agent 操作浏览器，不控制用户已安装的浏览器。",
+            "**透明磨砂默认开启**：新用户及缺少外观字段的旧配置默认开启透明磨砂，已保存的选择不被覆盖。可在外观设置关闭，效果仅在应用内部呈现，不透出系统桌面。"
+          ],
+          "notices": [
+            "远程保存图片请先升级 Desktop 0.15.8，再下载 Agent 0.15.2 并更新 Host；已有 Agent 进程不会热更新。本轮数据库仍为 schema 52，升级前请关闭应用并备份完整数据库及相邻 `notes/` 目录。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Save conversation images as files**: In Execute mode, a tool-capable Runtime can use `save_image` to write an uploaded or generated image from the current conversation to an absolute path; remote projects write on the Host and require Agent 0.15.2. Existing files are protected unless overwrite is explicitly requested; PNG, JPEG, and unchanged WebP are supported, conversion to WebP is not, and Ask mode cannot write files.",
+            "**Inspect built-in image tools**: MCP settings now list built-in image tools and descriptions so you can distinguish image generation from saving an existing image. Availability still depends on the Runtime, work mode, model configuration, and conversation images; listing a tool does not make it callable in every mode."
+          ],
+          "fixes": [
+            "**Cancel new note entries and restore editing focus**: New entries now have a cancel action with existing unsaved-draft confirmation, and leaving an existing entry's editor restores focus to its edit control. Note content uses the available pane width instead of an 880px maximum.",
+            "**Enable the built-in browser by default**: New configurations and older configurations without a browser preference enable it for the direct model, OpenCode, and Continue, while explicitly saved enablement and assignments remain unchanged. Agent browser operations still require Execute mode and do not control your separately installed browser.",
+            "**Enable frosted-glass appearance by default**: New users and older configurations without the appearance field start with the effect enabled, without overriding saved choices. You can disable it in Appearance; the effect stays inside the app and does not reveal the operating-system desktop."
+          ],
+          "notices": [
+            "For remote image saving, upgrade to Desktop 0.15.8 before downloading Agent 0.15.2 and updating the Host; existing Agent processes are not hot-updated. The database remains at schema 52; close the app and back up the complete database and adjacent `notes/` directory before upgrading."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.7",
       "releasedAt": "2026-10-01",
       "notes": {
