@@ -5,14 +5,22 @@ import {
   lazy,
   memo,
   Suspense,
-  useMemo
+  useEffect,
+  useMemo,
+  useRef
 } from 'react'
-import rehypeKatex from 'rehype-katex'
 import ReactMarkdown from 'react-markdown'
+import type { Components } from 'react-markdown'
+import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
-import type { Components } from 'react-markdown'
 import { useTranslation } from 'react-i18next'
+import {
+  blockMarkdownPipeline,
+  getMarkdown,
+  hastToReact,
+  storeMarkdown
+} from './markdown-render-cache'
 import { StaticHtmlPreview } from './StaticHtmlPreview'
 
 const MermaidDiagram = lazy(() =>
@@ -367,38 +375,63 @@ export function splitMarkdownSegments(content: string): string[] {
   return segments
 }
 
-const markdownRehypePlugins: NonNullable<
-  React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']
-> = [
-  [
-    rehypeKatex,
-    {
-      output: 'htmlAndMathml',
-      strict: 'warn',
-      trust: false
-    }
-  ]
-]
-const markdownRemarkPlugins: NonNullable<
-  React.ComponentProps<typeof ReactMarkdown>['remarkPlugins']
-> = [remarkGfm, [remarkMath, { singleDollarTextMath: true }]]
-
+/**
+ * Renders one segment from a hast tree shared through the module-level cache
+ * (markdown-render-cache.ts). Only the hast to React step runs per mount, with
+ * this instance's `components`, so callbacks and state are never shared.
+ *
+ * Cache-write rule (the renderer does not know whether a message is still
+ * streaming):
+ * - A segment followed by another segment (`complete`) is stored: the split
+ *   rules guarantee its text and blocks no longer depend on what comes next.
+ * - The final segment, which may still be growing, is stored only when it
+ *   unmounts (the windowed timeline scrolls it away, or the view closes).
+ *   That is exactly the text a remount asks for, and a stream adds at most
+ *   one prefix per unmount instead of one entry per token.
+ * Reads always consult the cache; keys are the exact segment text, so any
+ * entry is correct for its key regardless of when it was stored.
+ */
 const MarkdownSegment = memo(function MarkdownSegment({
+  complete,
   components,
   content
 }: {
+  complete: boolean
   components: Components
   content: string
 }): React.JSX.Element {
-  return (
-    <ReactMarkdown
-      components={components}
-      rehypePlugins={markdownRehypePlugins}
-      remarkPlugins={markdownRemarkPlugins}
-      skipHtml
-    >
-      {content}
-    </ReactMarkdown>
+  const parsed = useMemo(
+    () => getMarkdown(content, blockMarkdownPipeline),
+    [content]
+  )
+  const latest = useRef({ content, parsed })
+  const mounted = useRef(false)
+
+  useEffect(() => {
+    latest.current = { content, parsed }
+    if (complete) {
+      storeMarkdown(content, blockMarkdownPipeline, parsed)
+    }
+  }, [complete, content, parsed])
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      // StrictMode re-runs effects right after this cleanup; storing only
+      // when the segment stays unmounted keeps that from caching a prefix.
+      queueMicrotask(() => {
+        if (!mounted.current) {
+          const last = latest.current
+          storeMarkdown(last.content, blockMarkdownPipeline, last.parsed)
+        }
+      })
+    }
+  }, [])
+
+  return useMemo(
+    () => hastToReact(parsed.tree, components),
+    [components, parsed]
   )
 })
 
@@ -408,7 +441,20 @@ export const MarkdownRenderer = memo(function MarkdownRenderer(
   return <MarkdownDocument {...props} segmented />
 })
 
-/** Whole-document reference rendering; used to verify segmentation. */
+// Must stay in sync with blockMarkdownPipeline in markdown-render-cache.ts.
+const referenceRehypePlugins: NonNullable<
+  React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']
+> = [
+  [rehypeKatex, { output: 'htmlAndMathml', strict: 'warn', trust: false }]
+]
+const referenceRemarkPlugins: NonNullable<
+  React.ComponentProps<typeof ReactMarkdown>['remarkPlugins']
+> = [remarkGfm, [remarkMath, { singleDollarTextMath: true }]]
+
+/**
+ * Whole-document reference rendering through plain react-markdown, without
+ * the cache; used to verify segmentation and caching.
+ */
 export const UnsegmentedMarkdownRenderer = memo(
   function UnsegmentedMarkdownRenderer(
     props: MarkdownRendererProps
@@ -450,15 +496,31 @@ function MarkdownDocument({
   // Completed segments keep identical strings, so streaming updates re-parse
   // only the growing tail. The "\n" matches the text node ReactMarkdown
   // places between top-level blocks, keeping the DOM identical.
-  const segments = segmented
-    ? splitMarkdownSegments(normalizedContent)
-    : [normalizedContent]
+  if (!segmented) {
+    // Plain react-markdown, bypassing the cache: the reference also checks
+    // that the cached pipeline matches react-markdown.
+    return (
+      <ReactMarkdown
+        components={components}
+        rehypePlugins={referenceRehypePlugins}
+        remarkPlugins={referenceRemarkPlugins}
+        skipHtml
+      >
+        {normalizedContent}
+      </ReactMarkdown>
+    )
+  }
+  const segments = splitMarkdownSegments(normalizedContent)
   return (
     <>
       {segments.map((segment, index) => (
         <Fragment key={index}>
           {index > 0 && '\n'}
-          <MarkdownSegment components={components} content={segment} />
+          <MarkdownSegment
+            complete={index < segments.length - 1}
+            components={components}
+            content={segment}
+          />
         </Fragment>
       ))}
     </>

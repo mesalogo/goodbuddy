@@ -32,6 +32,7 @@ import { OverflowMarquee } from "./OverflowMarquee";
 import { findTaskSchedule } from "./TaskScheduleActions";
 import { formatConversationListTime, type TimeFormatLocale } from "./time-format";
 import { useConversationListOrder } from "./use-conversation-list-order";
+import { useConversationListWindow } from "./use-conversation-list-window";
 import { DestructiveConfirmActions } from "./WorkspacePrimitives";
 
 /** Delay before searching message text, so typing does not scan every keystroke. */
@@ -105,6 +106,11 @@ type ConversationListRowProps = {
   listTimeDay: string;
   actionsRef: React.RefObject<HTMLDivElement | null>;
   handlers: ConversationListRowHandlers;
+  /** Windowed lists only: measures the row; stable per conversation. */
+  rowRef?: (element: HTMLElement | null) => void;
+  /** Windowed lists only: 1-based position, since not every row is in the DOM. */
+  position?: number;
+  setSize?: number;
 };
 
 // Rows skip re-rendering unless their own props change, so streaming into one
@@ -132,13 +138,23 @@ const ConversationListRow = memo(function ConversationListRow({
   listTimeDay,
   actionsRef,
   handlers,
+  rowRef,
+  position,
+  setSize,
 }: ConversationListRowProps): React.JSX.Element {
   void listTimeDay;
   const { t } = useTranslation("app");
   const { t: tWorkspace } = useTranslation("workspace");
   const branchDisabledReasonId = `conversation-branch-disabled-${conversation.id}`;
   return (
-    <div className="conversation-entry" key={conversation.id}>
+    <div
+      aria-posinset={position}
+      aria-setsize={setSize}
+      className="conversation-entry"
+      data-conversation-window-row={conversation.id}
+      ref={rowRef}
+      role="listitem"
+    >
       <div className="conversation-row">
         {conversationTasks.length > 0 && (
           <button
@@ -610,11 +626,31 @@ export const ConversationSidebar = memo(function ConversationSidebar({
         conversation.title.toLocaleLowerCase().includes(query) ||
         (localSearchMatches.query === query && localSearchMatches.ids.has(conversation.id))),
   ), [activeProjectId, activeProjectKind, conversations, query, localSearchMatches, persistedSearchMatches]);
+  const listScope = JSON.stringify([activeProjectId, activeProjectKind, query]);
   const { conversations: filteredConversations, listProps } = useConversationListOrder(
     matchingConversations,
-    JSON.stringify([activeProjectId, activeProjectKind, query]),
+    listScope,
     Boolean(conversationActionsId),
   );
+  const filteredIds = useMemo(
+    () => filteredConversations.map((conversation) => conversation.id),
+    [filteredConversations],
+  );
+  const listWindow = useConversationListWindow({
+    ids: filteredIds,
+    scope: listScope,
+    scrollRef: listProps.ref,
+    // Rows holding user state stay mounted while scrolled out of the window.
+    keepIds: [
+      activeId,
+      conversationActionsId,
+      confirmingConversationId,
+      deletingConversationId,
+      renamingConversationId,
+    ],
+    enabled: !loadError,
+  });
+
   const defaultTitle = t("conversation.defaultTitle");
   const conversationById = useMemo(
     () => new Map(conversations.map((item) => [item.id, item])),
@@ -628,9 +664,30 @@ export const ConversationSidebar = memo(function ConversationSidebar({
 
   return (
     <section className="sidebar-conversations" aria-label={t("sidebar.recent")}>
-      <div className="conversation-list" {...listProps}>
+      <div
+        className={listWindow.windowed ? "conversation-list conversation-list--windowed" : "conversation-list"}
+        {...listProps}
+        onBlur={listWindow.onBlur}
+        onFocus={listWindow.onFocus}
+        onScroll={() => {
+          listProps.onScroll();
+          listWindow.onScroll();
+        }}
+        role={!loadError && filteredConversations.length > 0 ? "list" : undefined}
+      >
         {!loadError &&
-          filteredConversations.map((conversation) => {
+          listWindow.segments.map((segment) => {
+            if (segment.kind === "spacer") {
+              return (
+                <div
+                  aria-hidden="true"
+                  className="conversation-list__spacer"
+                  key={`spacer:${segment.key}`}
+                  style={{ height: `${segment.height}px` }}
+                />
+              );
+            }
+            const conversation = filteredConversations[segment.index]!;
             const conversationTasks =
               tasksByConversation.get(conversation.id) ?? emptyConversationTasks;
             const tasksExpanded = expandedTaskConversationIds.has(conversation.id);
@@ -668,7 +725,10 @@ export const ConversationSidebar = memo(function ConversationSidebar({
                 locale={locale}
                 menuVisible={sidebarOpen && conversationActionsId === conversation.id}
                 pinDisabled={!conversationStoreReady || Boolean(pinningConversationId)}
+                position={listWindow.windowed ? segment.index + 1 : undefined}
                 renaming={renamingConversationId === conversation.id}
+                rowRef={listWindow.windowed ? listWindow.rowRef(conversation.id) : undefined}
+                setSize={listWindow.windowed ? filteredConversations.length : undefined}
                 schedules={tasksExpanded ? assistantSchedules : emptyAssistantSchedules}
                 selectedTaskId={tasksExpanded && conversationTasks.some((task) => task.id === selectedAssistantTaskId) ? selectedAssistantTaskId : undefined}
                 tasksExpanded={tasksExpanded}

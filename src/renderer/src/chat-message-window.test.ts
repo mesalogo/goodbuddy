@@ -7,6 +7,7 @@ import {
   rangeAround,
   rangeCovers,
   rowAtOffset,
+  rowAtViewportTop,
   rowHeightsFor,
   tailRange
 } from './chat-message-window'
@@ -72,6 +73,16 @@ describe('window ranges', () => {
   it('finds the row at an offset', () => {
     expect(rowAtOffset(sizeAt, 10, 2_000, 250)).toEqual({ index: 12, top: 200 })
     expect(rowAtOffset(sizeAt, 10, 20, 99_999)).toEqual({ index: 19, top: 900 })
+  })
+
+  it('finds the row at the viewport top from a known row position', () => {
+    // Anchor row 50 sits 250 px below the viewport top: rows 48..49 lie above it.
+    expect(rowAtViewportTop(sizeAt, 0, 2_000, 50, 250)).toEqual({ index: 47, top: -50 })
+    // Anchor scrolled 1,030 px above the viewport top.
+    expect(rowAtViewportTop(sizeAt, 0, 2_000, 50, -1_030)).toEqual({ index: 60, top: -30 })
+    // Clamped to the loaded window.
+    expect(rowAtViewportTop(sizeAt, 40, 2_000, 50, 5_000)).toEqual({ index: 40, top: 4_000 })
+    expect(rowAtViewportTop(sizeAt, 0, 55, 50, -99_999)).toEqual({ index: 54, top: -99_999 + 400 })
   })
 })
 

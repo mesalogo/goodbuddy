@@ -25,6 +25,7 @@ import {
   rangeAround,
   rangeCovers,
   rowAtOffset,
+  rowAtViewportTop,
   rowHeightsFor,
   tailRange,
   type MessageRowHeights,
@@ -63,13 +64,22 @@ type ViewState =
 
 const bottomView: ViewState = { mode: "bottom" };
 
-type ScrollAnchor = { id: string; top: number };
+/**
+ * A row and its top relative to the reader top, as it was when the scroll
+ * container was at `scrollTop`. Until the next commit or resize nothing but
+ * scrollTop moves rows, so the row's current position is
+ * `top - (container.scrollTop - scrollTop)`: the scroll handler derives the
+ * viewport position from this and the cached row heights without reading
+ * layout.
+ */
+type ScrollAnchor = { id: string; top: number; scrollTop: number };
 
 type PaneModel = {
   messages: Message[];
   windowStart: number;
   range: MessageWindowRange;
   view: ViewState;
+  keptMessageIds: readonly string[];
 };
 
 function sizeAtFor(
@@ -113,22 +123,20 @@ function scrollRenderOverscan(viewportHeight: number): number {
   return Math.max(800, Math.round(viewportHeight * 1.5));
 }
 
-function hasLayout(element: HTMLElement): boolean {
-  return element.getBoundingClientRect().height > 0;
+function sameView(left: ViewState, right: ViewState): boolean {
+  if (left.mode === "bottom" || right.mode === "bottom") return left.mode === right.mode;
+  return left.start === right.start && left.end === right.end && left.toEnd === right.toEnd;
 }
 
-/**
- * Top of the reading area: the scroller's top plus the content's top padding.
- * Frosted glass moves the scroller under the topbar and grows the padding by
- * the same amount, so anchoring to this edge keeps rows where the reader saw
- * them when the effect is toggled.
- */
-function readerTop(container: HTMLElement): number {
-  const top = container.getBoundingClientRect().top;
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+function contentPaddingTop(container: HTMLElement): number {
   const content = container.querySelector<HTMLElement>(".chat-content");
-  if (!content) return top;
+  if (!content) return 0;
   const padding = Number.parseFloat(getComputedStyle(content).paddingTop);
-  return Number.isFinite(padding) ? top + padding : top;
+  return Number.isFinite(padding) ? padding : 0;
 }
 
 export const ChatHistoryPane = memo(function ChatHistoryPane({
@@ -226,9 +234,18 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   const observerRef = useRef<ResizeObserver | undefined>(undefined);
   const previousMessageCountRef = useRef(total);
   const modelRef = useRef<PaneModel | undefined>(undefined);
+  // Pending rAF that processes the scroll events of one frame.
+  const scrollFrameRef = useRef<number | undefined>(undefined);
+  // Top padding of .chat-content; read once per layout change (resize
+  // observer, activation) instead of getComputedStyle per scroll event.
+  const paddingTopRef = useRef<number | undefined>(undefined);
+  // Layout of the rendered segments at the last positioning pass; commits
+  // that leave it unchanged (streaming text below the reader) skip layout reads.
+  const layoutKeyRef = useRef<string | undefined>(undefined);
   const [showScrollToBottom, setShowScrollToBottom] = useState(
     scrollSnapshot ? !scrollSnapshot.pinnedToBottom : false,
   );
+  const showScrollToBottomRef = useRef(showScrollToBottom);
   // Bumped when new row heights change spacer sizes or the window size.
   const [, setMeasureVersion] = useState(0);
   // Rows kept mounted outside the range: the focused row, the first message
@@ -324,47 +341,104 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   }
   rendered.sort((left, right) => left - right);
   const segments = buildSegments(heights, messages, windowStart, total, rendered);
+  // Everything in the scroll content above or between rows whose size the
+  // pane controls; equal keys mean mounted rows only moved through their own
+  // resizes, which the resize observer reports.
+  const layoutKey = `${hiddenMessageCount > 0 ? 1 : 0}|${isUnusedConversation(conversation) ? 1 : 0}|${segments
+    .map((segment) => (segment.kind === "row" ? segment.index : `s${segment.height}`))
+    .join(",")}`;
 
   useLayoutEffect(() => {
-    modelRef.current = { messages, windowStart, range, view };
+    modelRef.current = { messages, windowStart, range, view, keptMessageIds };
   });
 
   const scrollToBottomNow = useCallback((container: HTMLElement): void => {
     container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
   }, []);
 
-  /** First rendered row reaching into the viewport, relative to its top. */
-  const captureAnchor = useCallback((): void => {
-    const container = scrollRef.current;
-    const list = listRef.current;
-    if (!container || !list || !hasLayout(container)) return;
-    const viewportTop = readerTop(container);
-    let fallback: ScrollAnchor | undefined;
-    for (const row of list.querySelectorAll<HTMLElement>(".message-window-row")) {
-      const id = row.dataset.messageId;
-      if (!id) continue;
-      const rect = row.getBoundingClientRect();
-      const anchor = { id, top: rect.top - viewportTop };
-      fallback = anchor;
-      if (rect.bottom > viewportTop) {
-        anchorRef.current = anchor;
-        return;
-      }
-    }
-    anchorRef.current = fallback;
+  /** Content top padding, cached until the next layout change. */
+  const readerPadding = useCallback((container: HTMLElement): number => {
+    paddingTopRef.current ??= contentPaddingTop(container);
+    return paddingTopRef.current;
   }, []);
 
-  /** Moves the scroll position so the anchor row stays where the reader saw it. */
-  const correctAnchor = useCallback((): void => {
+  /**
+   * Re-anchors on the row at the reader top, given that row `id` currently
+   * sits `top` px below the reader top. Pure arithmetic on cached heights.
+   * Returns the new anchor's index, or undefined when `id` is not loaded.
+   */
+  const anchorFrom = useCallback(
+    (id: string, top: number, scrollTop: number): number | undefined => {
+      const model = modelRef.current;
+      if (!model) return undefined;
+      const { messages: current, windowStart: start } = model;
+      const index = current.findIndex((message) => message.id === id);
+      if (index < start) {
+        anchorRef.current = undefined;
+        return undefined;
+      }
+      const row = rowAtViewportTop(sizeAtFor(heights, current), start, current.length, index, top);
+      const rowId = current[row.index]?.id;
+      anchorRef.current = rowId ? { id: rowId, top: row.top, scrollTop } : undefined;
+      return rowId ? row.index : undefined;
+    },
+    [heights],
+  );
+
+  /**
+   * Captures the anchor from layout: one rect pair (scroller and one mounted
+   * row near the viewport), then cached heights to the row at the reader top.
+   */
+  const captureAnchor = useCallback(
+    (preferredId?: string): void => {
+      const container = scrollRef.current;
+      const model = modelRef.current;
+      if (!container || !model) return;
+      const rows = rowElementsRef.current;
+      let id: string | undefined;
+      for (const candidate of [preferredId, anchorRef.current?.id, model.messages[model.range.start]?.id]) {
+        if (candidate && rows.has(candidate)) {
+          id = candidate;
+          break;
+        }
+      }
+      id ??= rows.keys().next().value;
+      const element = id ? rows.get(id) : undefined;
+      if (!id || !element) return;
+      const containerRect = container.getBoundingClientRect();
+      if (containerRect.height <= 0) return;
+      // Captures are rare (unpin, restore, mount), so refresh the padding
+      // here: a style change (frosted glass) may not have reached the resize
+      // observer yet.
+      paddingTopRef.current = undefined;
+      const top = element.getBoundingClientRect().top - containerRect.top - readerPadding(container);
+      anchorFrom(id, top, container.scrollTop);
+    },
+    [anchorFrom, readerPadding],
+  );
+
+  /**
+   * Moves the scroll position so the anchor row stays where the reader saw
+   * it (net of their own scrolling since), then re-anchors. Reads one rect
+   * pair: the scroller and the anchor row.
+   */
+  const syncAnchor = useCallback((): void => {
     const container = scrollRef.current;
     const anchor = anchorRef.current;
-    if (!container || !anchor) return;
-    const element = rowElementsRef.current.get(anchor.id);
-    if (!element || !hasLayout(container)) return;
-    const delta =
-      element.getBoundingClientRect().top - readerTop(container) - anchor.top;
-    if (Math.abs(delta) >= 0.5) container.scrollTop += delta;
-  }, []);
+    const element = anchor ? rowElementsRef.current.get(anchor.id) : undefined;
+    if (!container || !anchor || !element) {
+      captureAnchor();
+      return;
+    }
+    const containerRect = container.getBoundingClientRect();
+    if (containerRect.height <= 0) return;
+    const scrollTop = container.scrollTop;
+    const expected = anchor.top - (scrollTop - anchor.scrollTop);
+    const actual = element.getBoundingClientRect().top - containerRect.top - readerPadding(container);
+    if (Math.abs(actual - expected) >= 0.5) container.scrollTop = scrollTop + actual - expected;
+    const nextScrollTop = container.scrollTop;
+    anchorFrom(anchor.id, actual - (nextScrollTop - scrollTop), nextScrollTop);
+  }, [anchorFrom, captureAnchor, readerPadding]);
 
   useLayoutEffect(() => {
     const context = contextRef.current;
@@ -386,6 +460,9 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     // Hidden panes have no observer, so they never measure rows.
     const observer = new ResizeObserver((entries) => {
       measure();
+      // Frosted glass, the context strip or a window resize may have changed
+      // the content padding; re-read it lazily on the next anchor pass.
+      paddingTopRef.current = undefined;
       let layoutChanged = false;
       for (const entry of entries) {
         const target = entry.target as HTMLElement;
@@ -408,11 +485,11 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
         return;
       }
       // A row above the reader changed height (image, Mermaid, KaTeX).
-      correctAnchor();
-      captureAnchor();
+      syncAnchor();
     });
     observer.observe(context);
-    observer.observe(content);
+    // Border box, so a padding change (frosted glass) is reported too.
+    observer.observe(content, { box: 'border-box' });
     observer.observe(scrollContainer);
     for (const row of rowElementsRef.current.values()) observer.observe(row);
     observerRef.current = observer;
@@ -420,7 +497,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       observer.disconnect();
       observerRef.current = undefined;
     };
-  }, [active, captureAnchor, correctAnchor, heights, scrollToBottomNow]);
+  }, [active, heights, scrollToBottomNow, syncAnchor]);
 
   useEffect(() => {
     if (!active || !navigationTarget) return;
@@ -435,7 +512,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       element.focus({ preventScroll: true });
       // Keep the target mounted while it has focus, and remember the place.
       setKeptMessageIds([navigationTarget.messageId]);
-      captureAnchor();
+      captureAnchor(navigationTarget.messageId);
     });
     return () => cancelAnimationFrame(frame);
   }, [active, captureAnchor, navigationTarget, view, visibleMessageCount]);
@@ -475,10 +552,13 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
         scrollContainer.clientHeight;
       const pinnedToBottom = distanceFromBottom <= chatBottomProximity;
       const anchor = anchorRef.current;
+      const scrollTop = scrollContainer.scrollTop;
       latestScrollSnapshotRef.current = {
         pinnedToBottom,
-        scrollTop: scrollContainer.scrollTop,
-        ...(anchor ? { anchorMessageId: anchor.id, anchorOffset: anchor.top } : {}),
+        scrollTop,
+        ...(anchor
+          ? { anchorMessageId: anchor.id, anchorOffset: anchor.top - (scrollTop - anchor.scrollTop) }
+          : {}),
       };
       return pinnedToBottom;
     },
@@ -502,48 +582,54 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     [conversation.id, onScrollSnapshotChange, saveScrollPosition],
   );
 
-  const updateScrollPosition = useCallback((): void => {
+  /**
+   * Once per frame: decides whether the mounted rows still cover the
+   * viewport. The viewport position comes from scrollTop and the cached row
+   * heights relative to the last anchor, so a steady scroll reads no element
+   * geometry and commits only when it re-windows.
+   */
+  const processScroll = useCallback((): void => {
+    scrollFrameRef.current = undefined;
     const scrollContainer = scrollRef.current;
     const model = modelRef.current;
-    if (!scrollContainer || !model) {
-      return;
-    }
-    captureAnchor();
-    const atBottom = saveScrollPosition(scrollContainer);
-    pinnedToBottomRef.current = atBottom;
-    setShowScrollToBottom(!atBottom);
-    if (heights.setViewport(scrollContainer.clientHeight)) {
+    if (!scrollContainer || !model) return;
+    const clientHeight = scrollContainer.clientHeight;
+    if (heights.setViewport(clientHeight)) {
       setMeasureVersion((version) => version + 1);
     }
-    const { messages: current, windowStart: start, range: currentRange } = model;
+    const { messages: current, windowStart: start, range: currentRange, view: currentView } = model;
     let next: ViewState | undefined;
-    if (atBottom) {
+    if (pinnedToBottomRef.current) {
       next = bottomView;
+      // Content keeps moving under a pinned reader; capture afresh on unpin.
+      anchorRef.current = undefined;
     } else {
-      const topSpacer = listRef.current?.querySelector<HTMLElement>('[data-window-spacer="top"]');
-      if (!topSpacer || !hasLayout(scrollContainer)) {
+      const scrollTop = scrollContainer.scrollTop;
+      if (!anchorRef.current && clientHeight > 0) captureAnchor();
+      const anchor = anchorRef.current;
+      const anchorIndex = anchor && clientHeight > 0
+        ? anchorFrom(anchor.id, anchor.top - (scrollTop - anchor.scrollTop), scrollTop)
+        : undefined;
+      const viewportAnchor = anchorRef.current;
+      if (anchorIndex === undefined || !viewportAnchor) {
         // No layout (hidden pane, tests): keep the mounted rows.
-        next = model.view.mode === "bottom"
+        next = currentView.mode === "bottom"
           ? { mode: "range", start: currentRange.start, end: currentRange.end, toEnd: true }
           : undefined;
       } else {
-        const viewportOffset =
-          scrollContainer.getBoundingClientRect().top -
-          topSpacer.getBoundingClientRect().top;
-        const row = rowAtOffset(sizeAtFor(heights, current), start, current.length, viewportOffset);
+        // The anchor is relative to the reader top; windowing covers the
+        // whole scroller viewport.
+        const offset = viewportAnchor.top + readerPadding(scrollContainer);
         // Hysteresis: re-window only when the viewport plus a small margin
         // leaves the mounted rows, then mount a wider margin, so a steady
         // scroll remounts rows every few screens instead of every event.
-        const needed = viewAround(
-          heights, current, start, row.index, row.top - viewportOffset,
-          scrollRewindowMargin,
-        );
+        const needed = viewAround(heights, current, start, anchorIndex, offset, scrollRewindowMargin);
         if (needed.mode === "range" && !rangeCovers(currentRange, needed)) {
           next = viewAround(
-            heights, current, start, row.index, row.top - viewportOffset,
+            heights, current, start, anchorIndex, offset,
             scrollRenderOverscan(heights.viewport),
           );
-        } else if (model.view.mode === "bottom") {
+        } else if (currentView.mode === "bottom") {
           next = {
             mode: "range",
             start: currentRange.start,
@@ -552,8 +638,9 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
           };
         }
       }
+      saveScrollPosition(scrollContainer);
     }
-    if (next) setView(next);
+    if (next && !sameView(next, currentView)) setView(next);
     // Keep the focused row mounted while it scrolls out of the range.
     const focused = document.activeElement;
     const focusedRow = focused instanceof Element
@@ -563,13 +650,38 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       focusedRow && listRef.current?.contains(focusedRow)
         ? focusedRow.dataset.messageId
         : undefined;
-    setKeptMessageIds((kept) => {
-      const nextKept = focusedId ? [focusedId] : [];
-      return kept.length === nextKept.length && kept.every((id, index) => id === nextKept[index])
-        ? kept
-        : nextKept;
-    });
-  }, [captureAnchor, heights, saveScrollPosition]);
+    const nextKept = focusedId ? [focusedId] : [];
+    if (!sameIds(nextKept, model.keptMessageIds)) {
+      setKeptMessageIds((kept) => (sameIds(kept, nextKept) ? kept : nextKept));
+    }
+  }, [anchorFrom, captureAnchor, heights, readerPadding, saveScrollPosition]);
+
+  /**
+   * The scroll event: only cheap scroller metrics and state that changes
+   * rarely (the bottom pin). Windowing runs at most once per frame.
+   */
+  const updateScrollPosition = useCallback((): void => {
+    const scrollContainer = scrollRef.current;
+    if (!scrollContainer) return;
+    const distanceFromBottom =
+      scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
+    if (distanceFromBottom <= chatBottomProximity) {
+      // Content keeps moving under a pinned reader; an old anchor is stale.
+      anchorRef.current = undefined;
+    } else if (pinnedToBottomRef.current || !anchorRef.current) {
+      // Leaving the bottom: anchor from layout once, so a snapshot taken
+      // before the next frame (switching away) records where the reader is.
+      anchorRef.current = undefined;
+      captureAnchor();
+    }
+    const atBottom = saveScrollPosition(scrollContainer);
+    pinnedToBottomRef.current = atBottom;
+    if (showScrollToBottomRef.current === atBottom) {
+      showScrollToBottomRef.current = !atBottom;
+      setShowScrollToBottom(!atBottom);
+    }
+    scrollFrameRef.current ??= requestAnimationFrame(processScroll);
+  }, [captureAnchor, processScroll, saveScrollPosition]);
 
   // Runs before the positioning effect below, so a sent message pins first.
   useLayoutEffect(() => {
@@ -598,8 +710,12 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     }
     const activated = !wasActiveRef.current;
     wasActiveRef.current = true;
+    // Styles may have changed while hidden (frosted glass toggled).
+    if (activated) paddingTopRef.current = undefined;
     const measuredLayout = measuredLayoutRef.current;
     measuredLayoutRef.current = false;
+    const layoutChanged = layoutKeyRef.current !== layoutKey;
+    layoutKeyRef.current = layoutKey;
     if (
       navigationTarget &&
       navigationIndex >= 0 &&
@@ -617,14 +733,17 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       const anchorElement = snapshot.anchorMessageId
         ? rowElementsRef.current.get(snapshot.anchorMessageId)
         : undefined;
-      if (anchorElement && hasLayout(scrollContainer)) {
+      const containerRect = anchorElement ? scrollContainer.getBoundingClientRect() : undefined;
+      if (anchorElement && containerRect && containerRect.height > 0) {
         const delta =
           anchorElement.getBoundingClientRect().top -
-          scrollContainer.getBoundingClientRect().top -
+          containerRect.top -
+          readerPadding(scrollContainer) -
           (snapshot.anchorOffset ?? 0);
         if (Math.abs(delta) >= 0.5) scrollContainer.scrollTop += delta;
       }
-      captureAnchor();
+      anchorRef.current = undefined;
+      captureAnchor(snapshot.anchorMessageId);
     };
     if (restorePendingRef.current) {
       restorePendingRef.current = false;
@@ -655,13 +774,16 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
           ?.focus({ preventScroll: true });
       }
       if (!pinnedToBottomRef.current) {
+        // The reader's row is still mounted; read where it landed.
         captureAnchor();
         return;
       }
     }
     if (!pinnedToBottomRef.current) {
-      correctAnchor();
-      captureAnchor();
+      // Only commits that moved rows (mount/unmount, spacer sizes) need the
+      // one rect pair; size changes of mounted rows arrive through the
+      // resize observer, and streaming text below the reader changes nothing.
+      if (layoutChanged || measuredLayout || activated || !anchorRef.current) syncAnchor();
       return;
     }
     if (activated || measuredLayout) {
@@ -689,6 +811,10 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       if (followFrameRef.current !== undefined) {
         cancelAnimationFrame(followFrameRef.current);
         followFrameRef.current = undefined;
+      }
+      if (scrollFrameRef.current !== undefined) {
+        cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = undefined;
       }
     },
     [],
@@ -728,6 +854,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       return;
     }
     pinnedToBottomRef.current = true;
+    showScrollToBottomRef.current = false;
     setShowScrollToBottom(false);
     setView(bottomView);
     const reduceMotion =

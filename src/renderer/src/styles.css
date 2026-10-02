@@ -4342,6 +4342,27 @@ textarea:focus-visible {
   margin-top: var(--space-1);
 }
 
+/* Windowed lists (PERF-14) measure rows with getBoundingClientRect, which
+   excludes margins, so the row gap becomes padding. The list keeps the
+   reader's row in place itself; native scroll anchoring could pick a spacer. */
+.conversation-list--windowed {
+  overflow-anchor: none;
+}
+
+.conversation-list--windowed > .conversation-entry {
+  padding-top: var(--space-1);
+  margin-top: 0;
+}
+
+.conversation-list--windowed > .conversation-entry[aria-posinset="1"] {
+  padding-top: 0;
+}
+
+.conversation-list__spacer {
+  flex: none;
+  pointer-events: none;
+}
+
 .section-label {
   padding: 0 var(--space-3);
   margin: 0 0 var(--space-2);

@@ -183,7 +183,7 @@ afterEach(() => {
 })
 
 describe('ChatHistoryPane windowing', () => {
-  it('keeps the DOM bounded for a 2,000-message conversation at any scroll position', () => {
+  it('keeps the DOM bounded for a 2,000-message conversation at any scroll position', async () => {
     const messages = makeMessages(2_000)
     const { container, chat } = setup(messages)
     measure()
@@ -199,6 +199,7 @@ describe('ChatHistoryPane windowing', () => {
         chat.scrollTop = scrollTop
         fireEvent.scroll(chat)
       })
+      await frame()
       measure()
       const count = container.querySelectorAll('.message').length
       expect(count).toBeLessThanOrEqual(maxRenderedMessageCount + 1)
@@ -246,11 +247,12 @@ describe('ChatHistoryPane windowing', () => {
     expect(chat.scrollTop + viewport).toBe(chat.scrollHeight)
   })
 
-  it('keeps the reader in place while rows above change height or mount', () => {
+  it('keeps the reader in place while rows above change height or mount', async () => {
     const messages = makeMessages(2_000)
     const { chat, container } = setup(messages)
     measure()
     act(() => { chat.scrollTop = 120_050; fireEvent.scroll(chat) })
+    await frame()
     measure()
     const anchorId = renderedIds(container).find((id) => rowTop(container, id) + 100 > 0)!
     const before = rowTop(container, anchorId)
@@ -268,6 +270,7 @@ describe('ChatHistoryPane windowing', () => {
       if (index % 3 === 0) rowHeights.set(`m${index}`, 250)
     }
     act(() => { chat.scrollTop -= 3_000; fireEvent.scroll(chat) })
+    await frame()
     const anchorAfterScroll = renderedIds(container).find((id) => rowTop(container, id) + (rowHeights.get(id) ?? 100) > 0)!
     const topAfterScroll = rowTop(container, anchorAfterScroll)
     measure()
@@ -321,14 +324,16 @@ describe('ChatHistoryPane windowing', () => {
     Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
   })
 
-  it('restores the reader position across hide/show and from a saved snapshot', () => {
+  it('restores the reader position across hide/show and from a saved snapshot', async () => {
     const messages = makeMessages(2_000)
     const onScrollSnapshotChange = vi.fn()
     const { chat, container, rerender, props, unmount } = setup(messages, { onScrollSnapshotChange })
     measure()
     act(() => { chat.scrollTop = 80_000; fireEvent.scroll(chat) })
+    await frame()
     measure()
     act(() => { chat.scrollTop += 10; fireEvent.scroll(chat) })
+    await frame()
     const scrollTop = chat.scrollTop
     const anchorId = renderedIds(container).find((id) => rowTop(container, id) + 100 > 0)!
     const anchorTop = rowTop(container, anchorId)

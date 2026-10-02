@@ -170,6 +170,34 @@ export function rowAtOffset(
   return { index: windowStart, top: 0 };
 }
 
+/**
+ * Row at the viewport top, found by walking from a known row whose top is
+ * `anchorTop` pixels below the viewport top (negative when above). Returns
+ * that row and its top relative to the viewport top (<= 0 unless the window
+ * starts below the viewport top). Lets the scroll handler locate the viewport
+ * from cached heights instead of reading layout.
+ */
+export function rowAtViewportTop(
+  sizeAt: (index: number) => number,
+  windowStart: number,
+  count: number,
+  anchorIndex: number,
+  anchorTop: number,
+): { index: number; top: number } {
+  if (count <= windowStart) return { index: windowStart, top: anchorTop };
+  let index = Math.min(Math.max(anchorIndex, windowStart), count - 1);
+  let top = anchorTop;
+  while (top > 0 && index > windowStart) {
+    index -= 1;
+    top -= sizeAt(index);
+  }
+  while (index < count - 1 && top + sizeAt(index) <= 0) {
+    top += sizeAt(index);
+    index += 1;
+  }
+  return { index, top };
+}
+
 export function rangeCovers(
   outer: MessageWindowRange,
   inner: MessageWindowRange,

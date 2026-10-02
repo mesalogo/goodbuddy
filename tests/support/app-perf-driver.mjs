@@ -386,16 +386,37 @@ async function seed() {
 
 const rowSelectorByTitle = title => `[...document.querySelectorAll('button.conversation-item')].find(b => b.querySelector('.conversation-item__title')?.textContent.includes(${JSON.stringify(title)}))`
 
+// The sidebar mounts only the rows near its viewport (PERF-14). Scroll it a
+// screen at a time from the top, letting it re-window after each step, until
+// the row is mounted; then centre it and wait for the re-window again.
+async function revealConversation(title) {
+  const list = "document.querySelector('.conversation-list')"
+  const present = `!!(${rowSelectorByTitle(title)})`
+  await js(`(() => { const l = ${list}; if (l) l.scrollTop = 0; return true; })()`)
+  await settle()
+  for (let step = 0; step < 200; step += 1) {
+    await settle()
+    if (await js(present)) break
+    const moved = await js(`(() => { const l = ${list}; if (!l) return false; const before = l.scrollTop; l.scrollTop += Math.max(200, Math.round(l.clientHeight * 0.8)); return l.scrollTop !== before; })()`)
+    if (!moved) break
+  }
+  await js(`(() => { ${rowSelectorByTitle(title)}?.scrollIntoView({ block: 'center' }); return true; })()`)
+}
+
 async function clickConversation(title) {
   await focusWindow()
-  const point = await js(`(() => {
-    const e = ${rowSelectorByTitle(title)};
-    if (!e) return null;
-    e.scrollIntoView({ block: 'center' });
-    const r = e.getBoundingClientRect();
-    const x = Math.round(r.x + Math.min(r.width / 2, 80)), y = Math.round(r.y + r.height / 2);
-    return { x, y, hit: e.contains(document.elementFromPoint(x, y)) };
-  })()`)
+  await revealConversation(title)
+  let point
+  for (let attempt = 0; attempt < 10 && !point?.hit; attempt += 1) {
+    await settle()
+    point = await js(`(() => {
+      const e = ${rowSelectorByTitle(title)};
+      if (!e) return null;
+      const r = e.getBoundingClientRect();
+      const x = Math.round(r.x + Math.min(r.width / 2, 80)), y = Math.round(r.y + r.height / 2);
+      return { x, y, hit: e.contains(document.elementFromPoint(x, y)) };
+    })()`)
+  }
   if (!point?.hit) throw new Error(`Conversation row not clickable: ${title}`)
   await settle()
   win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
@@ -508,7 +529,7 @@ try {
   // Reload so the App loads the seeded history through its normal startup path.
   const reloadStart = performance.now()
   win.webContents.reload()
-  await waitFor(`!!document.querySelector(${JSON.stringify(composer)}) && document.querySelectorAll('button.conversation-item').length >= ${Math.min(50, config.seedConversations)}`, 60_000, 'seeded sidebar')
+  await waitFor(`!!document.querySelector(${JSON.stringify(composer)}) && (() => { const rows = document.querySelectorAll('button.conversation-item'); const entry = document.querySelector('.conversation-list [aria-setsize]'); const total = entry ? Number(entry.getAttribute('aria-setsize')) : rows.length; return total >= ${config.seedConversations} && rows.length >= ${Math.min(10, config.seedConversations)}; })()`, 60_000, 'seeded sidebar')
   report.startup.reloadWithSeedMs = performance.now() - reloadStart
   await applyCpuThrottle()
   await dismissStartupDialogs({ expect: false })
