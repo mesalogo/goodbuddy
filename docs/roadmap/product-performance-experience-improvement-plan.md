@@ -70,6 +70,7 @@
 | 2 | 通道、更新和真实 Runtime | `FUN-02`、`FUN-03`、`FUN-05`、`QA-01`、`QA-02` | 对应平台测试配置可用 | 文件办公闭环、更新下载闭环和真实 Runtime E2E 均通过 |
 | 3A | 性能基线 | `PERF-01`、`PERF-03`、`PERF-05`、`PERF-07`、`PERF-09` | 固定测试数据和设备 | 形成可重复基线、目标阈值和原始结果 |
 | 3B | 已测量性能优化 | `PERF-02`、`PERF-04`、`PERF-06`、`PERF-08`、`PERF-10` | 对应 3A 指标确认存在瓶颈 | 指标改善且功能、取消、恢复语义不回退 |
+| 3C | 架构级界面性能改造 | `PERF-11` 至 `PERF-17` | `PERF-11` 完整 App 基线已产生 | 第 7.1 节五条架构规则成立，并由基准和 lint 持续守护 |
 | 4 | 增强能力 | `FUN-06` 至 `FUN-09` | 核心闭环稳定；首个电脑控制平台已选定 | 每项形成独立、完整、可真实使用的工作流 |
 
 ## 5. 发布与交付
@@ -389,6 +390,159 @@ frame rate, heap measurements and 500KB/1MB scenarios remain unmeasured.
 会话草稿、图片素材选择期间切换会话，以及滚动位置和推理展开状态保留。
 这些是 jsdom 中真实 App 的渲染次数，使用 mock preload；尚未测量 Electron 输入延迟、
 绘制耗时或内存。流式事件未延后，缓存容量和有效期未改变。
+
+### 7.1 架构级界面性能改造（批次 3C）
+
+2026-10-02 的架构评审确认，界面卡顿的主要来源是架构组织方式，而不是 Electron 或 GPU：
+
+- **Renderer 单组件状态：** `App.tsx` 约 11k 行，`App()` 内有 123 个 `useState`、69 个
+  `useEffect`。会话、消息、草稿、任务和设置都在其中，输入和每次流式 flush 都会重新执行
+  整个 App 函数体；多个大面板未 memo，隐藏的 keep-alive 视图也会参与渲染。
+- **Main 同步存储：** 全部 SQLite 访问使用 Main 线程的 `DatabaseSync`，包括全表向量扫描、
+  会话列表与搜索、Story Graph 读取；PDF/Office 解析和附件同步文件 IO 也在 Main。
+- **全量回写：** 活动记录在任何变化后 250 ms 全量 `replace`；会话每 500 ms 定时保存；
+  `*Changed` 通知不带内容，Renderer 再重新查询完整列表。
+
+改造完成后须同时满足以下规则，并由工具守护，避免回退：
+
+1. Main 只负责窗口、生命周期、权限和消息路由，不执行数据库查询、文档解析或批量计算。
+2. Renderer 状态按领域拆成外部 store，组件通过 selector 订阅；`App.tsx` 只保留布局壳。
+3. 流式文本和终端输出走专用通道，只更新正在显示的行或面板，按帧合并提交。
+4. 数据只有一个权威来源，跨进程只传增量；不再全量回写，也不再“通知后重新查全量”。
+5. 消息、会话、笔记、文件树等长列表虚拟化，DOM 数量不随数据量增长。
+
+实施方式：先建立 `PERF-11` 基线，再沿 Renderer（`PERF-12`→`PERF-13`→`PERF-14`）和
+数据进程（`PERF-15`→`PERF-16`）两条线并行推进，最后由 `PERF-17` 固化守护。每一步完成后
+重新运行 `PERF-11` 场景并记录对比；不换技术栈，不一次性重写 `App.tsx`。
+
+### PERF-11 完整 App 交互基准
+
+- **优先级 / 状态：** P1 / 进行中
+- **目标：** 在当前生产构建、隔离 profile 和本地假模型下，可重复测量用户能感知的卡顿。
+- **运行：** `npm run build:bundle` 后执行 `npm run perf:app`；结果写入
+  `GB_PERF_OUTPUT` 或系统临时目录，不含用户内容，不发出外部模型请求。
+- **场景：** 空闲基线；Composer 连续输入；切换会话；打开长会话；大量会话列表下的流式
+  回答；流式回答期间同时输入。
+- **指标：** Renderer Long Tasks（>50 ms）数量与总时长、按键到下一帧延迟、帧间隔 p95 与
+  掉帧比例、React commit 无法直接取得时以 DOM mutation 批次近似、Main event-loop 延迟
+  （`monitorEventLoopDelay`）、Main 与 Renderer 进程 CPU 和内存、Renderer JS heap。
+- **验收：** 同一设备多次运行结果可比较；报告记录源码版本、环境、数据规模和原始样本摘要。
+
+#### 实现
+
+- `build/run-app-perf.cjs`：独立 supervisor。在 `127.0.0.1:11434`（新 profile 默认模型地址）
+  启动 OpenAI 兼容假模型，清除 `ELECTRON_RUN_AS_NODE` 和模型环境变量，设置整轮期限（默认
+  600 s），汇总报告并删除隔离 profile。端口被占用时直接失败。
+- `tests/support/app-perf-driver.mjs`：在导入 `out/main/index.js` 前设置 `appPath`、
+  `userData`、`sessionData` 和日志目录，然后由生产 Main 创建窗口、注册 IPC 并加载真实
+  Preload/Renderer。全部交互使用 `sendInputEvent` 原生输入；数据通过生产
+  `conversations.saveLocal` IPC 写入，再 reload 走正常启动加载。
+- Renderer 探针只观察：`longtask`、`long-animation-frame`、Event Timing、rAF 帧间隔、
+  keydown 到下一帧、MutationObserver 计数、DOM 节点数和精确 JS heap。Main 用
+  `monitorEventLoopDelay`，进程用 `app.getAppMetrics()`。
+- 默认规模：300 个会话 × 20 条消息，另加一个 2,000 条消息的长会话；输入 120 个字符，
+  按键间隔 60 ms；流式回答约 40 KB 混合 Markdown（标题、列表、代码、表格、行内/块级公式、
+  引用），每个 SSE 事件 12 个字符，2,000 字符/秒。可用 `GB_PERF_*` 环境变量调整，
+  见脚本开头。
+- `GB_PERF_PROFILE=1` 为流式场景采集 Renderer CPU profile 并汇总自身耗时热点；剖析有开销，
+  只用于归因，不作为基线数据。
+
+#### 2026-10-02 基线
+
+源码 `8280158`（工作区含其他未提交改动），Windows x64，Intel Core Ultra X7 358H ×16，
+32 GB，Electron 43.2.0 / Chromium 150，DPR 1，内容区 1280×800，GPU 合成与光栅化均启用。
+连续运行 3 次，假模型请求每次 2 次，外部模型请求 0 次。帧间隔基线为 8.3 ms（120 Hz）。
+
+| 场景 | Long Tasks 次数 / 总时长 | 帧间隔 p95 | 掉帧比例 | 交互延迟 p50 / p95 | Main lag 最大 |
+| --- | --- | --- | --- | --- | --- |
+| 空闲（新 profile / 有历史） | 0 / 0 | 8.5 ms | 0% | — | 17–21 ms |
+| 输入 120 字（新 profile） | 0 / 0 | 8.5 ms | ≤0.2% | 按键→帧 4.8–5.1 / 8.3–8.5 ms | ≤17 ms |
+| 输入 120 字（有历史） | 0 / 0 | 8.5 ms | 0% | 按键→帧 6.5–6.7 / 8.4–8.7 ms | ≤18 ms |
+| 首次切换会话 ×15 | 1 / 77–81 ms | 8.6 ms | 3.7–4.5% | 点击→显示 49–50 / 102–105 ms | 29–32 ms |
+| 再次切换（缓存命中）×10 | 0 / 0 | 8.6 ms | 3.3–4.1% | 点击→显示 52–53 / 56–59 ms | 19–22 ms |
+| 打开 2,000 条消息会话 | 1 / 94–102 ms | 8.5 ms | 1.6% | 点击→显示 134–144 ms | ≤21 ms |
+| 滚动长会话 3 s | 0 / 0 | 8.5 ms | 0% | — | ≤17 ms |
+| **流式 40 KB 回答** | **126–137 / 8.6–9.3 s** | **83 ms** | **45–48%** | — | 30–36 ms |
+| **流式期间输入 100 字** | **128–182 / 8.8–11.9 s** | **83 ms** | **50–52%** | 按键→帧 12.5–13.5 / 35–36 ms | 29–144 ms |
+
+其他观察：
+
+- 启动：窗口创建约 0.58 s，`ready-to-show` 约 1.29 s，Composer 可用约 1.42 s；带 300 个
+  会话 reload 到侧栏出现约 0.19 s。
+- 流式回答约 20 s，Long Tasks 占记录时间约 40%；按四等分统计为 `0 / 2.5 / 4.7 / 4.6 s`，
+  随回答变长而增加，说明每次提交的成本与已生成长度成正比。
+- 有历史时侧栏一次渲染全部 302 行，DOM 约 4,400 节点；访问过若干会话后约 1.6 万；两次
+  流式后约 4 万，JS heap 最高约 210 MB（keep-alive 缓存持续增长）。
+- 长会话只渲染最近 80 条，打开耗时主要是一次约 100 ms 的 Long Task。
+- KaTeX 的 `data:` 字体被 CSP 拒绝（缺少 `font-src`），每轮 8 条控制台错误，字体回退。
+- `app.getAppMetrics()` 的 CPU 百分比在 Windows 上按全部逻辑核归一，只作相对比较。
+
+**归因（剖析运行）：** 流式期间 Renderer 自身 CPU 约 74% 在应用 bundle 中，热点是
+`hast-util-from-dom` 的 `parseFragment`/`fromDom`（rehype-katex 把 KaTeX HTML 再解析成
+hast）、micromark 分词、hast→React 转换和 React reconcile。对照实验确认根因：默认语料的
+块级公式写在一行（`$$...$$`），命中 `MarkdownRenderer.tsx` 的 `unsafeSegmentLine`，
+`splitMarkdownSegments` 退回整篇单段，**每次 flush 都重新解析整篇回答并重新渲染全部公式**。
+仅把 `$$` 改成独占一行（`GB_PERF_CORPUS=multiline-math`）后，同一流式场景 Long Tasks
+从约 130 次 / 9 s 降到 1 次 / 0.15 s，帧间隔 p95 从 83 ms 回到 8.5 ms，流式期间按键→帧
+p95 从约 36 ms 降到 15.5 ms。
+
+**结论与对后续批次的影响：**
+
+1. 当前最严重、用户最易感知的卡顿是**流式长回答**，且由 Markdown 分段失效后的整篇重解析
+   主导；输入、切换、滚动和空闲在本机均未出现明显问题。`PERF-12` 应优先处理：让分段在
+   单行 `$$`、HTML 行、链接定义等情况下也能安全工作或局部回退，并对已完成段缓存渲染结果。
+2. 假模型 2,000 字符/秒高于常见真实模型输出速度，但成本随长度线性增长，真实速度下回答
+   足够长时同样会出现。
+3. 会话首次切换 p95 约 100 ms、打开长会话约 140 ms，可在 `PERF-13`/`PERF-14` 中改善，
+   优先级低于第 1 项。
+4. 本机为高性能设备；低端设备上的绝对值会更差，后续应补一台低配 Windows 设备基线。
+
+### PERF-12 流式与输入快速止血
+
+- **优先级 / 状态：** P1 / 待开始
+- **范围：** 流式 delta 在 Renderer 按 `requestAnimationFrame` 合并后提交，并以 transition
+  降低优先级；缓存 Markdown 预处理结果；`RightAssistantSidebar`、`ProjectSwitcher` 和
+  keep-alive 路由使用 memo 并稳定回调；滚动跟随只在需要时执行。
+- **验收：** `PERF-11` 流式与输入场景的 Long Tasks 和输入延迟下降；事件顺序、停止、重试、
+  工具与 Subagent 块不回退。该项吸收 `PERF-04` 的范围。
+
+### PERF-13 Renderer 领域 Store 迁移
+
+- **优先级 / 状态：** P1 / 待开始
+- **顺序：** 流式缓冲 → Composer 草稿 → 会话与消息 → 任务与通知 → 设置及其余界面状态。
+- **每个领域的完成步骤：** 建立 store 并把 IPC 订阅移入 store；调用方改为 selector；删除
+  App 中对应 state/ref 同步代码；运行测试与 `PERF-11`。
+- **验收：** 输入和流式更新不再重新渲染 App 根组件；`App.tsx` 最终降到布局壳规模。
+
+### PERF-14 长列表虚拟化
+
+- **优先级 / 状态：** P2 / 待开始
+- **实施条件：** `PERF-13` 完成会话与消息迁移，行组件 props 已稳定。
+- **范围：** 消息时间线和会话侧栏优先；保留滚动位置、跳转、展开状态和“加载更早消息”语义。
+- **验收：** 5,000 条消息和 1,000 个会话场景下 DOM 节点数有界，滚动与切换指标改善。
+
+### PERF-15 存储接口异步化
+
+- **优先级 / 状态：** P1 / 待开始
+- **范围：** 在原进程内把 `AssistantDatabase`、`KnowledgeDatabase` 等对外接口改为异步，
+  调用方全部 `await`；会话列表只返回摘要，搜索下推到 SQL，活动记录改为增量追加。
+- **验收：** 行为与测试不变；`PERF-11` Main event-loop 延迟不变差。
+
+### PERF-16 数据进程
+
+- **优先级 / 状态：** P1 / 待开始
+- **实施条件：** `PERF-15` 完成，调���方已全部异步。
+- **范围：** 新增独占 SQLite 的 `utilityProcess`，承接会话、知识库、向量检索、Story Graph、
+  活动记录及文档解析；Main 只转发；保证同一时刻只有一个写入方。吸收 `PERF-06` 的范围。
+- **验收：** 大知识库检索、会话列表和文档导入期间 Main event-loop 延迟达到批次目标；取消、
+  崩溃恢复和迁移语义不回退。
+
+### PERF-17 架构守护
+
+- **优先级 / 状态：** P2 / 待开始
+- **范围：** lint 禁止 `src/main` 使用同步文件 API 和在数据进程外引用 `DatabaseSync`；禁止
+  组件直接订阅 `window.goodbuddy.*.on*`；限制 `App.tsx` 规模；`PERF-11` 关键指标设置回归阈值。
+- **验收：** 违反规则的改动在 lint 或基准阶段失败。
 
 ## 8. 体验与可访问性
 
