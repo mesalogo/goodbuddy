@@ -1,0 +1,89 @@
+{
+  "note": "PERF-17 regression ceilings for the PERF-11 full-App benchmark (npm run perf:app). They apply ONLY to non-throttled runs (environment.rendererCpuThrottle = 1, the default) with the default GB_PERF_* scale, on the reference machine of the 2026-10-02 baseline (Intel Core Ultra X7 358H x16, 32 GB, DPR 1, 120 Hz). Limits are about 2-3x the 2026-10-02 values so that run-to-run noise does not fail; they catch regressions of the size seen before PERF-12 (e.g. ~130 long tasks / 9 s while streaming). Tighten them as PERF-12..PERF-14 land; do not loosen them to make a regression pass. Every listed scenario must be present unless marked optional, and report.status must equal requiredStatus.",
+  "requiredStatus": "passed",
+  "maxRendererCpuThrottle": 1,
+  "scenarios": {
+    "idle": {
+      "renderer.longTasks.count": { "max": 2 },
+      "renderer.longTasks.totalMs": { "max": 200 },
+      "renderer.frames.p95": { "max": 20 },
+      "renderer.frames.jankRatio": { "max": 0.05 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "typing-small": {
+      "renderer.longTasks.count": { "max": 3 },
+      "renderer.longTasks.totalMs": { "max": 300 },
+      "renderer.frames.p95": { "max": 20 },
+      "renderer.frames.jankRatio": { "max": 0.05 },
+      "latency.p95": { "max": 25 },
+      "latency.max": { "max": 100 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "idle-seeded": {
+      "renderer.longTasks.count": { "max": 2 },
+      "renderer.longTasks.totalMs": { "max": 200 },
+      "renderer.frames.p95": { "max": 20 },
+      "renderer.frames.jankRatio": { "max": 0.05 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "typing-seeded": {
+      "renderer.longTasks.count": { "max": 3 },
+      "renderer.longTasks.totalMs": { "max": 300 },
+      "renderer.frames.p95": { "max": 20 },
+      "renderer.frames.jankRatio": { "max": 0.05 },
+      "latency.p95": { "max": 25 },
+      "latency.max": { "max": 100 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "switch-conversations": {
+      "renderer.longTasks.count": { "max": 5 },
+      "renderer.longTasks.totalMs": { "max": 500 },
+      "renderer.frames.jankRatio": { "max": 0.15 },
+      "latency.p95": { "max": 350 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "switch-conversations-warm": {
+      "renderer.longTasks.count": { "max": 3 },
+      "renderer.longTasks.totalMs": { "max": 300 },
+      "renderer.frames.jankRatio": { "max": 0.15 },
+      "latency.p95": { "max": 200 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "switch-conversations-hot": {
+      "optional": true,
+      "renderer.longTasks.count": { "max": 3 },
+      "renderer.longTasks.totalMs": { "max": 200 },
+      "renderer.frames.jankRatio": { "max": 0.1 },
+      "latency.p95": { "max": 100 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "open-long-conversation": {
+      "renderer.longTasks.count": { "max": 4 },
+      "renderer.longTasks.totalMs": { "max": 400 },
+      "latency.p95": { "max": 400 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "scroll-long-conversation": {
+      "renderer.longTasks.count": { "max": 2 },
+      "renderer.longTasks.totalMs": { "max": 200 },
+      "renderer.frames.p95": { "max": 20 },
+      "renderer.frames.jankRatio": { "max": 0.05 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "stream-seeded": {
+      "renderer.longTasks.count": { "max": 10 },
+      "renderer.longTasks.totalMs": { "max": 1500 },
+      "renderer.frames.p95": { "max": 34 },
+      "renderer.frames.jankRatio": { "max": 0.15 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    },
+    "stream-and-type": {
+      "renderer.longTasks.count": { "max": 10 },
+      "renderer.longTasks.totalMs": { "max": 1500 },
+      "renderer.frames.p95": { "max": 34 },
+      "renderer.frames.jankRatio": { "max": 0.2 },
+      "latency.p95": { "max": 50 },
+      "main.eventLoopDelay.p99": { "max": 100 }
+    }
+  }
+}

@@ -701,6 +701,29 @@ Renderer 主线程降速 4 倍（Main 不降速，每次 reload 后重新应用�
 - **React 规则：** 缓存会话保持滚动位置（`bf6c4a9`）在渲染期间写 ref，即当前 lint 的 3 条
   `react-hooks/refs` 错误；启用 React Compiler 前需改为由状态派生顺序。
 
+#### 2026-10-02 并行修复：补全分帧、远程批量写库、架构守护
+
+- **补全分帧（`ChatHistoryPane.tsx`）：** 新面板补全改为每帧 +20 条（20→40→60→80），每步后
+  贴底或按高度差保持阅读位置；“加载更早”、批次变化或笔记跳转到达时立即渲染完整批次。
+- **渲染期 ref（`App.tsx`、`pane-order.ts`）：** 会话面板顺序改为 state，用纯函数
+  `reconcilePaneOrder` 在渲染期按需调整，顺序不变时返回原数组；消除 3 条 `react-hooks/refs`。
+- **远程批量写库（`remote-event-batcher.ts`、`assistant-database.ts`、`ipc.ts`）：** 远程语义事件
+  按 checkpoint 一个事务提交（Agent 在 checkpoint 之后才可能 ACK），可恢复会话每批只读写一次
+  消息；非远程事件、`question`、`done`/`error`、显式 flush、256 条或 50 ms 计时器也会先提交。
+  只转发新写入的事件，顺序不变；提交失败整批回滚且之后拒绝继续提交。交互、后台/定时/通道
+  和重启恢复三条路径都已改用。当前 checkpoint 粒度是每条 transcript 记录而非每页，按页批量
+  需要改 `acp-remote-runtime.ts`。
+- **架构守护（提前实施 `PERF-17` 的一部分）：** `eslint.config.js` 新增只减不增的白名单规则：
+  `DatabaseSync`（19 个文件）、`src/main` 同步 fs（8 个文件）、组件直接订阅
+  `window.goodbuddy.*.on*`（6 个文件）、`App.tsx` `max-lines` 11700；文档演示和 vendor 脚本
+  不再参与 lint，`npx eslint .` 现为 0 错误。`build/perf-thresholds.json` +
+  `npm run perf:check`（或 `GB_PERF_CHECK=1 npm run perf:app`）检查不降速报告的阈值。
+- **`npm run perf:app` A/B（改动前为 `9d8477b`）：** 不降速 2 轮两版均通过 60 项阈值；打开长会话
+  从 1 个 Long Task / 56–61 ms、最大帧 50–58 ms 降到 0 个、最大帧 25–33 ms，其余持平。4× 降速
+  3 轮：打开长会话最大帧从 475–567 ms 降到 225–283 ms（帧 p95 因多出几帧小提交升到
+  175–258 ms）；切换会话持平；流式场景两版方差都很大，未见一致变化。远程批量写库不在该基准
+  覆盖范围内，由单元测试和 `ipc.test.ts` 验证事务次数、顺序与回放去重。
+
 ### PERF-14 长列表虚拟化
 
 - **优先级 / 状态：** P2 / 待开始

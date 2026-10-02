@@ -208,6 +208,9 @@ async function main() {
   console.log(`\nreport: ${resultPath}`)
   if (!keepProfile) rmSync(join(runDirectory, 'profile'), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   process.exitCode = String(report.status).startsWith('passed') ? 0 : 1
+  // PERF-17: GB_PERF_CHECK=1 gates the run on build/perf-thresholds.json
+  // (exit 1 on a regression, 2 when the report cannot be judged, e.g. throttled).
+  if (process.env.GB_PERF_CHECK === '1') process.exitCode = require('./check-perf-thresholds.cjs').run([resultPath])
 }
 
 main().catch(error => {
