@@ -3857,6 +3857,15 @@ describe("App", () => {
   });
 
   it("keeps parallel streaming conversations in message order while persisting fresh deltas", async () => {
+    const realSetInterval = window.setInterval.bind(window);
+    const orderingTicks: Array<() => void> = [];
+    vi.spyOn(window, "setInterval").mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      if (timeout === 5_000 && typeof handler === "function") {
+        orderingTicks.push(handler as () => void);
+        return realSetInterval(() => {}, timeout);
+      }
+      return realSetInterval(handler, timeout, ...args);
+    }) as typeof window.setInterval);
     const snapshots: ConversationSnapshot[] = ["First", "Second"].map((title, index) => ({
       id: `parallel-${index}`, projectId, title, updatedAt: 100 - index, messages: [],
     }));
@@ -3870,6 +3879,10 @@ describe("App", () => {
       fireEvent.click(screen.getByLabelText("发送"));
       await waitFor(() => expect(run).toHaveBeenCalledTimes(index + 1));
     }
+    expect(titles()).toEqual(["First", "Second"]);
+    act(() => screen.getByLabelText("向 GoodBuddy 提问").focus());
+    expect(orderingTicks.length).toBeGreaterThan(0);
+    await act(async () => orderingTicks.forEach(tick => tick()));
     expect(titles()).toEqual(["Second", "First"]);
     const first = run.mock.calls[0]![0];
     const second = run.mock.calls[1]![0];
@@ -3893,7 +3906,19 @@ describe("App", () => {
     expect(titles()).toEqual(["Second", "First"]);
   });
 
-  it.each([false, true])("keeps summary and detail order stable across refreshes and moves a newly messaged conversation forward (channel: %s)", async (channel) => {
+  it.each([false, true].flatMap(channel =>
+    (["none", "mouse", "focus", "menu"] as const).map(pause => ({ channel, pause })),
+  ))("batches summary and detail ordering every 5 seconds with live rows (channel: $channel, pause: $pause)", async ({ channel, pause }) => {
+    const realSetInterval = window.setInterval.bind(window);
+    const orderingTicks: Array<() => void> = [];
+    vi.spyOn(window, "setInterval").mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      if (timeout === 5_000 && typeof handler === "function") {
+        orderingTicks.push(handler as () => void);
+        // Keep async Testing Library waits real, but advance five-second ticks explicitly.
+        return realSetInterval(() => {}, timeout);
+      }
+      return realSetInterval(handler, timeout, ...args);
+    }) as typeof window.setInterval);
     const snapshots: ConversationSnapshot[] = ["Earlier", "Later"].map((title, index) => ({
       id: `stable-${index}`, projectId, title, updatedAt: 900 - index,
       ...(channel ? { remote: { channel: "weixin" as const, accountDisplay: "Account", conversationType: "direct" as const } } : {}),
@@ -3913,10 +3938,36 @@ describe("App", () => {
     fireEvent.click(container.querySelectorAll(".conversation-item")[1]!);
     await screen.findByText("Body Earlier");
     expect(titles()).toEqual(["Later", "Refreshed Earlier"]);
+    const list = container.querySelector<HTMLElement>(".conversation-list")!;
+    const composer = screen.getByLabelText("向 GoodBuddy 提问");
+    act(() => composer.focus());
+    if (pause === "mouse") fireEvent.mouseEnter(list);
+    if (pause === "focus") act(() => screen.getByLabelText("更多会话操作 Refreshed Earlier").focus());
+    if (pause === "menu") {
+      fireEvent.click(screen.getByLabelText("更多会话操作 Refreshed Earlier"));
+      await waitFor(() => expect(screen.getByRole("menu")).toContainElement(document.activeElement as HTMLElement));
+      expect(list).not.toContainElement(screen.getByRole("menu"));
+    }
     snapshots[0] = { ...snapshots[0]!, updatedAt: 1100, messages: [...snapshots[0]!.messages,
-      { id: "new-message", role: "user", state: "complete", content: "New turn", createdAt: 200 }] };
+      { id: "new-message", role: "user", state: "complete", content: "New turn", createdAt: 200 }], title: "Live Earlier" };
     fireEvent(window, new Event("focus"));
-    await waitFor(() => expect(titles()).toEqual(["Refreshed Earlier", "Later"]));
+    await waitFor(() => expect(titles()).toEqual(["Later", "Live Earlier"]));
+    expect(await screen.findByText("New turn")).toBeInTheDocument();
+    expect(orderingTicks.length).toBeGreaterThan(0);
+    await act(async () => orderingTicks.forEach(tick => tick()));
+    if (pause !== "none") {
+      expect(titles()).toEqual(["Later", "Live Earlier"]);
+      if (pause === "mouse") fireEvent.mouseLeave(list);
+      if (pause === "menu") {
+        fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+        await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+        await waitFor(() => expect(screen.getByLabelText("更多会话操作 Live Earlier")).toHaveFocus());
+      }
+      act(() => composer.focus());
+      expect(titles()).toEqual(["Later", "Live Earlier"]);
+      await act(async () => orderingTicks.forEach(tick => tick()));
+    }
+    expect(titles()).toEqual(["Live Earlier", "Later"]);
   });
 
   it("uses the dedicated pin update for channel conversations", async () => {

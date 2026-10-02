@@ -60,6 +60,25 @@ npm run typecheck
 的未跟踪 `sidebar-final-probe.ts` 和 `sidebar-final-run.mjs`。未跑全仓测试、打包程序或
 macOS／Linux 窗口验证。中文新增规则经 deai-writing 扫描无阻断项，并已人工核对。
 
+## 2026-10-02：补齐五秒排序检查
+
+会话列表已接入 `useConversationListOrder`，保留实时行数据，定时调整展示顺序。
+交互暂停与即时操作规则见[会话置顶与操作菜单](./ui-design.md#会话置顶与操作菜单)。
+本地和消息通道共用此 Renderer 路径，未修改 Agent 执行、同步或持久化。
+
+验证命令：
+
+```text
+npx vitest run src/renderer/src/use-conversation-list-order.test.tsx src/renderer/src/chat-conversation.test.ts src/renderer/src/App.test.tsx -t "useConversationListOrder|conversation display order|parallel streaming conversations|summary and detail order|sorts pinned conversations|merges persisted pin metadata|dedicated pin update"
+```
+
+3 个文件、23 项通过，覆盖五秒边界、连续增量、交互暂停与恢复、立即增删与置顶、
+项目／搜索范围切换、计时器清理，以及 App 中本地／通道摘要更新的实际列表接线。
+新增 hook 与相关测试的定向 ESLint、`git diff --check` 通过。未运行 Electron 窗口验证。
+全仓检查未通过：typecheck 报并行修改中的 `App.tsx:5436` 缺少 `startTransition`；
+ESLint 报打包文件及现有会话视图缓存的 refs 错误；`npm test` 在 120 秒后超时。
+额外运行的草稿置顶失败测试未通过，实际显示持久化错误而非预期的置顶错误。
+
 ## 2026-09-28：并行会话输出时保持列表顺序
 
 修复多个会话交替输出时，左侧列表随每个增量反复换位的问题。展示顺序统一使用消息创建

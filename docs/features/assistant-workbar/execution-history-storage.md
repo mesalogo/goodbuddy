@@ -76,6 +76,8 @@ WAL 增长与 SQL 全历史扫描次数的定向验证见 [BUILD.md](../../../BU
   `createdAt` 最大值；摘要的 `latestMessageAt` 在已有聚合查询中取 `MAX(created_at)`，
   与摘要上附带的实时消息取最大值。该字段仅用于桌面只读投影，不增加数据库列或持久化副本。
   `updatedAt`／`updated_at` 继续随流式事件更新，原有快照合并、终态优先与逐消息保存规则不变。
+  `useConversationListOrder` 在内存中保留展示 ID 顺序，以单个 5 秒计时器应用自动排序，
+  并按上述交互规则暂缓重排；行数据始终使用最新会话对象，不延迟保存或同步。
 - 本机和托管 SSH 的 Renderer／Main 读取、持久化与恢复投影共用以上实现。Agent 的
   transcript、原生 Session、权限及模型桥协议未改变；完整列表、摘要和详情都附带
   Main 当前恢复请求的问题投影。
