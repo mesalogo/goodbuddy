@@ -2937,6 +2937,14 @@ function App(): React.JSX.Element {
     },
     [setConversationInput],
   );
+  // Leaving a workspace can be deferred (draft flush or discard confirmation),
+  // so focus the composer only after the chat view is actually committed.
+  const showChatAndFocusComposer = useCallback((): void => {
+    requestWorkspaceLeave("chat", () => {
+      commitView("chat");
+      requestAnimationFrame(() => inputRef.current?.focus());
+    });
+  }, [commitView, requestWorkspaceLeave]);
   const setQuickActionInput = useCallback((value: string): void => {
     setConversationInput(activeConversationIdRef.current, value);
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -4049,7 +4057,7 @@ function App(): React.JSX.Element {
         isUnusedConversation(currentConversation)
       ) {
         if (preview) preview.ready(currentConversation);
-        else { setView("chat"); requestAnimationFrame(() => inputRef.current?.focus()); }
+        else showChatAndFocusComposer();
         return true;
       }
       const conversation = createConversation(
@@ -4064,10 +4072,10 @@ function App(): React.JSX.Element {
       };
       setConversations(nextConversations);
       if (preview) preview.ready(conversation);
-      else { setActiveId(conversation.id); setView("chat"); requestAnimationFrame(() => inputRef.current?.focus()); }
+      else { setActiveId(conversation.id); showChatAndFocusComposer(); }
       return true;
     },
-    [notify, projects, setActiveId, setView],
+    [notify, projects, setActiveId, setView, showChatAndFocusComposer],
   );
   const activeProjectDisplayName = activeProject
     ? getProjectDisplayText(activeProject, tWorkspace).name
@@ -7184,7 +7192,7 @@ function App(): React.JSX.Element {
       ]);
       setSelectedAssistantTaskId(undefined);
       setActiveId(nextBranch.id);
-      setView("chat");
+      showChatAndFocusComposer();
       if (narrowWindow) {
         closeNarrowSidebar();
       }
@@ -7192,7 +7200,6 @@ function App(): React.JSX.Element {
         tone: "success",
         message: t("notices.conversationBranched"),
       });
-      requestAnimationFrame(() => inputRef.current?.focus());
     } catch (error) {
       notify({
         tone: "error",
@@ -10890,10 +10897,7 @@ function App(): React.JSX.Element {
                               ? current
                               : [...current, libraryId],
                           );
-                          setView("chat");
-                          requestAnimationFrame(() =>
-                            inputRef.current?.focus(),
-                          );
+                          showChatAndFocusComposer();
                         }}
                         onPauseSource={(sourceId) =>
                           runKnowledgeSourceAction(() =>

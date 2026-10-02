@@ -101,6 +101,7 @@ type DraftSwitchTarget =
   | { kind: 'select-entry'; entry: MagicNoteEntry }
   | { kind: 'entry-type'; value: 'text' | 'canvas' }
   | { kind: 'cancel-edit' }
+  | { kind: 'cancel-new-entry' }
   | { kind: 'overview' }
   | { kind: 'library-view'; value: LibraryView }
   | { kind: 'create-note'; title: string }
@@ -1125,11 +1126,40 @@ export function MagicNotesWorkspace({
       if (target.kind === 'entry-type') {
         discardComposerDraft()
         setEntryType(target.value)
+        // The composer remounts with the new type; move focus into the new editor.
+        requestAnimationFrame(() => {
+          if (target.value === 'canvas' && composerCanvasRef.current) { composerCanvasRef.current.focus(); return }
+          composerRef.current?.querySelector<HTMLElement>('.ql-editor, [data-testid="magic-note-editor"]')?.focus({ preventScroll: true })
+        })
+        return
+      }
+      if (target.kind === 'cancel-new-entry') {
+        discardComposerDraft()
+        setEntryType('text')
+        clearValidation('new-entry')
+        // Move focus out of the composer after any confirmation restores it, so the
+        // composer collapses without dropping focus onto the document body.
+        const fallbackEntryId = detail?.entries.some((entry) => entry.id === selectedEntryId) ? selectedEntryId : detail?.entries.at(-1)?.id
+        requestAnimationFrame(() => {
+          const active = document.activeElement
+          if (active instanceof HTMLElement && active !== document.body && !composerRef.current?.contains(active)) return
+          const entry = fallbackEntryId ? document.getElementById(`magic-note-entry-${fallbackEntryId}`) : null
+          if (entry) { entry.focus({ preventScroll: true }); return }
+          if (active instanceof HTMLElement) active.blur()
+        })
         return
       }
       if (target.kind === 'cancel-edit') {
+        const editedEntryId = editingEntry?.id
         discardEditingDraft()
         setSelectedEntryId((current) => detail?.entries.some((entry) => entry.id === current) ? current : detail?.entries.at(-1)?.id ?? '')
+        // The inline editor unmounts; return focus to the entry that was being edited.
+        requestAnimationFrame(() => {
+          const article = editedEntryId ? document.getElementById(`magic-note-entry-${editedEntryId}`) : null
+          if (!article) return
+          const editButton = article.querySelector<HTMLButtonElement>('button[data-entry-edit]:not(:disabled)')
+          ;(editButton ?? article).focus({ preventScroll: true })
+        })
         return
       }
       if (target.kind === 'overview') {
@@ -1183,10 +1213,13 @@ export function MagicNotesWorkspace({
       void loadDetail(target.noteId, target.entryId)
     },
     [
+      clearValidation,
       createNote,
       detail,
       discardComposerDraft,
       discardEditingDraft,
+      editingEntry?.id,
+      selectedEntryId,
       focusSwitchTarget,
       loadDetail,
       libraryView,
@@ -2812,6 +2845,7 @@ export function MagicNotesWorkspace({
                 </div>
                 {entryType === 'canvas' && <div className="magic-note-canvas-actions">
                   <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(false)}>{t('canvas.analyzeDraft')}</button>
+                  <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void requestDraftSwitch({ kind: 'cancel-new-entry' })}>{t('actions.cancel')}</button>
                   <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={() => void saveEntry()}>{t('actions.saveEntry')}</button>
                 </div>}
                 </div>
@@ -2868,6 +2902,14 @@ export function MagicNotesWorkspace({
                   </p>
                 )}
                 {entryType === 'text' && <footer style={{ justifyContent: 'flex-end' }}>
+                  <button
+                    className="secondary-button"
+                    disabled={Boolean(busy)}
+                    type="button"
+                    onClick={() => void requestDraftSwitch({ kind: 'cancel-new-entry' })}
+                  >
+                    {t('actions.cancel')}
+                  </button>
                   <button
                     className="primary-button"
                     disabled={Boolean(busy)}
@@ -2964,6 +3006,7 @@ export function MagicNotesWorkspace({
                             aria-label={t(entry.content.version === 2 ? 'canvas.edit' : 'actions.edit')}
                             title={t(entry.content.version === 2 ? 'canvas.edit' : 'actions.edit')}
                             disabled={Boolean(busy) || editingEntry?.id === entry.id}
+                            data-entry-edit=""
                             type="button"
                             onClick={() =>
                               requestDraftSwitch({

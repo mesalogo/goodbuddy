@@ -822,6 +822,33 @@ describe('MagicNotesWorkspace overview navigation', () => {
     await waitFor(() => expect(createEntry).toHaveBeenCalledWith({ noteId, content }))
   })
 
+  it('cancels a new entry only after confirming that its draft will be discarded', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    newEntry()
+    const composer = document.querySelector('.magic-note-composer')!
+    fireEvent.click(screen.getByTestId('magic-note-editor'))
+    fireEvent.click(within(composer as HTMLElement).getByRole('button', { name: '取消' }))
+    expect(await screen.findByRole('alertdialog')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+    expect(document.querySelector('.magic-note-composer')).toHaveClass('magic-note-composer--active')
+    fireEvent.click(within(document.querySelector('.magic-note-composer') as HTMLElement).getByRole('button', { name: '取消' }))
+    fireEvent.click(await screen.findByRole('button', { name: '放弃草稿并切换' }))
+    await waitFor(() => expect(document.querySelector('.magic-note-composer')).not.toHaveClass('magic-note-composer--active'))
+    await waitFor(() => expect(document.getElementById(`magic-note-entry-${entryId}`)).toHaveFocus())
+    expect(createEntry).not.toHaveBeenCalled()
+  })
+
+  it('returns focus to the entry edit button after cancelling an inline edit', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    const article = document.getElementById(`magic-note-entry-${entryId}`)!
+    fireEvent.click(within(article).getByRole('button', { name: '编辑' }))
+    await within(article).findByTestId('magic-note-editor')
+    fireEvent.click(within(article).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(within(article).getByRole('button', { name: '编辑' })).toHaveFocus())
+  })
+
   it('keeps todo filters and search when opening its source note and returning', async () => {
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     await screen.findByText(detail.title)
@@ -1655,9 +1682,9 @@ describe('MagicNotesWorkspace canvas integration', () => {
     showAi()
     const header = document.querySelector('.magic-note-composer__header')!
     const actions = header.querySelector('.magic-note-canvas-actions')!
-    expect(Array.from(actions.querySelectorAll('button'), (button) => button.textContent)).toEqual(['分析画布草稿', '保存记录'])
+    expect(Array.from(actions.querySelectorAll('button'), (button) => button.textContent)).toEqual(['分析画布草稿', '取消', '保存记录'])
     expect(header.nextElementSibling).toBe(screen.getByTestId('canvas-editor'))
-    expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '取消' })).toHaveLength(1)
     expect(document.querySelector('.magic-note-composer > footer')).toBeNull()
     expect(screen.queryByText(/不随笔画自动请求|保存后自动分析画布/)).not.toBeInTheDocument()
     // An empty flush permits switching to the saved record without a dirty draft.

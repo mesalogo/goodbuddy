@@ -14770,6 +14770,28 @@ describe("App", () => {
     expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
   })
 
+  it('focuses the chat composer after a guarded Magic Notes leave to a new conversation', async () => {
+    await api.updates!.updateSettings({ magicNotesEnabled: true })
+    const note = {
+      id: '00000000-0000-4000-8000-000000000602', title: 'Focus note', preview: '',
+      entryCount: 0, pinned: false, tags: [], revision: 1, createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z', entries: [],
+    }
+    vi.mocked(api.magicNotes.list).mockResolvedValue({ notes: [note], tags: [] })
+    vi.mocked(api.magicNotes.get).mockResolvedValue(note)
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '魔法笔记' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Focus note.*条记录/ }))
+    fireEvent.change(await screen.findByLabelText('笔记标题'), { target: { value: 'Unsaved focus title' } })
+    fireEvent.click(screen.getByRole('button', { name: /新建对话/ }))
+    const discard = await screen.findByRole('button', { name: '放弃草稿并切换' })
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)) })
+    // A real pointer click moves focus to the confirmation button before the leave completes.
+    discard.focus()
+    fireEvent.click(discard)
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '向 GoodBuddy 提问' })).toHaveFocus())
+  })
+
   it.each(['title', 'text'])('guards real App navigation to multiple apps and discards only after confirmation (%s)', async (draft) => {
     await api.updates!.updateSettings({ magicNotesEnabled: true })
     const note = {

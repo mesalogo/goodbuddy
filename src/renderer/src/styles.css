@@ -2467,16 +2467,6 @@
   background: var(--surface-raised);
 }
 
-/* Keep a readable line length on wide windows. */
-.magic-notes-stream-pane > :not(.magic-note-detail-header, .magic-note-detail-toolbar),
-.magic-notes-stream-pane > .magic-note-detail-header > .magic-note-detail-title {
-  max-width: 880px;
-}
-
-.magic-notes-stream-pane > * {
-  margin-inline: auto;
-}
-
 @container magic-notes-detail (max-width: 600px) {
   .magic-notes-stream-pane { --magic-note-stream-gutter: var(--space-3); }
 }
