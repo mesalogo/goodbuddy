@@ -4455,7 +4455,7 @@ describe("App", () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it("renders the latest 80 messages and preserves scroll when revealing earlier messages", async () => {
+  it("windows the latest 80 messages and preserves scroll when revealing earlier messages", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: "00000000-0000-4000-8000-000000000421",
@@ -4474,25 +4474,28 @@ describe("App", () => {
     const { container } = render(<App />);
 
     expect(await screen.findByText("历史消息 160")).toBeInTheDocument();
-    // The first paint shows only the trailing messages; the rest of the batch
-    // follows in steps.
-    expect(container.querySelectorAll(".message").length).toBeLessThanOrEqual(20);
+    // Only the rows near the bottom are mounted (PERF-14); a spacer stands in
+    // for the rest of the 80-message batch.
+    const mounted = container.querySelectorAll(".message").length;
+    expect(mounted).toBeGreaterThan(0);
+    expect(mounted).toBeLessThan(80);
     expect(
       screen.getByRole("button", { name: "加载更早的消息（还剩 81 条）" }),
     ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(container.querySelectorAll(".message")).toHaveLength(80),
-    );
     expect(screen.queryByText("历史消息 080")).not.toBeInTheDocument();
     const chat = container.querySelector<HTMLElement>(".chat");
     if (!chat) {
       throw new Error("Missing chat scroll container");
     }
+    const topSpacerHeight = (): number =>
+      Number.parseFloat(
+        container.querySelector<HTMLElement>('[data-window-spacer="top"]')?.style.height ?? "0",
+      ) || 0;
     Object.defineProperties(chat, {
       clientHeight: { configurable: true, value: 400 },
       scrollHeight: {
         configurable: true,
-        get: () => container.querySelectorAll(".message").length * 10,
+        get: () => container.querySelectorAll(".message").length * 10 + topSpacerHeight(),
       },
       scrollTop: {
         configurable: true,
@@ -4507,24 +4510,26 @@ describe("App", () => {
       }),
     );
 
-    expect(container.querySelectorAll(".message")).toHaveLength(160);
-    expect(screen.getByText("历史消息 001")).toBeInTheDocument();
-    expect(screen.queryByText("历史消息 000")).not.toBeInTheDocument();
-    expect(chat.scrollTop).toBe(925);
+    expect(
+      screen.getByRole("button", { name: "加载更早的消息（还剩 1 条）" }),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll(".message")).toHaveLength(mounted);
+    // The 80 earlier messages land above the reader, who keeps their place.
+    expect(chat.scrollTop).toBe(125 + 80 * 160);
     fireEvent.click(
       screen.getByRole("button", {
         name: "加载更早的消息（还剩 1 条）",
       }),
     );
-    expect(container.querySelectorAll(".message")).toHaveLength(161);
     expect(screen.getByText("历史消息 000")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /加载更早的消息/u }),
     ).not.toBeInTheDocument();
     expect(screen.getByText("历史消息 000").closest("article")).toHaveFocus();
+    expect(container.querySelectorAll(".message").length).toBeLessThanOrEqual(mounted + 1);
   });
 
-  it("catches up the first message batch in several small steps", async () => {
+  it("opens a long conversation in one bounded commit without catch-up steps", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: "00000000-0000-4000-8000-000000000422",
@@ -4551,21 +4556,17 @@ describe("App", () => {
     try {
       expect(await screen.findByText("分步消息 160")).toBeInTheDocument();
       record();
-      await waitFor(() =>
-        expect(container.querySelectorAll(".message")).toHaveLength(80),
+      await act(
+        () =>
+          new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 20))),
       );
       record();
     } finally {
       observer.disconnect();
     }
 
-    expect(counts[0]).toBeLessThanOrEqual(20);
-    expect(counts.at(-1)).toBe(80);
-    // More than one catch-up commit, each adding at most 20 messages.
-    expect(counts.filter((count) => count > 20 && count < 80).length).toBeGreaterThan(0);
-    counts.slice(1).forEach((count, index) => {
-      expect(count - (counts[index] ?? 0)).toBeLessThanOrEqual(20);
-    });
+    expect(counts).toHaveLength(1);
+    expect(counts[0]).toBeLessThan(80);
     expect(
       screen.getByRole("button", { name: "加载更早的消息（还剩 81 条）" }),
     ).toBeInTheDocument();
@@ -4820,6 +4821,27 @@ describe("App", () => {
     expect(composer).toHaveValue("");
   });
 
+  it("re-renders only the previous and next sidebar rows when switching conversations", async () => {
+    const conversations = Array.from({ length: 30 }, (_, c) => ({
+      id: `00000000-0000-4000-9${String(c).padStart(3, "0")}-000000000000`,
+      projectId, title: `Switch row ${c}`, updatedAt: 1_000 + c,
+      messages: [{
+        id: `00000000-0000-4000-9${String(c).padStart(3, "0")}-000000000001`,
+        role: "assistant" as const, content: `Switch body ${c}`, createdAt: 1_000 + c, state: "complete" as const,
+      }],
+    }));
+    vi.mocked(api.conversations.list).mockResolvedValueOnce(conversations);
+    render(<App />);
+    fireEvent.click((await screen.findByText("Switch row 3")).closest("button")!);
+    await screen.findByText("Switch body 3");
+    sidebarRenderProbes.row.mockClear();
+    fireEvent.click(screen.getByText("Switch row 7").closest("button")!);
+    await screen.findByText("Switch body 7");
+    expect(document.querySelector(".conversation-item--active")).toHaveTextContent("Switch row 7");
+    // Each row renders one title marquee; unrelated rows must be skipped.
+    expect(sidebarRenderProbes.row.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
   it("isolates history and task strips while typing during a running request", async () => {
     const conversationId = crypto.randomUUID();
     vi.mocked(api.conversations.list).mockResolvedValueOnce([{
@@ -4929,7 +4951,13 @@ describe("App", () => {
     const firstPane = container.querySelector<HTMLElement>(
       `[data-conversation-id="${firstConversationId}"]`,
     );
-    expect(firstPane?.querySelectorAll(".message")).toHaveLength(160);
+    expect(
+      screen.getByRole("button", { name: "加载更早的消息（还剩 1 条）" }),
+    ).toBeInTheDocument();
+    // Windowed (PERF-14): the mounted rows stay bounded and keep their nodes.
+    const mountedRows = firstPane?.querySelectorAll(".message").length ?? 0;
+    expect(mountedRows).toBeGreaterThan(0);
+    expect(mountedRows).toBeLessThan(80);
     const firstChat = firstPane?.querySelector<HTMLElement>(".chat");
     if (!firstChat) {
       throw new Error("Missing first chat scroll container");
@@ -4951,7 +4979,7 @@ describe("App", () => {
       target: { value: "第一段会话草稿" },
     });
     expect(messageRenderProbe).not.toHaveBeenCalled();
-    expect(firstPane?.querySelectorAll(".message")).toHaveLength(160);
+    expect(firstPane?.querySelectorAll(".message")).toHaveLength(mountedRows);
     fireEvent.click(screen.getByLabelText("添加附件"));
     expect(await screen.findByText(draftAttachment.name)).toBeInTheDocument();
 
@@ -4964,7 +4992,7 @@ describe("App", () => {
       target: { value: "第二段会话草稿" },
     });
     expect(messageRenderProbe).not.toHaveBeenCalled();
-    expect(firstPane?.querySelectorAll(".message")).toHaveLength(160);
+    expect(firstPane?.querySelectorAll(".message")).toHaveLength(mountedRows);
     const paneOrder = (): string[] =>
       [...container.querySelectorAll<HTMLElement>(".chat-history-pane")].map(
         (pane) => pane.dataset.conversationId ?? "",
@@ -4972,14 +5000,14 @@ describe("App", () => {
     const warmPaneOrder = paneOrder();
     fireEvent.click(screen.getByText("第一段长会话").closest("button")!);
 
-    expect(await screen.findByText("第一段历史 001")).toBeInTheDocument();
+    expect(await screen.findByText("第一段历史 160")).toBeInTheDocument();
     // Chromium resets scrollTop when React moves a kept pane; jsdom does not.
     expect(paneOrder()).toEqual(warmPaneOrder);
     const restoredFirstPane = container.querySelector<HTMLElement>(
       `[data-conversation-id="${firstConversationId}"]`,
     );
     expect(restoredFirstPane).toBe(firstPane);
-    expect(restoredFirstPane?.querySelectorAll(".message")).toHaveLength(160);
+    expect(restoredFirstPane?.querySelectorAll(".message")).toHaveLength(mountedRows);
     expect(restoredFirstPane?.querySelector(".chat")).toBe(firstChat);
     expect(firstChat.scrollTop).toBe(225);
     expect(reasoningDetails).toHaveAttribute("open");

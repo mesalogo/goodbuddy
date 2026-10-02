@@ -575,7 +575,7 @@ try {
     return { latency: { count: 1, p50: openMs, p95: openMs, max: openMs }, fields: { openMs, renderedMessages } }
   })
 
-  await measure('scroll-long-conversation', 'Wheel-scroll up through the long conversation for 3 s', async () => {
+  await measure('scroll-long-conversation', 'Wheel-scroll up through the long conversation for 3 s', () => withRendererProfile('scroll-long-conversation', async () => {
     const point = await js(`(() => { const e = document.querySelector('.chat-history-pane[data-active=true] #chat-message-list') || document.querySelector('.chat-history-pane[data-active=true]'); const r = e.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()`)
     const scroller = `(() => { const p = document.querySelector('.chat-history-pane[data-active=true]'); const c = p && [p, ...p.querySelectorAll('*')].find(e => e.scrollHeight > e.clientHeight + 4 && /(auto|scroll)/.test(getComputedStyle(e).overflowY)); return c ? c.scrollTop : null; })()`;
     const before = await js(scroller)
@@ -587,7 +587,7 @@ try {
     await sleep(300)
     const after = await js(scroller)
     return { fields: { scrollTopBefore: before, scrollTopAfter: after, scrolledPx: before === null || after === null ? null : before - after } }
-  })
+  }))
 
   await screenshot('long-conversation')
 

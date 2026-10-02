@@ -30,18 +30,13 @@ import type { ImageOperation } from "../../shared/image-generation-contracts";
 import {
   Bot,
   ChartColumn,
-  Check,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  ChevronRight,
   CircleAlert,
   CircleHelp,
-  Copy,
   Download,
-  Edit3,
   FileText,
-  GitFork,
   Grid2X2,
   Info,
   Library,
@@ -56,8 +51,6 @@ import {
   MoreHorizontal,
   Paperclip,
   PanelLeft,
-  Pin,
-  PinOff,
   Search,
   Send,
   Settings,
@@ -70,15 +63,12 @@ import {
   Square,
   Sun,
   TerminalSquare,
-  Trash2,
   X,
 } from "lucide-react";
 import {
   Component,
-  memo,
   Suspense,
   useCallback,
-  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -187,18 +177,33 @@ import {
   type ChatScrollSnapshot,
 } from "./ChatHistoryPane";
 import { reconcilePaneOrder } from "./pane-order";
-import { isUnusedConversation, sortConversationsForDisplay, type Conversation } from "./chat-conversation";
+import { getConversationDisplayTitle, isUnusedConversation, sortConversationsForDisplay, type Conversation } from "./chat-conversation";
+import {
+  ConversationListView,
+  ConversationStoreEffects,
+  createConversationStores,
+  useConversation,
+} from "./conversation-store";
+import {
+  useConversationActivitySummary,
+  useConversationCount,
+  useConversationsById,
+  useConversationTitles,
+  usePendingSidebarApprovals,
+} from "./conversation-selectors";
+import {
+  ConversationBranchBadge,
+  ConversationSidebar,
+  type ConversationListRowHandlers,
+  type ConversationSidebarActions,
+} from "./ConversationSidebar";
 import {
   ComposerDraftEffect,
   ComposerDraftHasText,
   ComposerDraftText,
   createComposerDraftStore,
 } from "./composer-draft-store";
-import {
-  createLiveMessageStore,
-  LiveMessageStoreContext,
-  type ConversationsUpdate,
-} from "./live-message-store";
+import { LiveMessageStoreContext } from "./live-message-store";
 import {
   clearLegacyActivityHistory,
   loadLegacyActivityHistory,
@@ -212,7 +217,6 @@ import {
   type KnowledgeCitationContextView,
 } from "./KnowledgeCitationDialog";
 import {
-  DestructiveConfirmActions,
   EmptyState,
   PageShell,
   SegmentedControl,
@@ -220,19 +224,12 @@ import {
 } from "./WorkspacePrimitives";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { ProjectActivity } from "./ProjectActivity";
-import {
-  deriveConversationActivity,
-  sameActivitySummary,
-  type ConversationActivity,
-} from "./conversation-activity";
-import { sameArrayItems, sameMapEntries, useStableDerivedValue, useStableHandlers } from "./stable-derived-value";
+import { sameArrayItems, useStableHandlers } from "./stable-derived-value";
 import { useUnviewedCompletions } from "./use-unviewed-completions";
-import { useConversationListOrder } from "./use-conversation-list-order";
 import { useExecutionStats } from "./use-execution-stats";
 import {
   RightAssistantSidebar,
   type AssistantSidebarTab,
-  type PendingSidebarApproval,
   type SidebarArtifact,
 } from "./RightAssistantSidebar";
 import {
@@ -244,8 +241,6 @@ import { ConversationTaskStrip } from "./ConversationTaskStrip";
 import { RuntimeChecklistStrip } from "./RuntimeChecklistStrip";
 import { appendConversationQuestionBlock } from "../../shared/conversation-question-blocks";
 import { ConversationInputQueue } from "./ConversationInputQueue";
-import { OverflowMarquee } from "./OverflowMarquee";
-import { findTaskSchedule } from "./TaskScheduleActions";
 import type { SettingsCategoryId } from "./settings-categories";
 import type { SettingsLeaveRequester } from "./SettingsPanel";
 import { formatShortcutForDisplay, type GlobalShortcutSettingsSnapshot } from "../../shared/shortcut";
@@ -276,8 +271,6 @@ import type { RemoteProjectRecoveryState } from "../../shared/remote-project-rec
 import { ReleaseNotesDialog } from "./ReleaseNotesDialog";
 import { scheduleIdleRoutePreload } from "./idle-route-preload";
 import { createPreloadableComponent } from "./preloadable-component";
-import { formatConversationListTime, type TimeFormatLocale } from "./time-format";
-import { formatMediumDateTime } from "./locale-formatters";
 import { formatCompactTokens } from "./token-format";
 import {
   filterKeepAliveEntries,
@@ -327,9 +320,8 @@ const SettingsPanel = settingsPanelRoute.Component;
 const ActivityPanel = activityPanelRoute.Component;
 
 const conversationPersistenceIntervalMs = 500;
-// How often streaming deltas are absorbed into App state; rows render them live.
+// How often streaming deltas are absorbed into the conversation store; rows render them live.
 const liveMessageFlushIntervalMs = 250;
-const conversationSearchSnapshotDelayMs = 250;
 const keepAliveExpirationMs = 60 * 60 * 1_000;
 const keepAliveSweepIntervalMs = 5 * 60 * 1_000;
 const maximumCachedConversations = 12;
@@ -639,32 +631,8 @@ const emptyTokenUsage: TokenUsageSummary = {
   records: [],
 };
 
-// Message arrays are replaced, never mutated: unchanged conversations reuse
-// their scan while another conversation streams.
-const approvalMessagesByArray = new WeakMap<readonly Message[], Message[]>();
-function messagesWithApprovals(messages: readonly Message[]): Message[] {
-  let found = approvalMessagesByArray.get(messages);
-  if (!found) {
-    found = messages.filter((message) => message.approval);
-    approvalMessagesByArray.set(messages, found);
-  }
-  return found;
-}
-
-function samePendingSidebarApprovals(
-  left: readonly PendingSidebarApproval[],
-  right: readonly PendingSidebarApproval[],
-): boolean {
-  return sameArrayItems(left, right, (a, b) =>
-    a.conversationId === b.conversationId && a.projectId === b.projectId &&
-    a.messageId === b.messageId && a.taskId === b.taskId &&
-    a.approvalId === b.approvalId && a.title === b.title &&
-    a.description === b.description && a.toolName === b.toolName);
-}
-
 const storageKey = "goodbuddy.conversations.v1";
 const emptyConversationTasks: AssistantTask[] = [];
-const emptyAssistantSchedules: AssistantSchedule[] = [];
 
 const activeProjectStorageKey = "goodbuddy.active-project.v1";
 
@@ -859,33 +827,6 @@ function createConversationBranchTitle(
     return suffix.slice(0, 200);
   }
   return `${sourceTitle.slice(0, 200 - trailing.length).trimEnd()}${trailing}`;
-}
-
-function ConversationBranchBadge({
-  sourceTitle,
-}: {
-  sourceTitle: string;
-}): React.JSX.Element {
-  const { t } = useTranslation("app");
-  const label = t("conversation.branch.badge", {
-    title: sourceTitle,
-  });
-  return (
-    <span
-      aria-label={label}
-      className="conversation-branch-badge"
-      title={label}
-    >
-      <GitFork aria-hidden="true" size={13} />
-    </span>
-  );
-}
-
-function getConversationDisplayTitle(
-  conversation: Conversation,
-  defaultTitle: string,
-): string {
-  return isUnusedConversation(conversation) ? defaultTitle : conversation.title;
 }
 
 function ConversationHistoryLoader({ conversationId, active, load }: {
@@ -1751,435 +1692,6 @@ function ComposerMenuSelect<T extends string>({
 }
 
 
-type ConversationListRowHandlers = {
-  toggleTasks: (conversationId: string) => void;
-  select: (conversationId: string) => void;
-  toggleActions: (conversationId: string) => void;
-  registerActionTrigger: (conversationId: string, element: HTMLButtonElement | null) => void;
-  closeActions: (conversationId: string) => void;
-  pin: (conversation: Conversation) => void;
-  branch: (conversation: Conversation, disabledReason: string | undefined) => void;
-  startRename: (conversationId: string) => void;
-  copy: (conversation: Conversation) => void;
-  exportConversation: (conversation: Conversation) => void;
-  cancelDelete: () => void;
-  confirmDelete: (conversationId: string) => void;
-  requestDelete: (conversationId: string) => void;
-  saveTitle: (conversationId: string, title: string) => void;
-  cancelRename: (conversationId: string) => void;
-  openTask: (task: AssistantTask) => void;
-  viewAllTasks: (conversationId: string, firstTaskId: string | undefined) => void;
-};
-
-type ConversationListRowProps = {
-  conversation: Conversation;
-  conversationTitle: string;
-  conversationTasks: readonly AssistantTask[];
-  tasksExpanded: boolean;
-  activity: ConversationActivity | undefined;
-  branchSourceTitle: string | undefined;
-  branchDisabledReason: string | undefined;
-  branching: boolean;
-  active: boolean;
-  unread: boolean;
-  actionsOpen: boolean;
-  menuVisible: boolean;
-  pinDisabled: boolean;
-  renaming: boolean;
-  confirmingDelete: boolean;
-  deleting: boolean;
-  selectedTaskId: string | undefined;
-  schedules: readonly AssistantSchedule[];
-  locale: TimeFormatLocale;
-  /** Current calendar day; re-renders rows so "today" times stay correct. */
-  listTimeDay: string;
-  actionsRef: React.RefObject<HTMLDivElement | null>;
-  handlers: ConversationListRowHandlers;
-};
-
-// Rows skip re-rendering unless their own props change, so streaming into one
-// conversation re-renders only that row instead of the whole list.
-const ConversationListRow = memo(function ConversationListRow({
-  conversation,
-  conversationTitle,
-  conversationTasks,
-  tasksExpanded,
-  activity,
-  branchSourceTitle,
-  branchDisabledReason,
-  branching,
-  active,
-  unread,
-  actionsOpen,
-  menuVisible,
-  pinDisabled,
-  renaming,
-  confirmingDelete,
-  deleting,
-  selectedTaskId,
-  schedules,
-  locale,
-  listTimeDay,
-  actionsRef,
-  handlers,
-}: ConversationListRowProps): React.JSX.Element {
-  void listTimeDay;
-  const { t } = useTranslation("app");
-  const { t: tWorkspace } = useTranslation("workspace");
-  const branchDisabledReasonId = `conversation-branch-disabled-${conversation.id}`;
-  return (
-    <div className="conversation-entry" key={conversation.id}>
-      <div className="conversation-row">
-        {conversationTasks.length > 0 && (
-          <button
-            aria-expanded={tasksExpanded}
-            aria-label={t("conversation.tasks.toggle", {
-              title: conversationTitle,
-              count: conversationTasks.length,
-            })}
-            className="conversation-task-toggle"
-            onClick={() => handlers.toggleTasks(conversation.id)}
-            type="button"
-          >
-            {tasksExpanded ? (
-              <ChevronDown aria-hidden="true" size={13} />
-            ) : (
-              <ChevronRight aria-hidden="true" size={13} />
-            )}
-          </button>
-        )}
-        <button
-          className={
-            active
-              ? "conversation-item conversation-item--active"
-              : "conversation-item"
-          }
-          type="button"
-          onClick={() => handlers.select(conversation.id)}
-        >
-          <span className="conversation-item__primary">
-            {conversation.pinned && (
-              <span className="conversation-pin">
-                <Pin size={13} role="img" aria-label={t("conversation.actions.pinned")}><title>{t("conversation.actions.pinned")}</title></Pin>
-              </span>
-            )}
-            {branchSourceTitle && (
-              <ConversationBranchBadge
-                sourceTitle={branchSourceTitle}
-              />
-            )}
-            {conversation.remote && (
-              <b className="conversation-source-badge">
-                {projectChannelLabels[conversation.remote.channel]}
-              </b>
-            )}
-            <OverflowMarquee
-              className="conversation-item__title"
-              text={conversationTitle}
-            />
-            {unread && (
-              <i
-                aria-label={t("conversation.unread")}
-                className="conversation-unread"
-                title={t("conversation.unreadRemote")}
-              />
-            )}
-          </span>
-          <small>
-            <time
-              dateTime={new Date(
-                conversation.updatedAt,
-              ).toISOString()}
-              title={formatMediumDateTime(
-                conversation.updatedAt,
-                locale,
-              )}
-            >
-              {formatConversationListTime(
-                conversation.updatedAt,
-                locale,
-              )}
-            </time>
-          </small>
-        </button>
-        {activity && (
-          <span
-            aria-label={activity.status === "running"
-              ? t("conversation.active")
-              : tWorkspace(`projectActivity.status.${activity.status}`)}
-            className={activity.status === "running"
-              ? "conversation-activity-indicator"
-              : "conversation-activity-indicator conversation-activity-indicator--attention"}
-            role="status"
-            title={tWorkspace(`projectActivity.status.${activity.status}`)}
-          />
-        )}
-        <button
-          aria-controls={`conversation-actions-${conversation.id}`}
-          aria-haspopup="menu"
-          aria-expanded={actionsOpen}
-          aria-label={t("conversation.actions.more", {
-            title: conversationTitle,
-          })}
-          className="conversation-more"
-          onClick={() => handlers.toggleActions(conversation.id)}
-          ref={(element) => handlers.registerActionTrigger(conversation.id, element)}
-          type="button"
-        >
-          <MoreHorizontal size={14} />
-        </button>
-      </div>
-      {menuVisible && createPortal(
-        <div
-          ref={actionsRef}
-          role="menu"
-          onKeyDown={(event) => {
-            if (event.defaultPrevented) return;
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              handlers.closeActions(conversation.id);
-              return;
-            }
-            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-            event.preventDefault();
-            const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([aria-disabled="true"])'));
-            const index = items.indexOf(document.activeElement as HTMLButtonElement);
-            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-            items[next]?.focus();
-          }}
-          aria-label={t("conversation.actions.region", {
-            title: conversationTitle,
-          })}
-          className="conversation-actions"
-          id={`conversation-actions-${conversation.id}`}
-        >
-          <button role="menuitem" type="button" disabled={pinDisabled} onClick={() => handlers.pin(conversation)}>
-            {conversation.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-            {t(conversation.pinned ? "conversation.actions.unpin" : "conversation.actions.pin")}
-          </button>
-          {!conversation.remote && (
-            <>
-              <button
-                role="menuitem"
-                aria-describedby={
-                  branchDisabledReason
-                    ? branchDisabledReasonId
-                    : undefined
-                }
-                aria-disabled={
-                  branchDisabledReason ? true : undefined
-                }
-                onClick={() => handlers.branch(conversation, branchDisabledReason)}
-                title={branchDisabledReason}
-                type="button"
-              >
-                <GitFork
-                  aria-hidden="true"
-                  className="conversation-branch-icon"
-                  size={14}
-                />
-                {branching
-                  ? t("conversation.branch.creating")
-                  : t("conversation.actions.branch")}
-              </button>
-              {branchDisabledReason && (
-                <span
-                  className="sr-only"
-                  id={branchDisabledReasonId}
-                >
-                  {branchDisabledReason}
-                </span>
-              )}
-            </>
-          )}
-          {!conversation.remote && (
-            <button
-              role="menuitem"
-              onClick={() => handlers.startRename(conversation.id)}
-              type="button"
-            >
-              <Edit3 size={14} />
-              {t("conversation.actions.rename")}
-            </button>
-          )}
-          <button
-            role="menuitem"
-            onClick={() => handlers.copy(conversation)}
-            type="button"
-          >
-            <Copy size={14} />
-            {t("conversation.actions.copy")}
-          </button>
-          <button
-            role="menuitem"
-            onClick={() => handlers.exportConversation(conversation)}
-            type="button"
-          >
-            <Download size={14} />
-            {t("conversation.actions.export")}
-          </button>
-          {!conversation.remote && (
-            <DestructiveConfirmActions
-              triggerRole="menuitem"
-              cancelAriaLabel={t("conversation.delete.cancelAria", {
-                title: conversationTitle,
-              })}
-              confirmAriaLabel={t(
-                "conversation.delete.confirmAria",
-                {
-                  title: conversationTitle,
-                },
-              )}
-              confirmLabel={t("conversation.delete.confirm")}
-              confirming={confirmingDelete}
-              disabled={deleting}
-              icon={<Trash2 aria-hidden="true" size={14} />}
-              onCancel={handlers.cancelDelete}
-              onConfirm={() => handlers.confirmDelete(conversation.id)}
-              onRequestConfirm={() => handlers.requestDelete(conversation.id)}
-              triggerAriaLabel={t(
-                "conversation.delete.triggerAria",
-                {
-                  title: conversationTitle,
-                },
-              )}
-              triggerLabel={t("conversation.delete.trigger")}
-            />
-          )}
-        </div>, document.body
-      )}
-      {!conversation.remote &&
-        renaming && (
-          <form
-            className="conversation-rename"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const input =
-                event.currentTarget.elements.namedItem("title");
-              if (input instanceof HTMLInputElement) {
-                handlers.saveTitle(conversation.id, input.value);
-              }
-            }}
-          >
-            <input
-              aria-label={t("conversation.renameAria", {
-                title: conversationTitle,
-              })}
-              autoFocus
-              defaultValue={conversation.title}
-              maxLength={80}
-              name="title"
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  handlers.cancelRename(conversation.id);
-                }
-              }}
-              pattern=".*\S.*"
-              required
-            />
-            <button
-              aria-label={t("conversation.saveName")}
-              type="submit"
-            >
-              <Check size={14} />
-            </button>
-            <button
-              aria-label={t("conversation.cancelRename")}
-              onClick={() => {
-                handlers.cancelRename(conversation.id);
-              }}
-              type="button"
-            >
-              <X size={14} />
-            </button>
-          </form>
-        )}
-      {tasksExpanded && conversationTasks.length > 0 && (
-        <ul
-          aria-label={t("conversation.tasks.list", {
-            title: conversationTitle,
-          })}
-          className="conversation-task-children"
-        >
-          {conversationTasks.slice(0, 3).map((task) => {
-            const schedule = findTaskSchedule(task, schedules);
-            const statusLabel = tWorkspace(
-              `task.status.${task.status}`,
-            );
-            const metadata = schedule
-              ? [
-                  tWorkspace(
-                    `sidebar.tasks.schedule.recurrence.${schedule.recurrence}`,
-                  ),
-                  task.status === "completed"
-                    ? undefined
-                    : statusLabel,
-                ]
-                  .filter((value) => value !== undefined)
-                  .join(" · ")
-              : task.status === "completed"
-                ? ""
-                : statusLabel;
-            return (
-              <li key={task.id}>
-                <button
-                  className={
-                    selectedTaskId === task.id
-                      ? "conversation-task-child conversation-task-child--active"
-                      : "conversation-task-child"
-                  }
-                  onClick={() => handlers.openTask(task)}
-                  type="button"
-                >
-                  <span className="conversation-task-child__title">
-                    {task.title}
-                  </span>
-                  {metadata && (
-                    <small className="conversation-task-child__meta">
-                      {metadata}
-                    </small>
-                  )}
-                  {task.status === "completed" ? (
-                    <span
-                      className="task-status-dot task-status-dot--completed conversation-task-child__completed-status"
-                      title={statusLabel}
-                    >
-                      <Check
-                        aria-hidden="true"
-                        size={7}
-                        strokeWidth={3}
-                      />
-                      <span className="sr-only">{statusLabel}</span>
-                    </span>
-                  ) : (
-                    <span
-                      aria-hidden="true"
-                      className={`task-status-dot task-status-dot--${task.status}`}
-                    />
-                  )}
-                </button>
-              </li>
-            );
-          })}
-          {conversationTasks.length > 3 && (
-            <li>
-              <button
-                className="conversation-task-view-all"
-                onClick={() => handlers.viewAllTasks(conversation.id, conversationTasks[0]?.id)}
-                type="button"
-              >
-                {t("conversation.tasks.viewAll", {
-                  count: conversationTasks.length,
-                })}
-              </button>
-            </li>
-          )}
-        </ul>
-      )}
-    </div>
-  );
-});
 
 function App(): React.JSX.Element {
   const { i18n, t } = useTranslation("app");
@@ -2191,46 +1703,21 @@ function App(): React.JSX.Element {
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
   const [initialConversationMigrationStoragePresent] = useState(hasConversationMigrationStorage);
   const conversationMigrationStoragePresent = useRef(initialConversationMigrationStoragePresent);
-  const [conversations, setConversationsState] = useState(() =>
-    loadConversations(
-      t("conversation.greeting"),
-      t("conversation.interrupted"),
+  // The conversation list lives in an external store (conversation-store.ts):
+  // App and the sidebar select only what they show. Streaming deltas render
+  // through the live-message store and are absorbed on a slow cadence.
+  const [{ conversations: conversationStore, liveMessages, cancelLiveMessageFlush }] = useState(() =>
+    createConversationStores(
+      loadConversations(t("conversation.greeting"), t("conversation.interrupted")),
+      { flushIntervalMs: liveMessageFlushIntervalMs },
     ),
   );
-  // Streaming deltas render through this store; App state absorbs them on a
-  // slow cadence or with the next conversations update (see live-message-store).
-  const [{ liveMessages, setConversations, cancelLiveMessageFlush }] = useState(() => {
-    let flushTimer: ReturnType<typeof setTimeout> | undefined;
-    const update = (next: ConversationsUpdate): void => {
-      const captured = store.capture();
-      setConversationsState((current) => store.applyUpdate(current, next, captured));
-    };
-    const store = createLiveMessageStore({
-      onPending: () => {
-        if (flushTimer !== undefined) return;
-        // A plain update: a transition would keep being interrupted by the
-        // row's synchronous store updates and might never absorb anything.
-        flushTimer = setTimeout(() => {
-          flushTimer = undefined;
-          if (!store.hasEntries()) return;
-          update((current) => current);
-        }, liveMessageFlushIntervalMs);
-      },
-    });
-    return {
-      liveMessages: store,
-      setConversations: update,
-      cancelLiveMessageFlush: () => {
-        clearTimeout(flushTimer);
-        flushTimer = undefined;
-      },
-    };
-  });
+  const setConversations = conversationStore.set;
+  const conversationCount = useConversationCount(conversationStore);
   const [activeId, setActiveIdState] = useState(
-    () => conversations[0]?.id ?? "",
+    () => conversationStore.getState()[0]?.id ?? "",
   );
   const activeConversationIdRef = useRef(activeId);
-  const conversationsRef = useRef(conversations);
   const persistedLocalConversationsRef = useRef(
     new Map<string, Conversation>(),
   );
@@ -2244,7 +1731,7 @@ function App(): React.JSX.Element {
     Set<string>
   >(() => new Set());
   const [conversationStoreReady, setConversationStoreReady] = useState(false);
-  const migrationConversations = useRef(conversations);
+  const migrationConversations = useRef(conversationStore.getState());
   const [projects, setProjects] = useState<AssistantProject[]>([]);
   const projectsRef = useRef(projects);
   const [projectRecoveryByProjectId, setProjectRecoveryByProjectId] = useState<
@@ -2836,11 +2323,6 @@ function App(): React.JSX.Element {
     setSearchOpen(false);
     requestAnimationFrame(() => searchTriggerRef.current?.focus());
   };
-  const deferredSearchQuery = useDeferredValue(searchQuery);
-  const [localSearchMatches, setLocalSearchMatches] =
-    useState<{ query: string; ids: Set<string> }>({ query: "", ids: new Set() });
-  const [persistedSearchMatches, setPersistedSearchMatches] =
-    useState<{ query: string; ids: Set<string> }>({ query: "", ids: new Set() });
   const [conversationLoadError, setConversationLoadError] = useState<string>();
   const [conversationLoadRetry, setConversationLoadRetry] = useState(0);
   const [conversationActionsId, setConversationActionsId] = useState("");
@@ -2876,14 +2358,14 @@ function App(): React.JSX.Element {
   }), []);
   useEffect(() => {
     let active = true;
-    if (attachmentsRef.current.has(activeId) || conversationsRef.current.find((conversation) => conversation.id === activeId)?.remote) return;
+    if (attachmentsRef.current.has(activeId) || conversationStore.getState().find((conversation) => conversation.id === activeId)?.remote) return;
     void window.goodbuddy.context.getDraft(activeId).then((saved) => {
       if (!active || attachmentsRef.current.has(activeId) || !saved.length) return;
       attachmentsRef.current.set(activeId, saved);
       setAttachmentsByConversation((current) => ({ ...current, [activeId]: saved }));
     }).catch((error: unknown) => notify({ tone: 'error', message: error instanceof Error ? error.message : '附件草稿读取失败' }));
     return () => { active = false; };
-  }, [activeId]);
+  }, [activeId, conversationStore]);
   const updateAttachments = useCallback(
     (
       update:
@@ -2894,7 +2376,7 @@ function App(): React.JSX.Element {
       const next = typeof update === "function" ? update(current) : update;
       attachmentSaveQueue.current = attachmentSaveQueue.current.catch(() => undefined).then(async () => {
         await conversationPersistenceQueueRef.current;
-        const owner = conversationsRef.current.find((conversation) => conversation.id === activeId);
+        const owner = conversationStore.getState().find((conversation) => conversation.id === activeId);
         if (!owner || owner.remote) throw new Error('附件目标会话不可编辑');
         if (next.length && !persistedLocalConversationsRef.current.has(activeId)) {
           await window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(owner), messages: [] }]);
@@ -2916,7 +2398,7 @@ function App(): React.JSX.Element {
         return remaining;
       });
     },
-    [activeId],
+    [activeId, conversationStore],
   );
   const [contextError, setContextError] = useState<string>();
   const [fileSelectionProgress, setFileSelectionProgress] =
@@ -3195,7 +2677,7 @@ function App(): React.JSX.Element {
     }
     const conversationIds = [
       ...new Set(
-        conversationsRef.current
+        conversationStore.getState()
           .filter(
             (conversation) =>
               !conversation.remote &&
@@ -3221,13 +2703,13 @@ function App(): React.JSX.Element {
         dedupeKey: "conversation-queue-resume",
       });
     });
-  }, [conversationStoreReady, projectRecoverySnapshotReady, conversations.length, runtimeSettings]);
+  }, [conversationStoreReady, projectRecoverySnapshotReady, conversationCount, runtimeSettings, conversationStore]);
 
   useEffect(() => {
     const sweep = (): void => {
       const now = Date.now();
       const conversationIds = new Set(
-        conversationsRef.current.map((conversation) => conversation.id),
+        conversationStore.getState().map((conversation) => conversation.id),
       );
       const runningConversationIds = new Set(
         [...activeRuns.current.values()].map((run) => run.conversationId),
@@ -3284,7 +2766,7 @@ function App(): React.JSX.Element {
     };
     const interval = window.setInterval(sweep, keepAliveSweepIntervalMs);
     return () => window.clearInterval(interval);
-  }, [activeId, assistantTasks, getPinnedWorkspaceViews, knowledgeOperationCount, view]);
+  }, [activeId, assistantTasks, getPinnedWorkspaceViews, knowledgeOperationCount, view, conversationStore]);
 
   useEffect(() => {
     livePrimarySidebarWidthRef.current = primarySidebarWidth;
@@ -3403,45 +2885,7 @@ function App(): React.JSX.Element {
     };
   }, [composerOptionsOpen]);
 
-  useLayoutEffect(() => {
-    conversationsRef.current = conversations;
-    liveMessages.prune(conversations);
-  }, [conversations, liveMessages]);
-
   useEffect(() => cancelLiveMessageFlush, [cancelLiveMessageFlush]);
-
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      return;
-    }
-    const timeout = window.setTimeout(
-      () => {
-        const query = searchQuery.trim().toLocaleLowerCase();
-        setLocalSearchMatches({ query, ids: new Set(conversations.filter(conversation =>
-          conversation.messages.some(message => message.content.toLocaleLowerCase().includes(query))
-        ).map(conversation => conversation.id)) });
-      },
-      conversationSearchSnapshotDelayMs,
-    );
-    return () => window.clearTimeout(timeout);
-  }, [conversations, searchQuery]);
-
-  useEffect(() => {
-    const query = deferredSearchQuery.trim().toLocaleLowerCase();
-    if (!query || !conversationStoreReady) return;
-    let active = true;
-    const timeout = window.setTimeout(() => {
-      void window.goodbuddy.conversations.search(query, conversationsRef.current.map(item => item.id)).then(ids => {
-        if (active) setPersistedSearchMatches({ query, ids: new Set(ids) });
-      }).catch(() => {
-        if (active) notify({
-          tone: "error", message: tRef.current("notices.remoteConversationRefreshFailed"),
-          dedupeKey: "conversation-search",
-        });
-      });
-    }, conversationSearchSnapshotDelayMs);
-    return () => { active = false; window.clearTimeout(timeout); };
-  }, [deferredSearchQuery, conversationStoreReady, localSearchMatches]);
 
   useEffect(() => {
     projectsRef.current = projects;
@@ -3623,10 +3067,7 @@ function App(): React.JSX.Element {
     };
   }, []);
 
-  const activeConversation = useMemo(
-    () => conversations.find((conversation) => conversation.id === activeId),
-    [activeId, conversations],
-  );
+  const activeConversation = useConversation(conversationStore, activeId);
   const enabledKnowledgeLibraryIds =
     activeConversation?.knowledgeLibraryIds ?? [];
   const setEnabledKnowledgeLibraryIds = useCallback(
@@ -3705,15 +3146,8 @@ function App(): React.JSX.Element {
   if (conversationPaneOrder !== conversationPaneOrderState) {
     setConversationPaneOrderState(conversationPaneOrder);
   }
-  const cachedConversations = useMemo(() => {
-    const conversationById = new Map(
-      conversations.map((conversation) => [conversation.id, conversation]),
-    );
-    return conversationPaneOrder.flatMap((conversationId) => {
-      const conversation = conversationById.get(conversationId);
-      return conversation ? [conversation] : [];
-    });
-  }, [conversationPaneOrder, conversations]);
+  // App re-renders for changes to these conversations only.
+  const cachedConversations = useConversationsById(conversationStore, conversationPaneOrder);
 
   const activeRuntimeResolution = useMemo(
     () =>
@@ -4066,17 +3500,13 @@ function App(): React.JSX.Element {
       document.removeEventListener("focusin", dismissOnOutsideFocus);
     };
   }, [activeRuntimeSelectionKey, runtimeMenuOpen]);
-  const conversationNavigationRef = useRef({
-    activeId,
-    conversations,
-  });
+  // The committed active ID, or a just-created conversation until the next
+  // commit, so repeated new-conversation requests reuse it.
+  const conversationNavigationRef = useRef({ activeId });
 
   useEffect(() => {
-    conversationNavigationRef.current = {
-      activeId,
-      conversations,
-    };
-  }, [activeId, conversations]);
+    conversationNavigationRef.current = { activeId };
+  }, [activeId]);
 
   useEffect(() => {
     const selection = activeRuntimeSelectionRef.current;
@@ -4152,9 +3582,7 @@ function App(): React.JSX.Element {
         return false;
       }
       const navigation = conversationNavigationRef.current;
-      const currentConversation = navigation.conversations.find(
-        (conversation) => conversation.id === navigation.activeId,
-      );
+      const currentConversation = conversationStore.getConversation(navigation.activeId);
       if (
         currentConversation &&
         currentConversation.projectId === projectId &&
@@ -4169,17 +3597,13 @@ function App(): React.JSX.Element {
         undefined,
         tRef.current("conversation.greeting"),
       );
-      const nextConversations = [conversation, ...navigation.conversations];
-      conversationNavigationRef.current = {
-        activeId: conversation.id,
-        conversations: nextConversations,
-      };
-      setConversations(nextConversations);
+      conversationNavigationRef.current = { activeId: conversation.id };
+      setConversations((current) => [conversation, ...current]);
       if (preview) preview.ready(conversation);
       else { setActiveId(conversation.id); showChatAndFocusComposer(); }
       return true;
     },
-    [notify, projects, setActiveId, setView, showChatAndFocusComposer, setConversations],
+    [notify, projects, setActiveId, setView, showChatAndFocusComposer, setConversations, conversationStore],
   );
   const activeProjectDisplayName = activeProject
     ? getProjectDisplayText(activeProject, tWorkspace).name
@@ -4187,31 +3611,6 @@ function App(): React.JSX.Element {
   const queuedConversationIds = useMemo(
     () => new Set(conversationQueueItems.map((item) => item.conversationId)),
     [conversationQueueItems],
-  );
-  const matchingConversations = useMemo(() => {
-    const query = deferredSearchQuery.trim().toLocaleLowerCase();
-    return conversations.filter(
-      (conversation) =>
-        (!activeProjectId || conversation.projectId === activeProjectId) &&
-        (activeProject?.kind !== "channel" ||
-          conversation.remote !== undefined) &&
-        (!query ||
-          (persistedSearchMatches.query === query && persistedSearchMatches.ids.has(conversation.id)) ||
-          conversation.title.toLocaleLowerCase().includes(query) ||
-          (localSearchMatches.query === query && localSearchMatches.ids.has(conversation.id))),
-    );
-  }, [
-    activeProject,
-    activeProjectId,
-    conversations,
-    deferredSearchQuery,
-    localSearchMatches,
-    persistedSearchMatches,
-  ]);
-  const { conversations: filteredConversations, listProps: conversationListProps } = useConversationListOrder(
-    matchingConversations,
-    JSON.stringify([activeProjectId, activeProject?.kind, deferredSearchQuery.trim().toLocaleLowerCase()]),
-    Boolean(conversationActionsId),
   );
   const productAssistantTasks = useMemo(
     () =>
@@ -4256,21 +3655,7 @@ function App(): React.JSX.Element {
     }
     return grouped;
   }, [productAssistantTasks]);
-  // Streaming replaces the conversation array on every delta; keep derived
-  // values whose content is unchanged so memoized consumers skip re-rendering.
-  const conversationTitles = useStableDerivedValue(useMemo(
-    () =>
-      new Map(
-        conversations.map((conversation) => [
-          conversation.id,
-          getConversationDisplayTitle(
-            conversation,
-            t("conversation.defaultTitle"),
-          ),
-        ]),
-      ),
-    [conversations, t],
-  ), sameMapEntries);
+  const conversationTitles = useConversationTitles(conversationStore, t("conversation.defaultTitle"));
   const projectNames = useMemo(
     () =>
       new Map(
@@ -4285,24 +3670,21 @@ function App(): React.JSX.Element {
     useUnviewedCompletions(assistantTasks,
       view === "chat" && !settingsOpen && !applicationCenterOpen && activeConversation && !activeConversation.messageSummary
         ? activeId : undefined);
-  const projectActivity = useStableDerivedValue(useMemo(
-    () => deriveConversationActivity(
-      conversations.map((conversation) => ({
-        ...conversation,
-        title: conversationTitles.get(conversation.id) ?? conversation.title,
-      })),
-      assistantTasks,
-      activeConversationIds,
-      projects.map((project) => ({
-        id: project.id,
-        name: projectNames.get(project.id) ?? project.name,
-      })),
-      tWorkspace("projectActivity.unassigned"),
-      completedConversationIds,
-    ),
-    [conversations, conversationTitles, assistantTasks, activeConversationIds,
-      projects, projectNames, tWorkspace, completedConversationIds],
-  ), sameActivitySummary);
+  const activityProjects = useMemo(
+    () => projects.map((project) => ({
+      id: project.id,
+      name: projectNames.get(project.id) ?? project.name,
+    })),
+    [projects, projectNames],
+  );
+  const projectActivity = useConversationActivitySummary(conversationStore, {
+    activeConversationIds,
+    completedConversationIds,
+    defaultTitle: t("conversation.defaultTitle"),
+    fallbackProjectName: tWorkspace("projectActivity.unassigned"),
+    projects: activityProjects,
+    tasks: assistantTasks,
+  });
   const activityByConversationId = useMemo(
     () =>
       new Map(
@@ -4313,22 +3695,7 @@ function App(): React.JSX.Element {
       ),
     [projectActivity],
   );
-  const pendingSidebarApprovals = useStableDerivedValue(useMemo<PendingSidebarApproval[]>(
-    () =>
-      conversations.flatMap((conversation) =>
-        messagesWithApprovals(conversation.messages).map((message) => ({
-          conversationId: conversation.id,
-          projectId: conversation.projectId,
-          messageId: message.id,
-          taskId: message.approval!.taskId ?? message.task?.id,
-          approvalId: message.approval!.id,
-          title: message.approval!.title,
-          description: message.approval!.description,
-          toolName: message.approval!.toolName,
-        })),
-      ),
-    [conversations],
-  ), samePendingSidebarApprovals);
+  const pendingSidebarApprovals = usePendingSidebarApprovals(conversationStore);
   const sidebarArtifacts = useMemo<SidebarArtifact[]>(
     () =>
       assistantArtifacts
@@ -4378,7 +3745,7 @@ function App(): React.JSX.Element {
       record: Omit<ActivityRecord, "id" | "createdAt" | "scope">,
       scopeOverride?: ActivityRecord["scope"],
     ): void => {
-      const conversation = conversationsRef.current.find(
+      const conversation = conversationStore.getState().find(
         (candidate) => candidate.id === record.conversationId,
       );
       const project = conversation?.projectId
@@ -4409,7 +3776,7 @@ function App(): React.JSX.Element {
         }),
       );
     },
-    [],
+    [conversationStore],
   );
 
   const updateRequestActivity = useCallback(
@@ -4768,7 +4135,7 @@ function App(): React.JSX.Element {
         return;
       }
 
-      const liveMessage = conversationsRef.current
+      const liveMessage = conversationStore.getState()
         .find((conversation) => conversation.id === run.conversationId)
         ?.messages.find((message) => message.id === run.messageId);
       if (event.type === "question-resolved") {
@@ -5397,6 +4764,7 @@ function App(): React.JSX.Element {
       }
     },
     [
+    conversationStore,
       recordActivity,
       loadWorkspaceChanges,
       releaseConversationQueueAfterRun,
@@ -5462,7 +4830,7 @@ function App(): React.JSX.Element {
         return;
       }
       const { batch, acknowledgements } = createLocalConversationSaveBatch(
-        conversationsRef.current,
+        conversationStore.getState(),
         persistedLocalConversationsRef.current,
         deletingLocalConversationIdsRef.current,
       );
@@ -5487,16 +4855,16 @@ function App(): React.JSX.Element {
         dedupeKey: "conversation-persistence",
       });
     });
-  }, [releaseUnretainedConversationHistories]);
+  }, [releaseUnretainedConversationHistories, conversationStore]);
   const ensureConversationHistory = useCallback((conversationId: string): Promise<Conversation> => {
-    const current = conversationsRef.current.find(item => item.id === conversationId);
+    const current = conversationStore.getState().find(item => item.id === conversationId);
     if (!current) return Promise.reject(new Error(tRef.current("notices.remoteConversationRefreshFailed")));
     if (!current.messageSummary) return Promise.resolve(current);
     const pending = conversationHistoryRequests.current.get(conversationId);
     if (pending) return pending;
     const pinRevision = conversationPinRevisionRef.current;
     const request = window.goodbuddy.conversations.get(conversationId).then(snapshot => {
-      const latest = conversationsRef.current.find(item => item.id === conversationId);
+      const latest = conversationStore.getState().find(item => item.id === conversationId);
       if (!latest || deletingLocalConversationIdsRef.current.has(conversationId)) {
         throw new Error(tRef.current("notices.remoteConversationRefreshFailed"));
       }
@@ -5505,16 +4873,15 @@ function App(): React.JSX.Element {
         snapshot = { ...snapshot, pinned: latest.pinned };
       }
       const next = mergePersistedConversations(
-        conversationsRef.current, [snapshot], persistedLocalConversationsRef.current,
+        conversationStore.getState(), [snapshot], persistedLocalConversationsRef.current,
         retainedConversationDetailIds(),
       );
-      conversationsRef.current = next;
       setConversations(next);
       return next.find(item => item.id === conversationId)!;
     }).finally(() => { conversationHistoryRequests.current.delete(conversationId); });
     conversationHistoryRequests.current.set(conversationId, request);
     return request;
-  }, [retainedConversationDetailIds, setConversations]);
+  }, [retainedConversationDetailIds, setConversations, conversationStore]);
 
   useEffect(() => {
     if (!conversationStoreReady) return;
@@ -5538,7 +4905,9 @@ function App(): React.JSX.Element {
     };
   }, [conversationStoreReady, persistLocalConversationChanges]);
 
-  useEffect(() => {
+  // Runs after each committed conversation change (ConversationStoreEffects)
+  // and when the store becomes ready.
+  const flushConversationPersistenceAfterCommit = useCallback((): void => {
     if (
       !conversationStoreReady ||
       !flushConversationPersistenceAfterRenderRef.current
@@ -5547,7 +4916,8 @@ function App(): React.JSX.Element {
     }
     flushConversationPersistenceAfterRenderRef.current = false;
     persistLocalConversationChanges();
-  }, [conversationStoreReady, conversations, persistLocalConversationChanges]);
+  }, [conversationStoreReady, persistLocalConversationChanges]);
+  useEffect(flushConversationPersistenceAfterCommit, [flushConversationPersistenceAfterCommit]);
 
   const persistActivityHistory = useCallback(async (): Promise<void> => {
     if (!activityHistoryReady) {
@@ -5697,14 +5067,14 @@ function App(): React.JSX.Element {
             return;
           }
           if (conversationPinPendingRef.current) {
-            const currentPins = new Map(conversationsRef.current.map(item => [item.id, item.pinned]));
+            const currentPins = new Map(conversationStore.getState().map(item => [item.id, item.pinned]));
             persisted = persisted.map(item => ({ ...item, pinned: currentPins.has(item.id) ? currentPins.get(item.id) : item.pinned }));
           }
           const remote = persisted.filter(
             (conversation) => conversation.remote,
           );
           const previousById = new Map(
-            conversationsRef.current.map((conversation) => [
+            conversationStore.getState().map((conversation) => [
               conversation.id,
               conversation,
             ]),
@@ -5785,6 +5155,7 @@ function App(): React.JSX.Element {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [
+    conversationStore,
     conversationStoreReady,
     releaseConversationQueueAfterRun,
     retainedConversationDetailIds,
@@ -6014,7 +5385,7 @@ function App(): React.JSX.Element {
       ) {
         return;
       }
-      const conversationIds = conversationsRef.current
+      const conversationIds = conversationStore.getState()
         .filter(
           (conversation) =>
             conversation.projectId === projectId && !conversation.remote,
@@ -6035,7 +5406,7 @@ function App(): React.JSX.Element {
         });
       });
     },
-    [notify],
+    [notify, conversationStore],
   );
 
   const applyProjectRecoveryState = useCallback(
@@ -6812,7 +6183,7 @@ function App(): React.JSX.Element {
 
   const commitProjectSelection = (
     selected: AssistantProject,
-    candidateConversations = conversationsRef.current,
+    candidateConversations = conversationStore.getState(),
   ): void => {
     setActiveProjectId(selected.id);
     const conversation = candidateConversations.find(
@@ -6947,7 +6318,7 @@ function App(): React.JSX.Element {
     const remainingProjects = projectsRef.current.filter(
       (project) => !deletedProjectIds.has(project.id),
     );
-    const currentConversations = conversationsRef.current;
+    const currentConversations = conversationStore.getState();
     const deletedConversationIds = new Set(
       currentConversations
         .filter((conversation) =>
@@ -7101,7 +6472,7 @@ function App(): React.JSX.Element {
       if (!conversation.remote) {
         await conversationPersistenceQueueRef.current;
         if (!persistedLocalConversationsRef.current.has(conversation.id)) {
-          const draft = conversationsRef.current.find(item => item.id === conversation.id);
+          const draft = conversationStore.getState().find(item => item.id === conversation.id);
           if (!draft) return;
           await window.goodbuddy.conversations.saveLocal([{
             header: toLocalConversationHeader(draft),
@@ -7112,8 +6483,7 @@ function App(): React.JSX.Element {
       }
       const pinned = !conversation.pinned;
       await window.goodbuddy.conversations.setPinned({ conversationId: conversation.id, pinned });
-      const next = conversationsRef.current.map(item => item.id === conversation.id ? { ...item, pinned } : item);
-      conversationsRef.current = next;
+      const next = conversationStore.getState().map(item => item.id === conversation.id ? { ...item, pinned } : item);
       setConversations(next);
     } catch {
       notify({ tone: "error", message: t("notices.conversationPinFailed") });
@@ -7146,7 +6516,7 @@ function App(): React.JSX.Element {
       setDeletingConversationId("");
       return;
     }
-    const deletingConversation = conversations.find(
+    const deletingConversation = conversationStore.getState().find(
       (conversation) => conversation.id === conversationId,
     );
     if (deletingConversation && !deletingConversation.remote) {
@@ -7210,10 +6580,9 @@ function App(): React.JSX.Element {
       return next;
     });
     setConversationActivity(conversationId, false);
-    const remaining = conversations.filter(
+    const remaining = conversationStore.getState().filter(
       (conversation) => conversation.id !== conversationId,
     );
-    conversationsRef.current = remaining;
     deletingLocalConversationIdsRef.current.delete(conversationId);
     const projectRemaining = remaining.filter(
       (conversation) => conversation.projectId === activeProjectId,
@@ -7257,7 +6626,7 @@ function App(): React.JSX.Element {
       if (
         persistedLocalConversationsRef.current.get(sourceConversation.id) !==
           sourceConversation ||
-        conversationsRef.current.find(
+        conversationStore.getState().find(
           (conversation) => conversation.id === sourceConversation.id,
         ) !== sourceConversation
       ) {
@@ -7544,7 +6913,7 @@ function App(): React.JSX.Element {
     let queuedInput: ConversationQueueUserInput | undefined =
       queuedDispatch && !queuedDispatch.scheduled ? queuedDispatch.input : undefined;
     if (queuedDispatch?.scheduled) {
-      const conversation = conversationsRef.current.find(
+      const conversation = conversationStore.getState().find(
         (candidate) => candidate.id === queuedDispatch.input.conversationId,
       );
       const project = projectsRef.current.find(
@@ -7588,7 +6957,7 @@ function App(): React.JSX.Element {
       }
     };
     let conversationSnapshot = queuedInput
-      ? conversationsRef.current.find(
+      ? conversationStore.getState().find(
           (conversation) => conversation.id === queuedInput.conversationId,
         )
       : activeConversation;
@@ -8101,7 +7470,7 @@ function App(): React.JSX.Element {
   const stop = async (): Promise<void> => {
     const requestId = [...activeRuns.current.entries()].find(
       ([, run]) => run.conversationId === activeId,
-    )?.[0] ?? conversationsRef.current.find(
+    )?.[0] ?? conversationStore.getState().find(
       conversation => conversation.id === activeId,
     )?.activeRequest?.requestId;
     if (requestId) {
@@ -8120,7 +7489,7 @@ function App(): React.JSX.Element {
       approvalId: string,
       decision: ApprovalDecision,
     ): Promise<void> => {
-      const pendingMessage = conversationsRef.current
+      const pendingMessage = conversationStore.getState()
         .find((conversation) => conversation.id === conversationId)
         ?.messages.find((message) => message.id === messageId);
       if (pendingMessage?.approval?.id !== approvalId) return;
@@ -8185,7 +7554,7 @@ function App(): React.JSX.Element {
         }));
       }
     },
-    [updateMessage],
+    [updateMessage, conversationStore],
   );
 
   const respondToQuestion = useCallback(
@@ -8195,7 +7564,7 @@ function App(): React.JSX.Element {
       questionId: string,
       answers?: AgentQuestionAnswer[],
     ): Promise<void> => {
-      const pendingMessage = conversationsRef.current
+      const pendingMessage = conversationStore.getState()
         .find((conversation) => conversation.id === conversationId)
         ?.messages.find((message) => message.id === messageId);
       const question = pendingMessage?.pendingQuestions?.[0];
@@ -8237,7 +7606,7 @@ function App(): React.JSX.Element {
         };
       });
     },
-    [updateMessage],
+    [updateMessage, conversationStore],
   );
 
   const addContext = async (
@@ -8248,7 +7617,7 @@ function App(): React.JSX.Element {
     try {
       await conversationPersistenceQueueRef.current;
       if (!persistedLocalConversationsRef.current.has(conversationId)) {
-        const owner = conversationsRef.current.find((conversation) => conversation.id === conversationId);
+        const owner = conversationStore.getState().find((conversation) => conversation.id === conversationId);
         if (!owner || owner.remote) throw new Error('附件目标会话不可编辑');
         await window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(owner), messages: owner.messages.map(toConversationMessage) }]);
       }
@@ -8588,7 +7957,7 @@ function App(): React.JSX.Element {
   }, [magicNotesEnabled]);
   const captureToNote = useCallback(async (conversationId: string, message?: Message, trigger?: HTMLElement): Promise<void> => {
     if (!magicNotesEnabled || noteCapturePending.current || noteDraft.saving) return;
-    const snapshot = conversationsRef.current.find(item => item.id === conversationId);
+    const snapshot = conversationStore.getState().find(item => item.id === conversationId);
     if (!snapshot || (message && (message.state === 'streaming' || !message.content.trim()))) return;
     if (!message && snapshot.messages.some(item => item.state === 'streaming')) {
       notify({ tone: 'info', message: t('magicNotes:capture.wait') });
@@ -8616,7 +7985,7 @@ function App(): React.JSX.Element {
       openQuickNotes();
     } catch (reason) { notify({ tone: 'error', message: displayErrorMessage(reason, t('magicNotes:errors.operationFailed')) }); }
     finally { noteCapturePending.current = false; setNoteCaptureLoading(false); }
-  }, [magicNotesEnabled, noteDraft.saving, ensureConversationHistory, persistLocalConversationChanges, guardNoteDraft, setNoteDraft, projectNames, openQuickNotes, notify, t]);
+  }, [magicNotesEnabled, noteDraft.saving, ensureConversationHistory, persistLocalConversationChanges, guardNoteDraft, setNoteDraft, projectNames, openQuickNotes, notify, t, conversationStore]);
   const openNoteSource = async (source: MagicNoteSource, messageId?: string): Promise<'opened' | 'missing'> => {
     let snapshot;
     try { snapshot = await window.goodbuddy.conversations.get(source.conversationId); }
@@ -8625,8 +7994,7 @@ function App(): React.JSX.Element {
       throw reason;
     }
     requestWorkspaceLeave('chat', () => {
-      const next = mergePersistedConversations(conversationsRef.current, [snapshot], persistedLocalConversationsRef.current, new Set([source.conversationId, ...retainedConversationDetailIds()]));
-      conversationsRef.current = next;
+      const next = mergePersistedConversations(conversationStore.getState(), [snapshot], persistedLocalConversationsRef.current, new Set([source.conversationId, ...retainedConversationDetailIds()]));
       setConversations(next);
       setActiveProjectId(snapshot.projectId ?? '');
       setActiveId(source.conversationId);
@@ -8655,7 +8023,7 @@ function App(): React.JSX.Element {
 
   const openActivityConversation = useCallback((conversationId: string): void => {
     const open = async (): Promise<void> => {
-      let conversation = conversationsRef.current.find(
+      let conversation = conversationStore.getState().find(
         (candidate) => candidate.id === conversationId,
       );
       if (!conversation) {
@@ -8689,7 +8057,7 @@ function App(): React.JSX.Element {
       if (narrowWindow) closeNarrowSidebar();
     };
     requestWorkspaceLeave("chat", () => { void open(); });
-  }, [closeNarrowSidebar, commitView, narrowWindow, requestWorkspaceLeave, setActiveId, t, setConversations]);
+  }, [closeNarrowSidebar, commitView, narrowWindow, requestWorkspaceLeave, setActiveId, t, setConversations, conversationStore]);
 
   const openAssistantTask = (task: AssistantTask): void => {
     if (!task.conversationId) {
@@ -8699,7 +8067,7 @@ function App(): React.JSX.Element {
       });
       return;
     }
-    const conversation = conversations.find(
+    const conversation = conversationStore.getState().find(
       (candidate) => candidate.id === task.conversationId,
     );
     if (!conversation) {
@@ -8937,6 +8305,15 @@ function App(): React.JSX.Element {
         }
       },
   });
+  const conversationSidebarActions = useStableHandlers<ConversationSidebarActions>({
+    newConversation: () => void newConversation(),
+    clearSearch: () => setSearchQuery(""),
+    retryLoad: () => {
+      setConversationLoadError(undefined);
+      setConversationLoadRetry((current) => current + 1);
+    },
+    notify,
+  });
 
   // Reuse each strip element while its inputs are unchanged: streaming into
   // one conversation must not hand every cached history pane a new taskStrip.
@@ -9011,7 +8388,6 @@ function App(): React.JSX.Element {
         undefined,
         t("conversation.greeting"),
       );
-      conversationsRef.current = [conversation];
       persistedLocalConversationsRef.current.clear();
       setConversations([conversation]);
       setActiveId(conversation.id);
@@ -9279,6 +8655,11 @@ function App(): React.JSX.Element {
   return (
     <div className="app-shell" data-frosted-glass={applicationSettings?.transparentFrostedEffectEnabled ? 'true' : undefined}>
       <LiveMessageStoreContext value={liveMessages}>
+      <ConversationStoreEffects
+        liveMessages={liveMessages}
+        onCommit={flushConversationPersistenceAfterCommit}
+        store={conversationStore}
+      />
       <DocumentConversationContext value={{
         activeId: activeConversation?.remote ? undefined : activeId,
         create: () => new Promise((resolve, reject) => {
@@ -9476,117 +8857,34 @@ function App(): React.JSX.Element {
           </button>
         </nav>
 
-        <section className="sidebar-conversations" aria-label={t("sidebar.recent")}>
-        <div className="conversation-list" {...conversationListProps}>
-          {!conversationLoadError &&
-            filteredConversations.map((conversation) => {
-              const conversationTasks =
-                tasksByConversation.get(conversation.id) ?? emptyConversationTasks;
-              const tasksExpanded = expandedTaskConversationIds.has(
-                conversation.id,
-              );
-              const conversationTitle = getConversationDisplayTitle(
-                conversation,
-                t("conversation.defaultTitle"),
-              );
-              const activity = activityByConversationId.get(conversation.id);
-              const branchSourceTitle = conversation.branch
-                ? (conversationTitles.get(
-                    conversation.branch.sourceConversationId,
-                  ) ?? conversation.branch.sourceTitle)
-                : undefined;
-              const branchUnavailable =
-                activeConversationIds.has(conversation.id) ||
-                queuedConversationIds.has(conversation.id);
-              const branchDisabledReason = !conversationStoreReady
-                ? t("conversation.branch.storageUnavailable")
-                : branchingConversationId
-                  ? branchingConversationId === conversation.id
-                    ? t("conversation.branch.creating")
-                    : t("conversation.branch.anotherCreating")
-                  : branchUnavailable
-                    ? t("conversation.branch.unavailable")
-                    : undefined;
-              return (
-                <ConversationListRow
-                  key={conversation.id}
-                  actionsOpen={conversationActionsId === conversation.id}
-                  actionsRef={conversationActionsRef}
-                  active={conversation.id === activeId}
-                  activity={activity}
-                  branchDisabledReason={branchDisabledReason}
-                  branchSourceTitle={branchSourceTitle}
-                  branching={branchingConversationId === conversation.id}
-                  confirmingDelete={confirmingConversationId === conversation.id}
-                  conversation={conversation}
-                  conversationTasks={conversationTasks}
-                  conversationTitle={conversationTitle}
-                  deleting={deletingConversationId === conversation.id}
-                    handlers={conversationListRowHandlers}
-                    listTimeDay={new Date().toDateString()}
-                    locale={locale}
-                  menuVisible={sidebarOpen && conversationActionsId === conversation.id}
-                  pinDisabled={!conversationStoreReady || Boolean(pinningConversationId)}
-                  renaming={renamingConversationId === conversation.id}
-                  schedules={tasksExpanded ? assistantSchedules : emptyAssistantSchedules}
-                  selectedTaskId={tasksExpanded && conversationTasks.some((task) => task.id === selectedAssistantTaskId) ? selectedAssistantTaskId : undefined}
-                  tasksExpanded={tasksExpanded}
-                  unread={unreadConversationIds.has(conversation.id)}
-                />
-              );
-            })}
-          {conversationLoadError ? (
-            <div className="conversation-empty" role="alert">
-              <strong>{t("conversation.loadFailed")}</strong>
-              <span>{conversationLoadError}</span>
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  setConversationLoadError(undefined);
-                  setConversationLoadRetry((current) => current + 1);
-                }}
-                type="button"
-              >
-                <RefreshCw aria-hidden="true" size={13} />
-                {t("conversation.retryLoad")}
-              </button>
-            </div>
-          ) : filteredConversations.length === 0 ? (
-            deferredSearchQuery.trim() ? (
-              <div className="conversation-empty">
-                <strong>{t("conversation.noMatches")}</strong>
-                <span>{t("conversation.noMatchesDescription")}</span>
-                <button
-                  className="secondary-button"
-                  onClick={() => setSearchQuery("")}
-                  type="button"
-                >
-                  {t("conversation.clearSearch")}
-                </button>
-              </div>
-            ) : activeProject?.kind === "channel" ? (
-              <div className="conversation-empty">
-                <strong>{t("conversation.noRemote")}</strong>
-                <span>{t("chat.remote.waiting")}</span>
-              </div>
-            ) : (
-              <div className="conversation-empty">
-                <strong>{t("conversation.empty")}</strong>
-                <span>{t("conversation.emptyDescription")}</span>
-                <button
-                  className="secondary-button"
-                  onClick={newConversation}
-                  type="button"
-                >
-                  <MessageSquarePlus aria-hidden="true" size={13} />
-                  {t("sidebar.newConversation")}
-                </button>
-              </div>
-            )
-          ) : null}
-        </div>
-
-        </section>
+        <ConversationSidebar
+          actions={conversationSidebarActions}
+          actionsRef={conversationActionsRef}
+          activeConversationIds={activeConversationIds}
+          activeId={activeId}
+          activeProjectId={activeProjectId}
+          activeProjectKind={activeProject?.kind}
+          activityByConversationId={activityByConversationId}
+          assistantSchedules={assistantSchedules}
+          branchingConversationId={branchingConversationId}
+          confirmingConversationId={confirmingConversationId}
+          conversationActionsId={conversationActionsId}
+          conversationStoreReady={conversationStoreReady}
+          deletingConversationId={deletingConversationId}
+          expandedTaskConversationIds={expandedTaskConversationIds}
+          handlers={conversationListRowHandlers}
+          loadError={conversationLoadError}
+          locale={locale}
+          pinningConversationId={pinningConversationId}
+          queuedConversationIds={queuedConversationIds}
+          renamingConversationId={renamingConversationId}
+          searchQuery={searchQuery}
+          selectedAssistantTaskId={selectedAssistantTaskId}
+          sidebarOpen={sidebarOpen}
+          store={conversationStore}
+          tasksByConversation={tasksByConversation}
+          unreadConversationIds={unreadConversationIds}
+        />
 
         <div className="sidebar-footer sidebar-footer--applications">
           <button
@@ -11494,6 +10792,7 @@ function App(): React.JSX.Element {
             document.body
           )}
           {customTaskDialog && activeProject?.kind === "user" && (
+            <ConversationListView store={conversationStore}>{(conversations) => (
             <CustomTaskDialog
               conversations={conversations.filter(
                 (conversation) => !conversation.remote &&
@@ -11514,6 +10813,7 @@ function App(): React.JSX.Element {
                 activeProject.rootPath || t("customTask.scope.noWorkspace")
               }
             />
+            )}</ConversationListView>
           )}
           <RightAssistantSidebar
             notesEnabled={magicNotesEnabled}

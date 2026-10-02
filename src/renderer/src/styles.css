@@ -6424,6 +6424,38 @@ button > svg {
   gap: 4px;
 }
 
+/*
+ * Windowed timeline (PERF-14): only rows near the viewport are mounted;
+ * spacers stand in for the rest. Each row wrapper carries the list gap as
+ * padding so its measured height is its full share of the list.
+ */
+.message-list--windowed {
+  gap: 0;
+}
+
+.message-list--windowed > .load-earlier-messages {
+  margin-bottom: 4px;
+}
+
+.message-window-row {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding-bottom: 4px;
+  gap: 4px;
+}
+
+.message-window-spacer {
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+/* The pane keeps the reader's row in place itself; native scroll anchoring
+   could pick a spacer and fight the correction. */
+.chat-history-pane > .chat {
+  overflow-anchor: none;
+}
+
 .load-earlier-messages {
   align-self: center;
   min-height: var(--control-height);

@@ -44,3 +44,10 @@ export function isUnusedConversation(conversation: Conversation): boolean {
     (conversation.messageSummary?.firstRole ?? conversation.messages[0]?.role) === "assistant"
   );
 }
+
+export function getConversationDisplayTitle(
+  conversation: Conversation,
+  defaultTitle: string,
+): string {
+  return isUnusedConversation(conversation) ? defaultTitle : conversation.title;
+}

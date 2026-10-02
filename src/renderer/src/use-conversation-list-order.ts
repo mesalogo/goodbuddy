@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { sortConversationsForDisplay, type Conversation } from './chat-conversation'
 
 export function useConversationListOrder(
@@ -16,8 +16,10 @@ export function useConversationListOrder(
   }))
   const byId = useMemo(() => new Map(conversations.map(item => [item.id, item])), [conversations])
   const reconciled = useMemo(() => {
+    const listed = new Set(order.ids)
+    // New, repinned, or (after a reorder from older input) unlisted rows.
     const changed = new Set(conversations.filter(item =>
-      !order.pins.has(item.id) || order.pins.get(item.id) !== Boolean(item.pinned),
+      !order.pins.has(item.id) || order.pins.get(item.id) !== Boolean(item.pinned) || !listed.has(item.id),
     ).map(item => item.id))
     const scopeChanged = order.scope !== scope
     if (!scopeChanged && !changed.size && order.ids.length === byId.size) return order
@@ -37,15 +39,21 @@ export function useConversationListOrder(
   }, [byId, conversations, order, scope])
   if (reconciled !== order) setOrder(reconciled)
 
-  const reorder = useEffectEvent(() => {
-    if (menuOpen || mouseWithin.current || Date.now() < scrollIdleAt.current ||
-      listRef.current?.contains(document.activeElement)) return
-    const ids = sortConversationsForDisplay(conversations).map(item => item.id)
-    setOrder(current => ids.every((id, index) => current.ids[index] === id) && ids.length === current.ids.length
-      ? current : { ...current, ids })
+  // Latest inputs for the interval. Not useEffectEvent: React 19.2 never
+  // refreshes effect events of simple memo components (such as the sidebar),
+  // so the tick would sort a stale list.
+  const latest = useRef({ conversations, menuOpen })
+  useLayoutEffect(() => {
+    latest.current = { conversations, menuOpen }
   })
   useEffect(() => {
-    const timer = window.setInterval(() => reorder(), 5000)
+    const timer = window.setInterval(() => {
+      if (latest.current.menuOpen || mouseWithin.current || Date.now() < scrollIdleAt.current ||
+        listRef.current?.contains(document.activeElement)) return
+      const ids = sortConversationsForDisplay(latest.current.conversations).map(item => item.id)
+      setOrder(current => ids.every((id, index) => current.ids[index] === id) && ids.length === current.ids.length
+        ? current : { ...current, ids })
+    }, 5000)
     return () => window.clearInterval(timer)
   }, [])
 

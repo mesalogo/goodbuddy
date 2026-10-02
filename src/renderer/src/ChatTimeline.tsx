@@ -43,6 +43,8 @@ import { useLiveMessage } from './live-message-store'
 import { formatTime, type TimeFormatLocale } from './time-format'
 import { formatCompactTokens } from './token-format'
 import { isCancelledMessage } from './message-terminal-status'
+import type { MessageWindowSegment } from './chat-message-window'
+
 
 export type ToolActivity = ConversationToolActivity
 
@@ -1343,6 +1345,39 @@ export const ChatMessageRow = memo(function ChatMessageRow(
   return <ChatMessageRowView {...props} message={useLiveMessage(props.message)} />
 })
 
+type ChatMessageWindowRowProps = ChatMessageRowProps & {
+  index: number
+  onRowRef?: (messageId: string, element: HTMLElement | null) => void
+}
+
+// A measured wrapper around one row of the windowed timeline. The wrapper
+// holds the row's article and its compression markers, so its height is the
+// row's full height in the list.
+const ChatMessageWindowRow = memo(function ChatMessageWindowRow({
+  index,
+  onRowRef,
+  ...props
+}: ChatMessageWindowRowProps): React.JSX.Element {
+  const messageId = props.message.id
+  const rowRef = useMemo(
+    () =>
+      onRowRef
+        ? (element: HTMLDivElement | null) => onRowRef(messageId, element)
+        : undefined,
+    [messageId, onRowRef]
+  )
+  return (
+    <div
+      className="message-window-row"
+      data-message-id={messageId}
+      data-message-index={index}
+      ref={rowRef}
+    >
+      <ChatMessageRow {...props} />
+    </div>
+  )
+})
+
 type ChatTimelineProps = {
   onAddToNote?: ChatMessageRowProps['onAddToNote']
   onOpenImageModelSettings?: () => void
@@ -1382,6 +1417,14 @@ type ChatTimelineProps = {
   renderAssistantHtml?: boolean
   retryContent?: string
   totalMessageCount: number
+  /**
+   * Windowed layout (PERF-14). When set, `messages` holds every loaded
+   * message starting at `messageStartIndex`, and only the rows listed here
+   * are mounted; spacers stand in for the rest. Each row is wrapped in an
+   * element reported through `onRowRef` so the pane can measure it.
+   */
+  segments?: readonly MessageWindowSegment[]
+  onRowRef?: (messageId: string, element: HTMLElement | null) => void
 }
 
 export const ChatTimeline = memo(function ChatTimeline({
@@ -1408,9 +1451,83 @@ export const ChatTimeline = memo(function ChatTimeline({
   onRevealEarlier,
   renderAssistantHtml = false,
   retryContent,
-  totalMessageCount
+  totalMessageCount,
+  segments,
+  onRowRef
 }: ChatTimelineProps): React.JSX.Element {
   const { t } = useTranslation('app')
+
+  if (segments) {
+    const rowProps = {
+      onAddToNote,
+      onOpenImageModelSettings,
+      onReselectImageSources,
+      onEditImage,
+      artifactById,
+      conversationId,
+      locale,
+      onArticleRef,
+      onCopyMessage,
+      onDownloadImage,
+      onOpenCitationContext,
+      onOpenCitationSource,
+      onOpenImage,
+      onRespondApproval,
+      onRespondQuestion,
+      onRetry,
+      renderAssistantHtml,
+      retryContent
+    }
+    // One flat keyed list, so the "load earlier" control keeps its DOM node
+    // (and focus) while the rows around it change. The control sits above
+    // the top spacer, at the start of the scrollable history.
+    const children: React.JSX.Element[] = []
+    if (hiddenMessageCount > 0) {
+      children.push(
+        <button
+          className="load-earlier-messages"
+          key="load-earlier"
+          onClick={onRevealEarlier}
+          type="button"
+        >
+          {t('chat.loadEarlierMessages', { count: hiddenMessageCount })}
+        </button>
+      )
+    }
+    for (const segment of segments) {
+      if (segment.kind === 'spacer') {
+        children.push(
+          <div
+            aria-hidden="true"
+            className="message-window-spacer"
+            data-window-spacer={segment.top ? 'top' : 'gap'}
+            key={`spacer:${segment.key}`}
+            style={{ height: segment.height }}
+          />
+        )
+        continue
+      }
+      const message = messages[segment.index - messageStartIndex]
+      if (!message) continue
+      children.push(
+        <ChatMessageWindowRow
+          {...rowProps}
+          canRetry={
+            message.state === 'error' &&
+            segment.index === totalMessageCount - 1
+          }
+          greeting={segment.index === 0 && isUnusedConversation}
+          index={segment.index}
+          key={message.id}
+          message={message}
+          onRowRef={onRowRef}
+        />
+      )
+    }
+    return (
+      <div className="message-list message-list--windowed">{children}</div>
+    )
+  }
 
   return (
     <div className="message-list">

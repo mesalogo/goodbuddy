@@ -1,4 +1,4 @@
-import { StrictMode } from 'react'
+import { memo, StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Conversation } from './chat-conversation'
@@ -144,6 +144,17 @@ describe('useConversationListOrder', () => {
     expect(ids()).toEqual(['b', 'a'])
     rerender(<List items={[]} scope="project" menuOpen />)
     expect(ids()).toEqual([])
+  })
+
+  it('sorts the latest input on a tick inside a memo component', () => {
+    const MemoList = memo(List)
+    const a = conversation('a', 20)
+    const { rerender } = render(<MemoList items={[conversation('x', 5)]} />)
+    rerender(<MemoList items={[a, conversation('b', 10)]} scope="project" />)
+    expect(ids()).toEqual(['a', 'b'])
+    rerender(<MemoList items={[a, conversation('b', 30)]} scope="project" />)
+    advance(5000)
+    expect(ids()).toEqual(['b', 'a'])
   })
 
   it('cleans up the interval on unmount and does not duplicate it in Strict Mode', () => {

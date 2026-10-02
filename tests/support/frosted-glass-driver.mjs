@@ -120,11 +120,22 @@ app.whenReady().then(async () => {
   await waitFor("!document.querySelector('.runtime-checklist__content')")
   await evaluate(`document.querySelector('.chat-history-pane[data-active="true"] .chat').scrollTop = 400`)
   await waitFor("document.querySelector('.chat-scroll-to-bottom') !== null")
-  const toggleAnchor = await evaluate(`document.querySelector('.chat-history-pane[data-active="true"] article').getBoundingClientRect().top`)
+  // The timeline is windowed (PERF-14): the first mounted row can change while
+  // the reader's place stays put, so track one visible message by id.
+  const anchorRow = await evaluate(`(() => {
+    const pane = document.querySelector('.chat-history-pane[data-active="true"]');
+    const top = pane.querySelector('.chat').getBoundingClientRect().top;
+    const row = [...pane.querySelectorAll('article')].find(a => a.getBoundingClientRect().bottom > top + 1);
+    const id = row.closest('[data-message-id]')?.dataset.messageId ?? row.id;
+    return { id, top: row.getBoundingClientRect().top };
+  })()`)
+  const anchorTop = `(() => { const pane = document.querySelector('.chat-history-pane[data-active="true"]');
+    const wrapper = pane.querySelector('[data-message-id=${JSON.stringify(anchorRow.id)}]');
+    return (wrapper?.querySelector('article') ?? document.getElementById(${JSON.stringify(anchorRow.id)})).getBoundingClientRect().top; })()`
   for (const enabled of [true, false]) {
     await evaluate(`for (const e of [document.documentElement, document.querySelector('.app-shell')]) e.dataset.frostedGlass = '${enabled}'`)
     await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-    assert.equal(await evaluate(`document.querySelector('.chat-history-pane[data-active="true"] article').getBoundingClientRect().top`), toggleAnchor, 'toggle preserves reader position')
+    assert.equal(await evaluate(anchorTop), anchorRow.top, 'toggle preserves reader position')
   }
   for (const theme of ['light', 'dark']) {
     await evaluate(`document.documentElement.dataset.theme = '${theme}'`)
@@ -169,10 +180,16 @@ app.whenReady().then(async () => {
   await waitFor(`document.querySelector('.chat-history-pane[data-active="true"]').dataset.conversationId === 'a'`)
   assert.equal(await evaluate(`document.querySelector('.chat-history-pane[data-active="true"] .chat').scrollTop`), 400, 'keep-alive scroll position')
   await evaluate(`document.querySelector('.chat-history-pane[data-active="true"] .chat').scrollTop = 0`)
-  const anchor = await evaluate(`document.querySelector('.chat-history-pane[data-active="true"] article').getBoundingClientRect().top`)
+  const firstRowId = `document.querySelector('.chat-history-pane[data-active="true"] [data-message-id]').dataset.messageId`
+  const prependId = await evaluate(firstRowId)
+  const rowTop = id => `document.querySelector('.chat-history-pane[data-active="true"] [data-message-id=${JSON.stringify(id)}] article').getBoundingClientRect().top`
+  const anchor = await evaluate(rowTop(prependId))
   await click('.load-earlier-messages')
-  await waitFor(`document.querySelectorAll('.chat-history-pane[data-active="true"] article').length === 100`)
-  const restoredAnchor = await evaluate(`document.querySelectorAll('.chat-history-pane[data-active="true"] article')[20].getBoundingClientRect().top`)
+  // Earlier rows load above; the windowed list may mount some of them, but the
+  // row the reader was looking at must not move.
+  await waitFor(`${firstRowId} !== ${JSON.stringify(prependId)}`)
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+  const restoredAnchor = await evaluate(rowTop(prependId))
   assert.ok(Math.abs(restoredAnchor - anchor) < 1, 'prepend preserves message anchor')
   await click('.runtime-checklist__toggle')
   await waitFor(`!!document.querySelector('.runtime-checklist__content')`)
