@@ -249,6 +249,43 @@ it('reopens saved batches after failure, resumes exact Unicode offsets and only 
   expect(f.summarize).toHaveBeenCalledTimes(calls)
 })
 
+it('retries an unusable leaf answer on a smaller part of the same text without skipping any of it', async () => {
+  const f = await fixture([['y'.repeat(2000)]], { concurrency: 1 })
+  // Invalid JSON, then an answer citing a source that is not in the batch, then usable answers.
+  f.summarize.mockResolvedValueOnce('not json' as never).mockImplementationOnce(async () => ({ ...empty,
+    events: [{ title: 'Bad', description: 'x', occurredAt: '2026-09-21T00:00:00.000Z', eventType: 'discussion' as const, entityIds: [], sourceReferenceIds: ['missing'] }] }))
+  const result = await f.service().run(request)
+  expect(result.status).toBe('completed')
+  const evidence = f.db.supervisionReviewStore().batches(result.runId!, 100).flatMap(row => row.evidence)
+  // Third attempt (a quarter of 1000, at least 500) succeeded; the rest of the text continued at full size.
+  expect(evidence.map(item => item.content.length)).toEqual([500, 1000, 500])
+  expect(evidence.map(item => item.content).join('')).toBe('y'.repeat(2000))
+})
+
+it('asks a navigation merge again once when its answer is unusable', async () => {
+  const f = await fixture([['n'.repeat(1500)]], { concurrency: 1 })
+  // Two leaves succeed; the merge first returns invalid JSON, then a usable answer.
+  f.summarize.mockImplementation(async (input: SupervisorSummarizerRequest) => input.evidence[0]?.sourceType === 'note' ? empty
+    : { ...empty, events: input.evidence.map(source => ({ title: 'Fact', description: 'x', occurredAt: source.occurredAt, eventType: 'discussion' as const, entityIds: [], sourceReferenceIds: [source.id] })) })
+  let navigation = 0
+  const base = f.summarize.getMockImplementation()!
+  f.summarize.mockImplementation(async input => input.evidence[0]?.sourceType === 'note' && navigation++ === 0 ? 'not json' as never : base(input))
+  const result = await f.service().run(request)
+  expect(result.status).toBe('completed')
+  expect(navigation).toBe(2)
+})
+
+it('fails after the retries and does not retry provider errors', async () => {
+  const f = await fixture([['z'.repeat(1500)]], { concurrency: 1 })
+  f.summarize.mockResolvedValue('not json' as never)
+  await expect(f.service().run(request)).rejects.toThrow('无效 JSON')
+  expect(f.summarize).toHaveBeenCalledTimes(3)
+  const g = await fixture([['z'.repeat(1500)]], { concurrency: 1 })
+  g.summarize.mockRejectedValueOnce(new Error('Provider down'))
+  await expect(g.service().run(request)).rejects.toThrow('Provider down')
+  expect(g.summarize).toHaveBeenCalledTimes(1)
+})
+
 it('continues extraction and navigation beyond the saved execution budget', async () => {
   const f = await fixture([['x'.repeat(2500)]], { concurrency: 1, executionSeconds: 30 })
   const clock = vi.spyOn(Date, 'now').mockReturnValue(time)

@@ -23,7 +23,8 @@ it('production six-leaf merge failure resumes navigation-only JSON and publishes
   let merges = 0
   f.respond.mockImplementation(prompt => {
     if (!prompt.includes('These inputs are navigation summaries')) return leaf(prompt)
-    if (++merges === 2) return { summary: 'Invalid navigation', changeDigest: '', openItems: [], events: [{ sourceReferenceIds: ['invented'] }] }
+    // The second merge is unusable on both attempts (one retry), so the run fails there.
+    if (++merges === 2 || merges === 3) return { summary: 'Invalid navigation', changeDigest: '', openItems: [], events: [{ sourceReferenceIds: ['invented'] }] }
     return { summary: 'Combined navigation', changeDigest: 'Retained leaf decisions', openItems: ['Check sources'] }
   })
   await expect(f.service().run(f.request)).rejects.toThrow()
@@ -51,7 +52,7 @@ it.each(['missing arrays', 'unknown source', 'unknown entity'])('production leaf
   await expect(f.service().run(f.request)).rejects.toThrow()
   expect(f.db.listSupervisionActivity()[0]!.reviewProgress).toMatchObject({ phase: 'extracting', batches: 0, remainingSources: 1, complete: false })
   expect(f.db.listSupervisionResults()).toHaveLength(0)
-  expect(f.respond).toHaveBeenCalledTimes(1)
+  expect(f.respond).toHaveBeenCalledTimes(3)
 })
 
 it('persists publication failure and resumes with saved navigation without model calls', async () => {
@@ -214,7 +215,7 @@ it.each(['Atlas', 'optional UUID from KNOWN ENTITIES only', ' ', '', null])('pre
   expect(f.db.listSupervisionCandidates(f.request)).toEqual(expect.arrayContaining(before))
 })
 
-it.each([randomUUID()])('production factory rejects unknown UUID %s without publishing or retrying', async persistedId => {
+it.each([randomUUID()])('production factory rejects unknown UUID %s without publishing, after the bounded output retries', async persistedId => {
   const f = fixture()
   const original = f.respond.getMockImplementation()!
   f.respond.mockImplementation(prompt => {
@@ -224,7 +225,7 @@ it.each([randomUUID()])('production factory rejects unknown UUID %s without publ
   await expect(f.service().run(f.request)).rejects.toThrow(/leaf batch: entities\[0\].persistedId/)
   expect(f.db.listSupervisionResults()).toHaveLength(0)
   expect(f.db.listSupervisionActivity()[0]!.status).toBe('failed')
-  expect(f.respond).toHaveBeenCalledTimes(1)
+  expect(f.respond).toHaveBeenCalledTimes(3)
 })
 
 it.each(['known_999', 'Atlas', ' ', 'optional candidate reference'])('rejects unknown explicit candidate reference %s', async candidateRef => {
@@ -236,7 +237,7 @@ it.each(['known_999', 'Atlas', ' ', 'optional candidate reference'])('rejects un
   })
   await expect(f.service().run(f.request)).rejects.toThrow('candidateRef is outside KNOWN ENTITIES')
   expect(f.db.listSupervisionResults()).toHaveLength(0)
-  expect(f.respond).toHaveBeenCalledTimes(1)
+  expect(f.respond).toHaveBeenCalledTimes(3)
 })
 
 it('production factory rejects a real UUID from another scope and preserves the existing graph', async () => {
@@ -251,7 +252,7 @@ it('production factory rejects a real UUID from another scope and preserves the 
   await expect(f.service().run({ ...f.request, scope: { kind: 'projects', projectIds: [f.db.listProjects()[0]!.id] } })).rejects.toThrow('outside KNOWN ENTITIES')
   expect(f.db.listSupervisionResults()).toHaveLength(1)
   expect(f.db.listSupervisionCandidates(f.request)).toEqual(candidates)
-  expect(f.respond).toHaveBeenCalledTimes(2)
+  expect(f.respond).toHaveBeenCalledTimes(4)
 })
 
 it('reuses actual legacy text-key shapes through strict UUID aliases and preserves confirmed fields and graph links', async () => {

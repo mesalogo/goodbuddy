@@ -170,6 +170,11 @@ function validateReferences(
   }
 }
 
+/** The model answered, but the answer was unusable (bad JSON, schema, or references). Retrying smaller may help. */
+export class SupervisionOutputError extends Error {}
+/** Leaf batches with unusable output are retried at half, then a quarter of the text budget, then the run fails. */
+const outputRetries = 2
+
 export class SupervisorService {
   private active?: { settled: Promise<unknown>; runId?: string; stopping?: 'paused' | 'cancelled' }
   private readonly controllers = new Map<string, AbortController>()
@@ -358,9 +363,13 @@ export class SupervisorService {
           authorizeTool: async name => { throw new Error(`Supervisor tools are disabled: ${name}`) } })
         } finally { activity.inFlight-- }
         controller.signal.throwIfAborted()
-        const output = parseModelOutput(raw, navigation ? [] : candidates, `Supervision ${runId} ${navigation ? 'navigation merge' : 'leaf batch'}`, navigation)
-        validateReferences(output, evidence)
-        return output
+        try {
+          const output = parseModelOutput(raw, navigation ? [] : candidates, `Supervision ${runId} ${navigation ? 'navigation merge' : 'leaf batch'}`, navigation)
+          validateReferences(output, evidence)
+          return output
+        } catch (error) {
+          throw new SupervisionOutputError(error instanceof Error ? error.message : String(error), { cause: error })
+        }
       }
       for (;;) {
         if (controller.signal.aborted) return stopped()
@@ -368,11 +377,24 @@ export class SupervisorService {
         if (!groups.length) break
         const results = await Promise.allSettled(groups.map(async group => {
           controller.signal.throwIfAborted()
-          const evidence = db.chunk(runId, group.projectId, group.conversationId, config)
-          if (!evidence.length) throw new Error('Pending source produced no reviewable content')
-          const output = await summarize(evidence, false, await candidatesFor(group.projectId))
-          controller.signal.throwIfAborted()
-          db.save(runId, group.projectId, group.conversationId, evidence, output)
+          const candidates = await candidatesFor(group.projectId)
+          // An unusable answer is retried on a smaller prefix of the same pending text; nothing is skipped,
+          // the rest of the text stays pending for the next batch.
+          for (let attempt = 0; ; attempt++) {
+            const scale = 2 ** attempt
+            const sized = attempt ? { ...config, batchCharacters: Math.max(500, Math.floor(config.batchCharacters / scale)),
+              batchMessages: Math.max(1, Math.ceil(config.batchMessages / scale)) } : config
+            const evidence = db.chunk(runId, group.projectId, group.conversationId, sized)
+            if (!evidence.length) throw new Error('Pending source produced no reviewable content')
+            try {
+              const output = await summarize(evidence, false, candidates)
+              controller.signal.throwIfAborted()
+              db.save(runId, group.projectId, group.conversationId, evidence, output)
+              return
+            } catch (error) {
+              if (!(error instanceof SupervisionOutputError) || attempt >= outputRetries || controller.signal.aborted) throw error
+            }
+          }
         }))
         if (controller.signal.aborted) return stopped()
         const failure = results.find(result => result.status === 'rejected')
@@ -393,7 +415,12 @@ export class SupervisorService {
         if (cached) return { id, output: cached }
         const evidence = [left, right].map(card => ({ id: card.id, sourceType: 'note' as const, sourceId: card.id,
           title: 'Retained review navigation', content: card.output.summary, occurredAt: request.timeRange.to }))
-        const output = await summarize(evidence, true)
+        // A navigation merge has fixed inputs; an unusable answer is asked again once before the run fails.
+        let output: SupervisionSummaryOutput
+        try { output = await summarize(evidence, true) } catch (error) {
+          if (!(error instanceof SupervisionOutputError) || controller.signal.aborted) throw error
+          output = await summarize(evidence, true)
+        }
         controller.signal.throwIfAborted()
         db.saveNavigation(runId, id, [left.id, right.id], output)
         return { id, output }
