@@ -72,6 +72,7 @@ Levels:
 - THREAD: a distinct sub-line inside a large feature: a sub-module, sub-topic, or one release line.
 Granularity:
 - A release, a version number, a single bug, a single day or a single task is never a feature. All release, packaging and version-sync work of a project belongs to one feature such as "发布与版本"; versions may be its threads.
+- Committing, pushing, testing or verifying the work of an area belongs to that area's feature, not to the release feature. The release feature holds only version bumps, release notes, tags, packaging and publishing.
 - Feature names never contain version numbers or dates.
 - Keep features few and broad; a project usually has 3 to 12. Before creating a feature, check EXISTING STORIES and the features already in your answer, and join the closest one when the topics overlap.
 - In a feature that has, or reaches with this input, at least ${threadEvents} events, place events in threads by sub-line (existing or new) and leave only general events on the feature itself. Threads of smaller features are folded into the feature.
