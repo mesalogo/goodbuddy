@@ -71,10 +71,11 @@ app.whenReady().then(async () => {
   }
   const click = async (selector: string): Promise<void> => {
     await wait(`!!document.querySelector(${JSON.stringify(selector)})`)
-    await js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'nearest'})`)
+    // The frosted header overlays the top of the chat viewport; nearest may leave a control underneath it.
+    await js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`)
     await settle()
-    const p = await js<{ x: number; y: number; hit: boolean }>(`(()=>{const e=document.querySelector(${JSON.stringify(selector)}),r=e.getBoundingClientRect(),x=Math.round(r.x+r.width/2),y=Math.round(r.y+r.height/2);return {x,y,hit:e.contains(document.elementFromPoint(x,y))}})()`)
-    assert(p.hit, `Occluded ${selector}`)
+    const p = await js<{ x: number; y: number; hit: boolean; cover?: string }>(`(()=>{const e=document.querySelector(${JSON.stringify(selector)}),r=e.getBoundingClientRect(),x=Math.round(r.x+r.width/2),y=Math.round(r.y+r.height/2),cover=document.elementFromPoint(x,y);return {x,y,hit:e.contains(cover),cover:cover?.outerHTML.slice(0,500)}})()`)
+    assert(p.hit, `Occluded ${selector}: ${JSON.stringify(p)}`)
     win.focus()
     win.webContents.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 })
     win.webContents.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 })

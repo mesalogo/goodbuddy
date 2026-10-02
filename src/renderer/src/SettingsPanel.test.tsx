@@ -6042,10 +6042,14 @@ describe('SettingsPanel runtime files', () => {
       screen.getAllByRole('button', {
         name: /^(?:展开|收起)服务器 /u
       })
-    ).toHaveLength(builtinMcpServers.length)
-    for (const server of builtinMcpServers) {
+    ).toHaveLength(builtinMcpServers.length + 1)
+    const serverNames = [
+      ...builtinMcpServers.map(server => server.name),
+      '图片生成与编辑'
+    ]
+    for (const serverName of serverNames) {
       expect(screen.getByRole('button', {
-        name: name => name === `展开服务器 ${server.name}` || name === `收起服务器 ${server.name}`
+        name: name => name === `展开服务器 ${serverName}` || name === `收起服务器 ${serverName}`
       })).toBeInTheDocument()
     }
     expect(

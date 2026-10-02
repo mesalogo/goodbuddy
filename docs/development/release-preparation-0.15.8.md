@@ -39,3 +39,13 @@ MainImageToolSession、ImageGenerationService、真实 SQLite 会话协作。
 中英文 FEATURES、Desktop 与 Agent 双语说明必须与上述实现边界一致。
 只暂存必要发布文件，保留工作区用户文件；双远端核验候选和标签一致。
 公开验证包括六平台 Desktop、三平台 Agent 签名目录、GitHub/OSS 同步及 Latest 分离。
+
+## 首轮 CI 修正
+
+`20317c2`：Agent CI `36960575058` 成功；Desktop `36960575157` 为
+5620 通过、59 跳过、4 失败，构建未执行。
+Obsidian 专项 IPC fixture 未安装浏览器服务，显式关闭无关浏览器能力；
+MCP 列表断言纳入新增图像卡片的数量和名称；覆盖层原生点击先将控件居中，
+避免磨砂顶栏覆盖 `nearest` 保留在顶部的控件，并补充命中遮挡诊断。
+保留所有业务、覆盖层和原生交互断言，不改变产品默认值、关闭沙箱或跳过测试。
+这些修正由新候选 CI 验证。

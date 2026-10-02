@@ -9319,6 +9319,8 @@ describe('registerIpcHandlers agent terminal state', () => {
         { isAvailable: () => true, encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() }
       )
       const settings = { vaultPath: join(root, 'Saved Vault') }
+      // This harness exercises Obsidian grants and does not install a browser service.
+      await capabilities.setBuiltinMcpServerEnabled('builtin-browser', false)
       await capabilities.updateObsidianSettings(settings)
       if (enabled) await capabilities.setBuiltinMcpServerEnabled('obsidian', true)
       if (!assigned) await capabilities.setBuiltinMcpServerAssignments('obsidian', ['continue'])
