@@ -186,6 +186,7 @@ import {
   messageRenderBatchSize,
   type ChatScrollSnapshot,
 } from "./ChatHistoryPane";
+import { reconcilePaneOrder } from "./pane-order";
 import { isUnusedConversation, sortConversationsForDisplay, type Conversation } from "./chat-conversation";
 import {
   ComposerDraftEffect,
@@ -3686,28 +3687,33 @@ function App(): React.JSX.Element {
   );
   // Kept panes must keep a stable DOM order. Reordering keyed siblings makes
   // React detach and reinsert scroll containers, which resets their scrollTop.
-  const conversationPaneOrderRef = useRef<string[]>([]);
+  // The order lives in state and is reconciled during render; the helper
+  // returns the previous array when nothing changed, so this settles at once.
+  const cachedConversationIds = useMemo(
+    () =>
+      [activeId, ...cachedConversationViews.map((entry) => entry.key)].filter(
+        (id): id is string => Boolean(id),
+      ),
+    [activeId, cachedConversationViews],
+  );
+  const [conversationPaneOrderState, setConversationPaneOrderState] =
+    useState<readonly string[]>([]);
+  const conversationPaneOrder = reconcilePaneOrder(
+    conversationPaneOrderState,
+    cachedConversationIds,
+  );
+  if (conversationPaneOrder !== conversationPaneOrderState) {
+    setConversationPaneOrderState(conversationPaneOrder);
+  }
   const cachedConversations = useMemo(() => {
     const conversationById = new Map(
       conversations.map((conversation) => [conversation.id, conversation]),
     );
-    const cachedIds = new Set(
-      [activeId, ...cachedConversationViews.map((entry) => entry.key)].filter(
-        Boolean,
-      ),
-    );
-    const paneOrder = conversationPaneOrderRef.current.filter((id) =>
-      cachedIds.has(id),
-    );
-    cachedIds.forEach((id) => {
-      if (!paneOrder.includes(id)) paneOrder.push(id);
-    });
-    conversationPaneOrderRef.current = paneOrder;
-    return paneOrder.flatMap((conversationId) => {
+    return conversationPaneOrder.flatMap((conversationId) => {
       const conversation = conversationById.get(conversationId);
       return conversation ? [conversation] : [];
     });
-  }, [activeId, cachedConversationViews, conversations]);
+  }, [conversationPaneOrder, conversations]);
 
   const activeRuntimeResolution = useMemo(
     () =>

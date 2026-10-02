@@ -4475,7 +4475,7 @@ describe("App", () => {
 
     expect(await screen.findByText("历史消息 160")).toBeInTheDocument();
     // The first paint shows only the trailing messages; the rest of the batch
-    // follows right after.
+    // follows in steps.
     expect(container.querySelectorAll(".message").length).toBeLessThanOrEqual(20);
     expect(
       screen.getByRole("button", { name: "加载更早的消息（还剩 81 条）" }),
@@ -4522,6 +4522,53 @@ describe("App", () => {
       screen.queryByRole("button", { name: /加载更早的消息/u }),
     ).not.toBeInTheDocument();
     expect(screen.getByText("历史消息 000").closest("article")).toHaveFocus();
+  });
+
+  it("catches up the first message batch in several small steps", async () => {
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: "00000000-0000-4000-8000-000000000422",
+        projectId,
+        title: "分步渲染会话",
+        updatedAt: 1_775_000_000_000,
+        messages: Array.from({ length: 161 }, (_, index) => ({
+          id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+          role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+          content: `分步消息 ${String(index).padStart(3, "0")}`,
+          createdAt: 1_775_000_000_000 + index,
+          state: "complete" as const,
+        })),
+      },
+    ]);
+    const { container } = render(<App />);
+    const counts: number[] = [];
+    const record = (): void => {
+      const count = container.querySelectorAll(".message").length;
+      if (count > 0 && counts.at(-1) !== count) counts.push(count);
+    };
+    const observer = new MutationObserver(record);
+    observer.observe(container, { childList: true, subtree: true });
+    try {
+      expect(await screen.findByText("分步消息 160")).toBeInTheDocument();
+      record();
+      await waitFor(() =>
+        expect(container.querySelectorAll(".message")).toHaveLength(80),
+      );
+      record();
+    } finally {
+      observer.disconnect();
+    }
+
+    expect(counts[0]).toBeLessThanOrEqual(20);
+    expect(counts.at(-1)).toBe(80);
+    // More than one catch-up commit, each adding at most 20 messages.
+    expect(counts.filter((count) => count > 20 && count < 80).length).toBeGreaterThan(0);
+    counts.slice(1).forEach((count, index) => {
+      expect(count - (counts[index] ?? 0)).toBeLessThanOrEqual(20);
+    });
+    expect(
+      screen.getByRole("button", { name: "加载更早的消息（还剩 81 条）" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps the reader position while a response continues below", async () => {

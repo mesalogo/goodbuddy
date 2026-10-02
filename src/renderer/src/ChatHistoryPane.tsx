@@ -24,11 +24,16 @@ import type { TimeFormatLocale } from "./time-format";
 export const messageRenderBatchSize = 80;
 /**
  * A freshly mounted pane first renders only this many trailing messages, which
- * fill the viewport, and renders the rest of its batch right after the first
- * paint. Opening a long conversation then costs roughly a quarter of
- * the Markdown and layout work before anything is shown.
+ * fill the viewport, and renders the rest of its batch after the first paint.
+ * Opening a long conversation then costs roughly a quarter of the Markdown and
+ * layout work before anything is shown.
  */
 export const initialMessageRenderCount = 20;
+/**
+ * The rest of the batch is caught up in steps of this many messages, one step
+ * per frame, so no single catch-up commit becomes a long frame.
+ */
+export const catchUpMessageRenderStep = 20;
 const chatBottomProximity = 96;
 
 type ChatQuickAction = {
@@ -130,9 +135,9 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   const [showScrollToBottom, setShowScrollToBottom] = useState(
     scrollSnapshot ? !scrollSnapshot.pinnedToBottom : false,
   );
-  // Only a pane that opens at the bottom renders in two steps. A saved scroll
+  // Only a pane that opens at the bottom renders in steps. A saved scroll
   // position or a note target refers to the full batch, so those render it
-  // at once.
+  // at once. `undefined` means the full batch is rendered.
   const [initialRenderLimit, setInitialRenderLimit] = useState<
     number | undefined
   >(() =>
@@ -143,14 +148,30 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       ? initialMessageRenderCount
       : undefined,
   );
+  const [steppedVisibleMessageCount] = useState(visibleMessageCount);
+  // Stepping only covers the batch the pane opened with. A changed batch
+  // ("load earlier", note navigation) or a note target for this pane ends the
+  // stepping and renders the full batch at once. Adjusting state during
+  // render avoids committing a partial step first.
+  const stopStepping =
+    initialRenderLimit !== undefined &&
+    (visibleMessageCount !== steppedVisibleMessageCount ||
+      noteMessageNavigation?.conversationId === conversation.id);
+  if (stopStepping) setInitialRenderLimit(undefined);
+  const steppingLimit = stopStepping ? undefined : initialRenderLimit;
   const initialRenderScrollRef = useRef<
     { scrollHeight: number; scrollTop: number } | undefined
   >(undefined);
+  const initialRenderTarget = Math.min(
+    visibleMessageCount,
+    conversation.messages.length,
+  );
   useEffect(() => {
-    if (initialRenderLimit === undefined) return;
-    // Render the rest once the first step has been painted. A plain update,
-    // not a transition: streaming rows commit synchronously many times per
-    // second and would keep restarting a transition (see live-message-store).
+    if (steppingLimit === undefined) return;
+    // Grow by one step once the previous step has been painted. A plain
+    // update, not a transition: streaming rows commit synchronously many times
+    // per second and would keep restarting a transition (see
+    // live-message-store).
     let timer: ReturnType<typeof setTimeout> | undefined;
     const frame = requestAnimationFrame(() => {
       timer = setTimeout(() => {
@@ -161,18 +182,21 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
               scrollTop: scrollContainer.scrollTop,
             }
           : undefined;
-        setInitialRenderLimit(undefined);
+        const nextLimit = steppingLimit + catchUpMessageRenderStep;
+        setInitialRenderLimit(
+          nextLimit >= initialRenderTarget ? undefined : nextLimit,
+        );
       }, 0);
     });
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
-  }, [initialRenderLimit]);
+  }, [steppingLimit, initialRenderTarget]);
   const renderedMessageCount =
-    initialRenderLimit === undefined
+    steppingLimit === undefined
       ? visibleMessageCount
-      : Math.min(visibleMessageCount, initialRenderLimit);
+      : Math.min(visibleMessageCount, steppingLimit);
   const visibleMessageStartIndex = Math.max(
     0,
     conversation.messages.length - renderedMessageCount,
@@ -181,11 +205,11 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     () => conversation.messages.slice(visibleMessageStartIndex),
     [conversation.messages, visibleMessageStartIndex],
   );
-  // The "load earlier" control reflects the real batch, not the first step.
-  const hiddenMessageCount =
-    initialRenderLimit === undefined
-      ? visibleMessageStartIndex
-      : Math.max(0, conversation.messages.length - visibleMessageCount);
+  // The "load earlier" control reflects the real batch, not the partial step.
+  const hiddenMessageCount = Math.max(
+    0,
+    conversation.messages.length - visibleMessageCount,
+  );
 
   useLayoutEffect(() => {
     const context = contextRef.current;
@@ -377,10 +401,9 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     }
   }, [visibleMessageCount]);
 
-  // The rest of the first batch lands above what the reader sees: stay at the
-  // bottom, or keep the reader's place if they already scrolled up.
+  // Each catch-up step lands above what the reader sees: stay at the bottom,
+  // or keep the reader's place if they already scrolled up.
   useLayoutEffect(() => {
-    if (initialRenderLimit !== undefined) return;
     const previous = initialRenderScrollRef.current;
     initialRenderScrollRef.current = undefined;
     const scrollContainer = scrollRef.current;
