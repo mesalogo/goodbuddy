@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n, {
   changeUiLocale,
   i18nResources
@@ -40,5 +40,21 @@ describe('renderer i18n resources', () => {
 
     await changeUiLocale('zh-CN')
     expect(i18n.t('navigation.chat')).toBe('对话')
+  })
+
+  it('canonicalizes language codes once instead of on every translation', async () => {
+    const getCanonicalLocales = vi.spyOn(Intl, 'getCanonicalLocales')
+    try {
+      await changeUiLocale('en-US')
+      expect(i18n.t('navigation.chat')).toBe('Chat')
+      getCanonicalLocales.mockClear()
+      for (let index = 0; index < 50; index += 1) {
+        i18n.t('navigation.chat')
+      }
+      expect(getCanonicalLocales).not.toHaveBeenCalled()
+      expect(i18n.services.languageUtils.formatLanguageCode('zh-cn')).toBe('zh-CN')
+    } finally {
+      getCanonicalLocales.mockRestore()
+    }
   })
 })

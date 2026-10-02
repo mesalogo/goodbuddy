@@ -3660,7 +3660,7 @@ describe("App", () => {
   it("measures composer height once per input and resizes after sending", async () => {
     render(<App />);
     const input = await screen.findByLabelText("向 GoodBuddy 提问");
-    const measureHeight = vi.fn(() =>
+    const measureHeight = vi.fn((): number =>
       (input as HTMLTextAreaElement).value ? 300 : 0,
     );
     Object.defineProperty(input, "scrollHeight", {
@@ -3672,6 +3672,21 @@ describe("App", () => {
     expect(measureHeight).toHaveBeenCalledTimes(1);
     expect(input).toHaveStyle({ height: "220px" });
 
+    // Appending at the maximum height cannot change the size.
+    measureHeight.mockClear();
+    fireEvent.input(input, { target: { value: "First line\nSecond line!" } });
+    expect(measureHeight).not.toHaveBeenCalled();
+    expect(input).toHaveStyle({ height: "220px" });
+
+    // Deleting text may shrink the box, so it is measured again.
+    measureHeight.mockImplementation(() => 100);
+    fireEvent.input(input, { target: { value: "First" } });
+    expect(measureHeight).toHaveBeenCalledTimes(1);
+    expect(input).toHaveStyle({ height: "100px" });
+
+    measureHeight.mockImplementation(() =>
+      (input as HTMLTextAreaElement).value ? 300 : 0,
+    );
     measureHeight.mockClear();
     fireEvent.click(screen.getByLabelText("发送"));
     await waitFor(() => expect(input).toHaveValue(""));
@@ -4475,6 +4490,51 @@ describe("App", () => {
 
     expect(scrollTo).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "到底部" })).toBeInTheDocument();
+  });
+
+  it("follows streaming output at the bottom once per frame", async () => {
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "生成流式回复" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
+    if (!request) {
+      throw new Error("Missing request");
+    }
+    await act(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    const chat = document.querySelector<HTMLElement>(".chat");
+    if (!chat) {
+      throw new Error("Missing chat scroll container");
+    }
+    let scrollHeight = 1_200;
+    Object.defineProperties(chat, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTop: { configurable: true, writable: true, value: 800 },
+    });
+    const scrollTo = vi.fn();
+    chat.scrollTo = scrollTo;
+
+    for (const delta of ["第一段", "第二段", "第三段"]) {
+      scrollHeight += 100;
+      act(() => {
+        agentListener?.({ requestId: request.requestId, type: "text", delta });
+      });
+    }
+    expect(await screen.findByText(/第三段/u)).toBeInTheDocument();
+    await act(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+
+    expect(scrollTo).toHaveBeenCalled();
+    expect(scrollTo.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1_500, behavior: "auto" });
   });
 
   it("restores the reader position after activity continues on another page", async () => {

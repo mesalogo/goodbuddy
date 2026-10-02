@@ -109,6 +109,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   const latestScrollSnapshotRef = useRef(scrollSnapshot);
   const restorePendingRef = useRef(true);
   const wasActiveRef = useRef(false);
+  const followFrameRef = useRef<number | undefined>(undefined);
   const prependScrollPositionRef = useRef<
     | {
         scrollHeight: number;
@@ -260,13 +261,41 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
         return;
       }
     }
-    if (pinnedToBottomRef.current) {
+    if (!pinnedToBottomRef.current) {
+      return;
+    }
+    if (activated) {
       scrollContainer.scrollTo({
         top: scrollContainer.scrollHeight,
         behavior: "auto",
       });
+      return;
     }
+    // Streaming updates commit many times per frame. Reading scrollHeight here
+    // would force a synchronous layout per commit, so follow the bottom once
+    // per frame instead; rAF still runs before the frame is painted.
+    if (followFrameRef.current !== undefined) {
+      return;
+    }
+    followFrameRef.current = requestAnimationFrame(() => {
+      followFrameRef.current = undefined;
+      const container = scrollRef.current;
+      if (!container || !pinnedToBottomRef.current) {
+        return;
+      }
+      container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+    });
   }, [active, conversation.messages, scrollSnapshot, visibleMessageCount]);
+
+  useEffect(
+    () => () => {
+      if (followFrameRef.current !== undefined) {
+        cancelAnimationFrame(followFrameRef.current);
+        followFrameRef.current = undefined;
+      }
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     const previous = prependScrollPositionRef.current;

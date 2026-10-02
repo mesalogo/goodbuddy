@@ -68,6 +68,37 @@ void i18n
     returnNull: false
   })
 
+memoizeLanguageCodeFormatting(i18n)
+
+/**
+ * i18next canonicalizes the current language with `Intl.getCanonicalLocales`
+ * on every `t()` call. The result depends only on the code and the static init
+ * options, so cache it; large lists call `t()` hundreds of times per render.
+ */
+export function memoizeLanguageCodeFormatting(instance: typeof i18n): void {
+  const languageUtils = instance.services?.languageUtils as
+    | { formatLanguageCode?: (code: string) => string }
+    | undefined
+  const format = languageUtils?.formatLanguageCode
+  if (!languageUtils || typeof format !== 'function') {
+    return
+  }
+  const cache = new Map<string, string>()
+  languageUtils.formatLanguageCode = (code: string): string => {
+    if (typeof code !== 'string') {
+      return format.call(languageUtils, code)
+    }
+    let formatted = cache.get(code)
+    if (formatted === undefined) {
+      formatted = format.call(languageUtils, code)
+      if (cache.size < 64) {
+        cache.set(code, formatted)
+      }
+    }
+    return formatted
+  }
+}
+
 export async function changeUiLocale(locale: UiLocale): Promise<void> {
   await i18n.changeLanguage(locale)
   document.documentElement.lang = locale
