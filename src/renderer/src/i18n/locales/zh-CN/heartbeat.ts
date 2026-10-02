@@ -3,6 +3,7 @@ export const heartbeat = {
     title: '回顾算法',
     responseKiB: '单次响应容量，KiB（默认 1024）',
     storyThreadEvents: '功能拆分子线索的最少事件数（默认 20）',
+    experienceMinEvents: '故事参与经验整理的最少事件数（默认 5）',
     save: '保存回顾算法',
     help: '每页条数只控制数据库读取量，不限制回顾总量。分批上限用于拆分工作，剩余正文会继续处理。这些设置及整理超时在新回顾开始时固定；继续回顾沿用已保存的配置。响应容量按每次请求的当前设置生效，调高后可继续失败的回顾。',
     pageSize: '每次读取来源条数（默认 50）', batchCharacters: '每批文本量（默认 8000）',
@@ -71,6 +72,8 @@ export const heartbeat = {
     heartbeatStage: '心跳触发', supervisionStage: '监督回顾', notRecorded: '无执行记录',
     storyStage: '故事整理', storyStates: { running: '整理中', completed: '已归入 {{assigned}} 个事件', failed: '整理失败' }, retryStories: '重新整理故事',
     storyFailed: '回顾已保存，故事整理失败。可以重新整理，或等下一次回顾自动补上。',
+    experienceStage: '经验', experienceCompleted: '新增 {{created}} 条，记录 {{applied}} 次应用', experienceNone: '没有可整理的新进展',
+    experienceFailed: '故事已整理，经验整理失败。可以重新整理，或等下一次回顾自动补上。',
     suggestionStage: '建议', suggestionStates: { running: '生成中', completed: '已生成 {{count}} 条', skipped: '无需建议', failed: '生成失败' },
     retrySuggestions: '重新生成建议', updatedSuggestionFailed: '回顾已更新，建议生成失败。',
     openReview: '查看回顾', pagination: '活动分页', previous: '较新记录', next: '更早记录', page: '第 {{page}} 页'
@@ -98,7 +101,15 @@ export const heartbeat = {
     more: '更多回顾操作', reanalyze: '重新整理…', reanalyzeTitle: '重新整理这段时间？', reanalyzeConfirm: '重新整理',
     reanalyzeHint: '将重新分析{{scope}}最近 {{period}}的全部内容，可能产生较多模型用量。已确认的内容和心跳处理进度不受影响。', retryRun: '重试回顾', dismiss: '关闭提示',
     graphScope: '图谱范围', graphEmpty: '当前范围没有故事线事件', legend: '实线表示事件影响实体，虚线表示实体关系。时间轴逆时针排列，起止之间保留缺口。', start: '起点', end: '终点',
-    listTabs: { event: '事件', entity: '实体', relation: '关系', story: '故事' },
+    listTabs: { event: '事件', entity: '实体', relation: '关系', story: '故事', experience: '经验' },
+    experiences: {
+      empty: '还没有经验。故事积累到一定进展后，回顾会从中整理可复用的经验。',
+      kicker: '经验', automatic: '自动归纳', edited: '已手动调整',
+      conditions: '适用条件', boundaries: '边界', formed: '形成依据（{{count}}）', applied: '后续应用（{{count}}）', noApplications: '暂无应用记录。',
+      fromStories: '来自 {{count}} 个故事', edit: '编辑', statement: '经验', save: '保存', remove: '删除经验',
+      removeHint: '删除后不会因同样的依据再次生成；依据中的事件和来源不受影响。',
+      mergeInto: '合并到', choose: '选择经验', merge: '合并'
+    },
     graph3d: {
       mode: '图谱视图', modes: { flat: '平铺', spiral: '时间螺旋' },
       levels: '木片层级', all: '全部', views: '视角', canvas: '时间螺旋。数字键 1、2、3 切换视角，方向键旋转，Esc 返回上一层；下方列表提供同样的木片。',

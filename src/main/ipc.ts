@@ -7252,9 +7252,9 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.supervisionStories, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     const { scope } = supervisionStoryListSchema.parse(input)
-    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return { stories: [], unassigned: 0, canUndo: false }
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return { stories: [], experiences: [], unassigned: 0, canUndo: false }
     const stories = assistantDatabase.supervisionStories()
-    return { stories: stories.list(scope), unassigned: stories.unassignedCount(scope), canUndo: stories.canUndo() }
+    return { stories: stories.list(scope), experiences: assistantDatabase.supervisionExperiences().list(scope.kind === 'projects' ? scope.projectIds : undefined), unassigned: stories.unassignedCount(scope), canUndo: stories.canUndo() }
   })
   registerHandler(ipcChannels.supervisionStoryAction, async (event, input: unknown) => {
     assertTrustedSender(event, window)

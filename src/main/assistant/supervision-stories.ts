@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
-import type { SupervisionStory, SupervisionStoryAction } from '../../shared/supervision-story-contracts'
+import type { SupervisionExperienceAction, SupervisionStory, SupervisionStoryAction } from '../../shared/supervision-story-contracts'
+import { SupervisionExperienceStore } from './supervision-experiences'
 
 /*
  * Story assignment (storyline model step 2, SL-1..SL-3, SL-5, SL-8).
@@ -400,6 +401,18 @@ export class SupervisionStoryStore {
     if (action.action === 'undo') return this.undo()
     this.db.exec('BEGIN IMMEDIATE')
     try {
+      if (action.action.startsWith('experience-')) {
+        // Experience adjustments share the undo history; their snapshot carries `experiences`.
+        const experience = action as SupervisionExperienceAction
+        const experiences = new SupervisionExperienceStore(this.db)
+        const ids = [experience.experienceId, ...(experience.action === 'experience-merge' ? [experience.intoId] : [])]
+        const before = experiences.snapshot(ids)
+        const now = new Date().toISOString()
+        experiences.act(experience, now)
+        this.db.prepare('INSERT INTO supervision_story_edits (id, action, before_json, created_at) VALUES (?, ?, ?, ?)').run(randomUUID(), action.action, before, now)
+        this.db.exec('COMMIT')
+        return
+      }
       const story = (id: string) => {
         const row = this.db.prepare("SELECT * FROM supervision_stories WHERE id = ? AND status = 'current'").get(id)
         if (!row) throw new Error('故事不存在或已被调整')
@@ -465,13 +478,19 @@ export class SupervisionStoryStore {
     try {
       const edit = this.db.prepare('SELECT * FROM supervision_story_edits ORDER BY created_at DESC, rowid DESC LIMIT 1').get()
       if (!edit) throw new Error('没有可以撤销的调整')
-      const before = JSON.parse(String(edit.before_json)) as { stories: Row[]; events: string[]; links: Row[] }
-      for (const story of before.stories) {
+      const before = JSON.parse(String(edit.before_json)) as { stories?: Row[]; events?: string[]; links: Row[]; experiences?: Row[] }
+      if (before.experiences) {
+        new SupervisionExperienceStore(this.db).restore({ experiences: before.experiences, links: before.links })
+        this.db.prepare('DELETE FROM supervision_story_edits WHERE id = ?').run(String(edit.id))
+        this.db.exec('COMMIT')
+        return
+      }
+      for (const story of before.stories ?? []) {
         this.db.prepare(`UPDATE supervision_stories SET parent_id = ?, name = ?, description = ?, state = ?, state_event_id = ?, status = ?,
           merged_into = ?, user_edited = ?, updated_at = ? WHERE id = ?`).run(story.parent_id == null ? null : String(story.parent_id), String(story.name), String(story.description),
           String(story.state), story.state_event_id == null ? null : String(story.state_event_id), String(story.status), story.merged_into == null ? null : String(story.merged_into), Number(story.user_edited), String(story.updated_at), String(story.id))
       }
-      this.db.prepare('DELETE FROM supervision_event_stories WHERE event_id IN (SELECT value FROM json_each(?))').run(JSON.stringify(before.events))
+      this.db.prepare('DELETE FROM supervision_event_stories WHERE event_id IN (SELECT value FROM json_each(?))').run(JSON.stringify(before.events ?? []))
       const insert = this.db.prepare('INSERT OR IGNORE INTO supervision_event_stories (event_id, story_id, is_primary, user_set) VALUES (?, ?, ?, ?)')
       for (const link of before.links) insert.run(String(link.event_id), String(link.story_id), Number(link.is_primary), Number(link.user_set))
       this.db.prepare('DELETE FROM supervision_story_edits WHERE id = ?').run(String(edit.id))

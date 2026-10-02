@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import { defaultSupervisionTimeoutSeconds, defaultSupervisorModelConcurrency } from '../../shared/application-settings-contracts'
-import { defaultStoryThreadEvents, supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
+import { defaultExperienceMinEvents, defaultStoryThreadEvents, supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
 import type { ReviewConfiguration } from './supervision-review-store'
 import { assignStories } from './supervision-stories'
+import { extractExperiences } from './supervision-experiences'
 import type { AgentRuntime, RuntimeModelUsageEvent } from '../agent/runtime'
 import type { AssistantDatabase } from './assistant-database'
 import type { SupervisionModelPool } from './supervision-model-pool'
@@ -131,6 +132,24 @@ export function createProductionSupervisorService(
 
 /** Story assignment for the review's scope: event text and story summaries only, one bounded call per chunk. */
 async function organizeSupervisionStories(model: SupervisionModelDependencies, request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal) {
+  const run = (title: string, prompt: string, modelSignal?: AbortSignal) => runSupervisionModel(model, {
+    title, instructions: title,
+    timeoutMessage: seconds => `${title}超时 ${seconds} 秒，已停止；回顾结果已保留`, timeoutSeconds: config.timeoutSeconds,
+    signal: modelSignal, authorizeTool: async name => { throw new Error(`监督者禁止调用工具 ${name}`) }, prompt
+  })
+  const result = await assignStoriesStep(model, request, config, signal)
+  // Experiences read stories, so they follow assignment; a failure keeps the assigned stories.
+  try {
+    const experiences = await extractExperiences(model.database.supervisionExperiences(), (prompt, modelSignal) => run('监督者经验整理', prompt, modelSignal),
+      { minEvents: config.experienceMinEvents ?? defaultExperienceMinEvents, batchCharacters: Math.max(4000, config.batchCharacters * 2), signal })
+    return { ...result, experiences: { status: 'completed' as const, ...experiences } }
+  } catch (error) {
+    if (signal.aborted) throw error
+    return { ...result, experiences: { status: 'failed' as const, error: error instanceof Error ? error.message.slice(0, 2000) : 'Experience extraction failed' } }
+  }
+}
+
+async function assignStoriesStep(model: SupervisionModelDependencies, request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal) {
   const result = await assignStories(model.database.supervisionStories(), (prompt, modelSignal) => runSupervisionModel(model, {
     title: '监督者故事整理', instructions: '把已发布的事件归入故事',
     timeoutMessage: seconds => `监督者故事整理超过 ${seconds} 秒，已停止；回顾结果已保留`, timeoutSeconds: config.timeoutSeconds,

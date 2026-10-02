@@ -115,7 +115,7 @@ it('upgrades released per-scope progress and duplicated events into the shared t
     PRAGMA user_version = 52;`)
   f.db.close()
   f.db.initialize(process.cwd())
-  expect(f.sql.prepare('PRAGMA user_version').get()!.user_version).toBe(54)
+  expect(f.sql.prepare('PRAGMA user_version').get()!.user_version).toBe(55)
   expect(f.sql.prepare("SELECT DISTINCT scope FROM review_checkpoints").all().map(row => row.scope)).toEqual(['timeline'])
   expect(current(f.sql)).toHaveLength(2)
   await expect(f.run({ kind: 'projects', projectIds: [f.a.id] })).resolves.toMatchObject({ status: 'no_change' })

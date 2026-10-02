@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ApplicationSettings, ApplicationSettingsUpdate } from '../../shared/application-settings-contracts'
-import { defaultStoryThreadEvents, defaultSupervisionReviewSettings, supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
+import { defaultExperienceMinEvents, defaultStoryThreadEvents, defaultSupervisionReviewSettings, supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
 
 const fields = [
-  ['pageSize', 1, 200], ['batchCharacters', 1000, 16000], ['batchMessages', 1, 50], ['responseKiB', 100, 16384], ['storyThreadEvents', 4, 500]
+  ['pageSize', 1, 200], ['batchCharacters', 1000, 16000], ['batchMessages', 1, 50], ['responseKiB', 100, 16384], ['storyThreadEvents', 4, 500], ['experienceMinEvents', 2, 200]
 ] as const
 
 export function SupervisionReviewSettings({ settings, disabled, onSave }: {
@@ -15,7 +15,8 @@ export function SupervisionReviewSettings({ settings, disabled, onSave }: {
   const { t } = useTranslation('heartbeat')
   const current = { ...defaultSupervisionReviewSettings, ...settings?.supervisionReview,
     responseKiB: settings?.supervisionReview?.responseKiB ?? 1024, crossProject: settings?.supervisionReview?.crossProject ?? false,
-    storyThreadEvents: settings?.supervisionReview?.storyThreadEvents ?? defaultStoryThreadEvents }
+    storyThreadEvents: settings?.supervisionReview?.storyThreadEvents ?? defaultStoryThreadEvents,
+    experienceMinEvents: settings?.supervisionReview?.experienceMinEvents ?? defaultExperienceMinEvents }
   const [saved, setSaved] = useState(current)
   const [draft, setDraft] = useState(current)
   if (fields.some(([key]) => saved[key] !== current[key]) || saved.crossProject !== current.crossProject) { setSaved(current); setDraft(current) }

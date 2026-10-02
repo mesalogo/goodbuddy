@@ -6,6 +6,7 @@ export const heartbeat = {
     title: 'Review algorithm',
     responseKiB: 'Response capacity, KiB (default 1024)',
     storyThreadEvents: 'Minimum events before a feature splits into sub-threads (default 20)',
+    experienceMinEvents: 'Minimum events before a story is considered for experiences (default 5)',
     save: 'Save review algorithm',
     help: 'Page size controls database reads, not total coverage. Batch limits split work without dropping remaining text. These settings and the organize timeout are frozen for each new review; continuing uses its saved configuration. Response capacity uses the current setting for each request; increase it before continuing a failed review.',
     pageSize: 'Sources read at a time (default 50)', batchCharacters: 'Text size per batch (default 8000)',
@@ -74,6 +75,8 @@ export const heartbeat = {
     heartbeatStage: 'Heartbeat trigger', supervisionStage: 'Supervision review', notRecorded: 'No recorded execution',
     storyStage: 'Stories', storyStates: { running: 'Organizing', completed: '{{assigned}} events assigned', failed: 'Failed' }, retryStories: 'Organize stories again',
     storyFailed: 'The review is saved, but stories could not be organized. Try again, or the next review will catch up.',
+    experienceStage: 'Experiences', experienceCompleted: '{{created}} new, {{applied}} applications recorded', experienceNone: 'No new progress to learn from',
+    experienceFailed: 'Stories are organized, but experiences could not be extracted. Try again, or the next review will catch up.',
     suggestionStage: 'Suggestions', suggestionStates: { running: 'Generating', completed: '{{count}} generated', skipped: 'Nothing to suggest', failed: 'Failed' },
     retrySuggestions: 'Regenerate suggestions', updatedSuggestionFailed: 'Review updated; suggestions could not be generated.',
     openReview: 'Open review', pagination: 'Activity pages', previous: 'Newer', next: 'Older', page: 'Page {{page}}'
@@ -101,7 +104,15 @@ export const heartbeat = {
     more: 'More review actions', reanalyze: 'Reanalyze…', reanalyzeTitle: 'Reanalyze this period?', reanalyzeConfirm: 'Reanalyze',
     reanalyzeHint: 'All content in {{scope}} from the last {{period}} will be analyzed again, which may use more model tokens. Confirmed content and heartbeat progress are not affected.', retryRun: 'Retry review', dismiss: 'Dismiss',
     graphScope: 'Graph scope', graphEmpty: 'No story events in this scope', legend: 'Solid lines show event impact on entities; dashed lines show entity relations. Time runs counter-clockwise with a visible gap.', start: 'Start', end: 'End',
-    listTabs: { event: 'Events', entity: 'Entities', relation: 'Relations', story: 'Stories' },
+    listTabs: { event: 'Events', entity: 'Entities', relation: 'Relations', story: 'Stories', experience: 'Experiences' },
+    experiences: {
+      empty: 'No experiences yet. Once stories have progressed, reviews distil reusable experience from them.',
+      kicker: 'Experience', automatic: 'Automatic', edited: 'Edited by you',
+      conditions: 'Applies when', boundaries: 'Limits', formed: 'Formed from ({{count}})', applied: 'Applied in ({{count}})', noApplications: 'No applications recorded yet.',
+      fromStories: 'From {{count}} stories', edit: 'Edit', statement: 'Experience', save: 'Save', remove: 'Delete experience',
+      removeHint: 'It will not be recreated from the same evidence. The events and sources it cites are not affected.',
+      mergeInto: 'Merge into', choose: 'Choose an experience', merge: 'Merge'
+    },
     graph3d: {
       mode: 'Graph view', modes: { flat: 'Flat', spiral: 'Time spiral' },
       levels: 'Stave levels', all: 'All', views: 'Viewpoint', canvas: 'Time spiral. Keys 1, 2 and 3 switch the viewpoint, arrow keys rotate, Esc goes up a level; the list below offers the same staves.',

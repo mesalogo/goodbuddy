@@ -133,7 +133,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 54
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 55
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -11956,6 +11956,18 @@ export class AssistantDatabase {
         database.exec('PRAGMA user_version = 54; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
+    if (version.user_version < 55) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // Experiences start empty: the next review extracts them from existing stories, without rereading sources.
+        database.exec(supervisionExperiencesMigration)
+        database.exec('PRAGMA user_version = 55; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+  }
+
+  supervisionExperiences(): SupervisionExperienceStore {
+    return new SupervisionExperienceStore(this.requireDatabase())
   }
 
   supervisionStories(): SupervisionStoryStore {
@@ -12017,6 +12029,7 @@ export class AssistantDatabase {
 import type { ImageOperation } from '../../shared/image-generation-contracts'
 import { SupervisionReviewStore, supervisionReviewMigration } from './supervision-review-store'
 import { SupervisionStoryStore, supervisionStoriesMigration } from './supervision-stories'
+import { SupervisionExperienceStore, supervisionExperiencesMigration } from './supervision-experiences'
 import { migrateSupervisionTimeline, placeTimelineEvents, supersedeReextractedEvents, supervisionAttention, timelineCandidates } from './supervision-timeline'
 import { SupervisionSuggestionStore } from './supervision-suggestions'
 import type { SupervisionSuggestion } from '../../shared/supervision-contracts'

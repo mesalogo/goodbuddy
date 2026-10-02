@@ -164,6 +164,7 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
       : !error && rows.length === 0 ? <EmptyState icon={<History size={24} />} title={t(configId ? 'activity.filteredEmpty' : 'activity.empty')} description={t(configId ? 'activity.filteredEmptyHint' : 'activity.emptyHint')} />
       : <ol className="supervisor-activity__list">{rows.map((row) => {
         const runId = row.reviewProgress?.runId
+        const experiences = row.reviewProgress?.stories?.experiences
         const stoppingKind = runId && stopping?.runId === runId ? stopping.kind
           : runId && execution.active && execution.runId === runId ? execution.stopping : undefined
         return <li key={`${row.kind}:${row.id}`}>
@@ -203,6 +204,12 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
             {row.reviewProgress.stories.status === 'failed' && typeof api?.retryStories === 'function' && <button type="button" className="secondary-button"
               disabled={!!pending || execution.active} onClick={() => void retryStories(row)}>{t('activity.retryStories')}</button>}
           </p>}
+          {experiences && <p className="supervisor-activity__suggestion" role={experiences.status === 'failed' ? 'alert' : undefined}>
+              {experiences.status === 'failed' ? t('activity.experienceFailed')
+                : `${t('activity.experienceStage')}: ${experiences.calls ? t('activity.experienceCompleted', { created: experiences.created ?? 0, applied: experiences.applied ?? 0 }) : t('activity.experienceNone')}`}
+              {experiences.status === 'failed' && typeof api?.retryStories === 'function' && <button type="button" className="secondary-button"
+                disabled={!!pending || execution.active} onClick={() => void retryStories(row)}>{t('activity.retryStories')}</button>}
+            </p>}
           {row.suggestionStatus && <p className="supervisor-activity__suggestion" role={row.suggestionStatus === 'failed' ? 'alert' : undefined}>
             {row.suggestionStatus === 'failed' ? t('activity.updatedSuggestionFailed')
               : `${t('activity.suggestionStage')}: ${t(`activity.suggestionStates.${row.suggestionStatus}`, { count: row.suggestionCount ?? 0 })}`}

@@ -328,7 +328,7 @@ describe('SupervisorWorkspace', () => {
     const view = { stories: [story('11111111-1111-4111-8111-111111111111', '监督者', 'feature', ['event-1']),
       story('22222222-2222-4222-8222-222222222222', '回顾算法', 'thread', [], '11111111-1111-4111-8111-111111111111'),
       story('33333333-3333-4333-8333-333333333333', '笔记', 'feature', []),
-      story('44444444-4444-4444-8444-444444444444', '果蝇', 'cross', ['event-1'])], unassigned: 2, canUndo: true }
+      story('44444444-4444-4444-8444-444444444444', '果蝇', 'cross', ['event-1'])], experiences: [], unassigned: 2, canUndo: true }
     const stories = vi.fn(async () => view)
     const storyAction = vi.fn(async () => undefined)
     window.goodbuddy = { supervision: {
@@ -357,6 +357,38 @@ describe('SupervisorWorkspace', () => {
     expect(within(picker).getAllByRole('option').map(option => option.textContent)).toEqual(['暂不归类', '监督者', '· 回顾算法', '笔记'])
     fireEvent.change(picker, { target: { value: '' } })
     await waitFor(() => expect(storyAction).toHaveBeenCalledWith({ action: 'move', eventId: 'event-1', storyId: null }))
+  })
+
+  it('lists experiences with evidence and applications and lets users edit or delete them', async () => {
+    const experience = { id: '55555555-5555-4555-8555-555555555555', statement: '先验证关键假设', conditions: '新方向', boundaries: '紧急修复', userEdited: false,
+      events: [{ id: 'event-1', role: 'formed', note: '', title: '决定', projectId: 'p', at: '2026-09-21T00:00:00.000Z', storyId: 's', storyName: '监督者' },
+        { id: 'event-2', role: 'applied', note: '少走弯路', title: '复用', projectId: 'p', at: '2026-09-22T00:00:00.000Z', storyId: 't', storyName: '笔记' }] }
+    const storyAction = vi.fn(async () => undefined)
+    window.goodbuddy = { supervision: {
+      overview: vi.fn(async () => [result]), storyAction,
+      stories: vi.fn(async () => ({ stories: [], experiences: [experience], unassigned: 0, canUndo: false })),
+      graph: vi.fn(async () => ({ storyLine: { id: 'story', scope_json: '{"kind":"global"}' }, events: [{ id: 'event-1', title: '决定', description: 'd', occurred_at: '2026-09-21T00:00:00.000Z', project_id: 'p' }],
+        entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
+    } } as never
+    render(<SupervisorWorkspace tab="graph" />)
+    fireEvent.click(await screen.findByRole('tab', { name: '经验 1' }))
+    const list = screen.getByRole('complementary', { name: '图谱选择' })
+    fireEvent.click(within(list).getByRole('button', { name: /先验证关键假设/ }))
+    const inspector = screen.getByRole('complementary', { name: '详情与来源' })
+    expect(within(inspector).getByRole('heading', { name: '先验证关键假设' })).toBeInTheDocument()
+    expect(within(inspector).getByText(/自动归纳/)).toBeInTheDocument()
+    expect(within(inspector).getByRole('heading', { name: '形成依据（1）' })).toBeInTheDocument()
+    expect(within(inspector).getByRole('button', { name: /复用.*少走弯路/ })).toBeInTheDocument()
+    fireEvent.click(within(inspector).getByRole('button', { name: '编辑' }))
+    fireEvent.change(within(inspector).getByRole('textbox', { name: '经验' }), { target: { value: '先验证关键假设，再扩大投入' } })
+    fireEvent.click(within(inspector).getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(storyAction).toHaveBeenCalledWith({ action: 'experience-edit', experienceId: experience.id, statement: '先验证关键假设，再扩大投入', conditions: '新方向', boundaries: '紧急修复' }))
+    fireEvent.click(within(inspector).getByRole('button', { name: '删除经验' }))
+    fireEvent.click(within(within(inspector).getByRole('alert')).getByRole('button', { name: '删除经验' }))
+    await waitFor(() => expect(storyAction).toHaveBeenCalledWith({ action: 'experience-remove', experienceId: experience.id }))
+    // The evidence event opens in the inspector.
+    fireEvent.click(within(inspector).getByRole('button', { name: /决定/ }))
+    expect(await within(inspector).findByText('d')).toBeInTheDocument()
   })
 
   it('steps through real events in time order and supports keyboard selection in the canvas', async () => {

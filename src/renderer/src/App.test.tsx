@@ -777,7 +777,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     suggestions: vi.fn(async () => []),
     suggestionAction: vi.fn(async () => { throw new Error('unused') }),
     retrySuggestions: vi.fn(async () => 0),
-    stories: vi.fn(async () => ({ stories: [], unassigned: 0, canUndo: false })),
+    stories: vi.fn(async () => ({ stories: [], experiences: [], unassigned: 0, canUndo: false })),
     storyAction: vi.fn(async () => undefined),
     retryStories: vi.fn(async () => { throw new Error('unused') })
   },

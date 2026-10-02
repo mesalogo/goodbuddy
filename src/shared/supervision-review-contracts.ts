@@ -10,9 +10,12 @@ export const supervisionReviewSettingsSchema = z.object({
   // Off: an event can only join knowledge already seen in the same project.
   crossProject: z.boolean().optional(),
   // A feature splits into sub-threads only once it holds at least this many events.
-  storyThreadEvents: z.number().int().min(4).max(500).optional()
+  storyThreadEvents: z.number().int().min(4).max(500).optional(),
+  // A story is offered to experience extraction only once it holds at least this many events.
+  experienceMinEvents: z.number().int().min(2).max(200).optional()
 }).strict()
 export const defaultStoryThreadEvents = 20
+export const defaultExperienceMinEvents = 5
 export type SupervisionReviewSettings = z.infer<typeof supervisionReviewSettingsSchema>
 export const defaultSupervisionReviewSettings = supervisionReviewSettingsSchema.parse({})
 export const supervisionReviewIdSchema = z.object({ runId: z.string().uuid() }).strict()
@@ -37,7 +40,9 @@ export type SupervisionReviewProgress = {
   phase?: 'collecting' | 'extracting' | 'summarizing' | 'saving'
   navigationNodes?: number
   /** Story assignment after publication. A failure leaves the published review intact. */
-  stories?: { status: 'running' | 'completed' | 'failed'; error?: string; calls?: number; assigned?: number; unassigned?: number; created?: number }
+  stories?: { status: 'running' | 'completed' | 'failed'; error?: string; calls?: number; assigned?: number; unassigned?: number; created?: number
+    /** Experience extraction after story assignment; its failure leaves the stories intact and is retried with them. */
+    experiences?: { status: 'completed' | 'failed'; error?: string; calls?: number; candidates?: number; created?: number; applied?: number } }
   settings?: SupervisionReviewSettings & { timeoutSeconds: number; concurrency: number }
 }
 export type SupervisionReviewBatch = {
