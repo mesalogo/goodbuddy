@@ -359,6 +359,39 @@ describe('SupervisorWorkspace', () => {
     await waitFor(() => expect(storyAction).toHaveBeenCalledWith({ action: 'move', eventId: 'event-1', storyId: null }))
   })
 
+  it('organizes the work review by story for the selected period and opens a story in the graph', async () => {
+    const story = (id: string, name: string, at: string[]) => ({
+      id, projectId: 'p', projectName: 'goodbuddy', parentId: null, level: 'feature', name, description: '', state: 'active', stateEventId: null,
+      userEdited: false, startedAt: at[0], endedAt: at.at(-1),
+      events: at.map((value, index) => ({ id: `${id}-${index}`, title: `${name} 第 ${index + 1} 步`, projectId: 'p', startedAt: value, endedAt: value, primary: true, userSet: false }))
+    })
+    const view = { unassigned: 1, canUndo: false, stories: [
+      story('11111111-1111-4111-8111-111111111111', '监督者', ['2026-09-10T00:00:00.000Z', '2026-09-21T00:00:00.000Z']),
+      story('22222222-2222-4222-8222-222222222222', '时间螺旋', ['2026-09-21T06:00:00.000Z']),
+      story('33333333-3333-4333-8333-333333333333', '笔记', ['2026-09-05T00:00:00.000Z'])
+    ], experiences: [{ id: '55555555-5555-4555-8555-555555555555', statement: '先验证关键假设', conditions: '', boundaries: '', userEdited: false,
+      events: [{ id: 'e', role: 'formed', note: '', title: '决定', projectId: 'p', at: '2026-09-21T00:00:00.000Z', storyId: 's', storyName: '监督者' }] }] }
+    const stories = vi.fn(async () => view)
+    const onTabChange = vi.fn()
+    window.goodbuddy = { supervision: {
+      overview: vi.fn(async () => [result]), stories, storyAction: vi.fn(),
+      graph: vi.fn(async () => ({ storyLine: { id: 'story', scope_json: '{"kind":"global"}' }, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
+    } } as never
+    render(<SupervisorWorkspace tab="overview" onTabChange={onTabChange} />)
+    const digest = await screen.findByRole('article', { name: '按故事查看本次回顾' })
+    await waitFor(() => expect(within(digest).getByRole('region', { name: /推进的故事/ })).toBeInTheDocument())
+    expect(stories).toHaveBeenCalledWith({ scope: { kind: 'global' } })
+    expect(within(within(digest).getByRole('region', { name: /推进的故事/ })).getByText('最近：监督者 第 2 步')).toBeInTheDocument()
+    expect(within(within(digest).getByRole('region', { name: /新出现的故事/ })).getByText('时间螺旋')).toBeInTheDocument()
+    expect(within(within(digest).getByRole('region', { name: /没有新进展/ })).getByRole('button', { name: '在图谱中查看 笔记' })).toBeInTheDocument()
+    expect(within(within(digest).getByRole('region', { name: /经验/ })).getByText('先验证关键假设')).toBeInTheDocument()
+    expect(within(digest).getByText('另有 1 个事件暂不归入任何故事。')).toBeInTheDocument()
+    // The original summary stays as the reading entry below.
+    expect(screen.getByText('Recap')).toBeInTheDocument()
+    fireEvent.click(within(digest).getByRole('button', { name: '在图谱中查看 监督者' }))
+    expect(onTabChange).toHaveBeenCalledWith('graph')
+  })
+
   it('lists experiences with evidence and applications and lets users edit or delete them', async () => {
     const experience = { id: '55555555-5555-4555-8555-555555555555', statement: '先验证关键假设', conditions: '新方向', boundaries: '紧急修复', userEdited: false,
       events: [{ id: 'event-1', role: 'formed', note: '', title: '决定', projectId: 'p', at: '2026-09-21T00:00:00.000Z', storyId: 's', storyName: '监督者' },

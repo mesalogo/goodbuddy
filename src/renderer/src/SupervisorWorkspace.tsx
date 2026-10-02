@@ -5,6 +5,7 @@ import { AnchoredMenu } from './AnchoredMenu'
 import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
 import { EmptyState, PageTabs } from './WorkspacePrimitives'
 import { SupervisionDiscussion } from './SupervisionDiscussion'
+import { SupervisionStoryDigest } from './SupervisionStoryDigest'
 import { SupervisionEventStory, SupervisionExperienceDetail, SupervisionExperienceList, SupervisionStoryDetail, SupervisionStoryList, useSupervisionStories } from './SupervisionStories'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 import { heartbeatScopeSchema } from '../../shared/assistant-contracts'
@@ -477,6 +478,8 @@ export function SupervisorWorkspace({
     ? (JSON.parse(graph.storyLine.scope_json) as SupervisionRunRequest['scope'])
     : undefined
   const storyState = useSupervisionStories(graphScope, tab === 'graph', graph)
+  // The work review reads the selected result's own scope, so it matches the period shown.
+  const recapStories = useSupervisionStories(latest?.scope, tab === 'overview', latest?.id)
   const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
   const selectedExperience = selection?.kind === 'experience' ? storyState.view.experiences.find((item) => item.id === selection.id) : undefined
   const busy = !!api && (loading || pending !== undefined)
@@ -630,6 +633,8 @@ export function SupervisorWorkspace({
                   {t('supervisor.graph')}
                 </button>}
               </div>}
+              {latest && recapStories.available && <SupervisionStoryDigest view={recapStories.view} range={latest.timeRange} date={date}
+                onOpen={(focus) => { select(focus); onTabChange?.('graph') }} />}
               {latest ? (
                 <article className="supervisor-workspace__recap">
                   <div className="supervisor-workspace__section-heading">

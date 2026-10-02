@@ -133,6 +133,14 @@ export const heartbeat = {
       mergeInto: 'Merge into', chooseStory: 'Choose a story', merge: 'Merge',
       events: 'Events ({{count}})', primary: 'Story', none: 'Not in a story', missing: 'This story was changed. Select it again.'
     },
+    digest: {
+      title: 'Stories in this period', label: 'This review by story',
+      advanced: 'Stories that moved forward', started: 'New stories', concluded: 'Finished stories', quiet: 'No new progress in this period',
+      experiences: 'Experiences formed or used', formed: 'New', applied: 'Used',
+      events: '{{count}} events', latest: 'Latest: {{title}}', lastAt: 'Last progress {{date}}',
+      empty: 'No events in this period belong to a story yet. After stories are organized, progress appears here by story.',
+      unassigned: '{{count}} more events are not in any story.', more: '{{count}} more', open: 'View {{name}} in the graph'
+    },
     listEmpty: 'No records of this type in this review.',
     openConversation: 'Open conversation',
     discussion: {

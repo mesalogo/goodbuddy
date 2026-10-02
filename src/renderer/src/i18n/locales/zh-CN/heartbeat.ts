@@ -130,6 +130,14 @@ export const heartbeat = {
       mergeInto: '合并到', chooseStory: '选择故事', merge: '合并',
       events: '事件（{{count}}）', primary: '所属故事', none: '暂不归类', missing: '这个故事已被调整，请重新选择。'
     },
+    digest: {
+      title: '这段时间的故事', label: '按故事查看本次回顾',
+      advanced: '推进的故事', started: '新出现的故事', concluded: '已结束的故事', quiet: '这段时间没有新进展',
+      experiences: '形成或用上的经验', formed: '新形成', applied: '用上了',
+      events: '{{count}} 个事件', latest: '最近：{{title}}', lastAt: '最后进展 {{date}}',
+      empty: '这段时间还没有归入故事的事件。故事整理完成后，这里会按故事列出进展。',
+      unassigned: '另有 {{count}} 个事件暂不归入任何故事。', more: '另有 {{count}} 个', open: '在图谱中查看 {{name}}'
+    },
     listEmpty: '本次回顾暂无此类记录。',
     openConversation: '打开会话',
     discussion: {
