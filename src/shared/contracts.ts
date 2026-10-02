@@ -2225,6 +2225,9 @@ export type DesktopApi = {
     suggestions: (input?: { status?: 'pending' | 'all'; limit?: number; offset?: number }) => Promise<import('./supervision-contracts').SupervisionSuggestion[]>
     suggestionAction: (input: import('./supervision-contracts').SupervisionSuggestionAction) => Promise<import('./supervision-contracts').SupervisionSuggestion>
     retrySuggestions: (input: { heartbeatRunId: string }) => Promise<number>
+    stories: (input: import('./supervision-story-contracts').SupervisionStoryListRequest) => Promise<import('./supervision-story-contracts').SupervisionStoryView>
+    storyAction: (input: import('./supervision-story-contracts').SupervisionStoryAction) => Promise<void>
+    retryStories: (input: { runId: string }) => Promise<import('./supervision-review-contracts').SupervisionReviewProgress>
   }
   experts: {
     list: () => Promise<AssistantExpert[]>

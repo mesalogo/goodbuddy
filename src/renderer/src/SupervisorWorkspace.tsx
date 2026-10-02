@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BookOpen, Ellipsis, Network, RefreshCw, X } from 'lucide-react'
 import { AnchoredMenu } from './AnchoredMenu'
 import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
 import { EmptyState, PageTabs } from './WorkspacePrimitives'
 import { SupervisionDiscussion } from './SupervisionDiscussion'
+import { SupervisionEventStory, SupervisionStoryDetail, SupervisionStoryList, useSupervisionStories } from './SupervisionStories'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 import { heartbeatScopeSchema } from '../../shared/assistant-contracts'
 import {
@@ -15,7 +16,9 @@ import {
   type SupervisionRunRequest
 } from '../../shared/supervision-contracts'
 
-type Selection = { kind: 'event' | 'entity' | 'relation'; id: string }
+// Three.js loads only when the spiral view is opened.
+const StoryGraph3D = lazy(() => import('./StoryGraph3D'))
+type Selection = { kind: 'event' | 'entity' | 'relation' | 'story'; id: string }
 export type SupervisionGraphNavigation = { resultId: string; tab?: 'overview' | 'graph' }
 type Props = {
   graphNavigation?: SupervisionGraphNavigation
@@ -66,6 +69,7 @@ export function SupervisorWorkspace({
   const [errorAction, setErrorAction] = useState<'run' | 'source' | 'action'>()
   const [selection, setSelection] = useState<Selection>()
   const [listTab, setListTab] = useState<Selection['kind']>('event')
+  const [graphMode, setGraphMode] = useState<'flat' | 'spiral'>('flat')
   const [source, setSource] = useState<{
     id: string
     title: string
@@ -162,6 +166,7 @@ export function SupervisorWorkspace({
             : current?.kind === 'entity'
               ? parsedGraph.entities
               : parsedGraph.relations
+        if (current?.kind === 'story') return current
         if (current && records.some((item) => item.id === current.id))
           return current
         const latestEvent = [...parsedGraph.events].sort(
@@ -469,6 +474,8 @@ export function SupervisorWorkspace({
   const graphScope = graph.storyLine
     ? (JSON.parse(graph.storyLine.scope_json) as SupervisionRunRequest['scope'])
     : undefined
+  const storyState = useSupervisionStories(graphScope, tab === 'graph', graph)
+  const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
   const busy = !!api && (loading || pending !== undefined)
   const showRunNotice = (execution.active || running || pausedReview) && !dismissedNotice
 
@@ -716,7 +723,8 @@ export function SupervisorWorkspace({
                       tabs={[
                         { id: 'event', label: `${t('supervisor.listTabs.event')} ${layout.events.length}` },
                         { id: 'entity', label: `${t('supervisor.listTabs.entity')} ${layout.entities.length}` },
-                        { id: 'relation', label: `${t('supervisor.listTabs.relation')} ${graph.relations.length}` }
+                        { id: 'relation', label: `${t('supervisor.listTabs.relation')} ${graph.relations.length}` },
+                        ...(storyState.available ? [{ id: 'story' as const, label: `${t('supervisor.listTabs.story')} ${storyState.view.stories.length}` }] : [])
                       ]}
                     />
                     <div
@@ -731,6 +739,14 @@ export function SupervisorWorkspace({
                       (listTab === 'relation' && !graph.relations.length)) && (
                       <p className="supervisor-workspace__muted">{t('supervisor.listEmpty')}</p>
                     )}
+                    {listTab === 'story' && <>
+                      {storyState.error && <p role="alert">{storyState.error}</p>}
+                      {!storyState.view.stories.length && <p className="supervisor-workspace__muted">{t('supervisor.stories.empty')}</p>}
+                      <SupervisionStoryList stories={storyState.view.stories} selectedId={selectedStory?.id} date={shortDate}
+                        onSelect={(id) => select({ kind: 'story', id })} />
+                      {storyState.view.unassigned > 0 && <p className="supervisor-workspace__muted">
+                        {t('supervisor.stories.unassigned', { count: storyState.view.unassigned })}</p>}
+                    </>}
                     {listTab === 'event' && layout.events.map((event, index) => (
                       <button
                         key={event.id}
@@ -808,7 +824,19 @@ export function SupervisorWorkspace({
                           entities: layout.entities.length
                         })}
                       </span>
+                      {storyState.available && <div role="group" aria-label={t('supervisor.graph3d.mode')} className="supervisor-workspace__graph-mode">
+                        {(['flat', 'spiral'] as const).map((mode) => <button key={mode} type="button" className="secondary-button"
+                          aria-pressed={graphMode === mode} onClick={() => setGraphMode(mode)}>{t(`supervisor.graph3d.modes.${mode}`)}</button>)}
+                      </div>}
                     </div>
+                    {graphMode === 'spiral' ? (
+                      <Suspense fallback={<p className="supervisor-workspace__muted" role="status">{t('supervisor.loading')}</p>}>
+                        <StoryGraph3D stories={storyState.view.stories} attention={graph.attention ?? []}
+                          selectedEventId={selection?.kind === 'event' ? selection.id : undefined}
+                          onSelectEvent={(id) => { if (layout.eventMap.has(id)) select({ kind: 'event', id }) }}
+                          onSelectStory={(id) => select({ kind: 'story', id })} />
+                      </Suspense>
+                    ) : <>
                     <figure className="supervisor-workspace__figure">
                       <div
                         className="supervisor-workspace__map-scroll"
@@ -1101,13 +1129,21 @@ export function SupervisorWorkspace({
                         </div>
                       </div>
                     )}
+                    </>}
                   </section>
                   <aside
                     className="supervisor-workspace__detail"
                     aria-label={t('supervisor.inspector')}
                   >
                     <h2>{t('supervisor.inspector')}</h2>
-                    {selection ? (
+                    {selection?.kind === 'story' ? (
+                      selectedStory ? <>
+                        {storyState.error && <p role="alert">{storyState.error}</p>}
+                        <SupervisionStoryDetail key={selectedStory.id} story={selectedStory} stories={storyState.view.stories}
+                          pending={storyState.pending} canUndo={storyState.view.canUndo} date={date} onAct={storyState.act}
+                          onSelectEvent={(id) => { if (layout.eventMap.has(id)) select({ kind: 'event', id }) }} />
+                      </> : <p>{t('supervisor.stories.missing')}</p>
+                    ) : selection ? (
                       <>
                         <div className="supervisor-workspace__detail-kicker">
                           {selectedEvent
@@ -1130,6 +1166,9 @@ export function SupervisorWorkspace({
                         {selectedEvent && (
                           <time>{date(selectedEvent.occurred_at)}</time>
                         )}
+                        {selectedEvent && storyState.available && <SupervisionEventStory eventId={selectedEvent.id}
+                          projectId={selectedEvent.project_id ?? null} stories={storyState.view.stories}
+                          pending={storyState.pending} onAct={storyState.act} />}
                         <div className="supervisor-workspace__related">
                           <h4>{t('supervisor.connections')}</h4>
                           {layout.entities

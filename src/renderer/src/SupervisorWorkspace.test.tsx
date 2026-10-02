@@ -319,6 +319,46 @@ describe('SupervisorWorkspace', () => {
     expect(within(detail as HTMLElement).queryByText(/依据 2/)).not.toBeInTheDocument()
   })
 
+  it('lists stories by project and feature, lets users adjust them and move an event between stories', async () => {
+    const story = (id: string, name: string, level: string, eventIds: string[], parentId: string | null = null) => ({
+      id, projectId: level === 'cross' ? null : 'p', projectName: level === 'cross' ? null : 'goodbuddy', parentId, level, name, description: '',
+      state: 'active', stateEventId: null, userEdited: false, startedAt: '2026-09-21T00:00:00.000Z', endedAt: '2026-09-21T00:00:00.000Z',
+      events: eventIds.map(eventId => ({ id: eventId, title: eventId === 'event-1' ? '决定' : eventId, projectId: 'p', startedAt: '2026-09-21T00:00:00.000Z', endedAt: '2026-09-21T00:00:00.000Z', primary: level !== 'cross', userSet: false }))
+    })
+    const view = { stories: [story('11111111-1111-4111-8111-111111111111', '监督者', 'feature', ['event-1']),
+      story('22222222-2222-4222-8222-222222222222', '回顾算法', 'thread', [], '11111111-1111-4111-8111-111111111111'),
+      story('33333333-3333-4333-8333-333333333333', '笔记', 'feature', []),
+      story('44444444-4444-4444-8444-444444444444', '果蝇', 'cross', ['event-1'])], unassigned: 2, canUndo: true }
+    const stories = vi.fn(async () => view)
+    const storyAction = vi.fn(async () => undefined)
+    window.goodbuddy = { supervision: {
+      overview: vi.fn(async () => [result]), stories, storyAction,
+      graph: vi.fn(async () => ({ storyLine: { id: 'story', scope_json: '{"kind":"global"}' }, events: [{ id: 'event-1', title: '决定', description: 'd', occurred_at: '2026-09-21T00:00:00.000Z', project_id: 'p' }],
+        entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
+    } } as never
+    render(<SupervisorWorkspace tab="graph" />)
+    fireEvent.click(await screen.findByRole('tab', { name: '故事 4' }))
+    expect(stories).toHaveBeenCalledWith({ scope: { kind: 'global' } })
+    const list = screen.getByRole('complementary', { name: '图谱选择' })
+    expect(within(list).getByRole('region', { name: 'goodbuddy' })).toBeInTheDocument()
+    expect(within(list).getByRole('region', { name: '跨项目故事' })).toBeInTheDocument()
+    expect(within(list).getByText('另有 2 个事件暂不归入任何故事。')).toBeInTheDocument()
+    fireEvent.click(within(list).getByRole('button', { name: /监督者/ }))
+    const inspector = screen.getByRole('complementary', { name: '详情与来源' })
+    expect(within(inspector).getByRole('heading', { name: '监督者' })).toBeInTheDocument()
+    fireEvent.change(within(inspector).getByRole('combobox', { name: '合并到' }), { target: { value: '33333333-3333-4333-8333-333333333333' } })
+    fireEvent.click(within(inspector).getByRole('button', { name: '合并' }))
+    await waitFor(() => expect(storyAction).toHaveBeenCalledWith({ action: 'merge', storyId: '11111111-1111-4111-8111-111111111111', intoId: '33333333-3333-4333-8333-333333333333' }))
+    fireEvent.click(within(inspector).getByRole('button', { name: '撤销上次调整' }))
+    await waitFor(() => expect(storyAction).toHaveBeenCalledWith({ action: 'undo' }))
+    // Event detail: the story picker offers only the event's own project stories, not cross stories.
+    fireEvent.click(within(inspector).getByRole('button', { name: /决定/ }))
+    const picker = await within(inspector).findByRole('combobox', { name: '所属故事' })
+    expect(within(picker).getAllByRole('option').map(option => option.textContent)).toEqual(['暂不归类', '监督者', '· 回顾算法', '笔记'])
+    fireEvent.change(picker, { target: { value: '' } })
+    await waitFor(() => expect(storyAction).toHaveBeenCalledWith({ action: 'move', eventId: 'event-1', storyId: null }))
+  })
+
   it('steps through real events in time order and supports keyboard selection in the canvas', async () => {
     window.goodbuddy = { supervision: {
       overview: vi.fn(async () => [result]),

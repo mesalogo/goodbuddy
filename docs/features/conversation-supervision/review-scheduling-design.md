@@ -40,6 +40,8 @@ schema 47 增加运行配置、来源清单、成功批次、导航节点四张�
 | `supervisionReview.batchCharacters` | 8000 | 1000..16000 | 每批新正文 UTF-16 单元，不含提示、候选及 JSON |
 | `supervisionReview.batchMessages` | 20 | 1..50 | 每批不同消息数；任务等无消息 ID 的来源单独计数 |
 | `supervisionReview.executionSeconds` | 300 | 30..3600 | 旧设置兼容字段，执行时忽略，设置页不再展示；恢复旧 run 同样不按此值暂停 |
+| `supervisionReview.crossProject` | 关闭 | 开关 | 创建回顾时冻结；关闭时每批只以本项目已有实体为候选，也不生成跨项目故事；开启后候选来自全部项目，故事归属可建立跨项目故事 |
+| `supervisionReview.storyThreadEvents` | 20 | 4..500 | 创建回顾时冻结；功能的事件数低于此值时，模型提出的子线索并入功能 |
 | `supervisorOrganizeTimeoutSeconds` | 240 | 30..600 | 创建回顾时冻结，节点获槽并解析 Runtime 后计时 |
 | `heartbeatReportTimeoutSeconds` | 240 | 30..600 | 维持报告发起时冻结及既有租约规则 |
 | `supervisorModelConcurrency` | 1 | 1..4 | 回顾保存接纳并发；共享池上限仍随应用设置实时变化，实际执行取较小值 |

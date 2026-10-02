@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import { defaultSupervisionTimeoutSeconds, defaultSupervisorModelConcurrency } from '../../shared/application-settings-contracts'
-import { supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
+import { defaultStoryThreadEvents, supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
+import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
+import type { ReviewConfiguration } from './supervision-review-store'
+import { assignStories } from './supervision-stories'
 import type { AgentRuntime, RuntimeModelUsageEvent } from '../agent/runtime'
 import type { AssistantDatabase } from './assistant-database'
 import type { SupervisionModelPool } from './supervision-model-pool'
@@ -123,7 +126,18 @@ export function createProductionSupervisorService(
     return { ...supervisionReviewSettingsSchema.parse(settings?.supervisionReview ?? {}), version: 1,
       timeoutSeconds: settings?.supervisorOrganizeTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
       concurrency: settings?.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency }
-  } })
+  }, stories: (request, config, signal) => organizeSupervisionStories(model, request, config, signal) })
+}
+
+/** Story assignment for the review's scope: event text and story summaries only, one bounded call per chunk. */
+async function organizeSupervisionStories(model: SupervisionModelDependencies, request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal) {
+  const result = await assignStories(model.database.supervisionStories(), (prompt, modelSignal) => runSupervisionModel(model, {
+    title: '监督者故事整理', instructions: '把已发布的事件归入故事',
+    timeoutMessage: seconds => `监督者故事整理超过 ${seconds} 秒，已停止；回顾结果已保留`, timeoutSeconds: config.timeoutSeconds,
+    signal: modelSignal, authorizeTool: async name => { throw new Error(`监督者禁止调用工具: ${name}`) }, prompt
+  }), request.scope, { crossProject: config.crossProject === true, threadEvents: config.storyThreadEvents ?? defaultStoryThreadEvents,
+    batchCharacters: Math.max(4000, config.batchCharacters * 2), concurrency: config.concurrency, signal })
+  return { status: 'completed' as const, ...result }
 }
 
 /** Phrases rule-selected suggestion candidates in one bounded model call. */

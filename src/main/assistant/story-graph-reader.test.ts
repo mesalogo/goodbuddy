@@ -87,7 +87,9 @@ it('enforces exact scope, rejects as_of and stale/changed cursors, and never wri
   const before = f.sql.prepare('SELECT total_changes() AS n').get()!.n
   f.sql.exec('PRAGMA query_only = ON')
   expect(f.db.readStoryGraph('story_graph_search', input, f.other.id)).toMatchObject({ items: [], coverage: { status: 'unknown' } })
-  expect(f.read('story_graph_search', { ...input, scope: { kind: 'global' } })).toMatchObject({ items: [] })
+  // Global is the root of the one shared timeline: it sees the project's current events.
+  const global = f.read('story_graph_search', { ...input, page_size: 50, scope: { kind: 'global' } }) as Page
+  expect(global.items.map(item => item.object_ref.type)).toEqual(['event'])
   expect(() => f.db.readStoryGraph('story_graph_get_context', { object_ref: { type: 'entity', id } }, f.other.id)).toThrow('scope_mismatch')
   expect(() => f.read('story_graph_get_context', { object_ref: { type: 'entity', id: 'missing' } })).toThrow('object_not_found')
   expect(() => f.db.readStoryGraph('story_graph_search', input)).toThrow('scope_required')

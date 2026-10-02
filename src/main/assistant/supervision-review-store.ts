@@ -2,10 +2,14 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { isIncrementalReview, type SupervisionEvidence, type SupervisionRunRequest, type SupervisionSummaryOutput } from '../../shared/supervision-contracts'
 import type { SupervisionReviewBatch, SupervisionReviewProgress, SupervisionReviewSettings } from '../../shared/supervision-review-contracts'
-import { reviewScope } from './review-checkpoint'
+/**
+ * Supervisor progress is one shared timeline: each source version is extracted once,
+ * whichever scope reviewed it. Scopes only filter what a review reads and shows.
+ */
+export const TIMELINE_CHECKPOINT_SCOPE = 'timeline'
 
 export type ReviewConfiguration = SupervisionReviewSettings & { timeoutSeconds: number; concurrency: number; version: 1 }
-export type ReviewState = { request: SupervisionRunRequest; config: ReviewConfiguration; restartRequired?: boolean; phase?: SupervisionReviewProgress['phase'] }
+export type ReviewState = { request: SupervisionRunRequest; config: ReviewConfiguration; restartRequired?: boolean; phase?: SupervisionReviewProgress['phase']; stories?: SupervisionReviewProgress['stories'] }
 
 // Only the manifest is materialized. Source bodies are read in bounded substrings.
 export const supervisionReviewMigration = `
@@ -84,7 +88,7 @@ export class SupervisionReviewStore {
           length(s.body), CASE WHEN c.revision = review_revision(s.context) THEN c.processed_offset ELSE 0 END,
           CASE WHEN c.revision = review_revision(s.context) THEN c.processed_offset ELSE 0 END
         FROM supervision_review_current s LEFT JOIN review_checkpoints c
-          ON ? = 1 AND c.stage = 'supervisor' AND c.scope = ? AND c.source = s.source
+          ON ? = 1 AND c.stage = 'supervisor' AND c.scope = '${TIMELINE_CHECKPOINT_SCOPE}' AND c.source = s.source
         WHERE ((s.occurred >= ? AND s.occurred <= ?) OR (s.alternate_time >= ? AND s.alternate_time <= ?))
           AND (? = 'global' OR s.project_id IN (SELECT value FROM json_each(?)))
           AND length(s.body) > 0
@@ -93,7 +97,7 @@ export class SupervisionReviewStore {
         ORDER BY s.project_id, s.conversation_id, s.sequence, s.source LIMIT ?`)
       let cursor: [string, string, number, string] = ['', '', -1, '']
       for (;;) {
-        const page = insertPage.run(runId, isIncrementalReview(request) ? 1 : 0, reviewScope(request.scope), request.timeRange.from, request.timeRange.to,
+        const page = insertPage.run(runId, isIncrementalReview(request) ? 1 : 0, request.timeRange.from, request.timeRange.to,
           request.timeRange.from, request.timeRange.to, request.scope.kind,
           JSON.stringify(request.scope.kind === 'projects' ? request.scope.projectIds : []), ...cursor, state.config.pageSize)
         if (!page.changes) break
@@ -156,6 +160,10 @@ export class SupervisionReviewStore {
 
   setPhase(runId: string, phase: NonNullable<SupervisionReviewProgress['phase']>): void {
     this.db.prepare("UPDATE supervision_review_runs SET state_json = json_set(state_json, '$.phase', ?) WHERE run_id = ?").run(phase, runId)
+  }
+
+  setStories(runId: string, stories: NonNullable<SupervisionReviewProgress['stories']>): void {
+    this.db.prepare("UPDATE supervision_review_runs SET state_json = json_set(state_json, '$.stories', json(?)) WHERE run_id = ?").run(JSON.stringify(stories), runId)
   }
 
   groups(runId: string, limit: number): Array<{ projectId: string; conversationId: string }> {
@@ -269,7 +277,7 @@ export class SupervisionReviewStore {
       FROM supervision_review_batches WHERE run_id = ?`).get(runId)!
     const state = this.load(runId)
     const navigation = this.db.prepare('SELECT COUNT(*) AS count FROM supervision_review_navigation WHERE run_id = ?').get(runId)!
-    return { runId, phase: state.phase, navigationNodes: Number(navigation.count), settings: state.config, restartRequired: state.restartRequired, batches: Number(batches.batches), characters: Number(batches.characters), sources: Number(sources.sources),
+    return { runId, phase: state.phase, stories: state.stories, navigationNodes: Number(navigation.count), settings: state.config, restartRequired: state.restartRequired, batches: Number(batches.batches), characters: Number(batches.characters), sources: Number(sources.sources),
       remainingSources: Number(sources.remaining), complete: this.db.prepare("SELECT id FROM supervision_runs WHERE id = ? AND status IN ('completed', 'no_change')").get(runId) !== undefined }
   }
 
@@ -286,7 +294,7 @@ export class SupervisionReviewStore {
       ON CONFLICT(stage, scope, source) DO UPDATE SET revision = excluded.revision,
         processed_offset = CASE WHEN review_checkpoints.revision = excluded.revision
           THEN MAX(review_checkpoints.processed_offset, excluded.processed_offset) ELSE excluded.processed_offset END,
-        source_length = excluded.source_length`).run(reviewScope(request.scope), runId)
+        source_length = excluded.source_length`).run(TIMELINE_CHECKPOINT_SCOPE, runId)
   }
 
   navigation(runId: string, id: string): SupervisionSummaryOutput | undefined {

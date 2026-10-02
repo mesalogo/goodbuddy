@@ -90,6 +90,20 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
       setRefresh(value => value + 1)
     }
   }
+  // The review stays published; only story organizing is repeated.
+  const retryStories = async (row: SupervisionActivity) => {
+    if (actionPending.current || !row.reviewProgress) return
+    actionPending.current = true
+    setPending(row.id)
+    setError(undefined)
+    try { await api.retryStories({ runId: row.reviewProgress.runId }) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
+    finally {
+      actionPending.current = false
+      setPending(undefined)
+      setRefresh(value => value + 1)
+    }
+  }
   const control = async (row: SupervisionActivity, action: 'pause' | 'cancel' | 'resume') => {
     if (actionPending.current || !row.reviewProgress) return
     const runId = row.reviewProgress.runId
@@ -183,6 +197,12 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
               <pre tabIndex={0} aria-label={t('reviewSettings.diagnostics')} style={{ userSelect: 'text' }}>{row.error}</pre>
             </details>
           </div>}
+          {row.reviewProgress?.stories && <p className="supervisor-activity__suggestion" role={row.reviewProgress.stories.status === 'failed' ? 'alert' : undefined}>
+            {row.reviewProgress.stories.status === 'failed' ? t('activity.storyFailed')
+              : `${t('activity.storyStage')}: ${t(`activity.storyStates.${row.reviewProgress.stories.status}`, { assigned: row.reviewProgress.stories.assigned ?? 0 })}`}
+            {row.reviewProgress.stories.status === 'failed' && typeof api?.retryStories === 'function' && <button type="button" className="secondary-button"
+              disabled={!!pending || execution.active} onClick={() => void retryStories(row)}>{t('activity.retryStories')}</button>}
+          </p>}
           {row.suggestionStatus && <p className="supervisor-activity__suggestion" role={row.suggestionStatus === 'failed' ? 'alert' : undefined}>
             {row.suggestionStatus === 'failed' ? t('activity.updatedSuggestionFailed')
               : `${t('activity.suggestionStage')}: ${t(`activity.suggestionStates.${row.suggestionStatus}`, { count: row.suggestionCount ?? 0 })}`}

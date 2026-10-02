@@ -20,6 +20,7 @@
 | [技术设计](./technical-design.md) | Main/Renderer 分层、数据模型、IPC、安全边界和实施顺序 |
 | [时态 Story Graph MCP 设计](./story-graph-mcp-design.md) | 只读工具、时间与版本语义、Runtime 接入，以及后续跨范围事实复用和记忆过渡合同 |
 | [回顾分块调度设计](./review-scheduling-design.md) | 第 0 节定义生产分页、批次持久化、续跑、当前设置及剩余边界；其余章节保留改造前基线、目标设计和原型证据 |
+| [故事线模型改造设计](./storyline-model-design.md) | 全局 › 项目 › 功能 › 子线索的故事层级、故事归属与经验抽取阶段、用户调整及实施顺序（目标设计） |
 | [实施进度](./progress.md) | 已验证实现、验证证据和当前边界 |
 | [故事线图谱设计](../story-graph/prd.md) | 图谱对象、环绕时间轴与实体交互 |
 

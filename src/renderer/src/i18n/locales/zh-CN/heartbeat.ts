@@ -2,11 +2,14 @@ export const heartbeat = {
   reviewSettings: {
     title: '回顾算法',
     responseKiB: '单次响应容量，KiB（默认 1024）',
+    storyThreadEvents: '功能拆分子线索的最少事件数（默认 20）',
     save: '保存回顾算法',
     help: '每页条数只控制数据库读取量，不限制回顾总量。分批上限用于拆分工作，剩余正文会继续处理。这些设置及整理超时在新回顾开始时固定；继续回顾沿用已保存的配置。响应容量按每次请求的当前设置生效，调高后可继续失败的回顾。',
     pageSize: '每次读取来源条数（默认 50）', batchCharacters: '每批文本量（默认 8000）',
     batchMessages: '每批消息数（默认 20）', executionSeconds: '单次整理时长，秒（默认 300）',
     pauseHelp: '回顾持续处理至完成，每批保存进度；可从活动记录主动暂停并继续。',
+    crossProject: '跨项目关联',
+    crossProjectHelp: '关闭时，新内容只关联到同一项目中已有的知识；开启后，可以关联到其他项目中的同一件事。只影响之后的回顾。',
     invalid: '请输入所示范围内的整数。',
     pause: '暂停回顾', resume: '继续已保存回顾', facts: '已保留事实与来源',
     cancel: '取消回顾', cancelling: '正在取消回顾…', pausing: '正在暂停回顾…',
@@ -66,6 +69,8 @@ export const heartbeat = {
     triggers: { manual: '用户触发', scheduled: '定时计划', heartbeat: '心跳触发' },
     trigger: '触发方式', started: '开始时间', finished: '结束时间', unknownScope: '未保存执行范围',
     heartbeatStage: '心跳触发', supervisionStage: '监督回顾', notRecorded: '无执行记录',
+    storyStage: '故事整理', storyStates: { running: '整理中', completed: '已归入 {{assigned}} 个事件', failed: '整理失败' }, retryStories: '重新整理故事',
+    storyFailed: '回顾已保存，故事整理失败。可以重新整理，或等下一次回顾自动补上。',
     suggestionStage: '建议', suggestionStates: { running: '生成中', completed: '已生成 {{count}} 条', skipped: '无需建议', failed: '生成失败' },
     retrySuggestions: '重新生成建议', updatedSuggestionFailed: '回顾已更新，建议生成失败。',
     openReview: '查看回顾', pagination: '活动分页', previous: '较新记录', next: '更早记录', page: '第 {{page}} 页'
@@ -93,7 +98,26 @@ export const heartbeat = {
     more: '更多回顾操作', reanalyze: '重新整理…', reanalyzeTitle: '重新整理这段时间？', reanalyzeConfirm: '重新整理',
     reanalyzeHint: '将重新分析{{scope}}最近 {{period}}的全部内容，可能产生较多模型用量。已确认的内容和心跳处理进度不受影响。', retryRun: '重试回顾', dismiss: '关闭提示',
     graphScope: '图谱范围', graphEmpty: '当前范围没有故事线事件', legend: '实线表示事件影响实体，虚线表示实体关系。时间轴逆时针排列，起止之间保留缺口。', start: '起点', end: '终点',
-    listTabs: { event: '事件', entity: '实体', relation: '关系' },
+    listTabs: { event: '事件', entity: '实体', relation: '关系', story: '故事' },
+    graph3d: {
+      mode: '图谱视图', modes: { flat: '平铺', spiral: '时间螺旋' },
+      levels: '木片层级', all: '全部', views: '视角', canvas: '时间螺旋。数字键 1、2、3 切换视角，方向键旋转，Esc 返回上一层；下方列表提供同样的木片。',
+      view: { oblique: '斜俯视', side: '侧视', top: '俯视', free: '自由' },
+      staves: '当前层的木片',
+      legend: '高度为时间，一圈 {{turn}}（共 {{count}} 圈）；半径为当时的对话密度，只表示投入集中程度。木片上下跨度为故事的起止时间。',
+      turns: { 3: '3 小时', 6: '6 小时', 12: '12 小时', 24: '1 天', 168: '1 周', 720: '1 个月', 2160: '1 个季度', 8760: '1 年' },
+      unsupported: '当前设备不支持三维显示，请使用平铺视图和左侧故事列表。'
+    },
+    stories: {
+      empty: '还没有故事。下一次回顾完成后，会把事件归入项目下的功能和子线索。',
+      unassigned: '另有 {{count}} 个事件暂不归入任何故事。',
+      count: '{{count}} 个事件', concluded: '已结束', active: '进行中', edited: '已手动调整',
+      cross: '跨项目故事', levels: { feature: '功能', thread: '子线索', cross: '跨项目故事' },
+      rename: '重命名', name: '名称', remove: '移除故事', undo: '撤销上次调整',
+      removeHint: '移除后，这个故事里的事件会回到上一级功能，或变为暂不归类；事件本身不会删除，之后的回顾也不会再建同名故事。',
+      mergeInto: '合并到', chooseStory: '选择故事', merge: '合并',
+      events: '事件（{{count}}）', primary: '所属故事', none: '暂不归类', missing: '这个故事已被调整，请重新选择。'
+    },
     listEmpty: '本次回顾暂无此类记录。',
     openConversation: '打开会话',
     discussion: {

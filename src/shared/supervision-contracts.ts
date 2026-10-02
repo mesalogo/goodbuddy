@@ -252,11 +252,14 @@ export type SupervisionGraphRequest = z.infer<typeof supervisionGraphRequestSche
 
 export const supervisionGraphViewSchema = z.object({
   storyLine: z.object({ id: z.string(), scope_json: z.string() }).nullable(),
-  events: z.array(z.object({ id: z.string(), title: z.string(), description: z.string(), occurred_at: z.string() })),
+  events: z.array(z.object({ id: z.string(), title: z.string(), description: z.string(), occurred_at: z.string(),
+    project_id: z.string().nullish(), started_at: z.string().nullish(), ended_at: z.string().nullish() })),
   entities: z.array(z.object({ id: z.string(), canonical_label: z.string(), description: z.string(), confirmation_state: z.string() })),
   relations: z.array(z.object({ id: z.string(), from_entity_id: z.string(), to_entity_id: z.string(), relation_type: z.string(), reason: z.string(), confirmation_state: z.string() })),
   sources: z.array(z.object({ id: z.string(), title: z.string(), occurred_at: z.string() })),
   eventEntities: z.array(z.object({ event_id: z.string(), entity_id: z.string() })),
-  eventSources: z.array(z.object({ event_id: z.string(), source_id: z.string() }))
+  eventSources: z.array(z.object({ event_id: z.string(), source_id: z.string() })),
+  attention: z.array(z.object({ start: z.string(), turns: z.number(), characters: z.number() })).optional()
 })
+export type SupervisionAttentionSlot = { start: string; turns: number; characters: number }
 export type SupervisionGraphView = z.infer<typeof supervisionGraphViewSchema>

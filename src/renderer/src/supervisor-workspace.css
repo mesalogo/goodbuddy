@@ -536,7 +536,8 @@
   gap: var(--space-1);
   padding-inline: var(--space-1);
 }
-.supervisor-workspace__list-panel > button {
+.supervisor-workspace__list-panel > button,
+.supervisor-workspace__story-group button {
   flex: 0 0 auto;
   display: flex;
   align-items: baseline;
@@ -572,10 +573,12 @@
   background: currentColor;
   border-radius: 50%;
 }
-.supervisor-workspace__list-panel > button:hover {
+.supervisor-workspace__list-panel > button:hover,
+.supervisor-workspace__story-group button:hover {
   background: var(--surface-raised);
 }
-.supervisor-workspace__list-panel > button[aria-pressed='true'] {
+.supervisor-workspace__list-panel > button[aria-pressed='true'],
+.supervisor-workspace__story-group button[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent-subtle);
 }
@@ -878,4 +881,110 @@
 
 .supervisor-activity .heartbeat-settings__field {
   max-width: 100%;
+}
+
+/* Stories: project › feature › sub-thread, then cross-project stories. */
+.supervisor-workspace__story-group {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+}
+.supervisor-workspace__story-group > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.supervisor-workspace__story-group button {
+  width: 100%;
+}
+.supervisor-workspace__story-group h3 {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 600;
+}
+.supervisor-workspace__story-group button.supervisor-workspace__story-thread {
+  padding-inline-start: var(--space-5);
+}
+.supervisor-workspace__story-merge,
+.supervisor-workspace__event-story {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin-block: var(--space-3);
+}
+.supervisor-workspace__story-merge label,
+.supervisor-workspace__event-story {
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
+.supervisor-workspace__story-merge label {
+  display: flex;
+  flex: 1 1 160px;
+  gap: var(--space-1);
+}
+/* 3D story view. The canvas fills the graph column; staves are repeated as a list below. */
+.supervisor-workspace__graph-mode {
+  display: flex;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+}
+.story-graph-3d {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.story-graph-3d__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--font-caption);
+}
+.story-graph-3d__toolbar > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.story-graph-3d__viewport {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 760 / 620;
+  min-height: 320px;
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+.story-graph-3d__viewport canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+.story-graph-3d__viewport canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.story-graph-3d__overlay {
+  pointer-events: none;
+}
+.story-graph-3d__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--font-caption);
+}
+.story-graph-3d__list small {
+  color: var(--text-muted);
 }

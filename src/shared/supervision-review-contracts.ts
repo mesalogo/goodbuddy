@@ -6,8 +6,13 @@ export const supervisionReviewSettingsSchema = z.object({
   batchCharacters: z.number().int().min(1000).max(16000).default(8000),
   batchMessages: z.number().int().min(1).max(50).default(20),
   executionSeconds: z.number().int().min(30).max(3600).default(300),
-  responseKiB: z.number().int().min(100).max(16384).optional()
+  responseKiB: z.number().int().min(100).max(16384).optional(),
+  // Off: an event can only join knowledge already seen in the same project.
+  crossProject: z.boolean().optional(),
+  // A feature splits into sub-threads only once it holds at least this many events.
+  storyThreadEvents: z.number().int().min(4).max(500).optional()
 }).strict()
+export const defaultStoryThreadEvents = 20
 export type SupervisionReviewSettings = z.infer<typeof supervisionReviewSettingsSchema>
 export const defaultSupervisionReviewSettings = supervisionReviewSettingsSchema.parse({})
 export const supervisionReviewIdSchema = z.object({ runId: z.string().uuid() }).strict()
@@ -31,6 +36,8 @@ export type SupervisionReviewProgress = {
   inFlight?: number
   phase?: 'collecting' | 'extracting' | 'summarizing' | 'saving'
   navigationNodes?: number
+  /** Story assignment after publication. A failure leaves the published review intact. */
+  stories?: { status: 'running' | 'completed' | 'failed'; error?: string; calls?: number; assigned?: number; unassigned?: number; created?: number }
   settings?: SupervisionReviewSettings & { timeoutSeconds: number; concurrency: number }
 }
 export type SupervisionReviewBatch = {

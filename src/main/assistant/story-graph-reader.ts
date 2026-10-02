@@ -62,8 +62,12 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     const source = db.prepare(`SELECT s.*, sr.scope_json, r.created_at AS generated_at FROM supervision_sources s
       JOIN supervision_results r ON r.id = s.result_id JOIN supervision_runs sr ON sr.id = r.run_id WHERE s.id = ?`).get(sourceArgs.source_reference_id)
     if (!source) throw new Error('source_not_found')
-    if (!sameScope(source.scope_json)) throw new Error('scope_mismatch')
     const locator = source.locator_json ? JSON.parse(String(source.locator_json)) as Row : {}
+    // Sources belong to the shared timeline: readable from the run's scope, from global,
+    // or from a project scope containing the source's own project.
+    const inScope = sameScope(source.scope_json) || scope.kind === 'global'
+      || (typeof locator.projectId === 'string' && scope.projectIds.includes(locator.projectId))
+    if (!inScope) throw new Error('scope_mismatch')
     const version = typeof locator.revision === 'string' ? locator.revision : 'unknown'
     if (sourceArgs.content_kind === 'version' && !sourceArgs.source_version) throw new Error('source_version_required')
     let body = String(source.content)
@@ -159,11 +163,19 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     }
     for (const entity of db.prepare('SELECT * FROM supervision_entities WHERE story_line_id = ? ORDER BY id').all(String(story.id))) add('entity', entity)
     for (const relation of db.prepare('SELECT * FROM supervision_relations WHERE story_line_id = ? ORDER BY id').all(String(story.id))) add('relation', relation)
-    for (const event of db.prepare('SELECT * FROM supervision_events WHERE story_line_id = ? ORDER BY id').all(String(story.id))) {
-      const sources = db.prepare('SELECT source_id FROM supervision_event_sources WHERE event_id = ? ORDER BY source_id').all(String(event.id)).map(row => String(row.source_id))
-      const entities = db.prepare('SELECT entity_id FROM supervision_event_entities WHERE event_id = ? ORDER BY entity_id').all(String(event.id)).map(row => String(row.entity_id))
-      add('event', { ...event, entity_ids: entities }, results.get(String(event.result_id)), sources)
-    }
+  }
+  // Events come from the one shared timeline: current events of the requested projects,
+  // whichever scope's review extracted them. Re-extracted, superseded events are omitted.
+  const projects = scope.kind === 'projects' ? JSON.stringify(scope.projectIds) : null
+  const storyIds = JSON.stringify(stories.map(story => String(story.id)))
+  for (const event of db.prepare(`SELECT * FROM supervision_events WHERE superseded_by IS NULL
+      AND (? IS NULL OR project_id IN (SELECT value FROM json_each(?))
+        OR (COALESCE(project_id, '') = '' AND story_line_id IN (SELECT value FROM json_each(?)))) ORDER BY id`).all(projects, projects, storyIds)) {
+    signal?.throwIfAborted()
+    const sources = db.prepare('SELECT source_id FROM supervision_event_sources WHERE event_id = ? ORDER BY source_id').all(String(event.id)).map(row => String(row.source_id))
+    const entities = db.prepare('SELECT entity_id FROM supervision_event_entities WHERE event_id = ? ORDER BY entity_id').all(String(event.id)).map(row => String(row.entity_id))
+    const result = results.get(String(event.result_id)) ?? db.prepare('SELECT * FROM supervision_results WHERE id = ?').get(String(event.result_id))
+    add('event', { ...event, entity_ids: entities }, result, sources)
   }
   const revision = digest(facts)
   checkRevision(revision)

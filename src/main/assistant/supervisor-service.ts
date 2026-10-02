@@ -52,7 +52,8 @@ export interface SupervisorResultStore {
   start?(request: SupervisionRunRequest, heartbeatRunId?: string): string
   fail?(runId: string, error: string): void
   noChange?(runId: string): void
-  candidates?(request: SupervisionRunRequest): Promise<SupervisionCandidate[]>
+  /** Known entities a batch may join; `batch` narrows them to the batch's project unless cross-project is on. */
+  candidates?(request: SupervisionRunRequest, batch?: { projectId: string; crossProject: boolean }): Promise<SupervisionCandidate[]>
   save(result: StoredSupervisionResult): Promise<void>
 }
 
@@ -177,8 +178,41 @@ export class SupervisorService {
     private readonly collector: SupervisorEvidenceCollector,
     private readonly summarizer: SupervisorSummarizer,
     private readonly store: SupervisorResultStore,
-    private readonly review?: { database: () => SupervisionReviewStore; configuration: () => Promise<ReviewConfiguration> }
+    private readonly review?: {
+      database: () => SupervisionReviewStore
+      configuration: () => Promise<ReviewConfiguration>
+      /** Story assignment over published, still unassigned events of the scope. Runs inside the review slot. */
+      stories?: (request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal) => Promise<NonNullable<SupervisionReviewProgress['stories']>>
+    }
   ) {}
+
+  /** Never fails a published review: errors are recorded and retried by the next review. */
+  private async organizeStories(db: SupervisionReviewStore, runId: string, request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal): Promise<void> {
+    if (!this.review?.stories) return
+    db.setStories(runId, { status: 'running' })
+    try {
+      db.setStories(runId, await this.review.stories(request, config, signal))
+    } catch (error) {
+      db.setStories(runId, { status: 'failed', error: signal.aborted ? 'SUPERVISION_STORIES_STOPPED' : error instanceof Error ? error.message.slice(0, 2000) : 'Story assignment failed' })
+    }
+  }
+
+  /** Retries story assignment for a published review, in the single review slot. */
+  async organizeStoriesFor(runId: string): Promise<SupervisionReviewProgress> {
+    if (!this.review?.stories) throw new Error('Story assignment is unavailable')
+    return this.admit(async () => {
+      const db = this.review!.database()
+      const state = db.load(runId)
+      const progress = db.progress(runId)
+      if (!progress.complete) throw new Error('SUPERVISION_STORIES_UNPUBLISHED: 回顾尚未完成，完成后再整理故事。')
+      const controller = new AbortController()
+      this.controllers.set(runId, controller)
+      if (this.active) this.active.runId = runId
+      try { await this.organizeStories(db, runId, state.request, state.config, controller.signal) }
+      finally { this.controllers.delete(runId) }
+      return { runId, request: state.request, evidence: [], output: { summary: '', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }, coverage: db.progress(runId) }
+    }).then(result => result.coverage!)
+  }
 
   async run(input: unknown, heartbeatRunId?: string): Promise<StoredSupervisionResult> {
     const request = supervisionRunRequestSchema.parse(input)
@@ -299,9 +333,15 @@ export class SupervisorService {
     try {
       if (existing) db.resume(runId)
       else db.initialize(runId, { ...state, phase: 'collecting' })
-      const candidates = await this.store.candidates?.(request) ?? []
+      // Every candidate offered to any batch, so publication can resolve all chosen identities.
+      const offered = new Map<string, SupervisionCandidate>()
+      const candidatesFor = async (projectId: string) => {
+        const list = await this.store.candidates?.(request, { projectId, crossProject: config.crossProject === true }) ?? []
+        for (const candidate of list) offered.set(candidate.id, candidate)
+        return list
+      }
       if (db.progress(runId).remainingSources) db.setPhase(runId, 'extracting')
-      const summarize = async (evidence: SupervisionEvidence[], navigation = false) => {
+      const summarize = async (evidence: SupervisionEvidence[], navigation = false, candidates: SupervisionCandidate[] = []) => {
         controller.signal.throwIfAborted()
         activity.inFlight++
         let raw: unknown
@@ -330,7 +370,7 @@ export class SupervisorService {
           controller.signal.throwIfAborted()
           const evidence = db.chunk(runId, group.projectId, group.conversationId, config)
           if (!evidence.length) throw new Error('Pending source produced no reviewable content')
-          const output = await summarize(evidence)
+          const output = await summarize(evidence, false, await candidatesFor(group.projectId))
           controller.signal.throwIfAborted()
           db.save(runId, group.projectId, group.conversationId, evidence, output)
         }))
@@ -341,6 +381,8 @@ export class SupervisorService {
       const progress = db.progress(runId)
       if (!progress.batches) {
         this.store.noChange?.(runId)
+        // Earlier events may still await assignment (an upgrade backlog or a failed attempt).
+        await this.organizeStories(db, runId, request, config, controller.signal)
         return { runId, request, evidence: [], output: empty, status: 'no_change', coverage: db.progress(runId) }
       }
       type Card = { id: string; output: SupervisionSummaryOutput }
@@ -397,11 +439,20 @@ export class SupervisorService {
       controller.signal.throwIfAborted()
       db.assertComplete(runId)
       db.setPhase(runId, 'saving')
-      const result: StoredSupervisionResult = { runId, request, candidates,
+      // A resumed run reuses leaves saved earlier; offer their projects' candidates too.
+      const savedProjects = new Set<string>()
+      for (let offset = 0;; offset += 10) {
+        const saved = db.batches(runId, 10, offset)
+        if (!saved.length) break
+        for (const batch of saved) savedProjects.add(batch.projectId)
+      }
+      for (const projectId of savedProjects) await candidatesFor(projectId)
+      const result: StoredSupervisionResult = { runId, request, candidates: [...offered.values()],
         evidence: progress.batches === 1 ? first!.evidence : [], output: root!.output,
         status: 'completed', coverage: { ...db.progress(runId), complete: true } }
       await this.store.save(result)
-      return result
+      await this.organizeStories(db, runId, request, config, controller.signal)
+      return { ...result, coverage: { ...db.progress(runId), complete: true } }
     } catch (error) {
       if (controller.signal.aborted) return stopped()
       this.store.fail?.(runId, error instanceof Error ? error.message : 'Review failed')

@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ApplicationSettings, ApplicationSettingsUpdate } from '../../shared/application-settings-contracts'
-import { defaultSupervisionReviewSettings, supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
+import { defaultStoryThreadEvents, defaultSupervisionReviewSettings, supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
 
 const fields = [
-  ['pageSize', 1, 200], ['batchCharacters', 1000, 16000], ['batchMessages', 1, 50], ['responseKiB', 100, 16384]
+  ['pageSize', 1, 200], ['batchCharacters', 1000, 16000], ['batchMessages', 1, 50], ['responseKiB', 100, 16384], ['storyThreadEvents', 4, 500]
 ] as const
 
 export function SupervisionReviewSettings({ settings, disabled, onSave }: {
@@ -14,10 +14,12 @@ export function SupervisionReviewSettings({ settings, disabled, onSave }: {
 }) {
   const { t } = useTranslation('heartbeat')
   const current = { ...defaultSupervisionReviewSettings, ...settings?.supervisionReview,
-    responseKiB: settings?.supervisionReview?.responseKiB ?? 1024 }
+    responseKiB: settings?.supervisionReview?.responseKiB ?? 1024, crossProject: settings?.supervisionReview?.crossProject ?? false,
+    storyThreadEvents: settings?.supervisionReview?.storyThreadEvents ?? defaultStoryThreadEvents }
   const [saved, setSaved] = useState(current)
   const [draft, setDraft] = useState(current)
-  if (fields.some(([key]) => saved[key] !== current[key])) { setSaved(current); setDraft(current) }
+  if (fields.some(([key]) => saved[key] !== current[key]) || saved.crossProject !== current.crossProject) { setSaved(current); setDraft(current) }
+  const unchanged = fields.every(([key]) => draft[key] === current[key]) && draft.crossProject === current.crossProject
   const valid = supervisionReviewSettingsSchema.safeParse(draft).success
   const locked = disabled || !settings || !onSave
   return <form className="heartbeat-settings heartbeat-settings__editor" onSubmit={event => {
@@ -31,8 +33,14 @@ export function SupervisionReviewSettings({ settings, disabled, onSave }: {
       <input type="number" min={min} max={max} step={1} value={draft[key]} disabled={locked}
         onChange={event => setDraft({ ...draft, [key]: Number(event.target.value) })} />
     </label>)}
+    <label className="toggle-row">
+      <span>{t('reviewSettings.crossProject')}</span>
+      <input type="checkbox" role="switch" checked={draft.crossProject} disabled={locked}
+        onChange={event => setDraft({ ...draft, crossProject: event.target.checked })} />
+    </label>
+    <p>{t('reviewSettings.crossProjectHelp')}</p>
     <p>{t('reviewSettings.pauseHelp')}</p>
     {!valid && <p role="alert">{t('reviewSettings.invalid')}</p>}
-    <button type="submit" className="primary-button" disabled={locked || !valid || fields.every(([key]) => draft[key] === current[key])}>{t('reviewSettings.save')}</button>
+    <button type="submit" className="primary-button" disabled={locked || !valid || unchanged}>{t('reviewSettings.save')}</button>
   </form>
 }

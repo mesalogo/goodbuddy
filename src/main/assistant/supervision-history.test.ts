@@ -88,6 +88,9 @@ it('supervision preserves result history and protected identities within scope t
 
     const other = structuredClone(third)
     other.request.scope = { kind: 'projects', projectIds: [projects[1]!.id] }
+    // Cross-project off: project B is never offered project A's entities, so it cannot claim them.
+    other.candidates = db.listSupervisionCandidates(other.request, { projectId: projects[1]!.id, crossProject: false })
+    expect(other.candidates).toEqual([])
     expect(() => db.saveSupervisionResult(other)).toThrow('本次范围')
     other.output.entities.forEach((entity) => { delete entity.persistedId })
     other.evidence = [{ ...first.evidence[0]!, sourceId: 'B', title: 'B source' }]

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>时间与故事 · 3D Story Graph</title>
+  <link rel="stylesheet" href="3d-demo.css">
+</head>
+<body>
+  <header class="page-header">
+    <div><a href="README.md" class="eyebrow">GOODBUDDY / STORY GRAPH LAB</a><h1>时间只有一条，故事交错生长。</h1><p>沿螺旋看一周的经历；木片可以层层拆开：项目 › 功能 › 子线索；跨木片的经验来自真实事件。</p></div>
+    <span class="badge">真实图谱 · 09.19 – 09.26 · 归组由模型提出，待确认</span>
+  </header>
+  <main>
+    <section class="stage" aria-label="三维故事图谱">
+      <div class="stage-header"><span><i></i> <span id="scale-note">高度为时间，一圈一天 · 半径为当时的对话密度</span> · <span id="renderer-note">WebGL</span></span>
+        <div class="views" role="group" aria-label="视角">
+          <button data-view="oblique" title="看整体结构（1）">斜俯视</button><button data-view="side" title="看起止与间隔（2）">侧视</button><button data-view="top" title="看注意力密度（3）">俯视</button><button data-view="free" title="拖动、滚轮自由查看">自由</button>
+          <button id="reset">重置</button>
+        </div>
+      </div>
+      <div class="viewport">
+        <canvas id="scene" tabindex="0" aria-label="三维故事图谱。数字键 1、2、3 切换视角，方向键旋转，PageUp/PageDown 沿时间移动，加减号缩放，Esc 返回上一层。木片也可通过右侧列表选择。"></canvas>
+        <div class="axis-note"><span id="axis-end">09.26</span><br><span>↑<br>时间等速推进<br>↑</span><br><span id="axis-start">09.19</span></div>
+        <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
+        <div class="canvas-hint">拖动旋转 · 右键或 Shift 拖动沿时间移动 · 滚轮缩放 · 点击木片拆开 · Esc 返回</div>
+      </div>
+      <div class="controls">
+        <label><input id="wisdom" type="checkbox" checked> 跨故事经验</label>
+        <label title="把多个项目里属于同一件事的功能串成一片全局木片；事件仍归属原项目"><input id="cross" type="checkbox"> 跨项目故事</label>
+        <label>范围 <select id="range"><option value="all">全部</option><option value="72">最近 3 天</option><option value="24">最近 1 天</option><option value="custom" hidden>所选时段</option></select></label>
+        <label>一圈 <select id="turn"><option value="auto">自动</option><option value="3">3 小时</option><option value="6">6 小时</option><option value="12">12 小时</option><option value="24">1 天</option><option value="168">1 周</option><option value="720">1 个月</option></select></label>
+        <button id="range-reset" hidden>返回全部时间</button>
+        <label class="range">缩放 <input id="zoom" type="range" min="50" max="250" value="100"></label>
+      </div>
+      <div class="legend"><span><b class="line"></b>时间：唯一的连续螺旋</span><span><b class="surface"></b>故事：木片，上下跨度为起止时间，短横为同一时段的事件，越粗越多</span><span><b class="link"></b>事件：同一高度连到所属木片，数字为聚合数量，点击放大拆开</span><span><b class="dashed"></b>经验：从形成到应用</span></div>
+    </section>
+    <aside>
+      <nav id="crumbs" class="crumbs" aria-label="木片层级"></nav>
+      <section class="inspector" aria-live="polite"><span id="period" class="section-label"></span><h2 id="story-title"></h2><p id="story-description"></p></section>
+      <div id="stories" class="stories" role="group" aria-label="下一层木片"></div>
+      <div id="events" class="events" aria-label="事件"></div>
+      <div id="detail" class="detail"></div>
+      <div id="wisdom-list" class="wisdom-list"></div>
+    </aside>
+  </main>
+  <footer><strong>数据来源：</strong>本机已生成的故事线图谱（2 次回顾，268 个实体；两次回顾重复提取的事件已按时间与类型合并，剩 358 个）的只读导出。项目由事件引用的会话确定；功能与子线索、跨故事经验由 deepseek-flash 根据实体与事件提出，未经确认。半径为每 3 小时的对话轮次，只表示投入集中程度，不代表效率。goodbuddy 以外的项目只显示时间与类型。“跨项目故事”默认关闭；打开后，按功能名称把多个项目中的同一件事（如果蝇神经仿真、Agent 运行环境）串成全局木片，与项目木片并列；事件仍归属原项目。</footer>
+  <script src="3d-demo-data.js"></script>
+  <script src="vendor/three.min.js"></script>
+  <script src="3d-demo-webgl.js"></script>
+</body>
+</html>

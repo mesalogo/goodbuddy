@@ -1,5 +1,9 @@
 # 故事线图谱（Story Graph）
 
+下一版视觉方向见 [3D 故事线图谱概念](./3d-concept.md)：记录变半径时间螺旋、长短不同的故事木片与跨故事智慧复用，以及概念图生成引用。该方案尚未实现，不替代下述现有演示。
+
+[打开 3D 网页 Demo](./3d-demo.html)：基于本机故事线图谱的只读导出（`3d-demo-data.js`），木片按项目 › 功能 › 子线索分层。默认用 WebGL 渲染（`3d-demo-webgl.js`，依赖仓库内的 `vendor/three.min.js`，Three.js r160，MIT 许可见 `vendor/three.LICENSE`），由 GPU 深度缓冲处理遮挡；浏览器不支持 WebGL 时自动改用 Canvas 投影版本（`3d-demo.js`）。直接打开 HTML 即可，不接入生产图谱，不是已上线的产品界面。
+
 这是[监督者应用](../conversation-supervision/supervisor-prd.md)的核心视图。目标对象与交互由[产品设计](./prd.md)定义，用户验收见[User Stories](../conversation-supervision/user-stories.md)。时间事件、知识实体与阶段总结在目标设计中分别建模；下述演示仍使用阶段节点。
 
 [打开交互演示](./demo.html)。这是监督者故事图谱的独立设计原型，使用模拟数据，尚未接入产品或笔记存储。

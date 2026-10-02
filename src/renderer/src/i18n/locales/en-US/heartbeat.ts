@@ -5,11 +5,14 @@ export const heartbeat = {
   reviewSettings: {
     title: 'Review algorithm',
     responseKiB: 'Response capacity, KiB (default 1024)',
+    storyThreadEvents: 'Minimum events before a feature splits into sub-threads (default 20)',
     save: 'Save review algorithm',
     help: 'Page size controls database reads, not total coverage. Batch limits split work without dropping remaining text. These settings and the organize timeout are frozen for each new review; continuing uses its saved configuration. Response capacity uses the current setting for each request; increase it before continuing a failed review.',
     pageSize: 'Sources read at a time (default 50)', batchCharacters: 'Text size per batch (default 8000)',
     batchMessages: 'Messages per batch (default 20)', executionSeconds: 'Time before pausing, seconds (default 300)',
     pauseHelp: 'Reviews run continuously until complete and save each batch. Pause and continue from Activity records.',
+    crossProject: 'Link across projects',
+    crossProjectHelp: 'When off, new content links only to knowledge already in the same project. When on, it can link to the same work in other projects. Applies to later reviews.',
     invalid: 'Enter whole numbers within the displayed ranges.',
     pause: 'Pause review', resume: 'Continue saved review', facts: 'Retained facts and sources',
     cancel: 'Cancel review', cancelling: 'Cancelling review…', pausing: 'Pausing review…',
@@ -69,6 +72,8 @@ export const heartbeat = {
     triggers: { manual: 'User', scheduled: 'Schedule', heartbeat: 'Heartbeat' },
     trigger: 'Triggered by', started: 'Started', finished: 'Finished', unknownScope: 'Execution scope not recorded',
     heartbeatStage: 'Heartbeat trigger', supervisionStage: 'Supervision review', notRecorded: 'No recorded execution',
+    storyStage: 'Stories', storyStates: { running: 'Organizing', completed: '{{assigned}} events assigned', failed: 'Failed' }, retryStories: 'Organize stories again',
+    storyFailed: 'The review is saved, but stories could not be organized. Try again, or the next review will catch up.',
     suggestionStage: 'Suggestions', suggestionStates: { running: 'Generating', completed: '{{count}} generated', skipped: 'Nothing to suggest', failed: 'Failed' },
     retrySuggestions: 'Regenerate suggestions', updatedSuggestionFailed: 'Review updated; suggestions could not be generated.',
     openReview: 'Open review', pagination: 'Activity pages', previous: 'Newer', next: 'Older', page: 'Page {{page}}'
@@ -96,7 +101,26 @@ export const heartbeat = {
     more: 'More review actions', reanalyze: 'Reanalyze…', reanalyzeTitle: 'Reanalyze this period?', reanalyzeConfirm: 'Reanalyze',
     reanalyzeHint: 'All content in {{scope}} from the last {{period}} will be analyzed again, which may use more model tokens. Confirmed content and heartbeat progress are not affected.', retryRun: 'Retry review', dismiss: 'Dismiss',
     graphScope: 'Graph scope', graphEmpty: 'No story events in this scope', legend: 'Solid lines show event impact on entities; dashed lines show entity relations. Time runs counter-clockwise with a visible gap.', start: 'Start', end: 'End',
-    listTabs: { event: 'Events', entity: 'Entities', relation: 'Relations' },
+    listTabs: { event: 'Events', entity: 'Entities', relation: 'Relations', story: 'Stories' },
+    graph3d: {
+      mode: 'Graph view', modes: { flat: 'Flat', spiral: 'Time spiral' },
+      levels: 'Stave levels', all: 'All', views: 'Viewpoint', canvas: 'Time spiral. Keys 1, 2 and 3 switch the viewpoint, arrow keys rotate, Esc goes up a level; the list below offers the same staves.',
+      view: { oblique: 'Oblique', side: 'Side', top: 'Top', free: 'Free' },
+      staves: 'Staves at this level',
+      legend: 'Height is time, one turn is {{turn}} ({{count}} turns); radius is conversation density at the time and only shows how concentrated the work was. A stave spans its story from first to last event.',
+      turns: { 3: '3 hours', 6: '6 hours', 12: '12 hours', 24: '1 day', 168: '1 week', 720: '1 month', 2160: '1 quarter', 8760: '1 year' },
+      unsupported: 'This device cannot show 3D. Use the flat view and the story list.'
+    },
+    stories: {
+      empty: 'No stories yet. After the next review, events are grouped into features and sub-threads under each project.',
+      unassigned: '{{count}} more events are not in any story.',
+      count: '{{count}} events', concluded: 'Concluded', active: 'Ongoing', edited: 'Edited by you',
+      cross: 'Cross-project stories', levels: { feature: 'Feature', thread: 'Sub-thread', cross: 'Cross-project story' },
+      rename: 'Rename', name: 'Name', remove: 'Remove story', undo: 'Undo last change',
+      removeHint: 'Its events move to the parent feature or become unassigned. Events are not deleted, and later reviews will not recreate a story with this name.',
+      mergeInto: 'Merge into', chooseStory: 'Choose a story', merge: 'Merge',
+      events: 'Events ({{count}})', primary: 'Story', none: 'Not in a story', missing: 'This story was changed. Select it again.'
+    },
     listEmpty: 'No records of this type in this review.',
     openConversation: 'Open conversation',
     discussion: {

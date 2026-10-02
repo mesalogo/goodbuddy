@@ -776,7 +776,10 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     knowledgeCommit: vi.fn(async () => ({})),
     suggestions: vi.fn(async () => []),
     suggestionAction: vi.fn(async () => { throw new Error('unused') }),
-    retrySuggestions: vi.fn(async () => 0)
+    retrySuggestions: vi.fn(async () => 0),
+    stories: vi.fn(async () => ({ stories: [], unassigned: 0, canUndo: false })),
+    storyAction: vi.fn(async () => undefined),
+    retryStories: vi.fn(async () => { throw new Error('unused') })
   },
   experts: {
     list: vi.fn(async () => []),

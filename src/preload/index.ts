@@ -1425,7 +1425,10 @@ const desktopApi: DesktopApi = {
     relationAction: (input) => ipcRenderer.invoke(ipcChannels.supervisionRelationAction, input) as Promise<void>,
     suggestions: (input) => ipcRenderer.invoke(ipcChannels.supervisionSuggestions, input ?? {}),
     suggestionAction: (input) => ipcRenderer.invoke(ipcChannels.supervisionSuggestionAction, input),
-    retrySuggestions: (input) => ipcRenderer.invoke(ipcChannels.supervisionRetrySuggestions, input)
+    retrySuggestions: (input) => ipcRenderer.invoke(ipcChannels.supervisionRetrySuggestions, input),
+    stories: (input) => ipcRenderer.invoke(ipcChannels.supervisionStories, input),
+    storyAction: (input) => ipcRenderer.invoke(ipcChannels.supervisionStoryAction, input) as Promise<void>,
+    retryStories: (input) => ipcRenderer.invoke(ipcChannels.supervisionRetryStories, input)
   },
   experts: {
     list: () =>

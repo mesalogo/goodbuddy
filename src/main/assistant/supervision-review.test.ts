@@ -330,11 +330,11 @@ it('resolves a supplied source token to its unique input fragment without expand
   for (const batch of batches) expect(batch.output.events[0]!.sourceReferenceIds).toEqual([batch.evidence[0]!.id])
 })
 
-it('continues an existing schema-46 automatic checkpoint without rereading its successful prefix', async () => {
+it('continues an existing automatic timeline checkpoint without rereading its successful prefix', async () => {
   const f = await fixture([['x'.repeat(3300)]], { concurrency: 1 })
   const old = f.db.collectIncrementalReview({ ...request, trigger: 'heartbeat' }, 'supervisor')
   const checkpoint = old.checkpoints[0]!
-  f.sql.prepare('INSERT INTO review_checkpoints VALUES (?, ?, ?, ?, ?, ?)').run('supervisor', old.scope,
+  f.sql.prepare('INSERT INTO review_checkpoints VALUES (?, ?, ?, ?, ?, ?)').run('supervisor', 'timeline',
     checkpoint.source, checkpoint.revision, checkpoint.offset, checkpoint.length)
   const result = await f.service().run({ ...request, trigger: 'heartbeat' })
   const evidence = f.db.supervisionReviewStore().batches(result.runId!).flatMap(batch => batch.evidence)

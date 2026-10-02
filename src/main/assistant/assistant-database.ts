@@ -133,7 +133,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 52
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 54
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -8865,11 +8865,14 @@ export class AssistantDatabase {
     return row ? toHeartbeatEntry(row) : undefined
   }
 
-  listSupervisionCandidates(request: StoredSupervisionResult['request']): SupervisionCandidate[] {
-    const rows = this.requireDatabase().prepare(`SELECT e.id, e.canonical_label AS label, e.description
+  listSupervisionCandidates(request: StoredSupervisionResult['request'], batch?: { projectId: string; crossProject: boolean }): SupervisionCandidate[] {
+    // The timeline is shared: a batch joins knowledge from its own project, or any project when cross-project is on.
+    const rows = (batch
+      ? timelineCandidates(this.requireDatabase(), batch.projectId, batch.crossProject)
+      : this.requireDatabase().prepare(`SELECT e.id, e.canonical_label AS label, e.description
       FROM supervision_entities e JOIN story_lines s ON s.id = e.story_line_id
       WHERE s.scope_json = ? AND e.confirmation_state != 'revoked'
-      ORDER BY e.updated_at DESC, e.id LIMIT 100`).all(JSON.stringify(request.scope)) as SupervisionCandidate[]
+      ORDER BY e.updated_at DESC, e.id LIMIT 100`).all(JSON.stringify(request.scope))) as SupervisionCandidate[]
     return rows.map(candidate => {
       if (supervisionEntitySchema.shape.persistedId.safeParse(candidate.id).success) return candidate
       // Released databases contain text primary keys. Keep those keys and their
@@ -8976,12 +8979,13 @@ export class AssistantDatabase {
       // Model IDs are local to one batch, never persistent cross-run identities.
       const sourceIds = new Map(result.evidence.map((source) => [source.id, randomUUID()]))
       const candidates = new Map((result.candidates ?? []).map(entity => [entity.id, entity.storageId ?? entity.id]))
-      const currentCandidate = database.prepare("SELECT id FROM supervision_entities WHERE id = ? AND story_line_id = ? AND confirmation_state != 'revoked'")
+      // Candidates come from the shared timeline, so a reused entity may first have appeared under another scope.
+      const currentCandidate = database.prepare("SELECT id FROM supervision_entities WHERE id = ? AND confirmation_state != 'revoked'")
       const entityIds = new Map<string, string>()
       for (const entity of result.output.entities) {
         const storedId = entity.persistedId ? candidates.get(entity.persistedId) : undefined
         if (entityIds.has(entity.id) || (entity.persistedId &&
-            (!storedId || !currentCandidate.get(storedId, story.id) || [...entityIds.values()].includes(storedId)))) {
+            (!storedId || !currentCandidate.get(storedId) || [...entityIds.values()].includes(storedId)))) {
           throw new Error('监督者实体身份不属于本次范围或重复')
         }
         entityIds.set(entity.id, storedId ?? randomUUID())
@@ -8994,11 +8998,14 @@ export class AssistantDatabase {
       const sourceReferences = (ids: string[]): string =>
         JSON.stringify(ids.map((id) => persistentId(sourceIds, id)))
       const insertSource = database.prepare(`INSERT INTO supervision_sources
-        (id, result_id, source_type, source_id, title, occurred_at, content, locator_json, availability)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available')`)
+        (id, result_id, source_type, source_id, title, occurred_at, content, locator_json, availability, source_key, source_revision)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?)`)
       for (const source of result.evidence) {
-        insertSource.run(persistentId(sourceIds, source.id), resultId, source.sourceType, source.sourceId, source.title, source.occurredAt, source.content, source.locator ? JSON.stringify(source.locator) : null)
+        const key = typeof source.locator?.source === 'string' ? source.locator.source : null
+        const revision = typeof source.locator?.revision === 'string' ? source.locator.revision : null
+        insertSource.run(persistentId(sourceIds, source.id), resultId, source.sourceType, source.sourceId, source.title, source.occurredAt, source.content, source.locator ? JSON.stringify(source.locator) : null, key, revision)
       }
+      // A reused entity keeps the story line it first appeared in; the graph reads it through its events.
       const insertEntity = database.prepare(`INSERT INTO supervision_entities
         (id, story_line_id, canonical_label, description, confirmation_state, updated_at, source_reference_ids_json)
         VALUES (?, ?, ?, ?, 'automatic', ?, ?)
@@ -9072,6 +9079,8 @@ export class AssistantDatabase {
           WHERE id = ?`).run(resultId)
         this.supervisionReviewStore().commitCheckpoints(result.runId, result.request)
       } else saveFacts(result)
+      placeTimelineEvents(database, resultId)
+      supersedeReextractedEvents(database, resultId)
       if (result.batch) this.saveReviewCheckpoints(result.batch)
       database.exec('COMMIT')
     } catch (error) {
@@ -9138,21 +9147,44 @@ export class AssistantDatabase {
         eventSources: database.prepare(`SELECT es.event_id, es.source_id FROM supervision_event_sources es JOIN supervision_events e ON e.id = es.event_id WHERE e.result_id = ?`).all(input.resultId)
       }
     }
-    return {
-      storyLine: story,
-      events: database.prepare('SELECT * FROM supervision_events WHERE story_line_id = ? ORDER BY occurred_at').all(id),
-      entities: database.prepare('SELECT * FROM supervision_entities WHERE story_line_id = ? ORDER BY canonical_label').all(id),
-      relations: database.prepare("SELECT * FROM supervision_relations WHERE story_line_id = ? AND confirmation_state != 'revoked'").all(id),
-      eventEntities: database.prepare(`SELECT ee.event_id, ee.entity_id FROM supervision_event_entities ee
-        JOIN supervision_events e ON e.id = ee.event_id WHERE e.story_line_id = ?`).all(id),
-      eventSources: database.prepare(`SELECT es.event_id, es.source_id FROM supervision_event_sources es
-        JOIN supervision_events e ON e.id = es.event_id WHERE e.story_line_id = ?`).all(id),
-      sources: database.prepare(`SELECT DISTINCT s.* FROM supervision_sources s
-        JOIN supervision_results r ON r.id = s.result_id
-        JOIN supervision_runs sr ON sr.id = r.run_id
-        WHERE sr.scope_json = (SELECT scope_json FROM story_lines WHERE id = ?)`
-      ).all(id)
-    }
+    // The story line is a scope over the one shared timeline: current events of its projects,
+    // whichever review extracted them, with their entities, relations and sources.
+    const scope = JSON.parse(String((story as { scope_json: string }).scope_json)) as SupervisionRunRequest['scope']
+    const projects = scope.kind === 'projects' ? JSON.stringify(scope.projectIds) : null
+    database.exec('DROP TABLE IF EXISTS temp.story_events')
+    // Events whose sources carry no project stay with the story line that extracted them.
+    database.prepare(`CREATE TEMP TABLE story_events AS SELECT id FROM supervision_events
+      WHERE superseded_by IS NULL AND (? IS NULL OR project_id IN (SELECT value FROM json_each(?))
+        OR (COALESCE(project_id, '') = '' AND story_line_id = ?))`).run(projects, projects, id)
+    try {
+      return {
+        storyLine: story,
+        events: database.prepare('SELECT * FROM supervision_events WHERE id IN (SELECT id FROM temp.story_events) ORDER BY COALESCE(started_at, occurred_at)').all(),
+        entities: database.prepare(`SELECT * FROM supervision_entities WHERE id IN (SELECT ee.entity_id FROM supervision_event_entities ee
+          WHERE ee.event_id IN (SELECT id FROM temp.story_events)) OR (story_line_id = ? AND NOT EXISTS (SELECT 1 FROM supervision_event_entities ee WHERE ee.entity_id = supervision_entities.id))
+          ORDER BY canonical_label`).all(id),
+        relations: database.prepare(`SELECT r.* FROM supervision_relations r WHERE r.confirmation_state != 'revoked' AND (r.story_line_id = ? OR (
+          r.from_entity_id IN (SELECT entity_id FROM supervision_event_entities WHERE event_id IN (SELECT id FROM temp.story_events))
+          AND r.to_entity_id IN (SELECT entity_id FROM supervision_event_entities WHERE event_id IN (SELECT id FROM temp.story_events))))
+          GROUP BY r.from_entity_id, r.to_entity_id, r.relation_type`).all(id),
+        eventEntities: database.prepare('SELECT event_id, entity_id FROM supervision_event_entities WHERE event_id IN (SELECT id FROM temp.story_events)').all(),
+        eventSources: database.prepare('SELECT event_id, source_id FROM supervision_event_sources WHERE event_id IN (SELECT id FROM temp.story_events)').all(),
+        sources: database.prepare(`SELECT * FROM supervision_sources WHERE id IN (SELECT source_id FROM supervision_event_sources
+          WHERE event_id IN (SELECT id FROM temp.story_events)) OR result_id IN (SELECT r.id FROM supervision_results r
+          JOIN supervision_runs sr ON sr.id = r.run_id WHERE sr.scope_json = ?)`).all(String((story as { scope_json: string }).scope_json)),
+        attention: this.storyAttention(scope)
+      }
+    } finally { database.exec('DROP TABLE IF EXISTS temp.story_events') }
+  }
+
+  /** Message turns and text per hour across the span of the scope's current events. */
+  private storyAttention(scope: SupervisionRunRequest['scope']) {
+    const database = this.requireDatabase()
+    const projects = scope.kind === 'projects' ? scope.projectIds : undefined
+    const span = database.prepare(`SELECT MIN(COALESCE(started_at, occurred_at)) AS a, MAX(COALESCE(ended_at, occurred_at)) AS b
+      FROM supervision_events WHERE superseded_by IS NULL AND (? IS NULL OR project_id IN (SELECT value FROM json_each(?)))`)
+      .get(projects ? 1 : null, JSON.stringify(projects ?? [])) as { a: string | null; b: string | null }
+    return span.a && span.b ? supervisionAttention(database, projects, span.a, span.b) : []
   }
 
   getSupervisionSource(sourceId: string): Record<string, unknown> | undefined {
@@ -11909,6 +11941,25 @@ export class AssistantDatabase {
         database.exec('PRAGMA user_version = 52; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
+    if (version.user_version < 53) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        migrateSupervisionTimeline(database)
+        database.exec('PRAGMA user_version = 53; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+    if (version.user_version < 54) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // Stories start empty: existing events are assigned by the next review, without rereading sources.
+        database.exec(supervisionStoriesMigration)
+        database.exec('PRAGMA user_version = 54; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+  }
+
+  supervisionStories(): SupervisionStoryStore {
+    return new SupervisionStoryStore(this.requireDatabase())
   }
 
   supervisionReviewStore(): SupervisionReviewStore {
@@ -11965,6 +12016,8 @@ export class AssistantDatabase {
 }
 import type { ImageOperation } from '../../shared/image-generation-contracts'
 import { SupervisionReviewStore, supervisionReviewMigration } from './supervision-review-store'
+import { SupervisionStoryStore, supervisionStoriesMigration } from './supervision-stories'
+import { migrateSupervisionTimeline, placeTimelineEvents, supersedeReextractedEvents, supervisionAttention, timelineCandidates } from './supervision-timeline'
 import { SupervisionSuggestionStore } from './supervision-suggestions'
 import type { SupervisionSuggestion } from '../../shared/supervision-contracts'
 import { readStoryGraph } from './story-graph-reader'

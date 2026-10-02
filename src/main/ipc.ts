@@ -258,6 +258,7 @@ import { HeartbeatService } from './assistant/heartbeat-service'
 import { createProductionSuggestionPhraser, createProductionSupervisorService } from './assistant/supervision-production'
 import { deriveSuggestions } from './assistant/supervision-suggester'
 import { supervisionReviewIdSchema, supervisionBatchesRequestSchema } from '../shared/supervision-review-contracts'
+import { supervisionStoryActionSchema, supervisionStoryListSchema } from '../shared/supervision-story-contracts'
 import {
   supervisionEntityActionSchema,
   supervisionActivityRequestSchema,
@@ -7247,6 +7248,26 @@ export function registerIpcHandlers(
     }
     knowledgeService.database.updateEntity(request.entityId!, { name: request.label, type: request.type, description: request.description || null, aliases: request.aliases, locked: true })
     return { operation: request.operation, status: 'committed' }
+  })
+  registerHandler(ipcChannels.supervisionStories, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { scope } = supervisionStoryListSchema.parse(input)
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return { stories: [], unassigned: 0, canUndo: false }
+    const stories = assistantDatabase.supervisionStories()
+    return { stories: stories.list(scope), unassigned: stories.unassignedCount(scope), canUndo: stories.canUndo() }
+  })
+  registerHandler(ipcChannels.supervisionStoryAction, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const action = supervisionStoryActionSchema.parse(input)
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) throw new Error('Supervisor is disabled')
+    assistantDatabase.supervisionStories().act(action)
+  })
+  registerHandler(ipcChannels.supervisionRetryStories, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { runId } = supervisionReviewIdSchema.parse(input)
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) throw new Error('Supervisor is disabled')
+    if (executionPaused || shuttingDown) throw new Error('本地数据维护期间暂不接受新任务')
+    return trackExecution(supervisorService.organizeStoriesFor(runId))
   })
   registerHandler(ipcChannels.supervisionEntityAction, (event, input: unknown) => {
     assertTrustedSender(event, window)
