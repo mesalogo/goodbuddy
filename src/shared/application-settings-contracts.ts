@@ -59,7 +59,7 @@ const applicationPreferencesSchema = z
   .object({
     checkUpdatesOnStartup: z.boolean(),
     desktopNotificationsEnabled: z.boolean().default(true),
-    transparentFrostedEffectEnabled: z.boolean().default(false),
+    transparentFrostedEffectEnabled: z.boolean().default(true),
     updateSource: updateSourceSchema,
     modelDownloadSource: modelDownloadSourceSchema,
     localToolEnvironment: localToolEnvironmentSettingsSchema,

@@ -656,7 +656,7 @@ export function SettingsPanel({
   onClearLocalData,
   onExpertsChanged = () => {},
   appearanceTheme = 'system',
-  transparentFrostedEffectEnabled = false,
+  transparentFrostedEffectEnabled = true,
   applicationSettingsPending = false,
   applicationSettingsLocked = false,
   applicationSettingsError,

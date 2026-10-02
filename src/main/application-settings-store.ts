@@ -251,7 +251,7 @@ export const resolveLegacyLocalToolEnvironmentPaths: LegacyLocalToolEnvironmentR
 export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   desktopNotificationsEnabled: true,
-  transparentFrostedEffectEnabled: false,
+  transparentFrostedEffectEnabled: true,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,

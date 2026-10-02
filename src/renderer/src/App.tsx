@@ -11173,7 +11173,7 @@ function App(): React.JSX.Element {
                   <Suspense fallback={null}>
                     <SettingsPanel
                       appearanceTheme={appearanceTheme}
-                      transparentFrostedEffectEnabled={applicationSettings?.transparentFrostedEffectEnabled ?? false}
+                      transparentFrostedEffectEnabled={applicationSettings?.transparentFrostedEffectEnabled ?? true}
                       applicationSettingsPending={applicationSettingsPending}
                       applicationSettingsLocked={applicationSettingsUnconfirmed || !applicationSettings}
                       applicationSettingsError={applicationSettingsError}

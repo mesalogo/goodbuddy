@@ -75,18 +75,18 @@ describe('ApplicationSettingsStore', () => {
     }
   })
 
-  it.each([11, 12])('defaults missing frosted glass to off in version %s', async (version) => {
+  it.each([11, 12])('defaults missing frosted glass to on in version %s', async (version) => {
     const { filePath, store } = await createStore()
     const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null, checkUpdatesOnStartup: false }
     delete legacy.transparentFrostedEffectEnabled
     await writeFile(filePath, JSON.stringify(legacy))
     expect(await store.get()).toEqual({ ...defaultApplicationSettings, checkUpdatesOnStartup: false })
-    expect(applicationSettingsSchema.parse({ ...defaultApplicationSettings, transparentFrostedEffectEnabled: undefined }).transparentFrostedEffectEnabled).toBe(false)
+    expect(applicationSettingsSchema.parse({ ...defaultApplicationSettings, transparentFrostedEffectEnabled: undefined }).transparentFrostedEffectEnabled).toBe(true)
   })
 
   it('persists and publishes both frosted glass choices across unrelated updates and reloads', async () => {
     const { filePath, store } = await createStore()
-    expect((await store.get()).transparentFrostedEffectEnabled).toBe(false)
+    expect((await store.get()).transparentFrostedEffectEnabled).toBe(true)
     const changed = vi.fn()
     store.onChanged(changed)
     for (const transparentFrostedEffectEnabled of [true, false]) {
