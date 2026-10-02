@@ -16,7 +16,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
-import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
+import {
+  builtinModelToolGroups,
+  builtinModelTools
+} from '../../shared/builtin-model-tools'
 import type {
   BuiltinMcpServerId,
   CapabilityDiagnosticReport,
@@ -40,6 +43,8 @@ const configurableMcpTargets: RuntimeTarget[] = [
   'continue',
   'deepseek-harness'
 ]
+const imageTools = builtinModelTools.filter((tool) => tool.group === 'image')
+const imageExpansionId = 'builtin:image-generation'
 type McpSettingsTab =
   | 'builtin'
   | 'custom'
@@ -647,6 +652,65 @@ export function McpSettingsSection({
             >
               {t('conversationImages.openSettings')}
             </button>
+            <button
+              aria-controls="mcp-server-tools-image-generation"
+              aria-expanded={expandedItemIds.has(imageExpansionId)}
+              aria-label={t(
+                expandedItemIds.has(imageExpansionId)
+                  ? 'mcp.builtin.collapseServer'
+                  : 'mcp.builtin.expandServer',
+                { name: t('conversationImages.title') }
+              )}
+              className="secondary-button builtin-mcp-card__details"
+              onClick={() => toggleItem(imageExpansionId)}
+              type="button"
+            >
+              {t('mcp.builtin.toolCount', { count: imageTools.length })}
+              <ChevronDown
+                aria-hidden="true"
+                className={
+                  expandedItemIds.has(imageExpansionId)
+                    ? 'mcp-server-card__chevron mcp-server-card__chevron--expanded'
+                    : 'mcp-server-card__chevron'
+                }
+                size={15}
+              />
+            </button>
+            {expandedItemIds.has(imageExpansionId) && (
+              <div
+                className="builtin-mcp-card__tools"
+                id="mcp-server-tools-image-generation"
+              >
+                <section
+                  aria-label={t('mcp.builtin.toolsAriaLabel', {
+                    name: t('conversationImages.title')
+                  })}
+                  className="mcp-server-tools"
+                >
+                  <div className="mcp-server-tools__heading">
+                    <strong>{t('mcp.builtin.tools')}</strong>
+                    <small>
+                      {t('mcp.profiles.count', { count: imageTools.length })}
+                    </small>
+                  </div>
+                  <ul>
+                    {imageTools.map((tool) => (
+                      <li key={tool.name}>
+                        <div>
+                          <code>{tool.name}</code>
+                          <span className="builtin-tool-badge">
+                            {tool.access === 'write'
+                              ? t('mcp.builtin.write')
+                              : t('mcp.builtin.readOnly')}
+                          </span>
+                        </div>
+                        <p>{t(`conversationImages.tools.${tool.name}`)}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              </div>
+            )}
           </article>
           {builtinMcpServers.map((server) => {
             const expansionId = `builtin:${server.id}`

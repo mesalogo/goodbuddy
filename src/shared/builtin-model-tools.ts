@@ -15,6 +15,13 @@ export const builtinModelTools = [
     group: 'image'
   },
   {
+    name: 'save_image',
+    displayName: 'Save image to file',
+    description: 'Save a generated or uploaded image from this conversation to a local PNG, JPEG or WebP file.',
+    access: 'write',
+    group: 'image'
+  },
+  {
     name: 'workspace_rg',
     displayName: '搜索工作区',
     description:

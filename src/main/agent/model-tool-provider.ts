@@ -1257,6 +1257,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       ? await this.knowledgeGateway.isStoryGraphAvailable(context.knowledgeCapabilityToken) : false
     const scopedTools = grantedTools.filter(tool => !tool.name.startsWith('story_graph_') || storyGraphAvailable)
     const imageTool = context.workMode === 'execute' ? await imageToolDefinition(context.imageToolBinding) : undefined
+    const imageSaveTool = context.workMode === 'execute' ? await imageSaveToolDefinition(context.imageToolBinding) : undefined
     const webTools = this.webSearchEnabled
       ? this.getWebSearchDefinitions()
       : []
@@ -1280,6 +1281,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     return [
       ...workspaceTools,
       ...(imageTool ? [imageTool] : []),
+      ...(imageSaveTool ? [imageSaveTool] : []),
       ...processTools,
       ...subagentTools,
       ...outputTools,
@@ -1357,6 +1359,18 @@ export class ModelToolProvider implements ModelToolProviderLike {
         allowPermanent: false
       }
     }
+    if (tool.name === 'save_image') {
+      return {
+        scopeKey: 'model:builtin:save_image',
+        title: '允许将图片保存到本地文件？',
+        description: path
+          ? `会使用当前用户权限写入：${path}`
+          : '会使用当前用户权限将会话图片写入本地文件。',
+        toolName: tool.displayName,
+        argumentSummary,
+        allowPermanent: false
+      }
+    }
     if (tool.name === 'output_read') {
       return {
         scopeKey: 'model:builtin:output_read',
@@ -1429,6 +1443,10 @@ export class ModelToolProvider implements ModelToolProviderLike {
     if (name === 'generate_image') {
       if (!context.imageToolBinding || !context.toolCallId) throw new Error('Image tool request binding is unavailable')
       return createTextToolResult(JSON.stringify(await context.imageToolBinding.call(argumentsValue, context.toolCallId, signal)))
+    }
+    if (name === 'save_image') {
+      if (!context.imageToolBinding?.save) throw new Error('Image save capability is unavailable')
+      return createTextToolResult(JSON.stringify(await context.imageToolBinding.save(argumentsValue, signal)))
     }
     if (name === 'knowledge_list') {
       if (
@@ -2017,4 +2035,4 @@ function emitDirectModelSubagentUsage(
     )
   })
 }
-import { imageToolDefinition, type ImageToolBinding } from './image-tool-binding'
+import { imageSaveToolDefinition, imageToolDefinition, type ImageToolBinding } from './image-tool-binding'

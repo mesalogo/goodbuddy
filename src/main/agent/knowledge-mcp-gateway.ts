@@ -118,6 +118,7 @@ export {
 
 export type GoodBuddyBuiltinToolName =
   | 'generate_image'
+  | 'save_image'
   | ScopedDataToolName
   | BrowserToolName
 
@@ -834,6 +835,7 @@ export class KnowledgeMcpGateway {
     return [
       ...(capability.storyGraph ? storyGraphToolNames : []),
       ...(capability.imageToolBinding ? ['generate_image' as const] : []),
+      ...(capability.imageToolBinding?.save ? ['save_image' as const] : []),
       ...(capability.libraryIds.length > 0
         ? knowledgeToolNames
         : []),
@@ -1769,6 +1771,7 @@ export class KnowledgeMcpGateway {
           )
           const capability = this.getCapability(token)
           const imageTool = await imageToolDefinition(capability.imageToolBinding)
+          const imageSaveTool = await imageSaveToolDefinition(capability.imageToolBinding)
           const browserTools = capability.browserConversationId && capability.browserTabId
             ? new BrowserModelTools({
                 service: this.browserService!,
@@ -1796,6 +1799,7 @@ export class KnowledgeMcpGateway {
           return {
             tools: [
               ...(imageTool ? [{ name: imageTool.name, description: imageTool.description, inputSchema: imageTool.inputSchema as Tool['inputSchema'], annotations: { readOnlyHint: false, destructiveHint: false } }] : []),
+              ...(imageSaveTool ? [{ name: imageSaveTool.name, title: imageSaveTool.displayName, description: imageSaveTool.description, inputSchema: imageSaveTool.inputSchema as Tool['inputSchema'], annotations: { readOnlyHint: false, destructiveHint: true } }] : []),
               ...scopedTools,
               ...browserDefinitions,
               ...[...customBindings.values()].map(
@@ -1827,6 +1831,16 @@ export class KnowledgeMcpGateway {
           if (!capability.imageToolBinding) throw new Error('Image capability is unavailable')
           const operation = await capability.imageToolBinding.call(input, `${session.registryKey}:${extra.requestId}`, AbortSignal.any([extra.signal, capability.signal]))
           return { content: [{ type: 'text' as const, text: JSON.stringify(operation) }] }
+        }
+        if (name === 'save_image') {
+          const capability = this.getCapability(token)
+          if (!capability.imageToolBinding?.save) throw new Error('Image save capability is unavailable')
+          try {
+            const saved = await capability.imageToolBinding.save(input, AbortSignal.any([extra.signal, capability.signal]))
+            return { content: [{ type: 'text' as const, text: JSON.stringify(saved) }] }
+          } catch (error) {
+            return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Saving image failed' }] }
+          }
         }
         if (availableTools.has(name as ScopedDataToolName)) {
           const definition = scopedDataToolByName.get(
@@ -2123,4 +2137,4 @@ export class KnowledgeMcpGateway {
     }
   }
 }
-import { imageToolDefinition, type ImageToolBinding } from './image-tool-binding'
+import { imageSaveToolDefinition, imageToolDefinition, type ImageToolBinding } from './image-tool-binding'

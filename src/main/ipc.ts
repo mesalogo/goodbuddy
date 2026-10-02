@@ -3740,6 +3740,9 @@ export function registerIpcHandlers(
         }, () => normalizeInteractiveWorkMode(assistantDatabase.getConversation(enrichedRequest.conversationId).workMode))
       : undefined
     const imageToolAvailable = Boolean(await imageToolBinding?.describe())
+    // Remote Agents write the file on the remote host; Desktop streams the bytes on demand.
+    const imageSaveAvailable = Boolean(imageToolBinding?.save && normalizedWorkMode === 'execute' &&
+      await imageToolBinding.describeSave?.())
     const scopedCapability = await grantScopedDataCapability({
       storyGraph: selectedRuntimeTarget && applicationSettings?.heartbeatEnabled
         ? { runtimeTarget: selectedRuntimeTarget, projectId: enrichedRequest.projectId } : undefined,
@@ -3773,6 +3776,7 @@ export function registerIpcHandlers(
     const knowledgeCapabilityToken = scopedCapability.token
     const availableTools = [
       ...(imageToolAvailable ? ['generate_image'] : []),
+      ...(imageSaveAvailable ? ['save_image'] : []),
       ...(webSearchEnabled ? ['web_search', 'web_fetch'] : []),
       ...(!agentRuntimeSelected && !imageGeneration
         ? ['workspace_rg', 'workspace_read_text', 'output_read', 'subagent_delegate']

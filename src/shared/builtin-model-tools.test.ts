@@ -25,9 +25,12 @@ describe('built-in model tool catalog', () => {
       expect.arrayContaining(directModelTools.map((tool) => tool.name))
     )
     expect(groupedNames).not.toContain('generate_image')
-    expect(builtinModelTools.find((tool) => tool.name === 'generate_image')).toMatchObject({
-      group: 'image', access: 'write'
-    })
+    expect(groupedNames).not.toContain('save_image')
+    expect(
+      builtinModelTools
+        .filter((tool) => tool.group === 'image')
+        .map((tool) => [tool.name, tool.access])
+    ).toEqual([['generate_image', 'write'], ['save_image', 'write']])
 
     for (const group of builtinModelToolGroups) {
       expect(group.tools.every((tool) => tool.group === group.id)).toBe(true)

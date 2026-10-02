@@ -597,13 +597,15 @@ export class ProtocolRemoteRuntimeChannel
     this.#imageTool = undefined
     const description = preparation.workMode === 'execute' ? await imageToolBinding?.describe() : undefined
     const storyGraph = await storyGraphBinding?.available()
+    const saveDescription = preparation.workMode === 'execute' && imageToolBinding?.readForSave
+      ? await imageToolBinding.describeSave?.() : undefined
     waitSignal?.throwIfAborted()
     let imageTool: z.infer<typeof remotePromptOperationPreparationSchema>['imageTool']
-    if ((description && imageToolBinding) || storyGraph) {
+    if ((description && imageToolBinding) || storyGraph || saveDescription) {
       this.#assertCurrent()
       const binary = this.#state.client.allocateBinaryChannel?.({ kind: 'blob' })
       if (!binary) throw new Error('Remote image tool transport is unavailable')
-      imageTool = { channelId: binary.channelId, channelEpoch: binary.channelEpoch, ...(description ? { description } : {}), ...(storyGraph ? { storyGraph: true } : {}) }
+      imageTool = { channelId: binary.channelId, channelEpoch: binary.channelEpoch, ...(description ? { description } : {}), ...(storyGraph ? { storyGraph: true } : {}), ...(saveDescription ? { saveDescription } : {}) }
       this.#imageTool = new MainImageToolSession(binary, imageToolBinding, waitSignal, storyGraphBinding)
     }
     try {

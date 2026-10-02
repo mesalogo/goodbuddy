@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute } from 'node:path'
 import {
-  imageToolDescription, imageToolInputSchema,
-  type ImageOperation, type ImageRequestContext, type ImageToolInput
+  imageSaveMaximumBytes, imageSaveMimeTypeForPath, imageSaveToolDescription, imageSaveToolInputSchema, imageToolDescription, imageToolInputSchema,
+  type ImageOperation, type ImageRequestContext, type ImageSaveResult, type ImageSaveToolInput, type ImageToolInput
 } from '../../shared/image-generation-contracts'
 import type { AssistantDatabase } from '../assistant/assistant-database'
 import { ModelAgentRuntime, type ModelRuntimeOptions } from './model-runtime'
@@ -89,8 +91,79 @@ export class ImageGenerationService {
           return active.operation
         }
         return this.getOperation(bound.conversationId, operation.id)
+      },
+      describeSave: async () => {
+        if (bound.workMode !== 'execute' || currentWorkMode() !== 'execute') return undefined
+        const conversation = this.options.database.getConversation(bound.conversationId)
+        // The model can only save IDs it has seen, so list them even when generate_image is unavailable.
+        const images = conversation.messages.flatMap(message => [
+          ...(message.imageSourceArtifactIds ?? []).map(id => ({ artifactId: id, kind: 'upload' })),
+          ...(message.imageOperations ?? []).flatMap(operation => operation.artifactIds.map(id => ({ artifactId: id, kind: 'generated' })))
+        ]).slice(-32)
+        if (!images.length) {
+          const settings = await this.options.getSettings()
+          if (!settings.modelProfiles.some(profile => profile.protocol === 'openai-images-generations' && profile.allowConversationInvocation === true)) return undefined
+        }
+        return `${imageSaveToolDescription}\nConversation images (oldest first): ${images.length ? JSON.stringify(images) : 'none yet; images returned by generate_image can be saved'}`
+      },
+      save: async (input, signal) => {
+        if (bound.workMode !== 'execute' || currentWorkMode() !== 'execute') throw new Error('Saving images requires Execute mode')
+        return this.saveImage(bound.conversationId, imageSaveToolInputSchema.parse(input), signal)
+      },
+      readForSave: async (artifactId, mimeType) => {
+        if (bound.workMode !== 'execute' || currentWorkMode() !== 'execute') throw new Error('Saving images requires Execute mode')
+        return this.readImageForSave(bound.conversationId, artifactId, mimeType)
       }
     }
+  }
+
+  /** Writes a conversation-visible image artifact to an absolute local path. */
+  async saveImage(conversationId: string, input: ImageSaveToolInput, signal?: AbortSignal): Promise<ImageSaveResult> {
+    signal?.throwIfAborted()
+    const target = input.path
+    if (!isAbsolute(target)) throw new Error('path must be an absolute file path')
+    const targetMimeType = imageSaveMimeTypeForPath(target)
+    if (!targetMimeType) throw new Error('path must end with .png, .jpg, .jpeg or .webp')
+    const bytes = await this.readImageForSave(conversationId, input.artifactId, targetMimeType)
+    signal?.throwIfAborted()
+    await mkdir(dirname(target), { recursive: true })
+    try {
+      await writeFile(target, bytes, { flag: input.overwrite ? 'w' : 'wx' })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('File already exists; choose another path or set overwrite=true', { cause: error })
+      throw error
+    }
+    return { artifactId: input.artifactId, path: target, mimeType: targetMimeType, byteSize: bytes.byteLength }
+  }
+
+  /** Returns a conversation-visible image encoded as the requested format; used for local and remote saves. */
+  async readImageForSave(conversationId: string, artifactId: string, targetMimeType: ImageSaveResult['mimeType']): Promise<Buffer> {
+    const conversation = this.options.database.getConversation(conversationId)
+    const allowed = new Set(conversation.messages.flatMap(message => [
+      ...(message.artifactIds ?? []), ...(message.imageSourceArtifactIds ?? []),
+      ...(message.imageOperations?.flatMap(operation => operation.artifactIds) ?? [])
+    ]))
+    if (!allowed.has(artifactId)) throw new Error('Image is not available in this conversation')
+    let artifact: ReturnType<AssistantDatabase['getArtifact']>
+    try {
+      artifact = this.options.database.getArtifact(artifactId)
+    } catch {
+      throw new Error('Image is not available in this conversation')
+    }
+    const match = artifact.kind === 'image'
+      ? artifact.content?.match(/^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/u)
+      : undefined
+    if (!match) throw new Error('Artifact is not a saved image')
+    let bytes: Buffer = Buffer.from(match[2]!, 'base64')
+    if (targetMimeType !== match[1]) {
+      if (targetMimeType === 'image/webp') throw new Error('Converting to WebP is not supported; use .png or .jpg')
+      const { nativeImage } = await import('electron')
+      const image = nativeImage.createFromBuffer(bytes)
+      if (image.isEmpty()) throw new Error('Image could not be decoded for conversion')
+      bytes = targetMimeType === 'image/png' ? image.toPNG() : image.toJPEG(92)
+    }
+    if (bytes.byteLength > imageSaveMaximumBytes) throw new Error('Image is too large to save')
+    return bytes
   }
 
   persistUploads(context: Pick<ImageRequestContext, 'conversationId' | 'messageId'>, images: readonly AgentImage[]): string[] {

@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -8,9 +11,14 @@ import { imageOperationSchema, type ImageOperation } from '../../shared/image-ge
 import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { ModelToolProvider } from './model-tool-provider'
 
-vi.mock('electron', () => ({ nativeImage: { createFromBuffer: () => ({ isEmpty: () => false, toPNG: () => Buffer.from(png, 'base64') }) } }))
+vi.mock('electron', () => ({ nativeImage: { createFromBuffer: () => ({ isEmpty: () => false, toPNG: () => Buffer.from(png, 'base64'), toJPEG: () => Buffer.from('jpeg-bytes') }) } }))
 const png = 'iVBORw0KGgo='
 const cleanups: (() => void | Promise<void>)[] = []
+async function tempDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'goodbuddy-save-image-'))
+  cleanups.push(() => rm(dir, { recursive: true, force: true }))
+  return dir
+}
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 
 function setup(fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [{ b64_json: png }] })), observers: Pick<ImageGenerationServiceOptions, 'onOperation' | 'onUsage' | 'onError'> = {}) {
@@ -222,10 +230,55 @@ describe('Main conversation image service', () => {
     const client = new Client({ name: 'image-test', version: '1' })
     cleanups.push(() => client.close())
     await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }))
-    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['generate_image'])
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['generate_image', 'save_image'])
     const result = await client.callTool({ name: 'generate_image', arguments: { intent: 'create', prompt: 'Blue' } })
     expect(JSON.stringify(result)).toContain('completed')
     expect(h.fetcher).toHaveBeenCalledOnce()
+    const operation = JSON.parse((result.content as { text: string }[])[0]!.text) as ImageOperation
+    const target = join(await tempDir(), 'mcp.png')
+    const saved = await client.callTool({ name: 'save_image', arguments: { artifactId: operation.artifactIds[0], path: target } })
+    expect(saved.isError).toBeFalsy()
+    expect((await readFile(target)).toString('base64')).toBe(png)
     gateway.revoke(token)
+  })
+
+  it('saves conversation images to local files with conversion, overwrite protection and scoping', async () => {
+    const h = setup()
+    const created = await h.service.bind(h.context).call({ intent: 'create', prompt: 'Blue' }, 'save')
+    const artifactId = created.artifactIds[0]!
+    const binding = h.service.bind(h.context)
+    const dir = await tempDir()
+    const pngPath = join(dir, 'nested', 'out.png')
+    expect(await binding.save!({ artifactId, path: pngPath })).toMatchObject({ path: pngPath, mimeType: 'image/png' })
+    expect((await readFile(pngPath)).toString('base64')).toBe(png)
+    await expect(binding.save!({ artifactId, path: pngPath })).rejects.toThrow('already exists')
+    await expect(binding.save!({ artifactId, path: pngPath, overwrite: true })).resolves.toMatchObject({ path: pngPath })
+    const jpgPath = join(dir, 'out.jpg')
+    expect(await binding.save!({ artifactId, path: jpgPath })).toMatchObject({ mimeType: 'image/jpeg' })
+    expect((await readFile(jpgPath)).toString()).toBe('jpeg-bytes')
+    await expect(binding.save!({ artifactId, path: join(dir, 'out.webp') })).rejects.toThrow('WebP')
+    await expect(binding.save!({ artifactId, path: join(dir, 'out.gif') })).rejects.toThrow('.png')
+    await expect(binding.save!({ artifactId, path: 'relative.png' })).rejects.toThrow('absolute')
+    await expect(binding.save!({ artifactId: randomUUID(), path: join(dir, 'x.png') })).rejects.toThrow('not available')
+    await expect(h.service.bind(h.context, () => 'ask').save!({ artifactId, path: join(dir, 'ask.png') })).rejects.toThrow('Execute')
+    const provider = new ModelToolProvider(process.cwd())
+    cleanups.push(() => provider.dispose())
+    const context = { conversationId: h.context.conversationId, workMode: 'execute' as const, imageToolBinding: binding }
+    const native = await provider.callTool('save_image', { artifactId, path: join(dir, 'native.png') }, new AbortController().signal, context)
+    expect(JSON.stringify(native)).toContain('native.png')
+    await expect(provider.callTool('save_image', { artifactId, path: join(dir, 'ask2.png') }, new AbortController().signal, { ...context, workMode: 'ask' })).rejects.toThrow()
+    expect(h.fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('offers save_image only when the conversation has images or can generate them', async () => {
+    const h = setup()
+    const binding = h.service.bind(h.context)
+    expect(await binding.describeSave!()).toMatch(/none yet/)
+    h.profile.allowConversationInvocation = false
+    expect(await binding.describeSave!()).toBeUndefined()
+    const [uploadId] = h.service.persistUploads(h.context, [{ name: 'upload.png', mediaType: 'image/png', data: png }])
+    // IDs are listed so the model can save images even when it cannot generate.
+    expect(await binding.describeSave!()).toContain(uploadId)
+    expect(await h.service.bind(h.context, () => 'ask').describeSave!()).toBeUndefined()
   })
 })

@@ -40,6 +40,37 @@ export type ImageRequestContext = {
   workMode: 'ask' | 'execute'
 }
 
+export const imageSaveToolInputSchema = z.object({
+  artifactId: z.string().uuid(),
+  path: z.string().trim().min(1).max(4_096),
+  overwrite: z.boolean().default(false)
+}).strict()
+export type ImageSaveToolInput = z.infer<typeof imageSaveToolInputSchema>
+
+export type ImageSaveResult = {
+  artifactId: string
+  path: string
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp'
+  byteSize: number
+}
+
+export const imageSaveMimeTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
+
+/** Target format from a save path extension; undefined when unsupported. Pure so the remote Agent can share it. */
+export function imageSaveMimeTypeForPath(path: string): ImageSaveResult['mimeType'] | undefined {
+  const extension = /\.([A-Za-z0-9]+)$/u.exec(path)?.[1]?.toLowerCase()
+  return extension === 'png' ? 'image/png'
+    : extension === 'jpg' || extension === 'jpeg' ? 'image/jpeg'
+      : extension === 'webp' ? 'image/webp'
+        : undefined
+}
+
+/** Upper bound for bytes written by save_image, including chunked remote delivery. */
+export const imageSaveMaximumBytes = 48 * 1024 * 1024
+
+export const imageSaveToolName = 'save_image' as const
+export const imageSaveToolDescription = 'Save an existing conversation image (generated result or uploaded source) to a local file. Use an artifactId listed in this conversation; never invent IDs. path must be absolute and end with .png, .jpg, .jpeg or .webp; the image is converted when the extension differs from its stored format (conversion to .webp is not supported). Missing parent folders are created. Existing files are kept unless overwrite=true. The file is written on the machine where this tool runs (the remote host for remote projects).'
+
 export const imageToolName = 'generate_image' as const
 export const imageToolDescriptionLimit = 16_000
 export const imageToolDescription = 'Generate or edit an image using a configured image model. Use intent=create for a new unrelated image, or intent=edit with explicit sourceArtifactIds. Never invent profile or artifact IDs. Clarify ambiguous references. A failed edit must not be replaced by generation. Results contain operation and artifact references, not image bytes. Do not retry a paid request automatically. A running operation continues after this chat stops; inspect its conversation card for completion.'

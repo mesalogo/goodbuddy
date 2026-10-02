@@ -7,7 +7,11 @@ export const integrations = {
     managed: 'Builtin · Automatically managed',
     description: 'Automatically managed by the image models’ “Allow AI to invoke in conversations” setting.',
     runtimeScope: 'Assignments include applicable remote Runtimes through GoodBuddy Agent. Generation requires Execute and a chat model with tool calling; assignments do not indicate runtime readiness.',
-    openSettings: 'Go to image model settings'
+    openSettings: 'Go to image model settings',
+    tools: {
+      generate_image: 'Generate a new image with an image model allowed in conversations, or edit images from this conversation. Results are saved in the conversation.',
+      save_image: 'Save a generated or uploaded image from this conversation to a PNG, JPEG or WebP file. Requires Execute mode; in remote projects the file is written on the remote host.'
+    }
   },
   channels: {
     tabs: {

@@ -358,9 +358,13 @@ function proxyToolInputSchema(
     delete scope.anyOf
     return dshCompatibleMainInputSchema(schema)
   }
-  return isMainWebTool(tool) || tool.name === 'generate_image'
+  return isMainWebTool(tool) || isMainImageTool(tool.name)
     ? dshCompatibleMainInputSchema(tool.inputSchema)
     : tool.inputSchema
+}
+
+function isMainImageTool(name: string): boolean {
+  return name === 'generate_image' || name === 'save_image'
 }
 
 function boundedProxyToolCatalog(
@@ -376,7 +380,7 @@ function boundedProxyToolCatalog(
   const catalog = tools.filter(
     (tool) =>
       isMainWebTool(tool) || isStoryGraphTool(tool.name) ||
-      (workMode === 'execute' && (tool.source === 'mcp' || tool.name === 'generate_image'))
+      (workMode === 'execute' && (tool.source === 'mcp' || isMainImageTool(tool.name)))
   )
   if (catalog.length > MAX_MCP_PROXY_TOOLS) {
     throw new Error(
@@ -864,7 +868,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 )
                 const catalog = boundedProxyToolCatalog(tools, context.workMode)
                 this.proxyToolCatalogs.set(params.sessionId, tools.filter(
-                  (tool) => tool.source === 'mcp' || isMainWebTool(tool) || isStoryGraphTool(tool.name) || tool.name === 'generate_image'
+                  (tool) => tool.source === 'mcp' || isMainWebTool(tool) || isStoryGraphTool(tool.name) || isMainImageTool(tool.name)
                 ))
                 return { tools: catalog }
               }
@@ -905,7 +909,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 const tool = tools.find(
                   (candidate) =>
                     candidate.name === name &&
-                    (candidate.source === 'mcp' || candidate.name === 'generate_image' || isStoryGraphTool(candidate.name) ||
+                    (candidate.source === 'mcp' || isMainImageTool(candidate.name) || isStoryGraphTool(candidate.name) ||
                       isMainWebTool(candidate))
                 )
                 if (!tool) {

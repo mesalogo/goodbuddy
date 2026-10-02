@@ -1,6 +1,9 @@
 // @vitest-environment node
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -46,7 +49,7 @@ async function setup() {
   service.initialize()
   cleanup.push(() => service.dispose())
   const frames: Uint8Array[] = []
-  const connect = async (mode: 'ask' | 'execute' = 'execute') => {
+  const connect = async (mode: 'ask' | 'execute' = 'execute', options: { save?: boolean } = {}) => {
     const binding = service.bind({ ...context, requestId: randomUUID(), workMode: mode })
     const queue: RuntimeProtocolBinaryFrame[] = []
     let receiver: ((frame: RuntimeProtocolBinaryFrame) => void) | undefined
@@ -62,7 +65,7 @@ async function setup() {
     }
     const wait = new AbortController()
     const main = new MainImageToolSession(channel, binding, wait.signal)
-    const adapter = new AgentImageToolMcp({ channelId: channel.channelId, channelEpoch: '1', description: await binding.describe() ?? 'Not available' }, async payload => {
+    const adapter = new AgentImageToolMcp({ channelId: channel.channelId, channelEpoch: '1', description: await binding.describe() ?? 'Not available', ...(options.save ? { saveDescription: 'Save image' } : {}) }, async payload => {
       if (closed) throw new Error('disconnected')
       frames.push(payload)
       const frame = { payload, sequence: '1', consume: async () => {} }
@@ -128,6 +131,43 @@ describe('remote image MCP to Main service', () => {
     h.profile.name = 'Changed next prompt'
     const execute = await h.connect()
     expect((await execute.client.listTools()).tools[0]!.description).toContain('Changed next prompt')
+  })
+
+  it('saves a conversation image on the Agent host by pulling bounded chunks from Desktop', async () => {
+    const h = await setup()
+    const plain = await h.connect()
+    expect((await plain.client.listTools()).tools.map(tool => tool.name)).not.toContain('save_image')
+    const remote = await h.connect('execute', { save: true })
+    expect((await remote.client.listTools()).tools.map(tool => tool.name)).toContain('save_image')
+    // Larger than one 128 KiB chunk so the Agent must reassemble several replies.
+    const large = Buffer.concat([Buffer.from(png, 'base64'), randomBytes(300 * 1024)])
+    const [artifactId] = h.service.persistUploads(h.context, [{ name: 'large.png', mediaType: 'image/png', data: large.toString('base64') }])
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-remote-save-'))
+    cleanup.push(() => rm(directory, { recursive: true, force: true }))
+    const target = join(directory, 'nested', 'out.png')
+    const saved = await remote.client.callTool({ name: 'save_image', arguments: { artifactId, path: target } })
+    expect(saved.isError).not.toBe(true)
+    expect(JSON.parse((saved.content as { text: string }[])[0]!.text)).toMatchObject({ artifactId, path: target, mimeType: 'image/png', byteSize: large.byteLength })
+    expect((await readFile(target)).equals(large)).toBe(true)
+    expect(h.frames.length).toBeGreaterThan(4)
+    expect(h.frames.every(frame => frame.byteLength <= 256 * 1024)).toBe(true)
+    const again = await remote.client.callTool({ name: 'save_image', arguments: { artifactId, path: target } })
+    expect(again.isError).toBe(true)
+    expect(JSON.stringify(again.content)).toContain('already exists')
+    const foreign = await remote.client.callTool({ name: 'save_image', arguments: { artifactId: randomUUID(), path: join(directory, 'x.png') } })
+    expect(foreign.isError).toBe(true)
+    expect(JSON.stringify(foreign.content)).toContain('not available in this conversation')
+  })
+
+  it('rejects remote saves in Ask mode at the desktop binding', async () => {
+    const h = await setup()
+    const [artifactId] = h.service.persistUploads(h.context, [{ name: 'source.png', mediaType: 'image/png', data: png }])
+    const ask = await h.connect('ask', { save: true })
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-remote-save-'))
+    cleanup.push(() => rm(directory, { recursive: true, force: true }))
+    const denied = await ask.client.callTool({ name: 'save_image', arguments: { artifactId, path: join(directory, 'out.png') } })
+    expect(denied.isError).toBe(true)
+    await expect(readFile(join(directory, 'out.png'))).rejects.toThrow()
   })
 
   it('returns unknown delivery without sending a second request for the same MCP call', async () => {

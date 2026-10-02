@@ -4,7 +4,11 @@ export const integrations = {
     managed: '内置 · 自动管理',
     description: '由图片模型的「允许 AI 在会话中调用」设置自动管理。',
     runtimeScope: '分配包含 GoodBuddy Agent 远程路径上的适用 Runtime。生成需要 Execute 模式及支持工具调用的聊天模型；勾选不代表 Runtime 已就绪。',
-    openSettings: '前往图片模型设置'
+    openSettings: '前往图片模型设置',
+    tools: {
+      generate_image: '使用已允许会话调用的图片模型生成新图片，或基于会话中的图片进行编辑，结果保存在当前会话。',
+      save_image: '将当前会话中已生成或已上传的图片保存为 PNG、JPEG 或 WebP 文件；需要 Execute 模式，远程项目中文件写入远程主机。'
+    }
   },
   channels: {
     tabs: {

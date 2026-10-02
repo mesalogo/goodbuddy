@@ -2,13 +2,15 @@ import type { ImageToolBinding } from '../agent/image-tool-binding'
 import type { RuntimeProtocolBinaryChannel } from './protocol-remote-runtime-channel'
 import {
   decodeRemoteImageToolMessage, encodeRemoteImageToolMessage,
-  remoteImageToolCallSchema, remoteImageToolReplySchema
+  remoteImageSaveChunkBytes, remoteImageToolCallSchema, remoteImageToolReplySchema
 } from '../../shared/remote-image-tool-contracts'
 
 export class MainImageToolSession {
   private readonly wait = new AbortController()
   private readonly unsubscribe: () => void
   private readonly removeAbort: () => void
+  /** Encoded bytes of the image currently being streamed to the Agent; one save at a time per prompt. */
+  private saveCache?: { key: string; bytes: Buffer }
 
   constructor(
     private readonly channel: RuntimeProtocolBinaryChannel,
@@ -28,6 +30,7 @@ export class MainImageToolSession {
     if (this.wait.signal.aborted) return
     // This aborts binding.call's wait, never the Main-owned image operation.
     this.wait.abort()
+    this.saveCache = undefined
     this.removeAbort()
     this.unsubscribe()
     this.channel.close()
@@ -46,7 +49,22 @@ export class MainImageToolSession {
     let reply: ReturnType<typeof remoteImageToolReplySchema.parse>
     try {
       this.wait.signal.throwIfAborted()
-      if ('name' in call) {
+      if ('name' in call && call.name === 'save_image_read') {
+        if (!this.binding?.readForSave || this.binding.context.workMode !== 'execute') throw new Error('Saving images is unavailable in Ask mode')
+        const { artifactId, mimeType, offset } = call.input
+        const cacheKey = `${artifactId}:${mimeType}`
+        let bytes = this.saveCache?.key === cacheKey ? this.saveCache.bytes : undefined
+        if (!bytes || offset === 0) {
+          bytes = await this.binding.readForSave(artifactId, mimeType)
+          this.saveCache = { key: cacheKey, bytes }
+        }
+        if (offset >= bytes.byteLength) throw new Error('Image chunk offset is out of range')
+        const end = Math.min(offset + remoteImageSaveChunkBytes, bytes.byteLength)
+        if (end === bytes.byteLength) this.saveCache = undefined
+        reply = remoteImageToolReplySchema.parse({ callId: call.callId, imageChunk: {
+          mimeType, totalBytes: bytes.byteLength, offset, data: bytes.subarray(offset, end).toString('base64')
+        } })
+      } else if ('name' in call) {
         if (!this.storyGraph) throw new Error('Story Graph capability unavailable')
         const storyGraphResult = call.name === 'story_graph_list'
           ? { available: await this.storyGraph.available() }

@@ -148,6 +148,22 @@ it('preserves the Obsidian draft after failures and folder-picker cancellation',
   })
 })
 
+it('lists the image generation and save tools on the managed image card', async () => {
+  const getSnapshot = vi.fn().mockResolvedValue({ mcpServers: [], skills: [] })
+  vi.stubGlobal('goodbuddy', { capabilities: { getSnapshot } })
+  render(<McpSettingsSection onOpenImageModelSettings={vi.fn()} />)
+  await waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce())
+  const name = i18n.t('integrations:conversationImages.title')
+  const toggle = screen.getByRole('button', { name: i18n.t('integrations:mcp.builtin.expandServer', { name }) })
+  expect(toggle).toHaveTextContent(i18n.t('integrations:mcp.builtin.toolCount', { count: 2 }))
+  expect(screen.queryByText('save_image')).not.toBeInTheDocument()
+  fireEvent.click(toggle)
+  const tools = screen.getByRole('region', { name: i18n.t('integrations:mcp.builtin.toolsAriaLabel', { name }) })
+  expect(tools).toHaveTextContent('generate_image')
+  expect(tools).toHaveTextContent('save_image')
+  expect(tools).toHaveTextContent(i18n.t('integrations:conversationImages.tools.save_image'))
+})
+
 it('removes the redundant MCP title and places the custom action in content', async () => {
   const getSnapshot = vi.fn().mockResolvedValue({ mcpServers: [], skills: [] })
   vi.stubGlobal('goodbuddy', { capabilities: { getSnapshot } })

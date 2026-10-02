@@ -1,14 +1,19 @@
 import { randomUUID } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
+import { dirname, isAbsolute } from 'node:path'
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
-import { imageToolInputSchema, imageToolName } from '../shared/image-generation-contracts'
+import {
+  imageSaveMimeTypeForPath, imageSaveToolInputSchema, imageSaveToolName,
+  imageToolInputSchema, imageToolName, type ImageSaveResult, type ImageSaveToolInput
+} from '../shared/image-generation-contracts'
 import { storyGraphTools, type StoryGraphToolName } from '../shared/story-graph-tools'
 import {
   decodeRemoteImageToolMessage, encodeRemoteImageToolMessage,
-  remoteImageToolMaximumBytes, remoteImageToolReplySchema, type remoteImageToolSchema
+  remoteImageSaveChunkSchema, remoteImageToolMaximumBytes, remoteImageToolReplySchema, type remoteImageToolSchema
 } from '../shared/remote-image-tool-contracts'
 
 /** One prompt's local MCP adapter. It never holds provider credentials or image bytes. */
@@ -31,6 +36,8 @@ export class AgentImageToolMcp {
     const path = `/${randomUUID()}/mcp`
     const schema = z.toJSONSchema(imageToolInputSchema, { target: 'draft-7', io: 'input' })
     Reflect.deleteProperty(schema, '$schema')
+    const saveSchema = z.toJSONSchema(imageSaveToolInputSchema, { target: 'draft-7', io: 'input' })
+    Reflect.deleteProperty(saveSchema, '$schema')
     this.server = createServer((request, response) => {
       void (async () => {
         if (this.closed || request.url !== path) { response.writeHead(404).end(); return }
@@ -50,6 +57,8 @@ export class AgentImageToolMcp {
           const graphEnabled = available?.content.some(part => part.type === 'text' && JSON.parse(part.text).available === true)
           return { tools: [
             ...(this.descriptor.description ? [{ name: imageToolName, description: this.descriptor.description, inputSchema: schema as { type: 'object' } }] : []),
+            ...(this.descriptor.saveDescription ? [{ name: imageSaveToolName, description: this.descriptor.saveDescription, inputSchema: saveSchema as { type: 'object' },
+              annotations: { readOnlyHint: false, destructiveHint: true } }] : []),
             ...(graphEnabled ? storyGraphTools.map(tool => ({ name: tool.name, description: tool.description,
               inputSchema: z.toJSONSchema(tool.inputSchema, { target: 'draft-7', io: 'input' }) as { type: 'object' },
               annotations: { readOnlyHint: true, destructiveHint: false } })) : [])
@@ -60,6 +69,14 @@ export class AgentImageToolMcp {
           if (graphTool && this.descriptor.storyGraph) {
             try { return await this.call(call.params.arguments ?? {}, graphTool.name) }
             catch (error) { return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'Story Graph read failed' }] } }
+          }
+          if (call.params.name === imageSaveToolName && this.descriptor.saveDescription) {
+            try {
+              const saved = await this.saveImage(imageSaveToolInputSchema.parse(call.params.arguments ?? {}))
+              return { content: [{ type: 'text', text: JSON.stringify(saved) }] }
+            } catch (error) {
+              return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'Saving image failed' }] }
+            }
           }
           if (call.params.name !== imageToolName || !this.descriptor.description) throw new Error('Unknown image tool')
           const input = imageToolInputSchema.parse(call.params.arguments)
@@ -99,8 +116,42 @@ export class AgentImageToolMcp {
     const reply = remoteImageToolReplySchema.parse(decodeRemoteImageToolMessage(payload))
     const pending = this.pending.get(reply.callId)
     if (!pending) return
-    if (reply.error || (!reply.result && !reply.storyGraphResult)) pending.reject(new Error(reply.error ?? 'Tool response has no result'))
-    else pending.resolve({ content: [{ type: 'text', text: JSON.stringify(reply.storyGraphResult ?? reply.result) }] })
+    if (reply.error || (!reply.result && !reply.storyGraphResult && !reply.imageChunk)) pending.reject(new Error(reply.error ?? 'Tool response has no result'))
+    else pending.resolve({ content: [{ type: 'text', text: JSON.stringify(reply.imageChunk ?? reply.storyGraphResult ?? reply.result) }] })
+  }
+
+  /** Pulls the encoded image from Desktop in bounded chunks and writes it on this host. */
+  private async saveImage(input: ImageSaveToolInput): Promise<ImageSaveResult> {
+    const target = input.path
+    if (!isAbsolute(target)) throw new Error('path must be an absolute file path')
+    const mimeType = imageSaveMimeTypeForPath(target)
+    if (!mimeType) throw new Error('path must end with .png, .jpg, .jpeg or .webp')
+    const chunks: Buffer[] = []
+    let offset = 0
+    let totalBytes: number | undefined
+    do {
+      const result = await this.call({ artifactId: input.artifactId, mimeType, offset }, 'save_image_read')
+      const part = result.content[0]
+      if (part?.type !== 'text') throw new Error('Image chunk response is invalid')
+      const chunk = remoteImageSaveChunkSchema.parse(JSON.parse(part.text))
+      if (chunk.offset !== offset || chunk.mimeType !== mimeType || (totalBytes !== undefined && chunk.totalBytes !== totalBytes)) {
+        throw new Error('Image chunk response is inconsistent')
+      }
+      totalBytes = chunk.totalBytes
+      const bytes = Buffer.from(chunk.data, 'base64')
+      if (bytes.byteLength === 0 || offset + bytes.byteLength > totalBytes) throw new Error('Image chunk response is inconsistent')
+      chunks.push(bytes)
+      offset += bytes.byteLength
+    } while (offset < totalBytes)
+    const data = Buffer.concat(chunks)
+    await mkdir(dirname(target), { recursive: true })
+    try {
+      await writeFile(target, data, { flag: input.overwrite ? 'w' : 'wx' })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('File already exists; choose another path or set overwrite=true', { cause: error })
+      throw error
+    }
+    return { artifactId: input.artifactId, path: target, mimeType, byteSize: data.byteLength }
   }
 
   close(): void {
@@ -112,7 +163,7 @@ export class AgentImageToolMcp {
     this.server?.close()
   }
 
-  private async call(input: Record<string, unknown>, name?: StoryGraphToolName | 'story_graph_list'): Promise<CallToolResult> {
+  private async call(input: Record<string, unknown>, name?: StoryGraphToolName | 'story_graph_list' | 'save_image_read'): Promise<CallToolResult> {
     if (this.closed) throw new Error('Image tool prompt has ended')
     const callId = randomUUID()
     let timer: NodeJS.Timeout | undefined
