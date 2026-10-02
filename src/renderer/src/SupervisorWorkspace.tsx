@@ -6,6 +6,7 @@ import type { SupervisionReviewExecution } from '../../shared/supervision-review
 import { EmptyState, PageTabs } from './WorkspacePrimitives'
 import { SupervisionDiscussion } from './SupervisionDiscussion'
 import { SupervisionStoryDigest } from './SupervisionStoryDigest'
+import { useFillHeight } from './use-fill-height'
 import { SupervisionEventStory, SupervisionExperienceDetail, SupervisionExperienceList, SupervisionStoryDetail, SupervisionStoryList, useSupervisionStories } from './SupervisionStories'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 import { heartbeatScopeSchema } from '../../shared/assistant-contracts'
@@ -478,6 +479,8 @@ export function SupervisorWorkspace({
     ? (JSON.parse(graph.storyLine.scope_json) as SupervisionRunRequest['scope'])
     : undefined
   const storyState = useSupervisionStories(graphScope, tab === 'graph', graph)
+  const graphLayoutRef = useRef<HTMLDivElement>(null)
+  useFillHeight(graphLayoutRef, tab === 'graph' && graph.events.length > 0)
   // The work review reads the selected result's own scope, so it matches the period shown.
   const recapStories = useSupervisionStories(latest?.scope, tab === 'overview', latest?.id)
   const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
@@ -718,7 +721,7 @@ export function SupervisorWorkspace({
                 />
               )}
               {graph.events.length > 0 && (
-                <div className="supervisor-workspace__graph-layout">
+                <div className="supervisor-workspace__graph-layout" ref={graphLayoutRef}>
                   <aside
                     className="supervisor-workspace__graph-list"
                     aria-label={t('supervisor.selection')}

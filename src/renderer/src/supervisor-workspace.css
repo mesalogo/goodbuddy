@@ -388,6 +388,41 @@
 .supervisor-workspace__graph-canvas {
   border-inline: 1px solid var(--border-default);
 }
+/*
+ * Wide layouts: the graph row is as tall as the window allows (`--fill-height`, set by useFillHeight with a
+ * steady bottom margin), and each column in it scrolls on its own, so long lists never grow the page.
+ * With three columns that is the whole layout; with two, the detail wraps below at its natural height.
+ * Single-column layouts keep page scrolling.
+ */
+@container supervisor (min-width: 861px) {
+  .supervisor-workspace__graph-layout {
+    grid-template-rows: var(--fill-height, auto);
+    grid-auto-rows: auto;
+  }
+  .supervisor-workspace__graph-canvas,
+  .supervisor-workspace__graph-layout > .supervisor-workspace__detail {
+    min-height: 0;
+    max-height: var(--fill-height, none);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+  }
+  .supervisor-workspace__graph-list {
+    contain: none;
+    height: 100%;
+  }
+  .supervisor-workspace__graph-list > .supervisor-workspace__list-panel {
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+}
+@container supervisor (min-width: 861px) and (max-width: 1190px) {
+  .supervisor-workspace__graph-layout > .supervisor-workspace__detail {
+    max-height: none;
+    overflow-y: visible;
+  }
+}
 .supervisor-workspace__canvas-heading {
   display: flex;
   justify-content: space-between;
