@@ -41,24 +41,10 @@ type Plan = {
   stateDigest: string
 }
 
-export type GoodBuddyConfigApplyEvent = {
-  requestId: string
-  planId: string
-  summary: string
-  risk: GoodBuddyConfigRisk
-  reload: GoodBuddyConfigReload
-  destructive: boolean
-}
-
 export type GoodBuddyConfigServiceOptions = {
   now?: () => number
   planTtlMs?: number
 }
-
-export type GoodBuddyConfigApplyAuthorizer = (
-  event: GoodBuddyConfigApplyEvent,
-  signal: AbortSignal
-) => Promise<boolean>
 
 function maximumRisk(
   risks: readonly GoodBuddyConfigRisk[]
@@ -377,8 +363,7 @@ export class GoodBuddyConfigService {
       operations: parsed.operations,
       steps,
       overallRisk: maximumRisk(steps.map((step) => step.risk)),
-      reload: maximumReload(steps.map((step) => step.reload)),
-      requiresApproval: true
+      reload: maximumReload(steps.map((step) => step.reload))
     })
     this.plans.set(planId, {
       requestId,
@@ -485,8 +470,7 @@ export class GoodBuddyConfigService {
   apply(
     requestId: string,
     input: unknown,
-    signal: AbortSignal,
-    authorize: GoodBuddyConfigApplyAuthorizer | undefined
+    signal: AbortSignal
   ): Promise<GoodBuddyConfigApplyOutput> {
     const parsed = goodbuddyConfigApplyInputSchema.parse(input)
     const operation = this.applyQueue.then(async () => {
@@ -502,29 +486,6 @@ export class GoodBuddyConfigService {
       }
       this.plans.delete(parsed.planId)
       signal.throwIfAborted()
-      const approved =
-        (await authorize?.(
-          {
-            requestId,
-            planId: parsed.planId,
-            summary: plan.output.steps
-              .map((step) => `${step.index + 1}. ${step.summary}`)
-              .join('\n'),
-            risk: plan.output.overallRisk,
-            reload: plan.output.reload,
-            destructive: plan.output.steps.some(
-              (step) => step.destructive
-            )
-          },
-          signal
-        )) ?? false
-      if (!approved) {
-        throw new Error('用户拒绝了 GoodBuddy 配置变更')
-      }
-      signal.throwIfAborted()
-      if (plan.expiresAt <= this.now()) {
-        throw new Error('GoodBuddy 配置计划在确认期间已过期，请重新生成计划')
-      }
       const currentSnapshot = await this.getSnapshot()
       const currentCapabilityDigest =
         await this.capabilityService.getConfigurationDigest()
@@ -534,7 +495,7 @@ export class GoodBuddyConfigService {
           currentCapabilityDigest
         ) !== plan.stateDigest
       ) {
-        throw new Error('GoodBuddy 配置在确认前已发生变化，请重新生成计划')
+        throw new Error('GoodBuddy 配置在应用前已发生变化，请重新生成计划')
       }
       let appliedOperations = 0
       for (const [index, plannedOperation] of plan.operations.entries()) {

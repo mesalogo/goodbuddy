@@ -34,7 +34,7 @@ function fixture() {
     settingsStore: { getResolvedSettings: async () => settings },
     applicationSettingsStore: { get: async () => application },
     capabilities: { getRuntimeSkillContext: async () => ({ packages: [{ directory: '/skills/test', id: 'test', digest: 'one' }] }),
-      getResolvedMcpServers: async () => [{ id: 'custom' }], getEnabledBuiltinMcpServerIds: async () => ['knowledge-base', 'obsidian'],
+      getResolvedMcpServers: async () => [{ id: 'custom' }], getEnabledBuiltinMcpServerIds: async () => ['knowledge-base', 'obsidian', 'goodbuddy-config'],
       getObsidianSettings: async () => ({}) },
     executionSpaceResolver: { resolveProject: () => ({ kind: 'local', rootPath: '/workspace', cacheIdentity: '/workspace' }) },
     terminalManager: { closeOwner: vi.fn() }, localEnvironment: { launchEnvironmentProvider: () => process.env },
@@ -83,12 +83,22 @@ describe('native client coordinator', () => {
     const { coordinator, gateway, start, conversation } = fixture()
     await coordinator.open(1, 'conversation')
     expect(gateway.grantCustomMcp).not.toHaveBeenCalled()
+    expect(gateway.grant).toHaveBeenLastCalledWith(
+      expect.any(String), ['library'], expect.any(AbortSignal), 'none',
+      { access: 'read', workspacePath: '/workspace' },
+      undefined, undefined, undefined, { settings: {}, access: 'read' }, undefined
+    )
     expect(start.mock.calls[0]![0]).toMatchObject({ skillDirectories: ['/skills/test'], mcpServers: [
       { serverName: 'goodbuddy-0', readOnlyTools: ['knowledge_search', 'obsidian_read_note'] }
     ] })
     conversation.workMode = 'execute'
     await coordinator.open(1, 'conversation')
     expect(gateway.grantCustomMcp).toHaveBeenCalledOnce()
+    expect(gateway.grant).toHaveBeenLastCalledWith(
+      expect.any(String), ['library'], expect.any(AbortSignal), 'none',
+      { access: 'write', workspacePath: '/workspace' },
+      undefined, undefined, undefined, { settings: {}, access: 'write' }, undefined
+    )
     expect(start.mock.calls[1]![0].mcpServers).toHaveLength(2)
     await coordinator.closeOwner(1)
     await expect(coordinator.open(1, 'conversation')).rejects.toThrow('closed')

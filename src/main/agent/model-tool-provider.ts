@@ -1331,7 +1331,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         scopeKey: 'model:goodbuddy-config:apply',
         title: '允许应用 GoodBuddy 配置计划？',
         description:
-          '该操作会修改 GoodBuddy 应用偏好或扩展能力。主进程还会显示计划中的具体变更并再次要求确认。',
+          '该操作会按计划修改 GoodBuddy 应用偏好或扩展能力。',
         toolName: tool.displayName,
         argumentSummary,
         allowPermanent: false

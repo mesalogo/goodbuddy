@@ -106,7 +106,7 @@ describe('GoodBuddyConfigService', () => {
       operations: [{ operation: 'application.update', updates: { applicationNavigation, magicNoteCanvasPageCount: 8 } }],
     })
     expect(changed).not.toHaveBeenCalled()
-    await service.apply('settings-sync', { planId: plan.planId }, new AbortController().signal, async () => true)
+    await service.apply('settings-sync', { planId: plan.planId }, new AbortController().signal)
     expect(changed).toHaveBeenCalledExactlyOnceWith(await application.get())
     expect(changed.mock.calls[0]![0].applicationNavigation).toEqual(applicationNavigation)
     expect((await service.getSnapshot()).application.magicNoteCanvasPageCount).toBe(8)
@@ -129,7 +129,6 @@ describe('GoodBuddyConfigService', () => {
 
     expect(service.getCapabilities()).toMatchObject({
       server: 'goodbuddy_config',
-      applyRequiresApproval: true,
       operations: expect.arrayContaining([
         expect.objectContaining({
           operation: 'skill.import',
@@ -163,17 +162,14 @@ describe('GoodBuddyConfigService', () => {
         ]
       }
     )
-    const authorize = vi.fn(async () => true)
-
     await expect(
       harness.service.apply(
         'request-two',
         { planId: plan.planId },
-        new AbortController().signal,
-        authorize
+        new AbortController().signal
       )
     ).rejects.toThrow('不属于当前请求')
-    expect(authorize).not.toHaveBeenCalled()
+    expect((await harness.application.get()).checkUpdatesOnStartup).toBe(true)
 
     const expiring = await harness.service.plan(
       'request-one',
@@ -192,14 +188,13 @@ describe('GoodBuddyConfigService', () => {
       harness.service.apply(
         'request-one',
         { planId: expiring.planId },
-        new AbortController().signal,
-        authorize
+        new AbortController().signal
       )
     ).rejects.toThrow('已过期')
-    expect(authorize).not.toHaveBeenCalled()
+    expect((await harness.application.get()).checkUpdatesOnStartup).toBe(true)
   })
 
-  it('rejects a plan that expires while native approval is open', async () => {
+  it('rejects a canceled apply and consumes its plan', async () => {
     const harness = await createHarness()
     const plan = await harness.service.plan(
       'request-one',
@@ -214,49 +209,52 @@ describe('GoodBuddyConfigService', () => {
       }
     )
 
+    const controller = new AbortController()
+    controller.abort(new Error('Canceled config apply'))
     await expect(
       harness.service.apply(
         'request-one',
         { planId: plan.planId },
-        new AbortController().signal,
-        async () => {
-          harness.setNow(1_101)
-          return true
-        }
+        controller.signal
       )
-    ).rejects.toThrow('确认期间已过期')
+    ).rejects.toThrow('Canceled config apply')
     await expect(harness.application.get()).resolves.toMatchObject({
       checkUpdatesOnStartup: true
     })
+    await expect(harness.service.apply(
+      'request-one', { planId: plan.planId }, new AbortController().signal
+    )).rejects.toThrow('不存在')
   })
 
-  it('requires approval and applies a plan only once', async () => {
+  it('checks expiry after waiting for an earlier apply', async () => {
     const harness = await createHarness()
-    const deniedPlan = await harness.service.plan(
-      'request-one',
-      harness.workspace,
-      {
-        operations: [
-          {
-            operation: 'application.update',
-            updates: { checkUpdatesOnStartup: false }
-          }
-        ]
-      }
-    )
-    await expect(
-      harness.service.apply(
-        'request-one',
-        { planId: deniedPlan.planId },
-        new AbortController().signal,
-        async () => false
-      )
-    ).rejects.toThrow('用户拒绝')
-    await expect(harness.application.get()).resolves.toMatchObject({
-      checkUpdatesOnStartup: true
+    const input = { operations: [{
+      operation: 'application.update', updates: { checkUpdatesOnStartup: false }
+    }] }
+    const first = await harness.service.plan('first', harness.workspace, input)
+    const second = await harness.service.plan('second', harness.workspace, input)
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    const update = harness.application.update.bind(harness.application)
+    const updating = vi.spyOn(harness.application, 'update').mockImplementationOnce(async updates => {
+      await blocked
+      return update(updates)
     })
+    const applying = harness.service.apply('first', { planId: first.planId }, new AbortController().signal)
+    await vi.waitFor(() => expect(updating).toHaveBeenCalledOnce())
+    const expired = expect(harness.service.apply(
+      'second', { planId: second.planId }, new AbortController().signal
+    )).rejects.toThrow('已过期')
+    harness.setNow(1_101)
+    release()
+    await applying
+    await expired
+    expect(updating).toHaveBeenCalledOnce()
+  })
 
-    const approvedPlan = await harness.service.plan(
+  it('applies without an authorizer and consumes the plan only once', async () => {
+    const harness = await createHarness()
+    const plan = await harness.service.plan(
       'request-one',
       harness.workspace,
       {
@@ -271,9 +269,8 @@ describe('GoodBuddyConfigService', () => {
     await expect(
       harness.service.apply(
         'request-one',
-        { planId: approvedPlan.planId },
-        new AbortController().signal,
-        async () => true
+        { planId: plan.planId },
+        new AbortController().signal
       )
     ).resolves.toMatchObject({
       status: 'applied',
@@ -289,9 +286,8 @@ describe('GoodBuddyConfigService', () => {
     await expect(
       harness.service.apply(
         'request-one',
-        { planId: approvedPlan.planId },
-        new AbortController().signal,
-        async () => true
+        { planId: plan.planId },
+        new AbortController().signal
       )
     ).rejects.toThrow('不存在')
   })
@@ -319,8 +315,7 @@ describe('GoodBuddyConfigService', () => {
     await harness.service.apply(
       'request-one',
       { planId: plan.planId },
-      new AbortController().signal,
-      async () => true
+      new AbortController().signal
     )
     await expect(harness.capabilities.getSnapshot()).resolves.toMatchObject({
       skills: expect.arrayContaining([
@@ -364,8 +359,7 @@ describe('GoodBuddyConfigService', () => {
       harness.service.apply(
         'request-two',
         { planId: changingPlan.planId },
-        new AbortController().signal,
-        async () => true
+        new AbortController().signal
       )
     ).rejects.toThrow('确认后已发生变化')
   })
@@ -401,8 +395,7 @@ describe('GoodBuddyConfigService', () => {
       harness.service.apply(
         'request-partial',
         { planId: plan.planId },
-        new AbortController().signal,
-        async () => true
+        new AbortController().signal
       )
     ).rejects.toThrow('已发生变化')
 
@@ -436,8 +429,7 @@ describe('GoodBuddyConfigService', () => {
     const result = await harness.service.apply(
       'request-partial-two',
       { planId: secondPlan.planId },
-      new AbortController().signal,
-      async () => true
+      new AbortController().signal
     )
     expect(result).toMatchObject({
       status: 'partially-applied',
@@ -535,10 +527,9 @@ describe('GoodBuddyConfigService', () => {
       harness.service.apply(
         'request-enable',
         { planId: enablePlan.planId },
-        new AbortController().signal,
-        async () => true
+        new AbortController().signal
       )
-    ).rejects.toThrow('确认前已发生变化')
+    ).rejects.toThrow('应用前已发生变化')
   })
 
   it('does not create persistent inspection artifacts while planning a ZIP Skill', async () => {

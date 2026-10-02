@@ -68,10 +68,7 @@ import {
   magicNotePlainText,
   validateMagicNoteRichContent
 } from '../magic-notes/rich-content'
-import type {
-  GoodBuddyConfigApplyAuthorizer,
-  GoodBuddyConfigService
-} from '../goodbuddy-config-service'
+import type { GoodBuddyConfigService } from '../goodbuddy-config-service'
 import {
   createMcpTransport
 } from '../capabilities/mcp-client-transport'
@@ -214,7 +211,6 @@ type Capability = {
   magicNotesAccess: MagicNotesCapabilityAccess
   configAccess: MagicNotesCapabilityAccess
   configWorkspacePath?: string
-  authorizeConfigApply?: GoodBuddyConfigApplyAuthorizer
   browserConversationId?: string
   browserTabId?: BrowserTabId
   browserUsageLease?: BrowserTabUsageLease
@@ -497,7 +493,6 @@ export class KnowledgeMcpGateway {
     config?: {
       access: MagicNotesCapabilityAccess
       workspacePath: string
-      authorizeApply?: GoodBuddyConfigApplyAuthorizer
     },
     browserConversationId?: string,
     browserTabId?: BrowserTabId,
@@ -573,8 +568,7 @@ export class KnowledgeMcpGateway {
         browserUsageLease: effectiveBrowserUsageLease,
         ...(effectiveConfigAccess !== 'none'
           ? {
-              configWorkspacePath: config?.workspacePath,
-              authorizeConfigApply: config?.authorizeApply
+              configWorkspacePath: config?.workspacePath
             }
           : {}),
         signal,
@@ -1403,8 +1397,7 @@ export class KnowledgeMcpGateway {
           result: await service.apply(
             capability.requestId,
             input,
-            effectiveSignal,
-            capability.authorizeConfigApply
+            effectiveSignal
           )
         }
     }

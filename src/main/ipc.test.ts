@@ -12762,40 +12762,11 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('routes local config apply through native approval and denies policy mode', async () => {
-    for (const [toolApproval, expectedAuthorized] of [
-      ['always', true],
-      ['policy', false]
-    ] as const) {
-      let authorizeConfigApply:
-        | ((
-            event: {
-              requestId: string
-              planId: string
-              summary: string
-              risk: 'high'
-              reload: 'after-current-request'
-              destructive: boolean
-            },
-            signal: AbortSignal
-          ) => Promise<boolean>)
-        | undefined
-      const requestId = `3f496642-f47d-4e0a-8944-a32c77b0d6e${expectedAuthorized ? '1' : '2'}`
+  it('grants local config write access without a standalone native authorizer', async () => {
+    for (const toolApproval of ['always', 'policy'] as const) {
+      const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6e1'
       const knowledgeGateway = {
-        grant: vi.fn(
-          (
-            _requestId: string,
-            _libraryIds: readonly string[],
-            _signal: AbortSignal,
-            _magicNotesAccess: string,
-            config: {
-              authorizeApply?: typeof authorizeConfigApply
-            }
-          ) => {
-            authorizeConfigApply = config.authorizeApply
-            return 'config-capability'
-          }
-        ),
+        grant: vi.fn(() => 'config-capability'),
         getAvailableToolNames: vi.fn(() => [
           'goodbuddy_config_capabilities',
           'goodbuddy_config_get',
@@ -12815,18 +12786,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         capability: 'chat',
         supportsToolExecution: true,
         async *run(request: { requestId: string }) {
-          const authorized = await authorizeConfigApply?.(
-            {
-              requestId: request.requestId,
-              planId: '11111111-1111-4111-8111-111111111111',
-              summary: '删除一个 MCP Server',
-              risk: 'high',
-              reload: 'after-current-request',
-              destructive: true
-            },
-            new AbortController().signal
-          )
-          expect(authorized).toBe(expectedAuthorized)
           yield { requestId: request.requestId, type: 'done' }
         }
       }
@@ -12845,7 +12804,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.getResolvedSettings.mockResolvedValue({
         workspacePath: 'C:\\Workspace'
       })
-      harness.approvalBroker.request.mockResolvedValue('once')
 
       harness.handler?.(trustedEvent(harness.webContents), {
         requestId,
@@ -12859,23 +12817,14 @@ describe('registerIpcHandlers agent terminal state', () => {
           harness.assistantDatabase.updateTaskStatus
         ).toHaveBeenCalledWith(requestId, 'completed')
       )
-      if (expectedAuthorized) {
-        expect(harness.approvalBroker.request).toHaveBeenCalledWith(
-          expect.objectContaining({
-            requestId,
-            conversationId: `goodbuddy-config:${requestId}`,
-            scopeKey:
-              'goodbuddy-config:11111111-1111-4111-8111-111111111111',
-            title: '允许高风险 GoodBuddy 配置变更？',
-            toolName: 'goodbuddy_config_apply',
-            allowPermanent: false
-          }),
-          expect.any(AbortSignal),
-          expect.any(Function)
-        )
-      } else {
-        expect(harness.approvalBroker.request).not.toHaveBeenCalled()
-      }
+      expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+        requestId,
+        [],
+        expect.any(AbortSignal),
+        'none',
+        { access: 'write', workspacePath: 'C:\\Workspace' }
+      )
+      expect(harness.approvalBroker.request).not.toHaveBeenCalled()
       await harness.dispose()
     }
   })

@@ -26,6 +26,9 @@ import { browserTabIdSchema } from '../../shared/contracts'
 import { BrowserService } from '../browser/browser-service'
 import { createHash } from 'node:crypto'
 import { DesktopDiagnostics, type DesktopDiagnosticFailureObserver } from '../desktop-diagnostics'
+import { ApplicationSettingsStore } from '../application-settings-store'
+import { CapabilityService } from '../capabilities/capability-service'
+import { GoodBuddyConfigService } from '../goodbuddy-config-service'
 
 const firstLibraryId = '11111111-1111-4111-8111-111111111111'
 const secondLibraryId = '22222222-2222-4222-8222-222222222222'
@@ -640,7 +643,6 @@ describe('KnowledgeMcpGateway', () => {
       'none',
       { access: 'read', workspacePath: process.cwd() }
     )!
-    const authorizeApply = vi.fn(async () => true)
     const writeToken = gateway.grant(
       'config-write',
       [],
@@ -648,8 +650,7 @@ describe('KnowledgeMcpGateway', () => {
       'none',
       {
         access: 'write',
-        workspacePath: process.cwd(),
-        authorizeApply
+        workspacePath: process.cwd()
       }
     )!
 
@@ -685,11 +686,61 @@ describe('KnowledgeMcpGateway', () => {
     expect(configService.apply).toHaveBeenCalledWith(
       'config-write',
       expect.any(Object),
-      expect.any(AbortSignal),
-      authorizeApply
+      expect.any(AbortSignal)
     )
     gateway.revoke(writeToken)
     expect(configService.revokeRequest).toHaveBeenCalledWith('config-write')
+  })
+
+  it('applies a real configuration plan over MCP without an authorizer', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'config-gateway-'))
+    temporaryDirectories.push(directory)
+    const application = new ApplicationSettingsStore(join(directory, 'application.json'))
+    const capabilities = new CapabilityService(
+      join(directory, 'capabilities.json'),
+      join(directory, 'builtin'),
+      join(directory, 'imported'),
+      {
+        isAvailable: () => true,
+        encrypt: value => Buffer.from(value),
+        decrypt: value => value.toString()
+      }
+    )
+    const configService = new GoodBuddyConfigService(application, capabilities)
+    const gateway = new KnowledgeMcpGateway(createService().service, { configService })
+    gateways.push(gateway)
+    const token = gateway.grant('config-mcp', [], new AbortController().signal, 'none', {
+      access: 'write', workspacePath: directory
+    })!
+    await gateway.start()
+    const client = new Client({ name: 'config-apply-test', version: '1.0.0' })
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } }
+      }))
+      const planned = await client.callTool({
+        name: 'goodbuddy_config_plan',
+        arguments: { operations: [{
+          operation: 'application.update', updates: { checkUpdatesOnStartup: false }
+        }] }
+      })
+      expect(planned.isError).not.toBe(true)
+      const content = planned.content as Array<{ type: string; text: string }>
+      const { plan } = JSON.parse(content[0]!.text)
+      expect(plan).not.toHaveProperty('requiresApproval')
+      expect((await application.get()).checkUpdatesOnStartup).toBe(true)
+      const applied = await client.callTool({
+        name: 'goodbuddy_config_apply', arguments: { planId: plan.planId }
+      })
+      expect(applied.isError).not.toBe(true)
+      expect((await application.get()).checkUpdatesOnStartup).toBe(false)
+      expect(configService.takePendingReload('config-mcp')).toBe('after-current-request')
+      await expect(client.callTool({
+        name: 'goodbuddy_config_apply', arguments: { planId: plan.planId }
+      })).rejects.toThrow('不存在')
+    } finally {
+      await client.close()
+    }
   })
 
   it('keeps scope server-side, strips markup, bounds model arguments, and drains references', async () => {

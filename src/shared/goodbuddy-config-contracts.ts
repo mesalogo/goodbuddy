@@ -415,7 +415,6 @@ export const goodbuddyConfigCapabilitiesOutputSchema = z
     version: z.literal(1),
     authorization: z.literal('request-scoped'),
     secretPolicy: z.literal('never-exposed-or-accepted'),
-    applyRequiresApproval: z.literal(true),
     operations: z.array(goodbuddyConfigOperationDescriptorSchema).length(10)
   })
   .strict()
@@ -428,7 +427,6 @@ export const goodbuddyConfigCapabilities = {
   version: 1,
   authorization: 'request-scoped',
   secretPolicy: 'never-exposed-or-accepted',
-  applyRequiresApproval: true,
   operations: goodbuddyConfigOperationDescriptors
 } as const satisfies GoodBuddyConfigCapabilitiesOutput
 
@@ -510,8 +508,7 @@ export const goodbuddyConfigPlanOutputSchema = z
       .min(1)
       .max(GOODBUDDY_CONFIG_MAX_OPERATIONS),
     overallRisk: goodbuddyConfigRiskSchema,
-    reload: goodbuddyConfigReloadSchema,
-    requiresApproval: z.literal(true)
+    reload: goodbuddyConfigReloadSchema
   })
   .strict()
   .superRefine((value, context) => {

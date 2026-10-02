@@ -200,7 +200,7 @@ describe('GoodBuddy configuration contracts', () => {
     ).toThrow()
   })
 
-  it('requires an expiring, approved plan and applies only its ID', () => {
+  it('requires an expiring plan without a standalone approval flag and applies only its ID', () => {
     const operation = goodbuddyConfigCommonExamples[0]!
     expect(
       goodbuddyConfigPlanOutputSchema.parse({
@@ -218,10 +218,10 @@ describe('GoodBuddy configuration contracts', () => {
           }
         ],
         overallRisk: 'low',
-        reload: 'none',
-        requiresApproval: true
-      }).requiresApproval
-    ).toBe(true)
+        reload: 'none'
+      })
+    ).not.toHaveProperty('requiresApproval')
+    expect(goodbuddyConfigCapabilities).not.toHaveProperty('applyRequiresApproval')
     expect(
       goodbuddyConfigApplyInputSchema.parse({
         planId: '00000000-0000-4000-8000-000000000002'

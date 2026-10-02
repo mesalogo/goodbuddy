@@ -1005,7 +1005,8 @@ describe('ModelToolProvider', () => {
       )
     ).toMatchObject({
       scopeKey: 'model:goodbuddy-config:apply',
-      allowPermanent: false
+      allowPermanent: false,
+      description: '该操作会按计划修改 GoodBuddy 应用偏好或扩展能力。'
     })
   })
 
