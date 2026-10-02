@@ -27,6 +27,9 @@ const config = {
   typedCharacters: Number(process.env.GB_PERF_TYPED_CHARACTERS || 120),
   keyIntervalMs: Number(process.env.GB_PERF_KEY_INTERVAL_MS || 60),
   switches: Number(process.env.GB_PERF_SWITCHES || 15),
+  memoryVisits: Number(process.env.GB_PERF_MEMORY_VISITS || 24),
+  // Chromium CPU throttling of the renderer only (Main is not slowed down).
+  cpuThrottle: Number(process.env.GB_PERF_CPU_THROTTLE || 1),
   contentWidth: 1280,
   contentHeight: 800
 }
@@ -267,10 +270,24 @@ async function measure(id, description, body) {
 // Optional renderer CPU profile (GB_PERF_PROFILE=1). Profiling adds overhead,
 // so profiled runs are for attribution only, not for baseline numbers.
 const profiling = process.env.GB_PERF_PROFILE === '1'
-async function withRendererProfile(name, body) {
-  if (!profiling) return body()
+function cdp() {
   const debuggerApi = win.webContents.debugger
   if (!debuggerApi.isAttached()) debuggerApi.attach('1.3')
+  return debuggerApi
+}
+// Throttling is per page session, so it is reapplied after every reload.
+async function applyCpuThrottle() {
+  if (config.cpuThrottle > 1) await cdp().sendCommand('Emulation.setCPUThrottlingRate', { rate: config.cpuThrottle })
+}
+// Heap after a full GC, so retained memory is not hidden by GC timing.
+async function retainedHeapMB() {
+  await cdp().sendCommand('HeapProfiler.collectGarbage')
+  const { usedSize } = await cdp().sendCommand('Runtime.getHeapUsage')
+  return usedSize / 1048576
+}
+async function withRendererProfile(name, body) {
+  if (!profiling) return body()
+  const debuggerApi = cdp()
   await debuggerApi.sendCommand('Profiler.enable')
   await debuggerApi.sendCommand('Profiler.setSamplingInterval', { interval: 200 })
   await debuggerApi.sendCommand('Profiler.start')
@@ -401,6 +418,42 @@ async function streamOnce({ typeDuring = 0 } = {}) {
   return { fields: { streamStartMs: startedMs, streamTotalMs: performance.now() - sendAt, assistantRenderedChars: assistantChars, typedDuringStream, typingEndedBeforeStreamFinished: stillStreaming } }
 }
 
+// PERF-09: visit many distinct conversations and check whether DOM size and
+// retained heap stay bounded by the keep-alive cache. Sampling forces a GC,
+// so it is recorded outside measure() and is not mixed with frame metrics.
+async function memoryGrowth(seeded) {
+  report.pending = 'memory-growth'
+  writeReport()
+  const sample = async visits => ({
+    visits,
+    mountedPanes: await js("document.querySelectorAll('.chat-history-pane').length"),
+    domNodes: await js("document.getElementsByTagName('*').length"),
+    retainedHeapMB: Math.round(await retainedHeapMB() * 10) / 10
+  })
+  const samples = [await sample(0)]
+  const openMs = []
+  for (let index = 0; index < config.memoryVisits; index += 1) {
+    const target = index * 3 + 2
+    await clickConversation(seeded.titles[target])
+    openMs.push(await js(`window.__gbPerf.paneShownSinceMouseDown(${JSON.stringify(seeded.ids[target])})`))
+    await sleep(200)
+    if ((index + 1) % 4 === 0) samples.push(await sample(index + 1))
+  }
+  const first = samples[0]
+  const last = samples[samples.length - 1]
+  const half = samples[Math.floor(samples.length / 2)]
+  report.memoryGrowth = {
+    description: `Visit ${config.memoryVisits} distinct seeded conversations; DOM and post-GC heap every 4 visits`,
+    samples,
+    openLatency: summarize(openMs),
+    // Growth in the second half shows whether the cache bound actually holds.
+    secondHalfGrowth: { domNodes: last.domNodes - half.domNodes, retainedHeapMB: Math.round((last.retainedHeapMB - half.retainedHeapMB) * 10) / 10 },
+    totalGrowth: { domNodes: last.domNodes - first.domNodes, retainedHeapMB: Math.round((last.retainedHeapMB - first.retainedHeapMB) * 10) / 10 }
+  }
+  writeReport()
+  console.log(`[perf] memory-growth: panes ${first.mountedPanes}->${last.mountedPanes}, DOM ${first.domNodes}->${last.domNodes}, heap ${first.retainedHeapMB}->${last.retainedHeapMB} MB (second half +${report.memoryGrowth.secondHalfGrowth.retainedHeapMB} MB)`)
+}
+
 // -------------------------------------------------------------- scenarios
 
 // Electron emits `ready` only after this ESM entry finishes evaluating, so
@@ -422,8 +475,10 @@ try {
     platform: process.platform, arch: process.arch, electron: process.versions.electron, chrome: process.versions.chrome,
     cpu: `${cpus()[0]?.model?.trim()} x${cpus().length}`, memoryGB: Math.round(totalmem() / 1073741824),
     innerWidth, innerHeight, devicePixelRatio,
-    gpu: { gpu_compositing: gpu.gpu_compositing, rasterization: gpu.rasterization, webgl: gpu.webgl, webgl2: gpu.webgl2, video_decode: gpu.video_decode }
+    gpu: { gpu_compositing: gpu.gpu_compositing, rasterization: gpu.rasterization, webgl: gpu.webgl, webgl2: gpu.webgl2, video_decode: gpu.video_decode },
+    rendererCpuThrottle: config.cpuThrottle
   }
+  await applyCpuThrottle()
   await sleep(1_500)
 
   const idle = await measure('idle', 'Fresh profile, no interaction for 3 s', async () => { await sleep(3_000) })
@@ -446,6 +501,7 @@ try {
   win.webContents.reload()
   await waitFor(`!!document.querySelector(${JSON.stringify(composer)}) && document.querySelectorAll('button.conversation-item').length >= ${Math.min(50, config.seedConversations)}`, 60_000, 'seeded sidebar')
   report.startup.reloadWithSeedMs = performance.now() - reloadStart
+  await applyCpuThrottle()
   await dismissStartupDialogs({ expect: false })
   await sleep(1_500)
   report.seed.sidebarRows = await js("document.querySelectorAll('button.conversation-item').length")
@@ -453,11 +509,11 @@ try {
 
   await measure('idle-seeded', `Seeded history (${config.seedConversations} conversations), no interaction for 3 s`, async () => { await sleep(3_000) })
 
-  await measure('typing-seeded', `Type ${config.typedCharacters} characters with seeded history`, async () => {
+  await measure('typing-seeded', `Type ${config.typedCharacters} characters with seeded history`, () => withRendererProfile('typing-seeded', async () => {
     await clickSelector(composer, { scroll: false })
     await typeText('abcdefghijklmnopqrstuvwxyz'.repeat(Math.ceil(config.typedCharacters / 26)).slice(0, config.typedCharacters))
     await settle()
-  })
+  }))
   await js(`(() => { const t = document.querySelector(${JSON.stringify(composer)}); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, ''); t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`)
 
   await measure('switch-conversations', `Click ${config.switches} different seeded conversations (${config.seedMessagesPerConversation} messages each), first visit`, async () => {
@@ -510,6 +566,8 @@ try {
   await screenshot('streamed')
 
   await measure('stream-and-type', 'Stream a long answer while typing into the composer; latency and frames cover the typing period', () => streamOnce({ typeDuring: 100 }))
+
+  if (config.memoryVisits > 0) await memoryGrowth(seeded)
 
   report.status = errors.length ? 'passed-with-renderer-errors' : 'passed'
   report.pending = null

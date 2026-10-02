@@ -140,6 +140,11 @@ function printSummary(report) {
     heapMB: format(s.renderer?.heapUsedMB)
   }))
   if (rows.length) console.table(rows)
+  if (report.memoryGrowth) {
+    console.log(`memory growth (${report.memoryGrowth.description}):`)
+    console.table(report.memoryGrowth.samples)
+  }
+  if (report.environment?.rendererCpuThrottle > 1) console.log(`renderer CPU throttled ${report.environment.rendererCpuThrottle}x`)
   if (report.error) console.log(`error: ${report.error}`)
 }
 

@@ -26,6 +26,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "perf:app": "node build/run-app-perf.cjs",
+    "perf:knowledge": "node build/run-knowledge-perf.cjs",
     "eval:retrieval": "vitest run --config tests/support/knowledge-retrieval-evaluation.ts tests/knowledge-retrieval-metrics.test.ts tests/knowledge-retrieval-evaluation.test.ts",
     "build": "npm run typecheck && npm run build:bundle",
     "build:bundle": "electron-vite build && node build/check-control-plane-package-installer.cjs",

@@ -332,10 +332,29 @@ frame rate, heap measurements and 500KB/1MB scenarios remain unmeasured.
 
 ### PERF-05 向量检索规模基准
 
-- **优先级 / 状态：** P1 / 待开始
+- **优先级 / 状态：** P1 / 耗时基线已完成，取消响应与峰值内存待测
 - **场景：** 1k、10k、50k chunks 的全文、向量和混合检索。
 - **指标：** 总耗时、`vectorScannedCount`、Main event-loop lag、取消响应和峰值内存。
 - **验收：** 固定语料和查询集产生可比较结果，并保留检索质量指标。
+
+#### 2026-10-02 耗时基线
+
+`npm run perf:knowledge`（`build/run-knowledge-perf.cjs`）用 esbuild 打包生产
+`KnowledgeDatabase`，在临时 SQLite 中写入确定性随机语料（每文档 100 chunks，每 chunk 80 词，
+384 维向量，与内置嵌入模型一致），重开连接后对每个规模各测 15 次 `search`、`vectorSearch`
+和 `hybridSearchWithDiagnostics`（图谱关闭）。这些调用是同步的，在 App 中由 Main 线程直接
+执行，所以单次耗时就是 Main 被阻塞的时长。同一台设备（Node 24.18），p95：
+
+| chunks | 全文 | 向量 | 混合 |
+| --- | --- | --- | --- |
+| 5,000 | 14 ms | 54 ms | 93 ms |
+| 20,000 | 59 ms | 173 ms | 219 ms |
+| 50,000 | 130 ms | 396 ms | 520 ms |
+
+向量扫描与 chunk 数线性相关，FTS 也随规模增长。按 50 ms 预算，约 5k chunks 起混合检索就会
+使 Main 可感知地卡顿；5 万 chunks 时每次检索约冻结 Main 0.5 s，期间全部 IPC（包括流式输出、
+终端和界面操作）排队。结论：`PERF-06` 的实施条件已满足；检索应先移出 Main（`PERF-06`，
+随后并入 `PERF-16`）。取消响应和峰值内存尚未测量。
 
 ### PERF-06 向量计算移出 Main
 
@@ -366,10 +385,28 @@ frame rate, heap measurements and 500KB/1MB scenarios remain unmeasured.
 
 ### PERF-09 Keep-alive 压力测试
 
-- **优先级 / 状态：** P2 / 待开始
+- **优先级 / 状态：** P2 / 文本会话部分已完成，图片与工具记录待补
 - **场景：** 连续打开 12 个会话，每个会话包含 80 条富 Markdown、图片和工具记录。
 - **指标：** DOM 节点、Renderer heap、GC pause 和流式 commit。
 - **验收：** 明确隐藏会话缓存是否构成实际内存或渲染问题。
+
+#### 2026-10-02 文本会话测量
+
+`npm run perf:app` 在流式场景之后连续打开 24 个未访问过的种子会话（每个 20 条富 Markdown），
+每 4 次记录挂载的面板数、DOM 节点数和强制 GC 后的 JS heap（CDP
+`HeapProfiler.collectGarbage` + `Runtime.getHeapUsage`）。
+
+| 已访问 | 挂载面板 | DOM 节点 | GC 后 heap |
+| --- | --- | --- | --- |
+| 0（两次流式之后） | 12 | 39,657 | 54.6 MB |
+| 4 / 8 | 12 | 39,656 | 54.6–55.1 MB |
+| 12 | 12 | 15,884 | 27.4 MB |
+| 16 / 20 / 24 | 12 | 15,884 | 27.3–27.9 MB |
+
+缓存上限 12 个面板有效：两条长流式回答被挤出缓存后，DOM 和 heap 回落并保持不变，后半段
+增长为 0。此前观察到的“4 万节点、210 MB”是两条 40 KB 流式回答仍在缓存中时的瞬时值
+（未 GC），不是持续泄漏。结论：文本会话场景下 keep-alive 不构成内存问题，`PERF-10` 不需要
+调整缓存数量或有效期；含图片和工具记录的会话尚未测。
 
 ### PERF-10 Keep-alive 轻量优化
 
@@ -444,8 +481,10 @@ frame rate, heap measurements and 500KB/1MB scenarios remain unmeasured.
   按键间隔 60 ms；流式回答约 40 KB 混合 Markdown（标题、列表、代码、表格、行内/块级公式、
   引用），每个 SSE 事件 12 个字符，2,000 字符/秒。可用 `GB_PERF_*` 环境变量调整，
   见脚本开头。
-- `GB_PERF_PROFILE=1` 为流式场景采集 Renderer CPU profile 并汇总自身耗时热点；剖析有开销，
-  只用于归因，不作为基线数据。
+- `GB_PERF_PROFILE=1` 为有历史输入和流式场景采集 Renderer CPU profile 并汇总自身耗时
+  热点；剖析有开销，只用于归因，不作为基线数据。
+- `GB_PERF_CPU_THROTTLE=<倍数>` 用 CDP 降低 Renderer CPU 速度模拟低端设备；
+  `GB_PERF_MEMORY_VISITS`（默认 24，0 跳过）控制 `PERF-09` 内存场景。
 
 #### 2026-10-02 基线
 
@@ -534,6 +573,38 @@ p95 从约 36 ms 降到 15.5 ms。
   剩余开销属于 App 级重渲染，留给 `PERF-12` 后续项和 `PERF-13`。
 - **剩余：** 流式 delta 按帧合并、大面板 memo、滚动跟随优化仍待实施。
 
+#### 2026-10-02 低端设备模拟（Renderer CPU 4× 降速）
+
+`GB_PERF_CPU_THROTTLE=4 npm run perf:app` 通过 CDP `Emulation.setCPUThrottlingRate` 把
+Renderer 主线程降速 4 倍（Main 不降速，每次 reload 后重新应用），源码 `5dc6545`
+（含 `PERF-12` 第一步），同一设备。不降速一栏为同一轮构建的对照。
+
+| 场景 | 不降速 | 4× 降速 |
+| --- | --- | --- |
+| 输入 120 字（新 profile）按键→帧 p95 | 8.7 ms | 42 ms，掉帧 21% |
+| **输入 120 字（有 300 个会话）** | 0 Long Task，p95 9 ms | **37 次 / 3.2 s，p95 355 ms，最大 483 ms** |
+| **首次切换会话 ×15** 点击→显示 p50 / p95 | 52 / 117 ms | **434 / 922 ms** |
+| 再次切换（缓存命中）p50 / p95 | 55 / 66 ms | 482 / 534 ms |
+| 打开 2,000 条消息会话 | 140 ms | 1.2 s |
+| 滚动长会话 | 帧 p95 8.5 ms | 帧 p95 17 ms，正常 |
+| **流式 40 KB** | 1 次 / 0.17 s，帧 p95 17 ms | **156 次 / 16.7 s，帧 p95 183 ms，掉帧 100%** |
+| **流式期间输入** 按键→帧 p50 / p95 | 11.5 / 17 ms | **575 / 1,513 ms** |
+
+高性能机上不可见的问题，在降速后全部暴露：
+
+- 新 profile 输入只到 42 ms，有 300 个会话后升到 355 ms，差异来自**每次按键重新渲染整个
+  App 和完整侧栏**。降速剖析：`resizeComposerTextarea`（每次输入同步读 `scrollHeight` 强制
+  布局）约 8%；i18next `formatLanguageCode`/`translate` 约 12%（`Intl.getCanonicalLocales`
+  每次调用 `t()` 都执行，侧栏 302 行各自多次调用）；其余是 App 与侧栏行的 React 渲染。
+- 流式期间约 18% 是 `ChatHistoryPane` 每次 flush 的滚动跟随 layout effect（读布局后
+  `scrollTo`），i18next 约 8%，Markdown 解析与 React reconcile 其余。
+- 缓存命中切换也约 0.5 s，说明慢的不是挂载新面板，而是切换触发的 App 级整体重渲染。
+
+**结论：** 低端设备上输入、切换和流式都会明显卡顿，主因是 App 级重渲染和侧栏全量渲染，
+证实 `PERF-13`（领域 store）和 `PERF-14`（侧栏虚拟化）有必要。`PERF-12` 剩余项应先做三处
+低成本热点：Composer 高度改为只在需要时测量、`t()` 结果或 i18next 语言码规范化做缓存、
+滚动跟随按帧合并且只在贴底时执行。
+
 ### PERF-13 Renderer 领域 Store 迁移
 
 - **优先级 / 状态：** P1 / 待开始
@@ -559,7 +630,7 @@ p95 从约 36 ms 降到 15.5 ms。
 ### PERF-16 数据进程
 
 - **优先级 / 状态：** P1 / 待开始
-- **实施条件：** `PERF-15` 完成，调���方已全部异步。
+- **实施条件：** `PERF-15` 完成，调用方已全部异步。
 - **范围：** 新增独占 SQLite 的 `utilityProcess`，承接会话、知识库、向量检索、Story Graph、
   活动记录及文档解析；Main 只转发；保证同一时刻只有一个写入方。吸收 `PERF-06` 的范围。
 - **验收：** 大知识库检索、会话列表和文档导入期间 Main event-loop 延迟达到批次目标；取消、
