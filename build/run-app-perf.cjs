@@ -10,7 +10,11 @@ const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 
 const root = resolve(__dirname, '..')
-const modelPort = 11434
+// 11434 is the fresh-profile default endpoint. Another GoodBuddy (or Ollama)
+// may already use it; GB_PERF_MODEL_PORT moves the fake model and points the
+// isolated profile at it through the GOODBUDDY_MODEL_* environment variables.
+const defaultModelPort = 11434
+const modelPort = Number(process.env.GB_PERF_MODEL_PORT || defaultModelPort)
 const totalTimeoutMs = Number(process.env.GB_PERF_TIMEOUT_MS || 600_000)
 const keepProfile = process.env.GB_PERF_KEEP_PROFILE === '1'
 const streamBytes = Number(process.env.GB_PERF_STREAM_BYTES || 40_000)
@@ -160,12 +164,18 @@ async function main() {
   try {
     server = await startModelServer(ledger)
   } catch (error) {
-    throw new Error(`Cannot listen on 127.0.0.1:${modelPort} for the fake model (${error.code ?? error.message}); stop the local service using that port and retry`, { cause: error })
+    throw new Error(`Cannot listen on 127.0.0.1:${modelPort} for the fake model (${error.code ?? error.message}); stop the local service using that port, or set GB_PERF_MODEL_PORT to a free port`, { cause: error })
   }
   const environment = { ...process.env, GB_PERF_DIRECTORY: runDirectory, GB_PERF_ARTIFACTS: outputDirectory, GB_PERF_ROOT: root }
   delete environment.ELECTRON_RUN_AS_NODE
   delete environment.ELECTRON_RENDERER_URL
   for (const key of ['GOODBUDDY_MODEL_API_KEY', 'GOODBUDDY_MODEL_BASE_URL', 'GOODBUDDY_MODEL_NAME', 'GOODBUDDY_BIGTOKEN_API_KEY', 'GOODBUDDY_BIGTOKEN_BASE_URL', 'GOODBUDDY_BIGTOKEN_MODEL']) delete environment[key]
+  if (modelPort !== defaultModelPort) {
+    // The fake model ignores the key; it only makes the default profile use the URL.
+    environment.GOODBUDDY_MODEL_API_KEY = 'perf-loopback'
+    environment.GOODBUDDY_MODEL_BASE_URL = `http://127.0.0.1:${modelPort}/v1`
+    environment.GOODBUDDY_MODEL_NAME = 'qwen3'
+  }
   environment.GOODBUDDY_WORKSPACE = join(runDirectory, 'workspace')
   mkdirSync(environment.GOODBUDDY_WORKSPACE, { recursive: true })
   const started = Date.now()
