@@ -4842,6 +4842,41 @@ describe("App", () => {
     expect(sidebarRenderProbes.row.mock.calls.length).toBeLessThanOrEqual(4);
   });
 
+  it("renders the App root once when switching between kept conversations (PERF-13)", async () => {
+    const conversations = Array.from({ length: 3 }, (_, c) => ({
+      id: `00000000-0000-4000-9${String(c).padStart(3, "0")}-000000000100`,
+      projectId, title: `Warm switch ${c}`, updatedAt: 2_000 + c,
+      messages: [{
+        id: `00000000-0000-4000-9${String(c).padStart(3, "0")}-000000000101`,
+        role: "assistant" as const, content: `Warm body ${c}`, createdAt: 2_000 + c, state: "complete" as const,
+      }],
+    }));
+    vi.mocked(api.conversations.list).mockResolvedValueOnce(conversations);
+    const { container } = render(<App />);
+    const list = (): HTMLElement => container.querySelector<HTMLElement>(".conversation-list")!;
+    fireEvent.click((await within(list()).findByText("Warm switch 0")).closest("button")!);
+    await screen.findByText("Warm body 0");
+    fireEvent.click(within(list()).getByText("Warm switch 1").closest("button")!);
+    await screen.findByText("Warm body 1");
+    // Let deferred loads (attachment drafts, artifact hydration) settle.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    // useUnviewedCompletions runs once per App render: it counts App renders.
+    assistantTasksProbe.mockClear();
+    act(() => {
+      fireEvent.click(within(list()).getByText("Warm switch 0").closest("button")!);
+    });
+    expect(document.querySelector(".conversation-item--active")).toHaveTextContent("Warm switch 0");
+    // The pane order and composer popups no longer update state during render.
+    expect(assistantTasksProbe).toHaveBeenCalledTimes(1);
+    // A conversation not kept yet adds a pane; that is still one App render.
+    assistantTasksProbe.mockClear();
+    act(() => {
+      fireEvent.click(within(list()).getByText("Warm switch 2").closest("button")!);
+    });
+    expect(document.querySelector(".conversation-item--active")).toHaveTextContent("Warm switch 2");
+    expect(assistantTasksProbe).toHaveBeenCalledTimes(1);
+  });
+
   it("copies and exports a streaming conversation with the text shown on screen", async () => {
     const { container } = render(<App />);
     const composer = await screen.findByLabelText("向 GoodBuddy 提问");

@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import type { AssistantTask } from "../../shared/assistant-contracts";
 import type { Message } from "./ChatTimeline";
 import { getConversationDisplayTitle, isUnusedConversation, type Conversation } from "./chat-conversation";
@@ -21,19 +21,40 @@ export function useConversationCount(store: ConversationStore): number {
   return useConversationStoreSelector(store, selectCount);
 }
 
-/** Display titles by conversation ID. */
+// Streaming replaces the list on every flush. The selector compares the
+// titles in order and keeps the previous map while none changed, instead of
+// building a new map each time only to compare it entry by entry.
+function createTitlesSelector(
+  defaultTitle: string,
+): (conversations: Conversation[]) => ReadonlyMap<string, string> {
+  const previous: { ids: string[]; titles: string[]; map?: ReadonlyMap<string, string> } = {
+    ids: [],
+    titles: [],
+  };
+  return (conversations) => {
+    const titles = conversations.map((conversation) =>
+      getConversationDisplayTitle(conversation, defaultTitle));
+    if (
+      previous.map &&
+      previous.ids.length === conversations.length &&
+      conversations.every((conversation, index) =>
+        previous.ids[index] === conversation.id && previous.titles[index] === titles[index])
+    ) {
+      return previous.map;
+    }
+    previous.ids = conversations.map((conversation) => conversation.id);
+    previous.titles = titles;
+    previous.map = new Map(previous.ids.map((id, index) => [id, titles[index]!]));
+    return previous.map;
+  };
+}
+
+/** Display titles by conversation ID; the same map while no title changes. */
 export function useConversationTitles(
   store: ConversationStore,
   defaultTitle: string,
 ): ReadonlyMap<string, string> {
-  const selector = useCallback(
-    (conversations: Conversation[]) =>
-      new Map(conversations.map((conversation) => [
-        conversation.id,
-        getConversationDisplayTitle(conversation, defaultTitle),
-      ])),
-    [defaultTitle],
-  );
+  const selector = useMemo(() => createTitlesSelector(defaultTitle), [defaultTitle]);
   return useConversationStoreSelector(store, selector, sameMapEntries);
 }
 

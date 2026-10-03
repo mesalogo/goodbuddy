@@ -139,7 +139,7 @@ import {
   messageRenderBatchSize,
   type ChatScrollSnapshot,
 } from "./ChatHistoryPane";
-import { reconcilePaneOrder } from "./pane-order";
+import { usePaneOrder } from "./pane-order";
 import { getConversationDisplayTitle, isUnusedConversation, type Conversation } from "./chat-conversation";
 import {
   ConversationListView,
@@ -2377,8 +2377,8 @@ function App(): React.JSX.Element {
   );
   // Kept panes must keep a stable DOM order. Reordering keyed siblings makes
   // React detach and reinsert scroll containers, which resets their scrollTop.
-  // The order lives in state and is reconciled during render; the helper
-  // returns the previous array when nothing changed, so this settles at once.
+  // The order is reconciled during render against the previous one (see
+  // usePaneOrder), without a state update, so a switch renders App once.
   const cachedConversationIds = useMemo(
     () =>
       [activeId, ...cachedConversationViews.map((entry) => entry.key)].filter(
@@ -2386,15 +2386,7 @@ function App(): React.JSX.Element {
       ),
     [activeId, cachedConversationViews],
   );
-  const [conversationPaneOrderState, setConversationPaneOrderState] =
-    useState<readonly string[]>([]);
-  const conversationPaneOrder = reconcilePaneOrder(
-    conversationPaneOrderState,
-    cachedConversationIds,
-  );
-  if (conversationPaneOrder !== conversationPaneOrderState) {
-    setConversationPaneOrderState(conversationPaneOrder);
-  }
+  const conversationPaneOrder = usePaneOrder(cachedConversationIds);
   const activeRuntimeResolution = useMemo(
     () =>
       runtimeSettings
