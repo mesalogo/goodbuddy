@@ -345,7 +345,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.2`, paired with the current Desktop release candidate `0.15.8`; formal
+  `0.15.3`, paired with the current Desktop release candidate `0.15.9`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -836,9 +836,18 @@ records are listed separately and do not introduce another feature status.
   manages daily or weekly Global or selected-Project plans and suggestions.
   Task Center and Settings do not duplicate this form. Pending suggestions are
   not repeated; dismissed suggestions can return with changed evidence.
-  Project/global processing progress remain separate and real-time conversation
+  Project/global processing progress share one source-version timeline; real-time conversation
   intervention remains planned. See the
   [implemented rules](./docs/features/conversation-supervision/logic-design.md).
+- [x] **Stories, experiences, and time-spiral navigation**: Reviews organize
+  events into project features, threads, and optional cross-project stories.
+  Users can rename, merge, reassign, remove, and undo adjustments. Experiences
+  retain formation/application evidence and human-edit markers; heartbeat
+  suggestions can identify stalled stories or potentially useful experiences.
+  Flat and lazy-loaded WebGL spiral views share selection and sources, with
+  a flat-view fallback and graphics cleanup. Organization and suggestions may
+  incur model costs and require source verification. See the
+  [implementation evidence](./docs/features/conversation-supervision/progress.md).
 - [x] **Supervisor reviews, story graphs, and activity**: Review a selected scope
   and period, read dated supervision results and history in Work review, inspect saved result graphs and sources, confirm or revise entities,
   and continue a discussion with source-linked review context. Sidebar feedback follows or pins a
@@ -876,12 +885,15 @@ records are listed separately and do not introduce another feature status.
 - [ ] **Batch runs and comparison lab** (planned): Compares model, Prompt,
   role, and workflow configurations in batches and summarizes quality,
   duration, tokens, cost, failure rate, and artifact differences.
-- **Story Graph read tools (Desktop 0.15.2 / Agent 0.15.0)**: Agents can search saved work,
+- **Story Graph read tools (Desktop 0.15.9 / Agent 0.15.3)**: Agents can search saved work,
   read current claims or timelines, and page through source evidence. Supervisor
   enablement and Runtime assignment control discovery and calls, including old
   sessions. Model, local Harness, and local/remote OpenCode and Continue share
   the desktop reader. Queries make no model calls and do not infer replacement
-  from newer reviews. Cross-scope fact reuse and `as_of` remain deferred; see the
+  from newer reviews. Shared source-version facts, stories, and experiences are
+  available across permitted scopes; `as_of` remains deferred. Keyword matching
+  and tool guidance support model-selected lookups without automatic full-graph
+  context injection; experiences remain advice, not instructions. See the
   [design and validation](./docs/features/conversation-supervision/story-graph-mcp-design.md).
 - [ ] **Temporal memory and fact-conflict detection** (planned): Adds validity
   periods, current/expired/conflicting fact detection, fact checking, and
@@ -966,9 +978,19 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.8`; Agent candidate `0.15.2` requires Desktop `0.15.8`, with
+- The current Desktop candidate is `0.15.9`; Agent candidate `0.15.3` requires Desktop `0.15.9`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.9` adds shared review progress, stories, experiences, and spiral
+  graph navigation, with schema 56 backup/rollback requirements and possible
+  model costs. Conversation/message windowing, Markdown caching, read-only
+  Workers, incremental activity writes, and checkpoint event batches reduce
+  repeated work without promising universal speedups. In-page find excludes
+  unmounted rows, rapid scrolling can show placeholders, and unavailable Workers
+  can fall back to synchronous reads. Execute configuration changes no longer
+  require duplicate native confirmation. Electron is 44.5.1. Four current-source
+  real Host model requests passed; exact-candidate CI and packaging remain required.
+  See the [preparation record](./docs/development/release-preparation-0.15.9.md).
 - Desktop `0.15.8` and Agent `0.15.2` add Execute-only saving of conversation
   images to absolute local or Host paths, with explicit overwrite and no WebP
   conversion. MCP settings list image tools without promising availability in

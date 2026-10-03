@@ -2,6 +2,52 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.9",
+      "releasedAt": "2026-10-03",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**让工作回顾围绕持续的故事展开**：监督者把事件组织为项目下的功能、子线索和可选的跨项目故事，工作回顾可查看本期新出现、推进或结束的故事。可手动重命名、合并、调整事件归属及撤销调整；跨项目关联默认关闭，自动归属可能有误，仍需核对来源。",
+            "**整理有依据的经验并给出后续建议**：监督者可从故事事件中归纳经验，显示适用条件、边界、形成依据及后续应用，并支持人工编辑、合并和删除。智能心跳可提示暂无进展的故事或可能适用的经验；自动归纳不是规则，接受暂无进展建议只创建暂停的后续任务，不自动执行。",
+            "**用时间螺旋查看工作的来路**：图谱可在平铺和时间螺旋间切换，按项目、功能、子线索逐层查看事件，并显示符合条件的跨故事经验连线。图例和导航控件收进紧凑工具栏，画布充分使用中间列；WebGL 不可用时可回到平铺视图，关闭时释放图形资源。",
+            "**让 Agent 按需查询故事与经验**：Story Graph 工具新增故事和经验对象，搜索支持关键词与中文分词匹配，并引导 Agent 在继续工作或核对既有决定时查证来源。是否调用仍由模型决定，不会把全部图谱自动注入每次对话；远程使用需更新至 Agent 0.15.3。"
+          ],
+          "fixes": [
+            "**减少长会话与流式回复的界面负担**：会话侧栏和消息时间线只挂载视口附近的内容，复用 Markdown 解析结果，流式更新减少无关界面刷新，并保留缓存会话的阅读位置。消息仍完整保存，可继续加载更早内容；浏览器式页内查找看不到未挂载行，快速滚动可能短暂出现占位，性能因设备和内容而异。",
+            "**减少数据库读写阻塞**：知识检索、图谱及会话查询的热点读取移到只读 Worker，活动记录按变化保存，远程语义事件在 checkpoint 前按批持久化。保留事务、顺序和回放去重，不以提前确认或丢弃事件换取速度；Worker 不可用时可退回同步读取。",
+            "**减少跨范围重复回顾并改进失败恢复**：项目和全局回顾共用处理进度，同一来源版本成功处理后不因换范围重复提取。模型输出不可用时，叶子批次最多按更小文本预算重试两次，汇总合并最多重试一次；提供方错误、超时和取消不自动重试，已保存批次保留。",
+            "**Execute 配置修改不再重复确认**：通过配置工具应用当前请求中的计划时，不再额外弹出一次原生确认框，避免已获 Execute 授权仍无法应用配置。Ask 仍只读，计划过期、一次性使用和配置变化校验继续保留。",
+            "**更新桌面运行环境与剪贴板适配**：Electron 升级至 44.5.1，并适配新版剪贴板接口。OpenCode 与 Continue 的固定版本不变，不代表新增操作系统或架构认证。"
+          ],
+          "notices": [
+            "首次启动升级到 schema 56，合并监督回顾进度并增加故事、经验和建议存储，历史结果保留；大数据库升级可能需要更多时间。请先关闭应用，备份完整数据库及相邻 `notes/` 目录；旧客户端无法打开升级后的库，降级需恢复升级前备份。",
+            "故事归属、经验整理、建议措辞及输出重试可能增加模型调用费用，首次整理已有事件也可能调用模型；已完成整理且没有变化时可跳过相关调用。自动结果不保证完整或正确，请核对来源；先升级 Desktop 0.15.9，再下载 Agent 0.15.3 并更新 Host。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Organize work reviews around ongoing stories**: Supervisor groups events into project features, threads, and optional cross-project stories, with reviews showing stories that appeared, progressed, or ended during the period. Rename, merge, reassign events, and undo adjustments; cross-project links are off by default, and automatic grouping still needs source verification.",
+            "**Extract evidence-backed experiences and follow-up suggestions**: Supervisor can derive experiences from story events, showing conditions, boundaries, formation evidence, and later applications, with editing, merging, and deletion controls. Heartbeats can suggest stalled stories or potentially useful experiences; automatic lessons are advice rather than rules, and accepting a stalled-story suggestion creates a paused follow-up task rather than executing it.",
+            "**Explore work through a time spiral**: Switch between flat and time-spiral graph views to navigate projects, features, and threads, including eligible cross-story experience links. Compact toolbar controls leave more room for the canvas; use the flat view when WebGL is unavailable, and graphics resources are released on close.",
+            "**Let Agents query stories and experiences when needed**: Story Graph tools now accept story and experience objects, support keyword and Chinese-term matching, and guide Agents to verify earlier decisions when continuing work. Tool use remains model-dependent rather than injecting the entire graph into every conversation; remote use requires Agent 0.15.3."
+          ],
+          "fixes": [
+            "**Reduce UI work in long conversations and streamed replies**: Conversation and message lists mount nearby rows, reuse parsed Markdown, reduce unrelated updates during streaming, and preserve reading positions in cached conversations. Messages remain fully stored with earlier-history loading; in-page find cannot see unmounted rows, fast scrolling may briefly show placeholders, and performance varies by device and content.",
+            "**Reduce blocking database work**: Hot knowledge, graph, and conversation reads run in a read-only Worker, activity records save changes incrementally, and remote semantic events persist in batches before checkpoints. Transactions, ordering, and replay deduplication remain intact without early acknowledgment or discarded events; reads can fall back to synchronous execution if the Worker is unavailable.",
+            "**Avoid repeated reviews across scopes and improve recovery**: Project and global reviews share progress so successfully processed source versions are not extracted again merely because the scope changes. Unusable model output allows up to two smaller-budget retries for leaf batches and one retry for a navigation merge; provider errors, timeouts, and cancellation are not automatically retried, and saved batches remain available.",
+            "**Remove duplicate confirmation for Execute configuration changes**: Applying a request-scoped configuration plan no longer requires an additional native confirmation after Execute authorization. Ask stays read-only, and plan expiry, single-use enforcement, and configuration-change checks remain in place.",
+            "**Update the desktop runtime and clipboard integration**: Electron moves to 44.5.1 with updated clipboard API handling. Pinned OpenCode and Continue versions remain unchanged; this is not certification for additional operating systems or architectures."
+          ],
+          "notices": [
+            "First launch upgrades to schema 56, consolidating review progress and adding story, experience, and suggestion storage while retaining historical results; large databases may take longer. Close the app and back up the complete database and adjacent `notes/` directory first; older clients cannot open the upgraded database, so downgrading requires a pre-upgrade backup.",
+            "Story grouping, experience extraction, suggestion wording, and output retries may add model costs, including the first organization of existing events; completed, unchanged work can skip the corresponding calls. Automatic results are not guaranteed complete or correct, so verify sources; upgrade to Desktop 0.15.9 before downloading Agent 0.15.3 and updating the Host."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.8",
       "releasedAt": "2026-10-02",
       "notes": {
