@@ -186,6 +186,7 @@ export class SupervisorService {
     private readonly review?: {
       database: () => SupervisionReviewStore
       configuration: () => Promise<ReviewConfiguration>
+      withExecution?: (operation: () => Promise<StoredSupervisionResult>) => Promise<StoredSupervisionResult>
       /** Story assignment over published, still unassigned events of the scope. Runs inside the review slot. */
       stories?: (request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal) => Promise<NonNullable<SupervisionReviewProgress['stories']>>
     }
@@ -234,7 +235,7 @@ export class SupervisorService {
       await this.active.settled.catch(() => undefined)
     }
     // Reserve before any asynchronous configuration, collection or resume work.
-    const active = { settled: Promise.resolve().then(operation) }
+    const active = { settled: Promise.resolve().then(() => this.review?.withExecution ? this.review.withExecution(operation) : operation()) }
     this.active = active
     try { return await active.settled }
     finally { if (this.active === active) this.active = undefined }

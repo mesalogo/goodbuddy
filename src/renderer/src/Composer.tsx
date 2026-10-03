@@ -22,6 +22,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -127,6 +128,7 @@ export type ComposerProps = {
   selectedRuntimeAgent: string;
   selectedRuntimeCommand: string;
   selectingContextFiles: boolean;
+  supervisorEnabled?: boolean;
   updateAttachmentBusy: (busy: boolean) => void;
   voiceListening: boolean;
   voiceRecording: boolean;
@@ -194,6 +196,7 @@ export const Composer = memo(function Composer({
   selectedRuntimeAgent,
   selectedRuntimeCommand,
   selectingContextFiles,
+  supervisorEnabled,
   updateAttachmentBusy,
   voiceListening,
   voiceRecording,
@@ -202,6 +205,7 @@ export const Composer = memo(function Composer({
 }: ComposerProps): React.JSX.Element {
   const { t } = useTranslation("app");
   const view = useComposerConversationView(conversationStore, conversationId);
+  const [storyGraphSaving, setStoryGraphSaving] = useState(false);
   const isRunning = view?.running ?? false;
   // Popups belong to one conversation, run state and view, like the former
   // reset in App: changing any of them shows every popup closed.
@@ -329,7 +333,7 @@ export const Composer = memo(function Composer({
       }
     };
     const frame = requestAnimationFrame(() => {
-      composerOptionsRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+      composerOptionsRef.current?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus();
     });
     document.addEventListener("pointerdown", dismissOutside);
     document.addEventListener("focusin", dismissOutside);
@@ -858,6 +862,23 @@ export const Composer = memo(function Composer({
               }}
             >
               <strong>{t("composer.settings")}</strong>
+              {supervisorEnabled && (
+                <label className="toggle-row">
+                  <span>{t("composer.storyGraph.label")}</span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={view?.storyGraphEnabled !== false}
+                    disabled={storyGraphSaving}
+                    onChange={(event) => {
+                      setStoryGraphSaving(true);
+                      void actions.setStoryGraphEnabled(conversationId, event.target.checked)
+                        .catch((error: unknown) => actions.notify({ tone: "error", message: error instanceof Error ? error.message : String(error) }))
+                        .finally(() => setStoryGraphSaving(false));
+                    }}
+                  />
+                </label>
+              )}
             {knowledgeLibraries.length > 0 && (
               <div
                 className="knowledge-scope"

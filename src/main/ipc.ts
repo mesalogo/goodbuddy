@@ -137,6 +137,7 @@ import {
   conversationListRequestSchema,
   conversationSearchRequestSchema,
   conversationSetPinnedSchema,
+  conversationSetStoryGraphSchema,
   type ConversationSnapshot,
   localConversationSaveBatchSchema,
   memoryCreateSchema,
@@ -2228,8 +2229,9 @@ export function registerIpcHandlers(
             )
         : []
       const notesCapability = await grantScopedDataCapability({
-        storyGraph: requestRuntimeTarget && (await applicationSettingsStore?.get())?.heartbeatEnabled
-          ? { runtimeTarget: requestRuntimeTarget, projectId: schedule.projectId ?? undefined } : undefined,
+        storyGraph: requestRuntimeTarget && (await applicationSettingsStore?.get())?.heartbeatEnabled &&
+          assistantDatabase.isConversationStoryGraphEnabled(runtimeConversationId)
+          ? { runtimeTarget: requestRuntimeTarget, projectId: schedule.projectId ?? undefined, conversationId: runtimeConversationId } : undefined,
         obsidian: enabledBuiltinMcpServers.includes('obsidian')
           ? {
               settings: await capabilityService.getObsidianSettings(),
@@ -3761,8 +3763,9 @@ export function registerIpcHandlers(
     const imageSaveAvailable = Boolean(imageToolBinding?.save && normalizedWorkMode === 'execute' &&
       await imageToolBinding.describeSave?.())
     const scopedCapability = await grantScopedDataCapability({
-      storyGraph: selectedRuntimeTarget && applicationSettings?.heartbeatEnabled
-        ? { runtimeTarget: selectedRuntimeTarget, projectId: enrichedRequest.projectId } : undefined,
+      storyGraph: selectedRuntimeTarget && applicationSettings?.heartbeatEnabled &&
+        assistantDatabase.isConversationStoryGraphEnabled(enrichedRequest.conversationId)
+        ? { runtimeTarget: selectedRuntimeTarget, projectId: enrichedRequest.projectId, conversationId: enrichedRequest.conversationId } : undefined,
       obsidian: enabledBuiltinMcpServers.includes('obsidian')
         ? {
             settings: await capabilityService.getObsidianSettings(),
@@ -6383,11 +6386,31 @@ export function registerIpcHandlers(
       publishConversationChange()
     }
   )
+  registerHandler(
+    ipcChannels.conversationsSetStoryGraph,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const { conversationId, enabled } = conversationSetStoryGraphSchema.parse(input)
+      assistantDatabase.setConversationStoryGraphEnabled(conversationId, enabled)
+      publishConversationChange()
+    }
+  )
+  const resolveSupervisorRuntime = async (profileId?: string | null): Promise<AgentRuntime> => {
+    const settings = await settingsStore.getResolvedSettings()
+    const profile = settings.modelProfiles.find(candidate => candidate.id === (profileId ?? settings.defaultModelProfileId))
+    if (!profile || !isAgentRuntimeModelProtocol(profile.protocol)) {
+      throw new Error('监督者所选文本模型不存在或已不可用，请在监督者设置中重新选择模型。')
+    }
+    if (profile.authentication === 'api-key' && !profile.apiKey) {
+      throw new Error(`监督者模型连接“${profile.name}”未配置 API Key`)
+    }
+    return createModelProfileRuntime(settings.workspacePath, settings, profile)
+  }
   const supervisorService = createProductionSupervisorService(assistantDatabase,
-    async () => applicationSettingsStore?.get(), () => resolveRequestRuntime({ workMode: 'ask' }), supervisionModelPool,
+    async () => applicationSettingsStore?.get(), resolveSupervisorRuntime, supervisionModelPool,
     persistModelUsage)
   const suggestionPhraser = createProductionSuggestionPhraser(assistantDatabase,
-    async () => applicationSettingsStore?.get(), () => resolveRequestRuntime({ workMode: 'ask' }), supervisionModelPool,
+    async () => applicationSettingsStore?.get(), resolveSupervisorRuntime, supervisionModelPool,
     persistModelUsage)
 
   registerHandler(

@@ -112,12 +112,17 @@ D1 来源页默认 4,000、上限 8,000 码点。`current` 通过既有 locator 
 | 配置或目录 | 当前状态 | 目标映射 |
 | --- | --- | --- |
 | `heartbeatEnabled` | 监督者应用开关，新设置默认关闭 | 为 Story Graph 暴露和每次调用的必要条件；关闭后不列出三个工具，旧会话直接调用也拒绝 |
+| 会话 `storyGraphEnabled` | 每个会话默认开启，缺省字段按开启处理 | 关闭后不向该会话签发图谱工具，并拒绝已有能力会话的发现、调用和在途结果交付；其他会话不受影响 |
 | 内置能力 `enabled` 与 `assignments` | [CapabilityService](../../../src/main/capabilities/capability-service.ts)管理现有 MCP 开关与 Runtime 分配 | `story-graph` 沿用同一管理方式；应用关闭时不得由内置能力开关绕过，保留用户原分配 |
 | 内置工具目录 | 已有 Story Graph 条目 | 映射 `story_graph_search`、`story_graph_get_context`、`story_graph_read_source`，全部 `access: read`、`readOnlyHint: true` |
 | 监督整理参数 | 超时、并发、来源页与批次设置已存在 | 控制后台整理；不让一次 MCP 查询启动整理，也不以正文批次预算截断检索结果 |
 | 计划 `enabled` | 决定自动回顾是否到期执行 | 不决定已有图谱能否读取；应用开启且能力可用时，无计划也能查已有结果 |
 
-Main 在工具发现和调用分发时共同检查应用启用、能力启用、Runtime 分配和 scope；只隐藏菜单不足以阻止旧会话调用。关闭后拒绝新的读取请求，已在途响应交付前复核状态，避免旧绑定继续返回数据。启用工具本身不产生回顾或数据写入。Ask 与 Execute 均可读取，同样没有写工具，也不借此扩大 Execute 权限。
+Main 在工具发现和调用分发时共同检查应用启用、会话开关、能力启用、Runtime 分配和 scope；只隐藏菜单不足以阻止旧会话调用。关闭后拒绝新的读取请求，已在途响应交付前复核状态，避免旧绑定继续返回数据。启用工具本身不产生回顾或图谱写入。Ask 与 Execute 均可读取，同样没有写工具，也不借此扩大 Execute 权限。
+
+会话开关只决定 Agent 能否按需使用这三个 MCP 工具，不自动查询或注入图谱上下文，也不触发回顾。监督者应用关闭时，输入区完全隐藏开关并保留会话选择；再次启用应用后恢复该选择。后台回顾和计划仍由各自设置控制。
+
+开关复用已发布的 `conversations.context_state_json`，字段为可选布尔值，不增加数据库版本或迁移。Renderer 经串行会话保存队列与 `conversations:set-story-graph` IPC 保存，成功后更新显示，失败保留原值并通知。Main 按会话主键只读设置，不加载消息历史；显式设置写入后，旧的自动保存快照不能覆盖它。新会话及新建分支使用默认开启。
 
 本地 OpenCode、Continue 和原生客户端复用 [KnowledgeMcpGateway](../../../src/main/agent/knowledge-mcp-gateway.ts) 的 MCP 注册和分发；直连 Model 与 DeepSeek Harness Main 代理调用同一服务。远程 OpenCode／Continue 复用现有图像工具的受管 HTTP MCP 和二进制通道，`storyGraph` 描述独立于图像生成描述，Ask 可只携带图谱读取。请求仍由桌面 Main 解析范围和读取 SQLite，不把数据库、正文库或凭据复制到 Host。
 
@@ -162,4 +167,4 @@ D1 可将现有已确认偏好作为明确标记的背景投影，原读取路�
 | Runtime 一致性 | US-S30 | 本地及 GoodBuddy Agent 远程实际链路具有相同 scope、版本、分页、引用与关闭行为，不能以共享 schema 代替接线验收 |
 | 记忆及范围复用 | US-S31 | 确认偏好与已有引用保留；同版本成功叶子跨 scope 复用且能检索事实，不只返回摘要；历史缺口不补造 |
 
-验证命令和证据集中记录在[实施进度](./progress.md#2026-09-28-story-graph-只读工具)。本次只运行定向测试、类型检查、限定文件 lint 和确定性 Host 探针，没有全量测试、付费模型请求或发布操作。真实模型如何根据冲突证据形成最终建议，仍需与工具读取正确性分开验收。
+2026-09-28 的 D1 验证命令和证据记录在[实施进度](./progress.md#2026-09-28-story-graph-只读工具)，当时运行定向测试、类型检查、限定文件 lint 和确定性 Host 探针，没有付费模型请求。2026-10-03 会话开关的 Electron、Host 及真实模型调用证据见[本轮记录](./progress.md#2026-10-03-会话故事图谱开关)。真实模型如何根据冲突证据形成最终建议，仍需与工具读取正确性分开验收。

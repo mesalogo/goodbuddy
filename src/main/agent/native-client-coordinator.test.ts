@@ -14,9 +14,9 @@ function fixture(whenReady: () => Promise<void> = async () => undefined) {
   const profile = { id: 'selected', name: 'Selected', protocol: 'openai-chat-completions',
     authentication: 'api-key', apiKey: 'secret', baseUrl: 'https://example.com/v1', modelName: 'selected-model' }
   const settings = { provider: 'deepseek-harness', modelProfiles: [profile], deepseekHarnessModelProfile: profile }
-  const conversation = { projectId: 'project', knowledgeLibraryIds: ['library'], workMode: 'ask' }
+  const conversation = { projectId: 'project', knowledgeLibraryIds: ['library'], workMode: 'ask', storyGraphEnabled: true }
   const project = { id: 'project', runtimeSelection: { provider: 'deepseek-harness', profileId: profile.id } }
-  const application = { magicNotesEnabled: true, localToolEnvironment: { node: { source: 'managed' } as LocalToolRuntimeSelection } }
+  const application = { heartbeatEnabled: false, magicNotesEnabled: true, localToolEnvironment: { node: { source: 'managed' } as LocalToolRuntimeSelection } }
   const gateway = { start: vi.fn(), dispose: vi.fn(), grant: vi.fn(() => 'builtin-token'),
     grantCustomMcp: vi.fn(() => 'custom-token'), getEndpoint: () => 'http://127.0.0.1:1234/mcp',
     getAvailableToolNames: vi.fn(() => ['knowledge_search', 'obsidian_read_note']) }
@@ -30,11 +30,11 @@ function fixture(whenReady: () => Promise<void> = async () => undefined) {
   const stop = vi.spyOn(NativeDshWebClientService.prototype, 'stop').mockImplementation(async id => { handles.delete(id) })
   const openExternal = vi.fn(async () => {})
   const coordinator = new NativeClientCoordinator({
-    database: { getConversation: () => conversation, getProject: () => project },
+    database: { getConversation: (id: string) => ({ ...conversation, id }), getProject: () => project },
     settingsStore: { getResolvedSettings: async () => settings },
     applicationSettingsStore: { get: async () => application },
     capabilities: { getRuntimeSkillContext: async () => ({ packages: [{ directory: '/skills/test', id: 'test', digest: 'one' }] }),
-      getResolvedMcpServers: async () => [{ id: 'custom' }], getEnabledBuiltinMcpServerIds: async () => ['knowledge-base', 'obsidian', 'goodbuddy-config'],
+      getResolvedMcpServers: async () => [{ id: 'custom' }], getEnabledBuiltinMcpServerIds: async () => ['knowledge-base', 'obsidian', 'goodbuddy-config', 'story-graph'],
       getObsidianSettings: async () => ({}) },
     executionSpaceResolver: { resolveProject: () => ({ kind: 'local', rootPath: '/workspace', cacheIdentity: '/workspace' }) },
     terminalManager: { closeOwner: vi.fn() }, localEnvironment: { launchEnvironmentProvider: () => process.env, whenReady },
@@ -45,6 +45,17 @@ function fixture(whenReady: () => Promise<void> = async () => undefined) {
 }
 
 describe('native client coordinator', () => {
+  it('binds story graph to its conversation and does not reuse another conversation or disabled configuration', async () => {
+    const { coordinator, conversation, application, gateway } = fixture()
+    application.heartbeatEnabled = true
+    await coordinator.open(1, 'first')
+    expect(gateway.grant.mock.calls.at(-1)?.at(-1)).toEqual({ projectId: 'project', conversationId: 'first', runtimeTarget: 'deepseek-harness' })
+    expect(await coordinator.get(1, 'second')).toBeNull()
+    conversation.storyGraphEnabled = false
+    expect(await coordinator.get(1, 'first')).toBeNull()
+    await coordinator.open(1, 'first')
+    expect(gateway.grant.mock.calls.at(-1)?.at(-1)).toBeUndefined()
+  })
   it('waits for the startup tool environment before launching a native client', async () => {
     let ready!: () => void
     const { coordinator, start } = fixture(() => new Promise<void>(resolve => { ready = resolve }))

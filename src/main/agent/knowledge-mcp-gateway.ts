@@ -3,7 +3,7 @@ import type { DesktopDiagnosticFailureObserver, DesktopMcpDiagnosticMetadata } f
 import { isStoryGraphTool, storyGraphToolNames, type StoryGraphToolName } from '../../shared/story-graph-tools'
 import type { RuntimeTarget } from '../../shared/capability-contracts'
 
-export type StoryGraphBinding = { projectId?: string; runtimeTarget: RuntimeTarget }
+export type StoryGraphBinding = { projectId?: string; conversationId?: string; runtimeTarget: RuntimeTarget }
 export type StoryGraphRemoteBinding = {
   available(): Promise<boolean>
   call(name: StoryGraphToolName, input: unknown, signal: AbortSignal): Promise<Record<string, unknown>>

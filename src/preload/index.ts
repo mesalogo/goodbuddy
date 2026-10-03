@@ -1135,6 +1135,9 @@ const desktopApi: DesktopApi = {
     setPinned: async (input) => {
       await ipcRenderer.invoke(ipcChannels.conversationsSetPinned, input)
     },
+    setStoryGraph: async (input) => {
+      await ipcRenderer.invoke(ipcChannels.conversationsSetStoryGraph, input)
+    },
     branchLocal: (input: ConversationBranchInput) =>
       ipcRenderer.invoke(
         ipcChannels.conversationsBranchLocal,

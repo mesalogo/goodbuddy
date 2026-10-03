@@ -4,13 +4,95 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { AgentRuntime } from '../agent/runtime'
 import type { SupervisionEvidence, SupervisionRunRequest } from '../../shared/supervision-contracts'
 import { AssistantDatabase } from './assistant-database'
-import { createProductionSupervisorService } from './supervision-production'
+import { createProductionSupervisorService, createProductionSuggestionPhraser } from './supervision-production'
 import { SupervisionModelPool } from './supervision-model-pool'
 import { supervisionEntitySchema } from '../../shared/supervision-contracts'
 
 const cleanups: Array<() => void> = []
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup() })
 const empty = { summary: 'Review', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
+
+it('keeps one model across extraction, navigation, stories and experiences, and reads the next selection on retry', async () => {
+  const f = fixture('A'.repeat(1500))
+  let profileId: string | null = 'first'
+  const phases: string[] = []
+  const dispose = vi.fn(async () => {})
+  const resolve = vi.fn(async (selected?: string | null) => ({
+    runtimeId: 'model', capability: 'chat', requiresToolApproval: false, supportsToolExecution: false, getStatus: vi.fn(), dispose,
+    run: async function* (input) {
+      expect(selected).toBe('first')
+      profileId = 'next'
+      let output: unknown
+      if (input.prompt.includes('You organise the GoodBuddy')) {
+        phases.push('stories')
+        output = { stories: [{ key: 'new_1', level: 'feature', name: 'Work' }],
+          assignments: [{ event: 'e_1', story: 'new_1' }, { event: 'e_2', story: 'new_1' }] }
+      } else if (input.prompt.includes('You distil reusable experience')) {
+        phases.push('experiences')
+        output = { experiences: [], applications: [] }
+      } else if (input.prompt.includes('These inputs are navigation summaries')) {
+        phases.push('navigation')
+        output = { summary: 'Combined', changeDigest: '', openItems: [] }
+      } else {
+        phases.push('extraction')
+        const evidence = JSON.parse(input.prompt.split('BOUNDED EVIDENCE:\n\n')[1]!.split('\n\nReturn only JSON.')[0]!) as SupervisionEvidence[]
+        output = { ...empty, events: [{ title: 'Decision', description: '', eventType: 'decision',
+          occurredAt: f.request.timeRange.from, entityIds: [], sourceReferenceIds: [evidence[0]!.id] }] }
+      }
+      yield { type: 'text', requestId: input.requestId, delta: JSON.stringify(output) }
+      yield { type: 'done', requestId: input.requestId }
+    }
+  } as AgentRuntime))
+  const pool = new SupervisionModelPool()
+  cleanups.push(() => pool.dispose())
+  const service = createProductionSupervisorService(f.db, async () => ({ supervisorModelProfileId: profileId,
+    supervisionReview: { pageSize: 10, batchCharacters: 1000, batchMessages: 10, executionSeconds: 300, experienceMinEvents: 2 } }), resolve, pool)
+  const result = await service.run(f.request)
+  expect(phases).toEqual(['extraction', 'extraction', 'navigation', 'stories', 'experiences'])
+  expect(resolve).toHaveBeenCalledExactlyOnceWith('first')
+  expect(dispose).toHaveBeenCalledOnce()
+  await service.organizeStoriesFor(result.runId!)
+  expect(resolve).toHaveBeenLastCalledWith('next')
+  expect(dispose).toHaveBeenCalledTimes(2)
+})
+
+it('releases a failed review runtime and uses the current model when continuing saved work', async () => {
+  const f = fixture()
+  let profileId: string | null = 'first'
+  const dispose = vi.fn(async () => {})
+  const resolve = vi.fn(async (selected?: string | null) => ({ runtimeId: 'model', capability: 'chat',
+    requiresToolApproval: false, supportsToolExecution: false, getStatus: vi.fn(), dispose,
+    run: async function* (input) {
+      if (selected === 'first') throw new Error('Provider unavailable')
+      yield { type: 'text', requestId: input.requestId, delta: JSON.stringify(empty) }
+      yield { type: 'done', requestId: input.requestId }
+    }
+  } as AgentRuntime))
+  const pool = new SupervisionModelPool()
+  cleanups.push(() => pool.dispose())
+  const service = createProductionSupervisorService(f.db, async () => ({ supervisorModelProfileId: profileId }), resolve, pool)
+  await expect(service.run(f.request)).rejects.toThrow('Provider unavailable')
+  expect(dispose).toHaveBeenCalledOnce()
+  expect(service.execution().active).toBe(false)
+  profileId = null
+  await expect(service.resume(f.db.listSupervisionActivity()[0]!.id)).resolves.toMatchObject({ status: 'completed' })
+  expect(resolve.mock.calls).toEqual([['first'], [null]])
+  expect(dispose).toHaveBeenCalledTimes(2)
+})
+
+it('uses the supervisor selection for suggestions and disposes its runtime on failure', async () => {
+  const f = fixture()
+  const dispose = vi.fn(async () => {})
+  const resolve = vi.fn(async () => ({ runtimeId: 'model', capability: 'chat', requiresToolApproval: false, supportsToolExecution: false, getStatus: vi.fn(), dispose,
+    run: async function* (input) { yield { type: 'error', requestId: input.requestId, message: 'Provider unavailable' } }
+  } as AgentRuntime))
+  const pool = new SupervisionModelPool()
+  cleanups.push(() => pool.dispose())
+  const phrase = createProductionSuggestionPhraser(f.db, async () => ({ supervisorModelProfileId: 'reviewer' }), resolve, pool)
+  await expect(phrase({ systemInstruction: 'Suggest', outputContract: '{}', candidates: [] })).rejects.toThrow('Provider unavailable')
+  expect(resolve).toHaveBeenCalledExactlyOnceWith('reviewer')
+  expect(dispose).toHaveBeenCalledOnce()
+})
 
 it('production six-leaf merge failure resumes navigation-only JSON and publishes all retained facts', async () => {
   const f = fixture('A'.repeat(765))

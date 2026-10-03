@@ -52,6 +52,8 @@ OpenCode 与 DeepSeek Harness 不使用该值。
 
 ## 会话与项目 Runtime 选择
 
+监督者在自身“设置 → 模型”中引用已保存的文本模型连接，不复制连接或凭据；默认跟随与执行生效规则见[监督者模型选择](../conversation-supervision/logic-design.md#监督者模型选择)。
+
 项目设置分“执行方式”和“模型”两个字段，输入框使用两栏选择器，全局默认模型仍在系统
 设置中按 Runtime 页签配置。分层规则、选择器状态、键盘行为和失效提示由
 [执行方式与模型选择设计](./runtime-selection-design.md#3-各入口行为已实现)唯一维护。

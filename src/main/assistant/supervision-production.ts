@@ -85,7 +85,7 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
 function dependencies(
   database: AssistantDatabase,
   getSettings: () => Promise<Partial<ApplicationSettings> | undefined>,
-  resolveRuntime: () => Promise<AgentRuntime>,
+  resolveRuntime: (profileId?: string | null) => Promise<AgentRuntime>,
   pool: SupervisionModelPool,
   persistUsage?: (event: RuntimeModelUsageEvent) => void
 ): SupervisionModelDependencies {
@@ -98,11 +98,16 @@ function dependencies(
 export function createProductionSupervisorService(
   database: AssistantDatabase,
   getSettings: () => Promise<Partial<ApplicationSettings> | undefined>,
-  resolveRuntime: () => Promise<AgentRuntime>,
+  resolveRuntime: (profileId?: string | null) => Promise<AgentRuntime>,
   pool: SupervisionModelPool,
   persistUsage?: (event: RuntimeModelUsageEvent) => void
 ): SupervisorService {
-  const model = dependencies(database, getSettings, resolveRuntime, pool, persistUsage)
+  // The service admits only one execution at a time, including resume and story retry.
+  let runtime: AgentRuntime | undefined
+  const model = dependencies(database, getSettings, async () => {
+    if (!runtime) throw new Error('Supervisor model execution is not active')
+    return runtime
+  }, pool, persistUsage)
   return new SupervisorService({ collect: async () => { throw new Error('Paged review collector required') } }, {
     summarize: async request => runSupervisionModel(model, {
       title: '监督者回顾', instructions: '根据有界证据整理监督者回顾',
@@ -122,7 +127,15 @@ export function createProductionSupervisorService(
     start: (request, heartbeatRunId) => database.startSupervisionRun(request, heartbeatRunId),
     fail: (runId, error) => database.failSupervisionRun(runId, error), noChange: runId => database.noChangeSupervisionRun(runId),
     candidates: async request => database.listSupervisionCandidates(request), save: async result => database.saveSupervisionResult(result)
-  }, { database: () => database.supervisionReviewStore(), configuration: async () => {
+  }, { database: () => database.supervisionReviewStore(), withExecution: async operation => {
+    runtime = await resolveRuntime((await getSettings())?.supervisorModelProfileId)
+    try { return await operation() }
+    finally {
+      const completed = runtime
+      runtime = undefined
+      await completed.dispose?.()
+    }
+  }, configuration: async () => {
     const settings = await getSettings()
     return { ...supervisionReviewSettingsSchema.parse(settings?.supervisionReview ?? {}), version: 1,
       timeoutSeconds: settings?.supervisorOrganizeTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
@@ -163,16 +176,21 @@ async function assignStoriesStep(model: SupervisionModelDependencies, request: S
 export function createProductionSuggestionPhraser(
   database: AssistantDatabase,
   getSettings: () => Promise<Partial<ApplicationSettings> | undefined>,
-  resolveRuntime: () => Promise<AgentRuntime>,
+  resolveRuntime: (profileId?: string | null) => Promise<AgentRuntime>,
   pool: SupervisionModelPool,
   persistUsage?: (event: RuntimeModelUsageEvent) => void
 ): SuggestionPhraser {
-  const model = dependencies(database, getSettings, resolveRuntime, pool, persistUsage)
-  return async request => runSupervisionModel(model, {
-    title: '监督者建议', instructions: '根据已发布的图谱变化生成建议',
-    timeoutMessage: seconds => `监督者建议生成超过 ${seconds} 秒，已停止；回顾结果已保留`,
-    authorizeTool: async name => { throw new Error(`监督者禁止调用工具: ${name}`) },
-    prompt: [request.systemInstruction, 'OUTPUT CONTRACT:', request.outputContract,
-      'CANDIDATES:', JSON.stringify(request.candidates), 'Return only JSON.'].join('\n\n')
-  })
+  return async request => {
+    const runtime = await resolveRuntime((await getSettings())?.supervisorModelProfileId)
+    const model = dependencies(database, getSettings, async () => runtime, pool, persistUsage)
+    try {
+      return await runSupervisionModel(model, {
+        title: '监督者建议', instructions: '根据已发布的图谱变化生成建议',
+        timeoutMessage: seconds => `监督者建议生成超过 ${seconds} 秒，已停止；回顾结果已保留`,
+        authorizeTool: async name => { throw new Error(`监督者禁止调用工具: ${name}`) },
+        prompt: [request.systemInstruction, 'OUTPUT CONTRACT:', request.outputContract,
+          'CANDIDATES:', JSON.stringify(request.candidates), 'Return only JSON.'].join('\n\n')
+      })
+    } finally { await runtime.dispose?.() }
+  }
 }

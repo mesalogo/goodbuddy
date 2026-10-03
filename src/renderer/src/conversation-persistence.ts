@@ -61,6 +61,7 @@ export function toLocalConversationHeader(
     workMode: conversation.workMode,
     knowledgeLibraryIds: conversation.knowledgeLibraryIds,
     knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+    storyGraphEnabled: conversation.storyGraphEnabled,
     contextMetrics: conversation.contextMetrics,
     contextCompressionState: conversation.contextCompressionState,
     ...(conversation.branch ? { branch: conversation.branch } : {}),

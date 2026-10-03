@@ -1057,7 +1057,8 @@ if (hasSingleInstanceLock) {
       {
         observeFailure: observeDesktopFailure,
         storyGraphService: {
-          available: async ({ runtimeTarget }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
+          available: async ({ runtimeTarget, conversationId }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
+            (!conversationId || startupAssistantDatabase.isConversationStoryGraphEnabled(conversationId)) &&
             (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
           read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraphAsync(name, input, projectId, signal)
         },
@@ -1540,7 +1541,8 @@ if (hasSingleInstanceLock) {
       createGateway: () => new KnowledgeMcpGateway(startupKnowledgeService, {
         observeFailure: observeDesktopFailure,
         storyGraphService: {
-          available: async ({ runtimeTarget }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
+          available: async ({ runtimeTarget, conversationId }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
+            (!conversationId || startupAssistantDatabase.isConversationStoryGraphEnabled(conversationId)) &&
             (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
           read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraphAsync(name, input, projectId, signal)
         },

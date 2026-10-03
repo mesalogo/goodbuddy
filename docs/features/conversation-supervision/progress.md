@@ -4,6 +4,34 @@
 
 当前记录以已验证生产行为为准。监督者尚未覆盖全部 user stories。
 
+## 2026-10-03 会话故事图谱开关
+
+FR-S11、US-S30 的“使用故事图谱”已接通 Composer、生产 Preload／IPC、SQLite 和工具网关。会话默认开启，仅在监督者应用启用时显示，位置在知识库之前。存储和执行合同见 [MCP 接入](./story-graph-mcp-design.md#6-内置-mcp-与-runtime-接入)，没有数据库版本升级或迁移。另保留本轮开始前已有的监督者独立模型选择及并行性能改动。
+
+定向测试共 9 个文件、37 项通过，重复运行不重复计数：
+
+- `npx vitest run src/main/agent/native-client-coordinator.test.ts src/renderer/src/conversation-persistence.test.ts src/renderer/src/Composer.test.tsx src/agent-daemon/story-graph-integration.test.ts`：25 项。覆盖默认值、按会话隔离、保存中及失败、原生客户端绑定、Main／Agent HTTP MCP 发现、旧调用拒绝与重新开启；图谱集成 5 项在最后修改后单独复跑通过，含在途结果交付前关闭。
+- `npx vitest run src/main/assistant/assistant-database.test.ts src/main/ipc.test.ts src/renderer/src/App.test.tsx src/main/agent/deepseek-harness-acp-e2e.test.ts -t "story graph|Story Graph|pins"`：11 项通过，630 项按名称未运行。覆盖真实 SQLite 重开、旧自动保存不能覆盖选择、IPC 校验、四种本地 Runtime 的签发与关闭，以及受控 Harness Ask／Execute。
+- `npx vitest run tests/overlay-layering.electron.test.ts -t "conversation story graph"`：1 项通过，3 项按名称未运行。真实 App、Preload、IPC 和 SQLite 在 1280px／390px、浅色／深色四种组合下检查共享 Switch、位置和可见矩形；原生鼠标打开菜单、Space 保存、页面重载、应用关闭时移除 DOM、重开后恢复选择及旧工具绑定拒绝均通过。切换没有模型请求，模型尝试计数为 0。
+
+`npm run typecheck` 的 Main、Agent、Web 三组通过，`git diff --check` 通过。修改文件定向 ESLint 除 `conversation-selectors.ts:32,47` 外通过；这两处是同工作树并行标题缓存改动的 `react-hooks/immutability` 报错，本功能只改该文件的 Composer 字段投影，未修改缓存逻辑。没有执行全量测试、发布构建、提交或推送。中文 MCP 说明扫描阻断项为 0，复核项保留必要的数据和执行边界。
+
+### 本轮 Linux Host 证据
+
+[源码探针](../../../scripts/story-graph-host-probe.ts)临时打包后在共享 Linux x64 Host 运行当前 `AgentImageToolMcp`、`AgentOwnedAcpPrompt`、`ContinueHostAdapter`，桌面使用真实 `AssistantDatabase`、`KnowledgeMcpGateway` 和 `MainImageToolSession`。关闭操作改为写会话持久设置，验证其他会话仍开启，以及同一个远程 MCP 会话不再发现工具、旧工具调用被拒绝。
+
+OpenCode 和 Continue 的 Ask／Execute 确定性探针通过，共 10 次测试推理请求（含 2 次标题生成）、10 次桌面图谱读取、0 次外部 Provider 请求。真实 DeepSeek 复测中，Linux OpenCode Ask／Execute 均完成图谱调用并返回完成标记，随后关闭检查通过；该轮 6 次 Provider 请求（含 2 次标题生成）、8 次桌面读取。首轮真实模型已完成 Ask 图谱读取，但探针未拼接流式文字便检查完成标记而失败，消耗 3 次 Provider 请求；修正探针后复测，整个任务外部请求合计 **9 次**。
+
+工具消息通过 SSH 标准输入输出搬运，调用生产二进制工具分发；没有重装共享 Agent，也未把完整 Desktop attach／bootstrap 或远端 Continue 的真实模型请求计作已验证。远程协议与模型桥源码未变，会话开关由 Desktop 的现有可用性回调执行。测试只使用隔离 SQLite 和固定示例内容；临时 Host 探针及运行目录已清理。Electron 界面与 SSH Runtime 分开验收，没有宣称一条自动化场景覆盖整窗点击到远端模型。
+
+## 2026-10-03 监督者独立模型选择
+
+FR-S13 已接通监督者“设置 → 模型”、应用设置持久化和 Main 连接解析。字段只保存已有文本连接 UUID，旧配置跟随应用默认；执行中复用同一 Runtime，继续和重试采用当前设置。规则见[模型选择](./logic-design.md#监督者模型选择)。
+
+定向验证覆盖中英文选择与保存失败草稿、失效连接提示、旧设置默认值及重载、提取到经验阶段的模型一致性、失败后的释放与继续、建议措辞连接及清理。`ipc.test.ts` 的监督／心跳相关 24 项通过，含真实直连 Runtime 到 loopback HTTP 服务的两次请求：固定连接、应用默认各一次，验证模型名、请求定制、无工具及失效连接不回退。外部真实模型请求为 0 次。
+
+验证命令：`npx vitest run src/main/application-settings-store.test.ts src/main/assistant/supervision-production.test.ts src/renderer/src/HeartbeatCenter.test.tsx`；`npx vitest run src/main/ipc.test.ts -t "supervis|heartbeat|unchanged sources"`；`npm run typecheck`；修改的源文件定向 ESLint。未跑全量测试、打包、真实供应商或 Electron 原生界面测试。监督模型请求在桌面 Main 内完成，Agent 和远程模型桥未改动；未进行远程 Host 验证。
+
 ## 2026-10-02 长会话验收与 Agent 自主调用图谱
 
 ### 长会话验收

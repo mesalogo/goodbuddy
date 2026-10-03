@@ -36,6 +36,7 @@ export type ComposerActions = {
   openModelSettings: () => void;
   setEnabledKnowledgeLibraryIds: (update: SetStateAction<string[]>) => void;
   setKnowledgeRetrievalMode: (mode: "auto" | "always") => void;
+  setStoryGraphEnabled: (conversationId: string, enabled: boolean) => Promise<void>;
   selectExpert: (expertId: string) => void;
   selectRuntimeAgent: (agentId: string) => void;
   selectContinuePreset: (presetId: string) => void;

@@ -101,6 +101,27 @@ it('roundtrips canvas assets and keeps todos stable across geometry edits and co
   } finally { database.close() }
 })
 
+it('persists the story graph switch per conversation without schema migration or stale autosave overrides', async () => {
+  const database = await createDatabase()
+  const header = { id: randomUUID(), title: 'Graph preference', updatedAt: 1000, knowledgeRetrievalMode: 'always' as const }
+  const other = { ...header, id: randomUUID() }
+  try {
+    database.saveLocalConversations([{ header, messages: [] }, { header: other, messages: [] }])
+    expect(database.isConversationStoryGraphEnabled(header.id)).toBe(true)
+    database.setConversationStoryGraphEnabled(header.id, false)
+    database.saveLocalConversations([{ header, messages: [] }])
+    database.close()
+    database.initialize('C:\\Workspace')
+    expect(database.getConversation(header.id)).toMatchObject({ storyGraphEnabled: false, knowledgeRetrievalMode: 'always' })
+    expect(database.isConversationStoryGraphEnabled(header.id)).toBe(false)
+    expect(database.isConversationStoryGraphEnabled(other.id)).toBe(true)
+    database.setConversationStoryGraphEnabled(header.id, true)
+    expect(database.isConversationStoryGraphEnabled(header.id)).toBe(true)
+    expect(database.isConversationStoryGraphEnabled(randomUUID())).toBe(false)
+    expect(() => database.setConversationStoryGraphEnabled(randomUUID(), false)).toThrow('对话不存在')
+  } finally { database.close() }
+})
+
 it('persists conversation pins without changing timestamps or allowing autosaves to overwrite them', async () => {
   const database = await createDatabase()
   const header = { id: randomUUID(), title: 'Pinned conversation', updatedAt: 1000 }

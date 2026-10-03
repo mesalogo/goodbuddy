@@ -27,9 +27,9 @@ Agent `0.11.23` 提供，显式请求期限与取消仍有效。当前问答源�
 
 ## 跨会话进程复用（未发布）
 
-2026-09-28 Story Graph 补充：远程 OpenCode／Continue 的 Ask 和 Execute
-通过现有受管 HTTP MCP、工具二进制通道读取桌面图谱。Main 固定项目范围并复核监督者
-开关及 Runtime 分配；图谱读取不复制数据库到 Host，也不调用模型。三个只读工具、
+2026-09-28 Story Graph 接线、2026-10-03 会话开关补充：远程 OpenCode／Continue 的 Ask 和 Execute
+通过现有受管 HTTP MCP、工具二进制通道读取桌面图谱。Main 固定项目和会话，并复核监督者
+应用开关、会话“使用故事图谱”开关及 Runtime 分配；关闭会话开关后已有远程绑定也拒绝读取。图谱读取不复制数据库到 Host，也不调用模型。三个只读工具、
 分页和版本限制由[专项设计](../conversation-supervision/story-graph-mcp-design.md)定义，
 源码 Host 探针及协议测试见[验证记录](../conversation-supervision/progress.md#2026-09-28-story-graph-只读工具)。
 

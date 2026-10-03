@@ -13,7 +13,7 @@
 
 本文回答如何在现有 GoodBuddy 桌面端中实现监督者。它不改变产品范围，也不把模拟 Demo 当作生产数据模型。
 
-FR-S11 的读取架构见[时态 Story Graph 内置 MCP 设计](./story-graph-mcp-design.md)。三个只读工具通过 `readStoryGraph` 投影现有 SQLite，Main 在发现、调用和返回前检查监督者启用及 Runtime 分配。本地 MCP、Model、Harness Main 代理和远程受管工具通道共用此入口；无 schema 迁移。该文独立定义对象／版本合同、时间语义、配置映射及后续跨 scope 复用和记忆过渡。当前 memory 背景读取、精确 scope checkpoint 与候选身份保留；结果快照不支持 `as_of` 历史重建。
+FR-S11 的读取架构见[时态 Story Graph 内置 MCP 设计](./story-graph-mcp-design.md)。三个只读工具通过 `readStoryGraph` 投影现有 SQLite，Main 在发现、调用和返回前检查监督者启用、会话开关及 Runtime 分配。绑定携带会话 ID，按主键读取当前设置；原生客户端的复用键包含会话 ID 和开关值。本地 MCP、Model、Harness Main 代理和远程受管工具通道共用此入口；会话开关复用 `context_state_json`，无 schema 迁移。该文独立定义对象／版本合同、时间语义、配置映射及后续跨 scope 复用和记忆过渡。当前 memory 背景读取、精确 scope checkpoint 与候选身份保留；结果快照不支持 `as_of` 历史重建。
 
 生产入口由 `supervision-production.ts` 组装服务、SQLite、共享池和 ask Runtime。`supervision-review-store.ts` 保存冻结来源清单，按有界页和片段供 `SupervisorService` 派发；叶子及连续位置先提交，导航和完整结果之后发布。消息已有知识引用保留本地或外部 locator，已确认记忆通过独立背景输入提供。不会检索外部全库。详细存储、调度及当前限制统一见[分块调度第 0 节](./review-scheduling-design.md#0-生产接线与剩余边界)。
 
@@ -40,6 +40,12 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 监督来源清单将 UI 时间区间归一化为 UTC，先筛选再按稳定键分页。项目必须存在且 active；消息按闭区间筛选，任务按区间内创建或完成时间筛选。手动和自动监督共用该路径，自动清单另读取 supervisor checkpoint；手动心跳报告保留原有 collector。
 
 已确认记忆作为当前背景，不参与新增正文覆盖。最多四条、每条 500 字符，时间来自真实更新时间；模型不能把背景引用为本批新增证据。旧结果继续保留原来源类型和 locator。监督正文上限现用于分批，余段继续处理；心跳报告的有界输入语义没有改变。
+
+## 监督者模型连接
+
+`ApplicationSettings.supervisorModelProfileId` 只保存已有连接 UUID，`null` 或旧设置缺少字段时跟随 `RuntimeSettings.defaultModelProfileId`。Main 的 `resolveSupervisorRuntime` 从 `getResolvedSettings()` 读取连接和已有凭据，校验文本协议及认证后，用 `createModelProfileRuntime` 创建无工具直连 Runtime。Renderer 仅接收公开连接信息，不新增凭据存储或 IPC 方法。
+
+`SupervisorService.admit` 在执行位置内调用生产工厂的 `withExecution`，为提取、导航、故事及经验共享一个 Runtime；执行结束后释放。每次请求仍释放自身临时会话。建议措辞在自身调用开始时解析同一设置，结束后释放 Runtime。生命周期规则见[监督者模型选择](./logic-design.md#监督者模型选择)。这条路径在桌面 Main 内运行，即使证据来自远程项目，也不经过 GoodBuddy Agent 或远程模型桥。
 
 ## 模型阶段超时与调度
 

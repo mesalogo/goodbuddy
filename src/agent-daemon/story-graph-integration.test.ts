@@ -5,7 +5,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { afterEach, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from '../main/assistant/assistant-database'
 import type { KnowledgeService } from '../main/knowledge/knowledge-service'
-import { KnowledgeMcpGateway } from '../main/agent/knowledge-mcp-gateway'
+import { KnowledgeMcpGateway, type StoryGraphBinding } from '../main/agent/knowledge-mcp-gateway'
 import { ModelToolProvider } from '../main/agent/model-tool-provider'
 import { AgentImageToolMcp } from './image-tool-mcp'
 import { MainImageToolSession } from '../main/remote-agent/main-image-tool-session'
@@ -19,18 +19,20 @@ function fixture() {
   const db = new AssistantDatabase(':memory:'); db.initialize(process.cwd())
   cleanups.push(() => db.close())
   const projectId = db.listProjects()[0]!.id
+  const conversationId = randomUUID()
+  db.saveLocalConversations([{ header: { id: conversationId, projectId, title: 'Graph', updatedAt: Date.now() }, messages: [] }])
   db.saveSupervisionResult({ request: { trigger: 'manual', scope: { kind: 'projects', projectIds: [projectId] }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-30T00:00:00Z' } },
     evidence: [{ id: 'quote', sourceType: 'conversation', sourceId: 'original', title: 'Evidence', occurredAt: '2026-09-01T00:00:00Z', content: 'Decision A is revised to B, C remains only an option.' }],
     output: { summary: 'Decision history', changeDigest: '', openItems: ['Not yet executed'], entities: [{ id: 'decision', label: 'Decision', description: 'Decision A revised to B', sourceReferenceIds: ['quote'] }],
       events: [], relations: [], entityChanges: [] } })
   let enabled = true, assigned = true
   const read = vi.fn(db.readStoryGraph.bind(db))
-  const available = vi.fn(async () => enabled && assigned)
+  const available = vi.fn(async (binding: StoryGraphBinding) => enabled && assigned && db.isConversationStoryGraphEnabled(binding.conversationId!))
   const gateway = new KnowledgeMcpGateway({} as KnowledgeService, { storyGraphService: { available, read } })
   cleanups.push(() => gateway.dispose())
   const wait = new AbortController()
-  const token = gateway.grant('graph', [], wait.signal, 'none', undefined, undefined, undefined, undefined, undefined, { projectId, runtimeTarget: 'model' })!
-  return { db, projectId, gateway, token, wait, read, available,
+  const token = gateway.grant('graph', [], wait.signal, 'none', undefined, undefined, undefined, undefined, undefined, { projectId, conversationId, runtimeTarget: 'model' })!
+  return { db, projectId, conversationId, gateway, token, wait, read, available,
     disable: () => { enabled = false }, unassign: () => { assigned = false } }
 }
 
@@ -41,7 +43,7 @@ async function client(url: string, token?: string) {
   return connection
 }
 
-it.each(['local', 'remote'] as const)('%s HTTP MCP reads SQLite through Main and revokes discovery and old calls when disabled', async transport => {
+it.each(['local', 'remote'] as const)('%s HTTP MCP reads SQLite through Main and revokes discovery and old calls when conversation is disabled', async transport => {
   const f = fixture()
   let connection: Client
   if (transport === 'local') {
@@ -84,11 +86,15 @@ it.each(['local', 'remote'] as const)('%s HTTP MCP reads SQLite through Main and
   expect(unsupported.isError).toBe(true)
   expect(JSON.stringify(unsupported)).toContain('unsupported_mode')
   const before = f.read.mock.calls.length
-  f.disable()
+  f.db.setConversationStoryGraphEnabled(f.conversationId, false)
   expect((await connection.listTools()).tools).toEqual([])
   const blocked = await connection.callTool({ name: 'story_graph_search', arguments: { query: 'Decision', cursor: result.page.next_cursor, page_size: 1 } })
   expect(blocked.isError).toBe(true)
   expect(f.read).toHaveBeenCalledTimes(before)
+  f.db.setConversationStoryGraphEnabled(f.conversationId, true)
+  expect((await connection.listTools()).tools.map(tool => tool.name)).toEqual(storyGraphToolNames)
+  f.disable()
+  expect((await connection.listTools()).tools).toEqual([])
 })
 
 it.each(['ask', 'execute'] as const)('direct Model %s uses the same reader and runtime assignment gate', async workMode => {
@@ -99,6 +105,10 @@ it.each(['ask', 'execute'] as const)('direct Model %s uses the same reader and r
   expect((await provider.listTools(context, f.wait.signal)).filter(tool => tool.name.startsWith('story_graph_')).map(tool => tool.name)).toEqual(storyGraphToolNames)
   const result = await provider.callTool('story_graph_search', { query: 'Decision' }, f.wait.signal, context)
   expect(JSON.stringify(result)).toContain(f.projectId)
+  f.db.setConversationStoryGraphEnabled(f.conversationId, false)
+  expect((await provider.listTools(context, f.wait.signal)).some(tool => tool.name.startsWith('story_graph_'))).toBe(false)
+  await expect(provider.callTool('story_graph_search', { query: 'Decision' }, f.wait.signal, context)).rejects.toThrow('story_graph_unavailable')
+  f.db.setConversationStoryGraphEnabled(f.conversationId, true)
   f.unassign()
   expect((await provider.listTools(context, f.wait.signal)).some(tool => tool.name.startsWith('story_graph_'))).toBe(false)
   await expect(provider.callTool('story_graph_search', { query: 'Decision' }, f.wait.signal, context)).rejects.toThrow('story_graph_unavailable')
@@ -110,6 +120,6 @@ it('rejects disabled in-flight delivery and cancellation before the synchronous 
   await expect(f.gateway.callStoryGraphTool(f.token, 'story_graph_search', { query: 'Decision' })).rejects.toThrow()
   expect(f.read).not.toHaveBeenCalled()
   const other = fixture()
-  other.read.mockImplementationOnce((...args) => { const result = other.db.readStoryGraph(...args); other.disable(); return result })
+  other.read.mockImplementationOnce((...args) => { const result = other.db.readStoryGraph(...args); other.db.setConversationStoryGraphEnabled(other.conversationId, false); return result })
   await expect(other.gateway.callStoryGraphTool(other.token, 'story_graph_search', { query: 'Decision' })).rejects.toThrow('story_graph_unavailable')
 })

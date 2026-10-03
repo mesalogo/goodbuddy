@@ -1,9 +1,10 @@
 // Deterministic SSH validation. Desktop owns SQLite; only tool messages cross SSH.
 import assert from 'node:assert/strict'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { parseEnv } from 'node:util'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -26,12 +27,19 @@ const emit = (value: object) => process.stdout.write(`${JSON.stringify(value)}\n
 
 async function hostProbe() {
   const [, , , opencode, continueEntry] = process.argv
+  const live = process.argv[5] === '--live'
   const root = await mkdtemp(join(tmpdir(), 'goodbuddy-graph-'))
   const adapter = new AgentImageToolMcp({ channelId: 'graph-probe', channelEpoch: '1', storyGraph: true }, async payload => { emit({ frame: Buffer.from(payload).toString('base64') }) })
   let disabled!: () => void
   const disabling = new Promise<void>(resolve => { disabled = resolve })
   const lines = createInterface({ input: process.stdin })
-  lines.on('line', line => { const value = JSON.parse(line); if (value.frame) adapter.onReply(Buffer.from(value.frame, 'base64')); if (value.disabled) disabled() })
+  const pendingInference = new Map<number, (response: { status: number; body: string }) => void>()
+  lines.on('line', line => {
+    const value = JSON.parse(line)
+    if (value.frame) adapter.onReply(Buffer.from(value.frame, 'base64'))
+    if (value.disabled) disabled()
+    if (value.inferenceReply) { pendingInference.get(value.id)?.(value.inferenceReply); pendingInference.delete(value.id) }
+  })
   const client = new Client({ name: 'story-graph-host-probe', version: '1' })
   let inferenceRequests = 0
   let backgroundRequests = 0
@@ -44,6 +52,13 @@ async function hostProbe() {
     const tool = tools?.find(tool => tool.function.name.endsWith('story_graph_search'))
     if (tools?.length) assert.ok(tool, 'Runtime must expose Story Graph in Ask and Execute')
     else backgroundRequests++
+    if (live) {
+      const response = new Promise<{ status: number; body: string }>(resolve => pendingInference.set(inferenceRequests, resolve))
+      emit({ inference: { ...body, tools: tools?.filter(tool => tool.function.name.endsWith('story_graph_search')) }, id: inferenceRequests })
+      const reply = await response
+      res.writeHead(reply.status, { 'content-type': 'text/event-stream' }).end(reply.body)
+      return
+    }
     const result = body.messages.findLast((message: { role: string }) => message.role === 'tool')
     if (result) assert.match(JSON.stringify(result), /Decision B/)
     const delta = !tool ? { role: 'assistant', content: 'Graph probe title' } : result ? { role: 'assistant', content: 'GRAPH_RUNTIME_OK' } : { role: 'assistant', tool_calls: [{ index: 0, id: 'graph-call', type: 'function', function: {
@@ -97,11 +112,17 @@ async function hostProbe() {
         completePrompt: async (_operation, _status, _response, commit) => { commit(); done() } })
       try {
         transcript.prepare({ bindingId: 'graph', controllerId: 'probe', operationId: workMode, requestId: workMode, preparationDigest: `sha256:${'a'.repeat(64)}`, promptSequence: 0 })
-        await owner.start({ bindingId: 'graph', operationId: workMode, requestId: workMode, prompt: [{ type: 'text', text: 'Search the graph.' }] }, workMode)
+        await owner.start({ bindingId: 'graph', operationId: workMode, requestId: workMode, prompt: [{ type: 'text', text: 'Search the story graph for Decision B using story_graph_search, then reply GRAPH_RUNTIME_OK. Do not use other tools.' }] }, workMode)
         await completed
         const page = transcript.page({ bindingId: 'graph', operationId: workMode, controllerId: 'probe', afterSequence: '0', limit: 128 })
-        assert.equal(page.state, 'completed'); assert.match(JSON.stringify(page), /GRAPH_RUNTIME_OK/)
+        assert.equal(page.state, 'completed')
+        const answer = page.events.map(event => {
+          const update = (event.payload as { update?: { sessionUpdate: string; content?: { text?: string } } }).update
+          return update?.sessionUpdate === 'agent_message_chunk' ? update.content?.text ?? '' : ''
+        }).join('')
+        assert.ok(answer.includes('GRAPH_RUNTIME_OK'), 'Runtime must return the completion marker')
       } finally { owner.close(); child.kill(); await exited; transcript.close() }
+      if (live) continue
       const continueAdapter = new ContinueHostAdapter({ binaryPath: continueEntry!, configPath: '', workspace: root, cacheRoot: join(root, 'continue'), mode: 'chat',
         modelProfile: { id: 'probe', name: 'Probe', modelName: 'graph-probe', baseUrl: `${origin}/v1`, protocol: 'openai-chat-completions', authentication: 'none' },
         launchHost: (entry, args, options) => {
@@ -120,27 +141,34 @@ async function hostProbe() {
     assert.deepEqual((await client.listTools()).tools, [])
     assert.equal((await client.callTool({ name: 'story_graph_search', arguments: { query: 'Decision' } })).isError, true)
     assert.deepEqual(failures, [])
-    emit({ passed: true, inferenceRequests, backgroundRequests, paidCalls: 0, runtimes: ['OpenCode Ask', 'OpenCode Execute', 'Continue Ask', 'Continue Execute'] })
+    emit({ passed: true, inferenceRequests, backgroundRequests, paidCalls: live ? inferenceRequests : 0,
+      runtimes: live ? ['OpenCode Ask', 'OpenCode Execute'] : ['OpenCode Ask', 'OpenCode Execute', 'Continue Ask', 'Continue Execute'] })
   } finally { lines.close(); await client.close(); adapter.close(); inference.closeAllConnections(); inference.close(); await rm(root, { recursive: true, force: true }) }
 }
 
 async function desktopProbe() {
   const [, , host, remoteScript, opencode, continueEntry] = process.argv
   assert.ok(host && remoteScript && opencode && continueEntry, 'Expected host, remote bundle, OpenCode and Continue paths')
+  const liveConfig = process.argv[6] ? parseEnv(await readFile(process.argv[6], 'utf8')) : undefined
+  if (liveConfig) assert.ok(liveConfig.DEEPSEEK_API_KEY && liveConfig.DEEPSEEK_BASE_URL && liveConfig.DEEPSEEK_MODEL, 'Live model configuration unavailable')
+  let providerCalls = 0
   const db = new AssistantDatabase(':memory:'); db.initialize(process.cwd())
   const projectId = db.listProjects()[0]!.id
+  const conversationId = randomUUID()
+  const otherConversationId = randomUUID()
+  db.saveLocalConversations([conversationId, otherConversationId].map(id => ({ header: { id, projectId, title: 'Graph probe', updatedAt: Date.now() }, messages: [] })))
   db.saveSupervisionResult({ request: { trigger: 'manual', scope: { kind: 'projects', projectIds: [projectId] }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-30T00:00:00Z' } },
     evidence: [{ id: 'quote', sourceType: 'conversation', sourceId: 'probe', title: 'Decision evidence', occurredAt: '2026-09-01T00:00:00Z', content: 'Decision A explicitly revised to Decision B; implementation remains pending.' }],
     output: { summary: 'Decision B', changeDigest: 'Revision A to B', openItems: ['Implementation pending'], events: [], entityChanges: [], relations: [],
       entities: [{ id: 'decision', label: 'Decision B', description: 'Explicit revision with evidence', sourceReferenceIds: ['quote'] }] } })
-  let enabled = true, reads = 0, passed = false
-  const gateway = new KnowledgeMcpGateway({} as KnowledgeService, { storyGraphService: { available: async () => enabled,
-    read: (...args) => { assert.ok(enabled); reads++; return db.readStoryGraph(...args) } } })
+  let reads = 0, passed = false
+  const gateway = new KnowledgeMcpGateway({} as KnowledgeService, { storyGraphService: { available: async binding => db.isConversationStoryGraphEnabled(binding.conversationId!),
+    read: (...args) => { assert.ok(db.isConversationStoryGraphEnabled(conversationId)); reads++; return db.readStoryGraph(...args) } } })
   const signal = AbortSignal.timeout(150_000)
-  const token = gateway.grant('probe', [], signal, 'none', undefined, undefined, undefined, undefined, undefined, { projectId, runtimeTarget: 'opencode' })!
+  const token = gateway.grant('probe', [], signal, 'none', undefined, undefined, undefined, undefined, undefined, { projectId, conversationId, runtimeTarget: 'opencode' })!
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
   const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=5', host!,
-    `TMPDIR=/root/tmp ELECTRON_RUN_AS_NODE=1 /opt/GoodBuddy/goodbuddy ${quote(remoteScript!)} --host ${quote(opencode!)} ${quote(continueEntry!)}`], { stdio: ['pipe', 'pipe', 'inherit'], signal })
+    `TMPDIR=/root/tmp ELECTRON_RUN_AS_NODE=1 /opt/GoodBuddy/goodbuddy ${quote(remoteScript!)} --host ${quote(opencode!)} ${quote(continueEntry!)} ${liveConfig ? '--live' : ''}`], { stdio: ['pipe', 'pipe', 'inherit'], signal })
   const exited = new Promise<number | null>((resolve, reject) => { child.once('close', resolve); child.once('error', reject) })
   const queue: RuntimeProtocolBinaryFrame[] = []
   let receive: ((frame: RuntimeProtocolBinaryFrame) => void) | undefined
@@ -153,14 +181,29 @@ async function desktopProbe() {
   const lines = createInterface({ input: child.stdout })
   lines.on('line', line => {
     const value = JSON.parse(line)
-    if (value.frame) {
+    if (value.inference) {
+      void (async () => {
+        assert.ok(liveConfig && ++providerCalls <= 8, 'Live request budget exhausted')
+        const base = liveConfig.DEEPSEEK_BASE_URL!.replace(/\/+$/, '')
+        const response = await fetch(base.endsWith('/chat/completions') ? base : `${base}/chat/completions`, {
+          method: 'POST', headers: { Authorization: `Bearer ${liveConfig.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...value.inference, model: liveConfig.DEEPSEEK_MODEL, max_tokens: 512 }), signal
+        })
+        assert.ok(response.ok, `Provider HTTP ${response.status}`)
+        child.stdin.write(`${JSON.stringify({ id: value.id, inferenceReply: { status: response.status, body: await response.text() } })}\n`)
+      })().catch(() => { child.stdin.write(`${JSON.stringify({ id: value.id, inferenceReply: { status: 502, body: 'Live provider request failed' } })}\n`) })
+    } else if (value.frame) {
       const frame = { payload: Buffer.from(value.frame, 'base64'), sequence: '1', consume: async () => {} }
       if (receive) { const resolve = receive; receive = undefined; resolve(frame) } else queue.push(frame)
-    } else if (value.disable) { enabled = false; child.stdin.write('{"disabled":true}\n') }
-    else if (value.passed) { passed = true; emit({ ...value, desktopReads: reads, desktopOwnsDatabase: true }) }
+    } else if (value.disable) {
+      db.setConversationStoryGraphEnabled(conversationId, false)
+      assert.ok(db.isConversationStoryGraphEnabled(otherConversationId))
+      child.stdin.write('{"disabled":true}\n')
+    }
+    else if (value.passed) { passed = true; emit({ ...value, providerCalls, desktopReads: reads, desktopOwnsDatabase: true }) }
   })
   try { assert.equal(await exited, 0); assert.ok(passed) }
-  finally { lines.close(); main.close(); child.kill(); await gateway.dispose(); db.close() }
+  finally { emit({ providerCalls }); lines.close(); main.close(); child.kill(); await gateway.dispose(); db.close() }
 }
 
 void (process.argv[2] === '--host' ? hostProbe() : desktopProbe()).catch(error => { console.error(error); process.exitCode = 1 })

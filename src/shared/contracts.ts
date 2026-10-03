@@ -2100,6 +2100,7 @@ export type DesktopApi = {
     replace: (conversations: ConversationSnapshot[]) => Promise<void>
     saveLocal: (batch: LocalConversationSaveBatch) => Promise<void>
     setPinned: (input: ConversationSetPinnedInput) => Promise<void>
+    setStoryGraph: (input: { conversationId: string; enabled: boolean }) => Promise<void>
     branchLocal: (
       input: ConversationBranchInput
     ) => Promise<ConversationSnapshot>

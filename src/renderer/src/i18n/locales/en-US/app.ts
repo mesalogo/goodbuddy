@@ -563,6 +563,7 @@ export const app = {
     },
     removeAttachment: 'Remove {{name}}',
     settings: 'Conversation settings',
+    storyGraph: { label: 'Use story graph' },
     options: 'Options',
     expertLabel: 'Expert role',
     modeLabel: 'Work mode',

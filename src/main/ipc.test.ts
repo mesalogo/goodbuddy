@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {} from '@testing-library/jest-dom/vitest'
 import { EventEmitter } from 'node:events'
+import { createServer } from 'node:http'
 import {
   mkdtemp,
   mkdir,
@@ -21,6 +22,7 @@ import type {
 } from '../shared/assistant-contracts'
 import {
   browserTabIdSchema,
+  defaultModelProfileId,
   defaultRuntimeSettings,
   runtimeSettingsInputSchema,
   type AgentEvent,
@@ -4684,6 +4686,16 @@ describe('registerIpcHandlers local conversation persistence', () => {
       expect(webContents.send).not.toHaveBeenCalled()
       expect(database.getConversation(conversationId)).toEqual(before)
 
+      const setStoryGraph = electronMocks.handlers.get(ipcChannels.conversationsSetStoryGraph)!
+      expect(database.isConversationStoryGraphEnabled(conversationId)).toBe(true)
+      for (const enabled of [false, true]) {
+        setStoryGraph(event, { conversationId, enabled })
+        expect(database.isConversationStoryGraphEnabled(conversationId)).toBe(enabled)
+        expect(database.getConversation(conversationId)).toEqual({ ...before, storyGraphEnabled: enabled })
+      }
+      expect(() => setStoryGraph(event, { conversationId, enabled: 'false' })).toThrow()
+      expect(() => setStoryGraph({ ...event, sender: {} }, { conversationId, enabled: false })).toThrow()
+
       expect(electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, conversationId)).toBe(true)
       expect(collect).toHaveBeenCalledOnce()
       expect(contextManager.cancelUnavailableImport).toHaveBeenCalledOnce()
@@ -5509,6 +5521,8 @@ describe('registerIpcHandlers agent terminal state', () => {
         runtimeSelection: { provider: 'opencode' },
         messages: []
       })),
+      isConversationStoryGraphEnabled: vi.fn(() => true),
+      setConversationStoryGraphEnabled: vi.fn(),
       getProject: vi.fn<
         (projectId: string) => Record<string, unknown>
       >((projectId) => ({
@@ -5559,6 +5573,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const getResolvedSettings = vi.fn(
       async (): Promise<Record<string, unknown>> => ({
+        modelProfiles: [{ id: defaultModelProfileId, name: 'Default', modelName: 'qwen3', protocol: 'openai-chat-completions', authentication: 'none' }],
+        defaultModelProfileId,
         toolApproval,
         subagentSmartRoutingEnabled: smartRoutingEnabled
       })
@@ -5634,6 +5650,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     args[45] = nativeClientCoordinator
     args[41] = nativeTerminalManager
     if (applicationSettingsStore) args[15] = applicationSettingsStore
+    runtimeFactoryMocks.createModelProfileRuntime.mockReturnValue(runtime)
     const dispose = registerIpcHandlers(...args)
     return {
       approvalBroker,
@@ -6394,6 +6411,57 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(unlinked.summary).toBe('')
       expect(unlinked.prompt).toBe('请基于以下监督回顾继续讨论。\n\n来源：unlinked source\nunlinked snapshot')
     } finally { await harness.dispose(); database.close() }
+  })
+
+  it('routes supervisor model selection through the real direct runtime to a saved connection', async () => {
+    const calls: Array<{ model: string; tools?: unknown; temperature?: number }> = []
+    const server = createServer(async (request, response) => {
+      let body = ''
+      for await (const chunk of request) body += String(chunk)
+      calls.push(JSON.parse(body))
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify({ summary: 'Connection verified', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`)
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address() as { port: number }
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const now = Date.now()
+    database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'Review', updatedAt: now },
+      messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'A saved decision', createdAt: now }] }])
+    const harness = createHarness({ runtimeId: 'opencode', capability: 'chat', run: vi.fn() }, undefined, 'always', undefined, false,
+      undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
+    const actual = await vi.importActual<typeof import('./agent/create-runtime')>('./agent/create-runtime')
+    runtimeFactoryMocks.createModelProfileRuntime.mockImplementation(actual.createModelProfileRuntime)
+    const profile = { id: crypto.randomUUID(), name: 'Review connection',
+      baseUrl: `http://127.0.0.1:${address.port}/v1`, modelName: 'review-selected', protocol: 'openai-chat-completions', authentication: 'none',
+      requestHeaders: {}, requestBody: { temperature: 0.25 } }
+    const fallback = { ...profile, id: crypto.randomUUID(), modelName: 'app-default' }
+    harness.getResolvedSettings.mockResolvedValue({ ...defaultRuntimeSettings, provider: 'opencode', modelProfiles: [profile, fallback], defaultModelProfileId: fallback.id })
+    const handler = electronMocks.handlers.get(ipcChannels.supervisionRun)!
+    const input = { trigger: 'manual', reanalyze: true, scope: { kind: 'global' }, timeRange: {
+      from: new Date(now - 1).toISOString(), to: new Date(now + 1).toISOString()
+    } }
+    try {
+      for (const supervisorModelProfileId of [profile.id, null]) {
+        harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorModelProfileId })
+        await expect(handler(trustedEvent(harness.webContents), input)).resolves.toMatchObject({ status: 'completed' })
+      }
+      expect(calls.map(call => call.model)).toEqual(['review-selected', 'app-default'])
+      expect(calls.every(call => !call.tools && call.temperature === 0.25)).toBe(true)
+      for (const invalid of [undefined, { ...profile, protocol: 'openai-images-generations' }, { ...profile, authentication: 'api-key', apiKey: undefined }]) {
+        harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorModelProfileId: profile.id })
+        harness.getResolvedSettings.mockResolvedValue({ modelProfiles: invalid ? [invalid, fallback] : [fallback], defaultModelProfileId: fallback.id })
+        await expect(handler(trustedEvent(harness.webContents), input)).rejects.toThrow(/不可用|API Key/)
+      }
+      expect(calls).toHaveLength(2)
+    } finally {
+      await harness.dispose()
+      database.close()
+      server.closeAllConnections()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      runtimeFactoryMocks.createModelProfileRuntime.mockReset()
+    }
   })
 
   it.each(['global', 'projects'] as const)('collects supervision within the exact UI timeRange before limits (%s)', async (kind) => {
@@ -9549,16 +9617,18 @@ describe('registerIpcHandlers agent terminal state', () => {
     })
     try {
       const projectId = '00000000-0000-4000-8000-000000000088'
-      for (const enabled of [true, false]) {
+      for (const [enabled, conversationEnabled] of [[true, true], [false, true], [true, false]]) {
         harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: enabled })
+        harness.assistantDatabase.isConversationStoryGraphEnabled.mockReturnValue(conversationEnabled!)
         const requestId = crypto.randomUUID()
         await harness.handler!(trustedEvent(harness.webContents), { requestId, projectId, conversationId: 'graph-grant', prompt: 'Continue work', workMode: 'ask', knowledgeLibraryIds: [] })
         await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
       }
       expect(gateway.grant).toHaveBeenCalledExactlyOnceWith(expect.any(String), [], expect.any(AbortSignal), 'none',
-        undefined, undefined, undefined, undefined, undefined, { projectId, runtimeTarget: runtimeId })
+        undefined, undefined, undefined, undefined, undefined, { projectId, conversationId: 'graph-grant', runtimeTarget: runtimeId })
       expect(received[0]).toMatchObject({ knowledgeCapabilityToken: 'graph-capability', storyGraphBinding: binding })
       expect(received[1]).not.toHaveProperty('storyGraphBinding')
+      expect(received[2]).not.toHaveProperty('storyGraphBinding')
       expect(gateway.bindRemoteStoryGraph).toHaveBeenCalledOnce()
     } finally { await harness.dispose() }
   })

@@ -141,6 +141,23 @@ describe('ApplicationSettingsStore', () => {
       await expect(store.update({ supervisionReview: { ...supervisionReview, ...patch } })).rejects.toThrow()
     }
   })
+  it.each([11, 12])('persists the supervisor model reference and defaults old settings to app default in version %s', async (version) => {
+    const { filePath, store } = await createStore()
+    const legacy = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null }
+    delete legacy.supervisorModelProfileId
+    await writeFile(filePath, JSON.stringify(legacy))
+    expect((await store.get()).supervisorModelProfileId).toBeNull()
+    const profileId = '00000000-0000-4000-8000-000000000201'
+    await store.update({ supervisorModelProfileId: profileId })
+    await store.update({ checkUpdatesOnStartup: false })
+    expect((await createApplicationSettingsStore(filePath).get()).supervisorModelProfileId).toBe(profileId)
+    for (const value of ['', 'missing', 12, { apiKey: 'not-a-profile-reference' }]) {
+      await expect(store.update({ supervisorModelProfileId: value })).rejects.toThrow()
+    }
+    await store.update({ supervisorModelProfileId: null })
+    expect((await createApplicationSettingsStore(filePath).get()).supervisorModelProfileId).toBeNull()
+  })
+
   it.each([11, 12])('persists supervision concurrency and defaults missing values in version %s', async (version) => {
     const { filePath, store } = await createStore()
     const legacy = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null }

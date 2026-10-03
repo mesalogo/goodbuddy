@@ -18,6 +18,7 @@ import type {
   HeartbeatUpdateInput
 } from '../../shared/assistant-contracts'
 import { HeartbeatSettings } from './HeartbeatSettings'
+import { isAgentRuntimeModelProtocol, type RuntimeSettings } from '../../shared/contracts'
 import { defaultSupervisionTimeoutSeconds, supervisionTimeoutSecondsSchema, defaultSupervisorModelConcurrency, supervisorModelConcurrencySchema, type ApplicationSettings, type ApplicationSettingsUpdate } from '../../shared/application-settings-contracts'
 import { SupervisionReviewSettings, type SupervisionSettingsSection } from './SupervisionReviewSettings'
 import { SupervisorWorkspace, type SupervisionGraphNavigation } from './SupervisorWorkspace'
@@ -34,6 +35,7 @@ import {
 } from './WorkspacePrimitives'
 
 export type HeartbeatCenterProps = {
+  runtimeSettings?: RuntimeSettings
   applicationSettings?: ApplicationSettings
   applicationSettingsPending?: boolean
   applicationSettingsLocked?: boolean
@@ -200,24 +202,37 @@ function SupervisionModelSettings(props: HeartbeatCenterProps): React.JSX.Elemen
   const { t } = useTranslation('heartbeat')
   const supervisor = props.applicationSettings?.supervisorOrganizeTimeoutSeconds ?? defaultSupervisionTimeoutSeconds
   const concurrency = props.applicationSettings?.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency
+  const profileId = props.applicationSettings?.supervisorModelProfileId ?? ''
+  const profiles = useMemo(() => props.runtimeSettings?.modelProfiles.filter(profile => isAgentRuntimeModelProtocol(profile.protocol)) ?? [], [props.runtimeSettings])
+  const [model, setModel] = useState(profileId)
   const [parallel, setParallel] = useState(String(concurrency))
   const [organize, setOrganize] = useState(String(supervisor))
-  const [saved, setSaved] = useState({ supervisor, concurrency })
-  if (saved.supervisor !== supervisor || saved.concurrency !== concurrency) {
-    setSaved({ supervisor, concurrency })
+  const [saved, setSaved] = useState({ supervisor, concurrency, profileId })
+  if (saved.supervisor !== supervisor || saved.concurrency !== concurrency || saved.profileId !== profileId) {
+    setSaved({ supervisor, concurrency, profileId })
+    setModel(profileId)
     setParallel(String(concurrency))
     setOrganize(String(supervisor))
   }
-  useWorkspaceUnsavedChanges(organize !== String(supervisor) || parallel !== String(concurrency))
+  useWorkspaceUnsavedChanges(organize !== String(supervisor) || parallel !== String(concurrency) || model !== profileId)
   const valid = supervisionTimeoutSecondsSchema.safeParse(Number(organize)).success &&
     supervisorModelConcurrencySchema.safeParse(Number(parallel)).success
   const disabled = props.applicationSettingsPending || props.applicationSettingsLocked || !props.applicationSettings || !props.onUpdateApplicationSettings
   return <form className="heartbeat-settings heartbeat-settings__editor" onSubmit={(event) => {
     event.preventDefault()
     if (!valid || disabled) return
-    void props.onUpdateApplicationSettings?.({ supervisorOrganizeTimeoutSeconds: Number(organize), supervisorModelConcurrency: Number(parallel) })
+    void props.onUpdateApplicationSettings?.({ supervisorOrganizeTimeoutSeconds: Number(organize), supervisorModelConcurrency: Number(parallel),
+      ...(model !== profileId ? { supervisorModelProfileId: model || null } : {}) })
   }}>
     <h2>{t('timeouts.title')}</h2>
+    <label className="heartbeat-settings__field">{t('timeouts.model')}
+      <select value={model} aria-describedby="supervisor-model-help" disabled={disabled || !props.runtimeSettings} onChange={event => setModel(event.target.value)}>
+        <option value="">{t('timeouts.followDefault')}</option>
+        {model && !profiles.some(profile => profile.id === model) && <option value={model} disabled>{t('timeouts.unavailableModel')}</option>}
+        {profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} ({profile.modelName})</option>)}
+      </select>
+    </label>
+    <p id="supervisor-model-help">{t('timeouts.modelHelp')}</p>
     <p>{t('timeouts.help')}</p>
     <label className="heartbeat-settings__field">{t('timeouts.organize')}
       <input type="number" min={30} max={600} step={1} value={organize} disabled={disabled}
@@ -234,7 +249,7 @@ function SupervisionModelSettings(props: HeartbeatCenterProps): React.JSX.Elemen
       <p>{props.applicationSettingsError}</p>
       <button className="secondary-button" type="button" disabled={props.applicationSettingsPending} onClick={props.onRetryApplicationSettings}>{t('center.actions.retry')}</button>
     </div>}
-    <button className="primary-button" type="submit" disabled={disabled || !valid || (Number(organize) === supervisor && Number(parallel) === concurrency)}>{t('timeouts.save')}</button>
+    <button className="primary-button" type="submit" disabled={disabled || !valid || (Number(organize) === supervisor && Number(parallel) === concurrency && model === profileId)}>{t('timeouts.save')}</button>
   </form>
 }
 function HeartbeatSections({

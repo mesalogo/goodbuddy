@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createRef, Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "./chat-conversation";
@@ -98,6 +98,37 @@ afterEach(() => {
 });
 
 describe("Composer render boundary", () => {
+  it("hides the story graph switch with Supervisor off and keeps conversation state while saving or failing", async () => {
+    const { props, rerender, store } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
+    expect(screen.queryByRole("switch", { name: "Use story graph" })).toBeNull();
+    let finish!: () => void;
+    const save = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const notify = vi.fn();
+    const next = { ...props, supervisorEnabled: true, actions: { ...actions, setStoryGraphEnabled: save, notify } };
+    rerender(<Composer {...next} />);
+    const toggle = screen.getByRole("switch", { name: "Use story graph" });
+    expect(toggle).toBeChecked();
+    expect(toggle.closest("label")).toHaveClass("toggle-row");
+    fireEvent.click(toggle);
+    expect(save).toHaveBeenCalledWith("a", false);
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
+    await act(async () => {
+      store.set(current => current.map(item => item.id === "a" ? { ...item, storyGraphEnabled: false } : item));
+      finish();
+    });
+    await waitFor(() => { expect(toggle).not.toBeChecked(); expect(toggle).toBeEnabled(); });
+    save.mockRejectedValueOnce(new Error("Save failed"));
+    fireEvent.click(toggle);
+    await waitFor(() => { expect(toggle).toBeEnabled(); expect(toggle).not.toBeChecked(); expect(notify).toHaveBeenCalledWith({ tone: "error", message: "Save failed" }); });
+    rerender(<Composer {...next} conversationId="b" />);
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
+    expect(screen.getByRole("switch", { name: "Use story graph" })).toBeChecked();
+    rerender(<Composer {...next} supervisorEnabled={false} />);
+    expect(screen.queryByRole("switch", { name: "Use story graph", hidden: true })).toBeNull();
+  });
+
   it("does not re-render when another conversation changes", () => {
     const { renders, store } = setup();
     act(() => store.set((current) => current.map((item) =>

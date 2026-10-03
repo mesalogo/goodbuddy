@@ -73,6 +73,7 @@ const applicationPreferencesSchema = z
     heartbeatReportTimeoutSeconds: supervisionTimeoutSecondsSchema.optional(),
     supervisorOrganizeTimeoutSeconds: supervisionTimeoutSecondsSchema.optional(),
     supervisorModelConcurrency: supervisorModelConcurrencySchema.optional(),
+    supervisorModelProfileId: z.string().uuid().nullable().optional(),
     supervisionReview: supervisionReviewSettingsSchema.optional(),
     magicNotesShowIncompleteTodoCount: z.boolean().default(true),
     magicNoteCommentMode: magicNoteCommentModeSchema.default('immediate'),

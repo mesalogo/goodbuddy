@@ -109,12 +109,14 @@ it('reads Story Graph through the controlled Harness ACP Main proxy in Ask and E
   const db = new AssistantDatabase(':memory:'); db.initialize(root)
   let enabled = true
   const projectId = db.listProjects()[0]!.id
+  const conversationId = crypto.randomUUID()
+  db.saveLocalConversations([{ header: { id: conversationId, projectId, title: 'Graph', updatedAt: Date.now() }, messages: [] }])
   const gateway = new KnowledgeMcpGateway({} as KnowledgeService, { storyGraphService: {
-    available: async () => enabled, read: db.readStoryGraph.bind(db)
+    available: async binding => db.isConversationStoryGraphEnabled(binding.conversationId!), read: db.readStoryGraph.bind(db)
   } })
   const signal = new AbortController().signal
   const token = gateway.grant('harness-graph', [], signal, 'none', undefined, undefined, undefined, undefined, undefined,
-    { projectId, runtimeTarget: 'deepseek-harness' })!
+    { projectId, conversationId, runtimeTarget: 'deepseek-harness' })!
   const inProcess = createInProcessLaunch(root, { stream(options) {
     const prompt = latestUserText(options)
     const tool = options.tools?.find(tool => tool.name === 'story_graph_search')
@@ -131,7 +133,8 @@ it('reads Story Graph through the controlled Harness ACP Main proxy in Ask and E
   try {
     for (const mode of ['ask', 'execute', 'disabled'] as const) {
       enabled = mode !== 'disabled'
-      const events = await collect(runtime.run({ requestId: crypto.randomUUID(), conversationId: 'graph', prompt: mode,
+      db.setConversationStoryGraphEnabled(conversationId, enabled)
+      const events = await collect(runtime.run({ requestId: crypto.randomUUID(), conversationId, prompt: mode,
         workMode: mode === 'execute' ? 'execute' : 'ask', knowledgeCapabilityToken: token }, signal))
       expect(events.at(-1)?.type).toBe('done')
       expect(JSON.stringify(events)).toContain(enabled ? 'GRAPH_READ' : 'DISABLED')

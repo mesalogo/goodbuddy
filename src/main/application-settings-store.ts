@@ -265,6 +265,7 @@ export const defaultApplicationSettings: ApplicationSettings = {
   heartbeatReportTimeoutSeconds: defaultSupervisionTimeoutSeconds,
   supervisorOrganizeTimeoutSeconds: defaultSupervisionTimeoutSeconds,
   supervisorModelConcurrency: defaultSupervisorModelConcurrency,
+  supervisorModelProfileId: null,
   magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined',
@@ -545,6 +546,7 @@ export class ApplicationSettingsStore {
       heartbeatReportTimeoutSeconds: stored.heartbeatReportTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
       supervisorOrganizeTimeoutSeconds: stored.supervisorOrganizeTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
       supervisorModelConcurrency: stored.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency,
+      supervisorModelProfileId: stored.supervisorModelProfileId ?? null,
       supervisionReview: stored.supervisionReview,
       magicNotesShowIncompleteTodoCount:
         stored.magicNotesShowIncompleteTodoCount,
@@ -593,6 +595,7 @@ export class ApplicationSettingsStore {
         heartbeatReportTimeoutSeconds: next.heartbeatReportTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
         supervisorOrganizeTimeoutSeconds: next.supervisorOrganizeTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
         supervisorModelConcurrency: next.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency,
+        supervisorModelProfileId: next.supervisorModelProfileId ?? null,
         supervisionReview: next.supervisionReview,
         magicNotesShowIncompleteTodoCount:
           next.magicNotesShowIncompleteTodoCount,

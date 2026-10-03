@@ -99,7 +99,7 @@ export class NativeClientCoordinator {
       this.options.applicationSettingsStore.get(),
       this.options.capabilities.getObsidianSettings()
     ])
-    const key = createHash('sha256').update(JSON.stringify({ projectId: project.id, space: space.cacheIdentity,
+    const key = createHash('sha256').update(JSON.stringify({ projectId: project.id, conversationId, storyGraphEnabled: conversation.storyGraphEnabled !== false, space: space.cacheIdentity,
       target: selected.target, profile: selected.target === 'deepseek-harness' ? selected.settings.deepseekHarnessModelProfile
         : selected.target === 'continue' ? selected.settings.continueModelProfile : selected.settings.opencodeModelProfile,
       workMode, skills, mcpServers, builtin,
@@ -168,7 +168,8 @@ export class NativeClientCoordinator {
         builtin.includes('magic-notes') && application.magicNotesEnabled ? access : 'none',
         builtin.includes('goodbuddy-config') ? { access, workspacePath: space.rootPath } : undefined,
         undefined, undefined, undefined, builtin.includes('obsidian') ? { settings: obsidian, access } : undefined,
-        builtin.includes('story-graph') && application.heartbeatEnabled ? { projectId: project.id, runtimeTarget: selected.target } : undefined)
+        builtin.includes('story-graph') && application.heartbeatEnabled && conversation.storyGraphEnabled !== false
+          ? { projectId: project.id, conversationId: conversation.id, runtimeTarget: selected.target } : undefined)
       const customToken = workMode === 'execute' ? gateway.grantCustomMcp(requestId, mcpServers, signal) : undefined
       const endpoints = [token, customToken].flatMap((value, index) => value ? [{ name: `goodbuddy-${index}`, url: gateway.getEndpoint()!, headers: { Authorization: `Bearer ${value}` },
         readOnlyTools: index === 0 && workMode === 'ask' ? gateway.getAvailableToolNames(value) : [] }] : [])

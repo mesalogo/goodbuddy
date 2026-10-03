@@ -543,6 +543,7 @@ export const app = {
     },
     removeAttachment: '移除 {{name}}',
     settings: '对话设置',
+    storyGraph: { label: '使用故事图谱' },
     options: '选项',
     expertLabel: '专家角色',
     modeLabel: '工作模式',

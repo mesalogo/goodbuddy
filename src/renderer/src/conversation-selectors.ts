@@ -250,7 +250,7 @@ export function useActiveConversationView(
  */
 export type ComposerConversationView = Pick<
   Conversation,
-  | "id" | "runtimeSelection" | "knowledgeLibraryIds" | "knowledgeRetrievalMode"
+  | "id" | "runtimeSelection" | "knowledgeLibraryIds" | "knowledgeRetrievalMode" | "storyGraphEnabled"
   | "remote" | "contextMetrics" | "contextCompressionState"
 > & { running: boolean };
 
@@ -263,6 +263,7 @@ export function selectComposerConversationView(
     runtimeSelection: conversation.runtimeSelection,
     knowledgeLibraryIds: conversation.knowledgeLibraryIds,
     knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+    storyGraphEnabled: conversation.storyGraphEnabled,
     remote: conversation.remote,
     contextMetrics: conversation.contextMetrics,
     contextCompressionState: conversation.contextCompressionState,
@@ -277,6 +278,7 @@ export function sameComposerConversationView(
   if (left === right) return true;
   if (!left || !right) return false;
   return left.id === right.id && left.running === right.running &&
+    left.storyGraphEnabled === right.storyGraphEnabled &&
     left.knowledgeRetrievalMode === right.knowledgeRetrievalMode &&
     sameArrayItems(left.knowledgeLibraryIds ?? [], right.knowledgeLibraryIds ?? []) &&
     (left.knowledgeLibraryIds === undefined) === (right.knowledgeLibraryIds === undefined) &&

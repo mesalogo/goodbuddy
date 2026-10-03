@@ -586,6 +586,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     replace: vi.fn(async () => {}),
     saveLocal: vi.fn(async () => {}),
     setPinned: vi.fn(async () => {}),
+    setStoryGraph: vi.fn(async () => {}),
     branchLocal: vi.fn(async (input) => ({
       id: crypto.randomUUID(),
       branch: {
@@ -8542,6 +8543,33 @@ describe("App", () => {
     expect(
       screen.queryByRole("menu", { name: "工作模式" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("saves the story graph switch through the conversation API and restores it on reload", async () => {
+    installRemoteProjectsSetting(false);
+    const id = "00000000-0000-4000-8000-000000000311";
+    const saved = { id, projectId: project.id, title: "Story preference", updatedAt: 1, messages: [] };
+    vi.mocked(api.conversations.list).mockResolvedValue([saved]);
+    const pending = deferred<void>();
+    vi.mocked(api.conversations.setStoryGraph).mockImplementationOnce(() => pending.promise);
+    const view = render(<App />);
+    await screen.findByLabelText("向 GoodBuddy 提问");
+    openComposerOptions();
+    const toggle = await screen.findByRole("switch", { name: "使用故事图谱" });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(api.conversations.setStoryGraph).toHaveBeenCalledWith({ conversationId: id, enabled: false }));
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
+    await act(async () => pending.resolve());
+    await waitFor(() => { expect(toggle).not.toBeChecked(); expect(toggle).toBeEnabled(); });
+    view.unmount();
+    vi.mocked(api.conversations.list).mockResolvedValue([{ ...saved, storyGraphEnabled: false }]);
+    render(<App />);
+    await screen.findByLabelText("向 GoodBuddy 提问");
+    openComposerOptions();
+    expect(await screen.findByRole("switch", { name: "使用故事图谱" })).not.toBeChecked();
+    expect(api.agent.run).not.toHaveBeenCalled();
   });
 
   it("groups composer tools and exposes clear control descriptions", async () => {

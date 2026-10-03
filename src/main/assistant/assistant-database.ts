@@ -1234,6 +1234,7 @@ const conversationContextStateSchema = conversationSnapshotSchema.pick({
   workMode: true,
   knowledgeLibraryIds: true,
   knowledgeRetrievalMode: true,
+  storyGraphEnabled: true,
   contextMetrics: true,
   contextCompressionState: true
 })
@@ -1242,7 +1243,7 @@ function parseConversationContextState(
   value: string | null
 ): Pick<
   ConversationSnapshot,
-  'workMode' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'contextMetrics' | 'contextCompressionState'
+  'workMode' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'contextMetrics' | 'contextCompressionState'
 > {
   if (!value) {
     return {}
@@ -1260,18 +1261,20 @@ function parseConversationContextState(
 function serializeConversationContextState(
   conversation: Pick<
     ConversationSnapshot,
-    'workMode' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'contextMetrics' | 'contextCompressionState'
+    'workMode' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'contextMetrics' | 'contextCompressionState'
   >
 ): string | null {
   return conversation.workMode !== undefined ||
     conversation.knowledgeLibraryIds !== undefined ||
     conversation.knowledgeRetrievalMode !== undefined ||
+    conversation.storyGraphEnabled !== undefined ||
     conversation.contextMetrics ||
     conversation.contextCompressionState
     ? JSON.stringify({
         workMode: conversation.workMode,
         knowledgeLibraryIds: conversation.knowledgeLibraryIds,
         knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+        storyGraphEnabled: conversation.storyGraphEnabled,
         contextMetrics: conversation.contextMetrics,
         contextCompressionState: conversation.contextCompressionState
       })
@@ -3194,6 +3197,22 @@ export class AssistantDatabase {
     }
   }
 
+  isConversationStoryGraphEnabled(conversationId: string): boolean {
+    const row = this.requireDatabase().prepare(
+      "SELECT context_state_json FROM conversations WHERE id = ? AND status = 'active'"
+    ).get(conversationId) as { context_state_json: string | null } | undefined
+    return Boolean(row && parseConversationContextState(row.context_state_json).storyGraphEnabled !== false)
+  }
+
+  setConversationStoryGraphEnabled(conversationId: string, enabled: boolean): void {
+    const result = this.requireDatabase().prepare(
+      `UPDATE conversations
+       SET context_state_json = json_set(COALESCE(context_state_json, '{}'), '$.storyGraphEnabled', json(?))
+       WHERE id = ? AND status = 'active'`
+    ).run(JSON.stringify(enabled), conversationId)
+    if (result.changes !== 1) throw new Error('对话不存在')
+  }
+
   /**
    * Clears references to deleted model connections in every project and
    * conversation so they fall back to the next layer instead of failing.
@@ -3324,7 +3343,7 @@ export class AssistantDatabase {
   saveLocalConversations(batch: LocalConversationSaveBatch): void {
     const database = this.requireDatabase()
     const findConversation = database.prepare(
-      'SELECT channel FROM conversations WHERE id = ?'
+      'SELECT channel, context_state_json FROM conversations WHERE id = ?'
     )
     const insertConversation = database.prepare(
       `INSERT INTO conversations
@@ -3376,7 +3395,7 @@ export class AssistantDatabase {
         const { header } = save
         const existingConversation = findConversation.get(
           header.id
-        ) as { channel: ProjectChannel | null } | undefined
+        ) as { channel: ProjectChannel | null; context_state_json: string | null } | undefined
         const updatedAt = new Date(header.updatedAt).toISOString()
         if (existingConversation?.channel) {
           throw new Error('本地对话 ID 与远程对话冲突')
@@ -3386,7 +3405,9 @@ export class AssistantDatabase {
             header.projectId ?? null,
             serializeRuntimeSelection(header.runtimeSelection),
             header.knowledgeRetrievalMode ?? null,
-            serializeConversationContextState(header),
+            // The explicit switch owns this preference; a queued older header must not undo it.
+            serializeConversationContextState({ ...header,
+              storyGraphEnabled: parseConversationContextState(existingConversation.context_state_json).storyGraphEnabled }),
             header.title,
             header.branch?.sourceConversationId ?? null,
             header.branch?.sourceTitle ?? null,

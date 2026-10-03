@@ -25,6 +25,7 @@ import { PageShell } from './WorkspacePrimitives'
 import i18n from './i18n'
 import { WorkspaceUnsavedChangesContext } from './workspace-unsaved-changes'
 import { applicationSettingsSchema, defaultLocalToolEnvironmentSettings } from '../../shared/application-settings-contracts'
+import type { RuntimeSettings } from '../../shared/contracts'
 
 afterEach(cleanup)
 
@@ -334,6 +335,40 @@ describe('HeartbeatCenter', () => {
     view.rerender(<HeartbeatCenter {...props} applicationSettings={{ ...applicationSettings, supervisorOrganizeTimeoutSeconds: 30, supervisorModelConcurrency: 4 }} />)
     expect(screen.getByRole('button', { name: t('timeouts.save') })).toBeDisabled()
   })
+  it.each(['zh-CN', 'en-US'])('saves an existing text model reference, retains failed drafts, and restores app default (%s)', async language => {
+    await i18n.changeLanguage(language)
+    const t = (key: string) => i18n.t(key, { ns: 'heartbeat' })
+    const profileId = '00000000-0000-4000-8000-000000000201'
+    const applicationSettings = applicationSettingsSchema.parse({ checkUpdatesOnStartup: true, updateSource: 'github', modelDownloadSource: 'modelscope', localToolEnvironment: defaultLocalToolEnvironmentSettings, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false })
+    const runtimeSettings = { modelProfiles: [
+      { id: profileId, name: 'Reviewer', modelName: 'review-model', protocol: 'openai-chat-completions' },
+      { id: 'image', name: 'Image only', modelName: 'image-model', protocol: 'openai-images-generations' }
+    ] } as RuntimeSettings
+    const onUpdateApplicationSettings = vi.fn(async () => false)
+    const props = createProps({ applicationSettings, runtimeSettings, onUpdateApplicationSettings })
+    const view = render(<HeartbeatCenter {...props} />, false)
+    fireEvent.click(screen.getByRole('tab', { name: t('supervisor.settings') }))
+    const selector = screen.getByRole('combobox', { name: t('timeouts.model') })
+    expect(selector).toHaveValue('')
+    expect(within(selector).queryByText(/Image only/)).not.toBeInTheDocument()
+    fireEvent.change(selector, { target: { value: profileId } })
+    fireEvent.click(screen.getByRole('button', { name: t('timeouts.save') }))
+    await waitFor(() => expect(onUpdateApplicationSettings).toHaveBeenCalledExactlyOnceWith({
+      supervisorModelProfileId: profileId, supervisorOrganizeTimeoutSeconds: 240, supervisorModelConcurrency: 1
+    }))
+    view.rerender(<HeartbeatCenter {...props} applicationSettingsError="Save failed" />)
+    expect(selector).toHaveValue(profileId)
+    view.rerender(<HeartbeatCenter {...props} applicationSettings={{ ...applicationSettings, supervisorModelProfileId: profileId }} />)
+    expect(screen.getByRole('button', { name: t('timeouts.save') })).toBeDisabled()
+    view.rerender(<HeartbeatCenter {...props} runtimeSettings={{ ...runtimeSettings, modelProfiles: [] }} applicationSettings={{ ...applicationSettings, supervisorModelProfileId: profileId }} />)
+    expect(within(selector).getByRole('option', { name: t('timeouts.unavailableModel') })).toBeDisabled()
+    fireEvent.change(selector, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: t('timeouts.save') }))
+    await waitFor(() => expect(onUpdateApplicationSettings).toHaveBeenLastCalledWith({
+      supervisorModelProfileId: null, supervisorOrganizeTimeoutSeconds: 240, supervisorModelConcurrency: 1
+    }))
+  })
+
   it.each(['zh-CN', 'en-US'])('opens complete automatic supervision settings without creating defaults (%s)', async (language) => {
     await i18n.changeLanguage(language)
     const props = createProps({ configs: [], runs: [], entries: [] })

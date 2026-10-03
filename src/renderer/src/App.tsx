@@ -853,6 +853,7 @@ function toConversationSnapshots(
       workMode: conversation.workMode,
       knowledgeLibraryIds: conversation.knowledgeLibraryIds,
       knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+      storyGraphEnabled: conversation.storyGraphEnabled,
       contextMetrics: conversation.contextMetrics,
       contextCompressionState: conversation.contextCompressionState,
       ...(conversation.branch ? { branch: conversation.branch } : {}),
@@ -6666,6 +6667,16 @@ function App(): React.JSX.Element {
     openImageViewer,
     openModelSettings: openImageModelSettings,
     setEnabledKnowledgeLibraryIds,
+    setStoryGraphEnabled: async (conversationId, enabled) => {
+      persistLocalConversationChanges();
+      await conversationPersistence.enqueue(async () => {
+        await window.goodbuddy.conversations.setStoryGraph({ conversationId, enabled });
+        setConversations((current) => current.map((conversation) =>
+          conversation.id === conversationId
+            ? { ...conversation, storyGraphEnabled: enabled, updatedAt: Date.now() }
+            : conversation));
+      });
+    },
     setKnowledgeRetrievalMode: (mode) =>
       setConversations((current) =>
         current.map((conversation) =>
@@ -7463,6 +7474,7 @@ function App(): React.JSX.Element {
                           selectedRuntimeAgent={selectedRuntimeAgent}
                           selectedRuntimeCommand={selectedRuntimeCommand}
                           selectingContextFiles={selectingContextFiles}
+                          supervisorEnabled={applicationSettings?.heartbeatEnabled === true}
                           updateAttachmentBusy={updateAttachmentBusy}
                           voiceListening={voiceListening}
                           voiceRecording={voiceRecording}
@@ -7569,6 +7581,7 @@ function App(): React.JSX.Element {
                       }
                     >
                       {isApplicationEnabled(applicationSettings, 'heartbeat') ? <HeartbeatCenter
+                        runtimeSettings={runtimeSettings}
                         applicationSettings={applicationSettings}
                         applicationSettingsPending={applicationSettingsPending}
                         applicationSettingsLocked={applicationSettingsUnconfirmed}

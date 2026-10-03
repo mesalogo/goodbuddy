@@ -43,6 +43,10 @@ export const heartbeat = {
     dismiss: 'Dismiss'
   },
   timeouts: {
+    model: 'Model',
+    followDefault: 'Follow app default',
+    unavailableModel: 'Selected model is unavailable',
+    modelHelp: 'Uses an existing text model for reviews, summaries, stories, experiences, and suggestions. Saving affects the next execution, including continue or retry; a review already running keeps its model.',
     title: 'Model timeouts and concurrency',
     report: 'Heartbeat report timeout (seconds)',
     organize: 'Supervisor organize timeout (seconds)',

@@ -620,6 +620,7 @@ export const conversationSnapshotSchema = z
     knowledgeLibraryIds: z.array(assistantIdSchema).max(20).optional(),
     workMode: workModeSchema.optional(),
     knowledgeRetrievalMode: z.enum(['auto', 'always']).optional(),
+    storyGraphEnabled: z.boolean().optional(),
     contextMetrics: conversationContextMetricsSchema.optional(),
     contextCompressionState:
       conversationContextCompressionStateSchema.optional(),
@@ -669,6 +670,11 @@ export const conversationSearchRequestSchema = z.object({
 export const conversationSetPinnedSchema = z.object({
   conversationId: assistantIdSchema,
   pinned: z.boolean()
+}).strict()
+
+export const conversationSetStoryGraphSchema = z.object({
+  conversationId: assistantIdSchema,
+  enabled: z.boolean()
 }).strict()
 
 export type ConversationSetPinnedInput = z.infer<
