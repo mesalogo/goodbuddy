@@ -81,7 +81,10 @@ app.whenReady().then(async () => {
         const name = `${git ? 'git' : 'non-git'}-${theme}-${width}x${height}`
         win.setContentSize(width, height)
         await win.loadURL(`${process.env.GB_LAYOUT_URL}?git=${git}&theme=${theme}&sidebar=${sidebar}`)
-        await wait(`document.querySelectorAll('.workspace-files__row').length===121 && !!${viewport}`)
+        // The tree is windowed (P5): only rows near the viewport are mounted.
+        await wait(`document.querySelectorAll('.workspace-files__row').length>0 && !!${viewport}`)
+        await settle()
+        assert(await js(`document.querySelectorAll('.workspace-files__row').length<121`), 'Long files tree must be windowed')
         await js('document.fonts.ready')
         await settle()
         assert.equal(await js('document.querySelectorAll(".workspace-files__view-switch button").length'), git ? 2 : 1)
@@ -103,15 +106,20 @@ app.whenReady().then(async () => {
         await click('.workspace-files__entry .workspace-files__more')
         await wait('!!document.querySelector("[role=menuitem]")')
         await click('[role=menuitem]:first-child')
-        await wait('document.querySelectorAll(".workspace-files__row").length===120 && !!document.querySelector(".workspace-files__breadcrumbs")')
+        await wait('!!document.querySelector(".workspace-files__breadcrumbs [aria-current=location]") && document.querySelectorAll(".workspace-files__row").length>0')
         const before = await geometry()
         assert.equal(await js('document.querySelector(".workspace-files__breadcrumbs [aria-current=location]").textContent'), 'documents')
-        await js(`${viewport}.scrollTop=${viewport}.scrollHeight`)
-        await settle()
+        const last = '.workspace-files__entry:last-child .workspace-files__row'
+        // Scrolling to the end re-windows; the measured row heights may grow the
+        // list, so keep scrolling until the last file is mounted at the bottom.
+        for (let i = 0; i < 10; i++) {
+          await js(`${viewport}.scrollTop=${viewport}.scrollHeight`)
+          await settle()
+          if (await js(`document.querySelector(${JSON.stringify(last)})?.title==='documents/file-120-workspace-notes.md' && Math.abs(${viewport}.scrollHeight-${viewport}.clientHeight-${viewport}.scrollTop)<=1`)) break
+        }
         const after = await geometry()
         assert(after.scrollTop > 0)
         docked(before, after)
-        const last = '.workspace-files__entry:last-child .workspace-files__row'
         assert(await js(`(() => {const r=document.querySelector(${JSON.stringify(last)}).getBoundingClientRect(),v=${viewport}.getBoundingClientRect();return r.top>=v.top && r.bottom<=v.bottom+1})()`), 'Last file must be fully visible')
         assert.equal(await js(`document.querySelector(${JSON.stringify(last)}).title`), 'documents/file-120-workspace-notes.md')
         await screenshot(name)

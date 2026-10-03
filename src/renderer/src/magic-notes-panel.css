@@ -30,3 +30,10 @@
 .assistant-sidebar__body.assistant-sidebar__body--notes { overflow: hidden; padding: 0; display: flex; flex-direction: column; }
 .assistant-sidebar__body--notes > .magic-note-panel { flex: 1; }
 .magic-note-panel .magic-note-panel__footer textarea { min-height: 80px; max-height: 180px; }
+
+/* Windowed note list (P5): rows of cards span the grid as subgrids; spacers
+   stand in for unmounted rows. Row spacing moves into each row's padding so
+   spacer heights and measured rows add up exactly. */
+.magic-notes-list.magic-notes-card-grid.magic-notes-card-grid--windowed { row-gap: 0; }
+.magic-notes-card-grid--windowed > .magic-notes-window-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: stretch; }
+.magic-notes-card-grid--windowed > .magic-notes-list__spacer { grid-column: 1 / -1; }

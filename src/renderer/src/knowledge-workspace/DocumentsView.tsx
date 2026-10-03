@@ -26,6 +26,8 @@ import {
 } from 'lucide-react'
 import { RemoveSourceDialog } from './RemoveSourceDialog'
 import { KnowledgeActionsMenu, type KnowledgeAction } from './KnowledgeActionsMenu'
+import { useListWindow } from '../use-list-window'
+import { ListWindowTableSpacer } from '../ListWindowSpacer'
 
 const sourceStatusLabelKeys = {
   queued: 'sourceStatuses.queued',
@@ -138,6 +140,8 @@ export function DocumentsView({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [viewedDocumentId, setViewedDocumentId] = useState<string>()
   const previewBackRef = useRef<HTMLButtonElement>(null)
+  const tableBodyRef = useRef<HTMLTableSectionElement>(null)
+  const [previewReturnKey, setPreviewReturnKey] = useState<string>()
   const previewOriginRef = useRef<{ trigger: HTMLElement; scroll?: HTMLElement; top: number } | undefined>(undefined)
   const [urlOpen, setUrlOpen] = useState(false)
   const [url, setUrl] = useState('')
@@ -218,6 +222,22 @@ export function DocumentsView({
     }
     return result
   }, [documents, sources, locale, query])
+  const rowKeysKey = rows.map((row) => row.key).join('\n')
+  const rowKeys = useMemo(() => (rowKeysKey ? rowKeysKey.split('\n') : []), [rowKeysKey])
+  // P5: large libraries mount only the table rows near the page viewport. The
+  // page (`.workspace-panel-scroll`) scrolls, not the table.
+  const documentWindow = useListWindow({
+    ids: rowKeys,
+    scope: `${library.id}\n${query}`,
+    listRef: tableBodyRef,
+    scrollParent: (body) => body.closest<HTMLElement>('.workspace-panel-scroll'),
+    // The previewed document's row is where focus returns after the preview.
+    keepIds: [previewReturnKey],
+    enabled: true,
+    active: !viewedDocumentId,
+    estimatedRowHeight: 96,
+    rowAttribute: 'data-knowledge-document-row'
+  })
   const viewedDocument = useMemo(() => documents.find((document) => document.id === viewedDocumentId), [documents, viewedDocumentId])
   const viewedSource = sources.find((source) => source.id === viewedDocument?.sourceId)
   const viewedTaskSourceId = viewedSource && viewedSource.kind !== 'directory' &&
@@ -500,9 +520,9 @@ export function DocumentsView({
           </div>
         ) : (
           <div className="knowledge-documents__table-scroll">
-            <table aria-label={t('documents.table.title')}>
+            <table aria-label={t('documents.table.title')} aria-rowcount={documentWindow.windowed ? rows.length + 1 : undefined}>
               <thead>
-                <tr>
+                <tr aria-rowindex={documentWindow.windowed ? 1 : undefined}>
                   <th>
                     {t('documents.table.columns.document')}
                   </th>
@@ -520,10 +540,18 @@ export function DocumentsView({
                   </th>
                 </tr>
               </thead>
-              <tbody>
-                {rows.map(({ key, source, document, grouped }) => {
+              <tbody ref={tableBodyRef} onBlur={documentWindow.onBlur} onFocus={documentWindow.onFocus}>
+                {documentWindow.segments.map((segment) => {
+                  if (segment.kind === 'spacer') return (
+                    <ListWindowTableSpacer className="knowledge-documents__spacer" columns={5} height={segment.height} key={`spacer:${segment.key}`} />
+                  )
+                  const { key, source, document, grouped } = rows[segment.index]!
+                  // The header row is row 1.
+                  const rowProps = documentWindow.windowed
+                    ? { 'aria-rowindex': segment.index + 2, 'data-knowledge-document-row': key, ref: documentWindow.rowRef(key) }
+                    : {}
                   if (!document && source) return (
-                    <tr key={key} className="knowledge-source-group">
+                    <tr key={key} className="knowledge-source-group" {...rowProps}>
                       <td colSpan={5}>
                         <div className="knowledge-source-row">
                           <div className="knowledge-source-row__main">
@@ -563,7 +591,7 @@ export function DocumentsView({
                        (task.status === 'queued' || task.status === 'running')
                   )
                   return (
-                   <tr key={key} className={grouped ? 'knowledge-document-row--grouped' : undefined}>
+                   <tr key={key} className={grouped ? 'knowledge-document-row--grouped' : undefined} {...rowProps}>
                      <td>
                        <strong>{document.name}</strong>
                         {(document.path || (source?.kind === 'url' && source.location)) && (
@@ -640,6 +668,7 @@ export function DocumentsView({
                         {document.resultId && <button type="button" className="secondary-button" onClick={(event) => {
                           const scroll = event.currentTarget.closest<HTMLElement>('.workspace-panel-scroll') ?? undefined
                           previewOriginRef.current = { trigger: event.currentTarget, scroll, top: scroll?.scrollTop ?? 0 }
+                          setPreviewReturnKey(key)
                           setViewedDocumentId(document.id)
                           requestAnimationFrame(() => { previewBackRef.current?.focus(); if (scroll) scroll.scrollTop = 0 })
                          }}>{t('documents.viewResult')}</button>}

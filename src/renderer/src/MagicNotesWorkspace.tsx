@@ -71,6 +71,7 @@ import type { MagicCanvasContentHandle } from './MagicCanvasContent'
 import { MagicCanvasThumbnail } from './MagicCanvasThumbnail'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
+import { useGridListWindow } from './use-grid-columns'
 import type { AppNotificationInput } from './notifications'
 import {
   EmptyState,
@@ -460,6 +461,10 @@ export function MagicNotesWorkspace({
   const [libraryView, setLibraryView] = useState<LibraryView>('notes')
   const [detailView, setDetailView] = useState<'notes'>()
   const overviewFocusRef = useRef('')
+  // The note whose card takes focus back on returning to the overview; the
+  // windowed note list keeps that card mounted.
+  const [overviewReturnNoteId, setOverviewReturnNoteId] = useState('')
+  const noteGridRef = useRef<HTMLDivElement>(null)
   const [todoFilter, setTodoFilter] = useState<TodoFilter>('active')
   const [loadedCommentMode, setCommentMode] =
     useState<MagicNoteCommentMode>('immediate')
@@ -1202,12 +1207,16 @@ export function MagicNotesWorkspace({
       }
       if (target.kind === 'create-note') {
         overviewFocusRef.current = 'magic-note-new'
+        setOverviewReturnNoteId('')
         void createNote(target.title, true)
           .then(() => focusSwitchTarget(target))
         return
       }
       setDeletingNote(false)
-      if (libraryView === 'notes') overviewFocusRef.current = `magic-note-select-${target.noteId}`
+      if (libraryView === 'notes') {
+        overviewFocusRef.current = `magic-note-select-${target.noteId}`
+        setOverviewReturnNoteId(target.noteId)
+      }
       setDetailView('notes')
       focusSwitchTarget(target)
       void loadDetail(target.noteId, target.entryId)
@@ -1753,6 +1762,24 @@ export function MagicNotesWorkspace({
   // Overview shows every note full width; the split list appears only beside an open note.
   const notesExpanded = isNarrowWorkspace ? !detailView : notesPaneOpen || !detailView
   const notesSplit = libraryView === 'notes' && Boolean(detailView) && !isNarrowWorkspace && notesPaneOpen
+  const visibleNoteIdsKey = visibleNotes.map((note) => note.id).join('\n')
+  const visibleNoteIds = useMemo(
+    () => (visibleNoteIdsKey ? visibleNoteIdsKey.split('\n') : []),
+    [visibleNoteIdsKey]
+  )
+  // P5: thousands of notes mount only the card rows near the viewport.
+  const noteWindow = useGridListWindow({
+    itemIds: visibleNoteIds,
+    gridRef: noteGridRef,
+    scope: `${search}\n${activeTagFilter.join('\n')}`,
+    // Selection, the open menu and the overview return target stay mounted.
+    keepIds: [selectedNoteId, noteActionsId, overviewReturnNoteId],
+    enabled: libraryView === 'notes' && loadStatus !== 'loading',
+    active: libraryView === 'notes' && notesExpanded,
+    layoutKey: detailView ? 'list' : 'cards',
+    estimatedRowHeight: detailView ? 56 : 176,
+    rowAttribute: 'data-magic-note-window-row'
+  })
   const todoPaneWidthLimits = { minimum: 240, maximum: Math.max(240, todoLayoutWidth - 301) }
   const displayedTodoWidth = clampMagicNotesPaneWidth(todoPaneWidth, todoPaneWidthLimits)
   const indexExpanded = isNarrowLayout ? narrowIndexOpen : indexPaneOpen
@@ -2182,6 +2209,61 @@ export function MagicNotesWorkspace({
     }
   }
 
+  const renderNoteCard = (note: MagicNoteSummary, index: number): React.JSX.Element => (
+    <div className="magic-note-row" key={note.id} {...(noteWindow.windowed ? { role: 'listitem', 'aria-posinset': index + 1, 'aria-setsize': visibleNotes.length } : {})}>
+      <button
+        id={`magic-note-select-${note.id}`}
+        className="magic-note-list-item"
+        aria-current={selectedNoteId === note.id ? 'true' : undefined}
+        type="button"
+        onClick={() =>
+          selectedNoteId !== note.id && requestDraftSwitch({
+            kind: 'note',
+            noteId: note.id
+          })
+        }
+      >
+        <span className="magic-note-list-item__title">
+          {note.pinned && (
+            <Pin aria-label={t('status.pinned')} size={12} />
+          )}
+          <span className="magic-note-list-item__title-text">{note.title}</span>
+          <time dateTime={note.updatedAt} title={t('notes.updatedAt', { date: dateFormatter.format(new Date(note.updatedAt)) })}>
+            {relativeDate(note.updatedAt)}
+          </time>
+        </span>
+        <span className="magic-note-list-item__preview">
+          {note.preview || t('notes.noPreview')}
+        </span>
+        {!detailView && <MagicNoteTagChips tags={note.tags ?? []} />}
+        <span className={detailView ? 'sr-only' : 'magic-note-list-item__meta magic-note-list-item__meta--overview'}>
+          {t(
+            note.entryCount === 1
+              ? 'notes.entryCountOne'
+              : 'notes.entryCountOther',
+            { count: note.entryCount }
+          )}
+        </span>
+      </button>
+      <button
+        aria-controls={`magic-note-actions-${note.id}`}
+        aria-expanded={noteActionsId === note.id}
+        aria-haspopup="menu"
+        aria-label={t('actions.more', { title: note.title })}
+        title={t('actions.more', { title: note.title })}
+        className="magic-note-more icon-button"
+        type="button"
+        onClick={(event) => {
+          noteActionTriggerRef.current = event.currentTarget
+          setDeletingNote(false)
+          setNoteActionsId((current) => current === note.id ? '' : note.id)
+        }}
+      >
+        <MoreHorizontal aria-hidden="true" size={14} />
+      </button>
+    </div>
+  )
+
   return (
     <div className="magic-notes-page">
       <PageHeader
@@ -2377,7 +2459,15 @@ export function MagicNotesWorkspace({
               </div>
             </form>
           )}
-          <div className="magic-notes-list magic-notes-card-grid">
+          <div
+            ref={noteGridRef}
+            className={`magic-notes-list magic-notes-card-grid${noteWindow.windowed ? ' magic-notes-card-grid--windowed' : ''}`}
+            role={noteWindow.windowed ? 'list' : undefined}
+            aria-label={noteWindow.windowed ? t('notes.listLabel') : undefined}
+            onBlur={noteWindow.onBlur}
+            onFocus={noteWindow.onFocus}
+            onScroll={noteWindow.onScroll}
+          >
             {loadStatus === 'loading' ? (
               <p className="magic-notes-muted">
                 {t('status.loadingNotes')}
@@ -2400,60 +2490,13 @@ export function MagicNotesWorkspace({
                 )}
               </>
             ) : (
-              visibleNotes.map((note) => (
-                <div className="magic-note-row" key={note.id}>
-                <button
-                  id={`magic-note-select-${note.id}`}
-                  className="magic-note-list-item"
-                  aria-current={selectedNoteId === note.id ? 'true' : undefined}
-                  type="button"
-                  onClick={() =>
-                    selectedNoteId !== note.id && requestDraftSwitch({
-                      kind: 'note',
-                      noteId: note.id
-                    })
-                  }
-                >
-                  <span className="magic-note-list-item__title">
-                    {note.pinned && (
-                      <Pin aria-label={t('status.pinned')} size={12} />
-                    )}
-                    <span className="magic-note-list-item__title-text">{note.title}</span>
-                    <time dateTime={note.updatedAt} title={t('notes.updatedAt', { date: dateFormatter.format(new Date(note.updatedAt)) })}>
-                      {relativeDate(note.updatedAt)}
-                    </time>
-                  </span>
-                  <span className="magic-note-list-item__preview">
-                    {note.preview || t('notes.noPreview')}
-                  </span>
-                  {!detailView && <MagicNoteTagChips tags={note.tags ?? []} />}
-                  <span className={detailView ? 'sr-only' : 'magic-note-list-item__meta magic-note-list-item__meta--overview'}>
-                    {t(
-                      note.entryCount === 1
-                        ? 'notes.entryCountOne'
-                        : 'notes.entryCountOther',
-                      { count: note.entryCount }
-                    )}
-                  </span>
-                </button>
-                <button
-                  aria-controls={`magic-note-actions-${note.id}`}
-                  aria-expanded={noteActionsId === note.id}
-                  aria-haspopup="menu"
-                  aria-label={t('actions.more', { title: note.title })}
-                  title={t('actions.more', { title: note.title })}
-                  className="magic-note-more icon-button"
-                  type="button"
-                  onClick={(event) => {
-                    noteActionTriggerRef.current = event.currentTarget
-                    setDeletingNote(false)
-                    setNoteActionsId((current) => current === note.id ? '' : note.id)
-                  }}
-                >
-                  <MoreHorizontal aria-hidden="true" size={14} />
-                </button>
+              noteWindow.windowed ? noteWindow.segments.map((segment) => segment.kind === 'spacer' ? (
+                <div aria-hidden="true" className="magic-notes-list__spacer" key={`spacer:${segment.key}`} style={{ height: `${segment.height}px` }} />
+              ) : (
+                <div className="magic-notes-window-row" data-magic-note-window-row={segment.key} key={segment.key} ref={noteWindow.rowRef(segment.key)} role="none" style={{ paddingBottom: `${noteWindow.gap}px` }}>
+                  {visibleNotes.slice(segment.start, segment.end).map((note, offset) => renderNoteCard(note, segment.start + offset))}
                 </div>
-              ))
+              )) : visibleNotes.map((note, index) => renderNoteCard(note, index))
             )}
             {actionNote && createPortal(
               <div

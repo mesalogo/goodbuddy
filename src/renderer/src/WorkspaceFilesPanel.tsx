@@ -30,6 +30,7 @@ import { createPortal } from 'react-dom'
 import { SegmentedControl } from './WorkspacePrimitives'
 import { WorkspaceActionDialog } from './WorkspaceActionDialog'
 import { WorkspaceGitTools } from './WorkspaceGitTools'
+import { useListWindow } from './use-list-window'
 import type {
   WorkspaceChangedFile,
   WorkspaceChanges,
@@ -70,6 +71,42 @@ function changedTree(entries: { path: string; row: React.JSX.Element }[], prefix
     groups.set(directory, [...(groups.get(directory) ?? []), entry])
   }
   return <>{[...groups].map(([name, children]) => <details key={name} open><summary>{name}</summary><div className="workspace-files__children">{changedTree(children, `${prefix}${name}/`)}</div></details>)}{files.map((entry) => entry.row)}</>
+}
+
+export type FileTreeRow =
+  | { kind: 'entry'; key: string; depth: number; entry: WorkspaceDirectoryEntry }
+  | { kind: 'status'; key: string; depth: number; path: string; status: 'loading' | 'error' | 'truncated' }
+
+export function fileRowKey(path: string): string {
+  return `entry:${path}`
+}
+
+/**
+ * The visible tree in display order: each expanded directory is followed by
+ * its children, then its reading / error / truncated notes, as before.
+ */
+export function flattenFileTree(
+  entries: readonly WorkspaceDirectoryEntry[],
+  listings: Readonly<Record<string, WorkspaceDirectoryListing>>,
+  expandedPaths: ReadonlySet<string>,
+  loadingPaths: ReadonlySet<string>,
+  errors: Readonly<Record<string, string | undefined>>
+): FileTreeRow[] {
+  const rows: FileTreeRow[] = []
+  const visit = (items: readonly WorkspaceDirectoryEntry[], depth: number): void => {
+    for (const entry of items) {
+      rows.push({ kind: 'entry', key: fileRowKey(entry.path), depth, entry })
+      if (entry.type !== 'directory' || !expandedPaths.has(entry.path)) continue
+      const listing = listings[entry.path]
+      const childDepth = depth + 1
+      if (listing) visit(listing.entries, childDepth)
+      if (loadingPaths.has(entry.path)) rows.push({ kind: 'status', key: `loading:${entry.path}`, depth: childDepth, path: entry.path, status: 'loading' })
+      if (errors[entry.path]) rows.push({ kind: 'status', key: `error:${entry.path}`, depth: childDepth, path: entry.path, status: 'error' })
+      if (listing?.truncated) rows.push({ kind: 'status', key: `truncated:${entry.path}`, depth: childDepth, path: entry.path, status: 'truncated' })
+    }
+  }
+  visit(entries, 0)
+  return rows
 }
 
 export function WorkspaceFilesPanel({
@@ -150,6 +187,7 @@ export function WorkspaceFilesPanel({
   const activeView = showGit ? view : 'files'
   const [selected, setSelected] = useState<{ projectId?: string; path: string }>()
   const panelRef = useRef<HTMLDivElement>(null)
+  const treeRef = useRef<HTMLDivElement>(null)
   const refreshRef = useRef<HTMLButtonElement>(null)
   const backRef = useRef<HTMLButtonElement>(null)
   const returnContext = useRef<{ scrollTop: number; scrollLeft: number; trigger: HTMLButtonElement } | undefined>(undefined)
@@ -287,8 +325,9 @@ export function WorkspaceFilesPanel({
     [changedFiles]
   )
   const emptyPaths = useMemo(() => new Set<string>(), [])
-  const listings =
-    listingState.projectId === projectId ? listingState.value : {}
+  const emptyRecord = useMemo(() => ({}), [])
+  const listings: Record<string, WorkspaceDirectoryListing> =
+    listingState.projectId === projectId ? listingState.value : emptyRecord
   const expandedPaths =
     expandedState.projectId === projectId
       ? expandedState.value
@@ -297,7 +336,7 @@ export function WorkspaceFilesPanel({
     loadingState.projectId === projectId
       ? loadingState.value
       : emptyPaths
-  const errors = errorState.projectId === projectId ? errorState.value : {}
+  const errors: Record<string, string | undefined> = errorState.projectId === projectId ? errorState.value : emptyRecord
   const renderDirectoryError = (path: string): React.JSX.Element | null => errors[path] ? (
     <p className="workspace-files__error" role="alert">
       {errors[path]}
@@ -368,55 +407,50 @@ export function WorkspaceFilesPanel({
       }}><MoreHorizontal size={14} aria-hidden="true" /></button>
   )
 
-  const renderEntry = (
-    entry: WorkspaceDirectoryEntry
+  const renderTreeRow = (
+    row: FileTreeRow,
+    rowProps: Record<string, unknown>
   ): React.JSX.Element => {
-    const expanded = expandedPaths.has(entry.path)
-    const listing = listings[entry.path]
-    const changed = changedByPath.get(entry.path)
-    if (entry.type === 'directory') {
+    // Nesting is drawn by indentation; the rows themselves are flat, so they
+    // keep their identity whether or not the tree is windowed.
+    const indent = row.depth ? { marginLeft: `calc(${row.depth} * var(--space-4))` } : undefined
+    if (row.kind === 'status') {
       return (
-        <div key={entry.path}>
-          <div className="workspace-files__entry">
-            <button
-              aria-expanded={expanded}
-              className="workspace-files__row"
-              onClick={() => toggleDirectory(entry.path)}
-              type="button"
-            >
-              {expanded ? (
-                <ChevronDown size={13} />
-              ) : (
-                <ChevronRight size={13} />
-              )}
-              {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
-              <span title={entry.path}>{entry.name}</span>
-            </button>
-            {entryMenu(entry)}
-          </div>
-          {expanded && (
-            <div className="workspace-files__children">
-              {listing?.entries.map((child) =>
-                renderEntry(child)
-              )}
-              {loadingPaths.has(entry.path) && (
-                <p className="workspace-files__status">
-                  {t('files.reading')}
-                </p>
-              )}
-              {renderDirectoryError(entry.path)}
-              {listing?.truncated && (
-                <p className="workspace-files__status">
-                  {t('files.directoryTruncated')}
-                </p>
-              )}
-            </div>
+        <div key={row.key} style={indent} {...rowProps}>
+          {row.status === 'error' ? renderDirectoryError(row.path) : (
+            <p className="workspace-files__status">
+              {t(row.status === 'loading' ? 'files.reading' : 'files.directoryTruncated')}
+            </p>
           )}
         </div>
       )
     }
+    const { entry } = row
+    const expanded = expandedPaths.has(entry.path)
+    const changed = changedByPath.get(entry.path)
+    if (entry.type === 'directory') {
+      return (
+        <div className="workspace-files__entry" key={row.key} style={indent} {...rowProps}>
+          <button
+            aria-expanded={expanded}
+            className="workspace-files__row"
+            onClick={() => toggleDirectory(entry.path)}
+            type="button"
+          >
+            {expanded ? (
+              <ChevronDown size={13} />
+            ) : (
+              <ChevronRight size={13} />
+            )}
+            {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
+            <span title={entry.path}>{entry.name}</span>
+          </button>
+          {entryMenu(entry)}
+        </div>
+      )
+    }
     return (
-      <div className="workspace-files__entry" key={entry.path}>
+      <div className="workspace-files__entry" key={row.key} style={indent} {...rowProps}>
         <button
           className="workspace-files__row"
           aria-current={selected?.projectId === projectId && selected?.path === entry.path ? 'true' : undefined}
@@ -442,6 +476,32 @@ export function WorkspaceFilesPanel({
     )
   }
 
+  const root = listings[browsedPath]
+  const treeRows = useMemo(
+    () => flattenFileTree(root?.entries ?? [], listings, expandedPaths, loadingPaths, errors),
+    [errors, expandedPaths, listings, loadingPaths, root]
+  )
+  const treeRowKeysKey = treeRows.map((row) => row.key).join('\n')
+  const treeRowKeys = useMemo(() => (treeRowKeysKey ? treeRowKeysKey.split('\n') : []), [treeRowKeysKey])
+  const selectedPath = selected && selected.projectId === projectId ? selected.path : undefined
+  // P5: a large workspace (500 entries per directory, many expanded) mounts
+  // only the rows near the viewport. The docked files view is the scroller;
+  // the sidebar body only scrolls where that view is not bounded.
+  const treeWindow = useListWindow({
+    ids: treeRowKeys,
+    scope: `${projectId ?? ''}\n${browsedPath}`,
+    listRef: treeRef,
+    scrollParent: (tree) =>
+      tree.closest<HTMLElement>('.workspace-files__files-view') ?? tree.closest<HTMLElement>('.assistant-sidebar__body'),
+    // The open file, the menu's and the dialog's entry keep their rows (focus returns there).
+    keepIds: [selectedPath, menu?.entry.path, dialog?.path].map((path) => (path === undefined ? undefined : fileRowKey(path))),
+    // Stays on while the Git view or a diff hides the tree, so hiding it never mounts every row.
+    enabled: true,
+    active: activeView === 'files' && !showingDiff,
+    estimatedRowHeight: 32,
+    rowAttribute: 'data-workspace-file-row'
+  })
+
   if (!projectId) {
     return (
       <p className="assistant-sidebar__empty">
@@ -450,7 +510,6 @@ export function WorkspaceFilesPanel({
     )
   }
 
-  const root = listings[browsedPath]
   const rootName = rootPath?.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) || t('files.currentWorkspace')
   const renderPatch = (patch: string): React.JSX.Element => (
     <pre className="assistant-sidebar__diff workspace-files__diff">
@@ -562,8 +621,16 @@ export function WorkspaceFilesPanel({
         </p>
       ) : errors[browsedPath] && !root ? null : root?.entries.length ? (
         <>
-          <div className="workspace-files__tree">
-            {root.entries.map((entry) => renderEntry(entry))}
+          <div ref={treeRef} className="workspace-files__tree" onBlur={treeWindow.onBlur} onFocus={treeWindow.onFocus}>
+            {treeWindow.segments.map((segment) => {
+              if (segment.kind === 'spacer') {
+                return <div aria-hidden="true" className="workspace-files__spacer" key={`spacer:${segment.key}`} style={{ height: `${segment.height}px` }} />
+              }
+              const row = treeRows[segment.index]!
+              return renderTreeRow(row, treeWindow.windowed
+                ? { 'data-workspace-file-row': row.key, ref: treeWindow.rowRef(row.key) }
+                : {})
+            })}
           </div>
           {root.truncated && (
             <p className="workspace-files__status">

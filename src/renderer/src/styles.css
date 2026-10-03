@@ -15302,6 +15302,15 @@ textarea.field-control {
   overflow-wrap: anywhere;
 }
 
+/* Windowed document table (P5): spacer rows stand in for unmounted rows. */
+.knowledge-documents__table-scroll tbody tr.knowledge-documents__spacer {
+  border: 0;
+}
+
+.knowledge-documents__table-scroll tr.knowledge-documents__spacer > td {
+  padding: 0;
+}
+
 .knowledge-documents__table-scroll .knowledge-document-metric {
   text-align: right;
   white-space: nowrap;
