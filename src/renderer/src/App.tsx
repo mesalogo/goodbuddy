@@ -325,8 +325,8 @@ const conversationPersistenceIntervalMs = 500;
 const liveMessageFlushIntervalMs = 250;
 const keepAliveExpirationMs = 60 * 60 * 1_000;
 const keepAliveSweepIntervalMs = 5 * 60 * 1_000;
-const maximumCachedConversations = 12;
-const recentCachedConversations = 5;
+const maximumCachedConversations = 6;
+const recentCachedConversations = 2;
 // Chat is the primary route and stays resident outside the capacity below,
 // together with any route that reports unsaved edits.
 const pinnedWorkspaceViews = ["chat"] as const;
@@ -1842,6 +1842,13 @@ function App(): React.JSX.Element {
     },
     [],
   );
+  // Busy conversations (sidebar activity indicators and queued follow-ups) keep their cached view.
+  const busyConversationIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const activeConversationViewIds = useCallback((): Set<string> => new Set([
+    ...[...activeRuns.current.values()].map((run) => run.conversationId),
+    ...preparingConversations.current,
+    ...busyConversationIdsRef.current,
+  ]), []);
   const setActiveId = useCallback((update: SetStateAction<string>): void => {
     const next =
       typeof update === "function"
@@ -1850,23 +1857,17 @@ function App(): React.JSX.Element {
     activeConversationIdRef.current = next;
     if (next) {
       const now = Date.now();
-      const runningConversationIds = new Set(
-        [...activeRuns.current.values()].map((run) => run.conversationId),
-      );
-      preparingConversations.current.forEach((conversationId) =>
-        runningConversationIds.add(conversationId),
-      );
       setCachedConversationViews((current) =>
         touchAndPruneKeepAliveEntries(current, next, now, {
           expiresAfterMs: keepAliveExpirationMs,
           maximumEntries: maximumCachedConversations,
-          protectedKeys: runningConversationIds,
+          protectedKeys: activeConversationViewIds(),
           recentEntries: recentCachedConversations,
         }),
       );
     }
     setActiveIdState(next);
-  }, []);
+  }, [activeConversationViewIds]);
   const [remoteProjectsEnabled, setRemoteProjectsEnabled] = useState(false);
   const [
     conversationHtmlRenderingEnabled,
@@ -2387,7 +2388,7 @@ function App(): React.JSX.Element {
             expiresAfterMs: keepAliveExpirationMs,
             maximumEntries: maximumCachedConversations,
             now,
-            protectedKeys: runningConversationIds,
+            protectedKeys: activeConversationViewIds(),
             recentEntries: recentCachedConversations,
           },
         ),
@@ -2407,7 +2408,7 @@ function App(): React.JSX.Element {
     };
     const interval = window.setInterval(sweep, keepAliveSweepIntervalMs);
     return () => window.clearInterval(interval);
-  }, [activeId, assistantTasks, getPinnedWorkspaceViews, knowledgeOperationCount, view, conversationStore]);
+  }, [activeConversationViewIds, activeId, assistantTasks, getPinnedWorkspaceViews, knowledgeOperationCount, view, conversationStore]);
 
   useEffect(() => {
     livePrimarySidebarWidthRef.current = primarySidebarWidth;
@@ -3335,6 +3336,9 @@ function App(): React.JSX.Element {
       ),
     [projectActivity],
   );
+  useLayoutEffect(() => {
+    busyConversationIdsRef.current = new Set([...activityByConversationId.keys(), ...queuedConversationIds]);
+  }, [activityByConversationId, queuedConversationIds]);
   const pendingSidebarApprovals = usePendingSidebarApprovals(conversationStore);
   const sidebarArtifacts = useMemo<SidebarArtifact[]>(
     () =>

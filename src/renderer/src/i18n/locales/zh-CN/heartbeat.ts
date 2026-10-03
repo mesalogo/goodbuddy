@@ -6,6 +6,9 @@ export const heartbeat = {
     experienceMinEvents: '故事参与经验整理的最少事件数（默认 5）',
     stalledDays: '故事多少天没有新进展时提醒（默认 14）',
     save: '保存回顾算法',
+    storiesTitle: '故事与经验', saveStories: '保存故事与经验设置',
+    suggestionsTitle: '监督建议', saveSuggestions: '保存建议设置',
+    suggestionsHelp: '心跳计划选择“生成建议”时使用。只提醒，不会改变故事的状态。',
     help: '每页条数只控制数据库读取量，不限制回顾总量。分批上限用于拆分工作，剩余正文会继续处理。这些设置及整理超时在新回顾开始时固定；继续回顾沿用已保存的配置。响应容量按每次请求的当前设置生效，调高后可继续失败的回顾。',
     pageSize: '每次读取来源条数（默认 50）', batchCharacters: '每批文本量（默认 8000）',
     batchMessages: '每批消息数（默认 20）', executionSeconds: '单次整理时长，秒（默认 300）',
@@ -28,6 +31,7 @@ export const heartbeat = {
     runError: '本次运行失败，请查看错误详情后继续。已保存的批次仍保留。',
     diagnostics: '错误详情'
   },
+  settingsTabs: { label: '监督者设置分类', model: '模型', review: '回顾整理', stories: '故事与经验', suggestions: '建议' },
   suggestions: {
     title: '监督建议',
     kind: { open_item: '未决事项', conflict: '分歧', convention: '候选约定', revision: '重要修订', stalled: '暂无进展', experience: '可用经验' },

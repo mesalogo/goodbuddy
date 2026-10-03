@@ -14,6 +14,20 @@
   box-sizing: border-box;
   align-self: stretch;
 }
+.supervisor-workspace__graph-empty {
+  display: grid;
+  min-height: var(--fill-height, 320px);
+  box-sizing: border-box;
+}
+.supervisor-workspace__graph-empty > .empty-state {
+  min-height: 0;
+}
+.supervisor-workspace__empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+}
 .supervisor-workspace__run-status {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;

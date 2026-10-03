@@ -279,6 +279,35 @@ app
             }
           }
         }
+        if (scenario === 'empty') {
+          // Without a graph, the empty state fills the visible height and its message sits in the middle.
+          for (const [width, height] of [[1440, 900], [390, 800]]) {
+            win.setContentSize(width, height)
+            await js(`document.querySelector('#supervisor-tab-graph').click(); document.querySelector('.page-shell').scrollTop = 0`)
+            await wait('!!document.querySelector(".supervisor-workspace__graph-empty .empty-state strong")')
+            await settle()
+            const empty = await js(`(() => {
+              const box = document.querySelector('.supervisor-workspace__graph-empty');
+              const shell = document.querySelector('.page-shell');
+              const title = box.querySelector('.empty-state strong').getBoundingClientRect();
+              const r = box.getBoundingClientRect(); const s = shell.getBoundingClientRect();
+              return { boxCenterX: r.left + r.width / 2, titleCenterX: title.left + title.width / 2,
+                boxTop: r.top, boxBottom: r.bottom, titleTop: title.top, shellBottom: s.bottom,
+                pageScroll: shell.scrollHeight > shell.clientHeight + 1,
+                buttons: [...box.querySelectorAll('button')].map(b => b.textContent),
+                outsideRefresh: [...document.querySelectorAll('#supervisor-panel-graph button')].filter(b => !box.contains(b) && b.textContent.includes('刷新')).length };
+            })()`)
+            assert(Math.abs(empty.boxCenterX - empty.titleCenterX) <= 2, 'Graph empty state is horizontally centred')
+            const middle = (empty.boxTop + empty.boxBottom) / 2
+            assert(empty.titleTop > empty.boxTop + 60 && Math.abs(empty.titleTop - middle) < (empty.boxBottom - empty.boxTop) / 4, 'Graph empty state is vertically centred')
+            assert(empty.shellBottom - empty.boxBottom <= 48, 'Graph empty state reaches the bottom margin')
+            assert.equal(empty.pageScroll, false, 'Graph empty state does not scroll the page')
+            assert.deepEqual(empty.buttons, ['工作回顾', '刷新'])
+            assert.equal(empty.outsideRefresh, 0)
+            reports.push({ scenario: 'graph-empty', width, height, ...empty })
+            await writeFile(join(artifacts, `graph-empty-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG())
+          }
+        }
         if (scenario === 'populated') {
           await js('document.querySelector("#supervisor-tab-overview").click()')
           // Toolbar: incremental review button, refresh, and the more menu holding re-analysis.
@@ -949,26 +978,35 @@ app
       join(artifacts, 'settings.png'),
       (await win.webContents.capturePage()).toPNG()
     )
-    assert.equal(await js('document.querySelectorAll("[role=tablist]").length'), 1, 'No nested settings menu')
-    for (const width of [1440, 1024, 390]) {
-      win.setContentSize(width, 1100)
-      await js('document.querySelector(".page-shell").scrollTop = 0')
-      await settle()
-      const sizes = await js(`(() => {
-        const shell = document.querySelector('.page-shell');
-        return { viewport: innerWidth, page: document.documentElement.scrollWidth,
-          clientWidth: shell.clientWidth, scrollWidth: shell.scrollWidth, headings: document.querySelectorAll('h1').length };
-      })()`)
-      assert(
-        sizes.page <= width && sizes.scrollWidth <= sizes.clientWidth,
-        'Settings overflow'
-      )
-      assert.equal(sizes.headings, 1)
-      reports.push({ settings: sizes })
-      await writeFile(
-        join(artifacts, `settings-plans-${width}.png`),
-        (await win.webContents.capturePage()).toPNG()
-      )
+    // Settings are grouped into one row of section tabs, with one visible form at a time.
+    assert.deepEqual(await js('[...document.querySelectorAll("#supervisor-panel-settings [role=tablist] [role=tab]")].map(t => t.textContent)'),
+      ['模型', '回顾整理', '故事与经验', '建议'])
+    assert.equal(await js('document.querySelectorAll("[role=tablist]").length'), 2, 'Page tabs plus one settings section row')
+    for (const section of ['model', 'review', 'stories', 'suggestions']) {
+      await js(`document.querySelector('#supervisor-settings-tab-${section}').click()`)
+      for (const width of [1440, 1024, 390]) {
+        win.setContentSize(width, 1100)
+        await js('document.querySelector(".page-shell").scrollTop = 0')
+        await settle()
+        const sizes = await js(`(() => {
+          const shell = document.querySelector('.page-shell');
+          const forms = [...document.querySelectorAll('#supervisor-panel-settings form')].filter(f => f.getClientRects().length);
+          return { viewport: innerWidth, page: document.documentElement.scrollWidth,
+            clientWidth: shell.clientWidth, scrollWidth: shell.scrollWidth, headings: document.querySelectorAll('h1').length,
+            visibleForms: forms.length, title: forms[0]?.querySelector('h2')?.textContent };
+        })()`)
+        assert(
+          sizes.page <= width && sizes.scrollWidth <= sizes.clientWidth,
+          `Settings overflow: ${section}/${width}`
+        )
+        assert.equal(sizes.headings, 1)
+        assert.equal(sizes.visibleForms, 1, `One settings form per section: ${section}`)
+        reports.push({ settings: section, ...sizes })
+        await writeFile(
+          join(artifacts, `settings-${section}-${width}.png`),
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
     }
     for (const query of [
       'story=1',
@@ -1038,7 +1076,8 @@ app
     )
     await js('document.querySelector("#supervisor-tab-settings").click()')
     await wait('!!document.querySelector(".heartbeat-settings")')
-    assert(await js('!document.querySelector("#supervisor-panel-settings [role=tablist], #supervisor-panel-settings .scope-badge")'))
+    assert(await js('!document.querySelector("#supervisor-panel-settings .scope-badge")'))
+    assert.equal(await js('document.querySelectorAll("#supervisor-panel-settings [role=tablist]").length'), 1, 'Only the settings section tabs')
     assert(await js('!document.querySelector("#heartbeat-panel-plans")'), 'Plans must not live in settings')
     await js('document.querySelector("#supervisor-tab-plans").click()')
     await js('document.querySelector(".heartbeat-settings__intro button").focus(); document.querySelector(".heartbeat-settings__intro button").click()')
@@ -1138,7 +1177,7 @@ app
               refresh: [...panel.querySelectorAll('button')].some(e => e.textContent.includes('刷新')) };
           })()`)
           assert.deepEqual(menuLayout.tabs, ['工作回顾', '故事线图谱', '智能心跳', '活动记录', '设置'])
-           assert.equal(menuLayout.nestedMenus, tab === 'graph' ? 1 : 0)
+           assert.equal(menuLayout.nestedMenus, tab === 'graph' || tab === 'settings' ? 1 : 0)
           assert(menuLayout.pageWidth <= width && menuLayout.scrollWidth <= menuLayout.panelWidth, 'Menu panel overflow')
            assert.equal(menuLayout.reports, tab === 'plans')
            if (tab === 'plans') assert(Math.abs(menuLayout.reportWidth - menuLayout.panelWidth) <= 1, 'Reports must use full reading width')

@@ -498,6 +498,9 @@ export function SupervisorWorkspace({
   // The graph column does not scroll: the graph scales to the height left in the window. Below 660px the flat
   // graph's labels would drop under 11px, so very short windows keep that height and scroll the page instead.
   useFillHeight(graphLayoutRef, tab === 'graph' && graph.events.length > 0, 24, GRAPH_MIN_HEIGHT)
+  const graphEmptyRef = useRef<HTMLDivElement>(null)
+  // Without a graph, the empty state takes the visible height so its message sits in the middle of the page.
+  useFillHeight(graphEmptyRef, tab === 'graph' && !loading && !loadError && graph.events.length === 0, 24, 320)
   // The work review reads the selected result's own scope, so it matches the period shown.
   const recapStories = useSupervisionStories(latest?.scope, tab === 'overview', latest?.id)
   const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
@@ -700,31 +703,32 @@ export function SupervisorWorkspace({
           )}
           {tab === 'graph' && (
             <>
-              {/* With a graph, scope and refresh live in the canvas heading; without one, keep refresh reachable here. */}
-              {!graph.events.length && <div className="supervisor-workspace__action-bar">
-                <span />
-                <button
-                  className="secondary-button"
-                  disabled={busy}
-                  onClick={() => void refresh()}
-                >
-                  {t('center.actions.refresh')}
-                </button>
-              </div>}
+              {/* With a graph, scope and refresh live in the canvas heading; without one, they sit in the centred empty state. */}
               {!loading && !loadError && !graph.events.length && (
-                <EmptyState
-                  icon={<Network size={28} />}
-                  title={t('supervisor.graphEmpty')}
-                  description={t('supervisor.emptyHint')}
-                  action={
-                    <button
-                      className="secondary-button"
-                      onClick={() => onTabChange?.('overview')}
-                    >
-                      {t('supervisor.recap')}
-                    </button>
-                  }
-                />
+                <div className="supervisor-workspace__graph-empty" ref={graphEmptyRef}>
+                  <EmptyState
+                    icon={<Network size={28} />}
+                    title={t('supervisor.graphEmpty')}
+                    description={t('supervisor.emptyHint')}
+                    action={
+                      <div className="supervisor-workspace__empty-actions">
+                        <button
+                          className="primary-button"
+                          onClick={() => onTabChange?.('overview')}
+                        >
+                          {t('supervisor.recap')}
+                        </button>
+                        <button
+                          className="secondary-button"
+                          disabled={busy}
+                          onClick={() => void refresh()}
+                        >
+                          {t('center.actions.refresh')}
+                        </button>
+                      </div>
+                    }
+                  />
+                </div>
               )}
               {graph.events.length > 0 && (
                 <div className="supervisor-workspace__graph-layout" ref={graphLayoutRef}>

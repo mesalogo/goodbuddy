@@ -219,7 +219,12 @@ describe('HeartbeatCenter', () => {
       expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
       expect(within(panel).queryByRole('heading', { name: t(key) })).not.toBeInTheDocument()
       expect(within(panel).queryByRole('tablist', { name: t('supervisor.navigation') })).not.toBeInTheDocument()
-      if (key !== 'supervisor.graph') {
+      if (key === 'supervisor.settings') {
+        const settingsNavigation = within(panel).getByRole('tablist', { name: t('settingsTabs.label') })
+        expect(screen.getAllByRole('tablist')).toEqual([navigation, settingsNavigation])
+        expect(within(settingsNavigation).getAllByRole('tab').map((tab) => tab.textContent))
+          .toEqual(['model', 'review', 'stories', 'suggestions'].map((id) => t(`settingsTabs.${id}`)))
+      } else if (key !== 'supervisor.graph') {
         expect(screen.getAllByRole('tablist')).toEqual([navigation])
         expect(within(panel).queryByRole('tablist')).not.toBeInTheDocument()
       }
@@ -539,7 +544,14 @@ describe('HeartbeatCenter', () => {
       expect(screen.queryByRole('heading', { name })).not.toBeInTheDocument()
     }
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
+    expect(screen.getByRole('heading', { level: 2, name: '模型超时与并发' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '回顾整理' }))
     expect(screen.getByRole('heading', { level: 2, name: '回顾算法' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '模型超时与并发' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '故事与经验' }))
+    expect(screen.getByRole('switch', { name: '跨项目关联' })).toBeVisible()
+    fireEvent.click(screen.getByRole('tab', { name: '建议' }))
+    expect(screen.getByLabelText(/故事多少天没有新进展/)).toBeVisible()
     expect(screen.queryByRole('button', { name: '新建计划' })).not.toBeInTheDocument()
   })
 
@@ -644,7 +656,17 @@ describe('HeartbeatCenter', () => {
     expect(screen.queryByRole('region', { name: '心跳计划' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
-    expect(screen.getByRole('heading', { name: '回顾算法' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '模型超时与并发' })).toBeInTheDocument()
+  })
+
+  it('keeps an unsaved draft when switching settings tabs', () => {
+    renderComponent(<HeartbeatCenter {...createProps()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '设置' }))
+    fireEvent.click(screen.getByRole('tab', { name: '回顾整理' }))
+    fireEvent.change(screen.getByLabelText(/每批消息数/), { target: { value: '33' } })
+    fireEvent.click(screen.getByRole('tab', { name: '建议' }))
+    fireEvent.click(screen.getByRole('tab', { name: '回顾整理' }))
+    expect(screen.getByLabelText(/每批消息数/)).toHaveValue(33)
   })
 
   it('passes manual project and time selections without requiring an automatic plan', async () => {

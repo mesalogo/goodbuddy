@@ -28,8 +28,7 @@ it('saves validated algorithm controls and retains the draft until saved setting
   fireEvent.change(screen.getByLabelText(/每次读取来源条数/), { target: { value: '17' } })
   fireEvent.change(screen.getByLabelText(/每批消息数/), { target: { value: '30' } })
   fireEvent.change(screen.getByLabelText(/单次响应容量/), { target: { value: '2048' } })
-  const cross = screen.getByRole('switch', { name: '跨项目关联' })
-  expect(cross).not.toBeChecked()
+  expect(screen.queryByRole('switch', { name: '跨项目关联' })).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '保存回顾算法' }))
   expect(save).toHaveBeenCalledWith({ supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300, responseKiB: 2048, crossProject: false, storyThreadEvents: 20, experienceMinEvents: 5, stalledDays: 14 } })
   expect(screen.getByLabelText(/每次读取来源条数/)).toHaveValue(17)
@@ -38,9 +37,23 @@ it('saves validated algorithm controls and retains the draft until saved setting
 it('enables cross-project linking only when the switch is turned on', () => {
   const save = vi.fn()
   const settings = applicationSettingsSchema.parse({ checkUpdatesOnStartup: true, updateSource: 'github', modelDownloadSource: 'modelscope', localToolEnvironment: defaultLocalToolEnvironmentSettings, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false })
-  render(<SupervisionReviewSettings settings={settings} onSave={save} />)
-  expect(screen.getByRole('button', { name: '保存回顾算法' })).toBeDisabled()
+  render(<SupervisionReviewSettings section="stories" settings={settings} onSave={save} />)
+  expect(screen.getByRole('button', { name: '保存故事与经验设置' })).toBeDisabled()
   fireEvent.click(screen.getByRole('switch', { name: '跨项目关联' }))
-  fireEvent.click(screen.getByRole('button', { name: '保存回顾算法' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存故事与经验设置' }))
   expect(save).toHaveBeenCalledWith({ supervisionReview: expect.objectContaining({ crossProject: true }) })
+})
+
+it('saves one section over stored values without carrying another section\'s draft', () => {
+  const save = vi.fn()
+  const settings = applicationSettingsSchema.parse({ checkUpdatesOnStartup: true, updateSource: 'github', modelDownloadSource: 'modelscope', localToolEnvironment: defaultLocalToolEnvironmentSettings, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false })
+  render(<>
+    <SupervisionReviewSettings section="review" settings={settings} onSave={save} />
+    <SupervisionReviewSettings section="suggestions" settings={settings} onSave={save} />
+  </>)
+  expect(screen.queryByLabelText(/故事多少天没有新进展/)).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText(/每批消息数/), { target: { value: '30' } })
+  fireEvent.change(screen.getByLabelText(/故事多少天没有新进展/), { target: { value: '7' } })
+  fireEvent.click(screen.getByRole('button', { name: '保存建议设置' }))
+  expect(save).toHaveBeenCalledWith({ supervisionReview: expect.objectContaining({ stalledDays: 7, batchMessages: 20 }) })
 })

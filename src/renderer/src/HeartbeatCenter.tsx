@@ -19,7 +19,7 @@ import type {
 } from '../../shared/assistant-contracts'
 import { HeartbeatSettings } from './HeartbeatSettings'
 import { defaultSupervisionTimeoutSeconds, supervisionTimeoutSecondsSchema, defaultSupervisorModelConcurrency, supervisorModelConcurrencySchema, type ApplicationSettings, type ApplicationSettingsUpdate } from '../../shared/application-settings-contracts'
-import { SupervisionReviewSettings } from './SupervisionReviewSettings'
+import { SupervisionReviewSettings, type SupervisionSettingsSection } from './SupervisionReviewSettings'
 import { SupervisorWorkspace, type SupervisionGraphNavigation } from './SupervisorWorkspace'
 import { SupervisorActivity } from './SupervisorActivity'
 import './supervisor-workspace.css'
@@ -165,15 +165,35 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
             setPageTab('activity')
             window.requestAnimationFrame(() => centerRef.current?.querySelector<HTMLElement>('#supervisor-tab-activity')?.focus())
           }} />
-        {pageTab === 'settings' && <>
-          <SupervisionModelSettings {...props} />
-          <SupervisionReviewSettings settings={props.applicationSettings}
-            disabled={props.applicationSettingsPending || props.applicationSettingsLocked}
-            onSave={props.onUpdateApplicationSettings} />
-        </>}
+        {pageTab === 'settings' && <SupervisorSettingsTabs {...props} />}
       </div>
     </section>
   )
+}
+
+type SettingsTab = 'model' | SupervisionSettingsSection
+
+/** Supervisor settings grouped by purpose. Every section stays mounted, so switching tabs keeps unsaved drafts. */
+function SupervisorSettingsTabs(props: HeartbeatCenterProps): React.JSX.Element {
+  const { t } = useTranslation('heartbeat')
+  const [tab, setTab] = useState<SettingsTab>('model')
+  const reviewProps = { settings: props.applicationSettings,
+    disabled: props.applicationSettingsPending || props.applicationSettingsLocked,
+    onSave: props.onUpdateApplicationSettings }
+  const tabs: { id: SettingsTab; label: string }[] = [
+    { id: 'model', label: t('settingsTabs.model') },
+    { id: 'review', label: t('settingsTabs.review') },
+    { id: 'stories', label: t('settingsTabs.stories') },
+    { id: 'suggestions', label: t('settingsTabs.suggestions') }
+  ]
+  return <div className="supervisor-settings">
+    <PageTabs ariaLabel={t('settingsTabs.label')} idPrefix="supervisor-settings" value={tab} onChange={setTab}
+      variant="segmented" tabs={tabs} />
+    {tabs.map(({ id }) => <div key={id} role="tabpanel" id={`supervisor-settings-panel-${id}`}
+      aria-labelledby={`supervisor-settings-tab-${id}`} hidden={tab !== id}>
+      {id === 'model' ? <SupervisionModelSettings {...props} /> : <SupervisionReviewSettings section={id} {...reviewProps} />}
+    </div>)}
+  </div>
 }
 
 function SupervisionModelSettings(props: HeartbeatCenterProps): React.JSX.Element {

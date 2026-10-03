@@ -9,6 +9,9 @@ export const heartbeat = {
     experienceMinEvents: 'Minimum events before a story is considered for experiences (default 5)',
     stalledDays: 'Days without new events before a story is flagged (default 14)',
     save: 'Save review algorithm',
+    storiesTitle: 'Stories and experiences', saveStories: 'Save story and experience settings',
+    suggestionsTitle: 'Supervisor suggestions', saveSuggestions: 'Save suggestion settings',
+    suggestionsHelp: 'Used when a heartbeat plan is set to suggest. Suggestions only remind you; they never change a story\'s status.',
     help: 'Page size controls database reads, not total coverage. Batch limits split work without dropping remaining text. These settings and the organize timeout are frozen for each new review; continuing uses its saved configuration. Response capacity uses the current setting for each request; increase it before continuing a failed review.',
     pageSize: 'Sources read at a time (default 50)', batchCharacters: 'Text size per batch (default 8000)',
     batchMessages: 'Messages per batch (default 20)', executionSeconds: 'Time before pausing, seconds (default 300)',
@@ -31,6 +34,7 @@ export const heartbeat = {
     runError: 'This run failed. Review the error details before continuing; saved batches remain available.',
     diagnostics: 'Error details'
   },
+  settingsTabs: { label: 'Supervisor settings sections', model: 'Model', review: 'Review processing', stories: 'Stories and experiences', suggestions: 'Suggestions' },
   suggestions: {
     title: 'Supervisor suggestions',
     kind: { open_item: 'Open item', conflict: 'Disagreement', convention: 'Possible convention', revision: 'Important revision', stalled: 'No recent progress', experience: 'Relevant experience' },
