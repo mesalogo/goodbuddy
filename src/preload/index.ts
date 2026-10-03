@@ -74,6 +74,7 @@ import type {
   ActivityHistorySummary,
   ActivityHistorySummaryRequest,
   ActivityHistoryUpdate,
+  ActivityHistoryUpdateResult,
   ActivityRecord,
   TokenUsageSummary,
   ConversationBranchInput,
@@ -1296,9 +1297,8 @@ const desktopApi: DesktopApi = {
         legacyHistoryMayBeIncomplete
       })
     },
-    update: async (update: ActivityHistoryUpdate) => {
-      await ipcRenderer.invoke(ipcChannels.activityHistoryUpdate, update)
-    },
+    update: (update: ActivityHistoryUpdate) =>
+      ipcRenderer.invoke(ipcChannels.activityHistoryUpdate, update) as Promise<ActivityHistoryUpdateResult>,
     clear: async () => {
       await ipcRenderer.invoke(ipcChannels.activityHistoryClear)
     },

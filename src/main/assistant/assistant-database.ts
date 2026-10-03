@@ -41,6 +41,7 @@ import type {
   ActivityHistoryPage,
   ActivityHistorySnapshot,
   ActivityHistorySummary,
+  ActivityHistoryUpdateResult,
   ConversationQueueItem,
   ConversationAnsweredQuestion,
   ConversationBranchInput,
@@ -5310,8 +5311,8 @@ export class AssistantDatabase {
   }
 
   /** Applies incremental changes in one transaction (PERF-15). */
-  updateActivityHistory(input: unknown): void {
-    this.activityHistory().update(input)
+  updateActivityHistory(input: unknown): ActivityHistoryUpdateResult {
+    return this.activityHistory().update(input)
   }
 
   /** Deletes every activity record in one transaction. */

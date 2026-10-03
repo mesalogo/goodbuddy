@@ -5,8 +5,9 @@ import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { build } from 'esbuild'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { ActivityRecord, AssistantTask } from '../../shared/assistant-contracts'
+import type { ActivityHistoryChange, ActivityRecord, AssistantTask } from '../../shared/assistant-contracts'
 import {
+  applyActivityChanges,
   firstOccurrences,
   referenceActivityPage,
   referenceActivityReconcile,
@@ -86,6 +87,34 @@ describe('ActivityHistoryRepository', () => {
         }
       }
       expect(database.getActivityHistoryPage({ limit: 500 }).records).toEqual(firstOccurrences(list))
+    }
+  })
+
+  it('applies content-matched changes in SQL exactly like the reference, including legacy duplicates', () => {
+    for (const seed of [4, 8, 15]) {
+      const random = makeRandom(seed)
+      const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!
+      const { database } = open()
+      let list = randomList(random, 150).map((item, index) =>
+        item.kind === 'tool' || item.kind === 'subagent' ? { ...item, callId: `call-${index % 4}` } : item)
+      database.replaceActivityHistory({ records: list, legacyHistoryMayBeIncomplete: false })
+      list = firstOccurrences(list)
+      for (let round = 0; round < 80; round++) {
+        const requestId = `request-${Math.floor(random() * 10)}`
+        const status = pick(statuses)
+        const changes: ActivityHistoryChange[] = [pick([
+          (): ActivityHistoryChange => ({ type: 'upsert-call', record: { ...randomList(random, 1)[0]!, id: `new-${round}`,
+            kind: pick(['tool', 'subagent'] as const), requestId, callId: `call-${Math.floor(random() * 4)}` } }),
+          (): ActivityHistoryChange => ({ type: 'update-request', requestId, status, ...(random() < 0.5 ? { detail: 'd' } : {}) }),
+          (): ActivityHistoryChange => ({ type: 'resolve-approval', conversationId: `conversation-${Math.floor(random() * 6)}`, status, detailLine: 'x' }),
+          (): ActivityHistoryChange => ({ type: 'settle-request', requestId, status, detailLine: 'y' }),
+          (): ActivityHistoryChange => ({ type: 'remove-request', requestId }),
+          (): ActivityHistoryChange => ({ type: 'remove-call', requestId, callId: `call-${Math.floor(random() * 4)}` })
+        ])()]
+        database.updateActivityHistory({ changes })
+        list = applyActivityChanges(list, changes)
+        expect(firstOccurrences(database.getActivityHistory().records)).toEqual(list)
+      }
     }
   })
 

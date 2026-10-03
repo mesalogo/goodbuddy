@@ -991,3 +991,96 @@ describe('ActivityPanel', () => {
     expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument()
   })
 })
+
+describe('ActivityPanel paged by Main', () => {
+  function makeRandom(seed: number): () => number {
+    let state = seed
+    return () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296
+  }
+  function randomList(random: () => number, length: number): ActivityRecord[] {
+    const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!
+    const list: ActivityRecord[] = []
+    for (let index = 0; index < length; index++) {
+      const duplicate = list.length > 0 && random() < 0.08
+      list.push({
+        id: duplicate ? pick(list).id : `random-${index}`,
+        conversationId: `conversation-${Math.floor(random() * 5)}`,
+        requestId: `request-${Math.floor(random() * 8)}`,
+        scope: random() < 0.5 ? { kind: 'project', projectId: 'p1', projectName: '项目一' } : { kind: 'global' },
+        kind: pick(['request', 'tool', 'approval', 'subagent', 'result'] as const),
+        title: `标题 ${index}`,
+        detail: `详情 ${index}`,
+        status: pick(['pending', 'running', 'completed', 'failed', 'denied', 'cancelled', 'interrupted'] as const),
+        createdAt: Date.UTC(2026, 0, 1) + Math.floor(random() * 30) * 1000
+      })
+    }
+    return list
+  }
+  const filterButtons = (container: HTMLElement): HTMLButtonElement[] =>
+    [...container.querySelectorAll<HTMLButtonElement>('.activity-panel__toolbar [role="group"] button')]
+  /** The visible text and status classes of the page; what the user can compare. */
+  function snapshot(container: HTMLElement): string {
+    return [...container.querySelectorAll('.activity-panel__toolbar, .activity-project, .activity-panel__load-more')]
+      .map((element) => `${element.textContent ?? ''}|${[...element.querySelectorAll('.status-badge')].map((badge) => badge.className).join(',')}`)
+      .join('\n')
+  }
+
+  it('shows the same counts, groups, titles, status and clear count as the full-list computation', async () => {
+    const { firstOccurrences, referenceActivitySummary } = await import('../../shared/activity-history-reference')
+    for (const seed of [2, 13, 77, 404]) {
+      const random = makeRandom(seed)
+      const stored = randomList(random, 120 + Math.floor(random() * 500))
+      // The former page got the whole shown list (first occurrences).
+      const full = firstOccurrences(stored)
+      const props = { tokenUsage: makeTokenUsage(), onClear: vi.fn(), onOpenConversation: vi.fn() }
+      for (const filter of ['all', 'active', 'failed'] as const) {
+        const before = render(<ActivityPanel {...props} records={full} />)
+        if (filter !== 'all') {
+          fireEvent.click(filterButtons(before.container)[filter === 'active' ? 1 : 2]!)
+        }
+        const expected = snapshot(before.container)
+        before.unmount()
+        // Now: only a loaded prefix (as Main pages it) plus Main's summary.
+        const matching = full.filter((record) =>
+          filter === 'all' ? true : filter === 'active'
+            ? record.status === 'pending' || record.status === 'running'
+            : ['failed', 'denied', 'cancelled', 'interrupted'].includes(record.status))
+        const loaded = matching.slice(0, 500)
+        const summary = referenceActivitySummary(stored, [...new Set(loaded.map((record) => record.conversationId))])
+        const after = render(
+          <ActivityPanel
+            {...props}
+            paging={{ filter, summary, hasMore: loaded.length < matching.length, onFilterChange: vi.fn(), onLoadMore: vi.fn() }}
+            records={loaded}
+          />
+        )
+        expect(snapshot(after.container)).toBe(expected)
+        after.unmount()
+      }
+    }
+  })
+
+  it('loads the next page behind "load more" and switches filters through the callbacks', () => {
+    const records = Array.from({ length: 500 }, (_, index) => makeRecord(index))
+    const onLoadMore = vi.fn()
+    const onFilterChange = vi.fn()
+    const summary = { counts: { all: 1_200, active: 0, failed: 0 }, conversations: {}, legacyHistoryMayBeIncomplete: false }
+    const { container } = render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        paging={{ filter: 'all', summary, hasMore: true, onFilterChange, onLoadMore }}
+        records={records}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+    expect(container.querySelectorAll('.activity-list__item')).toHaveLength(500)
+    const loadMore = container.querySelector<HTMLButtonElement>('.activity-panel__load-more')!
+    expect(loadMore.textContent).toContain('700')
+    fireEvent.click(loadMore)
+    expect(onLoadMore).toHaveBeenCalledOnce()
+    fireEvent.click(filterButtons(container)[2]!)
+    expect(onFilterChange).toHaveBeenCalledWith('failed')
+    expect(container.textContent).toContain('1,200')
+  })
+})

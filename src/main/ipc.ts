@@ -6869,7 +6869,7 @@ export function registerIpcHandlers(
     ipcChannels.activityHistoryUpdate,
     (event, input: unknown) => {
       assertTrustedSender(event, window)
-      assistantDatabase.updateActivityHistory(input)
+      return assistantDatabase.updateActivityHistory(input)
     }
   )
   registerHandler(ipcChannels.activityHistoryClear, (event) => {
@@ -6886,12 +6886,7 @@ export function registerIpcHandlers(
   })
   registerHandler(ipcChannels.activityHistoryReconcile, (event, input: unknown) => {
     assertTrustedSender(event, window)
-    const request = activityHistoryReconcileRequestSchema.parse(input)
-    // Requests still running in Main are active too, whichever window started them.
-    return assistantDatabase.reconcileActivityHistory({
-      ...request,
-      activeRequestIds: [...new Set([...request.activeRequestIds, ...activeRequests.keys()])]
-    })
+    return assistantDatabase.reconcileActivityHistory(activityHistoryReconcileRequestSchema.parse(input))
   })
 
   registerHandler(ipcChannels.tokenUsageSummary, (event) => {

@@ -51,6 +51,7 @@ import {
   type ActivityHistorySummary,
   type ActivityHistorySummaryRequest,
   type ActivityHistoryUpdate,
+  type ActivityHistoryUpdateResult,
   type ActivityRecord,
   type TokenUsageSummary,
   type ConversationSnapshot,
@@ -2169,7 +2170,7 @@ export type DesktopApi = {
      * Incremental save (PERF-15): only the changed records cross IPC and are
      * written. `replace` remains for the legacy localStorage migration.
      */
-    update: (update: ActivityHistoryUpdate) => Promise<void>
+    update: (update: ActivityHistoryUpdate) => Promise<ActivityHistoryUpdateResult | void>
     /** Deletes the whole history in one transaction. */
     clear: () => Promise<void>
     /** One page of shown records, newest first (see activityHistoryPageRequestSchema). */

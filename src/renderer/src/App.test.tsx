@@ -14222,19 +14222,67 @@ describe("App", () => {
     expect(await screen.findByLabelText("项目：默认项目")).toHaveClass("scope-badge");
 
     await waitFor(() => {
-      expect(api.activityHistory.replace).toHaveBeenCalledWith(
-        [
-          expect.objectContaining({
-            id: "legacy-activity",
-            detail: "x".repeat(4_000),
-          }),
-        ],
-        true,
-      );
+      expect(savedActivity).toEqual([
+        expect.objectContaining({
+          id: "legacy-activity",
+          detail: "x".repeat(4_000),
+        }),
+      ]);
+      expect(api.activityHistory.update).toHaveBeenCalledWith({
+        changes: [],
+        legacyHistoryMayBeIncomplete: true,
+      });
       expect(localStorage.getItem(ACTIVITY_STORAGE_KEY)).toBeNull();
     });
-
+    // The legacy migration no longer writes the whole list.
+    expect(api.activityHistory.replace).not.toHaveBeenCalled();
   });
+
+  it("keeps at most one page of activity after startup and trims when the page is left", async () => {
+    savedActivity = Array.from({ length: 1_200 }, (_, index) => ({
+      id: `stored-${index}`,
+      conversationId: `stored-conversation-${index % 7}`,
+      requestId: `stored-request-${index}`,
+      scope: { kind: "global" as const },
+      kind: index % 3 === 0 ? ("request" as const) : ("tool" as const),
+      title: `存量记录 ${index}`,
+      detail: "detail",
+      status: index % 5 === 0 ? ("failed" as const) : ("completed" as const),
+      createdAt: 1_200 - index,
+    }));
+    render(<App />);
+    // Startup: Main reconciles, then one page of at most 200 records.
+    await waitFor(() => expect(api.activityHistory.page).toHaveBeenCalledWith({ limit: 200 }));
+    expect(api.activityHistory.get).not.toHaveBeenCalled();
+    expect(api.activityHistory.reconcile).toHaveBeenCalledOnce();
+    expect(vi.mocked(api.activityHistory.reconcile).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(api.activityHistory.page).mock.invocationCallOrder[0]!);
+    expect(api.activityHistory.page).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
+    // The page loads a full visible batch (500, as before paging) and counts the whole history.
+    expect(await screen.findByRole("button", { name: "全部 1,200" })).toBeInTheDocument();
+    expect(api.activityHistory.page).toHaveBeenLastCalledWith({ limit: 500 });
+    const records = (): number =>
+      [...document.querySelectorAll(".activity-group small")]
+        .reduce((total, element) => total + Number(/\d[\d,]*/u.exec(element.textContent ?? "")![0]!.replace(",", "")), 0);
+    await waitFor(() => expect(records()).toBe(500));
+    expect(screen.getByRole("button", { name: "继续显示（剩余 700 条）" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "清空记录" }));
+    expect(screen.getByText("永久清空 1,200 条活动记录？此操作不可撤销。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认清空 1,200 条活动记录" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "继续显示（剩余 700 条）" }));
+    await waitFor(() => expect(records()).toBe(1_000));
+    await waitFor(() => expect(api.activityHistory.page).toHaveBeenLastCalledWith({ before: expect.any(Number), limit: 500 }));
+
+    // Leaving the page keeps one visible batch; coming back shows the same first rows.
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
+    expect(await screen.findByRole("button", { name: "全部 1,200" })).toBeInTheDocument();
+    expect(records()).toBe(500);
+  }, 30_000);
 
   it("marks the current primary navigation page and hides decorative icons", async () => {
     render(<App />);

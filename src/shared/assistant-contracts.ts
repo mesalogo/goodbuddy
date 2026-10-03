@@ -110,9 +110,25 @@ export const activityHistorySnapshotSchema = z
  * - `upsert` + `position: 'in-place'` replaces the existing record where it
  *   is; a record that does not exist yet is inserted at the front.
  * - `remove` deletes every record with the ID.
- * - `remove-duplicates` deletes every record but the first of each ID; the
- *   renderer shows only the first (see `mergeActivityRecords`).
+ * The other changes match shown records (first occurrences) by content, so
+ * the renderer does not need to have them loaded:
+ * - `upsert-call`: a tool/subagent record with a callId. The first record
+ *   of the same kind, request and call is moved to the front with the new
+ *   content but its own id, createdAt and scope (nothing happens when it is
+ *   unchanged and already first); without one the record is inserted at the
+ *   front (renderer `upsertActivityRecord`).
+ * - `update-request`: every request record of the request gets the status
+ *   (and the detail, when given), in place.
+ * - `resolve-approval`: the first pending approval of the conversation gets
+ *   the status and `detailLine` appended on a new line, in place.
+ * - `settle-request`: every pending/running non-request record of the
+ *   request gets the status and `detailLine` appended, in place.
+ * - `remove-request`: deletes every record of the request.
+ * - `remove-call`: deletes the tool records of the request with the callId.
  */
+const activityIdSchema = z.string().min(1).max(256)
+const activityStatusSchema = activityRecordSchema.shape.status
+const activityDetailLineSchema = z.string().max(1_000_000)
 export const activityHistoryChangeSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('upsert'),
@@ -121,9 +137,43 @@ export const activityHistoryChangeSchema = z.discriminatedUnion('type', [
   }).strict(),
   z.object({
     type: z.literal('remove'),
-    id: z.string().min(1).max(256)
+    id: activityIdSchema
   }).strict(),
-  z.object({ type: z.literal('remove-duplicates') }).strict()
+  z.object({ type: z.literal('remove-duplicates') }).strict(),
+  z.object({
+    type: z.literal('upsert-call'),
+    record: activityRecordSchema.refine(
+      (record) => (record.kind === 'tool' || record.kind === 'subagent') && record.callId !== undefined,
+      'upsert-call needs a tool or subagent record with a callId'
+    )
+  }).strict(),
+  z.object({
+    type: z.literal('update-request'),
+    requestId: activityIdSchema,
+    status: activityStatusSchema,
+    detail: z.string().optional()
+  }).strict(),
+  z.object({
+    type: z.literal('resolve-approval'),
+    conversationId: activityIdSchema,
+    status: activityStatusSchema,
+    detailLine: activityDetailLineSchema
+  }).strict(),
+  z.object({
+    type: z.literal('settle-request'),
+    requestId: activityIdSchema,
+    status: activityStatusSchema,
+    detailLine: activityDetailLineSchema
+  }).strict(),
+  z.object({
+    type: z.literal('remove-request'),
+    requestId: activityIdSchema
+  }).strict(),
+  z.object({
+    type: z.literal('remove-call'),
+    requestId: activityIdSchema,
+    callId: activityIdSchema
+  }).strict()
 ])
 
 export const activityHistoryUpdateSchema = z
@@ -189,6 +239,8 @@ export type ActivityHistorySnapshot = z.infer<
 >
 export type ActivityHistoryChange = z.infer<typeof activityHistoryChangeSchema>
 export type ActivityHistoryUpdate = z.infer<typeof activityHistoryUpdateSchema>
+/** The stored record of each upsert-call change, in order. */
+export type ActivityHistoryUpdateResult = { calls: ActivityRecord[] }
 
 export const projectExecutionSpaceSchema = z.discriminatedUnion(
   'kind',

@@ -8,6 +8,7 @@ import {
   type ActivityHistoryPage,
   type ActivityHistorySnapshot,
   type ActivityHistorySummary,
+  type ActivityHistoryUpdateResult,
   type ActivityRecord
 } from '../../shared/assistant-contracts'
 import {
@@ -275,9 +276,15 @@ export class ActivityHistoryRepository {
     })
   }
 
-  /** Applies incremental changes in one transaction, without reading the history. */
-  update(input: unknown): void {
+  /**
+   * Applies incremental changes in one transaction, without reading the
+   * history. Returns the stored record of every upsert-call, which keeps
+   * the id and createdAt of an earlier record of the call the renderer may
+   * not have loaded.
+   */
+  update(input: unknown): ActivityHistoryUpdateResult {
     const update = activityHistoryUpdateSchema.parse(input)
+    const calls: ActivityRecord[] = []
     this.write(() => {
       const database = this.database
       const nextSeq = database.prepare(
@@ -294,25 +301,95 @@ export class ActivityHistoryRepository {
         'UPDATE activity_history_records SET record_json = ? WHERE record_key = ? AND record_json != ?'
       )
       const remove = database.prepare('DELETE FROM activity_history_records WHERE record_id = ?')
+      const seq = (): number => (nextSeq.get() as { seq: number }).seq
+      // Shown rows (first occurrences) a content-matched change applies to, newest first.
+      type Row = { record_key: string; order_seq: number; record: ActivityRecord }
+      const select = (where: string, limit: number, ...args: SqlValue[]): Row[] =>
+        (database.prepare(
+          `SELECT record_key, order_seq, record_json FROM activity_history_records
+           WHERE occurrence = 0 AND ${where} ORDER BY order_seq DESC LIMIT ${limit}`
+        ).all(...args) as Array<{ record_key: string; order_seq: number; record_json: string }>)
+          .map((row) => ({ record_key: row.record_key, order_seq: row.order_seq, record: parseRow(row.record_json) }))
+      const frontSeq = database.prepare(
+        'SELECT MAX(order_seq) AS seq FROM activity_history_records WHERE occurrence = 0'
+      )
+      const rewrite = (key: string, record: ActivityRecord): void => {
+        const json = JSON.stringify(activityRecordSchema.parse(record))
+        replaceInPlace.run(json, key, json)
+      }
       for (const change of update.changes) {
-        if (change.type === 'remove-duplicates') {
-          database.exec('DELETE FROM activity_history_records WHERE occurrence != 0')
-        } else if (change.type === 'remove') {
-          remove.run(change.id)
-        } else {
-          // The first occurrence stays first when moved to the front, so its key is stable.
-          const key = activityRecordKey(change.record.id, 0)
-          const json = JSON.stringify(change.record)
-          const seq = (): number => (nextSeq.get() as { seq: number }).seq
-          if (!exists.get(key)) insert.run(key, json, seq())
-          else if (change.position === 'front') moveToFront.run(json, seq(), key)
-          else replaceInPlace.run(json, key, json)
+        switch (change.type) {
+          case 'remove-duplicates':
+            database.exec('DELETE FROM activity_history_records WHERE occurrence != 0')
+            break
+          case 'remove':
+            remove.run(change.id)
+            break
+          case 'upsert': {
+            // The first occurrence stays first when moved to the front, so its key is stable.
+            const key = activityRecordKey(change.record.id, 0)
+            const json = JSON.stringify(change.record)
+            if (!exists.get(key)) insert.run(key, json, seq())
+            else if (change.position === 'front') moveToFront.run(json, seq(), key)
+            else replaceInPlace.run(json, key, json)
+            break
+          }
+          case 'upsert-call': {
+            const incoming = change.record
+            const [existing] = select(
+              "request_id = ? AND kind = ? AND json_extract(record_json, '$.callId') = ?", 1,
+              incoming.requestId, incoming.kind, incoming.callId!
+            )
+            if (!existing) {
+              insert.run(activityRecordKey(incoming.id, 0), JSON.stringify(incoming), seq())
+              calls.push(incoming)
+              break
+            }
+            const before = existing.record
+            const unchanged = before.conversationId === incoming.conversationId && before.title === incoming.title &&
+              before.detail === incoming.detail && before.status === incoming.status
+            const front = existing.order_seq === (frontSeq.get() as { seq: number }).seq
+            const next = unchanged ? before : { ...incoming, id: before.id, createdAt: before.createdAt, scope: before.scope }
+            calls.push(next)
+            if (unchanged && front) break
+            moveToFront.run(JSON.stringify(activityRecordSchema.parse(next)), seq(), existing.record_key)
+            break
+          }
+          case 'update-request':
+            for (const row of select("request_id = ? AND kind = 'request'", -1, change.requestId)) {
+              rewrite(row.record_key, { ...row.record, status: change.status, detail: change.detail ?? row.record.detail })
+            }
+            break
+          case 'resolve-approval': {
+            const [row] = select("conversation_id = ? AND kind = 'approval' AND status = 'pending'", 1,
+              change.conversationId)
+            if (row) {
+              rewrite(row.record_key, { ...row.record, status: change.status, detail: `${row.record.detail}\n${change.detailLine}` })
+            }
+            break
+          }
+          case 'settle-request':
+            for (const row of select("request_id = ? AND kind != 'request' AND status_group = 'active'", -1,
+              change.requestId)) {
+              rewrite(row.record_key, { ...row.record, status: change.status, detail: `${row.record.detail}\n${change.detailLine}` })
+            }
+            break
+          case 'remove-request':
+            for (const row of select('request_id = ?', -1, change.requestId)) remove.run(row.record.id)
+            break
+          case 'remove-call':
+            for (const row of select(
+              "request_id = ? AND kind = 'tool' AND json_extract(record_json, '$.callId') = ?", -1,
+              change.requestId, change.callId
+            )) remove.run(row.record.id)
+            break
         }
       }
       if (update.legacyHistoryMayBeIncomplete !== undefined) {
         this.writeIncomplete(update.legacyHistoryMayBeIncomplete)
       }
     })
+    return { calls }
   }
 
   /**

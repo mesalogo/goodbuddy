@@ -98,6 +98,7 @@ import {
   runtimeProviderLabel,
 } from "./runtime-selection";
 import type {
+  ActivityHistoryFilter,
   AssistantProject,
   AssistantArtifact,
   AssistantMemory,
@@ -202,7 +203,7 @@ import {
   loadLegacyActivityHistory,
   type ActivityRecord,
 } from "./activity-store";
-import { useActivityPanelRecords } from "./activity-selectors";
+import { useActivityPanel } from "./activity-selectors";
 import { useActivityHistorySync } from "./activity-sync";
 import {
   KnowledgeCitationDialog,
@@ -1769,9 +1770,8 @@ function App(): React.JSX.Element {
   const citationRequestRef = useRef(0);
   const failedKnowledgeLibraryIdRef = useRef<string | undefined>(undefined);
   const [legacyActivityHistory] = useState(loadLegacyActivityHistory);
-  const [activityStore] = useState(() => createActivityStore(
-    legacyActivityHistory.records, legacyActivityHistory.historyMayBeIncomplete));
-  const activityPanelRecords = useActivityPanelRecords(activityStore);
+  const [activityStore] = useState(() => createActivityStore(legacyActivityHistory.records));
+  const activityPanel = useActivityPanel(activityStore);
   const activeRuns = useRef(new Map<string, ActiveRun>());
   const preparingConversations = useRef(new Set<string>());
   const [activeConversationIds, setActiveConversationIds] = useState<
@@ -3267,7 +3267,8 @@ function App(): React.JSX.Element {
     return stop;
   }, [conversationStoreReady, conversationPersistence]);
 
-  const persistActivityHistory = useActivityHistorySync(activityStore, legacyActivityHistory, {
+  const activitySync = useActivityHistorySync(activityStore, legacyActivityHistory, {
+    activeRequestIds: () => new Set(activeRuns.current.keys()),
     onReadFailed: () => notify({
       tone: "error", message: tRef.current("notices.activityHistoryReadFailed"), dedupeKey: "activity-history-read",
     }),
@@ -3278,9 +3279,10 @@ function App(): React.JSX.Element {
     }),
     // The loaded history appears at once when the Activity page is open.
     onLoaded: () => {
-      if (viewRef.current === "activity") activityStore.refreshPanel();
+      if (viewRef.current === "activity") void activitySync.show();
     },
   });
+  const persistActivityHistory = activitySync.flush;
 
   useEffect(
     () =>
@@ -3457,9 +3459,11 @@ function App(): React.JSX.Element {
     };
   }, []);
 
-  const refreshActivityPanelRecords = activityStore.refreshPanel;
+  const { show: showActivity, hide: hideActivity } = activitySync;
+  const refreshActivityPanelRecords = useCallback((): void => void showActivity(), [showActivity]);
 
-  // Layout effect so entering the page never paints a stale snapshot.
+  // Layout effect so entering the page never paints a stale snapshot; leaving
+  // it keeps only the first page loaded.
   useLayoutEffect(() => {
     if (view !== "activity") {
       return;
@@ -3469,8 +3473,11 @@ function App(): React.JSX.Element {
       refreshActivityPanelRecords,
       activityPanelRefreshIntervalMs,
     );
-    return () => window.clearInterval(interval);
-  }, [refreshActivityPanelRecords, view]);
+    return () => {
+      window.clearInterval(interval);
+      hideActivity();
+    };
+  }, [hideActivity, refreshActivityPanelRecords, view]);
 
   const resumeProjectConversationQueues = useCallback(
     (projectId: string): void => {
@@ -4042,7 +4049,7 @@ function App(): React.JSX.Element {
   }, [refreshTokenUsage, view]);
 
   const manualRefreshActivity = useCallback(async (): Promise<void> => {
-    refreshActivityPanelRecords();
+    await showActivity();
     try {
       await refreshTokenUsage();
     } catch {
@@ -4051,7 +4058,13 @@ function App(): React.JSX.Element {
         message: tRef.current("notices.tokenUsageReadFailed"),
       });
     }
-  }, [notify, refreshActivityPanelRecords, refreshTokenUsage]);
+  }, [notify, showActivity, refreshTokenUsage]);
+  const { loadMore: loadMoreActivity, setFilter: setActivityFilter } = activitySync;
+  const activityPaging = useMemo(() => ({
+    filter: activityPanel.page.filter, summary: activityPanel.summary, hasMore: activityPanel.page.hasMore,
+    onFilterChange: (filter: ActivityHistoryFilter) => void setActivityFilter(filter),
+    onLoadMore: () => void loadMoreActivity(),
+  }), [activityPanel, loadMoreActivity, setActivityFilter]);
 
   useInitialArtifactSync(taskStore, () =>
     notify({
@@ -7564,7 +7577,8 @@ function App(): React.JSX.Element {
                         onOpenConversation={openActivityConversation}
                         onRefresh={manualRefreshActivity}
                         projects={projects}
-                        records={activityPanelRecords}
+                        paging={activityPaging}
+                        records={activityPanel.page.records}
                         tokenUsage={tokenUsage}
                       />
                     </Suspense>

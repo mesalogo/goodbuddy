@@ -4,14 +4,28 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type {
+  ActivityHistoryPage,
   ActivityHistorySnapshot,
+  ActivityHistorySummary,
   ActivityHistoryUpdate,
   ActivityRecord,
   AssistantTask
 } from '../../shared/assistant-contracts'
-import { createActivityStore, type ActivityStore } from './activity-store'
+import { firstOccurrences } from '../../shared/activity-history-reference'
+import i18n from './i18n'
+import {
+  ACTIVITY_FIRST_PAGE_SIZE,
+  createActivityStore,
+  mergeActivityRecords,
+  reconcileActivityRecords,
+  upsertActivityRecord,
+  type ActivityStore
+} from './activity-store'
 import {
   loadActivityHistory,
+  loadFirstActivityPage,
+  loadNextActivityPage,
+  refreshActivitySummary,
   startActivitySync,
   type ActivityHistoryApi
 } from './activity-sync'
@@ -22,8 +36,13 @@ type AssistantDatabase = {
   close: () => void
   getActivityHistory: () => ActivityHistorySnapshot
   replaceActivityHistory: (input: unknown) => void
-  updateActivityHistory: (input: unknown) => void
+  updateActivityHistory: (input: unknown) => { calls: ActivityRecord[] }
   clearActivityHistory: () => void
+  getActivityHistoryPage: (input: unknown) => ActivityHistoryPage
+  getActivityHistorySummary: (input: unknown) => ActivityHistorySummary
+  reconcileActivityHistory: (input: unknown) => number
+  createTask: (input: { id: string; title: string; instructions: string; workMode: 'ask' }) => AssistantTask
+  updateTaskStatus: (taskId: string, status: AssistantTask['status']) => void
 }
 let AssistantDatabase: new (path: string) => AssistantDatabase
 beforeAll(async () => {
@@ -52,40 +71,44 @@ function openDatabase(): AssistantDatabase {
   return database
 }
 
-/** IPC double over a real database; `fail()` decides whether a call throws first. */
-function databaseApi(
-  database: AssistantDatabase,
-  fail: () => boolean = () => false
-): ActivityHistoryApi & { updates: ActivityHistoryUpdate[] } {
+type TestApi = ActivityHistoryApi & { updates: ActivityHistoryUpdate[]; calls: string[] }
+
+/** IPC double over a real database (structured clones, like IPC); `fail()` makes a save throw. */
+function databaseApi(database: AssistantDatabase, fail: () => boolean = () => false): TestApi {
   const updates: ActivityHistoryUpdate[] = []
-  const guard = (): void => {
+  const calls: string[] = []
+  const guard = (name: string): void => {
+    calls.push(name)
     if (fail()) throw new Error('injected save failure')
   }
   return {
     updates,
-    get: async () => database.getActivityHistory(),
-    replace: async (records, legacyHistoryMayBeIncomplete) => {
-      guard()
-      database.replaceActivityHistory(
-        structuredClone({ records, legacyHistoryMayBeIncomplete })
-      )
-    },
+    calls,
     update: async (update) => {
-      guard()
+      guard('update')
       updates.push(update)
-      database.updateActivityHistory(structuredClone(update))
+      return structuredClone(database.updateActivityHistory(structuredClone(update)))
     },
     clear: async () => {
-      guard()
+      guard('clear')
       database.clearActivityHistory()
+    },
+    reconcile: async (request) => {
+      guard('reconcile')
+      return database.reconcileActivityHistory(structuredClone(request))
+    },
+    page: async (request) => {
+      calls.push('page')
+      return database.getActivityHistoryPage(structuredClone(request))
+    },
+    summary: async (request) => {
+      calls.push('summary')
+      return database.getActivityHistorySummary(structuredClone(request))
     }
   }
 }
 
-const manualTimers = {
-  setTimeout: () => 1,
-  clearTimeout: () => undefined
-}
+const manualTimers = { setTimeout: () => 1, clearTimeout: () => undefined }
 
 function makeRandom(seed: number): () => number {
   let state = seed
@@ -109,140 +132,240 @@ function record(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
   }
 }
 
-function task(id: string, status: AssistantTask['status']): AssistantTask {
+async function startup(
+  store: ActivityStore,
+  api: TestApi,
+  sync: { flush: () => Promise<void> },
+  activeRequestIds: ReadonlySet<string> = new Set(),
+  legacy: ActivityRecord[] = [],
+  legacyIncomplete = false
+): Promise<void> {
+  await loadActivityHistory(store, api, { records: legacy, historyMayBeIncomplete: legacyIncomplete }, {
+    flush: sync.flush,
+    activeRequestIds: () => activeRequestIds,
+    onReadFailed: () => undefined,
+    isActive: () => true
+  })
+}
+
+/**
+ * The former App behavior over the whole list (activity state = every
+ * record), used as the oracle the paged store plus Main must match.
+ */
+function oracle(initial: readonly ActivityRecord[]) {
+  let list = firstOccurrences(initial)
   return {
-    id,
-    title: id,
-    instructions: id,
-    workMode: 'ask',
-    status,
-    createdAt: new Date(0).toISOString()
-  } as AssistantTask
+    get: () => list,
+    record: (incoming: ActivityRecord) => { list = upsertActivityRecord(list, incoming) },
+    updateRequest: (requestId: string, status: ActivityRecord['status'], detail?: string) => {
+      list = list.map((item) => item.requestId === requestId && item.kind === 'request'
+        ? { ...item, status, detail: detail ?? item.detail } : item)
+    },
+    updateApproval: (conversationId: string, status: ActivityRecord['status'], line: string) => {
+      let updated = false
+      list = list.map((item) => {
+        if (updated || item.conversationId !== conversationId || item.kind !== 'approval' || item.status !== 'pending') return item
+        updated = true
+        return { ...item, status, detail: `${item.detail}\n${line}` }
+      })
+    },
+    removeByRequest: (requestId: string) => { list = list.filter((item) => item.requestId !== requestId) },
+    removeToolByCallId: (requestId: string, callId: string) => {
+      list = list.filter((item) => !(item.requestId === requestId && item.kind === 'tool' && item.callId === callId))
+    },
+    settleRequest: (requestId: string, status: ActivityRecord['status'], line: string) => {
+      list = list.map((item) => item.requestId === requestId && item.kind !== 'request' &&
+        (item.status === 'pending' || item.status === 'running')
+        ? { ...item, status, detail: `${item.detail}\n${line}` } : item)
+    },
+    reconcile: (tasks: readonly AssistantTask[], active: ReadonlySet<string>) => {
+      list = reconcileActivityRecords(list, tasks, active)
+    },
+    clear: () => { list = [] },
+    prepend: (records: readonly ActivityRecord[]) => { list = mergeActivityRecords(records, list) }
+  }
 }
 
-async function loadedStore(api: ActivityHistoryApi): Promise<ActivityStore> {
-  const store = createActivityStore()
-  await loadActivityHistory(
-    store,
-    api,
-    { records: [], historyMayBeIncomplete: false },
-    { onReadFailed: () => undefined, onSaveFailed: () => undefined, isActive: () => true }
-  )
-  return store
-}
-
-describe('activity history sync', () => {
-  it('stores what a full replace of the final list stores, for random actions, flushes and failures', async () => {
-    for (const seed of [3, 17, 2026]) {
+describe('activity history sync (paged)', () => {
+  it('ends in the state the former full-list code saved, for random actions, pages, trims, flushes and failures', async () => {
+    for (const seed of [3, 17, 2026, 41, 7777, 90210]) {
       const random = makeRandom(seed)
-      const pick = <T,>(items: readonly T[]): T =>
-        items[Math.floor(random() * items.length)]!
-      const incremental = openDatabase()
-      // Legacy history with duplicate IDs, stored by the former full replace.
-      const first = record({ id: 'dup' })
-      const legacy = [
-        first,
-        record({ status: 'completed' }),
-        { ...first, detail: 'older duplicate' },
-        record({ kind: 'request', status: 'running', requestId: 'request-1' }),
-        record({ kind: 'approval', status: 'pending', conversationId: 'conversation-1' })
-      ]
-      incremental.replaceActivityHistory({
-        records: legacy,
-        legacyHistoryMayBeIncomplete: seed % 2 === 0
-      })
+      const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!
+      const database = openDatabase()
+      // Stored history with legacy duplicate IDs; the first occurrence is the shown one.
+      const stored = Array.from({ length: 260 }, (_, index) => record({
+        kind: pick(['tool', 'subagent', 'request', 'result', 'approval'] as const),
+        status: pick(['pending', 'running', 'completed', 'failed'] as const),
+        requestId: `request-${index % 7}`,
+        conversationId: `conversation-${index % 4}`,
+        ...(index % 3 === 0 ? { callId: pick(['a', 'b', 'c']) } : {})
+      }))
+      stored.splice(40, 0, { ...stored[3]!, detail: 'hidden duplicate' })
+      stored.splice(250, 0, { ...stored[200]!, detail: 'hidden duplicate' })
+      database.replaceActivityHistory({ records: stored, legacyHistoryMayBeIncomplete: false })
+      const tasks: AssistantTask[] = []
+      for (const [index, status] of (['completed', 'failed', 'running', 'cancelled'] as const).entries()) {
+        const created = database.createTask({ id: `request-${index}`, title: 't', instructions: 'i', workMode: 'ask' })
+        database.updateTaskStatus(created.id, status)
+        tasks.push({ ...created, status })
+      }
+      const expected = oracle(stored)
       let failing = false
-      let expectedFlag = seed % 2 === 0
-      const api = databaseApi(incremental, () => failing && random() < 0.5)
-      const store = await loadedStore(api)
-      const sync = startActivitySync(store, api, {
-        onSaveFailed: () => undefined,
-        timers: manualTimers
-      })
+      const api = databaseApi(database, () => failing && random() < 0.5)
+      const store = createActivityStore()
+      const sync = startActivitySync(store, api, { onSaveFailed: () => undefined, timers: manualTimers })
+      const active = new Set(['request-5'])
+      await startup(store, api, sync, active)
+      expected.reconcile(tasks, active)
+      expect(store.getRecords().length).toBeLessThanOrEqual(ACTIVITY_FIRST_PAGE_SIZE)
+
       const callIds = ['a', 'b', 'c', 'd']
-      for (let step = 0; step < 400; step++) {
+      for (let step = 0; step < 500; step++) {
         const roll = random()
-        const requestId = `request-${Math.floor(random() * 5)}`
-        if (roll < 0.3) {
+        const requestId = `request-${Math.floor(random() * 8)}`
+        const conversationId = `conversation-${Math.floor(random() * 4)}`
+        if (roll < 0.25) {
           const kind = pick(['tool', 'subagent', 'request', 'result', 'approval'] as const)
-          store.record(record({
-            kind,
-            requestId,
+          const incoming = record({
+            kind, requestId, conversationId,
             ...(kind === 'tool' || kind === 'subagent' ? { callId: pick(callIds) } : {}),
             status: pick(['pending', 'running', 'completed', 'failed'] as const)
-          }))
-        } else if (roll < 0.4) {
-          store.updateRequest(requestId, pick(['completed', 'failed'] as const), random() < 0.5 ? 'done' : undefined)
-        } else if (roll < 0.47) {
-          store.updateApproval(`conversation-${Math.floor(random() * 3)}`, 'denied', 'decision')
-        } else if (roll < 0.52) {
+          })
+          store.record(incoming)
+          expected.record(incoming)
+        } else if (roll < 0.35) {
+          const status = pick(['completed', 'failed'] as const)
+          const detail = random() < 0.5 ? 'done' : undefined
+          store.updateRequest(requestId, status, detail)
+          expected.updateRequest(requestId, status, detail)
+        } else if (roll < 0.42) {
+          store.updateApproval(conversationId, 'denied', 'decision')
+          expected.updateApproval(conversationId, 'denied', 'decision')
+        } else if (roll < 0.46) {
           store.removeByRequest(requestId)
-        } else if (roll < 0.58) {
-          store.removeToolByCallId(requestId, pick(callIds))
-        } else if (roll < 0.65) {
+          expected.removeByRequest(requestId)
+        } else if (roll < 0.51) {
+          const callId = pick(callIds)
+          store.removeToolByCallId(requestId, callId)
+          expected.removeToolByCallId(requestId, callId)
+        } else if (roll < 0.57) {
           store.settleRequest(requestId, 'interrupted', 'incomplete')
-        } else if (roll < 0.72) {
-          store.reconcile(
-            [task('request-0', 'completed'), task('request-2', 'failed'), task('request-3', 'running')],
-            new Set(random() < 0.5 ? ['request-1'] : [])
-          )
-        } else if (roll < 0.74) {
+          expected.settleRequest(requestId, 'interrupted', 'incomplete')
+        } else if (roll < 0.62) {
+          const running = new Set(random() < 0.5 ? ['request-1'] : [])
+          store.reconcile(tasks, running)
+          expected.reconcile(tasks, running)
+        } else if (roll < 0.635) {
           store.clear()
-          expectedFlag = false
-        } else if (roll < 0.8) {
+          expected.clear()
+        } else if (roll < 0.68) {
           failing = random() < 0.4
+        } else if (roll < 0.73) {
+          await loadNextActivityPage(store, api)
+        } else if (roll < 0.76) {
+          store.trim(Math.floor(random() * 60))
+        } else if (roll < 0.79) {
+          await loadFirstActivityPage(store, api, 1 + Math.floor(random() * 80))
         } else {
           await sync.flush()
+        }
+        // Loaded records are always the newest records of the full list.
+        if (store.getOutbox().length === 0) {
+          const loaded = store.getRecords()
+          expect(loaded).toEqual(expected.get().slice(0, loaded.length))
         }
       }
       failing = false
       await sync.flush()
       expect(store.getOutbox()).toEqual([])
-
+      const shown = firstOccurrences(database.getActivityHistory().records)
+      expect(shown).toEqual(expected.get())
       const replaced = openDatabase()
-      replaced.replaceActivityHistory({
-        records: [...store.getRecords()],
-        legacyHistoryMayBeIncomplete: expectedFlag
-      })
-      expect(incremental.getActivityHistory()).toEqual(replaced.getActivityHistory())
-      expect(incremental.getActivityHistory().records).toEqual(store.getRecords())
+      replaced.replaceActivityHistory({ records: expected.get(), legacyHistoryMayBeIncomplete: false })
+      expect(shown).toEqual(replaced.getActivityHistory().records)
       sync.stop()
     }
-  })
+  }, 60_000)
 
-  it('sends only the changed records', async () => {
+  it('keeps at most one page after startup and sends only changed records, including unloaded ones', async () => {
     const database = openDatabase()
-    const records = Array.from({ length: 5_000 }, () => record({ status: 'completed' }))
+    const records = Array.from({ length: 5_000 }, (_, index) => record({ status: 'completed', kind: index % 5 === 0 ? 'request' : 'tool', requestId: `request-${index}` }))
     database.replaceActivityHistory({ records, legacyHistoryMayBeIncomplete: false })
     const api = databaseApi(database)
-    const store = await loadedStore(api)
+    const store = createActivityStore()
     const sync = startActivitySync(store, api, { onSaveFailed: () => undefined, timers: manualTimers })
+    await startup(store, api, sync)
+    expect(store.getRecords()).toHaveLength(ACTIVITY_FIRST_PAGE_SIZE)
+    expect(api.calls).toEqual(['reconcile', 'page'])
 
     const tool = record({ callId: 'call-1', requestId: 'request-x' })
     store.record(tool)
     store.record({ ...tool, id: 'ignored', detail: 'progress', status: 'completed' })
-    store.updateRequest(records[4_000]!.requestId, 'failed')
+    // records[4_000] is far outside the loaded page.
+    store.updateRequest(records[4_000]!.requestId, 'failed', 'late failure')
     await sync.flush()
-    // Two consecutive upserts of the tool collapse into one.
     expect(api.updates).toHaveLength(1)
-    const changes = api.updates[0]!.changes
-    const requestRecords = records.filter(
-      (item) => item.requestId === records[4_000]!.requestId && item.kind === 'request'
-    )
-    expect(changes).toHaveLength(1 + requestRecords.length)
-    expect(JSON.stringify(api.updates[0]).length).toBeLessThan(1_000)
-    expect(database.getActivityHistory().records[0]).toMatchObject({
-      id: tool.id,
-      detail: 'progress'
-    })
+    expect(api.updates[0]!.changes).toHaveLength(3)
+    expect(JSON.stringify(api.updates[0]).length).toBeLessThan(1_500)
+    const after = database.getActivityHistory().records
+    expect(after[0]).toMatchObject({ id: tool.id, detail: 'progress', status: 'completed' })
+    expect(after.find((item) => item.id === records[4_000]!.id)).toMatchObject({ status: 'failed', detail: 'late failure' })
+    expect(store.getRecords().length).toBeLessThanOrEqual(ACTIVITY_FIRST_PAGE_SIZE + 1)
+    sync.stop()
+  })
+
+  it('shows a tool call once when its earlier record arrives on a later page while the update is queued', async () => {
+    const database = openDatabase()
+    const old = record({ kind: 'tool', callId: 'call-z', requestId: 'request-z', status: 'running' })
+    const newer = Array.from({ length: 4 }, () => record({ status: 'completed' }))
+    database.replaceActivityHistory({ records: [...newer, old], legacyHistoryMayBeIncomplete: false })
+    const api = databaseApi(database)
+    const store = createActivityStore()
+    const sync = startActivitySync(store, api, { onSaveFailed: () => undefined, timers: manualTimers })
+    await startup(store, api, sync)
+    await loadFirstActivityPage(store, api, 2)
+    const incoming = record({ kind: 'tool', callId: 'call-z', requestId: 'request-z', status: 'completed', detail: 'done' })
+    store.record(incoming)
+    await loadNextActivityPage(store, api)
+    const expected = upsertActivityRecord([...newer, old], incoming)
+    // Until saved, the call carries this session's id; content and order already match.
+    const withoutIds = (list: readonly ActivityRecord[]): unknown[] =>
+      list.map((item) => ({ ...item, id: undefined, createdAt: undefined }))
+    expect(store.getRecords()).toHaveLength(5)
+
+    expect(withoutIds(store.getRecords())).toEqual(withoutIds(expected))
+    await sync.flush()
+    expect(store.getRecords()).toEqual(expected.slice(0, store.getRecords().length))
+    expect(database.getActivityHistory().records).toEqual(expected)
+    sync.stop()
+  })
+
+  it('marks records left running by the previous session interrupted, with the same localized line', async () => {
+    const database = openDatabase()
+    const leftover = record({ status: 'running', requestId: 'gone', detail: 'reading' })
+    const done = record({ status: 'running', requestId: 'finished', kind: 'request', detail: 'started' })
+    const live = record({ status: 'running', requestId: 'live' })
+    database.replaceActivityHistory({ records: [leftover, done, live], legacyHistoryMayBeIncomplete: false })
+    const task = database.createTask({ id: 'finished', title: 't', instructions: 'i', workMode: 'ask' })
+    database.updateTaskStatus(task.id, 'completed')
+    const api = databaseApi(database)
+    const store = createActivityStore()
+    const sync = startActivitySync(store, api, { onSaveFailed: () => undefined, timers: manualTimers })
+    await startup(store, api, sync, new Set(['live']))
+    const line = i18n.t('records.interruptedOnRestart', { ns: 'activity' })
+    expect(line.length).toBeGreaterThan(0)
+    const expected = reconcileActivityRecords([leftover, done, live], [{ ...task, status: 'completed' }], new Set(['live']))
+    expect(expected[0]!.detail).toBe(`reading\n${line}`)
+    expect(database.getActivityHistory().records).toEqual(expected)
+    expect(store.getRecords()).toEqual(expected)
     sync.stop()
   })
 
   it('keeps failed changes queued and retries them in order with backoff', async () => {
     const database = openDatabase()
-    let fail = true
+    let fail = false
     const api = databaseApi(database, () => fail)
-    const store = await loadedStore(api)
+    const store = createActivityStore()
     const delays: number[] = []
     const callbacks: Array<() => void> = []
     const onSaveFailed = vi.fn()
@@ -257,6 +380,8 @@ describe('activity history sync', () => {
         clearTimeout: () => undefined
       }
     })
+    await startup(store, api, sync)
+    fail = true
     const a = record()
     const b = record()
     store.record(a)
@@ -276,45 +401,44 @@ describe('activity history sync', () => {
     sync.stop()
   })
 
-  it('clears the database in one call and drops queued changes', async () => {
+  it('clear empties the database, the loaded pages and the summary', async () => {
     const database = openDatabase()
     database.replaceActivityHistory({ records: [record(), record()], legacyHistoryMayBeIncomplete: true })
     const api = databaseApi(database)
-    const update = vi.spyOn(api, 'update')
-    const store = await loadedStore(api)
+    const store = createActivityStore()
     const sync = startActivitySync(store, api, { onSaveFailed: () => undefined, timers: manualTimers })
+    await startup(store, api, sync)
+    store.refreshPanel()
+    await refreshActivitySummary(store, api)
+    expect(store.getSummary()?.counts.all).toBe(2)
     store.record(record())
     store.clear()
     await sync.flush()
-    expect(update).not.toHaveBeenCalled()
+    expect(api.updates).toEqual([])
     expect(database.getActivityHistory()).toEqual({ records: [], legacyHistoryMayBeIncomplete: false })
     expect(store.getRecords()).toEqual([])
+    expect(store.getPanel().records).toEqual([])
+    expect(store.getSummary()?.counts).toEqual({ all: 0, active: 0, failed: 0 })
     sync.stop()
   })
 
-  it('migrates legacy records with one replace and retries it in full after a failure', async () => {
+  it('migrates legacy localStorage records in front of the stored ones, retrying after a failure', async () => {
     const database = openDatabase()
     const stored = record({ status: 'completed' })
-    database.replaceActivityHistory({ records: [stored], legacyHistoryMayBeIncomplete: false })
+    const both = record({ status: 'completed' })
+    database.replaceActivityHistory({ records: [stored, both], legacyHistoryMayBeIncomplete: false })
     let fail = true
     const api = databaseApi(database, () => fail)
     const legacyRecord = record({ status: 'completed' })
-    const store = createActivityStore([legacyRecord], true)
-    await loadActivityHistory(
-      store,
-      api,
-      { records: [legacyRecord], historyMayBeIncomplete: true },
-      { onReadFailed: () => undefined, onSaveFailed: () => undefined, isActive: () => true }
-    )
-    expect(store.getRecords()).toEqual([legacyRecord, stored])
-    expect(store.getOutbox()).toEqual([{ type: 'replace' }])
-    fail = false
+    const store = createActivityStore([legacyRecord, both])
     const sync = startActivitySync(store, api, { onSaveFailed: () => undefined, timers: manualTimers })
+    await startup(store, api, sync, new Set(), [legacyRecord, both], true)
+    fail = false
     await sync.flush()
-    expect(database.getActivityHistory()).toEqual({
-      records: [legacyRecord, stored],
-      legacyHistoryMayBeIncomplete: true
-    })
+    await loadFirstActivityPage(store, api)
+    const expected = mergeActivityRecords([legacyRecord, both], [stored, both])
+    expect(database.getActivityHistory()).toEqual({ records: expected, legacyHistoryMayBeIncomplete: true })
+    expect(store.getRecords()).toEqual(expected)
     sync.stop()
   })
 })

@@ -1,8 +1,9 @@
 import { Activity, ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
-import { memo, useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
 import type {
+  ActivityHistorySummary,
   AssistantProject,
   TokenUsageSummary
 } from '../../shared/assistant-contracts'
@@ -41,7 +42,23 @@ const activityRenderBatchSize = 500
 
 export type ActivityPanelProps = {
   projects?: readonly AssistantProject[]
+  /**
+   * The records to show, newest first. With `paging` they are the loaded
+   * pages of `paging.filter`; without, the whole history.
+   */
   records: readonly ActivityRecord[]
+  /**
+   * Paged history (PERF-15): counts, titles and conversation status come
+   * from `summary`, computed by Main over the whole history; "load more"
+   * and filter changes go through the callbacks.
+   */
+  paging?: {
+    filter: ActivityFilter
+    summary?: ActivityHistorySummary
+    hasMore: boolean
+    onFilterChange: (filter: ActivityFilter) => void
+    onLoadMore: () => void
+  }
   tokenUsage: TokenUsageSummary
   onClear: () => void
   onOpenConversation: (conversationId: string) => void
@@ -187,11 +204,15 @@ function getConversationTitles(
   return conversationTitles
 }
 
-function groupActivityRecordsByProject(
-  records: readonly ActivityRecord[],
+type ConversationFacts = {
+  titles: ReadonlyMap<string, string>
+  status: (conversationId: string, shown: readonly ActivityRecord[]) => ActivityRecord['status']
+}
+
+/** Titles and status from the whole list (unpaged). */
+function conversationFactsFromRecords(
   allRecords: readonly ActivityRecord[]
-): ProjectActivityGroup[] {
-  const conversationTitles = getConversationTitles(allRecords)
+): ConversationFacts {
   const allConversationRecords = new Map<string, ActivityRecord[]>()
   for (const record of allRecords) {
     const conversationRecords =
@@ -199,6 +220,35 @@ function groupActivityRecordsByProject(
     conversationRecords.push(record)
     allConversationRecords.set(record.conversationId, conversationRecords)
   }
+  return {
+    titles: getConversationTitles(allRecords),
+    status: (conversationId, shown) =>
+      conversationStatus(allConversationRecords.get(conversationId) ?? shown)
+  }
+}
+
+/** Titles and status Main computed over the whole history; loaded records fill gaps. */
+function conversationFactsFromSummary(
+  summary: ActivityHistorySummary,
+  loaded: readonly ActivityRecord[]
+): ConversationFacts {
+  const fallback = conversationFactsFromRecords(loaded)
+  const titles = new Map(fallback.titles)
+  for (const [conversationId, facts] of Object.entries(summary.conversations)) {
+    if (facts.title !== undefined) titles.set(conversationId, facts.title)
+  }
+  return {
+    titles,
+    status: (conversationId, shown) =>
+      summary.conversations[conversationId]?.status ?? fallback.status(conversationId, shown)
+  }
+}
+
+function groupActivityRecordsByProject(
+  records: readonly ActivityRecord[],
+  facts: ConversationFacts
+): ProjectActivityGroup[] {
+  const conversationTitles = facts.titles
   const projectGroups = new Map<
     string,
     {
@@ -231,9 +281,7 @@ function groupActivityRecordsByProject(
           conversationTitles.get(conversationId) ?? items[0]!.title,
         records: items,
         latestAt: Math.max(...items.map((record) => record.createdAt)),
-        status: conversationStatus(
-          allConversationRecords.get(conversationId) ?? items
-        )
+        status: facts.status(conversationId, items)
       })
     )
     return {
@@ -254,13 +302,23 @@ export const ActivityPanel = memo(function ActivityPanel({
   tokenUsage,
   onClear,
   onOpenConversation,
-  onRefresh
+  onRefresh,
+  paging
 }: ActivityPanelProps): React.JSX.Element {
   const { t, i18n } = useTranslation('activity')
   const { t: tWorkspace } = useTranslation('workspace')
   const [activeView, setActiveView] =
     useState<ActivityView>('tasks')
-  const [filter, setFilter] = useState<ActivityFilter>('all')
+  const [localFilter, setLocalFilter] = useState<ActivityFilter>('all')
+  const filter = paging?.filter ?? localFilter
+  const onFilterChange = paging?.onFilterChange
+  const setFilter = useCallback(
+    (next: ActivityFilter): void => {
+      if (onFilterChange) onFilterChange(next)
+      else setLocalFilter(next)
+    },
+    [onFilterChange]
+  )
   const [tokenGroup, setTokenGroup] =
     useState<Exclude<TokenUsageGroup, 'source'>>('project')
   const [systemTokenGroup, setSystemTokenGroup] =
@@ -414,6 +472,7 @@ export const ActivityPanel = memo(function ActivityPanel({
     }),
     [projectDisplayNames, tokenUsage]
   )
+  const summary = paging?.summary
   const matchingRecords = useMemo(
     () => displayRecords.filter((record) => matchesFilter(record, filter)),
     [displayRecords, filter]
@@ -422,9 +481,16 @@ export const ActivityPanel = memo(function ActivityPanel({
     () => matchingRecords.slice(0, visibleRecordCount),
     [matchingRecords, visibleRecordCount]
   )
+  const conversationFacts = useMemo(
+    () =>
+      summary
+        ? conversationFactsFromSummary(summary, displayRecords)
+        : conversationFactsFromRecords(displayRecords),
+    [displayRecords, summary]
+  )
   const projectGroups = useMemo(
-    () => groupActivityRecordsByProject(filteredRecords, displayRecords),
-    [displayRecords, filteredRecords]
+    () => groupActivityRecordsByProject(filteredRecords, conversationFacts),
+    [conversationFacts, filteredRecords]
   )
   const timelineBounds = useMemo(() => {
     const timestamps = filteredRecords.map((record) => record.createdAt)
@@ -450,12 +516,23 @@ export const ActivityPanel = memo(function ActivityPanel({
   const selectedTimelineRecord = filteredRecords.find(
     (record) => record.id === selectedTimelineRecordId
   )
-  const conversationTitles = useMemo(
-    () => getConversationTitles(displayRecords),
-    [displayRecords]
-  )
-  const activeCount = displayRecords.filter(isActive).length
-  const failedCount = displayRecords.filter(isFailed).length
+  const conversationTitles = conversationFacts.titles
+  // Before the first summary arrives, the loaded records are the best estimate.
+  const totalCount = summary?.counts.all ?? displayRecords.length
+  const activeCount =
+    summary?.counts.active ?? displayRecords.filter(isActive).length
+  const failedCount =
+    summary?.counts.failed ?? displayRecords.filter(isFailed).length
+  const matchingTotal =
+    filter === 'all' ? totalCount : filter === 'active' ? activeCount : failedCount
+  // Records of this filter that exist but are not shown yet.
+  const remainingCount = paging
+    ? Math.max(
+        matchingTotal - filteredRecords.length,
+        matchingRecords.length - filteredRecords.length,
+        paging.hasMore ? 1 : 0
+      )
+    : matchingRecords.length - filteredRecords.length
   const filters: ReadonlyArray<{
     value: ActivityFilter
     label: string
@@ -463,8 +540,8 @@ export const ActivityPanel = memo(function ActivityPanel({
     {
       value: 'all',
       label: t('filters.all', {
-        count: displayRecords.length,
-        formattedCount: formatCount(displayRecords.length)
+        count: totalCount,
+        formattedCount: formatCount(totalCount)
       })
     },
     {
@@ -691,19 +768,19 @@ export const ActivityPanel = memo(function ActivityPanel({
       />
       <DestructiveConfirmActions
         confirmAriaLabel={t('clear.confirmAriaLabel', {
-          count: displayRecords.length,
-          formattedCount: formatCount(displayRecords.length)
+          count: totalCount,
+          formattedCount: formatCount(totalCount)
         })}
         confirmLabel={t('clear.confirmLabel', {
-          count: displayRecords.length,
-          formattedCount: formatCount(displayRecords.length)
+          count: totalCount,
+          formattedCount: formatCount(totalCount)
         })}
         confirming={confirmingClear}
-        disabled={!confirmingClear && displayRecords.length === 0}
+        disabled={!confirmingClear && totalCount === 0 && displayRecords.length === 0}
         icon={<Trash2 aria-hidden="true" size={15} />}
         message={t('clear.message', {
-          count: displayRecords.length,
-          formattedCount: formatCount(displayRecords.length)
+          count: totalCount,
+          formattedCount: formatCount(totalCount)
         })}
         onCancel={() => setConfirmingClear(false)}
         onConfirm={() => {
@@ -739,20 +816,26 @@ export const ActivityPanel = memo(function ActivityPanel({
     />
   )
   const loadMoreRecords =
-    filteredRecords.length < matchingRecords.length ? (
+    remainingCount > 0 ? (
       <button
         className="secondary-button activity-panel__load-more"
-        onClick={() =>
+        onClick={() => {
+          // Show the next loaded batch at once; load another page behind it.
           setVisibleRecordCount(
             (current) => current + activityRenderBatchSize
           )
-        }
+          if (
+            paging?.hasMore &&
+            matchingRecords.length <
+              visibleRecordCount + 2 * activityRenderBatchSize
+          ) {
+            paging.onLoadMore()
+          }
+        }}
         type="button"
       >
         {t('records.loadMore', {
-          remaining: formatCount(
-            matchingRecords.length - filteredRecords.length
-          )
+          remaining: formatCount(remainingCount)
         })}
       </button>
     ) : null

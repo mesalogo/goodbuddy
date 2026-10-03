@@ -120,21 +120,78 @@ export function applyActivityChanges(
   changes: readonly ActivityHistoryChange[]
 ): ActivityRecord[] {
   let next = [...list]
+  /** Indexes of shown records (first occurrences) that match. */
+  const shown = (match: (record: ActivityRecord) => boolean): number[] => {
+    const seen = new Set<string>()
+    const indexes: number[] = []
+    next.forEach((record, index) => {
+      if (!seen.has(record.id) && match(record)) indexes.push(index)
+      seen.add(record.id)
+    })
+    return indexes
+  }
+  const updateAt = (indexes: readonly number[], update: (record: ActivityRecord) => ActivityRecord): void => {
+    const set = new Set(indexes)
+    next = next.map((record, index) => (set.has(index) ? update(record) : record))
+  }
+  const removeIds = (ids: ReadonlySet<string>): void => {
+    next = next.filter((record) => !ids.has(record.id))
+  }
   for (const change of changes) {
-    if (change.type === 'remove') {
-      next = next.filter((item) => item.id !== change.id)
-      continue
+    switch (change.type) {
+      case 'remove':
+        removeIds(new Set([change.id]))
+        break
+      case 'remove-duplicates':
+        next = firstOccurrences(next)
+        break
+      case 'upsert': {
+        const index = next.findIndex((item) => item.id === change.record.id)
+        if (index < 0) next = [change.record, ...next]
+        else if (change.position === 'front') next = [change.record, ...next.filter((_, at) => at !== index)]
+        else next = next.map((item, at) => (at === index ? change.record : item))
+        break
+      }
+      case 'upsert-call': {
+        const incoming = change.record
+        const [index] = shown((record) => record.kind === incoming.kind &&
+          record.requestId === incoming.requestId && record.callId === incoming.callId)
+        if (index === undefined) {
+          next = [incoming, ...next]
+          break
+        }
+        const existing = next[index]!
+        const unchanged = existing.conversationId === incoming.conversationId && existing.title === incoming.title &&
+          existing.detail === incoming.detail && existing.status === incoming.status
+        if (unchanged && index === 0) break
+        next = [
+          unchanged ? existing : { ...incoming, id: existing.id, createdAt: existing.createdAt, scope: existing.scope },
+          ...next.filter((_, at) => at !== index)
+        ]
+        break
+      }
+      case 'update-request':
+        updateAt(shown((record) => record.requestId === change.requestId && record.kind === 'request'),
+          (record) => ({ ...record, status: change.status, detail: change.detail ?? record.detail }))
+        break
+      case 'resolve-approval':
+        updateAt(shown((record) => record.conversationId === change.conversationId &&
+          record.kind === 'approval' && record.status === 'pending').slice(0, 1),
+        (record) => ({ ...record, status: change.status, detail: `${record.detail}\n${change.detailLine}` }))
+        break
+      case 'settle-request':
+        updateAt(shown((record) => record.requestId === change.requestId && record.kind !== 'request' &&
+          isActive(record)),
+        (record) => ({ ...record, status: change.status, detail: `${record.detail}\n${change.detailLine}` }))
+        break
+      case 'remove-request':
+        removeIds(new Set(shown((record) => record.requestId === change.requestId).map((index) => next[index]!.id)))
+        break
+      case 'remove-call':
+        removeIds(new Set(shown((record) => record.requestId === change.requestId && record.kind === 'tool' &&
+          record.callId === change.callId).map((index) => next[index]!.id)))
+        break
     }
-    if (change.type === 'remove-duplicates') {
-      const seen = new Set<string>()
-      next = next.filter((item) => !seen.has(item.id) && Boolean(seen.add(item.id)))
-      continue
-    }
-    const index = next.findIndex((item) => item.id === change.record.id)
-    if (index < 0) next = [change.record, ...next]
-    else if (change.position === 'front') {
-      next = [change.record, ...next.filter((_, at) => at !== index)]
-    } else next = next.map((item, at) => (at === index ? change.record : item))
   }
   return next
 }
