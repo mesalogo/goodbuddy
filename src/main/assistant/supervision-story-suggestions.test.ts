@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it, vi } from 'vitest'
-import { AssistantDatabase } from './assistant-database'
+import { ASSISTANT_DATABASE_SCHEMA_VERSION, AssistantDatabase } from './assistant-database'
 import { extractExperiences } from './supervision-experiences'
 import { assignStories } from './supervision-stories'
 import { deriveSuggestions } from './supervision-suggester'
@@ -168,6 +168,6 @@ it('upgrades schema 55 suggestions to 56 without losing rows', async () => {
   cleanups.push(async () => { db.close(); await rm(directory, { recursive: true, force: true }) })
   expect(db.supervisionSuggestions().get('keep')).toMatchObject({ kind: 'open_item', title: 'Keep', storyId: null })
   const check = new DatabaseSync(path)
-  expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(56)
+  expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
   check.close()
 })
