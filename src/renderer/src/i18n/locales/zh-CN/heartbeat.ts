@@ -87,7 +87,7 @@ export const heartbeat = {
   supervisor: {
     automatic: '智能心跳',
     projectScope: '项目：{{names}}',
-    canvasTitle: '工作的来路', canvasNote: '沿外圈逆时针阅读 · 选择节点，查看知识与来源', readingGuide: '如何读图',
+    canvasTitle: '事件与知识', generatedAt: '生成于 {{time}}', canvasNote: '沿外圈逆时针阅读 · 选择节点，查看知识与来源', readingGuide: '如何读图',
     visibleCounts: '画布中 {{events}} 个事件 / {{entities}} 个实体', showAll: '显示全部关联', connections: '图谱关联',
     loadingHint: '正在读取已保存的回顾、事件与来源。', unavailableHint: '请重新打开应用后重试；已保存的回顾仍保留在本机。',
     selection: '图谱选择', canvas: '故事图谱画布', inspector: '详情与来源',
@@ -113,11 +113,21 @@ export const heartbeat = {
     },
     graph3d: {
       mode: '图谱视图', modes: { flat: '平铺', spiral: '时间螺旋' },
-      levels: '木片层级', all: '全部', views: '视角', canvas: '时间螺旋。数字键 1、2、3 切换视角，方向键旋转，Esc 返回上一层；下方列表提供同样的木片。',
+      levels: '木片层级', all: '全部', views: '视角', canvas: '时间螺旋。数字键 1、2、3 切换视角，方向键旋转，Esc 返回上一层；工具栏的列表提供同样的内容。',
       view: { oblique: '斜俯视', side: '侧视', top: '俯视', free: '自由' },
-      staves: '当前层的木片',
-      experiences: '跨木片的经验',
-      legend: '高度为时间，一圈 {{turn}}（共 {{count}} 圈）；半径为当时的对话密度，只表示投入集中程度。木片上下跨度为故事的起止时间。桶外的菱形是经验，弧线从形成它的木片连到后来用上它的木片。',
+      staves: '当前层级的故事',
+      experiences: '跨故事的经验',
+      scale: '一圈 {{turn}} · 共 {{count}} 圈',
+      legendTitle: '图例', legendClose: '关闭图例',
+      legendItems: {
+        time: '高度为时间，{{scale}}。',
+        radius: '螺旋半径为当时的对话密度，只表示投入集中程度。',
+        stave: '木片上下跨度为故事的起止时间。',
+        experience: '桶外菱形是经验，弧线从形成它的木片连到后来用上它的木片。'
+      },
+      // Picker buttons name what the list holds at the current level.
+      childLevels: { project: '项目', feature: '功能', thread: '子线索', cross: '跨项目故事', mixed: '项目与跨项目故事' },
+      pickChildren: '{{level}} · {{count}}', pickExperience: '经验 · {{count}}',
       turns: { 3: '3 小时', 6: '6 小时', 12: '12 小时', 24: '1 天', 168: '1 周', 720: '1 个月', 2160: '1 个季度', 8760: '1 年' },
       unsupported: '当前设备不支持三维显示，请使用平铺视图和左侧故事列表。',
       failed: '时间螺旋没有加载成功，可能是系统正忙。左侧列表和平铺视图仍可使用。',

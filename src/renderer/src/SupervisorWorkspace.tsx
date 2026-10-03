@@ -1,7 +1,7 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ReactNode } from 'react'
-import { BookOpen, Ellipsis, Network, RefreshCw, X } from 'lucide-react'
+import { BookOpen, ChevronLeft, ChevronRight, Ellipsis, Info, Network, RefreshCw, X } from 'lucide-react'
 import { AnchoredMenu } from './AnchoredMenu'
 import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
 import { EmptyState, PageTabs } from './WorkspacePrimitives'
@@ -42,6 +42,9 @@ type Props = {
   onOpenConversation?: (conversationId: string) => void
   onTabChange?: (tab: 'overview' | 'graph' | 'plans' | 'activity' | 'settings') => void
 }
+const GRAPH_MIN_HEIGHT = 660
+// Stable empty value: a new array per render would rebuild the 3D scene on every refresh.
+const noAttention: NonNullable<SupervisionGraphView['attention']> = []
 const emptyGraph: SupervisionGraphView = {
   storyLine: null,
   events: [],
@@ -84,6 +87,7 @@ export function SupervisorWorkspace({
   const [selection, setSelection] = useState<Selection | undefined>(graphNavigation?.focus)
   const [listTab, setListTab] = useState<Selection['kind']>(graphNavigation?.focus?.kind ?? 'event')
   const [graphMode, setGraphMode] = useState<'flat' | 'spiral'>('flat')
+  const [flatLegendOpen, setFlatLegendOpen] = useState(false)
   const [source, setSource] = useState<{
     id: string
     title: string
@@ -491,7 +495,9 @@ export function SupervisorWorkspace({
     : undefined
   const storyState = useSupervisionStories(graphScope, tab === 'graph', graph)
   const graphLayoutRef = useRef<HTMLDivElement>(null)
-  useFillHeight(graphLayoutRef, tab === 'graph' && graph.events.length > 0)
+  // The graph column does not scroll: the graph scales to the height left in the window. Below 660px the flat
+  // graph's labels would drop under 11px, so very short windows keep that height and scroll the page instead.
+  useFillHeight(graphLayoutRef, tab === 'graph' && graph.events.length > 0, 24, GRAPH_MIN_HEIGHT)
   // The work review reads the selected result's own scope, so it matches the period shown.
   const recapStories = useSupervisionStories(latest?.scope, tab === 'overview', latest?.id)
   const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
@@ -694,20 +700,9 @@ export function SupervisorWorkspace({
           )}
           {tab === 'graph' && (
             <>
-              <div className="supervisor-workspace__action-bar">
-                {(graphScope || latest) && <div>
-                  {graphScope && (
-                    <p>
-                      {t('supervisor.graphScope')}: {scopeText(graphScope)}
-                    </p>
-                  )}
-                  {latest && (
-                    <p>
-                      {date(latest.timeRange.from)} –{' '}
-                      {date(latest.timeRange.to)} · {date(latest.createdAt)}
-                    </p>
-                  )}
-                </div>}
+              {/* With a graph, scope and refresh live in the canvas heading; without one, keep refresh reachable here. */}
+              {!graph.events.length && <div className="supervisor-workspace__action-bar">
+                <span />
                 <button
                   className="secondary-button"
                   disabled={busy}
@@ -715,7 +710,7 @@ export function SupervisorWorkspace({
                 >
                   {t('center.actions.refresh')}
                 </button>
-              </div>
+              </div>}
               {!loading && !loadError && !graph.events.length && (
                 <EmptyState
                   icon={<Network size={28} />}
@@ -846,13 +841,26 @@ export function SupervisorWorkspace({
                     aria-label={t('supervisor.canvas')}
                   >
                     <div className="supervisor-workspace__canvas-heading">
-                      <strong>{t('supervisor.canvasTitle')}</strong>
-                      <span>
-                        {t('supervisor.counts', {
-                          events: layout.events.length,
-                          entities: layout.entities.length
-                        })}
-                      </span>
+                      {/* Title, then one line with scope, period, generation time and counts. */}
+                      <div className="supervisor-workspace__canvas-title">
+                        <strong>{t('supervisor.canvasTitle')}</strong>
+                        <span>
+                          {[
+                            graphScope && `${t('supervisor.graphScope')}: ${scopeText(graphScope)}`,
+                            latest && `${date(latest.timeRange.from)} – ${date(latest.timeRange.to)}`,
+                            latest && t('supervisor.generatedAt', { time: date(latest.createdAt) }),
+                            t('supervisor.counts', { events: layout.events.length, entities: layout.entities.length })
+                          ].filter(Boolean).join(' · ')}
+                        </span>
+                      </div>
+                      <button type="button" className="icon-button" aria-label={t('center.actions.refresh')} title={t('center.actions.refresh')}
+                        disabled={busy} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden="true" /></button>
+                      {graphMode === 'flat' && <div className="supervisor-workspace__canvas-tools">
+                        {selection && <button type="button" className="link-button" onClick={() => { setSelection(undefined); setSource(undefined) }}>
+                          {t('supervisor.showAll')}</button>}
+                        <button type="button" className="secondary-button" aria-expanded={flatLegendOpen} aria-controls={`${graphId}-legend`}
+                          onClick={() => setFlatLegendOpen(value => !value)}><Info size={14} aria-hidden="true" />{t('supervisor.graph3d.legendTitle')}</button>
+                      </div>}
                       {storyState.available && <div role="group" aria-label={t('supervisor.graph3d.mode')} className="supervisor-workspace__graph-mode">
                         {(['flat', 'spiral'] as const).map((mode) => <button key={mode} type="button" className="secondary-button"
                           aria-pressed={graphMode === mode} onClick={() => setGraphMode(mode)}>{t(`supervisor.graph3d.modes.${mode}`)}</button>)}
@@ -865,7 +873,7 @@ export function SupervisorWorkspace({
                         <button type="button" className="link-button" onClick={() => setGraphMode('flat')}>{t('supervisor.graph3d.modes.flat')}</button>
                       </div>}>
                       <Suspense fallback={<p className="supervisor-workspace__muted" role="status">{t('supervisor.loading')}</p>}>
-                        <StoryGraph3D stories={storyState.view.stories} attention={graph.attention ?? []}
+                        <StoryGraph3D stories={storyState.view.stories} attention={graph.attention ?? noAttention}
                           selectedEventId={selection?.kind === 'event' ? selection.id : undefined}
                           onSelectEvent={(id) => { if (layout.eventMap.has(id)) select({ kind: 'event', id }) }}
                           onSelectStory={(id) => select({ kind: 'story', id })}
@@ -1057,79 +1065,42 @@ export function SupervisorWorkspace({
                           ))}
                         </svg>
                       </div>
-                      <div className="supervisor-workspace__canvas-note">
-                        {t('supervisor.canvasNote')}
-                      </div>
-                      <details className="supervisor-workspace__reading-guide">
-                        <summary>
-                          {t('supervisor.readingGuide')} ·{' '}
-                          {t('supervisor.visibleCounts', {
-                            events: layout.visibleEvents.length,
-                            entities: layout.visibleEntities.length
-                          })}
-                        </summary>
-                        <p id={`${graphId}-caption`}>
-                          {t('supervisor.canvasCaption')}
-                        </p>
-                      </details>
+                      <p id={`${graphId}-caption`} className="sr-only">{t('supervisor.canvasCaption')}</p>
+                      {/* Reading aids float on the canvas so the graph keeps the whole column. */}
+                      <span className="supervisor-workspace__map-hint" aria-hidden="true">
+                        {t('supervisor.visibleCounts', { events: layout.visibleEvents.length, entities: layout.visibleEntities.length })}
+                      </span>
+                      {flatLegendOpen && <div className="supervisor-workspace__map-legend" id={`${graphId}-legend`} role="note">
+                        <div className="supervisor-workspace__map-legend-head">
+                          <strong>{t('supervisor.graph3d.legendTitle')}</strong>
+                          <button type="button" className="icon-button" aria-label={t('supervisor.graph3d.legendClose')}
+                            title={t('supervisor.graph3d.legendClose')} onClick={() => setFlatLegendOpen(false)}><X size={14} aria-hidden="true" /></button>
+                        </div>
+                        <ul className="supervisor-workspace__legend" aria-label={t('supervisor.legendLabel')}>
+                          <li><i className="supervisor-workspace__legend-event" aria-hidden="true" />{t('supervisor.events')}</li>
+                          <li><i className="supervisor-workspace__legend-entity" aria-hidden="true" />{t('supervisor.entities')}</li>
+                          <li><i className="supervisor-workspace__legend-link" aria-hidden="true" />{t('supervisor.eventImpact')}</li>
+                          <li><i className="supervisor-workspace__legend-relation" aria-hidden="true" />{t('supervisor.relations')}</li>
+                        </ul>
+                        <p>{t('supervisor.canvasNote')}</p>
+                        <p>{t('supervisor.canvasCaption')}</p>
+                      </div>}
                     </figure>
-                    <ul
-                      className="supervisor-workspace__legend"
-                      aria-label={t('supervisor.legendLabel')}
-                    >
-                      <li>
-                        <i
-                          className="supervisor-workspace__legend-event"
-                          aria-hidden="true"
-                        />
-                        {t('supervisor.events')}
-                      </li>
-                      <li>
-                        <i
-                          className="supervisor-workspace__legend-entity"
-                          aria-hidden="true"
-                        />
-                        {t('supervisor.entities')}
-                      </li>
-                      <li>
-                        <i
-                          className="supervisor-workspace__legend-link"
-                          aria-hidden="true"
-                        />
-                        {t('supervisor.eventImpact')}
-                      </li>
-                      <li>
-                        <i
-                          className="supervisor-workspace__legend-relation"
-                          aria-hidden="true"
-                        />
-                        {t('supervisor.relations')}
-                      </li>
-                      {selection && (
-                        <li>
-                          <button
-                            className="link-button"
-                            onClick={() => {
-                              setSelection(undefined)
-                              setSource(undefined)
-                            }}
-                          >
-                            {t('supervisor.showAll')}
-                          </button>
-                        </li>
-                      )}
-                    </ul>
                     {stageEvent && (
                       <div className="supervisor-workspace__playback">
-                        <div className="supervisor-workspace__section-heading">
-                          <label htmlFor={`${graphId}-stage`}>
-                            {t('supervisor.playback')}
-                          </label>
-                          <output htmlFor={`${graphId}-stage`}>
-                            {stage + 1} / {layout.events.length} ·{' '}
-                            {date(stageEvent.occurred_at)}
-                          </output>
-                        </div>
+                        <label htmlFor={`${graphId}-stage`}>
+                          {t('supervisor.playback')}
+                        </label>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={t('supervisor.previousStage')}
+                          title={t('supervisor.previousStage')}
+                          disabled={stage <= 0}
+                          onClick={() => selectStage(stage - 1)}
+                        >
+                          <ChevronLeft size={16} aria-hidden="true" />
+                        </button>
                         <input
                           id={`${graphId}-stage`}
                           type="range"
@@ -1143,28 +1114,27 @@ export function SupervisorWorkspace({
                             selectStage(Number(event.target.value))
                           }
                         />
-                        <div className="supervisor-workspace__stage-actions">
-                          <button
-                            className="secondary-button"
-                            disabled={stage <= 0}
-                            onClick={() => selectStage(stage - 1)}
-                          >
-                            {t('supervisor.previousStage')}
-                          </button>
-                          <button
-                            className="link-button"
-                            onClick={() => selectStage(stage)}
-                          >
-                            {stageEvent.title}
-                          </button>
-                          <button
-                            className="secondary-button"
-                            disabled={stage >= layout.events.length - 1}
-                            onClick={() => selectStage(stage + 1)}
-                          >
-                            {t('supervisor.nextStage')}
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={t('supervisor.nextStage')}
+                          title={t('supervisor.nextStage')}
+                          disabled={stage >= layout.events.length - 1}
+                          onClick={() => selectStage(stage + 1)}
+                        >
+                          <ChevronRight size={16} aria-hidden="true" />
+                        </button>
+                        <output htmlFor={`${graphId}-stage`}>
+                          {stage + 1} / {layout.events.length} · {date(stageEvent.occurred_at)}
+                        </output>
+                        <button
+                          type="button"
+                          className="link-button"
+                          title={stageEvent.title}
+                          onClick={() => selectStage(stage)}
+                        >
+                          {stageEvent.title}
+                        </button>
                       </div>
                     )}
                     </>}

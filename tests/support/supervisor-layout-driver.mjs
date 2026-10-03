@@ -600,7 +600,7 @@ app
     }
     await open(false)
     await js(
-      'document.querySelector(".supervisor-workspace__legend .link-button").click()'
+      'document.querySelector(".supervisor-workspace__canvas-tools .link-button").click()'
     )
     await wait(
       '!document.querySelector(".supervisor-workspace__map.has-selection")'
@@ -657,7 +657,7 @@ app
           report.texts.every(
             (text) => text.inSvg && text.painted && text.screenFontSize >= 11
           ),
-          'Clipped or invisible SVG text'
+          `Clipped or invisible SVG text at ${width}: ${JSON.stringify(report.texts.filter(text => !(text.inSvg && text.painted && text.screenFontSize >= 11)).slice(0, 3))} svg=${JSON.stringify(report.svg)}`
         )
         for (const [index, a] of report.texts.entries()) {
           for (const b of report.texts.slice(index + 1)) {
@@ -825,7 +825,7 @@ app
       await writeFile(join(artifacts, `dense-bottom-${width}.png`), (await win.webContents.capturePage()).toPNG())
     }
     // The graph row fills the window down to a steady bottom margin; each column scrolls on its own.
-    for (const [width, height] of [[1440, 900], [1440, 700], [1024, 800]]) {
+    for (const [width, height] of [[1440, 1200], [1440, 900], [1440, 700], [1024, 1100]]) {
       win.setContentSize(width, height)
       await settle()
       const fill = await js(`(() => {
@@ -836,24 +836,44 @@ app
         const columns = [...layout.children].map(column => {
           const scroller = column.matches('.supervisor-workspace__graph-list') ? column.querySelector('[role=tabpanel]') : column;
           const r = column.getBoundingClientRect();
-          return { name: column.className.split(' ')[0], top: r.top, bottom: r.bottom, scrolls: getComputedStyle(scroller).overflowY,
-            clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight };
+          return { name: column.className.split(' ')[0], canvas: column.matches('.supervisor-workspace__graph-canvas'), top: r.top, bottom: r.bottom,
+            scrolls: getComputedStyle(scroller).overflowY, clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight };
         });
+        const canvas = layout.querySelector('.supervisor-workspace__graph-canvas'), map = layout.querySelector('.supervisor-workspace__map').getBoundingClientRect();
+        const playback = layout.querySelector('.supervisor-workspace__playback')?.getBoundingClientRect();
+        const graphArea = { map: { top: map.top, bottom: map.bottom, height: map.height }, playbackBottom: playback?.bottom, canvasBottom: canvas.getBoundingClientRect().bottom };
         // Bottom of the first grid row (the side-by-side columns), measured from the window bottom.
         const rowBottom = Math.max(...columns.filter(column => Math.abs(column.top - columns[0].top) < 1).map(column => column.bottom));
         return { bottomGap: shellBox.bottom - rowBottom, wrapped: columns.length - columns.filter(column => Math.abs(column.top - columns[0].top) < 1).length,
-          height: box.height, pageScroll: shell.scrollHeight - shell.clientHeight, columns };
+          height: box.height, pageScroll: shell.scrollHeight - shell.clientHeight, columns, graphArea };
       })()`)
       reports.push({ fill: { width, height, ...fill } })
-      await writeFile(join(artifacts, `fill-${width}x${height}.json`), JSON.stringify({ width, height, bottomGap: Math.round(fill.bottomGap), wrapped: fill.wrapped, pageScroll: fill.pageScroll, rowHeight: Math.round(fill.columns[0].bottom - fill.columns[0].top) }))
-      assert(fill.bottomGap >= 20 && fill.bottomGap <= 40, `Graph must stop above the window bottom: ${JSON.stringify(fill)}`)
-      // Three columns fit the window with no page scroll; at two columns only the wrapped detail extends the page.
-      if (!fill.wrapped) assert(fill.pageScroll <= 1, `Page must not scroll at three columns: ${JSON.stringify(fill)}`)
+      await writeFile(join(artifacts, `fill-${width}x${height}.json`), JSON.stringify({ width, height, bottomGap: Math.round(fill.bottomGap), wrapped: fill.wrapped, pageScroll: fill.pageScroll, rowHeight: Math.round(fill.columns[0].bottom - fill.columns[0].top), mapHeight: Math.round(fill.graphArea.map.height) }))
+      // At the 660px minimum (labels stay ≥ 11px) a short window scrolls the page; otherwise the row ends at the bottom margin.
+      const atMinimum = Math.abs(fill.columns[0].bottom - fill.columns[0].top - 660) < 1
+      if (!atMinimum) {
+        assert(fill.bottomGap >= 20 && fill.bottomGap <= 40, `Graph must stop above the window bottom: ${JSON.stringify(fill)}`)
+        // Three columns fit the window with no page scroll; at two columns only the wrapped detail extends the page.
+        if (!fill.wrapped) assert(fill.pageScroll <= 1, `Page must not scroll at three columns: ${JSON.stringify(fill)}`)
+      }
       const sideBySide = fill.columns.filter(column => Math.abs(column.top - fill.columns[0].top) < 1)
       for (const column of sideBySide) {
         assert(Math.abs(column.bottom - sideBySide[0].bottom) < 1, `Columns must share the row height: ${JSON.stringify(fill)}`)
-        assert(['auto', 'scroll'].includes(column.scrolls), `Column must scroll on its own: ${JSON.stringify(column)}`)
+        // The graph column has no scroll bar: the graph takes the height left after the heading and event bar.
+        if (column.canvas) assert(column.scrollHeight <= column.clientHeight + 1 && column.scrolls === 'hidden', `Graph column must not scroll: ${JSON.stringify(column)}`)
+        else assert(['auto', 'scroll'].includes(column.scrolls), `Column must scroll on its own: ${JSON.stringify(column)}`)
       }
+      if (width === 1440) {
+        const heading = await js(`(() => {
+          const title = document.querySelector('.supervisor-workspace__canvas-title'), [name, meta] = title.children;
+          return { name: name.textContent, meta: meta.textContent, metaBelow: meta.getBoundingClientRect().top >= name.getBoundingClientRect().bottom - 1,
+            actionBarAbove: !!document.querySelector('[role=tabpanel] > .supervisor-workspace__action-bar'), height: document.querySelector('.supervisor-workspace__canvas-heading').getBoundingClientRect().height };
+        })()`)
+        assert(heading.metaBelow && heading.meta.includes('图谱范围') && !heading.actionBarAbove && heading.height <= 80, `Scope line belongs under the canvas title: ${JSON.stringify(heading)}`)
+        reports.push({ heading })
+      }
+      assert(Math.abs((fill.graphArea.playbackBottom ?? fill.graphArea.map.bottom) - fill.graphArea.canvasBottom) <= 1,
+        `Graph area must reach the column bottom: ${JSON.stringify(fill.graphArea)}`)
       await writeFile(join(artifacts, `fill-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG())
     }
     win.setContentSize(1440, 1100)

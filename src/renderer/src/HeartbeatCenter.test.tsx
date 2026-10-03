@@ -257,7 +257,7 @@ describe('HeartbeatCenter', () => {
         }
         expect(within(panel).getByRole('region', { name: t('supervisor.canvas') })).toBeVisible()
         expect(within(panel).getByRole('heading', { name: t('supervisor.inspector') })).toBeVisible()
-        expect(within(panel).getByText(`${t('supervisor.graphScope')}: ${t('center.scope.global')}`)).toBeVisible()
+        expect(within(panel).getByText(new RegExp(`^${t('supervisor.graphScope')}: ${t('center.scope.global')} · `))).toBeVisible()
       }
       if (key === 'activity.title') {
         await screen.findByText(t('activity.empty'))

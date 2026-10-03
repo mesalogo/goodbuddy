@@ -90,7 +90,7 @@ export const heartbeat = {
   supervisor: {
     automatic: 'Smart heartbeat',
     projectScope: 'Project: {{names}}',
-    canvasTitle: 'How the work took shape', canvasNote: 'Read counter-clockwise · Select a node to explore knowledge and sources', readingGuide: 'Reading the graph',
+    canvasTitle: 'Events and knowledge', generatedAt: 'Generated {{time}}', canvasNote: 'Read counter-clockwise · Select a node to explore knowledge and sources', readingGuide: 'Reading the graph',
     visibleCounts: '{{events}} events / {{entities}} entities on canvas', showAll: 'Show all connections', connections: 'Graph connections',
     loadingHint: 'Reading saved reviews, events, and sources.', unavailableHint: 'Reopen the application to try again. Saved reviews remain on this device.',
     selection: 'Graph selection', canvas: 'Story graph canvas', inspector: 'Details and sources',
@@ -116,11 +116,21 @@ export const heartbeat = {
     },
     graph3d: {
       mode: 'Graph view', modes: { flat: 'Flat', spiral: 'Time spiral' },
-      levels: 'Stave levels', all: 'All', views: 'Viewpoint', canvas: 'Time spiral. Keys 1, 2 and 3 switch the viewpoint, arrow keys rotate, Esc goes up a level; the list below offers the same staves.',
+      levels: 'Stave levels', all: 'All', views: 'Viewpoint', canvas: 'Time spiral. Keys 1, 2 and 3 switch the viewpoint, arrow keys rotate, Esc goes up a level; the toolbar lists offer the same items.',
       view: { oblique: 'Oblique', side: 'Side', top: 'Top', free: 'Free' },
-      staves: 'Staves at this level',
-      experiences: 'Experiences across staves',
-      legend: 'Height is time, one turn is {{turn}} ({{count}} turns); radius is conversation density at the time and only shows how concentrated the work was. A stave spans its story from first to last event. Diamonds outside the barrel are experiences; arcs run from the stave they formed in to the stave that later used them.',
+      staves: 'Stories at this level',
+      experiences: 'Experiences across stories',
+      scale: 'One turn {{turn}} · {{count}} turns',
+      legendTitle: 'Legend', legendClose: 'Close legend',
+      legendItems: {
+        time: 'Height is time; {{scale}}.',
+        radius: 'Spiral radius is conversation density at the time and only shows how concentrated the work was.',
+        stave: 'A stave spans its story from first to last event.',
+        experience: 'Diamonds outside the barrel are experiences; arcs run from the stave they formed in to the stave that later used them.'
+      },
+      // Picker buttons name what the list holds at the current level.
+      childLevels: { project: 'Projects', feature: 'Features', thread: 'Sub-threads', cross: 'Cross-project stories', mixed: 'Projects and cross-project stories' },
+      pickChildren: '{{level}} · {{count}}', pickExperience: 'Experiences · {{count}}',
       turns: { 3: '3 hours', 6: '6 hours', 12: '12 hours', 24: '1 day', 168: '1 week', 720: '1 month', 2160: '1 quarter', 8760: '1 year' },
       unsupported: 'This device cannot show 3D. Use the flat view and the story list.',
       failed: 'The time spiral did not load, possibly because the system is busy. The lists and the flat view still work.',

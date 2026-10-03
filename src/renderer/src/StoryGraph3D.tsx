@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Check, ChevronDown, Info, X } from 'lucide-react'
+import { AnchoredMenu } from './AnchoredMenu'
 import { useTranslation } from 'react-i18next'
 import * as THREE from 'three'
 import type { SupervisionAttentionSlot } from '../../shared/supervision-contracts'
@@ -32,16 +34,39 @@ const toneVariables = ['--graph-node-1-border', '--graph-node-2-border', '--grap
 function cssColor(element: Element, variable: string, fallback: string): string {
   return getComputedStyle(element).getPropertyValue(variable).trim() || fallback
 }
+type PickerItem = { id: string; title: string; detail: string; current: boolean; onPick: () => void }
+/** Toolbar picker in the shared anchored-menu style: a title and a secondary line per item. */
+function PickerMenu({ label, button, items }: { label: string; button: string; items: PickerItem[] }) {
+  const [open, setOpen] = useState(false)
+  const anchorRef = useRef<HTMLButtonElement>(null)
+  const id = useId()
+  return <>
+    <button ref={anchorRef} type="button" className="secondary-button story-graph-3d__picker" aria-haspopup="menu" aria-expanded={open}
+      aria-controls={open ? id : undefined} aria-label={`${label}：${button}`} onClick={() => setOpen(value => !value)}>
+      <span>{button}</span><ChevronDown size={14} aria-hidden="true" />
+    </button>
+    {open && <AnchoredMenu anchorRef={anchorRef} id={id} label={label} width={320} className="story-graph-3d__menu" onClose={() => setOpen(false)}>
+      {items.map(item => <button key={item.id} type="button" role="menuitem" aria-current={item.current || undefined}
+        onClick={() => { setOpen(false); anchorRef.current?.focus(); item.onPick() }}>
+        <span><strong>{item.title}</strong><small>{item.detail}</small></span>
+        {item.current && <Check size={14} aria-hidden="true" />}
+      </button>)}
+    </AnchoredMenu>}
+  </>
+}
 function webglAvailable(): boolean {
   try { const canvas = document.createElement('canvas'); return Boolean(canvas.getContext('webgl2') ?? canvas.getContext('webgl')) }
   catch { return false }
 }
 
-export default function StoryGraph3D({ stories, attention, selectedEventId, onSelectEvent, onSelectStory, experiences = noExperiences, selectedExperienceId, onSelectExperience }: Props) {
+export default function StoryGraph3D({ stories, attention: attentionProp, selectedEventId, onSelectEvent, onSelectStory, experiences = noExperiences, selectedExperienceId, onSelectExperience }: Props) {
   const { t, i18n } = useTranslation('heartbeat')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const [supported] = useState(webglAvailable)
+  // Refreshes deliver equal data in new arrays; keep the previous array so the scene is not recreated.
+  const attentionKey = JSON.stringify(attentionProp)
+  const attention = useMemo(() => attentionProp, [attentionKey]) // eslint-disable-line react-hooks/exhaustive-deps
   // Context creation failed or the GPU dropped the context; `attempt` recreates the scene on retry.
   const [failure, setFailure] = useState<'create' | 'lost'>()
   const [attempt, setAttempt] = useState(0)
@@ -50,6 +75,8 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
   const focus = findNode(tree, focusId) ?? tree
   const [view, setView] = useState<ViewName>('oblique')
   const [hovered, setHovered] = useState<string>()
+  const [legendOpen, setLegendOpen] = useState(false)
+  const legendId = useId()
   const camera = useRef<{ yaw: number; tilt: number; zoom: number; pan: number }>({ yaw: VIEWS.oblique.yaw, tilt: VIEWS.oblique.tilt, zoom: 1, pan: 0 })
   const engine = useRef<{ draw: () => void; update: (next: EngineState) => void; dispose: () => void; hit: (x: number, y: number) => { node?: StoryNode; cluster?: StoryCluster; link?: ExperienceLink } | undefined }>(undefined)
   const range = useMemo(() => {
@@ -66,12 +93,18 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
   useEffect(() => {
     const canvas = canvasRef.current, overlay = overlayRef.current
     if (!supported || !canvas || !overlay || !range) return
+    // Each scene draws on a fresh canvas: a canvas whose context was released on dispose cannot give a working context again.
+    // `canvas` stays as the focus and pointer surface.
+    const glCanvas = document.createElement('canvas')
+    glCanvas.className = 'story-graph-3d__gl'
+    glCanvas.setAttribute('aria-hidden', 'true')
+    canvas.before(glCanvas)
     // Under load the browser can refuse a new WebGL context; show a local error instead of failing the page.
     let renderer: THREE.WebGLRenderer
-    try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true }) }
-    catch (error) { console.error('GoodBuddy 3D view failed', error); queueMicrotask(() => setFailure('create')); return }
+    try { renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true, alpha: true }) }
+    catch (error) { glCanvas.remove(); console.error('GoodBuddy 3D view failed', error); queueMicrotask(() => setFailure('create')); return }
     const lost = (event: Event) => { event.preventDefault(); setFailure('lost') }
-    canvas.addEventListener('webglcontextlost', lost)
+    glCanvas.addEventListener('webglcontextlost', lost)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     const scene = new THREE.Scene()
     const host = canvas.parentElement!
@@ -241,8 +274,8 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
           link: hit.object.userData.link as ExperienceLink | undefined }
       },
       // Release the GPU context too: browsers keep only a few, and reopening the view must not use them up.
-      dispose: () => { canvas.removeEventListener('wheel', zoom); canvas.removeEventListener('webglcontextlost', lost); resize.disconnect()
-        disposables.forEach(item => item.dispose()); renderer.dispose(); renderer.forceContextLoss() }
+      dispose: () => { canvas.removeEventListener('wheel', zoom); glCanvas.removeEventListener('webglcontextlost', lost); resize.disconnect()
+        disposables.forEach(item => item.dispose()); renderer.dispose(); renderer.forceContextLoss(); glCanvas.remove() }
     }
     return () => { engine.current?.dispose(); engine.current = undefined }
     // Focus, hover and selection are pushed through update() below; only data, locale and a retry recreate the scene.
@@ -280,6 +313,9 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
     <button type="button" className="secondary-button" onClick={() => { setFailure(undefined); setAttempt(value => value + 1) }}>{t('supervisor.graph3d.retry')}</button>
   </div>
   if (!range) return <p className="supervisor-workspace__muted">{t('supervisor.stories.empty')}</p>
+  const childKinds = new Set(level.children.map(node => node.level))
+  const childLevelName = t(`supervisor.graph3d.childLevels.${childKinds.size === 1 ? [...childKinds][0] : 'mixed'}`)
+  const scale = t('supervisor.graph3d.scale', { turn: t(`supervisor.graph3d.turns.${range.turnHours}`), count: Math.round(range.turns * 10) / 10 })
   return <div className="story-graph-3d">
     <div className="story-graph-3d__toolbar">
       <nav aria-label={t('supervisor.graph3d.levels')}>
@@ -292,6 +328,17 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
       <div role="group" aria-label={t('supervisor.graph3d.views')}>
         {(['oblique', 'side', 'top', 'free'] as const).map(name => <button key={name} type="button" className="secondary-button"
           aria-pressed={view === name} onClick={() => choose(name)}>{t(`supervisor.graph3d.view.${name}`)}</button>)}
+        <button type="button" className="secondary-button" aria-expanded={legendOpen} aria-controls={legendId}
+          onClick={() => setLegendOpen(value => !value)}><Info size={14} aria-hidden="true" />{t('supervisor.graph3d.legendTitle')}</button>
+      </div>
+      {/* Keyboard and screen-reader access to the same staves and experiences shown on the canvas. */}
+      <div className="story-graph-3d__pickers">
+        <PickerMenu label={t('supervisor.graph3d.staves')} button={t('supervisor.graph3d.pickChildren', { level: childLevelName, count: level.children.length })}
+          items={level.children.map(node => ({ id: node.id, title: node.name, detail: `${t('supervisor.stories.count', { count: node.events.length })} · ${dateText(node.start)} – ${dateText(node.end)}`,
+            current: node.id === focus.id, onPick: () => open(node) }))} />
+        {shownLinks.length > 0 && <PickerMenu label={t('supervisor.graph3d.experiences')} button={t('supervisor.graph3d.pickExperience', { count: shownLinks.length })}
+          items={shownLinks.map(link => ({ id: link.id, title: link.statement, detail: `${link.from.stave.name} → ${link.to.stave.name}`,
+            current: link.id === selectedExperienceId, onPick: () => onSelectExperience?.(link.id) }))} />}
       </div>
     </div>
     <div className="story-graph-3d__viewport">
@@ -334,19 +381,21 @@ export default function StoryGraph3D({ stories, attention, selectedEventId, onSe
           event.preventDefault(); setView('free'); move[event.key]!(); engine.current?.draw()
         }} />
       <canvas ref={overlayRef} className="story-graph-3d__overlay" aria-hidden="true" />
+      {/* Scale stays visible on the canvas; the full explanation opens on demand. */}
+      <span className="story-graph-3d__scale" aria-hidden="true">{scale}</span>
+      {legendOpen && <div className="story-graph-3d__legend" id={legendId} role="note">
+        <div className="story-graph-3d__legend-head">
+          <strong>{t('supervisor.graph3d.legendTitle')}</strong>
+          <button type="button" className="icon-button" aria-label={t('supervisor.graph3d.legendClose')} title={t('supervisor.graph3d.legendClose')}
+            onClick={() => setLegendOpen(false)}><X size={14} aria-hidden="true" /></button>
+        </div>
+        <ul>
+          <li>{t('supervisor.graph3d.legendItems.time', { scale })}</li>
+          <li>{t('supervisor.graph3d.legendItems.radius')}</li>
+          <li>{t('supervisor.graph3d.legendItems.stave')}</li>
+          <li>{t('supervisor.graph3d.legendItems.experience')}</li>
+        </ul>
+      </div>}
     </div>
-    <p className="supervisor-workspace__muted">{t('supervisor.graph3d.legend', { turn: t(`supervisor.graph3d.turns.${range.turnHours}`), count: Math.round(range.turns * 10) / 10 })}</p>
-    {/* The same staves as a list, for keyboard and screen readers. */}
-    {shownLinks.length > 0 && <ul className="story-graph-3d__list" aria-label={t('supervisor.graph3d.experiences')}>
-      {shownLinks.map(link => <li key={link.id}><button type="button" className="link-button" aria-pressed={link.id === selectedExperienceId}
-        onClick={() => onSelectExperience?.(link.id)}>
-        {link.statement} <small>{link.from.stave.name} → {link.to.stave.name}</small>
-      </button></li>)}
-    </ul>}
-    <ul className="story-graph-3d__list" aria-label={t('supervisor.graph3d.staves')}>
-      {level.children.map(node => <li key={node.id}><button type="button" className="link-button" aria-pressed={node.id === focus.id} onClick={() => open(node)}>
-        {node.name} <small>{t('supervisor.stories.count', { count: node.events.length })} · {dateText(node.start)} – {dateText(node.end)}</small>
-      </button></li>)}
-    </ul>
   </div>
 }

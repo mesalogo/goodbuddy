@@ -306,7 +306,12 @@ describe('SupervisorWorkspace', () => {
     expect(within(canvas).queryByRole('heading', { name: '时间事件' })).not.toBeInTheDocument()
     expect(within(canvas).getByRole('group', { name: '故事线图谱' })).toHaveAttribute('width', '100%')
     expect(canvas.querySelector('.supervisor-workspace__timeline-ring')).toHaveAttribute('marker-end')
+    // The legend is closed by default and opens on the canvas, so the graph keeps the column.
+    expect(within(canvas).queryByRole('list', { name: '图谱图例' })).not.toBeInTheDocument()
+    fireEvent.click(within(canvas).getByRole('button', { name: '图例' }))
     expect(within(canvas).getByRole('list', { name: '图谱图例' })).toBeInTheDocument()
+    fireEvent.click(within(canvas).getByRole('button', { name: '关闭图例' }))
+    expect(within(canvas).queryByRole('list', { name: '图谱图例' })).not.toBeInTheDocument()
     expect(within(canvas).getByRole('slider', { name: '事件浏览' })).toBeDisabled()
     expect(graph.querySelector('.supervisor-workspace__entity text')).toHaveTextContent('方案')
     expect(graph.querySelector('.supervisor-workspace__node text')).toHaveTextContent('决定')
