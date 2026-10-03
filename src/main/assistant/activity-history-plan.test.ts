@@ -6,6 +6,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { activityHistorySnapshotSchema, type ActivityHistoryChange, type ActivityRecord } from '../../shared/assistant-contracts'
+import { applyActivityChanges } from '../../shared/activity-history-reference'
 import { AssistantDatabase } from './assistant-database'
 import { parseActivityHistorySnapshot, planActivityHistoryReplace, planActivityHistoryUpdate } from './activity-history-plan'
 
@@ -46,13 +47,8 @@ function record(id: string, overrides: Partial<ActivityRecord> = {}): ActivityRe
 }
 
 /** Reference semantics of a change, applied to a plain newest-first list. */
-function applyReference(list: ActivityRecord[], change: ActivityHistoryChange): ActivityRecord[] {
-  if (change.type === 'remove') return list.filter(item => item.id !== change.id)
-  const index = list.findIndex(item => item.id === change.record.id)
-  if (index < 0) return [change.record, ...list]
-  if (change.position === 'front') return [change.record, ...list.filter((_, at) => at !== index)]
-  return list.map((item, at) => (at === index ? change.record : item))
-}
+const applyReference = (list: ActivityRecord[], change: ActivityHistoryChange): ActivityRecord[] =>
+  applyActivityChanges(list, [change])
 
 describe('activity history incremental updates', () => {
   it('stores exactly the state a full replace stores, for random change sequences', () => {

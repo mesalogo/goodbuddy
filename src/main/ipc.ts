@@ -6869,6 +6869,10 @@ export function registerIpcHandlers(
       assistantDatabase.updateActivityHistory(input)
     }
   )
+  registerHandler(ipcChannels.activityHistoryClear, (event) => {
+    assertTrustedSender(event, window)
+    assistantDatabase.clearActivityHistory()
+  })
 
   registerHandler(ipcChannels.tokenUsageSummary, (event) => {
     assertTrustedSender(event, window)

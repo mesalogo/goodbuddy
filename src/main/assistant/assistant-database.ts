@@ -5344,6 +5344,25 @@ export class AssistantDatabase {
     this.writeActivityHistoryPlan(database, (previous) => planActivityHistoryUpdate(input, previous))
   }
 
+  /** Deletes every activity record in one transaction. */
+  clearActivityHistory(): void {
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database.exec('DELETE FROM activity_history_records')
+      database.exec(
+        `UPDATE activity_history
+         SET record_order_json = '[]', legacy_history_may_be_incomplete = 0
+         WHERE singleton = 1`
+      )
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    this.activityHistoryCache = undefined
+  }
+
   /** The cached committed state, when no other connection committed since. */
   private committedActivityHistoryState(database: DatabaseSync): ActivityHistoryState | undefined {
     const cache = this.activityHistoryCache

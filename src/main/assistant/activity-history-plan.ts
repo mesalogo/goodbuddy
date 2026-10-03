@@ -163,6 +163,14 @@ export function planActivityHistoryUpdate(input: unknown, previous: ActivityHist
   let order = [...previous.order]
   const touched = new Set<string>()
   for (const change of update.changes) {
+    if (change.type === 'remove-duplicates') {
+      const isDuplicate = (key: string): boolean => (JSON.parse(key) as [string, number])[1] !== 0
+      order = order.filter(key => !isDuplicate(key))
+      for (const key of [...entries.keys()]) {
+        if (isDuplicate(key)) { entries.delete(key); touched.add(key) }
+      }
+      continue
+    }
     if (change.type === 'remove') {
       // Keys of one ID share the JSON prefix `["id",`.
       const prefix = `${JSON.stringify([change.id]).slice(0, -1)},`

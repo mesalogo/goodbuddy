@@ -110,6 +110,8 @@ export const activityHistorySnapshotSchema = z
  * - `upsert` + `position: 'in-place'` replaces the existing record where it
  *   is; a record that does not exist yet is inserted at the front.
  * - `remove` deletes every record with the ID.
+ * - `remove-duplicates` deletes every record but the first of each ID; the
+ *   renderer shows only the first (see `mergeActivityRecords`).
  */
 export const activityHistoryChangeSchema = z.discriminatedUnion('type', [
   z.object({
@@ -120,7 +122,8 @@ export const activityHistoryChangeSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('remove'),
     id: z.string().min(1).max(256)
-  }).strict()
+  }).strict(),
+  z.object({ type: z.literal('remove-duplicates') }).strict()
 ])
 
 export const activityHistoryUpdateSchema = z

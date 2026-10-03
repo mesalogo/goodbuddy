@@ -1293,6 +1293,9 @@ const desktopApi: DesktopApi = {
     },
     update: async (update: ActivityHistoryUpdate) => {
       await ipcRenderer.invoke(ipcChannels.activityHistoryUpdate, update)
+    },
+    clear: async () => {
+      await ipcRenderer.invoke(ipcChannels.activityHistoryClear)
     }
   },
   usage: {

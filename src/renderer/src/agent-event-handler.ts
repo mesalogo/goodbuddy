@@ -8,7 +8,7 @@ import type {
 } from "../../shared/assistant-contracts";
 import { appendConversationQuestionBlock } from "../../shared/conversation-question-blocks";
 import { knowledgeReferenceKey } from "../../shared/knowledge-reference";
-import type { ActivityRecord } from "./activity-store";
+import type { ActivityRecord, ActivityStore } from "./activity-store";
 import type { Message, SubagentActivity, ToolActivity } from "./ChatTimeline";
 import type { ConversationStore } from "./conversation-store";
 import type { LiveMessageStore } from "./live-message-store";
@@ -48,12 +48,13 @@ export type AgentEventDependencies = {
   setConversations: ConversationStore["set"];
   /** Tasks and artifacts; updates re-render only the views that select them. */
   taskStore: TaskStore;
-  setActivityRecords: Dispatch<SetStateAction<ActivityRecord[]>>;
+  /** Activity history; its actions also queue the incremental save. */
+  activityStore: ActivityStore;
   setUnreadConversationIds: Dispatch<SetStateAction<Set<string>>>;
   notify: (notification: AppNotificationInput) => void;
   updateMessage: (conversationId: string, messageId: string, update: (message: Message) => Message) => void;
+  /** Adds a record with the conversation's project scope. */
   recordActivity: (record: Omit<ActivityRecord, "id" | "createdAt" | "scope">) => void;
-  updateRequestActivity: (requestId: string, status: ActivityRecord["status"], detail?: string) => void;
   loadWorkspaceChanges: (projectId: string) => Promise<void>;
   markConversationCompleted: (conversationId: string) => void;
   setConversationActivity: (conversationId: string, active: boolean) => void;
@@ -169,8 +170,8 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
   const {
     activeRuns, activeConversationIdRef, activeProjectIdRef, taskStore, hydratingArtifactIds,
     requestPersistenceFlush, tRef, conversationStore, liveMessages, setConversations,
-    setActivityRecords, setUnreadConversationIds, notify,
-    updateMessage, recordActivity, updateRequestActivity, loadWorkspaceChanges, markConversationCompleted,
+    activityStore, setUnreadConversationIds, notify,
+    updateMessage, recordActivity, loadWorkspaceChanges, markConversationCompleted,
     setConversationActivity, releaseConversationQueueAfterRun,
   } = deps;
   const setAssistantTasks = taskStore.setTasks;
@@ -565,17 +566,7 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
       });
     }
     if (event.runtimeCallId) {
-      setActivityRecords((current) => {
-        const remaining = current.filter(
-          (record) =>
-            !(
-              record.requestId === event.requestId &&
-              record.kind === "tool" &&
-              record.callId === event.runtimeCallId
-            ),
-        );
-        return remaining.length === current.length ? current : remaining;
-      });
+      activityStore.removeToolByCallId(event.requestId, event.runtimeCallId);
     }
     recordActivity({
       conversationId: run.conversationId,
@@ -744,30 +735,17 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
     const incompleteActivityDetail = tRef.current(
       "chat.status.activityIncomplete",
     );
-    updateRequestActivity(
+    activityStore.updateRequest(
       event.requestId,
       terminalStatus,
       event.type === "error"
         ? event.message
         : tRef.current("chat.status.taskCompleted"),
     );
-    setActivityRecords((current) =>
-      current.map((record) =>
-        record.requestId === event.requestId &&
-        record.kind !== "request" &&
-        (record.status === "pending" || record.status === "running")
-          ? {
-              ...record,
-              status:
-                event.type === "done" ? "interrupted" : terminalStatus,
-              detail: `${record.detail}\n${
-                event.type === "done"
-                  ? incompleteActivityDetail
-                  : event.message
-              }`,
-            }
-          : record,
-      ),
+    activityStore.settleRequest(
+      event.requestId,
+      event.type === "done" ? "interrupted" : terminalStatus,
+      event.type === "done" ? incompleteActivityDetail : event.message,
     );
     recordActivity({
       conversationId: run.conversationId,

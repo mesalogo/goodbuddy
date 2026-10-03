@@ -256,6 +256,7 @@ export const ipcChannels = {
   activityHistoryGet: 'activity-history:get',
   activityHistoryReplace: 'activity-history:replace',
   activityHistoryUpdate: 'activity-history:update',
+  activityHistoryClear: 'activity-history:clear',
   tokenUsageSummary: 'usage:token-summary',
   tokenUsageChanged: 'usage:token-changed',
   artifactsList: 'artifacts:list',

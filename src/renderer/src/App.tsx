@@ -98,7 +98,6 @@ import {
   runtimeProviderLabel,
 } from "./runtime-selection";
 import type {
-  ActivityHistorySnapshot,
   AssistantProject,
   AssistantArtifact,
   AssistantMemory,
@@ -199,13 +198,12 @@ import {
   type AgentEventDependencies,
 } from "./agent-event-handler";
 import {
-  clearLegacyActivityHistory,
+  createActivityStore,
   loadLegacyActivityHistory,
-  mergeActivityRecords,
-  reconcileActivityRecords,
-  upsertActivityRecord,
   type ActivityRecord,
 } from "./activity-store";
+import { useActivityPanelRecords } from "./activity-selectors";
+import { useActivityHistorySync } from "./activity-sync";
 import {
   KnowledgeCitationDialog,
   type KnowledgeCitationContextView,
@@ -1771,22 +1769,9 @@ function App(): React.JSX.Element {
   const citationRequestRef = useRef(0);
   const failedKnowledgeLibraryIdRef = useRef<string | undefined>(undefined);
   const [legacyActivityHistory] = useState(loadLegacyActivityHistory);
-  const [activityRecords, setActivityRecords] = useState<ActivityRecord[]>(
-    legacyActivityHistory.records,
-  );
-  const [
-    legacyActivityHistoryMayBeIncomplete,
-    setLegacyActivityHistoryMayBeIncomplete,
-  ] = useState(legacyActivityHistory.historyMayBeIncomplete);
-  const [activityHistoryReady, setActivityHistoryReady] = useState(false);
-  // The Activity page shows a snapshot instead of live records so streaming
-  // runs do not re-render it; it refreshes on entry, periodically, or manually.
-  const [activityPanelRecords, setActivityPanelRecords] =
-    useState<ActivityRecord[]>(activityRecords);
-  const activityRecordsRef = useRef(activityRecords);
-  const legacyActivityHistoryMayBeIncompleteRef = useRef(
-    legacyActivityHistoryMayBeIncomplete,
-  );
+  const [activityStore] = useState(() => createActivityStore(
+    legacyActivityHistory.records, legacyActivityHistory.historyMayBeIncomplete));
+  const activityPanelRecords = useActivityPanelRecords(activityStore);
   const activeRuns = useRef(new Map<string, ActiveRun>());
   const preparingConversations = useRef(new Set<string>());
   const [activeConversationIds, setActiveConversationIds] = useState<
@@ -2944,39 +2929,18 @@ function App(): React.JSX.Element {
                   projectName: project.name.slice(0, 120),
                 }
               : { kind: "unavailable" });
-      setActivityRecords((current) =>
-        upsertActivityRecord(current, {
-          ...record,
-          title: record.title.slice(0, 240),
-          scope,
-          id: crypto.randomUUID(),
-          createdAt: Date.now(),
-        }),
-      );
+      activityStore.record({
+        ...record,
+        title: record.title.slice(0, 240),
+        scope,
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+      });
     },
-    [conversationStore],
+    [activityStore, conversationStore],
   );
 
-  const updateRequestActivity = useCallback(
-    (
-      requestId: string,
-      status: ActivityRecord["status"],
-      detail?: string,
-    ): void => {
-      setActivityRecords((current) =>
-        current.map((record) =>
-          record.requestId === requestId && record.kind === "request"
-            ? {
-                ...record,
-                status,
-                detail: detail ?? record.detail,
-              }
-            : record,
-        ),
-      );
-    },
-    [],
-  );
+  const updateRequestActivity = activityStore.updateRequest;
 
   useEffect(() => {
     const api = window.goodbuddy.channels;
@@ -3235,12 +3199,12 @@ function App(): React.JSX.Element {
       activeRuns, activeConversationIdRef, activeProjectIdRef, taskStore, hydratingArtifactIds,
       requestPersistenceFlush: conversationPersistence.requestFlushAfterCommit, tRef,
       conversationStore, liveMessages, setConversations,
-      setActivityRecords, setUnreadConversationIds, notify, updateMessage, recordActivity,
-      updateRequestActivity, loadWorkspaceChanges, markConversationCompleted, setConversationActivity,
+      activityStore, setUnreadConversationIds, notify, updateMessage, recordActivity,
+      loadWorkspaceChanges, markConversationCompleted, setConversationActivity,
       releaseConversationQueueAfterRun,
     };
-  }, [conversationPersistence, conversationStore, liveMessages, setConversations, taskStore, updateMessage,
-    recordActivity, updateRequestActivity, loadWorkspaceChanges, markConversationCompleted,
+  }, [activityStore, conversationPersistence, conversationStore, liveMessages, setConversations, taskStore,
+    updateMessage, recordActivity, loadWorkspaceChanges, markConversationCompleted,
     setConversationActivity, releaseConversationQueueAfterRun]);
   const handleAgentEvent = useCallback((event: AgentEvent): void => {
     const dependencies = agentEventDependenciesRef.current;
@@ -3303,23 +3267,20 @@ function App(): React.JSX.Element {
     return stop;
   }, [conversationStoreReady, conversationPersistence]);
 
-  const persistActivityHistory = useCallback(async (): Promise<void> => {
-    if (!activityHistoryReady) {
-      return;
-    }
-    try {
-      await window.goodbuddy.activityHistory.replace(
-        activityRecordsRef.current,
-        legacyActivityHistoryMayBeIncompleteRef.current,
-      );
-    } catch {
-      notify({
-        tone: "error",
-        message: tRef.current("notices.activityHistoryPersistenceFailed"),
-        dedupeKey: "activity-history-persistence",
-      });
-    }
-  }, [activityHistoryReady]);
+  const persistActivityHistory = useActivityHistorySync(activityStore, legacyActivityHistory, {
+    onReadFailed: () => notify({
+      tone: "error", message: tRef.current("notices.activityHistoryReadFailed"), dedupeKey: "activity-history-read",
+    }),
+    onSaveFailed: () => notify({
+      tone: "error",
+      message: tRef.current("notices.activityHistoryPersistenceFailed"),
+      dedupeKey: "activity-history-persistence",
+    }),
+    // The loaded history appears at once when the Activity page is open.
+    onLoaded: () => {
+      if (viewRef.current === "activity") activityStore.refreshPanel();
+    },
+  });
 
   useEffect(
     () =>
@@ -3352,9 +3313,7 @@ function App(): React.JSX.Element {
       }),
       onTasks: (tasks) => {
         setAssistantTasks(tasks);
-        setActivityRecords((current) =>
-          reconcileActivityRecords(current, tasks, new Set(activeRuns.current.keys())),
-        );
+        activityStore.reconcile(tasks, new Set(activeRuns.current.keys()));
       },
       onSchedules: setAssistantSchedules,
       onUnread: (unread) => {
@@ -3385,6 +3344,7 @@ function App(): React.JSX.Element {
       },
     });
   }, [
+    activityStore,
     conversationStore,
     conversationPersistence,
     conversationStoreReady,
@@ -3497,84 +3457,7 @@ function App(): React.JSX.Element {
     };
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      let snapshot: ActivityHistorySnapshot;
-      try {
-        snapshot = await window.goodbuddy.activityHistory.get();
-      } catch {
-        if (active) {
-          notify({
-            tone: "error",
-            message: tRef.current("notices.activityHistoryReadFailed"),
-            dedupeKey: "activity-history-read",
-          });
-        }
-        return;
-      }
-      if (!active) {
-        return;
-      }
-      const legacyHistoryMayBeIncomplete =
-        legacyActivityHistory.historyMayBeIncomplete ||
-        snapshot.legacyHistoryMayBeIncomplete;
-      if (
-        legacyActivityHistory.records.length > 0 ||
-        legacyActivityHistory.historyMayBeIncomplete
-      ) {
-        try {
-          await window.goodbuddy.activityHistory.replace(
-            mergeActivityRecords(
-              legacyActivityHistory.records,
-              snapshot.records,
-            ),
-            legacyHistoryMayBeIncomplete,
-          );
-          clearLegacyActivityHistory();
-        } catch {
-          notify({
-            tone: "error",
-            message: tRef.current("notices.activityHistoryPersistenceFailed"),
-            dedupeKey: "activity-history-persistence",
-          });
-        }
-        if (!active) {
-          return;
-        }
-      }
-      setActivityRecords((current) =>
-        mergeActivityRecords(current, snapshot.records),
-      );
-      setLegacyActivityHistoryMayBeIncomplete(legacyHistoryMayBeIncomplete);
-      setActivityHistoryReady(true);
-    })();
-    return () => {
-      active = false;
-    };
-  }, [legacyActivityHistory]);
-
-  useEffect(() => {
-    activityRecordsRef.current = activityRecords;
-    legacyActivityHistoryMayBeIncompleteRef.current =
-      legacyActivityHistoryMayBeIncomplete;
-    if (!activityHistoryReady) {
-      return;
-    }
-    const timeout = window.setTimeout(() => {
-      void persistActivityHistory();
-    }, 250);
-    return () => window.clearTimeout(timeout);
-  }, [
-    activityHistoryReady,
-    activityRecords,
-    legacyActivityHistoryMayBeIncomplete,
-    persistActivityHistory,
-  ]);
-
-  const refreshActivityPanelRecords = useCallback((): void => {
-    setActivityPanelRecords(activityRecordsRef.current);
-  }, []);
+  const refreshActivityPanelRecords = activityStore.refreshPanel;
 
   // Layout effect so entering the page never paints a stale snapshot.
   useLayoutEffect(() => {
@@ -3588,20 +3471,6 @@ function App(): React.JSX.Element {
     );
     return () => window.clearInterval(interval);
   }, [refreshActivityPanelRecords, view]);
-
-  // Runs after the ref sync effect above, so the loaded history is visible.
-  useEffect(() => {
-    if (activityHistoryReady && viewRef.current === "activity") {
-      refreshActivityPanelRecords();
-    }
-  }, [activityHistoryReady, refreshActivityPanelRecords]);
-
-  useEffect(
-    () => () => {
-      void persistActivityHistory();
-    },
-    [persistActivityHistory],
-  );
 
   const resumeProjectConversationQueues = useCallback(
     (projectId: string): void => {
@@ -4139,13 +4008,7 @@ function App(): React.JSX.Element {
       .list()
       .then((tasks) => {
         setAssistantTasks(tasks);
-        setActivityRecords((current) =>
-          reconcileActivityRecords(
-            current,
-            tasks,
-            new Set(activeRuns.current.keys()),
-          ),
-        );
+        activityStore.reconcile(tasks, new Set(activeRuns.current.keys()));
       })
       .catch(() =>
         notify({
@@ -4153,7 +4016,7 @@ function App(): React.JSX.Element {
           message: tRef.current("notices.taskHistoryReadFailed"),
         }),
       );
-  }, [setAssistantTasks]);
+  }, [activityStore, setAssistantTasks]);
 
   useEffect(() => {
     if (view !== "activity") {
@@ -5540,9 +5403,7 @@ function App(): React.JSX.Element {
       setAssistantTasks((current) =>
         current.filter((task) => task.id !== requestId),
       );
-      setActivityRecords((current) =>
-        current.filter((record) => record.requestId !== requestId),
-      );
+      activityStore.removeByRequest(requestId);
       notify({
         tone: "error",
         message: displayErrorMessage(error, t("notices.sendFailed")),
@@ -5687,28 +5548,11 @@ function App(): React.JSX.Element {
           session: tRef.current("chat.approval.decisionSession"),
           permanent: tRef.current("chat.approval.decisionPermanent"),
         }[decision];
-        setActivityRecords((current) => {
-          let updated = false;
-          return current.map((record) => {
-            if (
-              !updated &&
-              record.conversationId === conversationId &&
-              record.kind === "approval" &&
-              record.status === "pending"
-            ) {
-              updated = true;
-              return {
-                ...record,
-                status: approved ? ("completed" as const) : ("denied" as const),
-                detail: `${record.detail}\n${tRef.current(
-                  "notices.userDecision",
-                  { decision: decisionLabel },
-                )}`,
-              };
-            }
-            return record;
-          });
-        });
+        activityStore.updateApproval(
+          conversationId,
+          approved ? "completed" : "denied",
+          tRef.current("notices.userDecision", { decision: decisionLabel }),
+        );
         updateMessage(conversationId, messageId, (message) => {
           if (message.approval?.id !== approvalId) return message;
           if (!message.pendingQuestions?.length) {
@@ -5737,7 +5581,7 @@ function App(): React.JSX.Element {
         }));
       }
     },
-    [updateMessage, conversationStore, setAssistantTasks],
+    [activityStore, updateMessage, conversationStore, setAssistantTasks],
   );
 
   const respondToQuestion = useCallback(
@@ -6212,12 +6056,7 @@ function App(): React.JSX.Element {
     return 'opened';
   };
 
-  const clearActivity = useCallback((): void => {
-    legacyActivityHistoryMayBeIncompleteRef.current = false;
-    setLegacyActivityHistoryMayBeIncomplete(false);
-    setActivityRecords([]);
-    setActivityPanelRecords([]);
-  }, []);
+  const clearActivity = activityStore.clear;
 
   const openActivityConversation = useCallback((conversationId: string): void => {
     const open = async (): Promise<void> => {
@@ -6541,9 +6380,7 @@ function App(): React.JSX.Element {
       conversationPersistence.acknowledged().clear();
       setConversations([conversation]);
       setActiveId(conversation.id);
-      legacyActivityHistoryMayBeIncompleteRef.current = false;
-      setLegacyActivityHistoryMayBeIncomplete(false);
-      setActivityRecords([]);
+      activityStore.reset();
       setAssistantTasks([]);
       setTokenUsage(emptyTokenUsage);
       setAssistantArtifacts([]);

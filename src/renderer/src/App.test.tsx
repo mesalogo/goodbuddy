@@ -192,9 +192,14 @@ vi.mock("./TerminalPanel", () => ({
 }));
 
 import App from "./App";
-import { ACTIVITY_STORAGE_KEY } from "./activity-store";
+import { ACTIVITY_STORAGE_KEY, type ActivityRecord } from "./activity-store";
+import { applyActivityChanges } from "../../shared/activity-history-reference";
+import type { ActivityHistoryUpdate } from "../../shared/assistant-contracts";
 import { changeUiLocale } from "./i18n";
 import { UiLocaleProvider } from "./i18n/UiLocaleProvider";
+
+/** What the activity history mock holds after replace/update/clear calls. */
+let savedActivity: ActivityRecord[] = [];
 
 let agentListener: ((event: AgentEvent) => void) | undefined;
 let browserListener: ((state: BrowserLiveState) => void) | undefined;
@@ -675,7 +680,15 @@ const api: DesktopApi & RuntimeNativeClientApi = {
       records: [],
       legacyHistoryMayBeIncomplete: false,
     })),
-    replace: vi.fn(async () => {}),
+    replace: vi.fn(async (records: ActivityRecord[]) => {
+      savedActivity = [...records];
+    }),
+    update: vi.fn(async (update: ActivityHistoryUpdate) => {
+      savedActivity = applyActivityChanges(savedActivity, update.changes);
+    }),
+    clear: vi.fn(async () => {
+      savedActivity = [];
+    }),
   },
   usage: {
     getTokenSummary: vi.fn(async () => ({
@@ -1420,7 +1433,10 @@ describe("App", () => {
       records: [],
       legacyHistoryMayBeIncomplete: false,
     });
-    vi.mocked(api.activityHistory.replace).mockReset().mockResolvedValue();
+    vi.mocked(api.activityHistory.replace).mockClear();
+    vi.mocked(api.activityHistory.update).mockClear();
+    vi.mocked(api.activityHistory.clear).mockClear();
+    savedActivity = [];
     vi.mocked(api.schedules.list).mockReset().mockResolvedValue([]);
     api.channels = undefined;
     installRemoteProjectsSetting(false);
@@ -5506,8 +5522,7 @@ describe("App", () => {
     ).not.toBeInTheDocument();
     await waitFor(
       () => {
-        const saved =
-          vi.mocked(api.activityHistory.replace).mock.calls.at(-1)?.[0] ?? [];
+        const saved = savedActivity;
         expect(saved.filter((record) => record.kind === "tool")).toHaveLength(
           501,
         );
@@ -14164,9 +14179,7 @@ describe("App", () => {
     fireEvent.click(screen.getByLabelText("发送"));
     await waitFor(() =>
       expect(
-        vi
-          .mocked(api.activityHistory.replace)
-          .mock.calls.at(-1)?.[0]
+        savedActivity
           .find(
             (record) =>
               record.kind === "request" && record.title === "记录项目范围",

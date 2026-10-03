@@ -2162,10 +2162,11 @@ export type DesktopApi = {
     ) => Promise<void>
     /**
      * Incremental save (PERF-15): only the changed records cross IPC and are
-     * written. Optional until renderer mocks adopt it; the preload always
-     * provides it.
+     * written. `replace` remains for the legacy localStorage migration.
      */
-    update?: (update: ActivityHistoryUpdate) => Promise<void>
+    update: (update: ActivityHistoryUpdate) => Promise<void>
+    /** Deletes the whole history in one transaction. */
+    clear: () => Promise<void>
   }
   usage: {
     getTokenSummary: () => Promise<TokenUsageSummary>
