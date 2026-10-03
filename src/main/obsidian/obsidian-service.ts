@@ -6,7 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { CallToolResultSchema, type CallToolResult, type Tool } from '@modelcontextprotocol/sdk/types.js'
 import { applyLaunchEnvironmentPath, buildCredentialFilteredUserEnvironment } from '../agent/process-environment'
-import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
+import type { LaunchEnvironmentProvider, LaunchEnvironmentReady } from '../local-tool-environment/launch-environment-provider'
 
 export type ObsidianSettings = { vaultPath?: string }
 export type ObsidianVault = { id: string; name: string; path: string }
@@ -14,6 +14,8 @@ export type ObsidianServiceOptions = {
   /** Electron app.getAppPath(), or the project root in development. */
   appPath: string
   launchEnvironmentProvider: LaunchEnvironmentProvider
+  /** Awaited before reading the provider; startup builds the environment in the background. */
+  launchEnvironmentReady?: LaunchEnvironmentReady
   homePath?: string
   platform?: NodeJS.Platform
   environment?: NodeJS.ProcessEnv
@@ -122,6 +124,7 @@ export class ObsidianService {
     await stat(serverPath).catch((cause) => {
       throw new Error(`Bundled Obsidian MCPVault server is missing: ${serverPath}`, { cause })
     })
+    await this.options.launchEnvironmentReady?.()
     const env = applyLaunchEnvironmentPath(
       buildCredentialFilteredUserEnvironment(this.options.environment ?? process.env),
       this.options.launchEnvironmentProvider

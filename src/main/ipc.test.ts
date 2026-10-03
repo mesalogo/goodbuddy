@@ -9270,7 +9270,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       coordinator = new NativeClientCoordinator({ database, settingsStore,
         applicationSettingsStore,
         capabilities, executionSpaceResolver: new ExecutionSpaceResolver(), terminalManager,
-        localEnvironment: { launchEnvironmentProvider: () => process.env } as never,
+        localEnvironment: { launchEnvironmentProvider: () => process.env, whenReady: async () => undefined } as never,
         rootDirectory: join(root, 'clients'), managedNodeDirectory: join(root, 'node'),
         bundledRuntimePaths: resolveBundledRuntimePaths({ appPath: process.cwd(), resourcesPath: '', packaged: false }),
         npmCliPath: resolveNpmCliPaths({ appPath: process.cwd(), resourcesPath: '', packaged: false }).npmCliPath,

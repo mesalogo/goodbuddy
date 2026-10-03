@@ -677,7 +677,18 @@ if (hasSingleInstanceLock) {
         },
         baseEnvironment: buildCredentialFilteredUserEnvironment()
       })
-    await startupSpan('main:local-tool-environment', () => startupLocalToolEnvironmentService.initialize())
+    // Built in the background (P6): only runtime launches read the launch
+    // environment, and each of them awaits this first. A failure still fails
+    // startup with the same diagnostic once the prerequisites have settled.
+    let localToolEnvironmentFailed = false
+    let localToolEnvironmentError: unknown
+    const localToolEnvironmentReady = startupSpan(
+      'main:local-tool-environment',
+      () => startupLocalToolEnvironmentService.initialize()
+    ).catch((error: unknown) => {
+      localToolEnvironmentFailed = true
+      localToolEnvironmentError = error
+    })
     localToolEnvironmentService =
       startupLocalToolEnvironmentService
     const sshHostStore = new SshHostStore(
@@ -1038,7 +1049,8 @@ if (hasSingleInstanceLock) {
     const obsidianService = new ObsidianService({
       appPath: app.getAppPath(),
       launchEnvironmentProvider:
-        startupLocalToolEnvironmentService.launchEnvironmentProvider
+        startupLocalToolEnvironmentService.launchEnvironmentProvider,
+      launchEnvironmentReady: () => localToolEnvironmentReady
     })
     const startupKnowledgeGateway = new KnowledgeMcpGateway(
       startupKnowledgeService,
@@ -1054,7 +1066,8 @@ if (hasSingleInstanceLock) {
         obsidianService,
         browserService,
         launchEnvironmentProvider:
-          startupLocalToolEnvironmentService.launchEnvironmentProvider
+          startupLocalToolEnvironmentService.launchEnvironmentProvider,
+        launchEnvironmentReady: () => localToolEnvironmentReady
       }
     )
     knowledgeGateway = startupKnowledgeGateway
@@ -1063,6 +1076,8 @@ if (hasSingleInstanceLock) {
       target: SelectedRuntimeTarget,
       executionSpace?: ExecutionSpaceDescriptor
     ): Promise<AgentRuntime> => {
+      await localToolEnvironmentReady
+      if (localToolEnvironmentFailed) throw localToolEnvironmentError
       const [
         skillContext,
         mcpServers,
@@ -1271,7 +1286,14 @@ if (hasSingleInstanceLock) {
         )
         startupMark('main:assistant-db-init:end')
       }
-    }))
+    })).catch(async (error: unknown) => {
+      await localToolEnvironmentReady
+      throw localToolEnvironmentFailed ? localToolEnvironmentError : error
+    })
+    // Runtime hydration awaited the environment, so it has settled here. Keep
+    // the previous failure behaviour: an environment error fails startup.
+    await localToolEnvironmentReady
+    if (localToolEnvironmentFailed) throw localToolEnvironmentError
     const [initialSubagentRuntime, initialSubagentProfileRuntimes] =
       await startupSpan('main:subagent-runtimes', () => Promise.all([
         createSubagentRuntime(initialResolvedSettings),
@@ -1523,7 +1545,8 @@ if (hasSingleInstanceLock) {
           read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraphAsync(name, input, projectId, signal)
         },
         magicNotesDatabase: startupAssistantDatabase, configService: goodbuddyConfigService,
-        obsidianService, launchEnvironmentProvider: startupLocalToolEnvironmentService.launchEnvironmentProvider
+        obsidianService, launchEnvironmentProvider: startupLocalToolEnvironmentService.launchEnvironmentProvider,
+        launchEnvironmentReady: () => localToolEnvironmentReady
       })
     })
     startupMark('main:ipc-register:start')

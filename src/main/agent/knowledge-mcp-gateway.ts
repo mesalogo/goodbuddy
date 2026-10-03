@@ -81,7 +81,10 @@ import {
   listAllMcpTools,
   normalizeMcpToolSchema
 } from './mcp-tool-utils'
-import type { LaunchEnvironmentProvider } from '../local-tool-environment'
+import type {
+  LaunchEnvironmentProvider,
+  LaunchEnvironmentReady
+} from '../local-tool-environment'
 import {
   BrowserModelTools,
   browserNavigateInputSchema,
@@ -270,6 +273,8 @@ export type KnowledgeMcpGatewayOptions = {
     ): BrowserTabUsageLease
   }
   launchEnvironmentProvider?: LaunchEnvironmentProvider
+  /** Awaited before reading the provider; startup builds the environment in the background. */
+  launchEnvironmentReady?: LaunchEnvironmentReady
 }
 
 function toMagicNoteToolSummary(
@@ -400,6 +405,8 @@ export class KnowledgeMcpGateway {
     ): BrowserTabUsageLease
   }
   private readonly launchEnvironmentProvider?: LaunchEnvironmentProvider
+  private readonly launchEnvironmentReady?: LaunchEnvironmentReady
+
   private readonly observeFailure?: DesktopDiagnosticFailureObserver
   private server?: Server
   private endpoint?: string
@@ -416,6 +423,8 @@ export class KnowledgeMcpGateway {
     this.obsidianService = options.obsidianService
     this.browserService = options.browserService
     this.launchEnvironmentProvider = options.launchEnvironmentProvider
+    this.launchEnvironmentReady = options.launchEnvironmentReady
+
     this.observeFailure = options.observeFailure
   }
 
@@ -1048,6 +1057,7 @@ export class KnowledgeMcpGateway {
       capability.brokerController.signal
     ])
     try {
+      await this.launchEnvironmentReady?.()
       await client.connect(
         createMcpTransport(server, this.launchEnvironmentProvider),
         {

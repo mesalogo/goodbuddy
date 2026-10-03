@@ -64,7 +64,7 @@ export function registerCapabilityIpcHandlers(
     runtimeExtensionStore?: RuntimeExtensionStore
     knowledgeGateway?: Pick<KnowledgeMcpGateway, 'revokeObsidianCapabilities'>
     obsidianService?: Pick<ObsidianService, 'testConnection'>
-    localToolEnvironmentService?: Pick<LocalToolEnvironmentService, 'launchEnvironmentProvider'>
+    localToolEnvironmentService?: Pick<LocalToolEnvironmentService, 'launchEnvironmentProvider' | 'whenReady'>
   }
 ): void {
   registerHandler(
@@ -266,6 +266,8 @@ export function registerCapabilityIpcHandlers(
     ipcChannels.capabilitiesTestMcp,
     async (event, input: unknown): Promise<McpServerTestResult> => {
       assertTrustedSender(event, window)
+      // A stdio MCP test must launch with the prepared tool PATH.
+      await localToolEnvironmentService?.whenReady()
       return testMcpServer(
         await capabilityService.getResolvedMcpServer(
           mcpServerIdSchema.parse(input)

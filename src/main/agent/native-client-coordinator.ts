@@ -25,7 +25,7 @@ type Options = {
   capabilities: CapabilityService
   executionSpaceResolver: ExecutionSpaceResolver
   terminalManager: TerminalSessionManager
-  localEnvironment: LocalToolEnvironmentService
+  localEnvironment: Pick<LocalToolEnvironmentService, 'launchEnvironmentProvider' | 'whenReady'>
   bundledRuntimePaths: BundledRuntimePaths
   rootDirectory: string
   managedNodeDirectory: string
@@ -122,6 +122,9 @@ export class NativeClientCoordinator {
   }
 
   async open(ownerId: number, conversationId: string): Promise<RuntimeNativeClientResult> {
+    this.assertOwner(ownerId)
+    // Native clients launch with the prepared tool PATH; startup builds it in the background.
+    await this.options.localEnvironment.whenReady()
     this.assertOwner(ownerId)
     const context = await this.resolve(conversationId)
     this.assertOwner(ownerId)

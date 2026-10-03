@@ -217,6 +217,51 @@ describe('LocalToolEnvironmentService', () => {
     expect(Object.isFrozen(updated)).toBe(true)
   })
 
+  it('starts initialization once and lets consumers wait for the built environment', async () => {
+    const { service } = await fixture()
+    await expect(service.whenReady()).resolves.toBeUndefined()
+
+    const started = service.initialize()
+    expect(service.initialize()).toBe(started)
+    expect(service.launchEnvironmentProvider()).toEqual({})
+
+    await service.whenReady()
+    expect(service.launchEnvironmentProvider().PATH).toContain('bin')
+    await started
+  })
+
+  it('applies a settings update after an in-flight initialization, never before it', async () => {
+    const { service, node } = await fixture()
+    const order: string[] = []
+    const initialization = service.initialize().then(() => {
+      order.push('initialized')
+    })
+    const update = service
+      .updateSettings({
+        ...defaultLocalToolEnvironmentSettings,
+        node: { source: 'custom', executablePath: node }
+      })
+      .then(() => {
+        order.push('updated')
+      })
+    await Promise.all([initialization, update])
+
+    expect(order).toEqual(['initialized', 'updated'])
+    expect(service.launchEnvironmentProvider().PATH).toContain('bin')
+  })
+
+  it('reports a failed initialization through whenReady and still disposes', async () => {
+    const { service, options } = await fixture()
+    const failing = new LocalToolEnvironmentService(
+      { ...options, pythonArtifactCatalogPath: join(options.managedPythonRoot, 'missing.json') },
+      { toolEnvironment: { platform: 'win32', spawnProcess: fakeInspectionSpawn() } }
+    )
+    await expect(failing.initialize()).rejects.toThrow()
+    await expect(failing.whenReady()).rejects.toThrow()
+    await expect(failing.dispose()).resolves.toBeUndefined()
+    await service.dispose()
+  })
+
   it('keeps executable paths inside the Main-owned picker callback', async () => {
     const { service, settingsStore, python } = await fixture()
     const snapshot = await service.selectExecutable('python')

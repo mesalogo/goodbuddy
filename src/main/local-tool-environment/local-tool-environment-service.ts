@@ -453,6 +453,7 @@ export class LocalToolEnvironmentService {
   private installOperation?: Promise<LocalToolEnvironmentSnapshot>
   private launchEnvironment: Readonly<NodeJS.ProcessEnv> = Object.freeze({})
   private listeners = new Set<ProgressListener>()
+  private initialization?: Promise<void>
   readonly launchEnvironmentProvider: LaunchEnvironmentProvider = () =>
     this.launchEnvironment
 
@@ -530,15 +531,35 @@ export class LocalToolEnvironmentService {
     }
   }
 
-  async initialize(): Promise<void> {
-    await rm(this.options.binDirectory, {
-      recursive: true,
-      force: true
-    })
-    await this.rebuildLaunchEnvironment()
+  /**
+   * Starts building the launch environment once. Startup no longer awaits this
+   * before showing the window (P6); every consumer that reads
+   * `launchEnvironmentProvider` or mutates the environment awaits
+   * `whenReady()` first, so no launch observes the empty pre-start snapshot.
+   */
+  initialize(): Promise<void> {
+    this.initialization ??= (async () => {
+      await rm(this.options.binDirectory, {
+        recursive: true,
+        force: true
+      })
+      await this.rebuildLaunchEnvironment()
+    })()
+    return this.initialization
+  }
+
+  /** Settles with the result of `initialize()`; resolves immediately if it never started. */
+  whenReady(): Promise<void> {
+    return this.initialization ?? Promise.resolve()
+  }
+
+  /** Waits for initialization without failing; the startup path reports its error. */
+  private async initialized(): Promise<void> {
+    await this.whenReady().catch(() => undefined)
   }
 
   async getSnapshot(): Promise<LocalToolEnvironmentSnapshot> {
+    await this.initialized()
     const catalog = await loadPythonArtifactCatalog(
       this.options.pythonArtifactCatalogPath
     )
@@ -562,6 +583,7 @@ export class LocalToolEnvironmentService {
   }
 
   async updateSettings(input: unknown): Promise<LocalToolEnvironmentSnapshot> {
+    await this.initialized()
     let settings = localToolEnvironmentSettingsSchema.parse(input)
     const current = await this.settings()
     for (const kind of ['node', 'python'] as const) {
@@ -629,6 +651,7 @@ export class LocalToolEnvironmentService {
   }
 
   async diagnose(target: LocalToolDiagnoseTarget): Promise<LocalToolEnvironmentSnapshot> {
+    await this.initialized()
     const environment = await this.rebuildLaunchEnvironment(
       this.operationController?.signal
     )
@@ -767,6 +790,7 @@ export class LocalToolEnvironmentService {
 
   async removePython(): Promise<LocalToolEnvironmentSnapshot> {
     if (this.operationController) throw new Error('A Managed Python operation is running')
+    await this.initialized()
     const catalog = await loadPythonArtifactCatalog(this.options.pythonArtifactCatalogPath)
     await removeManagedPython({
       rootDirectory: this.options.managedPythonRoot,
@@ -781,6 +805,7 @@ export class LocalToolEnvironmentService {
   async dispose(): Promise<void> {
     this.cancelPython()
     await this.installOperation?.catch(() => undefined)
+    await this.initialized()
     await rm(this.options.binDirectory, {
       recursive: true,
       force: true

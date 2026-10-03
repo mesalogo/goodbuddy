@@ -10,7 +10,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-function fixture() {
+function fixture(whenReady: () => Promise<void> = async () => undefined) {
   const profile = { id: 'selected', name: 'Selected', protocol: 'openai-chat-completions',
     authentication: 'api-key', apiKey: 'secret', baseUrl: 'https://example.com/v1', modelName: 'selected-model' }
   const settings = { provider: 'deepseek-harness', modelProfiles: [profile], deepseekHarnessModelProfile: profile }
@@ -37,7 +37,7 @@ function fixture() {
       getResolvedMcpServers: async () => [{ id: 'custom' }], getEnabledBuiltinMcpServerIds: async () => ['knowledge-base', 'obsidian', 'goodbuddy-config'],
       getObsidianSettings: async () => ({}) },
     executionSpaceResolver: { resolveProject: () => ({ kind: 'local', rootPath: '/workspace', cacheIdentity: '/workspace' }) },
-    terminalManager: { closeOwner: vi.fn() }, localEnvironment: { launchEnvironmentProvider: () => process.env },
+    terminalManager: { closeOwner: vi.fn() }, localEnvironment: { launchEnvironmentProvider: () => process.env, whenReady },
     rootDirectory: '/clients', createGateway: () => gateway, openExternal
   } as unknown as ConstructorParameters<typeof NativeClientCoordinator>[0])
   coordinators.push(coordinator)
@@ -45,6 +45,16 @@ function fixture() {
 }
 
 describe('native client coordinator', () => {
+  it('waits for the startup tool environment before launching a native client', async () => {
+    let ready!: () => void
+    const { coordinator, start } = fixture(() => new Promise<void>(resolve => { ready = resolve }))
+    const opened = coordinator.open(1, 'conversation')
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(start).not.toHaveBeenCalled()
+    ready()
+    await expect(opened).resolves.toEqual({ kind: 'browser', serviceId: 'service-0' })
+    expect(start).toHaveBeenCalledOnce()
+  })
   it('retains a ready service and its gateway after browser failure, then reopens and stops it', async () => {
     const { coordinator, gateway, start, stop, openExternal } = fixture()
     openExternal.mockRejectedValueOnce(new Error('Browser unavailable'))

@@ -18,4 +18,7 @@ export type {
   LocalToolEnvironmentServiceDependencies,
   LocalToolEnvironmentServiceOptions
 } from './local-tool-environment-service'
-export type { LaunchEnvironmentProvider } from './launch-environment-provider'
+export type {
+  LaunchEnvironmentProvider,
+  LaunchEnvironmentReady
+} from './launch-environment-provider'
