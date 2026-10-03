@@ -13,6 +13,8 @@ import { useConversation, type ConversationStore } from "./conversation-store";
 import { ConversationTaskStrip } from "./ConversationTaskStrip";
 import { displayErrorMessage } from "./error-message";
 import { RuntimeChecklistStrip } from "./RuntimeChecklistStrip";
+import { useArtifactById } from "./task-selectors";
+import type { TaskStore } from "./task-store";
 
 function ConversationHistoryLoader({ conversationId, active, load }: {
   conversationId: string;
@@ -38,11 +40,13 @@ function ConversationHistoryLoader({ conversationId, active, load }: {
   </section>;
 }
 
-type PaneProps = Omit<ComponentProps<typeof ChatHistoryPane>, "conversation" | "taskStrip">;
+type PaneProps = Omit<ComponentProps<typeof ChatHistoryPane>, "conversation" | "taskStrip" | "artifactById">;
 
 export type ConversationHistorySlotProps = PaneProps & {
   conversationId: string;
   store: ConversationStore;
+  /** Artifacts are read here, so a new result re-renders the panes, not App. */
+  taskStore: TaskStore;
   loadHistory: (conversationId: string) => Promise<Conversation>;
   /** The active conversation's effective mode; others use their own or the project's. */
   workModeOverride?: InteractiveWorkMode;
@@ -65,6 +69,7 @@ export type ConversationHistorySlotProps = PaneProps & {
 export const ConversationHistorySlot = memo(function ConversationHistorySlot({
   conversationId,
   store,
+  taskStore,
   loadHistory,
   workModeOverride,
   projects,
@@ -78,6 +83,7 @@ export const ConversationHistorySlot = memo(function ConversationHistorySlot({
   ...paneProps
 }: ConversationHistorySlotProps): React.JSX.Element | null {
   const conversation = useConversation(store, conversationId);
+  const artifactById = useArtifactById(taskStore);
   const remote = Boolean(conversation?.remote);
   const conversationMode = workModeOverride ?? normalizeInteractiveWorkMode(
     conversation?.workMode ??
@@ -117,5 +123,5 @@ export const ConversationHistorySlot = memo(function ConversationHistorySlot({
       />
     );
   }
-  return <ChatHistoryPane {...paneProps} conversation={conversation} taskStrip={taskStrip} />;
+  return <ChatHistoryPane {...paneProps} artifactById={artifactById} conversation={conversation} taskStrip={taskStrip} />;
 });

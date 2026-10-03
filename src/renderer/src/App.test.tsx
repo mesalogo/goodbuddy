@@ -12656,9 +12656,11 @@ describe("App", () => {
       const card = within(region).getByRole("group");
       fireEvent.click(within(card).getByText(child.expertName, { selector: "strong" }));
       fireEvent(card, new Event("toggle"));
+      // App selects only top-level task statuses from the task store
+      // (PERF-13), so subagent tasks never reach it.
       const runningTasks = assistantTasksProbe.mock.lastCall![0] as AssistantTask[];
-      expect(runningTasks).toContainEqual(expect.objectContaining({
-        id: child.childTaskId, status: "running",
+      expect(runningTasks).not.toContainEqual(expect.objectContaining({
+        id: child.childTaskId,
       }));
 
       const progress = (step: number) => [{
@@ -12687,10 +12689,7 @@ describe("App", () => {
 
       act(() => agentListener!({ ...child, state, progress: progress(3), output: "Latest child result" }));
       const terminalTasks = assistantTasksProbe.mock.lastCall![0] as AssistantTask[];
-      expect(terminalTasks).not.toBe(runningTasks);
-      expect(terminalTasks).toContainEqual(expect.objectContaining({
-        id: child.childTaskId, status: state, completedAt: expect.any(String),
-      }));
+      expect(terminalTasks).toBe(runningTasks);
       expect(within(card).getByText(state === "completed" ? "已完成" : "已取消", {
         selector: ".subagent-status-card__status",
       })).toBeVisible();

@@ -2,7 +2,6 @@ import type { Dispatch, SetStateAction } from "react";
 import type { TFunction } from "i18next";
 import type { AgentEvent } from "../../shared/contracts";
 import type {
-  AssistantArtifact,
   AssistantTask,
   ConversationContextCompressionMarker,
   ConversationMessageBlock,
@@ -13,6 +12,7 @@ import type { ActivityRecord } from "./activity-store";
 import type { Message, SubagentActivity, ToolActivity } from "./ChatTimeline";
 import type { ConversationStore } from "./conversation-store";
 import type { LiveMessageStore } from "./live-message-store";
+import type { TaskStore } from "./task-store";
 import type { AppNotificationInput } from "./notifications";
 
 /**
@@ -39,7 +39,6 @@ export type AgentEventDependencies = {
   activeRuns: Ref<Map<string, ActiveRun>>;
   activeConversationIdRef: Ref<string>;
   activeProjectIdRef: Ref<string>;
-  assistantTasksRef: Ref<AssistantTask[]>;
   hydratingArtifactIds: Ref<Set<string>>;
   /** Set when a run ends: persist with the next list commit. */
   requestPersistenceFlush: () => void;
@@ -47,8 +46,8 @@ export type AgentEventDependencies = {
   conversationStore: ConversationStore;
   liveMessages: LiveMessageStore;
   setConversations: ConversationStore["set"];
-  setAssistantTasks: Dispatch<SetStateAction<AssistantTask[]>>;
-  setAssistantArtifacts: Dispatch<SetStateAction<AssistantArtifact[]>>;
+  /** Tasks and artifacts; updates re-render only the views that select them. */
+  taskStore: TaskStore;
   setActivityRecords: Dispatch<SetStateAction<ActivityRecord[]>>;
   setUnreadConversationIds: Dispatch<SetStateAction<Set<string>>>;
   notify: (notification: AppNotificationInput) => void;
@@ -61,23 +60,7 @@ export type AgentEventDependencies = {
   releaseConversationQueueAfterRun: (run: Pick<ActiveRun, "conversationId" | "projectId">) => void;
 };
 
-export function mergeArtifacts(
-  current: AssistantArtifact[],
-  incoming: AssistantArtifact[],
-): AssistantArtifact[] {
-  const merged = new Map(current.map((artifact) => [artifact.id, artifact]));
-  for (const artifact of incoming) {
-    const existing = merged.get(artifact.id);
-    merged.set(artifact.id, {
-      ...existing,
-      ...artifact,
-      content: artifact.content ?? existing?.content,
-    });
-  }
-  return [...merged.values()].sort((left, right) =>
-    right.createdAt.localeCompare(left.createdAt),
-  );
-}
+export { mergeArtifacts } from "./task-store";
 
 function upsertMessageToolBlock(
   blocks: ConversationMessageBlock[] | undefined,
@@ -184,12 +167,13 @@ function isErrorRepresentedByFailedTool(
 
 export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies): void {
   const {
-    activeRuns, activeConversationIdRef, activeProjectIdRef, assistantTasksRef, hydratingArtifactIds,
+    activeRuns, activeConversationIdRef, activeProjectIdRef, taskStore, hydratingArtifactIds,
     requestPersistenceFlush, tRef, conversationStore, liveMessages, setConversations,
-    setAssistantTasks, setAssistantArtifacts, setActivityRecords, setUnreadConversationIds, notify,
+    setActivityRecords, setUnreadConversationIds, notify,
     updateMessage, recordActivity, updateRequestActivity, loadWorkspaceChanges, markConversationCompleted,
     setConversationActivity, releaseConversationQueueAfterRun,
   } = deps;
+  const setAssistantTasks = taskStore.setTasks;
   const run = activeRuns.current.get(event.requestId);
   if (!run) {
     if (event.type !== "approval") {
@@ -255,7 +239,7 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
         }),
       );
     };
-    const task = assistantTasksRef.current.find(
+    const task = taskStore.getTasks().find(
       (candidate) => candidate.id === event.requestId,
     );
     if (task) {
@@ -265,7 +249,6 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
         .list()
         .then((tasks) => {
           setAssistantTasks(tasks);
-          assistantTasksRef.current = tasks;
           attachScheduledApproval(
             tasks.find((candidate) => candidate.id === event.requestId),
           );
@@ -345,11 +328,7 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
     }
     void window.goodbuddy.artifacts
       .list()
-      .then((artifacts) =>
-        setAssistantArtifacts((current) =>
-          mergeArtifacts(current, artifacts),
-        ),
-      )
+      .then((artifacts) => taskStore.mergeArtifacts(artifacts))
       .catch(() =>
         notify({
           tone: "error",
@@ -360,11 +339,7 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
     hydratingArtifactIds.current.add(event.artifactId);
     void window.goodbuddy.artifacts
       .get(event.artifactId)
-      .then((artifact) =>
-        setAssistantArtifacts((current) =>
-          mergeArtifacts(current, [artifact]),
-        ),
-      )
+      .then((artifact) => taskStore.mergeArtifacts([artifact]))
       .catch(() =>
         notify({
           tone: "error",

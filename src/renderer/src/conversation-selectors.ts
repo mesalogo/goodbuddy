@@ -101,7 +101,7 @@ export function useConversationActivitySummary(
     defaultTitle: string;
     fallbackProjectName: string;
     projects: readonly { id: string; name: string }[];
-    tasks: readonly AssistantTask[];
+    tasks: readonly (Pick<AssistantTask, "conversationId" | "projectId" | "title"> & { status: string })[];
   },
 ): ConversationActivitySummary {
   const selector = useCallback(

@@ -166,6 +166,23 @@ import { formatAttachmentSize, resizeComposerTextarea } from "./composer-textare
 import { Composer } from "./Composer";
 import { useComposerActions } from "./use-composer-actions";
 import { useKnowledgeWorkspaceActions } from "./use-knowledge-workspace-actions";
+import { createTaskStore } from "./task-store";
+import {
+  useAllTasks,
+  useConversationHasBusyTask,
+  useProductTasks,
+  useSidebarArtifacts,
+  useTaskActivityRows,
+  useTaskStatsRevision,
+  useTaskStatusRows,
+} from "./task-selectors";
+import {
+  loadArtifact,
+  refreshArtifacts,
+  refreshTasks,
+  useArtifactHydration,
+  useInitialArtifactSync,
+} from "./task-sync";
 import { LiveMessageStoreContext } from "./live-message-store";
 import {
   createConversationPersistence,
@@ -178,7 +195,6 @@ import {
 import { startConversationRefresh } from "./conversation-refresh";
 import {
   handleAgentEvent as applyAgentEvent,
-  mergeArtifacts,
   type ActiveRun,
   type AgentEventDependencies,
 } from "./agent-event-handler";
@@ -208,7 +224,6 @@ import {
   RightAssistantSidebar,
   type AssistantSidebarTab,
   type RightAssistantSidebarProps,
-  type SidebarArtifact,
 } from "./RightAssistantSidebar";
 import {
   CustomTaskDialog,
@@ -1099,22 +1114,16 @@ function App(): React.JSX.Element {
     Record<string, RemoteProjectRecoveryState>
   >({});
   const retryingRecoveryProjectIdsRef = useRef(new Set<string>());
-  const [assistantTasks, setAssistantTasks] = useState<AssistantTask[]>([]);
-  const assistantTasksRef = useRef(assistantTasks);
+  // Tasks and artifacts live in a store; App selects only what it shows.
+  const [taskStore] = useState(() => createTaskStore());
+  const setAssistantTasks = taskStore.setTasks;
+  const setAssistantArtifacts = taskStore.setArtifacts;
   const [tokenUsage, setTokenUsage] =
     useState<TokenUsageSummary>(emptyTokenUsage);
   const [workspaceChanges, setWorkspaceChanges] = useState<{
     projectId: string;
     changes: WorkspaceChanges;
   }>();
-  const [assistantArtifacts, setAssistantArtifacts] = useState<
-    AssistantArtifact[]
-  >([]);
-  const assistantArtifactById = useMemo(
-    () =>
-      new Map(assistantArtifacts.map((artifact) => [artifact.id, artifact])),
-    [assistantArtifacts],
-  );
   const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>(
     [],
   );
@@ -1408,7 +1417,7 @@ function App(): React.JSX.Element {
       protectedWorkspaceViews.add("activity");
     }
     if (
-      assistantTasksRef.current.some(
+      taskStore.getTasks().some(
         (task) =>
           task.status === "queued" ||
           task.status === "running" ||
@@ -1447,7 +1456,7 @@ function App(): React.JSX.Element {
         target?.focus();
       });
     }
-  }, [getPinnedWorkspaceViews]);
+  }, [getPinnedWorkspaceViews, taskStore]);
   const requestWorkspaceLeave = useCallback((next: WorkspaceView, leave: () => void): void => {
     const leaveNotes = (): void => {
       if (viewRef.current === "magic-notes" && next !== "magic-notes" && notesLeaveRequesterRef.current) {
@@ -2030,7 +2039,7 @@ function App(): React.JSX.Element {
         protectedWorkspaceViews.add("activity");
       }
       if (
-        assistantTasks.some(
+        taskStore.getTasks().some(
           (task) =>
             task.status === "queued" ||
             task.status === "running" ||
@@ -2069,7 +2078,7 @@ function App(): React.JSX.Element {
     };
     const interval = window.setInterval(sweep, keepAliveSweepIntervalMs);
     return () => window.clearInterval(interval);
-  }, [activeConversationViewIds, activeId, assistantTasks, getPinnedWorkspaceViews, knowledgeOperationCount, view, conversationStore]);
+  }, [activeConversationViewIds, activeId, taskStore, getPinnedWorkspaceViews, knowledgeOperationCount, view, conversationStore]);
 
   useEffect(() => {
     livePrimarySidebarWidthRef.current = primarySidebarWidth;
@@ -2136,10 +2145,6 @@ function App(): React.JSX.Element {
   useLayoutEffect(() => {
     projectRecoveryByProjectIdRef.current = projectRecoveryByProjectId;
   }, [projectRecoveryByProjectId]);
-
-  useEffect(() => {
-    assistantTasksRef.current = assistantTasks;
-  }, [assistantTasks]);
 
   useEffect(() => {
     saveAppearanceTheme(appearanceTheme);
@@ -2808,17 +2813,13 @@ function App(): React.JSX.Element {
     () => new Set(conversationQueueItems.map((item) => item.conversationId)),
     [conversationQueueItems],
   );
-  const productAssistantTasks = useMemo(
-    () =>
-      assistantTasks.filter(
-        (task) => !task.parentTaskId && task.origin === "schedule",
-      ),
-    [assistantTasks],
-  );
-  const executionStatsRevision = useMemo(
-    () => assistantTasks.map((task) => `${task.id}:${task.status}:${task.completedAt ?? ""}`).join("|"),
-    [assistantTasks],
-  );
+  const productAssistantTasks = useProductTasks(taskStore);
+  const taskStatusRows = useTaskStatusRows(taskStore);
+  const taskActivityRows = useTaskActivityRows(taskStore);
+  // The supervisor page needs every task; App follows them only while it is shown.
+  const heartbeatTasks = useAllTasks(taskStore, view !== "heartbeat");
+  const executionStatsEnabled = assistantSidebarOpen && assistantSidebarTab === "tasks";
+  const executionStatsRevision = useTaskStatsRevision(taskStore, executionStatsEnabled);
   const statsConversation = activeConversation?.projectId === activeProjectId
     ? activeConversation : undefined;
   const statsMessageCount = statsConversation?.messageCount ?? 0;
@@ -2826,7 +2827,7 @@ function App(): React.JSX.Element {
     statsConversation?.id,
     activeProjectId || undefined,
     `${executionStatsRevision}:${statsMessageCount}:${activeConversationIds.has(activeId)}`,
-    assistantSidebarOpen && assistantSidebarTab === "tasks",
+    executionStatsEnabled,
   );
   const taskDurations = useMemo(() => new Map(
     executionStats.project?.taskDurations.map((task) => [task.id, {
@@ -2863,7 +2864,7 @@ function App(): React.JSX.Element {
     [projects, tWorkspace],
   );
   const { completedConversationIds, markConversationCompleted, clearConversationCompleted } =
-    useUnviewedCompletions(assistantTasks,
+    useUnviewedCompletions(taskStatusRows,
       view === "chat" && !settingsOpen && !applicationCenterOpen && activeConversation?.historyLoaded
         ? activeId : undefined);
   const activityProjects = useMemo(
@@ -2879,7 +2880,7 @@ function App(): React.JSX.Element {
     defaultTitle: t("conversation.defaultTitle"),
     fallbackProjectName: tWorkspace("projectActivity.unassigned"),
     projects: activityProjects,
-    tasks: assistantTasks,
+    tasks: taskActivityRows,
   });
   const activityByConversationId = useMemo(
     () =>
@@ -2895,22 +2896,7 @@ function App(): React.JSX.Element {
     busyConversationIdsRef.current = new Set([...activityByConversationId.keys(), ...queuedConversationIds]);
   }, [activityByConversationId, queuedConversationIds]);
   const pendingSidebarApprovals = usePendingSidebarApprovals(conversationStore);
-  const sidebarArtifacts = useMemo<SidebarArtifact[]>(
-    () =>
-      assistantArtifacts
-        .filter(
-          (artifact) =>
-            !activeProjectId || artifact.projectId === activeProjectId,
-        )
-        .map((artifact) => ({
-          id: artifact.id,
-          title: artifact.title,
-          content: artifact.content ?? "",
-          createdAt: new Date(artifact.createdAt).getTime(),
-          mimeType: artifact.mimeType,
-        })),
-    [activeProjectId, assistantArtifacts],
-  );
+  const sidebarArtifacts = useSidebarArtifacts(taskStore, activeProjectId);
   // Pending supervisor suggestions; earlier report proposals are migrated into them.
   const [pendingHeartbeatSuggestionCount, setPendingHeartbeatSuggestionCount] = useState(0);
 
@@ -3253,14 +3239,14 @@ function App(): React.JSX.Element {
   const agentEventDependenciesRef = useRef<AgentEventDependencies | undefined>(undefined);
   useLayoutEffect(() => {
     agentEventDependenciesRef.current = {
-      activeRuns, activeConversationIdRef, activeProjectIdRef, assistantTasksRef, hydratingArtifactIds,
+      activeRuns, activeConversationIdRef, activeProjectIdRef, taskStore, hydratingArtifactIds,
       requestPersistenceFlush: conversationPersistence.requestFlushAfterCommit, tRef,
-      conversationStore, liveMessages, setConversations, setAssistantTasks, setAssistantArtifacts,
+      conversationStore, liveMessages, setConversations,
       setActivityRecords, setUnreadConversationIds, notify, updateMessage, recordActivity,
       updateRequestActivity, loadWorkspaceChanges, markConversationCompleted, setConversationActivity,
       releaseConversationQueueAfterRun,
     };
-  }, [conversationPersistence, conversationStore, liveMessages, setConversations, updateMessage,
+  }, [conversationPersistence, conversationStore, liveMessages, setConversations, taskStore, updateMessage,
     recordActivity, updateRequestActivity, loadWorkspaceChanges, markConversationCompleted,
     setConversationActivity, releaseConversationQueueAfterRun]);
   const handleAgentEvent = useCallback((event: AgentEvent): void => {
@@ -3292,7 +3278,7 @@ function App(): React.JSX.Element {
   useLayoutEffect(() => {
     conversationPersistence.connect({
       retainedConversationIds: retainedConversationDetailIds,
-      hasBusyTask: (conversationId) => assistantTasksRef.current.some(task => task.conversationId === conversationId &&
+      hasBusyTask: (conversationId) => taskStore.getTasks().some(task => task.conversationId === conversationId &&
         (task.status === "running" || task.status === "waiting_approval")),
       pinState: () => ({ revision: conversationPinRevisionRef.current, pending: conversationPinPendingRef.current }),
       historyUnavailableError: () => new Error(tRef.current("notices.remoteConversationRefreshFailed")),
@@ -3302,7 +3288,7 @@ function App(): React.JSX.Element {
         dedupeKey: "conversation-persistence",
       }),
     });
-  }, [conversationPersistence, retainedConversationDetailIds]);
+  }, [conversationPersistence, retainedConversationDetailIds, taskStore]);
   // Saves, history loading and the save queue live in conversation-persistence.ts.
   const persistLocalConversationChanges = conversationPersistence.persist;
   const ensureConversationHistory = conversationPersistence.ensureHistory;
@@ -3411,6 +3397,7 @@ function App(): React.JSX.Element {
     conversationStoreReady,
     releaseConversationQueueAfterRun,
     retainedConversationDetailIds,
+    setAssistantTasks,
     setConversationActivity,
     markConversationCompleted,
   ]);
@@ -4061,12 +4048,8 @@ function App(): React.JSX.Element {
   }, [loadHeartbeats, projects.length]);
 
   const refreshHeartbeatCenter = useCallback(async (): Promise<void> => {
-    const [artifacts] = await Promise.all([
-      window.goodbuddy.artifacts.list(),
-      refreshHeartbeats(),
-    ]);
-    setAssistantArtifacts((current) => mergeArtifacts(current, artifacts));
-  }, [refreshHeartbeats]);
+    await Promise.all([refreshArtifacts(taskStore), refreshHeartbeats()]);
+  }, [refreshHeartbeats, taskStore]);
 
   const retryHeartbeatLoad = useCallback(async (): Promise<void> => {
     setHeartbeatLoading(true);
@@ -4177,7 +4160,7 @@ function App(): React.JSX.Element {
           message: tRef.current("notices.taskHistoryReadFailed"),
         }),
       );
-  }, []);
+  }, [setAssistantTasks]);
 
   useEffect(() => {
     if (view !== "activity") {
@@ -4214,52 +4197,14 @@ function App(): React.JSX.Element {
     }
   }, [notify, refreshActivityPanelRecords, refreshTokenUsage]);
 
-  useEffect(() => {
-    void window.goodbuddy.artifacts
-      .list()
-      .then((artifacts) =>
-        setAssistantArtifacts((current) => mergeArtifacts(current, artifacts)),
-      )
-      .catch(() =>
-        notify({
-          tone: "error",
-          message: tRef.current("notices.resultHistoryReadFailed"),
-        }),
-      );
-  }, []);
+  useInitialArtifactSync(taskStore, () =>
+    notify({
+      tone: "error",
+      message: tRef.current("notices.resultHistoryReadFailed"),
+    }),
+  );
 
-  useEffect(() => {
-    const missingIds = [
-      ...(activeConversation?.artifactIds ?? []),
-    ]
-      .filter(
-        (artifactId) =>
-          !assistantArtifactById.get(artifactId)?.content &&
-          !hydratingArtifactIds.current.has(artifactId),
-      )
-      .slice(-32);
-    if (missingIds.length === 0) {
-      return;
-    }
-    for (const artifactId of missingIds) {
-      hydratingArtifactIds.current.add(artifactId);
-    }
-    void Promise.allSettled(
-      missingIds.map((artifactId) =>
-        window.goodbuddy.artifacts.get(artifactId),
-      ),
-    ).then((results) => {
-      const artifacts = results.flatMap((result) =>
-        result.status === "fulfilled" ? [result.value] : [],
-      );
-      if (artifacts.length > 0) {
-        setAssistantArtifacts((current) => mergeArtifacts(current, artifacts));
-      }
-      for (const artifactId of missingIds) {
-        hydratingArtifactIds.current.delete(artifactId);
-      }
-    });
-  }, [activeConversation?.artifactIds, assistantArtifactById]);
+  useArtifactHydration(taskStore, activeConversation?.artifactIds, hydratingArtifactIds);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -5799,7 +5744,7 @@ function App(): React.JSX.Element {
         }));
       }
     },
-    [updateMessage, conversationStore],
+    [updateMessage, conversationStore, setAssistantTasks],
   );
 
   const respondToQuestion = useCallback(
@@ -5851,7 +5796,7 @@ function App(): React.JSX.Element {
         };
       });
     },
-    [updateMessage, conversationStore],
+    [updateMessage, conversationStore, setAssistantTasks],
   );
 
   const addContext = async (
@@ -6437,12 +6382,12 @@ function App(): React.JSX.Element {
 
   const runAssistantSchedule = useCallback(async (scheduleId: string): Promise<void> => {
     await window.goodbuddy.schedules.runNow(scheduleId);
-    setAssistantTasks(await window.goodbuddy.tasks.list());
+    await refreshTasks(taskStore);
     notify({
       tone: "success",
       message: t("notices.scheduleStarted"),
     });
-  }, [notify, t]);
+  }, [notify, t, taskStore]);
 
   const setAssistantScheduleEnabled = useCallback(async (
     scheduleId: string,
@@ -6642,13 +6587,8 @@ function App(): React.JSX.Element {
       conversationQueueItems.filter((item) => item.conversationId === activeId),
     [activeId, conversationQueueItems],
   );
-  const conversationExecutionRunning =
-    isRunning ||
-    assistantTasks.some(
-      (task) =>
-        task.conversationId === activeId &&
-        (task.status === "running" || task.status === "waiting_approval"),
-    );
+  const activeConversationHasBusyTask = useConversationHasBusyTask(taskStore, activeId);
+  const conversationExecutionRunning = isRunning || activeConversationHasBusyTask;
   const handleConversationQueueError = useCallback(
     (message: string): void => {
       notify({
@@ -6892,15 +6832,7 @@ function App(): React.JSX.Element {
         setAssistantSidebarTab("results");
       }
     },
-    onLoadArtifact: async (artifactId) => {
-      if (assistantArtifactById.get(artifactId)?.content) {
-        return;
-      }
-      const artifact = await window.goodbuddy.artifacts.get(artifactId);
-      setAssistantArtifacts((current) =>
-        mergeArtifacts(current, [artifact]),
-      );
-    },
+    onLoadArtifact: (artifactId) => loadArtifact(taskStore, artifactId),
     onOpenTask: openAssistantTask,
     onRespondApproval: (approval, decision) => {
       void respondToApproval(
@@ -7399,7 +7331,7 @@ function App(): React.JSX.Element {
                     {conversationPaneOrder.map((conversationId) => (
                       <ConversationHistorySlot
                         active={view === "chat" && conversationId === activeId}
-                        artifactById={assistantArtifactById}
+                        taskStore={taskStore}
                         conversationHtmlRenderingEnabled={
                           conversationHtmlRenderingEnabled
                         }
@@ -7671,7 +7603,7 @@ function App(): React.JSX.Element {
                         onUseFollowUpTask={heartbeatActions.onUseFollowUpTask}
                         projects={projects}
                         runs={heartbeatRuns}
-                        tasks={assistantTasks}
+                        tasks={heartbeatTasks}
                       /> : <p role="status">{t('applications.disabledPage')}</p>}
                     </Suspense>
                   </RouteErrorBoundary>
