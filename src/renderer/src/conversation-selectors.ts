@@ -222,6 +222,66 @@ export function useActiveConversationView(
   return useConversationStoreSelector(store, selector, sameActiveConversationView, subscribe);
 }
 
+/**
+ * The fields of one conversation the composer shows. Unlike the active
+ * conversation view it leaves out the message count and artifact IDs, so a
+ * new message or a tool result does not re-render the composer.
+ */
+export type ComposerConversationView = Pick<
+  Conversation,
+  | "id" | "runtimeSelection" | "knowledgeLibraryIds" | "knowledgeRetrievalMode"
+  | "remote" | "contextMetrics" | "contextCompressionState"
+> & { running: boolean };
+
+export function selectComposerConversationView(
+  conversation: Conversation | undefined,
+): ComposerConversationView | undefined {
+  if (!conversation) return undefined;
+  return {
+    id: conversation.id,
+    runtimeSelection: conversation.runtimeSelection,
+    knowledgeLibraryIds: conversation.knowledgeLibraryIds,
+    knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+    remote: conversation.remote,
+    contextMetrics: conversation.contextMetrics,
+    contextCompressionState: conversation.contextCompressionState,
+    running: conversation.messages.some((message) => message.state === "streaming"),
+  };
+}
+
+export function sameComposerConversationView(
+  left: ComposerConversationView | undefined,
+  right: ComposerConversationView | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.id === right.id && left.running === right.running &&
+    left.knowledgeRetrievalMode === right.knowledgeRetrievalMode &&
+    sameArrayItems(left.knowledgeLibraryIds ?? [], right.knowledgeLibraryIds ?? []) &&
+    (left.knowledgeLibraryIds === undefined) === (right.knowledgeLibraryIds === undefined) &&
+    sameData(left.runtimeSelection, right.runtimeSelection) &&
+    sameData(left.remote, right.remote) &&
+    sameData(left.contextMetrics, right.contextMetrics) &&
+    sameData(left.contextCompressionState, right.contextCompressionState);
+}
+
+export function useComposerConversationView(
+  store: ConversationStore,
+  conversationId: string,
+): ComposerConversationView | undefined {
+  const selector = useCallback(
+    (conversations: Conversation[]) => selectComposerConversationView(
+      conversations.find((conversation) => conversation.id === conversationId),
+    ),
+    [conversationId],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribeConversation(conversationId, listener),
+    [conversationId, store],
+  );
+  return useConversationStoreSelector(store, selector, sameComposerConversationView, subscribe);
+}
+
 /** The conversations with these IDs, in this order; stable while unchanged. */
 export function useConversationsById(
   store: ConversationStore,

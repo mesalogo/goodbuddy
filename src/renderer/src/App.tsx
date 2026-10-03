@@ -1,16 +1,10 @@
-import { ImageCapabilityNotice } from "./ImageCapabilityNotice";
 import { MagicNotesPanel } from './MagicNotesPanel';
 import { AnchoredMenu } from './AnchoredMenu';
 import { useMagicNoteDraft } from './use-magic-note-draft';
 import type { MagicNoteSource } from '../../shared/magic-notes-contracts';
-import { RuntimeNativeClientActions } from "./RuntimeNativeClientActions";
 import type { TerminalSnapshot } from "../../shared/terminal-contracts";
 import LocalInferencePage from "./LocalInferencePage";
 import { ApplicationMenu } from './ApplicationMenu';
-import { AttachmentResultButton } from './AttachmentResultButton';
-import { AttachmentActions, AttachmentStatus } from './AttachmentActions';
-import { PendingDocumentImports } from './PendingDocumentImports';
-import { AttachmentCapabilityNotice } from './AttachmentCapabilityNotice';
 import { DocumentConversationContext } from './DocumentConversationContext';
 import { maximumAttachmentsPerMessage } from '../../shared/attachment-limits';
 import { buildRuntimeHistory } from '../../shared/runtime-history';
@@ -28,41 +22,27 @@ import {
 } from "../../shared/application-settings-contracts";
 import type { ImageOperation } from "../../shared/image-generation-contracts";
 import {
-  Bot,
   ChartColumn,
   CheckCircle2,
-  ChevronDown,
   ChevronUp,
   CircleAlert,
-  CircleHelp,
   Download,
-  FileText,
   Grid2X2,
   Info,
-  Library,
   LoaderCircle,
   Maximize2,
   MessageSquarePlus,
   MessageSquare,
-  Mic,
   Minimize2,
   Minus,
   Moon,
   MoreHorizontal,
-  Paperclip,
   PanelLeft,
   Search,
-  Send,
   Settings,
-  RefreshCw,
-  ShieldCheck,
-  SlidersHorizontal,
   PanelRightClose,
   PanelRightOpen,
-  Sparkles,
-  Square,
   Sun,
-  TerminalSquare,
   X,
 } from "lucide-react";
 import {
@@ -100,14 +80,9 @@ import type {
   RuntimeSettings,
 } from "../../shared/contracts";
 import {
-  defaultContextCompressionSettings,
-  maximumPastedImageBytes,
-} from "../../shared/contracts";
-import {
   buildConversationSummaryHistory,
   estimatedContextRequestOverheadTokens,
   estimateMessagesTokens,
-  getEffectiveContextTriggerTokens,
 } from "../../shared/context-window";
 import {
   agentRuntimeSelectionKey,
@@ -122,7 +97,6 @@ import {
   runtimeModelLabel,
   runtimeProviderLabel,
 } from "./runtime-selection";
-import { RuntimeModelPicker } from "./RuntimeModelPicker";
 import type {
   ActivityHistorySnapshot,
   AssistantProject,
@@ -185,12 +159,12 @@ import {
   type ConversationListRowHandlers,
   type ConversationSidebarActions,
 } from "./ConversationSidebar";
-import {
-  ComposerDraftEffect,
-  ComposerDraftHasText,
-  ComposerDraftText,
-  createComposerDraftStore,
-} from "./composer-draft-store";
+import { createComposerDraftStore } from "./composer-draft-store";
+import { createComposerMenuStore } from "./composer-menu-store";
+import type { ComposerMenuOption, RuntimeActionChoice } from "./ComposerMenuSelect";
+import { formatAttachmentSize, resizeComposerTextarea } from "./composer-textarea";
+import { Composer } from "./Composer";
+import { useComposerActions } from "./use-composer-actions";
 import { LiveMessageStoreContext } from "./live-message-store";
 import {
   createConversationPersistence,
@@ -222,7 +196,6 @@ import {
 import {
   EmptyState,
   PageShell,
-  SegmentedControl,
   ScopeBadge,
 } from "./WorkspacePrimitives";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -241,7 +214,6 @@ import {
   type CustomTaskDestination,
 } from "./CustomTaskDialog";
 import { ConversationHistorySlot } from "./ConversationHistorySlot";
-import { ConversationInputQueue } from "./ConversationInputQueue";
 import type { SettingsCategoryId } from "./settings-categories";
 import type { SettingsLeaveRequester } from "./SettingsPanel";
 import { formatShortcutForDisplay, type GlobalShortcutSettingsSnapshot } from "../../shared/shortcut";
@@ -272,7 +244,6 @@ import type { RemoteProjectRecoveryState } from "../../shared/remote-project-rec
 import { ReleaseNotesDialog } from "./ReleaseNotesDialog";
 import { scheduleIdleRoutePreload } from "./idle-route-preload";
 import { createPreloadableComponent } from "./preloadable-component";
-import { formatCompactTokens } from "./token-format";
 import {
   filterKeepAliveEntries,
   pruneKeepAliveEntries,
@@ -626,6 +597,8 @@ const emptyTokenUsage: TokenUsageSummary = {
 
 const storageKey = "goodbuddy.conversations.v1";
 const emptyConversationTasks: AssistantTask[] = [];
+const emptyAttachments: ContextAttachment[] = [];
+const emptyImageReferences: AssistantArtifact[] = [];
 
 const activeProjectStorageKey = "goodbuddy.active-project.v1";
 
@@ -964,60 +937,6 @@ function runtimeChoiceLabel(
   )}`;
 }
 
-function formatAttachmentSize(size: number): string {
-  return `${Math.max(1, Math.ceil(size / 1024))} KB`;
-}
-
-const composerTextareaMinHeight = 72;
-const composerTextareaMaxHeight = 220;
-
-const composerTextareaSizes = new WeakMap<
-  HTMLTextAreaElement,
-  { height: number; value: string }
->();
-
-function clampComposerTextareaHeight(height: number): number {
-  return Math.max(
-    composerTextareaMinHeight,
-    Math.min(height, composerTextareaMaxHeight),
-  );
-}
-
-// Sizing reads scrollHeight, which forces a synchronous layout of the whole
-// window. Skip the read when the result is known, and avoid the extra
-// "auto" reset layout when text was only appended (it can only grow).
-function resizeComposerTextarea(textarea: HTMLTextAreaElement | null): void {
-  if (!textarea) {
-    return;
-  }
-  const value = textarea.value;
-  const previous = composerTextareaSizes.get(textarea);
-  const previousHeightApplied =
-    previous !== undefined &&
-    textarea.style.height === `${previous.height}px`;
-  let height: number;
-  if (previousHeightApplied && value === previous.value) {
-    height = previous.height;
-  } else if (
-    previousHeightApplied &&
-    previous.value !== "" &&
-    value.startsWith(previous.value)
-  ) {
-    height =
-      previous.height >= composerTextareaMaxHeight
-        ? composerTextareaMaxHeight
-        : clampComposerTextareaHeight(textarea.scrollHeight);
-  } else {
-    textarea.style.height = "auto";
-    height = clampComposerTextareaHeight(textarea.scrollHeight);
-  }
-  const nextHeight = `${height}px`;
-  if (textarea.style.height !== nextHeight) {
-    textarea.style.height = nextHeight;
-  }
-  composerTextareaSizes.set(textarea, { height, value });
-}
-
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,/u;
 
 function getImageDownloadName(
@@ -1146,191 +1065,6 @@ function WindowControls({
       >
         <X size={17} />
       </button>
-    </div>
-  );
-}
-
-type ComposerMenuOption<T extends string> = {
-  value: T;
-  label: string;
-  description: string;
-  disabled?: boolean;
-};
-
-type RuntimeActionChoice = ComposerMenuOption<string> & {
-  action?: { type: "command"; id: string } | { type: "prompt"; prompt: string };
-};
-
-function ComposerMenuSelect<T extends string>({
-  ariaLabel,
-  className,
-  describedBy,
-  disabled = false,
-  icon,
-  menuOpen,
-  onChange,
-  onOpenChange,
-  options,
-  triggerLabel,
-  value,
-}: {
-  ariaLabel: string;
-  className: string;
-  describedBy?: string;
-  disabled?: boolean;
-  icon: ReactNode;
-  menuOpen: boolean;
-  onChange: (value: T) => void;
-  onOpenChange: (open: boolean) => void;
-  options: readonly ComposerMenuOption<T>[];
-  triggerLabel?: string;
-  value: T;
-}): React.JSX.Element {
-  const { t } = useTranslation("app");
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const selectedOption =
-    options.find((option) => option.value === value) ?? options[0];
-  const selectionLabel = t("composer.menuSelection", {
-    label: ariaLabel,
-    selection: selectedOption?.label ?? "",
-  });
-
-  useEffect(() => {
-    if (!menuOpen) {
-      return;
-    }
-    const menu = menuRef.current;
-    if (!menu) {
-      return;
-    }
-    const menuItems = Array.from(
-      menu.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),
-    ).filter((item) => !item.disabled);
-    const initialItem =
-      menuItems.find((item) => item.getAttribute("aria-checked") === "true") ??
-      menuItems[0];
-    menuItems.forEach((item) => {
-      item.tabIndex = item === initialItem ? 0 : -1;
-    });
-    const focusFrame = requestAnimationFrame(() => {
-      initialItem?.focus();
-    });
-    const isMenuTarget = (target: EventTarget | null): boolean =>
-      target instanceof Node &&
-      (menu.contains(target) || buttonRef.current?.contains(target) === true);
-    const dismissOnOutsidePointer = (event: PointerEvent): void => {
-      if (!isMenuTarget(event.target)) {
-        onOpenChange(false);
-      }
-    };
-    const dismissOnOutsideFocus = (event: FocusEvent): void => {
-      if (!isMenuTarget(event.target)) {
-        onOpenChange(false);
-      }
-    };
-    document.addEventListener("pointerdown", dismissOnOutsidePointer);
-    document.addEventListener("focusin", dismissOnOutsideFocus);
-    return () => {
-      cancelAnimationFrame(focusFrame);
-      document.removeEventListener("pointerdown", dismissOnOutsidePointer);
-      document.removeEventListener("focusin", dismissOnOutsideFocus);
-    };
-  }, [menuOpen, onOpenChange, value]);
-
-  return (
-    <div className={`runtime-picker composer-picker ${className}`}>
-      <button
-        aria-describedby={describedBy}
-        aria-expanded={menuOpen}
-        aria-haspopup="menu"
-        aria-label={selectionLabel}
-        className="model-button composer-picker__button"
-        disabled={disabled}
-        onClick={() => onOpenChange(!menuOpen)}
-        onKeyDown={(event) => {
-          if (
-            !menuOpen &&
-            (event.key === "ArrowDown" ||
-              event.key === "Enter" ||
-              event.key === " ")
-          ) {
-            event.preventDefault();
-            onOpenChange(true);
-          }
-        }}
-        ref={buttonRef}
-        title={selectionLabel}
-        type="button"
-      >
-        {icon}
-        <span className="model-button__label">
-          {triggerLabel ?? selectedOption?.label}
-        </span>
-        <ChevronDown aria-hidden="true" size={14} />
-      </button>
-      {menuOpen && (
-        <div
-          aria-label={ariaLabel}
-          className="runtime-picker__menu composer-picker__menu"
-          onKeyDown={(event) => {
-            const items = Array.from(
-              event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                '[role="menuitemradio"]',
-              ),
-            ).filter((item) => !item.disabled);
-            const currentIndex = items.indexOf(
-              document.activeElement as HTMLButtonElement,
-            );
-            let nextIndex: number | undefined;
-            if (event.key === "ArrowDown") {
-              nextIndex = (currentIndex + 1) % items.length;
-            } else if (event.key === "ArrowUp") {
-              nextIndex = (currentIndex - 1 + items.length) % items.length;
-            } else if (event.key === "Home") {
-              nextIndex = 0;
-            } else if (event.key === "End") {
-              nextIndex = items.length - 1;
-            } else if (event.key === "Escape") {
-              event.preventDefault();
-              onOpenChange(false);
-              buttonRef.current?.focus();
-            }
-            const nextItem =
-              nextIndex === undefined ? undefined : items.at(nextIndex);
-            if (nextItem) {
-              event.preventDefault();
-              items.forEach((item) => {
-                item.tabIndex = item === nextItem ? 0 : -1;
-              });
-              nextItem.focus();
-            }
-          }}
-          ref={menuRef}
-          role="menu"
-        >
-          {options.map((option) => (
-            <button
-              aria-checked={option.value === value}
-              disabled={option.disabled}
-              key={option.value}
-              onClick={() => {
-                onChange(option.value);
-                onOpenChange(false);
-                requestAnimationFrame(() => {
-                  buttonRef.current?.focus();
-                });
-              }}
-              role="menuitemradio"
-              tabIndex={option.value === value ? 0 : -1}
-              type="button"
-            >
-              <span>{option.label}</span>
-              <small>{option.description}</small>
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -1464,9 +1198,8 @@ function App(): React.JSX.Element {
       composerDrafts.set(conversationId, update),
     [composerDrafts],
   );
-  const resizeActiveComposer = useCallback((): void => {
-    resizeComposerTextarea(inputRef.current);
-  }, []);
+  // Composer popups (options, pickers, runtime menu) open and close without re-rendering App.
+  const [composerMenus] = useState(createComposerMenuStore);
   // Async composer operations retain the conversation that started them.
   const setInput = useCallback(
     (update: SetStateAction<string>): void => setConversationInput(activeId, update),
@@ -1484,19 +1217,6 @@ function App(): React.JSX.Element {
   const [runtime, setRuntime] = useState<AgentRuntimeStatus>();
   const [runtimeStatusKey, setRuntimeStatusKey] = useState("");
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>();
-  const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
-  const [knowledgeScopeOpen, setKnowledgeScopeOpen] = useState(false);
-  const [composerOptionsOpen, setComposerOptionsOpen] = useState(false);
-  const composerOptionsRef = useRef<HTMLDivElement>(null);
-  const composerOptionsTriggerRef = useRef<HTMLButtonElement>(null);
-  const [composerMenuOpen, setComposerMenuOpen] = useState<
-    | "expert"
-    | "mode"
-    | "runtime-agent"
-    | "runtime-action"
-    | "runtime-preset"
-    | undefined
-  >();
   const [runtimeCustomization, setRuntimeCustomization] =
     useState<RuntimeCustomizationSettings>();
   const [runtimeNativeSnapshot, setRuntimeNativeSnapshot] =
@@ -1519,7 +1239,6 @@ function App(): React.JSX.Element {
     useState(false);
   const runtimeCustomizationRequestRef = useRef(0);
   const runtimeMenuButtonRef = useRef<HTMLButtonElement>(null);
-  const runtimeMenuRef = useRef<HTMLDivElement>(null);
   const [runtimeSwitching, setRuntimeSwitching] = useState(false);
   const [appearanceTheme, setAppearanceTheme] =
     useState<AppearanceTheme>(loadAppearanceTheme);
@@ -1542,42 +1261,6 @@ function App(): React.JSX.Element {
   const toggleAppearanceTheme = useCallback((): void => {
     setAppearanceTheme(resolvedAppearanceTheme === "dark" ? "light" : "dark");
   }, [resolvedAppearanceTheme]);
-  const setExpertMenuOpen = useCallback((open: boolean): void => {
-    setComposerMenuOpen(open ? "expert" : undefined);
-    if (open) {
-      setRuntimeMenuOpen(false);
-      setKnowledgeScopeOpen(false);
-    }
-  }, []);
-  const setModeMenuOpen = useCallback((open: boolean): void => {
-    setComposerMenuOpen(open ? "mode" : undefined);
-    if (open) {
-      setRuntimeMenuOpen(false);
-      setComposerOptionsOpen(false);
-      setKnowledgeScopeOpen(false);
-    }
-  }, []);
-  const setRuntimeAgentMenuOpen = useCallback((open: boolean): void => {
-    setComposerMenuOpen(open ? "runtime-agent" : undefined);
-    if (open) {
-      setRuntimeMenuOpen(false);
-      setKnowledgeScopeOpen(false);
-    }
-  }, []);
-  const setRuntimeActionMenuOpen = useCallback((open: boolean): void => {
-    setComposerMenuOpen(open ? "runtime-action" : undefined);
-    if (open) {
-      setRuntimeMenuOpen(false);
-      setKnowledgeScopeOpen(false);
-    }
-  }, []);
-  const setRuntimePresetMenuOpen = useCallback((open: boolean): void => {
-    setComposerMenuOpen(open ? "runtime-preset" : undefined);
-    if (open) {
-      setRuntimeMenuOpen(false);
-      setKnowledgeScopeOpen(false);
-    }
-  }, []);
   const assistantExpertOptions = useMemo<ComposerMenuOption<string>[]>(
     () => [
       {
@@ -1989,9 +1672,9 @@ function App(): React.JSX.Element {
   const [attachmentsByConversation, setAttachmentsByConversation] = useState<
     Record<string, ContextAttachment[]>
   >({});
-  const attachments = attachmentsByConversation[activeId] ?? [];
+  const attachments = attachmentsByConversation[activeId] ?? emptyAttachments;
   const [imageReferencesByConversation, setImageReferencesByConversation] = useState<Record<string, AssistantArtifact[]>>({});
-  const imageReferences = imageReferencesByConversation[activeId] ?? [];
+  const imageReferences = imageReferencesByConversation[activeId] ?? emptyImageReferences;
   const attachmentsRef = useRef(new Map<string, ContextAttachment[]>());
   const attachmentSaveQueue = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => window.goodbuddy.context.onDraftChanged((conversationId, saved) => {
@@ -2097,8 +1780,6 @@ function App(): React.JSX.Element {
   const knowledgeLoadRequestRef = useRef(0);
   const citationRequestRef = useRef(0);
   const failedKnowledgeLibraryIdRef = useRef<string | undefined>(undefined);
-  const knowledgeScopeTriggerRef = useRef<HTMLButtonElement>(null);
-  const knowledgeScopePopoverRef = useRef<HTMLDivElement>(null);
   const [legacyActivityHistory] = useState(loadLegacyActivityHistory);
   const [activityRecords, setActivityRecords] = useState<ActivityRecord[]>(
     legacyActivityHistory.records,
@@ -2465,67 +2146,6 @@ function App(): React.JSX.Element {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [closeNarrowSidebar, narrowWindow, sidebarOpen]);
-
-  useEffect(() => {
-    if (!knowledgeScopeOpen) {
-      return;
-    }
-    const focusFrame = requestAnimationFrame(() => {
-      knowledgeScopePopoverRef.current
-        ?.querySelector<HTMLInputElement>("input")
-        ?.focus();
-    });
-    const isScopeTarget = (target: EventTarget | null): boolean =>
-      target instanceof Node &&
-      (knowledgeScopePopoverRef.current?.contains(target) === true ||
-        knowledgeScopeTriggerRef.current?.contains(target) === true);
-    const closeOnOutsidePointer = (event: PointerEvent): void => {
-      if (!isScopeTarget(event.target)) {
-        setKnowledgeScopeOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || event.defaultPrevented) {
-        return;
-      }
-      event.preventDefault();
-      setKnowledgeScopeOpen(false);
-      knowledgeScopeTriggerRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      cancelAnimationFrame(focusFrame);
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [knowledgeScopeOpen]);
-
-  useEffect(() => {
-    if (!composerOptionsOpen) {
-      return;
-    }
-    const isOptionsTarget = (target: EventTarget | null): boolean =>
-      target instanceof Node &&
-      (composerOptionsRef.current?.contains(target) === true ||
-        composerOptionsTriggerRef.current?.contains(target) === true);
-    const dismissOutside = (event: Event): void => {
-      if (!isOptionsTarget(event.target)) {
-        setComposerOptionsOpen(false);
-        setKnowledgeScopeOpen(false);
-      }
-    };
-    const frame = requestAnimationFrame(() => {
-      composerOptionsRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-    });
-    document.addEventListener("pointerdown", dismissOutside);
-    document.addEventListener("focusin", dismissOutside);
-    return () => {
-      cancelAnimationFrame(frame);
-      document.removeEventListener("pointerdown", dismissOutside);
-      document.removeEventListener("focusin", dismissOutside);
-    };
-  }, [composerOptionsOpen]);
 
   useEffect(() => cancelLiveMessageFlush, [cancelLiveMessageFlush]);
 
@@ -3096,51 +2716,6 @@ function App(): React.JSX.Element {
     },
     [runtimeActionOptions, setInput],
   );
-
-  useEffect(() => {
-    if (!runtimeMenuOpen) {
-      return;
-    }
-    const menu = runtimeMenuRef.current;
-    if (!menu) {
-      return;
-    }
-    const menuItems = Array.from(
-      menu.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitemradio"], [role="menuitem"]',
-      ),
-    ).filter((item) => !item.disabled);
-    const initialItem =
-      menuItems.find((item) => item.getAttribute("aria-checked") === "true") ??
-      menuItems[0];
-    menuItems.forEach((item) => {
-      item.tabIndex = item === initialItem ? 0 : -1;
-    });
-    const focusFrame = requestAnimationFrame(() => {
-      initialItem?.focus();
-    });
-    const isRuntimeMenuTarget = (target: EventTarget | null): boolean =>
-      target instanceof Node &&
-      (menu.contains(target) ||
-        runtimeMenuButtonRef.current?.contains(target) === true);
-    const dismissOnOutsidePointer = (event: PointerEvent): void => {
-      if (!isRuntimeMenuTarget(event.target)) {
-        setRuntimeMenuOpen(false);
-      }
-    };
-    const dismissOnOutsideFocus = (event: FocusEvent): void => {
-      if (!isRuntimeMenuTarget(event.target)) {
-        setRuntimeMenuOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", dismissOnOutsidePointer);
-    document.addEventListener("focusin", dismissOnOutsideFocus);
-    return () => {
-      cancelAnimationFrame(focusFrame);
-      document.removeEventListener("pointerdown", dismissOnOutsidePointer);
-      document.removeEventListener("focusin", dismissOnOutsideFocus);
-    };
-  }, [activeRuntimeSelectionKey, runtimeMenuOpen]);
   // The committed active ID, or a just-created conversation until the next
   // commit, so repeated new-conversation requests reuse it.
   const conversationNavigationRef = useRef({ activeId });
@@ -3552,7 +3127,7 @@ function App(): React.JSX.Element {
       const selection = resolved.selection;
       runtimeMenuButtonRef.current?.focus();
       setRuntimeSwitching(true);
-      setRuntimeMenuOpen(false);
+      composerMenus.closeRuntimeMenu();
       const requestId = runtimeStatusRequestRef.current + 1;
       runtimeStatusRequestRef.current = requestId;
       const generation = runtimeSwitchGenerationRef.current;
@@ -3628,6 +3203,7 @@ function App(): React.JSX.Element {
     [
       activeConversation,
       activeProject,
+      composerMenus,
       runtimeSettings,
       runtimeSwitching,
       setConversations,
@@ -5845,8 +5421,7 @@ function App(): React.JSX.Element {
         }
         await attachmentSaveQueue.current;
         await window.goodbuddy.conversationQueue.enqueueUser(queueInput);
-        setComposerMenuOpen(undefined);
-        setRuntimeMenuOpen(false);
+        composerMenus.closeMenus();
         setInput("");
         updateAttachments([]);
         setImageReferencesByConversation(current => ({ ...current, [conversationId]: [] }));
@@ -5866,8 +5441,7 @@ function App(): React.JSX.Element {
       return;
     }
     dispatchedConversationQueueItems.current.add(queuedDispatch.item.id);
-    setComposerMenuOpen(undefined);
-    setRuntimeMenuOpen(false);
+    composerMenus.closeMenus();
     preparingConversations.current.add(conversationId);
     clearConversationCompleted(conversationId);
     setConversationActivity(conversationId, true);
@@ -7068,14 +6642,6 @@ function App(): React.JSX.Element {
   };
 
   const isRunning = activeConversation?.running ?? false;
-  const [composerContext, setComposerContext] = useState({ activeId, isRunning, view });
-  if (composerContext.activeId !== activeId || composerContext.isRunning !== isRunning || composerContext.view !== view) {
-    setComposerContext({ activeId, isRunning, view });
-    setComposerOptionsOpen(false);
-    setKnowledgeScopeOpen(false);
-    setComposerMenuOpen(undefined);
-    setRuntimeMenuOpen(false);
-  }
   const activeConversationQueueItems = useMemo(
     () =>
       conversationQueueItems.filter((item) => item.conversationId === activeId),
@@ -7106,52 +6672,6 @@ function App(): React.JSX.Element {
     (itemId: string) => window.goodbuddy.conversationQueue.remove(itemId),
     [],
   );
-  const runtimeAgentControlAvailable =
-    activeRuntimeSelection?.provider === "opencode" &&
-    runtimeAgentOptions.length > 1;
-  const runtimePresetControlAvailable =
-    activeRuntimeSelection?.provider === "continue" &&
-    runtimePresetOptions.length > 1;
-  const runtimeActionControlAvailable =
-    (activeRuntimeSelection?.provider === "opencode" ||
-      activeRuntimeSelection?.provider === "continue") &&
-    runtimeActionOptions.length > 1;
-  const runtimeControlsAvailable =
-    runtimeAgentControlAvailable ||
-    runtimePresetControlAvailable ||
-    runtimeActionControlAvailable;
-  const runtimeControlsProvider = runtimeControlsAvailable
-    ? activeRuntimeSelection?.provider === "opencode"
-      ? "OpenCode"
-      : activeRuntimeSelection?.provider === "continue"
-        ? "Continue"
-        : undefined
-    : undefined;
-  const runtimeControlsLabel = runtimeControlsProvider
-    ? t("composer.runtimeControls.groupLabel", {
-        runtime: runtimeControlsProvider,
-      })
-    : "";
-  const composerOptionSummary = [
-    selectedExpertId && runtime?.capability !== "image-generation"
-      ? assistantExpertOptions.find((option) => option.value === selectedExpertId)?.label
-      : undefined,
-    enabledKnowledgeLibraryIds.length > 0
-      ? t("composer.knowledge.select", { count: enabledKnowledgeLibraryIds.length })
-      : undefined,
-    activeConversation?.knowledgeRetrievalMode === "always"
-      ? t("composer.knowledge.always")
-      : undefined,
-    runtimeAgentControlAvailable && selectedRuntimeAgent
-      ? runtimeAgentOptions.find((option) => option.value === selectedRuntimeAgent)?.label
-      : undefined,
-    runtimePresetControlAvailable && selectedContinuePreset
-      ? runtimePresetOptions.find((option) => option.value === selectedContinuePreset)?.label
-      : undefined,
-    runtimeActionControlAvailable && selectedRuntimeCommand
-      ? runtimeActionOptions.find((option) => option.action?.type === "command" && option.action.id === selectedRuntimeCommand)?.label
-      : undefined,
-  ].filter(Boolean).join(" · ");
   const runtimeContextCompactAvailable =
     activeRuntimeSelection?.provider === "model"
       ? !activeConversation?.remote &&
@@ -7189,67 +6709,59 @@ function App(): React.JSX.Element {
     return conversation.id;
   };
 
-  const composerContextMetrics = useMemo(() => {
-    if (
-      !activeConversation ||
-      !runtimeSettings ||
-      !activeRuntimeSelection ||
-      activeConversation.remote
-    ) {
-      return undefined;
-    }
-    const resolvedRuntimeSelection = activeRuntimeSelection;
-    const activeModelProfile =
-      "profileId" in resolvedRuntimeSelection &&
-      resolvedRuntimeSelection.profileId
-        ? runtimeSettings.modelProfiles.find(
-            (candidate) => candidate.id === resolvedRuntimeSelection.profileId,
-          )
-        : undefined;
-    if (activeModelProfile?.protocol === "openai-images-generations") {
-      return undefined;
-    }
-    const latest = activeConversation.contextMetrics;
-    const applicableLatest =
-      latest?.runtimeSelectionKey ===
-      agentRuntimeSelectionKey(resolvedRuntimeSelection)
-        ? latest
-        : undefined;
-    if (!applicableLatest) {
-      return undefined;
-    }
-    const compressionSettings =
-      runtimeSettings.contextCompression ?? defaultContextCompressionSettings;
-    const contextTokens = applicableLatest.contextTokens;
-    const contextWindowTokens = activeModelProfile?.contextWindowTokens;
-    const effectiveTriggerTokens = getEffectiveContextTriggerTokens({
-      triggerTokens: compressionSettings.triggerTokens,
-      contextWindowTokens,
-    });
-    const denominatorTokens = contextWindowTokens;
-    const percentage =
-      denominatorTokens === undefined
-        ? undefined
-        : Math.round((contextTokens / denominatorTokens) * 100);
-
-    return {
-      contextTokens,
-      effectiveTriggerTokens,
-      contextWindowTokens,
-      compressionEnabled:
-        resolvedRuntimeSelection.provider === "model" &&
-        compressionSettings.enabled,
-      source: applicableLatest.source,
-      basis:
-        applicableLatest.basis ??
-        (applicableLatest.source === "estimated" &&
-        activeConversation.contextCompressionState
-          ? "conversation"
-          : "model-call"),
-      denominatorTokens,
-      percentage,
-    };
-  }, [activeConversation, activeRuntimeSelection, runtimeSettings]);
+  const composerActions = useComposerActions({
+    submit: () => void submit(),
+    stop: () => void stop(),
+    selectContextFiles: (paths) => void selectContextFiles(paths),
+    addContext: (action) => void addContext(action),
+    isSelectingContextFiles: () => selectingContextFilesRef.current,
+    setContextError,
+    removeAttachment: (attachmentId) => {
+      void window.goodbuddy.context.remove(attachmentId);
+      updateAttachments((current) => current.filter((item) => item.id !== attachmentId));
+    },
+    removeImageReference: (conversationId, artifactId) =>
+      setImageReferencesByConversation((current) => ({
+        ...current,
+        [conversationId]: (current[conversationId] ?? []).filter((item) => item.id !== artifactId),
+      })),
+    restoreQueueItem: async (conversationId, itemId) => {
+      await attachmentSaveQueue.current;
+      const restored = await window.goodbuddy.conversationQueue.restoreToDraft(itemId, "");
+      setConversationInput(conversationId, (current) =>
+        [current, restored.prompt].filter(Boolean).join("\n\n"));
+    },
+    interruptQueueItem: interruptConversationQueueItem,
+    removeQueueItem: removeConversationQueueItem,
+    queueError: handleConversationQueueError,
+    toggleVoiceInput,
+    compactRuntimeContext: () => void compactRuntimeContext(),
+    openImageViewer,
+    openModelSettings: openImageModelSettings,
+    setEnabledKnowledgeLibraryIds,
+    setKnowledgeRetrievalMode: (mode) =>
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === activeId
+            ? { ...conversation, knowledgeRetrievalMode: mode, updatedAt: Date.now() }
+            : conversation,
+        ),
+      ),
+    selectExpert: setSelectedExpertId,
+    selectRuntimeAgent: setSelectedRuntimeAgent,
+    selectContinuePreset: setSelectedContinuePreset,
+    selectRuntimeAction,
+    setWorkMode,
+    switchRuntime: (layer) => void switchRuntime(layer),
+    prepareNativeClientConversation,
+    openNativeTerminal: (terminal, origin) => {
+      const focus = activeProjectIdRef.current === origin.projectId &&
+        activeConversationIdRef.current === origin.conversationId && viewRef.current === "chat";
+      setNativeTerminals((current) => [...current, { terminal, focus }]);
+      if (focus) setAssistantSidebarOpen(true);
+    },
+    notify,
+  });
 
   const mainSidebarOpen = narrowWindow && sidebarOpen;
   const canResizePrimarySidebar = sidebarOpen && !narrowWindow;
@@ -7257,23 +6769,6 @@ function App(): React.JSX.Element {
     window.innerWidth,
   );
   const backgroundIsolated = mainSidebarOpen;
-  const runtimeState =
-    runtimeSwitching ||
-    !runtime ||
-    runtimeStatusKey !== activeRuntimeSelectionKey
-      ? "connecting"
-      : runtime.available
-        ? "ready"
-        : "unavailable";
-  const runtimeDetailId = "composer-runtime-detail";
-  const runtimeDetail =
-    runtimeState === "connecting"
-      ? t("runtime.connecting")
-      : runtime?.detail ||
-        (runtimeState === "unavailable"
-          ? t("runtime.unavailable")
-          : t("runtime.state.ready"));
-  const composerContextErrorId = "composer-context-error";
   const runBrowserCommand = async (
     command: (
       browserApi: NonNullable<typeof window.goodbuddy.browser>,
@@ -7836,908 +7331,58 @@ function App(): React.JSX.Element {
                       </div>
                     ) : (
                       <>
-                        <ConversationInputQueue
-                          items={activeConversationQueueItems}
-                          onError={handleConversationQueueError}
-                          onInterruptAndRun={interruptConversationQueueItem}
-                          onRemove={removeConversationQueueItem}
-                          onRestore={async (itemId) => {
-                            await attachmentSaveQueue.current;
-                            const restored = await window.goodbuddy.conversationQueue.restoreToDraft(itemId, "");
-                            setInput((current) => [current, restored.prompt].filter(Boolean).join("\n\n"));
-                          }}
-                          running={conversationExecutionRunning}
+                        <Composer
+                          actions={composerActions}
+                          activeProjectId={activeProjectId}
+                          activeRuntimeSelection={activeRuntimeSelection}
+                          assistantExpertOptions={assistantExpertOptions}
+                          attachmentButtonRef={attachmentButtonRef}
+                          attachmentOperations={attachmentOperations}
+                          attachments={attachments}
+                          composerDrafts={composerDrafts}
+                          contextError={contextError}
+                          conversationHint={composerConversationHint}
+                          conversationId={activeId}
+                          conversationStore={conversationStore}
+                          effectiveWorkMode={effectiveWorkMode}
+                          executionRunning={conversationExecutionRunning}
+                          externalInstances={externalInstances}
+                          fileSelectionProgress={fileSelectionProgress}
+                          imageReferences={imageReferences}
+                          inputRef={inputRef}
+                          keyboardHint={composerKeyboardHint}
+                          knowledgeLibraries={knowledgeSnapshot.libraries}
+                          menuStore={composerMenus}
+                          nativeClientAvailable={nativeClientAvailable}
+                          nativeClientContextKey={nativeClientContextKey}
+                          projectRecoveryBlocked={activeProjectRecoveryBlocked}
+                          projectRuntimeSelection={activeProject?.runtimeSelection}
+                          projectUsesManagedSsh={activeProjectUsesManagedSsh}
+                          queueItems={activeConversationQueueItems}
+                          runtime={runtime}
+                          runtimeActionOptions={runtimeActionOptions}
+                          runtimeAgentOptions={runtimeAgentOptions}
+                          runtimeContextCompactAvailable={runtimeContextCompactAvailable}
+                          runtimeContextCompacting={runtimeContextCompacting}
+                          runtimeLabel={activeRuntimeLabel}
+                          runtimeMenuButtonRef={runtimeMenuButtonRef}
+                          runtimeModelDetail={activeRuntimeModelDetail}
+                          runtimeNativeSnapshot={runtimeNativeSnapshot}
+                          runtimePresetOptions={runtimePresetOptions}
+                          runtimeSettings={runtimeSettings}
+                          runtimeStatusKey={runtimeStatusKey}
+                          runtimeSwitching={runtimeSwitching}
+                          selectedContinuePreset={selectedContinuePreset}
+                          selectedExpertId={selectedExpertId}
+                          selectedRuntimeAgent={selectedRuntimeAgent}
+                          selectedRuntimeCommand={selectedRuntimeCommand}
+                          selectingContextFiles={selectingContextFiles}
+                          updateAttachmentBusy={updateAttachmentBusy}
+                          voiceListening={voiceListening}
+                          voiceRecording={voiceRecording}
+                          workModeOptions={workModeOptions}
+                          workspaceView={view}
                         />
-                        <div className="composer">
-                          <ImageCapabilityNotice
-                            runtime={runtime}
-                            workMode={effectiveWorkMode}
-                            hasCallableImageModels={runtimeSettings?.modelProfiles.some(profile =>
-                              profile.protocol === "openai-images-generations" && profile.allowConversationInvocation === true
-                            ) ?? false}
-                            onOpenModelSettings={openImageModelSettings}
-                          />
-                          {composerOptionSummary && (
-                            <div className="composer__option-summary" aria-label={t("composer.settings")}>
-                              {composerOptionSummary}
-                            </div>
-                          )}
-                          <PendingDocumentImports key={activeId} conversationId={activeId} refreshing={selectingContextFiles} onBusyChange={updateAttachmentBusy} />
-                          {attachments.some((attachment) => attachment.kind === 'image') && <AttachmentCapabilityNotice key={`${activeId}:${activeRuntimeSelectionKey}`} conversationId={activeId} selection={activeRuntimeSelection} revision={`${attachments.map((item) => item.id).join(',')}:${runtimeSettings?.defaultModelProfileId}:${runtimeStatusKey}`} />}
-                          {(attachments.length > 0 || imageReferences.length > 0 ||
-                            selectingContextFiles) && (
-                            <div
-                              aria-busy={selectingContextFiles}
-                              aria-describedby={
-                                contextError
-                                  ? composerContextErrorId
-                                  : undefined
-                              }
-                              aria-invalid={contextError ? true : undefined}
-                              className="context-list"
-                            >
-                              {imageReferences.map(artifact => <div className="context-chip" key={artifact.id}>
-                                {artifact.content && <img alt="" className="context-chip__thumbnail" src={artifact.content} />}
-                                <span><strong>{artifact.title}</strong><small>{t('chat.images.edit')}</small></span>
-                                <button type="button" aria-label={t('composer.removeAttachment', { name: artifact.title })}
-                                  onClick={() => setImageReferencesByConversation(current => ({ ...current,
-                                    [activeId]: (current[activeId] ?? []).filter(item => item.id !== artifact.id),
-                                  }))}>×</button>
-                              </div>)}
-                              {attachments.map((attachment) => (
-                                <div
-                                  className="context-chip"
-                                  key={attachment.attachmentId ?? attachment.id}
-                                  title={attachment.preview}
-                                >
-                                  {attachment.kind === "image" &&
-                                   (attachment.thumbnailUrl || attachment.contentUrl) ? (
-                                    <button
-                                      type="button"
-                                      className="message-image-button"
-                                      aria-label={t('chat.images.viewNamed', { title: attachment.name })}
-                                      onClick={(event) => openImageViewer({ src: attachment.contentUrl ?? attachment.thumbnailUrl!, title: attachment.name }, event.currentTarget)}
-                                    >
-                                    <img
-                                      alt=""
-                                      className="context-chip__thumbnail"
-                                      src={attachment.thumbnailUrl ?? attachment.contentUrl}
-                                    />
-                                    </button>
-                                  ) : (
-                                    <FileText size={14} />
-                                  )}
-                                  <span>
-                                    <strong title={attachment.name}>{attachment.name}</strong>
-                                    <span className="attachment-metadata">
-                                      <AttachmentStatus attachment={attachment} />
-                                      <small>
-                                        {formatAttachmentSize(attachment.size)}
-                                      </small>
-                                    </span>
-                                    <span className="attachment-actions">
-                                      {attachment.resultId && <AttachmentResultButton resultId={attachment.resultId} name={attachment.name} conversationId={activeId} />}
-                                      <AttachmentActions attachment={attachment} conversationId={activeId} onBusyChange={updateAttachmentBusy} />
-                                    </span>
-                                  </span>
-                                  <button
-                                    className="icon-button attachment-action"
-                                    title={t("composer.removeAttachment", { name: attachment.name })}
-                                    data-tooltip={t("composer.removeAttachment", { name: attachment.name })}
-                                    aria-label={t("composer.removeAttachment", {
-                                      name: attachment.name,
-                                    })}
-                                    onClick={() => {
-                                      void window.goodbuddy.context.remove(
-                                        attachment.id,
-                                      );
-                                      updateAttachments((current) =>
-                                        current.filter(
-                                          (item) => item.id !== attachment.id,
-                                        ),
-                                      );
-                                    }}
-                                    type="button"
-                                  >
-                                    <X size={16} aria-hidden="true" />
-                                  </button>
-                                </div>
-                              ))}
-                              {selectingContextFiles && (
-                                <div
-                                  aria-live="polite"
-                                  className="context-chip context-chip--processing"
-                                  role="status"
-                                >
-                                  <LoaderCircle
-                                    aria-hidden="true"
-                                    className="context-chip__spinner"
-                                    size={16}
-                                  />
-                                  <span>
-                                    <strong>
-                                      {fileSelectionProgress
-                                        ? t(
-                                            `composer.attachmentProgress.${fileSelectionProgress.phase}`,
-                                            {
-                                              name: fileSelectionProgress.fileName,
-                                            },
-                                          )
-                                        : t(
-                                            "composer.attachmentProgress.selecting",
-                                          )}
-                                    </strong>
-                                    <small>
-                                      {fileSelectionProgress
-                                        ? t(
-                                            "composer.attachmentProgress.fileCount",
-                                            {
-                                              current:
-                                                fileSelectionProgress.fileNumber,
-                                              total:
-                                                fileSelectionProgress.fileCount,
-                                            },
-                                          )
-                                        : t(
-                                            "composer.attachmentProgress.waiting",
-                                          )}
-                                    </small>
-                                  </span>
-                                  <button type="button" className="icon-button attachment-action" aria-label="取消文件导入" title="取消文件导入" data-tooltip="取消文件导入" onClick={() => void window.goodbuddy.context.cancelImport(fileSelectionProgress?.operationId)}><X size={16} aria-hidden="true" /></button>
-                                  <progress
-                                    aria-label={t(
-                                      "composer.attachmentProgress.progressLabel",
-                                    )}
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          <div className="composer__input">
-                            <ComposerDraftText
-                              conversationId={activeId}
-                              store={composerDrafts}
-                            >
-                            {(draft) => (
-                            <>
-                            <textarea
-                              aria-describedby={
-                                contextError
-                                  ? composerContextErrorId
-                                  : undefined
-                              }
-                              aria-invalid={contextError ? true : undefined}
-                              aria-label={t("composer.inputLabel")}
-                              placeholder={`${
-                                runtime?.capability === "image-generation"
-                                  ? `${t("composer.imagePlaceholder")}\n`
-                                  : ""
-                              }${composerKeyboardHint}\n${composerConversationHint}`}
-                              ref={inputRef}
-                              rows={3}
-                              title={`${composerKeyboardHint}\n${composerConversationHint}`}
-                              value={draft}
-                              onChange={(event) => setInput(event.target.value)}
-                              onPaste={(event) => {
-                                const files = Array.from(event.clipboardData.files);
-                                if (files.length > 0) {
-                                  event.preventDefault();
-                                  if (selectingContextFilesRef.current) {
-                                    setContextError(t("composer.attachmentProgress.waitBeforeSending"));
-                                    return;
-                                  }
-                                  if (files.length > maximumAttachmentsPerMessage) {
-                                    setContextError(t("composer.errors.attachmentLimit"));
-                                    return;
-                                  }
-                                  try {
-                                    const paths = files.map((file) => window.goodbuddy.context.getFilePath(file));
-                                    if (paths.some(Boolean)) {
-                                      if (paths.some((path) => !path)) {
-                                        setContextError(t("composer.errors.pasteFilePath"));
-                                        return;
-                                      }
-                                      void selectContextFiles(paths);
-                                      return;
-                                    }
-                                    if (files.some((file) => !file.type.startsWith("image/"))) {
-                                      setContextError(t("composer.errors.pasteFilePath"));
-                                      return;
-                                    }
-                                  } catch (reason) {
-                                    setContextError(reason instanceof Error ? reason.message : t("composer.errors.addContext"));
-                                    return;
-                                  }
-                                }
-                                const image = files.find((file) => file.type.startsWith("image/"));
-                                if (!image) {
-                                  return;
-                                }
-                                const mimeType =
-                                  image?.type === "image/jpeg" ||
-                                  image?.type === "image/png" ||
-                                  image?.type === "image/webp"
-                                    ? image.type
-                                    : undefined;
-                                event.preventDefault();
-                                if (!image || !mimeType) {
-                                  setContextError(
-                                    t("composer.errors.pasteImageType"),
-                                  );
-                                  return;
-                                }
-                                void addContext(async () => {
-                                  if (image.size > maximumPastedImageBytes) {
-                                    throw new Error(
-                                      t("composer.errors.pasteImageSize"),
-                                    );
-                                  }
-                                  return window.goodbuddy.context.addPastedImage(
-                                    {
-                                      data: new Uint8Array(
-                                        await image.arrayBuffer(),
-                                      ),
-                                      mimeType,
-                                    },
-                                  );
-                                });
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter" && !event.shiftKey) {
-                                  event.preventDefault();
-                                  void submit();
-                                }
-                              }}
-                            />
-                            {/* After the textarea, so its ref is attached first. */}
-                            <ComposerDraftEffect
-                              draft={draft}
-                              onCommit={resizeActiveComposer}
-                            />
-                            </>
-                            )}
-                            </ComposerDraftText>
-                          </div>
-                          <div className="composer__toolbar">
-                            <div className="composer__controls">
-                              <div
-                                aria-label={t("composer.addContent")}
-                                className="composer__tool-group"
-                                role="group"
-                              >
-                                <button
-                                  aria-label={t("composer.addAttachment")}
-                                  aria-describedby={
-                                    contextError
-                                      ? composerContextErrorId
-                                      : undefined
-                                  }
-                                  aria-invalid={contextError ? true : undefined}
-                                  disabled={selectingContextFiles || attachmentOperations > 0}
-                                  ref={attachmentButtonRef}
-                                  onClick={() => void selectContextFiles()}
-                                  title={t("composer.addAttachment")}
-                                  type="button"
-                                >
-                                  <Paperclip aria-hidden="true" size={18} />
-                                </button>
-                                <button
-                                  aria-label={
-                                    voiceRecording
-                                      ? t("composer.voice.stopRecording")
-                                      : voiceListening
-                                        ? t("composer.voice.cancel")
-                                        : t("composer.voice.input")
-                                  }
-                                  aria-pressed={voiceRecording}
-                                  className={
-                                    voiceRecording
-                                      ? "composer__voice-button composer__voice-button--recording"
-                                      : voiceListening
-                                        ? "composer__voice-button composer__voice-button--processing"
-                                        : "composer__voice-button"
-                                  }
-                                  data-state={
-                                    voiceRecording
-                                      ? "recording"
-                                      : voiceListening
-                                        ? "processing"
-                                        : "idle"
-                                  }
-                                  onClick={toggleVoiceInput}
-                                  title={
-                                    voiceRecording
-                                      ? t("composer.voice.stopAndRecognize")
-                                      : voiceListening
-                                        ? t("composer.voice.cancel")
-                                        : t("composer.voice.description")
-                                  }
-                                  type="button"
-                                >
-                                  <Mic aria-hidden="true" size={18} />
-                                </button>
-                              </div>
-                              <button
-                                aria-controls="composer-options"
-                                aria-expanded={composerOptionsOpen}
-                                aria-haspopup="dialog"
-                                aria-label={t("composer.options")}
-                                className="composer__options-trigger"
-                                onClick={() => {
-                                  setComposerOptionsOpen(!composerOptionsOpen);
-                                  setComposerMenuOpen(undefined);
-                                  setRuntimeMenuOpen(false);
-                                  setKnowledgeScopeOpen(false);
-                                }}
-                                ref={composerOptionsTriggerRef}
-                                title={t("composer.settings")}
-                                type="button"
-                              >
-                                <SlidersHorizontal aria-hidden="true" size={18} />
-                              </button>
-                              <div
-                                aria-label={t("composer.settings")}
-                                className="composer__options"
-                                id="composer-options"
-                                hidden={!composerOptionsOpen}
-                                ref={composerOptionsRef}
-                                role="dialog"
-                                onKeyDown={(event) => {
-                                  if (event.key !== "Escape" || event.defaultPrevented) return;
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                  if (knowledgeScopeOpen) {
-                                    setKnowledgeScopeOpen(false);
-                                    knowledgeScopeTriggerRef.current?.focus();
-                                  } else {
-                                    setComposerOptionsOpen(false);
-                                    setComposerMenuOpen(undefined);
-                                    composerOptionsTriggerRef.current?.focus();
-                                  }
-                                }}
-                              >
-                                <strong>{t("composer.settings")}</strong>
-                              {knowledgeSnapshot.libraries.length > 0 && (
-                                <div
-                                  className="knowledge-scope"
-                                  onBlurCapture={(event) => {
-                                    if (
-                                      event.relatedTarget instanceof Node &&
-                                      !event.currentTarget.contains(
-                                        event.relatedTarget,
-                                      )
-                                    ) {
-                                      setKnowledgeScopeOpen(false);
-                                    }
-                                  }}
-                                >
-                                  <button
-                                    aria-controls="knowledge-scope-popover"
-                                    aria-haspopup="dialog"
-                                    aria-label={t("composer.knowledge.select", {
-                                      count: enabledKnowledgeLibraryIds.length,
-                                    })}
-                                    aria-expanded={knowledgeScopeOpen}
-                                    onClick={() => {
-                                      setComposerMenuOpen(undefined);
-                                      setRuntimeMenuOpen(false);
-                                      setKnowledgeScopeOpen(
-                                        (current) => !current,
-                                      );
-                                    }}
-                                    ref={knowledgeScopeTriggerRef}
-                                    title={t("composer.knowledge.title")}
-                                    type="button"
-                                  >
-                                    <Library aria-hidden="true" size={16} />
-                                    <span>
-                                      {t("navigation.knowledge")}
-                                      <strong>
-                                        {enabledKnowledgeLibraryIds.length}
-                                      </strong>
-                                    </span>
-                                    <ChevronDown
-                                      aria-hidden="true"
-                                      className="knowledge-scope__chevron"
-                                      size={14}
-                                    />
-                                  </button>
-                                  {knowledgeScopeOpen && (
-                                    <div
-                                      aria-label={t("composer.knowledge.scope")}
-                                      className="knowledge-scope__popover"
-                                      id="knowledge-scope-popover"
-                                      ref={knowledgeScopePopoverRef}
-                                      role="dialog"
-                                    >
-                                      <strong>
-                                        {t("composer.knowledge.scope")}
-                                      </strong>
-                                      {knowledgeSnapshot.libraries.map(
-                                        (library) => {
-                                          const instance = externalInstances.find(item => item.id === library.external?.instanceId);
-                                          const externalStatus = !instance ? 'temporarily-unavailable' : !instance.enabled ? 'instance-disabled' : instance.credentialStatus !== 'configured' || instance.probeStatus === 'auth-failed' ? 'credential-error' : ['failed', 'unreachable'].includes(instance.probeStatus) ? 'temporarily-unavailable' : 'ready';
-                                          return (
-                                          <label key={library.id}>
-                                            <input
-                                              disabled={!!library.external && externalStatus !== 'ready'}
-                                              checked={enabledKnowledgeLibraryIds.includes(
-                                                library.id,
-                                              )}
-                                              onChange={(event) =>
-                                                setEnabledKnowledgeLibraryIds(
-                                                  (current) =>
-                                                    event.target.checked
-                                                      ? [
-                                                          ...new Set([
-                                                            ...current,
-                                                            library.id,
-                                                          ]),
-                                                        ]
-                                                      : current.filter(
-                                                          (id) =>
-                                                            id !== library.id,
-                                                        ),
-                                                )
-                                              }
-                                              type="checkbox"
-                                            />
-                                            <span>{library.name}</span>
-                                            <small>
-                                              {library.external ? `${({ dify: 'Dify', fastgpt: 'FastGPT', ragflow: 'RAGFlow' })[library.external.provider]} · ${instance?.name ?? library.external.instanceId} · ${t(`external.states.${externalStatus}`, { ns: 'knowledge' })}` : t(
-                                                "composer.knowledge.documents",
-                                                {
-                                                  count: library.documentCount,
-                                                },
-                                              )}
-                                            </small>
-                                          </label>
-                                        )},
-                                      )}
-                                      <div className="knowledge-scope__retrieval-mode">
-                                        <strong>
-                                          {t("composer.knowledge.modeLabel")}
-                                        </strong>
-                                        <SegmentedControl
-                                          ariaLabel={t(
-                                            "composer.knowledge.modeLabel",
-                                          )}
-                                          onChange={(mode) =>
-                                            setConversations((current) =>
-                                              current.map((conversation) =>
-                                                conversation.id === activeId
-                                                  ? {
-                                                      ...conversation,
-                                                      knowledgeRetrievalMode:
-                                                        mode,
-                                                      updatedAt: Date.now(),
-                                                    }
-                                                  : conversation,
-                                              ),
-                                            )
-                                          }
-                                          options={[
-                                            {
-                                              value: "auto",
-                                              label: t(
-                                                "composer.knowledge.auto",
-                                              ),
-                                            },
-                                            {
-                                              value: "always",
-                                              label: t(
-                                                "composer.knowledge.always",
-                                              ),
-                                            },
-                                          ]}
-                                          value={
-                                            activeConversation?.knowledgeRetrievalMode ??
-                                            "auto"
-                                          }
-                                        />
-                                        <small>
-                                          {activeConversation?.knowledgeRetrievalMode ===
-                                          "always"
-                                            ? t(
-                                                "composer.knowledge.alwaysDescription",
-                                              )
-                                            : t(
-                                                "composer.knowledge.autoDescription",
-                                              )}
-                                        </small>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                              <div className="composer__configuration">
-                                <ComposerMenuSelect
-                                  ariaLabel={t("composer.expertLabel")}
-                                  className="composer-picker--expert"
-                                  disabled={
-                                    isRunning ||
-                                    runtime?.capability === "image-generation"
-                                  }
-                                  icon={<Bot aria-hidden="true" size={15} />}
-                                  menuOpen={composerMenuOpen === "expert"}
-                                  onChange={setSelectedExpertId}
-                                  onOpenChange={setExpertMenuOpen}
-                                  options={assistantExpertOptions}
-                                  value={selectedExpertId}
-                                />
-                              </div>
-                              {runtimeControlsProvider && (
-                                <div aria-label={runtimeControlsLabel} className="composer__runtime-toolbar" role="group">
-                                  <strong className="composer__runtime-toolbar-label">{runtimeControlsLabel}</strong>
-                                  <div className="composer__runtime-controls">
-                                    {runtimeAgentControlAvailable && (
-                                      <ComposerMenuSelect
-                                        ariaLabel={t("composer.runtimeControls.agentLabel")}
-                                        className="composer-picker--runtime"
-                                        disabled={isRunning}
-                                        icon={<TerminalSquare aria-hidden="true" size={15} />}
-                                        menuOpen={composerMenuOpen === "runtime-agent"}
-                                        onChange={setSelectedRuntimeAgent}
-                                        onOpenChange={setRuntimeAgentMenuOpen}
-                                        options={runtimeAgentOptions}
-                                        value={selectedRuntimeAgent}
-                                      />
-                                    )}
-                                    {runtimePresetControlAvailable && (
-                                      <ComposerMenuSelect
-                                        ariaLabel={t("composer.runtimeControls.presetLabel")}
-                                        className="composer-picker--runtime"
-                                        disabled={isRunning}
-                                        icon={<TerminalSquare aria-hidden="true" size={15} />}
-                                        menuOpen={composerMenuOpen === "runtime-preset"}
-                                        onChange={setSelectedContinuePreset}
-                                        onOpenChange={setRuntimePresetMenuOpen}
-                                        options={runtimePresetOptions}
-                                        value={selectedContinuePreset}
-                                      />
-                                    )}
-                                    {runtimeActionControlAvailable && (
-                                      <ComposerMenuSelect
-                                        ariaLabel={t("composer.runtimeControls.actionLabel")}
-                                        className="composer-picker--runtime-action"
-                                        disabled={isRunning}
-                                        icon={<TerminalSquare aria-hidden="true" size={15} />}
-                                        menuOpen={composerMenuOpen === "runtime-action"}
-                                        onChange={selectRuntimeAction}
-                                        onOpenChange={setRuntimeActionMenuOpen}
-                                        options={runtimeActionOptions}
-                                        value={runtimeActionOptions.find((option) => option.action?.type === "command" && option.action.id === selectedRuntimeCommand)?.value ?? ""}
-                                      />
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                              </div>
-                              <div className="composer__configuration" role="group" aria-label={t("composer.settings")}>
-                                <div className="runtime-picker">
-                                  <button
-                                    aria-expanded={runtimeMenuOpen}
-                                    aria-haspopup="menu"
-                                    className="model-button"
-                                    disabled={isRunning || runtimeSwitching}
-                                    onClick={() => {
-                                      setComposerOptionsOpen(false);
-                                      setKnowledgeScopeOpen(false);
-                                      setComposerMenuOpen(undefined);
-                                      setRuntimeMenuOpen(!runtimeMenuOpen);
-                                    }}
-                                    onKeyDown={(event) => {
-                                      if (
-                                        !runtimeMenuOpen &&
-                                        (event.key === "ArrowDown" ||
-                                          event.key === "Enter" ||
-                                          event.key === " ")
-                                      ) {
-                                        event.preventDefault();
-                                        setComposerOptionsOpen(false);
-                                        setKnowledgeScopeOpen(false);
-                                        setComposerMenuOpen(undefined);
-                                        setRuntimeMenuOpen(true);
-                                      }
-                                    }}
-                                    ref={runtimeMenuButtonRef}
-                                    title={t("runtime.pickerTitle", {
-                                      label: activeRuntimeModelDetail
-                                        ? `${activeRuntimeLabel} (${activeRuntimeModelDetail})`
-                                        : activeRuntimeLabel,
-                                    })}
-                                    type="button"
-                                  >
-                                    <Sparkles aria-hidden="true" size={15} />
-                                    <span className="model-button__label">
-                                      {runtimeSwitching
-                                        ? t("runtime.switching")
-                                        : activeRuntimeLabel}
-                                    </span>
-                                    {!runtimeSwitching && activeRuntimeModelDetail && (
-                                      <span className="sr-only">{` (${activeRuntimeModelDetail})`}</span>
-                                    )}
-                                    {runtime?.capability ===
-                                      "image-generation" && (
-                                      <span className="runtime-capability-badge">
-                                        {t("runtime.imageGeneration")}
-                                      </span>
-                                    )}
-                                    <ChevronDown aria-hidden="true" size={14} />
-                                  </button>
-                                  {runtimeMenuOpen && runtimeSettings && (
-                                    <RuntimeModelPicker
-                                      conversationLayer={activeConversation?.runtimeSelection}
-                                      onClose={() => {
-                                        setRuntimeMenuOpen(false);
-                                        runtimeMenuButtonRef.current?.focus();
-                                      }}
-                                      onManage={() => {
-                                        setRuntimeMenuOpen(false);
-                                        setSettingsInitialCategory("model");
-                                        setView("settings");
-                                      }}
-                                      onSelect={(layer) => void switchRuntime(layer)}
-                                      projectLayer={activeProject?.runtimeSelection}
-                                      ref={runtimeMenuRef}
-                                      remote={activeProjectUsesManagedSsh}
-                                      runtimeSettings={runtimeSettings}
-                                    />
-                                  )}
-                                </div>
-                                <ComposerMenuSelect
-                                  ariaLabel={t("composer.modeLabel")}
-                                  className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
-                                  disabled={isRunning}
-                                  icon={
-                                    effectiveWorkMode === "execute" ? (
-                                      <ShieldCheck aria-hidden="true" size={15} />
-                                    ) : (
-                                      <CircleHelp aria-hidden="true" size={15} />
-                                    )
-                                  }
-                                  menuOpen={composerMenuOpen === "mode"}
-                                  onChange={setWorkMode}
-                                  onOpenChange={setModeMenuOpen}
-                                  options={workModeOptions}
-                                  triggerLabel={effectiveWorkMode === "execute" ? "Execute" : "Ask"}
-                                  value={effectiveWorkMode}
-                                />
-                              </div>
-                            </div>
-                            <div className="composer__submit-actions">
-                              {isRunning && (
-                                <button
-                                  className="send-button send-button--stop"
-                                  type="button"
-                                  aria-label={t("composer.stop")}
-                                  onClick={() => void stop()}
-                                  title={t("composer.stop")}
-                                >
-                                  <Square
-                                    aria-hidden="true"
-                                    fill="currentColor"
-                                    size={15}
-                                  />
-                                </button>
-                              )}
-                              <span className="sr-only" id={runtimeDetailId}>
-                                {runtimeDetail}
-                              </span>
-                              <ComposerDraftHasText
-                                conversationId={activeId}
-                                store={composerDrafts}
-                              >
-                              {(draftHasText) => (
-                              <button
-                                aria-describedby={
-                                  runtimeState !== "ready"
-                                    ? runtimeDetailId
-                                    : undefined
-                                }
-                                className="send-button"
-                                type="button"
-                                aria-label={
-                                  conversationExecutionRunning
-                                    ? t("composer.queueMessage")
-                                    : t("composer.send")
-                                }
-                                disabled={
-                                  (!draftHasText &&
-                                    !(
-                                      activeRuntimeSelection?.provider ===
-                                        "opencode" &&
-                                      runtimeNativeSnapshot?.commands.some(
-                                        (command) =>
-                                          command.id === selectedRuntimeCommand,
-                                      )
-                                    )) ||
-                                  selectingContextFiles || attachmentOperations > 0 ||
-                                  activeProjectRecoveryBlocked ||
-                                  !runtime?.available ||
-                                  runtimeSwitching ||
-                                  runtimeStatusKey !== activeRuntimeSelectionKey
-                                }
-                                onClick={() => void submit()}
-                                title={
-                                  conversationExecutionRunning
-                                    ? t("composer.queueMessageTitle")
-                                    : t("composer.sendTitle")
-                                }
-                              >
-                                <Send aria-hidden="true" size={17} />
-                              </button>
-                              )}
-                              </ComposerDraftHasText>
-                            </div>
-                          </div>
-                        </div>
-                        <div
-                          className="composer-meta"
-                        >
-                          <div className="composer-meta__actions">
-                          {nativeClientAvailable && <RuntimeNativeClientActions
-                            browser={activeRuntimeSelection?.provider === "deepseek-harness"}
-                            contextKey={nativeClientContextKey}
-                            conversationId={activeConversation?.id}
-                            prepareConversation={prepareNativeClientConversation}
-                            notify={notify}
-                            onTerminal={(terminal) => {
-                              const focus = activeProjectIdRef.current === activeProjectId &&
-                                activeConversationIdRef.current === activeId && viewRef.current === "chat";
-                              setNativeTerminals(current => [...current, { terminal, focus }]);
-                              if (focus) setAssistantSidebarOpen(true);
-                            }}
-                          />}
-                          {runtimeContextCompactAvailable && (
-                            <button
-                              className="composer-context-compact"
-                              disabled={runtimeContextCompacting || isRunning}
-                              onClick={() => void compactRuntimeContext()}
-                              title={runtimeNativeSnapshot?.context.detail}
-                              type="button"
-                            >
-                              {runtimeContextCompacting ? (
-                                <LoaderCircle
-                                  aria-hidden="true"
-                                  className="context-chip__spinner"
-                                  size={13}
-                                />
-                              ) : (
-                                <RefreshCw aria-hidden="true" size={13} />
-                              )}
-                              {runtimeContextCompacting
-                                ? t("composer.context.compacting")
-                                : t("composer.context.compact")}
-                            </button>
-                          )}
-                          </div>
-                          {composerContextMetrics && (
-                            <div
-                              className={`composer-context-meter${
-                                composerContextMetrics.percentage !==
-                                  undefined &&
-                                composerContextMetrics.percentage >= 90
-                                  ? " composer-context-meter--warning"
-                                  : ""
-                              }`}
-                              title={
-                                composerContextMetrics.compressionEnabled
-                                  ? t("composer.context.compressionTrigger", {
-                                      tokens: formatCompactTokens(
-                                        composerContextMetrics.effectiveTriggerTokens,
-                                      ),
-                                    })
-                                  : undefined
-                              }
-                            >
-                              <span className="composer-context-meter__summary">
-                                {composerContextMetrics.denominatorTokens ===
-                                undefined
-                                  ? t(
-                                      composerContextMetrics.basis ===
-                                        "conversation"
-                                        ? composerContextMetrics.compressionEnabled
-                                          ? "composer.context.conversationThresholdUsage"
-                                          : "composer.context.conversationTokenCount"
-                                        : composerContextMetrics.compressionEnabled
-                                          ? composerContextMetrics.source ===
-                                            "provider"
-                                            ? "composer.context.confirmedThresholdUsage"
-                                            : "composer.context.thresholdUsage"
-                                          : composerContextMetrics.source ===
-                                              "provider"
-                                            ? "composer.context.confirmedTokenCount"
-                                            : "composer.context.tokenCount",
-                                      {
-                                        used: formatCompactTokens(
-                                          composerContextMetrics.contextTokens,
-                                        ),
-                                        total: formatCompactTokens(
-                                          composerContextMetrics.effectiveTriggerTokens,
-                                        ),
-                                      },
-                                    )
-                                  : t(
-                                      composerContextMetrics.basis ===
-                                        "conversation"
-                                        ? "composer.context.conversationWindowUsage"
-                                        : composerContextMetrics.source ===
-                                            "provider"
-                                          ? "composer.context.confirmedWindowUsage"
-                                          : "composer.context.windowUsage",
-                                      {
-                                        used: formatCompactTokens(
-                                          composerContextMetrics.contextTokens,
-                                        ),
-                                        total: formatCompactTokens(
-                                          composerContextMetrics.denominatorTokens,
-                                        ),
-                                        percentage:
-                                          composerContextMetrics.percentage ??
-                                          0,
-                                      },
-                                    )}
-                              </span>
-                              {composerContextMetrics.denominatorTokens !==
-                                undefined && (
-                                <div
-                                  aria-label={t(
-                                    "composer.context.progressLabel",
-                                  )}
-                                  aria-valuemax={
-                                    composerContextMetrics.denominatorTokens
-                                  }
-                                  aria-valuemin={0}
-                                  aria-valuenow={Math.min(
-                                    composerContextMetrics.contextTokens,
-                                    composerContextMetrics.denominatorTokens,
-                                  )}
-                                  className="composer-context-meter__track"
-                                  role="progressbar"
-                                >
-                                  <span
-                                    className="composer-context-meter__fill"
-                                    style={{
-                                      width: `${Math.min(
-                                        100,
-                                        composerContextMetrics.percentage ?? 0,
-                                      )}%`,
-                                    }}
-                                  />
-                                  {composerContextMetrics.contextWindowTokens !==
-                                    undefined &&
-                                    composerContextMetrics.compressionEnabled && (
-                                      <span
-                                        aria-hidden="true"
-                                        className="composer-context-meter__trigger"
-                                        style={{
-                                          left: `${Math.min(
-                                            100,
-                                            Math.round(
-                                              (composerContextMetrics.effectiveTriggerTokens /
-                                                composerContextMetrics.contextWindowTokens) *
-                                                100,
-                                            ),
-                                          )}%`,
-                                        }}
-                                      />
-                                    )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          {contextError && (
-                            <span
-                              aria-label={contextError}
-                              className="composer-meta__error"
-                              id={composerContextErrorId}
-                              role="alert"
-                            >
-                              {contextError}
-                            </span>
-                          )}
-                        </div>
                       </>
                     )}
                   </footer>
