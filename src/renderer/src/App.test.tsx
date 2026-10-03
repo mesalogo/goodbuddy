@@ -4842,6 +4842,48 @@ describe("App", () => {
     expect(sidebarRenderProbes.row.mock.calls.length).toBeLessThanOrEqual(4);
   });
 
+  it("copies and exports a streaming conversation with the text shown on screen", async () => {
+    const { container } = render(<App />);
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(composer, { target: { value: "Copy while streaming" } });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    // Let the first delta's flush land, then stream more within one flush window.
+    act(() => agentListener?.({ requestId, type: "text", delta: "Live" }));
+    await screen.findByText("Live");
+    await act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+    for (const delta of [" alpha", " omega"]) {
+      act(() => agentListener?.({ requestId, type: "text", delta }));
+    }
+    expect(screen.getByText("Live alpha omega")).toBeInTheDocument();
+    const list = container.querySelector<HTMLElement>(".conversation-list")!;
+    fireEvent.click(within(list).getByLabelText(/^更多会话操作 /u));
+    fireEvent.click(screen.getByRole("menuitem", { name: "复制完整会话" }));
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledOnce());
+    expect(api.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("Live alpha omega"));
+
+    const blobs: Blob[] = [];
+    const createObjectURL = vi.fn((blob: Blob) => { blobs.push(blob); return "blob:export"; });
+    const originalUrl = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    try {
+      act(() => agentListener?.({ requestId, type: "text", delta: " tail" }));
+      fireEvent.click(within(list).getByLabelText(/^更多会话操作 /u));
+      fireEvent.click(screen.getByRole("menuitem", { name: "导出 Markdown" }));
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
+      expect(await blobs[0]!.text()).toContain("Live alpha omega tail");
+    } finally {
+      click.mockRestore();
+      URL.createObjectURL = originalUrl.create;
+      URL.revokeObjectURL = originalUrl.revoke;
+    }
+    fireEvent.click(screen.getByLabelText("停止生成"));
+    await waitFor(() => expect(api.agent.cancel).toHaveBeenCalledWith(requestId));
+  });
+
   it("does not re-render the App root when the active conversation's streaming text is flushed", async () => {
     render(<App />);
     const composer = await screen.findByLabelText("向 GoodBuddy 提问");

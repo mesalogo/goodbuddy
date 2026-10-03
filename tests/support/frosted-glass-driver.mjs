@@ -163,8 +163,22 @@ app.whenReady().then(async () => {
       const clicks = await evaluate(`Number(document.querySelector('[data-clicks]').dataset.clicks)`)
       await click('.topbar button')
       await waitFor(`Number(document.querySelector('[data-clicks]').dataset.clicks) === ${clicks + 1}`)
+      // The jump-to-bottom button glides (UX): sample scrollTop each frame after
+      // the click; an instant jump would show no position between start and end.
+      await evaluate(`(() => { const e = document.querySelector('.chat-history-pane[data-active="true"] .chat');
+        const samples = window.__jumpSamples = [e.scrollTop];
+        const sample = () => { samples.push(e.scrollTop); if (samples.length < 90) requestAnimationFrame(sample); };
+        requestAnimationFrame(sample); })()`)
       await click('.chat-scroll-to-bottom')
       await waitFor(`(() => { const e = document.querySelector('.chat-history-pane[data-active="true"] .chat'); return e.scrollHeight - e.clientHeight - e.scrollTop < 1; })()`)
+      await waitFor('window.__jumpSamples.length >= 90')
+      const glide = await evaluate(`(() => { const e = document.querySelector('.chat-history-pane[data-active="true"] .chat');
+        const end = e.scrollHeight - e.clientHeight, s = window.__jumpSamples, start = s[0];
+        const between = new Set(s.filter(v => v > start + 1 && v < end - 1).map(Math.round));
+        const reappeared = !!document.querySelector('.chat-scroll-to-bottom');
+        return { start, end, between: between.size, reappeared, samples: s.slice(0, 12).map(Math.round) }; })()`)
+      assert.ok(glide.between >= 3, `${theme}/${enabled}: jump-to-bottom animates ${JSON.stringify(glide)}`)
+      assert.equal(glide.reappeared, false, `${theme}/${enabled}: button stays hidden after the glide`)
       const bottom = await evaluate(`document.querySelector('.chat-history-pane[data-active="true"] article:last-child').getBoundingClientRect().bottom`)
       assert.ok(bottom <= geometry.composer.top, 'last message is above composer')
       assert.equal(await evaluate(`document.querySelector('[aria-label="Composer"]').value`), 'Draft')

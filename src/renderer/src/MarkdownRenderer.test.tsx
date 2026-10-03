@@ -15,6 +15,7 @@ import {
   vi
 } from 'vitest'
 import { changeUiLocale } from './i18n'
+import { clearMermaidResultCacheForTest } from './MermaidDiagram'
 import {
   InlineMarkdown,
   MarkdownRenderer,
@@ -71,6 +72,7 @@ describe('MarkdownRenderer', () => {
 
   afterEach(() => {
     cleanup()
+    clearMermaidResultCacheForTest()
     delete document.documentElement.dataset.theme
     vi.clearAllMocks()
   })
@@ -392,6 +394,19 @@ $\\href{javascript:alert(1)}{unsafe}$`}</MarkdownRenderer>
     expect(
       container.querySelector('a[href^="javascript:"]')
     ).not.toBeInTheDocument()
+  })
+
+  it('reuses a rendered Mermaid diagram when the row remounts (windowed chat)', async () => {
+    const source = '```mermaid\nflowchart LR\n  Cached --> Again\n```'
+    const first = render(<MarkdownRenderer>{source}</MarkdownRenderer>)
+    await screen.findByRole('region', { name: 'Mermaid 图表，可横向滚动' })
+    first.unmount()
+    expect(mermaidMock.render).toHaveBeenCalledTimes(1)
+    const again = render(<MarkdownRenderer>{source}</MarkdownRenderer>)
+    // Shown immediately: no loading state, no second render.
+    expect(again.container.querySelector('#safe-node')).toBeInTheDocument()
+    expect(screen.queryByText('正在绘制 Mermaid 图表…')).toBeNull()
+    expect(mermaidMock.render).toHaveBeenCalledTimes(1)
   })
 
   it('renders Mermaid fences with strict bounded configuration', async () => {

@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -40,6 +41,8 @@ import type { TimeFormatLocale } from "./time-format";
  */
 export const messageRenderBatchSize = 80;
 const chatBottomProximity = 96;
+/** Rows kept mounted because the user changed their local state. */
+const maxInteractedRows = 8;
 
 type ChatQuickAction = {
   title: string;
@@ -251,6 +254,26 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   // Rows kept mounted outside the range: the focused row, the first message
   // after the final "load earlier" step.
   const [keptMessageIds, setKeptMessageIds] = useState<readonly string[]>([]);
+  // Rows the user changed (toggled a <details>, typed into a question card):
+  // their local state would be lost if they unmounted. Bounded, oldest out.
+  const [interactedMessageIds, setInteractedMessageIds] = useState<readonly string[]>([]);
+  // Rows holding the start and end of a non-empty text selection.
+  const [selectionMessageIds, setSelectionMessageIds] = useState<readonly string[]>([]);
+  // Set while the jump-to-bottom button's smooth scroll runs.
+  const smoothScrollRef = useRef(false);
+  // Ends the glide; `true` pins to the bottom, `false` just stops tracking.
+  const endSmoothScrollRef = useRef<((pin: boolean) => void) | undefined>(undefined);
+  const messageIndexById = useMemo(
+    () => new Map(messages.map((message, index) => [message.id, index])),
+    [messages],
+  );
+  const pendingMessageIndexes = useMemo(() => {
+    const indexes: number[] = [];
+    messages.forEach((message, index) => {
+      if (message.approval || message.pendingQuestions?.length) indexes.push(index);
+    });
+    return indexes;
+  }, [messages]);
 
   const navigationTarget =
     noteMessageNavigation?.conversationId === conversation.id
@@ -333,8 +356,20 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   }
   const rendered: number[] = [];
   for (let index = range.start; index < range.end; index += 1) rendered.push(index);
-  for (const id of keptMessageIds) {
-    const index = messages.findIndex((message) => message.id === id);
+  // Rows that hold user state stay mounted wherever the reader scrolls
+  // (UX parity with the fully mounted list): focus/navigation, rows the user
+  // interacted with (open details, typed answers), the selected text, and
+  // pending questions and approvals.
+  const keptIndexes = new Set<number>();
+  const keepId = (id: string): void => {
+    const index = messageIndexById.get(id);
+    if (index !== undefined) keptIndexes.add(index);
+  };
+  keptMessageIds.forEach(keepId);
+  interactedMessageIds.forEach(keepId);
+  selectionMessageIds.forEach(keepId);
+  pendingMessageIndexes.forEach((index) => keptIndexes.add(index));
+  for (const index of keptIndexes) {
     if (index >= windowStart && (index < range.start || index >= range.end)) {
       rendered.push(index);
     }
@@ -479,7 +514,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
         measuredLayoutRef.current = true;
         setMeasureVersion((version) => version + 1);
       }
-      if (restorePendingRef.current) return;
+      if (restorePendingRef.current || smoothScrollRef.current) return;
       if (pinnedToBottomRef.current) {
         scrollToBottomNow(scrollContainer);
         return;
@@ -516,6 +551,106 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     });
     return () => cancelAnimationFrame(frame);
   }, [active, captureAnchor, navigationTarget, view, visibleMessageCount]);
+
+  // Rows the user interacts with keep their local state (open details, typed
+  // question answers, "copied" feedback, Mermaid toggles) as they did when
+  // every loaded row stayed mounted.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!active || !list) return;
+    const rowIdOf = (target: EventTarget | null): string | undefined =>
+      target instanceof Element
+        ? target.closest<HTMLElement>(".message-window-row")?.dataset.messageId
+        : undefined;
+    const remember = (event: Event): void => {
+      if (event.type === "click" && !(event.target instanceof Element && event.target.closest("button, summary, a, input, label"))) return;
+      const id = rowIdOf(event.target);
+      if (!id) return;
+      setInteractedMessageIds((ids) =>
+        ids.at(-1) === id ? ids : [...ids.filter((item) => item !== id), id].slice(-maxInteractedRows),
+      );
+    };
+    // `toggle` does not bubble; capture sees it on the way down.
+    list.addEventListener("toggle", remember, true);
+    list.addEventListener("input", remember);
+    list.addEventListener("click", remember);
+    return () => {
+      list.removeEventListener("toggle", remember, true);
+      list.removeEventListener("input", remember);
+      list.removeEventListener("click", remember);
+    };
+  }, [active]);
+
+  // A text selection keeps the rows at both of its ends mounted, so dragging
+  // a selection across many messages does not lose its start.
+  useEffect(() => {
+    if (!active) return;
+    const update = (): void => {
+      const list = listRef.current;
+      const selection = document.getSelection();
+      let next: string[] = [];
+      if (list && selection && !selection.isCollapsed && selection.rangeCount > 0) {
+        for (const node of [selection.anchorNode, selection.focusNode]) {
+          const element = node instanceof Element ? node : node?.parentElement;
+          const id = element && list.contains(element)
+            ? element.closest<HTMLElement>(".message-window-row")?.dataset.messageId
+            : undefined;
+          if (id && !next.includes(id)) next.push(id);
+        }
+      }
+      if (next.length === 0) next = [];
+      setSelectionMessageIds((ids) => (sameIds(ids, next) ? ids : next));
+    };
+    document.addEventListener("selectionchange", update);
+    return () => document.removeEventListener("selectionchange", update);
+  }, [active]);
+
+  // Copying a selection that spans unmounted rows: the browser would only
+  // copy mounted text, so fill the gaps from the message content.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!active || !list) return;
+    const onCopy = (event: ClipboardEvent): void => {
+      const selection = document.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !event.clipboardData) return;
+      const range = selection.getRangeAt(0);
+      if (!range.intersectsNode(list)) return;
+      const spacers = [...list.querySelectorAll<HTMLElement>(".message-window-spacer")]
+        .filter((spacer) => spacer.offsetHeight > 0 && range.intersectsNode(spacer));
+      if (spacers.length === 0) return;
+      const model = modelRef.current;
+      if (!model) return;
+      const indexOfBoundary = (node: Node, offset: number, fallback: number): number => {
+        const element = node instanceof Element ? (node.childNodes[offset] as Element | undefined) ?? node : node.parentElement;
+        const id = element instanceof Element ? element.closest<HTMLElement>(".message-window-row")?.dataset.messageId : undefined;
+        const index = id ? model.messages.findIndex((message) => message.id === id) : -1;
+        return index >= 0 ? index : fallback;
+      };
+      const first = indexOfBoundary(range.startContainer, range.startOffset, model.windowStart);
+      const last = indexOfBoundary(range.endContainer, range.endOffset, model.messages.length - 1);
+      const parts: string[] = [];
+      for (let index = Math.max(first, model.windowStart); index <= last; index += 1) {
+        const message = model.messages[index];
+        if (!message) continue;
+        const row = rowElementsRef.current.get(message.id);
+        if (row) {
+          const part = document.createRange();
+          part.selectNodeContents(row);
+          if (index === first && row.contains(range.startContainer)) part.setStart(range.startContainer, range.startOffset);
+          if (index === last && row.contains(range.endContainer)) part.setEnd(range.endContainer, range.endOffset);
+          const text = part.toString().trim();
+          if (text) parts.push(text);
+        } else if (message.content.trim()) {
+          parts.push(message.content.trim());
+        }
+      }
+      if (parts.length === 0) return;
+      event.clipboardData.setData("text/plain", parts.join("\n\n"));
+      event.preventDefault();
+    };
+    document.addEventListener("copy", onCopy);
+    return () => document.removeEventListener("copy", onCopy);
+  }, [active]);
 
   const handleArticleRef = useCallback(
     (messageId: string, element: HTMLElement | null): void => {
@@ -663,6 +798,18 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   const updateScrollPosition = useCallback((): void => {
     const scrollContainer = scrollRef.current;
     if (!scrollContainer) return;
+    if (smoothScrollRef.current) {
+      // Jump-to-bottom glide: re-window around the moving viewport only.
+      // Arriving at the bottom ends it (`scrollend` is not always delivered).
+      if (scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 1) {
+        endSmoothScrollRef.current?.(true);
+        return;
+      }
+      saveScrollPosition(scrollContainer);
+      anchorRef.current = undefined;
+      scrollFrameRef.current ??= requestAnimationFrame(processScroll);
+      return;
+    }
     const distanceFromBottom =
       scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
     if (distanceFromBottom <= chatBottomProximity) {
@@ -710,6 +857,8 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     }
     const activated = !wasActiveRef.current;
     wasActiveRef.current = true;
+    // Any scrollTop write would cancel the jump-to-bottom glide.
+    if (smoothScrollRef.current) return;
     // Styles may have changed while hidden (frosted glass toggled).
     if (activated) paddingTopRef.current = undefined;
     const measuredLayout = measuredLayoutRef.current;
@@ -799,7 +948,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     followFrameRef.current = requestAnimationFrame(() => {
       followFrameRef.current = undefined;
       const container = scrollRef.current;
-      if (!container || !pinnedToBottomRef.current) {
+      if (!container || !pinnedToBottomRef.current || smoothScrollRef.current) {
         return;
       }
       scrollToBottomNow(container);
@@ -848,21 +997,78 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     visibleMessageCount,
   ]);
 
+  useEffect(() => () => endSmoothScrollRef.current?.(false), []);
+
   const scrollToBottom = (): void => {
     const scrollContainer = scrollRef.current;
     if (!scrollContainer) {
       return;
     }
-    pinnedToBottomRef.current = true;
     showScrollToBottomRef.current = false;
     setShowScrollToBottom(false);
-    setView(bottomView);
     const reduceMotion =
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      pinnedToBottomRef.current = true;
+      setView(bottomView);
+      scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: "auto" });
+      return;
+    }
+    // The glide (UX): rows keep re-windowing around the moving viewport, but
+    // nothing writes scrollTop until it ends, because any write would cancel
+    // the browser's smooth scroll. At the end it pins to the real bottom.
+    endSmoothScrollRef.current?.(false);
+    smoothScrollRef.current = true;
+    pinnedToBottomRef.current = false;
+    const finish = (pin: boolean): void => {
+      if (!smoothScrollRef.current) return;
+      smoothScrollRef.current = false;
+      cleanup();
+      const container = scrollRef.current;
+      if (!container) return;
+      if (pin) {
+        pinnedToBottomRef.current = true;
+        anchorRef.current = undefined;
+        setView(bottomView);
+        scrollToBottomNow(container);
+      }
+      // Re-evaluate the pin and the button from where the glide stopped.
+      container.dispatchEvent(new Event("scroll"));
+    };
+    // A `scrollend` of an earlier scroll can arrive just after the glide
+    // starts; only one at (or stalled near) the bottom ends it.
+    const onEnd = (): void => {
+      const remaining = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
+      if (remaining <= chatBottomProximity) finish(true);
+    };
+    // The reader takes over: keep wherever they stop.
+    const onInterrupt = (): void => finish(false);
+    const cleanup = (): void => {
+      window.clearTimeout(timer);
+      scrollContainer.removeEventListener("scrollend", onEnd);
+      scrollContainer.removeEventListener("wheel", onInterrupt);
+      scrollContainer.removeEventListener("pointerdown", onInterrupt);
+      scrollContainer.removeEventListener("keydown", onInterrupt);
+      endSmoothScrollRef.current = undefined;
+    };
+    endSmoothScrollRef.current = (pin) => {
+      if (pin) {
+        finish(true);
+        return;
+      }
+      smoothScrollRef.current = false;
+      cleanup();
+    };
+    scrollContainer.addEventListener("scrollend", onEnd);
+    scrollContainer.addEventListener("wheel", onInterrupt, { passive: true });
+    scrollContainer.addEventListener("pointerdown", onInterrupt);
+    scrollContainer.addEventListener("keydown", onInterrupt);
+    // No `scrollend` (already at the target, or unsupported): end anyway.
+    const timer = window.setTimeout(() => finish(true), 1_500);
     scrollContainer.scrollTo({
       top: scrollContainer.scrollHeight,
-      behavior: reduceMotion ? "auto" : "smooth",
+      behavior: "smooth",
     });
   };
 

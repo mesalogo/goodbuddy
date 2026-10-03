@@ -18,6 +18,12 @@ export type RemoteEventBatcherOptions<TEvent> = {
   persist(entries: readonly RemoteEventBatchEntry<TEvent>[]): readonly boolean[]
   /** Called when a timer-driven flush fails (for example to abort the run). */
   onError?(error: unknown): void
+  /**
+   * Called after a timer-driven flush committed (and its `onCommitted`
+   * callbacks ran), e.g. to forward the committed events without waiting for
+   * a second coalescing timer downstream.
+   */
+  onTimerFlushed?(): void
   /** Safety flush for buffered events that are not followed by a boundary. */
   flushIntervalMs?: number
   maximumEvents?: number
@@ -27,7 +33,11 @@ type PendingEntry<TEvent> = RemoteEventBatchEntry<TEvent> & {
   onCommitted?: RemoteEventCommitted<TEvent>
 }
 
-export const REMOTE_EVENT_BATCH_FLUSH_INTERVAL_MS = 50
+/**
+ * One frame: committed events are forwarded to the renderer only after their
+ * batch commits, so this bounds how long streamed remote text is held back.
+ */
+export const REMOTE_EVENT_BATCH_FLUSH_INTERVAL_MS = 16
 export const REMOTE_EVENT_BATCH_MAXIMUM_EVENTS = 256
 
 /**
@@ -47,6 +57,7 @@ export const REMOTE_EVENT_BATCH_MAXIMUM_EVENTS = 256
 export class RemoteEventBatcher<TEvent> {
   private readonly persist: RemoteEventBatcherOptions<TEvent>['persist']
   private readonly onError: RemoteEventBatcherOptions<TEvent>['onError']
+  private readonly onTimerFlushed: RemoteEventBatcherOptions<TEvent>['onTimerFlushed']
   private readonly flushIntervalMs: number
   private readonly maximumEvents: number
   private pending: PendingEntry<TEvent>[] = []
@@ -56,6 +67,7 @@ export class RemoteEventBatcher<TEvent> {
   constructor(options: RemoteEventBatcherOptions<TEvent>) {
     this.persist = options.persist
     this.onError = options.onError
+    this.onTimerFlushed = options.onTimerFlushed
     this.flushIntervalMs =
       options.flushIntervalMs ?? REMOTE_EVENT_BATCH_FLUSH_INTERVAL_MS
     this.maximumEvents =
@@ -132,6 +144,7 @@ export class RemoteEventBatcher<TEvent> {
       this.timer = undefined
       try {
         this.flush()
+        this.onTimerFlushed?.()
       } catch (error) {
         this.onError?.(error)
       }

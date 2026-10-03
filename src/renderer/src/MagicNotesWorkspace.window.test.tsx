@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from './i18n'
@@ -79,6 +81,11 @@ describe('MagicNotesWorkspace note list windowing', () => {
     expect(first).toHaveAttribute('role', 'listitem')
     expect(first).toHaveAttribute('aria-posinset', '1')
     expect(first).toHaveAttribute('aria-setsize', String(count))
+  })
+
+  it('turns native scroll anchoring off for the windowed grid only', () => {
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/magic-notes-panel.css'), 'utf8')
+    expect(css).toMatch(/\.magic-notes-card-grid--windowed\s*\{\s*overflow-anchor:\s*none;\s*\}/)
   })
 
   it('mounts the notes at the scroll position', async () => {

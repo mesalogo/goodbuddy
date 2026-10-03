@@ -279,8 +279,9 @@ export function TerminalPanel({
       acceptedSequenceRef.current = event.sequence
 
       if (event.type === 'output') {
-        // Merged with neighbours and written once per frame; the batcher ACKs
-        // the batch's last sequence after xterm has processed it.
+        // Written at once when idle, otherwise merged with the rest of the
+        // frame; the batcher ACKs the batch's last sequence after xterm has
+        // processed it.
         outputBatcherRef.current?.push(
           event.sessionId,
           event.sequence,
@@ -700,8 +701,17 @@ export function TerminalPanel({
           title={t('sidebar.terminal.toolbar.clear')}
           aria-label={t('sidebar.terminal.toolbar.clear')}
           onClick={() => {
-            emulatorRef.current?.clear()
             emulatorRef.current?.focus()
+            // Output that arrived before the click is shown, then cleared:
+            // write what the batcher holds and wait until xterm processed it
+            // (xterm's clear() does not queue behind pending writes).
+            const emulator = emulatorRef.current
+            const flushed = outputBatcherRef.current?.flush() ?? Promise.resolve()
+            void flushed.then(() => {
+              if (emulatorRef.current === emulator) {
+                emulator?.clear()
+              }
+            })
           }}
         >
           <Eraser aria-hidden="true" />

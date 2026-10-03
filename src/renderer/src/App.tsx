@@ -5399,11 +5399,17 @@ function App(): React.JSX.Element {
     [t],
   );
 
-  const readConversationForExport = async (item: Conversation): Promise<Conversation> => {
+  const readConversationForExport = async (selected: Conversation): Promise<Conversation> => {
+    // Streaming deltas reach the conversation store only on the live-message
+    // flush cadence; absorb them now so the copy holds everything on screen.
+    if (liveMessages.hasEntries()) setConversations((current) => current);
+    const item = conversationStore.getConversation(selected.id) ?? selected;
     if (!item.messageSummary) return item;
     const snapshot = await window.goodbuddy.conversations.get(item.id);
     // Export reads do not acquire a view-cache entry or retain tool metadata.
-    return mergePersistedConversations([item], [snapshot], new Map())[0]!;
+    const merged = mergePersistedConversations([item], [snapshot], new Map())[0]!;
+    // Deltas that streamed in while the snapshot was read.
+    return liveMessages.resolveConversations([merged])[0]!;
   };
 
   const copyConversation = async (

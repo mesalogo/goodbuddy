@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '../i18n'
@@ -126,5 +128,13 @@ describe('DocumentsView windowing', () => {
     expect(renderedNames()).toHaveLength(10)
     expect(table().querySelector('.knowledge-documents__spacer')).toBeNull()
     expect(table()).not.toHaveAttribute('aria-rowcount')
+    expect(document.querySelector('.knowledge-documents__table-scroll')).not.toHaveClass('knowledge-documents__table-scroll--windowed')
+  })
+
+  it('turns native scroll anchoring off on the page only while the table is windowed', () => {
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+    expect(css).toMatch(/\.workspace-panel-scroll:has\(\.knowledge-documents__table-scroll--windowed\),\s*\.knowledge-documents__table-scroll--windowed\s*\{\s*overflow-anchor:\s*none;/)
+    setup()
+    expect(document.querySelector('.knowledge-documents__table-scroll')).toHaveClass('knowledge-documents__table-scroll--windowed')
   })
 })

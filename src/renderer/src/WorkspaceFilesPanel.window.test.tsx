@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { changeUiLocale } from './i18n'
@@ -107,6 +109,16 @@ describe('WorkspaceFilesPanel tree windowing', () => {
     expect(screen.getByRole('menu')).toBeInTheDocument()
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
     await waitFor(() => expect(screen.getByRole('button', { name: 'a-002.txt 的更多操作' })).toHaveFocus())
+  }, 20_000)
+
+  it('turns native scroll anchoring off on the files view only while the tree is windowed', async () => {
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+    expect(css).toMatch(/\.workspace-files__files-view--windowed\s*\{\s*overflow-anchor:\s*none;/)
+    await setup()
+    expect(body()).toHaveClass('workspace-files__files-view--windowed')
+    // Collapsing everything drops below the threshold: native anchoring is back.
+    for (const directory of directories) fireEvent.click(screen.getByRole('button', { name: directory }))
+    expect(body()).not.toHaveClass('workspace-files__files-view--windowed')
   }, 20_000)
 
   it('collapses and expands directories in the windowed tree', async () => {

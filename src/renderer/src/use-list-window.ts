@@ -184,6 +184,13 @@ export function useListWindow({
   const rowRefCallbacks = useRef(new Map<string, (element: HTMLElement | null) => void>())
   const observerRef = useRef<ResizeObserver | undefined>(undefined)
   const scrollAnchorRef = useRef<{ id: string; top: number } | undefined>(undefined)
+  // List-relative scroll position seen at the last scroll event or commit, and
+  // the ids and offsets of the last committed windowed layout. Together they
+  // locate the reader's row when ids change, without reading layout per scroll.
+  const scrollTopRef = useRef(0)
+  const committedRef = useRef<
+    { ids: readonly string[]; offsets: readonly number[]; viewport: number } | undefined
+  >(undefined)
   const scopeRef = useRef(scope)
   const scrollParentRef = useRef(scrollParent)
   useLayoutEffect(() => {
@@ -284,6 +291,7 @@ export function useListWindow({
     const layoutNow = layoutRef.current
     if (!current || !layoutNow || !activeRef.current || isHidden(current.list)) return
     const { top, viewport } = position(current)
+    scrollTopRef.current = top
     if (heights.setViewport(viewport)) setMeasureVersion((version) => version + 1)
     // Hysteresis: re-window only when the viewport (plus a margin) leaves the
     // mounted rows, so a steady scroll remounts rows every screen or so.
@@ -348,28 +356,45 @@ export function useListWindow({
     const current = geometry()
     if (!current) return
     const { container } = current
+    const committed = committedRef.current
+    committedRef.current = windowed && layoutRef.current
+      ? { ids, offsets: layoutRef.current.offsets, viewport: layoutRef.current.viewport }
+      : undefined
+    let idsAnchor: { id: string; top: number } | undefined
     if (scopeRef.current !== scope) {
       scopeRef.current = scope
       scrollAnchorRef.current = undefined
       // New search results start at the top; short lists keep the browser's
       // own clamping, as before windowing.
       if (resetScrollOnScopeChange && windowed && container && container.scrollTop !== 0) container.scrollTop = 0
+    } else if (windowed && committed && committed.ids !== ids) {
+      // Rows were inserted, removed or reordered: keep the reader's row where
+      // it was, like native scroll anchoring did before windowing (which the
+      // windowed list turns off). The top of the list stays the top.
+      idsAnchor = idsChangeAnchor(committed.ids, committed.offsets, ids, scrollTopRef.current, committed.viewport)
     }
-    const anchor = scrollAnchorRef.current
+    const anchor = idsAnchor ?? scrollAnchorRef.current
     scrollAnchorRef.current = undefined
     if (windowed && anchor) {
       const element = rowElements.current.get(anchor.id)
+      let delta: number | undefined
       if (element) {
-        const delta = element.getBoundingClientRect().top - viewportTop(container) - anchor.top
-        if (Math.abs(delta) >= 0.5) {
-          if (container) container.scrollTop += delta
-          else window.scrollBy(0, delta)
-        }
+        delta = element.getBoundingClientRect().top - viewportTop(container) - anchor.top
+      } else if (idsAnchor && layoutRef.current) {
+        // The row is not mounted (yet): its laid-out top is its cached offset.
+        const index = ids.indexOf(anchor.id)
+        const offset = index >= 0 ? layoutRef.current.offsets[index] : undefined
+        if (offset !== undefined) delta = offset - scrollTopRef.current - anchor.top
+      }
+      if (delta !== undefined && Math.abs(delta) >= 0.5) {
+        if (container) container.scrollTop += delta
+        else window.scrollBy(0, delta)
       }
     }
     const layoutNow = layoutRef.current
     if (!windowed || !layoutNow || !active || isHidden(current.list)) return
     const { top } = position(current)
+    scrollTopRef.current = top
     if (!coversViewport(layoutNow, top) && Math.abs(top - anchorTop) >= 1) setAnchorTop(top)
   }, [active, anchorTop, geometry, ids, keepKey, measureVersion, position, resetScrollOnScopeChange, scope, windowed])
 
@@ -419,6 +444,45 @@ export function useListWindow({
   }, [])
 
   return { windowed, segments, rowRef, onScroll, onFocus, onBlur }
+}
+
+/**
+ * The row to hold in place when the ids change: the first row of the previous
+ * layout reaching into the viewport that is still in the list (as native
+ * scroll anchoring skips removed nodes), with its offset from the viewport top.
+ * Uses cached offsets only. None at the top of the list or when nothing changed.
+ */
+export function idsChangeAnchor(
+  previousIds: readonly string[],
+  previousOffsets: readonly number[],
+  ids: readonly string[],
+  scrollTop: number,
+  viewportHeight: number,
+): { id: string; top: number } | undefined {
+  if (scrollTop <= 0 || sameIds(previousIds, ids)) return undefined
+  const count = Math.min(previousIds.length, previousOffsets.length - 1)
+  // First row whose bottom is below the viewport top.
+  let low = 0
+  let high = count
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (previousOffsets[middle + 1]! > scrollTop) high = middle
+    else low = middle + 1
+  }
+  const present = new Set(ids)
+  // Only rows that were in view: an anchor far below would move the view.
+  for (let index = low; index < count && previousOffsets[index]! < scrollTop + viewportHeight; index += 1) {
+    const id = previousIds[index]!
+    if (present.has(id)) return { id, top: previousOffsets[index]! - scrollTop }
+  }
+  return undefined
+}
+
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false
+  return true
 }
 
 /** A list inside a `hidden` subtree has no geometry; leave its window alone. */

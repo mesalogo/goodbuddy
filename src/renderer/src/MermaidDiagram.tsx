@@ -74,6 +74,44 @@ let mermaidModulePromise: Promise<Mermaid> | undefined
 let mermaidRenderQueue = Promise.resolve()
 let mermaidDiagramSequence = 0
 
+/**
+ * Rendered results by theme and source. Windowed chat rows remount when they
+ * scroll back into view; reusing the result keeps them from flashing the
+ * loading state and changing height (UX parity with fully mounted lists).
+ */
+const mermaidResultCacheLimit = 64
+const mermaidResultCache = new Map<string, MermaidRenderState>()
+
+function mermaidCacheKey(source: string, theme: 'light' | 'dark'): string {
+  return `${theme}\n${source}`
+}
+
+function cachedMermaidResult(source: string, theme: 'light' | 'dark'): MermaidRenderState | undefined {
+  const key = mermaidCacheKey(source, theme)
+  const cached = mermaidResultCache.get(key)
+  if (cached) {
+    mermaidResultCache.delete(key)
+    mermaidResultCache.set(key, cached)
+  }
+  return cached
+}
+
+function rememberMermaidResult(state: MermaidRenderState): void {
+  const key = mermaidCacheKey(state.source, state.theme)
+  mermaidResultCache.delete(key)
+  mermaidResultCache.set(key, state)
+  while (mermaidResultCache.size > mermaidResultCacheLimit) {
+    const oldest = mermaidResultCache.keys().next().value
+    if (oldest === undefined) break
+    mermaidResultCache.delete(oldest)
+  }
+}
+
+/** Test hook. */
+export function clearMermaidResultCacheForTest(): void {
+  mermaidResultCache.clear()
+}
+
 type MermaidRenderState =
   | {
       source: string
@@ -552,13 +590,15 @@ export function MermaidDiagram({
   const sourceId = useId()
   const documentTheme = useDocumentTheme()
   const [renderState, setRenderState] =
-    useState<MermaidRenderState>()
+    useState<MermaidRenderState | undefined>(() => cachedMermaidResult(source, documentTheme))
   const [visibleSource, setVisibleSource] = useState<string>()
   const [viewerSource, setViewerSource] = useState<string>()
   const sourceVisible = visibleSource === source
   const viewerOpen = viewerSource === source
 
   useEffect(() => {
+    // A cached result is read during render below; nothing to do here.
+    if (mermaidResultCache.has(mermaidCacheKey(source, documentTheme))) return
     let active = true
     const renderRevision = renderRevisionRef.current++
     const timeout = window.setTimeout(() => {
@@ -570,12 +610,14 @@ export function MermaidDiagram({
       ).then(
         (svg) => {
           if (active) {
-            setRenderState({
+            const state: MermaidRenderState = {
               source,
               status: 'ready',
               svg,
               theme: documentTheme
-            })
+            }
+            rememberMermaidResult(state)
+            setRenderState(state)
           }
         },
         () => {
@@ -600,7 +642,7 @@ export function MermaidDiagram({
     renderState?.source === source &&
     renderState.theme === documentTheme
       ? renderState
-      : undefined
+      : mermaidResultCache.get(mermaidCacheKey(source, documentTheme))
   const retainedSvg =
     renderState?.status === 'ready' &&
     renderState.source === source

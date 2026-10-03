@@ -34,7 +34,7 @@ describe('TerminalOutputBatcher', () => {
     vi.unstubAllGlobals()
   })
 
-  it('writes once per frame in order and ACKs the last sequence after the write callback', async () => {
+  it('writes idle output at once, merges the rest of the frame, and ACKs the last sequence after the write callback', async () => {
     const frames = manualScheduler()
     const writes: Array<{ data: string; done: () => void }> = []
     const acks: number[] = []
@@ -43,43 +43,62 @@ describe('TerminalOutputBatcher', () => {
       acknowledge: (_, sequence) => acks.push(sequence),
       schedule: frames.schedule
     })
+    // Leading edge: a keystroke echo is written without waiting for a frame.
+    batcher.push('s', 2, 'k')
+    expect(writes.map((write) => write.data)).toEqual(['k'])
+    expect(frames.pendingFrames()).toBe(1)
+    writes[0]!.done()
+    expect(acks).toEqual([2])
+
+    // Output in the same frame is merged and written once when the frame runs.
     batcher.push('s', 3, 'a')
     batcher.push('s', 4, 'b')
     batcher.push('s', 5, 'c')
+    expect(writes).toHaveLength(1)
+    frames.runFrame()
+    expect(writes.map((write) => write.data)).toEqual(['k', 'abc'])
+    expect(acks).toEqual([2])
+    writes[1]!.done()
+    expect(acks).toEqual([2, 5])
+    // A busy frame keeps the window open: the next output waits a frame.
     expect(frames.pendingFrames()).toBe(1)
-    expect(writes).toHaveLength(0)
-
-    frames.runFrame()
-    expect(writes.map((write) => write.data)).toEqual(['abc'])
-    expect(acks).toEqual([])
-    writes[0]!.done()
-    expect(acks).toEqual([5])
-
     batcher.push('s', 6, 'd')
+    expect(writes).toHaveLength(2)
     frames.runFrame()
-    writes[1]!.done()
-    writes[1]!.done()
-    expect(writes.map((write) => write.data)).toEqual(['abc', 'd'])
-    expect(acks).toEqual([5, 6])
+    writes[2]!.done()
+    writes[2]!.done()
+    expect(writes.map((write) => write.data)).toEqual(['k', 'abc', 'd'])
+    expect(acks).toEqual([2, 5, 6])
+
+    // A frame without output returns to idle: the next output is immediate.
+    frames.runFrame()
+    expect(frames.pendingFrames()).toBe(0)
+    batcher.push('s', 7, 'e')
+    expect(writes.map((write) => write.data)).toEqual(['k', 'abc', 'd', 'e'])
     batcher.dispose()
   })
 
   it('flush writes pending output immediately and waits for the emulator', async () => {
     const frames = manualScheduler()
     let release: (() => void) | undefined
+    const written: string[] = []
     const batcher = new TerminalOutputBatcher({
-      write: (_, done) => {
+      write: (data, done) => {
+        written.push(data)
         release = done
       },
       acknowledge: vi.fn(),
       schedule: frames.schedule
     })
     batcher.push('s', 1, 'x')
+    batcher.push('s', 2, 'y')
+    expect(written).toEqual(['x'])
     let flushed = false
     const flush = batcher.flush().then(() => {
       flushed = true
     })
     expect(frames.pendingFrames()).toBe(0)
+    expect(written).toEqual(['x', 'y'])
     await Promise.resolve()
     expect(flushed).toBe(false)
     release?.()
@@ -97,10 +116,12 @@ describe('TerminalOutputBatcher', () => {
       acknowledge,
       schedule: frames.schedule
     })
+    batcher.push('old', 8, 'shown')
     batcher.push('old', 9, 'stale')
     batcher.reset()
     frames.runFrame()
-    expect(write).not.toHaveBeenCalled()
+    expect(write).toHaveBeenCalledOnce()
+    expect(write).toHaveBeenCalledWith('shown', expect.any(Function))
     expect(acknowledge).toHaveBeenCalledWith('old', 9)
     batcher.dispose()
   })
@@ -139,9 +160,14 @@ describe('TerminalOutputBatcher', () => {
     })
     batcher.push('s', 1, 'hidden ')
     batcher.push('s', 2, 'output')
+    batcher.push('s', 3, '!')
+    expect(writes).toEqual(['hidden '])
     vi.advanceTimersByTime(TERMINAL_FRAME_FALLBACK_MS)
-    expect(writes).toEqual(['hidden output'])
-    expect(acks).toEqual([2])
+    expect(writes).toEqual(['hidden ', 'output!'])
+    expect(acks).toEqual([1, 3])
+    // The window closes after an empty fallback tick; no timers linger.
+    vi.advanceTimersByTime(TERMINAL_FRAME_FALLBACK_MS)
+    expect(vi.getTimerCount()).toBe(0)
     batcher.dispose()
   })
 

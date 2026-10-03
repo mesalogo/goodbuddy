@@ -519,7 +519,7 @@ export function DocumentsView({
               : t('documents.table.noResults')}
           </div>
         ) : (
-          <div className="knowledge-documents__table-scroll">
+          <div className={documentWindow.windowed ? 'knowledge-documents__table-scroll knowledge-documents__table-scroll--windowed' : 'knowledge-documents__table-scroll'}>
             <table aria-label={t('documents.table.title')} aria-rowcount={documentWindow.windowed ? rows.length + 1 : undefined}>
               <thead>
                 <tr aria-rowindex={documentWindow.windowed ? 1 : undefined}>

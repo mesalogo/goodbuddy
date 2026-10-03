@@ -331,4 +331,48 @@ describe('ConversationSidebar windowing', () => {
     act(() => { vi.advanceTimersByTime(5_000) })
     expect(renderedIds(list)[0]).toBe('c800')
   })
+
+  /** The first visible row and its offset from the viewport top. */
+  function readerRow(list: HTMLElement): { id: string; top: number } {
+    const id = visibleIds(list)[0]!
+    const row = list.querySelector<HTMLElement>(`[data-conversation-window-row="${id}"]`)!
+    return { id, top: row.getBoundingClientRect().top }
+  }
+
+  it('keeps the visible rows in place when rows are inserted, removed or reordered above them', () => {
+    vi.useFakeTimers()
+    const { list, store } = setup(1_000)
+    scrollList(list, 12_010)
+    const before = readerRow(list)
+    expect(before.id).toBe('c300')
+
+    // A new conversation at the top.
+    act(() => store.set((current) => [
+      { id: 'new', title: 'New', updatedAt: 2_000_000, messages: [] } as unknown as Conversation, ...current,
+    ]))
+    expect(readerRow(list)).toEqual(before)
+
+    // A delete above the reader.
+    act(() => store.set((current) => current.filter((item) => item.id !== idOf(5))))
+    expect(readerRow(list)).toEqual(before)
+
+    // Pinning a row from below moves it above the reader.
+    act(() => store.set((current) => current.map((item) => item.id === idOf(900) ? { ...item, pinned: true } : item)))
+    expect(readerRow(list)).toEqual(before)
+
+    // The 5 s reorder moves a row from below to the top.
+    act(() => store.set((current) => current.map((item) =>
+      item.id === idOf(700) ? { ...item, messageSummary: { count: 1, latestMessageAt: 3_000_000 } } : item)))
+    act(() => { vi.advanceTimersByTime(5_000) })
+    expect(readerRow(list)).toEqual(before)
+  })
+
+  it('keeps the top of the list at the top when a row is inserted there', () => {
+    const { list, store } = setup(1_000)
+    act(() => store.set((current) => [
+      { id: 'new', title: 'New', updatedAt: 2_000_000, messages: [] } as unknown as Conversation, ...current,
+    ]))
+    expect(list.scrollTop).toBe(0)
+    expect(visibleIds(list)[0]).toBe('new')
+  })
 })

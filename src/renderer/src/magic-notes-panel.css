@@ -35,5 +35,8 @@
    stand in for unmounted rows. Row spacing moves into each row's padding so
    spacer heights and measured rows add up exactly. */
 .magic-notes-list.magic-notes-card-grid.magic-notes-card-grid--windowed { row-gap: 0; }
+/* The grid keeps the reader's row in place itself; native scroll anchoring
+   could pick a spacer and fight the correction. */
+.magic-notes-card-grid--windowed { overflow-anchor: none; }
 .magic-notes-card-grid--windowed > .magic-notes-window-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: stretch; }
 .magic-notes-card-grid--windowed > .magic-notes-list__spacer { grid-column: 1 / -1; }

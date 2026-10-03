@@ -3988,6 +3988,9 @@ export function registerIpcHandlers(
       let remoteEventBatchClosed = false
       const remoteEventBatcher = new RemoteEventBatcher<RemoteBatchEvent>({
         onError: (error) => controller.abort(error),
+        // The batch already coalesced a frame of deltas: send them now rather
+        // than holding them for another public-buffer interval.
+        onTimerFlushed: () => publicEventBuffer.flush(),
         persist: (entries) =>
           remoteConversationRecovery
             ? assistantDatabase.appendRemoteConversationTaskEventsBatch({

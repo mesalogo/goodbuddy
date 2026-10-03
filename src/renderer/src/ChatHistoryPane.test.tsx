@@ -371,6 +371,88 @@ describe('ChatHistoryPane windowing', () => {
     expect(chat.scrollTop + viewport).toBe(chat.scrollHeight)
   })
 
+  // UX parity with the fully mounted list: rows holding user state survive
+  // scrolling away and back.
+  it('keeps rows with an open details element, a pending question or a selection mounted', async () => {
+    const messages = makeMessages(2_000)
+    messages[1_991] = {
+      ...messages[1_991]!,
+      approval: { id: 'approval-1', title: 'Run', description: 'Run a tool' }
+    }
+    messages[1_993] = {
+      ...messages[1_993]!,
+      reasoning: 'thinking',
+      blocks: [{ id: 'r1', type: 'reasoning', content: 'thinking' }, { id: 't1', type: 'text', content: 'answer' }]
+    } as Message
+    const { chat, container } = setup(messages)
+    measure()
+    const details = container.querySelector<HTMLDetailsElement>('[data-message-id="m1993"] details')!
+    act(() => {
+      details.open = true
+      details.dispatchEvent(new Event('toggle'))
+    })
+    const selected = container.querySelector<HTMLElement>('[data-message-id="m1995"] .message')!
+    act(() => {
+      const range = document.createRange()
+      range.selectNodeContents(selected)
+      const selection = document.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+
+    act(() => { chat.scrollTop = 0; fireEvent.scroll(chat) })
+    await frame()
+    measure()
+    const ids = renderedIds(container)
+    expect(ids).toContain('m0')
+    expect(ids).toEqual(expect.arrayContaining(['m1991', 'm1993', 'm1995']))
+    // The very same element, so its open state is intact.
+    expect(container.querySelector('[data-message-id="m1993"] details')).toBe(details)
+    expect(details.open).toBe(true)
+    expect(ids).not.toContain('m1500')
+    document.getSelection()?.removeAllRanges()
+  })
+
+  it('glides to the bottom without instant scroll writes, then pins', async () => {
+    const messages = makeMessages(500)
+    const { chat, container } = setup(messages)
+    measure()
+    act(() => { chat.scrollTop = 1_000; fireEvent.scroll(chat) })
+    await frame()
+    measure()
+    const scrollTo = vi.mocked(chat.scrollTo)
+    // A smooth scroll the browser animates: record the call, move nothing yet.
+    scrollTo.mockImplementation(() => undefined)
+    scrollTo.mockClear()
+    fireEvent.click(container.querySelector('.chat-scroll-to-bottom')!)
+    expect(scrollTo).toHaveBeenCalledTimes(1)
+    expect(scrollTo.mock.calls[0]![0]).toMatchObject({ behavior: 'smooth' })
+    // Mid-glide frames, resizes and re-windowing must not write scrollTop.
+    const before = chat.scrollTop
+    for (const step of [10_000, 30_000]) {
+      act(() => {
+        Object.getOwnPropertyDescriptor(chat, 'scrollTop')!.set!.call(chat, step)
+        fireEvent.scroll(chat)
+      })
+      await frame()
+      measure()
+      expect(scrollTo.mock.calls.every(([options]) => (options as ScrollToOptions).behavior === 'smooth')).toBe(true)
+    }
+    expect(chat.scrollTop).not.toBe(before)
+    expect(container.querySelector('.chat-scroll-to-bottom')).toBeNull()
+    // Arriving at the bottom ends the glide and pins.
+    act(() => {
+      chat.scrollTop = chat.scrollHeight
+      fireEvent.scroll(chat)
+    })
+    await frame()
+    measure()
+    expect(renderedIds(container).at(-1)).toBe('m499')
+    expect(chat.scrollTop + viewport).toBe(chat.scrollHeight)
+    expect(container.querySelector('.chat-scroll-to-bottom')).toBeNull()
+  })
+
   it('keeps messageIndex-based props for windowed rows', () => {
     const messages = makeMessages(300)
     messages[299] = { ...messages[299]!, state: 'error', content: 'failed' }

@@ -607,7 +607,26 @@ try {
     }
     await sleep(300)
     const after = await js(scroller)
-    return { fields: { scrollTopBefore: before, scrollTopAfter: after, scrolledPx: before === null || after === null ? null : before - after } }
+    // UX: large jumps (scrollbar drag, Home/End, flick) must not paint a frame
+    // whose viewport is not covered by mounted rows (a blank screen).
+    const blankFrames = await js(`new Promise((resolve) => {
+      const c = document.querySelector('.chat-history-pane[data-active=true] .chat');
+      const covered = () => {
+        const v = c.getBoundingClientRect(), mid = v.top + v.height / 2;
+        return [...c.querySelectorAll('.message-window-row')].some((row) => { const r = row.getBoundingClientRect(); return r.top <= mid && r.bottom >= mid; });
+      };
+      const targets = [0.5, 0.1, 0.9, 0.3, 0.7, 0.05, 0.95, 0.2, 0.8, 0.4].map((f) => Math.round((c.scrollHeight - c.clientHeight) * f));
+      let blank = 0, checked = 0;
+      const step = () => {
+        const target = targets.shift();
+        if (target === undefined) { resolve({ blank, checked }); return; }
+        c.scrollTop = target;
+        // The frame the jump is painted in: rAF runs before paint, after rendering work queued by the scroll.
+        requestAnimationFrame(() => requestAnimationFrame(() => { checked += 1; if (!covered()) blank += 1; setTimeout(step, 50); }));
+      };
+      step();
+    })`)
+    return { fields: { scrollTopBefore: before, scrollTopAfter: after, scrolledPx: before === null || after === null ? null : before - after, jumpBlankFrames: blankFrames.blank, jumpChecks: blankFrames.checked } }
   }))
 
   await screenshot('long-conversation')

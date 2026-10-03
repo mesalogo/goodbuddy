@@ -1,6 +1,8 @@
 /**
- * Renderer-side terminal output batching (P3): output events are merged and
- * written to the emulator at most once per animation frame, in sequence order.
+ * Renderer-side terminal output batching (P3): output arriving while idle is
+ * written to the emulator at once (no added echo latency); output arriving
+ * within the same frame after that is merged and written on the next
+ * animation frame, in sequence order.
  * Each batch is acknowledged with its highest sequence after the emulator's
  * write callback, which is what Main's ACK-based backpressure expects.
  */
@@ -71,7 +73,14 @@ export class TerminalOutputBatcher {
     return this.pending.length > 0
   }
 
-  /** Queues output; events must be pushed in increasing sequence order. */
+  /**
+   * Queues output; events must be pushed in increasing sequence order.
+   *
+   * Leading edge: output arriving while idle (no write in the current frame
+   * window) is written at once, so keystroke echo does not wait for a frame.
+   * Output arriving after that within the same frame is merged and written
+   * when the frame runs; a steady stream thus writes at most once per frame.
+   */
   push(sessionId: string, sequence: number, data: string): void {
     if (this.disposed) {
       return
@@ -83,9 +92,23 @@ export class TerminalOutputBatcher {
     this.pendingSessionId = sessionId
     this.pendingSequence = sequence
     this.pending.push(data)
-    this.cancelFrame ??= this.schedule(() => {
+    if (this.cancelFrame) {
+      return
+    }
+    void this.writePending()
+    this.openFrameWindow()
+  }
+
+  /** Until the frame runs, further output is merged instead of written. */
+  private openFrameWindow(): void {
+    this.cancelFrame = this.schedule(() => {
       this.cancelFrame = undefined
-      void this.flush()
+      if (this.disposed || this.pending.length === 0) {
+        // Nothing arrived during the frame: idle again.
+        return
+      }
+      void this.writePending()
+      this.openFrameWindow()
     })
   }
 
@@ -99,6 +122,10 @@ export class TerminalOutputBatcher {
     }
     this.cancelFrame?.()
     this.cancelFrame = undefined
+    return this.writePending()
+  }
+
+  private writePending(): Promise<void> {
     if (this.pending.length > 0) {
       const data = this.pending.length === 1 ? this.pending[0]! : this.pending.join('')
       const sessionId = this.pendingSessionId!

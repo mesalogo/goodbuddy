@@ -614,7 +614,7 @@ export function WorkspaceFilesPanel({
         </div>
         </WorkspaceGitTools>}
         </div>
-      <div className="workspace-files__files-view" hidden={activeView !== 'files'}>
+      <div className={treeWindow.windowed ? 'workspace-files__files-view workspace-files__files-view--windowed' : 'workspace-files__files-view'} hidden={activeView !== 'files'}>
       {loadingPaths.has(browsedPath) && !root ? (
         <p className="assistant-sidebar__empty">
           {t('files.readingWorkspace')}

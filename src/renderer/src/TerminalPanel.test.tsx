@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -485,7 +485,7 @@ describe('TerminalPanel', () => {
     )
   })
 
-  it('batches output into one write per frame and ACKs after the write callback', async () => {
+  it('writes idle output at once, merges the rest of the frame, and ACKs after the write callback', async () => {
     const frames = new Set<() => void>()
     const frameScheduler = (callback: () => void): (() => void) => {
       frames.add(callback)
@@ -517,18 +517,27 @@ describe('TerminalPanel', () => {
       expect(backend.adapter.create).toHaveBeenCalledOnce()
     )
 
-    for (let sequence = 1; sequence <= 5; sequence += 1) {
+    // The first output (a keystroke echo) is written without waiting for a frame.
+    backend.emit({ sessionId, sequence: 1, type: 'output', data: '1;' })
+    await waitFor(() => expect(emulator.write).toHaveBeenCalledWith('1;', expect.any(Function)))
+    expect(frames.size).toBe(1)
+    callbacks.shift()?.()
+    expect(backend.adapter.ack).toHaveBeenCalledWith({ sessionId, sequence: 1 })
+    for (let sequence = 2; sequence <= 5; sequence += 1) {
       backend.emit({ sessionId, sequence, type: 'output', data: `${sequence};` })
     }
-    await waitFor(() => expect(frames.size).toBe(1))
-    expect(emulator.write).not.toHaveBeenCalled()
-    runFrame()
+    // Wait until the event queue has consumed every event.
+    await act(async () => {
+      for (let tick = 0; tick < 10; tick += 1) await Promise.resolve()
+    })
     expect(emulator.write).toHaveBeenCalledOnce()
-    expect(emulator.write).toHaveBeenCalledWith('1;2;3;4;5;', expect.any(Function))
-    expect(backend.adapter.ack).not.toHaveBeenCalled()
-    callbacks.shift()?.()
+    runFrame()
+    expect(emulator.write).toHaveBeenCalledTimes(2)
+    expect(emulator.write).toHaveBeenLastCalledWith('2;3;4;5;', expect.any(Function))
     expect(backend.adapter.ack).toHaveBeenCalledOnce()
-    expect(backend.adapter.ack).toHaveBeenCalledWith({ sessionId, sequence: 5 })
+    callbacks.shift()?.()
+    expect(backend.adapter.ack).toHaveBeenCalledTimes(2)
+    expect(backend.adapter.ack).toHaveBeenLastCalledWith({ sessionId, sequence: 5 })
 
     // A control event flushes pending output first and is applied after it.
     backend.emit({ sessionId, sequence: 6, type: 'output', data: 'bye' })
@@ -547,7 +556,46 @@ describe('TerminalPanel', () => {
       expect(backend.adapter.ack).toHaveBeenLastCalledWith({ sessionId, sequence: 7 })
     )
     expect(backend.adapter.ack).toHaveBeenCalledWith({ sessionId, sequence: 6 })
-    expect(emulator.write).toHaveBeenCalledTimes(2)
+    expect(emulator.write).toHaveBeenCalledTimes(3)
+  })
+
+  it('writes output that arrived before Clear and then clears', async () => {
+    const frames = new Set<() => void>()
+    const frameScheduler = (callback: () => void): (() => void) => {
+      frames.add(callback)
+      return () => frames.delete(callback)
+    }
+    const backend = adapterHarness()
+    const emulator = emulatorHarness()
+    const order: string[] = []
+    const callbacks: Array<() => void> = []
+    emulator.write.mockImplementation((data: string, callback?: () => void) => {
+      order.push(`write:${data}`)
+      if (callback) callbacks.push(callback)
+    })
+    vi.mocked(emulator.terminal.clear).mockImplementation(() => { order.push('clear') })
+    render(
+      <TerminalPanel
+        adapter={backend.adapter}
+        frameScheduler={frameScheduler}
+        sessionId={sessionId}
+        target={{ type: 'local' }}
+        terminalFactory={emulator.factory}
+      />
+    )
+    await screen.findByText('PowerShell 7')
+    backend.emit({ sessionId, sequence: 1, type: 'output', data: 'a' })
+    backend.emit({ sessionId, sequence: 2, type: 'output', data: 'b' })
+    await waitFor(() => expect(order).toEqual(['write:a']))
+    await act(async () => {
+      for (let tick = 0; tick < 10; tick += 1) await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '清屏' }))
+    // The pending 'b' is written before the clear, and the clear waits for xterm.
+    expect(order).toEqual(['write:a', 'write:b'])
+    callbacks.splice(0).forEach((callback) => callback())
+    await waitFor(() => expect(order).toEqual(['write:a', 'write:b', 'clear']))
+    expect(backend.adapter.ack).toHaveBeenLastCalledWith({ sessionId, sequence: 2 })
   })
 
   it('keeps writing output for a hidden terminal tab', async () => {
@@ -569,8 +617,10 @@ describe('TerminalPanel', () => {
     await screen.findByText('PowerShell 7')
     backend.emit({ sessionId, sequence: 1, type: 'output', data: 'a' })
     backend.emit({ sessionId, sequence: 2, type: 'output', data: 'b' })
+    // 'a' is written at once; 'b' arrives in the same frame window and is
+    // written by the timer fallback (hidden windows run no frames).
     await waitFor(() =>
-      expect(emulator.write).toHaveBeenCalledWith('ab', expect.any(Function))
+      expect(emulator.write.mock.calls.map(([data]) => data)).toEqual(['a', 'b'])
     )
     await waitFor(() =>
       expect(backend.adapter.ack).toHaveBeenCalledWith({ sessionId, sequence: 2 })
