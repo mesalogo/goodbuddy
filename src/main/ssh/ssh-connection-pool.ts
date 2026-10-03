@@ -1,7 +1,7 @@
 import { createHmac, getCiphers, randomBytes } from "node:crypto";
 import { connect as connectLoopback, type Socket } from "node:net";
-import { Client } from "ssh2";
-import type { ClientChannel, ConnectConfig, SFTPWrapper } from "ssh2";
+import type { Client, ClientChannel, ConnectConfig, SFTPWrapper } from "ssh2";
+import { loadSsh2 } from "./ssh2-module";
 import {
   BoundedStagedSftp,
   type BoundedSftpLimits,
@@ -344,7 +344,7 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
     validatePoolTarget(target);
     validateConnectionIdentity(target, identity);
     const resolvedDependencies: SshConnectionDependencies = {
-      createClient: () => new Client(),
+      createClient: () => new (loadSsh2().Client)(),
       supportedOpenSslCiphers: getCiphers,
       systemAgent: defaultSystemAgent,
       controlPlanePackageInstaller: Buffer.alloc(0),

@@ -1,4 +1,4 @@
-import { convert } from 'html-to-text'
+import { loadHtmlToText } from '../document-extracted-text'
 import { unzipSync } from 'fflate'
 import { extname } from 'node:path'
 import type { ParsedDocumentImage } from '../http-document-ocr'
@@ -701,7 +701,7 @@ export async function parseDocument(
   } else if (['.docx', '.xlsx', '.pptx'].includes(extension)) {
     sections = parseOfficeArchive(buffer, extension)
   } else if (['.html', '.htm'].includes(extension)) {
-    const content = convert(decodeText(buffer), {
+    const content = loadHtmlToText().convert(decodeText(buffer), {
       wordwrap: false,
       selectors: [
         { selector: 'script', format: 'skip' },

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { loadImage } from '@napi-rs/canvas'
 import { z } from 'zod'
 import {
   maximumDocumentExtractedCharacters,
@@ -131,6 +130,8 @@ export class HttpDocumentOcr {
             : bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ? 'image/png'
               : bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp' : undefined
           if (!mimeType) throw new Error('图片格式不支持')
+          // Native canvas loads on first use (P6).
+          const { loadImage } = await import('@napi-rs/canvas')
           const image = await loadImage(bytes)
           if (!image.width || !image.height || image.width * image.height > 40_000_000) throw new Error('图片尺寸无效或超过 4000 万像素')
           imageBytes += bytes.length

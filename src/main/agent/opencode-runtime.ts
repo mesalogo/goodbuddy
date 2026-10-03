@@ -1,11 +1,11 @@
 import { runtimeChecklistSchema, type RuntimeChecklist } from '../../shared/runtime-checklist';
-import {
+import type {
   createOpencodeClient,
-  type AssistantMessage,
-  type OpencodeClient,
-  type PermissionRequest,
-  type PermissionRuleset,
-  type QuestionRequest,
+  AssistantMessage,
+  OpencodeClient,
+  PermissionRequest,
+  PermissionRuleset,
+  QuestionRequest,
 } from "@opencode-ai/sdk/v2";
 import spawn from "cross-spawn";
 import { createHash, randomBytes } from "node:crypto";
@@ -740,11 +740,27 @@ async function defaultValidateBinary(
   });
 }
 
+type OpencodeSdk = typeof import("@opencode-ai/sdk/v2");
+let opencodeSdk: OpencodeSdk | undefined;
+
+// The SDK is loaded when an OpenCode client is first created, not at Main
+// startup (P6). initializeClient awaits this before any default factory runs.
+async function loadOpencodeSdk(): Promise<OpencodeSdk> {
+  opencodeSdk ??= await import("@opencode-ai/sdk/v2");
+  return opencodeSdk;
+}
+
+const defaultCreateClient: typeof createOpencodeClient = (config) => {
+  if (!opencodeSdk) throw new Error("OpenCode SDK is not loaded");
+  return opencodeSdk.createOpencodeClient(config);
+};
+
 async function defaultCheckServerHealth(
   url: string,
   authorization: string,
   signal: AbortSignal,
 ): Promise<boolean> {
+  const { createOpencodeClient } = await loadOpencodeSdk();
   const client = createOpencodeClient({
     baseUrl: url,
     headers: { Authorization: authorization },
@@ -798,7 +814,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       spawn,
       detectBinary: defaultDetectBinary,
       validateBinary: defaultValidateBinary,
-      createClient: createOpencodeClient,
+      createClient: defaultCreateClient,
       checkServerHealth: defaultCheckServerHealth,
       platform: process.platform,
       startupTimeoutMs: STARTUP_TIMEOUT_MS,
@@ -1483,6 +1499,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     if (baseUrl && this.options.modelProfile) {
       throw new Error("OpenCode 独立模型连接仅支持由 GoodBuddy 启动的本机服务");
     }
+    await loadOpencodeSdk();
     if (!baseUrl && this.options.embedded) {
       this.server = await this.launchEmbedded(signal);
       baseUrl = this.server.url;

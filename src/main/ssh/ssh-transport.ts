@@ -1,11 +1,12 @@
 import { createHash, getCiphers } from 'node:crypto'
-import {
+import type {
   Client,
-  type Algorithms,
-  type CipherAlgorithm,
-  type ConnectConfig,
-  type ServerHostKeyAlgorithm
+  Algorithms,
+  CipherAlgorithm,
+  ConnectConfig,
+  ServerHostKeyAlgorithm
 } from 'ssh2'
+import { loadSsh2 } from './ssh2-module'
 import type {
   SshHostConnectionTestResult
 } from '../../shared/ssh-host-contracts'
@@ -336,7 +337,7 @@ export class Ssh2Transport implements SshTransport {
     dependencies: Partial<SshTransportDependencies> = {}
   ) {
     this.dependencies = {
-      createClient: () => new Client(),
+      createClient: () => new (loadSsh2().Client)(),
       now: Date.now,
       supportedOpenSslCiphers: getCiphers,
       systemAgent: defaultSystemAgent,

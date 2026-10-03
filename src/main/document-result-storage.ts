@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
-import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { documentResultSchema, type DocumentResult } from '../shared/document-result-contracts'
 import type { DocumentParsingSettings } from '../shared/document-parsing-contracts'
 import type { ParsedDocument } from './knowledge/document-parser'
@@ -96,6 +95,8 @@ export class DocumentResultStorage {
     if (!image) throw new Error('解析图片不存在')
     const data = await readFile(join(this.require(id).directory, 'images', imageId))
     if (thumbnail) {
+      // Native canvas loads on first use (P6).
+      const { createCanvas, loadImage } = await import('@napi-rs/canvas')
       const source = await loadImage(data)
       const scale = Math.min(1, 640 / Math.max(source.width, source.height))
       const canvas = createCanvas(Math.max(1, Math.round(source.width * scale)), Math.max(1, Math.round(source.height * scale)))

@@ -3,7 +3,7 @@ import { constants as fileSystemConstants } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { posix, win32 } from 'node:path'
-import * as nodePty from 'node-pty'
+import type * as nodePty from 'node-pty'
 import type { IDisposable, IPty } from 'node-pty'
 import {
   TERMINAL_LIMITS,
@@ -393,7 +393,9 @@ export class LocalTerminalSession {
           : undefined,
         this.dependencies
       )
-      const spawn = this.dependencies.spawn ?? nodePty.spawn
+      // node-pty is native; load it when the first terminal starts (P6).
+      const spawn = this.dependencies.spawn ??
+        (await import('node-pty')).spawn
       this.pty = spawn(this.launch.shell, spec?.args ?? [], {
         name: 'xterm-256color',
         cols: this.size.cols,

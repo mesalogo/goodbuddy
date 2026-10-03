@@ -1,4 +1,4 @@
-import { createCanvas } from '@napi-rs/canvas'
+// @napi-rs/canvas is a native module (~85 ms to load); load it on first OCR render (P6).
 
 export async function* renderOcrPdf(
   buffer: Buffer,
@@ -6,7 +6,10 @@ export async function* renderOcrPdf(
   signal?: AbortSignal
 ): AsyncGenerator<{ pageNumber: number; data: Buffer; width: number; height: number }> {
   signal?.throwIfAborted()
-  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const [{ getDocument }, { createCanvas }] = await Promise.all([
+    import('pdfjs-dist/legacy/build/pdf.mjs'),
+    import('@napi-rs/canvas')
+  ])
   const task = getDocument({
     data: Uint8Array.from(buffer), disableFontFace: true,
     isOffscreenCanvasSupported: false, useSystemFonts: false, useWorkerFetch: false
