@@ -1,6 +1,6 @@
 // Main-process database benchmark (PERF-15). Bundles the production
 // AssistantDatabase and readonly worker with esbuild, seeds a temporary
-// assistant database (default 1,000 conversations / 20,000 messages and 5,000
+// assistant database (default 1,000 conversations / 20,000 messages and 24,000
 // activity records) and measures, for the IPC paths the renderer hits often:
 //   - per-call time
 //   - Main event-loop delay while the calls run back to back
@@ -10,6 +10,9 @@
 //   activity-history:replace      legacy replace (zod parse + BEGIN IMMEDIATE +
 //                                 JSON.stringify of every record) vs current
 //   activity-history:update       one changed record via the incremental API
+//   activity startup load         whole list (pre-paging get) vs first page (200)
+//                                 + summary on the readonly worker
+//   activity page / summary       sync paths, for reference
 // Env: GB_MPERF_CONVERSATIONS, GB_MPERF_MESSAGES, GB_MPERF_ACTIVITY,
 // GB_MPERF_CALLS, GB_MPERF_OUTPUT (JSON), GB_MPERF_NODE=1 (skip Electron).
 const { buildSync } = require('esbuild')
@@ -35,7 +38,7 @@ if (process.env.GB_MPERF_NODE !== '1') {
 
 const conversationCount = Number(process.env.GB_MPERF_CONVERSATIONS || 1000)
 const messageCount = Number(process.env.GB_MPERF_MESSAGES || 20000)
-const activityCount = Number(process.env.GB_MPERF_ACTIVITY || 5000)
+const activityCount = Number(process.env.GB_MPERF_ACTIVITY || 24000)
 const calls = Number(process.env.GB_MPERF_CALLS || 15)
 
 const directory = mkdtempSync(join(tmpdir(), 'goodbuddy-main-perf-'))
@@ -118,7 +121,8 @@ function legacyReplace(raw, cache, input) {
     const records = new Map()
     const occurrences = new Map()
     const order = []
-    const upsert = raw.prepare(`INSERT INTO activity_history_records (record_key, record_json) VALUES (?, ?)
+    // order_seq only satisfies the current schema; the old code kept order in the JSON list below.
+    const upsert = raw.prepare(`INSERT INTO activity_history_records (record_key, record_json, order_seq) VALUES (?, ?, ?)
       ON CONFLICT(record_key) DO UPDATE SET record_json = excluded.record_json`)
     for (const record of snapshot.records) {
       const occurrence = occurrences.get(record.id) ?? 0
@@ -126,7 +130,7 @@ function legacyReplace(raw, cache, input) {
       const key = JSON.stringify([record.id, occurrence])
       const json = JSON.stringify(record)
       order.push(key)
-      if (previous.get(key) !== json) upsert.run(key, json)
+      if (previous.get(key) !== json) upsert.run(key, json, snapshot.records.length - order.length + 1)
       records.set(key, json)
     }
     const remove = raw.prepare('DELETE FROM activity_history_records WHERE record_key = ?')
@@ -224,6 +228,19 @@ async function main() {
     const record = { ...records[(index + 2) % 50], detail: `incremental ${index}`, status: 'running' }
     return { changes: [{ type: 'upsert', position: 'front', record }] }
   }, input => database.updateActivityHistory(input))
+
+  // Startup: the renderer used to load the whole list; now the first page and the summary.
+  const firstPageRequest = { limit: 200 }
+  const summaryRequest = () => ({ conversationIds: [...new Set(database.getActivityHistoryPage(firstPageRequest).records.map(record => record.conversationId))] })
+  results.activityFullLoad = await measure(async () => database.getActivityHistory())
+  results.activityFirstPageSync = await measure(async () => database.getActivityHistoryPage(firstPageRequest))
+  results.activitySummarySync = await measure(async () => database.getActivityHistorySummary(summaryRequest()))
+  results.activityStartupWorker = await measure(async () => {
+    const page = await database.getActivityHistoryPageAsync(firstPageRequest)
+    await database.getActivityHistorySummaryAsync({ conversationIds: [...new Set(page.records.map(record => record.conversationId))] })
+  })
+  results.activityFullLoadBytes = JSON.stringify(database.getActivityHistory()).length
+  results.activityFirstPageBytes = JSON.stringify(database.getActivityHistoryPage(firstPageRequest)).length
   database.close()
 
   console.log(`[mperf] seeded ${results.conversations} conversations / ${results.messages} messages (largest ${results.largestConversationMessages}), ${results.activityRecords} activity records in ${seedSeconds} s`)
@@ -233,7 +250,10 @@ async function main() {
     [`conversations:get (${counts[Math.floor(conversationCount / 2)]} msgs)`, results.getTypicalSync, results.getTypicalWorker],
     ['activity replace, unchanged', results.replaceUnchangedLegacy, results.replaceUnchangedAfter],
     ['activity replace, 1 changed', results.replaceOneChangedLegacy, results.replaceOneChangedAfter],
-    ['activity update, 1 record', results.replaceOneChangedLegacy, results.updateOneRecord]
+    ['activity update, 1 record', results.replaceOneChangedLegacy, results.updateOneRecord],
+    ['activity startup: full list vs page+summary (worker)', results.activityFullLoad, results.activityStartupWorker],
+    ['activity first page (200), sync', results.activityFullLoad, results.activityFirstPageSync],
+    ['activity summary, sync', results.activityFullLoad, results.activitySummarySync]
   ]
   console.table(rows.map(([name, before, after]) => ({
     path: name,
@@ -242,6 +262,7 @@ async function main() {
     'after call p50/p95 ms': `${after.callP50} / ${after.callP95}`,
     'after loop max ms': after.loopMax
   })))
+  console.log(`[mperf] activity payload: full list ${results.activityFullLoadBytes} bytes, first page ${results.activityFirstPageBytes} bytes`)
   const output = process.env.GB_MPERF_OUTPUT
   if (output) writeFileSync(output, JSON.stringify({ kind: 'goodbuddy-main-database-benchmark', node: process.version, results }, null, 2))
 }

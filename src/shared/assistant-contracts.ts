@@ -133,6 +133,56 @@ export const activityHistoryUpdateSchema = z
   })
   .strict()
 
+/**
+ * Activity history pages (PERF-15), newest first. A record ID shows once:
+ * legacy duplicates after the first occurrence are left out. `before` is the
+ * `nextBefore` of the previous page.
+ */
+export const activityHistoryFilterSchema = z.enum(['all', 'active', 'failed'])
+export const activityHistoryPageRequestSchema = z
+  .object({
+    before: z.number().int().optional(),
+    limit: z.number().int().min(1).max(500),
+    filter: activityHistoryFilterSchema.optional(),
+    projectId: z.string().min(1).max(256).optional(),
+    conversationId: z.string().min(1).max(256).optional()
+  })
+  .strict()
+export const activityHistorySummaryRequestSchema = z
+  .object({
+    /** Conversations whose title and status are needed (the loaded ones). */
+    conversationIds: z.array(z.string().min(1).max(256)).max(5_000)
+  })
+  .strict()
+export const activityHistoryReconcileRequestSchema = z
+  .object({
+    activeRequestIds: z.array(z.string().min(1).max(256)).max(10_000),
+    /** The localized line appended to records marked interrupted. */
+    interruptedDetail: z.string().max(1_000)
+  })
+  .strict()
+
+export type ActivityHistoryFilter = z.infer<typeof activityHistoryFilterSchema>
+export type ActivityHistoryPageRequest = z.infer<typeof activityHistoryPageRequestSchema>
+export type ActivityHistoryPage = {
+  records: ActivityRecord[]
+  /** Set when older records may follow. */
+  nextBefore?: number
+}
+export type ActivityHistorySummaryRequest = z.infer<typeof activityHistorySummaryRequestSchema>
+export type ActivityHistorySummary = {
+  /** Record counts per filter, over the whole history. */
+  counts: Record<ActivityHistoryFilter, number>
+  /**
+   * Per requested conversation: the title of its newest request record and
+   * the conversation status (latest request's result, else latest result,
+   * else latest record), over the whole history.
+   */
+  conversations: Record<string, { title?: string; status: ActivityRecord['status'] }>
+  legacyHistoryMayBeIncomplete: boolean
+}
+export type ActivityHistoryReconcileRequest = z.infer<typeof activityHistoryReconcileRequestSchema>
+
 export type ActivityRecord = z.infer<typeof activityRecordSchema>
 export type ActivityHistorySnapshot = z.infer<
   typeof activityHistorySnapshotSchema

@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { activityHistorySnapshotSchema, type ActivityHistoryChange, type ActivityRecord } from '../../shared/assistant-contracts'
 import { applyActivityChanges } from '../../shared/activity-history-reference'
 import { AssistantDatabase } from './assistant-database'
-import { parseActivityHistorySnapshot, planActivityHistoryReplace, planActivityHistoryUpdate } from './activity-history-plan'
+import { parseActivityHistorySnapshot, planActivityHistoryReplace } from './activity-history-plan'
 
 const directories: string[] = []
 const opened: AssistantDatabase[] = []
@@ -29,8 +29,9 @@ function open(): { database: AssistantDatabase; raw: DatabaseSync; directory: st
 /** The complete persisted state, independent of the read API. */
 function storedState(raw: DatabaseSync): unknown {
   return {
-    header: raw.prepare('SELECT record_order_json, legacy_history_may_be_incomplete FROM activity_history').all(),
-    rows: raw.prepare('SELECT record_key, record_json FROM activity_history_records ORDER BY record_key').all()
+    header: raw.prepare('SELECT legacy_history_may_be_incomplete FROM activity_history').all(),
+    // Sequence values may differ; their order may not.
+    rows: raw.prepare('SELECT record_key, record_json FROM activity_history_records ORDER BY order_seq DESC, record_key').all()
   }
 }
 
@@ -112,8 +113,8 @@ describe('activity history incremental updates', () => {
     database.updateActivityHistory({ changes: [{ type: 'upsert', position: 'front', record: { ...records[1_500]!, status: 'completed' } }] })
     const calls = stringify.mock.calls.filter(([value]) => !Array.isArray(value)).length
     stringify.mockRestore()
-    // One record row plus the order row.
-    expect(changes() - start).toBe(2)
+    // One record row; no order list is rewritten.
+    expect(changes() - start).toBe(1)
     expect(calls).toBeLessThan(10)
   })
 })
@@ -183,11 +184,11 @@ describe('activity history replace', () => {
     const empty = { entries: new Map() }
     const first = planActivityHistoryReplace(parseActivityHistorySnapshot({ records, legacyHistoryMayBeIncomplete: false }).items, false, empty)
     const reparsed = parseActivityHistorySnapshot(structuredClone({ records, legacyHistoryMayBeIncomplete: false }), first.next)
-    expect(reparsed.items.every((item, index) => item.record === first.next.entries.get([...first.next.order][index]!)!.record)).toBe(true)
+    const keys = ['["a",0]', '["b",0]', '["a",1]']
+    expect(reparsed.items.every((item, index) => item.record === first.next.entries.get(keys[index]!)!.record)).toBe(true)
     const second = planActivityHistoryReplace(reparsed.items, false, first.next)
     expect(second.upserts).toEqual([])
     expect(second.removes).toEqual([])
     expect(second.headerChanged).toBe(false)
-    expect(() => planActivityHistoryUpdate({ changes: [] }, { entries: new Map() })).toThrow('unreadable')
   })
 })

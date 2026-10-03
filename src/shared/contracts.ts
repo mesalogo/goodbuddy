@@ -44,7 +44,12 @@ import {
   type AssistantTask,
   type ExecutionStats,
   type ExecutionStatsInput,
+  type ActivityHistoryPage,
+  type ActivityHistoryPageRequest,
+  type ActivityHistoryReconcileRequest,
   type ActivityHistorySnapshot,
+  type ActivityHistorySummary,
+  type ActivityHistorySummaryRequest,
   type ActivityHistoryUpdate,
   type ActivityRecord,
   type TokenUsageSummary,
@@ -2167,6 +2172,15 @@ export type DesktopApi = {
     update: (update: ActivityHistoryUpdate) => Promise<void>
     /** Deletes the whole history in one transaction. */
     clear: () => Promise<void>
+    /** One page of shown records, newest first (see activityHistoryPageRequestSchema). */
+    page: (request: ActivityHistoryPageRequest) => Promise<ActivityHistoryPage>
+    /** Counts and conversation titles/status over the whole history. */
+    summary: (request: ActivityHistorySummaryRequest) => Promise<ActivityHistorySummary>
+    /**
+     * Ends records left pending/running by requests that are no longer
+     * active, against the stored tasks; returns how many changed.
+     */
+    reconcile: (request: ActivityHistoryReconcileRequest) => Promise<number>
   }
   usage: {
     getTokenSummary: () => Promise<TokenUsageSummary>

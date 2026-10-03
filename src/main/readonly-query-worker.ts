@@ -36,7 +36,9 @@ if (kind === 'knowledge') {
     listConversationSummaries: ([detailIds]) => database.readSnapshot(() =>
       database.listConversationSummaries(detailIds as string[])),
     getConversation: ([conversationId]) => database.readSnapshot(() =>
-      database.getConversation(conversationId as string))
+      database.getConversation(conversationId as string)),
+    activityHistoryPage: ([input]) => database.getActivityHistoryPage(input),
+    activityHistorySummary: ([input]) => database.getActivityHistorySummary(input)
   }
 }
 

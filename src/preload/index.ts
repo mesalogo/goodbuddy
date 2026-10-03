@@ -67,7 +67,12 @@ import type {
   AssistantExpert,
   AssistantTask,
   ExecutionStats,
+  ActivityHistoryPage,
+  ActivityHistoryPageRequest,
+  ActivityHistoryReconcileRequest,
   ActivityHistorySnapshot,
+  ActivityHistorySummary,
+  ActivityHistorySummaryRequest,
   ActivityHistoryUpdate,
   ActivityRecord,
   TokenUsageSummary,
@@ -1296,7 +1301,13 @@ const desktopApi: DesktopApi = {
     },
     clear: async () => {
       await ipcRenderer.invoke(ipcChannels.activityHistoryClear)
-    }
+    },
+    page: (request: ActivityHistoryPageRequest) =>
+      ipcRenderer.invoke(ipcChannels.activityHistoryPage, request) as Promise<ActivityHistoryPage>,
+    summary: (request: ActivityHistorySummaryRequest) =>
+      ipcRenderer.invoke(ipcChannels.activityHistorySummary, request) as Promise<ActivityHistorySummary>,
+    reconcile: (request: ActivityHistoryReconcileRequest) =>
+      ipcRenderer.invoke(ipcChannels.activityHistoryReconcile, request) as Promise<number>
   },
   usage: {
     getTokenSummary: () =>

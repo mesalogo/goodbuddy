@@ -193,7 +193,11 @@ vi.mock("./TerminalPanel", () => ({
 
 import App from "./App";
 import { ACTIVITY_STORAGE_KEY, type ActivityRecord } from "./activity-store";
-import { applyActivityChanges } from "../../shared/activity-history-reference";
+import {
+  applyActivityChanges,
+  referenceActivityPage,
+  referenceActivitySummary,
+} from "../../shared/activity-history-reference";
 import type { ActivityHistoryUpdate } from "../../shared/assistant-contracts";
 import { changeUiLocale } from "./i18n";
 import { UiLocaleProvider } from "./i18n/UiLocaleProvider";
@@ -689,6 +693,10 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     clear: vi.fn(async () => {
       savedActivity = [];
     }),
+    page: vi.fn(async (request) => referenceActivityPage(savedActivity, request)),
+    summary: vi.fn(async (request) =>
+      referenceActivitySummary(savedActivity, request.conversationIds)),
+    reconcile: vi.fn(async () => 0),
   },
   usage: {
     getTokenSummary: vi.fn(async () => ({

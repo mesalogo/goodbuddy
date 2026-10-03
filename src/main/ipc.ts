@@ -130,6 +130,9 @@ import {
 import { registerMagicNotesAnalysisIpcHandlers, registerMagicTodosAnalysisIpcHandlers } from './magic-notes/magic-notes-analysis-ipc'
 import { registerMagicNotesIpcHandlers, registerMagicTodosIpcHandlers } from './magic-notes/magic-notes-ipc'
 import {
+  activityHistoryPageRequestSchema,
+  activityHistoryReconcileRequestSchema,
+  activityHistorySummaryRequestSchema,
   assistantIdSchema,
   executionStatsInputSchema,
   conversationBranchInputSchema,
@@ -6872,6 +6875,23 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.activityHistoryClear, (event) => {
     assertTrustedSender(event, window)
     assistantDatabase.clearActivityHistory()
+  })
+  registerHandler(ipcChannels.activityHistoryPage, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.getActivityHistoryPageAsync(activityHistoryPageRequestSchema.parse(input))
+  })
+  registerHandler(ipcChannels.activityHistorySummary, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.getActivityHistorySummaryAsync(activityHistorySummaryRequestSchema.parse(input))
+  })
+  registerHandler(ipcChannels.activityHistoryReconcile, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = activityHistoryReconcileRequestSchema.parse(input)
+    // Requests still running in Main are active too, whichever window started them.
+    return assistantDatabase.reconcileActivityHistory({
+      ...request,
+      activeRequestIds: [...new Set([...request.activeRequestIds, ...activeRequests.keys()])]
+    })
   })
 
   registerHandler(ipcChannels.tokenUsageSummary, (event) => {
