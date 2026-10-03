@@ -44,10 +44,10 @@ export const heartbeat = {
   },
   timeouts: {
     model: 'Model',
-    followDefault: 'Follow app default',
+    followDefault: 'Default model',
     unavailableModel: 'Selected model is unavailable',
     modelHelp: 'Uses an existing text model for reviews, summaries, stories, experiences, and suggestions. Saving affects the next execution, including continue or retry; a review already running keeps its model.',
-    title: 'Model timeouts and concurrency',
+    title: 'Model and execution limits',
     report: 'Heartbeat report timeout (seconds)',
     organize: 'Supervisor organize timeout (seconds)',
     help: 'The organize timeout defaults to 240 seconds, adjustable from 30 to 600. Reviews save it at creation and retain it when continued; suggestions use the same limit.',

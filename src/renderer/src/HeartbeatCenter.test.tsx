@@ -579,10 +579,10 @@ describe('HeartbeatCenter', () => {
       expect(screen.queryByRole('heading', { name })).not.toBeInTheDocument()
     }
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
-    expect(screen.getByRole('heading', { level: 2, name: '模型超时与并发' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: '模型与运行限制' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '回顾整理' }))
     expect(screen.getByRole('heading', { level: 2, name: '回顾算法' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: '模型超时与并发' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '模型与运行限制' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '故事与经验' }))
     expect(screen.getByRole('switch', { name: '跨项目关联' })).toBeVisible()
     fireEvent.click(screen.getByRole('tab', { name: '建议' }))
@@ -691,7 +691,7 @@ describe('HeartbeatCenter', () => {
     expect(screen.queryByRole('region', { name: '心跳计划' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
-    expect(screen.getByRole('heading', { name: '模型超时与并发' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '模型与运行限制' })).toBeInTheDocument()
   })
 
   it('keeps an unsaved draft when switching settings tabs', () => {

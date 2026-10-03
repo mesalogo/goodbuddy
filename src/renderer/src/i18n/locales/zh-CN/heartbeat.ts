@@ -41,10 +41,10 @@ export const heartbeat = {
   },
   timeouts: {
     model: '模型',
-    followDefault: '跟随应用默认',
+    followDefault: '默认模型',
     unavailableModel: '所选模型已不可用',
     modelHelp: '复用已有文本模型，用于回顾、汇总、故事、经验和建议。保存后从下次执行生效，包括继续或重试；正在运行的回顾保持原模型。',
-    title: '模型超时与并发',
+    title: '模型与运行限制',
     report: '心跳报告超时（秒）',
     organize: '监督者整理超时（秒）',
     help: '整理超时默认 240 秒，可设置为 30 至 600 的整数秒。回顾在创建时保存整理超时，继续时沿用；生成建议使用同一上限。',

@@ -84,6 +84,61 @@ app
       assert(report.scrollWidth <= report.clientWidth && report.disclosures === 0, 'No overflow or redundant disclosure')
       return report
     }
+    if (process.env.GOODBUDDY_SUPERVISOR_SETTINGS) {
+      await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL)
+      await wait('!!document.querySelector("#supervisor-tab-settings")')
+      await js('document.querySelector("#supervisor-tab-settings").click()')
+      await wait('!!document.querySelector(".supervisor-settings")')
+      await js('document.fonts.ready')
+      for (const theme of ['light', 'dark']) {
+        await js(`document.documentElement.dataset.theme = '${theme}'`)
+        for (const [width, height] of [[1440, 1100], [1024, 768], [390, 480]]) {
+          win.setContentSize(width, height)
+          for (const tab of ['model', 'review', 'stories', 'suggestions']) {
+            await js(`document.querySelector('#supervisor-settings-tab-${tab}').click(); document.querySelector('.page-shell').scrollTop = 0`)
+            await wait(`document.querySelector('#supervisor-settings-tab-${tab}').getAttribute('aria-selected') === 'true' && innerWidth === ${width}`)
+            await settle()
+            const report = await js(`(() => {
+              const root = document.querySelector('.supervisor-settings');
+              const nav = root.querySelector('.page-tabs');
+              const panel = root.querySelector('[role=tabpanel]:not([hidden])');
+              const form = panel.querySelector('form');
+              const box = e => { const r = e.getBoundingClientRect(); return {left:r.left, right:r.right, top:r.top, bottom:r.bottom, height:r.height}; };
+              return { root:box(root), nav:box(nav), form:box(form), heading:form.querySelector('h2').textContent,
+                primaryTabs:document.querySelectorAll('.heartbeat-center > .page-tabs [role=tab]').length,
+                settingsTabs:nav.querySelectorAll('[role=tab]').length,
+                visiblePanels:root.querySelectorAll('[role=tabpanel]:not([hidden])').length,
+                navFlex:getComputedStyle(nav).flexShrink, rootFlex:getComputedStyle(root).flexShrink,
+                formBorder:getComputedStyle(form).borderTopWidth, formBackground:getComputedStyle(form).backgroundColor,
+                pageWidth:document.documentElement.scrollWidth, rootWidth:root.clientWidth, rootScrollWidth:root.scrollWidth,
+                controls:[...form.querySelectorAll('input,select,button')].map(box) };
+            })()`)
+            assert.equal(report.primaryTabs, 5)
+            assert.equal(report.settingsTabs, 4)
+            assert.equal(report.visiblePanels, 1)
+            assert.equal(report.nav.top - report.root.top, 17, 'Tabs inset from the card border')
+            assert.equal(report.form.top - report.nav.bottom, 24, 'Tabs separated from section content')
+            assert.equal(report.form.left, report.nav.left, 'Section and tabs share the content edge')
+            assert.equal(report.navFlex, '0')
+            assert.equal(report.rootFlex, '0')
+            assert(report.nav.height >= 36, 'Short windows do not compress tabs')
+            assert.equal(report.formBorder, '0px', 'No nested form border')
+            assert.equal(report.formBackground, 'rgba(0, 0, 0, 0)', 'One settings surface')
+            assert(report.pageWidth <= width && report.rootScrollWidth <= report.rootWidth, 'No horizontal page or card overflow')
+            assert(report.controls.every(control => control.left >= report.form.left && control.right <= report.form.right + 1), 'Fields fit the section')
+            if (tab === 'model') assert.equal(report.heading, '模型与运行限制')
+            reports.push({ theme, width, height, tab, ...report })
+            await writeFile(join(artifacts, `settings-${theme}-${width}-${tab}.png`), (await win.webContents.capturePage()).toPNG())
+          }
+        }
+      }
+      assert.deepEqual(errors, [])
+      await writeFile(join(artifacts, 'settings-measurements.json'), JSON.stringify(reports, null, 2))
+      console.log(JSON.stringify({ settingsCases: reports.length, tabInset: 17, contentGap: 24, errors }))
+      win.destroy()
+      app.quit()
+      return
+    }
     if (process.env.GOODBUDDY_SUPERVISOR_CONTENT_LAYOUT) {
       win.show()
       const controlsOnly = process.env.GOODBUDDY_SUPERVISOR_CONTENT_LAYOUT === 'controls'

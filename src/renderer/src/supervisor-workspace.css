@@ -1116,6 +1116,36 @@
   gap: var(--space-3);
 }
 
+.supervisor-settings {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+}
+
+.supervisor-settings > .page-tabs {
+  align-self: flex-start;
+}
+
+.supervisor-settings .heartbeat-settings__editor {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+.supervisor-settings .heartbeat-settings__editor > p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
 .supervisor-center__sections .heartbeat-settings__editor > h2 {
   margin: 0;
   font-size: var(--font-section-title);
