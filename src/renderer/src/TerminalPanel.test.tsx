@@ -8,7 +8,9 @@ import type {
 } from '../../shared/terminal-contracts'
 import {
   TerminalPanel,
+  resetTerminalRendererWarningsForTests,
   resolveTerminalFontFamily,
+  warnTerminalRendererFallback,
   type TerminalAdapter,
   type TerminalClipboardAdapter,
   type TerminalEmulator,
@@ -481,6 +483,120 @@ describe('TerminalPanel', () => {
     await waitFor(() =>
       expect(backend.adapter.close).toHaveBeenCalledWith({ sessionId })
     )
+  })
+
+  it('batches output into one write per frame and ACKs after the write callback', async () => {
+    const frames = new Set<() => void>()
+    const frameScheduler = (callback: () => void): (() => void) => {
+      frames.add(callback)
+      return () => frames.delete(callback)
+    }
+    const runFrame = (): void => {
+      const current = [...frames]
+      frames.clear()
+      current.forEach((callback) => callback())
+    }
+    const backend = adapterHarness()
+    const emulator = emulatorHarness()
+    const callbacks: Array<() => void> = []
+    emulator.write.mockImplementation((_: string, callback?: () => void) => {
+      if (callback) {
+        callbacks.push(callback)
+      }
+    })
+    render(
+      <TerminalPanel
+        adapter={backend.adapter}
+        frameScheduler={frameScheduler}
+        target={{ type: 'local' }}
+        terminalFactory={emulator.factory}
+      />
+    )
+    resizeObserver.trigger()
+    await waitFor(() =>
+      expect(backend.adapter.create).toHaveBeenCalledOnce()
+    )
+
+    for (let sequence = 1; sequence <= 5; sequence += 1) {
+      backend.emit({ sessionId, sequence, type: 'output', data: `${sequence};` })
+    }
+    await waitFor(() => expect(frames.size).toBe(1))
+    expect(emulator.write).not.toHaveBeenCalled()
+    runFrame()
+    expect(emulator.write).toHaveBeenCalledOnce()
+    expect(emulator.write).toHaveBeenCalledWith('1;2;3;4;5;', expect.any(Function))
+    expect(backend.adapter.ack).not.toHaveBeenCalled()
+    callbacks.shift()?.()
+    expect(backend.adapter.ack).toHaveBeenCalledOnce()
+    expect(backend.adapter.ack).toHaveBeenCalledWith({ sessionId, sequence: 5 })
+
+    // A control event flushes pending output first and is applied after it.
+    backend.emit({ sessionId, sequence: 6, type: 'output', data: 'bye' })
+    backend.emit({
+      sessionId,
+      sequence: 7,
+      type: 'exit',
+      exit: { exitCode: 0, signal: null }
+    })
+    await waitFor(() =>
+      expect(emulator.write).toHaveBeenLastCalledWith('bye', expect.any(Function))
+    )
+    expect(screen.queryByText('已退出')).not.toBeInTheDocument()
+    callbacks.shift()?.()
+    await waitFor(() =>
+      expect(backend.adapter.ack).toHaveBeenLastCalledWith({ sessionId, sequence: 7 })
+    )
+    expect(backend.adapter.ack).toHaveBeenCalledWith({ sessionId, sequence: 6 })
+    expect(emulator.write).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps writing output for a hidden terminal tab', async () => {
+    const backend = adapterHarness()
+    const emulator = emulatorHarness()
+    render(
+      <div hidden>
+        <TerminalPanel
+          adapter={backend.adapter}
+          sessionId={sessionId}
+          target={{ type: 'local' }}
+          terminalFactory={emulator.factory}
+        />
+      </div>
+    )
+    await waitFor(() =>
+      expect(backend.adapter.getSnapshot).toHaveBeenCalled()
+    )
+    await screen.findByText('PowerShell 7')
+    backend.emit({ sessionId, sequence: 1, type: 'output', data: 'a' })
+    backend.emit({ sessionId, sequence: 2, type: 'output', data: 'b' })
+    await waitFor(() =>
+      expect(emulator.write).toHaveBeenCalledWith('ab', expect.any(Function))
+    )
+    await waitFor(() =>
+      expect(backend.adapter.ack).toHaveBeenCalledWith({ sessionId, sequence: 2 })
+    )
+  })
+
+  it('logs a bounded, content-free warning when the WebGL renderer falls back', () => {
+    resetTerminalRendererWarningsForTests()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      for (let index = 0; index < 20; index += 1) {
+        warnTerminalRendererFallback(
+          index % 2 === 0 ? 'webgl-load-failed' : 'webgl-context-lost',
+          new TypeError('secret user content')
+        )
+      }
+      expect(warn).toHaveBeenCalledTimes(5)
+      expect(warn).toHaveBeenCalledWith(
+        '[terminal] webgl-load-failed; falling back to the DOM renderer',
+        { error: 'TypeError' }
+      )
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('secret')
+    } finally {
+      warn.mockRestore()
+      resetTerminalRendererWarningsForTests()
+    }
   })
 
   it('uses the resolved cross-platform monospace font stack', () => {

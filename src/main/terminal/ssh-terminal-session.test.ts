@@ -185,21 +185,83 @@ describe("SSH terminal session", () => {
   });
 
   it("emits ordered bounded output and pauses until acknowledged", async () => {
-    const harness = createHarness();
-    const session = await openSession(harness);
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness();
+      const session = await openSession(harness);
 
-    for (let index = 0; index < 255; index += 1) {
-      harness.channel.emit("data", `chunk-${index}`);
+      for (let index = 0; index < 255; index += 1) {
+        harness.channel.emit("data", `chunk-${index}`);
+        // One flush window per chunk keeps one event per chunk.
+        vi.advanceTimersByTime(20);
+      }
+
+      expect(harness.events).toHaveLength(256);
+      expect(harness.events.map((event) => event.sequence)).toEqual(
+        Array.from({ length: 256 }, (_, index) => index + 1),
+      );
+      expect(harness.channel.pause).toHaveBeenCalledOnce();
+      session.acknowledge(256);
+      expect(harness.channel.resume).toHaveBeenCalledOnce();
+      session.close();
+    } finally {
+      vi.useRealTimers();
     }
+  });
 
-    expect(harness.events).toHaveLength(256);
-    expect(harness.events.map((event) => event.sequence)).toEqual(
-      Array.from({ length: 256 }, (_, index) => index + 1),
-    );
-    expect(harness.channel.pause).toHaveBeenCalledOnce();
-    session.acknowledge(256);
-    expect(harness.channel.resume).toHaveBeenCalledOnce();
-    session.close();
+  it("coalesces bursts in order and flushes trailing output before exit", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness();
+      await openSession(harness);
+      const expected: string[] = [];
+      for (let index = 0; index < 500; index += 1) {
+        const chunk = `chunk-${index};`;
+        expected.push(chunk);
+        harness.channel.emit("data", Buffer.from(chunk));
+      }
+      // Split multi-byte character across two SSH packets.
+      const bytes = Buffer.from("你");
+      harness.channel.emit("data", bytes.subarray(0, 1));
+      harness.channel.emit("data", bytes.subarray(1));
+      expected.push("你");
+      harness.channel.emit("exit", 0);
+      harness.channel.emit("close");
+
+      const output = harness.events.filter((event) => event.type === "output");
+      expect(output.map((event) => event.data).join("")).toBe(expected.join(""));
+      expect(output.length).toBeLessThanOrEqual(2);
+      expect(harness.events.slice(-2).map((event) => event.type)).toEqual([
+        "exit",
+        "state",
+      ]);
+      const count = harness.events.length;
+      vi.advanceTimersByTime(100);
+      expect(harness.events).toHaveLength(count);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes buffered output before closing on kill", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness();
+      const session = await openSession(harness);
+      harness.channel.emit("data", "a");
+      harness.channel.emit("data", "b");
+      session.close();
+      expect(
+        harness.events.slice(1).map((event) =>
+          event.type === "output" ? event.data : event.type === "state" ? event.state : event.type,
+        ),
+      ).toEqual(["a", "b", "closing", "exit", "exited"]);
+      const count = harness.events.length;
+      vi.advanceTimersByTime(100);
+      expect(harness.events).toHaveLength(count);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("marks a disconnected SSH transport interrupted immediately and rejects late I/O", async () => {

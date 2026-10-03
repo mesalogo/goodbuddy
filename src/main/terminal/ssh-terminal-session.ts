@@ -16,6 +16,10 @@ import {
   type SshConnectionPoolTarget,
   type SshTerminalConnectionLease,
 } from "../ssh/ssh-connection-pool";
+import {
+  TerminalOutputCoalescer,
+  type TerminalOutputCoalescerOptions,
+} from "./terminal-output-coalescer";
 
 const SSH_TERMINAL_TERM = "xterm-256color";
 
@@ -71,29 +75,13 @@ function eventByteLength(event: TerminalEvent): number {
   }
 }
 
-function splitUtf8(text: string, maximumBytes: number): string[] {
-  const chunks: string[] = [];
-  let chunk = "";
-  let chunkBytes = 0;
-  for (const character of text) {
-    const characterBytes = Buffer.byteLength(character);
-    if (chunk && chunkBytes + characterBytes > maximumBytes) {
-      chunks.push(chunk);
-      chunk = "";
-      chunkBytes = 0;
-    }
-    chunk += character;
-    chunkBytes += characterBytes;
-  }
-  if (chunk) {
-    chunks.push(chunk);
-  }
-  return chunks;
-}
+const PAUSE_PENDING_BYTES =
+  TERMINAL_LIMITS.maximumBufferedOutputBytes - TERMINAL_LIMITS.maximumEventBytes;
 
 export async function createSshTerminalSession(
   pool: SshConnectionPool,
   options: SshTerminalSessionOptions,
+  coalescing?: Omit<TerminalOutputCoalescerOptions, "emit">,
 ): Promise<SshTerminalSession> {
   const initialSize = terminalSizeSchema.parse(options.size);
   const workingDirectoryCommand = options.workingDirectory && !options.command
@@ -128,7 +116,22 @@ export async function createSshTerminalSession(
   const decoder = new StringDecoder("utf8");
   let running: RunningSession | undefined;
 
+  const updateBackpressure = (): void => {
+    if (
+      !paused &&
+      (pendingEvents.length >= TERMINAL_LIMITS.maximumPendingEvents ||
+        pendingBytes + output.bufferedBytes >= PAUSE_PENDING_BYTES)
+    ) {
+      paused = true;
+      channel.pause();
+    }
+  };
+
   const emit = (event: TerminalEventPayload): void => {
+    if (event.type !== "output") {
+      // Control events must follow every byte received before them.
+      output.flush();
+    }
     sequence += 1;
     const sequenced = {
       ...event,
@@ -139,19 +142,18 @@ export async function createSshTerminalSession(
     pendingEvents.push({ event: sequenced, bytes });
     pendingBytes += bytes;
     options.onEvent(sequenced);
-    if (
-      !paused &&
-      (pendingEvents.length >= TERMINAL_LIMITS.maximumPendingEvents ||
-        pendingBytes >=
-          TERMINAL_LIMITS.maximumBufferedOutputBytes -
-            TERMINAL_LIMITS.maximumEventBytes)
-    ) {
-      paused = true;
-      channel.pause();
-    }
+    updateBackpressure();
   };
 
+  const output = new TerminalOutputCoalescer({
+    ...coalescing,
+    emit: (data) => emit({ type: "output", data }),
+  });
+
   const release = (): void => {
+    // Every terminal path calls release() after its final events; stop the
+    // flush timer and drop anything that can no longer be delivered.
+    output.dispose();
     const active = running;
     running = undefined;
     active?.removeDisconnectListener();
@@ -183,12 +185,8 @@ export async function createSshTerminalSession(
     }
     const text =
       typeof chunk === "string" ? chunk : decoder.write(Buffer.from(chunk));
-    for (const data of splitUtf8(
-      text,
-      TERMINAL_LIMITS.maximumEventBytes,
-    )) {
-      emit({ type: "output", data });
-    }
+    output.push(text);
+    updateBackpressure();
   });
   channel.once(
     "exit",
@@ -210,15 +208,8 @@ export async function createSshTerminalSession(
       release();
       return;
     }
-    const finalText = decoder.end();
-    if (finalText) {
-      for (const data of splitUtf8(
-        finalText,
-        TERMINAL_LIMITS.maximumEventBytes,
-      )) {
-        emit({ type: "output", data });
-      }
-    }
+    output.push(decoder.end());
+    output.flush();
     if (!lease.isUsable()) {
       interrupt();
       return;
@@ -279,9 +270,7 @@ export async function createSshTerminalSession(
       if (
         paused &&
         pendingEvents.length < TERMINAL_LIMITS.maximumPendingEvents &&
-        pendingBytes <
-          TERMINAL_LIMITS.maximumBufferedOutputBytes -
-            TERMINAL_LIMITS.maximumEventBytes
+        pendingBytes + output.bufferedBytes < PAUSE_PENDING_BYTES
       ) {
         paused = false;
         channel.resume();

@@ -16,6 +16,10 @@ import {
 } from '../../shared/terminal-contracts'
 import { requestProcessTreeTermination } from '../agent/child-process-termination'
 import { buildCredentialFilteredUserEnvironment } from '../agent/process-environment'
+import {
+  TerminalOutputCoalescer,
+  type TerminalOutputCoalescerOptions
+} from './terminal-output-coalescer'
 
 export type LocalTerminalTarget = Extract<
   TerminalTarget,
@@ -52,6 +56,7 @@ export type LocalTerminalDependencies = {
   directoryExists?: (path: string) => Promise<boolean>
   spawn?: LocalPtySpawn
   terminate?: (pty: IPty, platform: NodeJS.Platform) => Promise<void>
+  outputCoalescing?: Omit<TerminalOutputCoalescerOptions, 'emit'>
 }
 
 export type LocalTerminalSessionOptions = {
@@ -72,11 +77,25 @@ type UnsequencedTerminalEvent<T> = T extends TerminalEvent
 type LocalTerminalEvent = UnsequencedTerminalEvent<TerminalEvent>
 
 const CONTROL_EVENT_RESERVE = 2
-const PAUSE_PENDING_EVENT_COUNT =
+/** Hard limits: exceeding them fails the session (renderer stopped ACKing). */
+const MAXIMUM_PENDING_OUTPUT_EVENTS =
   TERMINAL_LIMITS.maximumPendingEvents - CONTROL_EVENT_RESERVE
-const RESUME_PENDING_EVENT_COUNT = Math.floor(
-  PAUSE_PENDING_EVENT_COUNT / 2
+/**
+ * Soft limits: pause the PTY with headroom below the hard limits, because a
+ * paused PTY may still deliver data that was already in flight. Coalesced
+ * events are up to 64 KiB, so the byte limit is normally reached first.
+ */
+const PAUSE_PENDING_EVENT_COUNT = Math.floor(
+  (MAXIMUM_PENDING_OUTPUT_EVENTS * 3) / 4
 )
+const PAUSE_PENDING_OUTPUT_BYTES = Math.floor(
+  (TERMINAL_LIMITS.maximumBufferedOutputBytes * 3) / 4
+)
+const RESUME_PENDING_EVENT_COUNT = Math.floor(
+  MAXIMUM_PENDING_OUTPUT_EVENTS / 2
+)
+const RESUME_PENDING_OUTPUT_BYTES =
+  TERMINAL_LIMITS.maximumBufferedOutputBytes / 2
 const CLOSE_WAIT_MS = 1_500
 const FORCE_WAIT_MS = 250
 
@@ -248,32 +267,6 @@ export async function resolveLocalTerminalLaunch(
   }
 }
 
-function splitBoundedOutput(data: string): string[] {
-  const encoded = Buffer.from(data)
-  const chunks: string[] = []
-  let offset = 0
-  while (offset < encoded.byteLength) {
-    let end = Math.min(
-      offset + TERMINAL_LIMITS.maximumEventBytes,
-      encoded.byteLength
-    )
-    if (end < encoded.byteLength) {
-      while (
-        end > offset &&
-        (encoded[end]! & 0xc0) === 0x80
-      ) {
-        end -= 1
-      }
-    }
-    if (end === offset) {
-      end = Math.min(offset + 1, encoded.byteLength)
-    }
-    chunks.push(encoded.subarray(offset, end).toString('utf8'))
-    offset = end
-  }
-  return chunks
-}
-
 async function waitUntil(
   predicate: () => boolean,
   milliseconds: number
@@ -369,12 +362,17 @@ export class LocalTerminalSession {
   private exit: TerminalExit | null = null
   private error: TerminalError | null = null
   private closePromise: Promise<TerminalSnapshot> | undefined
+  private readonly output: TerminalOutputCoalescer
 
   private constructor(options: LocalTerminalSessionOptions) {
     this.options = options
     this.dependencies = options.dependencies ?? {}
     this.sessionId = options.sessionId ?? randomUUID()
     this.size = { ...options.size }
+    this.output = new TerminalOutputCoalescer({
+      ...this.dependencies.outputCoalescing,
+      emit: (data) => this.emitOutput(data)
+    })
     this.emit({ type: 'state', state: 'starting' })
   }
 
@@ -487,8 +485,8 @@ export class LocalTerminalSession {
     if (
       this.paused &&
       this.pendingEvents.length <= RESUME_PENDING_EVENT_COUNT &&
-      this.pendingOutputBytes <=
-        TERMINAL_LIMITS.maximumBufferedOutputBytes / 2
+      this.pendingOutputBytes + this.output.bufferedBytes <=
+        RESUME_PENDING_OUTPUT_BYTES
     ) {
       this.paused = false
       this.pty?.resume()
@@ -545,31 +543,39 @@ export class LocalTerminalSession {
     if (this.state !== 'running' || data.length === 0) {
       return
     }
-    for (const chunk of splitBoundedOutput(data)) {
-      if (
-        this.pendingEvents.length >= PAUSE_PENDING_EVENT_COUNT ||
-        this.pendingOutputBytes + Buffer.byteLength(chunk) >
-          TERMINAL_LIMITS.maximumBufferedOutputBytes
-      ) {
-        this.fail(
-          'output-limit-exceeded',
-          'Terminal output exceeded the bounded Main process buffer'
-        )
-        void this.close()
-        return
-      }
-      this.pendingOutputBytes += Buffer.byteLength(chunk)
-      this.emit({ type: 'output', data: chunk })
-      this.updateBackpressure()
+    // Bytes count against backpressure as soon as they are buffered, so a slow
+    // renderer pauses the PTY regardless of the coalescing window.
+    this.output.push(data)
+    this.updateBackpressure()
+  }
+
+  /** Called by the coalescer with ordered, bounded (<= 64 KiB) chunks. */
+  private emitOutput(chunk: string): void {
+    const bytes = Buffer.byteLength(chunk)
+    if (
+      this.pendingEvents.length >= MAXIMUM_PENDING_OUTPUT_EVENTS ||
+      this.pendingOutputBytes + bytes >
+        TERMINAL_LIMITS.maximumBufferedOutputBytes
+    ) {
+      this.fail(
+        'output-limit-exceeded',
+        'Terminal output exceeded the bounded Main process buffer'
+      )
+      void this.close()
+      return
     }
+    this.pendingOutputBytes += bytes
+    this.emit({ type: 'output', data: chunk })
+    this.updateBackpressure()
   }
 
   private updateBackpressure(): void {
     if (
       !this.paused &&
+      this.state === 'running' &&
       (this.pendingEvents.length >= PAUSE_PENDING_EVENT_COUNT ||
-        this.pendingOutputBytes >=
-          TERMINAL_LIMITS.maximumBufferedOutputBytes)
+        this.pendingOutputBytes + this.output.bufferedBytes >=
+          PAUSE_PENDING_OUTPUT_BYTES)
     ) {
       this.paused = true
       this.pty?.pause()
@@ -599,8 +605,10 @@ export class LocalTerminalSession {
       this.exit.signal = 'unknown'
     }
     this.state = 'exited'
+    // emit() flushes buffered output first, so trailing output precedes exit.
     this.emit({ type: 'exit', exit: this.exit })
     this.emit({ type: 'state', state: 'exited' })
+    this.output.dispose()
   }
 
   private fail(
@@ -618,6 +626,9 @@ export class LocalTerminalSession {
       retryable: code === 'launch-failed'
     }
     this.state = 'failed'
+    // Failure is terminal: drop buffered output (it is what exceeded the
+    // bound) and cancel the flush timer before announcing the error.
+    this.output.dispose()
     this.emit({ type: 'error', error: this.error })
     this.emit({ type: 'state', state: 'failed' })
   }
@@ -625,6 +636,10 @@ export class LocalTerminalSession {
   private emit(
     event: LocalTerminalEvent
   ): void {
+    if (event.type !== 'output') {
+      // Control events must follow every byte the PTY produced before them.
+      this.output.flush()
+    }
     if (this.lastSequence >= Number.MAX_SAFE_INTEGER) {
       this.state = 'failed'
       this.error = {

@@ -258,30 +258,215 @@ describe('LocalTerminalSession', () => {
   })
 
   it('pauses at the pending-event boundary and resumes after ACK', async () => {
-    const pty = new FakePty()
-    const session = await LocalTerminalSession.create({
-      ...baseOptions,
-      dependencies: sessionDependencies(pty)
-    })
-    let lastSequence = 0
-    session.onEvent((event) => {
-      lastSequence = event.sequence
-    })
+    vi.useFakeTimers()
+    try {
+      const pty = new FakePty()
+      const session = await LocalTerminalSession.create({
+        ...baseOptions,
+        dependencies: sessionDependencies(pty)
+      })
+      let lastSequence = 0
+      session.onEvent((event) => {
+        lastSequence = event.sequence
+      })
 
-    for (
-      let index = 0;
-      index < TERMINAL_LIMITS.maximumPendingEvents;
-      index += 1
-    ) {
-      pty.emitData('x')
-      if (pty.pause.mock.calls.length > 0) {
-        break
+      for (
+        let index = 0;
+        index < TERMINAL_LIMITS.maximumPendingEvents;
+        index += 1
+      ) {
+        pty.emitData('x')
+        // Each flush window yields one event.
+        vi.advanceTimersByTime(20)
+        if (pty.pause.mock.calls.length > 0) {
+          break
+        }
       }
-    }
 
-    expect(pty.pause).toHaveBeenCalledTimes(1)
-    session.acknowledge(lastSequence)
-    expect(pty.resume).toHaveBeenCalledTimes(1)
+      expect(pty.pause).toHaveBeenCalledTimes(1)
+      expect(session.snapshot().state).toBe('running')
+      session.acknowledge(lastSequence)
+      expect(pty.resume).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('coalesces bursts into few ordered output events', async () => {
+    vi.useFakeTimers()
+    try {
+      const pty = new FakePty()
+      const session = await LocalTerminalSession.create({
+        ...baseOptions,
+        dependencies: sessionDependencies(pty)
+      })
+      const events: TerminalEvent[] = []
+      session.onEvent((event) => events.push(event))
+      const expected: string[] = []
+      for (let index = 0; index < 1_000; index += 1) {
+        const chunk = `line ${index} 你好\r\n`
+        expected.push(chunk)
+        pty.emitData(chunk)
+        if (index % 100 === 0) {
+          vi.advanceTimersByTime(8)
+        }
+      }
+      vi.advanceTimersByTime(20)
+
+      const output = events.filter((event) => event.type === 'output')
+      expect(output.map((event) => event.data).join('')).toBe(expected.join(''))
+      expect(output.length).toBeLessThan(25)
+      const sequences = events.map((event) => event.sequence)
+      expect(sequences).toEqual([...sequences].sort((a, b) => a - b))
+      expect(new Set(sequences).size).toBe(sequences.length)
+      await session.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes buffered output before exit events and stops its timer', async () => {
+    vi.useFakeTimers()
+    try {
+      const pty = new FakePty()
+      const session = await LocalTerminalSession.create({
+        ...baseOptions,
+        dependencies: sessionDependencies(pty)
+      })
+      const events: TerminalEvent[] = []
+      session.onEvent((event) => events.push(event))
+      pty.emitData('first ')
+      pty.emitData('trailing output')
+      pty.emitData(' tail')
+      pty.emitExit(0)
+
+      expect(
+        events.slice(2).map((event) =>
+          event.type === 'output' ? event.data : event.type
+        )
+      ).toEqual(['first ', 'trailing output tail', 'exit', 'state'])
+      expect(vi.getTimerCount()).toBe(0)
+      vi.advanceTimersByTime(100)
+      expect(events).toHaveLength(6)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes buffered output before the closing state on kill', async () => {
+    vi.useFakeTimers()
+    try {
+      const pty = new FakePty()
+      const session = await LocalTerminalSession.create({
+        ...baseOptions,
+        dependencies: sessionDependencies(pty, {
+          terminate: vi.fn(async () => undefined)
+        })
+      })
+      const events: TerminalEvent[] = []
+      session.onEvent((event) => events.push(event))
+      pty.emitData('a')
+      pty.emitData('b')
+      await session.close()
+
+      expect(
+        events.slice(2).map((event) =>
+          event.type === 'output'
+            ? event.data
+            : event.type === 'state'
+              ? event.state
+              : event.type
+        )
+      ).toEqual(['a', 'b', 'closing', 'exit', 'exited'])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('counts buffered and in-flight bytes for backpressure and keeps them bounded', async () => {
+    vi.useFakeTimers()
+    try {
+      const pty = new FakePty()
+      const session = await LocalTerminalSession.create({
+        ...baseOptions,
+        dependencies: sessionDependencies(pty)
+      })
+      const outputs: Extract<TerminalEvent, { type: 'output' }>[] = []
+      session.onEvent((event) => {
+        if (event.type === 'output') {
+          outputs.push(event)
+        }
+      })
+      const block = 'q'.repeat(16 * 1024)
+      let produced = 0
+      // A renderer that never ACKs: output must pause well before the hard
+      // 4 MiB bound and never exceed it.
+      while (pty.pause.mock.calls.length === 0) {
+        pty.emitData(block)
+        produced += block.length
+        expect(produced).toBeLessThan(TERMINAL_LIMITS.maximumBufferedOutputBytes)
+      }
+      expect(session.snapshot().state).toBe('running')
+      const emittedBytes = outputs.reduce((sum, event) => sum + event.data.length, 0)
+      expect(produced - emittedBytes).toBeLessThan(TERMINAL_LIMITS.maximumEventBytes)
+      expect(
+        outputs.every(
+          (event) => Buffer.byteLength(event.data) <= TERMINAL_LIMITS.maximumEventBytes
+        )
+      ).toBe(true)
+
+      // In-flight data after pause is absorbed by the headroom.
+      for (let index = 0; index < 16; index += 1) {
+        pty.emitData(block)
+        produced += block.length
+      }
+      vi.advanceTimersByTime(20)
+      expect(session.snapshot().state).toBe('running')
+
+      // A partial ACK that leaves more than half the budget pending must not
+      // resume; ACKing the rest must.
+      session.acknowledge(outputs[0]!.sequence)
+      expect(pty.resume).not.toHaveBeenCalled()
+      session.acknowledge(outputs.at(-1)!.sequence)
+      expect(pty.resume).toHaveBeenCalledTimes(1)
+      expect(
+        outputs.map((event) => event.data).join('').length
+      ).toBe(produced)
+      await session.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('fails with output-limit-exceeded when the renderer never ACKs and the PTY ignores pause', async () => {
+    vi.useFakeTimers()
+    try {
+      const pty = new FakePty()
+      const session = await LocalTerminalSession.create({
+        ...baseOptions,
+        dependencies: sessionDependencies(pty, {
+          terminate: vi.fn(async () => undefined)
+        })
+      })
+      const block = 'q'.repeat(64 * 1024)
+      for (
+        let produced = 0;
+        produced <= 2 * TERMINAL_LIMITS.maximumBufferedOutputBytes &&
+        session.snapshot().state === 'running';
+        produced += block.length
+      ) {
+        pty.emitData(block)
+      }
+      expect(session.snapshot()).toMatchObject({
+        state: 'failed',
+        error: { code: 'output-limit-exceeded' }
+      })
+      expect(vi.getTimerCount()).toBe(0)
+      await session.close()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reports launch failures with stable failed state', async () => {

@@ -28,6 +28,10 @@ import type {
   TerminalTarget
 } from '../../shared/terminal-contracts'
 import './terminal-panel.css'
+import {
+  TerminalOutputBatcher,
+  type TerminalFrameScheduler
+} from './terminal-output-batcher'
 
 export type TerminalAdapter = Omit<DesktopApi['terminal'], 'onEvent'> & {
   subscribe: DesktopApi['terminal']['onEvent']
@@ -74,6 +78,8 @@ export type TerminalPanelProps = {
   sessionId?: TerminalSessionId
   title?: string
   terminalFactory?: TerminalFactory
+  /** Test seam for the per-frame output batching scheduler. */
+  frameScheduler?: TerminalFrameScheduler
   onSessionChange?: (snapshot: TerminalSnapshot) => void
   onRename?: (title: string) => void
 }
@@ -105,6 +111,31 @@ export function resolveTerminalFontFamily(): string {
   return configured || fallbackTerminalFontFamily
 }
 
+/** Diagnostics are bounded per renderer so a flapping GPU cannot spam logs. */
+const MAXIMUM_RENDERER_WARNINGS = 5
+let rendererWarningCount = 0
+
+export function warnTerminalRendererFallback(
+  reason: 'webgl-load-failed' | 'webgl-context-lost',
+  cause?: unknown
+): void {
+  if (rendererWarningCount >= MAXIMUM_RENDERER_WARNINGS) {
+    return
+  }
+  rendererWarningCount += 1
+  // Only the error class is logged: messages could echo environment details.
+  const errorName =
+    cause instanceof Error ? cause.name.slice(0, 64) : undefined
+  console.warn(
+    `[terminal] ${reason}; falling back to the DOM renderer`,
+    errorName ? { error: errorName } : {}
+  )
+}
+
+export function resetTerminalRendererWarningsForTests(): void {
+  rendererWarningCount = 0
+}
+
 function createDefaultTerminal(): TerminalFactoryResult {
   const terminal = new Terminal({
     cursorBlink: true,
@@ -122,14 +153,22 @@ function createDefaultTerminal(): TerminalFactoryResult {
     fitAddon,
     searchAddon,
     activateRenderer: () => {
-      const webglAddon = new WebglAddon()
+      let webglAddon: WebglAddon
+      try {
+        webglAddon = new WebglAddon()
+      } catch (cause) {
+        warnTerminalRendererFallback('webgl-load-failed', cause)
+        return
+      }
       const contextLossSubscription = webglAddon.onContextLoss(() => {
+        warnTerminalRendererFallback('webgl-context-lost')
         contextLossSubscription.dispose()
         webglAddon.dispose()
       })
       try {
         terminal.loadAddon(webglAddon)
-      } catch {
+      } catch (cause) {
+        warnTerminalRendererFallback('webgl-load-failed', cause)
         contextLossSubscription.dispose()
         webglAddon.dispose()
       }
@@ -157,6 +196,7 @@ export function TerminalPanel({
   sessionId,
   title,
   terminalFactory = createDefaultTerminal,
+  frameScheduler,
   onSessionChange,
   onRename
 }: TerminalPanelProps): React.JSX.Element {
@@ -176,6 +216,9 @@ export function TerminalPanel({
   const mountedRef = useRef(false)
   const acceptedSequenceRef = useRef(0)
   const eventQueueRef = useRef(Promise.resolve())
+  const outputBatcherRef = useRef<TerminalOutputBatcher | undefined>(
+    undefined
+  )
   const lastSizeRef = useRef<
     { cols: number; rows: number } | undefined
   >(undefined)
@@ -213,6 +256,17 @@ export function TerminalPanel({
     }
   }, [])
 
+  const reportAckFailure = useCallback((reason: unknown): void => {
+    if (mountedRef.current) {
+      setError(
+        failureMessage(
+          reason,
+          translationRef.current('sidebar.terminal.errors.ack')
+        )
+      )
+    }
+  }, [])
+
   const consumeEvent = useCallback(
     async (event: TerminalEvent): Promise<void> => {
       if (
@@ -225,33 +279,42 @@ export function TerminalPanel({
       acceptedSequenceRef.current = event.sequence
 
       if (event.type === 'output') {
-        await new Promise<void>((resolve) => {
-          emulatorRef.current?.write(event.data, resolve)
-          if (!emulatorRef.current) {
-            resolve()
-          }
-        })
-      } else {
-        const current = snapshotRef.current
-        if (current) {
-          if (event.type === 'state') {
-            publishSnapshot({ ...current, state: event.state })
-          } else if (event.type === 'exit') {
-            publishSnapshot({
-              ...current,
-              state: 'exited',
-              exit: event.exit,
-              error: null
-            })
-          } else {
-            publishSnapshot({
-              ...current,
-              state: 'failed',
-              error: event.error,
-              exit: null
-            })
-            setError(event.error.message)
-          }
+        // Merged with neighbours and written once per frame; the batcher ACKs
+        // the batch's last sequence after xterm has processed it.
+        outputBatcherRef.current?.push(
+          event.sessionId,
+          event.sequence,
+          event.data
+        )
+        return
+      }
+      // Control events apply only after all earlier output has been written.
+      await outputBatcherRef.current?.flush()
+      if (
+        !mountedRef.current ||
+        event.sessionId !== activeSessionRef.current
+      ) {
+        return
+      }
+      const current = snapshotRef.current
+      if (current) {
+        if (event.type === 'state') {
+          publishSnapshot({ ...current, state: event.state })
+        } else if (event.type === 'exit') {
+          publishSnapshot({
+            ...current,
+            state: 'exited',
+            exit: event.exit,
+            error: null
+          })
+        } else {
+          publishSnapshot({
+            ...current,
+            state: 'failed',
+            error: event.error,
+            exit: null
+          })
+          setError(event.error.message)
         }
       }
 
@@ -262,18 +325,11 @@ export function TerminalPanel({
             sequence: event.sequence
           })
         } catch (reason) {
-          if (mountedRef.current) {
-            setError(
-              failureMessage(
-                reason,
-                translationRef.current('sidebar.terminal.errors.ack')
-              )
-            )
-          }
+          reportAckFailure(reason)
         }
       }
     },
-    [adapter, publishSnapshot]
+    [adapter, publishSnapshot, reportAckFailure]
   )
 
   useEffect(() => {
@@ -291,6 +347,19 @@ export function TerminalPanel({
       terminal.open(hostRef.current)
       activateRenderer?.()
     }
+    const outputBatcher = new TerminalOutputBatcher({
+      write: (data, done) => terminal.write(data, done),
+      acknowledge: (ackSessionId, sequence) => {
+        if (!mountedRef.current) {
+          return
+        }
+        adapter
+          .ack({ sessionId: ackSessionId, sequence })
+          .catch(reportAckFailure)
+      },
+      ...(frameScheduler ? { schedule: frameScheduler } : {})
+    })
+    outputBatcherRef.current = outputBatcher
 
     const inputSubscription = terminal.onData((data) => {
       const current = snapshotRef.current
@@ -322,12 +391,14 @@ export function TerminalPanel({
       operationGenerationRef.current += 1
       unsubscribe()
       inputSubscription.dispose()
+      outputBatcher.dispose()
+      outputBatcherRef.current = undefined
       terminal.dispose()
       emulatorRef.current = undefined
       fitAddonRef.current = undefined
       searchAddonRef.current = undefined
     }
-  }, [adapter, consumeEvent, terminalFactory])
+  }, [adapter, consumeEvent, frameScheduler, reportAckFailure, terminalFactory])
 
   const attachSession = useCallback(
     async (
@@ -548,6 +619,7 @@ export function TerminalPanel({
     if (!mountedRef.current) {
       return
     }
+    outputBatcherRef.current?.reset()
     emulatorRef.current?.clear()
     activeSessionRef.current = undefined
     acceptedSequenceRef.current = 0
