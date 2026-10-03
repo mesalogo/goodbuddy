@@ -21,13 +21,17 @@ stream events, error causes and nested release/dispose cleanup.
 ## Continuous Record Workspace
 
 The outer workspace separates the persistent notes list from the detail container.
-The list defaults to 280px, resizes within 240-420px and stores `notesPaneWidth`
-and `notesPaneOpen` in `goodbuddy.magic-notes-layout.v1`. At workspace widths up to
-900px, selection replaces the visible list with detail while retaining the mounted
-list. The right-hand `magic-notes-detail` query container and its ResizeObserver
+The list defaults to 200px, resizes within 160-420px and stores `notesPaneWidth`
+and `notesPaneOpen` in `goodbuddy.magic-notes-layout.v1`. Existing saved widths are
+preserved. Below 600px, selection replaces the visible list with detail while
+retaining the mounted list. The detail toolbar keeps its list toggle, opening an
+overlay drawer without shrinking detail. Selecting a note, clicking outside,
+using the drawer close button or pressing Escape closes the drawer; dismissal
+returns focus to the toggle. Drawer state is transient and separate from the
+desktop open preference. The right-hand `magic-notes-detail` query container and its ResizeObserver
 measure the detail width for two breakpoints: at 800px or less the record index
 becomes a drawer while AI stays beside the editor; at 600px or less AI stacks
-below the stream. The 900px list/detail switch is driven by the same measured
+below the stream. The 600px list/detail switch is driven by the same measured
 workspace width in both CSS class and React state, so the two cannot disagree.
 Per-note stream scroll positions live in a workspace-local map; explicit entry
 navigation takes precedence over reading-position restoration.
@@ -405,7 +409,9 @@ The overview's `libraryView` and the optional note-only `detailView` are indepen
 opening a todo's source note does not lose the originating task view.
 The notes list remains visible beside detail on desktop unless collapsed. On
 narrow screens, or when opening a source note from To-dos, the originating list
-remains mounted but hidden, retaining scroll position and filters. Returning restores the initiating control's focus and
+remains mounted but hidden, retaining scroll position and filters. The narrow
+notes view can reopen that list through the detail toolbar drawer toggle.
+Returning restores the initiating control's focus and
 invalidates outstanding detail requests. Initial loading fetches summaries and
 todos without selecting the first note or task. Navigation away from unsaved content or
 an unsaved title uses the existing draft confirmation; active writes finish

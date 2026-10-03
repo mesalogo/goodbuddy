@@ -1,5 +1,20 @@
 # Magic Notes Progress
 
+## 2026-10-03: Compact Notes List And Narrow Drawer
+
+The notes list now defaults to 200px with a 160px minimum. At workspace widths
+of 600px or more it can remain beside detail; below 600px the toolbar toggle
+opens the mounted list as an overlay drawer. Escape, outside click, the close
+button and note selection dismiss it. Existing desktop width preferences remain
+intact. Scroll restoration now runs after read-only content effects populate the
+record, fixing a failure exposed by the Electron layout regression.
+
+Validation: 143 workspace and list-window tests passed, along with the real
+Electron layout test covering native resizing, drawer geometry, Escape focus
+return and note switching. Typecheck and lint on changed code passed. Repository
+lint was blocked by concurrent App.tsx changes (max-lines error and a missing
+conversationStore hook dependency warning). No provider calls were made.
+
 ## 2026-10-01: Header New Note Action
 
 New note is now one primary page-header button that always follows the view

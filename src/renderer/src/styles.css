@@ -1283,6 +1283,7 @@
 }
 
 .magic-notes-workspace {
+  position: relative;
   display: grid;
   flex: 1;
   min-width: 0;
@@ -1291,7 +1292,7 @@
 }
 
 .magic-notes-workspace--notes {
-  grid-template-columns: var(--magic-notes-notes-width, 280px) 9px minmax(0, 1fr);
+  grid-template-columns: var(--magic-notes-notes-width, 200px) 9px minmax(0, 1fr);
 }
 
 .magic-notes-workspace--list-hidden,
@@ -1325,6 +1326,24 @@
 
 .magic-notes-workspace--notes .magic-notes-library-panel {
   gap: var(--space-2);
+}
+
+.magic-notes-list-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: var(--overlay-backdrop);
+}
+
+.magic-notes-workspace--drawer > .magic-notes-overview {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 5;
+  width: min(var(--magic-notes-notes-width, 200px), calc(100% - 32px));
+  padding: var(--space-2);
+  background: var(--surface-raised);
+  border-right: 1px solid var(--border-default);
+  box-shadow: var(--shadow-dialog);
 }
 
 .magic-notes-workspace--notes .magic-notes-pane-heading {
@@ -15302,6 +15321,14 @@ textarea.field-control {
   overflow-wrap: anywhere;
 }
 
+/* Windowed document table (P5): the table keeps the reader's row in place by
+   correcting the page's scrollTop; native scroll anchoring on the page could
+   pick a spacer and fight the correction. */
+.workspace-panel-scroll:has(.knowledge-documents__table-scroll--windowed),
+.knowledge-documents__table-scroll--windowed {
+  overflow-anchor: none;
+}
+
 /* Windowed document table (P5): spacer rows stand in for unmounted rows. */
 .knowledge-documents__table-scroll tbody tr.knowledge-documents__spacer {
   border: 0;
@@ -19430,6 +19457,11 @@ textarea.field-control {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+/* A windowed tree keeps the reader's row in place itself; native scroll
+   anchoring could pick a spacer and fight the correction. */
+.workspace-files__files-view--windowed {
+  overflow-anchor: none;
 }
 .workspace-git__changes {
   flex: 1;

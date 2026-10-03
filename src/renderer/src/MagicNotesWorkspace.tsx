@@ -134,7 +134,7 @@ type MagicNotesLayoutPreferences = {
 function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
   const defaults = {
     notesPaneOpen: true,
-    notesPaneWidth: 280,
+    notesPaneWidth: 200,
     recordIndexOpen: false,
     indexPaneWidth: defaultIndexPaneWidth,
     aiPanePinned: false,
@@ -152,7 +152,7 @@ function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
     return {
       notesPaneOpen: parsed.notesPaneOpen !== false,
       notesPaneWidth: typeof parsed.notesPaneWidth === 'number' && Number.isFinite(parsed.notesPaneWidth)
-        ? Math.min(420, Math.max(240, parsed.notesPaneWidth)) : defaults.notesPaneWidth,
+        ? Math.min(420, Math.max(160, parsed.notesPaneWidth)) : defaults.notesPaneWidth,
       todoPaneWidth: typeof parsed.todoPaneWidth === 'number' && Number.isFinite(parsed.todoPaneWidth)
         ? Math.max(240, parsed.todoPaneWidth) : defaults.todoPaneWidth,
       // Older layouts stored always-open panes; the compact defaults ignore those flags.
@@ -521,6 +521,7 @@ export function MagicNotesWorkspace({
   const [indexPaneWidth, setIndexPaneWidth] = useState(initialLayoutPreferences.indexPaneWidth)
   const [todoPaneWidth, setTodoPaneWidth] = useState(initialLayoutPreferences.todoPaneWidth)
   const [notesPaneOpen, setNotesPaneOpen] = useState(initialLayoutPreferences.notesPaneOpen)
+  const [narrowNotesOpen, setNarrowNotesOpen] = useState(false)
   const [notesPaneWidth, setNotesPaneWidth] = useState(initialLayoutPreferences.notesPaneWidth)
   const [workspaceWidth, setWorkspaceWidth] = useState(window.innerWidth)
   const [todoLayoutWidth, setTodoLayoutWidth] = useState(window.innerWidth)
@@ -696,19 +697,23 @@ export function MagicNotesWorkspace({
   useEffect(() => {
     const workspace = workspaceRef.current
     if (!workspace) return
-    const update = (): void => setWorkspaceWidth(workspace.getBoundingClientRect().width || window.innerWidth)
+    const update = (): void => {
+      const width = workspace.getBoundingClientRect().width || window.innerWidth
+      setWorkspaceWidth(width)
+      if (width >= 600) setNarrowNotesOpen(false)
+    }
     update()
     const observer = new ResizeObserver(update)
     observer.observe(workspace)
     return () => observer.disconnect()
   }, [loadStatus])
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const stream = streamRef.current
     if (!stream || !detail?.id) return
     const position = noteScrollPositions.current.get(detail.id) ?? 0
     if (requestedEntryIdRef.current) return
-    // Read-only rich text mounts in an effect; restore after it has laid out.
+    // Run after the read-only rich text effects have populated their content.
     const frame = requestAnimationFrame(() => { stream.scrollTop = position })
     return () => cancelAnimationFrame(frame)
   }, [detail?.id, detailView])
@@ -1168,6 +1173,7 @@ export function MagicNotesWorkspace({
         return
       }
       if (target.kind === 'overview') {
+        setNarrowNotesOpen(false)
         discardComposerDraft()
         discardEditingDraft()
         detailRequestRef.current += 1
@@ -1183,6 +1189,7 @@ export function MagicNotesWorkspace({
         return
       }
       if (target.kind === 'library-view') {
+        setNarrowNotesOpen(false)
         if (target.value === 'todos') {
           discardComposerDraft()
           discardEditingDraft()
@@ -1218,6 +1225,7 @@ export function MagicNotesWorkspace({
         setOverviewReturnNoteId(target.noteId)
       }
       setDetailView('notes')
+      setNarrowNotesOpen(false)
       focusSwitchTarget(target)
       void loadDetail(target.noteId, target.entryId)
     },
@@ -1754,14 +1762,22 @@ export function MagicNotesWorkspace({
   // Detail tiers: >800 three columns; 601-800 editor + AI with a record drawer; <=600 AI stacks below.
   const isNarrowLayout = magicNotesLayoutWidth <= 800
   const isStackedLayout = magicNotesLayoutWidth <= 600
-  const isNarrowWorkspace = workspaceWidth <= 900
+  const isNarrowWorkspace = workspaceWidth < 600
   const paneResizeDisabled = (pane: 'ai' | 'index' | 'todo' | 'notes'): boolean =>
     pane === 'notes' ? isNarrowWorkspace : pane === 'todo' ? todoLayoutWidth <= 700 : pane === 'ai' ? isStackedLayout : isNarrowLayout
-  const notesPaneWidthLimits = { minimum: 240, maximum: Math.min(420, Math.max(240, workspaceWidth - minimumMagicNotesEditorWidth - magicNotesResizeHandleWidth)) }
+  const notesPaneWidthLimits = { minimum: 160, maximum: Math.min(420, Math.max(160, workspaceWidth - minimumMagicNotesEditorWidth - magicNotesResizeHandleWidth)) }
   const displayedNotesWidth = clampMagicNotesPaneWidth(notesPaneWidth, notesPaneWidthLimits)
   // Overview shows every note full width; the split list appears only beside an open note.
-  const notesExpanded = isNarrowWorkspace ? !detailView : notesPaneOpen || !detailView
+  const notesDrawerOpen = libraryView === 'notes' && Boolean(detailView) && isNarrowWorkspace && narrowNotesOpen
+  const notesExpanded = isNarrowWorkspace ? !detailView || notesDrawerOpen : notesPaneOpen || !detailView
   const notesSplit = libraryView === 'notes' && Boolean(detailView) && !isNarrowWorkspace && notesPaneOpen
+  const closeNotesDrawer = (): void => {
+    setNarrowNotesOpen(false)
+    document.getElementById('magic-notes-list-toggle')?.focus({ preventScroll: true })
+  }
+  useEffect(() => {
+    if (notesDrawerOpen) document.querySelector<HTMLInputElement>('#magic-library-panel-notes input[type="search"]')?.focus({ preventScroll: true })
+  }, [notesDrawerOpen])
   const visibleNoteIdsKey = visibleNotes.map((note) => note.id).join('\n')
   const visibleNoteIds = useMemo(
     () => (visibleNoteIdsKey ? visibleNoteIdsKey.split('\n') : []),
@@ -2216,12 +2232,16 @@ export function MagicNotesWorkspace({
         className="magic-note-list-item"
         aria-current={selectedNoteId === note.id ? 'true' : undefined}
         type="button"
-        onClick={() =>
-          selectedNoteId !== note.id && requestDraftSwitch({
+        onClick={() => {
+          if (selectedNoteId === note.id) {
+            if (notesDrawerOpen) closeNotesDrawer()
+            return
+          }
+          void requestDraftSwitch({
             kind: 'note',
             noteId: note.id
           })
-        }
+        }}
       >
         <span className="magic-note-list-item__title">
           {note.pinned && (
@@ -2359,9 +2379,10 @@ export function MagicNotesWorkspace({
       <div
         ref={workspaceRef}
         aria-busy={Boolean(busy)}
-        className={`magic-notes-workspace${notesSplit ? ' magic-notes-workspace--notes' : ''}${libraryView === 'notes' && !detailView ? ' magic-notes-workspace--overview' : ''}${notesExpanded ? '' : ' magic-notes-workspace--list-hidden'}${isNarrowWorkspace ? ' magic-notes-workspace--narrow' : ''}${resizingPane === 'notes' ? ' magic-notes-layout--resizing' : ''}`}
+        className={`magic-notes-workspace${notesSplit || notesDrawerOpen ? ' magic-notes-workspace--notes' : ''}${notesDrawerOpen ? ' magic-notes-workspace--drawer' : ''}${libraryView === 'notes' && !detailView ? ' magic-notes-workspace--overview' : ''}${notesExpanded ? '' : ' magic-notes-workspace--list-hidden'}${isNarrowWorkspace ? ' magic-notes-workspace--narrow' : ''}${resizingPane === 'notes' ? ' magic-notes-layout--resizing' : ''}`}
         style={{ '--magic-notes-notes-width': `${displayedNotesWidth}px` } as React.CSSProperties}
       >
+        {notesDrawerOpen && <div className="magic-notes-list-backdrop" aria-hidden="true" onClick={closeNotesDrawer} />}
         <section
           aria-label={t(
             libraryView === 'notes'
@@ -2370,6 +2391,12 @@ export function MagicNotesWorkspace({
           )}
            className={`magic-notes-overview${libraryView === 'todos' ? ' magic-notes-overview--todos' : ''}`}
           hidden={libraryView === 'notes' ? !notesExpanded : Boolean(detailView)}
+          onKeyDown={(event) => {
+            if (notesDrawerOpen && event.key === 'Escape') {
+              event.stopPropagation()
+              closeNotesDrawer()
+            }
+          }}
         >
           {libraryView === 'notes' ? (
             <div
@@ -2379,6 +2406,7 @@ export function MagicNotesWorkspace({
           <div className="magic-notes-pane-heading">
             <strong>{t('notes.heading')}</strong>
             <span>{notes.length}</span>
+            {notesDrawerOpen && <button type="button" className="icon-button" aria-label={t('actions.hideNotes')} onClick={closeNotesDrawer}><PanelLeftClose aria-hidden="true" size={16} /></button>}
             <MagicNoteTagManagerButton
               compact={Boolean(detailView)}
               disabled={Boolean(busy)}
@@ -2744,11 +2772,11 @@ export function MagicNotesWorkspace({
           }}
         >
           <div className="magic-note-detail-toolbar" role="toolbar" aria-label={t('notes.toolbarLabel')}>
-            {libraryView === 'notes' && !isNarrowWorkspace && (
-              <button type="button" className="icon-button" aria-controls="magic-library-panel-notes"
+            {libraryView === 'notes' && (
+              <button id="magic-notes-list-toggle" type="button" className="icon-button" aria-controls="magic-library-panel-notes"
                 aria-expanded={notesExpanded} aria-label={t(notesExpanded ? 'actions.hideNotes' : 'actions.showNotes')}
                 title={t(notesExpanded ? 'actions.hideNotes' : 'actions.showNotes')}
-                onClick={() => setNotesPaneOpen((current) => !current)}>
+                onClick={() => isNarrowWorkspace ? setNarrowNotesOpen((current) => !current) : setNotesPaneOpen((current) => !current)}>
                 {notesExpanded ? <PanelLeftClose aria-hidden="true" size={16} /> : <PanelLeftOpen aria-hidden="true" size={16} />}
               </button>
             )}
