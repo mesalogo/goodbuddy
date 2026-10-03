@@ -5055,9 +5055,9 @@ button > svg {
 }
 
 .workbar-shell__scroll-button {
-  position: absolute;
-  z-index: 2;
-  bottom: 5px;
+  flex: 0 0 28px;
+  align-self: flex-end;
+  margin-bottom: 5px;
   background: transparent;
   opacity: 0;
   pointer-events: none;
@@ -5068,14 +5068,6 @@ button > svg {
 .workbar-shell__scroll-button:focus-visible:not(:disabled) {
   opacity: 1;
   pointer-events: auto;
-}
-
-.workbar-shell__scroll-button:first-child {
-  left: 0;
-}
-
-.workbar-shell__scroll-button:last-child {
-  right: 0;
 }
 
 .workbar-shell__scroll-button:hover:not(:disabled) {

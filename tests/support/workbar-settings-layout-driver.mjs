@@ -130,6 +130,10 @@ app.whenReady().then(async () => {
         for (const many of [false, true]) {
           if (many) { await click('#many-tabs'); await wait('document.querySelectorAll("[role=tab]").length===16') }
           await addVisible()
+          assert(await js(`(() => {
+            const s=${scroll}.getBoundingClientRect(),buttons=[...document.querySelectorAll('.workbar-shell__scroll-button')];
+            return buttons.length===2 && buttons[0].getBoundingClientRect().right<=s.left && buttons[1].getBoundingClientRect().left>=s.right;
+          })()`), 'Scroll arrows must reserve space outside the tab viewport')
           await click('.workbar-shell__add')
           await wait('!!document.querySelector(".workbar-shell__catalog") && document.activeElement.matches("[data-workbar-app-choice]")')
           await key('Escape')
@@ -160,7 +164,19 @@ app.whenReady().then(async () => {
         await click('.workbar-shell__catalog-choice:has(.workbar-shell__app-icon--browser)')
         await wait('document.querySelectorAll("[role=tab]").length===17 && !document.querySelector(".workbar-shell__catalog")')
         await addVisible()
-        observations.push({ locale, theme, workbar: 'default and 16 long tabs; native add/catalog/create, arrows, Home/End' })
+        await key('Left')
+        await wait('document.querySelector(".workbar-shell__tab-item:nth-last-child(2) [role=tab]").getAttribute("aria-selected")==="true"')
+        await js(`${scroll}.scrollLeft=0`)
+        await settle()
+        await js(`(() => {
+          const tab=document.querySelector('.workbar-shell__tab-item--active'),s=${scroll};
+          s.scrollLeft+=tab.getBoundingClientRect().right-s.getBoundingClientRect().right;
+        })()`)
+        await wait('!document.querySelector(".workbar-shell__scroll-button:last-child").disabled')
+        const closingId = await js('document.querySelector(".workbar-shell__tab-item--active [role=tab]").id')
+        await click('.workbar-shell__tab-item--active .workbar-shell__tab-close')
+        await wait(`document.querySelectorAll('[role=tab]').length===16 && !document.getElementById(${JSON.stringify(closingId)})`)
+        observations.push({ locale, theme, workbar: 'default and 16 long tabs; native add/catalog/create, arrows, Home/End, close at right viewport edge with right arrow enabled' })
 
         await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&locale=${locale}&theme=${theme}`)
         await wait('!!document.querySelector(".model-connection-detail select")')
