@@ -19,7 +19,8 @@ const directories: string[] = []
 const opened: AssistantDatabase[] = []
 afterEach(() => {
   for (const database of opened.splice(0)) database.close()
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
+  // A readonly worker ends asynchronously after close and may still hold the file briefly.
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
 function open(): { database: AssistantDatabase; raw: DatabaseSync; path: string; directory: string } {

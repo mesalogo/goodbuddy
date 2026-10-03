@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { createHash, randomUUID } from 'node:crypto'
+import { statSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -290,5 +291,39 @@ describe('assistant readonly worker', () => {
       await expect(database.readStoryGraphAsync('story_graph_search', inputs[0], project.id, aborted.signal)).rejects.toThrow('stop')
       expect(database.readonlyWorkerForTest?.pendingCount).toBe(0)
     } finally { database.close() }
+  }, 60_000)
+})
+
+describe('WAL checkpoint worker', () => {
+  it('checkpoints off Main, keeps a raised safety threshold and restores the default when stopped', async () => {
+    const path = join(directory, `checkpoint-${randomUUID()}.sqlite`)
+    const database = new AssistantDatabase(path)
+    database.initialize(directory)
+    const raw = (database as unknown as { database: import('node:sqlite').DatabaseSync }).database
+    const autocheckpoint = (): number =>
+      (raw.prepare('PRAGMA wal_autocheckpoint').get() as { wal_autocheckpoint: number }).wal_autocheckpoint
+    try {
+      expect(autocheckpoint()).toBe(1000)
+      database.enableWalCheckpointWorker(workerPath, 20)
+      await expect.poll(autocheckpoint, { timeout: 10_000 }).toBe(4000)
+      const task = database.createTask({ id: randomUUID(), title: 't', instructions: 'i', workMode: 'ask' })
+      const sizeBefore = statSync(path).size
+      for (let index = 0; index < 300; index += 1) {
+        database.appendTaskEvent(task.id, 'text', { type: 'text', requestId: task.id, delta: 'x'.repeat(4_000) })
+      }
+      // ~300 WAL pages stay below Main's 4,000-page threshold, so only the
+      // worker's checkpoint can copy them into the database file.
+      await expect.poll(() => statSync(path).size, { timeout: 10_000 }).toBeGreaterThan(sizeBefore + 1_000_000)
+      expect((raw.prepare("SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'text'").get(task.id) as { n: number }).n).toBe(300)
+    } finally {
+      database.close()
+    }
+    // A reopened database starts with SQLite's default threshold again.
+    const reopened = new AssistantDatabase(path)
+    reopened.initialize(directory)
+    try {
+      const again = (reopened as unknown as { database: import('node:sqlite').DatabaseSync }).database
+      expect((again.prepare('PRAGMA wal_autocheckpoint').get() as { wal_autocheckpoint: number }).wal_autocheckpoint).toBe(1000)
+    } finally { reopened.close() }
   }, 60_000)
 })

@@ -8,13 +8,35 @@ import type { ReadonlyQueryKind, ReadonlyQueryRequest } from './readonly-query-r
 // It reuses the production classes on a read-only connection, so results are
 // produced by exactly the same code as the synchronous path.
 
-const { kind, databasePath } = workerData as { kind: ReadonlyQueryKind; databasePath: string }
+const { kind, databasePath, intervalMs } = workerData as {
+  kind: ReadonlyQueryKind | 'checkpoint'
+  databasePath: string
+  intervalMs?: number
+}
 
 type Handler = (args: unknown[], signal: AbortSignal) => unknown
 let handlers: Record<string, Handler>
 let close: () => void
 
-if (kind === 'knowledge') {
+if (kind === 'checkpoint') {
+  // WAL checkpointer for AssistantDatabase.enableWalCheckpointWorker (PERF-15):
+  // PASSIVE checkpoints never wait for, or block, Main's readers and writers.
+  const database = new AssistantDatabase(databasePath)
+  database.openCheckpointer()
+  const timer = setInterval(() => {
+    try {
+      database.checkpointWal()
+    } catch {
+      // SQLITE_BUSY and similar: try again on the next tick.
+    }
+  }, intervalMs ?? 1_000)
+  close = () => {
+    clearInterval(timer)
+    database.close()
+  }
+  handlers = {}
+  parentPort!.postMessage({ ready: true })
+} else if (kind === 'knowledge') {
   const database = new KnowledgeDatabase(databasePath)
   database.openReadOnly()
   close = () => database.close()

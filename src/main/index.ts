@@ -1275,6 +1275,7 @@ if (hasSingleInstanceLock) {
         startupMark('main:assistant-db-init:start')
         startupAssistantDatabase.initialize(defaultWorkspace)
         startupAssistantDatabase.enableReadonlyWorker(readonlyQueryWorkerPath)
+        startupAssistantDatabase.enableWalCheckpointWorker(readonlyQueryWorkerPath)
         imageGenerationService!.initialize()
         startupAssistantDatabase.ensureChannelProjects(
           defaultWorkspace,

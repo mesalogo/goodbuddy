@@ -14,7 +14,8 @@ import {
 } from '../../shared/assistant-contracts'
 import {
   AssistantDatabase,
-  ASSISTANT_DATABASE_SCHEMA_VERSION
+  ASSISTANT_DATABASE_SCHEMA_VERSION,
+  MESSAGE_RECOVERY_CANDIDATE_SQL
 } from './assistant-database'
 import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 import type { ImageOperation } from '../../shared/image-generation-contracts'
@@ -530,6 +531,86 @@ function claimManualScheduleQueueItem(
 }
 
 describe('AssistantDatabase', () => {
+  it('writes frequent local saves with synchronous NORMAL and keeps FULL for everything else', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-relaxed-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(path)
+    database.initialize(process.cwd())
+    try {
+      const raw = (database as unknown as { database: DatabaseSync }).database
+      const levels: number[] = []
+      const exec = raw.exec.bind(raw)
+      raw.exec = (sql: string) => {
+        exec(sql)
+        if (/^\s*COMMIT/i.test(sql)) levels.push((raw.prepare('PRAGMA synchronous').get() as { synchronous: number }).synchronous)
+      }
+      const level = (): number => (raw.prepare('PRAGMA synchronous').get() as { synchronous: number }).synchronous
+      expect(level()).toBe(2)
+      const task = database.createTask({ id: randomUUID(), title: 't', instructions: 'i', workMode: 'ask' })
+      database.appendTaskEvent(task.id, 'text', { type: 'text', requestId: task.id, delta: 'a' })
+      expect(level()).toBe(2)
+      const id = randomUUID()
+      database.saveLocalConversations([{ header: { id, title: 'Relaxed', updatedAt: 1 },
+        messages: [{ id: randomUUID(), role: 'user', state: 'complete', content: 'hi', createdAt: 1 }] }])
+      expect(levels.at(-1)).toBe(1)
+      expect(level()).toBe(2)
+      // A failed relaxed write still restores FULL.
+      expect(() => database.saveLocalConversations([{ header: { id, title: 'Relaxed', updatedAt: 2 },
+        messages: [{ id: randomUUID(), role: 'user', state: 'complete', content: 'x', createdAt: 2 }, { id: 'dup', role: 'user', state: 'complete', content: 'y', createdAt: 2 }, { id: 'dup', role: 'assistant', state: 'complete', content: 'z', createdAt: 2 }] }]))
+        .toThrow()
+      expect(level()).toBe(2)
+      // Lifecycle events and task status changes commit with FULL.
+      levels.length = 0
+      database.updateTaskStatus(task.id, 'completed')
+      expect(level()).toBe(2)
+      expect(levels.every((value) => value === 2)).toBe(true)
+      expect(database.getConversation(id).messages.map((message) => message.content)).toEqual(['hi'])
+    } finally { database.close() }
+  })
+
+  it('startup recovery reads only candidate messages and ends the same ones as a full scan', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-recovery-index-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(path)
+    database.initialize(process.cwd())
+    const id = randomUUID()
+    const message = (content: string, extra: Record<string, unknown> = {}) => ({
+      id: randomUUID(), role: 'assistant' as const, state: 'complete' as const, content, createdAt: 1, ...extra })
+    const messages = [
+      message('streaming', { state: 'streaming' as const }),
+      message('running tool', { tools: [{ name: 'a', state: 'running', summary: 's' }] }),
+      message('pending block', { blocks: [{ type: 'tool', tool: { name: 'b', state: 'pending', summary: 's' } }] }),
+      message('queued subagent', { subagents: [{ childTaskId: randomUUID(), expertId: randomUUID(), expertName: 'e', routingMode: 'native', state: 'queued' }] }),
+      // Mentions "running" only inside text: a candidate, but nothing to end.
+      message('"state":"running" in text'),
+      message('done', { tools: [{ name: 'c', state: 'completed', summary: 's' }] })
+    ]
+    database.saveLocalConversations([{ header: { id, title: 'Recovery', updatedAt: 1 }, messages }])
+    const raw = (database as unknown as { database: DatabaseSync }).database
+    const plan = (raw.prepare(`EXPLAIN QUERY PLAN SELECT id FROM messages WHERE ${MESSAGE_RECOVERY_CANDIDATE_SQL}`)
+      .all() as Array<{ detail: string }>).map((row) => row.detail).join(' ')
+    expect(plan).toContain('messages_recovery_idx')
+    const imagePlan = (raw.prepare(`EXPLAIN QUERY PLAN SELECT id FROM messages
+      WHERE ${MESSAGE_RECOVERY_CANDIDATE_SQL} AND json_type(metadata_json, '$.imageOperations') = 'array'`)
+      .all() as Array<{ detail: string }>).map((row) => row.detail).join(' ')
+    expect(imagePlan).toContain('messages_recovery_idx')
+    database.close()
+
+    const recovered = new AssistantDatabase(path)
+    recovered.initialize(process.cwd())
+    try {
+      const after = recovered.getConversation(id).messages
+      expect(after.map((item) => item.state)).toEqual(['error', 'complete', 'complete', 'complete', 'complete', 'complete'])
+      expect(after[1]?.tools?.[0]?.state).toBe('interrupted')
+      expect((after[2]?.blocks?.[0] as { tool: { state: string } }).tool.state).toBe('interrupted')
+      expect(after[3]?.subagents?.[0]?.state).toBe('cancelled')
+      expect(after[4]?.content).toBe('"state":"running" in text')
+      expect(after[5]?.tools?.[0]?.state).toBe('completed')
+    } finally { recovered.close() }
+  })
+
   it('round trips long checklist metadata and explicit clears across reopen', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-checklist-'))
     temporaryDirectories.push(directory)

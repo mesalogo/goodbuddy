@@ -4,6 +4,7 @@ import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text
 import { knowledgeReferenceKey } from '../../shared/knowledge-reference'
 import { appendConversationQuestionBlock } from '../../shared/conversation-question-blocks'
 import { DatabaseSync } from 'node:sqlite'
+import { Worker } from 'node:worker_threads'
 import { ExecutionStatsReader } from './execution-stats-reader'
 import { ReadonlyQueryReader, readWithFallback } from '../readonly-query-reader'
 import { ActivityHistoryRepository, migrateActivityHistoryOrder } from './activity-history-repository'
@@ -138,7 +139,23 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 57
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 58
+/**
+ * Messages startup recovery may have to end (schema 58): still streaming, or
+ * metadata naming an unfinished tool/subagent (pending, running, queued) or
+ * image operation (running, saving, cancelling). Metadata is always minified
+ * JSON.stringify output, so every such state appears literally; the exact
+ * checks run on these rows only, through the partial index
+ * messages_recovery_idx.
+ */
+export const MESSAGE_RECOVERY_CANDIDATE_SQL = `(state = 'streaming'
+  OR instr(metadata_json, '"state":"running"') > 0
+  OR instr(metadata_json, '"state":"pending"') > 0
+  OR instr(metadata_json, '"state":"queued"') > 0
+  OR instr(metadata_json, '"state":"saving"') > 0
+  OR instr(metadata_json, '"state":"cancelling"') > 0)`
+/** Main's automatic checkpoint threshold while the checkpoint worker runs (16 MB of 4 KB pages). */
+const WAL_SAFETY_CHECKPOINT_PAGES = 4_000
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -1973,6 +1990,7 @@ export class AssistantDatabase {
   private activityHistoryRepository?: { database: DatabaseSync; repository: ActivityHistoryRepository }
   private executionStatsReader?: ExecutionStatsReader
   private readonlyReader?: ReadonlyQueryReader
+  private checkpointWorker?: Worker
   private readonlyWorkerPath?: string
   private foldedSearchConnection?: DatabaseSync
   private readonly noteStorage: MagicNoteStorage
@@ -2271,12 +2289,15 @@ export class AssistantDatabase {
                )`
           )
           .run()
-        database.exec(`DELETE FROM messages WHERE json_extract(metadata_json, '$.queueItemId') IN (
-          SELECT id FROM conversation_queue_items WHERE source = 'user'
-        ) AND EXISTS (
-          SELECT 1 FROM json_each(messages.metadata_json, '$.attachments') attachment
-          WHERE json_extract(attachment.value, '$.resourceId') IS NOT NULL
-        )`)
+        // This scans every message; with no user queue item it cannot match anything.
+        if (database.prepare("SELECT 1 FROM conversation_queue_items WHERE source = 'user' LIMIT 1").get()) {
+          database.exec(`DELETE FROM messages WHERE json_extract(metadata_json, '$.queueItemId') IN (
+            SELECT id FROM conversation_queue_items WHERE source = 'user'
+          ) AND EXISTS (
+            SELECT 1 FROM json_each(messages.metadata_json, '$.attachments') attachment
+            WHERE json_extract(attachment.value, '$.resourceId') IS NOT NULL
+          )`)
+        }
         database.exec(`
           INSERT OR IGNORE INTO conversation_queue_items
             (id, conversation_id, source, label, payload_json,
@@ -2318,9 +2339,13 @@ export class AssistantDatabase {
 
         const recoverableMessages = database
           .prepare(
+            // The partial index messages_recovery_idx holds exactly the rows
+            // matching the first term (a superset of those updated below), so
+            // startup no longer reads every message's metadata.
             `SELECT id, state, metadata_json
              FROM messages
-             WHERE NOT EXISTS (
+             WHERE ${MESSAGE_RECOVERY_CANDIDATE_SQL}
+               AND NOT EXISTS (
                SELECT 1 FROM tasks
                WHERE tasks.id = messages.request_id
                  AND tasks.remote_recoverable = 1
@@ -2402,6 +2427,7 @@ export class AssistantDatabase {
   }
 
   close(): void {
+    this.stopWalCheckpointWorker()
     this.executionStatsReader?.close()
     this.executionStatsReader = undefined
     this.readonlyReader?.close()
@@ -3337,6 +3363,11 @@ export class AssistantDatabase {
   }
 
   saveLocalConversations(batch: LocalConversationSaveBatch): void {
+    // The renderer saves every 500 ms and retries until acknowledged.
+    this.relaxedWrite(() => this.saveLocalConversationsNow(batch))
+  }
+
+  private saveLocalConversationsNow(batch: LocalConversationSaveBatch): void {
     const database = this.requireDatabase()
     const findConversation = database.prepare(
       'SELECT channel, context_state_json FROM conversations WHERE id = ?'
@@ -5014,6 +5045,69 @@ export class AssistantDatabase {
   }
 
   /**
+   * Opens a connection used only to checkpoint the WAL from a worker thread
+   * (PERF-15). It never writes rows; see enableWalCheckpointWorker.
+   */
+  openCheckpointer(): void {
+    if (this.database) throw new Error('Database already open')
+    this.database = new DatabaseSync(this.databasePath, { timeout: 5_000 })
+    this.database.exec('PRAGMA busy_timeout = 5000; PRAGMA wal_autocheckpoint = 0')
+  }
+
+  /** One PASSIVE checkpoint: copies committed WAL frames without blocking writers. */
+  checkpointWal(): { busy: number; log: number; checkpointed: number } {
+    if (!this.database) throw new Error('Database is not open')
+    return this.database.prepare('PRAGMA wal_checkpoint(PASSIVE)').get() as
+      { busy: number; log: number; checkpointed: number }
+  }
+
+  /**
+   * Moves WAL checkpoints off Main (PERF-15). SQLite's automatic checkpoint
+   * runs inside the commit that crosses 1,000 WAL pages, so on a large
+   * database one ordinary write now and then blocked Main for 100-250 ms
+   * while pages were copied and synced. A worker thread checkpoints on its
+   * own connection instead. While it runs, Main's automatic checkpoint stays
+   * as a safety net at a higher threshold: under sustained writes a passive
+   * checkpoint never catches up exactly, so the WAL could not reset; Main's
+   * checkpoint then finds almost every frame already copied and only
+   * finishes the rest. The default threshold comes back if the worker stops.
+   */
+  enableWalCheckpointWorker(workerPath: string, intervalMs = 250): void {
+    const database = this.database
+    if (!database || this.checkpointWorker || this.databasePath === ':memory:') return
+    let worker: Worker
+    try {
+      worker = new Worker(workerPath, {
+        workerData: { kind: 'checkpoint', databasePath: this.databasePath, intervalMs }
+      })
+    } catch {
+      return
+    }
+    this.checkpointWorker = worker
+    worker.unref()
+    const restore = (): void => {
+      if (this.checkpointWorker !== worker) return
+      this.checkpointWorker = undefined
+      if (this.database === database) database.exec('PRAGMA wal_autocheckpoint = 1000')
+    }
+    worker.on('message', (message: { ready?: boolean }) => {
+      if (message.ready && this.checkpointWorker === worker && this.database === database) {
+        database.exec(`PRAGMA wal_autocheckpoint = ${WAL_SAFETY_CHECKPOINT_PAGES}`)
+      }
+    })
+    worker.once('error', restore)
+    worker.once('exit', restore)
+  }
+
+  private stopWalCheckpointWorker(): void {
+    const worker = this.checkpointWorker
+    if (!worker) return
+    this.checkpointWorker = undefined
+    this.database?.exec('PRAGMA wal_autocheckpoint = 1000')
+    void worker.terminate()
+  }
+
+  /**
    * Runs multi-statement reads against one WAL snapshot. Used by the readonly
    * worker, where Main may commit between statements; on Main itself the
    * event loop already serializes reads and writes.
@@ -5312,7 +5406,30 @@ export class AssistantDatabase {
 
   /** Applies incremental changes in one transaction (PERF-15). */
   updateActivityHistory(input: unknown): ActivityHistoryUpdateResult {
-    return this.activityHistory().update(input)
+    return this.relaxedWrite(() => this.activityHistory().update(input))
+  }
+
+  /**
+   * Runs a high-frequency local write with `synchronous = NORMAL` instead of
+   * FULL (PERF-15). In WAL mode NORMAL skips the fsync per commit; the commit
+   * is still atomic and survives an application crash, and the next FULL
+   * commit or checkpoint makes it durable. A power loss can only drop a
+   * suffix of such local writes, never a FULL commit or anything before it,
+   * because the WAL is synced as a whole. Writes another party may rely on
+   * (remote acknowledgements, channel delivery) keep using FULL.
+   */
+  private relaxedWrite<T>(body: () => T): T {
+    const database = this.requireDatabase()
+    // Inside a caller's transaction the caller's commit decides durability.
+    if (database.isTransaction) return body()
+    const previous = (database.prepare('PRAGMA synchronous').get() as { synchronous: number }).synchronous
+    if (previous <= 1) return body()
+    database.exec('PRAGMA synchronous = NORMAL')
+    try {
+      return body()
+    } finally {
+      database.exec(`PRAGMA synchronous = ${previous}`)
+    }
   }
 
   /** Deletes every activity record in one transaction. */
@@ -6181,6 +6298,20 @@ export class AssistantDatabase {
   }
 
   appendTaskEvent(
+    taskId: string,
+    kind: string,
+    payload: unknown
+  ): void {
+    // Local run events stream many times per second. Lifecycle events stay
+    // FULL; their commit also makes every earlier relaxed event durable.
+    if (kind === 'status' || kind === 'done' || kind === 'error') {
+      this.appendTaskEventNow(taskId, kind, payload)
+    } else {
+      this.relaxedWrite(() => this.appendTaskEventNow(taskId, kind, payload))
+    }
+  }
+
+  private appendTaskEventNow(
     taskId: string,
     kind: string,
     payload: unknown
@@ -7109,7 +7240,9 @@ export class AssistantDatabase {
     const database = this.requireDatabase()
     database.exec('BEGIN IMMEDIATE')
     try {
-      const rows = database.prepare("SELECT id, metadata_json FROM messages WHERE json_type(metadata_json, '$.imageOperations') = 'array'")
+      // Candidates come from messages_recovery_idx instead of a scan of every message.
+      const rows = database.prepare(`SELECT id, metadata_json FROM messages
+        WHERE ${MESSAGE_RECOVERY_CANDIDATE_SQL} AND json_type(metadata_json, '$.imageOperations') = 'array'`)
         .all() as { id: string; metadata_json: string }[]
       for (const row of rows) {
         const metadata = JSON.parse(row.metadata_json) as MessageMetadata
@@ -12256,6 +12389,16 @@ export class AssistantDatabase {
         migrateActivityHistoryOrder(database)
         database.exec('PRAGMA user_version = 57; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+    if (version.user_version < 58) {
+      // Startup recovery reads candidate messages by index instead of scanning all (PERF-15).
+      database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE INDEX IF NOT EXISTS messages_recovery_idx ON messages(id)
+          WHERE ${MESSAGE_RECOVERY_CANDIDATE_SQL};
+        PRAGMA user_version = 58;
+        COMMIT;
+      `)
     }
   }
 

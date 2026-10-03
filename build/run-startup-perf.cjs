@@ -21,6 +21,7 @@
 // extra CPU-profiled launch per variant, excluded from the table),
 // GB_PERF_OUTPUT (report directory), GB_PERF_KEEP_PROFILE=1,
 // GB_PERF_STARTUP_APP_ROOT (checkout/worktree to build and launch; default .).
+// Variant "real" (opt-in) launches on a fresh copy of GB_PERF_STARTUP_REAL_DATA.
 const { spawn, spawnSync, execFileSync } = require('node:child_process')
 const { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } = require('node:fs')
 const { createServer } = require('node:http')
@@ -262,6 +263,25 @@ async function main() {
     // launch starts from an identical, never-used-before directory.
     for (const variant of variants) {
       if (variant === 'first-run') continue
+      if (variant === 'real') {
+        // A copy of a real data directory (GB_PERF_STARTUP_REAL_DATA, for
+        // example the portable build's data folder). Only the stores startup
+        // reads are copied; the source is never opened by the app. The driver
+        // blocks every non-loopback request, so configured remote models are
+        // not called.
+        const source = process.env.GB_PERF_STARTUP_REAL_DATA
+        if (!source || !existsSync(join(source, 'assistant.sqlite'))) throw new Error('variant "real" needs GB_PERF_STARTUP_REAL_DATA with assistant.sqlite')
+        const directory = join(runDirectory, 'template-real')
+        const profile = join(directory, 'profile')
+        mkdirSync(profile, { recursive: true })
+        for (const entry of readdirSync(source)) {
+          const from = join(source, entry)
+          const keep = /\.(sqlite|sqlite-wal|sqlite-shm|json)$/i.test(entry) || entry === 'notes' || entry === 'Local Storage'
+          if (keep && entry !== 'DevToolsActivePort') cpSync(from, join(profile, entry), { recursive: true })
+        }
+        templates[variant] = directory
+        continue
+      }
       const seed = variant === 'empty' ? 0 : variant === seededName ? seedCount : null
       if (seed === null) throw new Error(`Unknown variant ${variant}`)
       const directory = join(runDirectory, `template-${variant}`)
@@ -284,7 +304,8 @@ async function main() {
       return directory
     }
 
-    const expectedFor = variant => (variant === seededName ? seedCount : 0)
+    // The real profile's sidebar is ready once its first rows show.
+    const expectedFor = variant => (variant === seededName ? seedCount : variant === 'real' ? 10 : 0)
     const results = Object.fromEntries(variants.map(v => [v, []]))
     // A discarded warm-up launch per invocation so the first measured launch
     // does not also pay for loading Electron binaries from a cold disk cache.
