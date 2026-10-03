@@ -401,6 +401,30 @@ describe('activity history sync (paged)', () => {
     sync.stop()
   })
 
+  it('summarizes every loaded conversation, beyond one request', async () => {
+    const records = Array.from({ length: 5_003 }, (_, index) =>
+      record({ conversationId: `many-${index}`, kind: 'request', title: `Title ${index}`, status: 'completed' }))
+    const store = createActivityStore()
+    store.markReady()
+    store.setFirstPage('all', { records }, store.getGeneration())
+    store.refreshPanel()
+    const requested: number[] = []
+    await refreshActivitySummary(store, {
+      summary: async ({ conversationIds }) => {
+        requested.push(conversationIds.length)
+        return {
+          counts: { all: records.length, active: 0, failed: 0 },
+          conversations: Object.fromEntries(conversationIds.map((id) => [id, { title: id, status: 'completed' as const }])),
+          legacyHistoryMayBeIncomplete: false
+        }
+      }
+    })
+    expect(requested).toEqual([5_000, 3])
+    const conversations = store.getSummary()!.conversations
+    expect(Object.keys(conversations)).toHaveLength(5_003)
+    expect(conversations['many-5002']?.title).toBe('many-5002')
+  })
+
   it('clear empties the database, the loaded pages and the summary', async () => {
     const database = openDatabase()
     database.replaceActivityHistory({ records: [record(), record()], legacyHistoryMayBeIncomplete: true })

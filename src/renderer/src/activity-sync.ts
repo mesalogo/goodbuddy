@@ -193,8 +193,13 @@ export async function refreshActivitySummary(
   api: Pick<ActivityHistoryApi, 'summary'>
 ): Promise<void> {
   const conversationIds = [...new Set(store.getPanel().records.map((record) => record.conversationId))]
-    .slice(0, MAX_SUMMARY_CONVERSATIONS)
-  store.setSummary(await api.summary({ conversationIds }))
+  // Every loaded conversation is summarized; large sets go in several requests.
+  let merged: ActivityHistorySummary | undefined
+  for (let start = 0; start === 0 || start < conversationIds.length; start += MAX_SUMMARY_CONVERSATIONS) {
+    const part = await api.summary({ conversationIds: conversationIds.slice(start, start + MAX_SUMMARY_CONVERSATIONS) })
+    merged = merged ? { ...part, conversations: { ...merged.conversations, ...part.conversations } } : part
+  }
+  store.setSummary(merged!)
 }
 
 /**
