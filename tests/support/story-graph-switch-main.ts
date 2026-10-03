@@ -66,7 +66,8 @@ app.whenReady().then(async () => {
     const point = await js<{ x: number; y: number }>(`(() => { const r = document.querySelector('.composer__options-trigger').getBoundingClientRect(); return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) }; })()`)
     win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 })
     win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 })
-    await wait(`document.activeElement === document.querySelector('${toggle}')`)
+    // First focus stays on the first menu button, matching the model picker.
+    await wait('document.activeElement === document.querySelector(".composer__options button:not(:disabled)")')
   }
   const scenarios: object[] = []
   try {

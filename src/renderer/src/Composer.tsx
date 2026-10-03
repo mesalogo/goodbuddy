@@ -333,7 +333,9 @@ export const Composer = memo(function Composer({
       }
     };
     const frame = requestAnimationFrame(() => {
-      composerOptionsRef.current?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus();
+      // Keyboard users land on the same first control as the model picker
+      // (expert / work mode menus); optional switches above stay Tab-reachable.
+      composerOptionsRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
     });
     document.addEventListener("pointerdown", dismissOutside);
     document.addEventListener("focusin", dismissOutside);
