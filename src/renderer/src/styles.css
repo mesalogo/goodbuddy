@@ -8907,6 +8907,7 @@ button > svg {
 .composer-context-meter {
   display: flex;
   min-width: 0;
+  flex: 1 1 160px;
   align-items: center;
   color: var(--text-muted);
   gap: var(--space-2);
@@ -8917,6 +8918,8 @@ button > svg {
 }
 
 .composer-context-meter__summary {
+  min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8925,8 +8928,9 @@ button > svg {
 .composer-context-meter__track {
   position: relative;
   width: 112px;
+  min-width: 40px;
   height: 4px;
-  flex: 0 0 112px;
+  flex: 0 4 112px;
   border-radius: 999px;
   overflow: visible;
   background: var(--surface-muted);
@@ -8990,15 +8994,6 @@ button > svg {
   .composer__configuration > .composer-picker > .composer-picker__menu {
     right: 0;
     left: auto;
-  }
-
-  .composer-context-meter {
-    width: 100%;
-  }
-
-  .composer-context-meter__track {
-    min-width: 64px;
-    flex: 1;
   }
 }
 
