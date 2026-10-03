@@ -134,6 +134,7 @@ export default defineConfig({
           'assistant-storage-worker': resolve('src/main/assistant-storage-worker.ts'),
           'execution-stats-worker': resolve('src/main/execution-stats-worker.ts'),
           'readonly-query-worker': resolve('src/main/readonly-query-worker.ts'),
+          'document-parse-worker': resolve('src/main/document-parse-worker.ts'),
           'wechat-sidecar': resolve(
             'src/main/channels/wechat-sidecar.ts'
           ),

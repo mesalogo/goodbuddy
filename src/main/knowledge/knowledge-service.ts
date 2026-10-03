@@ -21,11 +21,14 @@ import {
 } from 'node:path'
 import {
   buildChunkContextPrefix,
-  chunkDocumentAdvanced,
-  parseDocument,
   supportedDocumentExtensions,
   type ParsedDocument
 } from './document-parser'
+import {
+  chunkDocumentOffMain,
+  parseDocumentOffMain,
+  sha256OffMain
+} from '../document-parse-client'
 import type { DocumentResultStorage } from '../document-result-storage'
 import { parsedCompleteness } from '../document-result-storage'
 import {
@@ -282,7 +285,7 @@ export class KnowledgeService {
     this.urlImporter = options.urlImporter ?? new UrlImporter()
     this.documentParser =
       options.parseDocument ??
-      ((name, buffer) => parseDocument(name, buffer))
+      ((name, buffer) => parseDocumentOffMain(name, buffer))
     this.embeddingProvider = options.embeddingProvider
     this.rerankProvider = options.rerankProvider
     const embeddingBatchSize = options.embeddingBatchSize ?? 16
@@ -769,7 +772,7 @@ export class KnowledgeService {
     const documentId = input.id ?? randomUUID()
     const imagesOnly = parsedCompleteness(parsed) === 'images-only'
     if (imagesOnly && this.database.getDocument(documentId)?.metadata.status === 'ready') throw new Error('未提取到可索引文字，保留上次正文与索引')
-    const chunks = imagesOnly ? [] : this.createDocumentChunks(parsed, library)
+    const chunks = imagesOnly ? [] : await this.createDocumentChunks(parsed, library)
     let embeddingReplacement: PreparedEmbeddingReplacement | undefined
     let embeddingFailure: PreparedDocumentPublication['embeddingFailure']
     const embeddingProvider = this.embeddingProvider
@@ -2484,7 +2487,7 @@ export class KnowledgeService {
       const prepared = await this.prepareDocumentPublication(
         {
           ...document,
-          checksum: createHash('sha256').update(buffer).digest('hex'),
+          checksum: await sha256OffMain(buffer),
           metadata: {
             ...document.metadata,
             status: 'ready',
@@ -3137,7 +3140,7 @@ export class KnowledgeService {
           progress: 35,
           message: '正在解析文档内容'
         })
-        const checksum = createHash('sha256').update(buffer).digest('hex')
+        const checksum = await sha256OffMain(buffer)
         const previous = existing.find(
           (document) => document.externalId === file.relativePath
         )
@@ -3835,11 +3838,12 @@ export class KnowledgeService {
     }
   }
 
-  private createDocumentChunks(
+  private async createDocumentChunks(
     parsed: ParsedDocument,
     library: KnowledgeBase
-  ): ReplaceChunkInput[] {
-    const chunks = chunkDocumentAdvanced(parsed, library.chunkingSettings)
+  ): Promise<ReplaceChunkInput[]> {
+    // Pure CPU work runs off Main; chunk ids are still assigned here.
+    const chunks = await chunkDocumentOffMain(parsed, library.chunkingSettings)
     const ids = chunks.map(() => randomUUID())
     return chunks.map((chunk) => ({
       id: ids[chunk.position],

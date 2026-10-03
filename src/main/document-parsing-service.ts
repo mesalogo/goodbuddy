@@ -18,12 +18,14 @@ import { HttpDocumentOcr } from './http-document-ocr'
 import { hasExtractedDocumentText } from './document-extracted-text'
 import { renderOcrPdf, renderSelectedOcrPdf } from './render-ocr-pdf'
 import type { DocumentResultStorage } from './document-result-storage'
-import { extractPptxPages } from './knowledge/pptx-parser'
+import {
+  extractPdfTextPagesOffMain,
+  extractPptxPagesOffMain,
+  parseDocumentOffMain
+} from './document-parse-client'
 import {
   assertDocumentBuffer,
   DocumentTextUnavailableError,
-  extractPdfTextPages,
-  parseDocument,
   type ParsedDocument,
   type ParsedSection,
   type PdfTextPage
@@ -279,10 +281,10 @@ export class DocumentParsingService {
       return this.parsePptx(name, buffer, purpose, operation, signal)
     }
     if (extname(name).toLowerCase() !== '.pdf') {
-      return parseDocument(name, buffer, signal)
+      return parseDocumentOffMain(name, buffer, signal)
     }
 
-    const extracted = await extractPdfTextPages(buffer, { signal })
+    const extracted = await extractPdfTextPagesOffMain(buffer, { signal })
     const { pages } = extracted
     ensureNotAborted(signal)
     const mode = effectiveOcrMode(settings, purpose)
@@ -517,7 +519,7 @@ export class DocumentParsingService {
     const mode = effectiveOcrMode(settings, purpose)
     if (mode === 'disabled') {
       try {
-        return await parseDocument(name, buffer, signal)
+        return await parseDocumentOffMain(name, buffer, signal)
       } catch (error) {
         if (error instanceof DocumentTextUnavailableError) {
           throw new DocumentTextUnavailableError(
@@ -527,7 +529,7 @@ export class DocumentParsingService {
         throw error
       }
     }
-    const pages = extractPptxPages(buffer)
+    const pages = await extractPptxPagesOffMain(buffer)
     ensureNotAborted(signal)
     const native: ParsedSection[] = pages
       .filter((page) => page.content)

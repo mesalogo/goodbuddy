@@ -1,3 +1,4 @@
+import { startupMark, startupSpan } from './startup-marks'
 import { localInferenceService } from './local-inference-service'
 import { NativeClientCoordinator } from './agent/native-client-coordinator'
 import { createEmbeddingUtilityTransport } from './knowledge/embedding-utility-transport'
@@ -98,6 +99,7 @@ import { DocumentParsingSettingsStore } from './document-parsing-settings-store'
 import { DocumentOcrModelManager } from './document-ocr-model-manager'
 import { DocumentOcrBroker } from './document-ocr-broker'
 import { DocumentParsingService } from './document-parsing-service'
+import { configureDocumentParseWorker } from './document-parse-client'
 import { DocumentResultStorage } from './document-result-storage'
 import { ConversationAttachmentStorage } from './conversation-attachment-storage'
 import { ReleaseNotesService } from './release-notes-service'
@@ -553,6 +555,7 @@ function buildTray(): Tray {
 const storageUpgradeController = new AbortController()
 let storageUpgrade: Promise<void> | undefined
 
+startupMark('main:module-evaluated')
 if (hasSingleInstanceLock) {
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -561,6 +564,7 @@ if (hasSingleInstanceLock) {
   })
 
   void app.whenReady().then(async () => {
+    startupMark('main:when-ready')
     session.defaultSession.setPermissionRequestHandler(
       (webContents, permission, callback, details) => {
         const mediaTypes =
@@ -582,15 +586,18 @@ if (hasSingleInstanceLock) {
         details.mediaType === 'audio'
     )
 
+    startupMark('main:create-window:start')
     mainWindow = createMainWindow(() => isQuitting, observeDesktopFailure)
+    startupMark('main:create-window:end')
     registerDesktopNotificationActivation(mainWindow)
     tray = buildTray()
+    startupMark('main:tray-built')
     storageUpgrade = prepareAssistantStorage(
       mainWindow,
       join(app.getPath('userData'), 'assistant.sqlite'),
       storageUpgradeController.signal
     )
-    await storageUpgrade
+    await startupSpan('main:storage-upgrade-check', () => storageUpgrade!)
     if (storageUpgradeController.signal.aborted) return
     const defaultWorkspace = process.env.GOODBUDDY_WORKSPACE ?? homedir()
     const secureCipher = {
@@ -670,7 +677,7 @@ if (hasSingleInstanceLock) {
         },
         baseEnvironment: buildCredentialFilteredUserEnvironment()
       })
-    await startupLocalToolEnvironmentService.initialize()
+    await startupSpan('main:local-tool-environment', () => startupLocalToolEnvironmentService.initialize())
     localToolEnvironmentService =
       startupLocalToolEnvironmentService
     const sshHostStore = new SshHostStore(
@@ -682,11 +689,11 @@ if (hasSingleInstanceLock) {
       resourcesPath: process.resourcesPath,
       packaged: app.isPackaged
     })
-    const controlPlanePackageInstaller = await readFile(
+    const controlPlanePackageInstaller = await startupSpan('main:read-control-plane-installer', () => readFile(
       resolveControlPlanePackageInstallerPath({
         appPath: app.getAppPath()
       })
-    )
+    ))
     const agentPackageManager = new AgentPackageManager({
       userDataPath: app.getPath('userData'),
       desktopVersion: app.getVersion(),
@@ -728,7 +735,7 @@ if (hasSingleInstanceLock) {
           return selection.provider === 'continue' ? resolved.continueModelProfile : resolved.opencodeModelProfile
         }
       })
-    await startupManagedRemoteExecutionServices.initialize()
+    await startupSpan('main:managed-remote-init', () => startupManagedRemoteExecutionServices.initialize())
     managedRemoteExecutionServices =
       startupManagedRemoteExecutionServices
     const beginRemoteHostInvalidation = (hostId: string): void => {
@@ -777,10 +784,10 @@ if (hasSingleInstanceLock) {
           )
       })
     const [initialRuntimeSettings, initialResolvedSettings] =
-      await Promise.all([
+      await startupSpan('main:runtime-settings-load', () => Promise.all([
         settingsStore.getPublicSettings(),
         settingsStore.getResolvedSettings()
-      ])
+      ]))
     globalTlsPolicy = new GlobalTlsPolicy(app)
     globalTlsPolicy.install()
     const capabilityService = new CapabilityService(
@@ -836,6 +843,7 @@ if (hasSingleInstanceLock) {
         (await applicationSettingsStore.get()).modelDownloadSource
     })
     documentOcrBroker = new DocumentOcrBroker(mainWindow)
+    configureDocumentParseWorker(join(app.getAppPath(), 'out/main/document-parse-worker.js'))
     documentParsingService = new DocumentParsingService(
       documentParsingSettingsStore,
       documentOcrModelManager,
@@ -1208,7 +1216,8 @@ if (hasSingleInstanceLock) {
             resolved.target
           )
     }
-    const configuredRuntime = await runStartupPrerequisites({
+    startupMark('main:services-constructed')
+    const configuredRuntime = await startupSpan('main:prerequisites', () => runStartupPrerequisites({
       prepareDeepSeekHome: async () => {
         await mkdir(deepSeekHarnessHome, {
           recursive: true,
@@ -1216,7 +1225,7 @@ if (hasSingleInstanceLock) {
         })
       },
       initializeKnowledgeAndGateway: async () => {
-        await startupKnowledgeService.initialize()
+        await startupSpan('main:knowledge-init', () => startupKnowledgeService.initialize())
         const embeddingProvider = await createEmbeddingProvider(
           initialResolvedSettings,
           startupEmbeddingModelManager
@@ -1242,11 +1251,12 @@ if (hasSingleInstanceLock) {
             () => undefined
           )
         ])
-        await startupKnowledgeGateway.start()
+        await startupSpan('main:knowledge-gateway-start', () => startupKnowledgeGateway.start())
       },
       hydrateConfiguredRuntime: () =>
-        createConfiguredRuntime(initialResolvedSettings),
+        startupSpan('main:runtime-hydrate', () => createConfiguredRuntime(initialResolvedSettings)),
       initializeAssistant: () => {
+        startupMark('main:assistant-db-init:start')
         startupAssistantDatabase.initialize(defaultWorkspace)
         startupAssistantDatabase.enableReadonlyWorker(readonlyQueryWorkerPath)
         imageGenerationService!.initialize()
@@ -1259,13 +1269,14 @@ if (hasSingleInstanceLock) {
             initialRuntimeSettings
           )
         )
+        startupMark('main:assistant-db-init:end')
       }
-    })
+    }))
     const [initialSubagentRuntime, initialSubagentProfileRuntimes] =
-      await Promise.all([
+      await startupSpan('main:subagent-runtimes', () => Promise.all([
         createSubagentRuntime(initialResolvedSettings),
         createSubagentProfileRuntimes(initialResolvedSettings)
-      ])
+      ]))
     const subagentService = new SubagentService(
       initialSubagentRuntime,
       startupAssistantDatabase,
@@ -1285,8 +1296,10 @@ if (hasSingleInstanceLock) {
       createSelectedStatusRuntime,
       (conversationId) => localRuntimeRegistry.releaseConversation(conversationId)
     )
+    startupMark('main:attachments-reconcile:start')
     conversationAttachmentStorage = new ConversationAttachmentStorage(app.getPath('userData'), documentParsingService.results!)
     conversationAttachmentStorage.reconcile((conversationId, kind, ownerId) => startupAssistantDatabase.hasAttachmentOwner(conversationId, kind, ownerId), true)
+    startupMark('main:attachments-reconcile:end')
     const contextManager = new ContextManager({
       parseDocument: documentParsingService.parse,
       assets: conversationAttachmentStorage,
@@ -1308,7 +1321,7 @@ if (hasSingleInstanceLock) {
       },
       process.platform
     )
-    await shortcutSettingsService.initialize()
+    await startupSpan('main:shortcuts-init', () => shortcutSettingsService.initialize())
 
     let runtimeReconfigurationQueue: Promise<void> = Promise.resolve()
     let runtimeReconfigurationClosing = false
@@ -1513,6 +1526,7 @@ if (hasSingleInstanceLock) {
         obsidianService, launchEnvironmentProvider: startupLocalToolEnvironmentService.launchEnvironmentProvider
       })
     })
+    startupMark('main:ipc-register:start')
     removeIpcHandlers = registerIpcHandlers(
       mainWindow,
       runtime,
@@ -1581,7 +1595,9 @@ if (hasSingleInstanceLock) {
       mainWindow,
       startupFeedbackService
     )
+    startupMark('main:ipc-register:end')
     loadMainWindow(mainWindow)
+    startupMark('main:load-main-window')
     removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow,
       new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion()))
     setImmediate(() => {

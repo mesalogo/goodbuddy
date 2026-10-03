@@ -1,7 +1,8 @@
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { parseDocument, type ParsedDocument } from './document-parser'
+import type { ParsedDocument } from './document-parser'
+import { parseDocumentOffMain } from '../document-parse-client'
 
 type ResolvedAddress = {
   address: string
@@ -224,7 +225,7 @@ export class UrlImporter {
             .trim() || url.hostname
         ).slice(0, 240)
       : url.pathname.split('/').filter(Boolean).at(-1) ?? url.hostname
-    const document = await parseDocument(
+    const document = await parseDocumentOffMain(
       isHtml ? `${title}.html` : `${title}.txt`,
       response.body
     )
