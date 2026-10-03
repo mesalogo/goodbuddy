@@ -42,6 +42,19 @@ Main 负责窗口、生命周期、权限和消息转发。数据库查询、文
 - 一个按键、一个流式片段，只能让显示它的那一小块界面重新渲染。
 - 传给 memo 组件的回调和 context 值，引用必须稳定。
 
+**模块约定（便于维护，所有拆分都按这个结构做）：**
+
+| 层 | 文件命名 | 内容 | 不允许 |
+| --- | --- | --- | --- |
+| Store | `<domain>-store.ts` | `create<Domain>Store()` 返回 `getState / subscribe / 领域动作`；纯 TS，不依赖 React；可单测 | 访问 DOM、调用 React hook |
+| 选择器 / Hook | `<domain>-selectors.ts` 或 `use-<domain>.ts` | 基于 `useSyncExternalStore` 的 selector，返回值引用稳定 | 在 selector 里新建对象却不做相等比较 |
+| 同步层 | `<domain>-sync.ts` | 与 Main 的 IPC：首次加载、订阅推送、增量保存队列、失败重试、退出前刷盘 | 放在组件里；整份数据回写 |
+| 视图 | `<Domain>*.tsx` | `memo` 组件，只从 selector 和稳定的动作读数据 | 接收 App 的大对象或内联回调 |
+
+- `App.tsx` 只负责布局外壳、路由和把 store 实例通过 context 提供给子树。新增领域状态一律走上表四层。
+- 每个 store 的单元测试和 store 文件放在一起（`<domain>-store.test.ts`），覆盖顺序、失败重试和边界情况。
+- Main 侧对应：`<domain>` 的数据库访问集中在一个 repository 类里，IPC handler 只做校验和转发。
+
 ### P3 高频数据走专门通道，按帧合并
 
 流式文本、终端输出、进度、滚动这类高频数据，不进全局状态。
