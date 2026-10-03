@@ -82,7 +82,7 @@ Agent 配置、Shell 执行和系统消息接口。
   和 Electron UI 测试失败；未取得全量通过结果，未修改这些并行工作的文件。
 
 本次依赖升级回归的真实供应商模型调用为 0 次；后续真实模型及 Web 实测见上节。上述升级验证不包含官方 Web 应用，
-“在浏览器中打开”入口仍按[原生客户端方案](../assistant-workbar/runtime-native-client-proposal.md)实施。
+“打开DSH Web”入口仍按[原生客户端方案](../assistant-workbar/runtime-native-client-proposal.md)实施。
 远程启动契约和资源打包仅支持 Continue、OpenCode，`create-runtime.ts` 拒绝 SSH
 执行空间使用 DS，因此本次升级未改变远程 Runtime 路径，也未进行 Linux Host 验证。
 

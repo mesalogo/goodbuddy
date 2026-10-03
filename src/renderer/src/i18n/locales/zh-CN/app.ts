@@ -607,8 +607,8 @@ export const app = {
       compactFailed: '上下文压缩失败'
     },
     nativeClient: {
-      terminal: '在终端中打开', browser: '在浏览器中打开', opening: '正在打开…', stopping: '正在停止…',
-      reopen: '重新打开', stop: '停止此服务', confirmStop: '停止服务', cancel: '取消',
+      terminal: '在终端中打开', browser: '打开DSH Web', opening: '正在打开…', stopping: '正在停止…',
+      stop: '停止DSH服务', confirmStop: '确认', cancel: '取消',
       description: '独立会话；关闭网页后服务仍运行，可在此停止，退出 GoodBuddy 时停止。',
       stopWarning: '停止后此服务的网页会断开，进行中的请求将中断。',
       stopped: '原生客户端服务已停止', failed: '无法打开原生客户端'

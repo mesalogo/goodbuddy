@@ -86,14 +86,16 @@ export function RuntimeNativeClientActions({ browser, contextKey, conversationId
 
   return <>
     <button className="composer-context-compact" type="button" disabled={!!pending} aria-busy={!!pending} onClick={() => void run()}>
-      {pending ? <LoaderCircle aria-hidden="true" className="context-chip__spinner" size={13} /> : browser ? <Globe aria-hidden="true" size={13} /> : <TerminalSquare aria-hidden="true" size={13} />}
-      {t(pending === 'stop' ? 'composer.nativeClient.stopping' : pending ? 'composer.nativeClient.opening' : serviceId ? 'composer.nativeClient.reopen' : browser ? 'composer.nativeClient.browser' : 'composer.nativeClient.terminal')}
+      {pending === 'open' ? <LoaderCircle aria-hidden="true" className="context-chip__spinner" size={13} /> : browser ? <Globe aria-hidden="true" size={13} /> : <TerminalSquare aria-hidden="true" size={13} />}
+      {t(pending === 'open' ? 'composer.nativeClient.opening' : browser ? 'composer.nativeClient.browser' : 'composer.nativeClient.terminal')}
     </button>
     {browser && serviceId && <button className="composer-context-compact danger-ghost" type="button" disabled={!!pending} onClick={() => setConfirmStop(serviceId)}>{t('composer.nativeClient.stop')}</button>}
     {serviceId && confirmStop === serviceId && <span className="composer-native-client-confirm" role="group" aria-label={t('composer.nativeClient.stop')}>
-      <span>{t('composer.nativeClient.stopWarning')}</span>
-      <button type="button" className="secondary-button" disabled={!!pending} onClick={() => setConfirmStop(undefined)}>{t('composer.nativeClient.cancel')}</button>
-      <button type="button" className="danger-ghost" disabled={!!pending} onClick={() => void run(serviceId)}>{t('composer.nativeClient.confirmStop')}</button>
+      <button type="button" className="composer-context-compact danger-ghost" title={t('composer.nativeClient.stopWarning')} aria-description={t('composer.nativeClient.stopWarning')} aria-busy={pending === 'stop'} disabled={!!pending} onClick={() => void run(serviceId)}>
+        {pending === 'stop' && <LoaderCircle aria-hidden="true" className="context-chip__spinner" size={13} />}
+        {t(pending === 'stop' ? 'composer.nativeClient.stopping' : 'composer.nativeClient.confirmStop')}
+      </button>
+      <button type="button" className="composer-context-compact" disabled={!!pending} onClick={() => setConfirmStop(undefined)}>{t('composer.nativeClient.cancel')}</button>
     </span>}
   </>
 }

@@ -10677,7 +10677,7 @@ describe("App", () => {
     await screen.findByRole("textbox", { name: "向 GoodBuddy 提问" });
     await waitFor(() => expect(api.settings.getRuntime).toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: "在终端中打开" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "在浏览器中打开" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开DSH Web" })).not.toBeInTheDocument();
   });
 
   it("opens local DS in the external browser without opening the workbar", async () => {
@@ -10688,13 +10688,13 @@ describe("App", () => {
     }]);
     vi.mocked(api.openRuntimeNativeClient).mockResolvedValue({ kind: "browser", serviceId: "ds-service" });
     render(<App />);
-    const open = await screen.findByRole("button", { name: "在浏览器中打开" });
+    const open = await screen.findByRole("button", { name: "打开DSH Web" });
     await waitFor(() => expect(api.getRuntimeNativeClient).toHaveBeenCalledWith({ conversationId }));
     fireEvent.click(open);
     await waitFor(() => {
       expect(api.openRuntimeNativeClient).toHaveBeenCalledWith({ conversationId });
-      expect(screen.getByRole("button", { name: "重新打开" })).toBeEnabled();
-      expect(screen.getByRole("button", { name: "停止此服务" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "打开DSH Web" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "停止DSH服务" })).toBeEnabled();
     });
     expect(screen.getByRole("button", { name: "切换助手工作栏" })).toHaveAttribute("aria-expanded", "false");
     expect(api.terminal.create).not.toHaveBeenCalled();
