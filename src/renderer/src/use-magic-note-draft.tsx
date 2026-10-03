@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
@@ -32,14 +32,18 @@ export function useMagicNoteDraft() {
     if (!pendingGuard.current) pendingGuard.current = new Promise<boolean>(resolve => setConfirmation({ resolve }))
     return pendingGuard.current
   }, [])
-  const finishGuard = (discard: boolean): void => {
-    if (discard) { current.current = { ...current.current, draft: undefined }; setDraft(undefined) }
-    confirmation?.resolve(discard)
-    setConfirmation(undefined)
-    pendingGuard.current = undefined
-  }
-  return { draft, setDraft, saving, setSaving, selectedNoteId, setSelectedNoteId, guard,
-    confirmation: confirmation ? <MagicNoteDraftConfirmation onResolve={finishGuard} /> : null }
+  // The result keeps its identity while nothing in it changes, so views that
+  // receive it (the notes panel) can skip re-rendering with their parent.
+  return useMemo(() => {
+    const finishGuard = (discard: boolean): void => {
+      if (discard) { current.current = { ...current.current, draft: undefined }; setDraft(undefined) }
+      confirmation?.resolve(discard)
+      setConfirmation(undefined)
+      pendingGuard.current = undefined
+    }
+    return { draft, setDraft, saving, setSaving, selectedNoteId, setSelectedNoteId, guard,
+      confirmation: confirmation ? <MagicNoteDraftConfirmation onResolve={finishGuard} /> : null }
+  }, [confirmation, draft, guard, saving, selectedNoteId])
 }
 
 function MagicNoteDraftConfirmation({ onResolve }: { onResolve: (discard: boolean) => void }): React.JSX.Element {

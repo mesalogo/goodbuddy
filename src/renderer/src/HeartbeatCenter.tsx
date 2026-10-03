@@ -5,7 +5,7 @@ import {
   XCircle
 } from 'lucide-react'
 import { SupervisionSuggestionsPanel } from './SupervisionSuggestionsPanel'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantHeartbeatConfig,
@@ -79,7 +79,7 @@ function byNewest<T extends { createdAt: string }>(left: T, right: T): number {
   )
 }
 
-export function HeartbeatCenter(props: HeartbeatCenterProps): React.JSX.Element {
+function HeartbeatCenterView(props: HeartbeatCenterProps): React.JSX.Element {
   return <UnifiedSupervisorCenter {...props} />
 }
 
@@ -616,3 +616,6 @@ function HeartbeatSections({
     </section>
   )
 }
+
+/** Memoized: App re-renders on chat updates; this view re-renders only when its props change. */
+export const HeartbeatCenter = memo(HeartbeatCenterView)

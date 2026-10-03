@@ -29,7 +29,8 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  memo
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
@@ -376,7 +377,7 @@ function TodoListItem({
   )
 }
 
-export function MagicNotesWorkspace({
+function MagicNotesWorkspaceView({
   navigation,
   onOpenSource,
   onNotify,
@@ -3399,3 +3400,6 @@ export function MagicNotesWorkspace({
     </div>
   )
 }
+
+/** Memoized: App re-renders on chat updates; this view re-renders only when its props change. */
+export const MagicNotesWorkspace = memo(MagicNotesWorkspaceView)

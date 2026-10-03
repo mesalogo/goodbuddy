@@ -16,7 +16,7 @@ import {
   X
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, memo } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -212,7 +212,7 @@ function isRemoteAbsolutePath(value: string): boolean {
   return remoteProjectRootPathSchema.safeParse(value).success
 }
 
-export function ProjectSwitcher({
+function ProjectSwitcherView({
   projects,
   activeProjectId,
   activityByProjectId = {},
@@ -2141,3 +2141,6 @@ export function ProjectSwitcher({
     </div>
   )
 }
+
+/** Memoized: App re-renders on chat updates; this view re-renders only when its props change. */
+export const ProjectSwitcher = memo(ProjectSwitcherView)

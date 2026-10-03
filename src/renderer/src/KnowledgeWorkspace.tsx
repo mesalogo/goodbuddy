@@ -17,7 +17,7 @@ import {
 import { stripKnowledgeHighlightTags } from '../../shared/knowledge-text'
 import { useTranslation } from 'react-i18next'
 import { resolvedLocale, formatNumber } from './knowledge-workspace/formatting'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, memo } from 'react'
 import type { ExternalKnowledgeProvider } from '../../shared/external-knowledge-contracts'
 import { type KnowledgeTaskContext, KnowledgeTasksView } from './knowledge-workspace/KnowledgeTasksView'
 import { toErrorMessage, strategyLabelKeys } from './knowledge-workspace/helpers'
@@ -139,7 +139,7 @@ function toWorkbenchResponse(
   }
 }
 
-export function KnowledgeWorkspace({
+function KnowledgeWorkspaceView({
   externalInstances = [],
   onExternalChanged = () => {},
   notify = () => {},
@@ -970,3 +970,6 @@ export function KnowledgeWorkspace({
     </div>
   )
 }
+
+/** Memoized: App re-renders on chat updates; this view re-renders only when its props change. */
+export const KnowledgeWorkspace = memo(KnowledgeWorkspaceView)

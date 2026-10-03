@@ -24,7 +24,8 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  memo
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -807,7 +808,7 @@ function BrowserViewport({
   )
 }
 
-export function RightAssistantSidebar({
+function RightAssistantSidebarView({
   notesEnabled = false,
   notesSettingsReady = true,
   notesOpenRequest = 0,
@@ -2752,3 +2753,6 @@ export function RightAssistantSidebar({
     </aside>
   )
 }
+
+/** Memoized: App re-renders on chat updates; this view re-renders only when its props change. */
+export const RightAssistantSidebar = memo(RightAssistantSidebarView)

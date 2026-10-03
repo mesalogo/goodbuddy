@@ -165,6 +165,7 @@ import type { ComposerMenuOption, RuntimeActionChoice } from "./ComposerMenuSele
 import { formatAttachmentSize, resizeComposerTextarea } from "./composer-textarea";
 import { Composer } from "./Composer";
 import { useComposerActions } from "./use-composer-actions";
+import { useKnowledgeWorkspaceActions } from "./use-knowledge-workspace-actions";
 import { LiveMessageStoreContext } from "./live-message-store";
 import {
   createConversationPersistence,
@@ -206,6 +207,7 @@ import { useExecutionStats } from "./use-execution-stats";
 import {
   RightAssistantSidebar,
   type AssistantSidebarTab,
+  type RightAssistantSidebarProps,
   type SidebarArtifact,
 } from "./RightAssistantSidebar";
 import {
@@ -250,10 +252,8 @@ import {
   touchAndPruneKeepAliveEntries,
   type KeepAliveCacheEntry,
 } from "./keep-alive-cache";
-import {
-  WorkspaceUnsavedChangesContext,
-  type ReportWorkspaceUnsavedChanges,
-} from "./workspace-unsaved-changes";
+import type { ReportWorkspaceUnsavedChanges } from "./workspace-unsaved-changes";
+import { KeepAliveRoute } from "./KeepAliveRoute";
 import { activateModalFocus, trapTabFocus } from "./dialog-focus";
 import { FloatingPortal } from "./FloatingPortal";
 import {
@@ -387,31 +387,6 @@ function RouteLoadingStatus({ label }: { label: string }): React.JSX.Element {
   );
 }
 
-function KeepAliveRoute({
-  active,
-  children,
-  onUnsavedChanges,
-  route,
-}: {
-  active: boolean;
-  children: ReactNode;
-  onUnsavedChanges?: ReportWorkspaceUnsavedChanges;
-  route: string;
-}): React.JSX.Element {
-  return (
-    <div
-      aria-hidden={active ? undefined : "true"}
-      className="workspace-route-cache"
-      data-route={route}
-      hidden={!active}
-      inert={!active}
-    >
-      <WorkspaceUnsavedChangesContext.Provider value={onUnsavedChanges}>
-        {children}
-      </WorkspaceUnsavedChangesContext.Provider>
-    </div>
-  );
-}
 
 class RouteErrorBoundary extends Component<
   { children: ReactNode; fallback: ReactNode },
@@ -598,6 +573,11 @@ const emptyTokenUsage: TokenUsageSummary = {
 const storageKey = "goodbuddy.conversations.v1";
 const emptyConversationTasks: AssistantTask[] = [];
 const emptyAttachments: ContextAttachment[] = [];
+type RightSidebarHandlers = Required<Pick<RightAssistantSidebarProps,
+  | "onBeforeCloseNotes" | "onOpenSupervisionGraph" | "onContinueSupervision" | "onCreateCustomTask"
+  | "onBackBrowser" | "onNavigateBrowser" | "onReloadBrowser" | "onStopLoadingBrowser"
+  | "onImportArtifacts" | "onLoadArtifact" | "onOpenTask" | "onRespondApproval"
+>>;
 const emptyImageReferences: AssistantArtifact[] = [];
 
 const activeProjectStorageKey = "goodbuddy.active-project.v1";
@@ -6214,6 +6194,21 @@ function App(): React.JSX.Element {
       });
     }
   };
+  const knowledgeWorkspaceActions = useKnowledgeWorkspaceActions({
+    notify,
+    t,
+    selectedLibraryId: knowledgeSnapshot.selectedLibraryId,
+    refreshKnowledge,
+    refreshSelectedKnowledge,
+    retryKnowledgeLoad,
+    runKnowledgeSourceAction,
+    createKnowledgeLibrary,
+    deleteKnowledgeLibrary,
+    setEnabledKnowledgeLibraryIds,
+    setKnowledgeSnapshot,
+    openModelSettings: openImageModelSettings,
+    showChatAndFocusComposer,
+  });
 
   const openQuickNotes = useCallback((): void => {
     if (!magicNotesEnabled) return;
@@ -6785,6 +6780,179 @@ function App(): React.JSX.Element {
     await command(browserApi);
   };
 
+  // Stable callbacks for the memoized routes and sidebars: App re-renders on
+  // chat updates, and fresh inline closures would re-render all of them.
+  const projectSwitcherActions = useStableHandlers({
+    onArchive: archiveProject,
+    onCreate: createProject,
+    onDelete: deleteProject,
+    onRemoteCommitted: loadCommittedRemoteProject,
+    onSelect: selectProject,
+    onSelectRoot: () => window.goodbuddy.settings.selectWorkspace(),
+    onUpdate: updateProject,
+  });
+  const magicNotesActions = useStableHandlers({
+    onOpenSource: openNoteSource,
+    onCancelNoteCapture: () => requestAnimationFrame(() => {
+      const trigger = noteCaptureTrigger.current;
+      (trigger?.isConnected && !trigger.closest('[hidden], [inert]') ? trigger : noteTitleMenuRef.current)?.focus();
+    }),
+    onOpenNoteWorkspace: (noteId: string, entryId?: string) =>
+      requestWorkspaceLeave('magic-notes', () => {
+        setNotesNavigation({ noteId, entryId, requestId: Date.now() });
+        commitView('magic-notes');
+      }),
+  });
+  const heartbeatActions = useStableHandlers({
+    onRetryApplicationSettings: () => void reloadApplicationSettings(),
+    onSetMemoryStatus: setMemoryStatus,
+    onSetTaskStatus: setHeartbeatTaskStatus,
+    onUseFollowUpTask: useHeartbeatTask,
+  });
+  const settingsPanelActions = useStableHandlers({
+    onTransparentFrostedEffectEnabledChange: (enabled: boolean) =>
+      updateApplicationSettings({ transparentFrostedEffectEnabled: enabled }),
+    onRetryApplicationSettings: () => void reloadApplicationSettings(),
+    onBrandingPreferencesChange: (preferences: Parameters<typeof saveBrandingPreferences>[0]) => {
+      if (!saveBrandingPreferences(preferences)) {
+        return false;
+      }
+      setBrandingPreferences(preferences);
+      notify({
+        tone: "success",
+        message: t("notices.brandingSaved"),
+        dedupeKey: "branding-saved",
+      });
+      return true;
+    },
+    onClearLocalData: clearLocalData,
+    onClose: () => {
+      commitView(viewRef.current);
+    },
+    onExpertsChanged: (experts: AssistantExpert[]) => {
+      setAssistantExperts(experts);
+      if (
+        (selectedExpertId === "team" && experts.length < 2) ||
+        (selectedExpertId &&
+          selectedExpertId !== "team" &&
+          !experts.some((expert) => expert.id === selectedExpertId))
+      ) {
+        setSelectedExpertId("");
+      }
+    },
+    onRemoteProjectsEnabledChange: handleRemoteProjectsEnabledChange,
+    onProjectsDeleted: removeProjectsFromUi,
+    onSaved: (settings: RuntimeSettings) => {
+      setRuntimeSettings(settings);
+    },
+    onUpdateProject: updateProject,
+  });
+  const rightSidebarActions = useStableHandlers<RightSidebarHandlers>({
+    onBeforeCloseNotes: async () => {
+      if (!await guardNoteDraft()) return false;
+      setNoteDraft(undefined);
+      return true;
+    },
+    onOpenSupervisionGraph: (resultId) => {
+      requestWorkspaceLeave('heartbeat', () => {
+        setSupervisionGraphNavigation({ resultId });
+        commitView('heartbeat');
+      });
+    },
+    onContinueSupervision: async (prompt, conversationId) => {
+      await window.goodbuddy.supervision.continue({
+        conversationId,
+        prompt,
+      });
+      openActivityConversation(conversationId);
+    },
+    onCreateCustomTask: () => openCustomTaskDialog("current"),
+    onBackBrowser: (conversationId, tabId) =>
+      runBrowserCommand((browserApi) =>
+        browserApi.back({ conversationId, tabId }),
+      ),
+    onNavigateBrowser: (conversationId, tabId, url) =>
+      runBrowserCommand((browserApi) =>
+        browserApi.navigate({ conversationId, tabId, url }),
+      ),
+    onReloadBrowser: (conversationId, tabId) =>
+      runBrowserCommand((browserApi) =>
+        browserApi.reload({ conversationId, tabId }),
+      ),
+    onStopLoadingBrowser: (conversationId, tabId) =>
+      runBrowserCommand((browserApi) =>
+        browserApi.stopLoading({ conversationId, tabId }),
+      ),
+    onImportArtifacts: async () => {
+      const imported = await window.goodbuddy.artifacts.importFiles(
+        activeProjectId || undefined,
+      );
+      if (imported.length > 0) {
+        setAssistantArtifacts((current) => [...imported, ...current]);
+        setAssistantSidebarTab("results");
+      }
+    },
+    onLoadArtifact: async (artifactId) => {
+      if (assistantArtifactById.get(artifactId)?.content) {
+        return;
+      }
+      const artifact = await window.goodbuddy.artifacts.get(artifactId);
+      setAssistantArtifacts((current) =>
+        mergeArtifacts(current, [artifact]),
+      );
+    },
+    onOpenTask: openAssistantTask,
+    onRespondApproval: (approval, decision) => {
+      void respondToApproval(
+        approval.conversationId,
+        approval.messageId,
+        approval.approvalId,
+        decision,
+      );
+    },
+  });
+  const notesPanelActive = assistantSidebarOpen && magicNotesEnabled;
+  const notesPanel = useMemo(
+    () => (
+      <MagicNotesPanel
+        state={noteDraft}
+        active={notesPanelActive}
+        commentMode={applicationSettings?.magicNoteCommentMode}
+        commentFormat={applicationSettings?.magicNoteCommentFormat}
+        onNotify={notify}
+        onOpenSource={magicNotesActions.onOpenSource}
+        onCancelCapture={magicNotesActions.onCancelNoteCapture}
+        onOpenWorkspace={magicNotesActions.onOpenNoteWorkspace}
+      />
+    ),
+    [
+      applicationSettings?.magicNoteCommentFormat,
+      applicationSettings?.magicNoteCommentMode,
+      magicNotesActions,
+      noteDraft,
+      notesPanelActive,
+    ],
+  );
+  const statsConversationId = statsConversation?.id;
+  const statsDurationMs = executionStats.conversation?.durationMs;
+  const statsIncomplete = (executionStats.conversation?.incompleteRequestCount ?? 0) > 0;
+  const conversationStats = useMemo(
+    () =>
+      statsConversationId && statsDurationMs !== undefined
+        ? {
+            conversationId: statsConversationId,
+            messageCount: statsMessageCount,
+            replyDurationMs: statsDurationMs,
+            incomplete: statsIncomplete,
+          }
+        : undefined,
+    [statsConversationId, statsDurationMs, statsIncomplete, statsMessageCount],
+  );
+  const activeWorkspaceChanges =
+    workspaceChanges?.projectId === activeProjectId
+      ? workspaceChanges.changes
+      : undefined;
+
   return (
     <div className="app-shell" data-frosted-glass={applicationSettings?.transparentFrostedEffectEnabled ? 'true' : undefined}>
       <LiveMessageStoreContext value={liveMessages}>
@@ -6855,14 +7023,8 @@ function App(): React.JSX.Element {
           activityByProjectId={projectActivity.byProjectId}
           recoveryByProjectId={projectRecoveryByProjectId}
           runtimeSettings={runtimeSettings}
-          onArchive={archiveProject}
-          onCreate={createProject}
-          onDelete={deleteProject}
-          onRemoteCommitted={loadCommittedRemoteProject}
+          {...projectSwitcherActions}
           onRetryRecovery={retryProjectRecovery}
-          onSelect={selectProject}
-          onSelectRoot={() => window.goodbuddy.settings.selectWorkspace()}
-          onUpdate={updateProject}
           projects={projects}
           remoteProjectsEnabled={remoteProjectsEnabled}
         />
@@ -7412,7 +7574,7 @@ function App(): React.JSX.Element {
                           <RouteLoadingStatus label={t("route.loading")} />
                         }
                       >
-                        <MagicNotesWorkspace onNotify={notify} applicationSettings={applicationSettings} onBeforeLeave={registerNotesLeaveRequester} navigation={notesNavigation} onOpenSource={openNoteSource} />
+                        <MagicNotesWorkspace onNotify={notify} applicationSettings={applicationSettings} onBeforeLeave={registerNotesLeaveRequester} navigation={notesNavigation} onOpenSource={magicNotesActions.onOpenSource} />
                       </Suspense>
                     </RouteErrorBoundary>
                   </PageShell>
@@ -7442,12 +7604,8 @@ function App(): React.JSX.Element {
                       }
                     >
                       <KnowledgeWorkspace
+                        {...knowledgeWorkspaceActions}
                         externalInstances={externalInstances}
-                        notify={notify}
-                        onExternalChanged={async (snapshot, createdId) => {
-                          await refreshKnowledge(createdId ?? snapshot?.selectedLibraryId ?? knowledgeSnapshot.selectedLibraryId);
-                          if (createdId) setEnabledKnowledgeLibraryIds(current => [...new Set([...current, createdId])]);
-                        }}
                         documents={knowledgeSnapshot.documents}
                         evidence={knowledgeSnapshot.evidence}
                         graphNodes={knowledgeSnapshot.graphNodes}
@@ -7455,308 +7613,6 @@ function App(): React.JSX.Element {
                         libraries={knowledgeSnapshot.libraries}
                         loadError={knowledgeLoadError}
                         loading={knowledgeLoading}
-                        onCreateLibrary={createKnowledgeLibrary}
-                        onCreateEntity={async (input) => {
-                          const libraryId = knowledgeSnapshot.selectedLibraryId;
-                          if (!libraryId) {
-                            throw new Error(t("notices.selectKnowledgeBase"));
-                          }
-                          await runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.createEntity(
-                              libraryId,
-                              input,
-                            ),
-                          );
-                        }}
-                        onCreateRelation={async (input) => {
-                          const libraryId = knowledgeSnapshot.selectedLibraryId;
-                          if (!libraryId) {
-                            throw new Error(t("notices.selectKnowledgeBase"));
-                          }
-                          await runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.createRelation(
-                              libraryId,
-                              input,
-                            ),
-                          );
-                        }}
-                        onDeleteEntity={(entityId) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.deleteEntity(entityId),
-                          )
-                        }
-                        onDeleteLibrary={deleteKnowledgeLibrary}
-                        onReextractGraph={async (libraryId) => {
-                          await runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.reextractGraph(
-                              libraryId,
-                            ),
-                          );
-                          notify({
-                            tone: "success",
-                            message: t("notices.knowledgeGraphRebuilt"),
-                            dedupeKey: `knowledge-graph:${libraryId}`,
-                          });
-                        }}
-                        onUpdateLibrary={async (libraryId, update) => {
-                          await runKnowledgeSourceAction(async () => {
-                            await window.goodbuddy.knowledge.updateLibrary(
-                              libraryId,
-                              update,
-                            );
-                          });
-                          notify({
-                            tone: "success",
-                            message: t("notices.knowledgeSettingsUpdated"),
-                            dedupeKey: `knowledge-library:${libraryId}`,
-                          });
-                        }}
-                        onDeleteRelation={(relationId) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.deleteRelation(
-                              relationId,
-                            ),
-                          )
-                        }
-                        onImportDirectory={(
-                          libraryId,
-                          files,
-                          graphStrategy,
-                        ) => {
-                          void files;
-                          return runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.selectDirectory(
-                              libraryId,
-                              graphStrategy,
-                            ),
-                          );
-                        }}
-                        onImportFiles={(libraryId, files, graphStrategy) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.importDroppedFiles(
-                              libraryId,
-                              files,
-                              graphStrategy,
-                            ),
-                          )
-                        }
-                        onImportUrl={(libraryId, url, graphStrategy) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.importUrl(
-                              libraryId,
-                              url,
-                              graphStrategy,
-                            ),
-                          )
-                        }
-                        onOpenDocumentSource={(libraryId, documentId) =>
-                          window.goodbuddy.knowledge.openDocumentSource({
-                            knowledgeBaseId: libraryId,
-                            documentId,
-                          })
-                        }
-                        onOpenModelSettings={() => {
-                          setSettingsInitialCategory("model");
-                          setView("settings");
-                        }}
-                        onMergeEntities={(sourceId, targetId) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.mergeEntities(
-                              sourceId,
-                              targetId,
-                            ),
-                          )
-                        }
-                        onMoveNode={(nodeId, position) => {
-                          setKnowledgeSnapshot((current) => ({
-                            ...current,
-                            graphNodes: current.graphNodes.map((node) =>
-                              node.id === nodeId
-                                ? { ...node, ...position }
-                                : node,
-                            ),
-                          }));
-                          void window.goodbuddy.knowledge
-                            .moveEntity(nodeId, position)
-                            .catch(() => void refreshSelectedKnowledge());
-                        }}
-                        onOpenEvidence={(evidence) =>
-                          notify({
-                            tone: "info",
-                            message: t("notices.evidenceExcerpt", {
-                              source: `${evidence.documentName}${
-                                evidence.location
-                                  ? ` · ${evidence.location}`
-                                  : ""
-                              }`,
-                              excerpt: evidence.excerpt,
-                            }).slice(0, 500),
-                          })
-                        }
-                        onUseInChat={(libraryId) => {
-                          setEnabledKnowledgeLibraryIds((current) =>
-                            current.includes(libraryId)
-                              ? current
-                              : [...current, libraryId],
-                          );
-                          showChatAndFocusComposer();
-                        }}
-                        onPauseSource={(sourceId) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.pauseSource(sourceId),
-                          )
-                        }
-                        onRemoveSource={(sourceId) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.removeSource(sourceId),
-                          )
-                        }
-                        onRetrieve={(libraryId, query, settings) =>
-                          window.goodbuddy.knowledge.retrieve({
-                            knowledgeBaseId: libraryId,
-                            query,
-                            settings,
-                          })
-                        }
-                        onUpdateKnowledgeSettings={async (
-                          libraryId,
-                          settings,
-                        ) => {
-                          await runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.updateSettings({
-                              knowledgeBaseId: libraryId,
-                              ...settings,
-                            }),
-                          );
-                          notify({
-                            tone: "success",
-                            message: t("notices.knowledgeSettingsUpdated"),
-                            dedupeKey: `knowledge-retrieval-settings:${libraryId}`,
-                          });
-                        }}
-                        onListChunks={({
-                          libraryId,
-                          documentId,
-                          page,
-                          pageSize,
-                          search,
-                        }) =>
-                          window.goodbuddy.knowledge.listChunks({
-                            knowledgeBaseId: libraryId,
-                            documentId,
-                            page,
-                            pageSize,
-                            search,
-                          })
-                        }
-                        onUpdateChunk={(input) =>
-                          window.goodbuddy.knowledge.updateChunk(input)
-                        }
-                        onDeleteChunk={(input) =>
-                          window.goodbuddy.knowledge.deleteChunk(input)
-                        }
-                        onRebuildDocument={(libraryId, documentId) =>
-                          runKnowledgeSourceAction(async () => {
-                            await window.goodbuddy.knowledge.rebuildDocument({
-                              knowledgeBaseId: libraryId,
-                              documentId,
-                            });
-                          })
-                        }
-                        onRebuildLibrary={(libraryId) =>
-                          runKnowledgeSourceAction(async () => {
-                            const result =
-                              await window.goodbuddy.knowledge.rebuildLibrary({
-                                knowledgeBaseId: libraryId,
-                              });
-                            if (result.failed > 0) {
-                              throw new Error(
-                                t("notices.knowledgeRebuildPartial", {
-                                  rebuilt: result.rebuilt,
-                                  failed: result.failed,
-                                }),
-                              );
-                            }
-                            notify({
-                              tone: "success",
-                              message: t("notices.knowledgeRebuildCompleted", {
-                                count: result.rebuilt,
-                              }),
-                              dedupeKey: `knowledge-rebuild:${libraryId}`,
-                            });
-                          })
-                        }
-                        onCancelRebuild={async (libraryId) => {
-                          const cancelled =
-                            await window.goodbuddy.knowledge.cancelRebuild(
-                              libraryId,
-                            );
-                          if (!cancelled) {
-                            throw new Error(
-                              t("notices.knowledgeRebuildNotRunning"),
-                            );
-                          }
-                        }}
-                        onGetEmbeddingIndex={(libraryId) =>
-                          window.goodbuddy.knowledge.getEmbeddingIndex(
-                            libraryId,
-                          )
-                        }
-                        onRebuildEmbeddingIndex={(libraryId) =>
-                          window.goodbuddy.knowledge.rebuildEmbeddingIndex(
-                            libraryId,
-                          )
-                        }
-                        onCancelTask={async (taskId) => {
-                          const cancelled =
-                            await window.goodbuddy.knowledge.cancelTask(taskId);
-                          if (!cancelled) {
-                            throw new Error(
-                              t("notices.knowledgeTaskNotRunning"),
-                            );
-                          }
-                          await refreshSelectedKnowledge();
-                        }}
-                        onOpenReferenceSource={(input) =>
-                          window.goodbuddy.knowledge.openReferenceSource(input)
-                        }
-                        onRetrySource={(sourceId) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.retrySource(sourceId),
-                          )
-                        }
-                        onRetryTask={(taskId) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.retryTask(taskId),
-                          )
-                        }
-                        onRetryLoad={retryKnowledgeLoad}
-                        onSelectLibrary={(libraryId) => {
-                          void refreshKnowledge(libraryId).catch(() => {
-                            // KnowledgeWorkspace renders the recoverable load error.
-                          });
-                        }}
-                        onSyncSource={(sourceId) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.syncSource(sourceId),
-                          )
-                        }
-                        onUpdateEntity={(entityId, update) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.updateEntity(
-                              entityId,
-                              update,
-                            ),
-                          )
-                        }
-                        onUpdateRelation={(relationId, input) =>
-                          runKnowledgeSourceAction(() =>
-                            window.goodbuddy.knowledge.updateRelation(
-                              relationId,
-                              input,
-                            ),
-                          )
-                        }
                         selectedLibraryId={knowledgeSnapshot.selectedLibraryId}
                         sources={knowledgeSnapshot.sources}
                         tasks={knowledgeSnapshot.tasks}
@@ -7794,7 +7650,7 @@ function App(): React.JSX.Element {
                         applicationSettingsLocked={applicationSettingsUnconfirmed}
                         applicationSettingsError={applicationSettingsError}
                         onUpdateApplicationSettings={updateApplicationSettings}
-                        onRetryApplicationSettings={() => void reloadApplicationSettings()}
+                        onRetryApplicationSettings={heartbeatActions.onRetryApplicationSettings}
                         active={view === 'heartbeat'}
                         graphNavigation={supervisionGraphNavigation}
                         onOpenConversation={openActivityConversation}
@@ -7808,11 +7664,11 @@ function App(): React.JSX.Element {
                         onRetryLoad={retryHeartbeatLoad}
                         onRemove={removeHeartbeat}
                         onRunNow={runHeartbeat}
-                        onSetMemoryStatus={setMemoryStatus}
+                        onSetMemoryStatus={heartbeatActions.onSetMemoryStatus}
                         onSetPaused={setHeartbeatPaused}
-                        onSetTaskStatus={setHeartbeatTaskStatus}
+                        onSetTaskStatus={heartbeatActions.onSetTaskStatus}
                         onUpdate={updateHeartbeat}
-                        onUseFollowUpTask={useHeartbeatTask}
+                        onUseFollowUpTask={heartbeatActions.onUseFollowUpTask}
                         projects={projects}
                         runs={heartbeatRuns}
                         tasks={assistantTasks}
@@ -7878,13 +7734,12 @@ function App(): React.JSX.Element {
                 >
                   <Suspense fallback={null}>
                     <SettingsPanel
+                      {...settingsPanelActions}
                       appearanceTheme={appearanceTheme}
                       transparentFrostedEffectEnabled={applicationSettings?.transparentFrostedEffectEnabled ?? true}
                       applicationSettingsPending={applicationSettingsPending}
                       applicationSettingsLocked={applicationSettingsUnconfirmed || !applicationSettings}
                       applicationSettingsError={applicationSettingsError}
-                      onTransparentFrostedEffectEnabledChange={(enabled) => updateApplicationSettings({ transparentFrostedEffectEnabled: enabled })}
-                      onRetryApplicationSettings={() => void reloadApplicationSettings()}
                       brandingFallbackLogo={
                         resolvedAppearanceTheme === "dark"
                           ? goodbuddyDarkIcon
@@ -7899,46 +7754,9 @@ function App(): React.JSX.Element {
                         setConversationHtmlRenderingEnabled
                       }
                       onAppearanceThemeChange={setAppearanceTheme}
-                      onBrandingPreferencesChange={(preferences) => {
-                        if (!saveBrandingPreferences(preferences)) {
-                          return false;
-                        }
-                        setBrandingPreferences(preferences);
-                        notify({
-                          tone: "success",
-                          message: t("notices.brandingSaved"),
-                          dedupeKey: "branding-saved",
-                        });
-                        return true;
-                      }}
-                      onClearLocalData={clearLocalData}
-                      onClose={() => {
-                        commitView(viewRef.current);
-                      }}
-                      onExpertsChanged={(experts) => {
-                        setAssistantExperts(experts);
-                        if (
-                          (selectedExpertId === "team" && experts.length < 2) ||
-                          (selectedExpertId &&
-                            selectedExpertId !== "team" &&
-                            !experts.some(
-                              (expert) => expert.id === selectedExpertId,
-                            ))
-                        ) {
-                          setSelectedExpertId("");
-                        }
-                      }}
-                      onRemoteProjectsEnabledChange={
-                        handleRemoteProjectsEnabledChange
-                      }
                       onNotify={notify}
                       onLeaveRequestReady={registerSettingsLeaveRequester}
-                      onProjectsDeleted={removeProjectsFromUi}
-                      onSaved={(settings) => {
-                        setRuntimeSettings(settings);
-                      }}
                       onShortcutSettingsChanged={handleShortcutSettingsChanged}
-                      onUpdateProject={updateProject}
                       open={settingsOpen}
                       projects={projects}
                     />
@@ -8101,21 +7919,14 @@ function App(): React.JSX.Element {
             )}</ConversationListView>
           )}
           <RightAssistantSidebar
+            {...rightSidebarActions}
             notesEnabled={magicNotesEnabled}
             notesSettingsReady={Boolean(applicationSettings)}
             notesOpenRequest={notesOpenRequest}
-            onBeforeCloseNotes={async () => { if (!await guardNoteDraft()) return false; setNoteDraft(undefined); return true; }}
-            notesPanel={<MagicNotesPanel state={noteDraft} active={assistantSidebarOpen && magicNotesEnabled} commentMode={applicationSettings?.magicNoteCommentMode} commentFormat={applicationSettings?.magicNoteCommentFormat} onNotify={notify} onOpenSource={openNoteSource}
-              onCancelCapture={() => requestAnimationFrame(() => { const trigger = noteCaptureTrigger.current; (trigger?.isConnected && !trigger.closest('[hidden], [inert]') ? trigger : noteTitleMenuRef.current)?.focus(); })}
-              onOpenWorkspace={(noteId, entryId) => requestWorkspaceLeave('magic-notes', () => { setNotesNavigation({ noteId, entryId, requestId: Date.now() }); commitView('magic-notes'); })} />}
+            notesPanel={notesPanel}
             nativeTerminals={nativeTerminals}
             activeConversationId={activeId}
-            conversationStats={statsConversation && executionStats.conversation ? {
-              conversationId: statsConversation.id,
-              messageCount: statsMessageCount,
-              replyDurationMs: executionStats.conversation.durationMs,
-              incomplete: executionStats.conversation.incompleteRequestCount > 0,
-            } : undefined}
+            conversationStats={conversationStats}
             taskDurations={taskDurations}
             approvals={pendingSidebarApprovals}
             artifacts={sidebarArtifacts}
@@ -8124,73 +7935,12 @@ function App(): React.JSX.Element {
             currentProject={activeProject}
             supervisionEnabled={isApplicationEnabled(applicationSettings, 'heartbeat')}
             supervisionLibraries={knowledgeSnapshot.libraries}
-            onOpenSupervisionGraph={(resultId) => {
-              requestWorkspaceLeave('heartbeat', () => {
-                setSupervisionGraphNavigation({ resultId });
-                commitView('heartbeat');
-              });
-            }}
             onOpenSupervisionConversation={openActivityConversation}
-            onContinueSupervision={async (prompt, conversationId) => {
-              await window.goodbuddy.supervision.continue({
-                conversationId,
-                prompt,
-              })
-              openActivityConversation(conversationId)
-            }}
-            onCreateCustomTask={() => openCustomTaskDialog("current")}
             schedules={assistantSchedules}
             selectedTaskId={selectedAssistantTaskId}
             tasks={productAssistantTasks}
             projectNames={projectNames}
-            onBackBrowser={(conversationId, tabId) =>
-              runBrowserCommand((browserApi) =>
-                browserApi.back({ conversationId, tabId }),
-              )
-            }
-            onNavigateBrowser={(conversationId, tabId, url) =>
-              runBrowserCommand((browserApi) =>
-                browserApi.navigate({ conversationId, tabId, url }),
-              )
-            }
-            onReloadBrowser={(conversationId, tabId) =>
-              runBrowserCommand((browserApi) =>
-                browserApi.reload({ conversationId, tabId }),
-              )
-            }
-            onStopLoadingBrowser={(conversationId, tabId) =>
-              runBrowserCommand((browserApi) =>
-                browserApi.stopLoading({ conversationId, tabId }),
-              )
-            }
-            onImportArtifacts={async () => {
-              const imported = await window.goodbuddy.artifacts.importFiles(
-                activeProjectId || undefined,
-              );
-              if (imported.length > 0) {
-                setAssistantArtifacts((current) => [...imported, ...current]);
-                setAssistantSidebarTab("results");
-              }
-            }}
-            onLoadArtifact={async (artifactId) => {
-              if (assistantArtifactById.get(artifactId)?.content) {
-                return;
-              }
-              const artifact = await window.goodbuddy.artifacts.get(artifactId);
-              setAssistantArtifacts((current) =>
-                mergeArtifacts(current, [artifact]),
-              );
-            }}
-            onOpenTask={openAssistantTask}
             onRemoveSchedule={removeAssistantSchedule}
-            onRespondApproval={(approval, decision) => {
-              void respondToApproval(
-                approval.conversationId,
-                approval.messageId,
-                approval.approvalId,
-                decision,
-              );
-            }}
             onRunSchedule={runAssistantSchedule}
             onSetScheduleEnabled={setAssistantScheduleEnabled}
             onListWorkspaceDirectory={listWorkspaceDirectory}
@@ -8202,11 +7952,7 @@ function App(): React.JSX.Element {
             open={assistantSidebarOpen}
             restoreFocusRef={assistantSidebarToggleRef}
             tab={assistantSidebarTab}
-            workspaceChanges={
-              workspaceChanges?.projectId === activeProjectId
-                ? workspaceChanges.changes
-                : undefined
-            }
+            workspaceChanges={activeWorkspaceChanges}
             workspaceProjectId={activeProjectId || undefined}
           />
         </div>

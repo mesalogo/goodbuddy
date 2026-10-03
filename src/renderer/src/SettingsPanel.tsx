@@ -15,7 +15,8 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
-  useState
+  useState,
+  memo
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
@@ -642,7 +643,7 @@ function RuntimeOverviewCard({
   )
 }
 
-export function SettingsPanel({
+function SettingsPanelView({
   open,
   presentation = 'modal',
   initialCategory,
@@ -4309,3 +4310,6 @@ export function SettingsPanel({
   )
   return presentation === 'modal' ? createPortal(panel, document.body) : panel
 }
+
+/** Memoized: App re-renders on chat updates; this view re-renders only when its props change. */
+export const SettingsPanel = memo(SettingsPanelView)
