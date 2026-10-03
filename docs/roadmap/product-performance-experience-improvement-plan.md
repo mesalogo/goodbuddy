@@ -737,6 +737,44 @@ Renderer 主线程降速 4 倍（Main 不降速，每次 reload 后重新应用�
 - **仍在 App：** 未读、展开、菜单、重命名、删除等界面 ID；持久化、历史加载与合并；
   活动会话的更新（含 250 ms 流式吸收）仍重渲染 App。
 
+#### 2026-10-03 PERF-13 进展：Composer、路由边界、任务 store、切换会话
+
+提交 `41be9f8`、`2e3d2e7`、`651475d`、`492f1d2`、`6b634c5`。
+
+- **Composer（`Composer.tsx`，`memo`）：** 输入区页脚（约 930 行 JSX、23 个内联回调）移出 App。
+  草稿读 `composer-draft-store`，会话字段读 `useComposerConversationView`（不含消息数和结果 ID），
+  弹出菜单状态放进 `composer-menu-store.ts`；动作经 `use-composer-actions.ts` 保持同一引用。
+  其他会话更新、当前会话新增消息、别的会话输入都不重渲染 Composer（有测试）。
+- **路由边界：** `KeepAliveRoute` 改为 `memo`，隐藏路由在 App 重渲染时保持上次结果，再次显示时
+  补一次渲染。知识库、设置、监督、笔记、右侧栏、项目切换器改为 `memo`，知识库 26 个回调移到
+  `use-knowledge-workspace-actions.ts`，其余用 `useStableHandlers`；笔记面板元素 `useMemo`。
+- **任务与结果（`task-store.ts` / `task-selectors.ts` / `task-sync.ts`）：** `assistantTasks`、
+  `assistantArtifacts` 移出 App state，`assistantTasksRef` 删除。App 只选取顶层任务状态、活动摘要
+  所需字段和当前会话是否忙碌，子代理进度不再重渲染 App；结果刷新时内容相同的对象保留引用，
+  会话面板自己读结果表。`agent-event-handler.ts` 只改了任务/结果调用。队列状态未迁移：它和发送、
+  恢复、中断流程交织，单独拆风险高于收益。
+- **切换会话：** 面板顺序改为渲染期派生（`usePaneOrder`），Composer 弹窗按上下文键关闭，
+  不再在渲染中 setState，切换一次只渲染 App 一次（测试在旧代码上为 2 次）。标题表在标题不变时
+  保持同一 Map。
+- **规模：** `App.tsx` 9,576 → 7,904 行（含期间合入的监督者改动）；App 内 useState 120→114、
+  useEffect 62→56、useRef 79→73、useCallback 89→83。lint 上限 9,600 → 8,000。
+- **`npm run perf:app` A/B**（改动前为 `b28ddd4` 临时 worktree 构建，与 `6b634c5` 交替各 3 轮，
+  4× 降速，取中位数，括号为 3 轮范围）：
+
+| 场景 | 改动前 | 改动后 |
+| --- | --- | --- |
+| 首次切换会话 延迟 p95 | 525 ms（520–674） | 489 ms（470–607） |
+| 首次切换 Long Tasks 数 / 总时长 | 37 / 3.9 s | 24 / 2.0 s |
+| 缓存切换（warm）延迟 p95 | 254 ms（208–256） | 139 ms（135–149） |
+| 缓存切换 Long Tasks 数 / 总时长 | 21 / 1.7 s | 12 / 0.7 s |
+| 热切换（hot）延迟 p95 | 139 ms | 94 ms（77–154） |
+| 流式 40 KB：Long Tasks 数 / 总时长 / 帧 p95 | 90 / 7.0 s / 208 ms | 49 / 3.1 s / 108 ms |
+| 流式期间输入：延迟 p95 / Long Tasks 总时长 / 帧 p95 | 110 ms / 8.3 s / 233 ms | 53 ms / 3.5 s / 100 ms |
+| 输入（有 300 个会话）延迟 p95 | 11.7 ms | 14.1 ms（12.6–15.9，噪声范围内） |
+
+  流式两个场景的掉帧率仍接近 100%（4× 降速下每帧仍有 Markdown 解析和 250 ms 吸收），但 Long
+  Tasks 减半。不降速一轮 `GB_PERF_CHECK=1`：60 项阈值全部通过。
+
 ### PERF-14 长列表虚拟化
 
 #### 2026-10-03 消息时间线窗口化
