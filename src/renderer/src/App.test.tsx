@@ -14092,6 +14092,7 @@ describe("App", () => {
     expect(
       await screen.findByRole("tab", { name: "工作回顾" }),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "新回顾" }));
     expect(
       screen.getByRole("button", { name: "回顾" }),
     ).toBeInTheDocument();
