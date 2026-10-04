@@ -2,6 +2,48 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.10",
+      "releasedAt": "2026-10-04",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**在一个菜单中切换项目与会话**：左上角统一入口按本地、远程和通道组织项目，可切换当前项目或全部项目范围，并查看活动会话及最近十个会话。悬停可预览，重新进入项目会恢复本次应用会话中最后打开的会话；离开确认和恢复入口保留。",
+            "**单独选择监督模型和会话图谱使用方式**：监督者可从已有文本模型连接中独立选择模型，不必与聊天模型相同。启用监督者后，可在会话中关闭默认开启的 Story Graph 使用开关，限制该会话的图谱工具发现与调用；模型调用仍按所选提供方计费。"
+          ],
+          "fixes": [
+            "**减少大活动历史的加载与保存负担**：活动历史按变化保存、按页读取，界面只保留已加载页面，汇总不再局限于前 5000 个会话。记录仍完整保存在数据库，可继续翻页查看，不以删除历史换取响应速度。",
+            "**减少启动、文档处理与界面更新中的等待**：文档解析、分块和哈希移到 Worker，部分依赖及本地工具环境按需或后台准备，聊天输入区与工作区减少无关刷新。笔记、文件树和知识文档列表只挂载附近内容并保留选择、焦点与滚动位置；未挂载行不支持页内查找，效果因设备和内容而异。",
+            "**改善终端输出和远程事件的呈现节奏**：终端合并短时间内的输出再交给界面，远程事件缩短定时批次等待，并保留 checkpoint 前落库、顺序和回放去重。SSH Unicode 输出与真实模型流已做限定场景验证，不代表所有断线恢复问题均已解决。",
+            "**清理旧 Runtime 缓存并调整工作栏操作**：启动后在后台清理匹配既定命名的旧版本缓存，保留当前布局、会话、日志和配置，跳过符号链接。工作栏分隔间距收窄，滚动箭头避开关闭按钮，输入区明确 DSH 操作并使用就地停止确认，恢复跳到底部的平滑滚动。"
+          ],
+          "notices": [
+            "首次启动升级到 schema 58，迁移活动历史排序并增加分页和启动恢复索引。请先关闭应用，备份完整数据库及相邻 `notes/` 目录；旧客户端无法打开升级后的库，降级需恢复升级前备份。",
+            "为减少磁盘同步等待，高频本地写入使用 SQLite NORMAL，并在后台执行 WAL checkpoint。应用进程崩溃仍保留事务原子性，但断电或系统崩溃可能丢失最近部分本地写入；远程确认、通道投递和任务生命周期写入继续使用 FULL。",
+            "Agent 保持 0.15.3，本轮不发布新的 Agent 包；Electron、Node、OpenCode 和 Continue 的固定版本不变。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Switch projects and conversations from one menu**: The top-left entry groups local, remote, and channel projects, with current-project or all-project scopes, active conversations, and the ten most recent conversations. Hover to preview, and return to a project's last-opened conversation within the current app session; leave confirmations and recovery entries remain available.",
+            "**Choose a separate Supervisor model and conversation graph access**: Supervisor can select an existing text-model connection independently of the chat model. When Supervisor is enabled, each conversation offers a default-on Story Graph switch that can disable graph tool discovery and calls for that conversation; model requests remain billable through the selected provider."
+          ],
+          "fixes": [
+            "**Reduce loading and saving work for large activity histories**: Activity records save incrementally and load in pages, the UI retains only loaded pages, and summaries are no longer limited to the first 5,000 conversations. Complete records remain in the database and can be paged through rather than deleting history to improve responsiveness.",
+            "**Reduce waiting during startup, document processing, and UI updates**: Document parsing, chunking, and hashing run in a Worker, some dependencies and the local tool environment initialize on demand or in the background, and the composer and workspaces avoid unrelated updates. Notes, file trees, and knowledge document lists mount nearby content while preserving selection, focus, and scroll positions; in-page find excludes unmounted rows, and results vary by device and content.",
+            "**Improve terminal output and remote event pacing**: Terminal output is coalesced over short intervals before reaching the UI, and remote event batches wait less before timed flushes while retaining persistence before checkpoints, ordering, and replay deduplication. Bounded real-model stream and SSH Unicode output checks passed; this does not establish that every reconnection issue is resolved.",
+            "**Clean old Runtime caches and refine workbar controls**: Background cleanup after startup removes older caches matching defined naming patterns while retaining current layouts, sessions, logs, and configuration and skipping symbolic links. Narrower dividers leave more room, scroll arrows avoid close buttons, composer controls clarify DSH actions with inline stop confirmation, and jump-to-bottom scrolling is smooth again."
+          ],
+          "notices": [
+            "First launch upgrades to schema 58, migrating activity history ordering and adding paging and startup recovery indexes. Close the app and back up the complete database and adjacent `notes/` directory first; older clients cannot open the upgraded database, so downgrading requires a pre-upgrade backup.",
+            "To reduce disk synchronization waits, frequent local writes use SQLite NORMAL with background WAL checkpoints. Application-process crashes retain transaction atomicity, but power loss or an operating-system crash can lose a recent suffix of local writes; remote acknowledgments, channel delivery, and task lifecycle writes continue to use FULL.",
+            "Agent remains at 0.15.3 with no new Agent package in this release; pinned Electron, Node, OpenCode, and Continue versions are unchanged."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.9",
       "releasedAt": "2026-10-03",
       "notes": {

@@ -345,7 +345,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.3`, paired with the current Desktop release candidate `0.15.9`; formal
+  `0.15.3`, paired with the current Desktop release candidate `0.15.10`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -978,9 +978,22 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.9`; Agent candidate `0.15.3` requires Desktop `0.15.9`, with
+- The current Desktop candidate is `0.15.10`; published Agent `0.15.3` requires Desktop `0.15.9`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.10` unifies project/conversation navigation with ten recent
+  conversations, adds independent Supervisor model selection and a default-on
+  per-conversation Story Graph switch. Indexed activity paging and complete
+  summaries, document Workers, lazy startup, narrower render subscriptions,
+  windowed lists, terminal batching and old Runtime cache cleanup reduce repeated
+  work without promising universal speedups. Schema 58 requires a pre-upgrade
+  database and notes backup. Frequent local writes use NORMAL and can lose a
+  recent suffix on power/system failure; remote acknowledgments, channel delivery
+  and task lifecycle writes retain FULL. Agent stays at 0.15.3. Four real Host
+  model requests and a 1,000-line Unicode SSH terminal check passed; exact-source
+  CI and six native packages remain release gates, and reported remote resume
+  failures are not claimed fixed. See the
+  [preparation record](./docs/development/release-preparation-0.15.10.md).
 - Desktop `0.15.9` adds shared review progress, stories, experiences, and spiral
   graph navigation, with schema 56 backup/rollback requirements and possible
   model costs. Conversation/message windowing, Markdown caching, read-only
