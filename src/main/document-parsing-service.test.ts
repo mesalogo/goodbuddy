@@ -1,9 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { defaultHttpOcrSettings } from '../shared/document-parsing-contracts'
 import {
   defaultDocumentParsingSettings
 } from './document-parsing-settings-store'
 import { DocumentParsingService } from './document-parsing-service'
 import { createImagePptx } from '../../tests/support/pptx-fixture'
+
+afterEach(() => vi.unstubAllGlobals())
 
 function createPdfFixture(...pageTexts: string[]): Buffer {
   const texts = pageTexts.length > 0 ? pageTexts : ['']
@@ -176,6 +179,22 @@ describe('DocumentParsingService', () => {
     } })
     await expect(service.parse('slides.pptx', createImagePptx('Useful native text', 2), 'chat-attachment', controller.signal)).rejects.toThrow('Cancelled PPTX')
     expect(recognize).toHaveBeenCalledOnce()
+  })
+
+  it('reports HTTP PPTX failures with the image location without consulting local OCR', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ errorCode: 500, errorMsg: 'Internal server error', logId: 'pptx-failure' }, { status: 500 })))
+    const { service, modelManager, recognize } = createService({ settings: {
+      ocrProvider: 'paddleocr-vl', httpOcr: { ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test' }
+    } })
+    const bytes = createImagePptx('Useful native slide body')
+    const parsed = await service.parse('slides.pptx', bytes, 'chat-attachment')
+    expect(parsed.content).toContain('Useful native slide body')
+    expect(parsed.warnings).toEqual([
+      'HTTP OCR 未完成，已保留 PPTX 文本内容：幻灯片 1 · 图片 1：HTTP OCR /layout-parsing：HTTP 500；服务错误 500；Internal server error；logId: pptx-failure'
+    ])
+    await expect(service.parse('slides.pptx', bytes, 'knowledge-index')).rejects.toThrow('幻灯片 1 · 图片 1：HTTP OCR /layout-parsing：HTTP 500')
+    expect(modelManager.getStatus).not.toHaveBeenCalled()
+    expect(recognize).not.toHaveBeenCalled()
   })
 
   it('keeps useful PDF text local without invoking OCR', async () => {

@@ -53,11 +53,8 @@ export class HttpDocumentOcr {
       signal: combined,
       redirect: 'error'
     })
-    if (!response.ok) {
-      await response.body?.cancel()
-      throw new Error(`HTTP OCR ${path}：HTTP ${response.status}`)
-    }
-    if (!response.body) throw new Error('HTTP OCR 返回空响应')
+    const httpError = `HTTP OCR ${path}：HTTP ${response.status}`
+    if (!response.body) throw new Error(response.ok ? 'HTTP OCR 返回空响应' : httpError)
     const reader = response.body.getReader()
     const chunks: Uint8Array[] = []
     let size = 0
@@ -66,6 +63,7 @@ export class HttpDocumentOcr {
         const chunk = await reader.read()
         if (chunk.done) break
         size += chunk.value.byteLength
+        if (!response.ok && size > 8192) break
         if (size > maximumResponseBytes) throw new Error('HTTP OCR 响应超过 32 MiB 限制')
         chunks.push(chunk.value)
       }
@@ -74,10 +72,23 @@ export class HttpDocumentOcr {
       reader.releaseLock()
     }
     combined.throwIfAborted()
-    const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-    const envelope = z.object({ errorCode: z.number().optional() }).passthrough().parse(value)
+    const text = Buffer.concat(chunks).toString('utf8')
+    let value: unknown
+    try {
+      value = JSON.parse(text)
+    } catch {
+      throw new Error(response.ok ? 'HTTP OCR 返回无效 JSON' : httpError)
+    }
+    const errorInfo = z.object({ errorCode: z.number().optional(), errorMsg: z.string().optional(), logId: z.string().optional() }).safeParse(value)
+    const envelope = errorInfo.success ? errorInfo.data : {}
+    let detail = envelope.errorMsg ?? ''
+    if (this.apiKey) detail = detail.replaceAll(this.apiKey, '[redacted]')
+    detail = detail.replace(/[\r\n\t]+/gu, ' ').slice(0, 240)
+    const logId = envelope.logId && /^[\w-]{1,80}$/u.test(envelope.logId) ? envelope.logId : undefined
+    const context = `${detail ? `；${detail}` : ''}${logId ? `；logId: ${logId}` : ''}`
+    if (!response.ok) throw new Error(`${httpError}${envelope.errorCode ? `；服务错误 ${envelope.errorCode}` : ''}${context}`)
     if (envelope.errorCode && envelope.errorCode !== 0) {
-      throw new Error(`HTTP OCR ${path}：服务错误 ${envelope.errorCode}；请检查部署模型和所选高级选项`)
+      throw new Error(`HTTP OCR ${path}：服务错误 ${envelope.errorCode}${context}；请检查部署模型和所选高级选项`)
     }
     return value
   }

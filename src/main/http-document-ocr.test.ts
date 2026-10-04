@@ -86,4 +86,20 @@ describe('HTTP document OCR', () => {
     await expect(provider.recognize(Buffer.from('image'), 1, [1], AbortSignal.abort())).rejects.toThrow()
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  it.each([200, 500])('retains structured provider diagnostics for status %s and redacts the configured key', async (status) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      errorCode: 500, errorMsg: 'invalid model settings test-secret', logId: 'probe-log-123'
+    }, { status })))
+    const client = new HttpDocumentOcr({ ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test' }, 'test-secret')
+    await expect(client.recognize(Buffer.from('image'), 1, [1])).rejects.toThrow(
+      `${status === 500 ? 'HTTP 500；服务错误 500' : '服务错误 500'}；invalid model settings [redacted]；logId: probe-log-123`
+    )
+  })
+
+  it('preserves HTTP status for oversized error bodies', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('x'.repeat(9000), { status: 500 })))
+    await expect(new HttpDocumentOcr({ ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test' })
+      .recognize(Buffer.from('image'), 1, [1])).rejects.toThrow('HTTP 500')
+  })
 })

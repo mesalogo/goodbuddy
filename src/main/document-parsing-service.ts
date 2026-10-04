@@ -553,6 +553,7 @@ export class DocumentParsingService {
     let extractedCharacters = native.reduce(
       (total, section) => total + section.content.length, 0
     )
+    let activeLocator: string | undefined
     if (imagePages.length > 0) {
       try {
         const http = settings.ocrProvider === 'paddleocr-vl' ? this.httpProvider(operation) : undefined
@@ -564,6 +565,7 @@ export class DocumentParsingService {
           for (const [index, image] of page.images.entries()) {
             ensureNotAborted(signal)
             const locator = `幻灯片 ${page.pageNumber} · 图片 ${index + 1}`
+            activeLocator = locator
             if (!image.mimeType) {
               throw new Error(`${locator} 的格式暂不支持 OCR：${extname(image.name)}`)
             }
@@ -611,11 +613,12 @@ export class DocumentParsingService {
           purpose === 'knowledge-index' ||
           !native.some((section) => hasUsefulText(section.content))
         ) {
+          if (activeLocator && error instanceof Error) throw new Error(`${activeLocator}：${error.message}`, { cause: error })
           throw error
         }
         return buildPagedDocument(name, native, pages.length, [
-          `本地 OCR 不可用，已保留 PPTX 文本内容：${
-            error instanceof Error ? error.message : '本地 OCR 识别失败'
+          `${settings.ocrProvider === 'paddleocr-vl' ? 'HTTP OCR' : '本地 OCR'} 未完成，已保留 PPTX 文本内容：${activeLocator ? `${activeLocator}：` : ''}${
+            error instanceof Error ? error.message : 'OCR 识别失败'
           }`.slice(0, 500)
         ], '.pptx')
       }
