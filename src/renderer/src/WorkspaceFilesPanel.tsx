@@ -600,9 +600,9 @@ export function WorkspaceFilesPanel({
         <button ref={refreshRef} className="icon-button" type="button" disabled={refreshing} aria-label={t('sidebar.workspace.refreshAriaLabel')} title={t('sidebar.workspace.refresh')} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden="true" /></button>
       </div>
       {activeView === 'files' && root && <div className="workspace-files__toolbar workspace-files__actions">
-        <button className="secondary-button" type="button" disabled={importing} onClick={() => void importFiles()}><Upload size={14} aria-hidden="true" />{t(importing ? 'management.importing' : 'management.importFiles')}</button>
         <span className="workspace-files__destination" title={createTarget || '/'}>{t('management.importTarget', { path: createTarget || '/' })}</span>
         <button className="icon-button" type="button" aria-label={t('management.createFile')} title={`${t('management.createFile')}: ${createTarget || '/'}`} onClick={() => setDialog({ kind: 'createFile', path: createTarget })}><FilePlus size={14} aria-hidden="true" /></button>
+        <button className="icon-button" type="button" disabled={importing} aria-label={t(importing ? 'management.importing' : 'management.importFiles')} title={`${t(importing ? 'management.importing' : 'management.importFiles')}: ${createTarget || '/'}`} onClick={() => void importFiles()}><Upload size={14} aria-hidden="true" /></button>
         <button className="icon-button" type="button" aria-label={t('management.createDirectory')} title={`${t('management.createDirectory')}: ${createTarget || '/'}`} onClick={() => setDialog({ kind: 'createDirectory', path: createTarget })}><FolderPlus size={14} aria-hidden="true" /></button>
       </div>}
       {activeView === 'files' && browsedPath && <nav className="workspace-files__breadcrumbs" aria-label={t('management.path')}>
