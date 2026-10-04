@@ -303,6 +303,11 @@ for (const [relativePath, content] of [["index.html", html], ["en.html", english
     `${relativePath} 常见问题必须使用原生可展开控件`);
   report(!/approval-controlled|受控执行|继续经过审批/.test(content),
     `${relativePath} 不得保留过时的执行审批文案`);
+  report(!/\bExecute\b|Ask\s*(?:模式|保持只读|stays read-only)|mode-pill|mode-row|floating-card--approval/.test(content),
+    `${relativePath} 不得保留工作模式或工具审批的文案与控件`);
+  report(/class="runtime-pill">Continue<\/div>/.test(content) &&
+    /class="composer-actions"><span>Continue<\/span>/.test(content),
+    `${relativePath} 首屏示意应显示 Runtime，不再显示执行模式`);
 }
 
 for (const forbiddenCopy of ["信创", "国产", "统信 UOS", "银河麒麟", "海光", "兆芯", "鲲鹏", "飞腾"]) {

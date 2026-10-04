@@ -182,11 +182,11 @@ Runtime 设置已升级到版本 22。版本 1 至 21 的历史 schema 继续读
 [原生工具合同](../../../src/shared/runtime-customization-contracts.ts)已删除 `tools[*].ask/execute`，
 能力合同也已删除 `availableIn` 模式列表。Runtime 清单生成与
 [清单 UI](../../../src/renderer/src/RuntimeCustomizationSection.tsx)的配套改造由各模块负责。
-[native-terminal-client](../../../src/main/agent/native-terminal-client.ts)生成模式插件和启动权限参数，
-[DS Web 策略](../../../src/main/agent/native-dsh-web-policy.ts)生成 `config.workMode`，
-[DS Web 启动器](../../../src/main/agent/native-dsh-web-client.ts)写入 `goodbuddy-mode.mjs`、`cordis.patch.yml`。
-删除或重生成应用自有启动材料，保留原生历史、用户 profile 和工作区文件。
-Harness 的 `params.mode`、ACP 模式列表和注入提示词属于同一旧概念，不能因字段名不同遗漏；
+[native-terminal-client](../../../src/main/agent/native-terminal-client.ts)已删除模式插件和模式化启动参数，
+[DS Web 策略](../../../src/main/agent/native-dsh-web-policy.ts)与
+[DS Web 启动器](../../../src/main/agent/native-dsh-web-client.ts)也不再生成 `config.workMode` 或加载旧模式插件。
+应用自有启动目录按既有生命周期重建，保留原生历史、用户 profile 和工作区文件。
+Harness 的 `params.mode`、ACP 产品模式列表和注入提示词已一并删除；
 见 [Harness 控制面](../../../src/main/agent/goodbuddy-harness-control-plane.ts)。
 通道 `/ask`、`/execute` 等前缀的行为改造见逻辑设计，历史消息正文不回写。
 
@@ -238,3 +238,5 @@ npx vitest run src/shared src/main/assistant/assistant-database.test.ts src/main
 本次修改文件的 ESLint 与 `git diff --check` 通过；Node 类型检查仍有其他模块的旧字段调用错误，
 本次负责的共享合同、主库与设置文件没有类型诊断。完整应用类型检查仍待并发改造合并后验收。
 这些证据不覆盖用户生产库、Renderer 导入、活动标签清理或真实 Agent Host。
+
+后续集成已通过完整类型检查和构建，详见[进度](./progress.md#最终集成检查)。真实存储 Worker 新增直接从历史迁移链构造 schema 59 的用例，验证三列和已知 JSON 字段删除、内容保留、事件身份、完整性及重开；并修正两个 schema 46 夹具的历史列形状。存储 Worker 与相关迁移回归共 145 项通过，仍不等同于用户生产旧库取样验证。

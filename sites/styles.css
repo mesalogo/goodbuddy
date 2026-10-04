@@ -127,7 +127,6 @@ html {
 }
 
 body {
-  min-width: 320px;
   margin: 0;
   overflow-x: hidden;
   background: var(--surface-canvas);
@@ -855,7 +854,7 @@ p {
   font-size: 8px;
 }
 
-.mode-pill {
+.runtime-pill {
   padding: 4px 8px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-pill);
@@ -1186,9 +1185,9 @@ p {
   font-size: 8px;
 }
 
-.floating-card--approval {
+.floating-card--agents {
   right: -32px;
-  bottom: 58px;
+  bottom: calc(-1 * var(--space-4));
 }
 
 .floating-card--scope {
@@ -1356,7 +1355,6 @@ p {
   margin-bottom: 0;
 }
 
-.mode-row,
 .provider-pills {
   display: flex;
   flex-wrap: wrap;
@@ -1364,7 +1362,6 @@ p {
   margin-top: var(--space-6);
 }
 
-.mode-row span,
 .provider-pills span {
   display: inline-flex;
   align-items: center;
@@ -1376,18 +1373,6 @@ p {
   color: var(--text-secondary);
   font-size: 0.6875rem;
   font-weight: 680;
-}
-
-.mode-row small {
-  color: var(--text-muted);
-  font-size: var(--font-caption);
-  font-weight: 500;
-}
-
-.mode-row .is-accent {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border-default));
-  background: var(--accent-subtle);
-  color: var(--accent);
 }
 
 .download-section {
@@ -1723,7 +1708,7 @@ p {
     transform-origin: center top;
   }
 
-  .floating-card--approval {
+  .floating-card--agents {
     right: -10px;
   }
 
@@ -1792,9 +1777,8 @@ p {
     right: 0;
   }
 
-  .floating-card--approval {
+  .floating-card--agents {
     right: 0;
-    bottom: 34px;
   }
 
   .proof-grid {
@@ -1985,6 +1969,8 @@ p {
 
   .app-layout {
     grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 420px;
   }
 
   .app-sidebar {
@@ -2003,7 +1989,7 @@ p {
   .tool-card strong,
   .tool-card span,
   .app-content-header span,
-  .mode-pill {
+  .runtime-pill {
     font-size: 10px;
   }
 
@@ -2017,9 +2003,9 @@ p {
     right: 2px;
   }
 
-  .floating-card--approval {
+  .floating-card--agents {
     right: 2px;
-    bottom: 18px;
+    bottom: var(--space-2);
   }
 
   .floating-card {
