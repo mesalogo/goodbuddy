@@ -257,6 +257,7 @@ app.whenReady().then(async () => {
     evidence.workspaceLayouts = workspaceLayouts
     evidence.workspaceTriggerHeight = idleTrigger
     await key('Escape')
+    await wait('document.querySelector(".sidebar").inert')
     win.setContentSize(1280, 800)
     await wait('innerWidth === 1280')
     await click('.sidebar-toggle')

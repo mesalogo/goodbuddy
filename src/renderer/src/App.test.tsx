@@ -14216,7 +14216,7 @@ describe("App", () => {
     await waitFor(() =>
       expect(screen.queryByText("监督者加载失败")).not.toBeInTheDocument(),
     );
-    expect(screen.getByRole("button", { name: "回顾" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新回顾" })).toBeInTheDocument();
   });
 
   it('routes Supervisor review feedback through dismissible application notifications across tabs', async () => {
@@ -14225,6 +14225,7 @@ describe("App", () => {
     vi.mocked(api.supervision.run).mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: '监督者' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新回顾' }));
     fireEvent.click(await screen.findByRole('button', { name: '回顾' }));
     const started = await screen.findByText('回顾已开始，可到活动记录查看进度。');
     expect(started.closest('.app-notification')).toHaveAttribute('role', 'status');

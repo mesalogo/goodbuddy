@@ -194,7 +194,6 @@
   min-width: 0;
 }
 .supervisor-workspace__toolbar label,
-.supervisor-workspace__result-navigation label,
 .supervisor-workspace__recap label,
 .supervisor-workspace__detail label {
   display: grid;
@@ -203,7 +202,6 @@
   font-size: var(--font-caption);
 }
 .supervisor-workspace__toolbar select,
-.supervisor-workspace__result-navigation select,
 .supervisor-workspace__recap select,
 .supervisor-workspace__detail input {
   min-height: 32px;
@@ -354,30 +352,26 @@
 }
 .supervisor-workspace__result-navigation {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-3);
-  margin-top: var(--space-6);
-}
-.supervisor-workspace__result-navigation label {
-  flex: 1 1 240px;
-  min-width: 0;
-}
-.supervisor-workspace__result-navigation select {
-  width: 100%;
-  min-width: 0;
-}
-.supervisor-workspace[data-view="graph"] .supervisor-workspace__result-navigation {
-  margin-top: 0;
-}
-.supervisor-workspace[data-view="graph"] .supervisor-workspace__result-navigation label {
-  display: flex;
   align-items: center;
   gap: var(--space-2);
   white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
 }
-.supervisor-workspace[data-view="graph"] .supervisor-workspace__result-navigation select {
+.supervisor-workspace__result-navigation .model-button {
   flex: 1;
+  min-width: 0;
+}
+.supervisor-workspace__history-menu [role="menuitemradio"] > span {
+  flex: 1;
+  min-width: 0;
+}
+.supervisor-workspace__history-menu small {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  font-weight: normal;
 }
 .supervisor-workspace__recap li {
   margin: var(--space-2) 0;
@@ -400,7 +394,7 @@
 /*
  * Wide layouts: the graph row is as tall as the window allows (`--fill-height`, set by useFillHeight with a
  * steady bottom margin), and each column in it scrolls on its own, so long lists never grow the page.
- * With three columns that is the whole layout; with two, the detail wraps below at its natural height.
+ * At medium widths the detail opens inside the graph row; it never grows a second grid row.
  * Single-column layouts keep page scrolling.
  */
 @container supervisor (min-width: 861px) {
@@ -455,12 +449,6 @@
     scrollbar-gutter: stable;
   }
 }
-@container supervisor (min-width: 861px) and (max-width: 1190px) {
-  .supervisor-workspace__graph-layout > .supervisor-workspace__detail {
-    max-height: none;
-    overflow-y: visible;
-  }
-}
 .supervisor-workspace__canvas-heading {
   display: flex;
   justify-content: space-between;
@@ -471,17 +459,9 @@
 }
 .supervisor-workspace__canvas-heading {
   align-items: center;
-}
-.supervisor-workspace__canvas-title {
-  display: grid;
-  gap: 2px;
-  flex: 1 1 240px;
-  min-width: 0;
-}
-.supervisor-workspace__canvas-title span {
-  color: var(--text-muted);
-  font-size: var(--font-caption);
-  overflow-wrap: anywhere;
+  flex: 0 0 auto;
+  font-size: var(--font-body);
+  background: var(--surface-raised);
 }
 .supervisor-workspace__figure {
   position: relative;
@@ -512,38 +492,10 @@
   font-size: var(--font-caption);
   pointer-events: none;
 }
-.supervisor-workspace__map-legend {
-  position: absolute;
-  inset-inline-end: var(--space-3);
-  inset-block-start: var(--space-3);
-  z-index: 1;
-  width: min(300px, calc(100% - 2 * var(--space-3)));
-  max-height: calc(100% - 2 * var(--space-3));
-  overflow: auto;
-  box-sizing: border-box;
-  padding: var(--space-2) var(--space-3) var(--space-3);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-card);
-  color: var(--text-secondary);
-  font-size: var(--font-caption);
-  line-height: 1.6;
-}
-.supervisor-workspace__map-legend-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  color: var(--text-primary);
-}
-.supervisor-workspace__map-legend .supervisor-workspace__legend {
+.inline-help__content .supervisor-workspace__legend {
   padding: var(--space-2) 0;
   border-top: 0;
   gap: var(--space-2) var(--space-3);
-}
-.supervisor-workspace__map-legend p {
-  margin: var(--space-1) 0 0;
 }
 .supervisor-workspace__figure figcaption {
   padding: 0 var(--space-4) var(--space-4);
@@ -947,10 +899,6 @@
   .supervisor-workspace__graph-layout {
     grid-template-columns: 184px minmax(0, 1fr);
   }
-  .supervisor-workspace__detail {
-    grid-column: 1 / -1;
-    border-top: 1px solid var(--border-default);
-  }
   .supervisor-workspace__graph-canvas {
     border-right: 0;
   }
@@ -1212,17 +1160,10 @@
 .story-graph-3d {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   min-width: 0;
-  padding: var(--space-4);
 }
 .story-graph-3d__toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  font-size: var(--font-caption);
+  justify-content: flex-start;
 }
 .story-graph-3d__toolbar > div {
   display: flex;
@@ -1230,18 +1171,20 @@
   gap: var(--space-2);
   min-width: 0;
 }
-.story-graph-3d__views {
-  margin-inline-start: auto;
+.story-graph-3d__breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
   max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .story-graph-3d__viewport {
   position: relative;
   width: 100%;
   aspect-ratio: 760 / 620;
   min-height: 320px;
-  border-radius: var(--radius-control);
   background: var(--surface-raised);
   overflow: hidden;
 }
@@ -1269,7 +1212,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  flex-basis: 100%;
+  flex: 0 1 auto;
 }
 .story-graph-3d__picker {
   display: inline-flex;
@@ -1277,6 +1220,12 @@
   gap: var(--space-1);
   min-width: 0;
   max-width: 100%;
+  min-height: 28px;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-body);
+  font-weight: 400;
+  border-color: var(--border-subtle);
+  background: var(--surface-subtle);
 }
 .story-graph-3d__picker > span {
   overflow: hidden;
@@ -1318,42 +1267,95 @@
 .anchored-menu.story-graph-3d__menu [role="menuitem"] > svg {
   color: var(--accent);
 }
-.story-graph-3d__scale {
-  position: absolute;
-  inset-inline-start: var(--space-2);
-  inset-block-end: var(--space-2);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-control);
-  background: color-mix(in srgb, var(--surface-raised) 85%, transparent);
-  color: var(--text-muted);
-  font-size: var(--font-caption);
-  pointer-events: none;
-}
-.story-graph-3d__legend {
-  position: absolute;
-  inset-inline-end: var(--space-2);
-  inset-block-start: var(--space-2);
-  width: min(280px, calc(100% - 2 * var(--space-2)));
-  max-height: calc(100% - 2 * var(--space-2));
-  overflow: auto;
-  box-sizing: border-box;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-card);
-  font-size: var(--font-caption);
-}
-.story-graph-3d__legend-head {
+
+/* Review context is shared by both result views, independently of new-review inputs. */
+.supervisor-workspace__review-context {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
 }
-.story-graph-3d__legend ul {
+.supervisor-workspace__review-context .supervisor-workspace__result-navigation {
+  margin: 0;
+  flex: 0 1 280px;
+  min-width: 0;
+}
+.supervisor-workspace__review-context > button { flex-shrink: 0; }
+.supervisor-workspace__toolbar {
+  padding: var(--space-3);
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.supervisor-workspace__recap {
   display: grid;
-  gap: var(--space-1);
-  margin: var(--space-1) 0 0;
-  padding-inline-start: 1.1em;
-  color: var(--text-muted);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+  border: 0;
+  border-radius: 0;
+}
+.supervisor-workspace__recap > * { min-width: 0; }
+.supervisor-workspace__recap h3:first-child { margin-top: 0; }
+.supervisor-workspace__recap-sidebar {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-4);
+}
+.supervisor-workspace__recap-sidebar .supervisor-digest {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-4) 0 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0;
+}
+.supervisor-workspace__recap-sidebar .supervisor-digest:first-child { margin: 0; padding: 0; border: 0; }
+.supervisor-workspace__recap-sidebar .supervisor-digest h2 { font-size: var(--font-section-title); }
+.supervisor-workspace__recap-sidebar .supervisor-digest__grid { grid-template-columns: minmax(0, 1fr); }
+@container supervisor (min-width: 861px) {
+  .supervisor-workspace__recap[data-sidebar='true'] { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  .supervisor-workspace__recap-sidebar {
+    border-top: 0;
+    border-left: 1px solid var(--border-subtle);
+    padding: 0 0 0 var(--space-6);
+  }
+}
+.supervisor-workspace__graph-layout { position: relative; }
+.supervisor-workspace__detail-toggle { display: none; }
+@container supervisor (max-width: 1190px) {
+  .supervisor-workspace__detail-toggle { display: inline-flex; }
+  .supervisor-workspace__graph-layout > .supervisor-workspace__detail {
+    display: none;
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 2;
+    width: min(360px, 100%);
+    max-height: 100%;
+    box-sizing: border-box;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-left: 1px solid var(--border-default);
+    box-shadow: var(--shadow-card);
+  }
+  .supervisor-workspace__graph-layout[data-detail-open='true'] > .supervisor-workspace__detail { display: block; }
+}
+.supervisor-workspace__category { display: none; }
+@container supervisor (max-width: 1190px) {
+  .supervisor-workspace__category { display: block; width: 100%; flex-shrink: 0; }
+  .supervisor-workspace__graph-list > .page-tabs { display: none; }
+}
+@container supervisor (max-width: 860px) {
+  .supervisor-workspace__graph-canvas {
+    display: flex;
+    flex-direction: column;
+    height: var(--fill-height, 660px);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .supervisor-workspace__graph-canvas > .supervisor-workspace__figure,
+  .supervisor-workspace__graph-canvas > .story-graph-3d { flex: 1 1 0; min-height: 0; }
+  .supervisor-workspace__graph-canvas .supervisor-workspace__map-scroll { position: absolute; inset: 0; overflow: hidden; }
+  .supervisor-workspace__graph-canvas .supervisor-workspace__map { min-width: 0; height: 100%; max-height: none; }
+  .supervisor-workspace__graph-canvas .story-graph-3d__viewport { flex: 1 1 0; min-height: 0; aspect-ratio: auto; }
+  .supervisor-workspace__graph-layout > .supervisor-workspace__detail { max-height: var(--fill-height, 660px); }
 }

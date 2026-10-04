@@ -107,7 +107,7 @@ export const heartbeat = {
     canvasTitle: '事件与知识', generatedAt: '生成于 {{time}}', canvasNote: '沿外圈逆时针阅读 · 选择节点，查看知识与来源', readingGuide: '如何读图',
     visibleCounts: '画布中 {{events}} 个事件 / {{entities}} 个实体', showAll: '显示全部关联', connections: '图谱关联',
     loadingHint: '正在读取已保存的回顾、事件与来源。', unavailableHint: '请重新打开应用后重试；已保存的回顾仍保留在本机。',
-    selection: '图谱选择', canvas: '故事图谱画布', inspector: '详情与来源',
+    selection: '图谱选择', canvas: '故事图谱画布', inspector: '详情与来源', closeDetails: '关闭详情',
     counts: '{{events}} 个事件 · {{entities}} 个实体', canvasCaption: '事件按时间顺序等距排列，不表示时间间隔。画布每批最多显示 8 个事件和 6 个实体；从列表选择可切换批次并查看完整名称，窄屏可横向滚动画布。实体状态以所选回顾结果为准。',
     legendLabel: '图谱图例', eventImpact: '事件影响', playback: '事件浏览', previousStage: '上一事件', nextStage: '下一事件',
     navigation: '监督者视图', recap: '工作回顾', graph: '故事线图谱', settings: '设置',
@@ -130,14 +130,14 @@ export const heartbeat = {
     },
     graph3d: {
       mode: '图谱视图', modes: { flat: '平铺', spiral: '时间螺旋' },
-      levels: '木片层级', all: '全部', views: '视角', canvas: '时间螺旋。数字键 1、2、3 切换视角，方向键旋转，Esc 返回上一层；工具栏的列表提供同样的内容。',
+      levels: '木片层级', all: '全部', views: '视角', canvas: '时间螺旋。数字键 1、2、3 切换视角，方向键旋转，Esc 返回上一层；层级菜单用于下钻，左侧列表用于选择记录。',
       view: { oblique: '斜俯视', side: '侧视', top: '俯视', free: '自由' },
       staves: '当前层级的故事',
       experiences: '跨故事的经验',
       scale: '一圈 {{turn}} · 共 {{count}} 圈',
       legendTitle: '图例', legendClose: '关闭图例',
       legendItems: {
-        time: '高度为时间，{{scale}}。',
+        time: '高度为时间，{{scale}}。彩色线段只表示事件的实际起止区间，颜色对应主故事；空档为灰线，仅有时间点的事件显示为圆点。重叠区间显示较晚开始的事件，未归属事件用中性色标记。',
         radius: '半径比较本次回顾内每小时的用户与助手消息数。密度相同则半径相同，无消息记录时取最小半径，不代表投入时长或工作效率。',
         stave: '木片上下跨度为故事的起止时间。',
         experience: '桶外菱形是经验，弧线从形成它的木片连到后来用上它的木片。'

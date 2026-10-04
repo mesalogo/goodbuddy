@@ -4,7 +4,41 @@
 
 当前记录以已验证生产行为为准。监督者尚未覆盖全部 user stories。
 
+## 2026-10-04 螺旋工具栏与事件颜色修正
+
+接续未提交的回顾布局调整。平铺与螺旋共用标题工具栏样式，项目层级菜单放在面包屑旁，画布内的视角入口和左下角圈数说明已移除。默认斜俯视，拖动及键盘操作保留；两种图谱均以共享 InlineHelp 的 i 图标打开图例。共用历史回顾栏、下钻返回、详情选择与中窄窗口详情面板保留。当前规则见 [UI 设计](./ui-design.md#故事线图谱)。
+
+颜色缺失的直接原因是 `StoryGraph3D` 将整条螺旋创建为一个 muted 材质的管状网格；`buildStoryTree` 只保留事件起点，丢弃结束时间，也未保留事件的主故事 ID。现在模型保留实际区间与精确成员归属，渲染在同一网格上按区间切换材质，事件点和短横按主故事配色。Three.js 默认的弧长参数化会移动时间边界，因此该曲线明确按时间采样位置与切线；区间规则及重叠处理见 [3D 概念](../story-graph/3d-concept.md#时间事件与故事)。主题变化重新读取令牌，不重置相机。
+
+验证结果：
+
+- `npx vitest run src/renderer/src/story-graph-3d-model.test.ts src/renderer/src/SupervisorWorkspace.test.tsx src/renderer/src/InlineHelp.test.tsx src/renderer/src/AnchoredMenu.test.tsx src/renderer/src/HeartbeatCenter.test.tsx`：98 项通过。覆盖历史 ID、空成员、真实起止、点事件、空档、重叠与裁剪、半径、选择和浮层键盘行为。
+- `npx vitest run src/renderer/src/App.test.tsx -t "routes Supervisor review feedback|shows retryable page-local Supervisor errors|graph navigation opens the pinned"`：3 项通过，其余 345 项按名称未运行。
+- `tests/supervisor-layout.electron.test.ts` 的默认平铺分支和 `GOODBUDDY_SUPERVISOR_SPIRAL=1` 分支通过。螺旋使用两个故事的确定性区间 fixture，测量实际 TubeGeometry 顶点环和材质组，断言彩色面没有覆盖空档、主故事与木片颜色一致、主题切换更新 WebGL 材质；另检查两层布局、平铺与螺旋字体一致、原生拖动和 Space/Escape、层级菜单键盘、根返回、历史切换及详情选择。
+- 只读复用已有临时 `spiral-portable.sqlite`，通过生产 Store 与图谱查询读取历史结果。1440px 浅深主题、1024px 浅色、390px 浅深主题均保留 21 个事件，其中 17 个当前有主故事、4 个未归属。该结果全部为时间点，没有可着色的非零事件区间，因此真实数据验证的是彩色点及中性未归属点，不宣称真实历史有彩色持续时段。测试 API 返回空成员后仍显示 21 个事件。单螺旋实际为 2,801 个顶点环，半径约 78～152，根场景全部顶点在视口内，无页面横向溢出或 Renderer 错误。数值报告位于系统临时 `opencode/supervisor-refinements/portable-measurements.json`。
+- `npm run typecheck`、`npm run lint`、`git diff --check` 通过。中文文档扫描及人工复核只处理本轮段落，保留数据口径和未实现边界说明。
+
+一次初测的控件边界断言失败，未改变产品代码的复跑通过；后续尺寸切换先等待实际视口达到目标宽高，再测布局。最终断言保留。所有 Electron 运行关闭截图，模型调用为 0；没有修改原用户库或备份、打包、全量测试、提交或推送。此次变更仅影响桌面展示和测试，Agent 与远程 Runtime 路径不受影响。
+
+## 2026-10-04 回顾与图谱布局统一
+
+本节保留此前验证记录；视角入口、图例及事件着色以本页上一节和当前 UI 设计为准。
+
+工作回顾与图谱共用页签下方的回顾栏，新回顾表单按需展开。回顾正文使用主次两栏，辅助内容为空时恢复全宽；图谱保留独立层级面包屑、共享模式切换、画布角落的视角菜单及图例。中窄工作区的详情改为图谱内按需打开的非模态面板。尺寸、键盘和范围显示规则见 [UI 设计](./ui-design.md#应用入口)与[图谱布局](./ui-design.md#故事线图谱)。本轮接续此前未提交的历史选择移动，将“历史选择替代全部面包屑”改为上述共用栏，并保留原有下钻与历史切换回归。
+
+验证结果：
+
+- `npx vitest run src/renderer/src/AnchoredMenu.test.tsx src/renderer/src/SupervisorWorkspace.test.tsx src/renderer/src/HeartbeatCenter.test.tsx src/renderer/src/story-graph-3d-model.test.ts src/renderer/src/supervision-story-digest.test.ts`：96 项通过，覆盖默认最新、显式导航优先、迟到响应、新回顾草稿、摘要展开、故事与经验选择及视角菜单键盘操作。
+- `npx vitest run src/renderer/src/App.test.tsx -t "routes Supervisor review feedback|shows retryable page-local Supervisor errors|graph navigation opens the pinned"`：3 项通过，其他 345 项未运行。通知、后台执行和固定结果导航保留。
+- `tests/supervisor-layout.electron.test.ts` 的默认布局、`GOODBUDDY_SUPERVISOR_RECAP=1`、`GOODBUDDY_SUPERVISOR_SPIRAL=1`、`GOODBUDDY_SUPERVISOR_CONTENT_LAYOUT=1` 分别通过。内容分支检查 40 个场景／宽度／主题组合，增加实际 2:1 列宽与窄屏顺序断言；螺旋分支检查共用栏跨页签位置、单一历史选择、层级返回、视角键盘、中宽详情开关及短窗口高度。默认分支还约束实际工作区宽度至 800～1191px，验证容器响应。测试窗口加入仓库既有的 `CalculateNativeWinOcclusion` 禁用设置，修正窗口被遮挡时的动画帧等待超时。
+- 只读复用临时 `spiral-portable.sqlite`，没有重新读取或修改在线用户库。真实历史结果仍有 21 个事件，1440px 浅深主题、1024px 浅色、390px 浅深主题全部通过；所有根场景顶点在视口内，页面无横向溢出。额外将测试 API 成员响应置空后，21 个事件仍保留。几何测量保存于系统临时 `opencode/supervisor-redesign-final/portable-measurements.json`，连续螺旋采样点仍为 1,401 个，半径范围仍为 78～152。
+- `npm run typecheck`、修改文件的定向 ESLint、`git diff --check` 通过。中文 UI 文档扫描无阻断项；复核提示中涉及范围与未实现边界的原有说明保留。
+
+本轮只修改桌面 UI、组件测试、Electron 布局检查及设计文档。保留工作区其他并行修改，包括布局 fixture 的通知消息记录。所有 Electron 运行使用 `GOODBUDDY_SUPERVISOR_NO_SCREENSHOT=1`，不输出截图。没有真实模型调用、数据库或设置写入、全量测试、打包、提交或推送。平铺图仍保留 660px 最小高度，短窗口可纵向滚动；螺旋单独使用 320px 最小高度。390px 平铺标签随画布缩小，完整名称和选择入口保留在列表中。
+
 ## 2026-10-04 历史螺旋缺失事件与工具栏
+
+以下保留本轮布局调整前的验证记录；历史入口和视角的当前规则以上节及其 UI 设计链接为准。
 
 读取仓库便携版 `data/assistant.sqlite`，用只读连接及 SQLite online backup 保存到系统临时 `opencode` 目录，后续查询只读备份。报告对应结果 `b1ec5e99-5a72-444b-8c2b-1c4eb4c50960`：本地时间 9 月 28 日 09:48:58 生成，区间 9 月 21 日 09:43:13 至 9 月 28 日 09:43:13，21 个事件、16 个实体。21 个事件均未被 supersede；36 条来源都有 source key、revision 和项目 locator。按同 source key、revision 及片段范围相交检查，没有其他当前事件替代这批来源，排除本例的 ID 过期猜测。
 

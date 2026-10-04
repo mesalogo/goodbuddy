@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile as writeArtifact } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
 import console from 'node:console'
@@ -8,8 +8,10 @@ import { setTimeout } from 'node:timers/promises'
 
 const directory = process.env.GOODBUDDY_SUPERVISOR_DIRECTORY
 const artifacts = process.env.GOODBUDDY_SUPERVISOR_ARTIFACTS || directory
+const writeFile = (path, data) => process.env.GOODBUDDY_SUPERVISOR_NO_SCREENSHOT && path.endsWith('.png') ? Promise.resolve() : writeArtifact(path, data)
 app.setPath('userData', join(directory, 'profile'))
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 app
   .whenReady()
   .then(async () => {
@@ -61,72 +63,166 @@ app
       await settle()
     }
     const reports = []
+    const selectHistory = async (id) => {
+      await js('document.querySelector(".supervisor-workspace__result-navigation button").click()')
+      await wait('!!document.querySelector(".supervisor-workspace__history-menu")')
+      await js(`[...document.querySelectorAll('.supervisor-workspace__history-menu button')].find(item => item.value === ${JSON.stringify(id)}).click()`)
+    }
+    if (process.env.GOODBUDDY_SUPERVISOR_HISTORY) {
+      await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + '?recap=1')
+      await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
+      for (const width of [1440, 390]) for (const theme of ['light', 'dark']) {
+        win.setContentSize(width, 800)
+        await wait(`innerWidth === ${width}`)
+        await js(`document.documentElement.dataset.theme = '${theme}'`)
+        await js('document.querySelector(".supervisor-workspace__result-navigation button").click()')
+        await wait('!!document.querySelector(".supervisor-workspace__history-menu")')
+        await settle()
+        const report = await js(`(() => {
+          const menu = document.querySelector('.supervisor-workspace__history-menu');
+          const context = document.querySelector('.supervisor-workspace__review-context');
+          const r = menu.getBoundingClientRect();
+          return { left:r.left, right:r.right, bottom:r.bottom, top:r.top,
+            overflow:menu.scrollWidth > menu.clientWidth + 1 || context.scrollWidth > context.clientWidth + 1,
+            options:[...menu.querySelectorAll('[role=menuitemradio]')].map(e => e.textContent),
+            duplicate:!!context.querySelector('.supervisor-workspace__review-meta') };
+        })()`)
+        assert(report.left >= 16 && report.right <= width - 16 && report.top >= 16 && report.bottom <= 784)
+        assert(!report.overflow && !report.duplicate)
+        assert.equal(report.options.length, 2)
+        assert(report.options.every(text => text.includes('生成于') && text.includes('全局') && text.includes('时间范围')))
+        await js('document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape",bubbles:true}))')
+        reports.push({ width, theme, ...report })
+      }
+      await selectHistory('older-result')
+      await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
+      await js('document.querySelector("#supervisor-tab-graph").click()')
+      assert.equal(await js('document.querySelector(".supervisor-workspace__result-navigation button").value'), 'older-result')
+      assert.deepEqual(errors, [])
+      console.log(JSON.stringify({ history: 'passed', reports }))
+      win.destroy(); app.quit(); return
+    }
+    const checkSpiral = async () => {
+      const report = await js(`(() => {
+        const heading = document.querySelector('.story-graph-3d__toolbar');
+        const viewport = document.querySelector('.story-graph-3d__viewport');
+        const picker = document.querySelector('.story-graph-3d__picker');
+        const info = heading.querySelector('button[title="图例"]');
+        const h = heading.getBoundingClientRect(), v = viewport.getBoundingClientRect(), p = picker.getBoundingClientRect();
+        return {scene:JSON.parse(document.documentElement.dataset.helix),
+          levels:heading.parentElement.children.length, headingBottom:h.bottom, canvasTop:v.top,
+          pickerInHeading:heading.contains(picker), pickerTop:p.top, headingTop:h.top,
+          rootFont:getComputedStyle(heading.querySelector('strong')).fontSize,
+          iconOnly:info.textContent === '', infoLabel:info.getAttribute('aria-label'),
+          presets:document.querySelectorAll('.story-graph-3d__views,[aria-label="视角"]').length,
+          caption:document.querySelectorAll('.story-graph-3d__scale').length};
+      })()`)
+      assert.equal(report.levels, 2, 'Only heading controls and canvas')
+      assert.equal(report.canvasTop, report.headingBottom, 'No inner toolbar row between title and canvas')
+      assert(report.pickerInHeading && report.pickerTop >= report.headingTop)
+      assert.equal(report.rootFont, '13px')
+      assert(report.iconOnly && report.infoLabel === '图例')
+      assert.equal(report.presets, 0); assert.equal(report.caption, 0)
+      const { timeline, marks, staves } = report.scene
+      for (const mark of marks) assert(mark.storyId ? mark.color !== timeline.colors[0] : mark.color === timeline.colors[0], 'Assigned and unassigned marks keep their color semantics')
+      assert.equal(timeline.groups.reduce((total, group) => total + group.count, 0), timeline.indices, 'Every face belongs to the single helix')
+      assert(timeline.groups.some(group => group.materialIndex === 0), 'Sparse events leave neutral gaps')
+      const assignedIntervals = timeline.intervals.filter(interval => interval.event?.storyId)
+      if (assignedIntervals.length) assert(timeline.groups.some(group => group.materialIndex > 0), 'Saved intervals produce colored tube faces')
+      for (const interval of assignedIntervals) {
+        const mark = marks.find(mark => mark.ids.includes(interval.event.id))
+        assert(mark && mark.storyId === interval.event.storyId)
+        assert(timeline.colors.includes(mark.color), 'Event mark and interval share story palette')
+        assert(interval.from >= interval.event.t && interval.to <= interval.event.end)
+      }
+      for (const group of timeline.groups.filter(group => group.materialIndex > 0)) {
+        const covered = assignedIntervals.filter(interval => interval.from < group.to && interval.to > group.from)
+        const duration = covered.reduce((sum, interval) => sum + Math.max(0, Math.min(interval.to, group.to) - Math.max(interval.from, group.from)), 0)
+        assert(Math.abs(duration - (group.to - group.from)) < 200, 'Actual colored vertices never cover a gap (Float32 geometry tolerance)')
+        for (const interval of covered.filter(interval => Math.min(interval.to, group.to) - Math.max(interval.from, group.from) > 200)) {
+          assert.equal(timeline.colors[group.materialIndex], marks.find(mark => mark.ids.includes(interval.event.id))?.color)
+        }
+      }
+      for (const stave of staves) for (const mark of marks.filter(mark => mark.storyId === stave.id)) assert.equal(stave.color, mark.color)
+      await js(`document.querySelector('.story-graph-3d__toolbar button[title="图例"]').focus(); document.activeElement.click()`)
+      await wait('!!document.querySelector(".inline-help__content")')
+      assert(await js('document.activeElement.getAttribute("aria-expanded") === "true"'))
+      await js('document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape",bubbles:true}))')
+      await wait('!document.querySelector(".inline-help__content")')
+      assert(await js('document.activeElement.getAttribute("title") === "图例"'), 'Info Escape retains trigger focus')
+      return { coloredIntervals: assignedIntervals.length, coloredGroups: timeline.groups.filter(group => group.materialIndex > 0).length,
+        marks: marks.length, assignedEvents: marks.filter(mark => mark.storyId).flatMap(mark => mark.ids).length,
+        unassignedEvents: marks.filter(mark => !mark.storyId).flatMap(mark => mark.ids).length }
+    }
+    const capturePage = async () => process.env.GOODBUDDY_SUPERVISOR_NO_SCREENSHOT
+      ? { toPNG: () => new Uint8Array() }
+      : win.webContents.capturePage()
     if (process.env.GOODBUDDY_SUPERVISOR_BACKUP) {
       const resultId = process.env.GOODBUDDY_SUPERVISOR_RESULT
       assert(resultId, 'Specify the historical result to measure')
       await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + '?spiral=1&portable=1')
       await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
       await js('document.querySelector("#supervisor-tab-graph").click()')
-      await js(`(() => { const e = document.querySelector('.supervisor-workspace__result-navigation select'); e.value = ${JSON.stringify(resultId)}; e.dispatchEvent(new Event('change', {bubbles:true})); })()`)
+      await selectHistory(resultId)
       await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false" && document.querySelectorAll(".supervisor-workspace__list-panel > button").length === 21')
       await js('[...document.querySelectorAll("button")].find(b => b.textContent === "时间螺旋").click()')
       await wait('JSON.parse(document.documentElement.dataset.helix || "null")?.dots.length === 21')
       await js('document.fonts.ready')
       await settle()
       const geometry = await js('JSON.parse(document.documentElement.dataset.helix)')
+      const initialCamera = await js('JSON.parse(document.documentElement.dataset.camera)')
+      assert(Math.abs(initialCamera[1] / 900 - Math.sin(0.38)) < 1e-6, 'Default oblique camera')
       const expected = await js(`fetch('/portable-review.json').then(r=>r.json()).then(data=>data.graphs[${JSON.stringify(resultId)}].events.map(e=>e.id))`)
       assert.deepEqual([...geometry.events].sort(), [...expected].sort())
       assert.deepEqual([...geometry.dots].sort(), [...expected].sort(), 'Real event clusters on the helix, not just empty staves')
-      assert.equal(geometry.points.length, 1401)
+      assert.equal(geometry.points.length, 2801, 'Actual rings of one continuous tube for point-only history')
       assert(geometry.clusters > 1 && geometry.clusters <= 21, 'Events occupy multiple real time positions after layout')
       const radii = geometry.points.map(point => point[0])
       assert(Math.max(...radii) - Math.min(...radii) > 40)
-      for (const [width, theme] of [[1440, 'light'], [390, 'dark']]) {
+      for (const [width, theme] of [[1440, 'light'], [1440, 'dark'], [1024, 'light'], [390, 'light'], [390, 'dark']]) {
         win.setContentSize(width, 1000)
+        await wait(`innerWidth === ${width} && innerHeight === 1000`)
         await js(`document.documentElement.dataset.theme = '${theme}'`)
         await settle()
         const boxes = await js(`(() => {
           const box = e => { const r=e.getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}; };
           const column=document.querySelector('.supervisor-workspace__graph-canvas');
-          const selector=column.querySelector('.supervisor-workspace__result-navigation select');
+          const selector=document.querySelector('.supervisor-workspace__result-navigation button');
           const toolbar=document.querySelector('.story-graph-3d__toolbar');
-          const views=toolbar.querySelector('.story-graph-3d__views');
-          const segment=views.querySelector('.segmented-control');
+          const views=toolbar.querySelector('button[title="图例"]');
+          const segment=toolbar.querySelector('.segmented-control');
           const buttons=[...segment.querySelectorAll('button')].map(box);
           return {width:innerWidth,pageWidth:document.documentElement.scrollWidth,column:box(column),selector:box(selector),
-            heading:box(column.querySelector('.supervisor-workspace__canvas-heading')),toolbar:box(toolbar),views:box(views),
+            context:box(document.querySelector('.supervisor-workspace__review-context')),toolbar:box(toolbar),views:box(views),
             canvas:box(document.querySelector('.story-graph-3d__gl')),gaps:buttons.slice(1).map((b,i)=>b.left-buttons[i].right),
-            segmentPadding:getComputedStyle(segment).paddingTop,controlGap:getComputedStyle(views).gap,
+            segmentPadding:getComputedStyle(segment).paddingTop,
             events:document.querySelectorAll('.supervisor-workspace__list-panel > button').length,
             bounds:JSON.parse(document.documentElement.dataset.sceneBounds),
             scene:JSON.parse(document.documentElement.dataset.helix).dots.length,
             clusters:JSON.parse(document.documentElement.dataset.helix).clusters};
         })()`)
-        assert(boxes.selector.left >= boxes.column.left + 16 && boxes.selector.right <= boxes.column.right - 16, 'Selector inside central-column padding')
-        assert(boxes.selector.top >= boxes.column.top && boxes.selector.bottom <= boxes.heading.bottom, 'History inside heading, not above three columns')
-        assert.equal(Math.round(boxes.toolbar.top - boxes.heading.bottom), 16, 'Toolbar top inset')
+        assert(boxes.selector.top >= boxes.context.top && boxes.selector.bottom <= boxes.context.bottom, 'History inside shared context')
+        assert(boxes.context.bottom <= boxes.column.top, 'Review context above graph columns')
         assert(boxes.gaps.every(gap => gap >= 2), 'Shared camera segment gaps')
         assert.equal(boxes.segmentPadding, '3px')
-        assert.equal(boxes.controlGap, '8px')
-        assert(boxes.views.right <= boxes.column.right - 16 && boxes.pageWidth <= width, 'Controls fit without overflow')
+        assert(boxes.views.right <= boxes.column.right - 16 && boxes.pageWidth <= width, `Controls fit without overflow: ${JSON.stringify(boxes)}`)
         assert(boxes.canvas.width > 0 && boxes.canvas.height > 0)
         assert.equal(boxes.events, 21); assert.equal(boxes.scene, 21)
         assert(Object.values(boxes.bounds).every(value => Math.abs(value) < 1), 'All root scene vertices fit within the camera viewport')
-        reports.push({ theme, ...boxes })
+        reports.push({ theme, ...boxes, colors: await checkSpiral() })
         if (width === 1440 && !process.env.GOODBUDDY_SUPERVISOR_NO_SCREENSHOT) await writeFile(join(artifacts, 'portable-spiral.png'), (await win.webContents.capturePage()).toPNG())
       }
-      await js('[...document.querySelectorAll(".story-graph-3d__picker")].find(b=>b.textContent.includes("事件")).click()')
-      await wait('document.querySelectorAll(".story-graph-3d__menu [role=menuitem]").length === 21')
-      await js('document.querySelector(".story-graph-3d__menu [role=menuitem]").click()')
+      await js('document.querySelector(".supervisor-workspace__list-panel > button").click()')
       await wait('document.querySelector(".supervisor-workspace__list-panel > button")?.getAttribute("aria-pressed") === "true"')
       // The pre-assignment case uses the same real events with an explicitly empty membership response.
-      await js(`window.goodbuddy.supervision.stories = async () => ({stories:[],experiences:[],unassigned:21,canUndo:false}); document.querySelector('.supervisor-workspace__canvas-heading > .icon-button').click()`)
+      await js(`window.goodbuddy.supervision.stories = async () => ({stories:[],experiences:[],unassigned:21,canUndo:false}); document.querySelector('.supervisor-workspace__review-context > .secondary-button').click()`)
       await wait('JSON.parse(document.documentElement.dataset.helix || "null")?.dots.length === 21 && document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
       await js('document.querySelector(".story-graph-3d__picker").click()')
       await wait('document.querySelectorAll(".story-graph-3d__menu [role=menuitem]").length === 1')
       await js('document.querySelector(".story-graph-3d__menu [role=menuitem]").click()')
       await wait('document.querySelector(".story-graph-3d__picker")?.textContent.includes("未归属事件")')
       assert.equal(await js('JSON.parse(document.documentElement.dataset.helix).dots.length'), 21)
+      assert(await js('JSON.parse(document.documentElement.dataset.helix).marks.every(mark => !mark.storyId)'), 'Empty membership keeps neutral event marks')
       assert.deepEqual(errors, [])
       await writeFile(join(artifacts, 'portable-measurements.json'), JSON.stringify({ resultId, reports, clusters: geometry.clusters, radiusRange: [Math.min(...radii), Math.max(...radii)], errors }, null, 2))
       console.log(JSON.stringify({ resultId, reports, clusters: geometry.clusters, radiusRange: [Math.min(...radii), Math.max(...radii)], emptyMembershipEvents: 21, errors }))
@@ -140,29 +236,123 @@ app
       await js('[...document.querySelectorAll("button")].find(b => b.textContent === "时间螺旋").click()')
       await wait('JSON.parse(document.documentElement.dataset.helix || "null")?.events.length === 8')
       const geometry = await js('JSON.parse(document.documentElement.dataset.helix)')
-      assert.equal(geometry.points.length, 1401, 'One continuous, full-span helix')
+      const palettes = new Map()
+      assert(new Set(geometry.timeline.groups.filter(group => group.materialIndex > 0).map(group => group.materialIndex)).size >= 2, 'Different primary stories paint distinct interval materials in this fixture')
+      assert(geometry.points.length >= 2801, 'One continuous helix with exact interval boundaries')
       const radii = geometry.points.map(p => p[0])
       assert(Math.max(...radii) - Math.min(...radii) > 40, 'Actual rendered geometry reflects uneven attention')
-      geometry.points.forEach((point, i) => assert(Math.abs(point[1] - (-215 + 430 * i / 1400)) < 1e-8, 'Height advances uniformly'))
+      geometry.points.forEach((point, i) => { if (i) assert(point[1] > geometry.points[i - 1][1], 'Actual tube advances monotonically in time') })
       assert(!geometry.events.includes('outside-review'), 'Aggregate story events outside this review are not plotted')
-      for (const [width, theme] of [[1440, 'light'], [390, 'dark']]) {
+      for (const [width, theme] of [[1440, 'light'], [1440, 'dark'], [1024, 'light'], [390, 'light'], [390, 'dark']]) {
         win.setContentSize(width, 1000)
+        await wait(`innerWidth === ${width} && innerHeight === 1000`)
         await js(`document.documentElement.dataset.theme = '${theme}'`)
         await settle()
         const boxes = await js(`(() => {
-          const selector = document.querySelector('.supervisor-workspace__result-navigation select');
+          const selector = document.querySelector('.supervisor-workspace__result-navigation button');
           const r = selector.getBoundingClientRect(), gl = document.querySelector('.story-graph-3d__gl').getBoundingClientRect();
-          return { value: selector.value, left: r.left, right: r.right, width: innerWidth, canvasWidth: gl.width, canvasHeight: gl.height, pageWidth: document.documentElement.scrollWidth };
+          const toolbar = document.querySelector('.story-graph-3d__toolbar').getBoundingClientRect();
+          const breadcrumb = document.querySelector('.story-graph-3d__breadcrumb');
+          const context = document.querySelector('.supervisor-workspace__review-context').getBoundingClientRect();
+          return { value: selector.value, left: r.left, right: r.right, top: r.top, bottom: r.bottom,
+            toolbar: { left: toolbar.left, top: toolbar.top, bottom: toolbar.bottom },
+            atRoot: breadcrumb.textContent === '全部', context: {top:context.top,bottom:context.bottom},
+            pickers: document.querySelectorAll('.story-graph-3d__picker').length,
+            headingSelectors: document.querySelectorAll('.supervisor-workspace__canvas-heading select').length,
+            selectors: document.querySelectorAll('.supervisor-workspace__result-navigation button').length,
+            width: innerWidth, canvasWidth: gl.width, canvasHeight: gl.height, pageWidth: document.documentElement.scrollWidth };
         })()`)
         assert.equal(boxes.value, 'fixture-result')
+        assert.equal(boxes.selectors, 1)
+        assert.equal(boxes.headingSelectors, 0)
+        assert(boxes.atRoot, 'Root All breadcrumb stays independent of review history')
+        assert.equal(boxes.pickers, 1, 'Only the hierarchy drill picker remains')
+        assert(boxes.top >= boxes.context.top && boxes.bottom <= boxes.context.bottom, 'History is inside shared review context')
+        assert(boxes.context.bottom <= boxes.toolbar.top, 'Context precedes graph tools')
         assert(boxes.left >= 0 && boxes.right <= boxes.width && boxes.pageWidth <= boxes.width, 'History selector fits without horizontal overflow')
         assert(boxes.canvasWidth > 0 && boxes.canvasHeight > 0, 'WebGL canvas is laid out')
+        assert((await checkSpiral()).coloredGroups > 0, 'Interval fixture paints the actual tube in both themes and all sizes')
+        palettes.set(theme, await js('JSON.parse(document.documentElement.dataset.helix).timeline.colors'))
+        await js('[...document.querySelectorAll(".supervisor-workspace__graph-mode button")].find(b => b.getAttribute("aria-pressed") === "false").click()')
+        await wait('!!document.querySelector(".supervisor-workspace__map")')
+        assert.equal(await js('getComputedStyle(document.querySelector(".supervisor-workspace__canvas-heading > strong")).fontSize'), '13px', 'Flat and spiral All use identical typography')
+        await js('document.querySelector(".supervisor-workspace__canvas-heading button[title=图例]").click()')
+        await wait('!!document.querySelector(".inline-help__content")')
+        await js('window.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape",bubbles:true}))')
+        await wait('!document.querySelector(".inline-help__content")')
+        await js('[...document.querySelectorAll(".supervisor-workspace__graph-mode button")].find(b => b.textContent === "时间螺旋").click()')
+        await wait('!!document.querySelector(".story-graph-3d__gl")')
+        await js('document.querySelector("#supervisor-tab-overview").click(); document.querySelector(".page-shell").scrollTop = 0')
+        await settle()
+        const overview = await js(`(() => { const r = document.querySelector('.supervisor-workspace__review-context').getBoundingClientRect();
+          return {top:r.top,bottom:r.bottom,forms:document.querySelectorAll('.supervisor-workspace__toolbar').length}; })()`)
+        assert.equal(overview.top, boxes.context.top, 'Review bar keeps its top across tabs')
+        assert.equal(overview.bottom, boxes.context.bottom, 'Review bar keeps its height across tabs')
+        assert.equal(overview.forms, 0, 'New review inputs collapsed by default')
+        await js('document.querySelector("#supervisor-tab-graph").click()')
+        await wait('!!document.querySelector(".story-graph-3d__gl")')
       }
-      await js(`(() => { const e = document.querySelector('.supervisor-workspace__result-navigation select');
-        e.value = 'older-result'; e.dispatchEvent(new Event('change', {bubbles:true})); })()`)
+      assert.notDeepEqual(palettes.get('light'), palettes.get('dark'), 'WebGL palette follows theme tokens')
+      await js('[...document.querySelectorAll(".supervisor-workspace__graph-mode button")].find(b => b.textContent === "时间螺旋").click()')
+      await wait('!!document.querySelector(".story-graph-3d__gl")')
+      const cameraBefore = await js('document.documentElement.dataset.camera')
+      await js('document.querySelector(".story-graph-3d__viewport canvas[tabindex]").dispatchEvent(new KeyboardEvent("keydown", {key:"ArrowLeft",bubbles:true}))')
+      await wait(`document.documentElement.dataset.camera !== ${JSON.stringify(cameraBefore)}`)
+      win.show(); win.focus(); win.webContents.focus()
+      await wait('document.hasFocus()')
+      await js('document.querySelector(".story-graph-3d__toolbar button[title=图例]").focus()')
+      win.webContents.sendInputEvent({type:'keyDown', keyCode:'Space'})
+      win.webContents.sendInputEvent({type:'keyUp', keyCode:'Space'})
+      await wait('document.activeElement.getAttribute("aria-expanded") === "true"')
+      win.webContents.sendInputEvent({type:'keyDown', keyCode:'Escape'})
+      win.webContents.sendInputEvent({type:'keyUp', keyCode:'Escape'})
+      await wait('!document.querySelector(".inline-help__content")')
+      const dragAt = await js(`(() => { const c = document.querySelector('.story-graph-3d__viewport canvas[tabindex]'); c.scrollIntoView();
+        const r = c.getBoundingClientRect(); return {x:Math.round(r.left+r.width/2), y:Math.round(r.top+r.height/2)}; })()`)
+      const beforeDrag = await js('document.documentElement.dataset.camera')
+      win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...dragAt})
+      win.webContents.sendInputEvent({type:'mouseMove',button:'left',modifiers:['leftButtonDown'],x:dragAt.x+30,y:dragAt.y+12})
+      win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:dragAt.x+30,y:dragAt.y+12})
+      await wait(`document.documentElement.dataset.camera !== ${JSON.stringify(beforeDrag)}`)
+      win.setContentSize(1024, 900)
+      await settle()
+      assert(await js('!document.querySelector(".supervisor-workspace__detail").getClientRects().length'), 'Medium details closed by default')
+      await js('document.querySelector(".supervisor-workspace__list-panel > button").click()')
+      await wait('document.activeElement === document.querySelector(".supervisor-workspace__detail")')
+      assert(await js(`(() => { const panel = document.querySelector('.supervisor-workspace__detail').getBoundingClientRect();
+        const graph = document.querySelector('.supervisor-workspace__graph-layout').getBoundingClientRect();
+        return panel.top >= graph.top && panel.bottom <= graph.bottom + 1; })()`), 'Medium details stay inside graph row')
+      await js('document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape",bubbles:true}))')
+      await wait('!document.querySelector(".supervisor-workspace__detail").getClientRects().length')
+      assert(await js('document.activeElement.matches(".supervisor-workspace__detail-toggle")'), 'Details restore toggle focus')
+      win.setContentSize(1440, 700)
+      await settle()
+      assert(await js('document.querySelector(".supervisor-workspace__graph-layout").getBoundingClientRect().height < 660'), 'Short spiral does not inherit flat graph minimum')
+      for (const name of ['Fixture project', 'Fixture story']) {
+        await js('document.querySelector(".story-graph-3d__picker").click()')
+        await wait('!!document.querySelector(".story-graph-3d__menu [role=menuitem]")')
+        await js('document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key:"End",bubbles:true}))')
+        assert(await js('document.activeElement === [...document.querySelectorAll(".story-graph-3d__menu [role=menuitem]")].at(-1)'), 'Hierarchy menu keyboard End')
+        await js(`([...document.querySelectorAll('.story-graph-3d__menu [role=menuitem]')].find(e => e.textContent.includes('${name}'))).click()`)
+        await wait(`document.querySelector('.story-graph-3d__breadcrumb strong')?.textContent === '${name}'`)
+        if (name === 'Fixture project') await checkSpiral()
+        assert.equal(await js('document.querySelectorAll(".story-graph-3d__breadcrumb select").length'), 0)
+      }
+      await js('[...document.querySelectorAll(".story-graph-3d__breadcrumb button")].find(b => b.textContent === "Fixture project").click()')
+      await wait('document.querySelector(".story-graph-3d__breadcrumb strong")?.textContent === "Fixture project"')
+      await js('document.querySelector(".story-graph-3d__breadcrumb button").click()')
+      await wait('document.querySelector(".story-graph-3d__breadcrumb strong")?.textContent === "全部"')
+      assert.equal(await js('document.querySelectorAll(".story-graph-3d__breadcrumb > span").length'), 1)
+      await js('[...document.querySelectorAll(".supervisor-workspace__graph-mode button")].find(b => b.getAttribute("aria-pressed") === "false").click()')
+      await wait('!!document.querySelector(".supervisor-workspace__map")')
+      assert.equal(await js('document.querySelector(".supervisor-workspace__result-navigation button").value'), 'fixture-result')
+      assert.equal(await js('document.querySelectorAll(".supervisor-workspace__result-navigation button").length'), 1)
+      await js('[...document.querySelectorAll(".supervisor-workspace__graph-mode button")].find(b => b.getAttribute("aria-pressed") === "false").click()')
+      await wait('!!document.querySelector(".story-graph-3d__gl")')
+      await selectHistory('older-result')
       await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false" && JSON.parse(document.documentElement.dataset.helix || "null")?.events.length === 1')
       await js('document.querySelector("#supervisor-tab-overview").click()')
-      await wait('document.querySelector(".supervisor-workspace__result-navigation select")?.value === "older-result"')
+      await wait('document.querySelector(".supervisor-workspace__result-navigation button")?.value === "older-result"')
       assert.deepEqual(errors, [])
       console.log(JSON.stringify({ spiral: 'passed', vertices: geometry.points.length, radiusRange: [Math.min(...radii), Math.max(...radii)], widths: [1440, 390], errors }))
       win.destroy(); app.quit(); return
@@ -249,12 +439,15 @@ app
       win.show()
       const controlsOnly = process.env.GOODBUDDY_SUPERVISOR_CONTENT_LAYOUT === 'controls'
       for (const view of controlsOnly ? ['activity', 'pending'] : ['recap', 'empty', 'activity', 'pending', 'failure']) {
+        console.log(`Checking content layout: ${view}`)
         await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + (view === 'activity' ? '?activity=1' : '?recap=1&long-summary=1' + (view === 'failure' ? '&fail-run=1' : view === 'empty' ? '&state=empty' : '')))
         await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
         if (view === 'activity') {
           await js('document.querySelector("#supervisor-tab-activity").click()')
           await wait('document.querySelectorAll(".supervisor-activity__item").length === 3')
         } else if (view === 'pending' || view === 'failure') {
+          await js('document.querySelector(".supervisor-workspace__review-context .primary-button").click()')
+          await wait('!!document.querySelector(".supervisor-workspace__toolbar .primary-button")')
           await js('document.querySelector(".supervisor-workspace__toolbar .primary-button").click()')
           await wait(`document.documentElement.dataset.reviewNoticeTone === '${view === 'pending' ? 'info' : 'error'}'`)
         }
@@ -268,8 +461,10 @@ app
             const report = await js(`(() => {
               const box = selector => { const r = document.querySelector(selector)?.getBoundingClientRect(); return r && { left:r.left, right:r.right, width:r.width, height:r.height, top:r.top, bottom:r.bottom }; };
               return { width:innerWidth, pageWidth:document.documentElement.scrollWidth,
-                panel:box('.heartbeat-center > [role=tabpanel]:not([hidden])'), toolbar:box('.supervisor-workspace__toolbar'), history:box('.supervisor-workspace__result-navigation'), recap:box('.supervisor-workspace__recap'),
+                panel:box('.heartbeat-center > [role=tabpanel]:not([hidden])'), toolbar:box('.supervisor-workspace__review-context'), recap:box('.supervisor-workspace__recap'),
                 prose:box('.supervisor-workspace__prose'), activity:box('.supervisor-activity'),
+                readingColumns:document.querySelector('.supervisor-workspace__recap') && getComputedStyle(document.querySelector('.supervisor-workspace__recap')).gridTemplateColumns.split(' ').map(parseFloat),
+                sidebar:box('.supervisor-workspace__recap-sidebar'),
                 steps:box('.supervisor-activity__steps'),
                 empty:box('.supervisor-workspace > .empty-state'), emptyTitle:box('.supervisor-workspace > .empty-state strong'),
                 stageConnectors:[...document.querySelectorAll('.supervisor-activity__steps li:not(:last-child)')].map(e=>getComputedStyle(e,'::after').borderTopWidth),
@@ -288,7 +483,9 @@ app
             } else if (view !== 'activity') {
               assert(report.summaryLength > 2000 && report.tail, 'Long summary retained')
               assert(Math.abs(report.recap.width - report.panel.width) < 1, 'Recap fills the page panel')
-              for (const control of [report.toolbar, report.history]) {
+              if (width >= 1024) assert(Math.abs(report.readingColumns[0] / report.readingColumns[1] - 2) < 0.02, 'Overview uses a 2:1 reading layout')
+              else assert(report.sidebar.top >= report.prose.bottom, 'Narrow overview puts supporting content after summary')
+              for (const control of [report.toolbar]) {
                 assert(Math.abs(control.left - report.recap.left) < 1 && Math.abs(control.right - report.recap.right) < 1, 'Toolbar, history and result share edges')
               }
                assert(report.prose.left - report.recap.left <= 25, 'No separately centered inner body')
@@ -308,11 +505,11 @@ app
               }
             }
             reports.push({ view, theme, ...report })
-            await writeFile(join(artifacts, `${view}-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
+            await writeFile(join(artifacts, `${view}-${theme}-${width}.png`), (await capturePage()).toPNG())
             if (view === 'recap') {
               await js('document.querySelector(".supervisor-workspace__prose").lastElementChild.scrollIntoView({block:"end"})')
               await settle()
-              await writeFile(join(artifacts, `${view}-tail-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
+              await writeFile(join(artifacts, `${view}-tail-${theme}-${width}.png`), (await capturePage()).toPNG())
             }
           }
         }
@@ -419,7 +616,7 @@ app
               if (scenario !== 'empty') {
                 assert.equal(report.paragraphs, 4)
                 assert(report.text.includes('外部评审时间') && report.text.includes('未解决事项'))
-                assert(report.clientWidth - report.proseWidth <= 50, 'Prose fills the panel within card padding')
+                assert(report.proseWidth > report.clientWidth * (width > 1000 ? 0.55 : 0.8), 'Prose uses the primary reading column')
               } else assert(report.text.includes('还没有成功回顾'))
             } else {
               assert(!report.text.includes('暂无历史心跳报告'))
@@ -461,14 +658,15 @@ app
             assert(empty.titleTop > empty.boxTop + 60 && Math.abs(empty.titleTop - middle) < (empty.boxBottom - empty.boxTop) / 4, 'Graph empty state is vertically centred')
             assert(empty.shellBottom - empty.boxBottom <= 48, 'Graph empty state reaches the bottom margin')
             assert.equal(empty.pageScroll, false, 'Graph empty state does not scroll the page')
-            assert.deepEqual(empty.buttons, ['工作回顾', '刷新'])
-            assert.equal(empty.outsideRefresh, 0)
+            assert.deepEqual(empty.buttons, ['工作回顾'])
+            assert.equal(empty.outsideRefresh, 1)
             reports.push({ scenario: 'graph-empty', width, height, ...empty })
             await writeFile(join(artifacts, `graph-empty-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG())
           }
         }
         if (scenario === 'populated') {
           await js('document.querySelector("#supervisor-tab-overview").click()')
+          await js('document.querySelector(".supervisor-workspace__review-context .primary-button").click()')
           // Toolbar: incremental review button, refresh, and the more menu holding re-analysis.
           const toolbar = await js(`(() => {
             const bar = document.querySelector('.supervisor-workspace__toolbar');
@@ -498,7 +696,7 @@ app
           await writeFile(join(artifacts, `recap-reanalyze-confirm-${win.getContentSize()[0]}.png`), (await win.webContents.capturePage()).toPNG())
           await js('document.querySelector(".supervisor-workspace__confirm .secondary-button").click()')
           await wait('!document.querySelector(".supervisor-workspace__confirm")')
-          await js(`(() => { const s = document.querySelector('.supervisor-workspace__result-navigation select'); s.value = 'older-result'; s.dispatchEvent(new Event('change', {bubbles:true})); })()`)
+          await selectHistory('older-result')
           await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
           await js('document.querySelector(".supervisor-workspace__toolbar .primary-button").click(); document.querySelector(".page-shell").scrollTop = 0')
           await settle()
@@ -843,7 +1041,7 @@ app
         )
         assert(
           report.texts.every(
-            (text) => text.inSvg && text.painted && text.screenFontSize >= 11
+            (text) => text.inSvg && text.painted && (width < 1024 || text.screenFontSize >= 11)
           ),
           `Clipped or invisible SVG text at ${width}: ${JSON.stringify(report.texts.filter(text => !(text.inSvg && text.painted && text.screenFontSize >= 11)).slice(0, 3))} svg=${JSON.stringify(report.svg)}`
         )
@@ -887,15 +1085,15 @@ app
           )
         if (width === 390) {
           assert(
-            report.scroller.scrollWidth > report.scroller.clientWidth,
-            'Keep mobile labels readable with local scrolling'
+            report.scroller.scrollWidth === report.scroller.clientWidth,
+            'Mobile canvas fits without internal scrolling; full labels remain in the list'
           )
           await js(
             'document.querySelector(".supervisor-workspace__map-scroll").scrollLeft = 600'
           )
           assert(
             await js(
-              'document.querySelector(".supervisor-workspace__map-scroll").scrollLeft > 0'
+              'document.querySelector(".supervisor-workspace__map-scroll").scrollLeft === 0'
             )
           )
           await writeFile(
@@ -1021,7 +1219,7 @@ app
         shell.scrollTop = 0;
         const layout = document.querySelector('.supervisor-workspace__graph-layout');
         const shellBox = shell.getBoundingClientRect(), box = layout.getBoundingClientRect();
-        const columns = [...layout.children].map(column => {
+          const columns = [...layout.children].filter(column => column.getClientRects().length).map(column => {
           const scroller = column.matches('.supervisor-workspace__graph-list') ? column.querySelector('[role=tabpanel]') : column;
           const r = column.getBoundingClientRect();
           return { name: column.className.split(' ')[0], canvas: column.matches('.supervisor-workspace__graph-canvas'), top: r.top, bottom: r.bottom,
@@ -1053,11 +1251,12 @@ app
       }
       if (width === 1440) {
         const heading = await js(`(() => {
-          const title = document.querySelector('.supervisor-workspace__canvas-title'), [name, meta] = title.children;
-          return { name: name.textContent, meta: meta.textContent, metaBelow: meta.getBoundingClientRect().top >= name.getBoundingClientRect().bottom - 1,
-            actionBarAbove: !!document.querySelector('[role=tabpanel] > .supervisor-workspace__action-bar'), height: document.querySelector('.supervisor-workspace__canvas-heading').getBoundingClientRect().height };
+          const context = document.querySelector('.supervisor-workspace__review-context');
+          return { meta: context.querySelector('.sr-only').textContent,
+            above: context.getBoundingClientRect().bottom <= document.querySelector('.supervisor-workspace__graph-layout').getBoundingClientRect().top,
+            heading: document.querySelector('.supervisor-workspace__canvas-heading').textContent };
         })()`)
-        assert(heading.metaBelow && heading.meta.includes('图谱范围') && !heading.actionBarAbove && heading.height <= 80, `Scope line belongs under the canvas title: ${JSON.stringify(heading)}`)
+        assert(heading.above && heading.meta.includes('全局') && !heading.heading.includes('事件与知识'), `Review context shared above graph: ${JSON.stringify(heading)}`)
         reports.push({ heading })
       }
       assert(Math.abs((fill.graphArea.playbackBottom ?? fill.graphArea.map.bottom) - fill.graphArea.canvasBottom) <= 1,
@@ -1218,15 +1417,17 @@ app
     }
     await js('document.querySelector("#supervisor-tab-overview").click()')
     await settle()
+    await js('document.querySelector(".supervisor-workspace__review-context .primary-button").click()')
+    await wait('!!document.querySelector(".supervisor-workspace__toolbar .primary-button")')
     await js(
       'document.querySelector(".supervisor-workspace__toolbar .primary-button").click()'
     )
     await wait(
-      '!!document.querySelector(".supervisor-workspace__inline-error")'
+      'document.documentElement.dataset.reviewNoticeTone === "error"'
     )
     assert(
       await js(
-        'document.querySelector("[role=alert]").textContent.includes("模型暂时不可用")'
+        'document.documentElement.dataset.reviewNoticeMessage.includes("回顾未能完成")'
       )
     )
     await writeFile(

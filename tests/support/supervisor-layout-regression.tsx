@@ -22,28 +22,44 @@ if (params.has('spiral')) {
   const events = new Set<string>()
   const dots = new Set<string>()
   let clusters = 0
+  let timeline: unknown
+  let marks: Array<{ ids: string[]; storyId?: string; color: string }> = []
+  let staves: Array<{ id: string; color: string }> = []
   THREE.Group.prototype.clear = function () {
-    events.clear(); dots.clear(); clusters = 0
+    events.clear(); dots.clear(); clusters = 0; marks = []; staves = []
     return clear.call(this)
   }
   THREE.Group.prototype.add = function (...objects) {
     for (const object of objects) {
-      const path = ((object as import('three').Mesh).geometry as import('three').TubeGeometry)?.parameters?.path as import('three').CatmullRomCurve3 | undefined
-      if (path?.points?.length === 1401) {
-        points = path.points.map(point => [Math.hypot(point.x, point.z), point.y])
-        events.clear()
-      }
       for (const event of object.userData.node?.events ?? []) events.add(event.id)
       if (object.userData.cluster) {
         clusters++
         for (const event of object.userData.cluster.events) dots.add(event.id)
+        marks.push({ ids: object.userData.cluster.events.map((event: { id: string }) => event.id), storyId: object.userData.cluster.events[0]?.storyId,
+          color: ((object as import('three').Mesh).material as import('three').MeshStandardMaterial).color.getHexString() })
       }
+      if (object.userData.timeline) {
+        const mesh = object as import('three').Mesh<import('three').TubeGeometry, import('three').MeshStandardMaterial[]>
+        const positions = mesh.geometry.getAttribute('position'), count = mesh.geometry.parameters.tubularSegments
+        const center = (ring: number) => {
+          const sum = new THREE.Vector3()
+          for (let i = 0; i < 8; i++) sum.add(new THREE.Vector3().fromBufferAttribute(positions, ring * 9 + i))
+          return sum.divideScalar(8)
+        }
+        points = Array.from({length: count + 1}, (_, i) => { const p = center(i); return [Math.hypot(p.x, p.z), p.y] })
+        const intervals = object.userData.timeline
+        const timeAt = (ring: number) => intervals[0].from + (center(ring).y / 430 + 0.5) * (intervals.at(-1).to - intervals[0].from)
+        timeline = { intervals, groups: mesh.geometry.groups.map(group => ({...group, from:timeAt(group.start / 48), to:timeAt((group.start + group.count) / 48)})),
+          colors: mesh.material.map(material => material.color.getHexString()), indices: mesh.geometry.index!.count }
+      }
+      if (object.userData.node && !object.userData.cluster) staves.push({ id: object.userData.node.id,
+        color: ((object as import('three').Mesh).material as import('three').MeshBasicMaterial).color.getHexString() })
     }
-    document.documentElement.dataset.helix = JSON.stringify({ points, events: [...events], dots: [...dots], clusters })
+    document.documentElement.dataset.helix = JSON.stringify({ points, events: [...events], dots: [...dots], clusters, timeline, marks, staves })
     return add.apply(this, objects)
   }
-  if (params.has('portable')) {
     THREE.Scene.prototype.onAfterRender = function (_renderer, scene, camera) {
+      document.documentElement.dataset.camera = JSON.stringify(camera.position.toArray())
       const point = new THREE.Vector3(), bounds = { left: 1, right: -1, top: -1, bottom: 1 }
       scene.traverse(object => {
         const positions = (object as import('three').Mesh).geometry?.getAttribute('position')
@@ -56,7 +72,6 @@ if (params.has('spiral')) {
       })
       document.documentElement.dataset.sceneBounds = JSON.stringify(bounds)
     }
-  }
 }
 const stories = [
   {
@@ -193,13 +208,13 @@ Object.defineProperty(window, 'goodbuddy', {
       ? {}
       : {
           supervision: {
-            ...(params.has('spiral') ? { stories: async () => ({ stories: [{
-              id: 'feature', projectId: 'p', projectName: 'Fixture project', parentId: null, level: 'feature', name: 'Fixture story',
+            ...(params.has('spiral') ? { stories: async () => ({ stories: [0, 1].map(storyIndex => ({
+              id: storyIndex ? 'secondary' : 'feature', projectId: 'p', projectName: 'Fixture project', parentId: null, level: 'feature', name: storyIndex ? 'Secondary story' : 'Fixture story',
               description: '', state: 'active', stateEventId: null, userEdited: false, startedAt: null, endedAt: null,
-              events: [...graph.events, { id: 'outside-review', title: 'Outside review', occurred_at: '2026-08-01T00:00:00Z' }].map(event => ({
+              events: [...graph.events, { id: 'outside-review', title: 'Outside review', occurred_at: '2026-08-01T00:00:00Z' }].filter((_event, index) => index % 2 === storyIndex).map(event => ({
                 id: event.id, title: event.title, startedAt: event.occurred_at, endedAt: event.occurred_at, projectId: 'p', primary: true, userSet: false
               }))
-            }], experiences: [], unassigned: 0, canUndo: false }) } : {}),
+            })), experiences: [], unassigned: 0, canUndo: false }) } : {}),
             continueContext: async () => ({ prompt: '模拟讨论上下文：本周已核对交付清单，负责人已确认。\n\n原始依据：模拟会议记录。外部评审时间仍待确认，下一步需要核对验收条件。' }),
             continue: async () => { throw new Error('Preview fixture must not send a message') },
             execution: async () => ({ active: params.has('activity'), ...(params.has('activity') ? { runId: 'activity-1' } : {}) }),
@@ -253,7 +268,8 @@ Object.defineProperty(window, 'goodbuddy', {
                     eventSources: []
                   }
                 : params.has('spiral') ? { ...graph,
-                  events: input?.resultId === 'older-result' ? graph.events.slice(0, 1) : graph.events,
+                  events: (input?.resultId === 'older-result' ? graph.events.slice(0, 1) : graph.events).map((event, index) => ({ ...event,
+                    started_at: event.occurred_at, ended_at: new Date(Date.parse(event.occurred_at) + (index % 3 ? 3_600_000 : 0)).toISOString() })),
                   attention: [1, 1, 1, 100, 100, 4, 4].map((turns, index) => ({
                     start: `2026-09-${String(1 + index * 3).padStart(2, '0')}T01:00:00.000Z`, turns, characters: turns * 20
                   })).filter(slot => input?.resultId !== 'older-result' || slot.start < '2026-09-15')
@@ -333,7 +349,10 @@ createRoot(document.getElementById('root')!).render(
         />
       </div> : <PageShell variant="supervisor">
         <HeartbeatCenter
-          onNotify={(notice) => { document.documentElement.dataset.reviewNoticeTone = notice.tone }}
+          onNotify={(notice) => {
+            document.documentElement.dataset.reviewNoticeTone = notice.tone
+            document.documentElement.dataset.reviewNoticeMessage = notice.message
+          }}
           applicationSettings={applicationSettingsSchema.parse({ checkUpdatesOnStartup: true, updateSource: 'github', modelDownloadSource: 'modelscope', localToolEnvironment: defaultLocalToolEnvironmentSettings, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false })}
           onUpdateApplicationSettings={async () => true}
            configs={menu || params.has('plan-only') ? [{ id: 'plan', name: '模拟每日回顾', scope: { kind: 'global' }, timezone: 'Asia/Shanghai', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 48, retentionDays: 90, nextRunAt: '2026-09-24T01:00:00.000Z', createdAt, updatedAt: createdAt }] : []}

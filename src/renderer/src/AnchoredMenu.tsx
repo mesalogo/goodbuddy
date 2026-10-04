@@ -41,7 +41,8 @@ export function AnchoredMenu({ anchorRef, id, label, width: preferredWidth = 280
     const anchor = anchorRef.current
     const focusFirst = (): void => {
       if (document.activeElement === document.body || document.activeElement === menu) {
-        (menu.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? menu).focus()
+        (menu.querySelector<HTMLElement>('[role="menuitemradio"][aria-checked="true"]:not(:disabled), [role="menuitem"][aria-current="true"]:not(:disabled)')
+          ?? menu.querySelector<HTMLElement>(':is([role="menuitem"], [role="menuitemradio"]):not(:disabled)') ?? menu).focus()
       }
     }
     menu.focus()
@@ -65,7 +66,7 @@ export function AnchoredMenu({ anchorRef, id, label, width: preferredWidth = 280
       }
       if (role !== 'menu' || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
       event.preventDefault()
-      const items = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)'))
+      const items = Array.from(menu.querySelectorAll<HTMLElement>(':is([role="menuitem"], [role="menuitemradio"]):not(:disabled)'))
       const index = items.indexOf(document.activeElement as HTMLElement)
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
         : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length

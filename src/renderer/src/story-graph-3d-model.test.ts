@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SupervisionStory } from '../../shared/supervision-story-contracts'
-import { buildStoryTree, clusterEvents, experienceLinks, radiusLevels, storyWindow, visibleLevel } from './story-graph-3d-model'
+import { buildStoryTree, clusterEvents, experienceLinks, radiusLevels, storyWindow, timelineSegments, visibleLevel } from './story-graph-3d-model'
 
 const day = 86_400_000
 const at = (d: number) => new Date(Date.parse('2026-09-01T00:00:00Z') + d * day).toISOString()
@@ -25,9 +25,10 @@ describe('story graph 3d model', () => {
       ['feature', ['exact-member']], ['unassigned', ['old-extraction', 'never-assigned']]
     ])
     expect(tree.children[1]!.name).toBe('Unknown')
-    expect(tree.events.at(-1)).toEqual({ id: 'exact-member', title: 'Same title', t: Date.parse(at(3.5)) })
+    expect(tree.events.at(-1)).toEqual({ id: 'exact-member', title: 'Same title', t: Date.parse(at(3.5)), end: Date.parse(at(3.5)), storyId: 'feature' })
     const beforeStories = buildStoryTree([], new Map([['p1', 'Project']]), { events, unassigned: 'Unassigned', unknownProject: 'Unknown' })
-    expect(beforeStories.events).toEqual(tree.events)
+    expect(beforeStories.events.map(event => event.id)).toEqual(tree.events.map(event => event.id))
+    expect(beforeStories.events.every(event => !event.storyId)).toBe(true)
     expect(beforeStories.children.flatMap(project => project.children).every(node => node.level === 'unassigned')).toBe(true)
   })
 
@@ -55,6 +56,34 @@ describe('story graph 3d model', () => {
     const years = storyWindow(0, 3 * 365 * day)
     expect(years.turns).toBeLessThanOrEqual(14)
     expect(storyWindow(0, 3 * day, 3).turnHours).toBe(6)
+  })
+
+  it('colors only saved intervals with primary membership, keeping points, gaps and overlaps truthful', () => {
+    const feature = story('feature', 'feature', [1])
+    const cross = story('cross', 'cross', [1], { events: feature.events.map(event => ({ ...event, primary: false })) })
+    const tree = buildStoryTree([feature, cross], new Map(), { unassigned: 'Unassigned', unknownProject: 'Unknown', events: [
+      { id: 'feature-0', title: 'Saved interval', description: '', occurred_at: at(1), started_at: at(1), ended_at: at(3) },
+      { id: 'point', title: 'Point', description: '', occurred_at: at(5) }
+    ] })
+    expect(tree.events[0]).toMatchObject({ t: Date.parse(at(1)), end: Date.parse(at(3)), storyId: 'feature' })
+    expect(tree.children[0]!.end).toBe(Date.parse(at(3)))
+    expect(tree.children.find(node => node.level === 'cross')!.events[0]!.storyId).toBe('feature')
+    const segments = timelineSegments(tree.events, storyWindow(Date.parse(at(0)), Date.parse(at(6))))
+    expect(segments.map(segment => [(segment.from - Date.parse(at(0))) / day, (segment.to - Date.parse(at(0))) / day, segment.event?.storyId])).toEqual([
+      [0, 1, undefined], [1, 3, 'feature'], [3, 6, undefined]
+    ])
+    const overlapping = [
+      { id: 'a', title: '', t: -1, end: 6, storyId: 'one' },
+      { id: 'b', title: '', t: 2, end: 4, storyId: 'two' },
+      { id: 'c', title: '', t: 2, end: 3, storyId: 'three' },
+      { id: 'point', title: '', t: 7, end: 7 },
+      { id: 'unassigned', title: '', t: 8, end: 12 }
+    ]
+    const mapped = timelineSegments(overlapping, storyWindow(0, 10))
+    expect(mapped.map(segment => [segment.from, segment.to, segment.event?.id])).toEqual([
+      [0, 2, 'a'], [2, 3, 'b'], [3, 4, 'b'], [4, 6, 'a'], [6, 8, undefined], [8, 10, 'unassigned']
+    ])
+    expect(timelineSegments([...overlapping].reverse(), storyWindow(0, 10))).toEqual(mapped)
   })
 
   it('keeps each turn round with continuous transitions and actual density differences', () => {

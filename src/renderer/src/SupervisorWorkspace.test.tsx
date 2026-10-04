@@ -9,8 +9,54 @@ const render = (ui: React.ReactNode) => {
   if (window.goodbuddy?.supervision) window.goodbuddy.supervision.execution ??= vi.fn().mockResolvedValue({ active: false })
   return renderComponent(ui)
 }
+const selectHistory = (id: string) => {
+  fireEvent.click(screen.getByLabelText('历史结果'))
+  fireEvent.click(screen.getAllByRole('menuitemradio').find(item => (item as HTMLButtonElement).value === id)!)
+}
 
 describe('SupervisorWorkspace', () => {
+  it.each(['overview', 'graph'] as const)('shows each history result scope and range only inside the %s picker', async tab => {
+    const old = { ...result, id: 'old', createdAt: '2026-08-02T00:00:00.000Z',
+      scope: { kind: 'projects', projectIds: ['11111111-1111-4111-8111-111111111111'] },
+      timeRange: { from: '2026-07-01T00:00:00.000Z', to: '2026-08-01T00:00:00.000Z' } }
+    window.goodbuddy = { supervision: { overview: async () => [result, old],
+      graph: async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }) } } as never
+    render(<SupervisorWorkspace tab={tab} projects={[{ id: old.scope.projectIds[0], name: 'Project One' } as never]} />)
+    const trigger = await screen.findByLabelText('历史结果')
+    await waitFor(() => expect(trigger).toBeEnabled())
+    const date = (value: string) => new Date(value).toLocaleString('zh-CN')
+    expect(trigger).toHaveTextContent(date(result.createdAt))
+    expect(trigger).not.toHaveTextContent('全局')
+    expect(trigger).toHaveAccessibleDescription(expect.stringContaining(date(result.timeRange.from)))
+    const context = trigger.closest('.supervisor-workspace__review-context')!
+    expect(context.querySelector('.supervisor-workspace__review-meta')).toBeNull()
+    expect(Array.from(context.children).map(item => item.tagName)).toEqual(['DIV', 'BUTTON', 'BUTTON'])
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    const options = screen.getAllByRole('menuitemradio')
+    for (const [index, item] of [result, old].entries()) {
+      expect(options[index]).toHaveTextContent(date(item.createdAt))
+      expect(options[index]).toHaveTextContent(date(item.timeRange.from))
+      expect(options[index]).toHaveTextContent(date(item.timeRange.to))
+    }
+    expect(options[0]).toHaveTextContent('全局')
+    expect(options[1]).toHaveTextContent('Project One')
+    expect(options[1]).not.toHaveTextContent(date(result.timeRange.from))
+    expect(options[0]).toHaveFocus()
+    fireEvent.keyDown(options[0]!, { key: 'End' })
+    expect(options[1]).toHaveFocus()
+    fireEvent.click(options[1]!)
+    await waitFor(() => expect(trigger).toBeEnabled())
+    expect(trigger).toHaveValue(old.id)
+    expect(trigger).toHaveTextContent(date(old.createdAt))
+    expect(trigger).toHaveAccessibleDescription(expect.stringContaining('Project One'))
+    expect(trigger).toHaveAccessibleDescription(expect.stringContaining(date(old.timeRange.from)))
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    fireEvent.click(trigger)
+    expect(screen.getAllByRole('menuitemradio')[1]).toHaveAttribute('aria-checked', 'true')
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(trigger).toHaveFocus()
+  })
+
   it('defaults the graph history to latest and synchronizes selection in both directions, including empty graphs', async () => {
     const old = { ...result, id: 'old', createdAt: '2026-08-01T00:00:00.000Z', summary: 'Old review' }
     const graph = vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
@@ -18,13 +64,18 @@ describe('SupervisorWorkspace', () => {
     const view = render(<SupervisorWorkspace tab="graph" />)
     await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
     expect(screen.getByLabelText('历史结果')).toHaveValue(result.id)
+    const context = document.querySelector('.supervisor-workspace__review-context')
+    expect(screen.queryByLabelText('关注范围')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('时间范围')).not.toBeInTheDocument()
     expect(graph).toHaveBeenLastCalledWith({ resultId: result.id, storyLineId: result.storyLineId })
-    fireEvent.change(screen.getByLabelText('历史结果'), { target: { value: old.id } })
+    selectHistory(old.id)
     await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
     view.rerender(<SupervisorWorkspace tab="overview" />)
+    expect(document.querySelector('.supervisor-workspace__review-context')).toBe(context)
+    expect(document.querySelector('.supervisor-workspace__recap')).toHaveAttribute('data-sidebar', 'false')
     expect(screen.getByLabelText('历史结果')).toHaveValue(old.id)
     expect(screen.getByText('Old review')).toBeVisible()
-    fireEvent.change(screen.getByLabelText('历史结果'), { target: { value: result.id } })
+    selectHistory(result.id)
     await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
     view.rerender(<SupervisorWorkspace tab="graph" />)
     expect(screen.getByLabelText('历史结果')).toHaveValue(result.id)
@@ -44,8 +95,8 @@ describe('SupervisorWorkspace', () => {
     const view = render(<SupervisorWorkspace tab="graph" graphNavigation={navigation} />)
     await screen.findByRole('heading', { name: kind === 'story' ? 'Target story' : 'Target experience' })
     expect(screen.getByLabelText('历史结果')).toHaveValue(old.id)
-    expect(screen.getByLabelText('历史结果').closest('.supervisor-workspace__graph-canvas')).not.toBeNull()
-    fireEvent.change(screen.getByLabelText('历史结果'), { target: { value: result.id } })
+    expect(screen.getByLabelText('历史结果').closest('.supervisor-workspace__review-context')).not.toBeNull()
+    selectHistory(result.id)
     await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
     view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={{ ...navigation }} />)
     await screen.findByRole('heading', { name: kind === 'story' ? 'Target story' : 'Target experience' })
@@ -103,7 +154,7 @@ describe('SupervisorWorkspace', () => {
     render(<SupervisorWorkspace projects={[project]} onTabChange={onTabChange} onNotify={onNotify} />)
     const history = await screen.findByLabelText('历史结果')
     await waitFor(() => expect(history).toBeEnabled())
-    fireEvent.change(history, { target: { value: 'old' } })
+    selectHistory('old')
     await waitFor(() => expect(history).toBeEnabled())
     expect(history).toHaveValue('old')
     expect(screen.queryByText('最近一次成功回顾')).not.toBeInTheDocument()
@@ -112,11 +163,17 @@ describe('SupervisorWorkspace', () => {
     expect(screen.getByText('Pending decision')).toBeVisible()
     const recap = screen.getByRole('article')
     const frozenText = recap.textContent
+    expect(recap).toHaveAttribute('data-sidebar', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
     fireEvent.change(screen.getByLabelText('时间范围'), { target: { value: '30' } })
     fireEvent.change(screen.getByLabelText('关注范围'), { target: { value: project.id } })
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
+    expect(screen.queryByLabelText('关注范围')).not.toBeInTheDocument()
+    expect(history).toHaveValue('old')
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
+    expect(screen.getByLabelText('时间范围')).toHaveValue('30')
+    expect(screen.getByLabelText('关注范围')).toHaveValue(project.id)
     expect(recap.textContent).toBe(frozenText)
-    fireEvent.click(screen.getByRole('button', { name: '故事线图谱' }))
-    expect(onTabChange).toHaveBeenCalledWith('graph')
     expect(graph).toHaveBeenLastCalledWith({ resultId: 'old', storyLineId: 'story' })
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(run).toHaveBeenCalledOnce())
@@ -154,6 +211,7 @@ describe('SupervisorWorkspace', () => {
     await act(() => vi.advanceTimersByTimeAsync(2000))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(cancel).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
     await act(async () => fireEvent.click(screen.getByRole('button', { name: '回顾' })))
     expect(onNotify).toHaveBeenLastCalledWith(expect.objectContaining({ message: i18nResources['zh-CN'].heartbeat.reviewSettings.cancelling }))
     expect(run).not.toHaveBeenCalled()
@@ -174,6 +232,7 @@ describe('SupervisorWorkspace', () => {
     const onNotify = vi.fn()
     render(<SupervisorWorkspace onNotify={onNotify} />)
     await screen.findByText('还没有成功回顾')
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(onNotify).toHaveBeenLastCalledWith({ tone: 'info', message: i18nResources['zh-CN'].heartbeat.supervisor.reviewBusy, dedupeKey: 'supervisor-review' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -225,7 +284,7 @@ describe('SupervisorWorkspace', () => {
     expect(screen.queryByText('Stale A')).not.toBeInTheDocument()
     view.rerender(<SupervisorWorkspace graphNavigation={next} />)
     expect(screen.getByLabelText('历史结果')).toHaveValue('B')
-    fireEvent.change(screen.getByLabelText('历史结果'), { target: { value: 'A' } })
+    selectHistory('A')
     await waitFor(() => expect(graph).toHaveBeenLastCalledWith({ resultId: 'A', storyLineId: 'story' }))
     view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={{ resultId: 'B' }} />)
     await waitFor(() => expect(graph).toHaveBeenLastCalledWith({ resultId: 'B', storyLineId: 'story' }))
@@ -254,16 +313,13 @@ describe('SupervisorWorkspace', () => {
     const onTabChange = vi.fn()
     const view = render(<SupervisorWorkspace onTabChange={onTabChange} />)
     await screen.findByText('B recap')
-    // The history select is identified by its selected result ID, not scope labels.
-    const select = [...document.querySelectorAll('select')].find((element) => element.value === 'B')!
-    fireEvent.change(select, { target: { value: 'A' } })
+    selectHistory('A')
     await waitFor(() => expect(graph).toHaveBeenLastCalledWith({ resultId: 'A', storyLineId: 'story-A' }))
-    fireEvent.change(select, { target: { value: 'B' } })
+    const navigation = { resultId: 'B' }
+    view.rerender(<SupervisorWorkspace graphNavigation={navigation} onTabChange={onTabChange} />)
     await waitFor(() => expect(graph).toHaveBeenLastCalledWith({ resultId: 'B', storyLineId: 'story-B' }))
     await act(async () => resolveA(graphFor('Wrong A event')))
-    fireEvent.click(screen.getByRole('button', { name: '故事线图谱' }))
-    expect(onTabChange).toHaveBeenCalledWith('graph')
-    view.rerender(<SupervisorWorkspace tab="graph" onTabChange={onTabChange} />)
+    view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={navigation} onTabChange={onTabChange} />)
     expect(within(await screen.findByRole('group', { name: '故事线图谱' })).getByRole('button', { name: 'B selected' })).toBeInTheDocument()
     expect(screen.queryByText('Wrong A event')).not.toBeInTheDocument()
   })
@@ -305,6 +361,7 @@ describe('SupervisorWorkspace', () => {
     } } as never
     render(<SupervisorWorkspace />)
     await waitFor(() => expect(screen.getByText('还没有成功回顾')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(window.goodbuddy.supervision.run).toHaveBeenCalledOnce())
     expect(window.goodbuddy.supervision.run).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'manual', scope: { kind: 'global' } }))
@@ -320,6 +377,7 @@ describe('SupervisorWorkspace', () => {
     } } as never
     render(<SupervisorWorkspace />)
     await screen.findByText('还没有成功回顾')
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
     fireEvent.click(screen.getByRole('button', { name: '更多回顾操作' }))
     fireEvent.click(await screen.findByRole('menuitem', { name: '重新整理…' }))
     const dialog = screen.getByRole('alertdialog', { name: '重新整理这段时间？' })
@@ -343,6 +401,7 @@ describe('SupervisorWorkspace', () => {
     const onNotify = vi.fn()
     render(<SupervisorWorkspace onNotify={onNotify} />)
     await screen.findByText('还没有成功回顾')
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(onNotify).toHaveBeenLastCalledWith(expect.objectContaining({ tone: 'error', message: i18nResources['zh-CN'].heartbeat.supervisor.reviewFailed })))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -360,6 +419,7 @@ describe('SupervisorWorkspace', () => {
     window.goodbuddy = { supervision: { overview: async () => [], run } } as never
     render(<SupervisorWorkspace onNotify={onNotify} />)
     await screen.findByText(copy.supervisor.empty)
+    fireEvent.click(screen.getByRole('button', { name: copy.supervisor.newReview }))
     fireEvent.change(screen.getByLabelText(copy.supervisor.period), { target: { value: '30' } })
     fireEvent.click(screen.getByRole('button', { name: copy.supervisor.run }))
     await waitFor(() => expect(run).toHaveBeenCalledOnce())
@@ -377,6 +437,7 @@ describe('SupervisorWorkspace', () => {
     window.goodbuddy = { supervision: { overview: async () => [], run: vi.fn().mockResolvedValue({ status }) } } as never
     render(<SupervisorWorkspace onNotify={onNotify} />)
     await screen.findByText(copy.supervisor.empty)
+    fireEvent.click(screen.getByRole('button', { name: copy.supervisor.newReview }))
     fireEvent.click(screen.getByRole('button', { name: copy.supervisor.run }))
     const message = { completed: copy.supervisor.reviewCompleted, paused: copy.reviewSettings.pausedHint,
       cancelled: copy.supervisor.reviewCancelled, no_change: copy.supervisor.reviewNoChange, failed: copy.supervisor.reviewFailed }[status]
@@ -396,6 +457,7 @@ describe('SupervisorWorkspace', () => {
     render(<SupervisorWorkspace onNotify={onNotify} />)
     await screen.findByText('还没有成功回顾')
     expect(onNotify).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(onNotify).toHaveBeenLastCalledWith(expect.objectContaining({ tone: 'error', message: i18nResources['zh-CN'].heartbeat.supervisor.reviewStartFailed })))
     expect(run).not.toHaveBeenCalled()
@@ -412,6 +474,7 @@ describe('SupervisorWorkspace', () => {
     window.goodbuddy = { supervision: { overview, execution, run, cancel } } as never
     const view = render(<SupervisorWorkspace onNotify={onNotify} />)
     await screen.findByText('还没有成功回顾')
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(phase === 'preflight' ? execution : run).toHaveBeenCalledOnce())
     view.unmount()
@@ -439,12 +502,13 @@ describe('SupervisorWorkspace', () => {
     expect(within(canvas).queryByRole('heading', { name: '时间事件' })).not.toBeInTheDocument()
     expect(within(canvas).getByRole('group', { name: '故事线图谱' })).toHaveAttribute('width', '100%')
     expect(canvas.querySelector('.supervisor-workspace__timeline-ring')).toHaveAttribute('marker-end')
-    // The legend is closed by default and opens on the canvas, so the graph keeps the column.
+    // The icon opens shared help without taking space from the canvas.
     expect(within(canvas).queryByRole('list', { name: '图谱图例' })).not.toBeInTheDocument()
     fireEvent.click(within(canvas).getByRole('button', { name: '图例' }))
-    expect(within(canvas).getByRole('list', { name: '图谱图例' })).toBeInTheDocument()
-    fireEvent.click(within(canvas).getByRole('button', { name: '关闭图例' }))
-    expect(within(canvas).queryByRole('list', { name: '图谱图例' })).not.toBeInTheDocument()
+    expect(screen.getByRole('list', { name: '图谱图例' })).toBeInTheDocument()
+    expect(within(canvas).getByRole('button', { name: '图例' })).toHaveTextContent('')
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('list', { name: '图谱图例' })).not.toBeInTheDocument()
     expect(within(canvas).getByRole('slider', { name: '事件浏览' })).toBeDisabled()
     expect(graph.querySelector('.supervisor-workspace__entity text')).toHaveTextContent('方案')
     expect(graph.querySelector('.supervisor-workspace__node text')).toHaveTextContent('决定')

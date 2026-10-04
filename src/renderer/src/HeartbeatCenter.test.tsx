@@ -202,9 +202,9 @@ describe('HeartbeatCenter', () => {
     renderComponent(<PageShell variant="supervisor"><HeartbeatCenter {...props} /></PageShell>)
     await screen.findByText('Review summary')
     expect(screen.getByRole('heading', { level: 1, name: t('center.title') }).closest('.page-shell')).toHaveClass('page-shell--supervisor')
-    expect(screen.getByRole('heading', { name: t('supervisor.latest') })).toBeVisible()
-    expect(screen.getByRole('button', { name: t('supervisor.run') })).toBeEnabled()
-    expect(screen.getByRole('combobox', { name: t('supervisor.scope') })).toBeVisible()
+    expect(screen.getByRole('heading', { name: t('supervisor.summary') })).toBeVisible()
+    expect(screen.getByRole('button', { name: t('supervisor.newReview') })).toBeEnabled()
+    expect(screen.queryByRole('combobox', { name: t('supervisor.scope') })).not.toBeInTheDocument()
     expect(screen.queryByText(t('supervisor.sourcesHint'))).not.toBeInTheDocument()
     const pageTabKeys = ['supervisor.recap', 'supervisor.graph', 'supervisor.automatic', 'activity.title', 'supervisor.settings']
     for (const key of pageTabKeys) {
@@ -262,7 +262,7 @@ describe('HeartbeatCenter', () => {
         }
         expect(within(panel).getByRole('region', { name: t('supervisor.canvas') })).toBeVisible()
         expect(within(panel).getByRole('heading', { name: t('supervisor.inspector') })).toBeVisible()
-        expect(within(panel).getByText(new RegExp(`^${t('supervisor.graphScope')}: ${t('center.scope.global')} · `))).toBeVisible()
+        expect(within(panel).getByRole('group', { name: t('supervisor.recap') })).toHaveTextContent(t('center.scope.global'))
       }
       if (key === 'activity.title') {
         await screen.findByText(t('activity.empty'))
@@ -709,6 +709,7 @@ describe('HeartbeatCenter', () => {
     const props = createProps({ configs: [] })
     renderComponent(<HeartbeatCenter {...props} />)
     await screen.findByText('还没有成功回顾')
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
     fireEvent.change(screen.getByLabelText('关注范围'), { target: { value: props.projects[0]!.id } })
     fireEvent.change(screen.getByLabelText('时间范围'), { target: { value: '30' } })
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))

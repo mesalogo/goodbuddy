@@ -110,7 +110,7 @@ export const heartbeat = {
     canvasTitle: 'Events and knowledge', generatedAt: 'Generated {{time}}', canvasNote: 'Read counter-clockwise · Select a node to explore knowledge and sources', readingGuide: 'Reading the graph',
     visibleCounts: '{{events}} events / {{entities}} entities on canvas', showAll: 'Show all connections', connections: 'Graph connections',
     loadingHint: 'Reading saved reviews, events, and sources.', unavailableHint: 'Reopen the application to try again. Saved reviews remain on this device.',
-    selection: 'Graph selection', canvas: 'Story graph canvas', inspector: 'Details and sources',
+    selection: 'Graph selection', canvas: 'Story graph canvas', inspector: 'Details and sources', closeDetails: 'Close details',
     counts: '{{events}} events · {{entities}} entities', canvasCaption: 'Events are evenly spaced in time order, not by elapsed time. Each batch shows up to 8 events and 6 entities; select from the list to switch batches and read full names. Scroll the canvas horizontally on narrow screens. Entity states reflect the selected review result.',
     legendLabel: 'Graph legend', eventImpact: 'Event impact', playback: 'Browse events', previousStage: 'Previous event', nextStage: 'Next event',
     navigation: 'Supervisor views', recap: 'Work review', graph: 'Story graph', settings: 'Settings',
@@ -133,14 +133,14 @@ export const heartbeat = {
     },
     graph3d: {
       mode: 'Graph view', modes: { flat: 'Flat', spiral: 'Time spiral' },
-      levels: 'Stave levels', all: 'All', views: 'Viewpoint', canvas: 'Time spiral. Keys 1, 2 and 3 switch the viewpoint, arrow keys rotate, Esc goes up a level; the toolbar lists offer the same items.',
+      levels: 'Stave levels', all: 'All', views: 'View', canvas: 'Time spiral. Keys 1, 2 and 3 switch the viewpoint, arrow keys rotate, Esc goes up a level. Use the level menu to drill down and the sidebar to select records.',
       view: { oblique: 'Oblique', side: 'Side', top: 'Top', free: 'Free' },
       staves: 'Stories at this level',
       experiences: 'Experiences across stories',
       scale: 'One turn {{turn}} · {{count}} turns',
       legendTitle: 'Legend', legendClose: 'Close legend',
       legendItems: {
-        time: 'Height is time; {{scale}}.',
+        time: 'Height is time; {{scale}}. Colored segments cover actual event intervals and match the primary story. Gaps stay gray; timestamp-only events are dots. Overlaps show the later-starting event; unassigned events use neutral marks.',
         radius: 'Radius compares user and assistant messages per hour within this review. Equal rates have equal radii; no recorded messages gives the minimum radius. It does not measure time spent or productivity.',
         stave: 'A stave spans its story from first to last event.',
         experience: 'Diamonds outside the barrel are experiences; arcs run from the stave they formed in to the stave that later used them.'

@@ -21,7 +21,7 @@ export type StoryNode = {
   a1: number
   concluded: boolean
 }
-export type StoryEventPoint = { id: string; title: string; t: number }
+export type StoryEventPoint = { id: string; title: string; t: number; end?: number; storyId?: string }
 export type StoryWindow = { from: number; to: number; turnHours: number; turns: number }
 
 const TAU = Math.PI * 2
@@ -34,11 +34,15 @@ export function buildStoryTree(stories: SupervisionStory[], projectNames: Map<st
 }): StoryNode {
   const events = review && new Map(review.events.map(event => [event.id, event]))
   if (events) stories = stories.map(story => ({ ...story, events: story.events.filter(event => events.has(event.id)) }))
+  const owners = new Map(stories.filter(story => story.level !== 'cross').flatMap(story =>
+    story.events.filter(event => event.primary).map(event => [event.id, story.id] as const)))
   const root: StoryNode = { id: 'root', name: '', level: 'root', children: [], events: [], start: 0, end: 0, a0: 0, a1: TAU, concluded: false }
   const node = (story: SupervisionStory, parent: StoryNode): StoryNode => ({ id: story.id, name: story.name, level: story.level, parent, children: [],
     events: story.events.filter(event => story.level === 'cross' || event.primary).map(event => {
       const saved = events?.get(event.id)
-      return { id: event.id, title: saved?.title ?? event.title, t: Date.parse(saved?.started_at ?? saved?.occurred_at ?? event.startedAt) }
+      const t = Date.parse(saved?.started_at ?? saved?.occurred_at ?? event.startedAt)
+      const end = Date.parse(saved ? saved.ended_at ?? saved.started_at ?? saved.occurred_at : event.endedAt)
+      return { id: event.id, title: saved?.title ?? event.title, t, end: Number.isFinite(end) ? Math.max(t, end) : t, storyId: owners.get(event.id) }
     }),
     start: 0, end: 0, a0: 0, a1: 0, concluded: story.state === 'concluded' })
   const projects = new Map<string, StoryNode>()
@@ -73,7 +77,8 @@ export function buildStoryTree(stories: SupervisionStory[], projectNames: Map<st
           children: [], events: [], start: 0, end: 0, a0: 0, a1: 0, concluded: false }
         project.children.push(unassigned)
       }
-      unassigned.events.push({ id: event.id, title: event.title, t: Date.parse(event.started_at ?? event.occurred_at) })
+      const t = Date.parse(event.started_at ?? event.occurred_at), end = Date.parse(event.ended_at ?? event.started_at ?? event.occurred_at)
+      unassigned.events.push({ id: event.id, title: event.title, t, end: Number.isFinite(end) ? Math.max(t, end) : t })
     }
   }
   finish(root)
@@ -90,7 +95,7 @@ function finish(node: StoryNode): void {
   }
   node.events.sort((a, b) => a.t - b.t || a.id.localeCompare(b.id))
   node.start = node.events[0]?.t ?? 0
-  node.end = node.events.at(-1)?.t ?? 0
+  node.end = node.events.reduce((end, event) => Math.max(end, event.end ?? event.t), node.start)
   node.children = node.children.filter(child => child.events.length > 0)
 }
 
@@ -149,6 +154,13 @@ export function radiusLevels(window: StoryWindow, attention: SupervisionAttentio
 }
 
 export type StoryCluster = { t0: number; t1: number; t: number; events: StoryEventPoint[] }
+/** Exact interval boundaries; overlapping events use the latest start, then stable ID. Points do not fill gaps. */
+export function timelineSegments(events: StoryEventPoint[], window: StoryWindow): Array<{ from: number; to: number; event?: StoryEventPoint }> {
+  const intervals = events.filter(event => (event.end ?? event.t) > event.t && event.t < window.to && event.end! > window.from)
+    .sort((a, b) => b.t - a.t || a.id.localeCompare(b.id))
+  const boundaries = [...new Set([window.from, window.to, ...intervals.flatMap(event => [Math.max(window.from, event.t), Math.min(window.to, event.end!)])])].sort((a, b) => a - b)
+  return boundaries.slice(0, -1).map((from, index) => ({ from, to: boundaries[index + 1]!, event: intervals.find(event => event.t <= from && event.end! > from) }))
+}
 /** Events closer than `span` (ms) along time merge into one band; zooming in re-splits them. */
 export function clusterEvents(events: StoryEventPoint[], span: number): StoryCluster[] {
   const out: StoryCluster[] = []

@@ -1,10 +1,12 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ReactNode } from 'react'
-import { BookOpen, ChevronLeft, ChevronRight, Ellipsis, Info, Network, RefreshCw, X } from 'lucide-react'
+import { BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Ellipsis, Network, RefreshCw, X } from 'lucide-react'
+import { InlineHelp } from './InlineHelp'
 import { AnchoredMenu } from './AnchoredMenu'
 import type { AppNotificationInput } from './notifications'
-import { EmptyState, PageTabs } from './WorkspacePrimitives'
+import { EmptyState, PageTabs, SegmentedControl } from './WorkspacePrimitives'
+import { storyDigest } from './supervision-story-digest'
 import { SupervisionDiscussion } from './SupervisionDiscussion'
 import { SupervisionStoryDigest } from './SupervisionStoryDigest'
 import { useFillHeight } from './use-fill-height'
@@ -85,7 +87,6 @@ export function SupervisorWorkspace({
   const [selection, setSelection] = useState<Selection | undefined>(graphNavigation?.focus)
   const [listTab, setListTab] = useState<Selection['kind']>(graphNavigation?.focus?.kind ?? 'event')
   const [graphMode, setGraphMode] = useState<'flat' | 'spiral'>('flat')
-  const [flatLegendOpen, setFlatLegendOpen] = useState(false)
   const [source, setSource] = useState<{
     id: string
     title: string
@@ -95,6 +96,10 @@ export function SupervisorWorkspace({
   }>()
   const [projectId, setProjectId] = useState('global')
   const [days, setDays] = useState(7)
+  const [newReviewOpen, setNewReviewOpen] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(Boolean(graphNavigation?.focus))
+  const detailToggleRef = useRef<HTMLButtonElement>(null)
+  const detailRef = useRef<HTMLElement>(null)
   const runPending = useRef(false)
   const mounted = useRef(false)
   useEffect(() => {
@@ -102,6 +107,9 @@ export function SupervisorWorkspace({
     return () => { mounted.current = false }
   }, [])
   const [moreOpen, setMoreOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const historyRef = useRef<HTMLButtonElement>(null)
+  const historyId = useId()
   const [confirmReanalyze, setConfirmReanalyze] = useState(false)
   const moreRef = useRef<HTMLButtonElement>(null)
   const moreId = useId()
@@ -114,6 +122,7 @@ export function SupervisorWorkspace({
     setLoading(true)
     setSource(undefined)
     setSelection(graphNavigation?.focus)
+    setDetailOpen(Boolean(graphNavigation?.focus))
     if (graphNavigation?.focus) setListTab(graphNavigation.focus.kind)
     setPending(undefined)
     setLoadError(undefined)
@@ -406,6 +415,7 @@ export function SupervisorWorkspace({
   const stageEvent = layout.events[stage]
   const select = (next: Selection) => {
     setSelection(next)
+    setDetailOpen(true)
     setListTab(next.kind)
     setSource(undefined)
     setConfirmRemoval(false)
@@ -476,32 +486,51 @@ export function SupervisorWorkspace({
   const storyState = useSupervisionStories(graphScope, tab === 'graph', graph)
   const projectNames = useMemo(() => new Map(projects.map(project => [project.id, project.name])), [projects])
   const graphLayoutRef = useRef<HTMLDivElement>(null)
-  // The graph column does not scroll: the graph scales to the height left in the window. Below 660px the flat
-  // graph's labels would drop under 11px, so very short windows keep that height and scroll the page instead.
-  useFillHeight(graphLayoutRef, tab === 'graph' && graph.events.length > 0, 24, GRAPH_MIN_HEIGHT)
+  // Flat labels need a taller minimum; the spiral can use short windows without that constraint.
+  useFillHeight(graphLayoutRef, tab === 'graph' && graph.events.length > 0, 24, graphMode === 'spiral' ? 320 : GRAPH_MIN_HEIGHT)
   const graphEmptyRef = useRef<HTMLDivElement>(null)
   // Without a graph, the empty state takes the visible height so its message sits in the middle of the page.
   useFillHeight(graphEmptyRef, tab === 'graph' && !loading && !loadError && graph.events.length === 0, 24, 320)
   // The work review reads the selected result's own scope, so it matches the period shown.
   const recapStories = useSupervisionStories(latest?.scope, tab === 'overview', latest?.id)
+  const digest = latest && recapStories.available ? storyDigest(recapStories.view, latest.timeRange) : undefined
+  const hasDigest = digest && [digest.advanced, digest.started, digest.concluded, digest.experiences, digest.quiet].some(items => items.length > 0)
   const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
   const selectedExperience = selection?.kind === 'experience' ? storyState.view.experiences.find((item) => item.id === selection.id) : undefined
+  useEffect(() => {
+    if (!detailOpen || !detailRef.current || !detailToggleRef.current || getComputedStyle(detailToggleRef.current).display === 'none') return
+    detailRef.current.focus({ preventScroll: true })
+    detailRef.current.scrollIntoView?.({ block: 'nearest' })
+  }, [detailOpen, selection?.id, tab])
   const busy = !!api && (loading || pending !== undefined)
+  const historyDetails = (item: SupervisionResultView) =>
+    `${scopeText(item.scope)} · ${t('supervisor.period')}: ${date(item.timeRange.from)} – ${date(item.timeRange.to)}`
   const historySelector = results.length > 0 && <div className="supervisor-workspace__result-navigation">
-    <label>
-      {t('supervisor.history')}
-      <select value={resultId ?? ''} disabled={busy}
-        onChange={(event) => { setSelection(undefined); setSource(undefined); void refresh(event.target.value) }}>
-        {!results.some((item) => item.id === resultId) && <option value={resultId ?? ''}>{t('supervisor.loading')}</option>}
-        {results.map((item) => <option key={item.id} value={item.id}>
-          {date(item.createdAt)} · {scopeText(item.scope)}
-        </option>)}
-      </select>
-    </label>
-    {tab === 'overview' && latest && <button className="secondary-button" onClick={() => onTabChange?.('graph')}>
-      {t('supervisor.graph')}
-    </button>}
+    <span id={`${historyId}-label`}>{t('supervisor.history')}</span>
+    <button ref={historyRef} type="button" className="model-button" value={resultId ?? ''} disabled={busy}
+      aria-labelledby={`${historyId}-label`} aria-describedby={`${historyId}-context`}
+      aria-haspopup="menu" aria-expanded={historyOpen && !busy} aria-controls={historyOpen && !busy ? historyId : undefined}
+      onClick={() => setHistoryOpen(value => !value)}
+      onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setHistoryOpen(true) } }}>
+      <span className="model-button__label">{latest ? date(latest.createdAt) : t('supervisor.loading')}</span>
+      <ChevronDown size={14} aria-hidden="true" />
+    </button>
+    <span id={`${historyId}-context`} className="sr-only">{latest && `${t('supervisor.generatedAt', { time: date(latest.createdAt) })} · ${historyDetails(latest)}`}</span>
+    {historyOpen && !busy && <AnchoredMenu anchorRef={historyRef} id={historyId} label={t('supervisor.history')}
+      width={480} className="supervisor-workspace__history-menu" onClose={() => setHistoryOpen(false)}>
+      {results.map(item => <button key={item.id} type="button" role="menuitemradio" value={item.id} aria-checked={item.id === resultId}
+        onClick={() => { setHistoryOpen(false); historyRef.current?.focus(); setSelection(undefined); setSource(undefined); setDetailOpen(false); void refresh(item.id) }}>
+        <span><span>{t('supervisor.generatedAt', { time: date(item.createdAt) })}</span><small>{historyDetails(item)}</small></span>
+        {item.id === resultId && <Check size={16} aria-hidden="true" />}
+      </button>)}
+    </AnchoredMenu>}
   </div>
+  const graphTools = <>
+    {storyState.available && <div className="supervisor-workspace__graph-mode"><SegmentedControl ariaLabel={t('supervisor.graph3d.mode')}
+      value={graphMode} onChange={setGraphMode} options={(['flat', 'spiral'] as const).map(value => ({ value, label: t(`supervisor.graph3d.modes.${value}`) }))} /></div>}
+    <button ref={detailToggleRef} type="button" className="secondary-button supervisor-workspace__detail-toggle"
+      aria-expanded={detailOpen} aria-controls={`${graphId}-detail`} onClick={() => setDetailOpen(value => !value)}>{t('supervisor.inspector')}</button>
+  </>
 
   return (
     <div className="supervisor-workspace" data-view={tab} aria-busy={busy}>
@@ -515,6 +544,12 @@ export function SupervisorWorkspace({
         </div>
       ) : (
         <>
+          {(tab === 'overview' || tab === 'graph') && <div className="supervisor-workspace__review-context" role="group" aria-label={t('supervisor.recap')}>
+            {historySelector}
+            <button type="button" className="secondary-button" disabled={busy} onClick={() => void refresh()}>{t('center.actions.refresh')}</button>
+            <button type="button" className={newReviewOpen ? 'secondary-button' : 'primary-button'} aria-expanded={newReviewOpen} aria-controls={`${graphId}-new-review`}
+              onClick={() => { setNewReviewOpen(value => !value); setConfirmReanalyze(false) }}>{t('supervisor.newReview')}</button>
+          </div>}
           {loading && (
             <EmptyState
               variant="loading"
@@ -536,9 +571,9 @@ export function SupervisorWorkspace({
               </button>
             </div>
           )}
-          {tab === 'overview' && (
+          {newReviewOpen && (tab === 'overview' || tab === 'graph') && (
             <>
-              <div className="supervisor-workspace__toolbar" role="group" aria-label={t('supervisor.newReview')}>
+              <div id={`${graphId}-new-review`} className="supervisor-workspace__toolbar" role="group" aria-label={t('supervisor.newReview')}>
                 <label>
                   <select
                     aria-label={t('supervisor.scope')}
@@ -574,13 +609,6 @@ export function SupervisorWorkspace({
                 >
                   {t('supervisor.run')}
                 </button>
-                <button
-                  className="secondary-button"
-                  disabled={busy}
-                  onClick={() => void refresh()}
-                >
-                  {t('center.actions.refresh')}
-                </button>
                 <button ref={moreRef} type="button" className="icon-button" aria-label={t('supervisor.more')} title={t('supervisor.more')}
                   aria-haspopup="menu" aria-expanded={moreOpen} aria-controls={moreOpen ? moreId : undefined}
                   onClick={() => setMoreOpen(!moreOpen)}><Ellipsis size={16} aria-hidden="true" /></button>
@@ -602,19 +630,12 @@ export function SupervisorWorkspace({
                   <button type="button" className="primary-button" onClick={() => void run(true)}>{t('supervisor.reanalyzeConfirm')}</button>
                 </div>
               </div>}
-              {historySelector}
-              {latest && recapStories.available && <SupervisionStoryDigest view={recapStories.view} range={latest.timeRange} date={date}
-                onOpen={(focus) => { select(focus); onTabChange?.('graph') }} />}
+            </>
+          )}
+          {tab === 'overview' && (
+            <>
               {latest ? (
-                <article className="supervisor-workspace__recap">
-                  <div className="supervisor-workspace__section-heading">
-                    <h2>{t('supervisor.latest')}</h2>
-                    <time dateTime={latest.createdAt}>{date(latest.createdAt)}</time>
-                  </div>
-                  <p>
-                    {scopeText(latest.scope)} · {date(latest.timeRange.from)} –{' '}
-                    {date(latest.timeRange.to)}
-                  </p>
+                <article className="supervisor-workspace__recap" data-sidebar={Boolean(latest.openItems.length || hasDigest)}>
                   <div className="supervisor-workspace__prose">
                     <h3>{t('supervisor.summary')}</h3>
                     {latest.summary.split(/\r?\n\s*\r?\n/u).map((paragraph, index) => (
@@ -624,6 +645,8 @@ export function SupervisorWorkspace({
                       <h3>{t('supervisor.changes')}</h3>
                       <p className="supervisor-workspace__summary">{latest.changeDigest}</p>
                     </>}
+                  </div>
+                  {(latest.openItems.length > 0 || hasDigest) && <aside className="supervisor-workspace__recap-sidebar">
                     {latest.openItems.length > 0 && (
                       <>
                         <h3>{t('supervisor.openItems')}</h3>
@@ -634,7 +657,9 @@ export function SupervisorWorkspace({
                         </ul>
                       </>
                     )}
-                  </div>
+                    {hasDigest && <SupervisionStoryDigest view={recapStories.view} range={latest.timeRange} date={date}
+                      onOpen={(focus) => { select(focus); onTabChange?.('graph') }} />}
+                  </aside>}
                 </article>
               ) : (
                 !loading &&
@@ -650,8 +675,6 @@ export function SupervisorWorkspace({
           )}
           {tab === 'graph' && (
             <>
-              {/* With a graph, scope and refresh live in the canvas heading; without one, they sit in the centred empty state. */}
-              {!graph.events.length && historySelector}
               {!loading && !loadError && !graph.events.length && (
                 <div className="supervisor-workspace__graph-empty" ref={graphEmptyRef}>
                   <EmptyState
@@ -666,24 +689,22 @@ export function SupervisorWorkspace({
                         >
                           {t('supervisor.recap')}
                         </button>
-                        <button
-                          className="secondary-button"
-                          disabled={busy}
-                          onClick={() => void refresh()}
-                        >
-                          {t('center.actions.refresh')}
-                        </button>
                       </div>
                     }
                   />
                 </div>
               )}
               {graph.events.length > 0 && (
-                <div className="supervisor-workspace__graph-layout" ref={graphLayoutRef}>
+                <div className="supervisor-workspace__graph-layout" ref={graphLayoutRef} data-detail-open={detailOpen} data-mode={graphMode}>
                   <aside
                     className="supervisor-workspace__graph-list"
                     aria-label={t('supervisor.selection')}
                   >
+                    <select className="field-control supervisor-workspace__category" aria-label={t('supervisor.selection')}
+                      value={listTab} onChange={event => setListTab(event.target.value as Selection['kind'])}>
+                      {(['event', 'entity', 'relation', ...(storyState.available ? ['story', 'experience'] as const : [])] as const).map(kind =>
+                        <option key={kind} value={kind}>{t(`supervisor.listTabs.${kind}`)} {kind === 'event' ? layout.events.length : kind === 'entity' ? layout.entities.length : kind === 'relation' ? graph.relations.length : kind === 'story' ? storyState.view.stories.length : storyState.view.experiences.length}</option>)}
+                    </select>
                     <PageTabs
                       ariaLabel={t('supervisor.selection')}
                       idPrefix={`${graphId}-list`}
@@ -792,41 +813,33 @@ export function SupervisorWorkspace({
                     className="supervisor-workspace__graph-canvas"
                     aria-label={t('supervisor.canvas')}
                   >
-                    <div className="supervisor-workspace__canvas-heading">
-                      {/* History stays inside the canvas column with its title and review metadata. */}
-                      <div className="supervisor-workspace__canvas-title">
-                        {historySelector}
-                        <strong>{t('supervisor.canvasTitle')}</strong>
-                        <span>
-                          {[
-                            graphScope && `${t('supervisor.graphScope')}: ${scopeText(graphScope)}`,
-                            latest && `${date(latest.timeRange.from)} – ${date(latest.timeRange.to)}`,
-                            latest && t('supervisor.generatedAt', { time: date(latest.createdAt) }),
-                            t('supervisor.counts', { events: layout.events.length, entities: layout.entities.length })
-                          ].filter(Boolean).join(' · ')}
-                        </span>
-                      </div>
-                      <button type="button" className="icon-button" aria-label={t('center.actions.refresh')} title={t('center.actions.refresh')}
-                        disabled={busy} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden="true" /></button>
-                      {graphMode === 'flat' && <div className="supervisor-workspace__canvas-tools">
+                    {graphMode === 'flat' && <div className="supervisor-workspace__canvas-heading">
+                      <strong>{t('supervisor.graph3d.all')}</strong>
+                      <div className="supervisor-workspace__canvas-tools">
                         {selection && <button type="button" className="link-button" onClick={() => { setSelection(undefined); setSource(undefined) }}>
                           {t('supervisor.showAll')}</button>}
-                        <button type="button" className="secondary-button" aria-expanded={flatLegendOpen} aria-controls={`${graphId}-legend`}
-                          onClick={() => setFlatLegendOpen(value => !value)}><Info size={14} aria-hidden="true" />{t('supervisor.graph3d.legendTitle')}</button>
-                      </div>}
-                      {storyState.available && <div role="group" aria-label={t('supervisor.graph3d.mode')} className="supervisor-workspace__graph-mode">
-                        {(['flat', 'spiral'] as const).map((mode) => <button key={mode} type="button" className="secondary-button"
-                          aria-pressed={graphMode === mode} onClick={() => setGraphMode(mode)}>{t(`supervisor.graph3d.modes.${mode}`)}</button>)}
-                      </div>}
-                    </div>
+                        <InlineHelp icon="info" label={t('supervisor.graph3d.legendTitle')}>
+                          <strong>{t('supervisor.graph3d.legendTitle')}</strong>
+                          <ul className="supervisor-workspace__legend" aria-label={t('supervisor.legendLabel')}>
+                            <li><i className="supervisor-workspace__legend-event" aria-hidden="true" />{t('supervisor.events')}</li>
+                            <li><i className="supervisor-workspace__legend-entity" aria-hidden="true" />{t('supervisor.entities')}</li>
+                            <li><i className="supervisor-workspace__legend-link" aria-hidden="true" />{t('supervisor.eventImpact')}</li>
+                            <li><i className="supervisor-workspace__legend-relation" aria-hidden="true" />{t('supervisor.relations')}</li>
+                          </ul>
+                          <p>{t('supervisor.canvasNote')}</p>
+                          <p>{t('supervisor.canvasCaption')}</p>
+                        </InlineHelp>
+                      </div>
+                      {graphTools}
+                    </div>}
                     {graphMode === 'spiral' ? (
-                      <SpiralBoundary fallback={(retry) => <div className="supervisor-workspace__inline-error" role="alert">
+                      <SpiralBoundary fallback={(retry) => <><div className="supervisor-workspace__canvas-heading">{graphTools}</div><div className="supervisor-workspace__inline-error" role="alert">
                         <strong>{t('supervisor.graph3d.failed')}</strong>
                         <button type="button" className="secondary-button" onClick={retry}>{t('supervisor.graph3d.retry')}</button>
-                        <button type="button" className="link-button" onClick={() => setGraphMode('flat')}>{t('supervisor.graph3d.modes.flat')}</button>
-                      </div>}>
-                      <Suspense fallback={<p className="supervisor-workspace__muted" role="status">{t('supervisor.loading')}</p>}>
+                      </div></>}>
+                      <Suspense fallback={<><div className="supervisor-workspace__canvas-heading">{graphTools}</div><p className="supervisor-workspace__muted" role="status">{t('supervisor.loading')}</p></>}>
                         <StoryGraph3D stories={storyState.view.stories} events={graph.events} projectNames={projectNames} attention={graph.attention ?? noAttention} timeRange={latest?.timeRange}
+                          toolbar={graphTools}
                           selectedEventId={selection?.kind === 'event' ? selection.id : undefined}
                           onSelectEvent={(id) => { if (layout.eventMap.has(id)) select({ kind: 'event', id }) }}
                           onSelectStory={(id) => select({ kind: 'story', id })}
@@ -1023,21 +1036,6 @@ export function SupervisorWorkspace({
                       <span className="supervisor-workspace__map-hint" aria-hidden="true">
                         {t('supervisor.visibleCounts', { events: layout.visibleEvents.length, entities: layout.visibleEntities.length })}
                       </span>
-                      {flatLegendOpen && <div className="supervisor-workspace__map-legend" id={`${graphId}-legend`} role="note">
-                        <div className="supervisor-workspace__map-legend-head">
-                          <strong>{t('supervisor.graph3d.legendTitle')}</strong>
-                          <button type="button" className="icon-button" aria-label={t('supervisor.graph3d.legendClose')}
-                            title={t('supervisor.graph3d.legendClose')} onClick={() => setFlatLegendOpen(false)}><X size={14} aria-hidden="true" /></button>
-                        </div>
-                        <ul className="supervisor-workspace__legend" aria-label={t('supervisor.legendLabel')}>
-                          <li><i className="supervisor-workspace__legend-event" aria-hidden="true" />{t('supervisor.events')}</li>
-                          <li><i className="supervisor-workspace__legend-entity" aria-hidden="true" />{t('supervisor.entities')}</li>
-                          <li><i className="supervisor-workspace__legend-link" aria-hidden="true" />{t('supervisor.eventImpact')}</li>
-                          <li><i className="supervisor-workspace__legend-relation" aria-hidden="true" />{t('supervisor.relations')}</li>
-                        </ul>
-                        <p>{t('supervisor.canvasNote')}</p>
-                        <p>{t('supervisor.canvasCaption')}</p>
-                      </div>}
                     </figure>
                     {stageEvent && (
                       <div className="supervisor-workspace__playback">
@@ -1093,9 +1091,15 @@ export function SupervisorWorkspace({
                     </>}
                   </section>
                   <aside
+                    ref={detailRef}
+                    tabIndex={-1}
+                    id={`${graphId}-detail`}
                     className="supervisor-workspace__detail"
                     aria-label={t('supervisor.inspector')}
+                    onKeyDown={(event) => { if (event.key === 'Escape' && detailOpen) { event.stopPropagation(); setDetailOpen(false); detailToggleRef.current?.focus() } }}
                   >
+                    <button type="button" className="icon-button supervisor-workspace__detail-toggle" aria-label={t('supervisor.closeDetails')}
+                      onClick={() => { setDetailOpen(false); detailToggleRef.current?.focus() }}><X size={16} aria-hidden="true" /></button>
                     <h2>{t('supervisor.inspector')}</h2>
                     {selection?.kind === 'experience' ? (
                       selectedExperience ? <>
@@ -1119,7 +1123,6 @@ export function SupervisorWorkspace({
                             : selectedEntity
                               ? t('supervisor.entities')
                               : t('supervisor.relations')}
-                          {graphScope && ` · ${scopeText(graphScope)}`}
                         </div>
                         <h3>
                           {selectedEvent?.title ??

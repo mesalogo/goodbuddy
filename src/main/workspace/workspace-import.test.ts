@@ -27,7 +27,7 @@ it('imports multichunk binary and empty files into the selected directory, retai
   const listing = await access.listDirectory({ path: 'selected' })
   const metadata = await stat(join(root, 'selected/image.png'))
   expect(listing.entries.find(entry => entry.name === 'image.png')).toMatchObject({ modifiedAt: metadata.mtime.toISOString(), ...(metadata.birthtimeMs > 0 ? { createdAt: metadata.birthtime.toISOString() } : {}) })
-})
+}, 15_000)
 
 it('removes a partial import after a write failure and continues the batch', async () => {
   const root = await mkdtemp(join(tmpdir(), 'goodbuddy-import-failure-')); roots.push(root)

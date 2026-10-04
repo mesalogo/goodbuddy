@@ -1,12 +1,13 @@
-import { CircleHelp } from 'lucide-react'
+import { CircleHelp, Info } from 'lucide-react'
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { FloatingPortal } from './FloatingPortal'
 import './inline-help.css'
 
-export function InlineHelp({ label, children, id }: {
+export function InlineHelp({ label, children, id, icon = 'help' }: {
   label: string
   children: ReactNode
   id?: string
+  icon?: 'help' | 'info'
 }): React.JSX.Element {
   const generatedId = useId()
   const contentId = id ?? generatedId
@@ -92,7 +93,7 @@ export function InlineHelp({ label, children, id }: {
     }
   }, [open])
   return <>
-    <button type="button" className="inline-help" ref={anchorRef} aria-label={label}
+    <button type="button" className="inline-help" ref={anchorRef} aria-label={label} title={icon === 'info' ? label : undefined}
       aria-expanded={open} aria-controls={open ? contentId : undefined} aria-describedby={open || id ? contentId : undefined}
       onMouseEnter={enter} onMouseLeave={leave} onFocus={() => { cancelClose(); setOpen(true) }} onBlur={leave}
       onClick={event => {
@@ -100,7 +101,7 @@ export function InlineHelp({ label, children, id }: {
         if (pinned.current) close()
         else { cancelClose(); pinned.current = true; setOpen(true) }
       }}>
-      <CircleHelp size={14} aria-hidden="true" />
+      {icon === 'info' ? <Info size={14} aria-hidden="true" /> : <CircleHelp size={14} aria-hidden="true" />}
     </button>
     {/* Referenced hidden text remains an accessible description without a second visible copy. */}
     {!open && id && <span id={contentId} hidden>{children}</span>}
