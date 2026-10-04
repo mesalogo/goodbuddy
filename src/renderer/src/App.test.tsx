@@ -14410,7 +14410,8 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
     expect(await screen.findByRole("button", { name: "全部 1,200" })).toBeInTheDocument();
     expect(records()).toBe(500);
-  }, 30_000);
+    // Rendering and querying 1,000 real activity rows is slower on shared CI runners.
+  }, 60_000);
 
   it("marks the current primary navigation page and hides decorative icons", async () => {
     render(<App />);
@@ -15479,6 +15480,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
     expect(screen.getByLabelText('监督者整理超时（秒）')).toHaveValue(30)
     expect(screen.getByLabelText('监督模型并发数')).toHaveValue(2)
+    fireEvent.click(screen.getByRole('tab', { name: '回顾整理' }))
     fireEvent.change(screen.getByLabelText(/每次读取来源条数/), { target: { value: '17' } })
     fireEvent.change(screen.getByLabelText(/每批消息数/), { target: { value: '30' } })
     fireEvent.click(screen.getByRole('button', { name: '保存回顾算法' }))
@@ -15488,6 +15490,7 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '保存回顾算法' })).toBeDisabled())
     fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }))
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
+    fireEvent.click(screen.getByRole('tab', { name: '回顾整理' }))
     expect(screen.getByLabelText(/每次读取来源条数/)).toHaveValue(17)
   })
 

@@ -1242,11 +1242,11 @@ app
           assert.equal(menuLayout.plans, tab === 'plans')
           if (tab === 'settings') {
             assert(!menuLayout.settingsBadge && !menuLayout.refresh, 'Redundant settings badge/refresh')
-            assert(menuLayout.headings.includes('回顾算法') && menuLayout.headings.includes('模型超时与并发'))
+            assert(menuLayout.headings.includes('回顾算法') && menuLayout.headings.includes('模型与运行限制'))
           }
           reports.push({ scenario: 'menu-placement', theme, tab, ...menuLayout })
           await writeFile(join(artifacts, `menu-${tab}-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
-          const anchors = tab === 'settings' ? ['.heartbeat-settings__editor:last-child']
+          const anchors = tab === 'settings' ? ['.supervisor-settings [role=tabpanel]:not([hidden]) form']
              : tab === 'plans' ? ['#heartbeat-panel-overview', '.supervision-suggestions', '#heartbeat-panel-history'] : []
           for (const [index, anchor] of anchors.entries()) {
             await js(`document.querySelector('${anchor}').scrollIntoView({block:'start'})`)
