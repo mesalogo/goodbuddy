@@ -2,6 +2,54 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.11",
+      "releasedAt": "2026-10-04",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**不再切换 Ask / Execute 工作模式**：普通请求直接使用所选 Runtime、已启用能力和本机或 SSH 账号权限，输入区、项目和安全设置不再提供模式及通用工具审批。旧 Ask 会话也不再具有产品级只读限制；只需解释时请明确说明，内部纯文本任务仍不开放工具。",
+            "**向工作区导入文件并按时间排序**：在文件页选择目录后，点击“新建文件”旁的导入图标，将本机文件原样复制或上传到该目录，支持二进制和空文件。可按名称、修改时间及可用的创建时间排序；同名文件不覆盖，批次失败项单独提示，远程导入需 Agent 0.15.4。",
+            "**按历史回顾查看完整故事螺旋**：工作回顾与图谱共用紧凑历史栏，新回顾表单按需展开，正文和详情适应中窄窗口。螺旋保留未归属当前故事的事件，按主故事为实际事件区间和标记着色，空档保持中性；半径反映所选区间内当前保存消息的密度，不补造历史归属或持续时段。"
+          ],
+          "fixes": [
+            "**统一文件与会话图片入口**：移除独立成果页，实际项目文件在工作区查看，旧会话图片和数据库成果记录仍保留，不会自动复制到项目目录。保存工具能发现仅由消息引用的图片，关闭图片生成后仍可按已有图片 ID 保存；远程项目专家沿用父请求的远程 Runtime，把图片写到 Host 而非桌面。",
+            "**修正执行时长和缓存命中率**：执行时长改为累计运行状态的时间，等待回答不计时，旧记录和中断后未闭合区间标记为不完整，不扫描历史补算。OpenCode 缓存比例按包含缓存读写的完整输入量计算，修复完全命中显示为空及比例偏高，已有用量记录重新查询即可使用新口径。",
+            "**减少会话汇总和回顾初始化阻塞**：纯会话汇总通过索引读取，不隐式加载大消息正文；回顾来源初始化和续跑取数移到 Worker，按批处理并保留暂停、取消与恢复。改进针对这些路径，不保证所有设备相同比例提速，也不代表完整回顾发布事务已移出主进程。",
+            "**改进项目菜单和目录选择**：项目菜单打开时默认展示全部项目，保留归档恢复、明确进入项目及最近会话入口，Story Graph 开关增加图标。新建本地项目必须选择目录，历史空目录项目仍可编辑；远程目录选择可进入指向目录的符号链接。",
+            "**让 OCR 错误更容易定位**：PPTX 图片识别失败会注明实际 OCR 提供方及幻灯片、图片位置，并保留有界、脱敏的服务端诊断。此项修正错误展示，不代表服务端 HTTP 500 已被解决；官网中英文说明也同步新的执行方式。"
+          ],
+          "notices": [
+            "首次启动升级到 schema 60，并将 Runtime 设置升级到版本 22，增加执行计时并清理已退休的模式和审批字段，保留用户正文、图片、引用和远程事件身份。请先关闭应用并备份完整数据目录，至少包括数据库、相邻 `notes/` 和设置文件；大库转换可能耗时，失败请按提示重试，旧客户端回退必须恢复升级前备份。",
+            "远程执行协议升级为 runtime/acp 6，旧 Agent 0.15.3 不兼容本轮执行请求。请先结束或妥善处理正在运行的任务，升级 Desktop 0.15.11，再下载 Agent 0.15.4 并更新 Host；已有进程不会热更新，尚未验证跨版本进行中的旧操作恢复。",
+            "本轮不恢复 Ask 只读模式或通用工具审批。请在合适的项目目录和执行账号下使用，按需启停能力，并明确提出只解释、不修改等要求；这些文字要求不是原先的产品级只读隔离。",
+            "高频本地写入继续沿用 0.15.10 的 NORMAL 持久性取舍，断电或系统崩溃可能丢失最近部分本地写入。Electron、Node、OpenCode 和 Continue 固定版本不变。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Run requests without switching Ask / Execute modes**: Normal requests use the selected Runtime, enabled capabilities, and local or SSH account permissions, without work-mode controls or general tool approvals in the composer, projects, or Safety settings. Former Ask conversations no longer have a product-level read-only boundary; explicitly request explanation-only work when needed, while dedicated internal text tasks remain tool-free.",
+            "**Import workspace files and sort by time**: Select a directory in the file pane and use the import icon beside New File to copy or upload local files unchanged, including binary and empty files. Sort by name, modification time, or available creation time; existing files are not overwritten, failed items are reported separately, and remote imports require Agent 0.15.4.",
+            "**View complete story spirals for historical reviews**: Reviews and graphs share a compact history bar, new-review inputs expand on demand, and recap and detail layouts adapt to narrower windows. Spirals retain events without current story membership and color actual intervals and markers by primary story while leaving gaps neutral; radii reflect currently stored message density within the selected interval without inventing historical membership or durations."
+          ],
+          "fixes": [
+            "**Unify file and conversation-image access**: The separate Results page is removed, actual project files appear in the workspace, and historical conversation images and stored artifacts remain intact without automatic copying into project folders. Saving tools discover images referenced only by messages and remain available for existing image IDs when generation is disabled; remote-project experts retain the parent remote Runtime and save on the Host rather than the Desktop.",
+            "**Correct execution duration and cache hit rates**: Duration now accumulates time in the running state, excludes waiting for answers, and marks old records and interrupted open intervals incomplete instead of reconstructing them from history. OpenCode cache rates use complete input totals including cache reads and writes, fixing inflated rates and empty displays for full hits; querying existing usage applies the corrected calculation.",
+            "**Reduce blocking summary and review initialization work**: Summary-only queries use indexes without implicitly loading large message bodies, while review source initialization and resume reads run in a Worker with batches, pause, cancellation, and recovery. These improvements target specific paths rather than promising universal speedups or moving the complete review publication transaction off Main.",
+            "**Improve project menus and directory selection**: The project menu opens with all projects and retains archive restoration, explicit project entry, and recent conversations, while the Story Graph switch gains an icon. New local projects require a directory, historical projects with empty paths remain editable, and remote directory selection can follow directory symbolic links.",
+            "**Make OCR failures easier to locate**: PPTX image-recognition warnings identify the actual OCR provider and slide/image location, retaining bounded, redacted server diagnostics. This corrects error reporting rather than resolving server-side HTTP 500 failures; bilingual website descriptions also reflect unified execution."
+          ],
+          "notices": [
+            "First launch upgrades to schema 60 and Runtime settings version 22, adding execution timing and removing retired mode and approval metadata while retaining user text, images, references, and remote event identities. Close the app and back up the complete data directory, including at least the database, adjacent `notes/`, and settings files; large conversions may take time, failures should be retried as instructed, and downgrading requires the pre-upgrade backup.",
+            "Remote execution moves to runtime/acp 6; Agent 0.15.3 cannot serve these new execution requests. Finish or otherwise handle active tasks, upgrade to Desktop 0.15.11, then download Agent 0.15.4 and update the Host; running processes are not hot-updated, and cross-version recovery of active old operations has not been validated.",
+            "This release does not retain Ask read-only mode or general tool approval. Use an appropriate project directory and execution account, enable capabilities as needed, and explicitly request explanation-only or no-modification work; those instructions are not the former product-level read-only isolation.",
+            "Frequent local writes retain the NORMAL durability tradeoff introduced in 0.15.10 and may lose a recent suffix after power loss or an operating-system crash. Pinned Electron, Node, OpenCode, and Continue versions are unchanged."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.10",
       "releasedAt": "2026-10-04",
       "notes": {

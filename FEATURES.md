@@ -344,7 +344,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.3`, paired with the current Desktop release candidate `0.15.10`; formal
+  `0.15.4`, paired with the current Desktop release candidate `0.15.11`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -982,9 +982,25 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.10`; published Agent `0.15.3` requires Desktop `0.15.9`, with
+- The current Desktop candidate is `0.15.11`; Agent candidate `0.15.4` requires Desktop `0.15.11`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.11` / Agent `0.15.4` remove Ask/Execute and general tool
+  approvals, including the former read-only boundary of old Ask conversations.
+  Schema 60 and Runtime settings 22 remove retired metadata; back up the complete
+  data directory before upgrading, and restore that backup to downgrade.
+  Remote execution requires coordinated runtime/acp 6 packages. Workspace imports,
+  file timestamps/sorting, conversation-image discovery and remote expert image
+  saves accompany removal of the Results page without deleting stored artifacts.
+  State-based timing does not reconstruct old durations; cache rates use complete
+  OpenCode input totals. Review history, responsive layouts and story-colored
+  actual event intervals retain unassigned events and neutral gaps. Summary reads
+  and review initialization reduce bounded I/O without universal performance claims.
+  Development evidence includes 25 real text requests for unified execution and
+  expert image saves, not new release-preparation requests or image generation.
+  Exact-candidate CI, signed packages, public verification and cross-version
+  active-operation recovery are separate from those checks. See the
+  [preparation record](./docs/development/release-preparation-0.15.11.md).
 - Desktop `0.15.10` unifies project/conversation navigation with ten recent
   conversations, adds independent Supervisor model selection and a default-on
   per-conversation Story Graph switch. Indexed activity paging and complete
