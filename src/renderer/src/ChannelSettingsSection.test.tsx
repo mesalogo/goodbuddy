@@ -112,7 +112,6 @@ const projects: AssistantProject[] = [
     kind: 'local',
     rootPath: 'C:\\Users\\tester'
   },
-  defaultWorkMode: 'ask',
   runtimeSelection: { provider: 'model' },
   kind: 'channel',
   channel: channel as 'weixin' | 'wecom' | 'dingtalk',
@@ -241,13 +240,7 @@ describe('ChannelSettingsSection', () => {
     fireEvent.change(screen.getByLabelText('企业微信 模型'), {
       target: { value: directProfileId }
     })
-    fireEvent.click(
-      within(
-        screen.getByRole('group', {
-          name: '企业微信 默认模式'
-        })
-      ).getByRole('button', { name: '执行' })
-    )
+    expect(screen.queryByRole('group', { name: '企业微信 默认模式' })).not.toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', { name: '保存通道设置' })
     )
@@ -256,7 +249,6 @@ describe('ChannelSettingsSection', () => {
       expect.objectContaining({
         description: '企业微信同步项目',
         rootPath: 'C:\\RemoteWorkspace',
-        defaultWorkMode: 'execute',
         runtimeSelection: {
           provider: 'model',
           model: { kind: 'profile', profileId: directProfileId }
@@ -675,7 +667,7 @@ describe('ChannelSettingsSection', () => {
     expect(screen.queryByText('Channel project')).not.toBeInTheDocument()
     expect(
       screen.getByText(
-        'Remote Execute operations can run only within this project directory.'
+        'The working directory for this channel project.'
       )
     ).toBeInTheDocument()
   })

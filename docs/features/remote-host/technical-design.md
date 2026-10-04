@@ -1,5 +1,13 @@
 # SSH 远程主机与 GoodBuddy Agent 实现说明
 
+## 工作区文件上传
+
+工作区“导入文件”复用 `workspace/manage`，由 Desktop 分块读取本机原件并通过新
+`importFile` 动作写入所选远程目录。需要包含该动作的新 Agent；已有版本不支持时报告失败，
+不回退为桌面 artifact。文件时间同时保留 Agent 的 `mtime` 与可用 `birthtime`，不使用
+Linux `ctime` 作为创建时间。实现及验证边界见
+[工作区文件](../assistant-workbar/workspace-files.md)和[工作栏进度](../assistant-workbar/progress.md)。
+
 ## 状态
 
 下述状态段保留 2026-09-10 的实现与验证截面，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
@@ -64,12 +72,12 @@ Agent `0.11.23` 提供，显式请求期限与取消仍有效。当前问答源�
 项目或凭据；当前远程项目切回第一个普通本地项目。应用启动仍固定
 选择普通本地项目，不会因为保存了远程项目而自动连接 Host。
 
-远程项目只有两种工作模式：
+远程项目不保存产品工作模式。Runtime 使用所选 SSH 账号可访问的文件、进程、网络和已接入工具，
+不要求额外 trust tier、consent checklist、一般工具审批或“受控执行”授权。
+当前源码要求 `runtime/acp` capability 6，旧版本在精确协商处提示更新，不补 `execute` 重试。
+2026-10-04 的源码 Host 验证与配套签名包验收分开，见[统一执行进度](../unified-execution/progress.md)。
 
-- **Ask**：Runtime 在原生工具权限边界只读访问项目 Workspace，不声称操作系统级只读隔离。
-- **Execute**：用户已授权使用所选 SSH 账号的完整权限。Runtime 可以使用该账号可访问的文件、进程、网络和工具，不再要求额外 trust tier、consent checklist、逐工具审批或“受控执行”授权。
-
-Execute 不获得 root 或 SSH 账号本身没有的权限。托管 SSH Prompt 会把当前选中的文本模型
+Runtime 不获得 root 或 SSH 账号本身没有的权限。托管 SSH Prompt 会把当前选中的文本模型
 profile 和凭据作为有界、逐 Prompt 的控制消息交给 Agent；该凭据不进入命令参数、环境变量、
 语义日志或模型调用账本，并在 Prompt 终态清除。此行为只适用于用户已明确启用的可信组织
 网络和已认证 SSH Host。
@@ -167,7 +175,7 @@ Detached GoodBuddy Agent
   完整验签、payload 扫描和 registry 写入仍只发生在显式 Host 准备/更新流程。
 - 项目切换不执行远程核对，立即选择本地项目配置。Workspace 或 Runtime 首次实际使用时
   才通过当前 Agent 连接核对所需能力；失败只影响该操作。新建或显式保存项目仍执行完整
-  准备，并只事务写入 Host、路径、Runtime 选择和工作模式。
+  准备，并只事务写入 Host、路径和 Runtime 选择。
 - SSH 连接先尝试 attach；Agent 不存在或未运行时执行幂等 bootstrap，然后重新 attach。
 - Agent 是按需启动的 detached process，不注册开机服务，不依赖 systemd、D-Bus 或 Linger。
 - 每个模型桥 helper 都为 loopback HTTP 入口生成一次性随机路径 capability；只有写入当前 OpenCode 子进程配置的 URL 可以访问该入口，其他本机用户即使发现临时端口也不能提交模型请求。
@@ -257,7 +265,7 @@ Agent adoption 和所有 Runtime 激活成功后，Main 调用新安装的
 - Host 可以按签名目录固定的 URL、大小和 SHA-256 直接从当前 GitHub/北京镜像来源下载
   完整 `.gbagent`，也可使用 GoodBuddy 本机下载、流式 SFTP 传输和离线导入。自动模式只在
   操作开始时择一；执行失败不会在同一次操作中切换 acquisition。
-- 项目只保存 Host ID、远端路径、Runtime 选择和默认模式。创建或保存时验证 Host current
+- 项目只保存 Host ID、远端路径和 Runtime 选择。创建或保存时验证 Host current
   环境；打开或切换只读取本地配置。Workspace/Runtime 实际使用时从 Host current registry
   和当前 Agent 连接取得 live identity，不再扫描、下载、上传或发布 Agent/Runtime。完整
   事务、兼容边界和验收要求以
@@ -283,8 +291,7 @@ Main 传入已规范化的绝对 POSIX root。Agent 返回 Workspace identity、
 - 浏览从 SSH 账号 Home 或当前有效绝对路径开始，限制扫描次数、返回条目和总时限；取消、Host 变化、超时或连接失败时关闭 SFTP 并保留用户原先输入。
 - 每次浏览最多扫描 2,000 项、读取 64 批、返回 500 个目录，总时限 30 秒。链接检查逐项执行，计入同一次浏览的扫描及时间限制；检查期间取消、超时或通道报错仍关闭目录句柄和 SFTP 通道，忽略迟到的结果。
 - 选择目录只更新项目草稿，仍需通过正常的 Agent、Workspace、Runtime 验证和项目保存事务才会持久化。
-- Ask Workspace handle 不暴露写入方法。
-- Execute Workspace handle 可读写，但这不是 Execute 的唯一权限面；Execute Runtime 本身使用 SSH 账号的正常权限。
+- Workspace handle 按后端实际支持的方法提供能力；Runtime 本身使用 SSH 账号的正常权限，移除模式不补齐尚未实现的 Workspace API。
 - 文件预览按有界页面传输并保持 UTF-8 字符边界；超过单页大小时先返回当前页，用户可继续加载，不把单页传输上限误作文件总预览上限。搜索、Git diff、目录项和显式文件传输继续保持各自的字节、条目数和路径长度上限。
 
 ## Runtime
@@ -294,34 +301,20 @@ Composer Runtime 菜单显示 OpenCode、Continue 和管理入口，不显示直
 DeepSeek Harness。项目与历史会话保留 OC/CN 选择；不支持的旧 selection 恢复为项目
 默认值。Main 校验已安装 Runtime 身份与选择一致，按相应 CN/OC 模型 profile 建立模型桥。
 本机配置的 SKILL 包和 stdio MCP Server 不上传或分配给远程 Runtime；远程 ACP Session
-仅接收当前请求由 Agent 管理的 HTTP MCP 能力（例如 Execute 图片工具），不继承本机原生
+仅接收当前请求由 Agent 管理的 HTTP MCP 能力（例如图片工具），不继承本机原生
 MCP 配置。Continue helper 将 ACP Session 的服务器作为显式 `sessionMcpServers` 交给
 共享 `ContinueHostAdapter`，与模型桥配置一起生成最终配置；不先写入会被独立模型分支
-丢弃的原生配置。新建、加载和续接 Session 使用当前列表，空列表清除旧能力；Ask 在 helper
-和 adapter 两层均不注入这些 Execute 能力。本机独立模型 profile 仍不继承原生 MCP，
+丢弃的原生配置。新建、加载和续接 Session 使用当前列表，空列表清除旧能力；Continue helper
+使用原生 agent 模式提供工具。本机独立模型 profile 仍不继承原生 MCP，
 既有知识库和自定义 MCP 的显式分配规则不变。
 Node.js、Python 等工具执行环境同样不修改或同步到 Host，
 完整边界见[工具执行环境](../local-tool-environment/README.md)。
 
-### Ask
+### 统一执行
 
-Ask 与 Execute 一样直接启动已签名 Runtime，不要求 Host 安装额外的进程隔离命令：
-
-- `cwd` 为项目 Workspace，并继承 SSH 账号的正常环境；
-- Agent-owned ACP 的备用权限分派允许原生 `read`/`search`，优先选择 `allow_once`；
-  写入、执行和未知工具仍拒绝。独占 raw ACP 保留其原有的读取权限分派。
-- 未发布的共享路径以中性的 `permission: "ask"` 启动一个进程，再于每个 Session 的
-  `chat.message` 按已登记 workMode 设置原生工具规则。Ask 默认拒绝，放行已支持的
-  读取、搜索和业务问答；子 Session 同步根会话模式并保留原生显式限制，避免固定版本
-  ACP 不转发子 Session 权限请求而永远等待。
-- Execute Session 放行工具，不再被另一个 Ask Session 的进程级默认值限制。项目目录
-  是默认 cwd，原生子代理仍使用所选 SSH 账号可访问的路径；不增加 Desktop 人工审批。
-  规则及模型路由的唯一实现说明见
-  [共享 Agent Session 设计](../assistant-workbar/runtime-process-reuse-technical-design.md#6-ssh-opencode-与-agent)。
-
-### Execute
-
-Execute 直接启动已签名 Runtime：
+请求直接启动已签名 Runtime，不要求额外的进程隔离命令。ACP 权限回应保留活动请求归属、
+合法允许选项与取消处理，不再维护产品只读名单。模型路由仍按独立 Session 隔离，见
+[共享 Agent Session 设计](../assistant-workbar/runtime-process-reuse-technical-design.md#6-ssh-opencode-与-agent)。
 
 - 直接启动已签名 Runtime entrypoint；
 - 使用 Agent 本地模型 gateway 时，签名 Agent launcher 会 `exec` 候选 manifest 锁定的
@@ -329,10 +322,10 @@ Execute 直接启动已签名 Runtime：
   launcher 路径；
 - `cwd` 为项目 Workspace；
 - 继承 SSH 账号的正常环境、文件系统、进程和网络能力；
-- 独占启动使用 Execute 配置；共享启动由 Session 规则应用 Execute，不修改其他会话模式；
+- 独占和共享启动均不携带产品模式，工具和模型按请求归属路由；
 - 不进行 T2/T3、confinement attestation、approval bridge 或逐工具批准。
 
-两种模式都保留输入字节上限、用户取消和进程组清理；输出只用有界内存队列与 journal
+保留输入字节上限、用户取消和进程组清理；输出只用有界内存队列与 journal
 配合背压，不按 Prompt 累计输出量停止 Runtime。生产 Prompt 不设置固定墙钟总时限；
 只要 Runtime 尚未按自身协议结束，Main 和 Agent 就允许其持续运行。启动、握手、单个
 控制 RPC、重连尝试和关闭清理仍使用独立的有界超时，测试可以显式注入短 Prompt 时限
@@ -642,8 +635,8 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
 
 1. Agent 组包、安装或升级：验证当前候选的 attach-or-bootstrap、安装/更新、版本切换及
    随后的连接。
-2. Runtime profile、进程启动/归属或 Ask/Execute 边界：通过桌面生产入口启动真实 Runtime，
-   验证受影响模式；Ask 权限改动必须验证只读边界，Execute 权限改动必须验证所需写入、
+2. Runtime profile、进程启动/归属或工具能力边界：通过桌面生产入口启动真实 Runtime，
+   验证受影响入口、启用与分配以及所需写入、
    进程和网络能力。
 3. Agent protocol、RPC、stream、model bridge 或模型消息链路：执行最小有界真实模型调用，
    禁用非必要工具和附件，并记录实际调用次数；大消息或工具链路改动还应覆盖对应的真实
@@ -830,8 +823,7 @@ bundle 构建通过；这组历史结果不替代完整 Host 支持改动后的�
 
 - Host ID；
 - 规范远端工作目录；
-- Runtime selection；
-- `ask | execute` 默认模式。
+- Runtime selection。
 
 Agent installation、Host revision/Host Key generation、Workspace identity、Runtime
 bundle/adapter digest 和 capability generation 都属于 live connection/lease，不进入项目
@@ -843,8 +835,8 @@ registry identity，再用同一个 Agent 连接验证 Workspace 路径和 Runti
 实时 Runtime 创建只接受 OpenCode，使用当前解析后的模型 profile 准备 Agent 本地 gateway，
 从当前 Agent 连接和 Runtime registry 取得会话 identity，并在该连接上打开 Workspace 和
 ACP channel。Host 编辑或环境更新会定向失效 Agent 连接与 Runtime 缓存，下一次请求自然
-重新取得 current 环境；无需修改项目。Ask/Execute 权限继续由每次 Prompt 的 ACP Runtime
-边界执行。
+重新取得 current 环境；无需修改项目。每次 Prompt 沿用 ACP Runtime 的能力范围和请求归属，
+不恢复产品模式。
 
 Renderer 在用户主动打开已有托管 SSH 项目时立即切换，不显示远程激活状态。Host、Agent、
 Workspace、Runtime 和 Saving 进度仅用于新建或显式保存项目；进行中可显式取消并禁用会
@@ -857,7 +849,7 @@ Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转
 identity 已变化且旧 authority 无法恢复，或原 binding 已有 `outcome-unknown` 终态时，显式
 新 Prompt 才替换旧 binding。新 ACP session 的首次 Prompt 会把 Desktop 已持久化的有界
 会话历史作为不可信数据一并发送；成功加载或恢复原 ACP session 时不会重复注入历史。
-Ask 和 Execute 的 Linux Runtime 进程都直接启动已签名 Runtime 或 Agent model bridge
+Linux Runtime 进程直接启动已签名 Runtime 或 Agent model bridge
 helper；监督器核对启动后的最终 executable，再登记为运行中进程。
 
 不持久化 T2/T3、consent、approval bridge、confinement 或组件验证结果。数据库 schema
@@ -871,7 +863,8 @@ Detached Agent 不依赖 stdio 留存故障证据。每个 installation 在固�
 `~/.goodbuddy/state/<installationId>/diagnostics/` 中维护
 `agent-diagnostics.jsonl`、`.1` 和 `.2`，每个文件不超过 64 KiB，目录权限为 `0700`，
 文件权限为 `0600`。记录覆盖 daemon 启停、detached 启动、连接、恢复和 Runtime
-启动/退出；每条只包含固定事件、时间、PID、可选工作模式、固定原因和白名单错误码。
+启动/退出；每条只包含固定事件、时间、PID、固定原因和白名单错误码。当前写入不含模式；
+启动清理在既有日志锁内仅删除已验证 formatVersion 1 的顶层 `workMode`，保留嵌套内容与损坏行。
 
 诊断写入使用最多 64 条的有界异步队列。连接、恢复和 Runtime 回调只把已经归一化的固定
 记录入队，不等待磁盘；原始 `Error` 不进入队列。队列满、目录不可写或轮转失败只丢弃诊断，
@@ -1021,8 +1014,8 @@ UI 更新或签名复合包安装流程通过；真实模型调用为 0 次。
 5. 用测试签名复合包验证在线下载源选择和离线导入/导出；正式 Agent 候选还需公开校验
    双架构 production 包与签名目录。
 6. 在已固定 Host Key 的 Linux x64 测试 Host 上验证 attach-or-bootstrap。
-7. 在 GoodBuddy 专用测试目录验证 Ask 无法修改文件。
-8. 验证 Execute 可以写文件、启动进程和访问网络，同时不触碰无关 Host 文件。
+7. 在 GoodBuddy 专用测试目录验证无模式请求与能力分配，不保留产品只读名单。
+8. 验证可以写文件、启动进程和访问网络，同时不触碰无关 Host 文件。
 9. 运行一次有界的真实模型调用，确认凭据不进入 Renderer、SSH 参数、远端环境或磁盘，
    只在当前 accepted operation 生命周期内进入 Agent 内存。
 10. 中断并恢复 SSH，确认活动 Runtime 不被网络抖动终止。

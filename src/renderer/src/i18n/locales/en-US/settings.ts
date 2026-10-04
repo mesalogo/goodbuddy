@@ -71,16 +71,11 @@ export const settings = {
       description:
         'Manage SSH hosts, pin host keys, and verify remote execution environments. Locally configured Skills and MCP servers do not apply to remote hosts.'
     },
-    security: {
-      label: 'Security and data',
-      navigationDescription: 'Tool policies and local privacy',
-      description: 'Tool policies and local privacy'
-    },
     channels: {
       label: 'Message channels',
       navigationDescription: 'WeChat, WeCom, and DingTalk',
       description:
-        'Configure connections, workspaces, message backends, and default modes'
+        'Configure connections, workspaces, and message backends'
     },
     roles: {
       label: 'Roles and prompts',
@@ -234,7 +229,7 @@ export const settings = {
     followGoodBuddy: 'Follow GoodBuddy · {{name}} ({{model}})',
     noCompatibleModel: 'No compatible text model is configured',
     permissions:
-      'Choose Ask or Execute in a conversation. Ask can use only read-only capabilities allowed by the current Runtime. Execute can use enabled tools, and records tool calls in Activity.',
+      'Available tools depend on the selected Runtime and settings. Tool calls are recorded in Activity.',
     customization: {
       title: 'Capabilities and defaults',
       description:
@@ -271,7 +266,6 @@ export const settings = {
         unsupported: 'Not supported by this Runtime',
         toolsUnsupported:
           'This Runtime does not support static discovery of Tools',
-        toolModes: 'Ask: {{ask}} · Execute: {{execute}}',
         toolKind: {
           read: 'Read',
           write: 'File modification',
@@ -288,11 +282,6 @@ export const settings = {
           skill: 'Skill',
           unknown: 'Unknown source'
         },
-        toolAccess: {
-          allowed: 'Available',
-          blocked: 'Unavailable',
-          conditional: 'Request-dependent'
-        }
       },
       agentMode: {
         primary: 'Primary Agent',
@@ -413,7 +402,7 @@ export const settings = {
       title: 'DeepSeek Harness',
       previewDescription: 'Developer preview · OpenAI-compatible',
       description:
-        'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Ask can call native read/skill plus enabled Web Search/Fetch, while Execute can use every enabled tool and DSH plugin capability. Cancellation and workspace boundaries remain in place.',
+        'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. The Runtime can use enabled tools and DSH plugin capabilities. Cancellation and workspace boundaries remain in place.',
       platformSource: 'Administrator environment, then GoodBuddy fallback',
       environmentSource:
         'This option resolves to the administrator preset: {{model}}.',
@@ -445,7 +434,7 @@ export const settings = {
         disabledDescription:
           'The plugin marketplace is off by default. Turn it on to connect to the public npm catalog and show its management interface. Turning off the marketplace does not disable or uninstall existing plugins.',
         permissionNotice:
-          'Third-party install scripts, initialization code, and tools run with your user permissions. Ask cannot call third-party plugin tools, but it cannot limit plugin initialization code. Execute can call every tool from enabled plugins. Install only packages you trust.',
+          'Third-party install scripts, initialization code, and tools run with your user permissions. Enabled plugins provide their tools to the Runtime. Install only packages you trust.',
         refresh: 'Refresh',
         refreshAria: 'Refresh the DSH plugin marketplace',
         searchLabel: 'Search plugins',
@@ -866,19 +855,10 @@ export const settings = {
       'This prompt is sent as a trusted summary instruction. Conversation content is always treated as untrusted historical data.',
     restoreDefaultPrompt: 'Restore default prompt'
   },
-  security: {
-    toolPolicy: {
-      label: 'Direct model tool security policy',
-      always: 'Automatically authorize enabled tools in Execute',
-      deny: 'Block all tool execution',
-      description:
-        'Direct models in Execute mode can use built-in workspace tools and assigned MCP tools. Choosing Execute authorizes automatic tool calls for the current interaction without individual prompts. The blocking policy denies every tool call. OpenCode and Continue continue to use their own tool systems.'
-    },
-    localData: {
-      title: 'Local data and privacy',
-      description:
-        'Clear local conversations, activity records, and knowledge base indexes. Saved Runtime credentials and source files are not deleted.'
-    }
+  localData: {
+    title: 'Local data and privacy',
+    description:
+      'Clear local conversations, activity records, and knowledge base indexes. Saved Runtime credentials and source files are not deleted.'
   },
   roles: {
     smartRouting: {
@@ -887,7 +867,7 @@ export const settings = {
         'Automatically choose the expert role that best matches the question',
       enabled: 'Enable Smart Subagent routing',
       help:
-        'Off by default. In Ask mode, when no expert or team is explicitly selected, GoodBuddy chooses one expert. The Subagent uses the default text model and inherits the current mode and enabled tools.'
+        'Off by default. When no expert or team is explicitly selected, GoodBuddy chooses one expert. The Subagent uses the default text model and enabled tools.'
     }
   },
   appearance: {

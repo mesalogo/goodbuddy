@@ -13,6 +13,11 @@ const terminalId = '00000000-0000-4000-8000-000000000102'
 const projectId = '00000000-0000-4000-8000-000000000201'
 
 describe('workbar contracts', () => {
+  it('drops only retired results instances from released layouts', () => {
+    const browser = { id: terminalId, appId: 'browser', title: 'Research', targetRef: { type: 'conversation', conversationId: 'A' } }
+    const restored = normalizeWorkbarLayoutPreferences({ instances: [{ id: taskId, appId: 'results', title: 'Results' }, browser], activeInstanceId: taskId, expanded: false, dock: 'right', widthRatio: 0.42 }, [])
+    expect(restored).toMatchObject({ instances: [browser], activeInstanceId: terminalId, expanded: false, widthRatio: 0.42 })
+  })
   it('keeps notes as a context-independent single instance through layout normalization', () => {
     const instance = { id: taskId, appId: 'notes', title: 'Notes' } as const
     const layout = { instances: [instance, { ...instance, id: terminalId }], activeInstanceId: terminalId, expanded: true, dock: 'right', widthRatio: 0.3 }
@@ -43,7 +48,6 @@ describe('workbar contracts', () => {
       { id: 'tasks', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: true, closable: false, reorderable: false },
       { id: 'workspace', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: true, closable: false, reorderable: false },
       { id: 'browser', instancePolicy: 'multiple', defaultContext: 'current-conversation', defaultOpen: true, required: false, closable: true, reorderable: true },
-      { id: 'results', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: false, closable: true, reorderable: true },
       { id: 'notes', instancePolicy: 'single', defaultContext: 'application', defaultOpen: false, required: false, closable: true, reorderable: true },
       {
         id: 'terminal',

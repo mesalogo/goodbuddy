@@ -69,7 +69,7 @@ export const builtinMcpServers = [
     id: 'magic-notes',
     name: '笔记',
     description:
-      '读取全局魔法笔记，并在 Execute 模式下创建、修改或删除笔记与记录。',
+      '读取全局魔法笔记，创建、修改或删除笔记与记录。',
     tools: magicNoteScopedDataTools.map(({ name, summary, access }) => ({
       name,
       description: summary,

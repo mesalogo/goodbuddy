@@ -201,7 +201,7 @@ describe('WorkbarShell', () => {
     const tablist = screen.getByRole('tablist', {
       name: '已打开的工作栏应用'
     })
-    expect(within(tablist).getAllByRole('tab')).toHaveLength(4)
+    expect(within(tablist).getAllByRole('tab')).toHaveLength(3)
     expect(within(tablist).getAllByRole('tab').map((tab) => tab.textContent))
       .toEqual(DEFAULT_WORKBAR_INSTANCES.map((instance) => instance.title))
     expect(
@@ -224,16 +224,16 @@ describe('WorkbarShell', () => {
   })
 
   it('pins tasks and workspace in supplied layouts and navigates in displayed order', () => {
-    const [tasks, workspace, browser, results] = DEFAULT_WORKBAR_INSTANCES
+    const [tasks, workspace, browser] = DEFAULT_WORKBAR_INSTANCES
     render(
       <ControlledShell
-        initialInstances={[terminalOne, workspace!, results!, tasks!, browser!]}
+        initialInstances={[terminalOne, workspace!, tasks!, browser!]}
       />
     )
 
     const tabs = screen.getAllByRole('tab')
     expect(tabs.map((tab) => tab.textContent)).toEqual(
-      [tasks!, workspace!, terminalOne, results!, browser!].map((instance) => instance.title)
+      [tasks!, workspace!, terminalOne, browser!].map((instance) => instance.title)
     )
     expect(tabs[2]).toHaveAttribute('aria-selected', 'true')
     fireEvent.keyDown(tabs[2]!, { key: 'Home' })
@@ -368,10 +368,10 @@ describe('WorkbarShell', () => {
     expect(workspace).toHaveAttribute('tabindex', '0')
 
     fireEvent.keyDown(workspace, { key: 'End' })
-    const results = screen.getByRole('tab', { name: '成果' })
-    expect(results).toHaveFocus()
+    const browser = screen.getByRole('tab', { name: '浏览器' })
+    expect(browser).toHaveFocus()
 
-    fireEvent.keyDown(results, { key: 'Home' })
+    fireEvent.keyDown(browser, { key: 'Home' })
     expect(tasks).toHaveFocus()
   })
 
@@ -387,9 +387,9 @@ describe('WorkbarShell', () => {
       screen.getByRole('button', { name: '关闭浏览器' })
     )
 
-    const results = screen.getByRole('tab', { name: '成果' })
-    await waitFor(() => expect(results).toHaveFocus())
-    expect(results).toHaveAttribute('aria-selected', 'true')
+    const terminal = screen.getByRole('tab', { name: terminalOne.title })
+    await waitFor(() => expect(terminal).toHaveFocus())
+    expect(terminal).toHaveAttribute('aria-selected', 'true')
     expect(
       screen.queryByRole('tab', { name: '浏览器' })
     ).not.toBeInTheDocument()

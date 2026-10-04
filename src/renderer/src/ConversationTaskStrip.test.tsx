@@ -24,7 +24,6 @@ describe('ConversationTaskStrip', () => {
 
     render(
       <ConversationTaskStrip
-        conversationMode="execute"
         locale="zh-CN"
         onRemoveSchedule={onRemoveSchedule}
         onRunSchedule={onRunSchedule}
@@ -37,7 +36,6 @@ describe('ConversationTaskStrip', () => {
             conversationId,
             title: '每日状态',
             prompt: '汇总状态',
-            workMode: 'execute',
             recurrence: 'daily',
             nextRunAt: '2026-08-20T09:00:00.000Z',
             enabled: true,
@@ -66,7 +64,7 @@ describe('ConversationTaskStrip', () => {
     expect(
       screen.queryByRole('button', { name: '新建任务' })
     ).not.toBeInTheDocument()
-    expect(screen.getByText('Execute')).toBeInTheDocument()
+    expect(screen.queryByText(/^(Ask|Execute|模式)$/u)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '立即运行' }))
     await waitFor(() =>
       expect(onRunSchedule).toHaveBeenCalledWith(scheduleId)
@@ -111,47 +109,24 @@ describe('ConversationTaskStrip', () => {
   })
 
   it.each(['running', 'waiting_approval', 'completed', 'failed', 'interrupted'] as const)(
-    'shows the actual %s Task mode, not the schedule or current conversation mode',
+    'shows %s Task details without mode metadata',
     (status) => {
-      const { task, schedule, props } = modeFixtures()
+      const { task, schedule, props } = taskFixtures()
       render(
         <ConversationTaskStrip
           {...props}
-          conversationMode="execute"
           schedules={[schedule]}
-          tasks={[{ ...task, status, workMode: 'ask' }]}
+          tasks={[{ ...task, status }]}
         />
       )
-      expect(screen.getByText('Ask')).toBeInTheDocument()
+      expect(screen.getByText(task.title, { selector: 'strong' })).toBeInTheDocument()
+      expect(screen.queryByText('Ask')).not.toBeInTheDocument()
       expect(screen.queryByText('Execute')).not.toBeInTheDocument()
     }
   )
 
-  it('tracks current conversation mode for an unrun schedule instead of its legacy mode', () => {
-    const { task, schedule, props } = modeFixtures()
-    const { rerender } = render(
-      <ConversationTaskStrip
-        {...props}
-        conversationMode="ask"
-        schedules={[schedule]}
-        tasks={[task]}
-      />
-    )
-    expect(screen.getByText('Ask')).toBeInTheDocument()
-    expect(screen.queryByText('Execute')).not.toBeInTheDocument()
-    rerender(
-      <ConversationTaskStrip
-        {...props}
-        conversationMode="execute"
-        schedules={[{ ...schedule, workMode: 'ask' }]}
-        tasks={[task]}
-      />
-    )
-    expect(screen.getByText('Execute')).toBeInTheDocument()
-  })
-
-  it('does not invent a mode when the conversation or historical Task mode is unavailable', () => {
-    const { task, schedule, props } = modeFixtures()
+  it('omits mode metadata for unrun and completed scheduled tasks', () => {
+    const { task, schedule, props } = taskFixtures()
     const { rerender } = render(
       <ConversationTaskStrip {...props} schedules={[schedule]} tasks={[task]} />
     )
@@ -160,9 +135,8 @@ describe('ConversationTaskStrip', () => {
     rerender(
       <ConversationTaskStrip
         {...props}
-        conversationMode="execute"
         schedules={[schedule]}
-        tasks={[{ ...task, status: 'completed', workMode: undefined }]}
+        tasks={[{ ...task, status: 'completed' }]}
       />
     )
     expect(screen.queryByText('Execute')).not.toBeInTheDocument()
@@ -170,15 +144,15 @@ describe('ConversationTaskStrip', () => {
   })
 })
 
-function modeFixtures() {
+function taskFixtures() {
   const task: AssistantTask = {
     id: 'task', conversationId: 'conversation', scheduleId: 'schedule',
     title: '模式回归', instructions: '', origin: 'schedule', status: 'idle',
-    workMode: 'execute', createdAt: '2026-08-19T00:00:00.000Z'
+    createdAt: '2026-08-19T00:00:00.000Z'
   }
   const schedule: AssistantSchedule = {
     id: 'schedule', taskId: task.id, conversationId: 'conversation',
-    title: task.title, prompt: '', workMode: 'execute', recurrence: 'daily',
+    title: task.title, prompt: '', recurrence: 'daily',
     nextRunAt: '2026-08-20T09:00:00.000Z', enabled: true,
     createdAt: task.createdAt, updatedAt: task.createdAt
   }

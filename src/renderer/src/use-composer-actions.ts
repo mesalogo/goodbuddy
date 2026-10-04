@@ -1,5 +1,4 @@
 import type { SetStateAction } from "react";
-import type { InteractiveWorkMode } from "../../shared/assistant-contracts";
 import type { ContextAttachment } from "../../shared/contracts";
 import type { RuntimeSelectionLayer } from "../../shared/runtime-selection-contracts";
 import type { TerminalSnapshot } from "../../shared/terminal-contracts";
@@ -41,7 +40,6 @@ export type ComposerActions = {
   selectRuntimeAgent: (agentId: string) => void;
   selectContinuePreset: (presetId: string) => void;
   selectRuntimeAction: (value: string) => void;
-  setWorkMode: (mode: InteractiveWorkMode) => void;
   switchRuntime: (layer: RuntimeSelectionLayer | undefined) => void;
   prepareNativeClientConversation: () => Promise<string>;
   openNativeTerminal: (

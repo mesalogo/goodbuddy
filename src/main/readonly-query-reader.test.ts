@@ -258,7 +258,7 @@ describe('assistant readonly worker', () => {
     database.initialize(root)
     try {
       const project = database.listProjects()[0]!
-      const other = database.createProject({ name: 'Other', description: '', rootPath: root, defaultWorkMode: 'ask' })
+      const other = database.createProject({ name: 'Other', description: '', rootPath: root })
       const conversationId = randomUUID(), messageId = randomUUID()
       const body = 'Choose A, then revise A to B because of measured latency.'
       database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Decision', updatedAt: 1 },
@@ -310,7 +310,7 @@ describe('WAL checkpoint worker', () => {
       expect(autocheckpoint()).toBe(1000)
       database.enableWalCheckpointWorker(workerPath, 20)
       await expect.poll(autocheckpoint, { timeout: 10_000 }).toBe(4000)
-      const task = database.createTask({ id: randomUUID(), title: 't', instructions: 'i', workMode: 'ask' })
+      const task = database.createTask({ id: randomUUID(), title: 't', instructions: 'i' })
       const sizeBefore = statSync(path).size
       for (let index = 0; index < 300; index += 1) {
         database.appendTaskEvent(task.id, 'text', { type: 'text', requestId: task.id, delta: 'x'.repeat(4_000) })

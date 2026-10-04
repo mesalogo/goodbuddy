@@ -9,7 +9,7 @@ import type { SupervisionReviewBatch, SupervisionReviewProgress, SupervisionRevi
 export const TIMELINE_CHECKPOINT_SCOPE = 'timeline'
 
 export type ReviewConfiguration = SupervisionReviewSettings & { timeoutSeconds: number; concurrency: number; version: 1 }
-export type ReviewState = { request: SupervisionRunRequest; config: ReviewConfiguration; restartRequired?: boolean; phase?: SupervisionReviewProgress['phase']; stories?: SupervisionReviewProgress['stories'] }
+export type ReviewState = { request: SupervisionRunRequest; config: ReviewConfiguration; initializing?: boolean; restartRequired?: boolean; phase?: SupervisionReviewProgress['phase']; stories?: SupervisionReviewProgress['stories'] }
 
 // Only the manifest is materialized. Source bodies are read in bounded substrings.
 export const supervisionReviewMigration = `
@@ -67,12 +67,25 @@ export const supervisionReviewMigration = `
 `
 
 export class SupervisionReviewStore {
-  constructor(private readonly db: DatabaseSync) {
-    db.function('review_revision', { deterministic: true }, value => createHash('sha256').update(String(value)).digest('hex'))
+  constructor(private readonly db: DatabaseSync, signal?: AbortSignal) {
+    db.function('review_revision', { deterministic: true }, value => {
+      signal?.throwIfAborted()
+      return createHash('sha256').update(String(value)).digest('hex')
+    })
   }
 
-  initialize(runId: string, state: ReviewState): void {
+  prepareInitialization(runId: string, state: ReviewState): void {
+    this.db.prepare('INSERT INTO supervision_review_runs VALUES (?, ?)').run(runId, JSON.stringify({ ...state, initializing: true }))
+  }
+
+  initialize(runId: string, state: ReviewState, signal?: AbortSignal): void {
+    this.prepareInitialization(runId, state)
+    this.initializeSources(runId, state, signal)
+  }
+
+  initializeSources(runId: string, state: ReviewState, signal?: AbortSignal): void {
     const { request } = state
+    signal?.throwIfAborted()
     if (request.scope.kind === 'projects') {
       for (const id of request.scope.projectIds) {
         if (!this.db.prepare("SELECT id FROM projects WHERE id = ? AND status = 'active'").get(id)) {
@@ -80,33 +93,44 @@ export class SupervisionReviewStore {
         }
       }
     }
-    this.db.exec('BEGIN IMMEDIATE')
+    // Scan once into connection-local metadata, under a read snapshot. No live
+    // writer lock is held while the source view parses potentially large JSON.
+    this.db.exec('DROP TABLE IF EXISTS temp.review_manifest; BEGIN')
     try {
-      this.db.prepare('INSERT INTO supervision_review_runs VALUES (?, ?)').run(runId, JSON.stringify(state))
-      const insertPage = this.db.prepare(`INSERT INTO supervision_review_sources
-        SELECT ?, s.source, review_revision(s.context), s.project_id, s.conversation_id, s.sequence,
-          length(s.body), CASE WHEN c.revision = review_revision(s.context) THEN c.processed_offset ELSE 0 END,
-          CASE WHEN c.revision = review_revision(s.context) THEN c.processed_offset ELSE 0 END
+      this.db.prepare(`CREATE TEMP TABLE review_manifest AS
+        SELECT s.source, review_revision(s.context) AS revision, s.project_id, s.conversation_id, s.sequence,
+          length(s.body) AS length, CASE WHEN c.revision = review_revision(s.context) THEN c.processed_offset ELSE 0 END AS initial_offset
         FROM supervision_review_current s LEFT JOIN review_checkpoints c
           ON ? = 1 AND c.stage = 'supervisor' AND c.scope = '${TIMELINE_CHECKPOINT_SCOPE}' AND c.source = s.source
         WHERE ((s.occurred >= ? AND s.occurred <= ?) OR (s.alternate_time >= ? AND s.alternate_time <= ?))
           AND (? = 'global' OR s.project_id IN (SELECT value FROM json_each(?)))
           AND length(s.body) > 0
-          AND (c.revision IS NULL OR c.revision != review_revision(s.context) OR c.processed_offset < length(s.body))
-          AND (s.project_id, s.conversation_id, s.sequence, s.source) > (?, ?, ?, ?)
-        ORDER BY s.project_id, s.conversation_id, s.sequence, s.source LIMIT ?`)
-      let cursor: [string, string, number, string] = ['', '', -1, '']
-      for (;;) {
-        const page = insertPage.run(runId, isIncrementalReview(request) ? 1 : 0, request.timeRange.from, request.timeRange.to,
+          AND (c.revision IS NULL OR c.revision != review_revision(s.context) OR c.processed_offset < length(s.body))`)
+        .run(isIncrementalReview(request) ? 1 : 0, request.timeRange.from, request.timeRange.to,
           request.timeRange.from, request.timeRange.to, request.scope.kind,
-          JSON.stringify(request.scope.kind === 'projects' ? request.scope.projectIds : []), ...cursor, state.config.pageSize)
-        if (!page.changes) break
-        const last = this.db.prepare(`SELECT project_id, conversation_id, sequence, source FROM supervision_review_sources
-          WHERE run_id = ? ORDER BY project_id DESC, conversation_id DESC, sequence DESC, source DESC LIMIT 1`).get(runId)!
-        cursor = [String(last.project_id), String(last.conversation_id), Number(last.sequence), String(last.source)]
-      }
+          JSON.stringify(request.scope.kind === 'projects' ? request.scope.projectIds : []))
       this.db.exec('COMMIT')
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
+    try {
+      // Incomplete manifests are disposable. The saved flag survives shutdown and
+      // makes resume rebuild them before extraction or publication can proceed.
+      for (;;) {
+        signal?.throwIfAborted()
+        const removed = this.db.prepare(`DELETE FROM supervision_review_sources WHERE run_id = ? AND source IN
+          (SELECT source FROM supervision_review_sources WHERE run_id = ? LIMIT 200)`).run(runId, runId)
+        if (!removed.changes) break
+      }
+      const insert = this.db.prepare(`INSERT INTO supervision_review_sources
+        SELECT ?, source, revision, project_id, conversation_id, sequence, length, initial_offset, initial_offset
+        FROM temp.review_manifest WHERE rowid > ? AND rowid <= ?`)
+      const count = Number(this.db.prepare('SELECT COUNT(*) AS n FROM temp.review_manifest').get()!.n)
+      for (let offset = 0; offset < count; offset += 200) {
+        signal?.throwIfAborted()
+        insert.run(runId, offset, offset + 200)
+      }
+      signal?.throwIfAborted()
+      this.db.prepare("UPDATE supervision_review_runs SET state_json = json_remove(state_json, '$.initializing') WHERE run_id = ?").run(runId)
+    } finally { this.db.exec('DROP TABLE IF EXISTS temp.review_manifest') }
   }
 
   load(runId: string): ReviewState {
@@ -124,19 +148,24 @@ export class SupervisionReviewStore {
       ORDER BY s.created_at LIMIT 1`).get(JSON.stringify(request.scope))?.id as string | undefined
   }
 
-  resume(runId: string): void {
+  resume(runId: string, signal?: AbortSignal): void {
     const status = this.db.prepare('SELECT status FROM supervision_runs WHERE id = ?').get(runId)?.status
     if (status === 'cancelled') throw new Error('SUPERVISION_REVIEW_CANCELLED: 此回顾已取消，不能继续。请开始新的回顾。')
     if (this.load(runId).restartRequired) throw new Error('Review source changed or was removed; start a new review')
     const changed = this.db.prepare(`UPDATE supervision_runs SET status = 'running', error = NULL, completed_at = NULL
       WHERE id = ? AND status IN ('paused', 'failed', 'running')`).run(runId)
     if (!changed.changes) throw new Error('SUPERVISION_REVIEW_NOT_RESUMABLE: 此回顾已完成或不存在，请开始新的回顾。')
+    if (this.load(runId).initializing) {
+      this.initializeSources(runId, this.load(runId), signal)
+      return
+    }
     // A changed/deleted source cannot be silently counted as covered. Saved facts remain accessible.
     let after = ''
     for (;;) {
       const rows = this.db.prepare('SELECT source, revision FROM supervision_review_sources WHERE run_id = ? AND source > ? ORDER BY source LIMIT 200').all(runId, after)
       if (!rows.length) break
       for (const row of rows) {
+        signal?.throwIfAborted()
         if (this.currentSource(String(row.source), 0, 0)?.current_revision !== row.revision) {
           this.sourceChanged(runId, String(row.source))
         }
@@ -282,6 +311,7 @@ export class SupervisionReviewStore {
   }
 
   assertComplete(runId: string): void {
+    if (this.load(runId).initializing) throw new Error('Cannot publish an incomplete source manifest')
     if (this.progress(runId).remainingSources) throw new Error('Cannot publish incomplete coverage')
   }
 

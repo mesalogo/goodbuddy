@@ -71,7 +71,7 @@ describe('direct Linux stdio Runtime ownership', () => {
     }
   })
 
-  it('spawns Ask directly without systemd using detached fixed stdio', async () => {
+  it('spawns directly without systemd using detached fixed stdio', async () => {
     const registry = createRegistry()
     const child = fakeChild()
     let launchedIdentity!: LinuxRuntimeProcessIdentity
@@ -147,7 +147,6 @@ describe('direct Linux stdio Runtime ownership', () => {
         args: ['/agent/lib/agent.cjs', 'model-bridge-helper'],
         cwd: '/workspace',
         env: { PATH: '/usr/bin:/bin' },
-        workMode: 'execute'
       },
       identity: { launchId: 'launch-1', processId: 'process-1' },
       installationId: 'installation-1',
@@ -417,7 +416,6 @@ function profile() {
     processExecutable: '/bundle/bin/opencode' as const,
     cwd: '/workspace',
     env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
-    workMode: 'ask' as const,
     args: ['acp']
   }
 }

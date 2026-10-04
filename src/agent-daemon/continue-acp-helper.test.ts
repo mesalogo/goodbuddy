@@ -8,8 +8,7 @@ import { runContinueAcpHelper } from './continue-acp-helper'
 
 const transport = vi.hoisted(() => ({
   agent: undefined as Agent | undefined,
-  close: () => {},
-  mode: 'execute' as 'ask' | 'execute'
+  close: () => {}
 }))
 vi.mock('@agentclientprotocol/sdk', () => ({
   PROTOCOL_VERSION: 1,
@@ -46,18 +45,19 @@ const server = (name: string) => ({
 
 // Keep the actual helper and adapter config builder together: mocking the
 // adapter constructor would miss the model-profile configuration-loss bug.
-it('delivers current ACP session MCP capabilities in Execute and Ask with read-only Ask authorization', async () => {
+it('delivers current ACP session MCP capabilities with normal tool authorization', async () => {
   const configs: Array<Record<string, unknown>> = []
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({
-    operationId: 'operation', workMode: transport.mode
+    operationId: 'operation'
   })))
   vi.spyOn(ContinueHostAdapter.prototype, 'run').mockImplementation(async function (
     this: ContinueHostAdapter, _prompt, _signal, authorize, options
   ) {
-    if (options?.workMode === 'ask') {
-      expect(await authorize!({ toolName: 'story_graph_search' } as never)).toBe('once')
-      expect(await authorize!({ toolName: 'generate_image' } as never)).toBe('deny')
-      expect(await authorize!({ toolName: 'write_file' } as never)).toBe('deny')
+    expect(options).not.toHaveProperty('workMode')
+    // Native chat mode adds --readonly independently of tool authorization.
+    expect((this as unknown as { options: { mode: string } }).options.mode).toBe('agent')
+    for (const toolName of ['story_graph_search', 'generate_image', 'write_file', 'dynamic_plugin_tool']) {
+      expect(await authorize!({ toolName } as never)).toBe('once')
     }
     const path = await (this as unknown as {
       createRunConfig(options: ContinueHostRunOptions): Promise<string>
@@ -68,7 +68,7 @@ it('delivers current ACP session MCP capabilities in Execute and Ask with read-o
   })
   const running = runContinueAcpHelper({
     socketPath: 'unused', protocol: 'openai-chat-completions', model: 'test-model',
-    supportsImageInput: false, workMode: 'execute', sharedSessions: true, entrypoint: 'unused'
+    supportsImageInput: false, sharedSessions: true, entrypoint: 'unused'
   })
   try {
     await vi.waitFor(() => expect(transport.agent).toBeDefined())
@@ -78,9 +78,7 @@ it('delivers current ACP session MCP capabilities in Execute and Ask with read-o
     await prompt()
     await agent.resumeSession!({ sessionId, cwd: tmpdir(), mcpServers: [server('replacement')] })
     await prompt()
-    transport.mode = 'ask'
     await prompt()
-    transport.mode = 'execute'
     await agent.loadSession!({ sessionId, cwd: tmpdir(), mcpServers: [] })
     await prompt()
     expect(configs.map(config => config.mcpServers ?? [])).toEqual([
@@ -98,16 +96,16 @@ it('delivers current ACP session MCP capabilities in Execute and Ask with read-o
   }
 })
 
-it('keeps one flat transcript without nesting history or repeating work-mode text', async () => {
+it('keeps one flat transcript and preserves user text beginning with Work mode', async () => {
   const prompts: string[] = []
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ operationId: 'operation', workMode: 'execute' })))
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ operationId: 'operation' })))
   vi.spyOn(ContinueHostAdapter.prototype, 'run').mockImplementation(async (prompt) => {
     prompts.push(prompt)
     return { text: `answer ${prompts.length}` }
   })
   const running = runContinueAcpHelper({
     socketPath: 'unused', protocol: 'openai-chat-completions', model: 'test-model',
-    supportsImageInput: false, workMode: 'execute', sharedSessions: true, entrypoint: 'unused'
+    supportsImageInput: false, sharedSessions: true, entrypoint: 'unused'
   })
   try {
     await vi.waitFor(() => expect(transport.agent).toBeDefined())
@@ -124,17 +122,17 @@ it('keeps one flat transcript without nesting history or repeating work-mode tex
 
     expect(prompts[0]!.match(/<conversation-history>/g)).toHaveLength(1)
     expect(prompts[1]!.match(/<conversation-history>/g)).toHaveLength(1)
-    expect(prompts[1]!.match(/Work mode:/g)).toHaveLength(1)
+    expect(prompts[1]!.match(/Work mode:/g)).toHaveLength(2)
     const history = JSON.parse(prompts[1]!.match(/<conversation-history>(.*)<\/conversation-history>/)![1]!)
     expect(history).toEqual([...desktopHistory,
-      { role: 'user', content: 'first' }, { role: 'assistant', content: 'answer 1' }])
+      { role: 'user', content: 'Work mode: Execute. Follow the user request.\n\nfirst' }, { role: 'assistant', content: 'answer 1' }])
   } finally {
     transport.close()
     await running
   }
 })
 
-it('keeps local profile MCP scoping and includes Main-bound session servers in Ask', async () => {
+it('keeps local profile MCP scoping and includes Main-bound session servers', async () => {
   const root = await mkdtemp(join(tmpdir(), 'goodbuddy-cn-scope-'))
   try {
     const configPath = join(root, 'native.json')
@@ -147,11 +145,11 @@ it('keeps local profile MCP scoping and includes Main-bound session servers in A
     const create = (options: ContinueHostRunOptions) => (adapter as unknown as {
       createRunConfig(options: ContinueHostRunOptions): Promise<string>
     }).createRunConfig(options)
-    for (const workMode of ['ask', 'execute'] as const) {
-      const path = await create({ workMode })
+    {
+      const path = await create({})
       expect(JSON.parse(await readFile(path, 'utf8')).mcpServers ?? []).toEqual([])
     }
-    const path = await create({ workMode: 'ask', sessionMcpServers: [{
+    const path = await create({ sessionMcpServers: [{
       name: 'remote', type: 'streamable-http', url: 'http://127.0.0.1:12346', requestOptions: { headers: {} }
     }] })
     expect(JSON.parse(await readFile(path, 'utf8')).mcpServers).toEqual([{

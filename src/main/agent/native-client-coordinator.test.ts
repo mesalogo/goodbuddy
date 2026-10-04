@@ -14,7 +14,7 @@ function fixture(whenReady: () => Promise<void> = async () => undefined) {
   const profile = { id: 'selected', name: 'Selected', protocol: 'openai-chat-completions',
     authentication: 'api-key', apiKey: 'secret', baseUrl: 'https://example.com/v1', modelName: 'selected-model' }
   const settings = { provider: 'deepseek-harness', modelProfiles: [profile], deepseekHarnessModelProfile: profile }
-  const conversation = { projectId: 'project', knowledgeLibraryIds: ['library'], workMode: 'ask', storyGraphEnabled: true }
+  const conversation = { projectId: 'project', knowledgeLibraryIds: ['library'], storyGraphEnabled: true }
   const project = { id: 'project', runtimeSelection: { provider: 'deepseek-harness', profileId: profile.id } }
   const application = { heartbeatEnabled: false, magicNotesEnabled: true, localToolEnvironment: { node: { source: 'managed' } as LocalToolRuntimeSelection } }
   const gateway = { start: vi.fn(), dispose: vi.fn(), grant: vi.fn(() => 'builtin-token'),
@@ -82,8 +82,8 @@ describe('native client coordinator', () => {
     expect(await coordinator.get(1, 'conversation')).toBeNull()
   })
 
-  it('matches get and reuse against current credentials, mode and Node selection', async () => {
-    const { coordinator, profile, conversation, application, start } = fixture()
+  it('matches get and reuse against current credentials and Node selection', async () => {
+    const { coordinator, profile, application, start } = fixture()
     await Promise.all([coordinator.open(1, 'conversation'), coordinator.open(1, 'conversation')])
     expect(start).toHaveBeenCalledOnce()
     profile.apiKey = 'rotated'
@@ -91,36 +91,26 @@ describe('native client coordinator', () => {
     await coordinator.open(1, 'conversation')
     expect(start.mock.calls[1]![0].profile.apiKey).toBe('rotated')
     expect(start.mock.calls[1]![0].configurationKey).not.toBe(start.mock.calls[0]![0].configurationKey)
-    conversation.workMode = 'execute'
-    expect(await coordinator.get(1, 'conversation')).toBeNull()
-    conversation.workMode = 'ask'
     expect(await coordinator.get(1, 'conversation')).toEqual({ serviceId: 'service-1' })
     application.localToolEnvironment.node = { source: 'custom', executablePath: '/new/node' }
     expect(await coordinator.get(1, 'conversation')).toBeNull()
     expect(await coordinator.get(2, 'conversation')).toBeNull()
   })
 
-  it('maps gateway read grants in Ask and custom MCP only in Execute', async () => {
-    const { coordinator, gateway, start, conversation } = fixture()
+  it('grants enabled writes and custom MCP without a mode or read whitelist', async () => {
+    const { coordinator, gateway, start } = fixture()
     await coordinator.open(1, 'conversation')
-    expect(gateway.grantCustomMcp).not.toHaveBeenCalled()
-    expect(gateway.grant).toHaveBeenLastCalledWith(
-      expect.any(String), ['library'], expect.any(AbortSignal), 'none',
-      { access: 'read', workspacePath: '/workspace' },
-      undefined, undefined, undefined, { settings: {}, access: 'read' }, undefined
-    )
     expect(start.mock.calls[0]![0]).toMatchObject({ skillDirectories: ['/skills/test'], mcpServers: [
-      { serverName: 'goodbuddy-0', readOnlyTools: ['knowledge_search', 'obsidian_read_note'] }
+      { serverName: 'goodbuddy-0' }, { serverName: 'goodbuddy-1' }
     ] })
-    conversation.workMode = 'execute'
-    await coordinator.open(1, 'conversation')
     expect(gateway.grantCustomMcp).toHaveBeenCalledOnce()
     expect(gateway.grant).toHaveBeenLastCalledWith(
       expect.any(String), ['library'], expect.any(AbortSignal), 'none',
       { access: 'write', workspacePath: '/workspace' },
       undefined, undefined, undefined, { settings: {}, access: 'write' }, undefined
     )
-    expect(start.mock.calls[1]![0].mcpServers).toHaveLength(2)
+    expect(start.mock.calls[0]![0].mcpServers).toHaveLength(2)
+    expect(gateway.getAvailableToolNames).not.toHaveBeenCalled()
     await coordinator.closeOwner(1)
     await expect(coordinator.open(1, 'conversation')).rejects.toThrow('closed')
   })

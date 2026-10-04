@@ -58,7 +58,6 @@ export function toLocalConversationHeader(
     id: conversation.id,
     projectId: conversation.projectId,
     runtimeSelection: conversation.runtimeSelection,
-    workMode: conversation.workMode,
     knowledgeLibraryIds: conversation.knowledgeLibraryIds,
     knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
     storyGraphEnabled: conversation.storyGraphEnabled,

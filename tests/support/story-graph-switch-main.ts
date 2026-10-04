@@ -43,7 +43,7 @@ app.whenReady().then(async () => {
     { capability: 'text', getStatus: async () => ({ available: true, name: 'Switch test', capability: 'text' }) } as never,
     'CommandOrControl+Shift+Space', settings, capabilities,
     { clear() {}, cancelImport() {}, getDraft: () => [] } as never, knowledge,
-    database, { clear() {} } as never, {} as never, async () => {}, undefined, undefined,
+    database, {} as never, async () => {}, undefined, undefined,
     undefined, undefined, application, undefined, undefined, undefined, undefined, undefined,
     undefined, undefined, undefined, undefined, undefined, { getPending: async () => undefined } as never)
   const js = <T = unknown>(code: string): Promise<T> => win.webContents.executeJavaScript(code)

@@ -5,7 +5,8 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync
+  statSync,
+  writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -25,6 +26,29 @@ afterEach(() => {
 })
 
 describe('Agent diagnostic log', () => {
+  it('removes only historical owned top-level modes while holding the append lock', async () => {
+    const stateDirectory = temporaryStateDirectory()
+    const first = new AgentDiagnosticLog(stateDirectory)
+    first.record('daemon.ready')
+    await first.dispose()
+    const record = { ...JSON.parse(readFileSync(first.currentFilePath, 'utf8')),
+      workMode: 'plan', detail: { workMode: 'user-data' }, outcome: 'completed' }
+    const malformed = '{not-json}\n'
+    for (const suffix of ['', '.1', '.2']) {
+      writeFileSync(`${first.currentFilePath}${suffix}`, `${JSON.stringify(record)}\n${malformed}`, { mode: 0o600 })
+    }
+    const restarted = new AgentDiagnosticLog(stateDirectory)
+    restarted.record('daemon.starting')
+    await restarted.dispose()
+    for (const suffix of ['', '.1', '.2']) {
+      const raw = readFileSync(`${first.currentFilePath}${suffix}`, 'utf8')
+      const cleaned = JSON.parse(raw.split('\n')[0]!)
+      const expected = { ...record } as Partial<typeof record>
+      delete expected.workMode
+      expect(cleaned).toEqual(expected)
+      expect(raw).toContain(malformed)
+    }
+  })
   it('rotates within fixed file and byte bounds and remains readable after restart', async () => {
     const stateDirectory = temporaryStateDirectory()
     let now = Date.UTC(2026, 7, 31)
@@ -107,7 +131,6 @@ describe('Agent diagnostic log', () => {
 
     log.record('runtime.start.failed', {
       runtimeId: 'opencode',
-      workMode: 'execute',
       error
     })
     await log.flush()
@@ -143,7 +166,6 @@ describe('Agent diagnostic log', () => {
       event: 'runtime.start.failed',
       pid: 42,
       runtimeId: 'opencode',
-      workMode: 'execute',
       error: {
         name: 'Error'
       }

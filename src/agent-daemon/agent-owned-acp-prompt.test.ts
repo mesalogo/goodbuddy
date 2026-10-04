@@ -23,7 +23,7 @@ afterEach(() => {
 })
 
 describe('AgentOwnedAcpPrompt', () => {
-  it('applies each prompt mode to the retained session and its permission decisions', async () => {
+  it('refreshes prompt tools on the retained session and authorizes execution', async () => {
     const root = mkdtempSync(join(tmpdir(), 'goodbuddy-owned-acp-modes-'))
     temporary.push(root)
     const transcript = new SemanticPromptStore(join(root, 'prompts.sqlite'))
@@ -49,8 +49,8 @@ describe('AgentOwnedAcpPrompt', () => {
       }
     })
     try {
-      for (const [index, workMode] of (['execute', 'execute', 'ask', 'execute', 'ask'] as const).entries()) {
-        imageUrl = workMode === 'execute' && index !== 1 ? `http://127.0.0.1:1234/prompt-${index}` : undefined
+      for (let index = 0; index < 5; index++) {
+        imageUrl = index === 0 || index === 3 ? `http://127.0.0.1:1234/prompt-${index}` : undefined
         const operationId = `operation-${index}`
         transcript.prepare({
           bindingId: 'binding-1', operationId, requestId: operationId,
@@ -59,9 +59,9 @@ describe('AgentOwnedAcpPrompt', () => {
         })
         await owner.start({
           bindingId: 'binding-1', operationId, requestId: operationId,
-          prompt: [{ type: 'text', text: 'Continue with the selected mode' }]
-        }, workMode)
-        expect(prepareSession).toHaveBeenLastCalledWith('session-1', operationId, workMode)
+          prompt: [{ type: 'text', text: 'Continue' }]
+        })
+        expect(prepareSession).toHaveBeenLastCalledWith('session-1', operationId)
         if (index !== 2) {
           expect(index === 0 ? newSession : resumeSession).toHaveBeenLastCalledWith(expect.objectContaining({ mcpServers: mcpServers() }))
         }
@@ -74,7 +74,7 @@ describe('AgentOwnedAcpPrompt', () => {
           ]
         })
         expect(result.outcome).toEqual({
-          outcome: 'selected', optionId: workMode === 'execute' ? 'allow' : 'reject'
+          outcome: 'selected', optionId: 'allow'
         })
         finish({ stopReason: 'end_turn' })
         await vi.waitFor(() => expect(transcript.attach('binding-1', operationId, 'controller-1'))
@@ -166,7 +166,7 @@ describe('AgentOwnedAcpPrompt', () => {
       requestId: 'operation-1',
       prompt: [{ type: 'text' as const, text: 'finish independently' }]
     }
-    await expect(owner.start(request, 'execute')).resolves.toMatchObject({
+    await expect(owner.start(request)).resolves.toMatchObject({
       state: 'running',
       sessionId: 'session-1'
     })
@@ -206,7 +206,7 @@ describe('AgentOwnedAcpPrompt', () => {
         limit: 10
       }).events.map((event) => event.kind)
     ).toEqual(['session-update', 'prompt-terminal'])
-    await expect(owner.start(request, 'execute')).resolves.toMatchObject({
+    await expect(owner.start(request)).resolves.toMatchObject({
       state: 'completed'
     })
     expect(prompt).toHaveBeenCalledOnce()
@@ -255,7 +255,7 @@ describe('AgentOwnedAcpPrompt', () => {
       operationId: 'operation-1',
       requestId: 'operation-1',
       prompt: [{ type: 'text', text: 'finish independently' }]
-    }, 'execute')
+    })
     await vi.waitFor(() =>
       expect(
         transcript.attach('binding-1', 'operation-1', 'controller-1')
@@ -324,7 +324,7 @@ describe('AgentOwnedAcpPrompt', () => {
       operationId: 'operation-1',
       requestId: 'operation-1',
       prompt: [{ type: 'text', text: 'wait for Runtime exit' }]
-    }, 'execute')
+    })
     await process.emitExit()
 
     await vi.waitFor(() =>
@@ -360,7 +360,7 @@ describe('AgentOwnedAcpPrompt', () => {
     transcript.close()
   })
 
-  it('answers permission requests autonomously from the accepted work mode', async () => {
+  it('answers permission requests autonomously for the accepted operation', async () => {
     const root = mkdtempSync(join(tmpdir(), 'goodbuddy-owned-acp-'))
     temporary.push(root)
     mkdirSync(join(root, 'state'), { mode: 0o700 })
@@ -402,7 +402,7 @@ describe('AgentOwnedAcpPrompt', () => {
       operationId: 'operation-1',
       requestId: 'operation-1',
       prompt: [{ type: 'text', text: 'run one tool' }]
-    }, 'execute')
+    })
     await expect(
       client.requestPermission({
         sessionId: 'session-1',
@@ -432,7 +432,7 @@ describe('AgentOwnedAcpPrompt', () => {
     transcript.close()
   })
 
-  it('allows only one-shot reads while Ask is detached', async () => {
+  it('allows reads and edits while detached', async () => {
     const root = mkdtempSync(join(tmpdir(), 'goodbuddy-owned-acp-'))
     temporary.push(root)
     mkdirSync(join(root, 'state'), { mode: 0o700 })
@@ -474,7 +474,7 @@ describe('AgentOwnedAcpPrompt', () => {
       operationId: 'operation-1',
       requestId: 'operation-1',
       prompt: [{ type: 'text', text: 'inspect one file' }]
-    }, 'ask')
+    })
     const permission = (
       kind: 'read' | 'edit'
     ): Parameters<Client['requestPermission']>[0] => ({
@@ -504,7 +504,7 @@ describe('AgentOwnedAcpPrompt', () => {
       outcome: { outcome: 'selected', optionId: 'read-allow' }
     })
     await expect(client.requestPermission(permission('edit'))).resolves.toEqual({
-      outcome: { outcome: 'selected', optionId: 'edit-reject' }
+      outcome: { outcome: 'selected', optionId: 'edit-allow' }
     })
     transcript.close()
   })

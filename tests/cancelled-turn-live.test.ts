@@ -29,7 +29,7 @@ async function runAndCancel(runtime: AgentRuntime, conversationId: string): Prom
   let partial = ''
   try {
     for await (const event of runtime.run({
-      requestId: crypto.randomUUID(), conversationId, workMode: 'ask', prompt: firstPrompt
+      requestId: crypto.randomUUID(), conversationId, prompt: firstPrompt
     }, controller.signal)) {
       if (event.type === 'text') partial += event.delta
       if (partial.length >= 60 && !controller.signal.aborted) controller.abort(new Error('用户取消了请求'))
@@ -87,7 +87,7 @@ describe.skipIf(!envPath)('cancelled turn handling with a real model', () => {
       ])
       expect(history).toHaveLength(2)
       expectOnlyNewAnswer(await runText(runtime, {
-        requestId: crypto.randomUUID(), conversationId, workMode: 'ask', prompt: secondPrompt,
+        requestId: crypto.randomUUID(), conversationId, prompt: secondPrompt,
         history: history.map(({ role, content }) => ({ role, content })),
         historyMessageIds: history.map(({ id }) => id)
       }))
@@ -107,7 +107,7 @@ describe.skipIf(!envPath)('cancelled turn handling with a real model', () => {
         { id: crypto.randomUUID(), role: 'assistant', content: '', state: 'error', terminalStatus: 'cancelled' }
       ])
       expectOnlyNewAnswer(await runText(runtime, {
-        requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), workMode: 'ask', prompt: secondPrompt,
+        requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), prompt: secondPrompt,
         history: history.map(({ role, content }) => ({ role, content })),
         historyMessageIds: history.map(({ id }) => id)
       }))
@@ -130,12 +130,12 @@ describe.skipIf(!envPath)('cancelled turn handling with a real model', () => {
       const partial = await runAndCancel(runtime, conversationId)
       console.info(`OPENCODE_PARTIAL_CHARS=${partial.length}`)
       expectOnlyNewAnswer(await runText(runtime, {
-        requestId: crypto.randomUUID(), conversationId, workMode: 'ask', prompt: secondPrompt
+        requestId: crypto.randomUUID(), conversationId, prompt: secondPrompt
       }))
       // The cancelled request stays in the native transcript, so the model
       // still knows what was asked before.
       const recall = await runText(runtime, {
-        requestId: crypto.randomUUID(), conversationId, workMode: 'ask',
+        requestId: crypto.randomUUID(), conversationId,
         prompt: 'In one short phrase, what did I ask for in my very first message of this conversation? Do not list anything.'
       })
       console.info(`OPENCODE_RECALL=${JSON.stringify(recall)}`)

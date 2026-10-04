@@ -71,9 +71,9 @@ it.for(['model', 'opencode', 'continue'] as const)('generates and edits through 
       const requestId = randomUUID()
       database.saveLocalConversations([{ header: { id: conversationId, title: 'Image integration', updatedAt: Date.now() },
         messages: [{ id: messageId, role: 'assistant', content: '', createdAt: Date.now(), state: 'complete' }] }])
-      const binding = service.bind({ conversationId, messageId, requestId, workMode: 'execute' })
+      const binding = service.bind({ conversationId, messageId, requestId,  })
       const events = []
-      for await (const event of runtime.run({ requestId, conversationId, prompt: `${intent} image ${requestId}`, workMode: 'execute', imageToolBinding: binding }, new AbortController().signal, async () => 'once')) events.push(event)
+      for await (const event of runtime.run({ requestId, conversationId, prompt: `${intent} image ${requestId}`,  imageToolBinding: binding }, new AbortController().signal, async () => 'once')) events.push(event)
       expect(events.some(event => event.type === 'done')).toBe(true)
       const operation = database.getConversation(conversationId).messages.find(message => message.id === messageId)!.imageOperations?.[0]
       expect(operation?.state).toBe('completed')

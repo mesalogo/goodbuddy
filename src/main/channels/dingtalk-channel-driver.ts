@@ -289,7 +289,6 @@ export class DingTalkChannelDriver implements ChannelDriver {
       conversationType: message.conversationType,
       text: message.text,
       mentioned: message.conversationType === 'group',
-      workMode: 'ask',
       receivedAt: message.createdAt
     }
     await handler(inbound, () => undefined)

@@ -22,7 +22,6 @@ import type {
   ProjectCreateInput
 } from '../../shared/assistant-contracts'
 import {
-  normalizeInteractiveWorkMode,
   projectChannelLabels
 } from '../../shared/assistant-contracts'
 import type { RuntimeSettings } from '../../shared/contracts'
@@ -51,7 +50,6 @@ import { getProjectDisplayText } from './project-display'
 import { ProjectRuntimeSelector } from './ProjectRuntimeSelector'
 import { ProjectActivityCounts } from './ProjectActivity'
 import type { ProjectActivityCountsProps } from './ProjectActivity'
-import { ProjectWorkModeFields } from './ProjectWorkModeFields'
 import { ChannelIcon } from './ChannelIcon'
 import { SegmentedControl } from './WorkspacePrimitives'
 import { InlineHelp } from './InlineHelp'
@@ -59,6 +57,7 @@ import { WorkspaceMenu } from './WorkspaceMenu'
 import type { ConversationActivity } from './conversation-activity'
 import type { ConversationStore } from './conversation-store'
 import { displayErrorMessage } from './error-message'
+import type { AppNotificationInput } from './notifications'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
@@ -72,6 +71,8 @@ type ProjectSwitcherProps = {
   remoteProjectsEnabled?: boolean
   runtimeSettings?: RuntimeSettings
   onArchive: (projectId: string) => Promise<void>
+  onRestore: (projectId: string) => Promise<void>
+  notify: (input: AppNotificationInput) => void
   onCreate: (input: ProjectCreateInput) => Promise<AssistantProject>
   onDelete: (projectId: string, confirmation: string) => Promise<void>
   onSelect: (projectId: string) => void
@@ -230,6 +231,8 @@ function ProjectSwitcherView({
   remoteProjectsEnabled = false,
   runtimeSettings,
   onArchive,
+  onRestore,
+  notify,
   onCreate,
   onDelete,
   onRemoteCommitted,
@@ -431,7 +434,6 @@ function ProjectSwitcherView({
     name: '',
     description: '',
     rootPath: '',
-    defaultWorkMode: 'ask'
   })
   const activeProject = projects.find(
     (project) => project.id === activeProjectId
@@ -847,9 +849,6 @@ function ProjectSwitcherView({
       name: project.name,
       description: project.description,
       rootPath: project.rootPath,
-      defaultWorkMode: normalizeInteractiveWorkMode(
-        project.defaultWorkMode
-      ),
       // Keep "follow global" as absent so saving never freezes today's default.
       runtimeSelection: project.runtimeSelection
     }
@@ -899,23 +898,19 @@ function ProjectSwitcherView({
         hostId: remoteHostId,
         remoteRootPath
       }
-      const modeDraft = {
-        ...commonDraft,
-        defaultWorkMode: draft.defaultWorkMode
-      }
       const result =
         await window.goodbuddy.projects.remote.save(
           dialogMode === 'settings' && settingsProject
             ? {
                 intent: 'update',
                 draft: {
-                  ...modeDraft,
+                  ...commonDraft,
                   projectId: settingsProject.id
                 }
               }
             : {
                 intent: 'create',
-                draft: modeDraft
+                draft: commonDraft
               }
         )
       await onRemoteCommitted(result)
@@ -1175,6 +1170,7 @@ function ProjectSwitcherView({
             hosts={sshHosts?.hosts ?? emptyHosts} connectionStates={agentConnectionStatusByHostId}
             anchorRef={projectPickerButtonRef} controlsRef={projectPickerRef}
             renderProject={renderProjectMenuItem} onClose={closeProjectMenu}
+            onEnterProject={onSelect} onRestore={onRestore} notify={notify}
             onNewConversation={onNewConversation} onOpenConversation={onOpenConversation}
             onCreateProject={() => {
             setProjectMenuOpen(false)
@@ -1188,7 +1184,6 @@ function ProjectSwitcherView({
               name: '',
               description: '',
               rootPath: '',
-              defaultWorkMode: 'ask'
             })
             restoreFocusTarget.current = 'create'
             setDialogMode('create')
@@ -1371,26 +1366,6 @@ function ProjectSwitcherView({
                         {t('projectSwitcher.dialog.rootRequired')}
                       </small>
                     )}
-                    <ProjectWorkModeFields
-                      ariaLabel={t(
-                        'projectSwitcher.dialog.fields.defaultMode'
-                      )}
-                      disabled={busy}
-                      labels={{
-                        ask: t('projectSwitcher.workModes.ask'),
-                        execute: t('projectSwitcher.workModes.execute')
-                      }}
-                      legend={t(
-                        'projectSwitcher.dialog.fields.defaultMode'
-                      )}
-                      onChange={(defaultWorkMode) =>
-                        setDraft((current) => ({
-                          ...current,
-                          defaultWorkMode
-                        }))
-                      }
-                      value={draft.defaultWorkMode}
-                    />
                     {runtimeSettings && (
                       <>
                         <ProjectRuntimeSelector
@@ -1558,26 +1533,6 @@ function ProjectSwitcherView({
                         selection={draft.runtimeSelection}
                       />
                     )}
-                    <ProjectWorkModeFields
-                      ariaLabel={t(
-                        'projectSwitcher.dialog.fields.defaultMode'
-                      )}
-                      disabled={remoteFieldsDisabled}
-                      labels={{
-                        ask: t('projectSwitcher.workModes.ask'),
-                        execute: t('projectSwitcher.workModes.execute')
-                      }}
-                      legend={t(
-                        'projectSwitcher.dialog.fields.defaultMode'
-                      )}
-                      onChange={(defaultWorkMode) =>
-                        setDraft((current) => ({
-                          ...current,
-                          defaultWorkMode
-                        }))
-                      }
-                      value={draft.defaultWorkMode}
-                    />
                     {remoteSaving && remoteSavePhase && (
                       <RemoteProjectProgress
                         phase={remoteSavePhase}

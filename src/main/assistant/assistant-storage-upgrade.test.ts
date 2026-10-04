@@ -21,6 +21,11 @@ import {
 
 const directories: string[] = []
 const databases: AssistantDatabase[] = []
+const historicalModeColumns = `
+  ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+  ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+  ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
+`
 afterEach(async () => {
   vi.restoreAllMocks()
   for (const database of databases.splice(0)) database.close()
@@ -41,7 +46,6 @@ async function fixture(): Promise<{
   const taskId = randomUUID()
   database.createTask({
     id: taskId, title: 'Storage regression', instructions: 'Synthetic fixture',
-    workMode: 'execute'
   })
   return { path, database, taskId }
 }
@@ -55,6 +59,116 @@ function subagent(requestId: string): SubagentEvent {
 }
 
 describe('subagent progress storage', () => {
+  it.each(['ask', 'execute', 'plan', undefined])('removes schema 59 mode metadata (%s) without changing content or event identity', async (workMode) => {
+    const { path, database, taskId } = await fixture()
+    const schedule = database.createSchedule({ title: 'ask / execute', prompt: '/ask keep this text',
+      recurrence: 'daily', nextRunAt: '2030-01-01T00:00:00Z' })
+    const header = { id: schedule.conversationId, title: 'ask / execute', updatedAt: 1000 }
+    const event = { ...subagent(taskId), state: 'completed' as const,
+      output: 'workMode: ask', progress: [{ id: randomUUID(), type: 'text' as const, content: '/execute' }] }
+    const { requestId: _requestId, type: _type, ...activity } = event
+    void _requestId
+    void _type
+    const message = { id: randomUUID(), role: 'assistant' as const, state: 'complete' as const,
+      content: '/ask preserve user content', createdAt: 1000, subagents: [activity] }
+    database.saveLocalConversations([{ header, messages: [message] }])
+    database.close()
+    const sql = new DatabaseSync(path)
+    const nested = { workMode: 'user-value', toolApproval: 'user-policy', text: 'ask execute plan' }
+    const context = { workMode, knowledgeLibraryIds: [], storyGraphEnabled: true, custom: nested }
+    const template = { workMode, title: schedule.title, prompt: schedule.prompt, custom: nested }
+    const queuePayloads = [
+      { workMode, prompt: '/execute keep', custom: nested },
+      { input: { workMode, prompt: '/ask keep', custom: nested }, serializedContexts: [nested] }
+    ]
+    let before: ReturnType<ReturnType<DatabaseSync['prepare']>['all']>
+    try {
+      sql.exec(`${historicalModeColumns} PRAGMA user_version = 59`)
+      sql.prepare('UPDATE projects SET default_work_mode = ?').run(workMode ?? 'ask')
+      sql.prepare('UPDATE conversations SET work_mode = ?, context_state_json = ? WHERE id = ?')
+        .run(workMode ?? 'ask', JSON.stringify(context), header.id)
+      sql.prepare('UPDATE tasks SET work_mode = ?').run(workMode ?? 'ask')
+      sql.prepare('UPDATE schedules SET task_template_json = ? WHERE id = ?').run(JSON.stringify(template), schedule.id)
+      const metadata = JSON.parse(sql.prepare('SELECT metadata_json FROM messages WHERE id = ?').get(message.id)!.metadata_json as string)
+      metadata.subagents[0].workMode = workMode
+      metadata.custom = nested
+      sql.prepare('UPDATE messages SET metadata_json = ? WHERE id = ?').run(JSON.stringify(metadata), message.id)
+      queuePayloads.forEach((payload, index) => sql.prepare(`INSERT INTO conversation_queue_items
+        (id, conversation_id, source, label, payload_json, status, created_at)
+        VALUES (?, ?, 'user', ?, ?, 'pending', ?)`)
+        .run(randomUUID(), header.id, `queued ${index}`, JSON.stringify(payload), `2026-01-0${index + 1}`))
+      sql.prepare(`INSERT INTO task_events (task_id, kind, payload_json, created_at,
+        remote_binding_id, remote_operation_id, remote_semantic_sequence, remote_event_index)
+        VALUES (?, 'subagent', ?, '2026-01-01', 'binding', 'operation', '7', 0)`)
+        .run(taskId, JSON.stringify({ ...event, workMode, custom: nested }))
+      before = sql.prepare('SELECT * FROM task_events ORDER BY id').all()
+    } finally { sql.close() }
+    expect(getPendingAssistantStorageUpgrade(path)).toEqual({ migrateNotes: false, reclaimSpace: false })
+    upgradeAssistantStorage(path, () => undefined)
+    const check = new DatabaseSync(path)
+    try {
+      for (const [table, column] of [['projects', 'default_work_mode'], ['conversations', 'work_mode'], ['tasks', 'work_mode']]) {
+        expect(check.prepare(`PRAGMA table_info(${table})`).all().map(row => row.name)).not.toContain(column)
+      }
+      expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(60)
+      const readJson = (table: string, column: string, id: string) =>
+        JSON.parse(check.prepare(`SELECT ${column} AS value FROM ${table} WHERE id = ?`).get(id)!.value as string)
+      expect(readJson('conversations', 'context_state_json', header.id))
+        .toEqual({ knowledgeLibraryIds: [], storyGraphEnabled: true, custom: nested })
+      expect(readJson('schedules', 'task_template_json', schedule.id))
+        .toEqual({ title: schedule.title, prompt: schedule.prompt, custom: nested })
+      expect(readJson('messages', 'metadata_json', message.id)).toMatchObject({ subagents: [activity], custom: nested })
+      expect(readJson('messages', 'metadata_json', message.id).subagents[0]).not.toHaveProperty('workMode')
+      const queues = check.prepare('SELECT payload_json FROM conversation_queue_items ORDER BY created_at').all()
+      expect(queues.map(row => JSON.parse(row.payload_json as string))).toEqual([
+        { prompt: '/execute keep', custom: nested },
+        { input: { prompt: '/ask keep', custom: nested }, serializedContexts: [nested] }
+      ])
+      expect(check.prepare('SELECT * FROM task_events ORDER BY id').all()).toEqual(before.map(row => {
+        const { workMode: obsolete, ...payload } = JSON.parse(row.payload_json as string)
+        void obsolete
+        return { ...row, payload_json: JSON.stringify(payload) }
+      }))
+      expect(check.prepare('PRAGMA integrity_check').get()!.integrity_check).toBe('ok')
+      expect(check.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    } finally { check.close() }
+    database.initialize(dirname(path))
+    expect(database.getConversation(header.id).messages[0]).toMatchObject(message)
+    expect(database.listSchedules().find(candidate => candidate.id === schedule.id)).toMatchObject({ nextRunAt: schedule.nextRunAt })
+    expect(database.appendRemoteTaskEventOnce({ taskId, bindingId: 'binding', operationId: 'operation',
+      semanticSequence: '7', eventIndex: 0, kind: 'subagent', payload: { ...event, workMode, custom: nested } })).toBe(false)
+    database.close()
+    expect(hasPendingAssistantStorageUpgrade(path)).toBe(false)
+  })
+
+  it('resumes schema 60 batches after cancellation and rolls back malformed JSON without losing its source', async () => {
+    const { path, database, taskId } = await fixture()
+    database.close()
+    const sql = new DatabaseSync(path)
+    try {
+      sql.exec(`${historicalModeColumns} PRAGMA user_version = 59`)
+      const insert = sql.prepare("INSERT INTO task_events (task_id, kind, payload_json, created_at) VALUES (?, 'status', ?, '2026-01-01')")
+      for (let index = 0; index < 70; index++) insert.run(taskId, JSON.stringify({ workMode: 'plan', index }))
+      const damagedId = Number(insert.run(taskId, '{broken').lastInsertRowid)
+      let cancelled = false
+      expect(() => upgradeAssistantStorage(path, progress => {
+        if (progress.processed >= 32) cancelled = true
+      }, () => cancelled)).toThrow('cancelled')
+      expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(59)
+      expect(sql.prepare("SELECT COUNT(*) AS count FROM task_events WHERE instr(payload_json, 'workMode') > 0").get()!.count).toBeLessThan(70)
+      expect(() => upgradeAssistantStorage(path, () => undefined)).toThrow(/Invalid execution metadata: task_events/)
+      expect(sql.prepare('SELECT payload_json FROM task_events WHERE id = ?').get(damagedId)!.payload_json).toBe('{broken')
+      // The uncommitted final batch remains intact, while earlier batches survive.
+      expect(sql.prepare("SELECT COUNT(*) AS count FROM task_events WHERE instr(payload_json, 'workMode') > 0").get()!.count).toBeGreaterThan(0)
+      expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(59)
+      sql.prepare('UPDATE task_events SET payload_json = ? WHERE id = ?').run('{"workMode":"ask"}', damagedId)
+      upgradeAssistantStorage(path, () => undefined)
+      expect(sql.prepare('SELECT payload_json FROM task_events WHERE id = ?').get(damagedId)!.payload_json).toBe('{}')
+      expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(60)
+      expect(sql.prepare('PRAGMA integrity_check').get()!.integrity_check).toBe('ok')
+    } finally { sql.close() }
+  })
+
   it.each([45, 46, 47])('upgrades schema %i without reconverting history or vacuuming ordinary free pages', async (sourceVersion) => {
     const { path, database, taskId } = await fixture()
     const event = subagent(randomUUID())
@@ -78,7 +192,7 @@ describe('subagent progress storage', () => {
         DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
         DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;`)
       sql.exec(`ALTER TABLE magic_note_entries DROP COLUMN source_json;
-        PRAGMA user_version = ${sourceVersion}; PRAGMA wal_checkpoint(TRUNCATE)`)
+        ${historicalModeColumns} PRAGMA user_version = ${sourceVersion}; PRAGMA wal_checkpoint(TRUNCATE)`)
       expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBeGreaterThan(0)
       const events = sql.prepare('SELECT * FROM task_events WHERE task_id = ? ORDER BY id').all(taskId)
       expect(events.length).toBeGreaterThan(0)
@@ -90,7 +204,8 @@ describe('subagent progress storage', () => {
       upgradeAssistantStorage(path, progress)
       expect(exec.mock.calls.some(([statement]) => /VACUUM/i.test(statement))).toBe(false)
       expect(progress.mock.calls.map(([value]) => value.stage)).not.toContain('compacting')
-      expect(progress.mock.calls.map(([value]) => value.stage)).not.toContain('converting')
+      // Schema 60 checks bounded metadata batches but does not compact history.
+      expect(progress.mock.calls.map(([value]) => value.stage)).toContain('converting')
       expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
       expect(sql.prepare('SELECT * FROM task_events WHERE task_id = ? ORDER BY id').all(taskId)).toEqual(events)
       // A retry in the same startup must not gain reclamation just because free pages remain.
@@ -160,7 +275,7 @@ describe('subagent progress storage', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
         ALTER TABLE magic_note_entries DROP COLUMN source_json;
-        PRAGMA user_version = 37`)
+        ${historicalModeColumns} PRAGMA user_version = 37`)
     } finally { legacy.close() }
     expect(hasPendingAssistantStorageUpgrade(path)).toBe(true)
     upgradeAssistantStorage(path, () => undefined)
@@ -402,7 +517,7 @@ describe('subagent progress storage', () => {
     const project = database.createSshProject({
       project: {
         name: 'Remote regression', description: '', rootPath: '/tmp/goodbuddy-storage-test',
-        defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' }
+        runtimeSelection: { provider: 'opencode' }
       },
       executionSpace: { kind: 'ssh', hostId, remoteRootPath: '/tmp/goodbuddy-storage-test' },
       assertCurrent: () => undefined
@@ -417,7 +532,7 @@ describe('subagent progress storage', () => {
     const remoteTaskId = randomUUID()
     database.createTask({
       id: remoteTaskId, projectId: project.id, conversationId,
-      title: 'Atomic remote', instructions: 'Synthetic', workMode: 'execute',
+      title: 'Atomic remote', instructions: 'Synthetic',
       remoteRecovery: {
         recoverable: true, currentUserMessageId: userMessageId,
         currentAssistantMessageId: assistantMessageId
@@ -482,7 +597,7 @@ describe('subagent progress storage', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
         ALTER TABLE magic_note_entries DROP COLUMN source_json;
-        PRAGMA user_version = ${sourceVersion}; BEGIN`)
+        ${historicalModeColumns} PRAGMA user_version = ${sourceVersion}; BEGIN`)
       const insert = legacy.prepare(
         `INSERT INTO task_events(
           task_id, kind, payload_json, created_at, remote_binding_id,

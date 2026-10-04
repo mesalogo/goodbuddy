@@ -93,6 +93,15 @@ export const heartbeat = {
     unknownTime: '时间未知'
   },
   supervisor: {
+    loadFailed: '无法读取回顾内容，请重试。',
+    sourceLoadFailed: '无法读取来源，请再次打开来源重试。',
+    reviewStarted: '回顾已开始，可到活动记录查看进度。',
+    reviewBusy: '已有回顾正在处理，请到活动记录查看进度。',
+    reviewStartFailed: '暂时无法确认回顾运行状态，请稍后重试。',
+    reviewFailed: '回顾未能完成。请到活动记录查看原因，并继续已保存的进度；也可重新发起回顾。',
+    reviewCompleted: '回顾已完成。可查看回顾结果或活动记录。',
+    reviewCancelled: '回顾已取消，已有结果仍可查看。',
+    reviewNoChange: '没有需要整理的新内容，已有回顾保持不变。',
     automatic: '智能心跳',
     projectScope: '项目：{{names}}',
     canvasTitle: '事件与知识', generatedAt: '生成于 {{time}}', canvasNote: '沿外圈逆时针阅读 · 选择节点，查看知识与来源', readingGuide: '如何读图',

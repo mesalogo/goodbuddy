@@ -61,15 +61,10 @@ export const settings = {
       description:
         '管理 SSH 主机、固定主机密钥并验证远端执行环境；本机配置的 Skills 和 MCP 不会应用于远程主机'
     },
-    security: {
-      label: '安全与数据',
-      navigationDescription: '工具策略与本地隐私',
-      description: '工具策略与本地隐私'
-    },
     channels: {
       label: '消息通道',
       navigationDescription: '微信、企业微信与钉钉',
-      description: '配置连接、工作目录、消息处理后端与默认模式'
+      description: '配置连接、工作目录与消息处理后端'
     },
     roles: {
       label: '角色与提示词',
@@ -211,7 +206,7 @@ export const settings = {
     followGoodBuddy: '跟随 GoodBuddy · {{name}}（{{model}}）',
     noCompatibleModel: '尚未配置兼容的文本模型',
     permissions:
-      '对话时可选择 Ask 或 Execute。Ask 仅可调用当前 Runtime 允许的只读能力；Execute 可调用已启用工具，调用过程会记录到活动。',
+      '可用工具由所选 Runtime 和设置决定，调用过程会记录到活动。',
     customization: {
       title: '能力与默认配置',
       description:
@@ -246,7 +241,6 @@ export const settings = {
         emptyDescription: '当前 Runtime 未报告此类别中的可用能力。',
         unsupported: '当前 Runtime 不支持',
         toolsUnsupported: '当前 Runtime 不支持静态发现 Tools',
-        toolModes: 'Ask：{{ask}} · Execute：{{execute}}',
         toolKind: {
           read: '读取',
           write: '文件修改',
@@ -263,11 +257,6 @@ export const settings = {
           skill: 'Skill',
           unknown: '来源未知'
         },
-        toolAccess: {
-          allowed: '可用',
-          blocked: '不可用',
-          conditional: '按当前请求可用'
-        }
       },
       agentMode: {
         primary: '主 Agent',
@@ -381,7 +370,7 @@ export const settings = {
       title: 'DeepSeek Harness',
       previewDescription: '开发者预览 · OpenAI 兼容',
       description:
-        '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Ask 可调用 Harness 原生 read/skill 与已启用的网页搜索/抓取，Execute 可调用全部已启用工具及 DSH 插件能力，并保留取消和工作区边界。',
+        '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；可调用已启用工具及 DSH 插件能力，并保留取消和工作区边界。',
       platformSource: '管理员环境优先，回退 GoodBuddy 兼容连接',
       environmentSource:
         '此选项实际使用管理员预置：{{model}}。',
@@ -412,7 +401,7 @@ export const settings = {
         disabledDescription:
           '插件市场默认关闭。开启后才会连接公共 npm 目录并显示管理界面；关闭市场不会停用或卸载已有插件。',
         permissionNotice:
-          '第三方插件的安装脚本、初始化代码及工具均以当前用户权限运行。Ask 不允许模型调用第三方插件工具，但无法限制插件初始化代码；Execute 可调用已启用插件提供的全部工具。请仅安装可信包。',
+          '第三方插件的安装脚本、初始化代码及工具均以当前用户权限运行。已启用插件会向 Runtime 提供工具。请仅安装可信包。',
         refresh: '刷新',
         refreshAria: '刷新 DSH 插件市场',
         searchLabel: '搜索插件',
@@ -802,19 +791,10 @@ export const settings = {
       '提示词作为受信任的摘要指令发送；对话内容始终按不可信历史数据处理。',
     restoreDefaultPrompt: '恢复默认提示词'
   },
-  security: {
-    toolPolicy: {
-      label: '直连模型工具安全策略',
-      always: 'Execute 自动授权已启用的工具',
-      deny: '禁止所有工具执行',
-      description:
-        '直连模型的 Execute 模式可使用内置工作区工具及已分配的 MCP 工具；选择 Execute 即授权当前交互运行自动调用这些工具，不再逐次询问。禁止策略会拒绝所有工具调用。OpenCode 与 Continue 继续使用各自的工具系统。'
-    },
-    localData: {
-      title: '本地数据与隐私',
-      description:
-        '清除本机对话、活动记录和知识库索引。已保存的 Runtime 凭据和原目录文件不会被删除。'
-    }
+  localData: {
+    title: '本地数据与隐私',
+    description:
+      '清除本机对话、活动记录和知识库索引。已保存的 Runtime 凭据和原目录文件不会被删除。'
   },
   roles: {
     smartRouting: {
@@ -822,7 +802,7 @@ export const settings = {
       description: '按问题内容自动选择最匹配的专家角色',
       enabled: '启用 Subagent 智能路由',
       help:
-        '默认关闭。仅在 Ask 模式且未显式选择专家或团队时，自动选择 1 位专家；子专家使用默认文本模型，并继承当前模式和已启用工具。'
+        '默认关闭。未显式选择专家或团队时，自动选择 1 位专家；子专家使用默认文本模型和已启用工具。'
     }
   },
   appearance: {

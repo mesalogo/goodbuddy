@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
-  type ApprovalDecision,
   type AgentEvent,
   type AgentQuestionAnswer,
   type AgentRequest,
@@ -320,15 +319,6 @@ const desktopApi: DesktopApi = {
     },
     cancel: async (requestId: string) => {
       await ipcRenderer.invoke(ipcChannels.agentCancel, requestId)
-    },
-    respondApproval: async (
-      approvalId: string,
-      decision: ApprovalDecision
-    ) => {
-      await ipcRenderer.invoke(ipcChannels.agentApprovalRespond, {
-        approvalId,
-        decision
-      })
     },
     respondQuestion: async (
       questionId: string,
@@ -1230,6 +1220,7 @@ const desktopApi: DesktopApi = {
     }
   },
   workspace: {
+    importFiles: (projectId, path) => ipcRenderer.invoke(ipcChannels.workspaceImportFiles, { projectId, path }),
     manage: (projectId, action) => ipcRenderer.invoke(ipcChannels.workspaceManage, { projectId, action }),
     getFileDiff: (projectId: string, path: string) =>
       ipcRenderer.invoke(ipcChannels.workspaceFileDiff, {

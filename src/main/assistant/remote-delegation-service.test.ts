@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { RemoteDelegationService } from './remote-delegation-service'
 
 describe('RemoteDelegationService', () => {
-  it('polls a public HTTPS endpoint and posts a bounded result', async () => {
+  it.each([undefined, 'ask', 'plan', 'execute'])('discards optional legacy mode %s and posts a bounded result', async (workMode) => {
     const transport = vi
       .fn()
       .mockResolvedValueOnce({
@@ -11,7 +11,7 @@ describe('RemoteDelegationService', () => {
           id: '00000000-0000-4000-8000-000000000301',
           title: '远程摘要',
           prompt: '整理状态',
-          workMode: 'ask'
+          workMode
         })
       })
       .mockResolvedValueOnce({ status: 204, body: '' })
@@ -30,6 +30,11 @@ describe('RemoteDelegationService', () => {
     await service.pollOnce()
 
     expect(onTask).toHaveBeenCalledOnce()
+    expect(onTask).toHaveBeenCalledWith({
+      id: '00000000-0000-4000-8000-000000000301',
+      title: '远程摘要',
+      prompt: '整理状态'
+    })
     expect(transport).toHaveBeenLastCalledWith(
       expect.objectContaining({
         pathname:
@@ -47,8 +52,7 @@ describe('RemoteDelegationService', () => {
     const task = {
       id: '00000000-0000-4000-8000-000000000302',
       title: '远程摘要',
-      prompt: '整理状态',
-      workMode: 'ask'
+      prompt: '整理状态'
     }
     const transport = vi
       .fn()

@@ -278,7 +278,6 @@ function embeddedRuntime(
 
 async function collectRun(
   runtime: OpenCodeRuntime,
-  workMode: "ask" | "execute" = "execute",
 ) {
   const events = [];
   for await (const event of runtime.run(
@@ -286,7 +285,6 @@ async function collectRun(
       requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
       conversationId: "conversation-1",
       prompt: "test",
-      workMode,
     },
     new AbortController().signal,
   )) {
@@ -1117,7 +1115,6 @@ describe("OpenCodeRuntime embedded launcher", () => {
               requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
               conversationId: "routing-probe",
               prompt: "Reply with OK",
-              workMode: "execute",
             },
             controller.signal,
           )) {
@@ -1383,7 +1380,7 @@ describe("OpenCodeRuntime embedded launcher", () => {
       for await (const event of runtime.run(
         {
           requestId: "peer", conversationId: "peer-conversation",
-          prompt: "test", workMode: "execute",
+          prompt: "test",
         },
         new AbortController().signal,
       )) peerEvents.push(event);
@@ -1426,7 +1423,7 @@ describe("OpenCodeRuntime embedded launcher", () => {
       const result = (async () => {
         try {
           for await (const event of runtime.run(
-            { requestId: "active", conversationId: "active", prompt: "test", workMode: "execute" },
+            { requestId: "active", conversationId: "active", prompt: "test",  },
             controller.signal,
           )) events.push(event);
         } catch (error) {
@@ -1573,9 +1570,9 @@ describe("OpenCodeRuntime embedded launcher", () => {
     spawnMock.mockReturnValueOnce(child).mockReturnValue(fakeChild(43));
     const runtime = new OpenCodeRuntime(options(), deps);
     try {
-      await collectRun(runtime, "execute");
+      await collectRun(runtime);
       checkServerHealth.mockResolvedValueOnce(false);
-      await collectRun(runtime, "execute");
+      await collectRun(runtime);
       expect(harness.session.create).toHaveBeenCalledTimes(2);
       expect(harness.session.update).not.toHaveBeenCalled();
       expect(harness.session.promptAsync).toHaveBeenCalledTimes(2);
@@ -1845,7 +1842,6 @@ describe("OpenCodeRuntime embedded launcher", () => {
             requestId: crypto.randomUUID(),
             conversationId: crypto.randomUUID(),
             prompt: "test",
-            workMode: "execute",
           },
           controller.signal,
         )) {
@@ -1938,7 +1934,6 @@ describe("OpenCodeRuntime embedded launcher", () => {
       requestId: "00000000-0000-4000-8000-000000000101",
       conversationId: "shared-conversation",
       prompt: "first",
-      workMode: "execute" as const,
     };
     const collect = async (
       stream: AsyncGenerator<RuntimeEvent, void, void>,
@@ -2012,7 +2007,6 @@ describe("OpenCodeRuntime embedded launcher", () => {
       const events: RuntimeEvent[] = [];
       for await (const event of runtime.run({
         requestId, conversationId: "shared-conversation", prompt: requestId,
-        workMode: "execute",
       }, signal)) events.push(event);
       return events;
     };
@@ -2076,7 +2070,6 @@ describe("OpenCodeRuntime embedded launcher", () => {
       const events: RuntimeEvent[] = [];
       for await (const event of runtime.run({
         requestId, conversationId: "shared-conversation", prompt: requestId,
-        workMode: "execute",
       }, signal)) events.push(event);
       return events;
     };
@@ -2148,7 +2141,6 @@ describe("OpenCodeRuntime embedded launcher", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "test",
-        workMode: "execute",
         images: [
           {
             name: "screenshot.png",
@@ -2259,7 +2251,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       ],
     });
 
-    await collectRun(runtime, "execute");
+    await collectRun(runtime);
 
     expect(gateway.grantCustomMcp).toHaveBeenCalledWith(
       "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
@@ -2298,9 +2290,9 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
-  it.each([["ask", true] as const, ["execute", false] as const])(
-    "does not share custom MCP with OpenCode in %s mode when embedded is %s",
-    async (workMode, embedded) => {
+  it.each([true, false])(
+    "shares custom MCP only with embedded OpenCode: %s",
+    async (embedded) => {
       const setup = runClient([
         {
           id: "idle",
@@ -2359,10 +2351,10 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
             }).deps,
           );
 
-      await collectRun(runtime, workMode);
+      await collectRun(runtime);
 
-      expect(gateway.grantCustomMcp).not.toHaveBeenCalled();
-      expect(setup.client.mcp.add).not.toHaveBeenCalled();
+      expect(gateway.grantCustomMcp).toHaveBeenCalledTimes(embedded ? 1 : 0);
+      expect(setup.client.mcp.add).toHaveBeenCalledTimes(embedded ? 1 : 0);
       await runtime.dispose();
     },
   );
@@ -2452,7 +2444,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "test",
-        workMode: "execute",
       },
       new AbortController().signal,
     );
@@ -2516,7 +2507,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     vi.mocked(setup.client.session.get).mockResolvedValue({ data: { parentID: "session-1" } } as never);
     const runtime = embeddedRuntime(setup.client);
     const stream = runtime.run({ requestId: crypto.randomUUID(), conversationId: "parallel",
-      prompt: "test", workMode: "execute" }, new AbortController().signal);
+      prompt: "test",  }, new AbortController().signal);
     await stream.next();
     const task = (await stream.next()).value;
     expect(task?.type).toBe("subagent");
@@ -2585,7 +2576,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "first",
-        workMode: "execute",
       },
       new AbortController().signal,
     );
@@ -2594,7 +2584,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "4f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-2",
         prompt: "second",
-        workMode: "execute",
       },
       new AbortController().signal,
     );
@@ -2821,7 +2810,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "Read README.md",
-        workMode: "execute",
       }, new AbortController().signal)) {
         events.push(event);
       }
@@ -2869,7 +2857,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
           conversationId: "conversation-1",
           prompt: "work for more than a day",
-          workMode: "execute",
         },
         new AbortController().signal,
       );
@@ -2929,7 +2916,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "never finish",
-        workMode: "execute",
       },
       new AbortController().signal,
     );
@@ -2967,7 +2953,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "never reach the stream",
-        workMode: "execute",
       },
       new AbortController().signal,
     );
@@ -3020,7 +3005,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "stalled creation",
-        workMode: "execute",
       },
       new AbortController().signal,
     );
@@ -3078,7 +3062,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       },
     ]);
     const runtime = embeddedRuntime(setup.client);
-    const events = await collectRun(runtime, "execute");
+    const events = await collectRun(runtime);
     const text = events
       .flatMap((event) => (event.type === "text" ? [event.delta] : []))
       .join("");
@@ -3107,7 +3091,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     ]);
     const runtime = embeddedRuntime(setup.client);
 
-    const events = await collectRun(runtime, "execute");
+    const events = await collectRun(runtime);
 
     expect(events.filter((event) => event.type === "tool")).toHaveLength(101);
     expect(events.at(-1)).toMatchObject({ type: "done" });
@@ -3157,7 +3141,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "search",
-        workMode: "ask",
         knowledgeCapabilityToken: "secret-capability",
       },
       new AbortController().signal,
@@ -3189,7 +3172,9 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     expect(setup.session.create).toHaveBeenCalledWith(
       expect.objectContaining({
         permission: [
-          { permission: "*", pattern: "*", action: "deny" },
+          { permission: "*", pattern: "*", action: "allow" },
+          { permission: "gbd-*", pattern: "*", action: "deny" },
+          { permission: "gbc-*", pattern: "*", action: "deny" },
           {
             permission: knowledgeToolId,
             pattern: "*",
@@ -3202,9 +3187,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     expect(setup.session.promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         tools: {
-          read: false,
-          write: false,
-          bash: false,
           "gbd-*": false,
           "gbc-*": false,
           [knowledgeToolId]: true,
@@ -3277,7 +3259,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       const events: RuntimeEvent[] = [];
       for await (const event of runtime.run({
         requestId: "request-1", conversationId: "conversation-1", prompt: "test",
-        workMode: kind === "custom" ? "execute" : "ask",
         ...(kind === "knowledge" ? { knowledgeCapabilityToken: secret } : {}),
       }, new AbortController().signal)) events.push(event);
       return events;
@@ -3389,7 +3370,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       });
       const collect = async () => {
         for await (const event of runtime.run({
-          requestId: "sdk-request", conversationId: "sdk-conversation", prompt: "test", workMode: "ask",
+          requestId: "sdk-request", conversationId: "sdk-conversation", prompt: "test",
           knowledgeCapabilityToken: token,
         }, new AbortController().signal)) void event;
       };
@@ -3456,7 +3437,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     });
     try {
       for await (const event of runtime.run({
-        requestId: "request-1", conversationId: "conversation-1", prompt: "test", workMode: "ask",
+        requestId: "request-1", conversationId: "conversation-1", prompt: "test",
         knowledgeCapabilityToken: token,
       }, new AbortController().signal)) void event;
       expect(setup.client.mcp.add).toHaveBeenCalledTimes(2);
@@ -3505,7 +3486,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     });
     const collect = async (requestId: string) => {
       for await (const event of runtime.run({
-        requestId, conversationId: "conversation-1", prompt: "test", workMode: "ask",
+        requestId, conversationId: "conversation-1", prompt: "test",
         knowledgeCapabilityToken: requestId,
       }, new AbortController().signal)) void event;
     };
@@ -3553,7 +3534,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     try {
       await expect((async () => {
         for await (const event of runtime.run({
-          requestId: "request-1", conversationId: "conversation-1", prompt: "test", workMode: "ask",
+          requestId: "request-1", conversationId: "conversation-1", prompt: "test",
           knowledgeCapabilityToken: "private-token",
         }, controller.signal)) void event;
       })()).rejects.toThrow("cancel initialization");
@@ -3592,7 +3573,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       const events: RuntimeEvent[] = [];
       await expect((async () => {
         for await (const event of runtime.run({
-          requestId: "request-1", conversationId: "conversation-1", prompt: "test", workMode: "ask",
+          requestId: "request-1", conversationId: "conversation-1", prompt: "test",
           knowledgeCapabilityToken: "private-token",
         }, new AbortController().signal)) events.push(event);
       })()).rejects.toThrow("connect ECONNRESET");
@@ -3621,7 +3602,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           requestId,
           conversationId,
           prompt: "search",
-          workMode: "ask",
           knowledgeCapabilityToken: requestId,
         },
         new AbortController().signal,
@@ -3669,7 +3649,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           requestId,
           conversationId: "conversation-1",
           prompt: "search",
-          workMode: "ask",
           knowledgeCapabilityToken: requestId,
         },
         new AbortController().signal,
@@ -3746,7 +3725,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     }, { controlRequestTimeoutMs: 50 });
     const run = async (signal: AbortSignal) => {
       for await (const event of runtime.run({
-        requestId: crypto.randomUUID(), conversationId: "uncertain", prompt: "test", workMode: "ask",
+        requestId: crypto.randomUUID(), conversationId: "uncertain", prompt: "test",
         knowledgeCapabilityToken: "token",
       }, signal)) void event;
     };
@@ -3776,7 +3755,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     });
     const run = async (conversationId: string) => {
       for await (const event of runtime.run({
-        requestId: crypto.randomUUID(), conversationId, prompt: "test", workMode: "ask",
+        requestId: crypto.randomUUID(), conversationId, prompt: "test",
         knowledgeCapabilityToken: "token",
       }, new AbortController().signal)) void event;
     };
@@ -3830,7 +3809,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "search",
-        workMode: "ask",
         knowledgeCapabilityToken: "secret-capability",
       },
       new AbortController().signal,
@@ -3843,13 +3821,10 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         .calls[0]?.[0] as { name: string }
     ).name;
     const knowledgeToolId = `${knowledgeMcpName}_knowledge_search`;
-    expect(toolIds).toHaveBeenCalledTimes(1);
+    expect(toolIds).not.toHaveBeenCalled();
     expect(setup.session.promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         tools: expect.objectContaining({
-          read: false,
-          write: false,
-          bash: false,
           [knowledgeToolId]: true,
         }),
       }),
@@ -3933,7 +3908,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           requestId,
           conversationId,
           prompt: "search",
-          workMode: "ask",
           knowledgeCapabilityToken: token,
         },
         new AbortController().signal,
@@ -4016,7 +3990,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       const events: RuntimeEvent[] = [];
       for await (const event of runtime.run({
         requestId, conversationId, prompt: "test",
-        workMode: mcp && kind === "custom" ? "execute" : "ask",
         ...(mcp && kind === "knowledge" ? { knowledgeCapabilityToken: requestId } : {}),
       }, signal)) events.push(event);
       return events;
@@ -4036,12 +4009,10 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       if (kind === "custom") expect(revoke).toHaveBeenCalledWith("custom-token");
       const next = collect("next", "conversation-second", new AbortController().signal, false);
       runs.push(next);
-      await expect(next).resolves.toContainEqual(expect.objectContaining({ type: "done" }));
-      expect(add).toHaveBeenCalledOnce();
-      expect(setup.client.mcp.disconnect).not.toHaveBeenCalled();
       releaseRegistration();
+      await expect(next).resolves.toContainEqual(expect.objectContaining({ type: "done" }));
       await Promise.all(runs);
-      expect(setup.client.mcp.disconnect).toHaveBeenCalledExactlyOnceWith(
+      expect(setup.client.mcp.disconnect).toHaveBeenCalledWith(
         { name: add.mock.calls[0]![0].name, directory: process.cwd() },
         { signal: expect.any(AbortSignal) },
       );
@@ -4106,7 +4077,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           requestId: `3f496642-f47d-4e0a-8944-a32c77b0d6e${index}`,
           conversationId: `conversation-${index}`,
           prompt: "search",
-          workMode: "ask",
           knowledgeCapabilityToken: `token-${index}`,
         },
         new AbortController().signal,
@@ -4196,7 +4166,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "search",
-        workMode: "ask",
         knowledgeCapabilityToken: "must-not-leave-main",
       },
       new AbortController().signal,
@@ -4213,7 +4182,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
-  it("allows only registered native Skills in read-only modes", async () => {
+  it("allows registered native Skills", async () => {
     const sourceRoot = await mkdtemp(
       join(tmpdir(), "goodbuddy-opencode-permission-skill-"),
     );
@@ -4248,14 +4217,16 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       ],
     });
     try {
-      await collectRun(runtime, "ask");
+      await collectRun(runtime);
 
       expect(setup.session.create).toHaveBeenCalledWith(
         {
           title: "GoodBuddy 对话",
           directory: process.cwd(),
           permission: [
-            { permission: "*", pattern: "*", action: "deny" },
+            { permission: "*", pattern: "*", action: "allow" },
+            { permission: "gbd-*", pattern: "*", action: "deny" },
+            { permission: "gbc-*", pattern: "*", action: "deny" },
             { permission: "skill", pattern: "*", action: "deny" },
             {
               permission: "skill",
@@ -4270,13 +4241,8 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         expect.objectContaining({
           system: undefined,
           tools: {
-            read: false,
-            write: false,
-            bash: false,
-            task: false,
             "gbd-*": false,
             "gbc-*": false,
-            skill: true,
           },
         }),
         expect.anything(),
@@ -4337,7 +4303,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       },
     ]);
     const runtime = embeddedRuntime(client);
-    const events = await collectRun(runtime, "execute");
+    const events = await collectRun(runtime);
 
     expect(callOrder).toEqual(["subscribe", "prompt"]);
     expect(session.create).toHaveBeenCalledWith(
@@ -4534,7 +4500,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       },
     ]);
     const runtime = embeddedRuntime(client);
-    await collectRun(runtime, "execute");
+    await collectRun(runtime);
 
     expect(permissionReply.mock.calls).toEqual([
       [
@@ -4557,7 +4523,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
-  it.each(["ask", "execute"] as const)("settles owned descendant directory permissions in %s without touching peer sessions", async (mode) => {
+  it("settles owned descendant directory permissions without touching peer sessions", async () => {
     const { client, permissionReply } = runClient([
       permissionEvent({ id: "peer-permission", sessionID: "peer-session" }),
       permissionEvent({
@@ -4583,12 +4549,12 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     client.session.get = sessionGet as unknown as typeof client.session.get;
     const runtime = embeddedRuntime(client);
     try {
-      const events = await collectRun(runtime, mode);
+      const events = await collectRun(runtime);
       expect(events.at(-1)).toMatchObject({ type: "done" });
       expect(events.filter((event) => event.type === "tool")).toEqual([]);
       expect(permissionReply).toHaveBeenCalledExactlyOnceWith({
         requestID: "child-permission", directory: process.cwd(),
-        reply: mode === "execute" ? "once" : "reject",
+        reply: "once",
       }, { signal: expect.any(AbortSignal) });
       expect(sessionGet).toHaveBeenCalledTimes(3);
     } finally {
@@ -4627,7 +4593,6 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "test",
-        workMode: "execute",
       },
       new AbortController().signal,
     );
@@ -4688,7 +4653,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       },
     ]);
     const runtime = embeddedRuntime(client);
-    const events = await collectRun(runtime, "execute");
+    const events = await collectRun(runtime);
 
     expect(
       events.filter(
@@ -4788,7 +4753,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     const runtime = embeddedRuntime(setup.client);
     const collect = async (prompt: string, signal: AbortSignal) => {
       for await (const event of runtime.run({
-        requestId: crypto.randomUUID(), conversationId: "conversation-1", prompt, workMode: "ask",
+        requestId: crypto.randomUUID(), conversationId: "conversation-1", prompt,
       }, signal)) void event;
     };
     try {
@@ -4851,7 +4816,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       },
     ]);
     const runtime = embeddedRuntime(client);
-    await collectRun(runtime, "execute");
+    await collectRun(runtime);
 
     expect(permissionReply).toHaveBeenCalledOnce();
     expect(permissionReply).toHaveBeenCalledWith(
@@ -4873,7 +4838,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     });
     const runtime = embeddedRuntime(client);
 
-    await expect(collectRun(runtime, "execute")).rejects.toThrow(
+    await expect(collectRun(runtime)).rejects.toThrow(
       "OpenCode 权限回复失败",
     );
     expect(session.abort).toHaveBeenCalledWith(
@@ -4883,7 +4848,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
-  it("uses deny-all session rules and hard tool disable in Ask mode", async () => {
+  it("allows native tools while isolating temporary MCP registrations", async () => {
     const { client, session, tool } = runClient([
       {
         id: "event-idle",
@@ -4893,27 +4858,24 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     ]);
     const runtime = embeddedRuntime(client);
 
-    await collectRun(runtime, "ask");
+    await collectRun(runtime);
 
     expect(session.create).toHaveBeenCalledWith(
       {
         title: "GoodBuddy 对话",
         directory: process.cwd(),
-        permission: [{ permission: "*", pattern: "*", action: "deny" }],
+        permission: [
+          { permission: "*", pattern: "*", action: "allow" },
+          { permission: "gbd-*", pattern: "*", action: "deny" },
+          { permission: "gbc-*", pattern: "*", action: "deny" },
+        ],
       },
       { signal: expect.any(AbortSignal) },
     );
-    expect(tool.ids).toHaveBeenCalledWith(
-      { directory: process.cwd() },
-      { signal: expect.any(AbortSignal) },
-    );
+    expect(tool.ids).not.toHaveBeenCalled();
     expect(session.promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         tools: {
-          read: false,
-          write: false,
-          bash: false,
-          task: false,
           "gbd-*": false,
           "gbc-*": false,
         },
@@ -4923,7 +4885,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
-  it("updates reused sessions when the work mode changes", async () => {
+  it("refreshes request permissions on reused sessions", async () => {
     const { client, session } = runClient([
       {
         id: "event-idle",
@@ -4933,14 +4895,18 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     ]);
     const runtime = embeddedRuntime(client);
 
-    await collectRun(runtime, "execute");
-    await collectRun(runtime, "ask");
+    await collectRun(runtime);
+    await collectRun(runtime);
 
     expect(session.update).toHaveBeenCalledWith(
       {
         sessionID: "session-1",
         directory: process.cwd(),
-        permission: [{ permission: "*", pattern: "*", action: "deny" }],
+        permission: [
+          { permission: "*", pattern: "*", action: "allow" },
+          { permission: "gbd-*", pattern: "*", action: "deny" },
+          { permission: "gbc-*", pattern: "*", action: "deny" },
+        ],
       },
       { signal: expect.any(AbortSignal) },
     );
@@ -4967,7 +4933,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         ) as unknown as typeof createOpencodeClient,
       },
     );
-    await collectRun(runtime, "execute");
+    await collectRun(runtime);
 
     expect(runtime.requiresToolApproval).toBe(false);
     expect(session.create).toHaveBeenCalledWith(
@@ -5186,34 +5152,22 @@ describe("OpenCodeRuntime native customization", () => {
           id: "edit",
           name: "edit",
           kind: "write",
-          source: "runtime",
-          ask: "blocked",
-          execute: "allowed",
-        },
+          source: "runtime",        },
         {
           id: "read",
           name: "read",
           kind: "read",
-          source: "runtime",
-          ask: "blocked",
-          execute: "allowed",
-        },
+          source: "runtime",        },
         {
           id: "skill",
           name: "skill",
           kind: "agent",
-          source: "runtime",
-          ask: "conditional",
-          execute: "allowed",
-        },
+          source: "runtime",        },
         {
           id: "extension_tool",
           name: "extension_tool",
           kind: "other",
-          source: "unknown",
-          ask: "blocked",
-          execute: "allowed",
-        },
+          source: "unknown",        },
       ]),
       commands: [
         {
@@ -5359,7 +5313,6 @@ describe("OpenCodeRuntime native customization", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "test",
-        workMode: "execute",
         runtimeControl: {
           provider: "opencode",
           agent: "plan",
@@ -5444,7 +5397,6 @@ describe("OpenCodeRuntime native customization", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "test",
-        workMode: "execute",
         runtimeControl: {
           provider: "opencode",
           agent: "hidden",
@@ -5508,7 +5460,6 @@ describe("OpenCodeRuntime native customization", () => {
         requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
         conversationId: "conversation-1",
         prompt: "must not become slash text",
-        workMode: "execute",
         runtimeControl: {
           provider: "opencode",
           agent: "build",

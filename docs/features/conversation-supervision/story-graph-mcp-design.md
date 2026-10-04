@@ -118,15 +118,15 @@ D1 来源页默认 4,000、上限 8,000 码点。`current` 通过既有 locator 
 | 监督整理参数 | 超时、并发、来源页与批次设置已存在 | 控制后台整理；不让一次 MCP 查询启动整理，也不以正文批次预算截断检索结果 |
 | 计划 `enabled` | 决定自动回顾是否到期执行 | 不决定已有图谱能否读取；应用开启且能力可用时，无计划也能查已有结果 |
 
-Main 在工具发现和调用分发时共同检查应用启用、会话开关、能力启用、Runtime 分配和 scope；只隐藏菜单不足以阻止旧会话调用。关闭后拒绝新的读取请求，已在途响应交付前复核状态，避免旧绑定继续返回数据。启用工具本身不产生回顾或图谱写入。Ask 与 Execute 均可读取，同样没有写工具，也不借此扩大 Execute 权限。
+Main 在工具发现和调用分发时共同检查应用启用、会话开关、能力启用、Runtime 分配和 scope；只隐藏菜单不足以阻止旧会话调用。关闭后拒绝新的读取请求，已在途响应交付前复核状态，避免旧绑定继续返回数据。启用工具本身不产生回顾或图谱写入。工具本身只读，不依赖产品工作模式，也不增加写工具。
 
 会话开关只决定 Agent 能否按需使用这三个 MCP 工具，不自动查询或注入图谱上下文，也不触发回顾。监督者应用关闭时，输入区完全隐藏开关并保留会话选择；再次启用应用后恢复该选择。后台回顾和计划仍由各自设置控制。
 
 开关复用已发布的 `conversations.context_state_json`，字段为可选布尔值，不增加数据库版本或迁移。Renderer 经串行会话保存队列与 `conversations:set-story-graph` IPC 保存，成功后更新显示，失败保留原值并通知。Main 按会话主键只读设置，不加载消息历史；显式设置写入后，旧的自动保存快照不能覆盖它。新会话及新建分支使用默认开启。
 
-本地 OpenCode、Continue 和原生客户端复用 [KnowledgeMcpGateway](../../../src/main/agent/knowledge-mcp-gateway.ts) 的 MCP 注册和分发；直连 Model 与 DeepSeek Harness Main 代理调用同一服务。远程 OpenCode／Continue 复用现有图像工具的受管 HTTP MCP 和二进制通道，`storyGraph` 描述独立于图像生成描述，Ask 可只携带图谱读取。请求仍由桌面 Main 解析范围和读取 SQLite，不把数据库、正文库或凭据复制到 Host。
+本地 OpenCode、Continue 和原生客户端复用 [KnowledgeMcpGateway](../../../src/main/agent/knowledge-mcp-gateway.ts) 的 MCP 注册和分发；直连 Model 与 DeepSeek Harness Main 代理调用同一服务。远程 OpenCode／Continue 复用现有图像工具的受管 HTTP MCP 和二进制通道，`storyGraph` 描述独立于图像生成描述，可只携带图谱读取。请求仍由桌面 Main 解析范围和读取 SQLite，不把数据库、正文库或凭据复制到 Host。
 
-远程发现每次向 Main 复核启用状态；调用复用同一个范围、分页及版本读取入口。OpenCode 根会话和子会话精确放行当前受管端点的图谱工具；Continue Ask 保留 Main 绑定的会话端点并只允许共享只读工具名。DeepSeek Harness 的 Main 目录、参数转换和 Host 执行钩子均接入这三个工具；其他普通内置 MCP 的 Harness 限制保留。当前远程 Runtime 支持 OpenCode／Continue，不新增远程 Harness。桥接不可用时明确失败。
+远程发现每次向 Main 复核启用状态；调用复用同一个范围、分页及版本读取入口。OpenCode 根会话和子会话精确接入当前受管端点的图谱工具；Continue 保留 Main 绑定的会话端点，不按产品模式过滤工具。DeepSeek Harness 的 Main 目录、参数转换和 Host 执行路径均接入这三个工具；其他普通内置 MCP 的 Harness 限制保留。当前远程 Runtime 支持 OpenCode／Continue，不新增远程 Harness。桥接不可用时明确失败。
 
 远程使用须配套部署含此接线的 Desktop 与 Agent；旧 Agent 不识别新增的工具描述字段。本次没有发布或更新受管包，源码验证不代表已发布客户端具备该能力。
 

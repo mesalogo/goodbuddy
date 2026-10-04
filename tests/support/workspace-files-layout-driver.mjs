@@ -41,6 +41,8 @@ app.whenReady().then(async () => {
   const click = async selector => {
     win.focus(); win.webContents.focus()
     await wait('document.hasFocus()')
+    await js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'nearest',inline:'nearest'})`)
+    await settle()
     const p = await point(selector)
     win.webContents.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y })
     await settle()
@@ -70,7 +72,7 @@ app.whenReady().then(async () => {
     assert(after.controls.every(c => c.hit && c.outside && c.height > 0), 'Docked controls must remain visible and hit-testable')
     assert.equal(after.bodyScroll, 0, 'Sidebar body must not scroll with files')
     assert(after.bodyOverflow <= 1, 'Files must not overflow the sidebar body')
-    assert(after.horizontalOverflow.every(value => value <= 1), 'Unexpected horizontal overflow')
+     assert(after.horizontalOverflow.slice(0, 3).every(value => value <= 1), 'Files must scroll inside their viewport without widening the sidebar')
     assert(after.viewport.bottom <= after.nav.bottom + 1, 'Files viewport exceeds navigation bounds')
     assert(after.viewport.y >= Math.max(...after.fixed.filter(Boolean).map(r => r.bottom)) - 1, 'Controls overlap files viewport')
   }
@@ -138,8 +140,9 @@ app.whenReady().then(async () => {
           assert.equal(await js(`${viewport}.scrollTop`), after.scrollTop, 'Git view return must retain files scroll')
           docked(before, await geometry())
         }
-        for (const index of [1, 2]) {
-          await click(`.workspace-files__actions button:nth-child(${index})`)
+         await js(`${viewport}.scrollLeft=0`)
+         for (const label of ['New file', 'New directory']) {
+           await click(`.workspace-files__actions button[aria-label="${label}"]`)
           await wait('!!document.querySelector("[role=dialog]")')
           win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
           win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })

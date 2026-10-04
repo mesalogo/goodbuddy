@@ -94,7 +94,6 @@ describe('WeComChannelDriver', () => {
       conversationType: 'group',
       text: '@GoodBuddy 请规划下一步',
       mentioned: true,
-      workMode: 'ask',
       receivedAt: 1_700_000_000
     })
 

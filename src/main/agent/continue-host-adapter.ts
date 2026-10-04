@@ -52,7 +52,6 @@ import {
 } from './approval-summary'
 import { stageRuntimeSkillPackages } from './runtime-skill-packages'
 import { readBoundedResponseText } from './bounded-response'
-import { scopedReadToolNames } from '../../shared/scoped-data-tools'
 import { readBoundedFile } from '../workspace-file-access'
 import { terminateProcessTreeAndWait } from './child-process-termination'
 import { CONTINUE_HOST_LAYOUT_VERSION } from './continue-host-layout'
@@ -252,7 +251,6 @@ export type ContinueHostAdapterDependencies = {
 }
 
 export type ContinueHostRunOptions = {
-  workMode?: 'ask' | 'execute'
   images?: AgentImage[]
   /** Explicit session capabilities, not MCP servers from a local model config. */
   sessionMcpServers?: Array<{
@@ -886,8 +884,6 @@ export class ContinueHostAdapter {
       'i={allow:o.allow,ask:o.ask,exclude:o.exclude,isHeadless:e.headless}'
     const permissionInitializeMarker =
       'E6t.initialize({isHeadless:e.headless},r,n)'
-    const permissionFlagOrderMarker =
-      'function ZZo(e){let t=[];if(e.exclude)for(let n of e.exclude){let r=n;t.push({tool:r,permission:"exclude"})}if(e.ask)for(let n of e.ask){let r=n;t.push({tool:r,permission:"ask"})}if(e.allow)for(let n of e.allow){let r=n;t.push({tool:r,permission:"allow"})}return t}'
     const serverMarker =
       'let j=(0,atn.default)();j.use(atn.default.json()),j.get("/state"'
     const listenMarker =
@@ -938,11 +934,6 @@ export class ContinueHostAdapter {
       patched,
       permissionInitializeMarker,
       'E6t.initialize({isHeadless:e.interactivePermissions?!1:e.headless},r,n)'
-    )
-    patched = replaceExactly(
-      patched,
-      permissionFlagOrderMarker,
-      'function ZZo(e){let t=[];if(e.allow)for(let n of e.allow){let r=n;t.push({tool:r,permission:"allow"})}if(e.exclude)for(let n of e.exclude){let r=n;t.push({tool:r,permission:"exclude"})}if(e.ask)for(let n of e.ask){let r=n;t.push({tool:r,permission:"ask"})}return t}'
     )
     patched = replaceExactly(
       patched,
@@ -1262,14 +1253,6 @@ export class ContinueHostAdapter {
   ): Promise<string | undefined> {
     const knowledgeCapability = runOptions.knowledgeCapability
     const customMcpCapability = runOptions.customMcpCapability
-    if (
-      customMcpCapability &&
-      runOptions.workMode !== 'execute'
-    ) {
-      throw new Error(
-        'Continue 自定义 MCP 仅允许在 Agent Execute 模式使用'
-      )
-    }
     const capabilityServers = [
       ...(runOptions.sessionMcpServers ?? []),
       ...(knowledgeCapability
@@ -1338,17 +1321,14 @@ export class ContinueHostAdapter {
           `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
         )
       }
-      const retainedServers =
-        runOptions.workMode === 'ask' && Boolean(knowledgeCapability || runOptions.sessionMcpServers?.length)
-          ? []
-          : servers.filter(
-              (server) =>
-                !isRecord(server) ||
-                (
-                  server.name !== knowledgeMcpName &&
-                  server.name !== customMcpName
-                )
-            )
+      const retainedServers = servers.filter(
+        (server) =>
+          !isRecord(server) ||
+          (
+            server.name !== knowledgeMcpName &&
+            server.name !== customMcpName
+          )
+      )
       if (
         retainedServers.length + capabilityServers.length >
         maximumConfiguredMcpServers
@@ -1521,18 +1501,10 @@ export class ContinueHostAdapter {
     if (configPath) {
       args.push('--config', configPath)
     }
-    if (
-      runOptions.workMode === 'ask' &&
-      (runOptions.knowledgeCapability || runOptions.sessionMcpServers?.length)
-    ) {
-      for (const toolName of scopedReadToolNames) {
-        args.push('--allow', toolName)
-      }
-      args.push('--exclude', '*')
-    } else if (runOptions.workMode === 'execute') {
-      args.push('--auto')
-    } else if (this.options.mode === 'chat') {
+    if (this.options.mode === 'chat') {
       args.push('--readonly')
+    } else {
+      args.push('--auto')
     }
     args.push('serve', '--port', String(port), '--timeout', '300')
     const environmentOverrides = {

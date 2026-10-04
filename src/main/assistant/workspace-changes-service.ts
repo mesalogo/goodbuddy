@@ -83,7 +83,9 @@ export class WorkspaceChangesService {
         return {
           name: entry.name,
           path: entry.path,
-          type: entry.type
+          type: entry.type,
+          modifiedAt: entry.modifiedAt,
+          createdAt: entry.createdAt
         }
       }),
       truncated: listing.truncated

@@ -21,7 +21,7 @@ import { KnowledgeMcpGateway } from '../src/main/agent/knowledge-mcp-gateway'
 import type { KnowledgeService } from '../src/main/knowledge/knowledge-service'
 import { MainImageToolSession } from '../src/main/remote-agent/main-image-tool-session'
 import type { RuntimeProtocolBinaryChannel, RuntimeProtocolBinaryFrame } from '../src/main/remote-agent/protocol-remote-runtime-channel'
-import { isStoryGraphTool, storyGraphToolNames } from '../src/shared/story-graph-tools'
+import { storyGraphToolNames } from '../src/shared/story-graph-tools'
 
 const emit = (value: object) => process.stdout.write(`${JSON.stringify(value)}\n`)
 
@@ -50,7 +50,7 @@ async function hostProbe() {
     if (++inferenceRequests > 20) throw new Error('Unexpected inference loop')
     const tools = body.tools as Array<{ function: { name: string } }> | undefined
     const tool = tools?.find(tool => tool.function.name.endsWith('story_graph_search'))
-    if (tools?.length) assert.ok(tool, 'Runtime must expose Story Graph in Ask and Execute')
+    if (tools?.length) assert.ok(tool, 'Runtime must expose Story Graph')
     else backgroundRequests++
     if (live) {
       const response = new Promise<{ status: number; body: string }>(resolve => pendingInference.set(inferenceRequests, resolve))
@@ -89,13 +89,12 @@ async function hostProbe() {
     assert.equal(unsupported.isError, true)
     await new Promise<void>(resolve => inference.listen(0, '127.0.0.1', resolve))
     const origin = `http://127.0.0.1:${(inference.address() as { port: number }).port}/${randomBytes(32).toString('base64url')}`
-    for (const workMode of ['ask', 'execute'] as const) {
-      const config = createOpenCodeModelBridgeProviderConfig({ protocol: 'openai-chat-completions', model: 'graph-probe', loopbackOrigin: origin, workMode })
-      const permission = workMode === 'execute' ? 'allow' : { '*': 'deny', 'graph_story_graph_*': 'allow' }
+    {
+      const config = createOpenCodeModelBridgeProviderConfig({ protocol: 'openai-chat-completions', model: 'graph-probe', loopbackOrigin: origin })
       const child = spawn(opencode!, ['acp'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env,
         HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_CACHE_HOME: join(root, 'cache'), XDG_STATE_HOME: join(root, 'state'),
         OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_MODELS_FETCH: '1', OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1',
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, permission, agent: { build: { permission } } })
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(config)
       } })
       child.stderr.resume()
       const exited = new Promise<void>(resolve => child.once('close', () => resolve()))
@@ -104,17 +103,17 @@ async function hostProbe() {
         subscribeOutput: (listener: Parameters<RuntimeAcpProcessOwner['subscribeOutput']>[0]) => { const data = (data: Buffer) => { void listener({ stream: 'stdout', data }) }; child.stdout.on('data', data); return () => { child.stdout.off('data', data) } },
         subscribeExit: (listener: () => void) => { child.on('close', listener); return () => { child.off('close', listener) } }
       } as RuntimeAcpProcessOwner
-      const transcript = new SemanticPromptStore(join(root, `${workMode}.sqlite`))
+      const transcript = new SemanticPromptStore(join(root, 'graph.sqlite'))
       let done!: () => void
       const completed = new Promise<void>(resolve => { done = resolve })
       const owner = new AgentOwnedAcpPrompt({ bindingId: 'graph', controllerId: 'probe', workspaceDirectory: root, process: processOwner, transcript,
         mcpServers: () => [{ type: 'http', name: 'graph', url: adapter.url!, headers: [] }],
         completePrompt: async (_operation, _status, _response, commit) => { commit(); done() } })
       try {
-        transcript.prepare({ bindingId: 'graph', controllerId: 'probe', operationId: workMode, requestId: workMode, preparationDigest: `sha256:${'a'.repeat(64)}`, promptSequence: 0 })
-        await owner.start({ bindingId: 'graph', operationId: workMode, requestId: workMode, prompt: [{ type: 'text', text: 'Search the story graph for Decision B using story_graph_search, then reply GRAPH_RUNTIME_OK. Do not use other tools.' }] }, workMode)
+        transcript.prepare({ bindingId: 'graph', controllerId: 'probe', operationId: 'graph-probe', requestId: 'graph-probe', preparationDigest: `sha256:${'a'.repeat(64)}`, promptSequence: 0 })
+        await owner.start({ bindingId: 'graph', operationId: 'graph-probe', requestId: 'graph-probe', prompt: [{ type: 'text', text: 'Search the story graph for Decision B using story_graph_search, then reply GRAPH_RUNTIME_OK. Do not use other tools.' }] })
         await completed
-        const page = transcript.page({ bindingId: 'graph', operationId: workMode, controllerId: 'probe', afterSequence: '0', limit: 128 })
+        const page = transcript.page({ bindingId: 'graph', operationId: 'graph-probe', controllerId: 'probe', afterSequence: '0', limit: 128 })
         assert.equal(page.state, 'completed')
         const answer = page.events.map(event => {
           const update = (event.payload as { update?: { sessionUpdate: string; content?: { text?: string } } }).update
@@ -122,7 +121,8 @@ async function hostProbe() {
         }).join('')
         assert.ok(answer.includes('GRAPH_RUNTIME_OK'), 'Runtime must return the completion marker')
       } finally { owner.close(); child.kill(); await exited; transcript.close() }
-      if (live) continue
+    }
+    if (!live) {
       const continueAdapter = new ContinueHostAdapter({ binaryPath: continueEntry!, configPath: '', workspace: root, cacheRoot: join(root, 'continue'), mode: 'chat',
         modelProfile: { id: 'probe', name: 'Probe', modelName: 'graph-probe', baseUrl: `${origin}/v1`, protocol: 'openai-chat-completions', authentication: 'none' },
         launchHost: (entry, args, options) => {
@@ -131,8 +131,8 @@ async function hostProbe() {
           return process
         } })
       try {
-        const result = await continueAdapter.run('Search the graph.', AbortSignal.timeout(40_000), async approval => workMode === 'execute' || isStoryGraphTool(approval.toolName ?? '') ? 'once' : 'deny', {
-          workMode, sessionMcpServers: [{ name: 'graph', type: 'streamable-http', url: adapter.url!, requestOptions: { headers: {} } }]
+        const result = await continueAdapter.run('Search the graph.', AbortSignal.timeout(40_000), async () => 'once', {
+          sessionMcpServers: [{ name: 'graph', type: 'streamable-http', url: adapter.url!, requestOptions: { headers: {} } }]
         })
         assert.match(result.text, /GRAPH_RUNTIME_OK/)
       } finally { await continueAdapter.dispose() }
@@ -142,7 +142,7 @@ async function hostProbe() {
     assert.equal((await client.callTool({ name: 'story_graph_search', arguments: { query: 'Decision' } })).isError, true)
     assert.deepEqual(failures, [])
     emit({ passed: true, inferenceRequests, backgroundRequests, paidCalls: live ? inferenceRequests : 0,
-      runtimes: live ? ['OpenCode Ask', 'OpenCode Execute'] : ['OpenCode Ask', 'OpenCode Execute', 'Continue Ask', 'Continue Execute'] })
+      runtimes: live ? ['OpenCode'] : ['OpenCode', 'Continue'] })
   } finally { lines.close(); await client.close(); adapter.close(); inference.closeAllConnections(); inference.close(); await rm(root, { recursive: true, force: true }) }
 }
 

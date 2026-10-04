@@ -170,7 +170,7 @@ GoodBuddy 的能力当前主要在本机执行，SSH 远程项目则要求用户
 
 ### FR-14 与现有能力的边界
 
-- 远端调用不能扩大 Ask/Execute、Workspace、MCP、Skill 和知识库现有权限。
+- 远端调用不能扩大 Workspace、MCP、Skill 和知识库既有能力范围，沿用统一执行规则。
 - 本机提供任务时使用能力声明对应的 Runtime 边界。
 - SSH 远程项目、本机工具环境和模型配置默认不向 Peer 或网关传播。
 

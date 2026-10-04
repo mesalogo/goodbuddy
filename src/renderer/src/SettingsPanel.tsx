@@ -391,7 +391,6 @@ function hydrateRuntimeSettings(
     knowledgeRerankApiKey: (value: string) => void
     clearKnowledgeRerankApiKey: (value: boolean) => void
     workspacePath: (value: string) => void
-    toolApproval: (value: RuntimeSettingsInput['toolApproval']) => void
     subagentSmartRoutingEnabled: (value: boolean) => void
     contextCompression: (value: ContextCompressionSettings) => void
   },
@@ -453,9 +452,6 @@ function hydrateRuntimeSettings(
   setters.knowledgeRerankApiKey('')
   setters.clearKnowledgeRerankApiKey(false)
   setters.workspacePath(configured.workspacePath)
-  setters.toolApproval(
-    value.toolApproval === 'policy' ? 'policy' : 'always'
-  )
   setters.subagentSmartRoutingEnabled(
     value.subagentSmartRoutingEnabled
   )
@@ -751,10 +747,6 @@ function SettingsPanelView({
   const [workspacePath, setWorkspacePath] = useState<string>(
     defaultRuntimeSettings.workspacePath
   )
-  const [toolApproval, setToolApproval] =
-    useState<RuntimeSettingsInput['toolApproval']>(
-      defaultRuntimeSettings.toolApproval
-    )
   const [
     subagentSmartRoutingEnabled,
     setSubagentSmartRoutingEnabled
@@ -897,7 +889,6 @@ function SettingsPanelView({
         knowledgeRerankApiKey: setKnowledgeRerankApiKey,
         clearKnowledgeRerankApiKey: setClearKnowledgeRerankApiKey,
         workspacePath: setWorkspacePath,
-        toolApproval: setToolApproval,
         subagentSmartRoutingEnabled: setSubagentSmartRoutingEnabled,
         contextCompression: setContextCompression
         },
@@ -916,7 +907,6 @@ function SettingsPanelView({
     activeTab === 'model' ||
     activeTab === 'context-control' ||
     activeTab === 'runtime' ||
-    activeTab === 'security' ||
     activeTab === 'roles'
   const categoryRendersOwnHeader =
     activeTab === 'platform-features' ||
@@ -958,7 +948,6 @@ function SettingsPanelView({
       knowledgeRerankApiKey,
       clearKnowledgeRerankApiKey,
       workspacePath,
-      toolApproval,
       subagentSmartRoutingEnabled,
       contextCompression,
       contextCompressionTokenInput
@@ -1009,8 +998,6 @@ function SettingsPanelView({
         knowledgeRerankApiKey: '',
         clearKnowledgeRerankApiKey: false,
         workspacePath: savedConfiguredSettings?.workspacePath,
-        toolApproval:
-          settings.toolApproval === 'policy' ? 'policy' : 'always',
         subagentSmartRoutingEnabled:
           settings.subagentSmartRoutingEnabled,
         contextCompression:
@@ -1591,7 +1578,6 @@ function SettingsPanelView({
         continueModelSource,
         deepseekHarnessModelSource,
         contextCompression: contextCompressionInput,
-        toolApproval,
         subagentSmartRoutingEnabled
       })
       let selectedSpeechModelId = speechModelDraftId
@@ -4160,38 +4146,13 @@ function SettingsPanelView({
             />
           )}
 
-          {activeTab === 'security' && (
+          {activeTab === 'platform-features' && (
             <>
-          <div className="settings-section">
-            <label className="field">
-            <span>{t('security.toolPolicy.label')}</span>
-            <select
-              aria-label={t('security.toolPolicy.label')}
-              value={toolApproval}
-              onChange={(event) =>
-                setToolApproval(
-                  event.target.value as RuntimeSettingsInput['toolApproval']
-                )
-              }
-            >
-              <option value="always">
-                {t('security.toolPolicy.always')}
-              </option>
-              <option value="policy">
-                {t('security.toolPolicy.deny')}
-              </option>
-            </select>
-            <small>
-              {t('security.toolPolicy.description')}
-            </small>
-            </label>
-          </div>
-
           <div className="settings-section settings-section--danger">
             <div>
-              <strong>{t('security.localData.title')}</strong>
+              <strong>{t('localData.title')}</strong>
               <p>
-                {t('security.localData.description')}
+                {t('localData.description')}
               </p>
             </div>
             {confirmingClear ? (

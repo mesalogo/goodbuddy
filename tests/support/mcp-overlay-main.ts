@@ -38,7 +38,7 @@ app.whenReady().then(async () => {
     capabilities, { clear() {}, cancelImport() {}, getDraft: () => [] } as never,
     { snapshot: () => ({ libraries: [], sources: [], documents: [], entities: [], relations: [], evidence: [], tasks: [] }),
       database: { externalStore: { listBindings: () => [] } }, external: { listInstances: () => [] } } as never,
-    database, { clear() {} } as never, {} as never, async () => {}, undefined, browser,
+    database, {} as never, async () => {}, undefined, browser,
     undefined, undefined, applicationSettings, undefined, undefined, undefined, undefined, undefined,
     undefined, undefined, undefined, undefined, undefined, { getPending: async () => undefined } as never)
   const errors: string[] = []

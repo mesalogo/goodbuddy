@@ -145,9 +145,9 @@ SelectedRuntimeManager
 混用会引入另一项真实风险。不同 profile ID 不通过比较或序列化明文 API Key 来合并；
 密钥、Header 和插件配置更新通过现有设置失效路径使旧 owner 退役。
 
-调研基线的 SSH launch profile 把 workMode 写入原生启动配置。当前实现把工作模式
-放入 Session/当前 Prompt 路由，并设置原生 Session 工具规则，详见 §6.1；
-不能仅从兼容键中删除 workMode，也不向用户增加逐工具审批。
+调研基线的 SSH launch profile 曾把 workMode 写入原生启动配置。当前源码已从启动、
+Session 和 Prompt 路由删除产品模式，按实际能力和请求归属接入工具，详见 §6.1；
+不向用户增加逐工具审批。
 
 ## 4. 本机 OpenCode
 
@@ -220,7 +220,7 @@ OpenCode 1.18.x 的 `mcp.add` 在服务端独立执行：客户端超时或取�
   不依赖 Windows 大小写字符串猜测，也不取消路径存在性校验。
 - 保留一个本地 Filesystem、Subprocess 和平台 Shell Provider。Session 使用原生 cwd
   路由；非 Session 的清单查询显式传入查询工作区，不能回退到第一个项目。
-- 保留 `setup(agentCtx)` 注册 Skill 和工具视图、每 Session 的 Ask definition 身份校验、
+- 保留 `setup(agentCtx)` 注册 Skill 和工具视图、每 Session 的请求归属校验、
   `sessionId + requestId` 准备及事件路由。Main 的 Web/MCP callback 按对应请求找
   ToolProvider，不挂到某个最先创建的 adapter 上。
 - 第一轮保持同 profile、图片能力和插件组合共享，`queueUsage` 的模型配置因此仍一致。
@@ -229,7 +229,7 @@ OpenCode 1.18.x 的 `mcp.add` 在服务端独立执行：客户端超时或取�
 第三方插件的初始化可能依赖配置中的路径，不能因为内置工具支持 cwd 就声称所有插件
 天然多工作区安全。已启用插件组合属于进程配置；对实际产品支持的插件验证它使用
 Agent scope/Session cwd。若某插件确实有项目级初始化状态，将该状态显式作为不兼容
-启动配置，而不是默认给所有工作区各起一套 Provider 或禁止 Execute 工具。
+启动配置，不默认给所有工作区各起一套 Provider 或禁用工具。
 
 ### 5.2 状态与取消
 
@@ -282,8 +282,8 @@ Agent 当前 Runtime installation + 兼容配置
 - 同一 PID 的多个 binding 不代表同一权限或同一 operation。Host/installation identity
   变化仍使用已有失效和退役规则，不把不同 Host、账号或 Runtime generation 合并。
 
-原生 `chat.message` 在模型请求前设置该 Session 的工具规则：Execute 允许工具；
-Ask 只开放原生只读、搜索和读取网络内容的工具，不开放 Shell/编辑/写入。
+原生 `chat.message` 在模型请求前设置该 Session 的工具与模型路由，不再按产品模式
+过滤 Shell、编辑或写入；请求级端点与子会话归属仍独立。
 OpenCode 1.18.29 的 ACP 不转发未注册子 Session 的权限请求，且原生子代理只继承父
 Session 的拒绝规则、不继承允许规则，因此子 Session 也按根 Prompt 设置规则，再
 保留原生子代理的显式限制。不能只把进程启动配置统一设成 `ask`，否则子代理工具会等待。
@@ -382,7 +382,7 @@ token、global dir、活动 Session 或权限/问题队列。设置替换及窗�
 | --- | --- | --- |
 | V1 | FR-RR1、FR-RR2 | 全新 profile 仅查看状态、切换设置，OpenCode/DSH 重型启动次数为 0；已有 Host 时刷新不新建；清单与首个真实请求并发只有一次初始化 |
 | V2 | FR-RR1、FR-RR3 | 同一有效模型连接，两个独立项目各两会话同时自然开发，OpenCode/DSH 各一重型进程；各项目同名不同内容文件、命令 cwd、Git/测试结果都正确 |
-| V3 | FR-RR3 | 第二轮复用同一批会话；Ask/Execute 混合，Ask 写入被边界拒绝，Execute 不增审批；Skill、MCP、图片能力、用量和业务问答不串归属 |
+| V3 | FR-RR3 | 第二轮复用同一批会话；不同能力分配不串用，无产品模式或一般审批；Skill、MCP、图片能力、用量和业务问答不串归属 |
 | V4 | FR-RR3、FR-RR4 | 一会话取消真实长工具/子代理时另外三会话完成并通过独立项目测试；分别检查请求 abort、SSE、问题映射和工具句柄释放 |
 | V5 | FR-RR4 | 关闭面板不取消工作；释放一个会话不关闭共享进程；无会话 owner 空闲后退出；App 退出后本机受管进程无残留，远端按已有 detach 规则保留 Agent-owned 工作 |
 | V6 | FR-RR1、FR-RR4 | 等价默认/显式选择复用；不同实际连接/插件配置不串用；配置更新期间旧请求完成，旧 generation 不永久积累；超过八个项目不因轻量 adapter 报重型容量满 |

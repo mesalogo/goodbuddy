@@ -30,6 +30,8 @@ import { createConversationStores } from './conversation-store'
 import type { ConversationActivity } from './conversation-activity'
 
 const menuProps = {
+  onRestore: vi.fn(async () => undefined),
+  notify: vi.fn(),
   conversationStore: createConversationStores([], { flushIntervalMs: 250 }).conversations,
   activities: [] as ConversationActivity[],
   onOpenConversation: vi.fn(),
@@ -78,7 +80,6 @@ const project: AssistantProject = {
     kind: 'local',
     rootPath: 'C:\\Workspace'
   },
-  defaultWorkMode: 'ask',
   runtimeSelection: { provider: 'model', model: { kind: 'profile', profileId } },
   kind: 'user',
   status: 'active',
@@ -503,7 +504,7 @@ describe('ProjectSwitcher runtime fields', () => {
     })
   })
 
-  it('edits an ordinary project to use DeepSeek Harness and switches work mode by keyboard', async () => {
+  it('edits an ordinary project to use DeepSeek Harness without mode controls', async () => {
     const { onUpdate } = renderSwitcher({
       ...project, rootPath: '', executionSpace: { kind: 'local', rootPath: '' }
     })
@@ -516,20 +517,7 @@ describe('ProjectSwitcher runtime fields', () => {
     fireEvent.change(within(dialog).getByLabelText('执行方式'), {
       target: { value: 'deepseek-harness' }
     })
-    const modeGroup = within(dialog)
-      .getAllByRole('group', { name: '默认模式' })
-      .find((candidate) =>
-        candidate.classList.contains('segmented-control')
-      )!
-    const ask = within(modeGroup).getByRole('button', {
-      name: 'Ask · 只读问答'
-    })
-    const execute = within(modeGroup).getByRole('button', {
-      name: 'Execute · 完全权限'
-    })
-    fireEvent.keyDown(ask, { key: 'ArrowRight' })
-    expect(execute).toHaveFocus()
-    expect(execute).toHaveAttribute('aria-pressed', 'true')
+    expect(within(dialog).queryByRole('group', { name: '默认模式' })).not.toBeInTheDocument()
     fireEvent.click(
       within(dialog).getByRole('button', { name: '保存项目' })
     )
@@ -538,14 +526,13 @@ describe('ProjectSwitcher runtime fields', () => {
         project.id,
         expect.objectContaining({
           rootPath: '',
-          defaultWorkMode: 'execute',
           runtimeSelection: { provider: 'deepseek-harness' }
         })
       )
     )
   })
 
-  it('localizes shared runtime and work mode fields in English', async () => {
+  it('localizes shared runtime fields and omits work mode in English', async () => {
     await i18n.changeLanguage('en-US')
     renderSwitcher()
 
@@ -556,12 +543,8 @@ describe('ProjectSwitcher runtime fields', () => {
     expect(within(dialog).getByLabelText('Root folder')).toHaveAttribute('aria-required', 'true')
     expect(within(dialog).getByLabelText('Root folder')).toHaveAccessibleDescription('Required: select a root folder to create the project.')
     expect(
-      within(dialog)
-        .getAllByRole('group', { name: 'Default mode' })
-        .find((candidate) =>
-          candidate.classList.contains('segmented-control')
-        )
-    ).toBeInTheDocument()
+      within(dialog).queryByRole('group', { name: 'Default mode' })
+    ).not.toBeInTheDocument()
     expect(within(dialog).getByRole('option', { name: 'DeepSeek Harness' })).toBeInTheDocument()
   })
 })
@@ -1338,7 +1321,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     expect(input).toHaveValue('/typed/path')
   })
 
-  it.each(['opencode', 'continue'])('saves %s Execute in one request without extra confirmation checklists', async (provider) => {
+  it.each(['opencode', 'continue'])('saves %s in one request without mode controls', async (provider) => {
     const api = installRemoteApi()
     const { onRemoteCommitted } = renderSwitcher()
     openCreate('新建项目')
@@ -1360,16 +1343,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     fireEvent.change(within(dialog).getByRole('combobox', { name: '执行方式' }), {
       target: { value: provider }
     })
-    const modeGroup = within(dialog)
-      .getAllByRole('group', { name: '默认模式' })
-      .find((candidate) =>
-        candidate.classList.contains('segmented-control')
-      )!
-    fireEvent.click(
-      within(modeGroup).getByRole('button', {
-        name: 'Execute · 完全权限'
-      })
-    )
+    expect(within(dialog).queryByRole('group', { name: '默认模式' })).not.toBeInTheDocument()
     const save = within(dialog).getByRole('button', {
       name: '保存远程项目'
     })
@@ -1380,7 +1354,6 @@ describe('ProjectSwitcher managed SSH projects', () => {
     expect(api.save).toHaveBeenCalledWith({
       intent: 'create',
       draft: expect.objectContaining({
-        defaultWorkMode: 'execute',
         runtimeSelection: { provider },
         hostId,
         remoteRootPath: '/srv/project'

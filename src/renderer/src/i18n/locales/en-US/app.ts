@@ -119,7 +119,7 @@ export const app = {
     defaultTitle: 'New conversation',
     remoteTitle: 'Remote conversation',
     greeting:
-      'Hi, I’m GoodBuddy. Ask me a question, add local files, or use your knowledge base to organize and retrieve information. When you want me to operate on files or use tools, choose the appropriate Agent Runtime and work mode.',
+      'Hi, I’m GoodBuddy. Ask a question or give me a task. Available tools depend on the selected Runtime and settings.',
     interrupted: 'The previous run stopped unexpectedly. You can resend your question.',
     active: 'Conversation is active',
     unread: 'Unread',
@@ -187,7 +187,6 @@ export const app = {
       instructions: 'Task content',
       timing: 'Execution time',
       destination: 'Conversation',
-      mode: 'Work mode',
       recurrence: 'Frequency',
       time: 'First run'
     },
@@ -195,17 +194,11 @@ export const app = {
       current: 'Current conversation',
       new: 'New conversation',
       currentHelp:
-        'Use the selected conversation\'s history, Runtime, work mode, and enabled capabilities when the message is sent.',
+        'Use the selected conversation\'s history, Runtime, and enabled capabilities when the message is sent.',
       newHelp:
         'Create an independent ordinary conversation with project defaults and the task name as its title.',
       currentUnavailable:
         'The current conversation cannot host this task. Choose another conversation in this project or a new conversation.'
-    },
-    mode: {
-      execute: 'Execute',
-      ask: 'Ask',
-      executeUnavailable:
-        'The current Runtime cannot use tools, so read-only Ask is selected.'
     },
     recurrence: {
       once: 'Once',
@@ -213,16 +206,12 @@ export const app = {
       weekly: 'Weekly'
     },
     scope: {
-      conversationSettings: 'Use the target conversation\'s Runtime, work mode, and enabled tools at send time. Adjust them in the conversation.',
+      conversationSettings: 'Use the target conversation\'s Runtime and enabled tools at send time. Adjust them in the conversation.',
       title: 'Execution scope',
       project: 'Project',
       runtime: 'Runtime',
       workspace: 'Workspace',
       tools: 'Tools and approval',
-      executeApproval:
-        'Use all tools, processes, network access, and writable paths available to the current account; calls are recorded in Activity',
-      askReadOnly:
-        'Stay within the read-only boundary for answers and retrieval; make no changes',
       noWorkspace: 'No workspace configured'
     },
     errors: {
@@ -369,7 +358,6 @@ export const app = {
       recoveryPrompt: 'Use image model "{{model}}": {{prompt}}',
       noToolsNotice: 'This chat model cannot call image tools automatically. You can use the existing direct image workflow.',
       directWorkflowNotice: 'Choose an image model in the Runtime selector and send your request. If none is configured, add an image connection in model settings.',
-      askNotice: 'Generating or editing images requires Execute mode. Change it using the work mode selector.',
       openModelSettings: 'Open image model settings',
       cancelNotice: 'Waiting was stopped. The provider may still generate and charge for the image; a late result will be saved here.',
       cancellingNotice: 'Cancellation was requested. The provider may still generate and charge for the image.',
@@ -527,18 +515,7 @@ export const app = {
       skipped: 'Skipped'
     },
     approval: {
-      waiting: 'Awaiting approval: {{tool}}',
-      deny: 'Deny',
-      once: 'Allow once',
-      session: 'Allow for conversation',
-      permanent: 'Always allow',
-      decisionDeny: 'Denied',
-      decisionOnce: 'Allowed once',
-      decisionSession: 'Allowed for this conversation',
-      decisionPermanent: 'Always allowed',
-      executing: '{{decision}}; Agent is running',
-      denied: 'Tool execution denied',
-      responseFailed: 'Failed to respond to approval. Try again.'
+      waiting: 'Awaiting approval: {{tool}}'
     }
   },
   composer: {
@@ -566,7 +543,6 @@ export const app = {
     storyGraph: { label: 'Use story graph' },
     options: 'Options',
     expertLabel: 'Expert role',
-    modeLabel: 'Work mode',
     runtimeControls: {
       groupLabel: '{{runtime}} controls',
       agentLabel: 'OpenCode Runtime Agent',
@@ -644,18 +620,6 @@ export const app = {
       teamDescription: 'Multiple experts collaborate in parallel',
       customDescription: 'Custom expert role'
     },
-    modes: {
-      ask: {
-        label: 'Ask · Read only',
-        description:
-          'Stay within the read-only boundary for answers and retrieval; make no changes'
-      },
-      execute: {
-        label: 'Execute · Full access',
-        description:
-          'Use all tools, processes, network access, and writable paths available to the current account; calls are recorded in Activity'
-      }
-    },
     voice: {
       stopRecording: 'Stop recording',
       cancel: 'Cancel speech recognition',
@@ -728,14 +692,6 @@ export const app = {
       configureRuntime: 'Configure an available model or Agent Runtime first.',
       imageGeneration:
         'Image model: describe a scene to generate an image that will appear here and be saved to Results.',
-      agentAsk:
-        '{{runtime}} Ask mode: stays within the read-only boundary for answers and retrieval and makes no changes.',
-      agentExecute:
-        '{{runtime}} Execute mode: uses all tools, processes, network access, and writable paths available to the current account; calls are recorded in Activity.',
-      ask:
-        'Ask mode: stays within the read-only boundary for answers and retrieval and makes no changes.',
-      execute:
-        'Execute mode: uses all tools, processes, network access, and writable paths available to the current account; calls are recorded in Activity.'
     },
     errors: {
       pasteImageType: 'Only JPEG, PNG, or WebP images can be pasted',
@@ -819,7 +775,6 @@ export const app = {
     heartbeatTaskAdded:
       'Added “{{title}}” to the conversation. Review it before sending.',
     userStartedTask: 'User started a conversation task',
-    userDecision: 'User selected {{decision}}',
     conversationDeleted: 'The related conversation has been deleted',
     localDataCleared:
       'Local conversations, tasks, memory, automatic supervision data, automations, and knowledge indexes were cleared',

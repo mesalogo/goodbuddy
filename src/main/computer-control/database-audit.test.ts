@@ -34,8 +34,7 @@ const createTask = (database: AssistantDatabase, taskId: string): void => {
   database.createTask({
     id: taskId,
     title: '计算机控制审计',
-    instructions: '验证持久审计',
-    workMode: 'execute'
+    instructions: '验证持久审计'
   })
 }
 

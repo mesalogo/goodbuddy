@@ -1,7 +1,6 @@
 import {
   Bot,
   ChevronDown,
-  CircleHelp,
   FileText,
   Library,
   LoaderCircle,
@@ -10,7 +9,6 @@ import {
   Paperclip,
   RefreshCw,
   Send,
-  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Square,
@@ -42,7 +40,6 @@ import {
 import type {
   AssistantArtifact,
   ConversationQueueItem,
-  InteractiveWorkMode,
 } from "../../shared/assistant-contracts";
 import type { ExternalKnowledgeInstanceSummary } from "../../shared/external-knowledge-contracts";
 import { maximumAttachmentsPerMessage } from "../../shared/attachment-limits";
@@ -96,7 +93,6 @@ export type ComposerProps = {
   conversationHint: string;
   conversationId: string;
   conversationStore: ConversationStore;
-  effectiveWorkMode: InteractiveWorkMode;
   executionRunning: boolean;
   externalInstances: readonly ExternalKnowledgeInstanceSummary[];
   fileSelectionProgress: ContextFileSelectionProgress | undefined;
@@ -135,7 +131,6 @@ export type ComposerProps = {
   voiceRecording: boolean;
   /** The workspace view; switching views closes the composer popups. */
   workspaceView: string;
-  workModeOptions: readonly ComposerMenuOption<InteractiveWorkMode>[];
 };
 
 const composerContextErrorId = "composer-context-error";
@@ -164,7 +159,6 @@ export const Composer = memo(function Composer({
   conversationHint,
   conversationId,
   conversationStore,
-  effectiveWorkMode,
   executionRunning,
   externalInstances,
   fileSelectionProgress,
@@ -202,7 +196,6 @@ export const Composer = memo(function Composer({
   voiceListening,
   voiceRecording,
   workspaceView,
-  workModeOptions,
 }: ComposerProps): React.JSX.Element {
   const { t } = useTranslation("app");
   const view = useComposerConversationView(conversationStore, conversationId);
@@ -241,11 +234,6 @@ export const Composer = memo(function Composer({
   const setExpertMenuOpen = useCallback((open: boolean): void => {
     setMenus(open
       ? { menu: "expert", runtimeMenuOpen: false, knowledgeScopeOpen: false }
-      : { menu: undefined });
-  }, [setMenus]);
-  const setModeMenuOpen = useCallback((open: boolean): void => {
-    setMenus(open
-      ? { menu: "mode", runtimeMenuOpen: false, optionsOpen: false, knowledgeScopeOpen: false }
       : { menu: undefined });
   }, [setMenus]);
   const setRuntimeAgentMenuOpen = useCallback((open: boolean): void => {
@@ -335,7 +323,7 @@ export const Composer = memo(function Composer({
     };
     const frame = requestAnimationFrame(() => {
       // Keyboard users land on the same first control as the model picker
-      // (expert / work mode menus); optional switches above stay Tab-reachable.
+      // and expert menu; optional switches above stay Tab-reachable.
       composerOptionsRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
     });
     document.addEventListener("pointerdown", dismissOutside);
@@ -530,10 +518,6 @@ export const Composer = memo(function Composer({
       <div className="composer">
         <ImageCapabilityNotice
           runtime={runtime}
-          workMode={effectiveWorkMode}
-          hasCallableImageModels={runtimeSettings?.modelProfiles.some(profile =>
-            profile.protocol === "openai-images-generations" && profile.allowConversationInvocation === true
-          ) ?? false}
           onOpenModelSettings={actions.openModelSettings}
         />
         {composerOptionSummary && (
@@ -1159,24 +1143,6 @@ export const Composer = memo(function Composer({
                   />
                 )}
               </div>
-              <ComposerMenuSelect
-                ariaLabel={t("composer.modeLabel")}
-                className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
-                disabled={isRunning}
-                icon={
-                  effectiveWorkMode === "execute" ? (
-                    <ShieldCheck aria-hidden="true" size={15} />
-                  ) : (
-                    <CircleHelp aria-hidden="true" size={15} />
-                  )
-                }
-                menuOpen={composerMenuOpen === "mode"}
-                onChange={actions.setWorkMode}
-                onOpenChange={setModeMenuOpen}
-                options={workModeOptions}
-                triggerLabel={effectiveWorkMode === "execute" ? "Execute" : "Ask"}
-                value={effectiveWorkMode}
-              />
             </div>
           </div>
           <div className="composer__submit-actions">

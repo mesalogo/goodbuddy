@@ -1,16 +1,19 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Profiler } from 'react'
+import { createRef, Profiler } from 'react'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 import type { Conversation } from './chat-conversation'
 import type { ConversationActivity } from './conversation-activity'
 import { createConversationStores } from './conversation-store'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import i18n from './i18n'
+import { WorkspaceMenu } from './WorkspaceMenu'
+import { formatConversationListTime } from './time-format'
+import { formatMediumDateTime } from './locale-formatters'
 
 const local: AssistantProject = {
   id: 'local', name: 'Local workspace', description: '', rootPath: 'C:/workspace',
-  executionSpace: { kind: 'local', rootPath: 'C:/workspace' }, defaultWorkMode: 'ask',
+  executionSpace: { kind: 'local', rootPath: 'C:/workspace' },
   kind: 'user', status: 'active', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z'
 }
 const other = { ...local, id: 'other', name: 'Other workspace', rootPath: 'C:/other' }
@@ -20,6 +23,7 @@ function setup({ projects = [local, other], conversations = [conversation('Local
   activities = [] as ConversationActivity[], remoteProjectsEnabled = false } = {}) {
   const store = createConversationStores(conversations, { flushIntervalMs: 250 }).conversations
   const actions = { onArchive: vi.fn(), onCreate: vi.fn(), onDelete: vi.fn(), onRemoteCommitted: vi.fn(),
+    onRestore: vi.fn<(id: string) => Promise<void>>().mockResolvedValue(undefined), notify: vi.fn(),
     onSelect: vi.fn(), onSelectRoot: vi.fn(), onUpdate: vi.fn(), onOpenConversation: vi.fn(), onNewConversation: vi.fn() }
   const props = { ...actions, projects, conversationStore: store, activeProjectId: local.id, activities, remoteProjectsEnabled }
   const renders = vi.fn()
@@ -50,6 +54,88 @@ describe('production workspace menu', () => {
     expect(actions.onSelect).not.toHaveBeenCalled()
   })
 
+  it('enters the previewed project explicitly and uses the current project in all-project scope', async () => {
+    await i18n.changeLanguage('en-US')
+    const { actions } = setup()
+    const trigger = screen.getByRole('button', { name: 'Current project' })
+    fireEvent.click(trigger)
+    fireEvent.pointerOver(screen.getByRole('menuitemradio', { name: /Other workspace/ }), { pointerType: 'mouse' })
+    expect(actions.onSelect).not.toHaveBeenCalled()
+    const enter = screen.getByRole('button', { name: 'Enter project Other workspace' })
+    expect(enter).toHaveTextContent('Enter project')
+    expect(enter).toHaveAttribute('title', 'Enter project Other workspace')
+    fireEvent.click(enter)
+    expect(actions.onSelect).toHaveBeenCalledExactlyOnceWith(other.id)
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('tab', { name: 'All projects' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Enter project Local workspace' }))
+    expect(actions.onSelect).toHaveBeenLastCalledWith(local.id)
+    expect(actions.onNewConversation).not.toHaveBeenCalled()
+  })
+
+  it('loads archives only on demand, searches them, respects remote gating and restores without navigation', async () => {
+    await i18n.changeLanguage('en-US')
+    const archived = { ...other, status: 'archived' as const }
+    const remote: AssistantProject = { ...archived, id: 'remote', name: 'Archived remote', executionSpace: { kind: 'ssh', hostId: 'host', remoteRootPath: '/srv' } }
+    const list = vi.fn(async () => [local, archived, remote, { ...archived, id: 'channel', kind: 'channel' as const }])
+    const original = window.goodbuddy
+    Object.defineProperty(window, 'goodbuddy', { configurable: true, value: { projects: { list } } })
+    try {
+      const { actions, props, rerender, renders } = setup()
+      fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+      fireEvent.pointerOver(screen.getByRole('menuitemradio', { name: /Other workspace/ }), { pointerType: 'mouse' })
+      expect(list).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Archived' }))
+      expect(screen.getByRole('status')).toHaveTextContent('Loading archived projects')
+      await screen.findByRole('menuitem', { name: 'Restore project Other workspace' })
+      expect(list).toHaveBeenCalledExactlyOnceWith(true)
+      expect(screen.queryByRole('menuitem', { name: 'Restore project Archived remote' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('tablist', { name: 'Project categories' })).not.toBeInTheDocument()
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'missing' } })
+      expect(screen.getByText('No matching projects. Try another search.')).toBeVisible()
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'C:/other' } })
+      let finishRestore!: () => void
+      actions.onRestore.mockImplementationOnce(() => new Promise<void>(resolve => { finishRestore = resolve }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Restore project Other workspace' }))
+      expect(screen.getByRole('menuitem', { name: 'Restore project Other workspace' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Restore project Other workspace' }))
+      await act(async () => finishRestore())
+      await waitFor(() => expect(actions.notify).toHaveBeenCalledWith({ tone: 'success', message: 'Other workspace restored to its project category.' }))
+      expect(actions.onRestore).toHaveBeenCalledExactlyOnceWith(other.id)
+      expect(actions.onSelect).not.toHaveBeenCalled()
+      expect(actions.onOpenConversation).not.toHaveBeenCalled()
+      rerender(<Profiler id="workspace" onRender={renders}><ProjectSwitcher {...props} remoteProjectsEnabled /></Profiler>)
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+      expect(screen.getByRole('menuitem', { name: 'Restore project Archived remote' })).toBeVisible()
+      expect(screen.queryByRole('menuitem', { name: 'Restore project Other workspace' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Archived' }))
+      expect(list).toHaveBeenCalledTimes(1)
+    } finally { Object.defineProperty(window, 'goodbuddy', { configurable: true, value: original }) }
+  })
+
+  it('keeps failed archive operations retryable and reports errors through notifications', async () => {
+    await i18n.changeLanguage('en-US')
+    const list = vi.fn().mockRejectedValueOnce(new Error('Archive read failed')).mockResolvedValue([{ ...other, status: 'archived' }])
+    const original = window.goodbuddy
+    Object.defineProperty(window, 'goodbuddy', { configurable: true, value: { projects: { list } } })
+    try {
+      const { actions } = setup()
+      actions.onRestore.mockRejectedValueOnce(new Error('Restore write failed'))
+      fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Archived' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Retry loading archives' }))
+      expect(actions.notify).toHaveBeenCalledWith({ tone: 'error', message: 'Archive read failed' })
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Restore project Other workspace' }))
+      await waitFor(() => {
+        expect(actions.notify).toHaveBeenCalledWith({ tone: 'error', message: 'Restore write failed' })
+        expect(screen.getByRole('menuitem', { name: 'Restore project Other workspace' })).toBeEnabled()
+      })
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Restore project Other workspace' }))
+      await screen.findByText('No archived projects. Archived projects can be restored here.')
+      expect(actions.onSelect).not.toHaveBeenCalled()
+    } finally { Object.defineProperty(window, 'goodbuddy', { configurable: true, value: original }) }
+  })
   it('puts All Projects first in a fixed tab row and filters categories only when activated', async () => {
     await i18n.changeLanguage('en-US')
     const remote: AssistantProject = { ...other, id: 'remote', name: 'Remote workspace', rootPath: '/srv/workspace',
@@ -88,7 +174,7 @@ describe('production workspace menu', () => {
     const remoteRow = within(list).getByRole('menuitemradio', { name: /Remote workspace/ })
     fireEvent.pointerOver(remoteRow, { pointerType: 'mouse' })
     const preview = screen.getByRole('region', { name: remote.name })
-    expect(within(preview).getByRole('button', { name: 'Remote chat' })).toBeVisible()
+    expect(within(preview).getByRole('button', { name: /^Remote chat/ })).toBeVisible()
     expect(within(preview).queryByText(remote.name)).not.toBeInTheDocument()
     expect(within(tabs).getByRole('tab', { name: 'Channels' })).toHaveAttribute('aria-selected', 'true')
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
@@ -139,7 +225,7 @@ describe('production workspace menu', () => {
       const target = screen.getByRole('menuitemradio', { name: /Other workspace/ })
       fireEvent.pointerOver(target, { pointerType: 'mouse' })
       const list = screen.getByRole('list', { name: 'Conversations' })
-      expect(within(list).getByRole('button', { name: 'Other chat' })).toBeVisible()
+      expect(within(list).getByRole('button', { name: /^Other chat/ })).toBeVisible()
       expect(within(list).queryByText('Other workspace')).not.toBeInTheDocument()
       const scopedPane = screen.getByRole('region', { name: 'Other workspace' })
       expect(scopedPane).toHaveClass('workspace-menu__activity')
@@ -229,7 +315,9 @@ describe('production workspace menu', () => {
 
   it('does not rerender the menu for message content deltas with unchanged summaries', async () => {
     await i18n.changeLanguage('en-US')
-    const initial = { ...conversation('Streaming chat'), messages: [{ id: 'm', role: 'assistant' as const, content: 'first', createdAt: 1, state: 'streaming' as const }] }
+    const now = new Date(2026, 9, 4, 14, 30, 10).getTime()
+    vi.spyOn(Date, 'now').mockReturnValue(now + 1000)
+    const initial = { ...conversation('Streaming chat', local.id, now), messages: [{ id: 'm', role: 'assistant' as const, content: 'first', createdAt: 1, state: 'streaming' as const }] }
     const { store, renders } = setup({ conversations: [initial] })
     act(() => store.rememberOpened(initial.id))
     fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
@@ -238,6 +326,67 @@ describe('production workspace menu', () => {
     act(() => store.set((rows) => rows.map((row) => ({ ...row, updatedAt: Date.now(), messages: [{ ...initial.messages[0]!, content: 'streaming text' }] }))))
     expect(renders).not.toHaveBeenCalled()
     expect(store.getActivityTimes()).toBe(activityTimes)
+  })
+
+  it('updates only the subscribed time when updatedAt crosses displayed precision', async () => {
+    await i18n.changeLanguage('en-US')
+    const now = new Date(2026, 9, 4, 14, 30, 10).getTime()
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const initial = { ...conversation('Streaming chat', local.id, now), messages: [
+      { id: 'm', role: 'assistant' as const, content: 'first', createdAt: 1, state: 'streaming' as const }
+    ] }
+    const store = createConversationStores([initial], { flushIntervalMs: 250 }).conversations
+    const renderProject = vi.fn((project: AssistantProject) => <button>{project.name}</button>)
+    const renders = vi.fn()
+    render(<Profiler id="menu" onRender={renders}><WorkspaceMenu projects={[local]} activeProjectId={local.id}
+      activities={[]} conversationStore={store} remoteProjectsEnabled={false} hosts={[]} connectionStates={{}}
+      anchorRef={createRef()} controlsRef={createRef()} id="menu" renderProject={renderProject}
+      onEnterProject={vi.fn()} onRestore={vi.fn()} notify={vi.fn()}
+      onClose={vi.fn()} onCreateProject={vi.fn()} onNewConversation={vi.fn()} onOpenConversation={vi.fn()} /></Profiler>)
+    renderProject.mockClear()
+    renders.mockClear()
+    const updatedAt = now + 60_000
+    act(() => store.set([{ ...initial, updatedAt }]))
+    const time = screen.getByRole('button', { name: /^Streaming chat/ }).querySelector('time')!
+    expect(time).toHaveTextContent(formatConversationListTime(updatedAt, 'en-US'))
+    expect(time).toHaveAttribute('title', formatMediumDateTime(updatedAt, 'en-US'))
+    expect(time).toHaveAttribute('datetime', new Date(updatedAt).toISOString())
+    expect(renders).toHaveBeenCalledTimes(1)
+    expect(renderProject).not.toHaveBeenCalled()
+    renders.mockClear()
+    act(() => store.set([{ ...initial, updatedAt: updatedAt + 1000 }]))
+    expect(renders).not.toHaveBeenCalled()
+  })
+
+  it.each(['en-US', 'zh-CN'] as const)('shows actual update times in %s without using visits or hydrating task-only rows', async (locale) => {
+    await i18n.changeLanguage('en-US')
+    const now = new Date(2026, 9, 4, 14, 30).getTime()
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const times = [now - 60_000, new Date(2026, 8, 2, 10).getTime(), new Date(2025, 8, 2, 10).getTime()]
+    const conversations = times.map((time, i) => conversation(`Chat ${i}`, local.id, time))
+    const activity: ConversationActivity = { conversationId: 'task-only', projectId: local.id,
+      projectName: local.name, title: 'Task without summary', status: 'running' }
+    const original = window.goodbuddy
+    const get = vi.fn(), listSummaries = vi.fn()
+    Object.defineProperty(window, 'goodbuddy', { configurable: true, value: { conversations: { get, listSummaries } } })
+    try {
+      const { store } = setup({ conversations, activities: [activity] })
+      act(() => { store.rememberOpened('Chat 2'); store.recordActivityStatuses([{ ...activity, status: 'completed' }]) })
+      fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+      await act(() => i18n.changeLanguage(locale))
+      for (const [i, updatedAt] of times.entries()) {
+        const time = screen.getByRole('button', { name: new RegExp(`^Chat ${i} `) }).querySelector('time')!
+        expect(time).toHaveTextContent(formatConversationListTime(updatedAt, locale))
+        expect(time).toHaveAttribute('title', formatMediumDateTime(updatedAt, locale))
+        expect(time).toHaveAttribute('datetime', new Date(updatedAt).toISOString())
+      }
+      expect(screen.getByRole('button', { name: /^Task without summary/ }).querySelector('time')).toBeNull()
+      expect(store.getActivityTimes().get('Chat 2')).toBeGreaterThan(times[2]!)
+      expect(get).not.toHaveBeenCalled()
+      expect(listSummaries).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(window, 'goodbuddy', { configurable: true, value: original })
+    }
   })
 
   it('records activity transitions while closed and promotes task-only completions when opened', async () => {
@@ -265,7 +414,7 @@ describe('production workspace menu', () => {
     const list = screen.getByRole('list', { name: 'Conversations' })
     expect(within(list).getAllByRole('button').length).toBeLessThan(120)
     fireEvent.keyDown(list, { key: 'End' })
-    const last = within(list).getByRole('button', { name: 'Result 299 Completed' })
+    const last = within(list).getByRole('button', { name: /^Result 299 .* Completed$/ })
     expect(last).toHaveFocus()
     expect(last.closest('[role="listitem"]')).toHaveAttribute('aria-setsize', '300')
     fireEvent.click(last)

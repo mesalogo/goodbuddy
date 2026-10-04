@@ -158,7 +158,7 @@ function setup(
         requests.push({ method, params })
         if (method === 'goodbuddy/handshake') {
           return {
-            controlProtocolVersion: 1,
+            controlProtocolVersion: 2,
             harnessVersion: '0.1.7-rc.2',
             acpProtocolVersion: 1,
             supports: {
@@ -308,15 +308,11 @@ async function collect(
   return events
 }
 
-function request(
-  conversationId: string,
-  workMode: 'ask' | 'execute' = 'execute'
-) {
+function request(conversationId: string) {
   return {
     requestId: `request-${conversationId}`,
     conversationId,
     prompt: 'hello',
-    workMode
   } as const
 }
 
@@ -702,7 +698,6 @@ describe('DeepSeekHarnessRuntime', () => {
       params: {
         sessionId: 'session-1',
         requestId: 'request-one',
-        mode: 'execute'
       }
     })
 
@@ -869,12 +864,12 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
-  it('fails Ask closed and never calls the authorizer', async () => {
+  it('allows owned session permissions without calling the authorizer', async () => {
     const harness = setup()
     const authorize = vi.fn().mockResolvedValue('once')
     const running = collect(
       harness.runtime.run(
-        request('ask', 'ask'),
+        request('ask'),
         new AbortController().signal,
         authorize
       )
@@ -886,7 +881,7 @@ describe('DeepSeekHarnessRuntime', () => {
     await expect(
       harness.permission(permission('session-1'))
     ).resolves.toEqual({
-      outcome: { outcome: 'selected', optionId: 'reject' }
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
     expect(authorize).not.toHaveBeenCalled()
     expect(harness.requests).toContainEqual({
@@ -894,7 +889,6 @@ describe('DeepSeekHarnessRuntime', () => {
       params: {
         sessionId: 'session-1',
         requestId: 'request-ask',
-        mode: 'ask'
       }
     })
     harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
@@ -902,7 +896,7 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
-  it('answers Execute permissions without waiting for a second authorizer', async () => {
+  it('answers permissions without waiting for a second authorizer', async () => {
     const harness = setup()
     const authorize = vi.fn(() => new Promise<never>(() => {}))
     const running = collect(
@@ -946,7 +940,7 @@ describe('DeepSeekHarnessRuntime', () => {
     ])
     const harness = setup({ toolProvider: provider })
     const running = collect(harness.runtime.run(
-      request('catalog', 'execute'), new AbortController().signal
+      request('catalog'), new AbortController().signal
     ))
     await vi.waitFor(() => expect(harness.promptGates).toHaveLength(1))
 
@@ -991,7 +985,7 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
-  it('exposes and calls Main-owned web tools in Ask without approval', async () => {
+  it('exposes all registered proxy tools and calls web tools without approval', async () => {
     const provider = toolProvider([
       webTool('web_search'),
       webTool('web_fetch'),
@@ -1001,7 +995,7 @@ describe('DeepSeekHarnessRuntime', () => {
     const authorize = vi.fn().mockResolvedValue('once')
     const running = collect(
       harness.runtime.run(
-        request('web-ask', 'ask'),
+        request('web-ask'),
         new AbortController().signal,
         authorize
       )
@@ -1017,7 +1011,8 @@ describe('DeepSeekHarnessRuntime', () => {
     ).resolves.toEqual({
       tools: [
         expect.objectContaining({ name: 'web_search' }),
-        expect.objectContaining({ name: 'web_fetch' })
+        expect.objectContaining({ name: 'web_fetch' }),
+        expect.objectContaining({ name: mcpTool().name })
       ]
     })
     await expect(
@@ -1039,7 +1034,6 @@ describe('DeepSeekHarnessRuntime', () => {
       expect.any(AbortSignal),
       expect.objectContaining({
         conversationId: 'web-ask',
-        workMode: 'ask'
       })
     )
     harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
@@ -1101,8 +1095,6 @@ describe('DeepSeekHarnessRuntime', () => {
           description: 'Read a workspace file',
           kind: 'read',
           source: 'runtime',
-          ask: 'allowed',
-          execute: 'allowed'
         },
         {
           id: 'edit',
@@ -1110,8 +1102,6 @@ describe('DeepSeekHarnessRuntime', () => {
           description: 'Edit a workspace file',
           kind: 'write',
           source: 'runtime',
-          ask: 'blocked',
-          execute: 'allowed'
         },
         {
           id: 'plugin_tool',
@@ -1119,8 +1109,6 @@ describe('DeepSeekHarnessRuntime', () => {
           description: 'Plugin capability',
           kind: 'other',
           source: 'plugin',
-          ask: 'blocked',
-          execute: 'allowed'
         }
       ],
       commands: [],
@@ -1160,13 +1148,13 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
-  it('rejects MCP calls in Ask mode without approval or execution', async () => {
+  it('executes registered MCP calls without approval', async () => {
     const provider = toolProvider()
     const harness = setup({ toolProvider: provider })
     const authorize = vi.fn().mockResolvedValue('once')
     const running = collect(
       harness.runtime.run(
-        request('mcp-ask', 'ask'),
+        request('mcp-ask'),
         new AbortController().signal,
         authorize
       )
@@ -1182,15 +1170,15 @@ describe('DeepSeekHarnessRuntime', () => {
         name: mcpTool().name,
         arguments: { kind: 'cube' }
       })
-    ).rejects.toThrow('需要 Execute 模式')
+    ).resolves.toEqual({ content: [{ type: 'text', text: '{"asset":"cube"}' }] })
     expect(authorize).not.toHaveBeenCalled()
-    expect(provider.callTool).not.toHaveBeenCalled()
+    expect(provider.callTool).toHaveBeenCalledOnce()
     harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
     await running
     await harness.runtime.dispose()
   })
 
-  it('requires one-time approval before calling an assigned MCP tool', async () => {
+  it('calls an assigned MCP tool from the registered catalog without approval', async () => {
     const provider = toolProvider()
     const harness = setup({ toolProvider: provider })
     const authorize = vi.fn().mockResolvedValue('once')
@@ -1218,7 +1206,7 @@ describe('DeepSeekHarnessRuntime', () => {
         { type: 'text', text: '{"asset":"cube"}' }
       ]
     })
-    expect(authorize).toHaveBeenCalledTimes(1)
+    expect(authorize).not.toHaveBeenCalled()
     expect(provider.listTools).toHaveBeenCalledOnce()
     expect(provider.callTool).toHaveBeenCalledWith(
       mcpTool().name,
@@ -1226,7 +1214,6 @@ describe('DeepSeekHarnessRuntime', () => {
       expect.any(AbortSignal),
       expect.objectContaining({
         conversationId: 'mcp-execute',
-        workMode: 'execute'
       })
     )
     harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
@@ -1251,7 +1238,7 @@ describe('DeepSeekHarnessRuntime', () => {
           resolve('tests', 'fixtures', 'web-3d-game-mcp.mjs')
         ]
       } satisfies ResolvedMcpServer
-    ])
+    ], undefined, undefined, false, { runtimeTarget: 'deepseek-harness' })
     const harness = setup({
       toolProvider: provider,
       promptTimeoutMs: 10_000
@@ -1323,7 +1310,7 @@ describe('DeepSeekHarnessRuntime', () => {
           testSurface: 'window.__GOODBUDDY_GAME__'
         }
       })
-      expect(authorize).toHaveBeenCalledOnce()
+      expect(authorize).not.toHaveBeenCalled()
     } finally {
       harness.promptGates[0]?.resolve({ stopReason: 'end_turn' })
       await running.catch(() => undefined)
@@ -1331,7 +1318,7 @@ describe('DeepSeekHarnessRuntime', () => {
     }
   })
 
-  it('does not execute an MCP tool when authorization is denied', async () => {
+  it('does not inherit generic approval blocking for registered MCP tools', async () => {
     const provider = toolProvider()
     const harness = setup({ toolProvider: provider })
     const authorize = vi.fn().mockResolvedValue('deny')
@@ -1353,14 +1340,15 @@ describe('DeepSeekHarnessRuntime', () => {
         name: mcpTool().name,
         arguments: { kind: 'cube' }
       })
-    ).rejects.toThrow('未获执行授权')
-    expect(provider.callTool).not.toHaveBeenCalled()
+    ).resolves.toEqual({ content: [{ type: 'text', text: '{"asset":"cube"}' }] })
+    expect(provider.callTool).toHaveBeenCalledOnce()
+    expect(authorize).not.toHaveBeenCalled()
     harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
     await running
     await harness.runtime.dispose()
   })
 
-  it('validates MCP arguments before requesting authorization', async () => {
+  it('validates MCP arguments before execution', async () => {
     const provider = toolProvider()
     const harness = setup({ toolProvider: provider })
     const authorize = vi.fn().mockResolvedValue('once')

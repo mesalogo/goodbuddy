@@ -9,7 +9,7 @@ import {
 } from '../../shared/supervision-contracts'
 import { reviewScope, type ReviewBatch } from './review-checkpoint'
 import { createHash } from 'node:crypto'
-import type { SupervisionReviewStore, ReviewConfiguration } from './supervision-review-store'
+import type { SupervisionReviewStore, ReviewConfiguration, ReviewState } from './supervision-review-store'
 import type { SupervisionReviewExecution, SupervisionReviewProgress } from '../../shared/supervision-review-contracts'
 
 export type SupervisorSummarizerRequest = {
@@ -186,6 +186,9 @@ export class SupervisorService {
     private readonly review?: {
       database: () => SupervisionReviewStore
       configuration: () => Promise<ReviewConfiguration>
+      initialize?: (runId: string, state: ReviewState, signal: AbortSignal) => Promise<void>
+      resume?: (runId: string, signal: AbortSignal) => Promise<void>
+      context?: (request: SupervisionRunRequest, signal: AbortSignal) => Promise<{ summary: string | undefined; background: SupervisionEvidence[] }>
       withExecution?: (operation: () => Promise<StoredSupervisionResult>) => Promise<StoredSupervisionResult>
       /** Story assignment over published, still unassigned events of the scope. Runs inside the review slot. */
       stories?: (request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal) => Promise<NonNullable<SupervisionReviewProgress['stories']>>
@@ -337,8 +340,15 @@ export class SupervisorService {
       return { runId, request, evidence: [], output: empty, status, coverage: db.progress(runId) }
     }
     try {
-      if (existing) db.resume(runId)
-      else db.initialize(runId, { ...state, phase: 'collecting' })
+      if (existing) {
+        if (this.review!.resume) await this.review!.resume(runId, controller.signal)
+        else db.resume(runId, controller.signal)
+      } else {
+        const initial = { ...state, phase: 'collecting' as const }
+        if (this.review!.initialize) await this.review!.initialize(runId, initial, controller.signal)
+        else db.initialize(runId, initial, controller.signal)
+      }
+      controller.signal.throwIfAborted()
       // Every candidate offered to any batch, so publication can resolve all chosen identities.
       const offered = new Map<string, SupervisionCandidate>()
       const candidatesFor = async (projectId: string) => {
@@ -349,6 +359,8 @@ export class SupervisorService {
       if (db.progress(runId).remainingSources) db.setPhase(runId, 'extracting')
       const summarize = async (evidence: SupervisionEvidence[], navigation = false, candidates: SupervisionCandidate[] = []) => {
         controller.signal.throwIfAborted()
+        const context = !navigation && this.review!.context ? await this.review!.context(request, controller.signal) : undefined
+        controller.signal.throwIfAborted()
         activity.inFlight++
         let raw: unknown
         try {
@@ -358,9 +370,9 @@ export class SupervisorService {
             ? '\nThese inputs are navigation summaries, not original evidence. Return summary, changeDigest and openItems. Omit events, entities, entityChanges and relations or return them as empty arrays. All original leaf results are retained separately.'
             : '\nRetain atomic decisions, constraints, corrections, conflicting statements and unresolved items with source references. Attribute assistant proposals as proposals. Source locators use Unicode code points; split task JSON is a source fragment, not a complete object.') +
             '\nWrite concise navigation while retaining decisions, qualifications and unresolved items. Entity IDs use only ASCII letters, numbers, underscore or hyphen (1..120 characters).',
-          previousSummary: navigation ? undefined : this.store.summary?.(request),
+          previousSummary: navigation ? undefined : context ? context.summary : this.store.summary?.(request),
           outputContract: navigation ? navigationContract : entityContract(candidates),
-          background: navigation ? [] : this.store.background?.(request),
+          background: navigation ? [] : context ? context.background : this.store.background?.(request),
           authorizeTool: async name => { throw new Error(`Supervisor tools are disabled: ${name}`) } })
         } finally { activity.inFlight-- }
         controller.signal.throwIfAborted()

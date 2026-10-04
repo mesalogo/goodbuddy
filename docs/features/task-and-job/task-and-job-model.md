@@ -233,7 +233,7 @@ waiting_approval > failed > running > paused > idle
 - Task 只能关联同一 Project 范围内允许使用的 Conversation。
 - Renderer 不能把任意 Task 或 Job 绑定到其他 Project 的 Conversation。
 - Job/Subjob 继承 Task 的能力上限，只能缩小，不能扩大。
-- Execute Task 冻结 Runtime、工作目录、工具和审批策略；后台触发不能扩大权限。
+- Task 请求冻结 Runtime、工作目录和能力范围；后台触发不增加未启用能力，不保存模式或一般审批策略。
 - 并行输出先有界持久化，再按确定顺序汇总到 Conversation。
 - 取消、超时、审批和应用退出必须沿 Task → Job / Subjob → Run → Runtime 传播。
 - 删除 Task 默认保留 Conversation 和消息；删除 Conversation 必须处理其全部关联 Task。

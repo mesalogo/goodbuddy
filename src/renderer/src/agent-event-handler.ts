@@ -582,11 +582,6 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
             : event.routingMode === "native"
               ? tRef.current("chat.subagents.native")
               : tRef.current("chat.subagents.manual"),
-        actor.kind === "direct-model" && event.workMode
-          ? event.workMode === "execute"
-            ? "Execute"
-            : "Ask"
-          : undefined,
         event.reason,
         event.error,
       ]
@@ -603,7 +598,6 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
         childTaskId: event.childTaskId,
         routingMode: event.routingMode,
         runtimeCallId: event.runtimeCallId,
-        workMode: event.workMode,
         state: event.state,
         reason: event.reason,
         progress: event.progress,

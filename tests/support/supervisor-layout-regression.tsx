@@ -265,6 +265,7 @@ createRoot(document.getElementById('root')!).render(
         />
       </div> : <PageShell variant="supervisor">
         <HeartbeatCenter
+          onNotify={(notice) => { document.documentElement.dataset.reviewNoticeTone = notice.tone }}
           applicationSettings={applicationSettingsSchema.parse({ checkUpdatesOnStartup: true, updateSource: 'github', modelDownloadSource: 'modelscope', localToolEnvironment: defaultLocalToolEnvironmentSettings, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false })}
           onUpdateApplicationSettings={async () => true}
            configs={menu || params.has('plan-only') ? [{ id: 'plan', name: '模拟每日回顾', scope: { kind: 'global' }, timezone: 'Asia/Shanghai', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 48, retentionDays: 90, nextRunAt: '2026-09-24T01:00:00.000Z', createdAt, updatedAt: createdAt }] : []}

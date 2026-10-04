@@ -240,7 +240,6 @@ const project = {
     kind: "local" as const,
     rootPath: "C:\\Users\\test",
   },
-  defaultWorkMode: "ask" as const,
   kind: "user" as const,
   builtInDefault: true,
   status: "active" as const,
@@ -337,7 +336,6 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     })),
     run,
     cancel: vi.fn(async () => {}),
-    respondApproval: vi.fn(async () => {}),
     respondQuestion: vi.fn(async () => {}),
     compactConversation: vi.fn(async () => ({
       provider: "continue" as const,
@@ -449,7 +447,6 @@ const api: DesktopApi & RuntimeNativeClientApi = {
         profileId: modelProfileId,
       },
       secureStorageAvailable: true,
-      toolApproval: "always",
     })),
     updateRuntime: vi.fn<DesktopApi["settings"]["updateRuntime"]>(
       async (input) => ({
@@ -505,7 +502,6 @@ const api: DesktopApi & RuntimeNativeClientApi = {
         opencodeModelSource: input.opencodeModelSource ?? { kind: "platform" },
         continueModelSource: input.continueModelSource ?? { kind: "platform" },
         secureStorageAvailable: true,
-        toolApproval: input.toolApproval,
       }),
     ),
     selectWorkspace: vi.fn(async () => undefined),
@@ -644,6 +640,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     }),
   },
   workspace: {
+    importFiles: vi.fn(async () => ({ imported: [], failed: [] })),
     manage: vi.fn(async () => ({ kind: 'branches' as const, current: 'main', branches: [] })),
     getFileDiff: vi.fn(),
     getChanges: vi.fn(async () => ({
@@ -1145,7 +1142,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
 };
 
 function composerMenuTrigger(
-  label: "专家角色" | "工作模式",
+  label: "专家角色",
 ): HTMLButtonElement {
   if (label === "专家角色") openComposerOptions();
   return screen.getByRole("button", {
@@ -1158,13 +1155,13 @@ function openComposerOptions(): void {
   if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
 }
 
-function openComposerMenu(label: "专家角色" | "工作模式"): HTMLElement {
+function openComposerMenu(label: "专家角色"): HTMLElement {
   fireEvent.click(composerMenuTrigger(label));
   return screen.getByRole("menu", { name: label });
 }
 
 function selectComposerOption(
-  label: "专家角色" | "工作模式",
+  label: "专家角色",
   optionLabel: string,
 ): void {
   const menu = openComposerMenu(label);
@@ -1296,7 +1293,6 @@ describe("App", () => {
     vi.mocked(api.knowledge.getSnapshot).mockReset();
     vi.mocked(api.knowledge.externalInstancesList).mockReset();
     vi.mocked(api.agent.respondQuestion).mockReset().mockResolvedValue();
-    vi.mocked(api.agent.respondApproval).mockReset().mockResolvedValue();
     magicTodoStatusChangedListener = undefined;
     vi.mocked(api.magicNotes.getTodoStatus)
       .mockReset()
@@ -1599,7 +1595,7 @@ describe("App", () => {
       fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
       expect(within(screen.getByRole("menu")).getByRole("menuitemradio", { name: /Background project/u }))
         .not.toHaveTextContent("个运行中");
-      expect(within(screen.getByRole('list', { name: '会话' })).getByRole('button', { name: 'Exact background discussion' })).toBeInTheDocument();
+      expect(within(screen.getByRole('list', { name: '会话' })).getByRole('button', { name: /^Exact background discussion /u })).not.toHaveTextContent('已完成');
     });
 
     it.each((["foreground", "background"] as const).flatMap((location) =>
@@ -1784,6 +1780,9 @@ describe("App", () => {
         fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
         const dialog = screen.getByRole('dialog', { name: '新建项目' });
         fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: createdProject.name } });
+        vi.mocked(api.settings.selectWorkspace).mockResolvedValueOnce('C:\\Created');
+        fireEvent.click(within(dialog).getByRole('button', { name: '选择项目根目录' }));
+        await waitFor(() => expect(within(dialog).getByRole('button', { name: '创建' })).toBeEnabled());
         fireEvent.click(within(dialog).getByRole('button', { name: '创建' }));
       }
       const discard = await screen.findByRole('button', { name: '放弃更改并关闭' });
@@ -1920,7 +1919,8 @@ describe("App", () => {
         act(() => conversationQueueChangeListener?.(request.conversationId!));
         await screen.findAllByText(refreshed.title);
         if (kind === "question") expect(screen.getByText("还有 2 个待答问题，请依次回答。")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: kind === "question" ? "提交回答" : "仅此次" })).toBeInTheDocument();
+        if (kind === "question") expect(screen.getByRole("button", { name: "提交回答" })).toBeInTheDocument();
+        else expect(screen.queryByRole("button", { name: "仅此次" })).not.toBeInTheDocument();
         expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个待处理");
       }
       let resolveReply: (() => void) | undefined;
@@ -1948,12 +1948,12 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: "当前项目" })).not.toHaveTextContent("待处理");
     });
 
-    it.each((["question", "approval"] as const).flatMap((kind) =>
+    it.each((["question"] as const).flatMap((kind) =>
       (["success", "question", "approval", "done", "failure"] as const).map((outcome) => ({ kind, outcome })),
     ))("settles $kind response activity safely on $outcome", async ({ kind, outcome }) => {
       let resolve!: () => void;
       let reject!: (error: Error) => void;
-      vi.mocked(kind === "question" ? api.agent.respondQuestion : api.agent.respondApproval)
+      vi.mocked(api.agent.respondQuestion)
         .mockImplementationOnce(() => new Promise<void>((yes, no) => { resolve = yes; reject = no; }));
       render(<App />);
       await screen.findByLabelText("更多会话操作 Current discussion");
@@ -1973,7 +1973,7 @@ describe("App", () => {
       act(() => agentListener?.(kind === "question" ? questionEvent : approvalEvent));
       expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个待处理 1 个运行中");
       fireEvent.click(screen.getByRole("button", { name: kind === "question" ? "跳过" : "仅此次" }));
-      await waitFor(() => expect(kind === "question" ? api.agent.respondQuestion : api.agent.respondApproval).toHaveBeenCalled());
+      await waitFor(() => expect(api.agent.respondQuestion).toHaveBeenCalled());
       await act(async () => {
         if (outcome === "failure") reject(new Error("Response failed"));
         else {
@@ -2128,7 +2128,6 @@ describe("App", () => {
       vi.mocked(api.conversations.list).mockResolvedValue(snapshots);
       vi.mocked(api.schedules.create).mockReset().mockImplementation(async (input) => ({
         ...input,
-        workMode: "execute",
         id: "00000000-0000-4000-8000-000000000815",
         taskId: "00000000-0000-4000-8000-000000000816",
         conversationId: input.conversationId ?? "00000000-0000-4000-8000-000000000817",
@@ -2271,7 +2270,7 @@ describe("App", () => {
       );
       expect(
         screen.getByText(
-          /Hi, I’m GoodBuddy\. Ask me a question, add local files/u,
+          /Hi, I’m GoodBuddy\. Ask a question or give me a task/u,
         ),
       ).toBeInTheDocument();
       expect(screen.getByLabelText("Message GoodBuddy")).toHaveAttribute(
@@ -2312,7 +2311,6 @@ describe("App", () => {
         instructions: "Verify the project label",
         origin: "schedule",
         status: "queued",
-        workMode: "ask",
         createdAt: "2026-07-31T01:00:00.000Z",
       },
     ]);
@@ -2436,7 +2434,7 @@ describe("App", () => {
     expect(document.getElementById("topbar-runtime-detail")).toBeNull();
     expect(
       screen.getByText(
-        /你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件/u,
+        /你好，我是 GoodBuddy。可以直接提问或交给我任务/u,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("智能工作台")).toBeInTheDocument();
@@ -2729,7 +2727,6 @@ describe("App", () => {
       conversationId,
       title: task.title,
       prompt: task.instructions,
-      workMode: "execute",
       recurrence: "weekly",
       nextRunAt: "2026-08-21T09:00:00.000Z",
       enabled: true,
@@ -2772,7 +2769,7 @@ describe("App", () => {
     const taskRegion = await screen.findByRole("region", {
       name: "当前会话的任务",
     });
-    expect(within(taskRegion).getByText("Ask")).toBeInTheDocument();
+    expect(within(taskRegion).queryByText(/^(Ask|Execute)$/u)).not.toBeInTheDocument();
   });
 
   it("refreshes scheduled Task state on queue-only events and guards manual runs through completion", async () => {
@@ -2795,7 +2792,6 @@ describe("App", () => {
       conversationId,
       title: task.title,
       prompt: task.instructions,
-      workMode: "execute",
       recurrence: "weekly",
       nextRunAt: "2026-08-21T09:00:00.000Z",
       enabled: true,
@@ -2931,7 +2927,6 @@ describe("App", () => {
       conversationId,
       title: tasks[0]!.title,
       prompt: tasks[0]!.instructions,
-      workMode: "ask",
       recurrence: "once",
       nextRunAt: "2026-08-19T03:00:00.000Z",
       enabled: false,
@@ -3028,7 +3023,7 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个待处理");
     fireEvent.click(within(container.querySelector<HTMLElement>(".conversation-list")!).getByText(target.title));
     expect(await screen.findByText("Retained scheduled history")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "仅此次" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "仅此次" })).not.toBeInTheDocument();
   });
 
   it("routes scheduled Task approvals to the associated Conversation", async () => {
@@ -3074,7 +3069,7 @@ describe("App", () => {
     });
 
     expect(await screen.findAllByText("请求写入工作区")).not.toHaveLength(0);
-    expect(screen.getByText("仅此次")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "仅此次" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("任务结果：发布任务")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个待处理");
     fireEvent.click(screen.getByRole("button", { name: "切换助手工作栏" }));
@@ -3083,11 +3078,8 @@ describe("App", () => {
     const taskRow = screen.getByRole("button", { name: /发布任务发布审批会话/u }).closest("article")!;
     expect(within(taskRow).getByLabelText("等待审批: write_file")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "等待审批" })).not.toBeInTheDocument();
-    fireEvent.click(within(taskRow).getByRole("button", { name: "仅此次允许" }));
-    await waitFor(() => expect(api.agent.respondApproval).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000834", "once"));
-    await waitFor(() => expect(within(taskRow).queryByLabelText("等待审批: write_file")).not.toBeInTheDocument());
-    await waitFor(() => expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个运行中"));
-    expect(screen.getByRole("button", { name: "当前项目" })).not.toHaveTextContent("待处理");
+    expect(within(taskRow).queryByRole("button", { name: "仅此次允许" })).not.toBeInTheDocument();
+    expect(within(taskRow).queryByRole("button", { name: "拒绝" })).not.toBeInTheDocument();
   });
 
   it("idle-preloads only the small Heartbeat route at startup", async () => {
@@ -7208,12 +7200,10 @@ describe("App", () => {
     render(<App />);
 
     const expertButton = composerMenuTrigger("专家角色");
-    const modeButton = composerMenuTrigger("工作模式");
     const runtimeButton = await screen.findByRole("button", {
       name: /sonnet-5/u,
     });
     expect(expertButton).toBeEnabled();
-    expect(modeButton).toBeEnabled();
     expect(runtimeButton).toBeEnabled();
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
@@ -7227,7 +7217,6 @@ describe("App", () => {
       screen.queryByRole("menu", { name: "专家角色" }),
     ).not.toBeInTheDocument();
     expect(expertButton).toBeDisabled();
-    expect(modeButton).toBeDisabled();
     expect(runtimeButton).toBeDisabled();
 
     const request = run.mock.calls[0]?.[0];
@@ -7242,7 +7231,6 @@ describe("App", () => {
     });
 
     await waitFor(() => expect(expertButton).toBeEnabled());
-    expect(modeButton).toBeEnabled();
     expect(runtimeButton).toBeEnabled();
   });
 
@@ -7302,9 +7290,7 @@ describe("App", () => {
     const otherRow = screen.getByRole("button", { name: /Another taskScheduled approval target/u }).closest("article")!;
     expect(within(otherRow).queryByLabelText("等待审批: write_file")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "等待审批" })).not.toBeInTheDocument();
-    fireEvent.click(within(row).getByRole("button", { name: "拒绝" }));
-    await waitFor(() => expect(api.agent.respondApproval).toHaveBeenCalledWith(approvalId, "deny"));
-    await waitFor(() => expect(within(row).queryByLabelText("等待审批: write_file")).not.toBeInTheDocument());
+    expect(within(row).queryByRole("button", { name: "拒绝" })).not.toBeInTheDocument();
   });
 
   it("sends scheduled instructions with the target conversation's current settings and history", async () => {
@@ -7322,7 +7308,7 @@ describe("App", () => {
     });
     vi.mocked(api.conversations.list).mockResolvedValue([{
       id: conversationId, projectId, title: "Scheduled target", updatedAt: Date.now(),
-      runtimeSelection: { provider: "continue" }, workMode: "execute",
+      runtimeSelection: { provider: "continue" },
       knowledgeLibraryIds: [knowledgeId], knowledgeRetrievalMode: "always",
       messages: [{ id: historyId, role: "user", content: "Existing context", state: "complete", createdAt: Date.now() }],
     }]);
@@ -7336,7 +7322,7 @@ describe("App", () => {
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(run.mock.calls[0]![0]).toMatchObject({
       requestId: runId, queueItemId: runId, conversationId,
-      runtimeSelection: { provider: "continue" }, workMode: "execute",
+      runtimeSelection: { provider: "continue" },
       knowledgeLibraryIds: [knowledgeId], knowledgeRetrievalMode: "always",
       history: [{ role: "user", content: "Existing context" }], historyMessageIds: [historyId],
       contextIds: [],
@@ -7368,9 +7354,9 @@ describe("App", () => {
   it("uses normal project defaults for a new scheduled conversation without another conversation's context", async () => {
     const targetId = crypto.randomUUID();
     const runId = crypto.randomUUID();
-    vi.mocked(api.projects.list).mockResolvedValueOnce([{ ...project, defaultWorkMode: "execute", runtimeSelection: { provider: "opencode" } }]);
+    vi.mocked(api.projects.list).mockResolvedValueOnce([{ ...project, runtimeSelection: { provider: "opencode" } }]);
     vi.mocked(api.conversations.list).mockResolvedValue([
-      { id: crypto.randomUUID(), projectId, title: "Other conversation", updatedAt: Date.now(), workMode: "ask", runtimeSelection: { provider: "model" }, messages: [{ id: crypto.randomUUID(), role: "user", content: "Do not inherit this source history", state: "complete", createdAt: Date.now() }] },
+      { id: crypto.randomUUID(), projectId, title: "Other conversation", updatedAt: Date.now(), runtimeSelection: { provider: "model" }, messages: [{ id: crypto.randomUUID(), role: "user", content: "Do not inherit this source history", state: "complete", createdAt: Date.now() }] },
       { id: targetId, projectId, title: "New scheduled conversation", updatedAt: Date.now(), messages: [] },
     ]);
     render(<App />);
@@ -7382,7 +7368,7 @@ describe("App", () => {
     }));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(run.mock.calls[0]![0]).toMatchObject({
-      conversationId: targetId, runtimeSelection: { provider: "opencode" }, workMode: "execute",
+      conversationId: targetId, runtimeSelection: { provider: "opencode" },
       history: [], knowledgeLibraryIds: [], contextIds: [],
     });
   });
@@ -8653,34 +8639,20 @@ describe("App", () => {
     }
   });
 
-  it("offers only Ask and Execute in visible work mode controls", async () => {
+  it("omits work mode controls from the composer and project form", async () => {
     render(<App />);
 
-    await screen.findByRole("button", {
-      name: "工作模式：Ask · 只读问答",
-    });
-    const modeMenu = openComposerMenu("工作模式");
-    expect(
-      within(modeMenu)
-        .getAllByRole("menuitemradio")
-        .map((option) => option.querySelector("span")?.textContent),
-    ).toEqual(["Ask · 只读问答", "Execute · 完全权限"]);
+    await screen.findByLabelText("向 GoodBuddy 提问");
+    expect(screen.queryByRole("button", { name: /工作模式/u })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '当前项目' }));
     fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
     const dialog = screen.getByRole("dialog", { name: "新建项目" });
-    const defaultMode = within(dialog)
-      .getAllByRole("group", { name: "默认模式" })
-      .find((candidate) => candidate.classList.contains("segmented-control"))!;
-    expect(
-      within(defaultMode)
-        .getAllByRole("button")
-        .map((button) => button.textContent),
-    ).toEqual(["Ask · 只读问答", "Execute · 完全权限"]);
+    expect(within(dialog).queryByRole("group", { name: "默认模式" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Plan/u })).toBeNull();
   });
 
-  it("matches expert and work mode keyboard menus to the model picker", async () => {
+  it("matches the expert keyboard menu to the model picker", async () => {
     render(<App />);
     openComposerOptions();
 
@@ -8714,13 +8686,8 @@ describe("App", () => {
     expect(optionsTrigger).toHaveFocus();
     expect(optionsTrigger).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("dialog", { name: "对话设置" })).not.toBeInTheDocument();
-    const modeTrigger = composerMenuTrigger("工作模式");
-    fireEvent.click(modeTrigger);
-    const modeMenu = screen.getByRole("menu", { name: "工作模式" });
-    expect(modeMenu).toHaveClass("runtime-picker__menu");
     fireEvent.click(optionsTrigger);
-    expect(screen.queryByRole("menu", { name: "工作模式" })).not.toBeInTheDocument();
-    await waitFor(() => expect(expertTrigger).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: "专家角色：通用助手" })).toHaveFocus());
     fireEvent.pointerDown(screen.getByLabelText("向 GoodBuddy 提问"));
     expect(optionsTrigger).toHaveAttribute("aria-expanded", "false");
     expect(
@@ -8785,15 +8752,10 @@ describe("App", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      within(conversationSettings).getByRole("button", {
-        name: "工作模式：Ask · 只读问答",
+      within(conversationSettings).queryByRole("button", {
+        name: /工作模式/u,
       }),
-    ).toBeInTheDocument();
-    expect(
-      within(conversationSettings).getByRole("button", {
-        name: "工作模式：Ask · 只读问答",
-      }),
-    ).toHaveTextContent(/^Ask$/u);
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute(
       "placeholder",
        "Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴\nCtrl+N 新建对话 · Ctrl+Shift+Space 快捷唤起",
@@ -8815,7 +8777,6 @@ describe("App", () => {
         kind: "local" as const,
         rootPath: "C:\\Second",
       },
-      defaultWorkMode: "execute" as const,
     };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
@@ -8829,10 +8790,10 @@ describe("App", () => {
       await screen.findByRole("button", { name: "当前项目" }),
     ).toHaveTextContent(project.name);
     expect(
-      screen.getByRole("button", {
-        name: "工作模式：Ask · 只读问答",
+      screen.queryByRole("button", {
+        name: /工作模式/u,
       }),
-    ).toBeEnabled();
+    ).not.toBeInTheDocument();
 
     selectProjectOption(secondProject.name);
     await waitFor(() =>
@@ -9837,6 +9798,48 @@ describe("App", () => {
     );
   });
 
+  it.each(['local', 'ssh'] as const)('restores archived %s projects through the menu and refreshes summaries before deliberate entry', async (kind) => {
+    installRemoteProjectsSetting(kind === 'ssh');
+    const restored = { ...project, id: '00000000-0000-4000-8000-000000000608', name: 'Restored workspace', builtInDefault: false,
+      executionSpace: kind === 'ssh' ? { kind: 'ssh' as const, hostId: '00000000-0000-4000-8000-000000000610', remoteRootPath: '/srv/restored' } : project.executionSpace };
+    let archived = true;
+    vi.mocked(api.projects.list).mockImplementation(async (includeArchived) => [project, ...(includeArchived || !archived ? [{ ...restored, status: archived ? 'archived' as const : 'active' as const }] : [])]);
+    vi.mocked(api.projects.setArchived).mockImplementation(async (_id, value) => { archived = value; });
+    const saved = { id: '00000000-0000-4000-8000-000000000609', projectId: restored.id, title: 'Restored history', updatedAt: 10, messages: [] };
+    render(<App />);
+    const trigger = await screen.findByRole('button', { name: '当前项目' });
+    await waitFor(() => expect(trigger).toHaveTextContent(project.name));
+    fireEvent.click(trigger);
+    expect(api.projects.list).not.toHaveBeenCalledWith(true);
+    fireEvent.click(screen.getByRole('button', { name: '已归档' }));
+    const restore = await screen.findByRole('menuitem', { name: '恢复项目 Restored workspace' });
+    vi.mocked(api.conversations.listSummaries).mockResolvedValue([saved]);
+    if (kind === 'local') {
+      vi.mocked(api.conversations.listSummaries).mockRejectedValueOnce(new Error('Restore summaries unavailable'));
+      fireEvent.click(restore);
+      await screen.findByText('Restore summaries unavailable');
+      expect(trigger).toHaveTextContent(project.name);
+      await waitFor(() => expect(restore).toBeEnabled());
+      expect(screen.queryByRole('menuitemradio', { name: /Restored workspace/ })).not.toBeInTheDocument();
+    }
+    fireEvent.click(restore);
+    await waitFor(() => {
+      expect(api.projects.setArchived).toHaveBeenCalledWith(restored.id, false);
+      expect(screen.queryByRole('menuitem', { name: '恢复项目 Restored workspace' })).not.toBeInTheDocument();
+      expect(trigger).toHaveTextContent(project.name);
+    });
+    fireEvent.click(screen.getByRole('button', { name: '返回' }));
+    fireEvent.click(screen.getByRole('tab', { name: kind === 'ssh' ? '远程' : '本地' }));
+    fireEvent.pointerOver(screen.getByRole('menuitemradio', { name: /Restored workspace/ }), { pointerType: 'mouse' });
+    expect(screen.getByRole('button', { name: /Restored history/ })).toBeVisible();
+    expect(trigger).toHaveTextContent(project.name);
+    fireEvent.click(screen.getByRole('button', { name: '进入项目 Restored workspace' }));
+    await waitFor(() => {
+      expect(trigger).toHaveTextContent('Restored workspace');
+      expect(document.querySelector('.conversation-title')).toHaveTextContent('Restored history');
+    });
+  });
+
   it("shows grouped project details and keeps the rich menu keyboard accessible", async () => {
     const channelProject = {
       ...project,
@@ -10072,13 +10075,7 @@ describe("App", () => {
         value: "opencode",
       },
     });
-    fireEvent.click(
-      within(
-        within(dialog).getByRole("group", {
-          name: "微信 ClawBot 默认模式",
-        }),
-      ).getByRole("button", { name: "执行" }),
-    );
+    expect(within(dialog).queryByRole("group", { name: "微信 ClawBot 默认模式" })).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "保存项目" }));
 
     await waitFor(() => {
@@ -10104,13 +10101,6 @@ describe("App", () => {
         value: "continue",
       },
     });
-    fireEvent.click(
-      within(
-        screen.getByRole("group", {
-          name: "微信 ClawBot 默认模式",
-        }),
-      ).getByRole("button", { name: "对话" }),
-    );
     fireEvent.click(screen.getByRole("button", { name: "保存通道设置" }));
 
     await waitFor(() =>
@@ -10119,7 +10109,6 @@ describe("App", () => {
         expect.objectContaining({
           description: "从消息通道更新",
           rootPath: "C:\\FromChannels",
-          defaultWorkMode: "ask",
           runtimeSelection: { provider: "continue" },
         }),
       ),
@@ -10139,13 +10128,7 @@ describe("App", () => {
     expect(
       within(dialog).getByLabelText("微信 ClawBot 执行方式"),
     ).toHaveValue("continue");
-    expect(
-      within(
-        within(dialog).getByRole("group", {
-          name: "微信 ClawBot 默认模式",
-        }),
-      ).getByRole("button", { name: "对话" }),
-    ).toHaveAttribute("aria-pressed", "true");
+    expect(within(dialog).queryByRole("group", { name: "微信 ClawBot 默认模式" })).not.toBeInTheDocument();
   });
 
   it("shows client-created remote conversations without obsolete approval copy", async () => {
@@ -10218,7 +10201,7 @@ describe("App", () => {
   it.each([
     ["opencode", "OpenCode"],
     ["continue", "Continue CLI"],
-  ] as const)("lets %s select Ask or Execute", async (runtimeId, label) => {
+  ] as const)("lets %s run without work mode selection", async (runtimeId, label) => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: runtimeId,
       label,
@@ -10228,16 +10211,10 @@ describe("App", () => {
     });
     render(<App />);
 
-    const mode = await screen.findByRole("button", {
-      name: "工作模式：Ask · 只读问答",
-    });
-    expect(mode).toBeEnabled();
-    expect(mode.closest(".composer")).not.toBeNull();
+    await screen.findByLabelText("向 GoodBuddy 提问");
+    expect(screen.queryByRole("button", { name: /工作模式/u })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问"))
       .toHaveAttribute("placeholder", expect.stringContaining("Ctrl+Shift+Space 快捷唤起")));
-    selectComposerOption("工作模式", "Execute · 完全权限");
-    expect(mode).toHaveAccessibleName("工作模式：Execute · 完全权限");
-    expect(mode).toHaveTextContent(/^Execute$/u);
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "执行任务" },
@@ -10248,7 +10225,6 @@ describe("App", () => {
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
           prompt: "执行任务",
-          workMode: "execute",
         }),
       ),
     );
@@ -10811,7 +10787,7 @@ describe("App", () => {
     const conversationId = "00000000-0000-4000-8000-000000000731";
     vi.mocked(api.conversations.list).mockResolvedValueOnce([{
       id: conversationId, projectId, title: "Native client", updatedAt: Date.now(),
-      runtimeSelection: { provider }, workMode: "execute", messages: [],
+      runtimeSelection: { provider }, messages: [],
     }]);
     render(<App />);
     const open = await screen.findByRole("button", { name: "在终端中打开" });
@@ -10825,7 +10801,7 @@ describe("App", () => {
       expect(screen.getByRole("region", { name: "用户终端：终端 1" })).toBeInTheDocument();
     });
     expect(api.conversations.saveLocal).toHaveBeenCalledWith([{
-      header: expect.objectContaining({ id: conversationId, runtimeSelection: { provider }, workMode: "execute" }), messages: [],
+      header: expect.objectContaining({ id: conversationId, runtimeSelection: { provider } }), messages: [],
     }]);
     expect(screen.getByRole("textbox", { name: "向 GoodBuddy 提问" })).toHaveValue("Keep my draft");
     expect(api.terminal.create).not.toHaveBeenCalled();
@@ -11059,7 +11035,7 @@ describe("App", () => {
     expect(api.agent.compactConversation).not.toHaveBeenCalled();
   });
 
-  it("restores the direct-model mode after leaving an Agent Runtime", async () => {
+  it("switches from an Agent Runtime to a direct model without mode controls", async () => {
     const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
@@ -11084,23 +11060,16 @@ describe("App", () => {
       });
     render(<App />);
 
-    const mode = await screen.findByRole("button", {
-      name: "工作模式：Ask · 只读问答",
-    });
-    expect(mode).toBeEnabled();
-    selectComposerOption("工作模式", "Execute · 完全权限");
-    expect(mode).toHaveAccessibleName("工作模式：Execute · 完全权限");
-
     await screen.findByRole("button", { name: /^OpenCode ·/u });
     pickRuntime("直连模型");
 
     await waitFor(() => {
-      expect(mode).toHaveAccessibleName("工作模式：Ask · 只读问答");
-      expect(mode).toBeEnabled();
+      expect(screen.getByRole("button", { name: /sonnet-5/u })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: /工作模式/u })).not.toBeInTheDocument();
     });
   });
 
-  it("disables Execute for a runtime without tool support", async () => {
+  it("shows capability guidance without mode controls for a runtime without tools", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: "model",
       label: "legacy-model",
@@ -11110,16 +11079,8 @@ describe("App", () => {
     });
     render(<App />);
 
-    const mode = await screen.findByRole("button", {
-      name: "工作模式：Ask · 只读问答",
-    });
-    const modeMenu = openComposerMenu("工作模式");
-    expect(
-      within(modeMenu).getByRole("menuitemradio", {
-        name: /^Execute · 完全权限/u,
-      }),
-    ).toBeDisabled();
-    expect(mode).toHaveAccessibleName("工作模式：Ask · 只读问答");
+    expect(await screen.findByText('当前聊天模型无法自动调用图片工具，可使用已有直连图片工作流。')).toBeVisible();
+    expect(screen.queryByRole("button", { name: /工作模式/u })).not.toBeInTheDocument();
   });
 
   it('opens model settings from no-tool image guidance without losing the request draft', async () => {
@@ -11143,7 +11104,7 @@ describe("App", () => {
     expect(api.conversations.imageOperations.regenerate).not.toHaveBeenCalled();
   });
 
-  it("allows a direct model to submit Execute with GoodBuddy approvals", async () => {
+  it("submits direct model tool requests without mode fields", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: "model",
       label: "sonnet-5",
@@ -11153,24 +11114,20 @@ describe("App", () => {
     });
     render(<App />);
 
-    const mode = await screen.findByRole("button", {
-      name: "工作模式：Ask · 只读问答",
-    });
-    selectComposerOption("工作模式", "Execute · 完全权限");
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "读取项目文件" },
     });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
     fireEvent.click(await screen.findByLabelText("发送"));
 
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
           prompt: "读取项目文件",
-          workMode: "execute",
         }),
       ),
     );
-    expect(mode).toBeDisabled();
+    expect(run.mock.calls[0]![0]).not.toHaveProperty("workMode");
   });
 
   it.each([
@@ -11348,10 +11305,10 @@ describe("App", () => {
         "当前对话已切换到 OpenCode · 默认模型",
       );
       expect(
-        screen.getByRole("button", {
-          name: "工作模式：Ask · 只读问答",
+        screen.queryByRole("button", {
+          name: /工作模式/u,
         }),
-      ).toBeInTheDocument();
+      ).not.toBeInTheDocument();
 
       pickRuntime("Continue");
       await act(async () => {
@@ -11371,10 +11328,10 @@ describe("App", () => {
         screen.queryByText("当前对话已切换到 Continue · 默认模型"),
       ).not.toBeInTheDocument();
       expect(
-        screen.getByRole("button", {
-          name: "工作模式：Ask · 只读问答",
+        screen.queryByRole("button", {
+          name: /工作模式/u,
         }),
-      ).toBeInTheDocument();
+      ).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -11707,7 +11664,19 @@ describe("App", () => {
     };
     localStorage.setItem(
       "goodbuddy.conversations.v1",
-      JSON.stringify([legacyConversation]),
+      JSON.stringify([{
+        ...legacyConversation,
+        workMode: 'plan',
+        messages: [{
+          ...legacyConversation.messages[0],
+          subagents: [{
+            childTaskId: '00000000-0000-4000-8000-000000000463',
+            actor: { kind: 'direct-model', label: '编程 Subagent' },
+            routingMode: 'native', state: 'completed', workMode: 'execute',
+            output: '/ask Keep Execute and workMode in user content',
+          }],
+        }],
+      }]),
     );
     render(<App />);
 
@@ -11719,11 +11688,21 @@ describe("App", () => {
       expect(api.conversations.replace).toHaveBeenCalledWith([
         expect.objectContaining({
           ...legacyConversation,
+          messages: [expect.objectContaining({
+            ...legacyConversation.messages[0],
+            subagents: [{
+              childTaskId: '00000000-0000-4000-8000-000000000463',
+              actor: { kind: 'direct-model', label: '编程 Subagent' },
+              routingMode: 'native', state: 'completed',
+              output: '/ask Keep Execute and workMode in user content',
+            }],
+          })],
           contextMetrics: normalizedContextMetrics,
           projectId,
         }),
       ]),
     );
+    expect(vi.mocked(api.conversations.replace).mock.calls[0]![0][0]).not.toHaveProperty('workMode');
     expect(api.conversations.saveLocal).not.toHaveBeenCalled();
   });
 
@@ -12197,13 +12176,16 @@ describe("App", () => {
     fireEvent.change(within(dialog).getByLabelText("名称"), {
       target: { value: "新项目" },
     });
+    vi.mocked(api.settings.selectWorkspace).mockResolvedValueOnce('C:\\NewProject');
+    fireEvent.click(within(dialog).getByRole('button', { name: '选择项目根目录' }));
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '创建' })).toBeEnabled());
     fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
 
     await waitFor(() =>
       expect(api.projects.create).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "新项目",
-          rootPath: "",
+          rootPath: "C:\\NewProject",
         }),
       ),
     );
@@ -12222,6 +12204,9 @@ describe("App", () => {
     fireEvent.change(nameInput, {
       target: { value: "保留的项目名称" },
     });
+    vi.mocked(api.settings.selectWorkspace).mockResolvedValueOnce('C:\\Unavailable');
+    fireEvent.click(within(dialog).getByRole('button', { name: '选择项目根目录' }));
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '创建' })).toBeEnabled());
     fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -12495,7 +12480,7 @@ describe("App", () => {
     let imageListener: ((value: typeof operation) => void) | undefined;
     vi.mocked(api.conversations.imageOperations.onChanged).mockImplementationOnce(listener => { imageListener = listener; return () => { imageListener = undefined; }; });
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
-      { id: conversationId, projectId, title: '图片原会话', updatedAt: 2, workMode: 'execute', messages: [
+      { id: conversationId, projectId, title: '图片原会话', updatedAt: 2, messages: [
         { id: messageId, role: 'assistant', content: '图片稍后保存', createdAt: 1, state: 'complete', imageOperations: [operation, secondOperation] },
       ] },
       { id: otherId, projectId, title: '另一会话', updatedAt: 1, messages: [
@@ -12539,7 +12524,7 @@ describe("App", () => {
       input: { intent: 'edit', prompt: 'Change the background', sourceArtifactIds: [crypto.randomUUID()] },
       state: 'failed', error: 'Original source unavailable', artifactIds: [], createdAt: 1, updatedAt: 1,
     };
-    vi.mocked(api.conversations.list).mockResolvedValueOnce([{ id: conversationId, projectId, title: 'Failed image editing', updatedAt: 2, workMode: 'execute', messages: [
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([{ id: conversationId, projectId, title: 'Failed image editing', updatedAt: 2, messages: [
       { id: operation.messageId, role: 'assistant', content: '', createdAt: 1, state: 'complete', imageOperations: [operation] },
     ] }, { id: otherId, projectId, title: 'Other image draft', updatedAt: 1, messages: [] }]);
     const source = { id: crypto.randomUUID(), name: 'replacement.png', size: 64, preview: 'Replacement image', kind: 'image' as const, contentUrl: 'data:image/png;base64,iVBORw0KGgo=' };
@@ -12618,7 +12603,6 @@ describe("App", () => {
           smartRouting: true,
           expertId: undefined,
           teamMode: false,
-          workMode: "ask",
         }),
       ),
     );
@@ -12986,7 +12970,6 @@ describe("App", () => {
           label: "编程 Subagent",
         },
         routingMode: "native",
-        workMode: "execute",
         state: "completed",
         reason: "修复并验证聚焦变更",
         output: "验证通过",
@@ -12999,7 +12982,7 @@ describe("App", () => {
         selector: "strong",
       }),
     ).toBeInTheDocument();
-    expect(within(region).getByText("直连模型 · Execute")).toBeInTheDocument();
+    expect(within(region).getByText("直连模型")).toBeInTheDocument();
     await waitFor(() => {
       const persistedActivities = vi
         .mocked(api.conversations.saveLocal)
@@ -13015,7 +12998,6 @@ describe("App", () => {
             kind: "direct-model",
             label: "编程 Subagent",
           },
-          workMode: "execute",
           output: "验证通过",
         }),
       );
@@ -13086,7 +13068,7 @@ describe("App", () => {
     });
   });
 
-  it("offers once, session, permanent, and deny for a tool call", async () => {
+  it("preserves approval event details without tool authorization buttons", async () => {
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
@@ -13112,17 +13094,11 @@ describe("App", () => {
       });
     });
 
-    expect(await screen.findByText("仅此次")).toBeInTheDocument();
-    expect(screen.getByText("此会话")).toBeInTheDocument();
-    expect(screen.getByText("永久允许")).toBeInTheDocument();
-    expect(screen.getAllByText("拒绝")).toHaveLength(2);
-    fireEvent.click(screen.getByText("此会话"));
-    await waitFor(() =>
-      expect(api.agent.respondApproval).toHaveBeenCalledWith(
-        expect.any(String),
-        "session",
-      ),
-    );
+    expect(await screen.findAllByText("Continue 请求调用 Bash")).not.toHaveLength(0);
+    expect(screen.getByText("echo safe")).toBeVisible();
+    for (const name of ["仅此次", "此会话", "永久允许", "拒绝"]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    }
   });
 
   it("keeps interactive questions in event order after a late answer response and history reload", async () => {
@@ -13482,7 +13458,7 @@ describe("App", () => {
     expect(
       screen.getByRole("tab", { name: "Agent Runtime" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "安全与数据" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "安全与数据" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "模型连接" }));
 
     const apiKeyInput = screen.getByLabelText("API Key");
@@ -13614,15 +13590,9 @@ describe("App", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "打开工作栏应用" }),
     );
-    fireEvent.click(
-      screen.getByText("成果", { selector: "strong" }).closest("button")!,
-    );
-    expect(
-      screen.getByRole("button", { name: "导入 PDF、图片或网页" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "生成与导入成果" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("成果", { selector: "strong" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "工作区" }));
+    expect(await screen.findByRole("button", { name: "导入文件" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "预览" })).not.toBeInTheDocument();
     fireEvent.click(assistantTrigger);
     expect(sidebar).not.toHaveClass("assistant-sidebar--open");
@@ -13634,7 +13604,7 @@ describe("App", () => {
     await waitFor(() => expect(assistantTrigger).toHaveFocus());
   });
 
-  it("keeps completed chat replies out of the results sidebar", async () => {
+  it("keeps completed chat replies in conversation without a results application", async () => {
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
@@ -13663,18 +13633,12 @@ describe("App", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "打开工作栏应用" }),
     );
-    fireEvent.click(
-      screen.getByText("成果", { selector: "strong" }).closest("button")!,
-    );
+    expect(screen.queryByText("成果", { selector: "strong" })).not.toBeInTheDocument();
     const sidebar = screen.getByLabelText("助手工作栏");
     expect(
       within(sidebar).queryByText("这是一条普通聊天回复"),
     ).not.toBeInTheDocument();
-    expect(
-      within(sidebar).getByText(
-        "生成的文件、图片、报告和手动导入内容会显示在这里。",
-      ),
-    ).toBeInTheDocument();
+    expect(api.artifacts.importFiles).not.toHaveBeenCalled();
   });
 
   it("shows the browser toolbar and starts an empty session by address", async () => {
@@ -14253,6 +14217,33 @@ describe("App", () => {
       expect(screen.queryByText("监督者加载失败")).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: "回顾" })).toBeInTheDocument();
+  });
+
+  it('routes Supervisor review feedback through dismissible application notifications across tabs', async () => {
+    let reject!: (reason: Error) => void;
+    vi.mocked(api.supervision.execution).mockResolvedValue({ active: false });
+    vi.mocked(api.supervision.run).mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: '监督者' }));
+    fireEvent.click(await screen.findByRole('button', { name: '回顾' }));
+    const started = await screen.findByText('回顾已开始，可到活动记录查看进度。');
+    expect(started.closest('.app-notification')).toHaveAttribute('role', 'status');
+    fireEvent.click(within(started.closest('.app-notification') as HTMLElement).getByRole('button', { name: '关闭通知' }));
+    expect(screen.queryByText('回顾已开始，可到活动记录查看进度。')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '回顾' }));
+    expect(await screen.findByText('已有回顾正在处理，请到活动记录查看进度。')).toBeVisible();
+    expect(api.supervision.run).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('tab', { name: '故事线图谱' }));
+    await act(async () => reject(new TypeError('terminated')));
+    const failed = await screen.findByText('回顾未能完成。请到活动记录查看原因，并继续已保存的进度；也可重新发起回顾。');
+    expect(failed.closest('.app-notification')).toHaveAttribute('role', 'alert');
+    expect(document.querySelectorAll('.app-notification')).toHaveLength(1);
+    expect(document.querySelector('.supervisor-workspace__run-status')).toBeNull();
+    expect(document.querySelector('.supervisor-workspace__inline-error')).toBeNull();
+    expect(screen.queryByText(/TypeError|terminated/)).not.toBeInTheDocument();
+    fireEvent.click(within(failed.closest('.app-notification') as HTMLElement).getByRole('button', { name: '关闭通知' }));
+    fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }));
+    expect(document.querySelector('.app-notification')).toBeNull();
   });
 
   it("graph navigation opens the pinned sidebar result and reenters the keepalive heartbeat route", async () => {
@@ -15361,7 +15352,7 @@ describe("App", () => {
     expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
   })
 
-  it.each(['sidebar', 'project', 'new conversation'] as const)('opens chat after a single guarded Magic Notes discard from %s', async (entry) => {
+  it.each(['sidebar', 'project', 'enter project', 'new conversation'] as const)('opens chat after a single guarded Magic Notes discard from %s', async (entry) => {
     await api.updates!.updateSettings({ magicNotesEnabled: true })
     const note = {
       id: '00000000-0000-4000-8000-000000000602', title: 'Focus note', preview: '',
@@ -15384,7 +15375,7 @@ describe("App", () => {
       if (entry === 'project') fireEvent.click(target)
       else {
         fireEvent.pointerOver(target, { pointerType: 'mouse' })
-        fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
+        fireEvent.click(screen.getByRole('button', { name: entry === 'enter project' ? '进入项目 Guarded workspace' : '新建会话' }))
       }
     }
     const discard = await screen.findByRole('button', { name: '放弃草稿并切换' })
@@ -15397,7 +15388,7 @@ describe("App", () => {
     await waitFor(() => {
       const composer = screen.getByRole('textbox', { name: '向 GoodBuddy 提问' })
       expect(composer).toBeVisible()
-      if (entry !== 'project') expect(composer).toHaveFocus()
+      if (entry !== 'project' && entry !== 'enter project') expect(composer).toHaveFocus()
       expect(screen.getByRole('button', { name: '对话' })).toHaveAttribute('aria-current', 'page')
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
       expect(title).not.toBeVisible()

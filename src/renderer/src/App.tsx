@@ -62,7 +62,6 @@ import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import type { TFunction } from "i18next";
 import type {
-  ApprovalDecision,
   AgentEvent,
   AgentQuestionAnswer,
   AgentRuntimeStatus,
@@ -115,7 +114,6 @@ import type {
   ConversationSnapshot,
   ConversationAttachment,
   ProjectCreateInput,
-  InteractiveWorkMode,
   ProjectChannel,
   WorkspaceChanges,
 } from "../../shared/assistant-contracts";
@@ -127,8 +125,6 @@ import {
   conversationContextMetricsSchema,
   conversationMessageBlocksSchema,
   conversationSubagentActivitySchema,
-  interactiveWorkModes,
-  normalizeInteractiveWorkMode,
   projectChannelLabels,
 } from "../../shared/assistant-contracts";
 import type {
@@ -171,12 +167,10 @@ import {
   useAllTasks,
   useConversationHasBusyTask,
   useProductTasks,
-  useSidebarArtifacts,
   useTaskActivityRows,
   useTaskStatusRows,
 } from "./task-selectors";
 import {
-  loadArtifact,
   refreshArtifacts,
   refreshTasks,
   useArtifactHydration,
@@ -191,6 +185,7 @@ import {
   toLocalConversationHeader,
   withRecoveredQuestions,
 } from "./conversation-persistence";
+import { stripLegacyConversationModes } from "./legacy-conversation-import";
 import { startConversationRefresh } from "./conversation-refresh";
 import {
   handleAgentEvent as applyAgentEvent,
@@ -214,6 +209,7 @@ import {
   ScopeBadge,
 } from "./WorkspacePrimitives";
 import { ProjectSwitcher } from "./ProjectSwitcher";
+import { restoreProject } from "./restore-project";
 import { useStableHandlers } from "./stable-derived-value";
 import { useUnviewedCompletions } from "./use-unviewed-completions";
 import { useExecutionStats } from "./use-execution-stats";
@@ -514,10 +510,6 @@ export function AppNotificationViewport({
   );
 }
 
-function supportsSubagentSmartRouting(workMode: string): boolean {
-  return workMode === "ask";
-}
-
 type WorkspaceView =
   "chat" | "magic-notes" | "knowledge" | "heartbeat" | "local-inference" | "device-sharing" | "activity" | "settings";
 
@@ -588,7 +580,7 @@ const emptyAttachments: ContextAttachment[] = [];
 type RightSidebarHandlers = Required<Pick<RightAssistantSidebarProps,
   | "onBeforeCloseNotes" | "onOpenSupervisionGraph" | "onContinueSupervision" | "onCreateCustomTask"
   | "onBackBrowser" | "onNavigateBrowser" | "onReloadBrowser" | "onStopLoadingBrowser"
-  | "onImportArtifacts" | "onLoadArtifact" | "onOpenTask" | "onRespondApproval"
+  | "onOpenTask"
 >>;
 const emptyImageReferences: AssistantArtifact[] = [];
 
@@ -650,7 +642,7 @@ function loadPrimarySidebarWidth(): number {
 function createConversation(
   projectId?: string,
   runtimeSelection?: RuntimeSelectionLayer,
-  greeting = "你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件，或使用知识库整理和检索信息。需要我操作文件或调用工具时，请选择合适的 Agent Runtime 和工作模式。",
+  greeting = "你好，我是 GoodBuddy。可以直接提问或交给我任务。可用工具由所选 Runtime 和设置决定。",
 ): Conversation {
   const now = Date.now();
   return {
@@ -712,6 +704,7 @@ function loadConversations(
       return [createConversation(undefined, undefined, greeting)];
     }
     const conversations = parsed
+      .map(stripLegacyConversationModes)
       .filter(isConversation)
       .slice(0, 100)
       .map((conversation) => ({
@@ -847,7 +840,6 @@ function toConversationSnapshots(
       id: conversation.id,
       projectId: conversation.projectId,
       runtimeSelection: conversation.runtimeSelection,
-      workMode: conversation.workMode,
       knowledgeLibraryIds: conversation.knowledgeLibraryIds,
       knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
       storyGraphEnabled: conversation.storyGraphEnabled,
@@ -1268,19 +1260,6 @@ function App(): React.JSX.Element {
       })),
     ],
     [assistantExperts, t],
-  );
-  const workModeOptions = useMemo<ComposerMenuOption<InteractiveWorkMode>[]>(
-    () =>
-      interactiveWorkModes.map((value) => ({
-        value,
-        label: t(`composer.modes.${value}.label`),
-        description:
-          value === "execute"
-            ? t("composer.modes.execute.description")
-            : t("composer.modes.ask.description"),
-        disabled: value === "execute" && !runtime?.supportsToolExecution,
-      })),
-    [runtime?.supportsToolExecution, t],
   );
   const quickActions = useMemo(
     () => [
@@ -2334,20 +2313,6 @@ function App(): React.JSX.Element {
     [activeProjectId, projects],
   );
   const activeProjectUsesManagedSsh = isManagedSshProject(activeProject);
-  const workMode = normalizeInteractiveWorkMode(
-    activeConversation?.workMode ?? activeProject?.defaultWorkMode,
-  );
-  const effectiveWorkMode =
-    workMode === "execute" && runtime?.supportsToolExecution === false
-      ? "ask"
-      : workMode;
-  const setWorkMode = (mode: InteractiveWorkMode): void => {
-    setConversations((current) => current.map((conversation) =>
-      conversation.id === activeId
-        ? { ...conversation, workMode: mode, updatedAt: Date.now() }
-        : conversation,
-    ));
-  };
   const activeProjectRecovery =
     activeProjectUsesManagedSsh && activeProject
       ? projectRecoveryByProjectId[activeProject.id]
@@ -2871,7 +2836,6 @@ function App(): React.JSX.Element {
     busyConversationIdsRef.current = new Set([...activityByConversationId.keys(), ...queuedConversationIds]);
   }, [activityByConversationId, queuedConversationIds]);
   const pendingSidebarApprovals = usePendingSidebarApprovals(conversationStore);
-  const sidebarArtifacts = useSidebarArtifacts(taskStore, activeProjectId);
   // Pending supervisor suggestions; earlier report proposals are migrated into them.
   const [pendingHeartbeatSuggestionCount, setPendingHeartbeatSuggestionCount] = useState(0);
 
@@ -4475,7 +4439,6 @@ function App(): React.JSX.Element {
     ) {
       return;
     }
-    setWorkMode("ask");
     setInput(
       [t("notices.heartbeatTaskPrompt"), task.title, task.instructions].join(
         "\n\n",
@@ -4975,19 +4938,16 @@ function App(): React.JSX.Element {
         await window.goodbuddy.conversationQueue.releaseUser(queuedDispatch.item.id);
         return;
       }
-      const mode = normalizeInteractiveWorkMode(conversation.workMode ?? project?.defaultWorkMode);
       queuedInput = {
         conversationId: conversation.id,
         projectId: conversation.projectId,
         prompt: queuedDispatch.input.prompt,
         runtimeSelection: selection,
-        workMode: mode,
         includeMemoryContext: true,
         attachments: [],
         knowledgeLibraryIds: conversation.knowledgeLibraryIds ?? [],
         knowledgeRetrievalMode: conversation.knowledgeRetrievalMode ?? "auto",
-        smartRouting: runtimeSettings?.subagentSmartRoutingEnabled === true &&
-          supportsSubagentSmartRouting(mode) ? true : undefined,
+        smartRouting: runtimeSettings?.subagentSmartRoutingEnabled === true ? true : undefined,
       };
     }
     const releaseQueuedItem = async (): Promise<void> => {
@@ -5154,9 +5114,6 @@ function App(): React.JSX.Element {
       : runtime?.capability === "image-generation"
         ? ""
         : selectedExpertId;
-    const workModeSnapshot = normalizeInteractiveWorkMode(
-      queuedInput?.workMode ?? effectiveWorkMode,
-    );
     const knowledgeLibraryIdsSnapshot =
       queuedInput?.knowledgeLibraryIds ?? enabledKnowledgeLibraryIds;
     const smartRoutingSnapshot =
@@ -5164,8 +5121,7 @@ function App(): React.JSX.Element {
       (!queuedInput &&
       runtime?.capability !== "image-generation" &&
       runtimeSettings?.subagentSmartRoutingEnabled === true &&
-      !selectedExpertSnapshot &&
-      supportsSubagentSmartRouting(workModeSnapshot)
+      !selectedExpertSnapshot
         ? true
         : undefined);
 
@@ -5182,7 +5138,6 @@ function App(): React.JSX.Element {
           : {}),
         ...(selectedExpertSnapshot === "team" ? { teamMode: true } : {}),
         ...(smartRoutingSnapshot ? { smartRouting: true } : {}),
-        workMode: workModeSnapshot,
         includeMemoryContext: !command,
         prompt,
         attachments: attachmentSnapshot,
@@ -5321,7 +5276,6 @@ function App(): React.JSX.Element {
           ...conversationSnapshot,
           title: conversationSnapshot.title === "新对话" ? prompt.slice(0, 24) : conversationSnapshot.title,
           updatedAt: assistantMessage.createdAt,
-          workMode: workModeSnapshot,
           messages: [...historySnapshot, userMessage, assistantMessage],
         };
         await window.goodbuddy.conversations.saveLocal([{
@@ -5344,7 +5298,6 @@ function App(): React.JSX.Element {
             : undefined,
         teamMode: selectedExpertSnapshot === "team",
         smartRouting: smartRoutingSnapshot,
-        workMode: workModeSnapshot,
         prompt: executionPrompt,
         knowledgeLibraryIds: knowledgeLibraryIdsSnapshot,
         knowledgeRetrievalMode: knowledgeRetrievalModeSnapshot,
@@ -5523,64 +5476,6 @@ function App(): React.JSX.Element {
       }
     }
   };
-
-  const respondToApproval = useCallback(
-    async (
-      conversationId: string,
-      messageId: string,
-      approvalId: string,
-      decision: ApprovalDecision,
-    ): Promise<void> => {
-      const pendingMessage = conversationStore.getState()
-        .find((conversation) => conversation.id === conversationId)
-        ?.messages.find((message) => message.id === messageId);
-      if (pendingMessage?.approval?.id !== approvalId) return;
-      const taskId = pendingMessage.task?.id ?? [...activeRuns.current.entries()]
-        .find(([, run]) => run.conversationId === conversationId && run.messageId === messageId)?.[0];
-      try {
-        await window.goodbuddy.agent.respondApproval(approvalId, decision);
-        const approved = decision !== "deny";
-        const decisionLabel = {
-          deny: tRef.current("chat.approval.decisionDeny"),
-          once: tRef.current("chat.approval.decisionOnce"),
-          session: tRef.current("chat.approval.decisionSession"),
-          permanent: tRef.current("chat.approval.decisionPermanent"),
-        }[decision];
-        activityStore.updateApproval(
-          conversationId,
-          approved ? "completed" : "denied",
-          tRef.current("notices.userDecision", { decision: decisionLabel }),
-        );
-        updateMessage(conversationId, messageId, (message) => {
-          if (message.approval?.id !== approvalId) return message;
-          if (!message.pendingQuestions?.length) {
-            setAssistantTasks((current) => current.map((task) =>
-              task.id === taskId && task.status === "waiting_approval"
-                ? { ...task, status: "running" }
-                : task,
-            ));
-          }
-          return {
-            ...message,
-            approval: undefined,
-            status: message.pendingQuestions?.length
-              ? message.status
-              : approved && message.task
-                ? undefined
-                : approved
-                  ? tRef.current("chat.approval.executing", { decision: decisionLabel })
-                  : tRef.current("chat.approval.denied"),
-          };
-        });
-      } catch {
-        updateMessage(conversationId, messageId, (message) => message.approval?.id !== approvalId ? message : ({
-          ...message,
-          status: tRef.current("chat.approval.responseFailed"),
-        }));
-      }
-    },
-    [activityStore, updateMessage, conversationStore, setAssistantTasks],
-  );
 
   const respondToQuestion = useCallback(
     async (
@@ -6452,8 +6347,8 @@ function App(): React.JSX.Element {
     activeRuntimeSelection?.provider === "opencode" ||
     (activeRuntimeSelection?.provider === "deepseek-harness" && activeProject?.executionSpace.kind === "local");
   const nativeClientContextKey = useMemo(() => JSON.stringify([
-    activeId, activeProjectId, activeRuntimeSelection, workMode, runtimeSettings,
-  ]), [activeId, activeProjectId, activeRuntimeSelection, workMode, runtimeSettings]);
+    activeId, activeProjectId, activeRuntimeSelection, runtimeSettings,
+  ]), [activeId, activeProjectId, activeRuntimeSelection, runtimeSettings]);
   const prepareNativeClientConversation = async (): Promise<string> => {
     let conversation = conversationStore.getConversation(activeId);
     if (!conversation) {
@@ -6465,7 +6360,7 @@ function App(): React.JSX.Element {
       setActiveId(conversation.id);
     }
     // Save the current selection before Main resolves the launch from its conversation ID.
-    const header = toLocalConversationHeader({ ...conversation, workMode });
+    const header = toLocalConversationHeader(conversation);
     await conversationPersistence.enqueue(() =>
       window.goodbuddy.conversations.saveLocal([{ header, messages: [] }]),
     );
@@ -6524,7 +6419,6 @@ function App(): React.JSX.Element {
     selectRuntimeAgent: setSelectedRuntimeAgent,
     selectContinuePreset: setSelectedContinuePreset,
     selectRuntimeAction,
-    setWorkMode,
     switchRuntime: (layer) => void switchRuntime(layer),
     prepareNativeClientConversation,
     openNativeTerminal: (terminal, origin) => {
@@ -6562,6 +6456,8 @@ function App(): React.JSX.Element {
   // chat updates, and fresh inline closures would re-render all of them.
   const projectSwitcherActions = useStableHandlers({
     onArchive: archiveProject,
+    onRestore: async (projectId: string) => setProjects(await restoreProject(projectId, conversationStore, conversationPersistence, retainedConversationDetailIds)),
+    notify,
     onCreate: createProject,
     onDelete: deleteProject,
     onRemoteCommitted: loadCommittedRemoteProject,
@@ -6670,25 +6566,7 @@ function App(): React.JSX.Element {
       runBrowserCommand((browserApi) =>
         browserApi.stopLoading({ conversationId, tabId }),
       ),
-    onImportArtifacts: async () => {
-      const imported = await window.goodbuddy.artifacts.importFiles(
-        activeProjectId || undefined,
-      );
-      if (imported.length > 0) {
-        setAssistantArtifacts((current) => [...imported, ...current]);
-        setAssistantSidebarTab("results");
-      }
-    },
-    onLoadArtifact: (artifactId) => loadArtifact(taskStore, artifactId),
     onOpenTask: openAssistantTask,
-    onRespondApproval: (approval, decision) => {
-      void respondToApproval(
-        approval.conversationId,
-        approval.messageId,
-        approval.approvalId,
-        decision,
-      );
-    },
   });
   const notesPanelActive = assistantSidebarOpen && magicNotesEnabled;
   const notesPanel = useMemo(
@@ -7195,7 +7073,6 @@ function App(): React.JSX.Element {
                         onOpenCitationSource={openCitationSource}
                         onOpenImage={openImageViewer}
                         onRemoveSchedule={removeAssistantSchedule}
-                        onRespondApproval={respondToApproval}
                         onRespondQuestion={respondToQuestion}
                         onRetry={retryMessage}
                         onRunSchedule={runAssistantSchedule}
@@ -7206,7 +7083,6 @@ function App(): React.JSX.Element {
                         onVisibleMessageCountChange={
                           handleVisibleMessageCountChange
                         }
-                        projects={projects}
                         quickActions={quickActions}
                         schedules={assistantSchedules}
                         scrollSnapshot={chatScrollSnapshots[conversationId]}
@@ -7217,7 +7093,6 @@ function App(): React.JSX.Element {
                           visibleMessageCounts[conversationId] ??
                           messageRenderBatchSize
                         }
-                        workModeOverride={conversationId === activeId ? effectiveWorkMode : undefined}
                       />
                     ))}
                     {activeProject?.kind === "channel" &&
@@ -7283,7 +7158,6 @@ function App(): React.JSX.Element {
                           conversationHint={composerConversationHint}
                           conversationId={activeId}
                           conversationStore={conversationStore}
-                          effectiveWorkMode={effectiveWorkMode}
                           executionRunning={conversationExecutionRunning}
                           externalInstances={externalInstances}
                           fileSelectionProgress={fileSelectionProgress}
@@ -7320,7 +7194,6 @@ function App(): React.JSX.Element {
                           updateAttachmentBusy={updateAttachmentBusy}
                           voiceListening={voiceListening}
                           voiceRecording={voiceRecording}
-                          workModeOptions={workModeOptions}
                           workspaceView={view}
                         />
                       </>
@@ -7423,6 +7296,7 @@ function App(): React.JSX.Element {
                       }
                     >
                       {isApplicationEnabled(applicationSettings, 'heartbeat') ? <HeartbeatCenter
+                        onNotify={notify}
                         runtimeSettings={runtimeSettings}
                         applicationSettings={applicationSettings}
                         applicationSettingsPending={applicationSettingsPending}
@@ -7699,6 +7573,7 @@ function App(): React.JSX.Element {
             )}</ConversationListView>
           )}
           <RightAssistantSidebar
+            notify={notify}
             {...rightSidebarActions}
             notesEnabled={magicNotesEnabled}
             notesSettingsReady={Boolean(applicationSettings)}
@@ -7709,7 +7584,6 @@ function App(): React.JSX.Element {
             conversationStats={conversationStats}
             taskDurations={taskDurations}
             approvals={pendingSidebarApprovals}
-            artifacts={sidebarArtifacts}
             browserStates={browserStates}
             conversationTitles={conversationTitles}
             currentProject={activeProject}

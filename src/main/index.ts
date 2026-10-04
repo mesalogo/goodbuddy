@@ -55,7 +55,6 @@ import { EmbeddingInferenceBroker } from './knowledge/embedding-inference-broker
 import { CohereRerankClient } from './knowledge/cohere-rerank-client'
 import { RuntimeSettingsStore } from './runtime-settings-store'
 import type { ResolvedRuntimeSettings } from './runtime-settings-store'
-import { ToolApprovalBroker } from './tool-approval-broker'
 import {
   createMainWindow,
   loadMainWindow,
@@ -69,7 +68,7 @@ import { CONTINUE_HOST_LAYOUT_VERSION } from './agent/continue-host-layout'
 import { removeStaleRuntimeCaches } from './stale-runtime-cache-cleanup'
 import { resolvePortableUserDataPath } from './portable-user-data'
 import { BrowserService } from './browser/browser-service'
-import { SubagentService } from './assistant/subagent-service'
+import { SubagentService, createSubagentRuntime } from './assistant/subagent-service'
 import { SubagentScheduler } from './assistant/subagent-scheduler'
 import { ChannelSettingsStore } from './channels/channel-settings-store'
 import type {
@@ -1151,37 +1150,6 @@ if (hasSingleInstanceLock) {
         getConfiguredRuntimeTarget(settings)
       )
     }
-    const createSubagentRuntime = (
-      settings: ResolvedRuntimeSettings,
-      profileId = settings.defaultModelProfileId
-    ): Promise<AgentRuntime> =>
-      createRuntimeWithCapabilities(
-        {
-          ...settings,
-          provider: 'model',
-          defaultModelProfileId: profileId
-        },
-        'model'
-      )
-    const createSubagentProfileRuntimes = async (
-      settings: ResolvedRuntimeSettings
-    ): Promise<ReadonlyMap<string, AgentRuntime>> =>
-      new Map(
-        await Promise.all(
-          settings.modelProfiles
-            .filter(
-              (profile) =>
-                profile.id !== settings.defaultModelProfileId &&
-                profile.protocol !== 'openai-images-generations'
-            )
-            .map(async (profile) =>
-              [
-                profile.id,
-                await createSubagentRuntime(settings, profile.id)
-              ] as const
-            )
-        )
-      )
     const createSelectedRuntime = async (
       selection: AgentRuntimeSelection,
       executionSpace?: ExecutionSpaceDescriptor
@@ -1298,16 +1266,10 @@ if (hasSingleInstanceLock) {
     // the previous failure behaviour: an environment error fails startup.
     await localToolEnvironmentReady
     if (localToolEnvironmentFailed) throw localToolEnvironmentError
-    const [initialSubagentRuntime, initialSubagentProfileRuntimes] =
-      await startupSpan('main:subagent-runtimes', () => Promise.all([
-        createSubagentRuntime(initialResolvedSettings),
-        createSubagentProfileRuntimes(initialResolvedSettings)
-      ]))
     const subagentService = new SubagentService(
-      initialSubagentRuntime,
-      startupAssistantDatabase,
-      undefined,
-      initialSubagentProfileRuntimes
+      async input => createSubagentRuntime(input, await settingsStore.getResolvedSettings(),
+        (settings, space) => createRuntimeWithCapabilities(settings, 'model', space), createSelectedRuntime),
+      startupAssistantDatabase
     )
     runtime = new AgentRuntimeController(
       configuredRuntime,
@@ -1333,7 +1295,6 @@ if (hasSingleInstanceLock) {
         if (!startupAssistantDatabase.hasAttachmentOwner(id, 'draft', id)) throw new Error('目标会话已删除')
       }
     })
-    const approvalBroker = new ToolApprovalBroker()
 
     const shortcutSettingsService = new ShortcutSettingsService(
       new ShortcutSettingsStore(
@@ -1364,30 +1325,18 @@ if (hasSingleInstanceLock) {
           )
         const nextRerankProvider = createRerankProvider(settings)
         let nextRuntime: AgentRuntime | undefined
-        let nextSubagentRuntime: AgentRuntime | undefined
-        let nextSubagentProfileRuntimes:
-          | ReadonlyMap<string, AgentRuntime>
-          | undefined
         try {
-          nextSubagentRuntime = await createSubagentRuntime(settings)
-          nextSubagentProfileRuntimes =
-            await createSubagentProfileRuntimes(settings)
           if (runtime) {
             nextRuntime = await createConfiguredRuntime(settings)
           }
         } catch (error) {
           await Promise.allSettled([
-            nextRuntime?.dispose(),
-            nextSubagentRuntime?.dispose(),
-            ...[
-              ...(nextSubagentProfileRuntimes?.values() ?? [])
-            ].map((candidate) => candidate.dispose())
+            nextRuntime?.dispose()
           ])
           throw error
         }
 
         let runtimeConsumed = false
-        let subagentRuntimesConsumed = false
         try {
           if (knowledgeService) {
             await Promise.all([
@@ -1403,11 +1352,7 @@ if (hasSingleInstanceLock) {
             runtimeConsumed = true
             await runtime.replace(nextRuntime)
           }
-          subagentRuntimesConsumed = true
-          await subagentService.replaceRuntimes(
-            nextSubagentRuntime,
-            nextSubagentProfileRuntimes
-          )
+          await subagentService.cancelAll('默认模型设置已更改')
           await selectedRuntimeManager?.reset()
           localRuntimeRegistry.reset(nextRuntime)
           const previousEmbeddingProvider = activeEmbeddingProvider
@@ -1427,15 +1372,7 @@ if (hasSingleInstanceLock) {
             : []
           await Promise.allSettled([
             nextEmbeddingProvider?.dispose?.(),
-            runtimeConsumed ? undefined : nextRuntime?.dispose(),
-            subagentRuntimesConsumed
-              ? undefined
-              : nextSubagentRuntime.dispose(),
-            ...(subagentRuntimesConsumed
-              ? []
-              : [...nextSubagentProfileRuntimes.values()].map(
-                  (candidate) => candidate.dispose()
-                ))
+            runtimeConsumed ? undefined : nextRuntime?.dispose()
           ])
           const rollbackErrors = rollbackResults.flatMap((result) =>
             result.status === 'rejected' ? [result.reason] : []
@@ -1564,7 +1501,6 @@ if (hasSingleInstanceLock) {
       contextManager,
       knowledgeService,
       assistantDatabase,
-      approvalBroker,
       bundledRuntimePaths,
       reconfigureRuntimes,
       async () => {

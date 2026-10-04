@@ -1,5 +1,50 @@
 # 工作栏实现与验证进度
 
+## 2026-10-04：移除成果页，工作区导入与文件时间
+
+对应 [FR-WF1～FR-WF3、US-WF1～US-WF3](./workspace-files.md)。成果 Tab、目录注册及独立导入
+界面已移除，旧布局过滤成果实例。工作区显示实际文件的修改时间与可用创建时间，支持同级排序，
+向所选目录导入原件。本机及远程共用分块管理动作，同名文件不覆盖，失败项独立反馈并清理部分文件。
+
+来源检查确认：`AssistantDatabase.createImageArtifact` 把图片保存为 `artifacts.inline_content`
+数据 URL，消息通过 `artifactIds` 引用；上传源图还可通过 `imageSourceArtifactIds` 引用。
+这些数据不是工作区文件。本次未改数据库 schema、删除或迁移 artifact，也未自动复制附件。
+生成图片继续保留在消息，需要项目文件时由既有 `save_image` 显式保存。
+
+验证证据：
+
+- 最终定向验证：16 个文件，252 项通过、2 项跳过。覆盖 WorkspaceAccess、导入服务、文件管理、
+  时间传递、布局恢复、工作区排序和虚拟列表、Sidebar、WorkbarShell、ChatTimeline、图片服务及
+  ProtocolRemoteWorkspaceTransport。命令使用 `npm test --` 加对应文件；新测试入口为
+  `src/main/workspace/workspace-import.test.ts` 和 `tests/workspace-import.electron.test.ts`。
+- `src/main/ipc.test.ts -t "resolves the project root and validates file requests"`：1 项通过，验证
+  原生选择取消、真实文件导入、路径校验以及已有目录读取。
+- App 的成果入口相关测试修正后复跑：2 项通过。真实 Electron 从完整 App 的工作区按钮进入
+  生产 preload、IPC 和本机文件系统，导入 700,001 字节二进制文件，逐字节核对，同名项不覆盖，
+  取消无写入；原生文件选择器以固定路径替代人工操作。历史会话图片在 Renderer 重载后仍能解码，
+  SQLite artifact 数量保持 1，项目根目录只有显式创建的 `selected` 目录。
+- `tests/workspace-files-layout.electron.test.ts`：16 个场景通过，包含 Git/非 Git、浅深主题、
+  四种窗口尺寸、原生滚轮与点击、隐藏/恢复位置，窄栏横向滚动不撑宽 Sidebar。
+  `tests/workbar-settings-layout.electron.test.ts`：80 项工作栏观察及 12 项设置观察通过，
+  中英文、浅深主题及原生键盘操作继续可用。
+- Linux x64 共享 Host：`scripts/workspace-import-host-probe.ts` 将当前源码打包后，通过现有
+  pinned SSH 连接运行。Desktop `RemoteWorkspaceAccess` 经 SSH stdio 测试桥调用真实
+  `createWorkspaceProtocolMethods`、`WorkspaceRegistry` 和 `manageWorkspace`；上传二进制
+  700,001 字节及空文件成功，Host 核对每个字节、目录归属、mtime/birthtime，同名重传失败且
+  原文件不变。临时工作区在 `/root/tmp` 下并在结束时清理。模型调用 0 次。
+  此探针未经过安装版 daemon 的完整二进制帧/attach 路径；该传输契约的本地回归通过，未替换
+  已安装 Agent。生产远程导入需要部署包含新增 `importFile` 动作的 Agent，旧 Agent 不支持。
+- `npm run typecheck`、`npm run lint` 通过。新工作区文档经 `deai-writing` 扫描无阻断项；
+  两个复核项属于布局偏好字段列举及明确的旧 Agent 支持边界，保留事实说明。
+
+全仓 `npm test` 运行 852.36 秒：505 文件通过、6 文件失败、14 文件跳过；5,974 项通过、
+8 项失败、86 项跳过。此次改动对应的 4 项旧断言（App 2 项、虚拟列表缩进 1 项、工作栏
+默认 Tab 数量 1 项）已修正，定向复跑通过。其余失败为 `assistant-storage-worker.test.ts`
+2 项升级失败、`supervisor-layout.electron.test.ts` 等待 inline error 超时、
+`opencode-runtime.test.ts` 的 cleanup-timeout 断言失败。存储升级 2 项单独复跑仍失败；
+OpenCode 用例单独复跑通过；监督者布局未重复运行。未改动这些非本次范围的实现，未将
+全仓测试记为通过。未提交、发布或打发行包。
+
 ## 2026-10-01：自定义 MCP 失败中断回复
 
 已修复共用网关将单个上游发现失败升级为整轮失败的问题，行为见

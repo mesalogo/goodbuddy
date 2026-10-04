@@ -9,7 +9,6 @@ import { useTranslation } from 'react-i18next'
 import type {
   AssistantSchedule,
   AssistantTask,
-  WorkMode
 } from '../../shared/assistant-contracts'
 import {
   findTaskSchedule,
@@ -17,7 +16,6 @@ import {
 } from './TaskScheduleActions'
 
 type ConversationTaskStripProps = {
-  conversationMode?: WorkMode
   locale: string
   onRemoveSchedule: (scheduleId: string) => Promise<void>
   onRunSchedule: (scheduleId: string) => Promise<void>
@@ -32,7 +30,6 @@ type ConversationTaskStripProps = {
 }
 
 export const ConversationTaskStrip = memo(function ConversationTaskStrip({
-  conversationMode,
   locale,
   onRemoveSchedule,
   onRunSchedule,
@@ -54,17 +51,6 @@ export const ConversationTaskStrip = memo(function ConversationTaskStrip({
   const selectedSchedule = selectedTask
     ? findTaskSchedule(selectedTask, schedules)
     : undefined
-  const unrunSchedule =
-    selectedSchedule &&
-    !selectedSchedule.lastRunAt &&
-    !selectedTask?.startedAt &&
-    !selectedTask?.completedAt &&
-    (selectedTask?.status === 'idle' ||
-      selectedTask?.status === 'queued' ||
-      selectedTask?.status === 'paused')
-  const selectedMode = unrunSchedule
-    ? conversationMode
-    : selectedTask?.workMode
   const expanded =
     manuallyExpanded ||
     (Boolean(selectedTaskId) && collapsedTaskId !== selectedTaskId)
@@ -147,14 +133,6 @@ export const ConversationTaskStrip = memo(function ConversationTaskStrip({
                 )}
               </header>
               <dl>
-                <div>
-                  <dt>{t('task.fields.mode')}</dt>
-                  <dd>
-                    {selectedMode
-                      ? t(`task.mode.${selectedMode}`)
-                      : t('task.mode.unavailable')}
-                  </dd>
-                </div>
                 <div>
                   <dt>{t('task.fields.schedule')}</dt>
                   <dd>

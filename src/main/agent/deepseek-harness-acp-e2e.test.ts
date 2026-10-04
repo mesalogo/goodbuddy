@@ -48,7 +48,7 @@ import type { KnowledgeService } from '../knowledge/knowledge-service'
 
 vi.mock('electron', () => ({ nativeImage: {} }))
 
-it('generates and edits durable images through the controlled Harness Main proxy and refreshes it in Ask', async () => {
+it('generates and edits durable images and removes tools when the request has no image binding', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-images-')))
   const database = new AssistantDatabase(join(root, 'assistant.sqlite'))
   database.initialize(root)
@@ -64,9 +64,9 @@ it('generates and edits durable images through the controlled Harness Main proxy
     stream(options) {
       const prompt = latestUserText(options)
       const tool = options.tools?.find(tool => tool.name === 'generate_image')
-      if (prompt === 'ask-image') {
+      if (prompt === 'no-image-binding') {
         expect(tool).toBeUndefined()
-        return textResponse('Ask is read-only')
+        return textResponse('No image binding')
       }
       expect(tool).toBeDefined()
       expect(tool?.description).toContain(profileId)
@@ -76,7 +76,7 @@ it('generates and edits durable images through the controlled Harness Main proxy
     }
   })
   const runtime = new DeepSeekHarnessRuntime({ defaultWorkspace: root, baseUrl: 'https://chat.test/v1', model: 'fixture',
-    launch: inProcess.launch, credentialRefs: { [CREDENTIAL_REF]: 'fixture' }, toolProvider: new ModelToolProvider(root),
+    launch: inProcess.launch, credentialRefs: { [CREDENTIAL_REF]: 'fixture' }, toolProvider: new ModelToolProvider(root, [], undefined, undefined, false, { runtimeTarget: 'deepseek-harness' }),
     initializationTimeoutMs: 20_000, promptTimeoutMs: 20_000, shutdownTimeoutMs: 5_000 })
   try {
     for (const intent of ['create', 'edit'] as const) {
@@ -84,14 +84,14 @@ it('generates and edits durable images through the controlled Harness Main proxy
       const requestId = crypto.randomUUID()
       database.saveLocalConversations([{ header: { id: conversationId, title: 'Images', updatedAt: Date.now() },
         messages: [{ id: messageId, role: 'assistant', content: '', createdAt: Date.now(), state: 'complete' }] }])
-      const events = await collect(runtime.run({ requestId, conversationId, prompt: `${intent}-${requestId}`, workMode: 'execute',
-        imageToolBinding: service.bind({ conversationId, messageId, requestId, workMode: 'execute' }) }, new AbortController().signal, async () => 'once'))
+      const events = await collect(runtime.run({ requestId, conversationId, prompt: `${intent}-${requestId}`,
+        imageToolBinding: service.bind({ conversationId, messageId, requestId,  }) }, new AbortController().signal, async () => 'once'))
       expect(events.at(-1)?.type).toBe('done')
       const operation = database.getConversation(conversationId).messages.find(message => message.id === messageId)!.imageOperations![0]!
       expect(operation.state).toBe('completed')
       input = { intent: 'edit', prompt: 'Turn red', sourceArtifactIds: operation.artifactIds }
     }
-    await collect(runtime.run({ requestId: crypto.randomUUID(), conversationId, prompt: 'ask-image', workMode: 'ask' }, new AbortController().signal))
+    await collect(runtime.run({ requestId: crypto.randomUUID(), conversationId, prompt: 'no-image-binding',  }, new AbortController().signal))
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(String(fetcher.mock.calls[1]![0])).toMatch(/images\/edits$/u)
   } finally {
@@ -104,7 +104,7 @@ it('generates and edits durable images through the controlled Harness Main proxy
 
 const CREDENTIAL_REF = 'GOODBUDDY_HARNESS_MODEL_API_KEY'
 
-it('reads Story Graph through the controlled Harness ACP Main proxy in Ask and Execute, then removes it when disabled', async () => {
+it('reads Story Graph through the controlled Harness ACP Main proxy, then removes it when disabled', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-graph-')))
   const db = new AssistantDatabase(':memory:'); db.initialize(root)
   let enabled = true
@@ -126,16 +126,16 @@ it('reads Story Graph through the controlled Harness ACP Main proxy in Ask and E
     expect(toolResultText(options, prompt)).toContain(projectId)
     return textResponse('GRAPH_READ')
   } })
-  const provider = new ModelToolProvider(root, [], undefined, gateway)
+  const provider = new ModelToolProvider(root, [], undefined, gateway, false, { runtimeTarget: 'deepseek-harness' })
   const runtime = new DeepSeekHarnessRuntime({ defaultWorkspace: root, baseUrl: 'https://chat.test/v1', model: 'fixture',
     launch: inProcess.launch, credentialRefs: { [CREDENTIAL_REF]: 'fixture' }, toolProvider: provider,
     initializationTimeoutMs: 20_000, promptTimeoutMs: 20_000, shutdownTimeoutMs: 5_000 })
   try {
-    for (const mode of ['ask', 'execute', 'disabled'] as const) {
+    for (const mode of ['first', 'second', 'disabled'] as const) {
       enabled = mode !== 'disabled'
       db.setConversationStoryGraphEnabled(conversationId, enabled)
       const events = await collect(runtime.run({ requestId: crypto.randomUUID(), conversationId, prompt: mode,
-        workMode: mode === 'execute' ? 'execute' : 'ask', knowledgeCapabilityToken: token }, signal))
+         knowledgeCapabilityToken: token }, signal))
       expect(events.at(-1)?.type).toBe('done')
       expect(JSON.stringify(events)).toContain(enabled ? 'GRAPH_READ' : 'DISABLED')
     }
@@ -143,7 +143,7 @@ it('reads Story Graph through the controlled Harness ACP Main proxy in Ask and E
 }, 60_000)
 const SKILL_CALL_ID = 'e2e-skill-call'
 const MCP_CALL_ID = 'e2e-mcp-call'
-const ASK_MCP_CALL_ID = 'e2e-ask-mcp-call'
+const FOLLOWUP_MCP_CALL_ID = 'e2e-followup-mcp-call'
 const MICRO_DELTA_COUNT = 30_000
 const liveModelEnabled =
   process.env.GOODBUDDY_DSH_MODEL_E2E === '1'
@@ -325,32 +325,32 @@ class FakeGameModel {
   mcpToolName?: string
   skillResult?: string
   blueprint?: Record<string, unknown>
-  askToolResult?: string
-  executeToolNames: string[] = []
-  askToolNames: string[] = []
+  followupToolResult?: string
+  initialToolNames: string[] = []
+  followupToolNames: string[] = []
 
   stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const prompt = latestUserText(options)
     const toolNames = options.tools?.map((tool) => tool.name) ?? []
 
-    if (prompt.includes('ASK_BOUNDARY_PROBE')) {
-      this.askToolNames = toolNames
-      const result = toolResultText(options, ASK_MCP_CALL_ID)
+    if (prompt.includes('FOLLOWUP_MCP_PROBE')) {
+      this.followupToolNames = toolNames
+      const result = toolResultText(options, FOLLOWUP_MCP_CALL_ID)
       if (!result) {
         if (!this.mcpToolName) {
           throw new Error('Fake model has no prior MCP tool identity')
         }
-        return toolCall(ASK_MCP_CALL_ID, this.mcpToolName, {
+        return toolCall(FOLLOWUP_MCP_CALL_ID, this.mcpToolName, {
           theme: 'neon-ruins',
-          seed: 'ask-must-not-execute',
+          seed: 'followup-request',
           targetCount: 5
         })
       }
-      this.askToolResult = result
-      return textResponse('Ask mode MCP proxy unavailable as required.')
+      this.followupToolResult = result
+      return textResponse('MCP proxy remains available.')
     }
 
-    this.executeToolNames = toolNames
+    this.initialToolNames = toolNames
     const skillResult = toolResultText(options, SKILL_CALL_ID)
     if (!skillResult) {
       return toolCall(SKILL_CALL_ID, 'skill', {
@@ -534,7 +534,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
             const id = `p${project}-c${conversation}-w${wave}`
             const events = await collect(runtime.run({
               requestId: id, conversationId: `p${project}-c${conversation}`,
-              prompt: id, workMode: 'execute'
+              prompt: id,
             }, AbortSignal.timeout(20_000)))
             expect(events.at(-1)?.type).toBe('done')
             expect(await readFile(join(directory, `${id}.txt`), 'utf8')).toContain(`PROJECT_${project}`)
@@ -586,7 +586,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
         expect(runtime).toBe(first)
         const events = await collect(runtime.run({
           requestId: `path-${index}`, conversationId: `path-${index}`,
-          workMode: 'ask', prompt: 'Return PATH_OK.'
+           prompt: 'Return PATH_OK.'
         }, AbortSignal.timeout(20_000)))
         expect(events.at(-1)).toMatchObject({ type: 'done' })
         expect(events.filter(event => event.type === 'text').map(event => event.delta).join('')).toBe('PATH_OK')
@@ -649,19 +649,18 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
       }]
     }))
     try {
-      for (const mode of ['execute', 'ask'] as const) {
+      for (const mode of ['first', 'second'] as const) {
         await Promise.all(runtimes.map(async (runtime, project) => {
           const events = await collect(runtime.run({
             requestId: `capabilities-${project}-${mode}`, conversationId: `capabilities-${project}`,
-            workMode: mode,
-            prompt: `${mode === 'ask' ? 'ASK_BOUNDARY_PROBE' : 'Use Skill and MCP'} PROJECT_${project}`,
-            ...(mode === 'execute' ? { images: [{
+            prompt: `${mode === 'second' ? 'FOLLOWUP_MCP_PROBE' : 'Use Skill and MCP'} PROJECT_${project}`,
+            ...(mode === 'first' ? { images: [{
               name: `project-${project}.png`, mediaType: 'image/png', data: images[project]!.toString('base64')
             }] } : {})
           }, AbortSignal.timeout(30_000), async () => 'once'))
           expect(events.at(-1)?.type).toBe('done')
           const model = models[project]!
-          if (mode === 'execute') {
+          if (mode === 'first') {
             expect(model.skillResult).toContain('window.__GOODBUDDY_GAME__')
             expect(model.blueprint).toMatchObject({ title: 'Prism Relay' })
             const seen = seenImages.get(project)!
@@ -672,19 +671,19 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
             const stored = await inProcess.hosts[0]!.context.attachments.readImage(image.attachment)
             expect(Buffer.from(stored.data).equals(images[project]!)).toBe(true)
           } else {
-            expect(model.askToolNames).not.toContain(model.mcpToolName)
-            expect(model.askToolResult).toContain('Ask 模式不允许执行非只读工具')
+            expect(model.followupToolNames).toContain(model.mcpToolName)
+            expect(model.followupToolResult).toContain('Prism Relay')
           }
           expect(await runtime.getNativeSnapshot?.()).toMatchObject({
             skills: expect.arrayContaining([expect.objectContaining({ id: 'shared-plugin-skill', source: 'plugin' })])
           })
         }))
         expect(launch).toHaveBeenCalledOnce()
-        expect(calls).toHaveBeenCalledTimes(2)
+        expect(calls).toHaveBeenCalledTimes(mode === 'first' ? 2 : 4)
       }
       expect(new Set(calls.mock.contexts).size).toBe(2)
       expect(calls.mock.calls.map(call => call[3]?.conversationId).sort())
-        .toEqual(['capabilities-0', 'capabilities-1'])
+        .toEqual(['capabilities-0', 'capabilities-0', 'capabilities-1', 'capabilities-1'])
       await runtimes[0]!.releaseConversation?.('capabilities-0')
       expect(await runtimes[1]!.getStatus()).toMatchObject({ available: true })
       expect(launch).toHaveBeenCalledOnce()
@@ -696,7 +695,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
     }
   }, 60_000)
 
-  it('writes outside the Workspace in Execute without approval and rejects the same tool in Ask', async () => {
+  it('writes outside the Workspace on consecutive requests without generic approval', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-directory-')))
     const workspace = join(root, 'workspace')
     const dshHome = join(root, 'home')
@@ -723,13 +722,13 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
     })
     const authorize = vi.fn(async () => 'deny' as const)
     try {
-      for (const mode of ['execute', 'ask'] as const) {
+      for (const mode of ['first', 'second'] as const) {
         const events = await collect(runtime.run({
           requestId: `directory-${mode}`, conversationId: `directory-${mode}`,
-          workMode: mode, prompt: mode === 'execute' ? 'EXECUTE_WRITTEN' : 'ASK_MUST_NOT_WRITE'
+           prompt: mode
         }, AbortSignal.timeout(20_000), authorize))
         expect(events.at(-1)).toMatchObject({ type: 'done' })
-        expect(await readFile(externalFile, 'utf8')).toBe('EXECUTE_WRITTEN')
+        expect(await readFile(externalFile, 'utf8')).toBe(mode)
       }
       expect(results).toHaveLength(2)
       expect(authorize).not.toHaveBeenCalled()
@@ -775,7 +774,6 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
             requestId: 'request-acp-image',
             conversationId: 'acp-image',
             prompt: 'Describe this image.',
-            workMode: 'ask',
             images: [
               {
                 name: 'reference.png',
@@ -857,7 +855,6 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
               requestId: 'request-acp-deltas',
               conversationId: 'acp-deltas',
               prompt: 'Return the deterministic reasoning stream.',
-              workMode: 'execute'
             },
             new AbortController().signal
           )
@@ -879,7 +876,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
             .filter((block) => block.type === 'text')
             .map((block) => block.text)
             .join('\n')
-        ).toContain('act through the available tools')
+        ).toContain('Act through the available tools')
         expect(reasoning).toHaveLength(8)
         expect(
           reasoning.map((event) => event.delta).join('')
@@ -936,7 +933,6 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
                 requestId: 'request-acp-error',
                 conversationId: 'acp-error',
                 prompt: 'Trigger the synthetic model failure.',
-                workMode: 'ask'
               },
               new AbortController().signal
             )
@@ -954,7 +950,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
   )
 
   it(
-    'loads a native Skill, calls an approved real MCP, forwards events, and removes MCP in Ask',
+    'loads a native Skill, calls a real MCP, and keeps registered tools on the next request',
     async () => {
       const root = await realpath(
         await mkdtemp(join(tmpdir(), 'goodbuddy-harness-acp-e2e-'))
@@ -1004,7 +1000,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
             )
           ]
         } satisfies ResolvedMcpServer
-      ])
+      ], undefined, undefined, false, { runtimeTarget: 'deepseek-harness' })
       const callTool = vi.spyOn(provider, 'callTool')
       const listTools = vi.spyOn(provider, 'listTools')
       const fakeModel = new FakeGameModel()
@@ -1065,15 +1061,11 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
               id: 'read',
               kind: 'read',
               source: 'runtime',
-              ask: 'allowed',
-              execute: 'allowed'
             }),
             expect.objectContaining({
               id: 'edit',
               kind: 'write',
               source: 'runtime',
-              ask: 'blocked',
-              execute: 'allowed'
             })
           ]),
           skills: [
@@ -1097,21 +1089,20 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
             manualCompact: false
           }
         })
-        const executeEvents = await collect(
+        const initialEvents = await collect(
           runtime.run(
             {
-              requestId: 'request-acp-execute',
+              requestId: 'request-acp-initial',
               conversationId: 'acp-e2e',
               prompt:
                 'Use the Web 3D Game Skill and assigned blueprint MCP.',
-              workMode: 'execute'
             },
             new AbortController().signal,
             authorize
           )
         )
 
-        expect(fakeModel.executeToolNames).toContain('skill')
+        expect(fakeModel.initialToolNames).toContain('skill')
         expect(fakeModel.mcpToolName).toMatch(
           /_create_game_blueprint$/u
         )
@@ -1125,7 +1116,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
             testSurface: 'window.__GOODBUDDY_GAME__'
           }
         })
-        expect(authorize).toHaveBeenCalledOnce()
+        expect(authorize).not.toHaveBeenCalled()
         expect(callTool).toHaveBeenCalledWith(
           fakeModel.mcpToolName,
           {
@@ -1136,11 +1127,10 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
           expect.any(AbortSignal),
           {
             conversationId: 'acp-e2e',
-            workMode: 'execute',
             knowledgeCapabilityToken: undefined
           } satisfies ModelToolCallContext
         )
-        expect(executeEvents).toEqual(
+        expect(initialEvents).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
               type: 'tool',
@@ -1179,64 +1169,62 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
           ])
         )
         expect(
-          executeEvents.filter(
+          initialEvents.filter(
             (event) =>
               event.type === 'tool' &&
               event.state === 'running'
           )
         ).toHaveLength(0)
 
-        const callsBeforeAsk = callTool.mock.calls.length
-        const listsBeforeAsk = listTools.mock.calls.length
-        const approvalsBeforeAsk = authorize.mock.calls.length
-        const askEvents = await collect(
+        const callsBeforeFollowup = callTool.mock.calls.length
+        const listsBeforeFollowup = listTools.mock.calls.length
+        const approvalsBeforeFollowup = authorize.mock.calls.length
+        const followupEvents = await collect(
           runtime.run(
             {
-              requestId: 'request-acp-ask',
+              requestId: 'request-acp-followup',
               conversationId: 'acp-e2e',
               prompt:
-                'ASK_BOUNDARY_PROBE: attempt the previous MCP tool.',
-              workMode: 'ask'
+                'FOLLOWUP_MCP_PROBE: attempt the previous MCP tool.',
             },
             new AbortController().signal,
             authorize
           )
         )
 
-        expect(fakeModel.askToolNames).not.toContain(
+        expect(fakeModel.followupToolNames).toContain(
           fakeModel.mcpToolName
         )
-        expect(fakeModel.askToolResult).toContain(
-          'Ask 模式不允许执行非只读工具'
+        expect(fakeModel.followupToolResult).toContain(
+          'Prism Relay'
         )
-        expect(callTool).toHaveBeenCalledTimes(callsBeforeAsk)
-        expect(listTools).toHaveBeenCalledTimes(listsBeforeAsk + 1)
+        expect(callTool).toHaveBeenCalledTimes(callsBeforeFollowup + 1)
+        expect(listTools).toHaveBeenCalledTimes(listsBeforeFollowup + 1)
         expect(listTools).toHaveBeenLastCalledWith(
           {
             conversationId: 'acp-e2e',
-            workMode: 'ask',
             knowledgeCapabilityToken: undefined
           },
           expect.any(AbortSignal)
         )
-        expect(authorize).toHaveBeenCalledTimes(approvalsBeforeAsk)
-        expect(askEvents).toEqual(
+        expect(authorize).toHaveBeenCalledTimes(approvalsBeforeFollowup)
+        expect(followupEvents).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
               type: 'tool',
-              callId: ASK_MCP_CALL_ID,
+              callId: FOLLOWUP_MCP_CALL_ID,
               name: fakeModel.mcpToolName,
               state: 'pending'
             }),
             expect.objectContaining({
               type: 'tool',
-              callId: ASK_MCP_CALL_ID,
-              state: 'failed'
+              callId: FOLLOWUP_MCP_CALL_ID,
+              state: 'completed'
             }),
             expect.objectContaining({
               type: 'text',
               delta: expect.stringContaining(
-                'MCP proxy unavailable'
+                'MCP proxy remains available'
               )
             }),
             expect.objectContaining({ type: 'done' })
@@ -1296,7 +1284,6 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
               conversationId: 'live-custom-header',
               prompt:
                 'Reply with exactly DSH_CUSTOM_HEADER_E2E_OK and nothing else.',
-              workMode: 'ask'
             },
             new AbortController().signal
           )
@@ -1327,7 +1314,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
   )
 
   it.runIf(liveModelEnabled)(
-    'lets a real model use Main-brokered Web Search and Fetch in Ask',
+    'lets a real model use Main-brokered Web Search and Fetch without approval',
     async () => {
       if (!liveApiKey) {
         throw new Error(
@@ -1351,7 +1338,8 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
         [],
         undefined,
         undefined,
-        true
+        true,
+        { runtimeTarget: 'deepseek-harness' }
       )
       const runtime = new DeepSeekHarnessRuntime({
         defaultWorkspace: workspace,
@@ -1375,7 +1363,6 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
               conversationId: 'live-web-search',
               prompt:
                 'DSH_WEB_TOOLS_PROBE: First call web_search exactly once with query "GoodBuddy GitHub desktop assistant" and numResults 2. Then call web_fetch exactly once with urls ["https://example.com/"] and maxCharacters 1000. Do not call another tool. After both results, reply with DSH_WEB_TOOLS_E2E_OK.',
-              workMode: 'ask'
             },
             new AbortController().signal
           )
@@ -1422,7 +1409,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
   )
 
   it.runIf(liveModelEnabled)(
-    'rejects a real npm plugin in Ask and lets a real model call it in Execute',
+    'lets a real model call a registered npm plugin across requests',
     async () => {
       if (!liveApiKey) {
         throw new Error(
@@ -1504,31 +1491,30 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
         })
 
         try {
-          const askEvents = await collect(
+          const followupEvents = await collect(
             runtime.run(
               {
-                requestId: 'request-live-plugin-ask',
-                conversationId: 'live-plugin-ask',
+                requestId: 'request-live-plugin-first',
+                conversationId: 'live-plugin-first',
                 prompt:
-                  'DSH_ASK_PLUGIN_PROBE: attempt to call greet exactly once with name GoodBuddyAsk. The runtime must reject it. After the tool result, reply with DSH_ASK_PLUGIN_BLOCKED.',
-                workMode: 'ask'
+                  'DSH_FIRST_PLUGIN_PROBE: call greet exactly once with name GoodBuddyFirst. After the tool result, reply with DSH_PLUGIN_OK.',
               },
               new AbortController().signal
             )
           )
-          const askRequests = observedRequests.filter((options) =>
+          const followupRequests = observedRequests.filter((options) =>
             latestUserText(options).includes(
-              'DSH_ASK_PLUGIN_PROBE'
+              'DSH_FIRST_PLUGIN_PROBE'
             )
           )
-          expect(askRequests.length).toBeGreaterThan(0)
+          expect(followupRequests.length).toBeGreaterThan(0)
           expect(
-            askRequests.flatMap(
+            followupRequests.flatMap(
               (options) =>
                 options.tools?.map((tool) => tool.name) ?? []
             )
           ).toContain('greet')
-          expect(askEvents).toEqual(
+          expect(followupEvents).toEqual(
             expect.arrayContaining([
               expect.objectContaining({
                 type: 'tool',
@@ -1537,53 +1523,52 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
               }),
               expect.objectContaining({
                 type: 'tool',
-                state: 'failed',
+                state: 'completed',
                 output: expect.stringContaining(
-                  'Ask 模式不允许执行非只读工具'
+                  'Hello, GoodBuddyFirst!'
                 )
               }),
               expect.objectContaining({ type: 'done' })
             ])
           )
           expect(
-            askEvents.some(
+            followupEvents.some(
               (event) =>
                 event.type === 'tool' &&
                 event.state === 'completed'
             )
-          ).toBe(false)
+          ).toBe(true)
           expect(
-            askEvents
+            followupEvents
               .flatMap((event) =>
                 event.type === 'text' ? [event.delta] : []
               )
               .join('')
-          ).toContain('DSH_ASK_PLUGIN_BLOCKED')
+          ).toContain('DSH_PLUGIN_OK')
 
-          const executeEvents = await collect(
+          const initialEvents = await collect(
             runtime.run(
               {
-                requestId: 'request-live-plugin-execute',
-                conversationId: 'live-plugin-execute',
+                requestId: 'request-live-plugin-second',
+                conversationId: 'live-plugin-second',
                 prompt:
-                  'DSH_EXECUTE_PLUGIN_PROBE: call greet exactly once with name GoodBuddyLive. After its result, reply with DSH_EXECUTE_PLUGIN_OK and the exact greeting.',
-                workMode: 'execute'
+                  'DSH_SECOND_PLUGIN_PROBE: call greet exactly once with name GoodBuddyLive. After its result, reply with DSH_SECOND_PLUGIN_OK and the exact greeting.',
               },
               new AbortController().signal
             )
           )
-          const executeRequests = observedRequests.filter((options) =>
+          const initialRequests = observedRequests.filter((options) =>
             latestUserText(options).includes(
-              'DSH_EXECUTE_PLUGIN_PROBE'
+              'DSH_SECOND_PLUGIN_PROBE'
             )
           )
-          expect(executeRequests.length).toBeGreaterThan(0)
+          expect(initialRequests.length).toBeGreaterThan(0)
           expect(
-            executeRequests.some((options) =>
+            initialRequests.some((options) =>
               options.tools?.some((tool) => tool.name === 'greet')
             )
           ).toBe(true)
-          expect(executeEvents).toEqual(
+          expect(initialEvents).toEqual(
             expect.arrayContaining([
               expect.objectContaining({
                 type: 'tool',
@@ -1601,12 +1586,12 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
             ])
           )
           expect(
-            executeEvents
+            initialEvents
               .flatMap((event) =>
                 event.type === 'text' ? [event.delta] : []
               )
               .join('')
-          ).toContain('DSH_EXECUTE_PLUGIN_OK')
+          ).toContain('DSH_SECOND_PLUGIN_OK')
         } finally {
           await Promise.allSettled([
             runtime.dispose(),

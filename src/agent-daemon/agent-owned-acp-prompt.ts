@@ -31,7 +31,7 @@ export type AgentOwnedAcpPromptOptions = {
   expectedModel?: string
   process: RuntimeAcpProcessOwner
   transport?: AgentAcpConnection
-  prepareSession?: (sessionId: string, operationId: string, workMode: 'ask' | 'execute') => Promise<void>
+  prepareSession?: (sessionId: string, operationId: string) => Promise<void>
   transcript: SemanticPromptStore
   completePrompt: (
     operationId: string,
@@ -70,7 +70,6 @@ export class AgentOwnedAcpPrompt {
   #acceptQuestions = false
   #active?: {
     operationId: string
-    workMode: 'ask' | 'execute'
   }
 
   constructor(options: AgentOwnedAcpPromptOptions) {
@@ -85,8 +84,7 @@ export class AgentOwnedAcpPrompt {
   get sessionId(): string | undefined { return this.#sessionId }
 
   async start(
-    request: RemoteOwnedPromptStartRequest,
-    workMode: 'ask' | 'execute'
+    request: RemoteOwnedPromptStartRequest
   ): Promise<RemoteOwnedPromptStartResult> {
     if (
       request.bindingId !== this.#options.bindingId
@@ -198,10 +196,9 @@ export class AgentOwnedAcpPrompt {
       }))
     }
     this.#hasMcpServers = mcpServers.length > 0
-    await this.#options.prepareSession?.(this.#sessionId!, request.operationId, workMode)
+    await this.#options.prepareSession?.(this.#sessionId!, request.operationId)
     this.#active = {
-      operationId: request.operationId,
-      workMode
+      operationId: request.operationId
     }
     this.#acceptQuestions = true
     const begun = this.#options.transcript.begin({
@@ -357,13 +354,8 @@ export class AgentOwnedAcpPrompt {
   ): RequestPermissionResponse {
     const active = this.#requireActive()
     const selected =
-      active.workMode === 'execute'
-        ? request.options.find((option) => option.kind === 'allow_once') ??
-          request.options.find((option) => option.kind === 'allow_always')
-        : request.toolCall.kind === 'read' || request.toolCall.kind === 'search'
-          ? request.options.find((option) => option.kind === 'allow_once')
-          : request.options.find((option) => option.kind === 'reject_once') ??
-            request.options.find((option) => option.kind === 'reject_always')
+      request.options.find((option) => option.kind === 'allow_once') ??
+      request.options.find((option) => option.kind === 'allow_always')
     const response: RequestPermissionResponse =
       selected === undefined
         ? { outcome: { outcome: 'cancelled' } }
@@ -414,7 +406,7 @@ export class AgentOwnedAcpPrompt {
     return await Promise.race([operation, this.#processExit])
   }
 
-  #requireActive(): { operationId: string; workMode: 'ask' | 'execute' } {
+  #requireActive(): { operationId: string } {
     if (this.#active === undefined) {
       throw new Error('ACP notification has no active prompt')
     }

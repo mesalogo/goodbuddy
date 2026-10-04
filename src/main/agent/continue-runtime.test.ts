@@ -50,8 +50,7 @@ function createRuntime(): ContinueAgentRuntime {
 }
 
 async function collectEvents(
-  runtime: ContinueAgentRuntime,
-  workMode?: 'ask' | 'execute'
+  runtime: ContinueAgentRuntime
 ): Promise<RuntimeEvent[]> {
   const events: RuntimeEvent[] = []
   for await (const event of runtime.run(
@@ -59,7 +58,6 @@ async function collectEvents(
       requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
       conversationId: 'conversation-1',
       prompt: 'test',
-      workMode
     },
     new AbortController().signal
   )) {
@@ -97,7 +95,6 @@ describe('ContinueAgentRuntime', () => {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'test',
-        workMode: 'execute'
       },
       controller.signal
     )
@@ -302,7 +299,7 @@ describe('ContinueAgentRuntime', () => {
       }
     })
 
-    const events = await collectEvents(createRuntime(), 'execute')
+    const events = await collectEvents(createRuntime())
 
     expect(events.filter((event) => event.type === 'model-usage')).toEqual([
       {
@@ -327,7 +324,7 @@ describe('ContinueAgentRuntime', () => {
     expect(runtime.requiresToolApproval).toBe(false)
   })
 
-  it('passes scoped MCP configuration for Ask and denies every other Ask tool', async () => {
+  it('passes scoped MCP configuration and allows normal tools', async () => {
     const runtime = new ContinueAgentRuntime({
       binaryPath: '',
       configPath: 'C:\\safe config\\continue.yaml',
@@ -347,7 +344,6 @@ describe('ContinueAgentRuntime', () => {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'search',
-        workMode: 'ask',
         knowledgeCapabilityToken: 'main-only-token'
       },
       new AbortController().signal
@@ -360,7 +356,6 @@ describe('ContinueAgentRuntime', () => {
       expect.any(AbortSignal),
       expect.any(Function),
       {
-        workMode: 'ask',
         knowledgeCapability: {
           endpoint: 'http://127.0.0.1:4567/mcp',
           token: 'main-only-token'
@@ -384,10 +379,10 @@ describe('ContinueAgentRuntime', () => {
     await expect(
       authorize?.({ toolName: 'note_get' })
     ).resolves.toBe('once')
-    await expect(authorize?.({ toolName: 'Bash' })).resolves.toBe('deny')
+    await expect(authorize?.({ toolName: 'Bash' })).resolves.toBe('once')
   })
 
-  it('shares assigned custom MCP with Continue Agent only in Execute through a scoped loopback token', async () => {
+  it('shares assigned custom MCP through a scoped loopback token on every request', async () => {
     const gateway = {
       getEndpoint: vi.fn(() => 'http://127.0.0.1:4567/mcp'),
       grantCustomMcp: vi.fn(() => 'custom-capability'),
@@ -426,7 +421,7 @@ describe('ContinueAgentRuntime', () => {
       })
     })
 
-    await collectEvents(runtime, 'execute')
+    await collectEvents(runtime)
 
     expect(gateway.grantCustomMcp).toHaveBeenCalledWith(
       '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
@@ -438,7 +433,6 @@ describe('ContinueAgentRuntime', () => {
       expect.any(AbortSignal),
       expect.any(Function),
       {
-        workMode: 'execute',
         customMcpCapability: {
           endpoint: 'http://127.0.0.1:4567/mcp',
           token: 'custom-capability'
@@ -462,8 +456,8 @@ describe('ContinueAgentRuntime', () => {
       detail: 'Continue CLI 1.5.47 已就绪'
     })
     mocks.runHost.mockResolvedValue({ text: 'Continue response' })
-    await collectEvents(runtime, 'ask')
-    expect(gateway.grantCustomMcp).not.toHaveBeenCalled()
+    await collectEvents(runtime)
+    expect(gateway.grantCustomMcp).toHaveBeenCalledOnce()
   })
 
   it('completes the Continue run when an assigned custom MCP server returns HTTP 503', async () => {
@@ -508,7 +502,7 @@ describe('ContinueAgentRuntime', () => {
         })
       })
 
-      const events = await collectEvents(runtime, 'execute')
+      const events = await collectEvents(runtime)
 
       expect(requests).toHaveBeenCalled()
       expect(mocks.runHost).toHaveBeenCalledOnce()
@@ -538,7 +532,7 @@ describe('ContinueAgentRuntime', () => {
       prepareCustomMcpTools: vi.fn(async () => { throw new Error('Custom MCP unavailable') }),
       revoke: vi.fn()
     }
-    const context = { requestId: randomUUID(), conversationId: 'conversation-1', messageId: 'message-1', workMode: 'execute' as const }
+    const context = { requestId: randomUUID(), conversationId: 'conversation-1', messageId: 'message-1',  }
     const runtime = new ContinueAgentRuntime({
       binaryPath: '', configPath: 'C:\\safe config\\continue.yaml', defaultWorkspace: process.cwd(),
       hostCacheRoot: 'C:\\safe\\continue-host',
@@ -566,7 +560,7 @@ describe('ContinueAgentRuntime', () => {
     })
     const runtime = createRuntime()
     try {
-      const events = await collectEvents(runtime, 'execute')
+      const events = await collectEvents(runtime)
       expect(events.filter(event => event.type === 'checklist')).toEqual([
         { type: 'checklist', requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef', checklist: { source: 'continue', items: [{ content: 'task', status: 'pending' }] } },
         { type: 'checklist', requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef', checklist: { source: 'continue', items: [] } }
@@ -673,7 +667,6 @@ describe('ContinueAgentRuntime', () => {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'test',
-        workMode: 'execute'
       },
       new AbortController().signal
     )
@@ -1048,7 +1041,6 @@ describe('ContinueAgentRuntime', () => {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'test',
-        workMode: 'execute'
       },
       new AbortController().signal
     )
@@ -1062,7 +1054,7 @@ describe('ContinueAgentRuntime', () => {
     await expect(hostAuthorize?.()).resolves.toBe('once')
   })
 
-  it('keeps non-interactive Ask runs read-only', async () => {
+  it('reuses the normal agent host for consecutive requests', async () => {
     const modes: Array<'chat' | 'agent' | undefined> = []
     const runtime = new ContinueAgentRuntime({
       binaryPath: '',
@@ -1079,17 +1071,17 @@ describe('ContinueAgentRuntime', () => {
       }
     })
 
-    await collectEvents(runtime, 'ask')
-    await collectEvents(runtime, 'execute')
+    await collectEvents(runtime)
+    await collectEvents(runtime)
 
-    expect(modes).toEqual(['chat', 'agent'])
+    expect(modes).toEqual(['agent'])
     const askAuthorize = mocks.runHost.mock.calls[0]?.[2] as
       | (() => Promise<string>)
       | undefined
     const executeAuthorize = mocks.runHost.mock.calls[1]?.[2] as
       | (() => Promise<string>)
       | undefined
-    await expect(askAuthorize?.()).resolves.toBe('deny')
+    await expect(askAuthorize?.()).resolves.toBe('once')
     await expect(executeAuthorize?.()).resolves.toBe('once')
   })
 
@@ -1108,7 +1100,7 @@ describe('ContinueAgentRuntime', () => {
       ]
     })
 
-    const events = await collectEvents(createRuntime(), 'execute')
+    const events = await collectEvents(createRuntime())
 
     expect(events.filter((event) => event.type === 'tool')).toEqual([
       expect.objectContaining({
@@ -1174,7 +1166,7 @@ describe('ContinueAgentRuntime', () => {
       }
     )
 
-    const events = await collectEvents(createRuntime(), 'execute')
+    const events = await collectEvents(createRuntime())
 
     expect(
       events.filter(
@@ -1375,7 +1367,6 @@ describe('ContinueAgentRuntime', () => {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'test',
-        workMode: 'execute'
       },
       new AbortController().signal
     )
@@ -1411,7 +1402,6 @@ describe('ContinueAgentRuntime', () => {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'test',
-        workMode: 'execute'
       },
       new AbortController().signal
     )
@@ -1456,7 +1446,6 @@ describe('ContinueAgentRuntime', () => {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'test',
-        workMode: 'execute'
       },
       new AbortController().signal
     )

@@ -15,7 +15,6 @@ const project: AssistantProject = {
     kind: 'local',
     rootPath: 'C:\\Workspace'
   },
-  defaultWorkMode: 'ask',
   kind: 'user',
   builtInDefault: true,
   status: 'active',
@@ -60,7 +59,6 @@ describe('getProjectDisplayText', () => {
         {
           ...project,
           rootPath: 'D:\\Moved',
-          defaultWorkMode: 'execute',
           runtimeSelection: { provider: 'continue' },
           updatedAt: '2026-08-01T00:00:01.000Z'
         },

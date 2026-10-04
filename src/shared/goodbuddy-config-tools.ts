@@ -55,8 +55,8 @@ export const goodbuddyConfigToolCatalog = {
     name: 'goodbuddy_config_apply',
     title: 'Apply a GoodBuddy configuration plan',
     description:
-      'Apply a previously planned request-scoped change in Execute mode. The plan must be unexpired and can be applied only once. Raw operations and secrets are not accepted. If a later operation fails, the result reports partial application and the remaining operations are not attempted.',
-    summary: 'Apply one request-scoped configuration plan in Execute mode.',
+      'Apply a previously planned request-scoped change. The plan must be unexpired and can be applied only once. Raw operations and secrets are not accepted. If a later operation fails, the result reports partial application and the remaining operations are not attempted.',
+    summary: 'Apply one request-scoped configuration plan.',
     access: 'write',
     inputSchema: goodbuddyConfigApplyInputSchema,
     outputSchema: goodbuddyConfigApplyOutputSchema

@@ -173,7 +173,7 @@ describe('RemoteWorkspaceAccess', () => {
       access.listDirectory({ path: '', maximumEntries: 10 })
     ).resolves.toEqual({
       path: '',
-      entries: [{ name: 'src', path: 'src', type: 'directory' }],
+      entries: [{ name: 'src', path: 'src', type: 'directory', modifiedAt: '2026-08-21T00:00:00.000Z' }],
       truncated: true
     })
     await expect(access.stat({ path: 'README.md' })).resolves.toEqual({

@@ -701,6 +701,7 @@ function entryFromMetadata(
     kind,
     ...(metadata.isFile() ? { byteLength: metadata.size } : {}),
     modifiedAt: metadata.mtime.toISOString(),
+    ...(metadata.birthtimeMs > 0 ? { createdAt: metadata.birthtime.toISOString() } : {}),
     executable: metadata.isFile() && (metadata.mode & 0o111) !== 0
   }
 }

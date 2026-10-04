@@ -30,11 +30,25 @@ export async function manageWorkspace(rootPath: string, input: WorkspaceManageme
     }
     return { kind: 'commitFiles', files }
   }
-  if (['createFile', 'createDirectory', 'move', 'delete', 'properties'].includes(action.kind) && 'path' in action) {
+  if (['importFile', 'createFile', 'createDirectory', 'move', 'delete', 'properties'].includes(action.kind) && 'path' in action) {
     const target = resolve(root, action.path)
     const parent = await realpath(dirname(target))
     if (target === root || !isPathInside(root, target) || !isPathInside(root, parent)) throw new Error('Path is outside the workspace')
-    if (action.kind === 'createFile') {
+    if (action.kind === 'importFile') {
+      if (!(await lstat(target)).isFile()) throw new Error('Import target is not a regular file')
+      const handle = await open(target, 'r+')
+      try {
+        if ((await handle.stat()).size !== action.offset) throw new Error('Import target size changed')
+        const data = Buffer.from(action.data, 'base64')
+        let written = 0
+        while (written < data.length) {
+          signal?.throwIfAborted()
+          const result = await handle.write(data, written, data.length - written, action.offset + written)
+          if (!result.bytesWritten) throw new Error('Import write made no progress')
+          written += result.bytesWritten
+        }
+      } finally { await handle.close() }
+    } else if (action.kind === 'createFile') {
       const handle = await open(target, 'wx')
       await handle.close()
     } else if (action.kind === 'createDirectory') {

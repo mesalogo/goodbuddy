@@ -1042,7 +1042,6 @@ export class CapabilityService {
       webSearch: webSearchCapabilitySchema.parse({
         provider: 'exa',
         enabled: state.webSearch.enabled,
-        availableIn: ['ask', 'execute'],
         tools: ['web_search', 'web_fetch']
       }),
       computerCapabilities: computerCapabilityCatalog.map((capability) =>

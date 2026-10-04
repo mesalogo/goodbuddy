@@ -6,15 +6,13 @@ import {
   CircleAlert,
   Copy,
   ExternalLink,
-  FileText,
   Maximize2,
   Minimize2,
   Pin,
   Plus,
   RefreshCw,
   ShieldAlert,
-  Square,
-  Upload
+  Square
 } from 'lucide-react'
 import {
   lazy,
@@ -40,7 +38,6 @@ import type { KnowledgeLibrary } from '../../shared/contracts'
 import type { SupervisionResultView, SupervisionTarget } from '../../shared/supervision-contracts'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type {
-  ApprovalDecision,
   BrowserLiveState,
   BrowserTabId
 } from '../../shared/contracts'
@@ -83,7 +80,6 @@ export type AssistantSidebarTab =
   | 'tasks'
   | 'workspace'
   | 'browser'
-  | 'results'
   | 'notes'
 
 export type SidebarArtifact = {
@@ -121,6 +117,7 @@ export type SidebarTaskDuration = {
 }
 
 export type RightAssistantSidebarProps = {
+  notify?: (input: import('./notifications').AppNotificationInput) => void
   notesEnabled?: boolean
   notesSettingsReady?: boolean
   notesOpenRequest?: number
@@ -130,7 +127,6 @@ export type RightAssistantSidebarProps = {
   open: boolean
   tab: AssistantSidebarTab
   approvals: PendingSidebarApproval[]
-  artifacts: SidebarArtifact[]
   schedules: AssistantSchedule[]
   tasks: AssistantTask[]
   conversationTitles: ReadonlyMap<string, string>
@@ -154,8 +150,6 @@ export type RightAssistantSidebarProps = {
   onReloadBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
   onStopLoadingBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
   onCreateCustomTask: () => void
-  onImportArtifacts: () => Promise<void>
-  onLoadArtifact: (artifactId: string) => Promise<void>
   onRefreshChanges: () => Promise<void>
   onLoadWorkspaceDiff: (path: string) => Promise<WorkspaceChanges>
   onListWorkspaceDirectory: (
@@ -170,10 +164,6 @@ export type RightAssistantSidebarProps = {
     type: 'file' | 'directory'
   ) => Promise<void>
   onRemoveSchedule: (scheduleId: string) => Promise<void>
-  onRespondApproval: (
-    approval: PendingSidebarApproval,
-    decision: ApprovalDecision
-  ) => void
   onRunSchedule: (scheduleId: string) => Promise<void>
   onSetScheduleEnabled: (
     scheduleId: string,
@@ -187,7 +177,6 @@ const tabIds: AssistantSidebarTab[] = [
   'tasks',
   'workspace',
   'browser',
-  'results',
   'notes'
 ]
 const emptyChangedFiles: WorkspaceChanges['files'] = []
@@ -196,9 +185,8 @@ const minimumPaneWidth = 160
 const keyboardResizeStep = 16
 const workbarStorageKey = 'goodbuddy.workbar-layout.v1'
 
-function SidebarApproval({ approval, onRespondApproval }: {
+function SidebarApproval({ approval }: {
   approval: PendingSidebarApproval
-  onRespondApproval: RightAssistantSidebarProps['onRespondApproval']
 }): React.JSX.Element {
   const { t } = useTranslation('workspace')
   return (
@@ -209,14 +197,6 @@ function SidebarApproval({ approval, onRespondApproval }: {
       <strong>{approval.title}</strong>
       <p>{approval.description}</p>
       {approval.toolName && <code>{approval.toolName}</code>}
-      <div className="assistant-sidebar__approval-actions">
-        <button className="secondary-button" onClick={() => onRespondApproval(approval, 'deny')} type="button">
-          {t('sidebar.tasks.deny')}
-        </button>
-        <button className="primary-button" onClick={() => onRespondApproval(approval, 'once')} type="button">
-          {t('sidebar.tasks.allowOnce')}
-        </button>
-      </div>
     </article>
   )
 }
@@ -818,7 +798,6 @@ function RightAssistantSidebarView({
   open,
   tab,
   approvals,
-  artifacts,
   schedules,
   tasks,
   conversationTitles,
@@ -842,15 +821,13 @@ function RightAssistantSidebarView({
   onReloadBrowser = async () => {},
   onStopLoadingBrowser = async () => {},
   onCreateCustomTask,
-  onImportArtifacts,
-  onLoadArtifact,
   onRefreshChanges,
+  notify,
   onLoadWorkspaceDiff,
   onListWorkspaceDirectory,
   onLoadWorkspaceFile,
   onOpenWorkspaceEntry,
   onRemoveSchedule,
-  onRespondApproval,
   onRunSchedule,
   onSetScheduleEnabled,
   onOpenTask,
@@ -865,14 +842,6 @@ function RightAssistantSidebarView({
     const seconds = Math.floor(Math.max(0, durationMs) / 1000)
     return `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor(seconds / 60 % 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
   }
-  const sidebarTimeFormatter = useMemo(
-    () =>
-      new Intl.DateTimeFormat(locale, {
-        hour: '2-digit',
-        minute: '2-digit'
-      }),
-    [locale]
-  )
   const tabs = useMemo(
     () =>
       tabIds.map((id) => ({
@@ -998,7 +967,6 @@ function RightAssistantSidebarView({
   )
   const liveSidebarWidth = useRef(sidebarWidth)
   const resizePointerId = useRef<number | undefined>(undefined)
-  const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [workspacePreview, setWorkspacePreview] = useState<
     | {
         projectId?: string
@@ -1081,8 +1049,6 @@ function RightAssistantSidebarView({
     }>()
   const terminalCloseCancelRef = useRef<HTMLButtonElement>(null)
   const lastExternalTabRef = useRef(tab)
-  const artifactPreview =
-    artifacts.find((artifact) => artifact.id === selectedArtifactId)
   const currentWorkspacePreview =
     workspacePreview?.projectId === workspaceProjectId
       ? workspacePreview
@@ -1857,7 +1823,6 @@ function RightAssistantSidebarView({
             state: 'ready',
             file
           })
-          setSelectedArtifactId(undefined)
         }
       })
       .finally(() => {
@@ -2224,7 +2189,7 @@ function RightAssistantSidebarView({
             {unassociatedApprovals.length > 0 && <>
               <h3><ShieldAlert size={15} />{t('sidebar.tasks.approvalsTitle')}</h3>
               {unassociatedApprovals.map((approval) => (
-                <SidebarApproval key={approval.approvalId} approval={approval} onRespondApproval={onRespondApproval} />
+                <SidebarApproval key={approval.approvalId} approval={approval} />
               ))}
             </>}
             <div className="task-center__list" id={`project-tasks-${instance.id}`} hidden={!taskListExpanded}>
@@ -2286,13 +2251,6 @@ function RightAssistantSidebarView({
                             })
                           : t('sidebar.tasks.unboundProject')}
                       </span>
-                      <span>
-                        {schedule
-                          ? t('task.mode.conversation')
-                          : task.workMode
-                            ? t(`task.mode.${task.workMode}`)
-                            : t('task.mode.unavailable')}
-                      </span>
                       <span>{t(`task.status.${task.status}`)}</span>
                       {duration && <span title={t('sidebar.tasks.stats.taskDuration')}>
                         {t('sidebar.tasks.stats.taskDuration')}: {formatDuration(duration.durationMs)}
@@ -2322,7 +2280,7 @@ function RightAssistantSidebarView({
                               : t('sidebar.tasks.notStarted'))}
                     </p>
                     {approvalsByTask.get(task.id)?.map((approval) => (
-                      <SidebarApproval key={approval.approvalId} approval={approval} onRespondApproval={onRespondApproval} />
+                      <SidebarApproval key={approval.approvalId} approval={approval} />
                     ))}
                     {schedule && (
                       <div className="task-center__actions">
@@ -2482,6 +2440,7 @@ function RightAssistantSidebarView({
               if (event.target instanceof Element) workspaceTrigger.current = event.target.closest('button') ?? undefined
             }}>
               <WorkspaceFilesPanel
+                notify={notify}
                 rootPath={currentProject?.rootPath}
                 onRefresh={onRefreshChanges}
                 changedFiles={workspaceChanges?.files ?? emptyChangedFiles}
@@ -2497,115 +2456,6 @@ function RightAssistantSidebarView({
               />
             </section>
           </>
-        )}
-
-        {instance.appId === 'results' && (
-          artifactPreview ? (
-            <section className="assistant-sidebar__preview">
-              <header>
-                <button
-                  aria-label={t('sidebar.results.back')}
-                  className="assistant-sidebar__back"
-                  onClick={() => {
-                    setSelectedArtifactId(undefined)
-                    setActionError('')
-                  }}
-                  type="button"
-                >
-                  <ChevronLeft size={14} />
-                  {t('sidebar.results.title')}
-                </button>
-                <span>
-                  <strong>{artifactPreview.title}</strong>
-                  <small>
-                    {sidebarTimeFormatter.format(
-                      new Date(artifactPreview.createdAt)
-                    )}
-                  </small>
-                </span>
-              </header>
-              <div className="markdown-body markdown-content">
-                {artifactPreview.mimeType.startsWith('image/') ? (
-                  artifactPreview.content ? (
-                    <img
-                      alt={artifactPreview.title}
-                      className="assistant-sidebar__image-preview"
-                      src={artifactPreview.content}
-                    />
-                  ) : (
-                    <p className="assistant-sidebar__empty">
-                      {t('sidebar.results.loadingImage')}
-                    </p>
-                  )
-                ) : artifactPreview.mimeType === 'text/html' ? (
-                  <iframe
-                    className="assistant-sidebar__web-preview"
-                    sandbox=""
-                    srcDoc={artifactPreview.content}
-                    title={artifactPreview.title}
-                  />
-                ) : artifactPreview.mimeType === 'application/json' ? (
-                  <pre>{artifactPreview.content}</pre>
-                ) : (
-                  <MarkdownRenderer>
-                    {artifactPreview.content}
-                  </MarkdownRenderer>
-                )}
-              </div>
-            </section>
-          ) : (
-            <section className="assistant-sidebar__section">
-              <h3>
-                <FileText size={15} />
-                {t('sidebar.results.sectionTitle')}
-              </h3>
-              <button
-                className="secondary-button assistant-sidebar__import"
-                onClick={() =>
-                  void runAction(
-                    onImportArtifacts,
-                    t('sidebar.errors.importResult')
-                  )
-                }
-                type="button"
-              >
-                <Upload size={13} />
-                {t('sidebar.results.import')}
-              </button>
-              {artifacts.length === 0 ? (
-                <p className="assistant-sidebar__empty">
-                  {t('sidebar.results.empty')}
-                </p>
-              ) : (
-                artifacts.map((artifact) => (
-                  <button
-                    className="assistant-sidebar__row"
-                    key={artifact.id}
-                    onClick={() => {
-                      setSelectedArtifactId(artifact.id)
-                      setActionError('')
-                      void runAction(
-                        () => onLoadArtifact(artifact.id),
-                        t('sidebar.errors.loadResult')
-                      )
-                    }}
-                    type="button"
-                  >
-                    <FileText size={15} />
-                    <span>
-                      <strong>{artifact.title}</strong>
-                      <small>
-                        {sidebarTimeFormatter.format(
-                          new Date(artifact.createdAt)
-                        )}
-                      </small>
-                    </span>
-                    <ChevronRight size={14} />
-                  </button>
-                ))
-              )}
-            </section>
-          )
         )}
 
         {instance.appId === 'browser' && (

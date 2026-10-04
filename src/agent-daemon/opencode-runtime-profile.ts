@@ -29,14 +29,12 @@ export type OpenCodeLaunchProfile = {
   args: readonly string[];
   cwd: string;
   env: Readonly<NodeJS.ProcessEnv>;
-  workMode: "ask" | "execute";
 };
 
 export function createOpenCodeLaunchProfile(input: {
   manifest: RemoteRuntimeBundleManifest;
   bundleDirectory: string;
   workspaceDirectory: string;
-  workMode: "ask" | "execute";
   modelBridge?: {
     agentExecutablePath: string;
     bridgeDirectory: string;
@@ -138,8 +136,6 @@ export function createOpenCodeLaunchProfile(input: {
             modelBridge.policy.model,
             "--supports-image-input",
             modelBridge.policy.supportsImageInput ? "true" : "false",
-            "--work-mode",
-            input.workMode,
             ...(modelBridge.sharedSessions ? ["--shared-sessions", "true"] : []),
             ...(isContinue ? ["--runtime-id", "continue"] : []),
             isContinue ? "--continue-entrypoint" : "--opencode-entrypoint",
@@ -153,7 +149,7 @@ export function createOpenCodeLaunchProfile(input: {
     ...(isContinue ? {} : { ...OPEN_CODE_RUNTIME_ENVIRONMENT,
       OPENCODE_CONFIG_DIR: join(bundleDirectory, "config", "opencode") }),
   };
-  const permission = input.workMode === "ask" ? "ask" : "allow";
+  const permission = "allow";
   const environment = {
     ...environmentBase,
     ...(isContinue ? {} : { OPENCODE_CONFIG_CONTENT: JSON.stringify({
@@ -168,7 +164,6 @@ export function createOpenCodeLaunchProfile(input: {
     processExecutable: runtimeCommand.executable,
     cwd: workspaceDirectory,
     env: environment,
-    workMode: input.workMode,
   };
 }
 

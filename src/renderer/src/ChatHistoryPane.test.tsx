@@ -133,7 +133,6 @@ function baseProps(messages: Message[], overrides: Partial<PaneProps> = {}): Pan
     onOpenImage: vi.fn(),
     onOpenImageModelSettings: vi.fn(),
     onReselectImageSources: vi.fn(),
-    onRespondApproval: vi.fn(async () => undefined),
     onRespondQuestion: vi.fn(async () => undefined),
     onRetry: vi.fn(),
     onScrollSnapshotChange: vi.fn(),

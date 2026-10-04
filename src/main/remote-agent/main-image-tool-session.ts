@@ -50,7 +50,7 @@ export class MainImageToolSession {
     try {
       this.wait.signal.throwIfAborted()
       if ('name' in call && call.name === 'save_image_read') {
-        if (!this.binding?.readForSave || this.binding.context.workMode !== 'execute') throw new Error('Saving images is unavailable in Ask mode')
+        if (!this.binding?.readForSave) throw new Error('Saving images is unavailable')
         const { artifactId, mimeType, offset } = call.input
         const cacheKey = `${artifactId}:${mimeType}`
         let bytes = this.saveCache?.key === cacheKey ? this.saveCache.bytes : undefined
@@ -71,7 +71,7 @@ export class MainImageToolSession {
           : await this.storyGraph.call(call.name, call.input, this.wait.signal)
         reply = remoteImageToolReplySchema.parse({ callId: call.callId, storyGraphResult })
       } else {
-        if (!this.binding || this.binding.context.workMode !== 'execute') throw new Error('Image tools are unavailable in Ask mode')
+        if (!this.binding) throw new Error('Image tools are unavailable')
         const result = await this.binding.call(call.input, call.callId, this.wait.signal)
         reply = remoteImageToolReplySchema.parse({ callId: call.callId, result })
       }

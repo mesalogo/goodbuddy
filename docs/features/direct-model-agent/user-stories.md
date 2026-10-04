@@ -31,7 +31,7 @@
 
 关联：FR-2、FR-3、FR-4。
 
-Given 当前项目位于 Windows 本机且选择直连模型 Execute，When 模型调用
+Given 当前项目位于 Windows 本机且选择直连模型，When 模型调用
 `process_execute`，Then GoodBuddy 使用可用 PowerShell 在项目目录运行命令，并返回
 Shell、目录、退出码、输出和耗时。
 
@@ -46,7 +46,7 @@ Bash，Bash 不可用时使用 Sh，工具契约保持不变且实际 Shell 明�
 
 关联：FR-3。
 
-Given 当前请求为本机 Execute，When 模型传入绝对路径或相对工作区路径，Then 命令在
+Given 当前请求在本机运行，When 模型传入绝对路径或相对工作区路径，Then 命令在
 解析后的目录执行，包括工作区外目录和符号链接目标，And 后续省略 `cwd` 时仍使用原工作区。
 When 目标不是目录或不存在，Then 命令不启动并返回准确错误。
 
@@ -86,15 +86,15 @@ Given 直连模型在 TLS 建连、网络传输或单次请求超时时失败且
 
 关联：FR-4、FR-12。
 
-Given 用户在 Ask 或 Execute 中处理本机项目，When 模型需要定位代码或读取大文件，Then
+Given 用户处理本机项目，When 模型需要定位代码或读取大文件，Then
 它可以使用随包 ripgrep 搜索内容或列出文件，并按行分页读取命中位置，不要求用户预装 `rg`。
-Given Ask 未启用知识库、联网搜索或编程委派，Then 工作区搜索和读取仍可使用，不要求额外批准。
+Given 未启用知识库、联网搜索或编程委派，Then 工作区搜索和读取仍可使用，不要求额外批准。
 
 ### US-B1 修改后运行验证
 
 关联：FR-2、FR-4。
 
-Given 用户选择 Execute 并要求修复代码，When 直连模型修改文件，Then 它可以运行聚焦测试
+Given 用户要求修复代码，When 直连模型修改文件，Then 它可以运行聚焦测试
 或检查命令，并根据真实结果继续修改，直到给出完成或阻塞结论。
 
 ### US-B2 使用本机工具环境
@@ -109,15 +109,15 @@ Given 用户选择了 GoodBuddy 托管或自定义 Node/Python，When 新命令�
 关联：FR-2、FR-9。
 
 Given 项目缺少所需命令或依赖，When Shell 返回错误，Then 工具保留退出码和错误文本，
-And 模型说明缺失项或在 Execute 中采取用户要求的安装步骤，不把环境缺失报告为模型故障。
+And 模型说明缺失项或采取用户要求的安装步骤，不把环境缺失报告为模型故障。
 
 ### US-B4 使用补丁修改文件
 
 关联：FR-4、FR-12。
 
-Given 用户选择 Execute，When 模型提交包含新增、修改或删除操作的工作区补丁，Then
+Given 用户要求修改文件，When 模型提交包含新增、修改或删除操作的工作区补丁，Then
 GoodBuddy 在写入前验证全部路径和上下文，逐文件原子写入，并返回实际修改的文件列表。
-Given 用户选择 Ask，Then 补丁工具不出现在清单中且伪造调用会被拒绝。
+Given 请求的执行空间不支持补丁，Then 工具不出现在清单中且伪造调用会被拒绝。
 
 ## 4. Epic C：Subagent 委派
 
@@ -126,16 +126,16 @@ Given 用户选择 Ask，Then 补丁工具不出现在清单中且伪造调用�
 关联：FR-5、FR-6。
 
 Given 父直连模型正在处理复杂请求，When 它调用 `subagent_delegate` 并给出独立任务，
-Then 子级使用同一项目、模型连接和 Execute 能力完成工作，And 最终结果返回父模型综合。
+Then 子级使用同一项目、模型连接和已启用能力完成工作，And 最终结果返回父模型综合。
 Given 父请求已有浏览器标签页，When 委派任务需要浏览器，Then 子级使用同一页；子级完成后，
 父模型仍可继续操作该页，不因子会话清理而关闭父页。
 
-### US-C2 Ask 中只读委派
+### US-C2 委派能力继承
 
 关联：FR-4、FR-5。
 
-Given 父请求为 Ask，When 模型委派分析任务，Then 子级保持 Ask，不能写文件或运行命令，
-And 不因 Subagent 存在而扩大权限。
+Given 父请求已有能力范围，When 模型委派分析任务，Then 子级不获得未启用能力，
+And 遵循用户明确的仅分析要求，不引入产品只读模式。
 
 ### US-C3 禁止递归委派
 
@@ -179,7 +179,7 @@ GoodBuddy 不注入 `process_execute` 或 `subagent_delegate`，And Runtime 原�
 关联：FR-1。
 
 Given 会话从直连模型切换为 Agent Runtime，When 下一次请求开始，Then 新请求只使用目标
-Runtime 的能力；切回直连模型时重新获得符合工作模式的直连工具。
+Runtime 的能力；切回直连模型时重新获得已注册的直连工具。
 
 ### US-D3 不在错误设备执行
 
@@ -192,5 +192,5 @@ Given 当前执行空间是 SSH 且远端进程后端尚不可用，When 解析�
 
 关联：FR-1、FR-4。
 
-Given 消息通道项目选择直连模型，When 合法消息触发 Ask 或 Execute，Then 使用与桌面会话
-相同的工具矩阵和通道既有工具策略，不维护第二套 Shell 能力配置。
+Given 消息通道项目选择直连模型，When 合法消息触发请求，Then 使用与桌面会话
+相同的工具矩阵和能力分配，不维护第二套 Shell 能力配置或通道审批策略。

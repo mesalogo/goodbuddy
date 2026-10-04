@@ -37,7 +37,6 @@ function setup() {
     conversationHint: "",
     conversationId: "a",
     conversationStore: stores.conversations,
-    effectiveWorkMode: "ask",
     executionRunning: false,
     externalInstances: [],
     fileSelectionProgress: undefined,
@@ -74,7 +73,6 @@ function setup() {
     voiceListening: false,
     voiceRecording: false,
     workspaceView: "chat",
-    workModeOptions: [],
   };
   const renders = vi.fn();
   const view = render(

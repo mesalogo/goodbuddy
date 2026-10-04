@@ -11,7 +11,7 @@ import {
   type ModelToolProviderLike,
   type ModelToolResult
 } from './model-tool-provider'
-import { ModelAgentRuntime } from './model-runtime'
+import { ModelAgentRuntime, noModelTools } from './model-runtime'
 import type { RuntimeEvent } from './runtime'
 import { SubagentScheduler } from '../assistant/subagent-scheduler'
 import { LocalWorkspaceAccess } from '../workspace'
@@ -30,6 +30,7 @@ it('preserves full supplied and cached history beyond message and byte caps', as
     { headers: { 'content-type': 'text/event-stream' } }
   ))
   const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
     apiKey: 'test-key',
     baseUrl: 'https://example.test',
     model: 'test-model',
@@ -227,6 +228,7 @@ describe('ModelAgentRuntime', () => {
   it('rejects images when the model connection disables image input', async () => {
     const fetcher = vi.fn<typeof fetch>()
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       baseUrl: 'http://127.0.0.1:11434/v1',
       model: 'qwen3',
       protocol: 'openai-chat-completions',
@@ -264,6 +266,7 @@ describe('ModelAgentRuntime', () => {
       })
     )
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-5',
@@ -363,6 +366,7 @@ describe('ModelAgentRuntime', () => {
       ]
       const fetcher = vi.fn<typeof fetch>(async () => response())
       const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
         apiKey: 'test-key',
         baseUrl: 'https://model.example/v1',
         model: 'test-model',
@@ -430,6 +434,7 @@ describe('ModelAgentRuntime', () => {
       })
     })
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -451,6 +456,7 @@ describe('ModelAgentRuntime', () => {
 
   it('rejects a successful HTTP response that does not contain generated test text', async () => {
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -492,6 +498,7 @@ describe('ModelAgentRuntime', () => {
       })
     })
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://model.example/v1',
       model: 'chat-model',
@@ -528,6 +535,7 @@ describe('ModelAgentRuntime', () => {
       })
     })
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'runtime-key',
       baseUrl: 'https://model.example/v1',
       model: 'runtime-model',
@@ -568,6 +576,7 @@ describe('ModelAgentRuntime', () => {
       })
     })
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -660,6 +669,7 @@ describe('ModelAgentRuntime', () => {
         })
       )
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -804,6 +814,7 @@ describe('ModelAgentRuntime', () => {
       })
     )
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -918,6 +929,7 @@ describe('ModelAgentRuntime', () => {
       { role: 'assistant' as const, content: 'd'.repeat(12_000) }
     ]
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -995,6 +1007,7 @@ describe('ModelAgentRuntime', () => {
       })
     )
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1057,6 +1070,7 @@ describe('ModelAgentRuntime', () => {
       })
     )
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1137,6 +1151,7 @@ describe('ModelAgentRuntime', () => {
         })
       )
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1230,6 +1245,7 @@ describe('ModelAgentRuntime', () => {
         )
       )
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1282,6 +1298,7 @@ describe('ModelAgentRuntime', () => {
       })
     })
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1331,6 +1348,7 @@ describe('ModelAgentRuntime', () => {
       ''
     ].join('\n')
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1379,6 +1397,7 @@ describe('ModelAgentRuntime', () => {
 
   it('rejects malformed SSE JSON instead of silently skipping it', async () => {
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1410,6 +1429,7 @@ describe('ModelAgentRuntime', () => {
   it('keeps the latest confirmed context usage when a model request is cancelled', async () => {
     const controller = new AbortController()
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1459,6 +1479,7 @@ describe('ModelAgentRuntime', () => {
 
   it('keeps the latest confirmed context usage when the model API fails', async () => {
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1517,6 +1538,7 @@ describe('ModelAgentRuntime', () => {
           })
         )
       const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
         apiKey: 'test-key',
         baseUrl: 'https://bigtoken.ai',
         model: 'sonnet-5',
@@ -1600,6 +1622,7 @@ describe('ModelAgentRuntime', () => {
       })
     )
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1643,6 +1666,7 @@ describe('ModelAgentRuntime', () => {
       })
     })
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1681,6 +1705,7 @@ describe('ModelAgentRuntime', () => {
       })
     })
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1728,6 +1753,7 @@ describe('ModelAgentRuntime', () => {
       }
     })
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1775,6 +1801,7 @@ describe('ModelAgentRuntime', () => {
           })
       )
       const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
         apiKey: 'test-key',
         baseUrl: 'https://bigtoken.ai',
         model: 'sonnet-5',
@@ -1812,6 +1839,7 @@ describe('ModelAgentRuntime', () => {
     try {
       let responseSignal: AbortSignal | null | undefined
       const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
         apiKey: 'test-key',
         baseUrl: 'https://bigtoken.ai',
         model: 'sonnet-5',
@@ -1899,6 +1927,7 @@ describe('ModelAgentRuntime', () => {
       }
     })
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'sonnet-5',
@@ -1935,6 +1964,7 @@ describe('ModelAgentRuntime', () => {
 
   it('preserves bounded provider error messages', async () => {
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
       model: 'claude-sonnet-5',
@@ -2064,7 +2094,7 @@ describe('ModelAgentRuntime', () => {
     ])
     expect(events.at(-2)).toMatchObject({ type: 'model-usage' })
     expect(events.at(-1)).toMatchObject({ type: 'done' })
-    expect(toolProvider.listTools).not.toHaveBeenCalled()
+    expect(toolProvider.listTools).toHaveBeenCalledOnce()
   })
 
   it('retries transient network failures for direct-model tool rounds', async () => {
@@ -2104,7 +2134,6 @@ describe('ModelAgentRuntime', () => {
             requestId: crypto.randomUUID(),
             conversationId: crypto.randomUUID(),
             prompt: '使用工具能力回答',
-            workMode: 'execute'
           },
           new AbortController().signal,
           async () => 'once'
@@ -2222,7 +2251,7 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
-  it('runs Ask workspace search, text reads and output paging with the production deny authorizer and no optional capabilities', async () => {
+  it('runs workspace search, text reads and output paging without generic approval or optional capabilities', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-ask-tools-'))
     const workspaceAccess = new LocalWorkspaceAccess(workspace)
     const processService = new LocalDirectModelProcessService()
@@ -2248,7 +2277,7 @@ describe('ModelAgentRuntime', () => {
       await writeFile(join(workspace, 'README.md'), 'readonly-marker\n')
       await writeFile(join(workspace, 'output.cjs'),
         "process.stdout.write('x'.repeat(110000) + 'retained-tail')")
-      // Seed output as a preceding Execute operation in the same conversation.
+      // Seed retained output from a preceding operation in the same conversation.
       const previous = await processService.execute(
         { command: 'node output.cjs', timeoutMs: 10_000 },
         { conversationId, workspace: workspaceAccess, signal }
@@ -2273,12 +2302,12 @@ describe('ModelAgentRuntime', () => {
       const events: RuntimeEvent[] = []
       for await (const event of runtime.run({
         requestId: crypto.randomUUID(), conversationId,
-        prompt: '搜索并读取文件，续读已有输出', workMode: 'ask'
+        prompt: '搜索并读取文件，续读已有输出',
       }, signal, authorize)) events.push(event)
 
       const firstBody = JSON.parse(String(fetcher.mock.calls[0]![1]!.body))
       expect(firstBody.tools.map((tool: { function: { name: string } }) =>
-        tool.function.name)).toEqual(['workspace_rg', 'workspace_read_text', 'output_read'])
+        tool.function.name)).toEqual(['workspace_rg', 'workspace_read_text', 'workspace_apply_patch', 'process_execute', 'output_read'])
       const secondBody = JSON.parse(String(fetcher.mock.calls[1]![1]!.body))
       const results = secondBody.messages.filter(
         (message: { role: string }) => message.role === 'tool'
@@ -2300,8 +2329,8 @@ describe('ModelAgentRuntime', () => {
     }
   })
 
-  it.each(['workspace_apply_patch', 'workspace_write_text', 'process_execute', 'browser_snapshot'])(
-    'rejects unlisted %s in Ask at the runtime boundary',
+  it.each(['workspace_write_text', 'browser_snapshot'])(
+    'rejects unregistered %s at the runtime boundary',
     async (name) => {
       const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-ask-denial-'))
       const fetcher = vi.fn<typeof fetch>(async () => Response.json({
@@ -2326,7 +2355,7 @@ describe('ModelAgentRuntime', () => {
         const consume = async () => {
           for await (const event of runtime.run({
             requestId: crypto.randomUUID(), conversationId: 'ask-denied',
-            prompt: '只读', workMode: 'ask'
+            prompt: '只读',
           }, new AbortController().signal, authorize)) void event
         }
         await expect(consume()).rejects.toThrow('未知工具')
@@ -2340,7 +2369,7 @@ describe('ModelAgentRuntime', () => {
   )
 
   it.each(['openai-chat-completions', 'openai-responses', 'anthropic-messages'] as const)(
-    'lists only workspace reads and retained output in plain Ask via %s',
+    'lists registered read, write, process and output tools via %s',
     async (protocol) => {
       const fetcher = vi.fn<typeof fetch>(async () => Response.json(
         protocol === 'anthropic-messages'
@@ -2356,11 +2385,11 @@ describe('ModelAgentRuntime', () => {
       try {
         for await (const event of runtime.run({
           requestId: crypto.randomUUID(), conversationId: 'plain-ask',
-          prompt: '只读', workMode: 'ask'
+          prompt: '只读',
         }, new AbortController().signal, async () => 'deny')) void event
         const body = JSON.parse(String(fetcher.mock.calls[0]![1]!.body))
         expect(body.tools.map((tool: { name?: string; function?: { name: string } }) =>
-          tool.function?.name ?? tool.name)).toEqual(['workspace_read_text', 'output_read'])
+          tool.function?.name ?? tool.name)).toEqual(['workspace_read_text', 'workspace_apply_patch', 'process_execute', 'output_read'])
       } finally {
         await runtime.dispose()
       }
@@ -2378,6 +2407,7 @@ describe('ModelAgentRuntime', () => {
       )
     )
     const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
       apiKey: 'test-key',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-5',
@@ -2558,7 +2588,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed130',
         conversationId: 'conversation-tools',
         prompt: '读取 README',
-        workMode: 'execute'
       },
       new AbortController().signal,
       authorize
@@ -2570,7 +2599,6 @@ describe('ModelAgentRuntime', () => {
     expect(toolProvider.listTools).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conversation-tools',
-        workMode: 'execute'
       }),
       expect.any(AbortSignal)
     )
@@ -2614,28 +2642,14 @@ describe('ModelAgentRuntime', () => {
         }
       ]
     })
-    expect(authorize).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scopeKey: 'model:builtin:workspace_read_text'
-      }),
-      expect.any(AbortSignal)
-    )
-    expect(toolProvider.getApproval).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'workspace_read_text' }),
-      args,
-      expect.any(String),
-      expect.objectContaining({
-        conversationId: 'conversation-tools',
-        workMode: 'execute'
-      })
-    )
+    expect(authorize).not.toHaveBeenCalled()
+    expect(toolProvider.getApproval).not.toHaveBeenCalled()
     expect(toolProvider.callTool).toHaveBeenCalledWith(
       'workspace_read_text',
       args,
       expect.any(AbortSignal),
       expect.objectContaining({
         conversationId: 'conversation-tools',
-        workMode: 'execute'
       })
     )
     expect(
@@ -2733,7 +2747,6 @@ describe('ModelAgentRuntime', () => {
           requestId: crypto.randomUUID(),
           conversationId: crypto.randomUUID(),
           prompt: 'Copy the file in the requested directory.',
-          workMode: 'execute'
         }, new AbortController().signal, async () => 'once')) {
           events.push(event)
         }
@@ -2749,7 +2762,7 @@ describe('ModelAgentRuntime', () => {
     }
   )
 
-  it('lets an Execute Subagent borrow the parent browser tab without changing tab ownership', async () => {
+  it('lets a Subagent borrow the parent browser tab without changing tab ownership', async () => {
     const conversationId = 'parent-browser-owner'
     const browserTabId = browserTabIdSchema.parse('00000000-0000-4000-8000-000000000203')
     let parentReleased = false
@@ -2797,14 +2810,14 @@ describe('ModelAgentRuntime', () => {
       const events: RuntimeEvent[] = []
       for await (const event of runtime.run({
         requestId: crypto.randomUUID(), conversationId, browserTabId,
-        prompt: '委派读取页面后继续使用页面', workMode: 'execute'
+        prompt: '委派读取页面后继续使用页面',
       }, new AbortController().signal, async () => 'once')) events.push(event)
       expect(fetcher).toHaveBeenCalledTimes(5)
       const childContext = listTools.mock.calls.find(
         ([context]) => context.delegationDepth === 1
       )![0]
       expect(childContext).toMatchObject({
-        workMode: 'execute', browserTabId,
+         browserTabId,
         browserConversationId: conversationId
       })
       expect(childContext.conversationId).not.toBe(conversationId)
@@ -2926,7 +2939,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed177',
         conversationId: 'conversation-direct-subagent',
         prompt: '委派子代理验证进程能力',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -3086,7 +3098,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed131',
         conversationId: 'conversation-long-agent',
         prompt: '连续读取三个文件',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -3260,7 +3271,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed133',
         conversationId: 'conversation-single-agent-round',
         prompt: '读取单个大文件',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -3359,7 +3369,6 @@ describe('ModelAgentRuntime', () => {
           requestId: 'a431666e-5ec8-45e6-beb4-654132eed132',
           conversationId: 'conversation-agent-summary-failure',
           prompt: '连续读取两个文件',
-          workMode: 'execute'
         },
         new AbortController().signal,
         async () => 'once'
@@ -3483,7 +3492,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed140',
         conversationId: 'conversation-streamed-tools',
         prompt: '读取 README',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -3518,7 +3526,6 @@ describe('ModelAgentRuntime', () => {
       expect.any(AbortSignal),
       expect.objectContaining({
         conversationId: 'conversation-streamed-tools',
-        workMode: 'execute'
       })
     )
     const secondBody = JSON.parse(
@@ -3596,7 +3603,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed143',
         conversationId: 'conversation-chat-fallback-id',
         prompt: '读取 README',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -3705,7 +3711,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed139',
         conversationId: 'conversation-dynamic-tools',
         prompt: '列出商机',
-        workMode: 'execute'
       },
       new AbortController().signal,
       vi.fn(async () => 'once' as const)
@@ -3782,7 +3787,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed151',
         conversationId: 'conversation-empty-refreshed-tools',
         prompt: '记录进度后完成',
-        workMode: 'execute'
       },
       new AbortController().signal,
       vi.fn(async () => 'once' as const)
@@ -3803,7 +3807,7 @@ describe('ModelAgentRuntime', () => {
     )
   })
 
-  it('runs only scoped knowledge in Ask without requesting approval', async () => {
+  it('runs scoped knowledge without requesting approval', async () => {
     const responses = [
       {
         choices: [
@@ -3892,7 +3896,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed139',
         conversationId: 'conversation-knowledge-ask',
         prompt: '查找发布说明',
-        workMode: 'ask',
         knowledgeCapabilityToken: 'main-only-token'
       },
       new AbortController().signal,
@@ -3904,7 +3907,6 @@ describe('ModelAgentRuntime', () => {
     expect(toolProvider.listTools).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conversation-knowledge-ask',
-        workMode: 'ask',
         knowledgeCapabilityToken: 'main-only-token'
       }),
       expect.any(AbortSignal)
@@ -3914,7 +3916,6 @@ describe('ModelAgentRuntime', () => {
       {},
       expect.any(AbortSignal),
       expect.objectContaining({
-        workMode: 'ask',
         knowledgeCapabilityToken: 'main-only-token'
       })
     )
@@ -3923,7 +3924,6 @@ describe('ModelAgentRuntime', () => {
       { query: 'release notes', limit: 3 },
       expect.any(AbortSignal),
       expect.objectContaining({
-        workMode: 'ask',
         knowledgeCapabilityToken: 'main-only-token'
       })
     )
@@ -3932,7 +3932,7 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
-  it('runs enabled web search in Ask without per-call approval', async () => {
+  it('runs enabled web search without per-call approval', async () => {
     const responses = [
       {
         choices: [
@@ -3999,7 +3999,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'f0370284-5933-4743-892c-98263b8a44ae',
         conversationId: 'conversation-web-search-ask',
         prompt: '查找当前版本',
-        workMode: 'ask'
       },
       new AbortController().signal,
       authorize
@@ -4011,7 +4010,7 @@ describe('ModelAgentRuntime', () => {
       'web_search',
       { query: 'current release', numResults: 2 },
       expect.any(AbortSignal),
-      expect.objectContaining({ workMode: 'ask' })
+      expect.objectContaining({  })
     )
     expect(authorize).not.toHaveBeenCalled()
     expect(toolProvider.getApproval).not.toHaveBeenCalled()
@@ -4077,7 +4076,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed130',
         conversationId: 'conversation-recoverable-tool-error',
         prompt: '继续浏览器操作',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -4155,7 +4153,6 @@ describe('ModelAgentRuntime', () => {
         requestId: crypto.randomUUID(),
         conversationId: 'conversation-workspace-read-recovery',
         prompt: 'Read README.md.',
-        workMode: 'ask'
       }, new AbortController().signal, async () => 'deny')) {
         events.push(event)
       }
@@ -4306,7 +4303,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed151',
         conversationId: 'conversation-responses-streaming-tools',
         prompt: '读取 README',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -4417,7 +4413,6 @@ describe('ModelAgentRuntime', () => {
           requestId: 'a431666e-5ec8-45e6-beb4-654132eed153',
           conversationId: 'conversation-responses-incomplete-tools',
           prompt: '读取 README',
-          workMode: 'execute'
         },
         new AbortController().signal,
         async () => 'once'
@@ -4520,7 +4515,6 @@ describe('ModelAgentRuntime', () => {
           '00000000-0000-4000-8000-000000000341',
           '00000000-0000-4000-8000-000000000342'
         ],
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -4720,7 +4714,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed141',
         conversationId: 'conversation-responses-fallback-id',
         prompt: '读取 README',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -4746,8 +4739,10 @@ describe('ModelAgentRuntime', () => {
     )
   })
 
-  it('fails closed when a direct-model tool is denied', async () => {
+  it('executes registered tools without inherited generic approval blocking', async () => {
+    let calls = 0
     const fetcher = vi.fn<typeof fetch>(async () =>
+      ++calls > 1 ? Response.json({ choices: [{ message: { role: 'assistant', content: 'done' } }] }) :
       Response.json({
         choices: [
           {
@@ -4785,7 +4780,6 @@ describe('ModelAgentRuntime', () => {
           requestId: 'a431666e-5ec8-45e6-beb4-654132eed131',
           conversationId: 'conversation-denied',
           prompt: '读取 secret',
-          workMode: 'execute'
         },
         new AbortController().signal,
         async () => 'deny'
@@ -4794,16 +4788,16 @@ describe('ModelAgentRuntime', () => {
       }
     }
 
-    await expect(consume()).rejects.toThrow('用户拒绝')
+    await expect(consume()).resolves.toBeUndefined()
     expect(
       events
         .filter((event) => event.type === 'tool')
         .map((event) => event.state)
-    ).toEqual(['pending', 'failed'])
-    expect(toolProvider.callTool).not.toHaveBeenCalled()
+    ).toEqual(['pending', 'running', 'completed'])
+    expect(toolProvider.callTool).toHaveBeenCalledOnce()
   })
 
-  it('uses Anthropic tool_use and tool_result messages in Execute mode', async () => {
+  it('uses Anthropic tool_use and tool_result messages', async () => {
     const responses = [
       {
         id: 'message-tool-1',
@@ -4845,7 +4839,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed132',
         conversationId: 'conversation-anthropic-tools',
         prompt: '读取 notes',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -5016,7 +5009,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed152',
         conversationId: 'conversation-anthropic-streaming-tools',
         prompt: '读取 notes',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -5137,7 +5129,6 @@ describe('ModelAgentRuntime', () => {
           requestId: 'a431666e-5ec8-45e6-beb4-654132eed154',
           conversationId: 'conversation-anthropic-invalid-tools',
           prompt: '读取 notes',
-          workMode: 'execute'
         },
         new AbortController().signal,
         async () => 'once'
@@ -5203,7 +5194,6 @@ describe('ModelAgentRuntime', () => {
           requestId: 'a431666e-5ec8-45e6-beb4-654132eed155',
           conversationId: 'conversation-anthropic-truncated-stream',
           prompt: '读取 notes',
-          workMode: 'execute'
         },
         new AbortController().signal,
         async () => 'once'
@@ -5244,7 +5234,6 @@ describe('ModelAgentRuntime', () => {
           requestId: 'a431666e-5ec8-45e6-beb4-654132eed156',
           conversationId: 'conversation-anthropic-truncated-json',
           prompt: '读取 notes',
-          workMode: 'execute'
         },
         new AbortController().signal,
         async () => 'once'
@@ -5296,7 +5285,6 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed142',
         conversationId: 'conversation-anthropic-fallback-id',
         prompt: '读取 notes',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -5365,7 +5353,6 @@ describe('ModelAgentRuntime', () => {
           requestId: crypto.randomUUID(),
           conversationId: crypto.randomUUID(),
           prompt: 'run',
-          workMode: 'execute'
         },
         controller.signal,
         async () => 'once'
@@ -5428,7 +5415,6 @@ describe('ModelAgentRuntime', () => {
           requestId: crypto.randomUUID(),
           conversationId: 'conversation-repeat',
           prompt: 'repeat',
-          workMode: 'execute'
         },
         controller.signal,
         async () => 'once'
@@ -5494,7 +5480,6 @@ describe('ModelAgentRuntime', () => {
         requestId: crypto.randomUUID(),
         conversationId: 'conversation-bulk-tools',
         prompt: 'run all tools',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -5562,7 +5547,6 @@ describe('ModelAgentRuntime', () => {
         requestId: crypto.randomUUID(),
         conversationId: 'conversation-many-rounds',
         prompt: 'continue until done',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'
@@ -5627,7 +5611,6 @@ describe('ModelAgentRuntime', () => {
       requestId: crypto.randomUUID(),
       conversationId: 'conversation-replacement',
       prompt: 'hello',
-      workMode: 'ask' as const
     }
     const firstProvider = createProvider()
     const firstRuntime = createRuntime(firstProvider)
@@ -5720,7 +5703,6 @@ describe('ModelAgentRuntime', () => {
         requestId: crypto.randomUUID(),
         conversationId: crypto.randomUUID(),
         prompt: 'run',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'once'

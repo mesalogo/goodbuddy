@@ -270,7 +270,7 @@ function shouldSuppressBecauseMainWindowVisible(mainWindow: BrowserWindow): bool
 ## 11. 与既有模块集成
 
 - 快速起草和拖放最终只调用主窗口渲染进程已有的“设置输入框文本”“追加附件”“激活
-  会话”“创建新会话”状态更新函数，不新建与 Ask/Execute、模型选择、Runtime 选择相关
+  会话”“创建新会话”状态更新函数，不新建与模型选择、Runtime 选择相关
   的任何路径。
 - 点击状态镜面/气泡打开 Task Center 复用现有 Task Center 导航（既有 IPC/路由，与托盘
   “新建对话”发送 `conversation:new` 事件属于同一类模式：Main 发送一个事件，主窗口

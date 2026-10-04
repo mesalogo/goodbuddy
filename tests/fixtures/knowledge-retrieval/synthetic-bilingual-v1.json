@@ -88,11 +88,11 @@
     },
     {
       "id": "doc-runtime",
-      "title": "Runtime modes",
+      "title": "Runtime execution",
       "chunks": [
         {
           "id": "chunk-runtime-main",
-          "content": "Ask mode is read-only at the runtime boundary. Execute mode can use tools only after the configured approval check."
+          "content": "Requests use the selected Runtime and enabled capabilities. Tools run with the execution account permissions without a product work mode or general approval gate."
         }
       ]
     },
@@ -137,12 +137,12 @@
       ]
     },
     {
-      "id": "doc-approval-secondary",
-      "title": "审批记录",
+      "id": "doc-permissions-secondary",
+      "title": "执行权限",
       "chunks": [
         {
-          "id": "chunk-approval-secondary",
-          "content": "执行敏感工具前应显示审批提示，并记录本次允许的操作范围。"
+          "id": "chunk-permissions-secondary",
+          "content": "工具使用执行账户的权限，仍须遵循用户指令，并保留取消和超时控制。"
         }
       ]
     },
@@ -315,7 +315,7 @@
     {
       "id": "query-runtime-zh",
       "language": "zh-CN",
-      "query": "询问模式是否允许写入，工具何时需要审批",
+      "query": "请求使用哪个运行时，工具执行由什么权限决定",
       "noAnswer": false,
       "judgments": [
         {
@@ -323,19 +323,19 @@
           "relevance": 3,
           "spans": [
             {
-              "text": "Ask mode is read-only at the runtime boundary."
+              "text": "Requests use the selected Runtime and enabled capabilities."
             },
             {
-              "text": "Execute mode can use tools only after the configured approval check."
+              "text": "Tools run with the execution account permissions without a product work mode or general approval gate."
             }
           ]
         },
         {
-          "chunkId": "chunk-approval-secondary",
+          "chunkId": "chunk-permissions-secondary",
           "relevance": 1,
           "spans": [
             {
-              "text": "执行敏感工具前应显示审批提示"
+              "text": "工具使用执行账户的权限"
             }
           ]
         }

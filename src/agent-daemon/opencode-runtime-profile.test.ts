@@ -24,15 +24,15 @@ afterEach(() => {
 })
 
 describe('OpenCode direct launch profile', () => {
-  it.each(['ask', 'execute'] as const)('launches Continue through the managed HTTP facade in %s', (workMode) => {
+  it('launches Continue through the managed HTTP facade without a mode option', () => {
     const fixture = createFixture()
     const manifest = remoteRuntimeBundleManifestSchema.parse({
       ...fixture.manifest, runtimeId: 'continue', provider: 'continue', runtimeVersion: '1.5.47',
       files: fixture.manifest.files.map(file => file.path === 'bin/opencode' ? { ...file, path: 'lib/continue/dist/cn.js' } : file),
       entrypoint: { ...fixture.manifest.entrypoint, identity: 'continue-acp', path: 'lib/continue/dist/cn.js', argvPrefix: [] }
     })
-    expect(() => createOpenCodeLaunchProfile({ ...fixture, manifest, workMode })).toThrow(/model bridge/)
-    const profile = createOpenCodeLaunchProfile({ ...fixture, manifest, workMode,
+    expect(() => createOpenCodeLaunchProfile({ ...fixture, manifest })).toThrow(/model bridge/)
+    const profile = createOpenCodeLaunchProfile({ ...fixture, manifest,
       modelBridge: {
         agentExecutablePath: resolve(fixture.bundleDirectory, 'agent', 'goodbuddy-agent'),
         bridgeDirectory: resolve(fixture.bundleDirectory, 'bridge'),
@@ -44,20 +44,21 @@ describe('OpenCode direct launch profile', () => {
     })
     expect(profile.args).toEqual(expect.arrayContaining([
       'model-bridge-helper', '--runtime-id', 'continue', '--continue-entrypoint',
-      resolve(fixture.bundleDirectory, 'lib/continue/dist/cn.js'), '--work-mode', workMode,
+      resolve(fixture.bundleDirectory, 'lib/continue/dist/cn.js'),
       '--shared-sessions', 'true'
     ]))
     expect(profile.args).not.toContain('acp')
+    expect(profile.args).not.toContain('--work-mode')
+    expect(profile).not.toHaveProperty('workMode')
     expect(profile.cwd).toBe(fixture.workspaceDirectory)
     expect(profile.env.OPENCODE_CONFIG_CONTENT === process.env.OPENCODE_CONFIG_CONTENT).toBe(true)
   })
 
-  it.each(['ask', 'execute'] as const)(
-    'disables unused automatic Git snapshots for %s',
-    (workMode) => {
+  it(
+    'disables unused automatic Git snapshots',
+    () => {
       const profile = createOpenCodeLaunchProfile({
-        ...createFixture(),
-        workMode
+        ...createFixture()
       })
       const config = JSON.parse(profile.env.OPENCODE_CONFIG_CONTENT!)
       expect(profile.env).toMatchObject({
@@ -66,15 +67,14 @@ describe('OpenCode direct launch profile', () => {
         OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_MODELS_FETCH: '1'
       })
       expect(config.snapshot).toBe(false)
-      expect(config.permission).toBe(workMode === 'ask' ? 'ask' : 'allow')
+      expect(config.permission).toBe('allow')
     }
   )
 
-  it('runs Ask directly in the Workspace', () => {
+  it('runs directly in the Workspace with normal tools available', () => {
     const fixture = createFixture()
     const profile = createOpenCodeLaunchProfile({
       ...fixture,
-      workMode: 'ask'
     })
 
     expect(profile.executable).toBe(
@@ -91,20 +91,19 @@ describe('OpenCode direct launch profile', () => {
     expect(
       JSON.parse(profile.env.OPENCODE_CONFIG_CONTENT!)
     ).toMatchObject({
-      permission: 'ask',
+      permission: 'allow',
       agent: {
         build: {
-          permission: 'ask'
+          permission: 'allow'
         }
       }
     })
   })
 
-  it('runs Execute directly with the SSH account environment', () => {
+  it('runs directly with the SSH account environment', () => {
     const fixture = createFixture()
     const execute = createOpenCodeLaunchProfile({
       ...fixture,
-      workMode: 'execute'
     })
 
     expect(execute.executable).toBe(
@@ -158,7 +157,6 @@ describe('OpenCode direct launch profile', () => {
     const fixture = createFixture()
     const profile = createOpenCodeLaunchProfile({
       ...fixture,
-      workMode: 'ask'
     })
     expect(profile.args.join('\0')).not.toContain('ANTHROPIC_API_KEY')
 
@@ -169,14 +167,12 @@ describe('OpenCode direct launch profile', () => {
           ...fixture.manifest,
           allowedEnvironmentNames: ['HOME']
         }),
-        workMode: 'ask'
       })
     ).toThrow(/environment allowlist/iu)
     expect(() =>
       createOpenCodeLaunchProfile({
         ...fixture,
         workspaceDirectory: 'relative/workspace',
-        workMode: 'ask'
       })
     ).toThrow(/normalized absolute/iu)
   })
@@ -201,9 +197,8 @@ describe('OpenCode direct launch profile', () => {
         createOpenCodeLaunchProfile({
           ...fixture,
           ...conflict,
-          workMode: 'ask'
         })
-      ).toMatchObject({ workMode: 'ask' })
+      ).toMatchObject({ cwd: conflict.workspaceDirectory })
     }
   })
 
@@ -231,7 +226,6 @@ describe('OpenCode direct launch profile', () => {
     )
     const profile = createOpenCodeLaunchProfile({
       ...fixture,
-      workMode: 'ask',
       modelBridge: {
         agentExecutablePath,
         bridgeDirectory,
@@ -259,8 +253,6 @@ describe('OpenCode direct launch profile', () => {
       'private-model',
       '--supports-image-input',
       'false',
-      '--work-mode',
-      'ask',
       '--opencode-entrypoint',
       resolve(fixture.bundleDirectory, 'bin', 'opencode')
     ])
@@ -273,7 +265,6 @@ describe('OpenCode direct launch profile', () => {
 
     const executeProfile = createOpenCodeLaunchProfile({
       ...fixture,
-      workMode: 'execute',
       modelBridge: {
         agentExecutablePath,
         bridgeDirectory,
@@ -297,7 +288,7 @@ describe('OpenCode direct launch profile', () => {
     )
   })
 
-  it('allows Execute to use a workspace that contains managed Runtime paths', () => {
+  it('allows a workspace that contains managed Runtime paths', () => {
     const fixture = createFixture()
     const workspaceDirectory = resolve(
       fixture.workspaceDirectory,
@@ -342,24 +333,10 @@ describe('OpenCode direct launch profile', () => {
         manifest: fixture.manifest,
         bundleDirectory,
         workspaceDirectory,
-        workMode: 'execute',
         modelBridge
       })
     ).toMatchObject({
       cwd: workspaceDirectory,
-      workMode: 'execute'
-    })
-    expect(
-      createOpenCodeLaunchProfile({
-        manifest: fixture.manifest,
-        bundleDirectory,
-        workspaceDirectory,
-        workMode: 'ask',
-        modelBridge
-      })
-    ).toMatchObject({
-      cwd: workspaceDirectory,
-      workMode: 'ask'
     })
   })
 })

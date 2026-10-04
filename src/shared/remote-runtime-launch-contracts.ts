@@ -362,7 +362,6 @@ export const remoteRuntimeStartPayloadSchema = z
   .object({
     bindingId: agentIdentifierSchema,
     requestId: agentIdentifierSchema,
-    workMode: z.enum(['ask', 'execute']),
     runtimeId: agentIdentifierSchema,
     adapterParameters: remoteRuntimeAdapterParametersSchema,
     deadlineAt: remoteRuntimeDeadlineSchema,

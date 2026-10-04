@@ -3,7 +3,8 @@ import { z } from 'zod'
 
 // PERF-15/16 first slice: hot read paths run in a read-only worker per database
 // file so a long scan does not block the Main event loop. The worker opens its
-// own read-only connection (WAL), so it observes committed data only.
+// own read-only connection (WAL), so it observes committed data only. The narrow
+// supervision writer reuses this transport and waits for cancellation settlement.
 
 export type ReadonlyQueryKind = 'assistant' | 'knowledge'
 
@@ -57,7 +58,7 @@ export class ReadonlyQueryReader {
   private readonly pending = new Map<number, Pending>()
 
   constructor(
-    private readonly kind: ReadonlyQueryKind,
+    private readonly kind: ReadonlyQueryKind | 'supervision',
     private readonly databasePath: string,
     private readonly workerPath: string,
     private readonly now: () => number = Date.now
@@ -95,6 +96,8 @@ export class ReadonlyQueryReader {
     return new Promise<T>((resolve, reject) => {
       const onAbort = (): void => {
         Atomics.store(flag, 0, 1)
+        // A writer must acknowledge cancellation before its caller releases the slot.
+        if (this.kind === 'supervision') return
         const request = this.pending.get(id)
         if (!request) return
         this.pending.delete(id)
@@ -104,8 +107,8 @@ export class ReadonlyQueryReader {
       }
       signal?.addEventListener('abort', onAbort, { once: true })
       this.pending.set(id, {
-        resolve: resolve as (value: unknown) => void,
-        reject,
+        resolve: value => signal?.aborted ? reject(signal.reason) : resolve(value as T),
+        reject: error => reject(signal?.aborted ? signal.reason : error),
         cleanup: () => signal?.removeEventListener('abort', onAbort)
       })
       // Keep the process alive only while a request is outstanding.
@@ -145,11 +148,15 @@ export class ReadonlyQueryReader {
       this.disabledUntil = this.now() + RESTART_BACKOFF_MS
       const pending = [...this.pending.values()]
       this.pending.clear()
-      for (const request of pending) {
-        request.cleanup()
-        request.reject(new ReadonlyWorkerUnavailableError(error.message, { cause: error }))
+      const reject = (): void => {
+        for (const request of pending) {
+          request.cleanup()
+          request.reject(new ReadonlyWorkerUnavailableError(error.message, { cause: error }))
+        }
       }
-      void worker.terminate()
+      const terminated = worker.terminate()
+      if (this.kind === 'supervision') void terminated.then(reject, reject)
+      else { reject(); void terminated }
     }
     worker.once('error', failed)
     worker.once('exit', (code) => failed(new Error(`Readonly query worker exited (${code})`)))
@@ -173,11 +180,15 @@ export class ReadonlyQueryReader {
     this.worker = undefined
     const pending = [...this.pending.values()]
     this.pending.clear()
-    for (const request of pending) {
-      request.cleanup()
-      request.reject(new ReadonlyWorkerUnavailableError('Readonly query reader closed'))
+    const reject = (): void => {
+      for (const request of pending) {
+        request.cleanup()
+        request.reject(new ReadonlyWorkerUnavailableError('Readonly query reader closed'))
+      }
     }
-    if (worker) void worker.terminate()
+    const terminated = worker?.terminate()
+    if (this.kind === 'supervision' && terminated) void terminated.then(reject, reject)
+    else { reject(); if (terminated) void terminated }
   }
 }
 

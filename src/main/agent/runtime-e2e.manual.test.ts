@@ -15,7 +15,6 @@ import { OpenCodeRuntime } from './opencode-runtime'
 import { AgentRuntimeController } from './runtime-controller'
 import type { RuntimeEvent } from './runtime'
 import type {
-  ModelToolCallContext,
   ModelToolDefinition,
   ModelToolProviderLike,
   ModelToolResult
@@ -187,14 +186,8 @@ class RealModelConfigToolProvider implements ModelToolProviderLike {
     private readonly requestId: string
   ) {}
 
-  async listTools(
-    context: ModelToolCallContext
-  ): Promise<ModelToolDefinition[]> {
+  async listTools(): Promise<ModelToolDefinition[]> {
     return goodbuddyConfigTools
-      .filter(
-        (tool) =>
-          context.workMode === 'execute' || tool.access === 'read'
-      )
       .map((tool) => {
         const schema = z.toJSONSchema(tool.inputSchema, {
           target: 'draft-7'
@@ -375,7 +368,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       }))
       try {
         const output = await collectText(runtime.run({
-          requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), workMode: 'ask',
+          requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(),
           prompt: 'Reply only with the verification code from the beginning of this conversation. Do not use tools.', history
         }, new AbortController().signal))
         expect(output).toContain(marker)
@@ -406,7 +399,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId: crypto.randomUUID(),
               conversationId: crypto.randomUUID(),
-              workMode: 'ask',
               prompt:
                 'Return exactly this text and nothing else: MODEL_E2E_OK'
             },
@@ -456,7 +448,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId: crypto.randomUUID(),
               conversationId: crypto.randomUUID(),
-              workMode: 'ask',
               prompt:
                 'Return exactly this text and nothing else: CUSTOM_REQUEST_E2E_OK'
             },
@@ -480,9 +471,9 @@ describe.runIf(enabled)('runtime end-to-end', () => {
     180_000
   )
 
-  it.each(['ask', 'execute'] as const)(
-    'searches native rg arguments and reads hidden output through real model in %s',
-    async (workMode) => {
+  it(
+    'searches native rg arguments and reads hidden output through real model',
+    async () => {
       const marker = `RG_TAIL_${crypto.randomUUID()}`
       await writeFile(join(workspace, 'native-rg.txt'), `target ${' '.repeat(110 * 1024)}${marker}\n`)
       const upstreamUrl = protocol === 'anthropic-messages'
@@ -513,7 +504,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       })
       try {
         const events = await collectEvents(runtime.run({
-          requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), workMode,
+          requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(),
           prompt: [
             'Call workspace_rg exactly once with args ["--no-line-number", "-F", "target", "native-rg.txt"].',
             'The result has a hidden RG_TAIL_ marker after a long line of spaces.',
@@ -533,7 +524,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         expect(events.some((event) => event.type === 'tool' && event.state === 'completed')).toBe(true)
         expect(events.at(-1)).toMatchObject({ type: 'done' })
       } finally {
-        console.info(JSON.stringify({ boundary: 'native-rg-pagination', workMode,
+        console.info(JSON.stringify({ boundary: 'native-rg-pagination',
           realModelCalls: probe.observations.length, toolCalls: observed.map((item) => item.name) }))
         await runtime.dispose()
         await probe.close()
@@ -584,7 +575,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       const events: RuntimeEvent[] = []
       try {
         for await (const event of runtime.run({
-          requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), workMode: 'execute',
+          requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(),
           prompt: [
             'Verify output pagination using only the supplied tools.',
             'Run exactly this command once with process_execute: node paged-output-e2e.cjs',
@@ -661,7 +652,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
           {
             requestId: crypto.randomUUID(),
             conversationId: crypto.randomUUID(),
-            workMode: 'execute',
             prompt: [
               'Complete this verification entirely with GoodBuddy tools.',
               '1. Use workspace_apply_patch to create programming-e2e.cjs with an intentional failing Node assertion.',
@@ -754,7 +744,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId: crypto.randomUUID(),
               conversationId: crypto.randomUUID(),
-              workMode: 'ask',
               prompt:
                 'Return exactly this text and nothing else: LOCAL_HISTORY_ID_E2E_OK',
               history: [
@@ -813,7 +802,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
           {
             requestId: crypto.randomUUID(),
             conversationId: crypto.randomUUID(),
-            workMode: 'ask',
             prompt
           },
           new AbortController().signal
@@ -824,7 +812,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
           {
             requestId: crypto.randomUUID(),
             conversationId: crypto.randomUUID(),
-            workMode: 'ask',
             prompt,
             images: [
               {
@@ -906,7 +893,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
           {
             requestId: crypto.randomUUID(),
             conversationId: crypto.randomUUID(),
-            workMode: 'ask',
             prompt:
               'Reply with exactly one line beginning CONTEXT_COMPRESSION_E2E_OK, followed by the project codename and deploy region found in the prior conversation.',
             history: [
@@ -1022,7 +1008,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
           {
             requestId: crypto.randomUUID(),
             conversationId: crypto.randomUUID(),
-            workMode: 'ask',
             prompt,
             history
           },
@@ -1102,7 +1087,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
           {
             requestId: crypto.randomUUID(),
             conversationId: crypto.randomUUID(),
-            workMode: 'execute',
             prompt:
               'Call record_progress sequentially for steps 1, 2, and 3. Wait for each result before calling the next step. After all three results, do not call tools again and reply with LONG_AGENT_COMPRESSION_E2E_OK.'
           },
@@ -1195,7 +1179,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId,
               conversationId: crypto.randomUUID(),
-              workMode: 'execute',
               prompt:
                 'Use GoodBuddy configuration tools. First discover capabilities and examples, then read the sanitized current configuration, then create (but do not apply) a plan that sets checkUpdatesOnStartup to false. Finish with CONFIG_PLAN_OK and the plan risk. Never call apply.'
             },
@@ -1250,7 +1233,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId: crypto.randomUUID(),
               conversationId: crypto.randomUUID(),
-              workMode: 'ask',
               prompt:
                 'Write a detailed technical essay of at least 3000 words.'
             },
@@ -1310,7 +1292,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId: crypto.randomUUID(),
               conversationId: crypto.randomUUID(),
-              workMode: 'execute',
               prompt:
                 'Create opencode-output.txt in the current workspace with exactly OPENCODE_E2E_OK. Use the file tools and finish only after verifying the file.'
             },
@@ -1368,7 +1349,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
               {
                 requestId: crypto.randomUUID(),
                 conversationId,
-                workMode: 'ask',
                 prompt:
                   'Remember that the verification codename is NATIVE-COMPACT-739. Reply with exactly OPENCODE_COMPACT_READY.'
               },
@@ -1415,7 +1395,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
               {
                 requestId: crypto.randomUUID(),
                 conversationId,
-                workMode: 'ask',
                 prompt:
                   'Return exactly the verification codename from before and nothing else.'
               },
@@ -1466,7 +1445,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId: crypto.randomUUID(),
               conversationId: crypto.randomUUID(),
-              workMode: 'execute',
               prompt:
                 'Create continue-output.txt in the current workspace with exactly CONTINUE_E2E_OK. Use tools and finish only after verifying the file.'
             },
@@ -1526,7 +1504,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId: crypto.randomUUID(),
               conversationId: crypto.randomUUID(),
-              workMode: 'execute',
               prompt:
                 'Use the assigned custom MCP tool to create a neon-ruins game blueprint with seed opencode-live and targetCount 5. Then reply with OPENCODE_MCP_E2E_OK and the blueprint title.'
             },
@@ -1621,7 +1598,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId: crypto.randomUUID(),
               conversationId: crypto.randomUUID(),
-              workMode: 'execute',
               prompt:
                 'Use the assigned custom MCP tool to create a neon-ruins game blueprint with seed continue-live and targetCount 5. Then reply with CONTINUE_MCP_E2E_OK and the blueprint title.'
             },
@@ -1755,7 +1731,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             {
               requestId,
               conversationId,
-              workMode: 'execute',
               knowledgeCapabilityToken: capabilityToken,
               prompt:
                 `Call browser_navigate exactly once with ${targetUrl}. ` +

@@ -15,6 +15,42 @@ afterEach(async () => {
 })
 
 describe('WorkspaceFilesPanel', () => {
+  it('imports into the selected directory, reports partial failure, refreshes and prevents duplicate submission', async () => {
+    let complete!: (result: { imported: string[]; failed: { name: string; error: string }[] }) => void
+    const importFiles = vi.fn(() => new Promise<{ imported: string[]; failed: { name: string; error: string }[] }>(resolve => { complete = resolve }))
+    Object.assign(window.goodbuddy.workspace, { importFiles })
+    const notify = vi.fn()
+    const list = vi.fn(async (path: string) => ({ path, truncated: false, entries: path ? [] : [{ name: 'docs', path: 'docs', type: 'directory' as const }] }))
+    render(<WorkspaceFilesPanel projectId="project" changedFiles={[]} notify={notify} onListDirectory={list} onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'docs' }))
+    expect(screen.getByText('目标目录：docs')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '导入文件' }))
+    expect(screen.getByRole('button', { name: '正在导入…' })).toBeDisabled()
+    expect(importFiles).toHaveBeenCalledExactlyOnceWith('project', 'docs')
+    await act(async () => { complete({ imported: ['docs/new.txt'], failed: [{ name: 'existing.txt', error: 'Destination already exists' }] }) })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '导入文件' })).toBeEnabled()
+      expect(notify).toHaveBeenCalledWith({ tone: 'error', message: expect.stringContaining('existing.txt: Destination already exists') })
+      expect(list.mock.calls.filter(([path]) => path === 'docs').length).toBeGreaterThan(1)
+    })
+  })
+
+  it('sorts siblings by real modification times, keeps directories first and omits unavailable creation times', async () => {
+    const { container } = render(<WorkspaceFilesPanel projectId="project" changedFiles={[]} onLoadDiff={vi.fn()} onOpenFile={vi.fn()}
+      onListDirectory={async path => ({ path, truncated: false, entries: [
+        { name: 'old', path: 'old', type: 'file', modifiedAt: '2026-01-01T00:00:00.000Z' },
+        { name: 'new', path: 'new', type: 'file', modifiedAt: '2026-10-01T00:00:00.000Z' },
+        { name: 'unknown', path: 'unknown', type: 'file' },
+        { name: 'docs', path: 'docs', type: 'directory' }
+      ] })} />)
+    fireEvent.click(await screen.findByRole('button', { name: '修改时间' }))
+    const names = () => [...container.querySelectorAll('.workspace-files__row')].map(row => row.textContent)
+    expect(names()).toEqual(['docs', 'new', 'old', 'unknown'])
+    fireEvent.click(screen.getByRole('button', { name: '修改时间 ↓' }))
+    expect(names()).toEqual(['docs', 'old', 'new', 'unknown'])
+    expect(screen.queryByRole('button', { name: '创建时间' })).not.toBeInTheDocument()
+    expect(container.querySelector('time[datetime="2026-01-01T00:00:00.000Z"]')).toBeInTheDocument()
+  })
   it('groups view switching and refresh, and only shows actions for the active view', async () => {
     const onRefresh = vi.fn(async () => undefined)
     const { container } = render(<WorkspaceFilesPanel projectId="project" isRepository rootPath="D:\\workspace\\demo"

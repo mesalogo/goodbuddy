@@ -85,7 +85,7 @@ void app.whenReady().then(async () => {
     const observation = { stage, inputUtf16: prompt.length, inputBytes: Buffer.byteLength(prompt), done: false }
     metrics.calls.push(observation); persist()
     try {
-      for await (const event of runtime.run({ requestId: id, conversationId: id, workMode: 'ask', prompt }, AbortSignal.any([signal, AbortSignal.timeout(600000)]), async () => 'deny')) {
+      for await (const event of runtime.run({ requestId: id, conversationId: id, prompt }, AbortSignal.any([signal, AbortSignal.timeout(600000)]), async () => 'deny')) {
         if (event.type === 'text') { firstTextMs ??= performance.now() - start; text += event.delta }
         if (event.type === 'done') done = true
         if (event.type === 'model-usage') usage.push({ inputTokens: event.inputTokens, outputTokens: event.outputTokens, cacheReadTokens: event.cacheReadTokens })

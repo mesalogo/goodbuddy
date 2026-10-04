@@ -70,7 +70,7 @@ it.skipIf(!existsSync(binaryPath))(
       let text = ''
       let lastEventType: string | undefined
       for await (const event of runtime.run({
-        requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), workMode: 'execute',
+        requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(),
         prompt: 'Reply MCP_UNAVAILABLE_OK without tools.'
       }, controller.signal)) {
         if (event.type === 'text') text += event.delta
@@ -171,7 +171,7 @@ it.skipIf(!existsSync(binaryPath))(
     try {
       let text = ''
       for await (const event of runtime.run({
-        requestId, conversationId: crypto.randomUUID(), workMode: 'ask',
+        requestId, conversationId: crypto.randomUUID(),
         prompt: 'Reply RETRY_OK without tools.', knowledgeCapabilityToken: token
       }, controller.signal)) {
         if (event.type === 'text') text += event.delta
@@ -300,7 +300,7 @@ it.skipIf(!existsSync(binaryPath))(
       let text = ''
       try {
         for await (const event of runtime.run({
-          requestId: crypto.randomUUID(), conversationId, workMode: 'ask',
+          requestId: crypto.randomUUID(), conversationId,
           prompt: 'Reply LATE_OK without tools.', knowledgeCapabilityToken: token
         }, controller.signal)) {
           if (event.type === 'text') text += event.delta
@@ -442,7 +442,7 @@ it.skipIf(!existsSync(binaryPath))(
       let text = ''
       try {
         for await (const event of runtime.run({
-          requestId, conversationId, workMode: 'ask',
+          requestId, conversationId,
           prompt: cancel ? 'CANCEL_LIFECYCLE' : 'Reply LIFECYCLE_OK without tools.',
           knowledgeCapabilityToken: token
         }, controller.signal)) {

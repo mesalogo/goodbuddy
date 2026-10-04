@@ -156,7 +156,6 @@ type ActivePrompt = {
   operationId: string
   sessionId: string
   bindingId: string
-  workMode: 'ask' | 'execute'
   authorize?: RuntimeAuthorizer
   updates: QueuedSessionUpdate[]
   pendingUpdateBytes: number
@@ -349,10 +348,8 @@ function usageEvent(
 /**
  * Generic ACP runtime over an authenticated remote virtual channel.
  *
- * The class deliberately does not claim confinement from ACP itself. Ask
- * permits only one-shot native reads in addition to the OpenCode Ask
- * permission profile. Execute follows the user's full authorization for the
- * selected SSH account.
+ * Native tools run with the selected SSH account's permissions. ACP does not
+ * provide operating-system confinement.
  */
 export class AcpRemoteRuntime implements AgentRuntime {
   readonly requiresToolApproval = false
@@ -1101,7 +1098,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
     request: AgentExecutionRequest,
     modelBridge?: RemoteModelBridgeSession
   ): RemotePromptOperationPreparation {
-    const workMode = request.workMode === 'execute' ? 'execute' : 'ask'
     const deadlineAt =
       this.promptTimeoutMs === undefined
         ? UNBOUNDED_REMOTE_PROMPT_DEADLINE
@@ -1120,7 +1116,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
       bindingId: binding.bindingId,
       operationId: request.requestId,
       requestId: request.requestId,
-      workMode,
       controllerId: binding.controllerId,
       controllerGeneration: binding.controllerGeneration,
       connectionGeneration: context.channel.generation,
@@ -2032,16 +2027,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
     const allowAlways = permission.options.find(
       (option) => option.kind === 'allow_always'
     )
-    if (prompt.workMode === 'ask') {
-      return permission.toolCall.kind === 'read' && allowOnce
-        ? {
-            outcome: {
-              outcome: 'selected',
-              optionId: allowOnce.optionId
-            }
-          }
-        : permissionRejection(permission)
-    }
     if (!prompt.authorize) {
       const selected = allowAlways ?? allowOnce
       return selected
@@ -2535,10 +2520,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
       operationId,
       sessionId: session.sessionId,
       bindingId: binding.bindingId,
-      workMode:
-        request.workMode === 'execute' ? 'execute' : 'ask',
-      authorize:
-        request.workMode === 'execute' ? authorize : undefined,
+      authorize,
       updates: [],
       pendingUpdateBytes: 0,
       inboundPaused: false,
@@ -2998,10 +2980,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
       operationId,
       sessionId: session.sessionId,
       bindingId: binding.bindingId,
-      workMode:
-        request.workMode === 'execute' ? 'execute' : 'ask',
-      authorize:
-        request.workMode === 'execute' ? authorize : undefined,
+      authorize,
       updates: [],
       pendingUpdateBytes: 0,
       inboundPaused: false,

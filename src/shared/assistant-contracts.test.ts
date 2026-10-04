@@ -30,7 +30,6 @@ const untouchedProject: AssistantProject = {
     kind: 'local',
     rootPath: 'C:\\Workspace'
   },
-  defaultWorkMode: 'ask',
   kind: 'user',
   builtInDefault: true,
   status: 'active',
@@ -137,7 +136,6 @@ describe('isUntouchedBuiltInDefaultProject', () => {
       isUntouchedBuiltInDefaultProject({
         ...untouchedProject,
         rootPath: 'D:\\Moved',
-        defaultWorkMode: 'execute',
         runtimeSelection: { provider: 'continue' },
         status: 'archived',
         updatedAt: '2026-08-01T00:00:01.000Z'
@@ -150,7 +148,6 @@ describe('isUntouchedBuiltInDefaultProject', () => {
       name: builtInDefaultProjectSeedName,
       description: builtInDefaultProjectSeedDescription,
       rootPath: 'C:\\Workspace',
-      defaultWorkMode: 'ask',
       builtInDefault: true
     }
     expect(projectCreateSchema.safeParse(input).success).toBe(false)
@@ -160,7 +157,7 @@ describe('isUntouchedBuiltInDefaultProject', () => {
 
 describe('project execution space contracts', () => {
   it.each(['', '   ', '\t\n'])('rejects blank creation paths but preserves updates: %j', (rootPath) => {
-    const input = { name: 'Project', description: '', rootPath, defaultWorkMode: 'ask' }
+    const input = { name: 'Project', description: '', rootPath }
     const result = projectCreateSchema.safeParse(input)
     expect(result.success).toBe(false)
     if (!result.success) expect(result.error.issues[0]?.path).toEqual(['rootPath'])
@@ -169,7 +166,7 @@ describe('project execution space contracts', () => {
 
   it.each(['C:\\Workspace', '/home/user/project'])('accepts and trims a creation directory: %s', (rootPath) => {
     expect(projectCreateSchema.parse({
-      name: 'Project', description: '', rootPath: ` ${rootPath} `, defaultWorkMode: 'ask'
+      name: 'Project', description: '', rootPath: ` ${rootPath} `
     }).rootPath).toBe(rootPath)
   })
 
@@ -248,7 +245,6 @@ describe('project execution space contracts', () => {
       name: '远程草稿',
       description: '',
       rootPath: '/srv/goodbuddy',
-      defaultWorkMode: 'ask',
       executionSpace: {
         kind: 'ssh',
         hostId: '00000000-0000-4000-8000-000000000301',
@@ -496,7 +492,6 @@ describe('conversation persistence contracts', () => {
         label: '编程 Subagent'
       },
       routingMode: 'native',
-      workMode: 'execute',
       state: 'completed',
       reason: '修复并验证聚焦变更',
       output: '验证通过'

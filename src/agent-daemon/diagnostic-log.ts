@@ -16,7 +16,8 @@ import {
   ensurePrivateDirectory,
   ensurePrivateDirectoryTree,
   readPrivateFile,
-  unlinkOwnedPrivateFile
+  unlinkOwnedPrivateFile,
+  writePrivateFileAtomic
 } from './managed-paths'
 
 export const AGENT_DIAGNOSTIC_DIRECTORY_NAME = 'diagnostics'
@@ -58,7 +59,6 @@ export type AgentDiagnosticRecord = {
   daemonBootId?: string
   reason?: string
   runtimeId?: string
-  workMode?: 'ask' | 'execute'
   outcome?: 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'outcome-unknown'
   error?: {
     name: string
@@ -70,7 +70,6 @@ export type AgentDiagnosticInput = {
   daemonBootId?: string
   reason?: string
   runtimeId?: string
-  workMode?: 'ask' | 'execute'
   outcome?: AgentDiagnosticRecord['outcome']
   error?: unknown
 }
@@ -102,6 +101,7 @@ export class AgentDiagnosticLog {
   #pendingRecordCount = 0
   #drainPromise?: Promise<void>
   #disposed = false
+  #historyCleaned = false
 
   constructor(
     stateDirectoryInput: string,
@@ -207,9 +207,6 @@ export class AgentDiagnosticLog {
       ...optionalToken('daemonBootId', input.daemonBootId, 128),
       ...optionalToken('reason', input.reason, 96),
       ...optionalToken('runtimeId', input.runtimeId, 64),
-      ...(input.workMode === undefined
-        ? {}
-        : { workMode: input.workMode }),
       ...(input.outcome === undefined
         ? {}
         : { outcome: input.outcome }),
@@ -287,6 +284,22 @@ export class AgentDiagnosticLog {
       resolve(this.directoryPath, AGENT_DIAGNOSTIC_LOCK_FILE_NAME)
     )
     try {
+      if (!this.#historyCleaned) {
+        // The same lock protects append and rotation in every Agent process.
+        for (let index = 0; index < this.#fileCount; index++) {
+          const path = rotatedPath(this.currentFilePath, index)
+          if (await privateFileSize(path) === 0) continue
+          const original = readPrivateFile(path, this.#maximumFileBytes).toString('utf8')
+          const cleaned = original.split('\n').map(line => {
+            const record = parseDiagnosticRecord(line)
+            if (!record || !Object.hasOwn(record, 'workMode')) return line
+            delete (record as AgentDiagnosticRecord & { workMode?: unknown }).workMode
+            return JSON.stringify(record)
+          }).join('\n')
+          if (cleaned !== original) writePrivateFileAtomic(path, cleaned)
+        }
+        this.#historyCleaned = true
+      }
       let nextLine = 0
       while (nextLine < lines.length) {
         let currentBytes = await privateFileSize(this.currentFilePath)

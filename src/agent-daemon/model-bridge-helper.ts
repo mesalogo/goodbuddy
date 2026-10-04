@@ -134,7 +134,7 @@ const FORWARDED_HEADER_NAMES = [
 export class ModelBridgeLoopbackProxy {
   readonly #exchange: ModelBridgeExchange
   readonly #sharedSessions: boolean
-  readonly #sessionRoutes = new Map<string, { operationId: string; socketPath: string; workMode: 'ask' | 'execute'; imageToolName?: string }>()
+  readonly #sessionRoutes = new Map<string, { operationId: string; socketPath: string; imageToolName?: string }>()
   readonly #routeToken: string
   readonly #maximumConnections: number
   readonly #requestTimeoutMs: number
@@ -318,12 +318,12 @@ export class ModelBridgeLoopbackProxy {
           const route = this.#sessionRoutes.get(url.searchParams.get('sessionId') ?? '')
           if (!route) throw new HttpRequestError(409, 'session-inactive')
           outgoing.setHeader('content-type', 'application/json')
-          outgoing.end(JSON.stringify({ operationId: route.operationId, workMode: route.workMode, imageToolName: route.imageToolName }))
+          outgoing.end(JSON.stringify({ operationId: route.operationId, imageToolName: route.imageToolName }))
           return
         }
         if (incoming.method !== 'POST') throw new HttpRequestError(405, 'method-not-allowed')
         const value = JSON.parse((await readBoundedBody(incoming)).toString('utf8')) as {
-          sessionId?: string; operationId?: string; socketPath?: string; release?: boolean; workMode?: 'ask' | 'execute'; imageToolName?: string
+          sessionId?: string; operationId?: string; socketPath?: string; release?: boolean; imageToolName?: string
         }
         if (
           typeof value.sessionId !== 'string' || value.sessionId.length > 128 ||
@@ -334,10 +334,9 @@ export class ModelBridgeLoopbackProxy {
             this.#sessionRoutes.delete(value.sessionId)
           }
         } else {
-          if (value.workMode !== 'ask' && value.workMode !== 'execute') throw new HttpRequestError(400, 'request-invalid')
           const socketPath = normalizedAbsolutePath(value.socketPath ?? '', 'Model bridge socket')
           if (value.imageToolName !== undefined && !/^goodbuddy_image_[a-f0-9]{24}$/.test(value.imageToolName)) throw new HttpRequestError(400, 'request-invalid')
-          this.#sessionRoutes.set(value.sessionId, { operationId: value.operationId, socketPath, workMode: value.workMode, imageToolName: value.imageToolName })
+          this.#sessionRoutes.set(value.sessionId, { operationId: value.operationId, socketPath, imageToolName: value.imageToolName })
         }
         outgoing.end('{}')
         return
@@ -453,7 +452,6 @@ export async function runOpenCodeModelBridgeHelper(options: {
   protocol: ModelBridgeProtocol
   model: string
   supportsImageInput: boolean
-  workMode: 'ask' | 'execute'
   sharedSessions?: boolean
   opencodeEntrypoint: string
   environment?: Readonly<NodeJS.ProcessEnv>
@@ -479,8 +477,7 @@ export async function runOpenCodeModelBridgeHelper(options: {
       protocol: options.protocol,
       model: options.model,
       loopbackOrigin: origin,
-      supportsImageInput: options.supportsImageInput,
-      workMode: options.sharedSessions ? 'ask' : options.workMode
+      supportsImageInput: options.supportsImageInput
     })
     const environment = credentialFreeHelperEnvironment(
       options.environment ?? process.env,
@@ -569,7 +566,6 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
   loopbackOrigin: string
   name?: string
   supportsImageInput?: boolean
-  workMode?: 'ask' | 'execute'
 }): OpenCodeModelBridgeProviderConfig {
   const model = boundedMetadataText(input.model, 'Model name')
   const name = boundedMetadataText(
@@ -584,7 +580,7 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
   return {
     model: openCodeModelBridgeModelId(input.protocol, model),
     snapshot: false,
-    permission: input.workMode === 'ask' ? 'ask' : 'allow',
+    permission: 'allow',
     // GoodBuddy owns conversation titles. A first-prompt title request can
     // race the real ACP prompt, abandon its Provider response, and correctly
     // poison the no-replay ledger before the user request can run.
@@ -593,7 +589,7 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
         disable: true
       },
       build: {
-        permission: input.workMode === 'ask' ? 'ask' : 'allow'
+        permission: 'allow'
       }
     },
     provider: {

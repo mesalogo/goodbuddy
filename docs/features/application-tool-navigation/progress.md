@@ -10,6 +10,29 @@
 
 本次未运行完整测试集或原生 Electron 目录选择器验收，未修改远程主机文档、Agent 或远程连接流程；模型调用 0 次。
 
+## 2026-10-04：归档恢复与右下角进入项目
+
+对应 FR-14、US-E4。生产菜单左栏底部已接入按需归档列表、搜索和逐项恢复，右下角已接入“进入项目”。恢复复用既有归档 IPC，并在项目重新可选前合并目标项目会话摘要；不自动切换当前项目，不改变 Task 状态或启动远程连接。进入按钮复用带离开检查的选择回调。规则见[活动逻辑](./logic-design.md#9-项目活动汇总)和[界面设计](./ui-design.md#10-项目活动汇总)。
+
+本次验证：
+
+- `npx vitest run --project unit src/renderer/src/WorkspaceMenu.test.tsx src/renderer/src/ProjectSwitcher.test.tsx src/renderer/src/workspace-menu-selectors.test.ts src/renderer/src/WorkspacePrimitives.test.tsx`：90 项通过。包含按需 `list(true)`、分类及远程开关、搜索、加载／恢复失败重试、重复提交锁定、预览不导航及全部项目进入目标。
+- App 项目／通道相关筛选首次运行 83 项通过，1 条旧断言未包含此前新增的更新时间。修正该断言后运行 `npx vitest run --project unit src/renderer/src/App.test.tsx -t "keeps cross-project counts independent|restores archived|single guarded Magic Notes discard"`，7 项通过，覆盖本地／远程恢复、真实 `setArchived(id, false)` 接线、摘要读取失败重试、原会话恢复和未保存草稿离开检查。
+- `npx vitest run tests/overlay-layering.electron.test.ts -t "keeps nested previews"`：真实 Electron App 用例通过。生产 Preload、IPC、SQLite 验证归档恢复、保留历史正文、恢复不切换及进入不新建替代会话；浅深主题分别覆盖 `1280×800`、`1280×480`、`560×640`、`375×480` 的右下角位置、边界和内部滚动，并保留原生浏览器相交遮挡及同页面恢复检查。模型调用 0 次。
+- `npm run typecheck`、`npm run lint`、`git diff --check` 通过。未运行全量测试或实机 SSH 连接；本次没有修改 Agent、SSH 协议或 Runtime 路径。Demo 未修改，生产菜单为本次交付对象。
+
+## 2026-10-04：会话更新时间与菜单下方定位
+
+对应 FR-14、US-E1、US-E2。右栏时间按会话 ID 局部订阅，使用实际 `updatedAt` 及侧栏共用格式；仅有活动而无摘要时省略时间。显示文字与提示未变的流式更新不触发 React 提交，跨显示精度更新只提交时间子组件。菜单按完整按钮底边定位，剩余视口高度限制菜单高度，保留内部滚动。规则见[活动界面](./ui-design.md#10-项目活动汇总)及[技术设计](./technical-design.md#12-项目活动汇总)。
+
+本次实际验证：
+
+- `npx vitest run --project unit src/renderer/src/WorkspaceMenu.test.tsx src/renderer/src/workspace-menu-selectors.test.ts src/renderer/src/ProjectSwitcher.test.tsx src/renderer/src/time-format.test.ts`：4 个文件、52 项通过。覆盖中英文当天／当年／跨年格式、提示和 ISO 时间、访问时间不替代更新时间、缺少摘要不读取详情、局部提交与未变化时零提交。
+- `npm run typecheck`：Node、Agent、Web 全部通过。`npx eslint src/renderer/src/WorkspaceMenu.tsx src/renderer/src/workspace-menu-selectors.ts src/renderer/src/WorkspaceMenu.test.tsx tests/support/overlay-paths-main.ts` 通过。
+- `npx vitest run --project integration tests/overlay-layering.electron.test.ts -t 'keeps nested previews'`：选中的真实 Electron App 用例通过，其余 3 项未选中。浅深主题分别覆盖 `1280×800`、`1280×480`、`560×640`、`375×480`，验证 `8px` 间隔、按钮两行命中、视口边界、时间与状态位置、原生滚轮内部滚动、End 到末行和 Escape 焦点恢复；连续 12 帧几何一致，并检查菜单打开时缩短及恢复窗口。
+- 原生浏览器与菜单相交时隐藏、不相交时保持显示；菜单关闭后恢复同一页面及标记。模型调用 0 次。截图和 JSON 保存在临时 `workspace-menu-validation` 目录，已查看桌面、短窗口深色和窄窗口浅色截图。
+- 临时换回旧的按菜单高度上移公式后，Electron 用例在首个桌面场景的间隔断言失败（实际 `6px`，要求 `8px`）；恢复最终代码后复跑通过。未运行全量测试，未修改监督者代码。
+
 ## 2026-10-04：双行入口合并为单个按钮
 
 对应 FR-14、US-E1 至 US-E3。项目名和活动摘要现在属于同一个 `60px` 按钮，共用键盘焦点、展开状态和菜单关联。点击任一行默认预览当前项目，全部项目范围在菜单内切换；活动描述和按钮外的恢复反馈通过 `aria-describedby` 关联。移除了独立摘要触发引用与入口范围状态，保留最近 10 条及现有活动计数，没有新增轮询。

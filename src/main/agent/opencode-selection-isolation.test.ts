@@ -174,7 +174,7 @@ describe('OpenCode isolated configuration paths', () => {
           let failure = ''
           try {
             for await (const event of runtime.run({ requestId: '403-isolation',
-              conversationId: '403-isolation', prompt: 'Reply OK', workMode: 'ask'
+              conversationId: '403-isolation', prompt: 'Reply OK',
             }, controller.signal)) void event
           } catch (error) {
             failure = error instanceof Error ? error.message : String(error)

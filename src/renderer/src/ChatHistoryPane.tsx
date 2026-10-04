@@ -13,7 +13,6 @@ import { useTranslation } from "react-i18next";
 import type { AssistantArtifact } from "../../shared/assistant-contracts";
 import type {
   AgentQuestionAnswer,
-  ApprovalDecision,
   KnowledgeSearchReference,
 } from "../../shared/contracts";
 import type { ImageOperation } from "../../shared/image-generation-contracts";
@@ -158,7 +157,6 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   onOpenCitationContext,
   onOpenCitationSource,
   onOpenImage,
-  onRespondApproval,
   onRespondQuestion,
   onRetry,
   onScrollSnapshotChange,
@@ -184,12 +182,6 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   onOpenCitationContext: (reference: KnowledgeSearchReference) => Promise<void>;
   onOpenCitationSource: (reference: KnowledgeSearchReference) => Promise<void>;
   onOpenImage: (item: ImageViewerItem, trigger: HTMLElement) => void;
-  onRespondApproval: (
-    conversationId: string,
-    messageId: string,
-    approvalId: string,
-    decision: ApprovalDecision,
-  ) => Promise<void>;
   onRespondQuestion: (
     conversationId: string,
     messageId: string,
@@ -1134,7 +1126,6 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
             onOpenCitationContext={onOpenCitationContext}
             onOpenCitationSource={onOpenCitationSource}
             onOpenImage={onOpenImage}
-            onRespondApproval={onRespondApproval}
             onRespondQuestion={onRespondQuestion}
             onRetry={onRetry}
             onRevealEarlier={revealEarlierMessages}

@@ -2,7 +2,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
-  FileOutput,
   FolderTree,
   Globe2,
   NotebookPen,
@@ -35,7 +34,6 @@ const WORKBAR_APP_ICONS: Record<WorkbarAppId, LucideIcon> = {
   tasks: ClipboardCheck,
   workspace: FolderTree,
   browser: Globe2,
-  results: FileOutput,
   notes: NotebookPen,
   terminal: SquareTerminal
 }
@@ -43,8 +41,7 @@ const WORKBAR_APP_ICONS: Record<WorkbarAppId, LucideIcon> = {
 const DEFAULT_INSTANCE_IDS = {
   tasks: '10000000-0000-4000-8000-000000000001',
   workspace: '10000000-0000-4000-8000-000000000002',
-  browser: '10000000-0000-4000-8000-000000000003',
-  results: '10000000-0000-4000-8000-000000000004'
+  browser: '10000000-0000-4000-8000-000000000003'
 } as const
 
 export const DEFAULT_WORKBAR_INSTANCES: readonly WorkbarTabInstance[] =

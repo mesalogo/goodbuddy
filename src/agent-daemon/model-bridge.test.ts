@@ -58,16 +58,15 @@ afterEach(() => {
 })
 
 describe('model bridge loopback helper', () => {
-  it.each(['ask', 'execute'] as const)(
-    'preserves the %s launch profile offline resources in the final OpenCode spawn',
-    async (workMode) => {
+  it(
+    'preserves launch profile offline resources in the final OpenCode spawn',
+    async () => {
       const fixture = await createRuntimeBundleTestFixture()
       temporaryPaths.push(fixture.root)
       const socketPath = join(fixture.root, 'bridge', 'model.sock')
       const profile = createOpenCodeLaunchProfile({
         ...fixture,
         workspaceDirectory: fixture.root,
-        workMode,
         modelBridge: {
           agentExecutablePath: join(fixture.root, 'agent', 'goodbuddy-agent'),
           bridgeDirectory: join(fixture.root, 'bridge'),
@@ -99,7 +98,6 @@ describe('model bridge loopback helper', () => {
         protocol: 'anthropic-messages',
         model: 'private-model',
         supportsImageInput: false,
-        workMode,
         opencodeEntrypoint: join(fixture.bundleDirectory, 'bin', 'opencode'),
         environment: {
           ...profile.env,
@@ -138,7 +136,7 @@ describe('model bridge loopback helper', () => {
       const config = JSON.parse(options.env.OPENCODE_CONFIG_CONTENT!)
       expect(config.model).toBe('goodbuddy-anthropic/private-model')
       expect(config.snapshot).toBe(false)
-      expect(config.permission).toBe(workMode === 'ask' ? 'ask' : 'allow')
+      expect(config.permission).toBe('allow')
       expect(config.plugin).toHaveLength(1)
     }
   )
@@ -558,18 +556,17 @@ describe('model bridge loopback helper', () => {
         loopbackOrigin:
           `http://127.0.0.1:12345/${modelBridgeRouteToken}`,
         supportsImageInput: true,
-        workMode: 'ask'
       })
 
       expect(config).toMatchObject({
         model: `${providerId}/private-model`,
-        permission: 'ask',
+        permission: 'allow',
         agent: {
           title: {
             disable: true
           },
           build: {
-            permission: 'ask'
+            permission: 'allow'
           }
         },
         provider: {
@@ -598,13 +595,12 @@ describe('model bridge loopback helper', () => {
     }
   )
 
-  it('explicitly allows Execute permissions instead of inheriting directory prompts', () => {
+  it('explicitly allows tool permissions instead of inheriting directory prompts', () => {
     const config = createOpenCodeModelBridgeProviderConfig({
       protocol: 'openai-responses',
       model: 'private-model',
       loopbackOrigin:
         `http://127.0.0.1:12345/${modelBridgeRouteToken}`,
-      workMode: 'execute'
     })
 
     expect(config.permission).toBe('allow')
@@ -680,7 +676,7 @@ describe('model bridge Unix broker', () => {
     await Promise.all(brokers.map(broker => broker.listen()))
     const origin = await proxy.listen()
     const route = (sessionId: string, operationId: string, index: number) => fetch(`${origin}/session`, {
-      method: 'POST', body: JSON.stringify({ sessionId, operationId, socketPath: brokers[index]!.socketPath, workMode: 'execute' })
+      method: 'POST', body: JSON.stringify({ sessionId, operationId, socketPath: brokers[index]!.socketPath })
     })
     const prompt = (sessionId: string, operationId: string) => fetch(`${origin}/v1/messages`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-goodbuddy-session': sessionId, 'x-goodbuddy-operation': operationId },

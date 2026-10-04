@@ -23,7 +23,6 @@ import { ImageOperationStatus } from './ImageOperationStatus'
 import type { ImageOperation } from '../../shared/image-generation-contracts'
 import type { RuntimeChecklist } from '../../shared/runtime-checklist'
 import type {
-  ApprovalDecision,
   AgentEvent,
   AgentQuestionAnswer,
   KnowledgeSearchReference
@@ -378,10 +377,6 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
       : subagent.routingMode === 'native'
         ? t('chat.subagents.native')
         : t('chat.subagents.manual')
-  const sourceAndMode =
-    actor.kind === 'direct-model' && subagent.workMode
-      ? `${source} · ${subagent.workMode === 'execute' ? 'Execute' : 'Ask'}`
-      : source
   const progress = subagent.progress?.filter((block, index, blocks) =>
     !(
       subagent.state === 'completed' &&
@@ -412,7 +407,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
             </span>
           )}
           <small className="subagent-status-card__source">
-            {sourceAndMode}
+            {source}
           </small>
         </span>
         <span
@@ -552,12 +547,6 @@ type ChatMessageRowProps = {
     reference: KnowledgeSearchReference
   ) => Promise<void>
   onOpenImage: (item: ImageViewerItem, trigger: HTMLElement) => void
-  onRespondApproval: (
-    conversationId: string,
-    messageId: string,
-    approvalId: string,
-    decision: ApprovalDecision
-  ) => Promise<void>
   onRespondQuestion: (
     conversationId: string,
     messageId: string,
@@ -586,7 +575,6 @@ function ChatMessageRowView({
   onOpenCitationContext,
   onOpenCitationSource,
   onOpenImage,
-  onRespondApproval,
   onRespondQuestion,
   onRetry,
   retryContent
@@ -1164,64 +1152,6 @@ function ChatMessageRowView({
                 <code>{message.approval.argumentSummary}</code>
               )}
             </div>
-            <button
-              className="approval-card__deny"
-              onClick={() =>
-                void onRespondApproval(
-                  conversationId,
-                  message.id,
-                  message.approval!.id,
-                  'deny'
-                )
-              }
-              type="button"
-            >
-              {t('chat.approval.deny')}
-            </button>
-            <button
-              className="approval-card__allow"
-              onClick={() =>
-                void onRespondApproval(
-                  conversationId,
-                  message.id,
-                  message.approval!.id,
-                  'once'
-                )
-              }
-              type="button"
-            >
-              {t('chat.approval.once')}
-            </button>
-            <button
-              className="approval-card__allow"
-              onClick={() =>
-                void onRespondApproval(
-                  conversationId,
-                  message.id,
-                  message.approval!.id,
-                  'session'
-                )
-              }
-              type="button"
-            >
-              {t('chat.approval.session')}
-            </button>
-            {message.approval.allowPermanent && (
-              <button
-                className="approval-card__allow"
-                onClick={() =>
-                  void onRespondApproval(
-                    conversationId,
-                    message.id,
-                    message.approval!.id,
-                    'permanent'
-                  )
-                }
-                type="button"
-              >
-                {t('chat.approval.permanent')}
-              </button>
-            )}
           </div>
         )}
         {question && !orderedQuestionIds.has(question.questionId) && renderQuestion(question.questionId)}
@@ -1400,12 +1330,6 @@ type ChatTimelineProps = {
     reference: KnowledgeSearchReference
   ) => Promise<void>
   onOpenImage: (item: ImageViewerItem, trigger: HTMLElement) => void
-  onRespondApproval: (
-    conversationId: string,
-    messageId: string,
-    approvalId: string,
-    decision: ApprovalDecision
-  ) => Promise<void>
   onRespondQuestion: (
     conversationId: string,
     messageId: string,
@@ -1445,7 +1369,6 @@ export const ChatTimeline = memo(function ChatTimeline({
   onOpenCitationContext,
   onOpenCitationSource,
   onOpenImage,
-  onRespondApproval,
   onRespondQuestion,
   onRetry,
   onRevealEarlier,
@@ -1472,7 +1395,6 @@ export const ChatTimeline = memo(function ChatTimeline({
       onOpenCitationContext,
       onOpenCitationSource,
       onOpenImage,
-      onRespondApproval,
       onRespondQuestion,
       onRetry,
       renderAssistantHtml,
@@ -1566,7 +1488,6 @@ export const ChatTimeline = memo(function ChatTimeline({
             onOpenCitationContext={onOpenCitationContext}
             onOpenCitationSource={onOpenCitationSource}
             onOpenImage={onOpenImage}
-            onRespondApproval={onRespondApproval}
             onRespondQuestion={onRespondQuestion}
             onRetry={onRetry}
             renderAssistantHtml={renderAssistantHtml}

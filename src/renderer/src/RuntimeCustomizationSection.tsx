@@ -214,17 +214,7 @@ const NativeInventory = memo(function NativeInventory({
           t(
             `runtime.customization.inventory.toolSource.${tool.source}`,
             tool.source
-          ),
-          t('runtime.customization.inventory.toolModes', {
-            ask: t(
-              `runtime.customization.inventory.toolAccess.${tool.ask}`,
-              tool.ask
-            ),
-            execute: t(
-              `runtime.customization.inventory.toolAccess.${tool.execute}`,
-              tool.execute
-            )
-          })
+          )
         ]
           .filter(Boolean)
           .join(' · ')

@@ -14,8 +14,7 @@ import { NativeTerminalClient } from './native-terminal-client'
 // Opt-in because these tests execute the installed native clients and a real PTY.
 describe.skipIf(!process.env.GOODBUDDY_NATIVE_NODE)('installed native terminal clients', () => {
   for (const runtime of ['continue', 'opencode'] as const) {
-    for (const workMode of ['ask', 'execute'] as const) {
-    it(`${runtime} ${workMode} enforces tool mode and starts its interactive PTY`, async () => {
+    it(`${runtime} writes without a mode and starts its interactive PTY`, async () => {
       const root = await mkdtemp(join(tmpdir(), 'native-client-e2e-'))
       let launch: NativeTerminalLaunch | undefined
       let pty: LocalTerminalSession | undefined
@@ -40,7 +39,7 @@ describe.skipIf(!process.env.GOODBUDDY_NATIVE_NODE)('installed native terminal c
       })
       try {
         await client.open(1, {
-          projectId: 'project', projectName: 'Native Test', directory: root, runtime, workMode,
+          projectId: 'project', projectName: 'Native Test', directory: root, runtime,
           settings: { continueBinaryPath: '', opencodeBinaryPath: '', continueConfigPath: '', continueModelProfile: profile, opencodeModelProfile: profile } as ResolvedRuntimeSettings
         })
         const spec = launch!.spawnSpec
@@ -63,10 +62,9 @@ describe.skipIf(!process.env.GOODBUDDY_NATIVE_NODE)('installed native terminal c
         if (runtime === 'continue') {
           const tools = requests.flatMap(request => (request.tools ?? []) as Array<{ function: { name: string } }>).map(tool => tool.function.name)
           expect(tools).toContain('Read')
-          if (workMode === 'ask') expect(tools).not.toContain('Write')
+          expect(tools).toContain('Write')
         }
-        if (workMode === 'ask') await expect(stat(join(root, 'native-write-probe.txt'))).rejects.toThrow()
-        else expect((await stat(join(root, 'native-write-probe.txt'))).isFile()).toBe(true)
+        expect((await stat(join(root, 'native-write-probe.txt'))).isFile()).toBe(true)
         expect(requests.length).toBeGreaterThan(1)
         pty = await LocalTerminalSession.create({ target: { type: 'project', projectId: 'project' }, targetLabel: 'Native Test', title: runtime, size: { cols: 100, rows: 30 }, projectDirectory: root, spawnSpec: spec })
         expect(pty.snapshot().state).toBe('running')
@@ -89,6 +87,5 @@ describe.skipIf(!process.env.GOODBUDDY_NATIVE_NODE)('installed native terminal c
         await rm(root, { recursive: true, force: true })
       }
     }, 70_000)
-    }
   }
 })

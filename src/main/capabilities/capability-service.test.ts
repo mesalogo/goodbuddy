@@ -297,7 +297,6 @@ describe('CapabilityService', () => {
       webSearch: {
         provider: 'exa',
         enabled: true,
-        availableIn: ['ask', 'execute'],
         tools: ['web_search', 'web_fetch']
       }
     })

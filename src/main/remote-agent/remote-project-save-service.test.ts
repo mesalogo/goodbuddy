@@ -46,7 +46,6 @@ class Owner extends EventEmitter implements RemoteProjectSaveOwner {
 const draft = {
   name: 'Remote',
   description: 'Validated remotely',
-  defaultWorkMode: 'ask' as const,
   runtimeSelection: { provider: 'opencode' as const },
   hostId,
   remoteRootPath: root
@@ -70,7 +69,6 @@ function project(
     name: draft.name,
     description: draft.description,
     rootPath: root,
-    defaultWorkMode: draft.defaultWorkMode,
     runtimeSelection: draft.runtimeSelection,
     kind: 'user',
     executionSpace: {

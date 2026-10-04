@@ -126,7 +126,6 @@ const currentProject: AssistantProject = {
   name: '当前项目',
   description: '',
   rootPath: 'D:\\project',
-  defaultWorkMode: 'ask',
   kind: 'user',
   executionSpace: { kind: 'local', rootPath: 'D:\\project' },
   status: 'active',
@@ -138,13 +137,11 @@ function sidebarElement({
   open = true,
   tab = 'tasks',
   approvals = [],
-  artifacts = [],
   onListWorkspaceDirectory = vi.fn(async (path: string) => ({
     path,
     entries: [],
     truncated: false
   })),
-  onLoadArtifact = vi.fn(async () => undefined),
   onLoadWorkspaceFile = vi.fn(),
   tasks = [],
   activeProject = currentProject,
@@ -165,7 +162,6 @@ function sidebarElement({
   onStopLoadingBrowser,
   onOpenTask = vi.fn(),
   onCreateCustomTask = vi.fn(),
-  onRespondApproval = vi.fn(),
   onTabChange = vi.fn()
 }: {
   open?: boolean
@@ -207,7 +203,6 @@ function sidebarElement({
   onStopLoadingBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
   onOpenTask?: (task: AssistantTask) => void
   onCreateCustomTask?: () => void
-  onRespondApproval?: React.ComponentProps<typeof RightAssistantSidebar>['onRespondApproval']
   onTabChange?: (tab: AssistantSidebarTab) => void
 } = {}): React.JSX.Element {
   return (
@@ -222,7 +217,6 @@ function sidebarElement({
         conversationStats={conversationStats}
         taskDurations={taskDurations}
         selectedTaskId={selectedTaskId}
-        artifacts={artifacts}
         browserStates={browserStates}
         schedules={[]}
         tasks={tasks}
@@ -231,9 +225,7 @@ function sidebarElement({
         projectNames={new Map()}
         onCreateCustomTask={onCreateCustomTask}
         onBackBrowser={onBackBrowser}
-        onImportArtifacts={vi.fn(async () => undefined)}
         onListWorkspaceDirectory={onListWorkspaceDirectory}
-        onLoadArtifact={onLoadArtifact}
         onLoadWorkspaceFile={onLoadWorkspaceFile}
         onNavigateBrowser={onNavigateBrowser}
         onLoadWorkspaceDiff={vi.fn()}
@@ -241,7 +233,6 @@ function sidebarElement({
         onRefreshChanges={vi.fn(async () => undefined)}
         onReloadBrowser={onReloadBrowser}
         onRemoveSchedule={vi.fn(async () => undefined)}
-        onRespondApproval={onRespondApproval}
         onRunSchedule={vi.fn(async () => undefined)}
         onSetScheduleEnabled={vi.fn(async () => undefined)}
         onStopLoadingBrowser={onStopLoadingBrowser}
@@ -351,12 +342,12 @@ describe('RightAssistantSidebar tab titles', () => {
     const initialTabs = screen.getAllByRole('tab')
     const savedLayout = localStorage.getItem('goodbuddy.workbar-layout.v1')
     expect(initialTabs.map((tab) => tab.textContent)).toEqual([
-      '任务中心', '工作区', '浏览器 · 未绑定会话', '成果'
+      '任务中心', '工作区', '浏览器 · 未绑定会话'
     ])
 
     await act(async () => { await i18n.changeLanguage('en-US') })
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      'Task center', 'Files', '浏览器 · 未绑定会话', 'Results'
+      'Task center', 'Files', '浏览器 · 未绑定会话'
     ])
     expect(screen.getAllByRole('tab')).toEqual(initialTabs)
     expect(screen.getByRole('tab', { name: 'Task center' })).toHaveAttribute('aria-selected', 'true')
@@ -364,7 +355,7 @@ describe('RightAssistantSidebar tab titles', () => {
 
     await act(async () => { await i18n.changeLanguage('zh-CN') })
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      '任务中心', '工作区', '浏览器 · 未绑定会话', '成果'
+      '任务中心', '工作区', '浏览器 · 未绑定会话'
     ])
   })
 
@@ -389,7 +380,7 @@ describe('RightAssistantSidebar tab titles', () => {
     expect(screen.getByRole('tab', { name: 'Terminal 1' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Terminal 2' })).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByRole('textbox', { name: 'Test terminal name' })).toHaveValue('Terminal 2')
-    for (const name of ['Task center', 'Files', 'Results']) {
+    for (const name of ['Task center', 'Files']) {
       expect(screen.getByRole('tab', { name })).toBeInTheDocument()
     }
     await act(async () => { await i18n.changeLanguage('zh-CN') })
@@ -674,7 +665,7 @@ describe('RightAssistantSidebar resizing', () => {
 
     expect(
       screen.getAllByRole('tab').map((tab) => tab.textContent)
-    ).toEqual(['任务中心', '工作区', '浏览器 · 未绑定会话', '成果'])
+    ).toEqual(['任务中心', '工作区', '浏览器 · 未绑定会话'])
     expect(
       screen.queryByRole('tab', { name: '预览' })
     ).not.toBeInTheDocument()
@@ -812,10 +803,9 @@ describe('RightAssistantSidebar resizing', () => {
       title: '写入工作区', description: '更新 release.md'
     }
     const onOpenTask = vi.fn()
-    const onRespondApproval = vi.fn()
     renderSidebar({
       tasks: [...tasks, { ...tasks[4]!, id: 'child', title: 'Child task', parentTaskId: 'running' }],
-      approvals: [approval], onOpenTask, onRespondApproval
+      approvals: [approval], onOpenTask
     })
 
     const filters = within(screen.getByRole('group', { name: '筛选任务' }))
@@ -845,13 +835,11 @@ describe('RightAssistantSidebar resizing', () => {
       expect(screen.getByLabelText('等待审批: 1')).toBeVisible()
       expect(screen.getByLabelText('等待审批: 写入工作区')).toBeVisible()
     }
-    fireEvent.click(screen.getByRole('button', { name: '仅此次允许' }))
-    expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'once')
-    fireEvent.click(screen.getByRole('button', { name: '拒绝' }))
-    expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'deny')
+    expect(screen.queryByRole('button', { name: '仅此次允许' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '拒绝' })).not.toBeInTheDocument()
   })
 
-  it('embeds matched approvals only in active task cards and preserves their actions', () => {
+  it('preserves matched approval records without response actions', () => {
     const task: AssistantTask = {
       id: 'scheduled-task', conversationId: 'conversation-1', projectId: currentProject.id,
       title: 'Scheduled task', instructions: '', origin: 'schedule', status: 'paused',
@@ -861,15 +849,12 @@ describe('RightAssistantSidebar resizing', () => {
       taskId: task.id, conversationId: task.conversationId!, projectId: task.projectId,
       messageId: 'message-1', approvalId: 'approval-1', title: 'Confirm write', description: 'write file'
     }
-    const onRespondApproval = vi.fn()
-    renderSidebar({ tasks: [task], approvals: [approval], onRespondApproval })
+    renderSidebar({ tasks: [task], approvals: [approval] })
     const row = screen.getByText(task.title).closest('article')!
     expect(within(row).getByLabelText('等待审批: Confirm write')).toBeVisible()
     expect(screen.queryByRole('heading', { name: '等待审批' })).not.toBeInTheDocument()
-    fireEvent.click(within(row).getByRole('button', { name: '仅此次允许' }))
-    expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'once')
-    fireEvent.click(within(row).getByRole('button', { name: '拒绝' }))
-    expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'deny')
+    expect(within(row).queryByRole('button', { name: '仅此次允许' })).not.toBeInTheDocument()
+    expect(within(row).queryByRole('button', { name: '拒绝' })).not.toBeInTheDocument()
     for (const filter of ['暂停', '已结束']) {
       fireEvent.click(screen.getByRole('button', { name: filter }))
       expect(screen.queryByText(task.title)).not.toBeInTheDocument()
@@ -1162,7 +1147,7 @@ describe('RightAssistantSidebar resizing', () => {
       onCreateCustomTask: vi.fn(), onImportArtifacts: vi.fn(), onLoadArtifact: vi.fn(),
       onLoadWorkspaceFile: vi.fn(() => new Promise<WorkspaceFilePreview>((resolve) => { resolveRead = resolve })),
       onLoadWorkspaceDiff: vi.fn(), onOpenWorkspaceEntry: vi.fn(),
-      onRefreshChanges: vi.fn(), onRemoveSchedule: vi.fn(), onRespondApproval: vi.fn(),
+      onRefreshChanges: vi.fn(), onRemoveSchedule: vi.fn(),
       onRunSchedule: vi.fn(), onSetScheduleEnabled: vi.fn(), onOpenTask: vi.fn(), onTabChange: vi.fn(),
       onListWorkspaceDirectory: vi.fn(async (path: string) => ({
         path, entries: [{ name: 'file.txt', path: 'file.txt', type: 'file' as const }], truncated: false
@@ -1239,34 +1224,12 @@ describe('RightAssistantSidebar resizing', () => {
     )
   })
 
-  it('previews a result without switching to a separate tab', () => {
-    const onLoadArtifact = vi.fn(async () => undefined)
-    renderSidebar({
-      tab: 'results',
-      artifacts: [
-        {
-          id: 'artifact-1',
-          title: '发布说明',
-          content: '# 发布说明',
-          createdAt: Date.now(),
-          mimeType: 'text/markdown'
-        }
-      ],
-      onLoadArtifact
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: /发布说明/u }))
-
-    expect(onLoadArtifact).toHaveBeenCalledWith('artifact-1')
-    expect(
-      screen.getByRole('tab', { name: '成果' })
-    ).toHaveAttribute('aria-selected', 'true')
-    expect(
-      screen.getByRole('button', { name: '返回成果列表' })
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole('tab', { name: '预览' })
-    ).not.toBeInTheDocument()
+  it('removes results from both the tabs and application catalog', () => {
+    renderSidebar()
+    expect(screen.queryByRole('tab', { name: '成果' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    expect(screen.queryByText('成果')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '导入成果' })).not.toBeInTheDocument()
   })
 
   it('requires a committed URL to reload a fresh active browser tab, but still allows Stop', async () => {

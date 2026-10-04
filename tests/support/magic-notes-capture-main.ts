@@ -37,7 +37,7 @@ app.whenReady().then(async () => {
     {} as never, { clear() {}, cancelImport() {}, getDraft: () => [] } as never,
     { snapshot: () => ({ libraries: [], sources: [], documents: [], entities: [], relations: [], evidence: [], tasks: [] }),
       database: { externalStore: { listBindings: () => [] } }, external: { listInstances: () => [] } } as never, database,
-    { clear() {} } as never, {} as never, async () => {}, undefined, undefined, undefined, undefined, applicationSettings,
+    {} as never, async () => {}, undefined, undefined, undefined, undefined, applicationSettings,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     { getPending: async () => undefined } as never)
   win.webContents.on('console-message', event => { if (event.level === 'error') console.error(event.message) })

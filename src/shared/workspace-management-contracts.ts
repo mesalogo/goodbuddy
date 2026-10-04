@@ -8,6 +8,7 @@ const branchSchema = z.string().min(1).max(1024).refine((value) => !value.starts
 const oidSchema = z.string().regex(/^[a-f0-9]{40,64}$/)
 
 export const workspaceManagementActionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('importFile'), path: pathSchema, offset: z.number().int().nonnegative().safe(), data: z.string().max(349528).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/) }).strict(),
   z.object({ kind: z.literal('createFile'), path: pathSchema }).strict(),
   z.object({ kind: z.literal('createDirectory'), path: pathSchema }).strict(),
   z.object({ kind: z.literal('move'), path: pathSchema, destination: pathSchema }).strict(),

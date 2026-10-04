@@ -1,4 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { canonicalJson } from '../shared/agent-protocol/canonical'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -30,6 +32,33 @@ afterEach(() => {
 })
 
 describe('SemanticPromptStore', () => {
+  it('preserves legacy preparation digests and replay identity instead of accepting a mode-free resubmission', () => {
+    const first = store()
+    const identity = { bindingId: 'legacy-binding', operationId: 'legacy-operation',
+      requestId: 'legacy-operation', controllerId: 'controller-1', promptSequence: 0 }
+    const digest = (value: unknown) => `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`
+    const preparation = { ...identity, preparationDigest: digest({ ...identity, workMode: 'ask' }) }
+    const start = { bindingId: identity.bindingId, operationId: identity.operationId,
+      startDigest: digest({ prompt: 'original' }), sessionId: 'legacy-session' }
+    first.prepare(preparation)
+    first.begin(start)
+    const payload = { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'original' } } }
+    first.append({ ...identity, kind: 'session-update', payload })
+    first.close()
+    const reopened = new SemanticPromptStore(join(temporary.at(-1)!, 'state', 'prompts.sqlite'))
+    try {
+      expect(reopened.prepare(preparation)).toEqual({ created: false })
+      expect(() => reopened.prepare({ ...preparation, preparationDigest: digest(identity) })).toThrow(/different preparation/)
+      expect(reopened.findStarted({ ...identity, startDigest: start.startDigest })).toMatchObject({
+        state: 'outcome-unknown', sessionId: 'legacy-session'
+      })
+      const page = reopened.page({ ...identity, afterSequence: '0', limit: 10 })
+      expect(page.events[0]).toMatchObject({ sequence: '1', payload })
+      expect(page.acknowledgedSequence).toBe('0')
+      expect(reopened.acknowledge({ ...identity, acknowledgedSequence: page.latestSequence }))
+        .toMatchObject({ acknowledgedSequence: page.latestSequence })
+    } finally { reopened.close() }
+  })
   it('replays unacknowledged output and prunes it after durable acknowledgement', () => {
     const first = store()
     first.prepare({

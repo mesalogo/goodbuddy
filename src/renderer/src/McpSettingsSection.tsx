@@ -428,7 +428,6 @@ export function McpSettingsSection({
   const webSearch = snapshot?.webSearch ?? {
     provider: 'exa' as const,
     enabled: true,
-    availableIn: ['ask', 'execute'] as const,
     tools: ['web_search', 'web_fetch'] as const
   }
 
@@ -755,8 +754,6 @@ export function McpSettingsSection({
                           ? t('mcp.builtin.serverSummaryDisabled')
                           : server.id === 'obsidian'
                             ? t('mcp.obsidian.access')
-                          : server.id === 'builtin-browser'
-                            ? t('mcp.builtin.serverSummaryExecuteOnly')
                           : server.access === 'mixed'
                             ? t('mcp.builtin.serverSummaryMixed')
                             : t('mcp.builtin.serverSummaryReadOnly')}

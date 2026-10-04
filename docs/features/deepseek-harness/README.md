@@ -18,7 +18,7 @@
 未发布实现的验收状态见[工作栏进度](../assistant-workbar/progress.md#2026-09-14-runtime-进程复用实施中)。
 
 The separate official Web client is pinned to `@deepseek-ai/dsh@0.1.7-rc.2`.
-Its Main service API, Ask/Execute policy, capability adapters, packaged resource
+Its Main service API, unified execution rules, capability adapters, packaged resource
 layout, and Windows validation are documented in
 [Native Client Proposal, section 9.1](../assistant-workbar/runtime-native-client-proposal.md#91-ds-web-backend-2026-09-26).
 This Web resource tree is prepared separately from the background Harness Host.

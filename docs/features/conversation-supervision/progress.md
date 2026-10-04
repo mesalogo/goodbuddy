@@ -4,6 +4,50 @@
 
 当前记录以已验证生产行为为准。监督者尚未覆盖全部 user stories。
 
+## 2026-10-04 回顾初始化阻塞修复
+
+对应 FR-S4、FR-S6、FR-S10、US-S12、US-S26、US-S27。原全局七天回顾在 Main 的一个 `BEGIN IMMEDIATE` 内扫描 25 页来源，首次 Electron 复现初始化 16.208 秒，IPC 等待 16.221 秒，阻塞发生在模型调用前。初始化现由现有 Worker 入口的独立连接执行，单次扫描后按 200 条写入；取消、未完成清单重建及发布事务的合同见[调度与存储](./review-scheduling-design.md#已接入的调度与存储)。继续前的全清单版本检查同样移出 Main；单批片段读取约 2 ms，保留原路径。候选、摘要和背景复用既有只读查询 Worker。
+
+数据沿用此前 SQLite online backup 得到的 2,429,247,488 字节安全快照，输入 schema 58。所有写入只发生在临时副本；当前工作树含并行 schema 59 执行统计改动，副本初始化会应用该升级。本次未修改迁移、原库、设置或自动计划。周范围为 UTC+08:00 的 2026-09-27 13:58:52 至 2026-10-04 13:58:52，包含 1,167 条消息、68 个会话；五分钟控制范围包含 9 条消息、4 个会话。
+
+Electron 44.5.1，复用原生产服务探针、最小隔离 Renderer、10 ms Main 定时器、20 ms Renderer 定时器及 IPC ping。本地确定性 Runtime 首次响应后请求暂停，来源收集、SQL、提示组装、状态和取消处理使用生产代码。原复现 bundle 与修复版交替测量各三轮：
+
+| 场景／指标 | 原版三轮范围 | 修复版三轮范围 | 最终版本复核 |
+| --- | --- | --- | --- |
+| 周范围初始化 | 16.641–17.911 s | 1.099–1.146 s | 1.122 s |
+| 周范围 Main 定时器最大延迟 | 16.663–17.939 s | 21.96–36.37 ms | 17.17 ms |
+| 周范围最慢 IPC | 16.642–17.928 s | 8.1–14.7 ms | 4.7 ms |
+| 小范围初始化 | 1.404–1.468 s | 0.588–0.872 s | 0.832 s |
+| 小范围 Main 定时器最大延迟 | 1.430–1.476 s | 18.37–29.69 ms | 14.51 ms |
+| 小范围最慢 IPC | 1.417–1.485 s | 0.6–25.3 ms | 1.3 ms |
+
+三轮测量后在来源哈希回调增加取消检查，再复核上表最后一列及初始化中暂停／取消。周范围到本地 Runtime 首次调用 1.260 秒，到暂停返回 1.314 秒；小范围分别为 0.956、1.004 秒。全部完成初始化的运行与原清单逐行比较来源键、版本、项目、会话、顺序、码点长度及起始／已处理位置，哈希一致；周范围 1,167 条、小范围 9 条均未截断。Renderer 最大定时器间隔约 21–23 ms。计时包含 Main 调度和系统定时器误差，不等同于每次同步调用耗时；有一轮 Main 最大延迟 36.37 ms，未宣称达到全部性能预算。
+
+初始化启动约 210 ms 时发出暂停，调用受理耗时 0.37 ms，约 310 ms 时完全返回；取消受理耗时 3.41 ms，约 312 ms 时完全返回。两个场景都保留停止中的执行位置，到 Worker 结束才释放；模型调用、清单来源和新 checkpoint 均为零。同时每 25 ms 执行一次数据库点查和生产任务状态写入：点查最大 0.55 ms、写入最大 7.26 ms，IPC 最大 10.8 ms。此前完整初始化并发写入轮的 43 次写入最大 21.65 ms。该探针验证数据库竞争和 Main 响应，未模拟完整聊天流或打开正式监督者页面。
+
+验证：
+
+- `npx vitest run src/main/assistant/supervision-worker.test.ts src/main/assistant/supervision-review.test.ts src/main/assistant/supervision-production.test.ts src/main/assistant/supervisor-service.test.ts src/main/readonly-query-reader.test.ts src/main/assistant/supervision-timeline.test.ts`：最终 6 个文件、74 项通过。真实 Worker 用例覆盖项目／全局／重分析、消息／任务／知识引用、Unicode 长度、旧 checkpoint、初始化暂停和取消、200 条后写入失败及重启重建、旧完整清单版本变化、缺失 Worker 不回退、Worker 异常／关闭后的请求结束、完整发布和下一次无变化。
+- 最终 `npm run typecheck` 通过 Main、Agent、Web；`npm run lint`、`git diff --check` 通过。源码没有新增 Worker 打包入口，真实 Worker 测试和 Electron 探针使用 esbuild 编译当前入口；未运行整包构建。中文文档扫描只复核本次新增和修改段落，既有历史段落不作无关改写。
+- 原报告和本次 JSON 保存在系统临时 `opencode/supervisor-freeze-compare-*` 目录。`supervisor-compare.cjs` 交替运行保留的原 bundle 与 `supervisor-fix-probe.cjs`，后者使用 `supervisor-fix-worker.cjs`。第三轮小范围在备份时曾因临时盘满失败；清理本次已完成运行的重复数据库、保留报告与原安全快照后，以 `4retry` 完成补测。失败尝试未进入回顾计时。
+
+外部模型调用为 0 次。未运行全量测试、便携版打包或全局完整模型回顾；未提交或推送。监督取数及模型调度属于桌面服务，Agent 和远程模型桥未改变。最终发布大事务的 Main 延迟仍需另测，本次没有迁移该事务。
+
+## 2026-10-04 工作回顾 Toast 反馈
+
+对应 FR-S4、FR-S6、FR-S10、US-S24。`SupervisorWorkspace` 经 `HeartbeatCenter` 使用 App 的既有通知回调，移除工作区操作状态条和错误横幅。开始、完成、暂停、取消、无变化及失败的展示规则见 [UI 设计](./ui-design.md#应用入口)。发起前占用检查、本地请求锁和 Main 的最终准入保留；后台执行、活动持久化和活动页轮询未修改。刷新期间的结束反馈与卸载后的迟到响应分别处理，见 [技术设计](./technical-design.md#单次执行与取消)。未修改搜索范围。
+
+验证记录：
+
+- `npx vitest run src/renderer/src/SupervisorWorkspace.test.tsx src/renderer/src/HeartbeatCenter.test.tsx src/renderer/src/SupervisorActivity.test.tsx`：102 项通过。随后补充来源读取失败重试，单独复跑 `SupervisorWorkspace.test.tsx`，35 项通过；三个组件文件合计覆盖 103 项。
+- `npx vitest run src/renderer/src/App.test.tsx -t "routes Supervisor review feedback|shows retryable page-local Supervisor errors|graph navigation opens the pinned"`：3 项通过，其余 349 项未运行。覆盖真实 App 通知接线、关闭、同键替换、跨页签失败、页面内加载重试及历史图谱跳转。
+- `GOODBUDDY_SUPERVISOR_RECAP=1` 下执行 `npx vitest run tests/supervisor-layout.electron.test.ts`：1 项通过。使用生产 React 组件和模拟数据验证工作回顾布局、历史阅读、重新整理确认及活动页签访问；未调用真实模型。布局 fixture 只记录通知回调的语义，Toast DOM 由上述 App 测试验证。
+- `npx vitest run src/main/assistant/supervision-review.test.ts src/main/assistant/supervision-activity.test.ts`：30 项通过、1 项失败。失败为 schema 44 重开测试遇到 `table execution_timing already exists`，来自工作区并行新增的执行统计迁移，本次未修改该迁移。
+- 修改的 TypeScript／TSX 和布局 driver 定向 ESLint 通过，`git diff --check` 通过。`npm run typecheck` 被并行执行统计改动阻塞：Node 检查报告 `execution-timing.ts` SQL 参数可能为 undefined、IPC 的 `getExecutionStatsAsync` 不存在；末次 Web 检查报告 App 的 `statsMessageCount` 未定义及 `use-execution-stats.test.tsx` 的字段、参数不匹配。未更改这些并行代码。
+- 中文文档扫描后人工复核新增段落。新增内容无阻断项；全文件扫描的 4 个阻断项均在既有用户故事段落，未作无关改写。技术段落的否定句提示用于说明历史通知和卸载边界，按实际行为保留。
+
+没有运行全量测试、其余 Electron 布局分支或生产构建，真实模型请求为 0 次。此次仅调整桌面 Renderer 反馈，未修改 Agent、远程 Runtime 或传输路径；未提交、推送或覆盖已有无关改动。
+
 ## 2026-10-03 会话故事图谱开关
 
 FR-S11、US-S30 的“使用故事图谱”已接通 Composer、生产 Preload／IPC、SQLite 和工具网关。会话默认开启，仅在监督者应用启用时显示，位置在知识库之前。存储和执行合同见 [MCP 接入](./story-graph-mcp-design.md#6-内置-mcp-与-runtime-接入)，没有数据库版本升级或迁移。另保留本轮开始前已有的监督者独立模型选择及并行性能改动。

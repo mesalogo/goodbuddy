@@ -65,7 +65,7 @@ void app.whenReady().then(async () => {
     let output = '', firstTextMs: number | null = null, done = false
     const usage: object[] = []
     try {
-      for await (const event of runtime.run({ requestId: randomUUID(), conversationId, workMode: 'ask', prompt }, AbortSignal.timeout(60000), async () => 'deny')) {
+      for await (const event of runtime.run({ requestId: randomUUID(), conversationId, prompt }, AbortSignal.timeout(60000), async () => 'deny')) {
         if (event.type === 'text') { firstTextMs ??= performance.now() - started; output += event.delta }
         if (event.type === 'done') done = true
         if (event.type === 'model-usage') usage.push({ inputTokens: event.inputTokens, outputTokens: event.outputTokens, cacheReadTokens: event.cacheReadTokens, cacheWriteTokens: event.cacheWriteTokens })

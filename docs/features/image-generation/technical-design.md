@@ -17,6 +17,14 @@ Main 仅在 `capability === 'image-generation'` 时调用 `withImageConversation
 公开成果事件和消息 metadata 保存，不新增表、迁移、服务端 ID 或 Runtime 会话缓存。
 它是该回复的展示事实，不进入下一轮提示词。
 
+成果页移除后，这条会话图片存储和读取链路继续保留；没有批量迁移或删除 artifact。
+需要项目图片文件时使用 `save_image` 显式保存。其 `artifactId` 是会话图片、上传图片或
+`generate_image` 返回的图片 ID，不依赖成果页；旧消息中的 `artifactIds` 继续有效。
+工具将实际图片文件写入 Runtime 所在主机的绝对路径，远程项目写到远程 Host。
+工作区导入不会创建会话图片记录。工具发现规则见
+[会话图片工具](../conversation-media-generation/technical-design.md#图片保存工具)。
+文件与会话数据的边界见[工作区文件](../assistant-workbar/workspace-files.md#存储与实现)。
+
 ## 上游请求
 
 `ModelAgentRuntime` 将已有文字历史作为会话数据加入提示词，并把本轮要求放在末尾。

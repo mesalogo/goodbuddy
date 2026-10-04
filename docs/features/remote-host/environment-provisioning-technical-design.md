@@ -29,7 +29,7 @@ bootstrap 能力元数据。公开直连能力仍须完成本文末尾 GitHub/�
 - 大文件传输发生在项目切换时会阻塞导航，也把 Host 级故障误显示成项目故障。
 - Host Key、认证、平台和架构本来就在新增 Host 时验证，此时继续只读探测并在 Host 卡片
   提供手动准备入口最容易理解。
-- 项目只保存 Host ID、远端路径、Runtime 选择和默认工作模式。Agent installation、
+- 项目只保存 Host ID、远端路径和 Runtime 选择。Agent installation、
   Runtime digest、Workspace identity 和 Host revision 都从当次连接取得，不写入项目；
   “移出安装”不等于“跳过当前环境检查”。
 
@@ -237,8 +237,7 @@ cleanup 失败不回滚环境，也不阻塞下一次更新。
   已完成本地验证的 Host 可选；浏览目录或保存时才连接所选 Host，并由保存流程完整检查
   Agent、Workspace 和 Runtime，但不隐式安装。
 - 项目保存验证 Host 当前 revision 与 Host Key generation、当前 Agent、Workspace、
-  Runtime、模型 profile 和 Ask/Execute 配置；SQLite 事务只写入 Host ID、规范远端路径、
-  Runtime 选择和默认工作模式。
+  Runtime 和模型 profile；SQLite 事务只写入 Host ID、规范远端路径和 Runtime 选择。
 - 打开或切换已有项目只提交本地项目选择，不执行 SSH、registry、Workspace 或 Runtime
   检查。首次实际使用远程 Workspace 或 Runtime 时才解析 Host 管理的当前 Agent/Runtime，
   并建立或复用当前 Agent 连接。已安装 Agent 暂未运行时，

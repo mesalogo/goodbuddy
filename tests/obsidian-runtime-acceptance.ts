@@ -92,7 +92,7 @@ export async function run(root: string, snapshot: CapabilitySnapshot): Promise<v
     try {
       let output = ''
       const tools: string[] = []
-      for await (const event of runtime.run({ requestId, conversationId: crypto.randomUUID(), workMode: 'execute',
+      for await (const event of runtime.run({ requestId, conversationId: crypto.randomUUID(),
         knowledgeCapabilityToken: token,
         prompt: `Use only the assigned Obsidian tools. Call obsidian_write_note to write ${provider}.md with content ${marker}, then obsidian_read_note to read it. Reply with the content read. Do not use shell or other tools.`
       }, controller.signal)) {

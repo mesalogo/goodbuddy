@@ -198,11 +198,11 @@ describe('workspace file browsing', () => {
     const docs = await listWorkspaceDirectory(directory, 'docs')
     const preview = await readWorkspaceFile(directory, 'docs/guide.md')
 
-    expect(root.entries).toEqual([
+    expect(root.entries).toMatchObject([
       { name: 'docs', path: 'docs', type: 'directory' },
       { name: 'notes.txt', path: 'notes.txt', type: 'file' }
     ])
-    expect(docs.entries).toEqual([
+    expect(docs.entries).toMatchObject([
       {
         name: 'guide.md',
         path: 'docs/guide.md',

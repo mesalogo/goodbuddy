@@ -6,11 +6,11 @@ export const integrations = {
     title: 'Image generation and editing',
     managed: 'Builtin · Automatically managed',
     description: 'Automatically managed by the image models’ “Allow AI to invoke in conversations” setting.',
-    runtimeScope: 'Assignments include applicable remote Runtimes through GoodBuddy Agent. Generation requires Execute and a chat model with tool calling; assignments do not indicate runtime readiness.',
+    runtimeScope: 'Assignments include applicable remote Runtimes through GoodBuddy Agent. Generation requires a chat model with tool calling; assignments do not indicate runtime readiness.',
     openSettings: 'Go to image model settings',
     tools: {
       generate_image: 'Generate a new image with an image model allowed in conversations, or edit images from this conversation. Results are saved in the conversation.',
-      save_image: 'Save a generated or uploaded image from this conversation to a PNG, JPEG or WebP file. Requires Execute mode; in remote projects the file is written on the remote host.'
+      save_image: 'Save a generated or uploaded image from this conversation to a PNG, JPEG or WebP file. In remote projects the file is written on the remote host.'
     }
   },
   channels: {
@@ -39,7 +39,7 @@ export const integrations = {
         'Choose the default working directory for {{name}}',
       select: 'Choose',
       rootHelp:
-        'Remote Execute operations can run only within this project directory.',
+        'The working directory for this channel project.',
       backendLabel: 'Message processing backend',
       backendAriaLabel: '{{name}} message processing backend',
       directModels: 'Direct models',
@@ -62,18 +62,6 @@ export const integrations = {
         'Follow the global default Runtime setting.',
       runtimeDescription:
         'Run through the {{runtime}} Agent Runtime using the global {{runtime}} configuration under Agent Runtime settings.',
-      defaultMode: 'Default mode',
-      defaultModeAriaLabel: '{{name}} default mode',
-      modes: {
-        ask: 'Ask',
-        execute: 'Execute'
-      },
-      overrideHelp:
-        'Prefix a message with /ask, /execute, Ask:, or Execute: to override the mode temporarily.',
-      executeRisk:
-        'Execute messages are sent to the selected backend immediately without per-request confirmation.',
-      askRisk:
-        'In Ask mode, allowlisted senders can still use /execute to start an operation without confirmation.',
       riskSuffix:
         'Connect only trusted accounts and limit the working directory to the required scope.'
     },
@@ -211,7 +199,7 @@ export const integrations = {
       custom: 'Custom MCP'
     },
     customNotice:
-      'Custom MCP loads only in Execute mode and can be assigned to direct models, GoodBuddy-managed OpenCode, Continue Agent, or DeepSeek Harness. New servers target direct models by default. Servers and their tools run with the current user’s permissions, so add only trusted services. GoodBuddy keeps server addresses, commands, and credentials in the main process, encrypts remote access tokens in secure system storage, and still requires approval for tool calls. stdio servers start in a restricted environment without desktop session variables; use diagnosed built-in capabilities for computer control.',
+      'Once enabled and assigned, this server’s tools are available to the selected Runtime. Custom MCP can be assigned to direct models, GoodBuddy-managed OpenCode, Continue Agent, or DeepSeek Harness. New servers target direct models by default. Servers and their tools run with the current user’s permissions, so add only trusted services. GoodBuddy keeps server addresses, commands, and credentials in the main process and encrypts remote access tokens in secure system storage. stdio servers start in a restricted environment without desktop session variables; use diagnosed built-in capabilities for computer control.',
     computer: {
       title: 'Computer control capabilities',
       supported: 'Supported on this device',
@@ -240,8 +228,7 @@ export const integrations = {
       runtimeAssignmentUnsupportedAriaLabel:
         '{{name}} cannot be assigned to {{runtime}} because this runtime does not support built-in MCP',
       unsupportedSuffix: ' (not supported yet)',
-      serverSummaryExecuteOnly: 'Execute only',
-      serverSummaryMixed: 'Read and write by mode',
+      serverSummaryMixed: 'Read and write',
       serverSummaryReadOnly: 'Read-only',
       serverSummaryDisabled: 'Disabled · Enable Magic Notes first',
       featureDisabled:
@@ -263,11 +250,11 @@ export const integrations = {
     },
     browser: {
       title: 'Built-in browser',
-      subtitle: 'Built-in GoodBuddy capability · Isolated browser · Execute',
+      subtitle: 'Built-in GoodBuddy capability · Isolated browser',
       description:
         'Opens and operates webpages in GoodBuddy’s temporary isolated browser. It does not control Chrome, Edge, or another browser installed on the client computer.',
       control:
-        'This switch controls Agent access only. When off, browser tools are unavailable to every runtime, but you can still operate the browser manually from the workbar. When on, assigned runtimes can use them directly in Execute mode without per-action prompts.',
+        'This switch controls Agent access only. When off, browser tools are unavailable to every runtime, but you can still operate the browser manually from the workbar. When on, assigned runtimes can use them directly.',
       enableAriaLabel: 'Enable the built-in GoodBuddy browser',
       enabled: 'Enabled',
       disabled: 'Disabled',
@@ -277,9 +264,9 @@ export const integrations = {
     },
     webSearch: {
       title: 'Web search',
-      subtitle: 'Direct-model tool · Exa MCP · Ask / Execute',
+      subtitle: 'Direct-model tool · Exa MCP',
       description:
-        'Provides web_search and web_fetch for public web search and reading only. The tools are available in Ask and Execute.',
+        'Provides web_search and web_fetch for public web search and reading only.',
       privacy:
         'Queries and public webpage addresses are sent to the third-party Exa service. Model API keys, local files, and knowledge content are not sent.',
       enableAriaLabel: 'Enable direct-model web search',

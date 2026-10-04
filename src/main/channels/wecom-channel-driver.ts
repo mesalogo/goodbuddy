@@ -131,7 +131,6 @@ export class WeComChannelDriver implements ChannelDriver {
         message.chatType === 'group' ? 'group' : 'direct',
       text: message.text,
       mentioned: message.mentionedBot,
-      workMode: 'ask',
       ...(message.createdAt === undefined
         ? {}
         : { receivedAt: message.createdAt })

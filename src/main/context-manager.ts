@@ -588,8 +588,7 @@ export class ContextManager {
     this.validateForSend(request.contextIds ?? [])
     for (const id of request.contextIds ?? []) this.restoreAsset(id)
     const normalizedRequest: AgentExecutionRequest = {
-      ...request,
-      workMode: request.workMode === 'execute' ? 'execute' : 'ask'
+      ...request
     }
     const selected = (request.contextIds ?? [])
       .map((id) => this.contexts.get(id))

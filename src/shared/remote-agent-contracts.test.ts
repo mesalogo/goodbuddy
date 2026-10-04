@@ -77,7 +77,7 @@ describe('remote Agent contracts', () => {
     }
   })
 
-  it('uses workMode as the complete prompt authorization contract', () => {
+  it('uses a mode-free prompt contract and rejects legacy mode fields', () => {
     const common = {
       bindingId: 'binding-1',
       operationId: 'operation-1',
@@ -100,11 +100,9 @@ describe('remote Agent contracts', () => {
         maximumOutputBytes: 100
       }
     }
-    const execute = remotePromptOperationPreparationSchema.parse({
-      ...common,
-      workMode: 'execute'
-    })
-    expect(execute.workMode).toBe('execute')
+    const execute = remotePromptOperationPreparationSchema.parse(common)
+    expect(execute).not.toHaveProperty('workMode')
+    expect(() => remotePromptOperationPreparationSchema.parse({ ...common, workMode: 'execute' })).toThrow()
     expect(execute).not.toHaveProperty('trustTier')
     expect(execute).not.toHaveProperty('capabilities')
     expect(execute.budget).not.toHaveProperty('maximumToolCalls')
@@ -112,7 +110,6 @@ describe('remote Agent contracts', () => {
       bindingId: execute.bindingId,
       operationId: execute.operationId,
       requestId: execute.requestId,
-      workMode: execute.workMode,
       deadlineAt: execute.deadlineAt,
       acceptedAt: '2029-01-01T00:00:00.000Z'
     })
@@ -122,9 +119,10 @@ describe('remote Agent contracts', () => {
     expect(() =>
       assertRemotePromptAcceptanceMatchesPreparation(execute, {
         ...acceptance,
-        workMode: 'ask'
+        operationId: 'another-operation'
       })
     ).toThrow(/does not match/iu)
+    expect(() => remotePromptOperationAcceptanceSchema.parse({ ...acceptance, workMode: 'ask' })).toThrow()
   })
 
   it('rejects delivered and ACK cursors ahead of durable journals', () => {

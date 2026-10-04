@@ -405,7 +405,9 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
       .map((entry) => ({
         name: entry.name,
         path: entry.relativePath,
-        type: entryType(entry.kind)
+        type: entryType(entry.kind),
+        modifiedAt: entry.modifiedAt,
+        createdAt: entry.createdAt
       }))
     return {
       path: input.path,

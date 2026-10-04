@@ -1,13 +1,13 @@
 # Runtime 交互边界
 
-本文定义当前原生交互的适配范围，不增加工作模式或第二层 Execute 审批。
+本文定义当前原生交互的适配范围，不增加产品工作模式或一般工具审批。
 
 | Runtime | 权限确认 | 业务问答 |
 | --- | --- | --- |
-| 本机 GoodBuddy 管理的 OpenCode | 内部默认配置允许权限；每个 Ask 请求仍使用 deny-all 与显式只读能力。Execute 自动回复属于当前请求的父、子孙会话权限事件，不处理其他并行请求 | 通过 `question.asked` 转交父、子孙会话问题，支持原生单选、多选、yes/no、自由文本及跳过；使用公开 ID 回传 `question.reply/reject` |
-| 托管 SSH OpenCode | Agent 按已接受 Prompt 的 Ask/Execute 模式处理 ACP 权限，规则见远程主机技术设计 | 当前 Agent 插件转交原生父、子孙会话 `question.asked`；前台使用同一问答队列，回答和跳过经认证 Agent 控制通道回传，已知 Task 关联显示子任务归属 |
-| Continue | Execute 启动传入 `--auto`，剩余原生权限请求按当前模式自动答复 | 对接 `1.5.47` QuizService 的扁平 `pendingQuestion`，其中 `question` 是字符串。选项回答与自定义文本分别回传正确的 `isCustomAnswer`；跳过发送拒绝回答的文本 |
-| DeepSeek Harness | 固定 Host 的 Execute 文件与命令工具不询问目录权限；若收到 ACP 权限请求，活跃 Execute 直接选一次性允许，缺少该选项时使用 Runtime 提供的允许选项，Ask 拒绝，不等待额外 authorizer | 固定 Host 当前未提供通用原生业务问答服务，不把普通模型正文误识别成待答协议。模型以普通回复提问时，用户通过下一条消息回答 |
+| 本机 GoodBuddy 管理的 OpenCode | 自动回复属于当前请求的父、子孙会话权限事件，不处理其他并行请求；无产品模式名单 | 通过 `question.asked` 转交父、子孙会话问题，支持原生单选、多选、yes/no、自由文本及跳过；使用公开 ID 回传 `question.reply/reject` |
+| 托管 SSH OpenCode | Agent 按已接受 Prompt 的归属和实际能力处理 ACP 权限，规则见远程主机技术设计 | 当前 Agent 插件转交原生父、子孙会话 `question.asked`；前台使用同一问答队列，回答和跳过经认证 Agent 控制通道回传，已知 Task 关联显示子任务归属 |
+| Continue | 启动使用原生 agent 与 `--auto`，剩余原生权限请求自动答复 | 对接 `1.5.47` QuizService 的扁平 `pendingQuestion`，其中 `question` 是字符串。选项回答与自定义文本分别回传正确的 `isCustomAnswer`；跳过发送拒绝回答的文本 |
+| DeepSeek Harness | 固定 Host 文件与命令工具不询问目录权限；活跃请求优先选择一次性允许，缺少时使用 Runtime 提供的允许选项，保留取消和未知请求拒绝 | 固定 Host 当前未提供通用原生业务问答服务，不把普通模型正文误识别成待答协议。模型以普通回复提问时，用户通过下一条消息回答 |
 
 托管 SSH OpenCode 的权限、原生问题事件与回复链路由
 [远程主机技术设计](../remote-host/technical-design.md)定义。该远端业务问答基线需要
@@ -177,10 +177,10 @@ Markdown 或名称含 `list` 的工具。子会话清单不覆盖父请求顶部
 
 不变量：
 
-1. 一条请求始终使用接受时的 execution space、工作模式、配置和归属；不能读取后来
+1. 一条请求始终使用接受时的 execution space、配置和归属；不能读取后来
    切换的 UI 选择，也不以进程 cwd 表示所有会话的 cwd。
 2. 同一会话串行，跨会话不增加全局 Prompt 队列。权限、子代理、问题、用量和最终清理
-   必须沿同一 Session/请求归属，不因共享进程放宽 Ask 或限制 Execute。
+   必须沿同一 Session/请求归属，不因共享进程改变能力范围。
 3. owner 的退出条件依据所有使用者，不依据某个 adapter 的空闲状态。
    未启动对象的 dispose 不产生冷启动；一个等待者取消不取消其他等待者的初始化。
 4. 正常会话仍持有原生上下文时，不用任意 TTL 清掉它来声称“空闲内存已回收”。

@@ -313,43 +313,16 @@ export class AgentRuntimeController implements AgentRuntime {
     }
     const slot = this.current
     this.ownedConversationIds.add(request.conversationId)
-    const toolsAllowed = request.workMode === 'execute'
     let toolDenied = false
-    const effectiveAuthorize: RuntimeAuthorizer | undefined = toolsAllowed
-      ? authorize === undefined
-        ? undefined
-        : async (authorizationRequest) => {
-            const decision = await authorize(authorizationRequest)
-            if (decision === 'deny') {
-              toolDenied = true
-            }
-            return decision
-          }
-      : async () => {
-          toolDenied = true
-          return 'deny'
+    const effectiveAuthorize: RuntimeAuthorizer = authorize
+      ? async (approval, approvalSignal) => {
+          const decision = await authorize(approval, approvalSignal)
+          toolDenied = decision === 'deny'
+          return decision
         }
+      : async () => 'once'
     slot.activeRequests += 1
     try {
-      if (toolsAllowed && !slot.runtime.supportsToolExecution) {
-        throw new Error('当前 Runtime 不支持工具执行，请切换到 OpenCode 或 Continue')
-      }
-      if (
-        toolsAllowed &&
-        slot.runtime.requiresToolApproval &&
-        effectiveAuthorize
-      ) {
-        const decision = await effectiveAuthorize({
-          scopeKey: 'runtime:whole-run',
-          title: '允许 Agent 使用工作区工具？',
-          description:
-            '该 Runtime 尚不能报告单个工具调用，可能读取或修改工作区文件并执行命令。',
-          allowPermanent: false
-        })
-        if (decision === 'deny') {
-          throw new Error('用户拒绝了 Agent 工具执行')
-        }
-      }
       try {
         for await (const event of slot.runtime.run(
           request,

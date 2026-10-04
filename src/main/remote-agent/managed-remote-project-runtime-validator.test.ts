@@ -40,7 +40,7 @@ function advertisedCapabilities(): DaemonCapabilities {
     generation: 2,
     capabilities: [
       { name: 'workspace/read', version: 1, critical: true },
-      { name: 'runtime/acp', version: 5, critical: true },
+      { name: 'runtime/acp', version: 6, critical: true },
       {
         name: 'runtime/model-bridge',
         version: 1,
@@ -268,7 +268,7 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
         ...advertisedCapabilities(),
         capabilities: [
           { name: 'workspace/read', version: 1, critical: true },
-          { name: 'runtime/acp', version: 5, critical: true }
+          { name: 'runtime/acp', version: 6, critical: true }
         ]
       }
     ],
@@ -278,7 +278,7 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
         ...advertisedCapabilities(),
         capabilities: [
           { name: 'workspace/read', version: 1, critical: true },
-          { name: 'runtime/acp', version: 5, critical: true },
+          { name: 'runtime/acp', version: 6, critical: true },
           {
             name: 'runtime/model-bridge',
             version: 3,
@@ -294,7 +294,7 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
         capabilities: [
           {
             name: 'runtime/acp',
-            version: 5,
+            version: 6,
             critical: false
           }
         ]

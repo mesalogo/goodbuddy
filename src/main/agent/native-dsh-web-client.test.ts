@@ -2,11 +2,10 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NativeDshWebClientService, resolveNativeDshCli, type NativeDshWebRequest } from './native-dsh-web-client'
-import { nativeDshMcpToolName, nativeDshWebPolicySource } from './native-dsh-web-policy'
+import { nativeDshWebPatch } from './native-dsh-web-policy'
 
 const roots: string[] = []
 const services: NativeDshWebClientService[] = []
@@ -25,31 +24,16 @@ const profile: NativeDshWebRequest['profile'] = {
   baseUrl: 'http://127.0.0.1:1', modelName: 'test-model'
 }
 
-describe('native DS Web mode', () => {
-  it('enforces Ask tool names independently of agent mode and permits Execute', async () => {
-    const root = await temporary()
-    const file = join(root, 'policy.mjs')
-    await writeFile(file, nativeDshWebPolicySource)
-    const plugin = await import(/* @vite-ignore */ pathToFileURL(file).href)
-    for (const mode of ['ask', 'execute']) {
-      let execute!: (execution: unknown, next: () => string) => string
-      plugin.apply({ on: (_name: string, callback: typeof execute) => { execute = callback } }, {
-        workMode: mode, readOnlyTools: ['mcp__docs__lookup']
-      })
-      for (const name of ['read', 'skill', 'mcp__docs__lookup']) {
-        expect(execute({ name, agent: { mode: 'execute' } }, () => 'ran')).toBe('ran')
-      }
-      for (const name of ['write', 'edit', 'pwsh', 'bash', 'subagent', 'mcp__docs__delete']) {
-        const run = () => execute({ name, agent: { mode: 'execute' } }, () => 'ran')
-        if (mode === 'ask') expect(run).toThrow('GoodBuddy Ask mode')
-        else expect(run()).toBe('ran')
-      }
-    }
-  })
-  it('matches official MCP names without collisions after normalization', () => {
-    expect(nativeDshMcpToolName('docs', 'lookup')).toBe('mcp__docs__lookup')
-    expect(nativeDshMcpToolName('docs', 'a.b')).not.toBe(nativeDshMcpToolName('docs', 'a_b'))
-    expect(nativeDshMcpToolName('docs', 'a'.repeat(100))).toHaveLength(64)
+describe('native DS Web configuration', () => {
+  it('uses normal upstream execution settings without a generated tool restriction', () => {
+    const patch = nativeDshWebPatch({ model: 'test', api: 'openai-completions', baseURL: 'http://localhost/v1',
+      skillDirectories: [], mcpServers: [{ serverName: 'docs', transport: 'streamable-http', url: 'http://localhost/mcp' }] })
+    expect(patch).toEqual(expect.arrayContaining([
+      { id: 'sandbox-policy', config: { mode: 'danger-full-access' } },
+      { id: 'approval', config: { policy: 'never' } }
+    ]))
+    expect(JSON.stringify(patch)).not.toContain('goodbuddy-native-mode')
+    expect(JSON.stringify(patch)).toContain('@deepseek-ai/dsh-mcp-client')
   })
   it('resolves the packaged CLI outside ASAR', () => {
     expect(resolveNativeDshCli('/resources')).toBe(join('/resources', 'runtimes/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'))
@@ -58,7 +42,7 @@ describe('native DS Web mode', () => {
 
 const standardNode = process.env.NATIVE_DSH_TEST_NODE ?? (!process.versions.electron ? process.execPath : undefined)
 describe.skipIf(!standardNode)('official DS Web process', () => {
-  it('initializes the workspace, coalesces starts, isolates modes and preserves history on stop', async () => {
+  it('initializes the workspace, coalesces starts, isolates configuration and preserves history on stop', async () => {
     const root = await temporary()
     const workspace = join(root, 'workspace')
     await mkdir(workspace)
@@ -68,7 +52,7 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
       resolveLaunchEnvironment: async () => ({ nodeExecutablePath: standardNode!, environment: process.env })
     })
     services.push(service)
-    const request: NativeDshWebRequest = { projectId: 'one', workspace, profile, workMode: 'ask' }
+    const request: NativeDshWebRequest = { projectId: 'one', workspace, profile }
     const [first, repeated] = await Promise.all([service.start(request), service.start(request)])
     expect(first).toEqual(repeated)
     const config = await readFile(join(root, 'homes', first.id, 'cordis.patch.yml'), 'utf8')
@@ -82,8 +66,6 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
     expect(await service.start(request)).toEqual(first)
     const history = join(root, 'homes', first.id, 'history-marker')
     await writeFile(history, 'retained')
-    const execute = await service.start({ ...request, workMode: 'execute' })
-    expect(execute.id).not.toBe(first.id)
     const changedConfiguration = await service.start({ ...request, configurationKey: 'updated-skill-digest' })
     expect(changedConfiguration.id).not.toBe(first.id)
     expect(await service.start({ ...request, configurationKey: 'updated-skill-digest' })).toEqual(changedConfiguration)
@@ -92,7 +74,6 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
     await expect(fetch(first.url)).rejects.toThrow()
     expect(await readFile(history, 'utf8')).toBe('retained')
     await expect(readFile(join(root, 'homes', first.id, 'cordis.patch.yml'))).rejects.toThrow()
-    expect((await fetch(execute.url, { redirect: 'manual' })).status).toBe(303)
     const restarted = await service.start(request)
     expect(restarted.id).toBe(first.id)
     expect(restarted.url).not.toBe(first.url)
@@ -100,7 +81,7 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
     await expect(service.start(request)).rejects.toThrow('disposed')
   }, 120_000)
 
-  it('routes official Web tool calls through the model bridge and enforces Ask at execution', async () => {
+  it('routes official Web writes, skills and MCP calls through the model bridge without a mode', async () => {
     const root = await temporary()
     const skills = join(root, 'skills')
     await mkdir(skills)
@@ -151,10 +132,9 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
       resolveLaunchEnvironment: async () => ({ nodeExecutablePath: standardNode!, environment: process.env }) })
     services.push(service)
     try {
-    for (const workMode of ['ask', 'execute'] as const) {
-      const handle = await service.start({ projectId: 'tools', workspace: root, profile, workMode,
+      const handle = await service.start({ projectId: 'tools', workspace: root, profile,
         skillDirectories: [skills], mcpServers: [{ serverName: 'test', transport: 'streamable-http',
-          url: `http://127.0.0.1:${address.port}/mcp`, readOnlyTools: ['lookup'] }] })
+          url: `http://127.0.0.1:${address.port}/mcp` }] })
       const auth = await fetch(handle.url, { redirect: 'manual' })
       const cookie = auth.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
       async function rpc(method: string, request: unknown): Promise<Record<string, unknown>> {
@@ -170,12 +150,7 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
       await rpc('session/prompt', { sessionId: session.sessionId, requestId: crypto.randomUUID(), mode: 'queue',
         content: [{ type: 'text', text: 'Write the requested marker file.' }] })
       await vi.waitFor(() => expect(toolResults.length).toBeGreaterThan(previous), { timeout: 15_000 })
-      if (workMode === 'ask') {
-        expect(toolResults.at(-1)).toContain('GoodBuddy Ask mode')
-        await expect(readFile(join(root, 'written.txt'))).rejects.toThrow()
-      } else {
-        expect(await readFile(join(root, 'written.txt'), 'utf8')).toBe('EXECUTED')
-      }
+      expect(await readFile(join(root, 'written.txt'), 'utf8')).toBe('EXECUTED')
       for (const prompt of ['Load skill', 'MCP read', 'MCP write']) {
         const next = await rpc('session/create', { cwd: root })
         const before = toolResults.length
@@ -184,15 +159,11 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
           content: [{ type: 'text', text: prompt }] })
         await vi.waitFor(() => expect(toolResults.length).toBeGreaterThan(before), { timeout: 15_000 })
         if (prompt === 'Load skill') await vi.waitFor(() => expect(toolResults.slice(before).join()).toContain('SKILL_LOADED_MARKER'), { timeout: 15_000 })
-        else if (prompt === 'MCP write' && workMode === 'ask') {
-          await vi.waitFor(() => expect(toolResults.slice(before).join()).toContain('does not allow tool: mcp__test__mutate'), { timeout: 15_000 })
-          expect(mcpCalls).toBe(callsBefore)
-        } else {
+        else {
           await vi.waitFor(() => expect(toolResults.slice(before).join()).toContain('MCP_CALLED_MARKER'), { timeout: 15_000 })
           expect(mcpCalls).toBe(callsBefore + 1)
         }
       }
-    }
     } finally {
       await service.dispose()
       mcp.closeAllConnections()
@@ -205,7 +176,7 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
     const service = new NativeDshWebClientService({ rootDirectory: join(root, 'homes'), cliPath: join(root, 'missing.js'),
       resolveLaunchEnvironment: async () => ({ nodeExecutablePath: standardNode!, environment: process.env }) })
     services.push(service)
-    const request: NativeDshWebRequest = { projectId: 'one', workspace: root, profile, workMode: 'ask' }
+    const request: NativeDshWebRequest = { projectId: 'one', workspace: root, profile }
     await expect(service.start(request)).rejects.toThrow()
     await expect(service.start(request)).rejects.toThrow()
   })
@@ -217,7 +188,7 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
     const service = new NativeDshWebClientService({ rootDirectory: join(root, 'homes'), cliPath,
       resolveLaunchEnvironment: async () => ({ nodeExecutablePath: standardNode!, environment: process.env }) })
     services.push(service)
-    const starting = service.start({ projectId: 'pending', workspace: root, profile, workMode: 'ask' })
+    const starting = service.start({ projectId: 'pending', workspace: root, profile })
     const rejected = expect(starting).rejects.toThrow()
     await new Promise(resolve => setTimeout(resolve, 200))
     await service.dispose()

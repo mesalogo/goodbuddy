@@ -19,8 +19,6 @@ const channelIdentifierSchema = z
   .min(1)
   .max(CHANNEL_LIMITS.maximumIdentityLength)
 
-export const channelWorkModeSchema = z.literal('ask')
-export type ChannelWorkMode = z.infer<typeof channelWorkModeSchema>
 
 const attachmentBase64Schema = z
   .string()
@@ -126,7 +124,6 @@ export const channelInboundTextSchema = z
       .max(CHANNEL_LIMITS.maximumErrorLength)
       .optional(),
     mentioned: z.boolean().default(false),
-    workMode: channelWorkModeSchema.default('ask'),
     receivedAt: z.number().int().nonnegative().optional()
   })
   .strict()

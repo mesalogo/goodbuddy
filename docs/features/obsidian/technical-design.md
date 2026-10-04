@@ -14,7 +14,7 @@
 | 共享目录与直连 | [obsidian-tools.ts](../../../src/shared/obsidian-tools.ts) 定义 19 个工具；[model-tool-provider.ts](../../../src/main/agent/model-tool-provider.ts) 发现并调用同一目录，保留上游错误详情 |
 | 构建 | [package-mcpvault.ts](../../../src/main/obsidian/package-mcpvault.ts) 复制依赖树，[electron.vite.config.ts](../../../electron.vite.config.ts) 调用打包函数，[package.json](../../../package.json) 配置版本及解包资源 |
 
-正式链路为设置页面经 Preload、受信任的 Main IPC 处理器到配置服务或 ObsidianService；会话经既有能力入口到 ObsidianService，再通过 stdio 到 MCPVault。[index.ts](../../../src/main/index.ts) 创建服务并注入工具启动环境、网关及 IPC；[capability-ipc.ts](../../../src/main/capabilities/capability-ipc.ts) 注册设置、测试和目录选择处理器，接收 [ipc.ts](../../../src/main/ipc.ts) 的注册及刷新回调。`ipc.ts` 保留处理器跟踪、Runtime 重载和生命周期管理，并在会话入口按保存设置及工作模式签发请求授权。
+正式链路为设置页面经 Preload、受信任的 Main IPC 处理器到配置服务或 ObsidianService；会话经既有能力入口到 ObsidianService，再通过 stdio 到 MCPVault。[index.ts](../../../src/main/index.ts) 创建服务并注入工具启动环境、网关及 IPC；[capability-ipc.ts](../../../src/main/capabilities/capability-ipc.ts) 注册设置、测试和目录选择处理器，接收 [ipc.ts](../../../src/main/ipc.ts) 的注册及刷新回调。`ipc.ts` 保留处理器跟踪、Runtime 重载和生命周期管理，并在会话入口按保存设置与资源范围签发请求授权。
 
 ## 配置与 IPC
 
@@ -69,7 +69,7 @@
 | `get_note_outline` | 获取笔记大纲 |
 | `read_note_lines` | 按行读取笔记 |
 
-服务分页读取上游工具，不设置功能白名单。读写属性供应用既有工作模式使用，不能据此增加 Obsidian 专用过滤。保留上游的错误结果与参数规则，例如删除参数 `confirmPath`；不把参数要求改造成额外确认弹窗。
+服务分页读取上游工具，不设置功能白名单。读写属性用于说明，不据此过滤工具。保留上游的错误结果与参数规则，例如删除参数 `confirmPath`；不把参数要求改造成额外确认弹窗。
 
 ## 离线打包与生命周期
 
@@ -97,7 +97,7 @@
 | --- | --- | --- |
 | TS-1 配置与服务 | 缺省字段、持久化独立性、各平台注册路径、ID 路由、真实上游读写、取消清理 | LR-1～LR-3、LR-5～LR-7 |
 | TS-2 设置 UI | 草稿测试不保存不启用、切换范围、取消选择、失败保留输入、键盘与窄窗口 | US-1～US-3、US-7、US-8 |
-| TS-3 网关与 IPC | 正式 Main 处理器、19 个共享工具、分配、Ask/Execute、配置提交撤销旧授权、在途取消与销毁等待；核对 DeepSeek Harness 和远程执行不可用边界 | LR-3、LR-4、LR-7、LR-8；US-4、US-5、US-9～US-12 |
+| TS-3 网关与 IPC | 正式 Main 处理器、19 个共享工具、分配、无模式读写、配置提交撤销旧授权、在途取消与销毁等待；核对 DeepSeek Harness 和远程执行不可用边界 | LR-3、LR-4、LR-7、LR-8；US-4、US-5、US-9～US-12 |
 | TS-4 安装包与端到端 | 在实际支持系统上断网且无系统 Node 测试；Obsidian 关闭；许可证及原生资源完整；从设置到真实会话读写 | FR-5、FR-6；US-6 |
 
 当前分配目标为 `model`、`opencode`、`continue`；[DeepSeek Harness](../../../src/main/agent/deepseek-harness-runtime.ts)和[远程 ACP Runtime](../../../src/main/agent/acp-remote-runtime.ts)的 `supportsScopedDataTools` 为 `false`，沿用既有不可用边界。已通过的生产组件自动化包含设置组件到注册 IPC、HTTP 网关，以及直连工具提供器全部 19 个工具的实际执行。真实聊天会话、Electron 托管 Node、Windows 解包应用及网络限制的不同验证范围见[进度](./progress.md)。

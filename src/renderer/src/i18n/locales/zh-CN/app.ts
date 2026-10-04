@@ -116,7 +116,7 @@ export const app = {
     defaultTitle: '新对话',
     remoteTitle: '远程会话',
     greeting:
-      '你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件，或使用知识库整理和检索信息。需要我操作文件或调用工具时，请选择合适的 Agent Runtime 和工作模式。',
+      '你好，我是 GoodBuddy。可以直接提问或交给我任务。可用工具由所选 Runtime 和设置决定。',
     interrupted: '上次运行意外中断，可以重新发送问题',
     active: '会话正在活动',
     unread: '未读',
@@ -179,21 +179,15 @@ export const app = {
       instructions: '任务内容',
       timing: '执行时间',
       destination: '关联会话',
-      mode: '执行模式',
       recurrence: '运行频率',
       time: '首次运行'
     },
     destination: {
       current: '当前会话',
       new: '新建会话',
-      currentHelp: '发送时使用所选会话的历史、Runtime、工作模式和已启用能力。',
+      currentHelp: '发送时使用所选会话的历史、Runtime 和已启用能力。',
       newHelp: '创建独立的普通会话，使用项目默认设置，以任务名称作为标题。',
       currentUnavailable: '当前会话不能关联此任务，请选择本项目其他会话或新建会话。'
-    },
-    mode: {
-      execute: 'Execute',
-      ask: 'Ask',
-      executeUnavailable: '当前 Runtime 不支持工具执行，已使用只读 Ask。'
     },
     recurrence: {
       once: '单次',
@@ -201,15 +195,12 @@ export const app = {
       weekly: '每周'
     },
     scope: {
-      conversationSettings: '发送时使用目标会话的 Runtime、工作模式和已启用工具，可在会话中调整。',
+      conversationSettings: '发送时使用目标会话的 Runtime 和已启用工具，可在会话中调整。',
       title: '执行范围',
       project: '项目',
       runtime: 'Runtime',
       workspace: '工作目录',
       tools: '工具与审批',
-      executeApproval:
-        '使用当前账号可用的全部工具、进程、网络和可写路径；调用记录到活动',
-      askReadOnly: '保持只读边界，仅问答和检索，不执行任何变更',
       noWorkspace: '未设置工作目录'
     },
     errors: {
@@ -354,7 +345,6 @@ export const app = {
       recoveryPrompt: '使用图片模型“{{model}}”：{{prompt}}',
       noToolsNotice: '当前聊天模型无法自动调用图片工具，可使用已有直连图片工作流。',
       directWorkflowNotice: '在 Runtime 选择器中选择图片模型后发送请求；尚未配置时，请前往模型设置添加图片连接。',
-      askNotice: '生成或编辑图片需要 Execute 模式，请通过工作模式选择器切换。',
       openModelSettings: '前往图片模型设置',
       cancelNotice: '已停止等待。提供商可能继续生成并计费，晚到的结果会保存在这里。',
       cancellingNotice: '已请求取消。提供商可能继续生成并计费。',
@@ -508,18 +498,7 @@ export const app = {
       skipped: '已跳过'
     },
     approval: {
-      waiting: '等待审批：{{tool}}',
-      deny: '拒绝',
-      once: '仅此次',
-      session: '此会话',
-      permanent: '永久允许',
-      decisionDeny: '拒绝',
-      decisionOnce: '仅此次允许',
-      decisionSession: '此会话允许',
-      decisionPermanent: '永久允许',
-      executing: '{{decision}}，Agent 正在执行',
-      denied: '已拒绝工具执行',
-      responseFailed: '审批响应失败，请重试'
+      waiting: '等待审批：{{tool}}'
     }
   },
   composer: {
@@ -546,7 +525,6 @@ export const app = {
     storyGraph: { label: '使用故事图谱' },
     options: '选项',
     expertLabel: '专家角色',
-    modeLabel: '工作模式',
     runtimeControls: {
       groupLabel: '{{runtime}} 专属功能',
       agentLabel: 'OpenCode Runtime Agent',
@@ -620,17 +598,6 @@ export const app = {
       teamDescription: '多个专家并行协作',
       customDescription: '自定义专家角色'
     },
-    modes: {
-      ask: {
-        label: 'Ask · 只读问答',
-        description: '保持只读边界，仅问答和检索，不执行任何变更'
-      },
-      execute: {
-        label: 'Execute · 完全权限',
-        description:
-          '使用当前账号可用的全部工具、进程、网络和可写路径；调用记录到活动'
-      }
-    },
     voice: {
       stopRecording: '停止录音',
       cancel: '取消语音识别',
@@ -689,13 +656,6 @@ export const app = {
       configureRuntime: '请先配置可用的模型或 Agent Runtime。',
       imageGeneration:
         '图像生成模型：输入画面描述后，生成结果会直接显示并保存到成果。',
-      agentAsk:
-        '{{runtime}} Ask 模式：保持只读边界，仅问答和检索，不执行任何变更。',
-      agentExecute:
-        '{{runtime}} Execute 模式：使用当前账号可用的全部工具、进程、网络和可写路径；调用记录到活动。',
-      ask: 'Ask 模式：保持只读边界，仅问答和检索，不执行任何变更。',
-      execute:
-        'Execute 模式：使用当前账号可用的全部工具、进程、网络和可写路径；调用记录到活动。'
     },
     errors: {
       pasteImageType: '仅支持粘贴 JPEG、PNG 或 WebP 图片',
@@ -767,7 +727,6 @@ export const app = {
      heartbeatTaskPrompt: '请根据以下监督反馈制定可执行方案：',
     heartbeatTaskAdded: '已将“{{title}}”带入对话，请确认后发送',
     userStartedTask: '用户发起对话任务',
-    userDecision: '用户选择了{{decision}}',
     conversationDeleted: '对应对话已被删除',
     localDataCleared:
       '本地对话、任务、记忆、自动监督、自动化和知识库索引已清除',

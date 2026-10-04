@@ -62,7 +62,7 @@ function fixture(access: 'read' | 'write' = 'write') {
   fixtures.push({ provider, gateway })
   const context: ModelToolCallContext = {
     conversationId: 'obsidian-model-test', runtimeTarget: 'model',
-    workMode: 'execute', knowledgeCapabilityToken: token
+    knowledgeCapabilityToken: token
   }
   return { gateway, provider, token, signal, context,
     call: (name: string, args: Record<string, unknown> = {}) => provider.callTool(name, args, signal, context) }
@@ -124,13 +124,12 @@ describe('ModelToolProvider with bundled Obsidian service', () => {
     expect([...executed].sort()).toEqual(tools.map((tool) => tool.name).sort())
   }, 60_000)
 
-  it('enforces Ask, read-only grants, missing tokens and revoked tokens at the provider boundary', async () => {
+  it('enforces scoped grants, missing tokens and revoked tokens at the provider boundary', async () => {
     const { provider, gateway, context, signal, token, call } = fixture()
-    const ask = { ...context, workMode: 'ask' as const }
-    expect((await provider.listTools(ask, signal)).filter((tool) => tool.name.startsWith('obsidian_'))
+    const read = fixture('read')
+    expect((await read.provider.listTools(read.context, signal)).filter((tool) => tool.name.startsWith('obsidian_'))
       .map((tool) => tool.name).sort()).toEqual([...obsidianReadToolNames].sort())
     const args = { vaultId: 'first', path: 'blocked.md', content: 'blocked' }
-    await expect(provider.callTool('obsidian_write_note', args, signal, ask)).rejects.toThrow('Ask')
     await expect(fixture('read').call('obsidian_write_note', args)).rejects.toThrow('capability is unavailable')
     const unscoped = { ...context, knowledgeCapabilityToken: undefined }
     expect((await provider.listTools(unscoped, signal)).some((tool) => tool.name.startsWith('obsidian_'))).toBe(false)
@@ -198,7 +197,7 @@ describe('ModelToolProvider with bundled Obsidian service', () => {
     }))
     fixtures.push({ provider, gateway })
     // No scoped grant: 72 real upstream tools plus two workspace tools fit below 100.
-    const tools = await provider.listTools({ conversationId: 'disabled-obsidian', workMode: 'execute' },
+    const tools = await provider.listTools({ conversationId: 'disabled-obsidian' },
       new AbortController().signal)
     expect(tools.filter((tool) => tool.source === 'mcp')).toHaveLength(72)
     expect(tools.some((tool) => tool.name.startsWith('obsidian_'))).toBe(false)

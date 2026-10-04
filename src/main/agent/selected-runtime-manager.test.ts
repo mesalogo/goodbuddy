@@ -424,7 +424,6 @@ describe('SelectedRuntimeManager', () => {
         requestId: '00000000-0000-4000-8000-000000000011',
         conversationId: 'conversation-one',
         prompt: 'keep working',
-        workMode: 'ask'
       },
       new AbortController().signal
     )
@@ -440,7 +439,6 @@ describe('SelectedRuntimeManager', () => {
             requestId: '00000000-0000-4000-8000-000000000012',
             conversationId: 'conversation-two',
             prompt: 'new work',
-            workMode: 'ask'
           },
           new AbortController().signal
         )
@@ -486,7 +484,6 @@ describe('SelectedRuntimeManager', () => {
         requestId: '00000000-0000-4000-8000-000000000021',
         conversationId: 'conversation-draining',
         prompt: 'finish normally',
-        workMode: 'ask'
       },
       new AbortController().signal
     )
@@ -524,7 +521,7 @@ describe('SelectedRuntimeManager', () => {
     const controller = await manager.getRuntime({ provider: 'opencode' }, executionSpace('project-one'))
     const stream = controller.run({
       requestId: 'retained-request', conversationId: 'retained-conversation',
-      prompt: 'Ask a question', workMode: 'execute'
+      prompt: 'Ask a question',
     }, new AbortController().signal)
     try {
       expect((await stream.next()).value?.type).toBe('question')
@@ -537,7 +534,7 @@ describe('SelectedRuntimeManager', () => {
       expect(active.value.respondToQuestion).toHaveBeenCalledWith('retained-question', [['Yes']])
       await expect(controller.run({
         requestId: 'new-request', conversationId: 'new-conversation',
-        prompt: 'New work', workMode: 'execute'
+        prompt: 'New work',
       }, new AbortController().signal).next()).rejects.toThrow('正在关闭')
       expect((await stream.next()).value?.type).toBe('done')
       await stream.next()

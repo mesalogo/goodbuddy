@@ -43,7 +43,7 @@ describe('computer capability catalog', () => {
     ).toBe(true)
     expect(browser.name).toBe('内置浏览器')
     expect(browser.description).toContain('不会控制客户端已安装的浏览器')
-    expect(browser.riskSummary).toContain('不再逐次询问')
+    expect(browser.riskSummary).toContain('已分配的 Runtime 可直接读取网页并操作网站')
     expect(desktop.description).toContain('技术预览')
     expect(desktop.riskSummary).toContain('尚未')
   })

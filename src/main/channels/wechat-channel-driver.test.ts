@@ -80,7 +80,6 @@ describe('WechatChannelDriver', () => {
         accountId: 'bot-account',
         eventId: 'event-1',
         senderId: 'sender-1',
-        workMode: 'ask',
         attachments: [
           expect.objectContaining({ name: '说明.txt' })
         ]

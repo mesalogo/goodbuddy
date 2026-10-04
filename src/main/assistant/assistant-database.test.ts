@@ -23,6 +23,17 @@ import type { StoredSupervisionResult } from './supervisor-service'
 
 const temporaryDirectories: string[] = []
 
+// Fixtures derived from the current schema must restore released columns before
+// resetting user_version. Production never downgrades databases this way.
+const historicalModeColumns = `
+  ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask'
+    CHECK(default_work_mode IN ('ask', 'execute'));
+  ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask'
+    CHECK(work_mode IN ('ask', 'execute'));
+  ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute'
+    CHECK(work_mode IN ('ask', 'execute'));
+`
+
 it.each(['text-fallback', 'canvas-images'] as const)('invalidates canvas source comments by actual %s input while retaining todo identity', async (inputMode) => {
   const database = await createDatabase()
   try {
@@ -201,7 +212,7 @@ it('migrates schema 35 conversations to unpinned while retaining existing data a
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
     ALTER TABLE magic_note_entries DROP COLUMN source_json;
-    PRAGMA user_version = 35;`)
+    ${historicalModeColumns} PRAGMA user_version = 35;`)
   legacy.close()
   try {
     database.initialize('C:\\Workspace')
@@ -356,7 +367,7 @@ it('preserves existing supervision data when upgrading schema 41 and reopening',
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
     ALTER TABLE magic_note_entries DROP COLUMN source_json;
-    PRAGMA user_version = 41;`)
+    ${historicalModeColumns} PRAGMA user_version = 41;`)
   legacy.close()
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -460,7 +471,6 @@ function validatedSshProjectWrite(
       name: '远程项目',
       description: '原子持久化',
       rootPath,
-      defaultWorkMode: 'execute',
       runtimeSelection: { provider: 'opencode' }
     },
     executionSpace: {
@@ -547,7 +557,7 @@ describe('AssistantDatabase', () => {
       }
       const level = (): number => (raw.prepare('PRAGMA synchronous').get() as { synchronous: number }).synchronous
       expect(level()).toBe(2)
-      const task = database.createTask({ id: randomUUID(), title: 't', instructions: 'i', workMode: 'ask' })
+      const task = database.createTask({ id: randomUUID(), title: 't', instructions: 'i' })
       database.appendTaskEvent(task.id, 'text', { type: 'text', requestId: task.id, delta: 'a' })
       expect(level()).toBe(2)
       const id = randomUUID()
@@ -681,7 +691,7 @@ describe('AssistantDatabase', () => {
       const message = { id: randomUUID(), role: 'assistant' as const, state: 'streaming' as const,
         content: 'Partial reply', reasoning: 'x'.repeat(1_000_000), createdAt: 7 }
       database.saveLocalConversations([{ header: { id, title: 'Active', updatedAt: 7 }, messages: [message] }])
-      database.createTask({ id: randomUUID(), conversationId: id, title: 'Active', instructions: '', workMode: 'ask', status: 'running' })
+      database.createTask({ id: randomUUID(), conversationId: id, title: 'Active', instructions: '', status: 'running' })
       const raw = (database as unknown as { database: DatabaseSync }).database
       const prepare = vi.spyOn(raw, 'prepare')
       const summary = database.listConversationSummaries([]).find(item => item.id === id)!
@@ -706,24 +716,23 @@ describe('AssistantDatabase', () => {
       const projectId = database.listProjects()[0]!.id
       const otherProject = database.createProject({
         name: 'Other project', description: '', rootPath: 'C:\\Other',
-        defaultWorkMode: 'ask'
       })
       const active = ['running', 'waiting_approval'].map((status, index) =>
         database.createTask({
           id: randomUUID(), projectId: index ? otherProject.id : projectId,
-          title: status, instructions: '', workMode: 'execute',
+          title: status, instructions: '',
           status: status as 'running' | 'waiting_approval'
         })
       )
       database.createTask({
         id: randomUUID(), title: 'Hidden live task', instructions: '',
-        workMode: 'execute', visible: false
+        visible: false
       })
       const history = Array.from({ length: 501 }, (_, index) => {
         vi.setSystemTime(new Date(Date.UTC(2026, 1, 1) + index * 1000))
         return database.createTask({
           id: randomUUID(), projectId, title: `History ${index}`,
-          instructions: '', workMode: 'ask',
+          instructions: '',
           status: index === 500 ? 'running' : 'completed'
         })
       }).reverse()
@@ -786,7 +795,7 @@ describe('AssistantDatabase', () => {
         }])
         database.createTask({
           id: randomUUID(), projectId, conversationId: id,
-          title: status, instructions: '', workMode: 'execute',
+          title: status, instructions: '',
           status: status as 'running' | 'waiting_approval'
         })
         return id
@@ -811,7 +820,7 @@ describe('AssistantDatabase', () => {
       vi.setSystemTime(new Date('2026-02-01T00:00:00Z'))
       const historyTask = database.createTask({
         id: randomUUID(), projectId, title: 'Recent completed task',
-        instructions: '', workMode: 'ask', status: 'completed'
+        instructions: '', status: 'completed'
       })
       const tasks = database.listTasks(1)
       expect(tasks).toHaveLength(6)
@@ -846,7 +855,7 @@ describe('AssistantDatabase', () => {
     const database = await createDatabase()
     const project = database.createProject({
       name: 'Scheduled project', rootPath: 'C:\\Workspace', description: '',
-      defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' }
+      runtimeSelection: { provider: 'opencode' }
     })
     const schedule = database.createSchedule({
       projectId: project.id, title: 'Timed message', prompt: 'Continue our work',
@@ -855,23 +864,23 @@ describe('AssistantDatabase', () => {
     expect(schedule.runtimeSelection).toBeUndefined()
     const conversation = database.getConversation(schedule.conversationId)
     expect(conversation.runtimeSelection).toBeUndefined()
-    expect(conversation.workMode).toBeUndefined()
+    expect(conversation).not.toHaveProperty('workMode')
     const { messages, ...header } = conversation
     database.saveLocalConversations([{ header: {
-      ...header, workMode: 'execute',
+      ...header,
       knowledgeRetrievalMode: 'always',
       runtimeSelection: { provider: 'continue' }
     }, messages }])
     const existing = database.createSchedule({
       projectId: project.id, conversationId: conversation.id,
-      title: 'Second message', prompt: 'Continue', workMode: 'ask',
+      title: 'Second message', prompt: 'Continue',
       recurrence: 'once', nextRunAt: '2026-09-11T00:00:00Z'
     })
     expect(existing.runtimeSelection).toBeUndefined()
     database.close()
     database.initialize('C:\\Workspace')
     expect(database.getConversation(conversation.id)).toMatchObject({
-      workMode: 'execute', runtimeSelection: { provider: 'continue' },
+      runtimeSelection: { provider: 'continue' },
       knowledgeRetrievalMode: 'always'
     })
     database.close()
@@ -889,7 +898,7 @@ describe('AssistantDatabase', () => {
     database.releaseConversationUserQueueItem(item.id)
     expect(database.claimConversationQueueItem(schedule.conversationId)?.source).toBe('schedule')
     database.createTask({ id: item.scheduleRunId!, conversationId: schedule.conversationId,
-      title: 'Continue', instructions: 'Continue', workMode: 'execute', visible: false })
+      title: 'Continue', instructions: 'Continue', visible: false })
     database.completeConversationUserQueueItem(item.id)
     database.updateTaskStatus(item.scheduleRunId!, 'completed')
     database.completeTaskScheduleRun(item.scheduleRunId!)
@@ -910,7 +919,7 @@ describe('AssistantDatabase', () => {
     const item = database.queueScheduleNow(schedule.id)
     database.claimConversationQueueItem(schedule.conversationId)
     database.createTask({ id: item.scheduleRunId!, conversationId: schedule.conversationId,
-      title: 'Continue', instructions: 'Continue', workMode: 'execute', visible: false })
+      title: 'Continue', instructions: 'Continue', visible: false })
     database.completeConversationUserQueueItem(item.id)
     database.close()
     database.initialize('C:\\Workspace')
@@ -1176,21 +1185,18 @@ describe('AssistantDatabase', () => {
       name: '第二项目',
       description: '',
       rootPath: 'C:\\Second',
-      defaultWorkMode: 'ask'
     })
     vi.setSystemTime(new Date('2026-08-07T00:02:00.000Z'))
     const thirdProject = database.createProject({
       name: '第三项目',
       description: '',
       rootPath: 'C:\\Third',
-      defaultWorkMode: 'execute'
     })
 
     database.updateProject(secondProject.id, {
       name: '第二项目（已更新）',
       description: '',
       rootPath: 'C:\\Second',
-      defaultWorkMode: 'ask'
     })
 
     expect(database.listProjects().map((project) => project.id)).toEqual([
@@ -1233,7 +1239,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 3;
+      ${historicalModeColumns} PRAGMA user_version = 3;
     `)
     oldDatabase.close()
 
@@ -1378,7 +1384,6 @@ describe('AssistantDatabase', () => {
       name: '迁移项目',
       description: '保留全部项目字段',
       rootPath: 'D:\\Migration',
-      defaultWorkMode: 'execute',
       runtimeSelection: { provider: 'continue' }
     })
     initial.close()
@@ -1400,7 +1405,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 26;
+      ${historicalModeColumns} PRAGMA user_version = 26;
     `)
     legacy.close()
 
@@ -1416,7 +1421,6 @@ describe('AssistantDatabase', () => {
       name: '迁移项目',
       description: '保留全部项目字段',
       rootPath: 'D:\\Migration',
-      defaultWorkMode: 'execute',
       runtimeSelection: { provider: 'continue' },
       executionSpace: {
         kind: 'local',
@@ -1520,7 +1524,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 30;
+      ${historicalModeColumns} PRAGMA user_version = 30;
     `)
     legacy.close()
 
@@ -1573,7 +1577,6 @@ describe('AssistantDatabase', () => {
       projectId: project.id,
       title: '保留任务',
       instructions: '迁移后仍应存在',
-      workMode: 'execute'
     })
     initial.close()
 
@@ -1602,7 +1605,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 30;
+      ${historicalModeColumns} PRAGMA user_version = 30;
     `)
     legacy.close()
 
@@ -1610,7 +1613,6 @@ describe('AssistantDatabase', () => {
     migrated.initialize('C:\\Workspace')
     expect(migrated.getProject(project.id)).toMatchObject({
       id: project.id,
-      defaultWorkMode: 'execute',
       executionSpace: {
         kind: 'ssh',
         hostId: validatedSshHostId,
@@ -1703,7 +1705,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 24;
+      ${historicalModeColumns} PRAGMA user_version = 24;
     `)
     legacy.close()
 
@@ -1733,7 +1735,6 @@ describe('AssistantDatabase', () => {
       name: builtInDefaultProjectSeedName,
       description: builtInDefaultProjectSeedDescription,
       rootPath: 'D:\\Independent',
-      defaultWorkMode: 'ask'
     })
     expect(independent.builtInDefault).toBe(false)
     expect(isUntouchedBuiltInDefaultProject(independent)).toBe(false)
@@ -1754,7 +1755,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 24;
+      ${historicalModeColumns} PRAGMA user_version = 24;
     `)
     legacy.close()
 
@@ -1781,13 +1782,11 @@ describe('AssistantDatabase', () => {
       name: '已编辑默认项目',
       description: builtInDefaultProjectSeedDescription,
       rootPath: original.rootPath,
-      defaultWorkMode: 'ask'
     })
     const clone = initial.createProject({
       name: builtInDefaultProjectSeedName,
       description: builtInDefaultProjectSeedDescription,
       rootPath: original.rootPath,
-      defaultWorkMode: 'ask'
     })
     initial.close()
 
@@ -1806,7 +1805,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 24;
+      ${historicalModeColumns} PRAGMA user_version = 24;
     `)
     legacy.close()
 
@@ -1834,7 +1833,6 @@ describe('AssistantDatabase', () => {
       name: builtInDefaultProjectSeedName,
       description: builtInDefaultProjectSeedDescription,
       rootPath: original.rootPath,
-      defaultWorkMode: 'ask'
     })
     initial.deleteProject(original.id, original.name)
     initial.close()
@@ -1854,7 +1852,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 24;
+      ${historicalModeColumns} PRAGMA user_version = 24;
     `)
     legacy.close()
 
@@ -1891,7 +1889,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 24;
+      ${historicalModeColumns} PRAGMA user_version = 24;
     `)
     legacy.close()
 
@@ -1925,7 +1923,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 5;
+      ${historicalModeColumns} PRAGMA user_version = 5;
     `)
     versionFive.close()
 
@@ -1993,7 +1991,6 @@ describe('AssistantDatabase', () => {
       projectId: project.id,
       title: '旧版每日报告',
       prompt: '生成每日报告',
-      workMode: 'ask',
       recurrence: 'daily',
       nextRunAt: '2026-08-20T00:00:00.000Z'
     })
@@ -2004,7 +2001,7 @@ describe('AssistantDatabase', () => {
     const legacyRunId =
       '00000000-0000-4000-8000-000000000222'
     const raw = new DatabaseSync(databasePath)
-    raw.exec('BEGIN IMMEDIATE')
+    raw.exec(`BEGIN IMMEDIATE; ${historicalModeColumns}`)
     raw
       .prepare('DELETE FROM tasks WHERE id = ?')
       .run(legacySchedule.taskId)
@@ -2156,7 +2153,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 9;
+      ${historicalModeColumns} PRAGMA user_version = 9;
     `)
     legacy.close()
 
@@ -2218,7 +2215,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 16`)
+      ${historicalModeColumns} PRAGMA user_version = 16`)
     legacy.close()
 
     const migrated = new AssistantDatabase(databasePath)
@@ -2252,7 +2249,6 @@ describe('AssistantDatabase', () => {
         kind: 'local',
         rootPath: 'C:\\Workspace'
       },
-      defaultWorkMode: 'ask',
       kind: 'user',
       builtInDefault: true,
       status: 'active'
@@ -2269,7 +2265,6 @@ describe('AssistantDatabase', () => {
         name: builtInDefaultProjectSeedName,
         description: builtInDefaultProjectSeedDescription,
         rootPath: 'D:\\Moved',
-        defaultWorkMode: 'execute',
         runtimeSelection: { provider: 'continue' }
       }
     )
@@ -2283,7 +2278,6 @@ describe('AssistantDatabase', () => {
       name: '产品发布',
       description: '发布资料和任务',
       rootPath: 'C:\\Release',
-      defaultWorkMode: 'ask'
     })
     expect(project.builtInDefault).toBe(false)
     expect(project.executionSpace).toEqual({
@@ -2296,14 +2290,12 @@ describe('AssistantDatabase', () => {
       name: '产品发布 2',
       description: '更新后的项目',
       rootPath: 'C:\\Release',
-      defaultWorkMode: 'execute',
       runtimeSelection: {
         provider: 'continue'
       }
     })
     expect(updated).toMatchObject({
       name: '产品发布 2',
-      defaultWorkMode: 'execute',
       executionSpace: {
         kind: 'local',
         rootPath: 'C:\\Release'
@@ -2337,7 +2329,6 @@ describe('AssistantDatabase', () => {
       name: '原始项目',
       description: '原始说明',
       rootPath: '',
-      defaultWorkMode: 'ask'
     })
     expect(project).toMatchObject({
       rootPath: '',
@@ -2366,7 +2357,6 @@ describe('AssistantDatabase', () => {
         name: '不能半创建',
         description: '',
         rootPath: 'blocked-insert',
-        defaultWorkMode: 'ask'
       })
     ).toThrow('forced execution-space insert failure')
     expect(
@@ -2380,14 +2370,12 @@ describe('AssistantDatabase', () => {
         name: '不能半更新',
         description: '不能保留',
         rootPath: 'blocked-update',
-        defaultWorkMode: 'execute'
       })
     ).toThrow('forced execution-space update failure')
     expect(database.getProject(project.id)).toMatchObject({
       name: '原始项目',
       description: '原始说明',
       rootPath: '',
-      defaultWorkMode: 'ask',
       executionSpace: { kind: 'local', rootPath: '' }
     })
     database.close()
@@ -2405,7 +2393,6 @@ describe('AssistantDatabase', () => {
       name: '远程项目',
       description: '',
       rootPath: 'C:\\LegacyProjection',
-      defaultWorkMode: 'ask',
       runtimeSelection: { provider: 'opencode' }
     })
     const hostId = '00000000-0000-4000-8000-000000000311'
@@ -2440,7 +2427,6 @@ describe('AssistantDatabase', () => {
       projectId: project.id,
       title: '无法连接的远程任务',
       instructions: '本地清理不应等待远端任务停止',
-      workMode: 'execute'
     })
     expect(database.listProjectsReferencingSshHost(hostId)).toEqual([
       { id: project.id, name: project.name }
@@ -2694,7 +2680,6 @@ describe('AssistantDatabase', () => {
       name: '本地项目',
       description: '',
       rootPath: 'D:\\Local',
-      defaultWorkMode: 'ask'
     })
     expect(() =>
       database.updateSshProject(
@@ -2825,7 +2810,6 @@ describe('AssistantDatabase', () => {
       name: '微信 ClawBot',
       description: '普通同名项目',
       rootPath: 'C:\\Ordinary',
-      defaultWorkMode: 'execute'
     })
 
     const first = database.ensureChannelProjects(
@@ -2845,7 +2829,6 @@ describe('AssistantDatabase', () => {
           kind: 'local',
           rootPath: 'C:\\Users\\test'
         },
-        defaultWorkMode: 'ask',
         // The model follows global settings instead of freezing today's default.
         runtimeSelection: { provider: 'model' },
         kind: 'channel',
@@ -2874,7 +2857,6 @@ describe('AssistantDatabase', () => {
       name: '不可重命名',
       description: '更新后的通道说明',
       rootPath: 'C:\\Remote',
-      defaultWorkMode: 'execute',
       runtimeSelection: {
         provider: 'opencode',
         model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000019' }
@@ -2888,7 +2870,6 @@ describe('AssistantDatabase', () => {
         kind: 'local',
         rootPath: 'C:\\Remote'
       },
-      defaultWorkMode: 'execute',
       runtimeSelection: {
         provider: 'opencode',
         model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000019' }
@@ -2899,7 +2880,6 @@ describe('AssistantDatabase', () => {
         name: weixin.name,
         description: weixin.description,
         rootPath: '  ',
-        defaultWorkMode: 'execute'
       })
     ).toThrow('通道项目必须设置默认工作目录')
     expect(() =>
@@ -3165,7 +3145,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 23`)
+      ${historicalModeColumns} PRAGMA user_version = 23`)
     legacy.close()
 
     const migrated = new AssistantDatabase(databasePath)
@@ -3333,7 +3313,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 18;
+      ${historicalModeColumns} PRAGMA user_version = 18;
     `)
     legacy.close()
 
@@ -3362,7 +3342,6 @@ describe('AssistantDatabase', () => {
       name: '待删除项目',
       description: '删除测试',
       rootPath: 'C:\\Delete',
-      defaultWorkMode: 'execute'
     })
     const conversationId = '00000000-0000-4000-8000-000000000111'
     const taskId = '00000000-0000-4000-8000-000000000211'
@@ -3381,7 +3360,6 @@ describe('AssistantDatabase', () => {
       conversationId,
       title: '项目任务',
       instructions: '执行任务',
-      workMode: 'execute'
     })
     database.createTextArtifact({
       projectId: project.id,
@@ -3399,7 +3377,6 @@ describe('AssistantDatabase', () => {
       projectId: project.id,
       title: '项目计划',
       prompt: '执行计划',
-      workMode: 'ask',
       recurrence: 'daily',
       nextRunAt: '2026-08-08T00:00:00.000Z'
     })
@@ -3570,7 +3547,6 @@ describe('AssistantDatabase', () => {
       conversationId: 'conversation-1',
       title: '整理发布说明',
       instructions: '根据本次变更整理说明',
-      workMode: 'execute'
     })
     expect(database.listTasks()[0]).toMatchObject({
       id: taskId,
@@ -3588,7 +3564,6 @@ describe('AssistantDatabase', () => {
       routingMode: 'smart',
       title: '研究子任务',
       instructions: '只读分析',
-      workMode: 'ask',
       origin: 'subagent',
       status: 'queued'
     })
@@ -3632,13 +3607,11 @@ describe('AssistantDatabase', () => {
       projectId: project.id,
       title: '每日摘要',
       prompt: '总结今天的任务状态',
-      workMode: 'ask',
       recurrence: 'daily',
       nextRunAt: '2026-07-31T00:00:00.000Z'
     })
     expect(schedule).toMatchObject({
       projectId: project.id,
-      workMode: 'ask',
       taskId: expect.any(String),
       conversationId: expect.any(String)
     })
@@ -3728,7 +3701,6 @@ describe('AssistantDatabase', () => {
       conversationId: schedule.conversationId,
       title: '每周复盘',
       prompt: '复盘本周任务',
-      workMode: 'execute',
       recurrence: 'weekly',
       nextRunAt: '2027-01-01T00:00:00.000Z'
     })
@@ -3756,7 +3728,6 @@ describe('AssistantDatabase', () => {
           '00000000-0000-4000-8000-000000000299',
         title: '不应创建',
         prompt: '无效对话',
-        workMode: 'execute',
         recurrence: 'once',
         nextRunAt: '2027-01-02T00:00:00.000Z'
       })
@@ -3770,7 +3741,6 @@ describe('AssistantDatabase', () => {
       projectId: project.id,
       title: '过期摘要',
       prompt: '总结任务状态',
-      workMode: 'ask',
       recurrence: 'daily',
       nextRunAt: '2025-07-31T00:00:00.000Z'
     })
@@ -3804,7 +3774,6 @@ describe('AssistantDatabase', () => {
       conversationId: schedule.conversationId,
       scheduleId: undefined,
       status: 'completed',
-      workMode: 'execute'
     })
     database.close()
   })
@@ -3822,7 +3791,6 @@ describe('AssistantDatabase', () => {
       id: taskId,
       title: '迁移任务事件',
       instructions: '保留普通事件',
-      workMode: 'ask',
       status: 'completed'
     })
     initial.appendTaskEvent(taskId, 'output', { text: '原有事件' })
@@ -3852,7 +3820,7 @@ describe('AssistantDatabase', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 31;
+      ${historicalModeColumns} PRAGMA user_version = 31;
     `)
     legacy.close()
 
@@ -3941,7 +3909,6 @@ describe('AssistantDatabase', () => {
       id: taskId,
       title: '远程事件任务',
       instructions: '验证幂等落库',
-      workMode: 'execute',
       status: 'completed'
     })
 
@@ -4025,7 +3992,6 @@ describe('AssistantDatabase', () => {
       id: taskId,
       title: '远程事件批次',
       instructions: '验证批次事务',
-      workMode: 'execute',
       status: 'completed'
     })
     const provenance = {
@@ -4129,7 +4095,7 @@ describe('AssistantDatabase', () => {
     let database = new AssistantDatabase(path)
     database.initialize('C:\\Workspace')
     const taskId = '00000000-0000-4000-8000-000000000702'
-    database.createTask({ id: taskId, title: 'Recovery', instructions: 'Read', workMode: 'execute' })
+    database.createTask({ id: taskId, title: 'Recovery', instructions: 'Read' })
     const append = (sequence: string, kind: string, payload: object) => database.appendRemoteTaskEventOnce({
       taskId, bindingId: 'tool-recovery', operationId: taskId,
       semanticSequence: sequence, eventIndex: 0, kind, payload
@@ -4174,7 +4140,7 @@ describe('AssistantDatabase', () => {
     }])
     database.createTask({
       id: taskId, projectId: project.id, conversationId,
-      title: '继承', instructions: '回复', workMode: 'ask',
+      title: '继承', instructions: '回复',
       remoteRecovery: {
         recoverable: true,
         currentUserMessageId: '00000000-0000-4000-8000-000000000703',
@@ -4247,7 +4213,7 @@ describe('AssistantDatabase', () => {
       }])
       database.createTask({
         id: taskId, projectId: project.id, conversationId,
-        title: '批量', instructions: '回复', workMode: 'execute',
+        title: '批量', instructions: '回复',
         remoteRecovery: {
           recoverable: true,
           currentUserMessageId: '00000000-0000-4000-8000-000000000713',
@@ -4399,7 +4365,7 @@ describe('AssistantDatabase', () => {
     database.initialize('C:\\Workspace')
     try {
       const taskId = '00000000-0000-4000-8000-000000000721'
-      database.createTask({ id: taskId, title: '批量', instructions: '回复', workMode: 'ask' })
+      database.createTask({ id: taskId, title: '批量', instructions: '回复' })
       const event = (semanticSequence: string, eventIndex: number, delta: string) => ({
         taskId, bindingId: 'plain-batch', operationId: taskId, semanticSequence, eventIndex,
         kind: 'text', payload: { requestId: taskId, type: 'text', delta }
@@ -4464,7 +4430,6 @@ describe('AssistantDatabase', () => {
       conversationId,
       title: '远程恢复',
       instructions: '恢复这次回答',
-      workMode: 'execute',
       remoteRecovery: {
         recoverable: true,
         currentUserMessageId: userMessageId,
@@ -4495,7 +4460,6 @@ describe('AssistantDatabase', () => {
         currentUserMessageId: userMessageId,
         currentAssistantMessageId: assistantMessageId,
         instructions: '恢复这次回答',
-        workMode: 'execute',
         status: 'running'
       }
     ])
@@ -4788,7 +4752,6 @@ describe('AssistantDatabase', () => {
         conversationId,
         title: `远程恢复 ${index}`,
         instructions: `恢复回答 ${index}`,
-        workMode: 'execute',
         remoteRecovery: {
           recoverable: true,
           currentUserMessageId: id(index + 200),
@@ -4821,7 +4784,7 @@ describe('AssistantDatabase', () => {
       }])
       database.createTask({
         id: taskId, projectId: project.id, conversationId, title: 'Question order',
-        instructions: 'Ask then acknowledge', workMode: 'execute',
+        instructions: 'Ask then acknowledge',
         remoteRecovery: { recoverable: true, currentUserMessageId: randomUUID(), currentAssistantMessageId: assistantMessageId }
       })
       if (legacy) {
@@ -4905,7 +4868,6 @@ describe('AssistantDatabase', () => {
       conversationId,
       title: '原子恢复',
       instructions: '不能半写入',
-      workMode: 'execute',
       remoteRecovery: {
         recoverable: true,
         currentUserMessageId:
@@ -5209,7 +5171,6 @@ describe('AssistantDatabase', () => {
     const schedule = database.createSchedule({
       title: '排队提醒',
       prompt: '检查排队结果',
-      workMode: 'execute',
       recurrence: 'daily',
       nextRunAt: '2026-08-20T09:00:00.000Z'
     })
@@ -5286,7 +5247,6 @@ describe('AssistantDatabase', () => {
     const schedule = initial.createSchedule({
       title: '一次提醒',
       prompt: '提醒我检查结果',
-      workMode: 'ask',
       recurrence: 'once',
       nextRunAt: '2026-08-13T00:00:00.000Z'
     })
@@ -5333,7 +5293,6 @@ describe('AssistantDatabase', () => {
       database.createSchedule({
         title: `批量任务 ${index + 1}`,
         prompt: `执行批量任务 ${index + 1}`,
-        workMode: 'execute',
         recurrence: 'once',
         nextRunAt: '2026-08-13T00:00:00.000Z'
       }).id
@@ -5378,13 +5337,11 @@ describe('AssistantDatabase', () => {
       id: runningTaskId,
       title: '运行中的任务',
       instructions: '等待启动恢复',
-      workMode: 'execute'
     })
     initial.createTask({
       id: approvalTaskId,
       title: '等待审批的任务',
       instructions: '等待启动恢复',
-      workMode: 'execute'
     })
     initial.updateTaskStatus(approvalTaskId, 'waiting_approval')
     initial.close()
@@ -6253,7 +6210,6 @@ describe('AssistantDatabase', () => {
       conversationId: sourceConversationId,
       title: '运行中的任务',
       instructions: '保持运行',
-      workMode: 'ask'
     })
     database.updateTaskStatus(taskId, 'running')
     expect(() =>
@@ -6531,7 +6487,6 @@ describe('AssistantDatabase', () => {
       conversationId: localId,
       title: '随会话删除的任务',
       prompt: '整理会话',
-      workMode: 'execute',
       recurrence: 'daily',
       nextRunAt: '2027-01-01T00:00:00.000Z'
     })
@@ -6540,7 +6495,6 @@ describe('AssistantDatabase', () => {
       conversationId: localId,
       title: '本地对话任务',
       instructions: '生成仅属于对话的回复',
-      workMode: 'ask'
     })
     database.updateTaskStatus(localTaskId, 'completed')
     const hiddenReply = database.createTextArtifact({
@@ -6671,7 +6625,7 @@ describe('AssistantDatabase', () => {
       runtimeSelection: { provider: 'model', model: { kind: 'profile', profileId: imageProfileId } }
     })
     const localProject = database.createProject({
-      name: '本地', description: '', rootPath: 'C:\\Local', defaultWorkMode: 'ask',
+      name: '本地', description: '', rootPath: 'C:\\Local',
       runtimeSelection: { model: { kind: 'profile', profileId: removedProfileId } }
     })
 
@@ -6713,10 +6667,10 @@ describe('AssistantDatabase', () => {
     raw.prepare('UPDATE projects SET runtime_selection_json = ? WHERE id = ?')
       .run(JSON.stringify({ provider: 'continue', profileId: '00000000-0000-4000-8000-000000000301' }), project.id)
     raw.prepare(
-      `INSERT INTO conversations (id, project_id, runtime_selection_json, work_mode, title, status, created_at, updated_at)
-       VALUES (?, ?, ?, 'ask', 'legacy', 'active', ?, ?)`
+      `INSERT INTO conversations (id, project_id, runtime_selection_json, title, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'legacy', 'active', ?, ?)`
     ).run('00000000-0000-4000-8000-000000000302', project.id, JSON.stringify({ provider: 'auto' }), '2026-01-01', '2026-01-01')
-    raw.exec('PRAGMA user_version = 48')
+    raw.exec(`${historicalModeColumns} PRAGMA user_version = 48`)
     raw.close()
 
     const reopened = new AssistantDatabase(databasePath)
@@ -7019,7 +6973,6 @@ describe('AssistantDatabase', () => {
       conversationId: 'conversation-chat',
       title: '普通对话',
       instructions: '回答问题',
-      workMode: 'ask'
     })
     database.createTask({
       id: channelTaskId,
@@ -7027,7 +6980,6 @@ describe('AssistantDatabase', () => {
       conversationId: 'conversation-channel',
       title: '远程对话',
       instructions: '回答远程消息',
-      workMode: 'ask',
       origin: 'delegation'
     })
     database.createTask({
@@ -7036,7 +6988,6 @@ describe('AssistantDatabase', () => {
       conversationId: 'schedule:daily',
       title: '每日报告',
       instructions: '生成报告',
-      workMode: 'ask',
       origin: 'schedule'
     })
     database.createTask({
@@ -7045,7 +6996,6 @@ describe('AssistantDatabase', () => {
       conversationId: 'delegation:weekly-report',
       title: '委派报告',
       instructions: '生成远程委派报告',
-      workMode: 'ask',
       origin: 'delegation'
     })
     const chatReply = database.createTextArtifact({
@@ -7153,7 +7103,6 @@ describe('AssistantDatabase', () => {
       id: taskId,
       title: '统计令牌',
       instructions: '记录模型调用',
-      workMode: 'ask'
     })
 
     database.upsertModelUsageCall({
@@ -7254,7 +7203,6 @@ describe('AssistantDatabase', () => {
       name: '第二项目',
       description: '',
       rootPath: 'C:\\Second',
-      defaultWorkMode: 'ask'
     })
     const firstConversationId =
       '00000000-0000-4000-8000-000000000311'
@@ -7284,7 +7232,6 @@ describe('AssistantDatabase', () => {
       conversationId: firstConversationId,
       title: '第一请求',
       instructions: '测试',
-      workMode: 'ask'
     })
     database.createTask({
       id: secondTaskId,
@@ -7292,7 +7239,6 @@ describe('AssistantDatabase', () => {
       conversationId: secondConversationId,
       title: '第二请求',
       instructions: '测试',
-      workMode: 'ask'
     })
     for (const usage of [
       {
@@ -7403,8 +7349,7 @@ describe('AssistantDatabase', () => {
         id: taskId,
         conversationId: system ? `knowledge:${randomUUID()}` : randomUUID(),
         title: 'Cache usage',
-        instructions: 'Cache usage',
-        workMode: 'ask'
+        instructions: 'Cache usage'
       })
       const calls = [
         { runtime: 'opencode', provider: 'goodbuddy-openai-chat', input: 60, cacheRead: 40, cacheWrite: 0 },
@@ -7857,7 +7802,6 @@ describe('AssistantDatabase', () => {
       projectId: project.id,
       title: '待清除任务',
       prompt: '总结',
-      workMode: 'ask',
       recurrence: 'daily',
       nextRunAt: '2026-08-02T00:00:00.000Z'
     })
@@ -7879,7 +7823,6 @@ describe('AssistantDatabase', () => {
       projectId: project.id,
       title: '待清除用量',
       instructions: '测试',
-      workMode: 'ask'
     })
     database.upsertModelUsageCall({
       requestId: taskId,
@@ -7929,7 +7872,7 @@ describe('AssistantDatabase', () => {
     const database = await createDatabase()
     const usage = { runtime: 'model', provider: 'openai', model: 'gpt', input: 10, output: 5, cacheRead: 0, cacheWrite: 0 }
     const conversationTask = '00000000-0000-4000-8000-000000000401'
-    database.createTask({ id: conversationTask, conversationId: 'chat-1', title: 'Chat', instructions: 'Reply', workMode: 'ask' })
+    database.createTask({ id: conversationTask, conversationId: 'chat-1', title: 'Chat', instructions: 'Reply' })
     database.upsertModelUsageCall({ ...usage, requestId: conversationTask, callId: 'chat' })
     const systemTasks = [
       ['00000000-0000-4000-8000-000000000402', 'heartbeat:a', 'heartbeat'],
@@ -7937,7 +7880,7 @@ describe('AssistantDatabase', () => {
       ['00000000-0000-4000-8000-000000000404', undefined, 'magic-notes']
     ] as const
     for (const [id, conversationId] of systemTasks) {
-      database.createTask({ id, conversationId, title: 'System', instructions: 'Run', workMode: 'ask', origin: 'assistant', visible: false })
+      database.createTask({ id, conversationId, title: 'System', instructions: 'Run', origin: 'assistant', visible: false })
       database.upsertModelUsageCall({ ...usage, requestId: id, callId: 'system' })
     }
     database.recordSystemModelUsage({ ...usage, runtime: 'embedding', source: 'knowledge', bucket: 'embedding', output: 0 })

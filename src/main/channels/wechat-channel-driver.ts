@@ -195,7 +195,6 @@ export class WechatChannelDriver implements ChannelDriver {
             attachments: message.attachments,
             attachmentError: message.attachmentError,
             mentioned: false,
-            workMode: 'ask',
             receivedAt: Date.now()
           },
           () => undefined

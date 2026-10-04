@@ -104,7 +104,6 @@ function acceptPrompt(
     bindingId: value.bindingId,
     operationId: value.operationId,
     requestId: value.requestId,
-    workMode: value.workMode,
     deadlineAt: value.deadlineAt,
     acceptedAt: new Date().toISOString()
   }
@@ -320,7 +319,6 @@ const request = {
   requestId: '1c608898-ecb7-4081-8174-2b6a52f53c01',
   conversationId: 'conversation-1',
   prompt: 'hello',
-  workMode: 'execute' as const
 }
 
 const modelBridgePolicy = {
@@ -1219,11 +1217,12 @@ describe('AcpRemoteRuntime', () => {
     await instance.dispose()
   })
 
-  it('starts the requested work mode before session and prompt', async () => {
+  it('prepares a mode-free operation before session and prompt', async () => {
     const order: string[] = []
     const server = fakeServer({
       preparePrompt: async (value) => {
-        order.push(`prepare:${value.workMode}`)
+        expect(value).not.toHaveProperty('workMode')
+        order.push('prepare')
         return acceptPrompt(value)
       },
       newSession: async () => {
@@ -1238,17 +1237,16 @@ describe('AcpRemoteRuntime', () => {
 
     await collect(
       runtime(server).run(
-        { ...request, workMode: 'ask' },
+        request,
         new AbortController().signal
       )
     )
 
-    expect(order).toEqual(['prepare:ask', 'session', 'prompt'])
+    expect(order).toEqual(['prepare', 'session', 'prompt'])
     expect(server.prepare).toHaveBeenCalledWith(
       expect.objectContaining({
         operationId: request.requestId,
         requestId: request.requestId,
-        workMode: 'ask',
         controllerGeneration: 1,
         connectionGeneration: 1,
         channelEpoch: '1'
@@ -1256,7 +1254,7 @@ describe('AcpRemoteRuntime', () => {
     )
   })
 
-  it('passes Execute directly as the authorization contract', async () => {
+  it('prepares without product mode or trust-tier fields', async () => {
     const server = fakeServer()
 
     await collect(
@@ -1267,11 +1265,7 @@ describe('AcpRemoteRuntime', () => {
       )
     )
 
-    expect(server.prepare).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workMode: 'execute'
-      })
-    )
+    expect(server.prepare.mock.calls[0]?.[0]).not.toHaveProperty('workMode')
     expect(server.prepare.mock.calls[0]?.[0]).not.toHaveProperty(
       'trustTier'
     )
@@ -1280,12 +1274,12 @@ describe('AcpRemoteRuntime', () => {
     )
   })
 
-  it('supports Ask and Execute without trust-tier translation', async () => {
+  it('prepares the same contract with and without an authorizer', async () => {
     const askServer = fakeServer()
     const executeServer = fakeServer()
 
     await collect(runtime(askServer).run(
-      { ...request, workMode: 'ask' },
+      request,
       new AbortController().signal
     ))
     await collect(runtime(executeServer).run(
@@ -1293,12 +1287,8 @@ describe('AcpRemoteRuntime', () => {
       new AbortController().signal,
       async () => 'once'
     ))
-    expect(askServer.prepare).toHaveBeenCalledWith(
-      expect.objectContaining({ workMode: 'ask' })
-    )
-    expect(executeServer.prepare).toHaveBeenCalledWith(
-      expect.objectContaining({ workMode: 'execute' })
-    )
+    expect(askServer.prepare.mock.calls[0]?.[0]).not.toHaveProperty('workMode')
+    expect(executeServer.prepare.mock.calls[0]?.[0]).not.toHaveProperty('workMode')
   })
 
   it('rejects a stale Host binding before a new prompt', async () => {
@@ -1751,7 +1741,7 @@ describe('AcpRemoteRuntime', () => {
     }
   })
 
-  it('routes Execute permission through the authorizer and denies mutating Ask permission', async () => {
+  it('routes tool permission through the supplied authorizer across conversations', async () => {
     const client: { value?: AgentSideConnection } = {}
     const outcomes: string[] = []
     const server = fakeServer({
@@ -1803,7 +1793,7 @@ describe('AcpRemoteRuntime', () => {
               {
                 optionId: 'ask-allow',
                 name: 'Allow',
-                kind: 'allow_always'
+                kind: 'allow_once'
               },
               {
                 optionId: 'reject',
@@ -1828,16 +1818,16 @@ describe('AcpRemoteRuntime', () => {
     askClient.value = askServer.client
     await collect(
       runtime(askServer).run(
-        { ...request, conversationId: 'conversation-2', workMode: 'ask' },
+        { ...request, conversationId: 'conversation-2' },
         new AbortController().signal,
         authorize
       )
     )
-    expect(authorize).toHaveBeenCalledOnce()
-    expect(outcomes).toEqual(['allow', 'reject'])
+    expect(authorize).toHaveBeenCalledTimes(2)
+    expect(outcomes).toEqual(['allow', 'ask-allow'])
   })
 
-  it('allows only one-shot read permission in Ask mode', async () => {
+  it('authorizes read and search tools using the supplied decision', async () => {
     const client: { value?: AgentSideConnection } = {}
     const outcomes: string[] = []
     const server = fakeServer({
@@ -1915,21 +1905,21 @@ describe('AcpRemoteRuntime', () => {
 
     await collect(
       runtime(server).run(
-        { ...request, workMode: 'ask' },
+        request,
         new AbortController().signal,
         authorize
       )
     )
 
-    expect(authorize).not.toHaveBeenCalled()
+    expect(authorize).toHaveBeenCalledTimes(3)
     expect(outcomes).toEqual([
       'tool-read-once',
-      'tool-search-reject',
+      'tool-search-once',
       'read-reject'
     ])
   })
 
-  it('auto-allows Execute permissions without an external authorizer', async () => {
+  it('auto-allows tool permissions without an external authorizer', async () => {
     const client: { value?: AgentSideConnection } = {}
     const outcomes: string[] = []
     const server = fakeServer({
@@ -1989,7 +1979,7 @@ describe('AcpRemoteRuntime', () => {
     expect(outcomes).toEqual(['always', 'once-only'])
   })
 
-  it('preserves an explicit Execute authorizer denial', async () => {
+  it('preserves an explicit authorizer denial', async () => {
     const client: { value?: AgentSideConnection } = {}
     let outcome = ''
     const server = fakeServer({
@@ -3168,11 +3158,11 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     const fresh = ownedChannel()
     try {
       await collect(fixture.instance.run(
-        { ...request, workMode: 'ask' }, new AbortController().signal
+        request, new AbortController().signal
       ))
       Object.defineProperty(fixture.channel, 'generation', { value: 2 })
       await collect(fixture.instance.run(
-        { ...request, requestId: 'after-reconnect', workMode: 'execute' },
+        { ...request, requestId: 'after-reconnect' },
         new AbortController().signal
       ))
       Object.defineProperty(fresh.channel, 'generation', { value: 2 })
@@ -3409,7 +3399,7 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize('C:\\Workspace')
     const project = database.createSshProject({
-      project: { name: 'Recovery', description: '', rootPath: '/srv/project', defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' } },
+      project: { name: 'Recovery', description: '', rootPath: '/srv/project', runtimeSelection: { provider: 'opencode' } },
       executionSpace: { kind: 'ssh', hostId: '00000000-0000-4000-8000-000000000850', remoteRootPath: '/srv/project' },
       assertCurrent: () => {}
     })
@@ -3420,7 +3410,7 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     }])
     database.createTask({
       id: request.requestId, projectId: project.id, conversationId,
-      title: 'Recovery', instructions: 'Read', workMode: 'execute',
+      title: 'Recovery', instructions: 'Read',
       remoteRecovery: { recoverable: true, currentUserMessageId: '00000000-0000-4000-8000-000000000852', currentAssistantMessageId: assistantMessageId }
     })
     const persist = (event: RuntimeEvent & { remoteProvenance?: RemoteSemanticEventProvenance }) => {

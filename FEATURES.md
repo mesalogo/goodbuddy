@@ -140,7 +140,7 @@ records are listed separately and do not introduce another feature status.
   resizing. The AI pane remembers its visibility and width, and stacks below
   the editor at narrow widths.
 - [ ] **Project Agent Space** (planned): Unifies roles, knowledge, Skills/MCP,
-  models, approval policy, budgets, and timeouts in a Project, with reusable
+  models, capability assignments, budgets, and timeouts in a Project, with reusable
   templates.
 - [x] **Application center and navigation**:
   The footer shows equal-height Apps and Settings buttons with visible labels and a subtle vertical divider.
@@ -191,7 +191,7 @@ records are listed separately and do not introduce another feature status.
 - [ ] **Additional assistant workbar and execution-space capabilities**
   (planned): Builds on the current workbar and multiple terminals with
   broader execution supervision, unified Runtime monitoring, managed processes,
-  target-pinnable workspace/browser/artifact instances, bottom
+   target-pinnable workspace/browser instances, bottom
   docking, and separate windows. Task Center remains the singleton Task index;
   attachments and knowledge remain in the conversation composer, while memory,
   when implemented, and historical execution context belong to the associated Task. See
@@ -232,7 +232,7 @@ records are listed separately and do not introduce another feature status.
   not used. See [image generation](./docs/features/image-generation/README.md).
 - [x] **Image tools in the current conversation**:
   Enable conversation access for an image model to let tool-capable chat models
-  generate images and edit uploads or earlier artifacts in Execute, without a
+  generate images and edit uploads or earlier artifacts, without a
   separate conversation or manually switching to an image model. Direct text
   models, local OpenCode, Continue, DeepSeek Harness, and managed remote OpenCode
   use the shared service; Runtime assignment is derived from model settings.
@@ -247,14 +247,14 @@ records are listed separately and do not introduce another feature status.
   and Agent `0.13.0` together for the new remote behavior. See the
   [design and measured validation](./docs/features/assistant-workbar/runtime-process-reuse-technical-design.md).
 - [x] **Direct model programming agent**: Local direct text models can run the
-  platform Shell in Execute mode and delegate one level of programming
-  Subagent work while inheriting the parent request's mode, model, workspace,
+  platform Shell and delegate one level of programming
+  Subagent work while inheriting the parent request's model, workspace,
   and capability scope. OpenCode, Continue, DeepSeek Harness, and managed SSH
   do not receive duplicate copies of these tools. The Windows local command
   path and a real-model edit, test, fix, and review loop have passed; native
-  macOS and Linux command validation remains. Execute commands can select
+  macOS and Linux command validation remains. Commands can select
   absolute, relative, or symbolic-link directories outside the workspace;
-  the workspace stays the default and relative-path base. Ask remains read-only.
+  the workspace stays the default and relative-path base.
 - [x] **OpenCode and Continue**: Use isolated child processes, an environment
   variable allowlist, unified configuration, cancellation, startup and control-request
   deadlines, bounded streaming output, and activity records. Shared process
@@ -295,13 +295,12 @@ records are listed separately and do not introduce another feature status.
   Features and disabled by default. Disabling it does not affect local
   projects, ordinary desktop capabilities, or desktop releases. When enabled,
   users can manage SSH Hosts with pinned Host Keys, browse bounded remote
-  directories, and create Ask or Execute projects. Both modes start the
-  signed Runtime directly without bubblewrap. Ask applies OpenCode's Ask
-  permission configuration and permits only native read approvals at the
-  Agent tool-dispatch boundary, while Execute explicitly allows native permissions
-  and retains all permissions of the selected SSH account. The Agent owns accepted Prompts,
+  directories, and create remote projects. Requests start the signed Runtime
+  directly without bubblewrap and use the selected SSH account's permissions.
+  Enabled tools do not require a product work mode or general approval policy.
+  The Agent owns accepted Prompts,
   provider/tool rounds, Runtime processes, a stable model ledger, and a bounded
-  semantic transcript over a private Unix socket and ACP v5. Work continues on
+  semantic transcript over a private Unix socket and runtime/acp capability 6. Work continues on
   the Host after Desktop exit, network loss, or local-process termination.
   The current Agent may remain resident; a superseded Agent drains active work
   before exiting. Idle Runtime processes are reclaimed after tasks finish,
@@ -330,7 +329,7 @@ records are listed separately and do not introduce another feature status.
   revocation; catalog, package, manifest, payload signatures, and streaming
   SHA-256 remain unchanged. A missing architecture package disables managed
   SSH only for that architecture. Projects store only Host, remote path,
-  Runtime selection, and mode. Current Host identity is read when a
+  Runtime selection. Current Host identity is read when a
   Workspace/Runtime is first used, then reused by other projects in the same
   process. Managed SSH conversations expose supported OpenCode and Continue choices;
   Continue requires the updated compound package and matching Desktop.
@@ -382,7 +381,7 @@ records are listed separately and do not introduce another feature status.
   capabilities, and prompt startup do not scan the full payload. See the
   [design](./docs/features/remote-host/environment-provisioning-technical-design.md).
 - **SSH Host environment provisioning validation records**: The
-  current source passed isolated Linux x64 package installation, Ask/Execute,
+  earlier source passed isolated Linux x64 package installation, Ask/Execute,
   native subagent external writes, reconnection, and stop/bootstrap.
   The complete Host-card acquisition matrix across GitHub, Beijing mirror,
   Linux x64/arm64, cancellation, and offline GoodBuddy transfer remains.
@@ -392,11 +391,8 @@ records are listed separately and do not introduce another feature status.
   OpenAI-compatible model connection. It prefers an administrator-provided
   connection, otherwise follows the compatible default model or first
   compatible connection without requiring a duplicate selection. Settings
-  displays the actual administrator or fallback model source. Ask permits
-  only real Host-registered `read` and `skill` tools plus Main-managed Web
-  Search/Fetch and enabled Story Graph proxies, and rejects plugin impersonation
-  of those names.
-  Execute allows all enabled built-in and plugin tools with the current user's
+  displays the actual administrator or fallback model source. Registered
+  built-in and enabled plugin tools run with the current user's
   permissions. Image input follows the selected model connection's declared
   capability: text models reject images before Host or model invocation, while
   image-capable models receive bounded inline JPEG/PNG content through a
@@ -410,18 +406,23 @@ records are listed separately and do not introduce another feature status.
   after startup failure, and offline management of installed plugins.
   Disabling the marketplace hides only the catalog and management interface;
   it does not change the enabled state of installed plugins, and third-party
-  code is not subject to Ask initialization isolation.
-- [x] **Ask and Execute work modes**: Ask remains read-only. Execute is the
-  user's authorization for all tools, processes, network access, and writable
-  paths available to the current local or SSH account, including paths outside
-  the workspace and native subagent work.
+  code runs with the current user's permissions during initialization.
+- [x] **Unified execution source path**: Ask/Execute, the Safety category, and
+  `toolApproval` are removed. Requests use the selected Runtime, enabled
+  capabilities, and local or SSH account permissions. Clear local data is under
+  General / Platform Features and retains confirmation. Database schema 60 and
+  Runtime settings 22 remove legacy fields; remote execution requires
+  runtime/acp 6 and local Harness uses control protocol 2. Native inventories
+  do not provide uniform per-tool switches. Targeted Electron and real Linux
+  Host checks are recorded in [progress](./docs/features/unified-execution/progress.md);
+  full-suite and coordinated release-package validation remain pending.
 - **Local native Runtime clients (preview)**: The composer opens Continue or
   OpenCode in a workbar terminal, or the official DS Web client in the system
   browser, using the current local project and model. These are independent
   sessions, without imported GoodBuddy conversation history. Closing a DS page
   does not stop its service; use GoodBuddy's stop action. Remote shortcuts are
-  not connected. Continue/OpenCode Ask now map Main-bound read tools through
-  native permissions. Managed standard Node delivery and full cross-platform
+  not connected. Continue/OpenCode use assigned Main-bound tools without a
+  product work mode. Managed standard Node delivery and full cross-platform
   package acceptance remain incomplete;
   existing Windows real-model evidence does not establish full capability parity.
   See the [implementation and remaining work](./docs/features/assistant-workbar/progress.md#2026-09-27-local-native-client-validation).
@@ -433,8 +434,8 @@ records are listed separately and do not introduce another feature status.
   [0.15.0 preparation record](./docs/development/release-preparation-0.15.0.md).
 - [x] **Efficient direct-model workspace tools**: Direct models use bundled
   ripgrep with native arguments for file discovery and content search, read large
-    UTF-8 files by line, and apply multi-file patches in Execute. Ask searches stay
-    read-only within the workspace; Execute searches use current-account permissions.
+    UTF-8 files by line, and apply multi-file patches. Searches use current-account
+    permissions; file read and patch APIs retain their workspace-relative contracts.
     No system ripgrep install is required. Search preserves native output and exit
     codes, with complete large results available through `output_read`; actionable
     argument errors let the model correct its request and continue.
@@ -454,8 +455,8 @@ records are listed separately and do not introduce another feature status.
   Concurrent questions wait in order, duplicate events preserve drafts, and
   failed submissions remain retryable. Cancelling a pending managed SSH
   question allows another message in the same conversation.
-  Execute permission confirmations are handled automatically rather than
-  waiting for another approval. See the [interaction boundaries](./docs/features/assistant-workbar/runtime-interactions.md).
+  Native tool permission confirmations are handled automatically, without
+  another approval. See the [interaction boundaries](./docs/features/assistant-workbar/runtime-interactions.md).
 - [x] **Native execution checklists**: OpenCode and Continue update a
   read-only checklist above the conversation, with progress saved in history.
   Details expand in an anchored, scrollable floating panel without shifting chat
@@ -466,8 +467,8 @@ records are listed separately and do not introduce another feature status.
   [checklist contract](./docs/features/assistant-workbar/runtime-checklist-technical-design.md).
 - [x] **Experts and Subagents**: Supports explicit experts, team analysis, and
   up to three experts running in parallel. Experts inherit the parent
-  Ask/Execute mode and can use enabled local direct-model tools; Ask remains
-  read-only. They are not remote OpenCode child sessions. Chat shows each
+  execution space and capability scope and can use enabled local direct-model
+  tools. They are not remote OpenCode child sessions. Chat shows each
   expandable full expert response first and the main Agent's synthesis below,
   and persists both with the conversation.
 - [x] **OpenCode child progress and final results**: Child cards show ordered
@@ -560,7 +561,7 @@ records are listed separately and do not introduce another feature status.
 - [x] **OpenCode Runtime customization**: GoodBuddy-managed OpenCode can
   discover native Agents, Tools, Commands, LSPs, Formatters, MCP, Skills,
   Prompts, and Resources. Tools show read, file-edit, command, network, Agent
-  orchestration, and other types, source, and Ask/Execute availability while
+  orchestration, and other types, source, and descriptions while
   hiding OpenCode's internal `invalid` tool and temporary GoodBuddy MCP tools.
   Users can save a default Agent, override it per request, run Commands through
   the native SDK, view context usage, and invoke native Compact with a total
@@ -587,7 +588,7 @@ records are listed separately and do not introduce another feature status.
   Runtime connectivity and distinguishes complete, partial, unavailable,
   connection-only, and unsupported. DeepSeek Harness enumerates bounded
   built-in/plugin Tools and Skills through the Host Registry, reports real
-  Ask/Execute boundaries, and excludes per-request GoodBuddy Skills and
+  actual registered capabilities, and excludes per-request GoodBuddy Skills and
   Web/MCP proxies.
 - [ ] **Runtime supervision section** (planned): A fixed section in the
   application-level assistant workbar for Task-level delegation, background
@@ -634,7 +635,7 @@ records are listed separately and do not introduce another feature status.
   models, GoodBuddy-managed OpenCode, and Continue. DeepSeek Harness remains
   unsupported for these servers; Story Graph supports it through the Main proxy.
   Built-in MCP uses short-lived local authority
-  for the current request, and user configuration cannot loosen Ask/Execute
+  for the current request, and user configuration cannot bypass resource
   read/write boundaries.
 - **Obsidian integration (implemented in source, acceptance in progress)**:
   Disabled by default, with all locally registered vaults as the default scope
@@ -648,8 +649,8 @@ records are listed separately and do not introduce another feature status.
   [feature docs and validation record](./docs/features/obsidian/README.md);
   this is not a release claim.
 - [x] **MCP Tools**: Explicitly enabled custom MCP can be assigned to direct
-  models, GoodBuddy-managed OpenCode, Continue Agent Execute, and DeepSeek
-  Harness, and loads only in Execute. Agent child processes receive only
+  models, GoodBuddy-managed OpenCode, Continue Agent, and DeepSeek
+  Harness. Agent child processes receive only
   per-request local-loopback authority; MCP addresses, commands, and
   credentials remain in Main. Dynamic tools pass through discovery and the
   existing activity and permission boundaries; healthy direct-model
@@ -772,18 +773,19 @@ records are listed separately and do not introduce another feature status.
   conversation-source metadata. Older clients cannot reopen
   that database; rollback requires a pre-upgrade backup.
 - [ ] **MCP Server Control Plane** (planned): Unified MCP lifecycle, health
-  checks, reconnection, schema cache, isolation, approval, and audit.
+  checks, reconnection, schema cache, isolation, capability scope, and audit.
 - [ ] **Knowledge/web excerpts and AI editing** (planned): Extend capture beyond
   the implemented conversation-text path to knowledge and web excerpts, with
   confirmation-based summarization, rewriting, and organization.
 
 ### Work management, long-term collaboration, and workflows
 
-- [x] **Tasks, activity, and artifacts**: Centrally manages task state, audit
-  activity, and independent artifact files. Ordinary chat responses remain
-  only in the conversation and are no longer copied into Artifacts; existing
-  duplicate chat Markdown is hidden from the artifact list but not physically
-  deleted. Run history is stored in Main SQLite without the previous 500-item,
+- [x] **Tasks, activity, and workspace files**: Centrally manages task state and audit
+  activity. The Results page is removed; Workspace lists actual project files with
+  modification and available creation times, sortable columns, and file import into
+  the selected local or remote directory. Remote upload requires the updated Agent.
+  Conversation images and attachments remain in messages; existing artifact data is
+  preserved without automatic project copies. Run history is stored in Main SQLite without the previous 500-item,
   4,000-character, or 2 MB Renderer limits; the page renders it in batches,
   without a persistent legacy-cache truncation warning; previously lost
   history is not restored. Token usage is grouped by Runtime and
@@ -810,8 +812,8 @@ records are listed separately and do not introduce another feature status.
   left conversation list exposes Task children through a leading expand
   button; children share status dots, the parent does not repeat task badges,
   and the UI stops at Task rather than exposing Job/Run levels. A new custom
-  Task can use the current or a new Conversation, defaults to Execute, and
-  preserves Runtime, tool, and approval boundaries. Repeated triggers reuse the
+  Task can use the current or a new Conversation and
+  preserves Runtime, enabled-tool, and resource boundaries. Repeated triggers reuse the
   same Task; text returns to the Conversation, while independent files and
   images remain artifacts. Ordinary messages and due Scheduled Tasks share a
   persistent Conversation queue that runs one item at a time. Users can keep
@@ -821,13 +823,13 @@ records are listed separately and do not introduce another feature status.
   Center. Current schedules support one-time, daily, and weekly triggers;
   advanced time zones, Cron, event triggers, and retry governance remain
   incremental PRD work. Scheduled messages use the conversation's current
-  history, Runtime, work mode, and saved knowledge retrieval settings; task
-  details show the actual mode used, and an active occurrence blocks duplicate
+  history, Runtime, and saved knowledge retrieval settings; task
+  details show execution status, and an active occurrence blocks duplicate
   Run Now actions. See the
   [Task Center PRD](./docs/features/task-and-job/task-center-prd.md) and
   [Scheduled Task PRD](./docs/features/task-and-job/scheduled-task-prd.md).
   Status counts and filters identify running tasks and those needing attention;
-  task approvals remain actionable in their task cards.
+  structured questions remain actionable in their conversations.
 - [x] **Memory and Smart Heartbeat**: Plans trigger shared incremental reviews
   instead of separate heartbeat reports. Choose memory/graph updates only or
   evidence-backed suggestions for open items, disagreements, revisions, and
@@ -901,10 +903,10 @@ records are listed separately and do not introduce another feature status.
   periods, current/expired/conflicting fact detection, fact checking, and
   evidence tracing to memory and the knowledge graph.
 - [ ] **Visual controlled workflows** (planned): Versioned DAGs, conditional
-  branches, approvals, cancellation, and recovery, with execution still
+  branches, business confirmations, cancellation, and recovery, with execution still
   passing through Main Runtime boundaries.
 - [ ] **Unified Run Graph and replay** (planned): Connects Tasks, Subagents,
-  models, knowledge, tool approvals, usage, and artifacts for failure
+  models, knowledge, tool activity, usage, and artifacts for failure
   diagnosis, retry, and redacted export.
 
 ### Browser, communication, voice, and application maintenance
@@ -912,7 +914,7 @@ records are listed separately and do not introduce another feature status.
 - [x] **Shared built-in browser for runtimes**: Uses GoodBuddy's isolated
   Chromium and never controls a browser installed by the user. A separate
   master switch decides whether assigned runtimes receive the capability in
-  Execute, with no per-use prompt after enablement. Turning Agent access off
+  requests, with no per-use prompt after enablement. Turning Agent access off
   does not disable manual browser workbar actions. The Browser workbar and
   Agent share the same Conversation-owned session and serialized operation
   path, with Back, Refresh/Stop Loading, address entry, Go, Interaction, and
@@ -931,8 +933,8 @@ records are listed separately and do not introduce another feature status.
   browser with scope, cancellation, timeout, output, and activity boundaries.
 - [x] **Remote messaging-channel projects**: WeChat ClawBot, WeCom, and
   DingTalk each have a system-managed project, independent remote
-  conversations, working directory, processing backend, default Ask/Execute
-  mode, and task/activity ownership. Each channel controls complete-response
+  conversations, working directory, processing backend, and
+  task/activity ownership. Each channel controls complete-response
   length and segmentation according to platform capabilities rather than
   relying on a shared service truncation.
 - [x] **WeChat ClawBot QR login and media**: A separate Sidecar handles local
@@ -1147,14 +1149,14 @@ records are listed separately and do not introduce another feature status.
   artifact API with scoped, expiring, rate-limited, and revocable tokens.
 - [ ] **GoodBuddy Team Hub** (planned): An optional service for organizations,
   RBAC, project sharing, remote Agents, policy distribution, and tenant audit.
-- **SSH Host and remote execution-space validation records**: Host CRUD,
+- **Historical SSH Host and remote execution-space validation records**: Host CRUD,
   Host Key, encrypted credentials, Project UI, Workspace, OpenCode ACP v5,
   Agent-owned Prompt/gateway/transcript, read-only Ask, full-account Execute,
   cancellation, exact detached-Agent reconnection, and release-only
-  dual-architecture resource verification are wired. Current Linux x64 source
-  has passed a real-model and tool matrix covering detach, process exit, relay
+  dual-architecture resource verification were wired. The then-current Linux x64 source
+  passed a real-model and tool matrix covering detach, process exit, relay
   loss, concurrency, cancellation, provider failures, Agent restart, and
-  Desktop SQLite recovery. A current-source, test-signed Agent `0.11.17`
+  Desktop SQLite recovery. A test-signed Agent `0.11.17`
   package on Linux x64 additionally passed two concurrent Ask reads, an
   Execute write/read, and six real managed-gateway model requests with the
   configured custom headers and body fields. No provider request was replayed,
@@ -1179,5 +1181,5 @@ records are listed separately and do not introduce another feature status.
 ## Roadmap Principles
 
 Planned workflows, Subagents, MCP, remote APIs, and sandbox capabilities must
-not bypass existing Main Runtime, Ask/Execute, permission, cancellation,
+not bypass existing Main Runtime, capability scope, permission, cancellation,
 timeout, or audit boundaries.

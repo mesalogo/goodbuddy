@@ -664,7 +664,6 @@ describe('SshHostsSettingsSection', () => {
         hostId,
         remoteRootPath: '/srv/missing'
       },
-      defaultWorkMode: 'ask',
       runtimeSelection: { provider: 'opencode' },
       kind: 'user',
       status: 'active',

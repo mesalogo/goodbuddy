@@ -96,6 +96,15 @@ export const heartbeat = {
     unknownTime: 'Unknown time'
   },
   supervisor: {
+    loadFailed: 'Review content could not be loaded. Please retry.',
+    sourceLoadFailed: 'The source could not be loaded. Open it again to retry.',
+    reviewStarted: 'Review started. Open Activity records to check progress.',
+    reviewBusy: 'A review is already in progress. Open Activity records to check it.',
+    reviewStartFailed: 'Could not check whether a review is running. Please try again shortly.',
+    reviewFailed: 'The review could not finish. Open Activity records for details and to continue saved progress, or start a new review.',
+    reviewCompleted: 'Review completed. You can view the result or Activity records.',
+    reviewCancelled: 'Review cancelled. Existing results remain available.',
+    reviewNoChange: 'There is no new content to review. Existing results are unchanged.',
     automatic: 'Smart heartbeat',
     projectScope: 'Project: {{names}}',
     canvasTitle: 'Events and knowledge', generatedAt: 'Generated {{time}}', canvasNote: 'Read counter-clockwise · Select a node to explore knowledge and sources', readingGuide: 'Reading the graph',

@@ -12,8 +12,7 @@ import type {
 import type {
   ConversationSubagentActivity,
   ConversationMessage,
-  ConversationToolActivity,
-  WorkMode
+  ConversationToolActivity
 } from '../../shared/assistant-contracts'
 
 export type RuntimeApprovalRequest = {
@@ -139,10 +138,9 @@ export type RemoteRecoveredTool = ConversationToolActivity & {
 export type RemoteRecoveredSubagent =
   ConversationSubagentActivity
 
-export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
+export type AgentExecutionRequest = AgentRequest & {
   /** Resolved Main-side workspace, never taken from the current UI selection. */
   executionWorkspace?: string
-  workMode?: WorkMode
   images?: AgentImage[]
   imageContextNotice?: ConversationMessage['imageContextNotice']
   /** Main-process-only recursion guard for direct-model programming delegation. */

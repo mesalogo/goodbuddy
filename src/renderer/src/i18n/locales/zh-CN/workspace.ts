@@ -1,5 +1,10 @@
 export const workspace = {
   workspaceMenu: {
+    enter: '进入项目', enterNamed: '进入项目 {{name}}',
+    archived: '已归档', back: '返回', restore: '恢复', restoreNamed: '恢复项目 {{name}}', restoring: '恢复中…',
+    restored: '{{name}} 已恢复到原项目分类。', restoreFailed: '恢复项目失败。',
+    loadingArchives: '正在加载已归档项目…', loadArchivesFailed: '加载已归档项目失败。',
+    retryArchives: '重新加载已归档项目', noArchives: '暂无已归档项目。归档后可在此恢复。',
     title: '项目与活动', close: '关闭项目与活动', search: '搜索项目',
     allProjects: '全部项目', local: '本地', remote: '远程', channels: '消息通道', categories: '项目类型',
     filter: '筛选会话状态', conversations: '会话', newConversation: '新建会话',
@@ -28,6 +33,7 @@ export const workspace = {
     }
   },
   management: {
+    importFiles: '导入文件', importing: '正在导入…', importTarget: '目标目录：{{path}}', imported: '已导入 {{count}} 个文件到 {{path}}。', created: '创建时间',
     gitWorkspace: 'Git 工作区', more: '{{name}} 的更多操作', browse: '浏览此目录', parent: '返回父目录',
     createFile: '新建文件', createDirectory: '新建目录', rename: '重命名', move: '移动', delete: '删除', properties: '属性',
     defaultOpen: '使用默认应用打开', name: '名称', nameOnly: '名称不能包含路径分隔符', destination: '目标目录',
@@ -44,10 +50,6 @@ export const workspace = {
     description: 'GoodBuddy 默认工作区'
   },
   projectSwitcher: {
-    workModes: {
-      ask: 'Ask · 只读问答',
-      execute: 'Execute · 完全权限'
-    },
     selector: {
       ariaLabel: '当前项目',
       userProjects: '本地项目',
@@ -92,7 +94,6 @@ export const workspace = {
         description: '说明',
         rootPath: '根目录',
         executionSpace: '执行空间',
-        defaultMode: '默认模式',
         defaultRuntime: '新对话默认 Runtime'
       },
       runtimeOptions: {
@@ -177,7 +178,7 @@ export const workspace = {
         select: '选择此目录'
       },
       runtimeHelp:
-        '托管 SSH 项目可使用已安装的 OpenCode 或 Continue Runtime。Ask 为只读；Execute 可使用所选 SSH 账户拥有的全部权限。保存时会检查主机、远端 Agent、工作区和所选 Runtime。',
+        '托管 SSH 项目可使用已安装的 OpenCode 或 Continue Runtime。保存时会检查主机、远端 Agent、工作区和所选 Runtime。',
       actions: {
         save: '保存远程项目',
         saving: '正在保存远程项目…'
@@ -214,7 +215,7 @@ export const workspace = {
       notes: { label: '笔记', description: '搜索笔记、采集会话和快速追加文字。' },
       tasks: {
         label: '任务中心',
-        description: '处理待审批操作并管理自动化'
+        description: '查看任务状态并管理自动化'
       },
       workspace: {
         label: '工作区',
@@ -323,8 +324,6 @@ export const workspace = {
     tasks: {
       approvalsTitle: '等待审批',
       noApprovals: '当前没有等待审批的操作。',
-      deny: '拒绝',
-      allowOnce: '仅此次允许',
       taskIndexTitle: '项目任务',
       runningCount: '{{count}} 运行中',
       stats: {
@@ -337,7 +336,7 @@ export const workspace = {
         incomplete: '部分回复缺少计时记录，时长仅包含已知记录。',
         partial: '部分记录',
         timeHelp: '时间说明',
-        timeDescription: '累计每次 Agent 回复的实际用时，不包含回复之间的空闲时间。缺少计时记录的回复不按会话或任务的起止时间估算。',
+        timeDescription: '累计每次 Agent 回复处于运行状态的时间，不包含暂停、等待审批或回复之间的空闲时间。旧历史和中断区间不重建；远程请求只统计桌面观察到的运行时间。',
         taskDuration: '任务累计用时'
       },
       empty: '明确创建的任务会显示在这里。',
@@ -400,11 +399,14 @@ export const workspace = {
       truncatedDiff: '\n\n[输出超过安全限制，已截断]'
     },
     results: {
-      back: '返回成果列表',
       title: '成果',
       sectionTitle: '生成与导入成果',
       loadingImage: '正在加载图片…',
-      import: '导入 PDF、图片或网页',
+      retryImage: '重试加载图片',
+      import: '导入文件',
+      importProjectHelp: '将本地文件加入当前项目成果，不导入知识库。',
+      importGlobalHelp: '将本地文件加入全局成果，不导入知识库。',
+      importTooltip: '支持 PDF、图片、文本、JSON 和本地 HTML 文件；PDF 显示提取的文字。',
       empty: '生成的文件、图片、报告和手动导入内容会显示在这里。'
     },
     browser: {
@@ -468,14 +470,7 @@ export const workspace = {
       cancelled: '已取消',
       interrupted: '已中断'
     },
-    mode: {
-      conversation: '跟随会话设置',
-      ask: 'Ask',
-      execute: 'Execute',
-      unavailable: '模式不可用'
-    },
     fields: {
-      mode: '模式',
       schedule: '计划',
       nextRun: '下次运行',
       outcome: '最近结果'

@@ -14,7 +14,8 @@ import {
   Trash2,
   FileText,
   Folder,
-  FolderOpen
+  FolderOpen,
+  Upload
 } from 'lucide-react'
 import {
   useCallback,
@@ -31,6 +32,7 @@ import { SegmentedControl } from './WorkspacePrimitives'
 import { WorkspaceActionDialog } from './WorkspaceActionDialog'
 import { WorkspaceGitTools } from './WorkspaceGitTools'
 import { useListWindow } from './use-list-window'
+import type { AppNotificationInput } from './notifications'
 import type {
   WorkspaceChangedFile,
   WorkspaceChanges,
@@ -39,6 +41,7 @@ import type {
 } from '../../shared/assistant-contracts'
 
 type WorkspaceFilesPanelProps = {
+  notify?: (input: AppNotificationInput) => void
   projectId?: string
   rootPath?: string
   onRefresh?: () => Promise<void>
@@ -90,11 +93,18 @@ export function flattenFileTree(
   listings: Readonly<Record<string, WorkspaceDirectoryListing>>,
   expandedPaths: ReadonlySet<string>,
   loadingPaths: ReadonlySet<string>,
-  errors: Readonly<Record<string, string | undefined>>
+  errors: Readonly<Record<string, string | undefined>>,
+  sort: { field: 'name' | 'modifiedAt' | 'createdAt'; descending: boolean } = { field: 'name', descending: false }
 ): FileTreeRow[] {
   const rows: FileTreeRow[] = []
   const visit = (items: readonly WorkspaceDirectoryEntry[], depth: number): void => {
-    for (const entry of items) {
+    const ordered = [...items].sort((left, right) => {
+      if (left.type !== right.type) return left.type === 'directory' ? -1 : 1
+      const a = left[sort.field], b = right[sort.field]
+      if (!a || !b) return a ? -1 : b ? 1 : left.name.localeCompare(right.name)
+      return (a.localeCompare(b) * (sort.descending ? -1 : 1)) || left.name.localeCompare(right.name)
+    })
+    for (const entry of ordered) {
       rows.push({ kind: 'entry', key: fileRowKey(entry.path), depth, entry })
       if (entry.type !== 'directory' || !expandedPaths.has(entry.path)) continue
       const listing = listings[entry.path]
@@ -110,6 +120,7 @@ export function flattenFileTree(
 }
 
 export function WorkspaceFilesPanel({
+  notify,
   projectId,
   rootPath,
   onRefresh,
@@ -181,6 +192,9 @@ export function WorkspaceFilesPanel({
   const [dialog, setDialog] = useState<{ kind: 'rename' | 'move' | 'delete' | 'properties' | 'createFile' | 'createDirectory'; path: string }>()
   const [changeView, setChangeView] = useState<'list' | 'tree'>('list')
   const [refreshing, setRefreshing] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const importingRef = useRef(false)
+  const [sort, setSort] = useState<{ field: 'name' | 'modifiedAt' | 'createdAt'; descending: boolean }>({ field: 'name', descending: false })
   const repositoryKnown = useRef<{ projectId?: string; available: boolean }>({ available: false })
   useEffect(() => { if (!gitError && isRepository !== undefined) repositoryKnown.current = { projectId, available: isRepository } }, [gitError, isRepository, projectId])
   const showGit = isRepository === true || (Boolean(gitError) && repositoryKnown.current.projectId === projectId && repositoryKnown.current.available)
@@ -407,6 +421,23 @@ export function WorkspaceFilesPanel({
       }}><MoreHorizontal size={14} aria-hidden="true" /></button>
   )
 
+  const importFiles = async (): Promise<void> => {
+    if (!projectId || importingRef.current) return
+    importingRef.current = true
+    setImporting(true)
+    const directory = createTarget
+    try {
+      const result = await window.goodbuddy.workspace.importFiles(projectId, directory)
+      if (result.imported.length || result.failed.length) {
+        notify?.({ tone: result.failed.length ? 'error' : 'success', message:
+          `${t('management.imported', { count: result.imported.length, path: directory || '/' })}${result.failed.length ? ` ${result.failed.map(file => `${file.name}: ${file.error}`).join('; ')}` : ''}` })
+        await refresh()
+      }
+    } catch (reason) {
+      notify?.({ tone: 'error', message: String(reason) })
+    } finally { importingRef.current = false; setImporting(false) }
+  }
+
   const renderTreeRow = (
     row: FileTreeRow,
     rowProps: Record<string, unknown>
@@ -430,10 +461,11 @@ export function WorkspaceFilesPanel({
     const changed = changedByPath.get(entry.path)
     if (entry.type === 'directory') {
       return (
-        <div className="workspace-files__entry" key={row.key} style={indent} {...rowProps}>
+        <div className="workspace-files__entry" key={row.key} {...rowProps}>
           <button
             aria-expanded={expanded}
             className="workspace-files__row"
+            style={row.depth ? { paddingLeft: `calc(${row.depth} * var(--space-4) + var(--space-2))` } : undefined}
             onClick={() => toggleDirectory(entry.path)}
             type="button"
           >
@@ -445,14 +477,16 @@ export function WorkspaceFilesPanel({
             {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
             <span title={entry.path}>{entry.name}</span>
           </button>
+          {renderTimes(entry)}
           {entryMenu(entry)}
         </div>
       )
     }
     return (
-      <div className="workspace-files__entry" key={row.key} style={indent} {...rowProps}>
+      <div className="workspace-files__entry" key={row.key} {...rowProps}>
         <button
           className="workspace-files__row"
+          style={row.depth ? { paddingLeft: `calc(${row.depth} * var(--space-4) + var(--space-2))` } : undefined}
           aria-current={selected?.projectId === projectId && selected?.path === entry.path ? 'true' : undefined}
           onClick={() => {
             setSelected({ projectId, path: entry.path })
@@ -471,15 +505,23 @@ export function WorkspaceFilesPanel({
             </small>
           )}
         </button>
+        {renderTimes(entry)}
         {entryMenu(entry)}
       </div>
     )
   }
 
   const root = listings[browsedPath]
+  const showCreated = useMemo(() => Object.values(listings).some(listing => listing.entries.some(entry => entry.createdAt)), [listings])
+  const renderTimes = (entry: WorkspaceDirectoryEntry): React.JSX.Element => <>
+    {(['modifiedAt', ...(showCreated ? ['createdAt' as const] : [])] as const).map(field =>
+      <time className="workspace-files__time" key={field} dateTime={entry[field]} title={entry[field] ? new Date(entry[field]).toLocaleString() : undefined}>
+        {entry[field] ? new Date(entry[field]).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+      </time>)}
+  </>
   const treeRows = useMemo(
-    () => flattenFileTree(root?.entries ?? [], listings, expandedPaths, loadingPaths, errors),
-    [errors, expandedPaths, listings, loadingPaths, root]
+    () => flattenFileTree(root?.entries ?? [], listings, expandedPaths, loadingPaths, errors, sort),
+    [errors, expandedPaths, listings, loadingPaths, root, sort]
   )
   const treeRowKeysKey = treeRows.map((row) => row.key).join('\n')
   const treeRowKeys = useMemo(() => (treeRowKeysKey ? treeRowKeysKey.split('\n') : []), [treeRowKeysKey])
@@ -524,7 +566,7 @@ export function WorkspaceFilesPanel({
     </pre>
   )
   return (
-    <div ref={panelRef} className="workspace-files">
+    <div ref={panelRef} className="workspace-files" data-created-time={showCreated}>
     {diff && <section className="assistant-sidebar__preview" aria-busy={!diff.value && !diff.error}>
       <header>
         <button ref={backRef} className="assistant-sidebar__back" type="button" onClick={() => {
@@ -558,6 +600,8 @@ export function WorkspaceFilesPanel({
         <button ref={refreshRef} className="icon-button" type="button" disabled={refreshing} aria-label={t('sidebar.workspace.refreshAriaLabel')} title={t('sidebar.workspace.refresh')} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden="true" /></button>
       </div>
       {activeView === 'files' && root && <div className="workspace-files__toolbar workspace-files__actions">
+        <button className="secondary-button" type="button" disabled={importing} onClick={() => void importFiles()}><Upload size={14} aria-hidden="true" />{t(importing ? 'management.importing' : 'management.importFiles')}</button>
+        <span className="workspace-files__destination" title={createTarget || '/'}>{t('management.importTarget', { path: createTarget || '/' })}</span>
         <button className="icon-button" type="button" aria-label={t('management.createFile')} title={`${t('management.createFile')}: ${createTarget || '/'}`} onClick={() => setDialog({ kind: 'createFile', path: createTarget })}><FilePlus size={14} aria-hidden="true" /></button>
         <button className="icon-button" type="button" aria-label={t('management.createDirectory')} title={`${t('management.createDirectory')}: ${createTarget || '/'}`} onClick={() => setDialog({ kind: 'createDirectory', path: createTarget })}><FolderPlus size={14} aria-hidden="true" /></button>
       </div>}
@@ -622,6 +666,11 @@ export function WorkspaceFilesPanel({
       ) : errors[browsedPath] && !root ? null : root?.entries.length ? (
         <>
           <div ref={treeRef} className="workspace-files__tree" onBlur={treeWindow.onBlur} onFocus={treeWindow.onFocus}>
+            <div className="workspace-files__columns">
+              {(['name', 'modifiedAt', ...(showCreated ? ['createdAt' as const] : [])] as const).map(field => <button type="button" key={field} aria-pressed={sort.field === field} onClick={() => setSort(current => ({ field, descending: current.field === field ? !current.descending : field !== 'name' }))}>
+                {t(field === 'name' ? 'management.name' : field === 'modifiedAt' ? 'management.modified' : 'management.created')}{sort.field === field ? (sort.descending ? ' ↓' : ' ↑') : ''}
+              </button>)}
+            </div>
             {treeWindow.segments.map((segment) => {
               if (segment.kind === 'spacer') {
                 return <div aria-hidden="true" className="workspace-files__spacer" key={`spacer:${segment.key}`} style={{ height: `${segment.height}px` }} />

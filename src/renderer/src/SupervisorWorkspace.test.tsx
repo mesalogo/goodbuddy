@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render as renderComponent, screen, waitFor, wi
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { SupervisorWorkspace } from './SupervisorWorkspace'
+import { changeUiLocale, i18nResources } from './i18n'
 
 const result = { id: 'result-1', storyLineId: 'story', sourceId: null, summary: 'Recap', changeDigest: '', createdAt: '2026-09-22T00:00:00.000Z', scope: { kind: 'global' }, timeRange: { from: '2026-09-20T00:00:00.000Z', to: '2026-09-22T00:00:00.000Z' }, openItems: [] }
 const render = (ui: React.ReactNode) => {
@@ -10,6 +11,22 @@ const render = (ui: React.ReactNode) => {
 }
 
 describe('SupervisorWorkspace', () => {
+  it('keeps source lookup failures retryable through notifications', async () => {
+    const onNotify = vi.fn()
+    const source = vi.fn().mockRejectedValueOnce(new TypeError('terminated')).mockResolvedValueOnce({ title: 'Source', content: 'Saved source', occurredAt: result.createdAt })
+    window.goodbuddy = { supervision: {
+      overview: async () => [result], source,
+      graph: async () => ({ storyLine: null, events: [{ id: 'event', title: 'Event', description: '', occurred_at: result.createdAt }],
+        entities: [], relations: [], eventEntities: [], sources: [{ id: 'source', title: 'Source', occurred_at: result.createdAt }],
+        eventSources: [{ event_id: 'event', source_id: 'source' }] })
+    } } as never
+    render(<SupervisorWorkspace tab="graph" onNotify={onNotify} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Source/ }))
+    await waitFor(() => expect(onNotify).toHaveBeenCalledWith({ tone: 'error', message: i18nResources['zh-CN'].heartbeat.supervisor.sourceLoadFailed }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Source/ }))
+    expect(await screen.findByText('Saved source')).toBeVisible()
+  })
   it.each(['conversation', 'knowledge'])('opens only conversation sources without replacing the saved %s snapshot', async (sourceType) => {
     const onOpenConversation = vi.fn()
     const source = vi.fn(async () => ({ sourceType, sourceId: 'original-conversation', title: 'Original source', content: 'Saved snapshot', occurredAt: result.createdAt }))
@@ -40,9 +57,9 @@ describe('SupervisorWorkspace', () => {
     const graph = vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
     window.goodbuddy = { supervision: { overview: async () => [result, old], graph, run } } as never
     const onTabChange = vi.fn()
-    const onOpenActivity = vi.fn()
-    const project = { id: 'project', name: 'New project', description: '', status: 'active', kind: 'user', rootPath: 'C:\\project', executionSpace: { kind: 'local', rootPath: 'C:\\project' }, defaultWorkMode: 'ask', createdAt: result.createdAt, updatedAt: result.createdAt } as const
-    render(<SupervisorWorkspace projects={[project]} onTabChange={onTabChange} onOpenActivity={onOpenActivity} />)
+    const onNotify = vi.fn()
+    const project = { id: 'project', name: 'New project', description: '', status: 'active', kind: 'user', rootPath: 'C:\\project', executionSpace: { kind: 'local', rootPath: 'C:\\project' }, createdAt: result.createdAt, updatedAt: result.createdAt } as const
+    render(<SupervisorWorkspace projects={[project]} onTabChange={onTabChange} onNotify={onNotify} />)
     const history = await screen.findByLabelText('历史结果')
     await waitFor(() => expect(history).toBeEnabled())
     fireEvent.change(history, { target: { value: 'old' } })
@@ -64,41 +81,40 @@ describe('SupervisorWorkspace', () => {
     await waitFor(() => expect(run).toHaveBeenCalledOnce())
     expect(recap.textContent).toBe(frozenText)
     expect(screen.getByText('Important final conclusion.')).toBeVisible()
-    expect(screen.getByRole('status')).toHaveTextContent('新回顾正在整理')
+    expect(onNotify).toHaveBeenLastCalledWith({ tone: 'info', message: i18nResources['zh-CN'].heartbeat.supervisor.reviewStarted, dedupeKey: 'supervisor-review' })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '回顾' })).toBeEnabled()
     expect(screen.getByLabelText('关注范围')).toBeEnabled()
     expect(screen.getByLabelText('时间范围')).toBeEnabled()
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
     expect(screen.queryByText('关注范围')).not.toBeInTheDocument()
     expect(screen.queryByText('时间范围')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '刷新' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
-    expect(screen.getByRole('status')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '活动记录' }))
-    expect(onOpenActivity).toHaveBeenCalledOnce()
+    expect(onNotify).toHaveBeenLastCalledWith(expect.objectContaining({ message: i18nResources['zh-CN'].heartbeat.supervisor.reviewBusy }))
     expect(run).toHaveBeenCalledOnce()
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ scope: { kind: 'projects', projectIds: [project.id] } }))
     await act(async () => finish())
+    expect(onNotify).toHaveBeenLastCalledWith(expect.objectContaining({ tone: 'success' }))
+    expect(history).toHaveValue('old')
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
-  it('discovers automatic execution on mount, preserves dismissal through polling, and guards start until cleanup', async () => {
+  it('loads silently and checks automatic execution before starting, including stopping cleanup', async () => {
     vi.useFakeTimers()
     const execution = vi.fn().mockResolvedValue({ active: true, runId: 'automatic', stopping: 'cancelled' })
     const run = vi.fn().mockResolvedValue(undefined)
     const cancel = vi.fn()
     window.goodbuddy = { supervision: { execution, overview: async () => [], run, cancel } } as never
-    const view = render(<SupervisorWorkspace onOpenActivity={vi.fn()} />)
+    const onNotify = vi.fn()
+    const view = render(<SupervisorWorkspace onNotify={onNotify} />)
     await act(() => vi.advanceTimersByTimeAsync(0))
-    expect(screen.getByRole('status')).toHaveTextContent('正在取消回顾')
-    fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
+    expect(onNotify).not.toHaveBeenCalled()
     await act(() => vi.advanceTimersByTimeAsync(2000))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(cancel).not.toHaveBeenCalled()
     await act(async () => fireEvent.click(screen.getByRole('button', { name: '回顾' })))
-    expect(screen.getByRole('status')).toHaveTextContent('正在取消回顾')
+    expect(onNotify).toHaveBeenLastCalledWith(expect.objectContaining({ message: i18nResources['zh-CN'].heartbeat.reviewSettings.cancelling }))
     expect(run).not.toHaveBeenCalled()
     execution.mockResolvedValue({ active: false })
     await act(async () => fireEvent.click(screen.getByRole('button', { name: '回顾' })))
@@ -114,10 +130,11 @@ describe('SupervisorWorkspace', () => {
   it('turns a backend busy race into a dismissible ongoing notice', async () => {
     const run = vi.fn().mockRejectedValue(new Error('SUPERVISION_REVIEW_BUSY'))
     window.goodbuddy = { supervision: { overview: async () => [], run } } as never
-    render(<SupervisorWorkspace onOpenActivity={vi.fn()} />)
+    const onNotify = vi.fn()
+    render(<SupervisorWorkspace onNotify={onNotify} />)
     await screen.findByText('还没有成功回顾')
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('新回顾正在整理'))
+    await waitFor(() => expect(onNotify).toHaveBeenLastCalledWith({ tone: 'info', message: i18nResources['zh-CN'].heartbeat.supervisor.reviewBusy, dedupeKey: 'supervisor-review' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '回顾' })).toBeEnabled()
   })
@@ -178,7 +195,8 @@ describe('SupervisorWorkspace', () => {
     const graph = vi.fn().mockRejectedValue(new Error('Missing requested result'))
     window.goodbuddy = { supervision: { overview: async () => [result], graph } } as never
     render(<SupervisorWorkspace tab="graph" graphNavigation={{ resultId: 'older' }} />)
-    expect(await screen.findByRole('alert')).toHaveTextContent('Missing requested result')
+    expect(await screen.findByRole('alert')).toHaveTextContent(i18nResources['zh-CN'].heartbeat.supervisor.loadFailed)
+    expect(screen.queryByText('Missing requested result')).not.toBeInTheDocument()
     expect(graph).toHaveBeenCalledWith({ resultId: 'older', storyLineId: undefined })
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     await waitFor(() => expect(graph).toHaveBeenCalledTimes(2))
@@ -215,7 +233,7 @@ describe('SupervisorWorkspace', () => {
       expect(tokens, token).toContain(`${token}:`)
     }
   })
-  afterEach(() => { cleanup(); vi.useRealTimers(); window.goodbuddy = {} as never })
+  afterEach(async () => { cleanup(); vi.useRealTimers(); window.goodbuddy = {} as never; await changeUiLocale('zh-CN') })
   it('shows unavailable immediately and does not call supervision APIs when the bridge is absent', () => {
     window.goodbuddy = {} as never
 
@@ -274,20 +292,94 @@ describe('SupervisorWorkspace', () => {
     await waitFor(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'manual', reanalyze: true })))
   })
 
-  it('keeps review failures retryable even with a selected graph event', async () => {
+  it('notifies review failures and allows a new review without a workspace error banner', async () => {
     const run = vi.fn().mockRejectedValueOnce(new Error('Review provider unavailable')).mockResolvedValueOnce(undefined)
     window.goodbuddy = { supervision: {
       overview: async () => [],
       graph: async () => ({ storyLine: null, events: [{ id: 'event', title: 'Decision', description: '', occurred_at: '2026-09-21T00:00:00.000Z' }], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }),
       run
     } } as never
-    render(<SupervisorWorkspace />)
+    const onNotify = vi.fn()
+    render(<SupervisorWorkspace onNotify={onNotify} />)
     await screen.findByText('还没有成功回顾')
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Review provider unavailable')
-    fireEvent.click(screen.getByRole('button', { name: '重试回顾' }))
+    await waitFor(() => expect(onNotify).toHaveBeenLastCalledWith(expect.objectContaining({ tone: 'error', message: i18nResources['zh-CN'].heartbeat.supervisor.reviewFailed })))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(run).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it.each(['zh-CN', 'en-US'] as const)('localizes failures after refresh and preserves request controls in %s', async locale => {
+    await changeUiLocale(locale)
+    const copy = i18nResources[locale].heartbeat
+    let reject!: (reason: Error) => void
+    const run = vi.fn(() => new Promise((_, fail) => { reject = fail }))
+    const onNotify = vi.fn()
+    window.goodbuddy = { supervision: { overview: async () => [], run } } as never
+    render(<SupervisorWorkspace onNotify={onNotify} />)
+    await screen.findByText(copy.supervisor.empty)
+    fireEvent.change(screen.getByLabelText(copy.supervisor.period), { target: { value: '30' } })
+    fireEvent.click(screen.getByRole('button', { name: copy.supervisor.run }))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: copy.center.actions.refresh }))
+    await waitFor(() => expect(screen.getByRole('button', { name: copy.center.actions.refresh })).toBeEnabled())
+    await act(async () => reject(new Error("Error invoking remote method 'supervision:run': TypeError: terminated")))
+    expect(onNotify).toHaveBeenLastCalledWith({ tone: 'error', message: copy.supervisor.reviewFailed, dedupeKey: 'supervisor-review' })
+    expect(screen.getByLabelText(copy.supervisor.period)).toHaveValue('30')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it.each(['completed', 'paused', 'cancelled', 'no_change', 'failed'] as const)('notifies %s once without an operation banner', async status => {
+    const copy = i18nResources['zh-CN'].heartbeat
+    const onNotify = vi.fn()
+    window.goodbuddy = { supervision: { overview: async () => [], run: vi.fn().mockResolvedValue({ status }) } } as never
+    render(<SupervisorWorkspace onNotify={onNotify} />)
+    await screen.findByText(copy.supervisor.empty)
+    fireEvent.click(screen.getByRole('button', { name: copy.supervisor.run }))
+    const message = { completed: copy.supervisor.reviewCompleted, paused: copy.reviewSettings.pausedHint,
+      cancelled: copy.supervisor.reviewCancelled, no_change: copy.supervisor.reviewNoChange, failed: copy.supervisor.reviewFailed }[status]
+    await waitFor(() => {
+      expect(onNotify).toHaveBeenCalledTimes(2)
+      expect(onNotify).toHaveBeenLastCalledWith({ message, tone: status === 'completed' ? 'success' : status === 'failed' ? 'error' : 'info', dedupeKey: 'supervisor-review' })
+      expect(screen.getByRole('button', { name: copy.center.actions.refresh })).toBeEnabled()
+    })
+    expect(document.querySelector('.supervisor-workspace__run-status')).toBeNull()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('reports execution lookup failure without starting a review', async () => {
+    const onNotify = vi.fn()
+    const run = vi.fn()
+    window.goodbuddy = { supervision: { overview: async () => [], execution: vi.fn().mockRejectedValue(new TypeError('terminated')), run } } as never
+    render(<SupervisorWorkspace onNotify={onNotify} />)
+    await screen.findByText('还没有成功回顾')
+    expect(onNotify).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '回顾' }))
+    await waitFor(() => expect(onNotify).toHaveBeenLastCalledWith(expect.objectContaining({ tone: 'error', message: i18nResources['zh-CN'].heartbeat.supervisor.reviewStartFailed })))
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it.each(['preflight', 'running'] as const)('ignores late %s responses after unmount without cancelling background work', async phase => {
+    let resolve!: (value: unknown) => void
+    const deferred = new Promise(done => { resolve = done })
+    const execution = vi.fn().mockImplementation(() => phase === 'preflight' ? deferred : Promise.resolve({ active: false }))
+    const run = vi.fn(() => deferred)
+    const cancel = vi.fn()
+    const overview = vi.fn().mockResolvedValue([])
+    const onNotify = vi.fn()
+    window.goodbuddy = { supervision: { overview, execution, run, cancel } } as never
+    const view = render(<SupervisorWorkspace onNotify={onNotify} />)
+    await screen.findByText('还没有成功回顾')
+    fireEvent.click(screen.getByRole('button', { name: '回顾' }))
+    await waitFor(() => expect(phase === 'preflight' ? execution : run).toHaveBeenCalledOnce())
+    view.unmount()
+    onNotify.mockClear()
+    await act(async () => resolve(phase === 'preflight' ? { active: false } : { status: 'completed' }))
+    expect(onNotify).not.toHaveBeenCalled()
+    expect(overview).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledTimes(phase === 'preflight' ? 0 : 1)
+    expect(cancel).not.toHaveBeenCalled()
   })
 
   it('draws only actual event to entity links and filters sources for the selected event', async () => {

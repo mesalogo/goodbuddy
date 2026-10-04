@@ -21,7 +21,6 @@ import {
   conversationSnapshotSchema,
   conversationSetPinnedSchema,
   expertCreateSchema,
-  normalizeInteractiveWorkMode,
   persistedProjectExecutionSpaceSchema,
   projectCreateSchema,
   scheduleCreateSchema
@@ -56,7 +55,6 @@ import type {
   HeartbeatCreateInput,
   HeartbeatSummaryOutput,
   HeartbeatUpdateInput,
-  LegacyWorkMode,
   LocalConversationSaveBatch,
   MemoryCreateInput,
   ModelUsageCallInput,
@@ -138,7 +136,14 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 59
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 60
+
+function withoutHistoricalWorkMode(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const { workMode: obsolete, ...current } = value as Record<string, unknown>
+  void obsolete
+  return current
+}
 /**
  * Messages startup recovery may have to end (schema 58): still streaming, or
  * metadata naming an unfinished tool/subagent (pending, running, queued) or
@@ -204,7 +209,6 @@ export type RecoverableRemoteTask = {
   currentUserMessageId: string
   currentAssistantMessageId: string
   instructions: string
-  workMode: 'ask' | 'execute'
   status: 'running' | 'waiting_approval' | 'interrupted'
 }
 
@@ -213,7 +217,6 @@ type ProjectRow = {
   name: string
   description: string
   root_path: string
-  default_work_mode: LegacyWorkMode
   runtime_selection_json: string | null
   kind: AssistantProject['kind']
   channel: ProjectChannel | null
@@ -254,7 +257,6 @@ type TaskRow = {
   origin: AssistantTask['origin']
   status: AssistantTask['status']
   active_run_status?: 'pending' | 'running' | null
-  work_mode: LegacyWorkMode
   progress: number | null
   created_at: string
   started_at: string | null
@@ -698,9 +700,6 @@ function toProject(row: ProjectRow): AssistantProject {
     description: row.description,
     rootPath,
     executionSpace: executionSpace.data,
-    defaultWorkMode: normalizeInteractiveWorkMode(
-      row.default_work_mode
-    ),
     runtimeSelection,
     kind: row.kind,
     channel: row.channel ?? undefined,
@@ -762,7 +761,6 @@ function toTask(row: TaskRow): AssistantTask {
           : row.origin === 'schedule' && row.status === 'queued'
             ? 'idle'
             : row.status,
-    workMode: normalizeInteractiveWorkMode(row.work_mode),
     progress: row.progress ?? undefined,
     createdAt: row.created_at,
     startedAt: row.started_at ?? undefined,
@@ -889,7 +887,6 @@ function toSchedule(row: ScheduleWithTaskRow): AssistantSchedule {
   const template = JSON.parse(row.task_template_json) as {
     title: string
     prompt: string
-    workMode: LegacyWorkMode
     runtimeSelection?: unknown
   }
   const runtimeSelection = optionalAgentRuntimeSelectionSchema.safeParse(
@@ -905,7 +902,6 @@ function toSchedule(row: ScheduleWithTaskRow): AssistantSchedule {
     conversationId: row.conversation_id,
     title: template.title,
     prompt: template.prompt,
-    workMode: normalizeInteractiveWorkMode(template.workMode),
     runtimeSelection: runtimeSelection.success
       ? runtimeSelection.data
       : undefined,
@@ -1162,7 +1158,7 @@ function validateRemoteTaskEvent(
     throw new TypeError('kind must be a string')
   }
   const kind = input.kind.slice(0, 64)
-  const payloadJson = JSON.stringify(input.payload)
+  const payloadJson = JSON.stringify(withoutHistoricalWorkMode(input.payload))
   if (typeof payloadJson !== 'string') {
     throw new TypeError('Task event payload must be JSON serializable')
   }
@@ -1243,7 +1239,6 @@ function interruptActiveToolBlocks(
 }
 
 const conversationContextStateSchema = conversationSnapshotSchema.pick({
-  workMode: true,
   knowledgeLibraryIds: true,
   knowledgeRetrievalMode: true,
   storyGraphEnabled: true,
@@ -1255,7 +1250,7 @@ function parseConversationContextState(
   value: string | null
 ): Pick<
   ConversationSnapshot,
-  'workMode' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'contextMetrics' | 'contextCompressionState'
+  'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'contextMetrics' | 'contextCompressionState'
 > {
   if (!value) {
     return {}
@@ -1273,17 +1268,15 @@ function parseConversationContextState(
 function serializeConversationContextState(
   conversation: Pick<
     ConversationSnapshot,
-    'workMode' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'contextMetrics' | 'contextCompressionState'
+    'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'contextMetrics' | 'contextCompressionState'
   >
 ): string | null {
-  return conversation.workMode !== undefined ||
-    conversation.knowledgeLibraryIds !== undefined ||
+  return conversation.knowledgeLibraryIds !== undefined ||
     conversation.knowledgeRetrievalMode !== undefined ||
     conversation.storyGraphEnabled !== undefined ||
     conversation.contextMetrics ||
     conversation.contextCompressionState
     ? JSON.stringify({
-        workMode: conversation.workMode,
         knowledgeLibraryIds: conversation.knowledgeLibraryIds,
         knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
         storyGraphEnabled: conversation.storyGraphEnabled,
@@ -1616,7 +1609,6 @@ function reduceRecoveredAgentEvent(
       childTaskId: event.childTaskId,
       routingMode: event.routingMode,
       runtimeCallId: event.runtimeCallId,
-      workMode: event.workMode,
       state: event.state,
       reason: event.reason,
       progress: event.progress,
@@ -2079,6 +2071,7 @@ export class AssistantDatabase {
   private activityHistoryRepository?: { database: DatabaseSync; repository: ActivityHistoryRepository }
   private executionTiming?: ExecutionTiming
   private readonlyReader?: ReadonlyQueryReader
+  private supervisionWorker?: ReadonlyQueryReader
   private checkpointWorker?: Worker
   private readonlyWorkerPath?: string
   private foldedSearchConnection?: DatabaseSync
@@ -2280,7 +2273,6 @@ export class AssistantDatabase {
             name: builtInDefaultProjectSeedName,
             description: builtInDefaultProjectSeedDescription,
             rootPath: defaultRootPath,
-            defaultWorkMode: 'ask'
           },
           true
         )
@@ -2520,6 +2512,8 @@ export class AssistantDatabase {
     this.executionTiming = undefined
     this.readonlyReader?.close()
     this.readonlyReader = undefined
+    this.supervisionWorker?.close()
+    this.supervisionWorker = undefined
     this.foldedSearchConnection = undefined
     this.activityHistoryRepository = undefined
     this.database?.close()
@@ -2636,10 +2630,10 @@ export class AssistantDatabase {
     )
     const insert = database.prepare(
       `INSERT INTO projects
-        (id, name, description, root_path, default_work_mode,
+        (id, name, description, root_path,
          runtime_selection_json, kind, channel, status, created_at,
          updated_at)
-       VALUES (?, ?, ?, ?, 'ask', ?, 'channel', ?, 'active', ?, ?)`
+       VALUES (?, ?, ?, ?, ?, 'channel', ?, 'active', ?, ?)`
     )
     const insertExecutionSpace = database.prepare(
       `INSERT INTO project_execution_spaces
@@ -2701,17 +2695,16 @@ export class AssistantDatabase {
       database
         .prepare(
           `INSERT INTO projects
-            (id, name, description, root_path, default_work_mode,
+            (id, name, description, root_path,
              runtime_selection_json, kind, channel, built_in_default,
              status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'user', NULL, ?, 'active', ?, ?)`
+           VALUES (?, ?, ?, ?, ?, 'user', NULL, ?, 'active', ?, ?)`
         )
         .run(
           id,
           input.name,
           input.description,
           input.rootPath,
-          input.defaultWorkMode,
           serializeRuntimeSelection(input.runtimeSelection),
           builtInDefault ? 1 : 0,
           now,
@@ -2753,7 +2746,7 @@ export class AssistantDatabase {
         .prepare(
           `UPDATE projects
            SET name = ?, description = ?, root_path = ?,
-               default_work_mode = ?, runtime_selection_json = ?,
+               runtime_selection_json = ?,
                updated_at = ?
            WHERE id = ?`
         )
@@ -2761,7 +2754,6 @@ export class AssistantDatabase {
           current.kind === 'channel' ? current.name : input.name,
           input.description,
           input.rootPath,
-          input.defaultWorkMode,
           // The settings form always sends the full layer; absent means follow global.
           serializeRuntimeSelection(input.runtimeSelection),
           new Date().toISOString(),
@@ -2802,17 +2794,16 @@ export class AssistantDatabase {
       database
         .prepare(
           `INSERT INTO projects
-            (id, name, description, root_path, default_work_mode,
+            (id, name, description, root_path,
              runtime_selection_json, kind, channel, built_in_default,
              status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'user', NULL, 0, 'active', ?, ?)`
+           VALUES (?, ?, ?, ?, ?, 'user', NULL, 0, 'active', ?, ?)`
         )
         .run(
           id,
           normalized.project.name,
           normalized.project.description,
           normalized.executionSpace.remoteRootPath,
-          normalized.project.defaultWorkMode,
           serializeRuntimeSelection(normalized.project.runtimeSelection),
           now,
           now
@@ -2894,7 +2885,7 @@ export class AssistantDatabase {
         .prepare(
           `UPDATE projects
            SET name = ?, description = ?, root_path = ?,
-               default_work_mode = ?, runtime_selection_json = ?,
+               runtime_selection_json = ?,
                updated_at = ?
            WHERE id = ? AND kind = 'user' AND channel IS NULL
              AND updated_at = ?`
@@ -2903,7 +2894,6 @@ export class AssistantDatabase {
           normalized.project.name,
           normalized.project.description,
           normalized.executionSpace.remoteRootPath,
-          normalized.project.defaultWorkMode,
           serializeRuntimeSelection(normalized.project.runtimeSelection),
           updatedAt,
           projectId,
@@ -3396,10 +3386,10 @@ export class AssistantDatabase {
       const insertConversation = database.prepare(
         `INSERT INTO conversations
           (id, project_id, runtime_selection_json, knowledge_retrieval_mode,
-           context_state_json, work_mode, title,
+           context_state_json, title,
            branch_source_conversation_id, branch_source_title, status,
            created_at, updated_at, timing_incomplete)
-         VALUES (?, ?, ?, ?, ?, 'ask', ?, ?, ?, 'active', ?, ?, 1)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1)`
       )
       const insertMessage = database.prepare(
         `INSERT INTO messages
@@ -3459,10 +3449,10 @@ export class AssistantDatabase {
     const insertConversation = database.prepare(
       `INSERT INTO conversations
         (id, project_id, runtime_selection_json, knowledge_retrieval_mode,
-         context_state_json, work_mode, title,
+         context_state_json, title,
          branch_source_conversation_id, branch_source_title, status,
          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'ask', ?, ?, ?, 'active', ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`
     )
     const updateConversation = database.prepare(
       `UPDATE conversations
@@ -3675,10 +3665,10 @@ export class AssistantDatabase {
         .prepare(
           `INSERT INTO conversations
             (id, project_id, runtime_selection_json,
-             knowledge_retrieval_mode, context_state_json, work_mode,
+             knowledge_retrieval_mode, context_state_json,
              title, branch_source_conversation_id, branch_source_title,
              status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'ask', ?, ?, ?, 'active', ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`
         )
         .run(
           destinationConversationId,
@@ -3879,10 +3869,10 @@ export class AssistantDatabase {
     database
       .prepare(
         `INSERT INTO conversations
-          (id, project_id, runtime_selection_json, work_mode, title, status,
+          (id, project_id, runtime_selection_json, title, status,
            channel, external_account_id, external_conversation_id,
            conversation_type, account_display, created_at, updated_at)
-         VALUES (?, ?, ?, 'ask', ?, 'active', ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -5291,7 +5281,6 @@ export class AssistantDatabase {
     routingMode?: AssistantTask['routingMode']
     title: string
     instructions: string
-    workMode: 'ask' | 'execute'
     origin?: AssistantTask['origin']
     status?: Exclude<AssistantTask['status'], 'idle'>
     visible?: boolean
@@ -5352,14 +5341,14 @@ export class AssistantDatabase {
         `INSERT INTO tasks
           (id, project_id, conversation_id, parent_task_id, expert_id,
            routing_mode, title, instructions, origin, status, priority,
-           work_mode, progress, created_at, started_at, visible,
+           progress, created_at, started_at, visible,
            remote_recoverable, current_user_message_id,
            current_assistant_message_id)
           VALUES (?, ?, ?, COALESCE((
             SELECT parent.id FROM schedule_runs sr
             JOIN tasks parent ON parent.schedule_id = sr.schedule_id
             WHERE sr.id = ?
-          ), ?), ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?, ?, ?,
+          ), ?), ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?,
                  ?, ?, ?)`
         )
         .run(
@@ -5374,7 +5363,6 @@ export class AssistantDatabase {
           input.instructions,
           input.origin ?? 'user',
           status,
-          input.workMode,
           now,
           status === 'running' ? now : null,
           Number(input.visible ?? true),
@@ -5566,7 +5554,7 @@ export class AssistantDatabase {
         .run(
           taskId,
           status,
-          JSON.stringify({ workMode: input.workMode }),
+          '{}',
           now
         )
       database.exec('COMMIT')
@@ -5584,7 +5572,7 @@ export class AssistantDatabase {
                 conversation_id AS conversationId,
                 current_user_message_id AS currentUserMessageId,
                 current_assistant_message_id AS currentAssistantMessageId,
-                instructions, work_mode AS workMode, status
+                instructions, status
          FROM tasks
          WHERE remote_recoverable = 1
            AND status IN ('running', 'waiting_approval', 'interrupted')
@@ -5603,7 +5591,6 @@ export class AssistantDatabase {
         assistantIdSchema.parse(candidate.currentUserMessageId)
         assistantIdSchema.parse(candidate.currentAssistantMessageId)
         if (
-          !['ask', 'execute'].includes(candidate.workMode) ||
           !['running', 'waiting_approval', 'interrupted'].includes(
             candidate.status
           )
@@ -5884,9 +5871,9 @@ export class AssistantDatabase {
       .prepare(
         `INSERT OR IGNORE INTO tasks
           (id, project_id, conversation_id, title, instructions, origin,
-           status, priority, work_mode, created_at, started_at, completed_at,
+           status, priority, created_at, started_at, completed_at,
            visible)
-         VALUES (?, NULL, ?, ?, ?, 'assistant', 'completed', 0, 'ask', ?, ?, ?, 0)`
+         VALUES (?, NULL, ?, ?, ?, 'assistant', 'completed', 0, ?, ?, ?, 0)`
       )
       .run(
         taskId,
@@ -6128,7 +6115,7 @@ export class AssistantDatabase {
     payload: unknown
   ): void {
     const database = this.requireDatabase()
-    const payloadJson = this.subagentProgress!.serialize(taskId, kind, payload)
+    const payloadJson = this.subagentProgress!.serialize(taskId, kind, withoutHistoricalWorkMode(payload))
     const result = database
       .prepare(
         `INSERT INTO task_events
@@ -7607,15 +7594,14 @@ export class AssistantDatabase {
         database
           .prepare(
             `INSERT INTO conversations
-              (id, project_id, runtime_selection_json, work_mode, title,
+              (id, project_id, runtime_selection_json, title,
                status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
+             VALUES (?, ?, ?, ?, 'active', ?, ?)`
           )
           .run(
             conversationId,
             projectId,
             null,
-            'ask',
             parsed.title,
             now,
             now
@@ -7634,8 +7620,7 @@ export class AssistantDatabase {
           projectId,
           JSON.stringify({
             title: parsed.title,
-            prompt: parsed.prompt,
-            workMode: parsed.workMode
+            prompt: parsed.prompt
           }),
           JSON.stringify({ type: parsed.recurrence }),
           parsed.runImmediately ? now : parsed.nextRunAt,
@@ -7651,10 +7636,10 @@ export class AssistantDatabase {
           `INSERT INTO tasks
             (id, project_id, conversation_id, schedule_id,
              parent_task_id, expert_id, routing_mode, title,
-             instructions, origin, status, work_mode, progress,
+             instructions, origin, status, progress,
              created_at, started_at, completed_at, error)
            VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?,
-                   'schedule', 'queued', ?, NULL, ?, NULL, NULL, NULL)`
+                   'schedule', 'queued', NULL, ?, NULL, NULL, NULL)`
         )
         .run(
           taskId,
@@ -7663,7 +7648,6 @@ export class AssistantDatabase {
           scheduleId,
           parsed.title,
           parsed.prompt,
-          parsed.workMode,
           now
         )
       if (parsed.runImmediately) {
@@ -9546,10 +9530,10 @@ export class AssistantDatabase {
       const insertTask = database.prepare(
         `INSERT INTO tasks
           (id, project_id, conversation_id, schedule_id, title,
-           instructions, origin, status, priority, work_mode,
+           instructions, origin, status, priority,
            progress, created_at, started_at, completed_at, error)
          VALUES (?, ?, NULL, NULL, ?, ?, 'assistant', 'paused', 0,
-           'ask', NULL, ?, NULL, NULL, NULL)`
+           NULL, ?, NULL, NULL, NULL)`
       )
       for (const task of output.followUpTasks) {
         const taskId = randomUUID()
@@ -11143,7 +11127,7 @@ export class AssistantDatabase {
           let template: {
             title?: unknown
             prompt?: unknown
-            workMode?: LegacyWorkMode
+            workMode?: 'ask' | 'plan' | 'execute'
           } = {}
           try {
             template = JSON.parse(
@@ -11163,9 +11147,7 @@ export class AssistantDatabase {
             template.prompt.trim()
               ? template.prompt.trim().slice(0, 100_000)
               : title
-          const workMode = normalizeInteractiveWorkMode(
-            template.workMode
-          )
+          const workMode = template.workMode === 'execute' ? 'execute' : 'ask'
           const existing = findTask.get(schedule.id) as
             | { id: string; conversation_id: string | null }
             | undefined
@@ -12238,6 +12220,78 @@ export class AssistantDatabase {
         database.exec('PRAGMA user_version = 59; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
+    if (version.user_version < 60) {
+      // Run after the historical migrations that still require the SQL columns,
+      // and before startup recovery parses messages with the current contracts.
+      const targets = [
+        ['conversations', 'context_state_json'],
+        ['schedules', 'task_template_json'],
+        ['conversation_queue_items', 'payload_json'],
+        ['task_events', 'payload_json'],
+        ['messages', 'metadata_json']
+      ] as const
+      const bytesBefore = this.databasePath === ':memory:' ? 0 : statSync(this.databasePath).size
+      let processed = 0
+      for (const [table, column] of targets) {
+        const select = database.prepare(`SELECT rowid AS position, ${column} AS payload
+          FROM ${table} WHERE rowid > ? AND ${column} IS NOT NULL ORDER BY rowid LIMIT 32`)
+        const update = database.prepare(`UPDATE ${table} SET ${column} = ? WHERE rowid = ?`)
+        let after = 0
+        for (;;) {
+          if (isCancelled?.()) throw new DOMException('Upgrade cancelled', 'AbortError')
+          const rows = select.all(after) as Array<{ position: number; payload: string }>
+          if (!rows.length) break
+          database.exec('BEGIN IMMEDIATE')
+          try {
+            for (const row of rows) {
+              let payload: Record<string, unknown>
+              let original: string
+              try {
+                const value: unknown = JSON.parse(row.payload)
+                if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object')
+                payload = value as Record<string, unknown>
+                original = JSON.stringify(payload)
+                if (table === 'messages') {
+                  if (payload.subagents !== undefined) {
+                    if (!Array.isArray(payload.subagents) || payload.subagents.some(
+                      item => !item || typeof item !== 'object' || Array.isArray(item)
+                    )) throw new Error('Expected subagent objects')
+                    payload.subagents = payload.subagents.map(withoutHistoricalWorkMode)
+                  }
+                } else {
+                  delete payload.workMode
+                  if (table === 'conversation_queue_items' && payload.input !== undefined) {
+                    if (!payload.input || typeof payload.input !== 'object' || Array.isArray(payload.input)) {
+                      throw new Error('Expected queue input object')
+                    }
+                    payload.input = withoutHistoricalWorkMode(payload.input)
+                  }
+                }
+              } catch {
+                throw new Error(`Invalid execution metadata: ${table}.${column} row ${row.position}`)
+              }
+              const json = JSON.stringify(payload)
+              if (json !== original) update.run(json, row.position)
+              after = row.position
+            }
+            database.exec('COMMIT')
+          } catch (error) { database.exec('ROLLBACK'); throw error }
+          processed += rows.length
+          onProgress?.({ stage: 'converting', processed, total: 0, bytesBefore })
+        }
+      }
+      if (isCancelled?.()) throw new DOMException('Upgrade cancelled', 'AbortError')
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec(`
+          ALTER TABLE projects DROP COLUMN default_work_mode;
+          ALTER TABLE conversations DROP COLUMN work_mode;
+          ALTER TABLE tasks DROP COLUMN work_mode;
+          PRAGMA user_version = 60;
+          COMMIT;
+        `)
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
   }
 
   supervisionExperiences(): SupervisionExperienceStore {
@@ -12248,8 +12302,45 @@ export class AssistantDatabase {
     return new SupervisionStoryStore(this.requireDatabase())
   }
 
-  supervisionReviewStore(): SupervisionReviewStore {
-    return new SupervisionReviewStore(this.requireDatabase())
+  supervisionReviewStore(signal?: AbortSignal): SupervisionReviewStore {
+    return new SupervisionReviewStore(this.requireDatabase(), signal)
+  }
+
+  async initializeSupervisionReview(runId: string, state: import('./supervision-review-store').ReviewState, signal: AbortSignal): Promise<void> {
+    const store = this.supervisionReviewStore()
+    store.prepareInitialization(runId, state)
+    await this.runSupervisionWorker('initialize', [runId, state], signal)
+  }
+
+  async resumeSupervisionReview(runId: string, signal: AbortSignal): Promise<void> {
+    await this.runSupervisionWorker('resume', [runId], signal)
+  }
+
+  private async runSupervisionWorker(op: 'initialize' | 'resume', args: unknown[], signal: AbortSignal): Promise<void> {
+    if (this.databasePath === ':memory:') {
+      const store = this.supervisionReviewStore()
+      if (op === 'resume') store.resume(String(args[0]), signal)
+      else store.initializeSources(String(args[0]), args[1] as import('./supervision-review-store').ReviewState, signal)
+      return
+    }
+    // Fail explicitly when packaging/startup is broken; never freeze Main as a fallback.
+    if (!this.readonlyWorkerPath) throw new Error('Supervision worker is not configured')
+    this.supervisionWorker ??= new ReadonlyQueryReader('supervision', this.databasePath, this.readonlyWorkerPath)
+    await this.supervisionWorker.call(op, args, signal)
+  }
+
+  async supervisionContext(request: SupervisionRunRequest, signal?: AbortSignal): Promise<{ summary: string | undefined; background: ReviewBatch['evidence'] }> {
+    const reader = this.readonlyQueryReader()
+    if (reader) return reader.call('reviewContext', [request], signal)
+    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
+    return { summary: this.reviewSummary(request.scope, 'supervisor'), background: this.reviewBackground(request.scope) }
+  }
+
+  async supervisionCandidates(request: SupervisionRunRequest): Promise<ReturnType<AssistantDatabase['listSupervisionCandidates']>> {
+    const reader = this.readonlyQueryReader()
+    if (reader) return reader.call('reviewCandidates', [request])
+    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
+    return this.listSupervisionCandidates(request)
   }
 
   supervisionSuggestions(): SupervisionSuggestionStore {
@@ -12275,7 +12366,7 @@ export class AssistantDatabase {
     // A stalled story is resumed through a paused follow-up task, like an open item.
     if (suggestion.kind === 'open_item' || suggestion.kind === 'stalled') {
       const task = this.createTask({ id: randomUUID(), projectId, title: suggestion.title.slice(0, 200), instructions: suggestion.detail,
-        workMode: 'ask', origin: 'assistant', status: 'paused' })
+        origin: 'assistant', status: 'paused' })
       store.resolve(id, 'accepted', { taskId: task.id })
     } else if (suggestion.kind === 'convention') {
       let memoryId = suggestion.memoryId ?? undefined

@@ -60,7 +60,7 @@ it('completes Execute external writes and native free-text questions without a s
     let text = ''
     for await (const event of runtime.run({
       requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(),
-      workMode: 'execute', prompt: 'Write the external test sentinel, then reply CONTINUE_DONE.'
+       prompt: 'Write the external test sentinel, then reply CONTINUE_DONE.'
     }, AbortSignal.timeout(30_000))) {
       if (event.type === 'text') text += event.delta
       if (event.type === 'question') {

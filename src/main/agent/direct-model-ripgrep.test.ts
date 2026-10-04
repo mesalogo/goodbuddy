@@ -20,19 +20,19 @@ afterEach(async () => {
   await service.dispose()
   await rm(root, { recursive: true, force: true })
 })
-const search = (args: string[], workMode: 'ask' | 'execute' = 'execute', signal = new AbortController().signal) =>
-  searchWorkspaceWithRipgrep(rgPath, { args }, workspace, signal, service, 'owner', workMode)
+const search = (args: string[], signal = new AbortController().signal) =>
+  searchWorkspaceWithRipgrep(rgPath, { args }, workspace, signal, service, 'owner')
 
 describe('native ripgrep', () => {
   it('preserves native context, file listing, JSON and multiple expressions', async () => {
-    expect((await search(['-A1', '-B1', '-e', 'target', '-e', 'absent', '.'], 'ask')).stdout).toContain('after')
-    expect((await search(['--files', '-g', '*.txt'], 'ask')).stdout).toContain('valid.txt')
+    expect((await search(['-A1', '-B1', '-e', 'target', '-e', 'absent', '.'])).stdout).toContain('after')
+    expect((await search(['--files', '-g', '*.txt'])).stdout).toContain('valid.txt')
     expect((await search(['--json', 'target', '.'])).stdout).toContain('"type":"match"')
   })
   it('preserves no matches, regex errors and partial results with exit codes', async () => {
     expect(await search(['absent', '.'])).toMatchObject({ exitCode: 1, stdout: '' })
     expect(await search(['[', '.'])).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('regex parse error') })
-    expect(await search(['target', 'valid.txt', 'missing.txt'], 'ask')).toMatchObject({
+    expect(await search(['target', 'valid.txt', 'missing.txt'])).toMatchObject({
       exitCode: 2, stdout: expect.stringContaining('target'), stderr: expect.stringContaining('missing.txt')
     })
   })
@@ -55,8 +55,8 @@ describe('native ripgrep', () => {
     await service.releaseConversation('owner')
     await expect(service.readOutput('owner', reference.handle)).rejects.toThrow()
   })
-  it.each([['--pre=cmd', 'target'], ['--hostname-bin', 'cmd', 'target'], ['-L', 'target'], ['-z', 'target'], ['target', '../outside'], ['-f../outside']])('keeps Ask boundaries for %j', async (...args) => {
-    await expect(search(args, 'ask')).rejects.toThrow()
+  it.each(['-L', '-z'])('accepts native option %s without a mode', async (option) => {
+    expect((await search([option, 'target', 'valid.txt'])).exitCode).toBe(0)
   })
   it('supports cwd and literal shell characters while ignoring external config', async () => {
     await mkdir(join(root, 'nested'))
@@ -66,23 +66,22 @@ describe('native ripgrep', () => {
     try {
       const result = await searchWorkspaceWithRipgrep(rgPath, {
         args: ['-F', '$(echo unexpected);', '.'], cwd: 'nested'
-      }, workspace, new AbortController().signal, configured, 'owner', 'ask')
+      }, workspace, new AbortController().signal, configured, 'owner')
       expect(result).toMatchObject({ exitCode: 0, stdout: expect.stringContaining('$(echo unexpected); target') })
     } finally { await configured.dispose() }
   })
-  it('allows external Execute paths and rejects Ask directory links', async () => {
+  it('allows external paths and directory links with current-user permissions', async () => {
     const outside = await mkdtemp(join(tmpdir(), 'goodbuddy-rg-outside-'))
     try {
       await writeFile(join(outside, 'outside.txt'), 'target\n')
       await symlink(outside, join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir')
       expect((await search(['target', outside])).exitCode).toBe(0)
-      await expect(search(['target', outside], 'ask')).rejects.toThrow('不能超出')
-      await expect(search(['target', 'linked'], 'ask')).rejects.toThrow()
+      expect((await search(['target', 'linked'])).exitCode).toBe(0)
     } finally { await rm(outside, { recursive: true, force: true }) }
   })
   it('preserves cancellation', async () => {
     const controller = new AbortController()
     controller.abort(new Error('cancelled'))
-    await expect(search(['target'], 'execute', controller.signal)).rejects.toThrow('cancelled')
+    await expect(search(['target'], controller.signal)).rejects.toThrow('cancelled')
   })
 })

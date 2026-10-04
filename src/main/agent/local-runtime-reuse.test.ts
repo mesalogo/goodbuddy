@@ -161,7 +161,7 @@ it.skipIf(!existsSync(binaryPath)).each([2, 10])('uses one real OpenCode server 
         if (projectCount === 2 && wave === 0) requestImages.set(requestId, images[project]!)
         for await (const event of runtime.run({
           requestId, conversationId: `project-${project}-${conversation}`,
-          prompt: `Read marker.txt for wave ${wave}. REQUEST_${requestId}`, workMode: 'execute',
+          prompt: `Read marker.txt for wave ${wave}. REQUEST_${requestId}`,
           ...(projectCount === 2 && wave === 0 ? { images: [{
             name: `project-${project}.png`, mediaType: 'image/png', data: images[project]!
           }] } : {})

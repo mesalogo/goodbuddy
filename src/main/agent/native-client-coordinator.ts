@@ -3,7 +3,6 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { normalizeInteractiveWorkMode } from '../../shared/assistant-contracts'
 import type { RuntimeNativeClientResult } from '../../shared/runtime-native-client-contracts'
 import type { AssistantDatabase } from '../assistant/assistant-database'
 import type { ApplicationSettingsStore } from '../application-settings-store'
@@ -91,7 +90,6 @@ export class NativeClientCoordinator {
       { remote: project.executionSpace?.kind === 'ssh' }
     ).selection)
     const space = this.options.executionSpaceResolver.resolveProject(project)
-    const workMode = normalizeInteractiveWorkMode(conversation.workMode ?? project.defaultWorkMode)
     const [skills, mcpServers, builtin, application, obsidian] = await Promise.all([
       this.options.capabilities.getRuntimeSkillContext(selected.target),
       this.options.capabilities.getResolvedMcpServers(selected.target),
@@ -102,13 +100,13 @@ export class NativeClientCoordinator {
     const key = createHash('sha256').update(JSON.stringify({ projectId: project.id, conversationId, storyGraphEnabled: conversation.storyGraphEnabled !== false, space: space.cacheIdentity,
       target: selected.target, profile: selected.target === 'deepseek-harness' ? selected.settings.deepseekHarnessModelProfile
         : selected.target === 'continue' ? selected.settings.continueModelProfile : selected.settings.opencodeModelProfile,
-      workMode, skills, mcpServers, builtin,
+      skills, mcpServers, builtin,
       libraries: conversation.knowledgeLibraryIds, magicNotes: application.magicNotesEnabled, supervisor: application.heartbeatEnabled, obsidian,
       node: application.localToolEnvironment.node,
       binary: selected.target === 'continue' ? selected.settings.continueBinaryPath
         : selected.target === 'opencode' ? selected.settings.opencodeBinaryPath : undefined,
       config: selected.target === 'continue' ? selected.settings.continueConfigPath : undefined })).digest('hex')
-    return { conversation, project, selected, space, workMode, skills, mcpServers, builtin, application, obsidian, key }
+    return { conversation, project, selected, space, skills, mcpServers, builtin, application, obsidian, key }
   }
 
   async get(ownerId: number, conversationId: string): Promise<{ serviceId: string } | null> {
@@ -142,7 +140,7 @@ export class NativeClientCoordinator {
   }
 
   private async launch(ownerId: number, key: string, context: Awaited<ReturnType<NativeClientCoordinator['resolve']>>): Promise<RuntimeNativeClientResult> {
-    const { project, selected, space, workMode, skills, mcpServers, builtin, application, conversation, obsidian } = context
+    const { project, selected, space, skills, mcpServers, builtin, application, conversation, obsidian } = context
     if (selected.target === 'model') throw new Error('This runtime has no native client')
     if (space.kind !== 'local') throw new Error('Native client requires a local execution space')
     const existing = this.services.get(key)
@@ -163,24 +161,21 @@ export class NativeClientCoordinator {
     try {
       await gateway.start()
       const requestId = randomUUID()
-      const access = workMode === 'execute' ? 'write' : 'read'
+      const access = 'write'
       const token = gateway.grant(requestId, builtin.includes('knowledge-base') ? conversation.knowledgeLibraryIds ?? [] : [], signal,
         builtin.includes('magic-notes') && application.magicNotesEnabled ? access : 'none',
         builtin.includes('goodbuddy-config') ? { access, workspacePath: space.rootPath } : undefined,
         undefined, undefined, undefined, builtin.includes('obsidian') ? { settings: obsidian, access } : undefined,
         builtin.includes('story-graph') && application.heartbeatEnabled && conversation.storyGraphEnabled !== false
           ? { projectId: project.id, conversationId: conversation.id, runtimeTarget: selected.target } : undefined)
-      const customToken = workMode === 'execute' ? gateway.grantCustomMcp(requestId, mcpServers, signal) : undefined
-      const endpoints = [token, customToken].flatMap((value, index) => value ? [{ name: `goodbuddy-${index}`, url: gateway.getEndpoint()!, headers: { Authorization: `Bearer ${value}` },
-        readOnlyTools: index === 0 && workMode === 'ask' ? gateway.getAvailableToolNames(value) : [] }] : [])
+      const customToken = gateway.grantCustomMcp(requestId, mcpServers, signal)
+      const endpoints = [token, customToken].flatMap((value, index) => value ? [{ name: `goodbuddy-${index}`, url: gateway.getEndpoint()!, headers: { Authorization: `Bearer ${value}` } }] : [])
       if (selected.target === 'deepseek-harness') {
         const profile = selected.settings.deepseekHarnessModelProfile
         if (!profile) throw new Error('DS Web requires a text model connection')
-        const readOnlyTools = token && workMode === 'ask' ? gateway.getAvailableToolNames(token) : []
-        const handle = await this.browser.start({ projectId: project.id, ownerId, configurationKey: context.key, workspace: space.rootPath, profile, workMode,
+        const handle = await this.browser.start({ projectId: project.id, ownerId, configurationKey: context.key, workspace: space.rootPath, profile,
           skillDirectories: skills.packages.map(skill => skill.directory),
-          mcpServers: endpoints.map(endpoint => ({ serverName: endpoint.name, transport: 'streamable-http', url: endpoint.url, headers: endpoint.headers,
-            readOnlyTools: endpoint.name === 'goodbuddy-0' ? readOnlyTools : [] })) })
+          mcpServers: endpoints.map(endpoint => ({ serverName: endpoint.name, transport: 'streamable-http', url: endpoint.url, headers: endpoint.headers })) })
         this.services.set(key, { ownerId, id: handle.id, dispose })
         this.assertOwner(ownerId)
         await this.options.openExternal(handle.url)
@@ -198,7 +193,7 @@ export class NativeClientCoordinator {
           } })
         } }
       }).open(ownerId, { projectId: project.id, projectName: project.name, directory: space.rootPath,
-        runtime: selected.target, settings: selected.settings, workMode, skillPackages: skills.packages, mcpServers: endpoints })
+        runtime: selected.target, settings: selected.settings, skillPackages: skills.packages, mcpServers: endpoints })
       if (this.closedOwners.has(ownerId) || this.controller.signal.aborted) {
         await this.options.terminalManager.closeOwner(ownerId)
         throw new Error('Native client window is closed')

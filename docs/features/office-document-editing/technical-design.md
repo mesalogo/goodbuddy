@@ -164,9 +164,9 @@ ShareServer 托管固定版本的 GoodBuddy ONLYOFFICE 插件。插件只能：
 
 首期优先让插件通过 ShareServer 会话通道与 Desktop 交换事件，不给远端编辑页面添加通用
 Electron preload。ShareServer 只中继有界事件；Agent 请求仍由 Desktop 创建并经过现有
-Conversation、模型、Ask/Execute、取消和活动记录边界。
+Conversation、模型、能力范围、取消和活动记录边界。
 
-Ask 请求可以返回可复制的修改建议，但 Main 拒绝向插件下发写操作。只有 Execute 请求能够
+仅要建议的请求返回可复制文本，不下发编辑操作。修改请求
 取得绑定当前文档会话、revision 和选区的短期编辑 Grant；该 Grant 不包含源文件路径，也不能
 用于其他文档、文件工具或系统能力。
 

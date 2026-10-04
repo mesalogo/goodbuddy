@@ -370,8 +370,7 @@ function isMainImageTool(name: string): boolean {
 function boundedProxyToolCatalog(
   tools: Awaited<
     ReturnType<ModelToolProviderLike['listTools']>
-  >,
-  workMode: 'ask' | 'execute'
+  >
 ): Array<{
   name: string
   description: string
@@ -380,7 +379,7 @@ function boundedProxyToolCatalog(
   const catalog = tools.filter(
     (tool) =>
       isMainWebTool(tool) || isStoryGraphTool(tool.name) ||
-      (workMode === 'execute' && (tool.source === 'mcp' || isMainImageTool(tool.name)))
+      tool.source === 'mcp' || isMainImageTool(tool.name)
   )
   if (catalog.length > MAX_MCP_PROXY_TOOLS) {
     throw new Error(
@@ -760,8 +759,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     ) ?? permission.options.find((option) => option.kind === 'allow_always')
     if (
       !run ||
-      run.closed ||
-      run.request.workMode !== 'execute'
+      run.closed
     ) {
       return reject
         ? {
@@ -855,10 +853,6 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                     run?.request.conversationId ??
                     'deepseek-harness-tool-catalog',
                   browserTabId: run?.request.browserTabId,
-                  workMode:
-                    run?.request.workMode === 'ask'
-                      ? ('ask' as const)
-                      : ('execute' as const),
                   knowledgeCapabilityToken:
                     run?.request.knowledgeCapabilityToken
                 }
@@ -866,7 +860,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                   context,
                   connection.signal
                 )
-                const catalog = boundedProxyToolCatalog(tools, context.workMode)
+                const catalog = boundedProxyToolCatalog(tools)
                 this.proxyToolCatalogs.set(params.sessionId, tools.filter(
                   (tool) => tool.source === 'mcp' || isMainWebTool(tool) || isStoryGraphTool(tool.name) || isMainImageTool(tool.name)
                 ))
@@ -898,10 +892,6 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                   ...(name === 'generate_image' ? { toolCallId: typeof params.callId === 'string' ? params.callId : crypto.randomUUID() } : {}),
                   conversationId: run.request.conversationId,
                   browserTabId: run.request.browserTabId,
-                  workMode:
-                    run.request.workMode === 'execute'
-                      ? ('execute' as const)
-                      : ('ask' as const),
                   knowledgeCapabilityToken:
                     run.request.knowledgeCapabilityToken
                 }
@@ -917,17 +907,6 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                     'DeepSeek Harness 请求了未知 Main 代理工具'
                   )
                 }
-                const isWebTool = isMainWebTool(tool)
-                if (
-                  !isWebTool && !isStoryGraphTool(name) &&
-                  (context.workMode !== 'execute' || !run.authorize)
-                ) {
-                  throw new Error(
-                    'DeepSeek Harness MCP 工具需要 Execute 模式授权'
-                  )
-                }
-                const argumentSummary =
-                  safeStringify(argumentsValue) ?? '{}'
                 const inputSchema = proxyToolInputSchema(tool)
                 try {
                   assertObjectJsonSchema(inputSchema)
@@ -948,23 +927,6 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                       .join('; ')
                       .slice(0, 1_000)}`
                   )
-                }
-                if (!isWebTool && !isStoryGraphTool(name)) {
-                  const approval =
-                    run.toolProvider.getApproval(
-                      tool,
-                      argumentsValue as Record<string, unknown>,
-                      argumentSummary,
-                      context
-                    )
-                  const decision = await run
-                    .authorize!(approval)
-                    .catch(() => 'deny')
-                  if (decision === 'deny') {
-                    throw new Error(
-                      'DeepSeek Harness MCP 工具调用未获执行授权'
-                    )
-                  }
                 }
                 const result = await run.toolProvider.callTool(
                   name,
@@ -1267,14 +1229,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
               ? 'skill'
               : builtinKind
                 ? 'runtime'
-                : 'plugin',
-          ask:
-            id === 'read'
-              ? 'allowed'
-              : id === 'skill'
-                ? 'conditional'
-                : 'blocked',
-          execute: 'allowed'
+                : 'plugin'
         })
         return parsed.success ? [parsed.data] : []
       })
@@ -1547,9 +1502,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         await withTimeout(
           state.agent.extMethod(GOODBUDDY_PREPARE, {
             sessionId,
-            requestId: request.requestId,
-            mode:
-              request.workMode === 'execute' ? 'execute' : 'ask'
+            requestId: request.requestId
           }),
           this.initializationTimeoutMs,
           '请求准备'

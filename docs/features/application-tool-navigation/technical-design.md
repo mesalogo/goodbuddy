@@ -482,11 +482,14 @@ OCR 模型可用性由 Main 校验，Worker 运行状态由实际持有它的 Re
 - 本地创建使用共享 `projectCreateSchema`，`rootPath` 经 trim 后要求 1 至 4096 个字符，`projectsCreate` IPC 在写库前校验。`projectUpdateSchema` 保留原有空目录兼容性，`projectsUpdate` 请求显式使用该 schema；持久化执行空间、默认项目和通道初始化不增加目录限制。`ProjectSwitcher` 在创建按钮和保存入口检查空目录，设置保存沿用原规则。
 - `workspace-menu-selectors.ts` 订阅会话 Store，投影 ID、项目、标题、排序时间及通道标记，以字段相等比较保留未变化结果；排序时间为 `Math.max(conversationActivityTime(conversation), activityTimes.get(conversation.id) ?? 0)`。与活动行按 ID 合并后派生分组和最近 10 条；仅有活动、尚无摘要的行使用 Store 时间，缺失时取 0。悬停只改变 Renderer 预览范围，不发 IPC、不加载详情或请求模型。打开菜单所需的既有主机快照读取与悬停预览分开。
 - Store 的 `activityTimes` 保存本次应用会话内的访问／状态变化时间，更新时间为 `Math.max(Date.now(), lastActivityTime + 1)`。`ProjectSwitcher` 调用 `recordActivityStatuses`：首次快照只建立基线，后续状态变化触发更新，但 `completed` 变为无状态的完成提醒清除不触发更新。`WorkspaceMenu` 经 `useSyncExternalStore` 订阅该时间映射；时间不持久化，悬停不更新，普通侧栏原有消息排序规则不变。
+- 可见会话行的 `WorkspaceConversationTime` 通过 `useWorkspaceConversationTime` 按 ID 订阅 Store，使用 `formatConversationListTime(updatedAt, locale)` 和 `formatMediumDateTime`，`time.dateTime` 保留对应快照的实际 ISO 时间。选择器按显示文字及提示相等复用结果，忽略显示精度以下的流式变化；时间变化只重渲染该子组件，不向整菜单投影加入原始 `updatedAt`。缺少摘要时返回空值，不读取详情。
 - 项目、会话列表均使用共享 `useListWindow`，分别估算 `64px`、`56px` 行高并测量实际高度，保留键盘目标行；范围改变时重置滚动。窗口化仅限制挂载行数，不截断活动集合，不代表已有性能基准结果。
-- 菜单通过 `FloatingPortal` 显示同一双栏表面，定位和焦点恢复共用项目按钮的引用；尺寸、窗口和滚动变化时重算位置。非模态 `dialog` 不调用焦点隔离，Escape 关闭整个菜单，Tab 可访问内部控件，焦点离开后关闭。窄窗口仍为双栏，侧栏隐藏时卸载菜单。
+- 菜单通过 `FloatingPortal` 显示同一双栏表面，定位和焦点恢复共用项目按钮的引用；按钮尺寸、窗口和滚动变化时重算位置。顶部由按钮底边加 `8px` 决定，最大高度为视口底边减顶部及 `16px` 边距，不读取菜单高度参与定位。`ResizeObserver` 只观察按钮，避免菜单收缩后反复改变自身位置。非模态 `dialog` 不调用焦点隔离，Escape 关闭整个菜单，Tab 可访问内部控件，焦点离开后关闭。窄窗口仍为双栏，侧栏隐藏时卸载菜单。
 - 浮层沿用共享 `browser-viewport-occlusion.ts` 相交检测，不增加浏览器实例的特殊隐藏条件，也不关闭或重建浏览器会话。
 - `conversationStore.rememberOpened` 在 `App.setActiveId` 时为存在的会话记录访问时间，并记住其项目最后打开的 ID。`projectConversation` 优先返回仍在候选集合中的记忆 ID，否则按 `conversationActivityTime` 选择最近会话，不使用菜单的访问／状态时间；通道项目只选带 `remote` 的会话。记忆仅存在当前 Store 的 Map 中，不持久化、不跨重载恢复。普通项目无会话时创建，通道无会话时清空活动 ID。
 - 项目进入、新建会话及创建项目后的导航均经过 `requestWorkspaceLeave`。获准后的 `commitProjectSelection` 与新建会话 `ready` 回调直接调用 `commitView('chat')`，避免经 `setView` 再次触发离开检查；新建会话就绪后才提交项目、会话及输入框焦点。
+- `WorkspaceMenu.onEnterProject` 接到 `ProjectSwitcher.onSelect`，与项目行共用 App 的离开检查及会话恢复。归档入口首次点击才调用 `projects.list(true)` 并筛选 `status === 'archived'`，当前菜单内缓存结果，重新打开菜单后按需重读；不新增启动读取、轮询或逐项目请求。
+- `restore-project.ts` 调用既有 `projects.setArchived(id, false)`，成功后并行读取活动项目和会话摘要，只合并目标项目摘要，以 `mergePersistedConversations` 保留本地未保存正文及需要保留的详情，再发布 App 项目列表。恢复不调用选择、新建或任务执行路径；摘要读取失败时保留重试入口，重复设置活动状态可安全重试。归档预览不读会话详情，正常进入才按原路径加载历史。后端通道限制、远程功能检查及删除保护不变。
 - 持久化快照刷新时，同一条仍在流式输出的消息保留本地待审批、待回答信息，持久化终态
   则清除这些信息。响应成功后对应 Task 立即退出等待状态；响应期间到达的新问题、审批或
   终态不能被旧响应覆盖。

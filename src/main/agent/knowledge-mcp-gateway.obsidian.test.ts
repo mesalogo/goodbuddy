@@ -71,7 +71,7 @@ function text(result: CallToolResult) {
 }
 
 describe('Obsidian gateway', () => {
-  it('uses the shared Ask classification and exposes every tool for Execute', async () => {
+  it('uses scoped read grants and exposes every tool for write grants', async () => {
     const read = grant('read')
     const write = grant('write')
     expect(read.gateway.getAvailableToolNames(read.token)).toEqual(obsidianReadToolNames)

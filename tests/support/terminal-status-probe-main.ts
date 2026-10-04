@@ -37,7 +37,7 @@ app.whenReady().then(async () => {
     { getEnabledBuiltinMcpServerIds: async () => [] } as never, new ContextManager(),
     { snapshot: () => ({ libraries: [], sources: [], documents: [], entities: [], relations: [], evidence: [], tasks: [] }),
       database: { externalStore: { listBindings: () => [] } }, external: { listInstances: () => [] } } as never,
-    database, { clear() {} } as never, {} as never, async () => {}, undefined, undefined, undefined, undefined, appSettings,
+    database, {} as never, async () => {}, undefined, undefined, undefined, undefined, appSettings,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     { getPending: async () => undefined } as never)
   const run = <T = unknown>(script: string): Promise<T> => win.webContents.executeJavaScript(script, true)

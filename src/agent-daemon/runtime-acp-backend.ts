@@ -229,7 +229,6 @@ export type RuntimeAcpProcessLaunch = {
   bundle: RuntimeAcpVerifiedBundle
   workspace: RuntimeAcpWorkspace
   scratch: string
-  workMode: 'ask' | 'execute'
   deadlineAt: string
   budget: RemotePromptOperationPreparation['budget']
   sharedSessions?: boolean
@@ -321,7 +320,6 @@ type BindingState = {
   transportState: 'live' | 'detached' | 'replaying'
   resolvedBundle: RuntimeAcpResolvedBundle
   state: 'open' | 'running' | 'stopping' | 'closed' | 'outcome-unknown'
-  workMode?: 'ask' | 'execute'
   process?: RuntimeAcpProcessOwner
   sharedProcess?: SharedProcess
   unsubscribeOutput?: () => void
@@ -1071,17 +1069,6 @@ export class RuntimeAcpBackend {
         'capacity'
       )
     }
-    if (
-      binding.process !== undefined &&
-      binding.workMode !== undefined &&
-      binding.workMode !== preparation.workMode &&
-      binding.sharedProcess === undefined
-    ) {
-      throw new RuntimeAcpBackendError(
-        'Runtime process work mode cannot change',
-        'conflict'
-      )
-    }
 
     let verified: RuntimeAcpVerifiedBundle
     try {
@@ -1173,8 +1160,8 @@ export class RuntimeAcpBackend {
         }
       }
     }
-    if (preparation.imageTool && (((preparation.imageTool.description || preparation.imageTool.saveDescription) && preparation.workMode !== 'execute') || !this.#options.blobSink)) {
-      throw new RuntimeAcpBackendError('Image tools require Execute and a desktop transport', 'identity')
+    if (preparation.imageTool && !this.#options.blobSink) {
+      throw new RuntimeAcpBackendError('Image tools require a desktop transport', 'identity')
     }
     if (requestedModelBridgePolicy !== undefined) {
       await this.#startModelBridge(binding, preparation, workspace)
@@ -1207,7 +1194,6 @@ export class RuntimeAcpBackend {
       bindingId: preparation.bindingId,
       operationId: preparation.operationId,
       requestId: preparation.requestId,
-      workMode: preparation.workMode,
       deadlineAt: preparation.deadlineAt,
       acceptedAt
     })
@@ -1225,8 +1211,7 @@ export class RuntimeAcpBackend {
             ])
           : undefined
       this.#options.diagnostics?.tryRecord('runtime.starting', {
-        runtimeId: verified.manifest.runtimeId,
-        workMode: preparation.workMode
+        runtimeId: verified.manifest.runtimeId
       })
       try {
         const launch: RuntimeAcpProcessLaunch = {
@@ -1234,7 +1219,6 @@ export class RuntimeAcpBackend {
           bundle: verified,
           workspace,
           scratch: workspace.scratchDirectory,
-          workMode: preparation.workMode,
           deadlineAt: preparation.deadlineAt,
           budget: preparation.budget,
           ...(sharedKey === undefined ? {} : { sharedSessions: true }),
@@ -1260,7 +1244,6 @@ export class RuntimeAcpBackend {
       } catch (error) {
         this.#options.diagnostics?.tryRecord('runtime.start.failed', {
           runtimeId: verified.manifest.runtimeId,
-          workMode: preparation.workMode,
           error
         })
         await this.#closeModelBridge(binding, false).catch(
@@ -1295,7 +1278,6 @@ export class RuntimeAcpBackend {
       )
       binding.process = process
       binding.workspaceDirectory = workspace.workspaceDirectory
-      binding.workMode = preparation.workMode
       binding.state = 'running'
       binding.operations.set(preparation.operationId, {
         preparationDigest,
@@ -1336,8 +1318,7 @@ export class RuntimeAcpBackend {
         )
       }
       this.#options.diagnostics?.tryRecord('runtime.started', {
-        runtimeId: verified.manifest.runtimeId,
-        workMode: preparation.workMode
+        runtimeId: verified.manifest.runtimeId
       })
     } else if (!binding.sharedProcess) {
       try {
@@ -1355,7 +1336,6 @@ export class RuntimeAcpBackend {
         )
       }
     }
-    binding.workMode = preparation.workMode
     binding.inputBytes = 0
     if (!binding.operations.has(preparation.operationId)) {
       binding.operations.set(preparation.operationId, {
@@ -1521,9 +1501,9 @@ export class RuntimeAcpBackend {
         process: binding.process,
         ...(binding.sharedProcess ? {
           transport: binding.sharedProcess.transport,
-          prepareSession: async (sessionId: string, operationId: string, workMode: 'ask' | 'execute') => {
+          prepareSession: async (sessionId: string, operationId: string) => {
             await binding.sharedProcess!.transport.setModelRoute(
-              sessionId, operationId, binding.modelBridgeBroker!.socketPath, workMode,
+              sessionId, operationId, binding.modelBridgeBroker!.socketPath,
               binding.imageTool ? remoteImageToolMcpName(binding.request.bindingId) : undefined
             )
           }
@@ -1543,7 +1523,7 @@ export class RuntimeAcpBackend {
           binding.poisoned ? 'outcome-unknown' : status
       })
     }
-    const result = await binding.ownedAcp.start(request, prepared.acceptance.workMode)
+    const result = await binding.ownedAcp.start(request)
     prepared.ownedPromptStarted = true
     if (binding.ownedPromptStartTimer !== undefined) {
       clearTimeout(binding.ownedPromptStartTimer)
@@ -2395,9 +2375,6 @@ export class RuntimeAcpBackend {
       diagnosticOutcome = 'outcome-unknown'
       this.#options.diagnostics?.tryRecord('runtime.exited', {
         runtimeId: binding.resolvedBundle.entry.runtimeId,
-        ...(binding.workMode === undefined
-          ? {}
-          : { workMode: binding.workMode }),
         outcome: diagnosticOutcome,
         error
       })
@@ -2406,9 +2383,6 @@ export class RuntimeAcpBackend {
     }
     this.#options.diagnostics?.tryRecord('runtime.exited', {
       runtimeId: binding.resolvedBundle.entry.runtimeId,
-      ...(binding.workMode === undefined
-        ? {}
-        : { workMode: binding.workMode }),
       outcome: diagnosticOutcome
     })
     this.#finishBinding(binding, state)

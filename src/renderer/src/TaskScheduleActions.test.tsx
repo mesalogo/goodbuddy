@@ -10,7 +10,7 @@ const schedule: AssistantSchedule = {
   id: '00000000-0000-4000-8000-000000000801',
   taskId: '00000000-0000-4000-8000-000000000802',
   conversationId: '00000000-0000-4000-8000-000000000803',
-  title: 'Immediate task', prompt: 'Run once', workMode: 'ask',
+  title: 'Immediate task', prompt: 'Run once',
   recurrence: 'once', enabled: false,
   nextRunAt: triggeredAt, lastRunAt: triggeredAt,
   createdAt: triggeredAt, updatedAt: triggeredAt

@@ -81,3 +81,34 @@
 - `deai-writing` 扫描：阻断项为 0；人工复核保留设计状态、能力边界和禁止行为等必要限定，以及真实并列的验收项。
 - 独立一致性审阅发现“重新生成”与“重试保存”的操作身份表述不一致，已在 L-4 和 US-09 中统一：前者创建新操作，后者更新原操作。
 - `git diff --check` 通过。上述检查只验证文档，不构成功能验收。
+## 2026-10-04：会话图片保存工具发现修复
+
+`save_image` 现在也列出仅由消息 `artifactIds` 引用的图片，过滤缺失及非图片记录，
+按最近引用去重后取最近 32 张。已发布字段、图片记录及普通消息 metadata 保留。
+共享参数说明明确 ID 来自会话图片、上传图片或 `generate_image`，无需成果页，
+保存会在 Runtime 主机写入实际文件。契约见[图片保存工具](./technical-design.md#图片保存工具)。
+
+验证：四个专项文件 `image-generation-service.test.ts`、`image-tool-mcp.test.ts`、
+`protocol-remote-runtime-channel.test.ts`、`image-runtime-integration.test.ts` 共 70 项通过；
+覆盖关闭图片生成后的保存发现、SQLite 重新打开后的字节保存、混合引用过滤与去重、
+数据库错误传播、远程 save-only 描述及 MCP 参数说明。`npm run typecheck` 和
+`npm run lint` 通过。
+
+[源码 Host 探针](../../../scripts/image-save-host-probe.ts)沿用现有 pinned SSH/stdin 工具消息传输，
+桌面运行当前 `ImageGenerationService` 与 `MainImageToolSession`，共享 Linux x64 Host
+运行当前 `AgentImageToolMcp`。实测从重新打开的桌面 SQLite 发现单独 `artifactIds` 图片，
+远程 MCP 仅列出 `save_image`，分三块读取后写入 307268 字节 PNG，SHA-256 与桌面一致：
+`5beca5523d8adbb5eb9719b692f9c9c0ccc06efd05d770a5e8a541fece4c1aa3`。
+图片包含用于分块验证的尾随字节。模型调用为 0，测试目录内的数据库与图片在结束时清理。
+
+复跑时用 esbuild 将探针打包为 Node CJS，`electron` 和 `*.node` 保持 external，
+`zod`、`zod/v4`、`zod/v3`、`zod/v4-mini` 分别 alias 到各自包内的 `index.cjs`，
+避免当前 Zod ESM bundle 初始化错误。将 bundle 传至 Host 专用 `/root/tmp` 目录，
+桌面设置 `NODE_PATH` 指向仓库 `node_modules` 后运行：
+
+```text
+node <local-probe.cjs> <ssh-host> <remote-probe.cjs>
+```
+
+本次真实验证覆盖 MCP 发现及同格式文件保存；生产 `preparePrompt` 描述传递由协议测试覆盖。
+没有执行完整桌面 UI、Agent 安装/升级、生产二进制帧传输或真实模型选工具，也未验证远程格式转换。

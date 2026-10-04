@@ -89,7 +89,7 @@ broker 调用已分配自定义 MCP 的真实 OpenCode 和 Continue 用例。
 `src/main/agent/opencode-runtime-permissions.test.ts`、
 `src/main/agent/continue-runtime-permissions.test.ts` 和
 `src/main/agent/deepseek-harness-acp-e2e.test.ts`。它们用本地确定性模型驱动真实 Runtime
-或固定 Host，覆盖工作区外访问、原生问答及 Ask 边界。OpenCode 用例默认使用开发缓存
+或固定 Host，覆盖工作区外访问、原生问答及能力范围。OpenCode 用例默认使用开发缓存
 二进制；可通过 `GOODBUDDY_TEST_OPENCODE_BINARY` 指定已经安装的候选二进制，避免把
 仍在运行的旧缓存版本当作候选版本验证。这不替代当前源码 Agent 的 Linux Host 验收。
 
@@ -403,11 +403,10 @@ integrity，以 `--ignore-scripts` 从官方 npm registry 获取归档；bundle 
 再次验证归档 SHA-512、包名、版本和 ELF 架构。
 
 源码已经实现 Runtime bundle build/import/verify、Daemon 侧
-manifest/Ed25519/payload/ELF/lock 校验、digest registry、ACP v3、直接进程 ownership 和
+manifest/Ed25519/payload/ELF/lock 校验、digest registry、runtime/acp 6、直接进程 ownership 和
 `runtime/model-bridge` v1。Agent 通过私有 Unix socket 按需 detached 启动，不依赖
-systemd、D-Bus、Linger 或 bubblewrap。Ask 与 Execute 都直接启动签名 Runtime；两者的
-差异由 OpenCode Ask 权限配置和 Agent 工具权限分发边界共同执行，Execute 不注入该
-权限覆盖。
+systemd、D-Bus、Linger 或 bubblewrap。请求直接启动签名 Runtime，使用所选 SSH 账号
+权限与已接入能力；不携带产品工作模式。旧 capability 5 不兼容，发布前须重建配套工件。
 
 OpenCode 通过已签名 Agent helper 和每次 Prompt 的私有 Unix socket 使用 Main-only 模型
 网关；Provider URL、API Key 和真实 Provider 认证头不进入远端。helper 的 loopback
@@ -415,8 +414,7 @@ HTTP 入口使用每个进程随机生成的路径 capability，Anthropic/OpenAI
 本地兼容标记由 helper 核对后丢弃。GoodBuddy 自己维护会话标题，所以生成的 OpenCode
 配置必须禁用 title Agent；工具循环只使用 build Agent 的模型轮次。
 
-Ask 模式的 ACP 权限中介只可为原生 `read` 选择 `allow_once`；其他工具种类和
-`allow_always` 请求必须拒绝。Unix 模型桥
+ACP 权限中介按活动请求与工具能力回复合法允许选项，保留取消及未知请求拒绝。Unix 模型桥
 broker 必须按 socket 当前已缓冲字节增量读取长度帧，不能等待 `read(remaining)` 一次返回
 完整大响应。Agent 传输或权限实现变化后，除了普通测试，还要在原生 Linux 上运行包含
 至少 256 KiB 响应的模型桥回归。
@@ -589,11 +587,11 @@ Windows 代码签名仍未配置。对外分发前还应配置 Windows 签名凭
 2. 中文输入法、窗口缩放和高分屏显示。
 3. 系统密钥环和模型连接。
 4. 本地知识库导入、检索和知识图谱。
-5. Ask、Execute 的权限边界与旧版 Plan 数据兼容。
+5. 无模式执行、schema 60 与 Runtime 设置 22 的历史字段清理及用户数据保留。
 6. OpenCode 与 Continue 的权限边界、取消和超时。
-7. DeepSeek Harness Ask 拒绝写入和第三方插件工具，可调用 Main 管理的 Web Search/Fetch；Execute 可调用已启用插件工具。文本模型在网络调用前拒绝图片，声明图片能力的模型可以实际接收 JPEG/PNG。
+7. DeepSeek Harness 控制协议 2 可调用已注册内置及已启用插件工具，Main 代理沿用能力分配和请求归属。文本模型在网络调用前拒绝图片，声明图片能力的模型可以实际接收 JPEG/PNG。
 8. OpenCode Agent/Command、原生上下文 Compact，以及 Continue Rules/Prompt 预设、结构化提问和 GoodBuddy 手动摘要压缩。
-9. Runtime 原生清单把 Tools 与 Commands/LSP/Formatters 分开，显示来源及 Ask/Execute 可用性，不混入 GoodBuddy 分配的 Skills/MCP；外部 OpenCode 只报告连接状态，Continue 明确标记原生 Tools 静态发现不支持；内置 MCP 的启停与 Runtime 分配会持久化并限制后续请求，DeepSeek Harness 保持不可分配；MCP 测试只读取有界 Prompt/Resource 元数据，不读取 Resource 内容。
+9. Runtime 原生清单把 Tools 与 Commands/LSP/Formatters 分开，显示来源及描述，不提供统一逐工具开关，不混入 GoodBuddy 分配的 Skills/MCP；外部 OpenCode 只报告连接状态，Continue 明确标记原生 Tools 静态发现不支持；内置 MCP 的启停与 Runtime 分配会持久化并限制后续请求，DeepSeek Harness 保持不可分配；MCP 测试只读取有界 Prompt/Resource 元数据，不读取 Resource 内容。
 10. DSH 市场可安装、停用、重新启用和移除插件；启动失败插件不会阻止 Host，并显示为自动停用。
 11. 智能心跳的创建、暂停、恢复和历史记录。
 12. 应用退出后无残留 Runtime 子进程。
@@ -629,7 +627,7 @@ GOODBUDDY_DSH_MARKETPLACE_E2E=1 npm test -- src/main/agent/dsh-extension-marketp
 该测试使用临时用户目录，经捆绑 npm 路径安装已审查的最小测试插件，并验证 Host
 加载和真实工具调用；测试结束后删除临时目录。
 
-要让真实模型同时验证插件的 Ask 拒绝与 Execute 调用，可显式提供兼容的
+要让真实模型验证已启用插件的调用，可显式提供兼容的
 OpenAI Chat Completions 配置：
 
 ```bash

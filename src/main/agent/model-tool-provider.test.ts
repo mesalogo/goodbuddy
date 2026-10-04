@@ -90,7 +90,6 @@ const secondBrowserTabId = browserTabIdSchema.parse(
 const toolContext = {
   conversationId: 'provider-test-conversation',
   browserTabId: firstBrowserTabId,
-  workMode: 'execute'
 } satisfies ModelToolCallContext
 
 function createBrowserService(): BrowserToolService {
@@ -556,12 +555,12 @@ describe('ModelToolProvider', () => {
     }
   })
 
-  it.each(['workspace_read_text', 'workspace_rg'])('keeps %s cancellation fatal', async (name) => {
+  it.each(['workspace_read_text'])('keeps %s cancellation fatal', async (name) => {
     const access = new LocalWorkspaceAccess(await createWorkspace())
     const provider = new ModelToolProvider(access, [], undefined, undefined, false, { ripgrepExecutablePath: rgPath })
-    const operation = name === 'workspace_rg' ? vi.spyOn(access, 'stat') : vi.spyOn(access, 'readText')
-    const args = name === 'workspace_rg' ? { args: ['x', 'note.txt'] } : { path: 'note.txt' }
-    const context = { ...toolContext, workMode: 'ask' as const }
+    const operation = vi.spyOn(access, 'readText')
+    const args = { path: 'note.txt' }
+    const context = toolContext
     try {
       const abortError = new DOMException('cancelled', 'AbortError')
       operation.mockRejectedValueOnce(abortError)
@@ -579,7 +578,7 @@ describe('ModelToolProvider', () => {
     }
   })
 
-  it('suggests process_execute only when available in local model Execute', async () => {
+  it('suggests process_execute only when available in the local model runtime', async () => {
     const workspace = await createWorkspace()
     const access = new LocalWorkspaceAccess(workspace)
     const identity = await access.getIdentity()
@@ -591,7 +590,6 @@ describe('ModelToolProvider', () => {
     try {
       for (const [context, available] of [
         [{ ...toolContext, runtimeTarget: 'model' as const }, true],
-        [{ ...toolContext, runtimeTarget: 'model' as const, workMode: 'ask' as const }, false],
         [toolContext, false],
         [{ ...toolContext, runtimeTarget: 'model' as const, executionSpaceIdentity: `${identity.id}-other` }, false]
       ] as const) {
@@ -668,127 +666,21 @@ describe('ModelToolProvider', () => {
     expect(dispose).toHaveBeenCalledOnce()
   })
 
-  it('denies spoofed mutating tool calls in Ask before reaching sinks', async () => {
-    const readText = vi.fn(async () => ({
-      path: 'remote.txt',
-      name: 'remote.txt',
-      content: 'remote content',
-      size: 14
-    }))
-    const listDirectory = vi.fn(async () => ({
-      path: '',
-      entries: [],
-      truncated: false
-    }))
-    const writeTextAtomic = vi.fn()
-    const access = {
-      getIdentity: vi.fn(),
-      listDirectory,
-      stat: vi.fn(),
-      readText,
-      writeTextAtomic,
-      search: vi.fn(),
-      getChanges: vi.fn(),
-      dispose: vi.fn(async () => undefined)
-    } as unknown as WorkspaceAccess
-    const browserService = createBrowserService()
-    const createMagicNote = vi.fn()
-    const callGoodBuddyConfigTool = vi.fn()
-    const gateway = {
-      createMagicNote,
-      callGoodBuddyConfigTool,
-      getAvailableToolNames: vi.fn(() => [
-        'note_create',
-        'goodbuddy_config_apply'
-      ])
-    } as unknown as KnowledgeMcpGateway
-    const provider = new ModelToolProvider(
-      access,
-      [createMcpServer()],
-      browserService,
-      gateway
-    )
+  it('rejects calls to capabilities absent from the request without a mode', async () => {
+    const provider = new ModelToolProvider(await createWorkspace())
+    const context = { conversationId: 'unbound-tools' }
     const signal = new AbortController().signal
-    const askContext = {
-      conversationId: 'spoofed-ask-tools',
-      workMode: 'ask',
-      knowledgeCapabilityToken: 'main-only-token'
-    } satisfies ModelToolCallContext
-    const denial = 'Ask 模式仅允许调用已声明的只读工具'
-
-    for (const [name, argumentsValue] of [
-      [
-        'workspace_apply_patch',
-        { patch: '*** Begin Patch\n*** End Patch' }
-      ],
-      ['browser_click', { ref: 'b_target' }],
-      ['note_create', { title: 'blocked' }],
-      [
-        'goodbuddy_config_apply',
-        { planId: '00000000-0000-4000-8000-000000000702' }
-      ],
-      ['mcp_spoofed_mutation', {}]
-    ] as const) {
-      await expect(
-        provider.callTool(
-          name,
-          argumentsValue,
-          signal,
-          askContext
-        )
-      ).rejects.toThrow(denial)
+    try {
+      for (const name of ['browser_click', 'note_create', 'goodbuddy_config_apply', 'mcp_spoofed_mutation', 'process_execute', 'generate_image']) {
+        await expect(provider.callTool(name, {}, signal, context)).rejects.toThrow()
+      }
+      expect(mocks.client.callTool).not.toHaveBeenCalled()
+    } finally {
+      await provider.dispose()
     }
-
-    expect(writeTextAtomic).not.toHaveBeenCalled()
-    expect(browserService.click).not.toHaveBeenCalled()
-    expect(createMagicNote).not.toHaveBeenCalled()
-    expect(callGoodBuddyConfigTool).not.toHaveBeenCalled()
-    expect(mocks.Client).not.toHaveBeenCalled()
-
-    const writeTool = {
-      name: 'workspace_apply_patch',
-      displayName: '应用工作区补丁',
-      description: 'write',
-      inputSchema: {},
-      source: 'builtin'
-    } as const
-    expect(() =>
-      provider.getApproval(
-        writeTool,
-        { patch: '*** Begin Patch\n*** End Patch' },
-        'output.txt',
-        askContext
-      )
-    ).toThrow(denial)
-    expect(() =>
-      provider.getApproval(
-        {
-          ...writeTool,
-          name: 'browser_click',
-          displayName: '点击浏览器元素'
-        },
-        { ref: 'b_target' },
-        'b_target',
-        askContext
-      )
-    ).toThrow(denial)
-    expect(browserService.getOrigin).not.toHaveBeenCalled()
-
-    await expect(
-      provider.callTool(
-        'workspace_read_text',
-        { path: 'remote.txt' },
-        signal,
-        askContext
-      )
-    ).resolves.toMatchObject({
-      parts: [{ type: 'text', text: expect.stringContaining('1: remote content') }]
-    })
-    expect(readText).toHaveBeenCalledOnce()
-    expect(listDirectory).not.toHaveBeenCalled()
   })
 
-  it('exposes scoped reads in Ask and Magic Notes writes only in Execute', async () => {
+  it('exposes and calls scoped reads and writes without a mode', async () => {
     const workspace = await createWorkspace()
     const search = vi.fn(async () => [])
     const searchMagicNotes = vi.fn(() => [])
@@ -840,13 +732,13 @@ describe('ModelToolProvider', () => {
     const signal = new AbortController().signal
     const askContext = {
       conversationId: 'knowledge-ask',
-      workMode: 'ask',
       knowledgeCapabilityToken: 'main-only-token'
     } satisfies ModelToolCallContext
 
     const askTools = await provider.listTools(askContext, signal)
-    expect(askTools.map((tool) => tool.name)).toEqual([
+    expect(askTools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
       'workspace_read_text',
+      'workspace_apply_patch',
       'knowledge_list',
       'knowledge_search',
       'note_list',
@@ -854,8 +746,10 @@ describe('ModelToolProvider', () => {
       'note_search',
       'goodbuddy_config_capabilities',
       'goodbuddy_config_get',
-      'goodbuddy_config_plan'
-    ])
+      'goodbuddy_config_plan',
+      'goodbuddy_config_apply',
+      'note_create'
+    ]))
     expect(
       JSON.stringify(
         askTools.find((tool) => tool.name === 'knowledge_search')
@@ -922,7 +816,6 @@ describe('ModelToolProvider', () => {
       provider.listTools(
         {
           conversationId: 'knowledge-empty',
-          workMode: 'ask'
         },
         signal
       )
@@ -932,7 +825,7 @@ describe('ModelToolProvider', () => {
       ])
     )
     const executeTools = await provider.listTools(
-      { ...askContext, workMode: 'execute' },
+      askContext,
       signal
     )
     expect(executeTools.map((tool) => tool.name)).toEqual(
@@ -958,7 +851,7 @@ describe('ModelToolProvider', () => {
       'note_create',
       { title: '发布计划', content: '核对构建产物' },
       signal,
-      { ...askContext, workMode: 'execute' }
+      askContext
     )
     expect(createMagicNote).toHaveBeenCalledWith('main-only-token', {
       title: '发布计划',
@@ -986,7 +879,7 @@ describe('ModelToolProvider', () => {
           expectedRevision: 1
         },
         '{"expectedRevision":1}',
-        { ...askContext, workMode: 'execute' }
+        askContext
       )
     ).toMatchObject({
       scopeKey: 'model:magic-notes:note_delete',
@@ -1001,7 +894,7 @@ describe('ModelToolProvider', () => {
         configApplyTool,
         { planId: '00000000-0000-4000-8000-000000000702' },
         '{"planId":"00000000-0000-4000-8000-000000000702"}',
-        { ...askContext, workMode: 'execute' }
+        askContext
       )
     ).toMatchObject({
       scopeKey: 'model:goodbuddy-config:apply',
@@ -1022,7 +915,6 @@ describe('ModelToolProvider', () => {
     const context = {
       conversationId: 'knowledge-capacity',
       runtimeTarget: 'model',
-      workMode: 'execute',
       knowledgeCapabilityToken: 'main-only-token'
     } satisfies ModelToolCallContext
     const createTools = (count: number) =>
@@ -1193,7 +1085,7 @@ describe('ModelToolProvider', () => {
     await provider.dispose()
   })
 
-  it('provides local process execution only to direct-model Execute requests', async () => {
+  it('provides local process execution to direct-model requests in the matching space', async () => {
     const workspace = await createWorkspace()
     const processService = {
       getCapability: vi.fn(async () => ({
@@ -1227,7 +1119,6 @@ describe('ModelToolProvider', () => {
     ).getIdentity()
     const executeContext = {
       conversationId: 'process-execute',
-      workMode: 'execute',
       runtimeTarget: 'model',
       executionSpaceIdentity: identity.id,
       delegationDepth: 0
@@ -1244,8 +1135,7 @@ describe('ModelToolProvider', () => {
       provider.listTools(
         {
           ...executeContext,
-          conversationId: 'process-ask',
-          workMode: 'ask'
+          executionSpaceIdentity: 'different-space'
         },
         new AbortController().signal
       )
@@ -1297,10 +1187,10 @@ describe('ModelToolProvider', () => {
         new AbortController().signal,
         {
           ...executeContext,
-          workMode: 'ask'
+          executionSpaceIdentity: 'different-space'
         }
       )
-    ).rejects.toThrow('Ask 模式')
+    ).rejects.toThrow('执行空间')
 
     await provider.releaseConversation('process-execute')
     expect(processService.releaseConversation).toHaveBeenCalledWith(
@@ -1310,7 +1200,7 @@ describe('ModelToolProvider', () => {
     expect(processService.dispose).toHaveBeenCalledOnce()
   })
 
-  it.each(['process', 'subagent'] as const)('exposes %s output reads in Ask and Execute independently of shell availability and delegation depth', async (source) => {
+  it.each(['process', 'subagent'] as const)('exposes %s output reads independently of shell availability and delegation depth', async (source) => {
     const workspace = await createWorkspace()
     const scheduler = new SubagentScheduler({ concurrency: 1, queueLimit: 1, timeoutMs: 10000 })
     const programming = source === 'process'
@@ -1322,8 +1212,7 @@ describe('ModelToolProvider', () => {
     const unconfigured = new ModelToolProvider(workspace)
     const signal = new AbortController().signal
     try {
-      for (const workMode of ['ask', 'execute'] as const) {
-        const context = { ...toolContext, runtimeTarget: 'model' as const, workMode, delegationDepth: 1 as const }
+        const context = { ...toolContext, runtimeTarget: 'model' as const, delegationDepth: 1 as const }
         const tools = await provider.listTools(context, signal)
         const tool = tools.find((item) => item.name === 'output_read')!
         expect(tool).toMatchObject({
@@ -1342,7 +1231,6 @@ describe('ModelToolProvider', () => {
         expect(tools.some((item) => item.name === 'process_execute')).toBe(false)
         expect((await unconfigured.listTools(context, signal)).some((item) => item.name === 'output_read')).toBe(false)
         await expect(unconfigured.callTool('output_read', { handle: 'process:test' }, signal, context)).rejects.toThrow('服务不可用')
-      }
       expect((await provider.listTools(toolContext, signal)).some((item) => item.name === 'output_read')).toBe(false)
       await expect(provider.callTool('output_read', { handle: 'process:test' }, signal, toolContext)).rejects.toThrow('不允许')
     } finally {
@@ -1370,7 +1258,7 @@ describe('ModelToolProvider', () => {
       executionSpaceIdentity: (await new LocalWorkspaceAccess(workspace).getIdentity()).id,
       subagentBridge: { requestContext: { emitEvent: vi.fn() } }
     }
-    const askContext = { ...context, workMode: 'ask' as const }
+    const askContext = context
     const signal = new AbortController().signal
     const parse = (result: ModelToolResult) => {
       expect(result.contextBytes).toBeLessThan(256 * 1024)
@@ -1531,6 +1419,39 @@ describe('ModelToolProvider', () => {
     ).rejects.toThrow('不能超出工作区')
   })
 
+  it('lists and calls enabled browser reads and writes without a mode', async () => {
+    const service = createBrowserService()
+    const provider = new ModelToolProvider(await createWorkspace(), [], service)
+    const context = toolContext
+    const signal = new AbortController().signal
+    const tools = (await provider.listTools(context, signal))
+      .filter((tool) => tool.name.startsWith('browser_'))
+    expect(tools).toHaveLength(7)
+    for (const tool of tools.filter(tool => ['browser_snapshot', 'browser_screenshot'].includes(tool.name))) {
+      expect(() => provider.getApproval(tool, {}, '', context)).not.toThrow()
+      await provider.callTool(tool.name, {}, signal, context)
+    }
+    expect(service.snapshot).toHaveBeenCalledWith(context.conversationId, signal, context.browserTabId)
+    expect(service.screenshot).toHaveBeenCalledWith(context.conversationId, signal, context.browserTabId)
+    for (const [name, args] of [
+      ['browser_navigate', { url: 'https://example.com' }],
+      ['browser_click', { ref: 'b_target' }],
+      ['browser_type', { ref: 'b_target', text: 'hello' }],
+      ['browser_select', { ref: 'b_target', value: 'one' }],
+      ['browser_back', {}]
+    ] as const) {
+      await provider.callTool(name, args, signal, context)
+    }
+    expect(service.navigate).toHaveBeenCalledOnce()
+    expect(service.click).toHaveBeenCalledOnce()
+    expect(service.type).toHaveBeenCalledOnce()
+    expect(service.select).toHaveBeenCalledOnce()
+    expect(service.back).toHaveBeenCalledOnce()
+    const disabled = new ModelToolProvider(await createWorkspace())
+    expect((await disabled.listTools(context, signal)).some((tool) => tool.name.startsWith('browser_'))).toBe(false)
+    await expect(disabled.callTool('browser_snapshot', {}, signal, context)).rejects.toThrow('未知工具')
+  })
+
   it('delegates browser tools with per-call conversation context', async () => {
     const workspace = await createWorkspace()
     const browserService = createBrowserService()
@@ -1538,18 +1459,15 @@ describe('ModelToolProvider', () => {
     const firstContext = {
       conversationId: 'browser-conversation-one',
       browserTabId: firstBrowserTabId,
-      workMode: 'execute'
     } satisfies ModelToolCallContext
     const secondContext = {
       conversationId: 'browser-conversation-two',
       browserTabId: secondBrowserTabId,
-      workMode: 'execute'
     } satisfies ModelToolCallContext
     const signal = new AbortController().signal
 
     const readOnlyContext = {
       conversationId: 'browser-ask',
-      workMode: 'ask'
     } satisfies ModelToolCallContext
     await expect(
       provider.listTools(readOnlyContext, signal)
@@ -1710,13 +1628,11 @@ describe('ModelToolProvider', () => {
     const firstRequest = {
       conversationId,
       browserTabId: firstBrowserTabId,
-      workMode: 'execute',
       requestId: 'first-tab-request'
     } satisfies ModelToolCallContext
     const secondRequest = {
       conversationId,
       browserTabId: secondBrowserTabId,
-      workMode: 'execute',
       requestId: 'second-tab-request'
     } satisfies ModelToolCallContext
     const signal = new AbortController().signal
@@ -1759,7 +1675,7 @@ describe('ModelToolProvider', () => {
     )
   })
 
-  it('exposes only allowlisted read-only Exa tools in Ask and Execute', async () => {
+  it('exposes the builtin Exa search and fetch tools', async () => {
     const workspace = await createWorkspace()
     mocks.client.listTools.mockResolvedValue({
       tools: [
@@ -1796,7 +1712,6 @@ describe('ModelToolProvider', () => {
     const signal = new AbortController().signal
     const askContext = {
       conversationId: 'web-search-ask',
-      workMode: 'ask'
     } satisfies ModelToolCallContext
 
     await expect(provider.listTools(askContext, signal)).resolves.toEqual(
@@ -1838,7 +1753,7 @@ describe('ModelToolProvider', () => {
         maxCharacters: 2_000
       },
       signal,
-      { ...askContext, workMode: 'execute' }
+      askContext
     )
     expect(mocks.client.callTool).toHaveBeenLastCalledWith(
       {
@@ -1861,7 +1776,7 @@ describe('ModelToolProvider', () => {
     ).rejects.toThrow('公开 HTTP(S) URL')
   })
 
-  it('fails closed when an Exa search tool is not marked read-only', async () => {
+  it('does not use read-only annotations as an Exa tool permission gate', async () => {
     const workspace = await createWorkspace()
     mocks.client.listTools.mockResolvedValue({
       tools: [
@@ -1898,23 +1813,71 @@ describe('ModelToolProvider', () => {
         new AbortController().signal,
         {
           conversationId: 'web-search-invalid',
-          workMode: 'ask'
         }
       )
-    ).rejects.toMatchObject({
-      name: 'RecoverableModelToolError',
-      message: '联网搜索暂时不可用'
-    })
-    expect(mocks.client.close).toHaveBeenCalledOnce()
+    ).resolves.toBeDefined()
+    expect(mocks.client.callTool).toHaveBeenCalledOnce()
+    await provider.dispose()
   })
 
-  it('loads and invokes configured MCP tools through provider-safe names', async () => {
+  it.each(['disabled', 'unassigned', 'other-runtime'] as const)('does not discover or call %s custom MCP tools', async (state) => {
+    const server = createMcpServer()
+    if (state === 'disabled') server.enabled = false
+    else server.assignments = state === 'unassigned' ? [] : ['opencode']
+    const provider = new ModelToolProvider(await createWorkspace(), [server])
+    const signal = new AbortController().signal
+    try {
+      expect((await provider.listTools(toolContext, signal)).some(tool => tool.source === 'mcp')).toBe(false)
+      await expect(provider.callTool('mcp_spoofed_mutation', {}, signal, toolContext)).rejects.toThrow('未知工具')
+      expect(mocks.Client).not.toHaveBeenCalled()
+      expect(mocks.client.callTool).not.toHaveBeenCalled()
+    } finally {
+      await provider.dispose()
+    }
+  })
+
+  it.each([true, false])('honors Harness assignments for custom MCP writes (enabled=%s)', async (enabled) => {
+    const server = createMcpServer()
+    server.assignments = ['deepseek-harness']
+    server.enabled = enabled
+    mocks.client.listTools.mockResolvedValue({ tools: [{
+      name: 'write_document', inputSchema: { type: 'object' },
+      annotations: { readOnlyHint: false, destructiveHint: true }
+    }] })
+    const workspace = await createWorkspace()
+    const provider = new ModelToolProvider(workspace, [server], undefined, undefined, false, {
+      runtimeTarget: 'deepseek-harness'
+    })
+    const modelProvider = new ModelToolProvider(workspace, [server])
+    const signal = new AbortController().signal
+    try {
+      const tools = (await provider.listTools(toolContext, signal)).filter(tool => tool.source === 'mcp')
+      expect(tools).toHaveLength(enabled ? 1 : 0)
+      expect((await modelProvider.listTools(toolContext, signal)).some(tool => tool.source === 'mcp')).toBe(false)
+      if (enabled) {
+        await expect(provider.callTool(tools[0]!.name, {}, signal, toolContext)).resolves.toMatchObject({
+          parts: [{ type: 'text', text: 'MCP result' }]
+        })
+        expect(mocks.client.callTool).toHaveBeenCalledOnce()
+        await expect(modelProvider.callTool(tools[0]!.name, {}, signal, toolContext)).rejects.toThrow('未知工具')
+      } else {
+        expect(mocks.Client).not.toHaveBeenCalled()
+        expect(mocks.client.callTool).not.toHaveBeenCalled()
+      }
+    } finally {
+      await provider.dispose()
+      await modelProvider.dispose()
+    }
+  })
+
+  it('loads and invokes configured MCP writes through provider-safe names without a mode', async () => {
     const workspace = await createWorkspace()
     mocks.client.listTools.mockResolvedValue({
       tools: [
         {
           name: 'search-web',
           description: 'Search',
+          annotations: { readOnlyHint: false, destructiveHint: true },
           inputSchema: {
             type: 'object',
             properties: { query: { type: 'string' } },

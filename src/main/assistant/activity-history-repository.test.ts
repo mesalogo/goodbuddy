@@ -129,7 +129,7 @@ describe('ActivityHistoryRepository', () => {
     const tasks: Array<Pick<AssistantTask, 'id' | 'status'>> = []
     statusesByRequest.forEach((status, index) => {
       if (!status) return
-      const task = database.createTask({ id: `request-${index}`, title: 't', instructions: 'i', workMode: 'ask' })
+      const task = database.createTask({ id: `request-${index}`, title: 't', instructions: 'i' })
       database.updateTaskStatus(task.id, status)
       tasks.push({ id: task.id, status })
     })
@@ -190,7 +190,10 @@ describe('ActivityHistoryRepository', () => {
     insert.run(JSON.stringify(['orphan', 0]), JSON.stringify({ ...list[0], id: 'orphan' }))
     legacy.prepare("UPDATE activity_history SET record_order_json = ? WHERE singleton = 1")
       .run(JSON.stringify(rows.map((row) => row.record_key)))
-    legacy.exec('PRAGMA user_version = 56')
+    legacy.exec(`ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
+      PRAGMA user_version = 56`)
     legacy.close()
 
     const reopened = new AssistantDatabase(path)

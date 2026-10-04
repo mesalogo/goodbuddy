@@ -9,9 +9,10 @@ const remoteTaskSchema = z
     projectId: z.string().uuid().optional(),
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100_000),
-    workMode: z.literal('ask')
+    workMode: z.enum(['ask', 'plan', 'execute']).optional()
   })
   .strict()
+  .transform(({ id, projectId, title, prompt }) => ({ id, projectId, title, prompt }))
 
 export type RemoteDelegationTask = z.infer<typeof remoteTaskSchema>
 

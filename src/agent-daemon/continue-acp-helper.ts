@@ -9,20 +9,17 @@ import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION, type Agent, type M
 import { ContinueHostAdapter } from '../main/agent/continue-host-adapter'
 import {
   promptWithUntrustedConversationHistory,
-  splitUntrustedConversationHistory,
-  stripWorkModeInstruction
+  splitUntrustedConversationHistory
 } from '../main/agent/runtime-conversation-history'
 import type { AgentExecutionRequest, AgentImage } from '../main/agent/runtime'
 import { createUnixModelBridgeExchange } from './model-bridge-broker'
 import { ModelBridgeLoopbackProxy, MODEL_BRIDGE_SDK_AUTH_SENTINEL, openCodeModelBridgeModelId, type ModelBridgeProtocol } from './model-bridge-helper'
-import { isStoryGraphTool } from '../shared/story-graph-tools'
 
 export async function runContinueAcpHelper(options: {
   socketPath: string
   protocol: ModelBridgeProtocol
   model: string
   supportsImageInput: boolean
-  workMode: 'ask' | 'execute'
   sharedSessions?: boolean
   entrypoint: string
 }): Promise<number> {
@@ -90,16 +87,15 @@ export async function runContinueAcpHelper(options: {
         signal: AbortSignal.timeout(10_000)
       }).then(async response => {
         if (!response.ok) throw new Error('Continue model route is unavailable')
-        return await response.json() as { operationId: string; workMode: 'ask' | 'execute' }
+        return await response.json() as { operationId: string }
       }) : undefined
-      const workMode = route?.workMode ?? options.workMode
       const sessionMcpServers = session.mcpServers.map(server => {
         if (!('type' in server) || server.type !== 'http') throw new Error('Continue remote MCP requires HTTP')
         return { name: server.name, type: 'streamable-http' as const, url: server.url,
           requestOptions: { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } }
       })
       const adapter = new ContinueHostAdapter({
-        binaryPath: options.entrypoint, configPath: '', workspace: session.cwd, cacheRoot: root, mode: 'chat',
+        binaryPath: options.entrypoint, configPath: '', workspace: session.cwd, cacheRoot: root, mode: 'agent',
         modelProfile: { id: 'agent-bridge', name: 'GoodBuddy', modelName: options.model,
           protocol: options.protocol, authentication: 'api-key', apiKey: MODEL_BRIDGE_SDK_AUTH_SENTINEL,
           baseUrl: `${origin}/v1`, supportsImageInput: options.supportsImageInput,
@@ -121,8 +117,8 @@ export async function runContinueAcpHelper(options: {
       session.active = { abort, adapter, finished: new Promise(resolve => { finish = resolve }) }
       try {
         const result = await adapter.run(promptWithUntrustedConversationHistory({ prompt: text, history: session.history }, true), abort.signal,
-          async approval => workMode === 'execute' || isStoryGraphTool(approval.toolName ?? '') ? 'once' : 'deny', {
-            workMode, images, sessionMcpServers,
+          async () => 'once', {
+            images, sessionMcpServers,
             onEvent: async event => {
               if (event.type === 'text') await connection.sessionUpdate({ sessionId, update: {
                 sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: event.delta }
@@ -152,7 +148,7 @@ export async function runContinueAcpHelper(options: {
         if (!result.streamedText && result.text) await connection.sessionUpdate({ sessionId, update: {
           sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: result.text }
         } })
-        session.history.push({ role: 'user', content: stripWorkModeInstruction(text) },
+        session.history.push({ role: 'user', content: text },
           { role: 'assistant', content: result.text })
         return { stopReason: 'end_turn', ...(result.usage ? { usage: {
           inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,

@@ -48,7 +48,7 @@ try {
     messages: [{ ...message, state: 'streaming' }] }])
   const taskId = randomUUID()
   database.createTask({ id: taskId, projectId: snapshot.projectId,
-    conversationId: snapshot.id, title: 'I/O probe', instructions: '', workMode: 'ask', visible: false })
+    conversationId: snapshot.id, title: 'I/O probe', instructions: '', visible: false })
   database.startExecutionTiming(taskId)
   raw.exec('PRAGMA wal_checkpoint(TRUNCATE)')
   console.log(JSON.stringify({ schema: raw.prepare('PRAGMA user_version').get(), metadataBytes: largest.bytes }))

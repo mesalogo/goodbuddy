@@ -132,7 +132,7 @@ it('lets agents search stories and experiences and read their events through the
   expect(events).toHaveLength(2)
   expect(formed.items.find(item => item.object_ref.type === 'experience')!.content).toContain('Not for interactive edits')
   // Outside the project scope nothing is returned.
-  const other = f.db.createProject({ name: 'Other', description: '', rootPath: tmpdir(), defaultWorkMode: 'ask' })
+  const other = f.db.createProject({ name: 'Other', description: '', rootPath: tmpdir() })
   expect((f.db.readStoryGraph('story_graph_search', { query: 'long jobs', object_types: ['experience'] }, other.id) as Page).items).toEqual([])
 })
 
@@ -161,6 +161,9 @@ it('upgrades schema 55 suggestions to 56 without losing rows', async () => {
       evidence_key TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     INSERT INTO supervision_suggestions (id, scope_json, kind, fingerprint, title, detail, status, created_at, updated_at)
       VALUES ('keep', '{"kind":"global"}', 'open_item', 'open_item:x', 'Keep', 'Keep', 'pending', 'now', 'now');
+    ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+    ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+    ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
     PRAGMA user_version = 55;`)
   sql.close()
   const db = new AssistantDatabase(path)

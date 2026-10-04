@@ -26,7 +26,7 @@ export async function imageToolDefinition(binding: ImageToolBinding | undefined)
 }
 
 export async function imageSaveToolDefinition(binding: ImageToolBinding | undefined) {
-  if (!binding?.save || binding.context.workMode !== 'execute') return undefined
+  if (!binding?.save) return undefined
   const description = binding.describeSave ? await binding.describeSave() : imageSaveToolDescription
   if (!description) return undefined
   const inputSchema = z.toJSONSchema(imageSaveToolInputSchema, { target: 'draft-7', io: 'input' })

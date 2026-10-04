@@ -23,6 +23,7 @@ import { defaultSupervisionTimeoutSeconds, supervisionTimeoutSecondsSchema, defa
 import { SupervisionReviewSettings, type SupervisionSettingsSection } from './SupervisionReviewSettings'
 import { SupervisorWorkspace, type SupervisionGraphNavigation } from './SupervisorWorkspace'
 import { SupervisorActivity } from './SupervisorActivity'
+import type { AppNotificationInput } from './notifications'
 import './supervisor-workspace.css'
 import { getProjectDisplayText } from './project-display'
 import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
@@ -35,6 +36,7 @@ import {
 } from './WorkspacePrimitives'
 
 export type HeartbeatCenterProps = {
+  onNotify?: (notification: AppNotificationInput) => void
   runtimeSettings?: RuntimeSettings
   applicationSettings?: ApplicationSettings
   applicationSettingsPending?: boolean
@@ -139,11 +141,7 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
             onTabChange={setPageTab}
             projects={props.projects}
             onOpenConversation={props.onOpenConversation}
-            onOpenActivity={() => {
-              setActivityPlanId('')
-              setPageTab('activity')
-              window.requestAnimationFrame(() => centerRef.current?.querySelector<HTMLElement>('#supervisor-tab-activity')?.focus())
-            }}
+            onNotify={props.onNotify}
           />
         </div>
         {pageTab === 'activity' && <SupervisorActivity

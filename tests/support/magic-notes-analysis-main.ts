@@ -36,7 +36,7 @@ app.whenReady().then(async () => {
       modelProfiles: runtimeSettings.modelProfiles.map(profile => ({ id: profile.id, supportsImageInput: profile.supportsImageInput }))
     } : runtimeSettings } as never,
     {} as never, { clear() {}, cancelImport() {} } as never, {} as never, database,
-    { clear() {} } as never, {} as never, async () => {}, undefined, undefined, undefined, undefined,
+    {} as never, async () => {}, undefined, undefined, undefined, undefined,
     applicationSettings)
   if (!live) win.webContents.on('console-message', event => console.log(event.message))
   try {

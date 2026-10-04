@@ -91,7 +91,7 @@ describe('magic note analyzer', () => {
     expect(requests[0]?.prompt).toContain(canvasTodo.instructions)
     expect(requests[0]?.prompt).toContain('第 2 页：\\n验收')
     expect(requests[0]?.conversationId).toBe(`magic-todos:${canvasTodo.id}`)
-    expect(requests[0]?.workMode).toBe('ask')
+    expect(requests[0]).not.toHaveProperty('workMode')
     if (supportsImageInput) {
       expect(requests[0]?.images).toHaveLength(2)
     } else {
@@ -137,7 +137,7 @@ describe('magic note analyzer', () => {
     expect(requests[0]?.prompt).toContain('第 1 页 = page-1.png')
     expect(requests[0]?.prompt).toContain('第 2 页 = page-2.png')
     expect(requests[0]?.prompt).toContain('验收')
-    expect(requests[0]?.workMode).toBe('ask')
+    expect(requests[0]).not.toHaveProperty('workMode')
     expect(comments[0]?.inputMode).toBe('canvas-images')
     expect(usage).toEqual([expect.objectContaining({ callId: 'analysis-call', inputTokens: 25 })])
   })
@@ -283,7 +283,6 @@ describe('magic note analyzer', () => {
     )
 
     expect(request).toMatchObject({
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     expect(request?.trustedInstructions).toContain('禁止工具调用')
@@ -372,7 +371,7 @@ describe('magic note analyzer', () => {
         content: '验收条件还不够明确。'
       })
     ])
-    expect(request?.workMode).toBe('ask')
+    expect(request).not.toHaveProperty('workMode')
     expect(request?.trustedInstructions).toContain('禁止工具调用')
   })
 

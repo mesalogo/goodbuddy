@@ -27,7 +27,7 @@ it('routes a shared request question to its original Runtime across replacement'
   const next: AgentRuntime = { ...previous, respondToQuestion: vi.fn(async () => undefined) }
   const controller = new AgentRuntimeController(previous, 1)
   const stream = controller.run({
-    requestId: 'old-request', conversationId: 'old-conversation', prompt: 'test', workMode: 'execute'
+    requestId: 'old-request', conversationId: 'old-conversation', prompt: 'test',
   }, new AbortController().signal)
   try {
     expect((await stream.next()).value?.type).toBe('question')
@@ -151,18 +151,13 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b08',
         conversationId: 'conversation-2',
         prompt: 'test',
-        workMode: 'execute'
       },
       new AbortController().signal,
       authorize
     )
     const pendingEvent = approvedStream.next()
     await previous.started
-    expect(authorize).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scopeKey: 'runtime:whole-run'
-      })
-    )
+    expect(authorize).not.toHaveBeenCalled()
 
     const replacement = controller.replace(next)
     previous.finish()
@@ -214,7 +209,7 @@ describe('AgentRuntimeController', () => {
     const controller = new AgentRuntimeController(previous, 1)
     const stream = controller.run({
       requestId: '00000000-0000-4000-8000-000000000071',
-      conversationId: 'shared-replacement', prompt: 'continue', workMode: 'ask'
+      conversationId: 'shared-replacement', prompt: 'continue',
     }, new AbortController().signal)
     const pending = stream.next()
     await previous.started
@@ -238,7 +233,6 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b13',
         conversationId: 'conversation-drain',
         prompt: 'test',
-        workMode: 'ask'
       },
       new AbortController().signal
     )
@@ -274,7 +268,6 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b16',
         conversationId: 'conversation-release-failure',
         prompt: 'test',
-        workMode: 'ask'
       },
       new AbortController().signal
     )
@@ -389,7 +382,6 @@ describe('AgentRuntimeController', () => {
           requestId: '1c608898-ecb7-4081-8174-2b6a52f53b14',
           conversationId: 'conversation-replacement-grace',
           prompt: 'test',
-          workMode: 'ask'
         },
         new AbortController().signal
       )
@@ -443,7 +435,6 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b12',
         conversationId: 'conversation-shutdown',
         prompt: 'test',
-        workMode: 'ask'
       },
       new AbortController().signal
     )
@@ -468,7 +459,6 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b17',
         conversationId: 'conversation-application-exit',
         prompt: 'keep running remotely',
-        workMode: 'execute'
       },
       new AbortController().signal
     )
@@ -489,7 +479,7 @@ describe('AgentRuntimeController', () => {
     await stream.return()
   })
 
-  it('denies tool authorization in Ask mode without prompting the user', async () => {
+  it('allows tools by default without prompting the user', async () => {
       const runtime = new TestRuntime(false, false, true)
       const controller = new AgentRuntimeController(runtime)
       const authorize = vi.fn(async () => 'once' as const)
@@ -498,13 +488,11 @@ describe('AgentRuntimeController', () => {
           requestId: '1c608898-ecb7-4081-8174-2b6a52f53b09',
           conversationId: 'conversation-3',
           prompt: 'test',
-          workMode: 'ask'
         },
-        new AbortController().signal,
-        authorize
+        new AbortController().signal
       )
 
-      await expect(stream.next()).rejects.toThrow('tool denied')
+      await expect(stream.next()).resolves.toMatchObject({ value: { type: 'text' } })
       expect(authorize).not.toHaveBeenCalled()
   })
 
@@ -536,7 +524,6 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b18',
         conversationId: 'conversation-canceled',
         prompt: 'test',
-        workMode: 'ask'
       },
       abortController.signal
     )
@@ -566,7 +553,6 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b19',
         conversationId: 'conversation-abort-error',
         prompt: 'test',
-        workMode: 'ask'
       },
       new AbortController().signal
     )
@@ -586,7 +572,6 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b20',
         conversationId: 'conversation-tool-denied',
         prompt: 'test',
-        workMode: 'execute'
       },
       new AbortController().signal,
       async () => 'deny'
@@ -619,7 +604,6 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b21',
         conversationId: 'conversation-run-failed',
         prompt: 'test',
-        workMode: 'ask'
       },
       new AbortController().signal
     )
@@ -643,7 +627,6 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b10',
         conversationId: 'conversation-4',
         prompt: 'test',
-        workMode: 'execute'
       },
       new AbortController().signal,
       authorize
@@ -654,11 +637,12 @@ describe('AgentRuntimeController', () => {
     })
     expect(authorize).toHaveBeenCalledOnce()
     expect(authorize).toHaveBeenCalledWith(
-      expect.objectContaining({ scopeKey: 'test:tool' })
+      expect.objectContaining({ scopeKey: 'test:tool' }),
+      undefined
     )
   })
 
-  it('rejects Execute mode when the runtime cannot execute tools', async () => {
+  it('allows text requests when the runtime cannot execute tools', async () => {
     const runtime = new TestRuntime(false, false, false, false)
     const controller = new AgentRuntimeController(runtime)
     const stream = controller.run(
@@ -666,14 +650,11 @@ describe('AgentRuntimeController', () => {
         requestId: '1c608898-ecb7-4081-8174-2b6a52f53b11',
         conversationId: 'conversation-5',
         prompt: 'test',
-        workMode: 'execute'
       },
       new AbortController().signal
     )
 
-    await expect(stream.next()).rejects.toThrow(
-      '当前 Runtime 不支持工具执行'
-    )
+    await expect(stream.next()).resolves.toMatchObject({ value: { type: 'text' } })
   })
 
   it('reports Runtime boundary failures without request content', async () => {

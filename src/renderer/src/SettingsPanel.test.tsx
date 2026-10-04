@@ -160,7 +160,6 @@ const runtimeSettings: RuntimeSettings = {
   deepseekHarnessModelSource: { kind: 'platform' },
   deepseekHarnessPlatformModel: { source: 'unavailable' },
   secureStorageAvailable: true,
-  toolApproval: 'always'
 }
 
 const getRuntime = vi.fn(async () => runtimeSettings)
@@ -274,7 +273,6 @@ const capabilitySnapshot = {
   webSearch: {
     provider: 'exa' as const,
     enabled: true,
-    availableIn: ['ask', 'execute'] as const,
     tools: ['web_search', 'web_fetch'] as const
   },
   computerCapabilities: [
@@ -286,7 +284,7 @@ const capabilitySnapshot = {
       supported: true,
       browserProfileId: null,
       riskSummary:
-        '总开关关闭时不会向任何 Runtime 提供浏览器工具；开启后，已分配的 Runtime 可在 Execute 模式直接读取网页并操作网站，不再逐次询问。'
+        '总开关关闭时不会向任何 Runtime 提供浏览器工具；开启后，已分配的 Runtime 可直接读取网页并操作网站。'
     },
     {
       id: 'linux-desktop-control' as const,
@@ -1973,7 +1971,7 @@ describe('SettingsPanel runtime files', () => {
       ).not.toHaveClass('capability-card--disabled')
     )
     expect(
-      screen.getAllByText('按模式读写')
+      screen.getAllByText('读写')
     ).not.toHaveLength(0)
   })
 
@@ -2011,7 +2009,7 @@ describe('SettingsPanel runtime files', () => {
       'settings-tab-model', 'settings-tab-context-control', 'settings-tab-runtime',
       'settings-tab-ssh-hosts',
       'settings-tab-document-parsing', 'settings-tab-channels', 'settings-tab-roles',
-      'settings-tab-capabilities', 'settings-tab-security', 'settings-tab-about'
+      'settings-tab-capabilities', 'settings-tab-about'
     ])
   })
 
@@ -2920,7 +2918,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     fireEvent.click(
       screen.getByRole('button', { name: '清除本地数据' })
     )
@@ -2979,46 +2977,30 @@ describe('SettingsPanel runtime files', () => {
     ).toHaveFocus()
   })
 
-  it('explains automatic Execute authorization and the deny-all policy', async () => {
+  it('removes security settings and keeps confirmed data clearing under general settings', async () => {
+    const onClearLocalData = vi.fn(async () => {})
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
         open
-        onClearLocalData={vi.fn(async () => {})}
+        onClearLocalData={onClearLocalData}
         onClose={vi.fn()}
         onSaved={vi.fn()}
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
-    const policy = await screen.findByLabelText(
-      '直连模型工具安全策略'
-    )
-    expect(policy).toHaveValue('always')
-    expect(
-      within(policy).getByRole('option', {
-        name: 'Execute 自动授权已启用的工具'
-      })
-    ).toBeInTheDocument()
-    expect(
-      within(policy).getByRole('option', {
-        name: '禁止所有工具执行'
-      })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/选择 Execute 即授权当前交互运行自动调用这些工具/)
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/禁止策略会拒绝所有工具调用/)
-    ).toBeInTheDocument()
-
-    fireEvent.change(policy, { target: { value: 'policy' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
-    await waitFor(() =>
-      expect(updateRuntime).toHaveBeenCalledWith(
-        expect.objectContaining({ toolApproval: 'policy' })
-      )
-    )
+    expect(screen.queryByRole('tab', { name: '安全与数据' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('直连模型工具安全策略')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const panel = screen.getByRole('tabpanel', { name: '平台功能' })
+    expect(within(panel).getByText('本地数据与隐私')).toBeVisible()
+    fireEvent.click(within(panel).getByRole('button', { name: '清除本地数据' }))
+    expect(onClearLocalData).not.toHaveBeenCalled()
+    fireEvent.click(within(panel).getByRole('button', { name: '取消' }))
+    expect(onClearLocalData).not.toHaveBeenCalled()
+    fireEvent.click(within(panel).getByRole('button', { name: '清除本地数据' }))
+    fireEvent.click(within(panel).getByRole('button', { name: '清除本地数据' }))
+    await waitFor(() => expect(onClearLocalData).toHaveBeenCalledOnce())
   })
 
   it('saves the accessible Subagent smart routing switch', async () => {
@@ -3032,7 +3014,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     expect(
       screen.queryByRole('switch', {
         name: '启用 Subagent 智能路由'
@@ -3043,17 +3025,17 @@ describe('SettingsPanel runtime files', () => {
       name: '启用 Subagent 智能路由'
     })
     expect(smartRouting).not.toBeChecked()
-    expect(screen.getByText(/仅在 Ask 模式/)).not.toBeVisible()
-    expect(smartRouting).toHaveAccessibleDescription(/仅在 Ask 模式/)
+    expect(screen.getByText(/未显式选择专家或团队时/)).not.toBeVisible()
+    expect(smartRouting).toHaveAccessibleDescription(/未显式选择专家或团队时/)
     const routingHelp = screen.getByRole('button', { name: 'Subagent 智能路由' })
     expect(routingHelp.closest('label, summary')).toBeNull()
     fireEvent.click(routingHelp)
     expect(smartRouting).not.toBeChecked()
-    expect(screen.getByText(/仅在 Ask 模式/)).toHaveTextContent(
+    expect(screen.getByText(/未显式选择专家或团队时/)).toHaveTextContent(
       '自动选择 1 位专家'
     )
-    expect(screen.getByText(/仅在 Ask 模式/)).toHaveTextContent(
-      '继承当前模式和已启用工具'
+    expect(screen.getByText(/未显式选择专家或团队时/)).toHaveTextContent(
+      '子专家使用默认文本模型和已启用工具'
     )
 
     fireEvent.click(smartRouting)
@@ -3065,6 +3047,7 @@ describe('SettingsPanel runtime files', () => {
         })
       )
     )
+    expect(updateRuntime.mock.calls[0]![0]).not.toHaveProperty('toolApproval')
   })
 
   it('offers roles only model connections that have been saved', async () => {
@@ -3549,7 +3532,7 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText(/自定义 Continue 可执行文件将以当前用户权限运行/)
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/Ask 仅可调用当前 Runtime 允许的只读能力/)
+      screen.getByText(/可用工具由所选 Runtime 和设置决定/)
     ).toBeInTheDocument()
     fireEvent.click(within(field).getByRole('button', { name: '清除' }))
     expect(input).toHaveValue('')
@@ -3685,8 +3668,6 @@ describe('SettingsPanel runtime files', () => {
           description: 'Edit a file',
           kind: 'write',
           source: 'runtime',
-          ask: 'blocked',
-          execute: 'allowed'
         }
       ],
       toolsSupported: true,
@@ -3759,7 +3740,7 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText('edit')).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Edit a file · 文件修改 · Runtime 内置 · Ask：不可用 · Execute：可用'
+        'Edit a file · 文件修改 · Runtime 内置'
       )
     ).toBeInTheDocument()
     const commandsTab = within(inventoryTabs).getByRole('tab', {
@@ -5295,7 +5276,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     expect(
       screen.queryByRole('switch', { name: '启用向量检索' })
     ).not.toBeInTheDocument()
@@ -5880,7 +5861,7 @@ describe('SettingsPanel runtime files', () => {
       )
     )
     expect(
-      within(browserBuiltinCard!).getByText('仅 Execute')
+      within(browserBuiltinCard!).getByText('读写')
     ).toBeInTheDocument()
     const builtinBrowserToggle = screen.getByRole('button', {
       name: '展开服务器 内置浏览器'
@@ -5895,7 +5876,7 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByText(/关闭时不会向任何 Runtime 提供浏览器工具/)
-    ).toHaveTextContent('不再逐次询问')
+    ).toHaveTextContent('已分配的 Runtime 可直接读取网页并操作网站')
     expect(
       screen.getByRole('region', { name: '内置浏览器 工具' })
     ).toContainElement(screen.getByText('browser_navigate'))
@@ -6088,7 +6069,7 @@ describe('SettingsPanel runtime files', () => {
     )
     expect(
       screen.getByText(/远程访问令牌由系统安全存储加密/)
-    ).toHaveTextContent('工具调用前仍需 GoodBuddy 审批')
+    ).toHaveTextContent('启用并分配后，该服务提供的工具可供对应 Runtime 使用')
     expect(
       await screen.findByText('尚未配置 MCP Server')
     ).toBeInTheDocument()

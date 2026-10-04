@@ -576,7 +576,7 @@ describe('AgentProtocolServer connection bounds', () => {
     expect(daemonCapabilitiesSchema.parse(result)).toMatchObject({
       capabilities: [
         { name: 'agent/control', version: 1, critical: true },
-        { name: 'runtime/acp', version: 5, critical: true },
+        { name: 'runtime/acp', version: 6, critical: true },
         {
           name: 'runtime/model-bridge',
           version: 1,

@@ -25,13 +25,6 @@ export interface ExecutionStats {
   /** Project card totals; empty for conversation queries. */
   taskDurations: Array<{ id: string; durationMs: number; runningCount: number; incomplete: boolean }>
 }
-export const interactiveWorkModes = ['ask', 'execute'] as const
-export const workModeSchema = z.enum(interactiveWorkModes)
-export const legacyWorkModeSchema = z.enum([
-  'ask',
-  'plan',
-  'execute'
-])
 export const projectKindSchema = z.enum(['user', 'channel'])
 export const projectChannels = [
   'weixin',
@@ -45,9 +38,6 @@ export const projectChannelLabels: Record<ProjectChannel, string> = {
   dingtalk: '钉钉'
 }
 
-export type WorkMode = z.infer<typeof workModeSchema>
-export type LegacyWorkMode = z.infer<typeof legacyWorkModeSchema>
-export type InteractiveWorkMode = (typeof interactiveWorkModes)[number]
 export type ProjectKind = z.infer<typeof projectKindSchema>
 export type ProjectChannel = z.infer<typeof projectChannelSchema>
 
@@ -270,18 +260,11 @@ export type ProjectExecutionSpace = z.output<
   typeof persistedProjectExecutionSpaceSchema
 >
 
-export function normalizeInteractiveWorkMode(
-  workMode: LegacyWorkMode | undefined
-): InteractiveWorkMode {
-  return workMode === 'execute' ? 'execute' : 'ask'
-}
-
 export const projectUpdateSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().max(2_000),
     rootPath: z.string().trim().max(4_096),
-    defaultWorkMode: workModeSchema,
     /** Project layer; absent means follow the global settings. */
     runtimeSelection: runtimeSelectionLayerSchema.optional()
   })
@@ -441,7 +424,6 @@ const conversationSubagentActivityBaseSchema = z.object({
   childTaskId: assistantIdSchema,
   routingMode: z.enum(['manual', 'smart', 'native']),
   runtimeCallId: z.string().trim().min(1).max(256).optional(),
-  workMode: workModeSchema.optional(),
   state: z.enum([
     'queued',
     'running',
@@ -724,7 +706,6 @@ export const conversationSnapshotSchema = z
     /** Conversation layer; absent means follow the project. */
     runtimeSelection: runtimeSelectionLayerSchema.optional(),
     knowledgeLibraryIds: z.array(assistantIdSchema).max(20).optional(),
-    workMode: workModeSchema.optional(),
     knowledgeRetrievalMode: z.enum(['auto', 'always']).optional(),
     storyGraphEnabled: z.boolean().optional(),
     contextMetrics: conversationContextMetricsSchema.optional(),
@@ -868,6 +849,8 @@ export type WorkspaceDirectoryEntry = {
   name: string
   path: string
   type: 'file' | 'directory'
+  modifiedAt?: string
+  createdAt?: string
 }
 
 export type WorkspaceDirectoryListing = {
@@ -910,7 +893,6 @@ export type AssistantTask = {
   instructions: string
   origin: 'user' | 'assistant' | 'schedule' | 'delegation' | 'subagent'
   status: AssistantTaskStatus
-  workMode?: WorkMode
   progress?: number
   createdAt: string
   startedAt?: string
@@ -1027,7 +1009,6 @@ export const scheduleCreateSchema = z
     conversationId: z.string().uuid().optional(),
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100_000),
-    workMode: workModeSchema.default('execute'),
     recurrence: z.enum(['once', 'daily', 'weekly']),
     nextRunAt: z.string().datetime({ offset: true }),
     runImmediately: z.boolean().optional()

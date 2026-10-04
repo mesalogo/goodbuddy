@@ -71,10 +71,3 @@ function parseHistory(json: string): ConversationHistory | undefined {
   }
   return history
 }
-
-/** Drops the per-turn GoodBuddy work-mode paragraph from stored user text. */
-export function stripWorkModeInstruction(prompt: string): string {
-  if (!prompt.startsWith('Work mode: ')) return prompt
-  const end = prompt.indexOf('\n\n')
-  return end === -1 ? prompt : prompt.slice(end + 2)
-}

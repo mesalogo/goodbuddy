@@ -35,12 +35,16 @@ import type {
 } from '../shared/ssh-host-contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
+import { SubagentService, createSubagentRuntime } from './assistant/subagent-service'
 import { ConversationAttachmentStorage } from './conversation-attachment-storage'
 import { DocumentResultStorage } from './document-result-storage'
 import { ImageGenerationService } from './agent/image-generation-service'
 import { ApplicationSettingsStore } from './application-settings-store'
 import * as desktopNotification from './desktop-notification'
 import type { AgentExecutionRequest } from './agent/runtime'
+import type { SelectedRuntimeResolver } from './agent/selected-runtime-manager'
+import { ExecutionSpaceResolver, type ExecutionSpaceDescriptor } from './execution-space'
+import type { WorkspaceAccess } from './workspace'
 import { KnowledgeService } from './knowledge/knowledge-service'
 import { KnowledgeDatabase } from './knowledge/knowledge-database'
 import { BrowserNavigationStoppedError } from './browser/browser-service'
@@ -167,7 +171,6 @@ describe('terminal IPC boundary', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {}),
       undefined,
@@ -380,7 +383,6 @@ const channelMocks = vi.hoisted(() => ({
           conversationType: 'direct' | 'group'
           text: string
           mentioned: boolean
-          workMode: 'ask'
           attachments?: Array<{
             name: string
             mimeType: string
@@ -566,7 +568,6 @@ describe('registerIpcHandlers computer capabilities', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       onRuntimeSettingsChanged,
       undefined,
@@ -1143,7 +1144,6 @@ describe('registerIpcHandlers update source routing', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined),
       undefined,
@@ -1274,7 +1274,6 @@ describe('registerIpcHandlers model download source routing', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined),
       undefined,
@@ -1488,7 +1487,6 @@ describe('registerIpcHandlers DSH runtime extensions', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       onRuntimeSettingsChanged,
       undefined,
@@ -1849,7 +1847,6 @@ describe('registerIpcHandlers SSH hosts', () => {
         listSshHostProjectReferences,
         deleteProjectsReferencingSshHost
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined),
       undefined, // onBeforeClearLocalData
@@ -2227,8 +2224,7 @@ describe('registerIpcHandlers SSH hosts', () => {
         description: '',
         runtimeSelection: { provider: 'opencode' },
         hostId,
-        remoteRootPath: '/srv/project',
-        defaultWorkMode: 'ask'
+        remoteRootPath: '/srv/project'
       }
     }
     await expect(
@@ -2282,7 +2278,6 @@ describe('registerIpcHandlers SSH hosts', () => {
         hostId,
         remoteRootPath: '/srv/project'
       },
-      defaultWorkMode: 'ask' as const,
       kind: 'user' as const,
       status: 'active' as const,
       createdAt: '2026-08-01T00:00:00.000Z',
@@ -2352,7 +2347,6 @@ describe('registerIpcHandlers SSH hosts', () => {
       { clear: vi.fn() } as never,
       {} as never,
       assistantDatabase as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined),
       undefined,
@@ -2403,8 +2397,7 @@ describe('registerIpcHandlers SSH hosts', () => {
         description: '',
         runtimeSelection: { provider: 'opencode' },
         hostId,
-        remoteRootPath: '/srv/project',
-        defaultWorkMode: 'ask'
+        remoteRootPath: '/srv/project'
       }
     }
     const disabledRequests: Array<[string, unknown?]> = [
@@ -2447,8 +2440,7 @@ describe('registerIpcHandlers SSH hosts', () => {
         input: {
           name: remoteProject.name,
           description: '',
-          rootPath: remoteProject.rootPath,
-          defaultWorkMode: 'ask'
+          rootPath: remoteProject.rootPath
         }
       })
     ).rejects.toThrow('远程项目未启用')
@@ -2628,8 +2620,7 @@ function runtimeUpdateFixture(
     opencodeModelSource: { kind: 'platform' as const },
     continueModelSource: { kind: 'platform' as const },
     deepseekHarnessModelSource: { kind: 'platform' as const },
-    secureStorageAvailable: true,
-    toolApproval: 'always' as const
+    secureStorageAvailable: true
   }
   return {
     publicSettings,
@@ -2674,8 +2665,7 @@ function runtimeUpdateFixture(
       defaultModelProfileId: profileId,
       opencodeModelSource: { kind: 'platform' as const },
       continueModelSource: { kind: 'platform' as const },
-      deepseekHarnessModelSource: { kind: 'platform' as const },
-      toolApproval: 'always' as const
+      deepseekHarnessModelSource: { kind: 'platform' as const }
     }
   }
 }
@@ -2740,8 +2730,7 @@ describe('registerIpcHandlers lifecycle tracking', () => {
       defaultModelProfileId: '00000000-0000-4000-8000-000000000001',
       opencodeModelSource: { kind: 'platform' },
       continueModelSource: { kind: 'platform' },
-      secureStorageAvailable: true,
-      toolApproval: 'always'
+      secureStorageAvailable: true
     }
     const update = vi.fn(async () => {
       await updateReleased
@@ -2774,7 +2763,6 @@ describe('registerIpcHandlers lifecycle tracking', () => {
         listPendingConversationQueueIds: vi.fn(() => []),
         repairConversationRuntimeSelections: vi.fn()
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       onRuntimeSettingsChanged
     )
@@ -2805,8 +2793,7 @@ describe('registerIpcHandlers lifecycle tracking', () => {
       knowledgeRerankEndpoint: savedSettings.knowledgeRerankEndpoint,
       knowledgeRerankModel: savedSettings.knowledgeRerankModel,
       workspacePath: savedSettings.workspacePath,
-      apiKey: { action: 'keep' as const },
-      toolApproval: savedSettings.toolApproval
+      apiKey: { action: 'keep' as const }
     }
 
     try {
@@ -2891,8 +2878,7 @@ describe('registerIpcHandlers lifecycle tracking', () => {
       opencodeModelSource: { kind: 'platform' as const },
       continueModelSource: { kind: 'platform' as const },
       deepseekHarnessModelSource: { kind: 'platform' as const },
-      secureStorageAvailable: true,
-      toolApproval: 'always' as const
+      secureStorageAvailable: true
     }
     const candidateSettings = {
       ...previousSettings,
@@ -2939,7 +2925,6 @@ describe('registerIpcHandlers lifecycle tracking', () => {
         listPendingConversationQueueIds: vi.fn(() => []),
         repairConversationRuntimeSelections: repairs
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       onRuntimeSettingsChanged
     )
@@ -2989,8 +2974,7 @@ describe('registerIpcHandlers lifecycle tracking', () => {
       defaultModelProfileId: profileId,
       opencodeModelSource: { kind: 'platform' },
       continueModelSource: { kind: 'platform' },
-      deepseekHarnessModelSource: { kind: 'platform' },
-      toolApproval: 'always'
+      deepseekHarnessModelSource: { kind: 'platform' }
     }
 
     try {
@@ -3102,7 +3086,6 @@ describe('registerIpcHandlers lifecycle tracking', () => {
         listPendingConversationQueueIds: vi.fn(() => []),
         repairConversationRuntimeSelections: repairs
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       onRuntimeSettingsChanged,
       undefined,
@@ -3231,7 +3214,6 @@ describe('registerIpcHandlers knowledge snapshot ontology', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined)
     )
@@ -3319,7 +3301,6 @@ describe('registerIpcHandlers knowledge embedding index', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined)
     )
@@ -3413,7 +3394,6 @@ describe('registerIpcHandlers knowledge task actions', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined)
     )
@@ -3516,7 +3496,6 @@ describe('registerIpcHandlers model ZIP dialogs', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined),
       undefined,
@@ -3718,7 +3697,6 @@ describe('registerIpcHandlers document parsing', () => {
       { clear: vi.fn() } as never,
       {} as never,
       assistantDatabase as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined),
       undefined,
@@ -3851,7 +3829,6 @@ describe('registerIpcHandlers connection tests', () => {
       removeListener: vi.fn()
     }
     const contextManager = { clear: vi.fn() }
-    const approvalBroker = { clear: vi.fn() }
     const dispose = registerIpcHandlers(
       window as never,
       continueRuntime as never,
@@ -3865,7 +3842,6 @@ describe('registerIpcHandlers connection tests', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      approvalBroker as never,
       {} as never,
       vi.fn(async () => {})
     )
@@ -3986,7 +3962,6 @@ describe('registerIpcHandlers connection tests', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {}),
       undefined,
@@ -4082,7 +4057,6 @@ describe('registerIpcHandlers Runtime config actions', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {})
     )
@@ -4223,7 +4197,6 @@ describe('registerIpcHandlers window controls', () => {
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => [])
       } as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {})
     )
@@ -4306,7 +4279,6 @@ describe('registerIpcHandlers workspace files', () => {
       { clear: vi.fn() } as never,
       {} as never,
       assistantDatabase as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {}),
       undefined,
@@ -4350,6 +4322,18 @@ describe('registerIpcHandlers workspace files', () => {
     ).rejects.toThrow('路径必须是工作区内的相对路径')
     expect(assistantDatabase.getProject).toHaveBeenCalledWith(projectId)
 
+    const source = await mkdtemp(join(tmpdir(), 'goodbuddy-ipc-import-'))
+    temporaryDirectories.push(source)
+    await mkdir(join(rootPath, 'selected'))
+    await writeFile(join(source, 'binary.png'), Buffer.from([0, 255, 128, 1]))
+    const importFiles = electronMocks.handlers.get(ipcChannels.workspaceImportFiles)!
+    electronMocks.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: [] })
+    await expect(importFiles(event, { projectId, path: 'selected' })).resolves.toEqual({ imported: [], failed: [] })
+    electronMocks.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [join(source, 'binary.png')] })
+    await expect(importFiles(event, { projectId, path: 'selected' })).resolves.toEqual({ imported: ['selected/binary.png'], failed: [] })
+    expect(await readFile(join(rootPath, 'selected/binary.png'))).toEqual(Buffer.from([0, 255, 128, 1]))
+    await expect(importFiles(event, { projectId, path: '../outside' })).rejects.toThrow()
+
     await dispose()
   })
 
@@ -4369,7 +4353,6 @@ describe('registerIpcHandlers workspace files', () => {
           hostId: '00000000-0000-4000-8000-000000000202',
           remoteRootPath: '/srv/project'
         },
-        defaultWorkMode: 'ask',
         kind: 'user',
         status: 'active',
         createdAt: '2026-08-01T00:00:00.000Z',
@@ -4395,7 +4378,6 @@ describe('registerIpcHandlers workspace files', () => {
       { clear: vi.fn() } as never,
       {} as never,
       assistantDatabase as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {}),
       undefined,
@@ -4461,7 +4443,7 @@ describe('registerIpcHandlers token usage', () => {
       window as never, { capability: 'text' } as never,
       'CommandOrControl+Shift+Space', {} as never, {} as never,
       { clear: vi.fn() } as never, {} as never, assistantDatabase as never,
-      { clear: vi.fn() } as never, {} as never, vi.fn(async () => {})
+      {} as never, vi.fn(async () => {})
     )
     try {
       const handler = electronMocks.handlers.get(ipcChannels.tasksExecutionStats)!
@@ -4520,7 +4502,6 @@ describe('registerIpcHandlers token usage', () => {
       { clear: vi.fn() } as never,
       {} as never,
       assistantDatabase as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {})
     )
@@ -4592,7 +4573,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
         window as never, {} as never, 'CommandOrControl+Shift+Space',
         { getResolvedSettings: vi.fn(async () => settings) } as never,
         {} as never, { clear: vi.fn() } as never, {} as never, database as never,
-        { clear: vi.fn() } as never, {} as never, vi.fn(async () => {})
+        {} as never, vi.fn(async () => {})
       )
       try {
         const result = electronMocks.handlers.get(ipcChannels.agentCompactConversation)?.(
@@ -4660,7 +4641,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
         window as never, { capability: 'text' } as never,
         'CommandOrControl+Shift+Space', {} as never, {} as never,
         contextManager as never, {} as never, database,
-        { clear: vi.fn() } as never, {} as never, vi.fn(async () => {})
+        {} as never, vi.fn(async () => {})
       )
       const event = { sender: webContents, senderFrame: webContents.mainFrame }
       const pin = electronMocks.handlers.get(ipcChannels.conversationsSetPinned)!
@@ -4739,7 +4720,6 @@ describe('registerIpcHandlers local conversation persistence', () => {
           input: {
             conversationId,
             runtimeSelection: { provider: 'model' },
-            workMode: 'ask',
             includeMemoryContext: true,
             prompt: queuedItem.label,
             attachments: [
@@ -4796,7 +4776,6 @@ describe('registerIpcHandlers local conversation persistence', () => {
       contextManager as never,
       {} as never,
       assistantDatabase as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {})
     )
@@ -4931,7 +4910,6 @@ describe('registerIpcHandlers local conversation persistence', () => {
       { clear: vi.fn() } as never,
       {} as never,
       assistantDatabase as never,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {})
     )
@@ -5008,8 +4986,6 @@ describe('registerIpcHandlers Runtime customization', () => {
           name: 'edit',
           kind: 'write' as const,
           source: 'runtime' as const,
-          ask: 'blocked' as const,
-          execute: 'allowed' as const
         }
       ],
       toolsSupported: true,
@@ -5114,7 +5090,6 @@ describe('registerIpcHandlers Runtime customization', () => {
         })
         .mockResolvedValue(compactionOutcome)
     }
-    const approvalBroker = { clear: vi.fn() }
     const onRuntimeSettingsChanged = vi.fn(async () => undefined)
     const contextManager = { clear: vi.fn() }
     const dispose = registerIpcHandlers(
@@ -5126,7 +5101,6 @@ describe('registerIpcHandlers Runtime customization', () => {
       contextManager as never,
       {} as never,
       assistantDatabase as never,
-      approvalBroker as never,
       {} as never,
       onRuntimeSettingsChanged,
       undefined,
@@ -5187,7 +5161,6 @@ describe('registerIpcHandlers Runtime customization', () => {
       settingsStore.updateRuntimeCustomization
     ).toHaveBeenCalledWith(customization)
     expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
-    expect(approvalBroker.clear).not.toHaveBeenCalled()
     const activationError = new Error('customization activation failed')
     onRuntimeSettingsChanged
       .mockRejectedValueOnce(activationError)
@@ -5386,7 +5359,6 @@ describe('registerIpcHandlers agent terminal state', () => {
   function createHarness(
     runtime: Record<string, unknown>,
     onBeforeClearLocalData?: () => Promise<void>,
-    toolApproval: 'always' | 'policy' = 'always',
     subagentService?: Record<string, unknown>,
     smartRoutingEnabled = false,
     selectedRuntimes?: Record<string, unknown>,
@@ -5400,10 +5372,14 @@ describe('registerIpcHandlers agent terminal state', () => {
     imageDatabase?: AssistantDatabase,
     heartbeatEnabled?: boolean,
     obsidianService?: ObsidianService,
-    nativeClientCoordinator?: Parameters<typeof registerIpcHandlers>[45],
-    nativeTerminalManager?: Parameters<typeof registerIpcHandlers>[41],
+    nativeClientCoordinator?: Parameters<typeof registerIpcHandlers>[44],
+    nativeTerminalManager?: Parameters<typeof registerIpcHandlers>[40],
     applicationSettingsStore?: ApplicationSettingsStore
   ) {
+    runtime.getStatus ??= vi.fn(async () => ({
+      id: runtime.runtimeId ?? 'model', available: true,
+      supportsToolExecution: runtime.supportsToolExecution ?? true
+    }))
     const appendRemoteTaskEventOnce = vi.fn<
       (input: RemoteTaskEventMockInput) => boolean
     >(() => true)
@@ -5436,7 +5412,6 @@ describe('registerIpcHandlers agent terminal state', () => {
           currentUserMessageId: string
           currentAssistantMessageId: string
           instructions: string
-          workMode: 'ask' | 'execute'
           status: 'running' | 'waiting_approval' | 'interrupted'
         }>
       >(() => []),
@@ -5466,7 +5441,6 @@ describe('registerIpcHandlers agent terminal state', () => {
             kind: 'local',
             rootPath: 'C:\\ProjectWorkspace'
           },
-          defaultWorkMode: 'ask',
           runtimeSelection: {
             provider: 'model',
             model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000001' }
@@ -5575,22 +5549,15 @@ describe('registerIpcHandlers agent terminal state', () => {
       restoreFromQueue: vi.fn(),
       clear: vi.fn()
     }
-    const approvalBroker = {
-      request: vi.fn(),
-      respond: vi.fn(),
-      clear: vi.fn()
-    }
     const getResolvedSettings = vi.fn(
       async (): Promise<Record<string, unknown>> => ({
         modelProfiles: [{ id: defaultModelProfileId, name: 'Default', modelName: 'qwen3', protocol: 'openai-chat-completions', authentication: 'none' }],
         defaultModelProfileId,
-        toolApproval,
         subagentSmartRoutingEnabled: smartRoutingEnabled
       })
     )
     const getPolicySettings = vi.fn(
       async (): Promise<Record<string, unknown>> => ({
-        toolApproval,
         subagentSmartRoutingEnabled: smartRoutingEnabled
       })
     )
@@ -5630,7 +5597,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         database: { listKnowledgeBases: vi.fn(() => []) }
       }) as never,
       (imageDatabase ?? assistantDatabase) as never,
-      approvalBroker as never,
       {} as never,
       onRuntimeSettingsChanged,
       onBeforeClearLocalData,
@@ -5654,15 +5620,14 @@ describe('registerIpcHandlers agent terminal state', () => {
       undefined,
       goodbuddyConfigService as never
     ]
-    args[43] = imageService
-    args[44] = obsidianService
-    args[45] = nativeClientCoordinator
-    args[41] = nativeTerminalManager
-    if (applicationSettingsStore) args[15] = applicationSettingsStore
+    args[42] = imageService
+    args[43] = obsidianService
+    args[44] = nativeClientCoordinator
+    args[40] = nativeTerminalManager
+    if (applicationSettingsStore) args[14] = applicationSettingsStore
     runtimeFactoryMocks.createModelProfileRuntime.mockReturnValue(runtime)
     const dispose = registerIpcHandlers(...args)
     return {
-      approvalBroker,
       assistantDatabase,
       contextManager,
       dispose,
@@ -5724,7 +5689,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         if (status === 'failed') throw new Error('Runtime failed')
         yield { requestId: request.requestId, type: 'done' }
       }
-    }, undefined, 'always', undefined, false, undefined, undefined, undefined, false,
+    }, undefined, undefined, false, undefined, undefined, undefined, false,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, store)
     try {
       for (preference of ['default', false, true, 'unreadable'] as const) {
@@ -5735,12 +5700,12 @@ describe('registerIpcHandlers agent terminal state', () => {
           await expect(channelMocks.executor!({
             channel: 'wecom', eventId: crypto.randomUUID(), senderId: 'user-1',
             conversationId: 'conversation-1', conversationType: 'direct',
-            text: 'Read only', mentioned: false, workMode: 'ask'
+            text: 'Read only', mentioned: false
           }, new AbortController().signal)).resolves.toMatchObject({ status })
         } else {
           const requestId = crypto.randomUUID()
           await harness.handler!(trustedEvent(harness.webContents), {
-            requestId, conversationId: crypto.randomUUID(), prompt: 'Read only', workMode: 'ask'
+            requestId, conversationId: crypto.randomUUID(), prompt: 'Read only'
           })
           await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(
             ipcChannels.agentEvent, expect.objectContaining({ requestId, type: status === 'completed' ? 'done' : 'error' })
@@ -5774,7 +5739,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         run: vi.fn()
       },
       undefined,
-      'always',
       undefined,
       false,
       selectedRuntimes
@@ -5801,7 +5765,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     projectId,
     runtimeSelection: { provider: 'opencode' as const },
     prompt: 'continue on Agent',
-    workMode: 'execute' as const,
     knowledgeLibraryIds: []
   })
 
@@ -5825,11 +5788,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       yield { type: 'done' as const, requestId: request.requestId }
     })
     const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: true, run },
-      undefined, 'always', undefined, false, undefined, undefined, undefined, false,
+      undefined, undefined, false, undefined, undefined, undefined, false,
       undefined, undefined, undefined, undefined, database)
     try {
       const event = trustedEvent(harness.webContents)
-      await harness.handler!(event, { requestId, conversationId, projectId, prompt: 'Run', workMode: 'ask' })
+      await harness.handler!(event, { requestId, conversationId, projectId, prompt: 'Run' })
       await ready
       now += 5000
       const read = () => electronMocks.handlers.get(ipcChannels.tasksExecutionStats)!(event, { conversationId })
@@ -5887,12 +5850,12 @@ describe('registerIpcHandlers agent terminal state', () => {
       yield { type: 'done' as const, requestId }
     })
     const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: true, run, respondToQuestion },
-      undefined, 'always', undefined, false, undefined, undefined, undefined, false,
+      undefined, undefined, false, undefined, undefined, undefined, false,
       undefined, undefined, undefined, undefined, database)
     const read = () => database.getExecutionStats({ conversationId })
     try {
       const event = trustedEvent(harness.webContents)
-      await harness.handler!(event, { requestId, conversationId, projectId, prompt: 'Ask me', workMode: 'ask' })
+      await harness.handler!(event, { requestId, conversationId, projectId, prompt: 'Ask me' })
       await ready.promise
       expect(database.getTask(requestId).status).toBe('waiting_approval')
       now += 60_000
@@ -5927,13 +5890,13 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   })
 
-  it('binds the production image service before text dispatch and routes regenerate, Ask rejection, and deletion through IPC', async () => {
+  it('binds the production image service and routes regeneration and deletion through IPC', async () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
     const conversationId = crypto.randomUUID()
     const userId = crypto.randomUUID()
     const messageId = crypto.randomUUID()
-    const header = { id: conversationId, title: 'Image IPC', updatedAt: Date.now(), workMode: 'execute' as const }
+    const header = { id: conversationId, title: 'Image IPC', updatedAt: Date.now() }
     database.saveLocalConversations([{ header, messages: [] }])
     const profile = { id: crypto.randomUUID(), name: 'Image model', modelName: 'image-test', protocol: 'openai-images-generations',
       baseUrl: 'https://image.test/v1', authentication: 'none' as const, allowConversationInvocation: true }
@@ -5948,12 +5911,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       yield { type: 'done' as const, requestId: request.requestId }
     })
     const harness = createHarness({ runtimeId: 'model', capability: 'text', supportsToolExecution: true, run },
-      undefined, 'always', undefined, false, undefined, undefined, undefined, false, undefined, undefined, undefined, service, database)
+      undefined, undefined, false, undefined, undefined, undefined, false, undefined, undefined, undefined, service, database)
     const event = trustedEvent(harness.webContents)
     try {
       const requestId = crypto.randomUUID()
-      await harness.handler!(event, { requestId, conversationId, prompt: 'Draw a circle', workMode: 'execute',
-        currentUserMessageId: userId, currentAssistantMessageId: messageId })
+      await harness.handler!(event, { requestId, conversationId, prompt: 'Draw a circle', currentUserMessageId: userId, currentAssistantMessageId: messageId })
       await vi.waitFor(() => expect(database.getTask(requestId).status).toBe('completed'))
       const original = database.getConversation(conversationId).messages[1]!.imageOperations![0]!
       expect(database.getArtifact(original.artifactIds[0]!).content).toContain('iVBORw0KGgo=')
@@ -5966,9 +5928,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       // Regeneration keeps the originating task so its usage satisfies the task foreign key.
       expect(regenerated.requestId).toBe(original.requestId)
       expect(regenerated.callId).not.toBe(original.callId)
-      expect(fetcher).toHaveBeenCalledTimes(2)
-      database.saveLocalConversations([{ header: { ...header, workMode: 'ask' }, messages: [] }])
-      await expect(regenerate(event, { conversationId, operationId: original.id })).rejects.toThrow('Execute')
       expect(fetcher).toHaveBeenCalledTimes(2)
       const cancelConversation = vi.spyOn(service, 'cancelConversation')
       await electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, conversationId)
@@ -5997,12 +5956,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       yield { type: 'done' as const, requestId: request.requestId }
     })
     const harness = createHarness({ runtimeId: 'model', capability: 'text', supportsToolExecution: true, run },
-      undefined, 'always', undefined, false, undefined, undefined, undefined, false, undefined, undefined, undefined, service, database)
+      undefined, undefined, false, undefined, undefined, undefined, false, undefined, undefined, undefined, service, database)
     harness.contextManager.enrichRequest.mockImplementation(request => ({ ...request, images: [{ name: 'Upload', mediaType: 'image/png', data: 'iVBORw0KGgo=' }] }))
     try {
       const requestId = crypto.randomUUID()
-      await harness.handler!(trustedEvent(harness.webContents), { requestId, conversationId, prompt: 'Turn it red', workMode: 'execute',
-        currentUserMessageId: userId, currentAssistantMessageId: crypto.randomUUID() })
+      await harness.handler!(trustedEvent(harness.webContents), { requestId, conversationId, prompt: 'Turn it red', currentUserMessageId: userId, currentAssistantMessageId: crypto.randomUUID() })
       await vi.waitFor(() => expect(database.getTask(requestId).status).toBe('completed'))
       expect(run).toHaveBeenCalledOnce()
     } finally { await harness.dispose(); await service.dispose(); database.close() }
@@ -6032,8 +5990,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     try {
       await harness.handler!(trustedEvent(harness.webContents), {
         requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(),
-        prompt: '把圆改成蓝色', imageContextArtifactIds: [artifactId],
-        workMode: 'ask'
+        prompt: '把圆改成蓝色', imageContextArtifactIds: [artifactId]
       })
       await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus)
         .toHaveBeenCalledWith(expect.any(String), 'completed'))
@@ -6049,7 +6006,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   })
 
-  it('defaults custom scheduled Tasks to Execute', async () => {
+  it('creates custom scheduled tasks without mode metadata', async () => {
     const harness = createHarness({
       runtimeId: 'continue',
       capability: 'chat',
@@ -6076,8 +6033,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(
       harness.assistantDatabase.createSchedule
     ).toHaveBeenCalledWith({
-      ...createInput,
-      workMode: 'execute'
+      ...createInput
     })
     await harness.dispose()
   })
@@ -6098,7 +6054,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const collect = vi.spyOn(database, 'buildHeartbeatInput')
     const queueSchedules = vi.spyOn(database, 'queueDueSchedules')
     const run = vi.fn()
-    const harness = createHarness({ capability: 'chat', run }, undefined, 'always', undefined, false,
+    const harness = createHarness({ capability: 'chat', run }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database, enabled)
     try {
       await vi.advanceTimersByTimeAsync(60_000)
@@ -6140,7 +6096,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         { summary: 'Review', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
       yield { type: 'done' as const, requestId: request.requestId }
     })
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, 'always', undefined, false,
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     try {
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorOrganizeTimeoutSeconds: 600 })
@@ -6193,7 +6149,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       inputSignal.throwIfAborted()
       yield { type: 'done' as const, requestId: request.requestId }
     })
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, 'always', undefined, false,
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     try {
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorOrganizeTimeoutSeconds: 30 })
@@ -6228,7 +6184,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       inputSignal.throwIfAborted()
       yield { type: 'done' as const, requestId: request.requestId }
     })
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, 'always', undefined, false,
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     try {
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
@@ -6257,7 +6213,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const claimDue = vi.spyOn(database, 'claimDueHeartbeats')
     const collect = vi.spyOn(database, 'buildHeartbeatInput')
     const run = vi.fn()
-    const harness = createHarness({ capability: 'chat', run }, undefined, 'always', undefined, false,
+    const harness = createHarness({ capability: 'chat', run }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database, true)
     try {
       await vi.advanceTimersByTimeAsync(60_000)
@@ -6287,7 +6243,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify(output) }
       yield { type: 'done' as const, requestId: request.requestId }
     })
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, 'always', undefined, false,
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     try {
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
@@ -6329,7 +6285,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         { summary: 'Review', changeDigest: '', openItems: ['Decide the page size'], events: [], entities: [], entityChanges: [], relations: [] }) }
       yield { type: 'done' as const, requestId: request.requestId }
     })
-    const harness = createHarness({ capability: 'chat', run }, undefined, 'always', undefined, false,
+    const harness = createHarness({ capability: 'chat', run }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database, false)
     try {
       await vi.advanceTimersByTimeAsync(0)
@@ -6373,7 +6329,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       yield { type: 'done' as const, requestId: _input.requestId }
     })
     const releaseConversation = vi.fn(async () => { cleaning(); await cleanup })
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, 'always', undefined, false,
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     try {
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
@@ -6411,7 +6367,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       stop: vi.fn(async () => {}),
       closeOwner: vi.fn(async () => {})
     }
-    const harness = createHarness({}, undefined, 'always', undefined, false, undefined,
+    const harness = createHarness({}, undefined, undefined, false, undefined,
       undefined, undefined, false, undefined, undefined, undefined, undefined, undefined, false, undefined, coordinator)
     const event = trustedEvent(harness.webContents)
     const input = { conversationId: '00000000-0000-4000-8000-000000000401' }
@@ -6458,7 +6414,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       yield { type: 'done' as const, requestId: input.requestId }
     })
     const releaseConversation = vi.fn(async () => undefined)
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, 'always', undefined, false,
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     try {
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, supervisorModelConcurrency: 1,
@@ -6517,7 +6473,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         ]
       }
     })
-    const harness = createHarness({}, undefined, 'always', undefined, false, undefined, undefined, undefined,
+    const harness = createHarness({}, undefined, undefined, false, undefined, undefined, undefined,
       false, undefined, undefined, undefined, undefined, database)
     try {
       const resultId = database.listSupervisionResults()[0]!.id
@@ -6560,7 +6516,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const now = Date.now()
     database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'Review', updatedAt: now },
       messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'A saved decision', createdAt: now }] }])
-    const harness = createHarness({ runtimeId: 'opencode', capability: 'chat', run: vi.fn() }, undefined, 'always', undefined, false,
+    const harness = createHarness({ runtimeId: 'opencode', capability: 'chat', run: vi.fn() }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     const actual = await vi.importActual<typeof import('./agent/create-runtime')>('./agent/create-runtime')
     runtimeFactoryMocks.createModelProfileRuntime.mockImplementation(actual.createModelProfileRuntime)
@@ -6598,12 +6554,12 @@ describe('registerIpcHandlers agent terminal state', () => {
   it('requires a directory through project creation IPC while preserving blank-path updates', async () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
-    const harness = createHarness({}, undefined, 'always', undefined, false, undefined, undefined, undefined,
+    const harness = createHarness({}, undefined, undefined, false, undefined, undefined, undefined,
       false, undefined, undefined, undefined, undefined, database)
     try {
       const event = trustedEvent(harness.webContents)
       const create = electronMocks.handlers.get(ipcChannels.projectsCreate)!
-      const input = { name: 'Directory project', description: '', rootPath: '', defaultWorkMode: 'ask' as const }
+      const input = { name: 'Directory project', description: '', rootPath: '' }
       const initialCount = database.listProjects().length
       for (const rootPath of ['', '   ']) {
         expect(() => create(event, { ...input, rootPath })).toThrow()
@@ -6627,20 +6583,20 @@ describe('registerIpcHandlers agent terminal state', () => {
     vi.setSystemTime(new Date('2026-09-22T08:00:00.000Z'))
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
-    const project = database.createProject({ name: 'Review', description: '', rootPath: process.cwd(), defaultWorkMode: 'ask' })
+    const project = database.createProject({ name: 'Review', description: '', rootPath: process.cwd() })
     const conversationId = crypto.randomUUID()
     const from = '2026-09-22T10:00:00.000Z'
     const to = '2026-09-22T10:15:00.000Z'
     const after = '2026-09-22T10:15:00.001Z'
-    const oldTask = database.createTask({ id: crypto.randomUUID(), projectId: project.id, title: 'Old completed task', instructions: 'Review', workMode: 'ask' })
+    const oldTask = database.createTask({ id: crypto.randomUUID(), projectId: project.id, title: 'Old completed task', instructions: 'Review' })
     const memory = database.createMemory({ scope: 'global', type: 'fact', content: 'Current background content' })
     vi.setSystemTime(new Date(from))
-    const newTask = database.createTask({ id: crypto.randomUUID(), projectId: project.id, title: 'Created in range', instructions: 'Review', workMode: 'ask' })
+    const newTask = database.createTask({ id: crypto.randomUUID(), projectId: project.id, title: 'Created in range', instructions: 'Review' })
     vi.setSystemTime(new Date(to))
     database.updateTaskStatus(oldTask.id, 'completed')
     vi.setSystemTime(new Date(after))
     database.updateTaskStatus(newTask.id, 'completed')
-    database.createTask({ id: crypto.randomUUID(), projectId: project.id, title: 'Future task', instructions: 'Review', workMode: 'ask' })
+    database.createTask({ id: crypto.randomUUID(), projectId: project.id, title: 'Future task', instructions: 'Review' })
     database.setMemoryStatus(memory.id, 'confirmed')
     const message = (content: string, timestamp: string) => ({ id: crypto.randomUUID(), role: 'user' as const, state: 'complete' as const, content, createdAt: Date.parse(timestamp) })
     database.saveLocalConversations([{
@@ -6656,7 +6612,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       yield { type: 'done' as const, requestId: request.requestId }
     })
     vi.setSystemTime(new Date('2026-09-23T12:00:00.000Z'))
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, 'always', undefined, false, undefined, undefined, undefined,
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, undefined, false, undefined, undefined, undefined,
       false, undefined, undefined, undefined, undefined, database)
     try {
       const scope = kind === 'global' ? { kind } : { kind, projectIds: [project.id] }
@@ -6726,7 +6682,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       }
       yield { type: 'done' as const, requestId: request.requestId }
     })
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, 'always', undefined, false,
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, undefined, false,
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     try {
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true, heartbeatReportTimeoutSeconds: 60, supervisorOrganizeTimeoutSeconds: configuredTimeout })
@@ -6765,7 +6721,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify({ summary: 'Atlas reviewed', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
       yield { type: 'done' as const, requestId: request.requestId }
     })
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, 'always', undefined, false, undefined, undefined, undefined,
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, undefined, false, undefined, undefined, undefined,
       false, undefined, undefined, undefined, undefined, database)
     try {
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
@@ -6796,8 +6752,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
     const conversationId = crypto.randomUUID()
-    database.saveLocalConversations([{ header: { id: conversationId, title: 'Continue', updatedAt: Date.now(), workMode: 'ask', runtimeSelection: { provider: 'opencode' } }, messages: [] }])
-    const harness = createHarness({ capability: 'chat' }, undefined, 'always', undefined, false, undefined, undefined, undefined,
+    database.saveLocalConversations([{ header: { id: conversationId, title: 'Continue', updatedAt: Date.now(), runtimeSelection: { provider: 'opencode' } }, messages: [] }])
+    const harness = createHarness({ capability: 'chat' }, undefined, undefined, false, undefined, undefined, undefined,
       false, undefined, undefined, undefined, undefined, database)
     try {
       await electronMocks.handlers.get(ipcChannels.supervisionContinue)!(trustedEvent(harness.webContents), { conversationId, prompt: 'Continue this review' })
@@ -6815,7 +6771,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const library = database.createKnowledgeBase({ name: 'Target', storageMode: 'reference' })
     const other = database.createKnowledgeBase({ name: 'Other', storageMode: 'reference' })
     const entity = database.createEntity({ knowledgeBaseId: other.id, name: 'Original', type: 'Concept' })
-    const harness = createHarness({ capability: 'chat' }, undefined, 'always', undefined, false, undefined, { database })
+    const harness = createHarness({ capability: 'chat' }, undefined, undefined, false, undefined, { database })
     Object.assign(harness.assistantDatabase, { getSupervisionSource: () => ({ id: 'source', title: 'Source', content: 'Evidence' }) })
     const event = trustedEvent(harness.webContents)
     const preview = electronMocks.handlers.get(ipcChannels.supervisionKnowledgePreview)!
@@ -6855,7 +6811,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     let timingNow = Date.now()
     const timingClock = vi.spyOn(Date, 'now').mockImplementation(() => timingNow)
     database.saveLocalConversations([{
-      header: { id: conversationId, title: 'Immediate', updatedAt: Date.now(), workMode: 'ask' },
+      header: { id: conversationId, title: 'Immediate', updatedAt: Date.now() },
       messages: []
     }])
     const run = vi.fn(async function* (request: AgentExecutionRequest) {
@@ -6869,7 +6825,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     })
     const harness = createHarness(
       { runtimeId: 'model', capability: 'chat', supportsToolExecution: true, run },
-      undefined, 'always', undefined, false, undefined, undefined, undefined,
+      undefined, undefined, false, undefined, undefined, undefined,
       false, undefined, undefined, undefined, undefined, database
     )
     const event = trustedEvent(harness.webContents)
@@ -6896,7 +6852,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         conversationId,
         queueItemId: dispatch.item.id,
         prompt: input.prompt,
-        workMode: 'ask',
         currentUserMessageId: crypto.randomUUID(),
         currentAssistantMessageId: crypto.randomUUID()
       })
@@ -6928,7 +6883,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       capability: 'chat',
       supportsToolExecution: true,
       async *run(
-        request: { requestId: string; history?: unknown; workMode?: string },
+        request: { requestId: string; history?: unknown },
         _signal: AbortSignal,
         authorize: (
           input: {
@@ -6940,12 +6895,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       ) {
         expect(request.requestId).toBe(runId)
         expect(request.history).toEqual([{ role: 'user', content: 'Earlier conversation' }])
-        expect(request.workMode).toBe('execute')
-        expect(await authorize({
-          scopeKey: 'workspace.write',
-          title: '写入工作区',
-          description: '更新状态文件'
-        })).toBe('once')
+        expect(request).not.toHaveProperty('workMode')
+        expect(authorize).toBeUndefined()
+        yield { requestId: request.requestId, type: 'tool', callId: 'scheduled-write',
+          name: 'workspace.write', state: 'completed', summary: 'Updated status file' } as const
         yield {
           requestId: request.requestId,
           type: 'text',
@@ -6967,7 +6920,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       conversationId,
       title: '每日状态',
       prompt: '汇总状态',
-      workMode: 'execute' as const,
       recurrence: 'daily' as const,
       nextRunAt: '2026-08-20T00:00:00.000Z',
       enabled: true,
@@ -6997,7 +6949,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       schedule,
       runId
     })
-    harness.approvalBroker.request.mockResolvedValue('once')
 
     await electronMocks.handlers.get(
       ipcChannels.schedulesRunNow
@@ -7011,8 +6962,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       } })
     await harness.handler?.(trustedEvent(harness.webContents), {
       requestId: runId, conversationId, queueItemId: queueItem.id,
-      prompt: schedule.prompt, workMode: 'execute',
-      history: [{ role: 'user', content: 'Earlier conversation' }]
+      prompt: schedule.prompt, history: [{ role: 'user', content: 'Earlier conversation' }]
     })
     await vi.waitFor(() =>
       expect(
@@ -7022,7 +6972,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(
       harness.assistantDatabase.updateTaskStatus
     ).toHaveBeenCalledWith(taskId, 'running')
-    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
     expect(
       harness.assistantDatabase.appendConversationMessage
     ).not.toHaveBeenCalled()
@@ -7080,7 +7029,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       conversationId,
       title: '后台提问测试',
       prompt: '执行任务',
-      workMode: 'execute' as const,
       recurrence: 'daily' as const,
       nextRunAt: '2026-08-20T00:00:00.000Z',
       enabled: true,
@@ -7117,7 +7065,7 @@ describe('registerIpcHandlers agent terminal state', () => {
 
     await harness.handler?.(trustedEvent(harness.webContents), {
       requestId: runId, conversationId, queueItemId: queueItem.id,
-      prompt: schedule.prompt, workMode: 'execute'
+      prompt: schedule.prompt
     })
     await vi.waitFor(() =>
       expect(
@@ -7159,7 +7107,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId: '00000000-0000-4000-8000-000000000722',
         conversationId,
         prompt: '第一条',
-        workMode: 'ask',
         knowledgeLibraryIds: []
       }
     )
@@ -7170,7 +7117,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId: '00000000-0000-4000-8000-000000000723',
         conversationId,
         prompt: '第二条',
-        workMode: 'ask',
         knowledgeLibraryIds: []
       })
     ).rejects.toThrow('当前对话已有执行中的请求')
@@ -7191,7 +7137,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId: '00000000-0000-4000-8000-000000000724',
         conversationId,
         prompt: '第三条',
-        workMode: 'ask',
         knowledgeLibraryIds: []
       })
     ).resolves.toBeUndefined()
@@ -7255,7 +7200,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -7275,7 +7219,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: oldConversationId,
       prompt: '旧请求',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
@@ -7294,7 +7237,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: newConversationId,
       prompt: '替换请求',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })).rejects.toThrow('请求正在执行')
 
@@ -7312,7 +7254,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: newConversationId,
       prompt: '替换请求',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
@@ -7325,7 +7266,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId: '00000000-0000-4000-8000-000000000744',
         conversationId: newConversationId,
         prompt: '不能并发',
-        workMode: 'ask',
         knowledgeLibraryIds: []
       })
     ).rejects.toThrow('当前对话已有执行中的请求')
@@ -7347,7 +7287,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: newConversationId,
       prompt: '清理后重试',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
@@ -7360,6 +7299,69 @@ describe('registerIpcHandlers agent terminal state', () => {
       ).toHaveBeenCalledWith(requestId, 'completed')
     )
     await harness.dispose()
+  })
+
+  it.each([false, true])('owns a dedicated tool-free synthesis runtime and disposes it on failure=%s', async (fail) => {
+    const actual = await vi.importActual<typeof import('./agent/create-runtime')>('./agent/create-runtime')
+    runtimeFactoryMocks.createDefaultModelRuntime.mockImplementation(actual.createDefaultModelRuntime)
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body))
+      expect(body.tools).toBeUndefined()
+      expect(body.tool_choice).toBeUndefined()
+      return new Response('data: {"choices":[{"delta":{"content":"Combined answer"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { headers: { 'content-type': 'text/event-stream' } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    let disposeSynthesis: ReturnType<typeof vi.spyOn> | undefined
+    const subagents = {
+      run: vi.fn<SubagentService['run']>(async () => ({ childTaskId: crypto.randomUUID(), output: 'Specialist result' })),
+      synthesize: vi.fn(async (...args: Parameters<SubagentService['synthesize']>) => {
+        const [request, prompt, signal, synthesisRuntime, onModelUsage] = args
+        expect(prompt).toContain('Specialist result')
+        disposeSynthesis = vi.spyOn(synthesisRuntime, 'dispose')
+        const events = []
+        for await (const event of synthesisRuntime.run({ ...request, prompt }, signal)) events.push(event)
+        expect(events).toContainEqual(expect.objectContaining({ type: 'text', delta: 'Combined answer' }))
+        expect(events).toContainEqual(expect.objectContaining({ type: 'done' }))
+        onModelUsage!({ requestId: args[0].requestId, type: 'model-usage', callId: 'synthesis-usage',
+          runtime: 'model', provider: 'openai', model: 'test-model', inputTokens: 10, outputTokens: 5,
+          cacheReadTokens: 0, cacheWriteTokens: 0 })
+        if (fail) throw new Error('Synthesis failed')
+        return 'Combined answer'
+      }),
+      dispose: vi.fn(async () => undefined)
+    }
+    const runtime = { runtimeId: 'model', capability: 'chat', supportsToolExecution: true, run: vi.fn() }
+    const harness = createHarness(runtime, undefined, subagents)
+    const settings = { ...runtimeUpdateFixture(process.cwd()).publicSettings, modelAuthentication: 'none' as const }
+    harness.getResolvedSettings.mockResolvedValue(settings)
+    harness.assistantDatabase.listExperts.mockReturnValue([
+      { id: crypto.randomUUID(), name: 'First', enabled: true },
+      { id: crypto.randomUUID(), name: 'Second', enabled: true }
+    ])
+    const requestId = crypto.randomUUID()
+    try {
+      await harness.handler!(trustedEvent(harness.webContents), {
+        requestId, conversationId: 'synthesis-test', prompt: 'Compare the analyses', teamMode: true
+      })
+      await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId, fail ? 'failed' : 'completed', ...(fail ? ['Synthesis failed'] : [])))
+      expect(subagents.run).toHaveBeenCalledTimes(2)
+      for (const [input] of subagents.run.mock.calls) {
+        expect(input).not.toHaveProperty('authorize')
+      }
+      expect(runtime.run).not.toHaveBeenCalled()
+      expect(runtimeFactoryMocks.createDefaultModelRuntime).toHaveBeenCalledExactlyOnceWith(process.cwd(), settings)
+      expect(subagents.synthesize).toHaveBeenCalledOnce()
+      expect(fetcher).toHaveBeenCalledOnce()
+      expect(harness.assistantDatabase.upsertModelUsageCall).toHaveBeenCalledWith(
+        expect.objectContaining({ callId: 'synthesis-usage' }))
+      expect(disposeSynthesis).toHaveBeenCalledOnce()
+    } finally {
+      await harness.dispose()
+      runtimeFactoryMocks.createDefaultModelRuntime.mockReset()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('cancels only an expert-team parent on settings replacement without synthesizing on the replacement model', async () => {
@@ -7384,7 +7386,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         yield { requestId: request.requestId, type: 'done' as const }
       }
     }
-    const harness = createHarness(runtime, undefined, 'always', subagents)
+    const harness = createHarness(runtime, undefined, subagents)
     harness.assistantDatabase.listExperts.mockReturnValue([
       { id: '00000000-0000-4000-8000-000000000781', name: 'First', enabled: true },
       { id: '00000000-0000-4000-8000-000000000782', name: 'Second', enabled: true }
@@ -7397,12 +7399,12 @@ describe('registerIpcHandlers agent terminal state', () => {
     try {
       await harness.handler?.(event, {
         requestId: teamId, conversationId: 'expert-team',
-        prompt: 'Analyze with the team', teamMode: true, workMode: 'ask', knowledgeLibraryIds: []
+        prompt: 'Analyze with the team', teamMode: true, knowledgeLibraryIds: []
       })
       await vi.waitFor(() => expect(subagents.run).toHaveBeenCalledTimes(2))
       await harness.handler?.(event, {
         requestId: '00000000-0000-4000-8000-000000000784', conversationId: 'ordinary-peer',
-        prompt: 'Keep working', workMode: 'ask', knowledgeLibraryIds: []
+        prompt: 'Keep working', knowledgeLibraryIds: []
       })
       await vi.waitFor(() => expect(peerSignal).toBeDefined())
       await electronMocks.handlers.get(ipcChannels.runtimeCustomizationUpdate)!(event, {
@@ -7455,7 +7457,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       remoteRuntime,
       undefined,
-      'always',
       undefined,
       false,
       selectedRuntimes
@@ -7479,7 +7480,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         projectId,
         runtimeSelection: { provider: 'opencode' },
         prompt: 'continue on Agent',
-        workMode: 'execute',
         knowledgeLibraryIds: []
       }
     )
@@ -7565,7 +7565,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('advertises read-only workspace and delegation tools in the production Ask instruction', async () => {
+  it('advertises workspace and delegation tools in the capability instruction', async () => {
     const received: string[] = []
     const runtime = {
       runtimeId: 'model', capability: 'chat', supportsToolExecution: true,
@@ -7577,7 +7577,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(runtime)
     const requestId = '00000000-0000-4000-8000-000000000794'
     await harness.handler?.(trustedEvent(harness.webContents), {
-      requestId, conversationId: 'ask-workspace', prompt: 'Read the source', workMode: 'ask'
+      requestId, conversationId: 'ask-workspace', prompt: 'Read the source'
     })
     await vi.waitFor(() => expect(received).toHaveLength(1))
     for (const name of ['workspace_rg', 'workspace_read_text', 'output_read', 'subagent_delegate']) {
@@ -8205,7 +8205,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         currentUserMessageId: userMessageId,
         currentAssistantMessageId: assistantMessageId,
         instructions: 'continue remotely',
-        workMode: 'execute',
         status: 'running'
       }
     ])
@@ -8288,7 +8287,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize('C:\\Workspace')
     const project = database.createSshProject({
-      project: { name: 'Partial terminal', description: '', rootPath: '/srv/project', defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' } },
+      project: { name: 'Partial terminal', description: '', rootPath: '/srv/project', runtimeSelection: { provider: 'opencode' } },
       executionSpace: { kind: 'ssh', hostId: '00000000-0000-4000-8000-000000000850', remoteRootPath: '/srv/project' },
       assertCurrent: () => {}
     })
@@ -8299,8 +8298,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       header: { id: conversationId, projectId: project.id, title: 'Partial terminal', updatedAt: 0 }, messages: []
     }])
     database.createTask({
-      id: taskId, projectId: project.id, conversationId, title: 'Partial terminal', instructions: 'Read', workMode: 'execute',
-      remoteRecovery: { recoverable: true, currentUserMessageId: '00000000-0000-4000-8000-000000000854', currentAssistantMessageId: assistantMessageId }
+      id: taskId, projectId: project.id, conversationId, title: 'Partial terminal', instructions: 'Read', remoteRecovery: { recoverable: true, currentUserMessageId: '00000000-0000-4000-8000-000000000854', currentAssistantMessageId: assistantMessageId }
     })
     const append = (semanticSequence: string, eventIndex: number, event: Parameters<AssistantDatabase['appendRemoteConversationTaskEventOnce']>[0]['event']) =>
       database.appendRemoteConversationTaskEventOnce({
@@ -8369,7 +8367,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const project = database.createSshProject({
       project: {
         name: 'Recovered questions', description: '', rootPath: '/srv/project',
-        defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' }
+        runtimeSelection: { provider: 'opencode' }
       },
       executionSpace: {
         kind: 'ssh', hostId: '00000000-0000-4000-8000-000000000850',
@@ -8381,8 +8379,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const tasks = [1, 2].map(n => ({
       taskId: id(810 + n), conversationId: id(820 + n), projectId: project.id,
       currentUserMessageId: id(830 + n), currentAssistantMessageId: id(840 + n),
-      instructions: 'Original question', workMode: 'execute' as const,
-      status: 'running' as const
+      instructions: 'Original question', status: 'running' as const
     }))
     for (const task of tasks) {
       database.saveLocalConversations([{
@@ -8394,8 +8391,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       }])
       database.createTask({
         id: task.taskId, conversationId: task.conversationId, projectId: project.id,
-        title: 'Recovered question', instructions: task.instructions, workMode: task.workMode,
-        remoteRecovery: {
+        title: 'Recovered question', instructions: task.instructions, remoteRecovery: {
           recoverable: true, currentUserMessageId: task.currentUserMessageId,
           currentAssistantMessageId: task.currentAssistantMessageId
         }
@@ -8470,7 +8466,6 @@ describe('registerIpcHandlers agent terminal state', () => {
           : [ipcChannels.capabilitiesToggleWebSearch, false] as const
       await electronMocks.handlers.get(update[0])!(event, update[1])
       expect(signals.every(signal => !signal.aborted)).toBe(true)
-      expect(harness.approvalBroker.clear).not.toHaveBeenCalled()
       for (const [index, task] of [...tasks].reverse().entries()) {
         const snapshot = list().find(c => c.id === task.conversationId)!
         expect(snapshot.activeRequest).toMatchObject({
@@ -8548,7 +8543,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'local-shutdown-conversation',
       prompt: 'local work',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() => expect(localSignal).toBeDefined())
@@ -8621,7 +8615,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       remoteRuntime,
       undefined,
-      'always',
       undefined,
       false,
       selectedRuntimes
@@ -8643,7 +8636,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       projectId,
       runtimeSelection: { provider: 'opencode' },
       prompt: 'stop this',
-      workMode: 'execute',
       knowledgeLibraryIds: [],
       currentUserMessageId:
         '00000000-0000-4000-8000-000000000758',
@@ -8695,7 +8687,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       remoteRuntime,
       undefined,
-      'always',
       undefined,
       false,
       selectedRuntimes
@@ -8718,7 +8709,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       projectId,
       runtimeSelection: { provider: 'opencode' },
       prompt: 'start once',
-      workMode: 'execute',
       knowledgeLibraryIds: [],
       currentUserMessageId:
         '00000000-0000-4000-8000-000000000763',
@@ -8762,7 +8752,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       selectedRuntimes
@@ -8776,7 +8765,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         conversationId,
         runtimeSelection: { provider: 'model' },
         prompt: '等待 Runtime',
-        workMode: 'ask',
         knowledgeLibraryIds: []
       }
     )
@@ -8790,7 +8778,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         conversationId,
         runtimeSelection: { provider: 'model' },
         prompt: '不能并发',
-        workMode: 'ask',
         knowledgeLibraryIds: []
       })
     ).rejects.toThrow('当前对话已有执行中的请求')
@@ -8848,7 +8835,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const input = {
       conversationId,
       runtimeSelection: { provider: 'model' as const },
-      workMode: 'ask' as const,
       includeMemoryContext: true,
       prompt: item.label,
       attachments: [],
@@ -8871,7 +8857,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId: '00000000-0000-4000-8000-000000000727',
       conversationId,
       prompt: '当前回复',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() => expect(runtimeStarted).toHaveBeenCalled())
@@ -8900,7 +8885,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     try {
       await expect(electronMocks.handlers.get(ipcChannels.conversationQueueEnqueueUser)?.(trustedEvent(harness.webContents), {
         conversationId: '00000000-0000-4000-8000-000000000731',
-        workMode: 'ask', prompt: 'Read the picture',
+        prompt: 'Read the picture',
         attachments: [{ id: '00000000-0000-4000-8000-000000000734', name: 'image.png', size: 10, preview: '', kind: 'image' }],
         knowledgeLibraryIds: [], knowledgeRetrievalMode: 'auto'
       })).rejects.toThrow('图片输入')
@@ -8930,7 +8915,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const input = {
       conversationId,
       runtimeSelection: { provider: 'model' as const },
-      workMode: 'ask' as const,
       includeMemoryContext: true,
       prompt: '排队发送',
       attachments: [
@@ -8997,7 +8981,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       queueItemId: itemId,
       runtimeSelection: input.runtimeSelection,
       prompt: input.prompt,
-      workMode: input.workMode,
       knowledgeLibraryIds: []
     })
 
@@ -9035,7 +9018,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const input = {
       conversationId,
       runtimeSelection: { provider: 'model' as const },
-      workMode: 'ask' as const,
       includeMemoryContext: true,
       prompt: '需要重新排队',
       attachments: [],
@@ -9089,7 +9071,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         queueItemId: itemId,
         runtimeSelection: input.runtimeSelection,
         prompt: input.prompt,
-        workMode: input.workMode,
         knowledgeLibraryIds: []
       })
     ).rejects.toThrow('会话记录不可用')
@@ -9102,7 +9083,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       conversationId,
       runtimeSelection: { provider: 'model' },
       prompt: '失败后的新消息',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await harness.dispose()
@@ -9130,7 +9110,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       const input = {
         conversationId,
         runtimeSelection: { provider: 'model' as const },
-        workMode: 'ask' as const,
         includeMemoryContext: true,
         prompt,
         attachments: [],
@@ -9201,7 +9180,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       queueItemId: first.item.id,
       runtimeSelection: first.input.runtimeSelection,
       prompt: first.input.prompt,
-      workMode: first.input.workMode,
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() => expect(runtimeStarted).toHaveBeenCalled())
@@ -9259,7 +9237,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const harness = createHarness(runtime)
     harness.getResolvedSettings.mockResolvedValue({
-      toolApproval: 'always',
       subagentSmartRoutingEnabled: false,
       continueModelProfile: {
         contextWindowTokens: 32_000
@@ -9274,7 +9251,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'continue-context',
       prompt: 'report context usage',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
@@ -9336,7 +9312,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -9356,7 +9331,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId: '00000000-0000-4000-8000-000000000021',
         conversationId: 'unknown-scope',
         prompt: 'test',
-        workMode: 'ask',
         knowledgeLibraryIds: [
           '22222222-2222-4222-8222-222222222222'
         ]
@@ -9368,7 +9342,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId: '00000000-0000-4000-8000-000000000022',
       conversationId: 'empty-scope',
       prompt: 'test',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
@@ -9391,10 +9364,10 @@ describe('registerIpcHandlers agent terminal state', () => {
     })
     const retrieveMany = vi.fn(async () => [])
     const gateway = { grant: vi.fn(() => 'capability'), getAvailableToolNames: vi.fn(() => ['knowledge_search']), drainReferences: vi.fn(() => []), revoke: vi.fn() }
-    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: true, supportsScopedDataTools: true, run }, undefined, 'always', undefined, false, undefined, {
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: true, supportsScopedDataTools: true, run }, undefined, undefined, false, undefined, {
       database: { listKnowledgeBases: vi.fn(() => [{ id: libraryId, name: 'Knowledge' }]) }, retrieveMany
     }, gateway)
-    const request = { prompt: 'use saved knowledge', workMode: 'ask', knowledgeLibraryIds: [libraryId], knowledgeRetrievalMode: 'always' }
+    const request = { prompt: 'use saved knowledge', knowledgeLibraryIds: [libraryId], knowledgeRetrievalMode: 'always' }
     try {
       await harness.handler?.(trustedEvent(harness.webContents), { ...request, requestId: '00000000-0000-4000-8000-000000000021', conversationId: 'in-flight' })
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
@@ -9474,7 +9447,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         defaultModelProfileId: profileId, deepseekHarnessModelSource: { kind: 'profile', profileId }
       }))
       const project = database.createProject({ name: 'Native UI', description: '', rootPath: root,
-        defaultWorkMode: 'ask', runtimeSelection: { provider: 'deepseek-harness', model: { kind: 'profile', profileId } } })
+        runtimeSelection: { provider: 'deepseek-harness', model: { kind: 'profile', profileId } } })
       const conversationId = '00000000-0000-4000-8000-000000000222'
       const now = Date.now()
       const save = async (): Promise<string> => {
@@ -9508,7 +9481,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         createGateway: () => new KnowledgeMcpGateway({} as never),
         openExternal: async (url) => { opened.push(url) }
       })
-      harness = createHarness({}, undefined, 'always', undefined, false, undefined, undefined, undefined,
+      harness = createHarness({}, undefined, undefined, false, undefined, undefined, undefined,
         false, undefined, undefined, undefined, undefined, undefined, false, undefined, coordinator, terminalManager)
       const event = trustedEvent(harness.webContents)
       electronMocks.invoke.mockImplementation((channel: string, input: unknown) => electronMocks.handlers.get(channel)!(event, input))
@@ -9527,9 +9500,9 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(await coordinator.get(10, conversationId)).toBeNull()
       await coordinator.stop(10, handle!.serviceId)
       expect(await coordinator.get(9, conversationId)).toEqual(handle)
-      database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Native UI', updatedAt: now + 1, workMode: 'execute' }, messages: [] }])
+      database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Native UI', updatedAt: now + 1 }, messages: [] }])
       expect(await coordinator.get(9, conversationId)).toBeNull()
-      database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Native UI', updatedAt: now + 2, workMode: 'ask' }, messages: [] }])
+      database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Native UI', updatedAt: now + 2 }, messages: [] }])
       expect(await coordinator.get(9, conversationId)).toEqual(handle)
       const config = await readFile(join(root, 'clients', 'dsh', handle!.serviceId, 'cordis.patch.yml'), 'utf8')
       expect(config).toContain(selectedProfile?.modelName ?? 'native-ui-model')
@@ -9620,7 +9593,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         { isAvailable: () => true, encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() }
       )
       harness = createHarness(
-        { capability: 'chat' }, undefined, 'always', undefined, false,
+        { capability: 'chat' }, undefined, undefined, false,
         undefined, undefined, undefined, false, undefined,
         {
           getSnapshot: capabilities.getSnapshot.bind(capabilities),
@@ -9707,11 +9680,10 @@ describe('registerIpcHandlers agent terminal state', () => {
   }, 60_000)
 
   it.each([
-    { enabled: false, assigned: true, workMode: 'ask' as const, access: undefined },
-    { enabled: true, assigned: false, workMode: 'execute' as const, access: undefined },
-    { enabled: true, assigned: true, workMode: 'ask' as const, access: 'read' },
-    { enabled: true, assigned: true, workMode: 'execute' as const, access: 'write' }
-  ])('routes Obsidian request grants with saved settings: %j', async ({ enabled, assigned, workMode, access }) => {
+    { enabled: false, assigned: true, access: undefined },
+    { enabled: true, assigned: false, access: undefined },
+    { enabled: true, assigned: true, access: 'write' }
+  ])('routes Obsidian request grants with saved settings: %j', async ({ enabled, assigned, access }) => {
     const root = await mkdtemp(join(tmpdir(), 'goodbuddy-ipc-obsidian-grant-'))
     let harness: ReturnType<typeof createHarness> | undefined
     try {
@@ -9739,13 +9711,13 @@ describe('registerIpcHandlers agent terminal state', () => {
           received.push(request)
           yield { requestId: request.requestId, type: 'done' }
         }
-      }, undefined, 'always', undefined, false, undefined, undefined, gateway, false, undefined, {
+      }, undefined, undefined, false, undefined, undefined, gateway, false, undefined, {
         getEnabledBuiltinMcpServerIds: capabilities.getEnabledBuiltinMcpServerIds.bind(capabilities),
         getObsidianSettings
       })
       const requestId = '00000000-0000-4000-8000-000000000026'
       await harness.handler!(trustedEvent(harness.webContents), {
-        requestId, conversationId: 'obsidian-grant', prompt: 'List my vaults', workMode, knowledgeLibraryIds: []
+        requestId, conversationId: 'obsidian-grant', prompt: 'List my vaults', knowledgeLibraryIds: []
       })
       await vi.waitFor(() => expect(harness!.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
       expect(received).toHaveLength(1)
@@ -9775,7 +9747,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       bindRemoteStoryGraph: vi.fn(() => binding), drainReferences: vi.fn(() => []), revoke: vi.fn() }
     const harness = createHarness({ runtimeId, capability: 'chat', supportsToolExecution: true,
       async *run(request: AgentExecutionRequest) { received.push(request); yield { requestId: request.requestId, type: 'done' } }
-    }, undefined, 'always', undefined, false, undefined, undefined, gateway, false, undefined, {
+    }, undefined, undefined, false, undefined, undefined, gateway, false, undefined, {
       getEnabledBuiltinMcpServerIds: vi.fn(async () => ['story-graph'])
     })
     try {
@@ -9784,7 +9756,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: enabled })
         harness.assistantDatabase.isConversationStoryGraphEnabled.mockReturnValue(conversationEnabled!)
         const requestId = crypto.randomUUID()
-        await harness.handler!(trustedEvent(harness.webContents), { requestId, projectId, conversationId: 'graph-grant', prompt: 'Continue work', workMode: 'ask', knowledgeLibraryIds: [] })
+        await harness.handler!(trustedEvent(harness.webContents), { requestId, projectId, conversationId: 'graph-grant', prompt: 'Continue work', knowledgeLibraryIds: [] })
         await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
       }
       expect(gateway.grant).toHaveBeenCalledExactlyOnceWith(expect.any(String), [], expect.any(AbortSignal), 'none',
@@ -9796,7 +9768,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     } finally { await harness.dispose() }
   })
 
-  it('grants read-only Magic Notes tools in Ask and write tools in Execute', async () => {
+  it('grants enabled Magic Notes write tools for both reading and writing requests', async () => {
     const runtime = {
       runtimeId: 'model',
       capability: 'chat',
@@ -9807,11 +9779,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const knowledgeGateway = {
       grant: vi.fn(() => 'capability'),
-      getAvailableToolNames: vi.fn(() => {
-        const grantCallCount = knowledgeGateway.grant.mock.calls.length
-        return grantCallCount === 1
-          ? ['note_list', 'note_get', 'note_search']
-          : [
+      getAvailableToolNames: vi.fn(() => [
               'note_list',
               'note_get',
               'note_search',
@@ -9821,15 +9789,13 @@ describe('registerIpcHandlers agent terminal state', () => {
               'note_entry_update',
               'note_entry_delete',
               'note_delete'
-            ]
-      }),
+             ]),
       drainReferences: vi.fn(() => []),
       revoke: vi.fn()
     }
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -9838,46 +9804,44 @@ describe('registerIpcHandlers agent terminal state', () => {
       true
     )
     const event = trustedEvent(harness.webContents)
-    const askRequestId = '00000000-0000-4000-8000-000000000023'
-    const executeRequestId = '00000000-0000-4000-8000-000000000024'
+    const readRequestId = '00000000-0000-4000-8000-000000000023'
+    const writeRequestId = '00000000-0000-4000-8000-000000000024'
 
     await harness.handler?.(event, {
-      requestId: askRequestId,
+      requestId: readRequestId,
       conversationId: 'notes-read',
       prompt: '读取笔记',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
       expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
-        askRequestId,
+        readRequestId,
         'completed'
       )
     )
     await harness.handler?.(event, {
-      requestId: executeRequestId,
+      requestId: writeRequestId,
       conversationId: 'notes-write',
       prompt: '创建笔记',
-      workMode: 'execute',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
       expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
-        executeRequestId,
+        writeRequestId,
         'completed'
       )
     )
 
     expect(knowledgeGateway.grant).toHaveBeenNthCalledWith(
       1,
-      askRequestId,
+      readRequestId,
       [],
       expect.any(AbortSignal),
-      'read'
+      'write'
     )
     expect(knowledgeGateway.grant).toHaveBeenNthCalledWith(
       2,
-      executeRequestId,
+      writeRequestId,
       [],
       expect.any(AbortSignal),
       'write'
@@ -9906,7 +9870,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -9922,7 +9885,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'disabled-notes',
       prompt: '读取笔记',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
@@ -9937,7 +9899,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('grants the assigned built-in browser only to managed Runtime Execute', async () => {
+  it('grants the assigned built-in browser for ordinary requests', async () => {
     const receivedRequests: Array<{
       requestId: string
       knowledgeCapabilityToken?: string
@@ -9998,7 +9960,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -10010,39 +9971,43 @@ describe('registerIpcHandlers agent terminal state', () => {
       browserControl
     )
     const event = trustedEvent(harness.webContents)
-    const askRequestId = '00000000-0000-4000-8000-000000000026'
-    const executeRequestId = '00000000-0000-4000-8000-000000000027'
+    const readRequestId = '00000000-0000-4000-8000-000000000026'
+    const writeRequestId = '00000000-0000-4000-8000-000000000027'
 
     await harness.handler?.(event, {
-      requestId: askRequestId,
+      requestId: readRequestId,
       conversationId: 'browser-ask',
       prompt: '只回答',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
       expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
-        askRequestId,
+        readRequestId,
         'completed'
       )
     )
     await harness.handler?.(event, {
-      requestId: executeRequestId,
+      requestId: writeRequestId,
       conversationId: 'browser-execute',
       prompt: '打开网页',
-      workMode: 'execute',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
       expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
-        executeRequestId,
+        writeRequestId,
         'completed'
       )
     )
 
-    expect(knowledgeGateway.grant).toHaveBeenCalledOnce()
+    expect(knowledgeGateway.grant).toHaveBeenCalledTimes(2)
     expect(knowledgeGateway.grant).toHaveBeenCalledWith(
-      executeRequestId,
+      readRequestId, [], expect.any(AbortSignal), 'none', undefined,
+      'browser-ask', primaryTabId,
+      expect.objectContaining({ conversationId: 'browser-ask', tabId: primaryTabId, owner: readRequestId }),
+      undefined, undefined
+    )
+    expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+      writeRequestId,
       [],
       expect.any(AbortSignal),
       'none',
@@ -10052,10 +10017,12 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect.objectContaining({
         conversationId: 'browser-execute',
         tabId: primaryTabId,
-        owner: executeRequestId
-      })
+        owner: writeRequestId
+      }),
+      undefined,
+      undefined
     )
-    expect(receivedRequests[0]?.knowledgeCapabilityToken).toBeUndefined()
+    expect(receivedRequests[0]).toMatchObject({ knowledgeCapabilityToken: 'browser-capability', browserTabId: primaryTabId })
     expect(receivedRequests[1]).toMatchObject({
       knowledgeCapabilityToken: 'browser-capability',
       browserTabId: primaryTabId,
@@ -10069,7 +10036,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(browserControl.acquireTabUsage).toHaveBeenCalledWith(
       'browser-execute',
       primaryTabId,
-      executeRequestId,
+      writeRequestId,
       harness.webContents.id
     )
     await harness.dispose()
@@ -10121,7 +10088,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -10137,7 +10103,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'visible-browser',
       prompt: '使用当前网页',
-      workMode: 'execute',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
@@ -10204,7 +10169,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -10221,7 +10185,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId,
         conversationId: lease.conversationId,
         prompt: 'Continue after the browser tab closes',
-        workMode: 'execute',
         knowledgeLibraryIds: []
       })
       await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
@@ -10315,7 +10278,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       const harness = createHarness(
         runtime,
         undefined,
-        'always',
         undefined,
         false,
         undefined,
@@ -10332,7 +10294,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId,
         conversationId: `browser-${outcome}`,
         prompt: '使用浏览器',
-        workMode: 'execute',
         knowledgeLibraryIds: []
       })
       await started
@@ -10355,9 +10316,9 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   )
 
-  it.each(['ask', 'execute'] as const)(
-    'does not grant or advertise scoped data tools to external OpenCode in %s mode',
-    async (workMode) => {
+  it(
+    'does not grant or advertise scoped data tools to external OpenCode',
+    async () => {
     let receivedRequest:
       | {
           knowledgeCapabilityToken?: string
@@ -10387,7 +10348,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       externalOpenCode,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -10401,7 +10361,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'external-opencode',
       prompt: '读取笔记',
-      workMode,
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
@@ -10448,7 +10407,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -10461,7 +10419,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId,
         conversationId: 'later-library',
         prompt: 'search',
-        workMode: 'ask',
         knowledgeLibraryIds: [libraries[100]!.id]
       })
     ).resolves.toBeUndefined()
@@ -10513,7 +10470,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -10531,7 +10487,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'scoped',
       prompt: 'search',
-      workMode: 'ask',
       knowledgeLibraryIds: [libraryId, libraryId]
     })
     await vi.waitFor(() =>
@@ -10597,7 +10552,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'burst-stream',
       prompt: 'stream',
-      workMode: 'ask',
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() =>
@@ -10765,7 +10719,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         run
       },
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -10784,7 +10737,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'always-retrieve',
       prompt: '如何离线部署？',
-      workMode: 'ask',
       knowledgeLibraryIds: [libraryId],
       knowledgeRetrievalMode: 'always'
     })
@@ -10848,7 +10800,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         supportsToolExecution: true
       },
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -10885,7 +10836,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         supportsToolExecution: true
       },
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -10915,7 +10865,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       credentialCipher: { isAvailable: () => true, encrypt: value => Buffer.from(value), decrypt: value => value.toString() }
     })
     await service.initialize()
-    const harness = createHarness({ capability: 'chat' }, undefined, 'always', undefined, false, undefined, service as unknown as Record<string, unknown>)
+    const harness = createHarness({ capability: 'chat' }, undefined, undefined, false, undefined, service as unknown as Record<string, unknown>)
     const event = trustedEvent(harness.webContents)
     const invoke = (channel: string, input?: unknown) => electronMocks.handlers.get(channel)!(event, input)
     try {
@@ -11016,7 +10966,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       fallbackRuntime,
       undefined,
-      'always',
       undefined,
       false,
       selectedRuntimes
@@ -11057,14 +11006,12 @@ describe('registerIpcHandlers agent terminal state', () => {
         conversationId: 'conversation-one',
         projectId: '00000000-0000-4000-8000-000000000101',
         prompt: 'first request',
-        workMode: 'ask',
         runtimeSelection: firstSelection
       }),
       harness.handler?.(event, {
         requestId: '00000000-0000-4000-8000-000000000012',
         conversationId: 'conversation-two',
         prompt: 'second request',
-        workMode: 'ask',
         runtimeSelection: secondSelection
       })
     ])
@@ -11109,7 +11056,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       getRuntime: vi.fn(async () => requestRuntime),
       releaseConversation: vi.fn(async () => undefined)
     }
-    const harness = createHarness(requestRuntime, undefined, 'always', undefined, false, selectedRuntimes)
+    const harness = createHarness(requestRuntime, undefined, undefined, false, selectedRuntimes)
     const projectId = '00000000-0000-4000-8000-000000000101'
     const fixedProfileId = '00000000-0000-4000-8000-000000000042'
     const project = { id: projectId, rootPath: 'C:\\ProjectWorkspace' }
@@ -11124,7 +11071,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const event = trustedEvent(harness.webContents)
     await harness.handler?.(event, {
       projectId, conversationId: 'project-rule-one',
-      requestId: '00000000-0000-4000-8000-000000000011', prompt: 'one', workMode: 'ask'
+      requestId: '00000000-0000-4000-8000-000000000011', prompt: 'one'
     })
     // No project model: OpenCode uses its global default (own configuration here).
     expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith(
@@ -11136,14 +11083,14 @@ describe('registerIpcHandlers agent terminal state', () => {
     })
     await harness.handler?.(event, {
       projectId, conversationId: 'project-rule-two',
-      requestId: '00000000-0000-4000-8000-000000000012', prompt: 'two', workMode: 'ask'
+      requestId: '00000000-0000-4000-8000-000000000012', prompt: 'two'
     })
     expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith(
       { provider: 'continue', profileId: fixedProfileId }, expect.anything()
     )
     await harness.handler?.(event, {
       projectId, conversationId: 'project-rule-three', runtimeSelection: { provider: 'model' },
-      requestId: '00000000-0000-4000-8000-000000000013', prompt: 'three', workMode: 'ask'
+      requestId: '00000000-0000-4000-8000-000000000013', prompt: 'three'
     })
     expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith({ provider: 'model' }, expect.anything())
     await harness.dispose()
@@ -11180,7 +11127,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       selectedRuntime,
       undefined,
-      'always',
       undefined,
       false,
       selectedRuntimes,
@@ -11199,8 +11145,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId: '00000000-0000-4000-8000-000000000013',
       conversationId: 'duplicate-request',
       projectId: '00000000-0000-4000-8000-000000000101',
-      prompt: 'run once',
-      workMode: 'ask' as const
+      prompt: 'run once'
     }
 
     await harness.handler?.(event, request)
@@ -11270,7 +11215,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -11295,7 +11239,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId,
         conversationId: 'concurrent-request-setup',
         prompt: 'prepare concurrently',
-        workMode: 'ask',
         knowledgeLibraryIds: []
       }
     )
@@ -11378,8 +11321,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.handler?.(trustedEvent(harness.webContents), {
       requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
       conversationId: 'conversation-clear',
-      prompt: 'keep running',
-      workMode: 'execute'
+      prompt: 'keep running'
     })
     await started
 
@@ -11422,8 +11364,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.handler?.(event, {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-during-clear',
-        prompt: 'do not start',
-        workMode: 'execute'
+        prompt: 'do not start'
       })
     ).rejects.toThrow('本地数据维护期间暂不接受新任务')
 
@@ -11461,8 +11402,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.handler?.(trustedEvent(harness.webContents), {
       requestId,
       conversationId: 'conversation-1',
-      prompt: 'write a file',
-      workMode: 'execute'
+      prompt: 'write a file'
     })
 
     await vi.waitFor(() =>
@@ -11512,8 +11452,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.handler?.(trustedEvent(harness.webContents), {
       requestId,
       conversationId: 'conversation-1',
-      prompt: 'retry browser input',
-      workMode: 'execute'
+      prompt: 'retry browser input'
     })
 
     await vi.waitFor(() =>
@@ -11568,8 +11507,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.handler?.(trustedEvent(harness.webContents), {
       requestId,
       conversationId: 'conversation-1',
-      prompt: 'inspect the desktop',
-      workMode: 'execute'
+      prompt: 'inspect the desktop'
     })
 
     await vi.waitFor(() =>
@@ -11589,11 +11527,11 @@ describe('registerIpcHandlers agent terminal state', () => {
   })
 
   it.each(['opencode', 'continue'] as const)(
-    'preserves read-only Ask mode at the %s Runtime boundary',
+    'dispatches ordinary requests without an authorizer at the %s Runtime boundary',
     async (runtimeId) => {
       let received:
         | {
-            request: { workMode?: string }
+            request: { requestId: string }
             authorize: unknown
           }
         | undefined
@@ -11605,7 +11543,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         getStatus: vi.fn(),
         dispose: vi.fn(),
         async *run(
-          request: { requestId: string; workMode?: string },
+          request: { requestId: string },
           _signal: AbortSignal,
           authorize: unknown
         ) {
@@ -11619,8 +11557,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.handler?.(trustedEvent(harness.webContents), {
         requestId,
         conversationId: 'conversation-1',
-        prompt: 'run the task',
-        workMode: 'ask'
+        prompt: 'run the task'
       })
 
       await vi.waitFor(() =>
@@ -11628,21 +11565,19 @@ describe('registerIpcHandlers agent terminal state', () => {
           harness.assistantDatabase.updateTaskStatus
         ).toHaveBeenCalledWith(requestId, 'completed')
       )
-      expect(received?.request.workMode).toBe('ask')
+      expect(received?.request).not.toHaveProperty('workMode')
       expect(received?.authorize).toBeUndefined()
-      expect(harness.approvalBroker.request).not.toHaveBeenCalled()
       expect(
         harness.assistantDatabase.createTask
       ).toHaveBeenCalledWith(
-        expect.objectContaining({ id: requestId, workMode: 'ask' })
+        expect.objectContaining({ id: requestId })
       )
       await harness.dispose()
     }
   )
 
-  it('keeps Ask fail-closed and auto-allows DeepSeek Harness Execute tools', async () => {
+  it('runs DeepSeek Harness tools without a general authorizer', async () => {
     const receivedAuthorizers: unknown[] = []
-    const executeDecisions: string[] = []
     const runtime = {
       runtimeId: 'deepseek-harness',
       capability: 'chat',
@@ -11651,7 +11586,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       getStatus: vi.fn(),
       dispose: vi.fn(),
       async *run(
-        request: { requestId: string; workMode?: string },
+        request: { requestId: string },
         _signal: AbortSignal,
         authorize?: (request: {
           scopeKey: string
@@ -11660,30 +11595,19 @@ describe('registerIpcHandlers agent terminal state', () => {
         }) => Promise<string>
       ) {
         receivedAuthorizers.push(authorize)
-        if (request.workMode === 'execute') {
-          executeDecisions.push(
-            (await authorize?.({
-              scopeKey: 'deepseek-harness:write_file',
-              title: '写入文件',
-              description: '主机工具执行'
-            })) ?? 'missing'
-          )
-        }
+        yield { requestId: request.requestId, type: 'tool', callId: 'write-file',
+          name: 'write_file', state: 'completed', summary: 'Wrote file' }
         yield { requestId: request.requestId, type: 'done' }
       }
     }
     const harness = createHarness(runtime)
-    harness.approvalBroker.request.mockResolvedValue('once')
 
-    for (const [index, workMode] of (
-      ['ask', 'execute'] as const
-    ).entries()) {
+    for (const index of [0, 1]) {
       const requestId = `3f496642-f47d-4e0a-8944-a32c77b0d6e${index}`
       harness.handler?.(trustedEvent(harness.webContents), {
         requestId,
         conversationId: `conversation-${index}`,
-        prompt: 'run the task',
-        workMode
+        prompt: 'run the task'
       })
       await vi.waitFor(() =>
         expect(
@@ -11692,31 +11616,15 @@ describe('registerIpcHandlers agent terminal state', () => {
       )
     }
 
-    expect(receivedAuthorizers).toEqual([
-      expect.any(Function),
-      expect.any(Function)
-    ])
-    expect(executeDecisions).toEqual(['once'])
-    await expect(
-      (
-        receivedAuthorizers[0] as (
-          request: Record<string, string>
-        ) => Promise<string>
-      )({
-        scopeKey: 'deepseek-harness:write_file',
-        title: '写入文件',
-        description: 'must be denied'
-      })
-    ).resolves.toBe('deny')
-    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    expect(receivedAuthorizers).toEqual([undefined, undefined])
     await harness.dispose()
   })
 
   it.each(['model', 'opencode'] as const)(
-    'normalizes legacy interactive Plan requests to Ask for %s',
+    'uses capability instructions without mode metadata for %s',
     async (runtimeId) => {
       let receivedRequest:
-        | { requestId: string; prompt: string; workMode?: string }
+        | { requestId: string; prompt: string }
         | undefined
       const runtime = {
         runtimeId,
@@ -11728,7 +11636,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         async *run(request: {
           requestId: string
           prompt: string
-          workMode?: string
         }) {
           receivedRequest = request
           yield { requestId: request.requestId, type: 'done' }
@@ -11740,8 +11647,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.handler?.(trustedEvent(harness.webContents), {
         requestId,
         conversationId: 'conversation-1',
-        prompt: 'draft a plan',
-        workMode: 'plan'
+        prompt: 'draft a plan'
       })
 
       await vi.waitFor(() =>
@@ -11749,19 +11655,19 @@ describe('registerIpcHandlers agent terminal state', () => {
           harness.assistantDatabase.updateTaskStatus
         ).toHaveBeenCalledWith(requestId, 'completed')
       )
-      expect(receivedRequest?.workMode).toBe('ask')
-      expect(receivedRequest?.prompt).toContain('Work mode: Ask.')
-      expect(receivedRequest?.prompt).not.toContain('Work mode: Plan.')
+      expect(receivedRequest).not.toHaveProperty('workMode')
+      expect(receivedRequest?.prompt).toContain('enabled capabilities')
+      expect(receivedRequest?.prompt).not.toContain('Work mode:')
       expect(
         harness.assistantDatabase.createTask
       ).toHaveBeenCalledWith(
-        expect.objectContaining({ id: requestId, workMode: 'ask' })
+        expect.objectContaining({ id: requestId })
       )
       await harness.dispose()
     }
   )
 
-  it('sends the work-mode instruction only once to runtimes that consume trusted instructions', async () => {
+  it('sends capability instructions only once to runtimes that consume trusted instructions', async () => {
     let receivedRequest:
       | { requestId: string; prompt: string; trustedInstructions?: string }
       | undefined
@@ -11788,8 +11694,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.handler?.(trustedEvent(harness.webContents), {
       requestId,
       conversationId: 'conversation-1',
-      prompt: 'fix the bug',
-      workMode: 'execute'
+      prompt: 'fix the bug'
     })
 
     await vi.waitFor(() =>
@@ -11798,11 +11703,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       ).toHaveBeenCalledWith(requestId, 'completed')
     )
     expect(receivedRequest?.prompt).toBe('fix the bug')
-    expect(receivedRequest?.trustedInstructions).toContain('Work mode: Execute.')
+    expect(receivedRequest?.trustedInstructions).toContain('enabled capabilities')
     await harness.dispose()
   })
 
-  it('routes eligible Ask requests through the persisted smart expert service and publishes child events', async () => {
+  it('routes eligible requests through the persisted smart expert service and publishes child events', async () => {
     const runtime = {
       capability: 'chat',
       requiresToolApproval: false,
@@ -11846,7 +11751,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       subagentService,
       true
     )
@@ -11859,7 +11763,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'conversation-smart',
       prompt: '请做资料分析',
-      workMode: 'ask',
       smartRouting: true
     })
 
@@ -11887,12 +11790,162 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it.each(['manual', 'team', 'smart'] as const)('binds %s expert writes to each request project instead of the global workspace', async (route) => {
+    const actual = await vi.importActual<typeof import('./agent/create-runtime')>('./agent/create-runtime')
+    const directory = await mkdtemp(join(tmpdir(), 'expert-projects-'))
+    const globalRoot = join(directory, 'global')
+    const roots = [join(directory, 'alpha'), join(directory, 'beta')]
+    await Promise.all([globalRoot, ...roots].map(root => mkdir(root)))
+    const settings = { ...runtimeUpdateFixture(globalRoot).publicSettings,
+      provider: 'model' as const, modelAuthentication: 'none' as const, apiKey: 'test-only',
+      runtimeCustomization: defaultRuntimeSettings.runtimeCustomization }
+    const projectIds: string[] = [crypto.randomUUID(), crypto.randomUUID()]
+    let toolCall = 0
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body))
+      const messages = body.messages as Array<{ role: string; content: string }>
+      if (!body.tools) return new Response('data: {"choices":[{"delta":{"content":"Combined answer"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { headers: { 'content-type': 'text/event-stream' } })
+      if (body.tools && !messages.some(message => message.role === 'tool')) {
+        const label = messages.some(message => message.role === 'user' && message.content.includes('alpha')) ? 'alpha' : 'beta'
+        const id = `write-${++toolCall}`
+        expect(body.tools).toContainEqual(expect.objectContaining({ function: expect.objectContaining({ name: 'workspace_apply_patch' }) }))
+        return Response.json({ choices: [{ message: { role: 'assistant', content: null,
+          tool_calls: [{ id, type: 'function', function: { name: 'workspace_apply_patch',
+            arguments: JSON.stringify({ patch: `*** Begin Patch\n*** Add File: ${id}.txt\n+${label}\n*** End Patch` }) } }] }, finish_reason: 'tool_calls' }] })
+      }
+      return Response.json({ choices: [{ message: { role: 'assistant', content: 'Written' }, finish_reason: 'stop' }] })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    runtimeFactoryMocks.createDefaultModelRuntime.mockImplementation(actual.createDefaultModelRuntime)
+    const expert = { id: crypto.randomUUID(), name: 'Writer', description: '', systemInstructions: 'Write the requested file.',
+      routingKeywords: ['write'], enabled: true, createdAt: '', updatedAt: '' }
+    const requests: Parameters<SubagentService['run']>[0][] = []
+    const db = { createTask: vi.fn(), updateTaskStatus: vi.fn(), appendTaskEvent: vi.fn() }
+    const service = new SubagentService(async input => {
+      requests.push(input)
+      return createSubagentRuntime(input, settings,
+        async (selectedSettings, executionSpace) => actual.createAgentRuntime(globalRoot, selectedSettings, { executionSpace }),
+        async () => { throw new Error('Local experts must not select a remote runtime') })
+    }, db as never)
+    const ordinary = { runtimeId: 'model', capability: 'chat', supportsToolExecution: true, run: vi.fn() }
+    const getRuntime = vi.fn<SelectedRuntimeResolver['getRuntime']>(async () => ordinary as never)
+    const harness = createHarness(ordinary, undefined, service as unknown as Record<string, unknown>, true, { getRuntime })
+    harness.getResolvedSettings.mockResolvedValue(settings)
+    harness.assistantDatabase.getProject.mockImplementation(id => ({ id, rootPath: roots[projectIds.indexOf(id)], runtimeSelection: { provider: 'model' } }))
+    harness.assistantDatabase.getExpert.mockReturnValue(expert)
+    harness.assistantDatabase.listExperts.mockReturnValue([expert, { ...expert, id: crypto.randomUUID(), name: 'Second', routingKeywords: [] }])
+    try {
+      for (const [index, projectId] of projectIds.entries()) {
+        const requestId = crypto.randomUUID()
+        await harness.handler!(trustedEvent(harness.webContents), { requestId, conversationId: `project-${index}`, projectId,
+          prompt: `write ${index === 0 ? 'alpha' : 'beta'}`, expertId: route === 'manual' ? expert.id : undefined,
+          teamMode: route === 'team', smartRouting: route === 'smart' })
+        await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
+        const files = await readdir(roots[index]!)
+        expect(files).toHaveLength(route === 'team' ? 2 : 1)
+        for (const file of files) expect(await readFile(join(roots[index]!, file), 'utf8')).toBe(index === 0 ? 'alpha' : 'beta')
+        for (const input of requests.filter(input => input.parentRequest.requestId === requestId)) {
+          expect(input.executionSpace).toBe(getRuntime.mock.calls[index]?.[1])
+          expect(input.executionSpace).toMatchObject({ kind: 'local', rootPath: roots[index] })
+        }
+      }
+      expect(await readdir(globalRoot)).toEqual([])
+      expect(ordinary.run).not.toHaveBeenCalled()
+    } finally {
+      await harness.dispose()
+      vi.unstubAllGlobals()
+      runtimeFactoryMocks.createDefaultModelRuntime.mockReset()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.each((['manual', 'team', 'smart'] as const).flatMap(route =>
+    (['opencode', 'continue'] as const).map(provider => ({ route, provider }))
+  ))('uses managed $provider for $route SSH experts with their profile and parent bindings', async ({ route, provider }) => {
+    const actual = await vi.importActual<typeof import('./agent/create-runtime')>('./agent/create-runtime')
+    const globalRoot = await mkdtemp(join(tmpdir(), 'expert-ssh-'))
+    const projectId = crypto.randomUUID()
+    const remoteAccess = {
+      getIdentity: vi.fn(async () => ({ kind: 'remote', id: 'ssh:test', canonicalDisplayPath: '/remote/project', access: 'read-only' })),
+      dispose: vi.fn(async () => {})
+    } as unknown as WorkspaceAccess
+    const executionSpace: ExecutionSpaceDescriptor = { kind: 'ssh', hostId: crypto.randomUUID(), remoteRootPath: '/remote/project',
+      cacheIdentity: 'ssh:test', routeIdentity: 'ssh:project', workspaceAccess: remoteAccess }
+    const resolveSpace = vi.spyOn(ExecutionSpaceResolver.prototype, 'resolveProject').mockReturnValue(executionSpace)
+    const settings = { ...runtimeUpdateFixture(globalRoot).publicSettings, provider: 'model' as const,
+      apiKey: 'test-only', runtimeCustomization: defaultRuntimeSettings.runtimeCustomization }
+    const expertProfileId = crypto.randomUUID()
+    settings.modelProfiles.push({ ...settings.modelProfiles[0]!, id: expertProfileId, name: 'Expert connection' })
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body))
+      expect(body.tools).toBeUndefined()
+      return new Response('data: {"choices":[{"delta":{"content":"Remote summary"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { headers: { 'content-type': 'text/event-stream' } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    runtimeFactoryMocks.createDefaultModelRuntime.mockImplementation(actual.createDefaultModelRuntime)
+    const binding = { context: {} as never, describe: vi.fn(), call: vi.fn(), save: vi.fn(), readForSave: vi.fn() }
+    const browserTabId = browserTabIdSchema.parse(crypto.randomUUID())
+    const createLocal = vi.fn(async () => { throw new Error('SSH experts must not create Desktop model tools') })
+    const createRemote = vi.fn<SelectedRuntimeResolver['getRuntime']>(async () => ({
+      async *run(request: AgentExecutionRequest) {
+        expect(request.imageToolBinding).toBe(binding)
+        expect(request.knowledgeCapabilityToken).toBe('parent-scoped-token')
+        expect(request.browserTabId).toBe(browserTabId)
+        expect(request.prompt).toContain('Work in the project.')
+        yield { requestId: request.requestId, type: 'text', delta: 'Remote expert result' } as const
+        yield { requestId: request.requestId, type: 'done' } as const
+      },
+      releaseConversation: vi.fn(), dispose: vi.fn()
+    }) as never)
+    const factory = vi.fn(async (input: Parameters<SubagentService['run']>[0]) => {
+      expect(input.executionSpace).toBe(executionSpace)
+      return createSubagentRuntime(input, settings, createLocal, createRemote)
+    })
+    const service = new SubagentService(factory, { createTask: vi.fn(), updateTaskStatus: vi.fn(), appendTaskEvent: vi.fn() } as never)
+    const ordinary = { runtimeId: 'model', capability: 'chat', supportsToolExecution: true, run: vi.fn() }
+    const harness = createHarness(ordinary, undefined, service as unknown as Record<string, unknown>, true,
+      { getRuntime: vi.fn(async () => ordinary) })
+    const expert = { id: crypto.randomUUID(), name: 'Remote writer', description: '', systemInstructions: 'Work in the project.',
+      modelProfileId: expertProfileId, routingKeywords: ['write'], enabled: true, createdAt: '', updatedAt: '' }
+    harness.getResolvedSettings.mockResolvedValue(settings)
+    harness.assistantDatabase.getProject.mockReturnValue({ id: projectId, rootPath: globalRoot,
+      executionSpace: { kind: 'ssh', hostId: executionSpace.hostId, remoteRootPath: executionSpace.remoteRootPath },
+      runtimeSelection: { provider } })
+    harness.assistantDatabase.getConversation.mockReturnValue({ id: 'remote-expert', messages: [] })
+    harness.contextManager.enrichRequest.mockImplementation(request => ({ ...request, imageToolBinding: binding,
+      knowledgeCapabilityToken: 'parent-scoped-token', browserTabId }))
+    harness.assistantDatabase.getExpert.mockReturnValue(expert)
+    harness.assistantDatabase.listExperts.mockReturnValue([expert, { ...expert, id: crypto.randomUUID(), routingKeywords: [] }])
+    try {
+      const requestId = crypto.randomUUID()
+      await harness.handler!(trustedEvent(harness.webContents), { requestId, conversationId: 'remote-expert', projectId,
+        prompt: 'write a file', expertId: route === 'manual' ? expert.id : undefined,
+        teamMode: route === 'team', smartRouting: route === 'smart' })
+      await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
+      expect(factory).toHaveBeenCalledTimes(route === 'team' ? 2 : 1)
+      expect(createRemote).toHaveBeenCalledWith({ provider, profileId: expert.modelProfileId }, executionSpace)
+      expect(createLocal).not.toHaveBeenCalled()
+      expect(binding.save).not.toHaveBeenCalled()
+      expect(fetcher).toHaveBeenCalledTimes(route === 'team' ? 1 : 0)
+      expect(ordinary.run).not.toHaveBeenCalled()
+      expect(await readdir(globalRoot)).toEqual([])
+    } finally {
+      await harness.dispose()
+      resolveSpace.mockRestore()
+      vi.unstubAllGlobals()
+      runtimeFactoryMocks.createDefaultModelRuntime.mockReset()
+      await rm(globalRoot, { recursive: true, force: true })
+    }
+  })
+
   it.each([
-    { workMode: 'ask' as const, persisted: false },
-    { workMode: 'execute' as const, persisted: true }
+    { persisted: false, prompt: '请做资料分析' },
+    { persisted: true, prompt: 'Unmatched request' }
   ])(
     'falls back to the ordinary runtime for ineligible smart routing %#',
-    async ({ workMode, persisted }) => {
+    async ({ prompt, persisted }) => {
       const runtime = {
         capability: 'chat',
         requiresToolApproval: false,
@@ -11912,7 +11965,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       const harness = createHarness(
         runtime,
         undefined,
-        'always',
         subagentService,
         persisted
       )
@@ -11932,8 +11984,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.handler?.(trustedEvent(harness.webContents), {
         requestId,
         conversationId: 'conversation-fallback',
-        prompt: '请做资料分析',
-        workMode,
+        prompt,
         smartRouting: true
       })
       await vi.waitFor(() =>
@@ -11978,7 +12029,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       subagentService,
       true
     )
@@ -11999,7 +12049,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId,
       conversationId: 'conversation-cancel-smart',
       prompt: '请做资料分析',
-      workMode: 'ask',
       smartRouting: true
     })
     await started
@@ -12016,14 +12065,19 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('rejects Execute before creating a task on an unsupported runtime', async () => {
+  it('allows ordinary text requests on runtimes without tool execution', async () => {
     const runtime = {
       capability: 'chat',
       requiresToolApproval: false,
       supportsToolExecution: false,
       getStatus: vi.fn(),
       dispose: vi.fn(),
-      run: vi.fn()
+      async *run(request: AgentExecutionRequest) {
+        expect(request.trustedInstructions).not.toContain('Available GoodBuddy tools:')
+        expect(request.knowledgeCapabilityToken).toBeUndefined()
+        yield { requestId: request.requestId, type: 'text', delta: 'Text answer' }
+        yield { requestId: request.requestId, type: 'done' }
+      }
     }
     const harness = createHarness(runtime)
 
@@ -12031,22 +12085,77 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.handler?.(trustedEvent(harness.webContents), {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
-        prompt: 'write a file',
-        workMode: 'execute'
+        prompt: 'Explain this code'
       })
-    ).rejects.toThrow('当前 Runtime 不支持工具执行')
-    expect(harness.assistantDatabase.createTask).not.toHaveBeenCalled()
+    ).resolves.toBeUndefined()
+    await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+      '3f496642-f47d-4e0a-8944-a32c77b0d6ef', 'completed'))
     await harness.dispose()
   })
 
-  it('bridges channel ask requests to read-only tasks without approval', async () => {
+  it('executes delegated writes with enabled note and config grants and no authorizer', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const task = { id: crypto.randomUUID(), title: 'Delegated note', prompt: 'Create a note' }
+    let delivered: unknown
+    const server = createServer((request, response) => {
+      if (request.method === 'GET') {
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify(task))
+      } else {
+        let body = ''
+        request.on('data', chunk => { body += chunk })
+        request.on('end', () => { delivered = JSON.parse(body); response.end('{}') })
+      }
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address() as { port: number }
+    vi.stubEnv('GOODBUDDY_DELEGATION_ENDPOINT', `http://127.0.0.1:${address.port}`)
+    vi.stubEnv('GOODBUDDY_DELEGATION_TOKEN', 'test-token')
+    const gateway = {
+      grant: vi.fn(() => 'delegated-capability'),
+      getAvailableToolNames: vi.fn(() => ['note_create', 'goodbuddy_config_apply']),
+      revoke: vi.fn()
+    }
+    const config = { revokeRequest: vi.fn(), takePendingReload: vi.fn(() => 'none'), clear: vi.fn() }
+    const runtime = {
+      runtimeId: 'model', capability: 'chat', supportsToolExecution: true,
+      async *run(request: AgentExecutionRequest, _signal: AbortSignal, authorize?: unknown) {
+        expect(authorize).toBeUndefined()
+        expect(request).not.toHaveProperty('workMode')
+        expect(request.knowledgeCapabilityToken).toBe('delegated-capability')
+        database.createMagicNote({ title: task.title })
+        yield { requestId: request.requestId, type: 'tool', callId: 'delegated-note',
+          name: 'note_create', state: 'completed', summary: 'Created note' } as const
+        yield { requestId: request.requestId, type: 'done' } as const
+      }
+    }
+    let harness: ReturnType<typeof createHarness> | undefined
+    try {
+      harness = createHarness(runtime, undefined, undefined, false, undefined, undefined,
+        gateway, true, config, { getEnabledBuiltinMcpServerIds: vi.fn(async () => ['magic-notes', 'goodbuddy-config']) },
+        undefined, undefined, database)
+      harness.getResolvedSettings.mockResolvedValue({ workspacePath: process.cwd() })
+      await vi.waitFor(() => expect(delivered).toEqual({ status: 'completed' }))
+      expect(database.listMagicNotes().map(note => note.title)).toContain(task.title)
+      expect(gateway.grant).toHaveBeenCalledExactlyOnceWith(expect.any(String), [], expect.any(AbortSignal),
+        'write', { access: 'write', workspacePath: process.cwd() })
+      expect(gateway.revoke).toHaveBeenCalledWith('delegated-capability')
+    } finally {
+      await harness?.dispose()
+      vi.unstubAllEnvs()
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      database.close()
+    }
+  })
+
+  it('bridges explanation-only channel requests without an authorizer', async () => {
     let received:
       | {
           request: {
             requestId: string
             conversationId: string
             prompt: string
-            workMode: string
           }
           authorize?: (request: {
             scopeKey: string
@@ -12062,7 +12171,6 @@ describe('registerIpcHandlers agent terminal state', () => {
           requestId: string
           conversationId: string
           prompt: string
-          workMode: string
         },
         _signal: AbortSignal,
         authorize?: (request: {
@@ -12095,8 +12203,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           conversationId: 'conversation-1',
           conversationType: 'direct',
           text: '请只读分析',
-          mentioned: false,
-          workMode: 'ask'
+          mentioned: false
         },
         new AbortController().signal
       )
@@ -12105,24 +12212,15 @@ describe('registerIpcHandlers agent terminal state', () => {
       output: '只读结果'
     })
     expect(received?.request).toMatchObject({
-      workMode: 'ask',
       prompt: expect.stringContaining('请只读分析')
     })
-    await expect(
-      received?.authorize?.({
-        scopeKey: 'model:builtin:workspace_read_text',
-        title: '读取文件',
-        description: '不应申请批准'
-      })
-    ).resolves.toBe('deny')
-    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    expect(received?.authorize).toBeUndefined()
     expect(harness.getPolicySettings).not.toHaveBeenCalled()
     expect(harness.getResolvedSettings).not.toHaveBeenCalled()
     expect(harness.assistantDatabase.createTask).toHaveBeenCalledWith(
       expect.objectContaining({
         title: '企业微信远程请求',
         instructions: '请只读分析',
-        workMode: 'ask',
         origin: 'delegation'
       })
     )
@@ -12134,14 +12232,13 @@ describe('registerIpcHandlers agent terminal state', () => {
     ['wecom', '企业微信'],
     ['dingtalk', '钉钉']
   ] as const)(
-    'grants read-only Magic Notes tools to %s channel Ask requests',
+    'grants enabled Magic Notes write tools to %s channel requests',
     async (channel, channelLabel) => {
       let receivedRequest:
         | {
             knowledgeCapabilityToken?: string
             prompt: string
             trustedInstructions?: string
-            workMode: string
           }
         | undefined
       const runtime = {
@@ -12151,7 +12248,6 @@ describe('registerIpcHandlers agent terminal state', () => {
           knowledgeCapabilityToken?: string
           prompt: string
           trustedInstructions?: string
-          workMode: string
         }) {
           receivedRequest = request
           yield {
@@ -12180,7 +12276,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       const harness = createHarness(
         runtime,
         undefined,
-        'always',
         undefined,
         false,
         undefined,
@@ -12200,7 +12295,6 @@ describe('registerIpcHandlers agent terminal state', () => {
             kind: 'local',
             rootPath: 'C:\\ProjectWorkspace'
           },
-          defaultWorkMode: 'ask',
           runtimeSelection: {
             provider: 'model',
             model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000001' }
@@ -12226,8 +12320,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             conversationId: `conversation-${channel}-notes`,
             conversationType: 'direct',
             text: '读取我的笔记',
-            mentioned: false,
-            workMode: 'ask'
+            mentioned: false
           },
           new AbortController().signal
         )
@@ -12238,11 +12331,10 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId,
         [],
         expect.any(AbortSignal),
-        'read'
+        'write'
       )
       expect(receivedRequest).toMatchObject({
         knowledgeCapabilityToken: 'channel-notes-capability',
-        workMode: 'ask',
         trustedInstructions: expect.stringContaining(
           'note_list, note_get, note_search'
         )
@@ -12302,8 +12394,7 @@ describe('registerIpcHandlers agent terminal state', () => {
               dataBase64: 'iVBORw=='
             }
           ],
-          mentioned: false,
-          workMode: 'ask'
+          mentioned: false
         },
         new AbortController().signal
       )
@@ -12368,8 +12459,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           conversationId: 'conversation-generated-image',
           conversationType: 'direct',
           text: '生成结果图',
-          mentioned: false,
-          workMode: 'ask'
+          mentioned: false
         },
         new AbortController().signal
       )
@@ -12427,8 +12517,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         conversationId: 'conversation-result-file',
         conversationType: 'direct',
         text: '请生成一个文件，总结本周进展',
-        mentioned: false,
-        workMode: 'ask'
+        mentioned: false
       },
       new AbortController().signal
     )
@@ -12462,19 +12551,20 @@ describe('registerIpcHandlers agent terminal state', () => {
       expectedError: '状态查询失败'
     },
     {
-      name: 'Runtime is available without tool execution',
+      name: 'Runtime is unavailable',
       getStatus: () =>
         Promise.resolve({
           id: 'model',
           label: 'Direct model',
-          available: true,
-          supportsToolExecution: false
+          available: false,
+          supportsToolExecution: false,
+          detail: 'Model unavailable'
         }),
       expectedError:
-        '所选处理后端不支持工具执行，请在消息通道设置中选择 OpenCode、Continue 或支持工具的直连模型'
+        'Model unavailable'
     }
   ])(
-    'finalizes remote Execute consistently when $name',
+    'finalizes remote requests consistently when $name',
     async ({ getStatus, expectedError }) => {
       const runtime = {
         runtimeId: 'model',
@@ -12498,8 +12588,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             conversationId: 'conversation-execute-unavailable',
             conversationType: 'direct',
             text: '/execute 更新 README',
-            mentioned: false,
-            workMode: 'ask'
+            mentioned: false
           },
           new AbortController().signal
         )
@@ -12514,7 +12603,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         expect.objectContaining({
           projectId: '00000000-0000-4000-8000-000000000401',
           conversationId: '00000000-0000-4000-8000-000000000402',
-          workMode: 'execute',
           origin: 'delegation',
           visible: false
         })
@@ -12560,8 +12648,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   )
 
-  it('runs remote Execute immediately with the selected direct model policy', async () => {
-    let authorization: string | undefined
+  it('runs channel tools without a general authorizer and preserves old prefixes literally', async () => {
+    let receivedAuthorize: unknown
     const runtime = {
       runtimeId: 'model',
       capability: 'chat',
@@ -12573,21 +12661,14 @@ describe('registerIpcHandlers agent terminal state', () => {
         supportsToolExecution: true
       })),
       async *run(
-        request: { requestId: string },
+        request: { requestId: string; prompt: string },
         _signal: AbortSignal,
-        authorize: (
-          request: {
-            scopeKey: string
-            title: string
-            description: string
-          }
-        ) => Promise<string>
+        authorize: unknown
       ) {
-        authorization = await authorize({
-          scopeKey: 'model:builtin:workspace_apply_patch',
-          title: '写入文件',
-          description: '写入 README.md'
-        })
+        receivedAuthorize = authorize
+        expect(request.prompt).toContain('/execute 更新 README')
+        yield { requestId: request.requestId, type: 'tool', callId: 'channel-write',
+          name: 'workspace_apply_patch', state: 'completed', summary: 'Updated README.md' }
         yield {
           requestId: request.requestId,
           type: 'text',
@@ -12612,8 +12693,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           conversationId: 'conversation-execute-direct',
           conversationType: 'direct',
           text: '/execute 更新 README',
-          mentioned: false,
-          workMode: 'ask'
+          mentioned: false
         },
         new AbortController().signal,
         reportProgress
@@ -12622,9 +12702,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       status: 'completed',
       output: '执行完成'
     })
-    expect(authorization).toBe('once')
+    expect(receivedAuthorize).toBeUndefined()
     expect(reportProgress).not.toHaveBeenCalled()
-    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
     expect(
       harness.assistantDatabase.updateTaskStatus
     ).not.toHaveBeenCalledWith(
@@ -12640,12 +12719,11 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('grants Magic Notes write tools to channel Execute requests', async () => {
+  it('grants Magic Notes write tools to channel requests', async () => {
     let receivedRequest:
       | {
           knowledgeCapabilityToken?: string
           trustedInstructions?: string
-          workMode: string
         }
       | undefined
     const runtime = {
@@ -12662,7 +12740,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId: string
         knowledgeCapabilityToken?: string
         trustedInstructions?: string
-        workMode: string
       }) {
         receivedRequest = request
         yield { requestId: request.requestId, type: 'done' }
@@ -12689,7 +12766,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -12711,8 +12787,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           conversationId: 'conversation-execute-notes',
           conversationType: 'direct',
           text: '/execute 创建一条笔记',
-          mentioned: false,
-          workMode: 'ask'
+          mentioned: false
         },
         new AbortController().signal
       )
@@ -12727,7 +12802,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     )
     expect(receivedRequest).toMatchObject({
       knowledgeCapabilityToken: 'channel-notes-write-capability',
-      workMode: 'execute',
       trustedInstructions: expect.stringContaining('note_create')
     })
     expect(receivedRequest?.trustedInstructions).toContain(
@@ -12775,7 +12849,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       selectedRuntime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -12795,8 +12868,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         conversationId: 'external-opencode',
         conversationType: 'direct',
         text: '读取我的笔记',
-        mentioned: true,
-        workMode: 'ask'
+        mentioned: true
       },
       new AbortController().signal
     )
@@ -12813,11 +12885,10 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('advertises only native read access to remote Agent Runtime Ask requests', async () => {
+  it('uses enabled runtime capabilities for remote Agent requests', async () => {
     let receivedRequest:
       | {
           trustedInstructions?: string
-          workMode?: string
         }
       | undefined
     const selectedRuntime = {
@@ -12827,7 +12898,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       async *run(request: {
         requestId: string
         trustedInstructions?: string
-        workMode?: string
       }) {
         receivedRequest = request
         yield { requestId: request.requestId, type: 'done' }
@@ -12846,7 +12916,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         run: vi.fn()
       },
       undefined,
-      'always',
       undefined,
       false,
       selectedRuntimes
@@ -12866,7 +12935,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         hostId: '00000000-0000-4000-8000-000000000452',
         remoteRootPath: '/srv/project'
       },
-      defaultWorkMode: 'ask',
       runtimeSelection: { provider: 'opencode' },
       kind: 'user',
       status: 'active',
@@ -12881,7 +12949,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         conversationId: 'conversation-remote-ask',
         projectId,
         prompt: 'Read marker.txt',
-        workMode: 'ask',
         runtimeSelection: { provider: 'opencode' },
         knowledgeLibraryIds: []
       }
@@ -12894,12 +12961,12 @@ describe('registerIpcHandlers agent terminal state', () => {
         remoteRootPath: '/srv/project'
       })
     )
-    expect(receivedRequest).toMatchObject({ workMode: 'ask' })
+    expect(receivedRequest).not.toHaveProperty('workMode')
     expect(receivedRequest?.trustedInstructions).toContain(
-      'only the native read tool'
+      'enabled capabilities'
     )
     expect(receivedRequest?.trustedInstructions).toContain(
-      'Do not call any other tool or make changes'
+      'Respect requests for explanation only'
     )
     expect(receivedRequest?.trustedInstructions).not.toContain(
       'Do not call tools'
@@ -12907,7 +12974,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('routes remote Execute to a configured Agent Runtime without a GoodBuddy approval callback', async () => {
+  it('routes channel requests to a configured Agent Runtime without an approval callback', async () => {
     let receivedAuthorize: unknown = 'not-called'
     const configuredProfileId =
       '00000000-0000-4000-8000-000000000019'
@@ -12948,13 +13015,11 @@ describe('registerIpcHandlers agent terminal state', () => {
         run: vi.fn()
       },
       undefined,
-      'always',
       undefined,
       false,
       selectedRuntimes
     )
     harness.getResolvedSettings.mockResolvedValue({
-      toolApproval: 'always',
       subagentSmartRoutingEnabled: false,
       continueModelProfile: { id: configuredProfileId },
       modelProfiles: [{
@@ -12974,7 +13039,6 @@ describe('registerIpcHandlers agent terminal state', () => {
           kind: 'local',
           rootPath: 'C:\\ProjectWorkspace'
         },
-        defaultWorkMode: 'execute',
         runtimeSelection: { provider: 'continue' },
         kind: 'channel',
         channel: 'wecom',
@@ -12997,8 +13061,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           conversationId: 'conversation-execute-runtime',
           conversationType: 'direct',
           text: '更新 README',
-          mentioned: false,
-          workMode: 'ask'
+          mentioned: false
         },
         new AbortController().signal
       )
@@ -13019,7 +13082,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect.not.objectContaining({ runtimeSelection: expect.anything() })
     )
     expect(receivedAuthorize).toBeUndefined()
-    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
     await harness.dispose()
   })
 
@@ -13041,7 +13103,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(order).toEqual(['channel-stop', 'context-clear'])
   })
 
-  it('authorizes direct-model Execute tools without approval events or broker prompts', async () => {
+  it('runs direct-model tools without approval events or an authorizer', async () => {
     let receivedAuthorize:
       | ((
           request: {
@@ -13051,7 +13113,6 @@ describe('registerIpcHandlers agent terminal state', () => {
           }
         ) => Promise<string>)
       | undefined
-    let decision: string | undefined
     const runtime = {
       runtimeId: 'model',
       capability: 'chat',
@@ -13065,11 +13126,6 @@ describe('registerIpcHandlers agent terminal state', () => {
         authorize: typeof receivedAuthorize
       ) {
         receivedAuthorize = authorize
-        decision = await authorize?.({
-          scopeKey: 'model:builtin:workspace_read_text',
-          title: '允许读取工作区文本？',
-          description: '读取 README.md'
-        })
         yield {
           requestId: request.requestId,
           type: 'tool',
@@ -13087,8 +13143,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.handler?.(trustedEvent(harness.webContents), {
       requestId,
       conversationId: 'conversation-1',
-      prompt: '读取文件',
-      workMode: 'execute'
+      prompt: '读取文件'
     })
 
     await vi.waitFor(() =>
@@ -13096,10 +13151,8 @@ describe('registerIpcHandlers agent terminal state', () => {
         harness.assistantDatabase.updateTaskStatus
       ).toHaveBeenCalledWith(requestId, 'completed')
     )
-    expect(receivedAuthorize).toEqual(expect.any(Function))
-    expect(decision).toBe('once')
-    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
-    expect(harness.getPolicySettings).toHaveBeenCalledOnce()
+    expect(receivedAuthorize).toBeUndefined()
+    expect(harness.getPolicySettings).not.toHaveBeenCalled()
     expect(harness.getResolvedSettings).not.toHaveBeenCalled()
     expect(
       harness.assistantDatabase.updateTaskStatus
@@ -13111,52 +13164,35 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('denies direct-model Execute tools when the deny-all policy is selected', async () => {
-    let decision: string | undefined
+  it('allows channel text-only models without tool execution support', async () => {
+    let receivedAuthorize: unknown
     const runtime = {
       runtimeId: 'model',
       capability: 'chat',
       requiresToolApproval: false,
-      supportsToolExecution: true,
-      getStatus: vi.fn(),
+      supportsToolExecution: false,
+      getStatus: vi.fn(async () => ({ available: true, supportsToolExecution: false })),
       dispose: vi.fn(),
       async *run(
-        request: { requestId: string },
+        request: AgentExecutionRequest,
         _signal: AbortSignal,
-        authorize: (
-          request: {
-            scopeKey: string
-            title: string
-            description: string
-          }
-        ) => Promise<string>
+        authorize: unknown
       ) {
-        decision = await authorize({
-          scopeKey: 'model:builtin:workspace_read_text',
-          title: '允许读取工作区文本？',
-          description: '读取 README.md'
-        })
+        receivedAuthorize = authorize
+        expect(request.prompt).toContain('/ask Explain this code')
+        expect(request.trustedInstructions).not.toContain('Available GoodBuddy tools:')
+        yield { requestId: request.requestId, type: 'text', delta: 'Text answer' }
         yield { requestId: request.requestId, type: 'done' }
       }
     }
-    const harness = createHarness(runtime, undefined, 'policy')
-    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
-
-    harness.handler?.(trustedEvent(harness.webContents), {
-      requestId,
-      conversationId: 'conversation-1',
-      prompt: '读取文件',
-      workMode: 'execute'
-    })
-
-    await vi.waitFor(() =>
-      expect(
-        harness.assistantDatabase.updateTaskStatus
-      ).toHaveBeenCalledWith(requestId, 'completed')
-    )
-    expect(decision).toBe('deny')
-    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
-    expect(harness.getPolicySettings).toHaveBeenCalledOnce()
+    const harness = createHarness(runtime)
+    await expect(channelMocks.executor!({
+      channel: 'wecom', eventId: 'text-only', senderId: 'user-1',
+      conversationId: 'text-only', conversationType: 'direct',
+      text: '/ask Explain this code', mentioned: false
+    }, new AbortController().signal)).resolves.toEqual({ status: 'completed', output: 'Text answer' })
+    expect(receivedAuthorize).toBeUndefined()
+    expect(harness.getPolicySettings).not.toHaveBeenCalled()
     expect(harness.getResolvedSettings).not.toHaveBeenCalled()
     expect(harness.webContents.send).not.toHaveBeenCalledWith(
       ipcChannels.agentEvent,
@@ -13166,70 +13202,65 @@ describe('registerIpcHandlers agent terminal state', () => {
   })
 
   it('grants local config write access without a standalone native authorizer', async () => {
-    for (const toolApproval of ['always', 'policy'] as const) {
-      const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6e1'
-      const knowledgeGateway = {
-        grant: vi.fn(() => 'config-capability'),
-        getAvailableToolNames: vi.fn(() => [
-          'goodbuddy_config_capabilities',
-          'goodbuddy_config_get',
-          'goodbuddy_config_plan',
-          'goodbuddy_config_apply'
-        ]),
-        drainReferences: vi.fn(() => []),
-        revoke: vi.fn()
-      }
-      const goodbuddyConfigService = {
-        takePendingReload: vi.fn(() => 'none'),
-        revokeRequest: vi.fn(),
-        clear: vi.fn()
-      }
-      const runtime = {
-        runtimeId: 'model',
-        capability: 'chat',
-        supportsToolExecution: true,
-        async *run(request: { requestId: string }) {
-          yield { requestId: request.requestId, type: 'done' }
-        }
-      }
-      const harness = createHarness(
-        runtime,
-        undefined,
-        toolApproval,
-        undefined,
-        false,
-        undefined,
-        undefined,
-        knowledgeGateway,
-        false,
-        goodbuddyConfigService
-      )
-      harness.getResolvedSettings.mockResolvedValue({
-        workspacePath: 'C:\\Workspace'
-      })
-
-      harness.handler?.(trustedEvent(harness.webContents), {
-        requestId,
-        conversationId: `conversation-${requestId}`,
-        prompt: '删除 MCP',
-        workMode: 'execute'
-      })
-
-      await vi.waitFor(() =>
-        expect(
-          harness.assistantDatabase.updateTaskStatus
-        ).toHaveBeenCalledWith(requestId, 'completed')
-      )
-      expect(knowledgeGateway.grant).toHaveBeenCalledWith(
-        requestId,
-        [],
-        expect.any(AbortSignal),
-        'none',
-        { access: 'write', workspacePath: 'C:\\Workspace' }
-      )
-      expect(harness.approvalBroker.request).not.toHaveBeenCalled()
-      await harness.dispose()
+    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6e1'
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'config-capability'),
+      getAvailableToolNames: vi.fn(() => [
+        'goodbuddy_config_capabilities',
+        'goodbuddy_config_get',
+        'goodbuddy_config_plan',
+        'goodbuddy_config_apply'
+      ]),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
     }
+    const goodbuddyConfigService = {
+      takePendingReload: vi.fn(() => 'none'),
+      revokeRequest: vi.fn(),
+      clear: vi.fn()
+    }
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      false,
+      goodbuddyConfigService
+    )
+    harness.getResolvedSettings.mockResolvedValue({
+      workspacePath: 'C:\\Workspace'
+    })
+
+    harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: `conversation-${requestId}`,
+      prompt: '删除 MCP'
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'completed')
+    )
+    expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+      requestId,
+      [],
+      expect.any(AbortSignal),
+      'none',
+      { access: 'write', workspacePath: 'C:\\Workspace' }
+    )
+    await harness.dispose()
   })
 
   it('coalesces config reload until all active requests finish', async () => {
@@ -13261,7 +13292,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     const harness = createHarness(
       runtime,
       undefined,
-      'always',
       undefined,
       false,
       undefined,
@@ -13281,8 +13311,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.handler?.(trustedEvent(harness.webContents), {
         requestId,
         conversationId: `conversation-${requestId}`,
-        prompt: '配置 Runtime',
-        workMode: 'execute'
+        prompt: '配置 Runtime'
       })
     }
     await vi.waitFor(() => expect(completions.size).toBe(2))
@@ -13346,8 +13375,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.handler?.(trustedEvent(harness.webContents), {
       requestId,
       conversationId: 'conversation-1',
-      prompt: 'ask',
-      workMode: 'ask'
+      prompt: 'ask'
     })
 
     await vi.waitFor(() =>
@@ -13452,7 +13480,6 @@ describe('registerIpcHandlers Magic Notes analysis', () => {
       { clear: vi.fn() } as never,
       {} as never,
       database,
-      { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined)
     )

@@ -150,7 +150,7 @@ async function main() {
     `SELECT conversation_id AS id FROM messages GROUP BY conversation_id ORDER BY COUNT(*) DESC LIMIT 1`
   ).get()?.id
   const taskId = randomUUID()
-  database.createTask({ id: taskId, title: 'write perf', instructions: 'replay', workMode: 'ask', conversationId: conversation })
+  database.createTask({ id: taskId, title: 'write perf', instructions: 'replay', conversationId: conversation })
 
   const replay = (events, kind) => index => {
     const event = { ...events[index % events.length], requestId: taskId }

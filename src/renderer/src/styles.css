@@ -5569,6 +5569,42 @@ button > svg {
 
 .workspace-files__entry {
   position: relative;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 152px;
+  align-items: center;
+  padding-right: 32px;
+}
+
+.workspace-files__columns {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 152px;
+  padding-right: 32px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.workspace-files[data-created-time="true"] :is(.workspace-files__entry, .workspace-files__columns) {
+  grid-template-columns: minmax(160px, 1fr) 152px 152px;
+}
+
+.workspace-files__columns button {
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: var(--font-caption);
+}
+
+.workspace-files__time {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  white-space: nowrap;
+}
+
+.workspace-files__destination {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
 }
 
 .workspace-files__open-entry {
@@ -5631,7 +5667,11 @@ button > svg {
 }
 
 .workspace-files__tree {
-  min-width: 0;
+  min-width: 344px;
+}
+
+.workspace-files[data-created-time="true"] .workspace-files__tree {
+  min-width: 496px;
 }
 
 .workspace-files__children {
@@ -5718,18 +5758,6 @@ button > svg {
 
 .assistant-sidebar__approval code {
   color: var(--danger);
-  font-size: 9px;
-}
-
-.assistant-sidebar__approval-actions {
-  display: flex;
-  margin-top: 9px;
-  gap: 6px;
-}
-
-.assistant-sidebar__approval-actions button {
-  flex: 1;
-  padding: 7px 5px;
   font-size: 9px;
 }
 
@@ -6192,10 +6220,45 @@ button > svg {
   font-size: 9px;
 }
 
-.assistant-sidebar__image-preview {
+.assistant-sidebar__import-help {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.assistant-sidebar__result {
+  min-width: 0;
+  padding-block: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  overflow-wrap: anywhere;
+}
+
+.assistant-sidebar__result > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.assistant-sidebar__result h4 {
+  margin: 0;
+  font-size: 12px;
+}
+
+.assistant-sidebar__result time {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.assistant-sidebar__result .assistant-sidebar__image-preview {
   display: block;
-  width: 100%;
+  width: auto;
+  max-width: min(100%, 240px);
+  max-height: 160px;
   height: auto;
+  object-fit: contain;
   border-radius: 8px;
 }
 
@@ -6207,7 +6270,8 @@ button > svg {
   background: var(--surface-raised);
 }
 
-.assistant-sidebar__preview pre {
+.assistant-sidebar__preview pre,
+.assistant-sidebar__result pre {
   padding: 10px;
   overflow: auto;
   border-radius: 8px;
@@ -7566,26 +7630,6 @@ button > svg {
   white-space: nowrap;
 }
 
-.approval-card button {
-  min-height: 29px;
-  padding: 0 10px;
-  border-radius: 7px;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 650;
-}
-
-.approval-card__deny {
-  border: 1px solid var(--border-default);
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-}
-
-.approval-card__allow {
-  background: var(--accent-solid);
-  color: var(--text-on-accent);
-}
-
 .agent-question-card {
   display: flex;
   padding: var(--space-4);
@@ -8484,22 +8528,12 @@ button > svg {
   width: 148px;
 }
 
-.composer-picker--mode > .model-button {
-  width: 108px;
-}
 
 .composer-picker--runtime > .model-button,
 .composer-picker--runtime-action > .model-button {
   width: 220px;
 }
 
-.composer-picker--ask svg {
-  color: var(--accent);
-}
-
-.composer-picker--execute svg {
-  color: var(--warning);
-}
 
 .composer-picker__menu {
   right: auto;
@@ -11194,23 +11228,6 @@ details.settings-section > :not(summary) + :not(summary) {
   gap: var(--space-2);
 }
 
-.project-work-mode {
-  display: grid;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  margin: 0;
-  gap: var(--space-2);
-}
-
-.project-work-mode legend {
-  margin-bottom: var(--space-2);
-  color: var(--text-secondary);
-}
-
-.project-work-mode small {
-  color: var(--text-muted);
-}
 
 .project-runtime-selector__scope-help {
   color: var(--text-muted);
@@ -18253,7 +18270,6 @@ textarea.field-control {
 .approval-card p,
 .assistant-sidebar__approval code,
 .assistant-sidebar__approval p,
-.assistant-sidebar__approval-actions button,
 .assistant-sidebar__badge,
 .assistant-sidebar__browser-placeholder,
 .assistant-sidebar__diff,

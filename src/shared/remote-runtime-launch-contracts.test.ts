@@ -85,7 +85,6 @@ const signedBundle = {
 const startPayload = {
   bindingId: 'binding-1',
   requestId: 'request-1',
-  workMode: 'ask' as const,
   runtimeId: 'runtime-1',
   adapterParameters: [
     { name: 'modelProfileId' as const, value: 'model-1' }

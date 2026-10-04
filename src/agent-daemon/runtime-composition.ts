@@ -275,7 +275,6 @@ export async function createProductionRuntimeProtocol(
           profileInput: {
             bundleDirectory: launch.bundle.bundleDirectory,
             workspaceDirectory: launch.workspace.workspaceDirectory,
-            workMode: launch.workMode,
             ...(launch.modelBridge === undefined ||
             options.agentExecutablePath === undefined
               ? {}

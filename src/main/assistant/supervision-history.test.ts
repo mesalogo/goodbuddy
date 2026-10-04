@@ -14,10 +14,10 @@ it('supervision preserves result history and protected identities within scope t
   const db = new AssistantDatabase(path)
   db.initialize(process.cwd())
   try {
-    const projects = ['A', 'B'].map((name) => db.createProject({ name, description: name, rootPath: directory, defaultWorkMode: 'ask' }))
+    const projects = ['A', 'B'].map((name) => db.createProject({ name, description: name, rootPath: directory }))
     db.replaceConversations(projects.map((project) => ({ id: project.name, projectId: project.id, title: project.name, updatedAt: Date.now(), messages: [] })))
     const taskId = randomUUID()
-    db.createTask({ id: taskId, projectId: projects[0]!.id, conversationId: 'A', title: 'Task A', instructions: 'Review', workMode: 'ask' })
+    db.createTask({ id: taskId, projectId: projects[0]!.id, conversationId: 'A', title: 'Task A', instructions: 'Review' })
     const first: StoredSupervisionResult = {
       request: { trigger: 'manual', scope: { kind: 'projects', projectIds: [projects[0]!.id] }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-22T00:00:00Z' } },
       evidence: [{ id: 'source', sourceType: 'conversation', sourceId: 'A', title: 'A source', content: 'A content', occurredAt: '2026-09-20T00:00:00Z' },
@@ -47,6 +47,9 @@ it('supervision preserves result history and protected identities within scope t
       DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
+      ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
       PRAGMA user_version = 42;`)
     legacy.close()
     db.initialize(process.cwd())

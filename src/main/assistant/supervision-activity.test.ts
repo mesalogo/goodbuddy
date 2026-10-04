@@ -133,6 +133,9 @@ it('upgrades schema 44 without inventing historical links and preserves runs on 
       DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
+      ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
       PRAGMA user_version = 44;`)
     legacy.close()
     db.initialize(process.cwd())

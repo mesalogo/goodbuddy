@@ -28,7 +28,7 @@ function fixture() {
 async function run(runtime: AgentRuntime, id: string) {
   const events: RuntimeEvent[] = []
   for await (const event of runtime.run({
-    requestId: id, conversationId: id, prompt: 'continue', workMode: 'execute'
+    requestId: id, conversationId: id, prompt: 'continue',
   }, new AbortController().signal)) events.push(event)
   return events
 }

@@ -28,23 +28,6 @@
   justify-content: center;
   gap: var(--space-3);
 }
-.supervisor-workspace__run-status {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
-  background: var(--accent-subtle);
-  color: var(--text-secondary);
-}
-.supervisor-workspace__run-status > span {
-  overflow-wrap: anywhere;
-}
-.supervisor-workspace__run-status > .icon-button {
-  grid-column: 3;
-}
 .supervisor-workspace__confirm {
   display: grid;
   gap: var(--space-2);

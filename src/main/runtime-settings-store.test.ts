@@ -8,6 +8,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as settingsFileUtils from './settings-file-utils'
 import {
   builtinEmbeddingConnectionId,
   legacyEmbeddingConnectionId,
@@ -54,7 +55,6 @@ function settings(
     knowledgeRerankModel: 'rerank-v3.5',
     workspacePath: 'test-workspace',
     apiKey: { action: 'keep' },
-    toolApproval: 'always',
     ...overrides
   }
 }
@@ -72,6 +72,7 @@ async function createStore(
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true })
@@ -80,6 +81,54 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('leaves version 21 intact and retries when the migration write fails', async () => {
+    const { store, filePath } = await createStore()
+    await store.update(settings())
+    const previous = JSON.parse(await readFile(filePath, 'utf8'))
+    previous.version = 21
+    previous.toolApproval = 'policy'
+    const original = JSON.stringify(previous)
+    await writeFile(filePath, original)
+    const write = vi.spyOn(settingsFileUtils, 'writeJsonFileAtomically').mockRejectedValueOnce(new Error('disk full'))
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPolicySettings()).rejects.toThrow('disk full')
+    expect(await readFile(filePath, 'utf8')).toBe(original)
+    await expect(migrated.getPolicySettings()).resolves.toEqual({ subagentSmartRoutingEnabled: false })
+    expect(write).toHaveBeenCalledTimes(2)
+    const saved = JSON.parse(await readFile(filePath, 'utf8'))
+    expect(saved.version).toBe(22)
+    expect(saved).not.toHaveProperty('toolApproval')
+  })
+
+  it.each(['always', 'session', 'workspace', 'policy'])('upgrades version 21 %s policy without touching credential bytes or user request fields', async (toolApproval) => {
+    const { store, filePath } = await createStore()
+    await store.update(settings({
+      subagentSmartRoutingEnabled: true,
+      apiKey: { action: 'replace', value: 'model-secret' },
+      knowledgeEmbeddingApiKey: { action: 'replace', value: 'embedding-secret' },
+      knowledgeRerankApiKey: { action: 'replace', value: 'rerank-secret' }
+    }))
+    const previous = JSON.parse(await readFile(filePath, 'utf8'))
+    previous.version = 21
+    previous.toolApproval = toolApproval
+    previous.modelProfiles[0].requestBody = { workMode: 'plan', toolApproval: 'user-owned' }
+    await writeFile(filePath, JSON.stringify(previous))
+    const encrypt = vi.fn(cipher.encrypt)
+    const decrypt = vi.fn(cipher.decrypt)
+    const migrated = new RuntimeSettingsStore(filePath, { ...cipher, encrypt, decrypt }, {})
+    await expect(migrated.getPolicySettings()).resolves.toEqual({ subagentSmartRoutingEnabled: true })
+    expect(encrypt).not.toHaveBeenCalled()
+    expect(decrypt).not.toHaveBeenCalled()
+    const savedText = await readFile(filePath, 'utf8')
+    const { toolApproval: obsolete, ...expected } = previous
+    void obsolete
+    expect(JSON.parse(savedText)).toEqual({ ...expected, version: 22 })
+    expect(await migrated.getPublicSettings()).not.toHaveProperty('toolApproval')
+    expect(await migrated.getResolvedSettings()).not.toHaveProperty('toolApproval')
+    await new RuntimeSettingsStore(filePath, cipher, {}).getPolicySettings()
+    expect(await readFile(filePath, 'utf8')).toBe(savedText)
+  })
+
   it('round-trips conversation image settings and retains unavailable defaults without resolving credentials', async () => {
     const { store, filePath } = await createStore()
     const initial = await store.getPublicSettings()
@@ -200,14 +249,14 @@ describe('RuntimeSettingsStore', () => {
     expect(runtimeSettingsInputSchema.safeParse({ ...settings(), modelProfiles: [{ id: '00000000-0000-4000-8000-000000000001', name: 'Image', baseUrl: 'https://example.com', modelName: 'image', protocol: 'openai-images-generations', authentication: 'none', imageGenerationQuality: 'auto', apiKey: { action: 'keep' }, allowConversationInvocation: 'true' }] }).success).toBe(false)
   })
 
-  it('defaults to automatic Execute tool authorization and preserves an explicitly saved deny policy', async () => {
+  it('persists smart routing without a tool approval policy', async () => {
     const { store, filePath } = await createStore()
-    await expect(store.getPublicSettings()).resolves.toMatchObject({ toolApproval: 'always' })
-    await expect(store.getPolicySettings()).resolves.toMatchObject({ toolApproval: 'always' })
-    await store.update(settings({ toolApproval: 'policy' }))
+    expect(await store.getPublicSettings()).not.toHaveProperty('toolApproval')
+    await expect(store.getPolicySettings()).resolves.toEqual({ subagentSmartRoutingEnabled: false })
+    await store.update(settings({ subagentSmartRoutingEnabled: true }))
     const reloaded = new RuntimeSettingsStore(filePath, cipher, {})
-    await expect(reloaded.getPublicSettings()).resolves.toMatchObject({ toolApproval: 'policy' })
-    await expect(reloaded.getPolicySettings()).resolves.toMatchObject({ toolApproval: 'policy' })
+    expect(await reloaded.getPublicSettings()).not.toHaveProperty('toolApproval')
+    await expect(reloaded.getPolicySettings()).resolves.toEqual({ subagentSmartRoutingEnabled: true })
   })
 
   it('persists default references separately from fixed profiles and resolves each settings generation', async () => {
@@ -346,6 +395,7 @@ describe('RuntimeSettingsStore', () => {
       modelProfiles: Array<Record<string, unknown>>
     }
     version20.version = 20
+    Object.assign(version20, { toolApproval: 'always' })
     for (const profile of version20.modelProfiles) {
       delete profile.requestHeaders
       delete profile.requestBody
@@ -430,7 +480,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(21)
+    expect(persisted.version).toBe(22)
     expect(persisted.modelProfiles[0]).toMatchObject({
       requestHeaders: { 'x-tenant-id': 'tenant-a' },
       requestBody: { temperature: 0.2 }
@@ -445,6 +495,7 @@ describe('RuntimeSettingsStore', () => {
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
     version19.version = 19
+    Object.assign(version19, { toolApproval: 'always' })
     await writeFile(filePath, JSON.stringify(version19), 'utf8')
 
     const migrated = new RuntimeSettingsStore(filePath, cipher, {})
@@ -466,6 +517,7 @@ describe('RuntimeSettingsStore', () => {
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
     version19.version = 19
+    Object.assign(version19, { toolApproval: 'always' })
     await writeFile(filePath, JSON.stringify(version19), 'utf8')
 
     const migrated = new RuntimeSettingsStore(filePath, cipher, {})
@@ -483,6 +535,7 @@ describe('RuntimeSettingsStore', () => {
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
     version19.version = 19
+    Object.assign(version19, { toolApproval: 'always' })
     await writeFile(filePath, JSON.stringify(version19), 'utf8')
 
     const migrated = new RuntimeSettingsStore(filePath, cipher, {
@@ -532,6 +585,7 @@ describe('RuntimeSettingsStore', () => {
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
     previous.version = 17
+    Object.assign(previous, { toolApproval: 'always' })
     Reflect.deleteProperty(previous, 'runtimeCustomization')
     await writeFile(filePath, JSON.stringify(previous))
 
@@ -593,6 +647,7 @@ describe('RuntimeSettingsStore', () => {
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
     previous.version = 16
+    Object.assign(previous, { toolApproval: 'always' })
     delete previous.contextCompression
     await writeFile(filePath, JSON.stringify(previous), 'utf8')
 
@@ -824,6 +879,7 @@ describe('RuntimeSettingsStore', () => {
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
     versionFourteen.version = 14
+    Object.assign(versionFourteen, { toolApproval: 'always' })
     delete versionFourteen.deepseekHarnessModelSource
     delete versionFourteen.deepseekHarnessBinaryPath
     await writeFile(filePath, JSON.stringify(versionFourteen), 'utf8')
@@ -1017,6 +1073,7 @@ describe('RuntimeSettingsStore', () => {
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
     versionFifteen.version = 15
+    Object.assign(versionFifteen, { toolApproval: 'always' })
     versionFifteen.deepseekHarnessBinaryPath =
       'C:\\untrusted\\custom-harness.js'
     versionFifteen.runtimeSandboxMode = 'strict'
@@ -1048,7 +1105,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
-    expect(persisted.version).toBe(21)
+    expect(persisted.version).toBe(22)
     expect(persisted).not.toHaveProperty(
       'deepseekHarnessBinaryPath'
     )
@@ -1213,6 +1270,7 @@ describe('RuntimeSettingsStore', () => {
       intranetCompatibilityEnabled?: boolean
     }
     versionTen.version = 10
+    Object.assign(versionTen, { toolApproval: 'always' })
     versionTen.intranetCompatibilityEnabled = false
     await writeFile(filePath, JSON.stringify(versionTen), 'utf8')
 
@@ -1258,6 +1316,7 @@ describe('RuntimeSettingsStore', () => {
       intranetCompatibilityEnabled?: boolean
     }
     versionTen.version = 10
+    Object.assign(versionTen, { toolApproval: 'always' })
     versionTen.continueConfigPath = 'C:\\Users\\test\\.continue\\config.yaml'
     versionTen.intranetCompatibilityEnabled = false
     await writeFile(filePath, JSON.stringify(versionTen), 'utf8')
@@ -1297,6 +1356,7 @@ describe('RuntimeSettingsStore', () => {
       intranetCompatibilityEnabled?: boolean
     }
     versionTen.version = 10
+    Object.assign(versionTen, { toolApproval: 'always' })
     versionTen.intranetCompatibilityEnabled = false
     await writeFile(filePath, JSON.stringify(versionTen), 'utf8')
 
@@ -1316,6 +1376,7 @@ describe('RuntimeSettingsStore', () => {
       subagentSmartRoutingEnabled?: boolean
     }
     versionEight.version = 8
+    Object.assign(versionEight, { toolApproval: 'always' })
     delete versionEight.subagentSmartRoutingEnabled
     await writeFile(filePath, JSON.stringify(versionEight), 'utf8')
 
@@ -1327,7 +1388,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(21)
+    expect(persisted.version).toBe(22)
   })
 
   it('migrates version 11 and removes the obsolete intranet toggle', async () => {
@@ -1338,6 +1399,7 @@ describe('RuntimeSettingsStore', () => {
       intranetCompatibilityEnabled?: boolean
     }
     versionEleven.version = 11
+    Object.assign(versionEleven, { toolApproval: 'always' })
     versionEleven.intranetCompatibilityEnabled = false
     await writeFile(filePath, JSON.stringify(versionEleven), 'utf8')
 
@@ -1347,7 +1409,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       intranetCompatibilityEnabled?: boolean
     }
-    expect(persisted.version).toBe(21)
+    expect(persisted.version).toBe(22)
     expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
   })
 
@@ -1359,6 +1421,7 @@ describe('RuntimeSettingsStore', () => {
       modelProfiles: Array<Record<string, unknown>>
     }
     versionTwelve.version = 12
+    Object.assign(versionTwelve, { toolApproval: 'always' })
     for (const profile of versionTwelve.modelProfiles) {
       delete profile.supportsImageInput
     }
@@ -1460,6 +1523,7 @@ describe('RuntimeSettingsStore', () => {
       modelProfiles: Array<{ baseUrl: string }>
     }
     persisted.version = 6
+    Object.assign(persisted, { toolApproval: 'always' })
     persisted.modelProfiles[0]!.baseUrl = 'file:///tmp/model'
     await writeFile(filePath, JSON.stringify(persisted), 'utf8')
 
@@ -1534,6 +1598,7 @@ describe('RuntimeSettingsStore', () => {
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
     previous.version = 18
+    Object.assign(previous, { toolApproval: 'always' })
     delete previous.embeddingConnections
     delete previous.activeEmbeddingConnectionId
     await writeFile(filePath, JSON.stringify(previous), 'utf8')
@@ -1625,7 +1690,7 @@ describe('RuntimeSettingsStore', () => {
       (JSON.parse(await readFile(filePath, 'utf8')) as {
         version: number
       }).version
-    ).toBe(21)
+    ).toBe(22)
   })
 
   it('changes the active embedding connection without changing model profiles', async () => {
@@ -1802,6 +1867,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     persisted.version = 13
+    Object.assign(persisted, { toolApproval: 'always' })
     delete persisted.knowledgeRerankEnabled
     delete persisted.knowledgeRerankEndpoint
     delete persisted.knowledgeRerankModel
@@ -1933,7 +1999,6 @@ describe('RuntimeSettingsStore', () => {
     await store.update(
       settings({
         subagentSmartRoutingEnabled: true,
-        toolApproval: 'policy',
         apiKey: { action: 'replace', value: 'stored-model-secret' },
         knowledgeEmbeddingApiKey: {
           action: 'replace',
@@ -1953,8 +2018,7 @@ describe('RuntimeSettingsStore', () => {
     )
 
     await expect(policyStore.getPolicySettings()).resolves.toEqual({
-      subagentSmartRoutingEnabled: true,
-      toolApproval: 'policy'
+      subagentSmartRoutingEnabled: true
     })
     expect(decrypt).not.toHaveBeenCalled()
   })
@@ -2009,6 +2073,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     persisted.version = 6
+    Object.assign(persisted, { toolApproval: 'always' })
     persisted.knowledgeEmbeddingBaseUrl = 'http://127.0.0.1:11434'
     delete persisted.knowledgeEmbeddingCredential
     await writeFile(filePath, JSON.stringify(persisted), 'utf8')
@@ -2033,6 +2098,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     persisted.version = 6
+    Object.assign(persisted, { toolApproval: 'always' })
     persisted.knowledgeEmbeddingBaseUrl =
       'https://vectors.example/custom/v1/embeddings'
     delete persisted.knowledgeEmbeddingCredential
@@ -2058,6 +2124,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     persisted.version = 6
+    Object.assign(persisted, { toolApproval: 'always' })
     persisted.knowledgeEmbeddingBaseUrl = 'not a URL'
     delete persisted.knowledgeEmbeddingCredential
     await writeFile(filePath, JSON.stringify(persisted), 'utf8')
@@ -2086,6 +2153,7 @@ describe('RuntimeSettingsStore', () => {
       modelProfiles: Array<Record<string, unknown>>
     }
     persisted.version = 7
+    Object.assign(persisted, { toolApproval: 'always' })
     for (const profile of persisted.modelProfiles) {
       delete profile.imageGenerationQuality
     }
@@ -2298,7 +2366,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(21)
+    expect(persisted.version).toBe(22)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -2600,7 +2668,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 21,
+      version: 22,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -2879,7 +2947,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(21)
+    expect(persisted.version).toBe(22)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

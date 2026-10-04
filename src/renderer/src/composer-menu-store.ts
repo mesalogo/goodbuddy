@@ -11,7 +11,6 @@ import { useCallback, useLayoutEffect, useSyncExternalStore } from "react";
  */
 export type ComposerMenuId =
   | "expert"
-  | "mode"
   | "runtime-agent"
   | "runtime-action"
   | "runtime-preset";

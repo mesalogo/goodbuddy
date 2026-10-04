@@ -368,7 +368,6 @@ export class RemoteProjectSaveService {
         name: request.draft.name,
         description: request.draft.description,
         rootPath: workspace.canonicalDisplayPath,
-        defaultWorkMode: request.draft.defaultWorkMode,
         runtimeSelection
       },
       executionSpace: {

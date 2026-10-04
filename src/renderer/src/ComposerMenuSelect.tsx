@@ -2,7 +2,7 @@ import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
-// A composer picker (expert, work mode, runtime agent/preset/action) with a
+// A composer picker (expert, runtime agent/preset/action) with a
 // roving-focus menu. Moved out of App.tsx unchanged.
 
 export type ComposerMenuOption<T extends string> = {

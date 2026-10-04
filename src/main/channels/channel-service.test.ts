@@ -57,7 +57,6 @@ function inbound(
     conversationType: 'direct',
     text: '你好',
     mentioned: false,
-    workMode: 'ask',
     ...overrides
   }
 }
@@ -72,7 +71,7 @@ async function waitForSent(
 }
 
 describe('channel contracts', () => {
-  it('normalizes text, defaults to ask, and refuses non-ask modes', () => {
+  it('normalizes text without a mode and rejects obsolete mode fields', () => {
     expect(
       channelInboundTextSchema.parse({
         channel: ' fake ',
@@ -90,8 +89,7 @@ describe('channel contracts', () => {
       conversationId: 'direct-1',
       conversationType: 'direct',
       text: '你好',
-      mentioned: false,
-      workMode: 'ask'
+      mentioned: false
     })
 
     expect(
@@ -162,7 +160,7 @@ describe('ChannelService', () => {
     await service.stop()
   })
 
-  it('executes an allowed request asynchronously with the normalized ask mode', async () => {
+  it('executes an allowed request asynchronously without a mode', async () => {
     const driver = new FakeChannelDriver()
     let finish: ((value: { status: string; output: string }) => void) | undefined
     const executor = vi.fn(
@@ -191,9 +189,13 @@ describe('ChannelService', () => {
     })
     expect(executor).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: '帮我分析',
-        workMode: 'ask'
+        text: '帮我分析'
       }),
+      expect.any(AbortSignal),
+      expect.any(Function)
+    )
+    expect(executor).toHaveBeenCalledWith(
+      expect.not.objectContaining({ workMode: expect.anything() }),
       expect.any(AbortSignal),
       expect.any(Function)
     )

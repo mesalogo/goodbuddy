@@ -102,7 +102,6 @@ export type DirectLinuxStdioProcessOwnerOptions = {
   profileInput?: {
     bundleDirectory: string
     workspaceDirectory: string
-    workMode: 'ask' | 'execute'
     modelBridge?: {
       agentExecutablePath: string
       bridgeDirectory: string
@@ -874,7 +873,6 @@ function validateProfile(profile: OpenCodeLaunchProfile): OpenCodeLaunchProfile 
     args: [...profile.args],
     cwd: profile.cwd,
     env: { ...profile.env },
-    workMode: profile.workMode
   }
 }
 

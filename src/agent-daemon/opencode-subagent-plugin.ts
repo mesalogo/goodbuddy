@@ -26,7 +26,7 @@ async function plugin(input?: {
 }) {
   const tasks = new Map<string, { sessionId: string; callId: string }>()
   const pending = new Map<string, { sessionId: string; root: string }>()
-  const modelMessages = new Map<string, { sessionId: string; operationId: string; workMode: 'ask' | 'execute'; imageToolName?: string }>()
+  const modelMessages = new Map<string, { sessionId: string; operationId: string; imageToolName?: string }>()
   const modelRoute = async (sessionId: string, messageId: string) => {
     const key = `${sessionId}\0${messageId}`
     const previous = modelMessages.get(key)
@@ -43,8 +43,8 @@ async function plugin(input?: {
     }
     const response = await fetch(`${modules.modelBridgeOrigin}/session?sessionId=${encodeURIComponent(root)}`)
     if (!response.ok) throw new Error('GoodBuddy model operation is no longer active')
-    const { operationId, workMode, imageToolName } = await response.json() as { operationId: string; workMode: 'ask' | 'execute'; imageToolName?: string }
-    const route = { sessionId: root, operationId, workMode, imageToolName }
+    const { operationId, imageToolName } = await response.json() as { operationId: string; imageToolName?: string }
+    const route = { sessionId: root, operationId, imageToolName }
     modelMessages.set(key, route)
     return route
   }
@@ -116,15 +116,8 @@ async function plugin(input?: {
       const route = await modelRoute(request.sessionID, output.message.id)
       if (!route) return
       // Native ACP only forwards permissions for its registered root Sessions.
-      // Use native Session rules so child tools use Execute and Ask's
-      // unavailable tools are omitted instead of interrupting the prompt.
-      const permission = route.workMode === 'execute'
-        ? [{ permission: '*', pattern: '*', action: 'allow' }]
-        : [
-            { permission: '*', pattern: '*', action: 'deny' },
-            ...['read', 'glob', 'grep', 'list', 'lsp', 'webfetch', 'websearch', 'codesearch', 'question', 'external_directory']
-              .map(permission => ({ permission, pattern: '*', action: 'allow' }))
-          ]
+      // Native Session rules also authorize tools in child Sessions.
+      const permission = [{ permission: '*', pattern: '*', action: 'allow' }]
       if (route.sessionId !== request.sessionID) {
         const child = await input!.client.session.get({ path: { id: request.sessionID }, throwOnError: true })
         // OpenCode copies parent denies, not parent allows, into children.
@@ -133,9 +126,6 @@ async function plugin(input?: {
       }
       permission.push({ permission: 'goodbuddy_image_*', pattern: '*', action: 'deny' })
       if (route.imageToolName) {
-        permission.push({ permission: `${route.imageToolName}_story_graph_*`, pattern: '*', action: 'allow' })
-      }
-      if (route.workMode === 'execute' && route.imageToolName) {
         permission.push({ permission: `${route.imageToolName}_*`, pattern: '*', action: 'allow' })
       }
       await input!.client._client.patch({

@@ -9,6 +9,11 @@ import {
 } from './assistant-database'
 
 const temporaryDirectories: string[] = []
+const historicalModeColumns = `
+  ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+  ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+  ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
+`
 
 afterEach(async () => {
   await Promise.all(
@@ -69,7 +74,6 @@ describe('AssistantDatabase heartbeat persistence', () => {
     const schedule = database.createSchedule({
       title: 'Existing schedule',
       prompt: 'Keep this schedule',
-      workMode: 'ask',
       recurrence: 'weekly',
       nextRunAt: '2026-08-03T09:00:00.000Z'
     })
@@ -87,7 +91,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 2`)
+      ${historicalModeColumns} PRAGMA user_version = 2`)
     raw.close()
 
     const migrated = new AssistantDatabase(path)
@@ -150,7 +154,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
-      PRAGMA user_version = 20`)
+      ${historicalModeColumns} PRAGMA user_version = 20`)
     raw.close()
 
     const migrated = new AssistantDatabase(path)
@@ -169,13 +173,11 @@ describe('AssistantDatabase heartbeat persistence', () => {
       name: 'Second',
       description: '',
       rootPath: 'C:\\Second',
-      defaultWorkMode: 'ask'
     })
     const excluded = database.createProject({
       name: 'Excluded',
       description: '',
       rootPath: 'C:\\Excluded',
-      defaultWorkMode: 'ask'
     })
     database.replaceConversations(
       [first, second, excluded].map((project, index) => ({
@@ -192,7 +194,6 @@ describe('AssistantDatabase heartbeat persistence', () => {
         projectId: project.id,
         title: project.name,
         instructions: '',
-        workMode: 'ask'
       })
       database.createMemory({
         scope: 'project',

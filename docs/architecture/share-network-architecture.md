@@ -401,7 +401,7 @@ ShareServer 可以部署到公网，因此公网连接、外部组织和服务�
 4. ShareServer 按组织隔离查询，搜索和计数接口不能泄露无权查看的设备或能力。
 5. 设备只建立主动配置的网关出站连接，不接受 ShareServer 发起任意系统调用。
 6. 局域网发现不等于信任，组织成员身份也不等于所有能力授权。
-7. 远程能力不能扩大本机 Ask/Execute、Workspace、Runtime、Skill 或 MCP 现有权限。
+7. 远程能力不能扩大本机 Workspace、Runtime、Skill 或 MCP 既有能力范围，沿用统一执行规则。
 8. 密钥只进入对应安全存储，诊断和审计使用固定字段与脱敏错误码。
 9. 限制握手、清单、帧、文件、并发、速率、任务时长和审计查询大小。
 10. 撤销设备、用户、Grant、Publication、Package 或 FederationTrust 后停止签发新令牌。

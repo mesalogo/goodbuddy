@@ -3,13 +3,16 @@ import { z } from 'zod'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { KnowledgeDatabase } from './knowledge/knowledge-database'
 import type { ReadonlyQueryKind, ReadonlyQueryRequest } from './readonly-query-reader'
+import type { ReviewState } from './assistant/supervision-review-store'
 
 // Read-only query worker (PERF-15/16 first slice). One worker per database file.
 // It reuses the production classes on a read-only connection, so results are
 // produced by exactly the same code as the synchronous path.
+// This packaged entry also hosts the WAL checkpointer and the dedicated,
+// separately connected supervision manifest writer.
 
 const { kind, databasePath, intervalMs } = workerData as {
-  kind: ReadonlyQueryKind | 'checkpoint'
+  kind: ReadonlyQueryKind | 'checkpoint' | 'supervision'
   databasePath: string
   intervalMs?: number
 }
@@ -36,6 +39,16 @@ if (kind === 'checkpoint') {
   }
   handlers = {}
   parentPort!.postMessage({ ready: true })
+} else if (kind === 'supervision') {
+  // Only manifest initialization and resume validation write here. Publication
+  // and checkpoints remain in Main's existing atomic result transaction.
+  const database = new AssistantDatabase(databasePath)
+  database.openSupervisionWorker()
+  close = () => database.close()
+  handlers = {
+    initialize: ([runId, state], signal) => database.supervisionReviewStore(signal).initializeSources(String(runId), state as ReviewState, signal),
+    resume: ([runId], signal) => database.supervisionReviewStore(signal).resume(String(runId), signal)
+  }
 } else if (kind === 'knowledge') {
   const database = new KnowledgeDatabase(databasePath)
   database.openReadOnly()
@@ -60,7 +73,12 @@ if (kind === 'checkpoint') {
     getConversation: ([conversationId]) => database.readSnapshot(() =>
       database.getConversation(conversationId as string)),
     activityHistoryPage: ([input]) => database.getActivityHistoryPage(input),
-    activityHistorySummary: ([input]) => database.getActivityHistorySummary(input)
+    activityHistorySummary: ([input]) => database.getActivityHistorySummary(input),
+    reviewContext: ([request]) => {
+      const scope = (request as ReviewState['request']).scope
+      return database.readSnapshot(() => ({ summary: database.reviewSummary(scope, 'supervisor'), background: database.reviewBackground(scope) }))
+    },
+    reviewCandidates: ([request]) => database.listSupervisionCandidates(request as ReviewState['request'])
   }
 }
 

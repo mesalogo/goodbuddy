@@ -58,8 +58,6 @@ describe('Agent CLI fixed command contract', () => {
           'private-model',
           '--supports-image-input',
           'false',
-          '--work-mode',
-          'ask',
           '--opencode-entrypoint',
           '/runtime/bin/opencode'
         ],
@@ -71,7 +69,6 @@ describe('Agent CLI fixed command contract', () => {
       protocol: 'openai-responses',
       model: 'private-model',
       supportsImageInput: false,
-      workMode: 'ask',
       opencodeEntrypoint: '/runtime/bin/opencode'
     })
     await expect(
@@ -90,8 +87,6 @@ describe('Agent CLI fixed command contract', () => {
           'ask',
           '--opencode-entrypoint',
           '/runtime/bin/opencode',
-          '--api-key',
-          'secret'
         ],
         { runModelBridgeHelper, io: cliIo() }
       )

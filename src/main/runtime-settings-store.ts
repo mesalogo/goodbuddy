@@ -26,7 +26,6 @@ import {
   runtimeCustomizationSettingsSchema,
   runtimePathSchema,
   runtimeProviderSchema,
-  toolApprovalPolicySchema,
   type RuntimeSettings,
   type RuntimeCustomizationSettings,
   type RuntimeSettingsInput
@@ -50,7 +49,9 @@ import {
 } from './settings-credential-cipher'
 
 const credentialSchema = encryptedSettingsCredentialSchema.optional()
-const CURRENT_SETTINGS_VERSION = 21
+const CURRENT_SETTINGS_VERSION = 22
+// Released settings versions only; not a current execution policy.
+const legacyToolApprovalPolicySchema = z.enum(['always', 'session', 'workspace', 'policy'])
 const legacyRuntimeSandboxModeSchema = z.enum([
   'off',
   'auto',
@@ -71,7 +72,7 @@ const version4StoredSettingsSchema = z.object({
   continueMode: continueModeSchema.default('chat'),
   workspacePath: z.string().default(''),
   credential: credentialSchema,
-  toolApproval: toolApprovalPolicySchema
+  toolApproval: legacyToolApprovalPolicySchema
 })
 
 const version5StoredModelProfileSchema = z.object({
@@ -97,7 +98,7 @@ const version5StoredSettingsSchema = z.object({
   continueConfigPath: runtimePathSchema.default(''),
   continueMode: continueModeSchema.default('chat'),
   workspacePath: z.string().default(''),
-  toolApproval: toolApprovalPolicySchema
+  toolApproval: legacyToolApprovalPolicySchema
 })
 
 const version6StoredModelProfileSchema =
@@ -285,10 +286,10 @@ const version20StoredSettingsSchema = version19StoredSettingsSchema
     version: z.literal(20)
   })
 
-const storedSettingsSchema = version20StoredSettingsSchema
+const version21StoredSettingsSchema = version20StoredSettingsSchema
   .omit({ version: true, modelProfiles: true })
   .extend({
-    version: z.literal(CURRENT_SETTINGS_VERSION),
+    version: z.literal(21),
     modelProfiles: z
       .array(
         currentStoredModelProfileSchema.extend({
@@ -301,6 +302,10 @@ const storedSettingsSchema = version20StoredSettingsSchema
       .max(20),
     defaultImageModelProfileId: z.string().uuid().nullable().optional()
   })
+
+const storedSettingsSchema = version21StoredSettingsSchema
+  .omit({ version: true, toolApproval: true })
+  .extend({ version: z.literal(CURRENT_SETTINGS_VERSION) })
 
 type StoredSettings = z.infer<typeof storedSettingsSchema>
 export type RuntimeSettingsRollback = {
@@ -360,7 +365,7 @@ const version2StoredSettingsSchema = z.object({
   continueCommand: runtimePathSchema.default('cn'),
   workspacePath: z.string().default(''),
   credential: credentialSchema,
-  toolApproval: toolApprovalPolicySchema
+  toolApproval: legacyToolApprovalPolicySchema
 })
 
 const legacyStoredSettingsSchema = z.object({
@@ -373,7 +378,7 @@ const legacyStoredSettingsSchema = z.object({
   continueCommand: runtimePathSchema.default('cn'),
   workspacePath: z.string().default(''),
   credential: credentialSchema,
-  toolApproval: toolApprovalPolicySchema
+  toolApproval: legacyToolApprovalPolicySchema
 })
 
 const savedApiKeyPayloadSchema = z.object({
@@ -454,12 +459,11 @@ export type ResolvedRuntimeSettings = {
   contextCompression?: RuntimeSettings['contextCompression']
   runtimeCustomization: RuntimeCustomizationSettings
   workspacePath: string
-  toolApproval: RuntimeSettings['toolApproval']
 }
 
 export type RuntimePolicySettings = Pick<
   ResolvedRuntimeSettings,
-  'subagentSmartRoutingEnabled' | 'toolApproval'
+  'subagentSmartRoutingEnabled'
 >
 
 export type ResolvedModelProfile = {
@@ -566,8 +570,7 @@ const defaultSettings: StoredSettings = {
     defaultRuntimeSettings.knowledgeRerankModel,
   contextCompression: defaultContextCompressionSettings,
   runtimeCustomization: defaultRuntimeCustomizationSettings,
-  workspacePath: defaultRuntimeSettings.workspacePath,
-  toolApproval: defaultRuntimeSettings.toolApproval
+  workspacePath: defaultRuntimeSettings.workspacePath
 }
 
 function migrateContinueCommand(command: string): string {
@@ -762,15 +765,23 @@ function migrateVersion19(
 function migrateVersion20(
   settings: Version20StoredSettings
 ): StoredSettings {
-  return {
+  return migrateVersion21({
     ...settings,
-    version: CURRENT_SETTINGS_VERSION,
+    version: 21,
     modelProfiles: settings.modelProfiles.map((profile) => ({
       ...profile,
       requestHeaders: {},
       requestBody: {}
     }))
-  }
+  })
+}
+
+function migrateVersion21(
+  settings: z.infer<typeof version21StoredSettingsSchema>
+): StoredSettings {
+  const { toolApproval: obsolete, ...current } = settings
+  void obsolete
+  return { ...current, version: CURRENT_SETTINGS_VERSION }
 }
 
 function migrateVersion10(
@@ -1131,6 +1142,8 @@ function parseStoredSettings(value: unknown): StoredSettings {
   switch (version) {
     case CURRENT_SETTINGS_VERSION:
       return storedSettingsSchema.parse(value)
+    case 21:
+      return migrateVersion21(version21StoredSettingsSchema.parse(value))
     case 20:
       return migrateVersion20(version20StoredSettingsSchema.parse(value))
     case 19:
@@ -1201,6 +1214,8 @@ export class RuntimeSettingsStore {
   }
 
   private async readSettings(): Promise<StoredSettings> {
+    let needsUpgrade = false
+    let settings: StoredSettings
     try {
       const contents = await readFile(this.filePath, 'utf8')
       const parsed: unknown = JSON.parse(contents)
@@ -1210,8 +1225,8 @@ export class RuntimeSettingsStore {
         (version) =>
           `当前 GoodBuddy 不支持 Runtime 设置版本 ${version}，请升级应用后重试`
       )
-      this.settings = parseStoredSettings(parsed)
-      this.settings = normalizeStoredSettings(this.settings)
+      settings = normalizeStoredSettings(parseStoredSettings(parsed))
+      needsUpgrade = (parsed as { version: number }).version < CURRENT_SETTINGS_VERSION
     } catch (error) {
       if (error instanceof UnsupportedSettingsVersionError) {
         throw error
@@ -1223,9 +1238,13 @@ export class RuntimeSettingsStore {
         )
         this.loadWarnings = [{ code: 'runtime-settings-recovered' }]
       }
-      this.settings = { ...defaultSettings }
+      settings = { ...defaultSettings }
     }
-    return this.settings
+    // Persist the upgrade without decrypting/re-encrypting any credential. A write
+    // failure is not evidence of corrupt input and must not isolate the source.
+    if (needsUpgrade) await writeJsonFileAtomically(this.filePath, settings)
+    this.settings = settings
+    return settings
   }
 
   private getStoredApiKey(
@@ -1878,7 +1897,6 @@ export class RuntimeSettingsStore {
       deepseekHarnessModelSource,
       deepseekHarnessPlatformModel,
       secureStorageAvailable: this.cipher.isAvailable(),
-      toolApproval: settings.toolApproval,
       configured: {
         modelProfiles: configuredModelProfiles,
         opencodeBaseUrl: settings.opencodeBaseUrl,
@@ -1952,7 +1970,6 @@ export class RuntimeSettingsStore {
     return {
       subagentSmartRoutingEnabled:
         settings.subagentSmartRoutingEnabled,
-      toolApproval: settings.toolApproval
     }
   }
 
@@ -2043,7 +2060,6 @@ export class RuntimeSettingsStore {
         this.getStoredRerankApiKey(settings),
       contextCompression: settings.contextCompression,
       runtimeCustomization: settings.runtimeCustomization,
-      toolApproval: settings.toolApproval
     }
   }
 
@@ -2579,7 +2595,6 @@ export class RuntimeSettingsStore {
         input.runtimeCustomization ??
         current.runtimeCustomization,
       workspacePath: input.workspacePath,
-      toolApproval: input.toolApproval
     }
 
     await writeJsonFileAtomically(this.filePath, next)

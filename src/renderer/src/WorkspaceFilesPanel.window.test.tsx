@@ -82,7 +82,7 @@ describe('WorkspaceFilesPanel tree windowing', () => {
     expect(fileRow('a', 0)).toBeNull()
     expect(rows().length).toBeLessThanOrEqual(defaultMaxRenderedRows)
     // Indentation still shows the nesting.
-    expect(fileRow('c', 1)!.parentElement!.style.marginLeft).toContain('1 *')
+    expect(fileRow('c', 1)!.style.paddingLeft).toContain('1 *')
   }, 20_000)
 
   it('keeps the selected file and the open menu mounted, and scrolls back to the selection', async () => {
@@ -135,4 +135,3 @@ describe('WorkspaceFilesPanel tree windowing', () => {
     expect(fileRow('a', 0)).toBeInTheDocument()
   }, 20_000)
 })
-

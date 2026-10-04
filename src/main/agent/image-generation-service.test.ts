@@ -25,7 +25,7 @@ function setup(fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [
   const database = new AssistantDatabase(':memory:')
   database.initialize(process.cwd())
   cleanups.push(() => database.close())
-  const context = { conversationId: randomUUID(), messageId: randomUUID(), requestId: randomUUID(), workMode: 'execute' as const }
+  const context = { conversationId: randomUUID(), messageId: randomUUID(), requestId: randomUUID() }
   const message = { id: context.messageId, role: 'assistant' as const, content: '', createdAt: Date.now(), state: 'complete' as const }
   const header = { id: context.conversationId, title: 'Images', updatedAt: Date.now() }
   database.saveLocalConversations([{ header, messages: [message] }])
@@ -94,10 +94,9 @@ describe('Main conversation image service', () => {
     expect(h.fetcher).toHaveBeenCalledTimes(1)
   })
 
-  it('rejects absent, disabled, deleted defaults without silent fallback and rechecks current mode', async () => {
+  it('rejects absent, disabled, deleted defaults without silent fallback', async () => {
     const h = setup()
-    let mode: 'ask' | 'execute' = 'execute'
-    const binding = h.service.bind(h.context, () => mode)
+    const binding = h.service.bind(h.context)
     expect(await binding.describe()).toContain(h.profile.id)
     h.profile.allowConversationInvocation = false
     await expect(binding.call({ intent: 'create', prompt: 'Blue' }, 'disabled')).rejects.toThrow('unavailable')
@@ -106,9 +105,8 @@ describe('Main conversation image service', () => {
     await expect(binding.call({ intent: 'create', prompt: 'Blue' }, 'deleted')).rejects.toThrow('unavailable')
     h.settings.defaultImageModelProfileId = null
     await expect(binding.call({ intent: 'create', prompt: 'Blue' }, 'absent')).rejects.toThrow('default')
-    mode = 'ask'
-    await expect(binding.call({ intent: 'create', prompt: 'Blue', modelProfileId: h.profile.id }, 'ask')).rejects.toThrow('Execute')
     expect(h.fetcher).not.toHaveBeenCalled()
+    expect(await binding.call({ intent: 'create', prompt: 'Blue', modelProfileId: h.profile.id }, 'enabled')).toMatchObject({ state: 'completed' })
   })
 
   it('continues after chat abort and pins the accepted profile while a replacement binding starts', async () => {
@@ -210,15 +208,15 @@ describe('Main conversation image service', () => {
     expect(h.fetcher).toHaveBeenCalledTimes(2)
   })
 
-  it('dispatches the native Model tool through its scoped binding and denies Ask', async () => {
+  it('dispatches the native Model tool through its scoped binding without a mode', async () => {
     const h = setup()
     const provider = new ModelToolProvider(process.cwd())
     cleanups.push(() => provider.dispose())
-    const context = { conversationId: h.context.conversationId, workMode: 'execute' as const, imageToolBinding: h.service.bind(h.context), toolCallId: 'native' }
+    const context = { conversationId: h.context.conversationId, imageToolBinding: h.service.bind(h.context), toolCallId: 'native' }
     const result = await provider.callTool('generate_image', { intent: 'create', prompt: 'Blue' }, new AbortController().signal, context)
     expect(JSON.stringify(result)).toContain('completed')
     expect(JSON.stringify(result)).not.toContain(png)
-    await expect(provider.callTool('generate_image', { intent: 'create', prompt: 'Blue' }, new AbortController().signal, { ...context, workMode: 'ask' })).rejects.toThrow()
+    await expect(provider.callTool('generate_image', { intent: 'create', prompt: 'Blue' }, new AbortController().signal, { conversationId: context.conversationId })).rejects.toThrow()
   })
 
   it('round trips image-only MCP discovery/call and does not abort accepted work on capability revocation', async () => {
@@ -260,13 +258,14 @@ describe('Main conversation image service', () => {
     await expect(binding.save!({ artifactId, path: join(dir, 'out.gif') })).rejects.toThrow('.png')
     await expect(binding.save!({ artifactId, path: 'relative.png' })).rejects.toThrow('absolute')
     await expect(binding.save!({ artifactId: randomUUID(), path: join(dir, 'x.png') })).rejects.toThrow('not available')
-    await expect(h.service.bind(h.context, () => 'ask').save!({ artifactId, path: join(dir, 'ask.png') })).rejects.toThrow('Execute')
+    expect((await binding.readForSave!(artifactId, 'image/png')).toString('base64')).toBe(png)
+    await expect(binding.readForSave!(randomUUID(), 'image/png')).rejects.toThrow('not available')
     const provider = new ModelToolProvider(process.cwd())
     cleanups.push(() => provider.dispose())
-    const context = { conversationId: h.context.conversationId, workMode: 'execute' as const, imageToolBinding: binding }
+    const context = { conversationId: h.context.conversationId, imageToolBinding: binding }
     const native = await provider.callTool('save_image', { artifactId, path: join(dir, 'native.png') }, new AbortController().signal, context)
     expect(JSON.stringify(native)).toContain('native.png')
-    await expect(provider.callTool('save_image', { artifactId, path: join(dir, 'ask2.png') }, new AbortController().signal, { ...context, workMode: 'ask' })).rejects.toThrow()
+    await expect(provider.callTool('save_image', { artifactId, path: join(dir, 'unbound.png') }, new AbortController().signal, { conversationId: context.conversationId })).rejects.toThrow()
     expect(h.fetcher).toHaveBeenCalledOnce()
   })
 
@@ -276,9 +275,64 @@ describe('Main conversation image service', () => {
     expect(await binding.describeSave!()).toMatch(/none yet/)
     h.profile.allowConversationInvocation = false
     expect(await binding.describeSave!()).toBeUndefined()
+    const text = h.database.createTextArtifact({ title: 'Text reply', content: 'Not an image' })
+    h.database.saveLocalConversations([{ header: h.header, messages: [{ ...h.message, artifactIds: [text.id, randomUUID()] }] }])
+    expect(await binding.describeSave!()).toBeUndefined()
     const [uploadId] = h.service.persistUploads(h.context, [{ name: 'upload.png', mediaType: 'image/png', data: png }])
     // IDs are listed so the model can save images even when it cannot generate.
     expect(await binding.describeSave!()).toContain(uploadId)
-    expect(await h.service.bind(h.context, () => 'ask').describeSave!()).toBeUndefined()
+    expect(await h.service.bind(h.context).describeSave!()).toContain(uploadId)
+  })
+
+  it('discovers and saves message.artifactIds-only images after reopening without image generation', async () => {
+    const directory = await tempDir()
+    const databasePath = join(directory, 'assistant.sqlite')
+    let database = new AssistantDatabase(databasePath)
+    database.initialize(directory)
+    cleanups.push(() => database.close())
+    const image = database.createImageArtifact({ title: 'Direct image reply', mimeType: 'image/png', base64: png })
+    const context = { conversationId: randomUUID(), messageId: randomUUID(), requestId: randomUUID() }
+    const message = { id: context.messageId, role: 'assistant' as const, content: 'Saved reply', createdAt: 1, state: 'complete' as const, artifactIds: [image.id] }
+    database.saveLocalConversations([{ header: { id: context.conversationId, title: 'Direct images', updatedAt: 1 }, messages: [message] }])
+    database.close()
+    database = new AssistantDatabase(databasePath)
+    database.initialize(directory)
+    const service = new ImageGenerationService({ database, getSettings: async () => ({ modelProfiles: [] }) })
+    cleanups.push(() => service.dispose())
+    const binding = service.bind(context)
+    expect(await binding.describe()).toBeUndefined()
+    expect(await binding.describeSave!()).toContain(image.id)
+    const provider = new ModelToolProvider(directory)
+    cleanups.push(() => provider.dispose())
+    const target = join(directory, 'reopened.png')
+    await provider.callTool('save_image', { artifactId: image.id, path: target }, new AbortController().signal,
+      { conversationId: context.conversationId, imageToolBinding: binding })
+    expect(await readFile(target)).toEqual(Buffer.from(png, 'base64'))
+    expect(database.getConversation(context.conversationId).messages[0]).toMatchObject(message)
+    expect(database.getArtifact(image.id)).toEqual(image)
+  })
+
+  it('filters missing and non-image references and deduplicates before limiting recent images', async () => {
+    const h = setup()
+    const generated = await h.service.bind(h.context).call({ intent: 'create', prompt: 'Blue' }, 'catalog')
+    const [upload] = h.service.persistUploads(h.context, [{ name: 'upload.png', mediaType: 'image/png', data: png }])
+    h.profile.allowConversationInvocation = false
+    const text = h.database.createTextArtifact({ title: 'Text', content: 'Not an image' })
+    const missing = randomUUID()
+    const images = Array.from({ length: 34 }, (_, index) => h.database.createImageArtifact({ title: `Image ${index}`, mimeType: 'image/png', base64: png }).id)
+    const readImages = async () => JSON.parse((await h.service.bind(h.context).describeSave!())!.split('Conversation images (oldest first): ')[1]!) as { artifactId: string; kind: string }[]
+    expect(await readImages()).toEqual(expect.arrayContaining([
+      { artifactId: upload, kind: 'upload' }, { artifactId: generated.artifactIds[0], kind: 'generated' }
+    ]))
+    h.database.saveLocalConversations([{ header: h.header, messages: [h.message,
+      { ...h.message, id: randomUUID(), artifactIds: [...images, ...Array<string>(40).fill(images.at(-1)!), text.id, missing] }
+    ] }])
+    const catalog = await readImages()
+    expect(catalog.map(image => image.artifactId)).toEqual(images.slice(-32))
+    expect(catalog.every(image => image.kind === 'artifact')).toBe(true)
+    const failure = new Error('Database read failed')
+    const getArtifact = vi.spyOn(h.database, 'getArtifact').mockImplementation(() => { throw failure })
+    await expect(h.service.bind(h.context).describeSave!()).rejects.toBe(failure)
+    getArtifact.mockRestore()
   })
 })

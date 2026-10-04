@@ -25,7 +25,7 @@
   置顶与非置顶分组按最近一条消息的创建时间排序，流式文本和工具进度更新不再反复改变位置。
 - [x] **可选桌面任务通知**：“平台功能 / 通用设置”提供默认开启、保存后立即生效的系统任务提醒开关，应用内提示独立保留；通用设置按快捷键、会话与通知、工作目录分组。
 - [x] **按需上下文帮助**：页面和设置中的补充说明使用标题或字段旁的共享帮助入口，支持鼠标与键盘；关键操作后果和错误提示保持可见。
-- [x] **紧凑会话控件**：输入选项集中在紧凑设置面板，Runtime、工作模式、发送和队列操作保持可用；会话搜索提供内嵌清除按钮，清除后恢复当前范围列表并把焦点返回输入框。
+- [x] **紧凑会话控件**：输入选项集中在紧凑设置面板，Runtime、发送和队列操作保持可用；会话搜索提供内嵌清除按钮，清除后恢复当前范围列表并把焦点返回输入框。
 - [x] **会话历史按需加载**：列表只加载轻量摘要，不再一次读入全部会话的过程元数据；已打开和活动会话保留完整详情，搜索、复制、导出、续聊和远程待答问题保持可用。图片合并不会重新发送未变化消息，已确认保存的空闲详情随现有视图缓存释放。详见[历史读取与保留规则](./docs/features/assistant-workbar/execution-history-storage.md#会话列表读取与前端保留)。
 - [x] **文件、截图、窗口、剪贴板上下文**：用户明确选择后才加入模型上下文。聊天输入框支持 `Ctrl+V` 粘贴一个或多个本地支持文件并自动添加为附件，沿用附件按钮的解析进度与限制；普通文本和截图仍可直接粘贴。详见[聊天附件规则](./docs/features/document-processing/prd.md#321-聊天附件入口)。
 - [x] **图片型 PPTX 文字识别**：配置本地 OCR 并选择启用 OCR 的解析方式后，可识别内嵌 PNG、JPEG 和 WebP 图片，保留原生文字与幻灯片定位。OCR 在没有活动或排队任务时空闲 60 秒自动释放模型内存，下次按需重载；快速文本/索引模式仍跳过 OCR。详见[解析行为与真实文件验证](./docs/features/document-processing/chat-attachments-technical-design.md)。
@@ -35,11 +35,11 @@
 - [x] **富文本回答**：支持 GitHub Flavored Markdown、LaTeX 数学公式、受控 Mermaid 图表和会话内 HTML 静态预览。Mermaid 大图放大后可滚动到各个边缘，并可导出完整 PNG，不受当前缩放和拖动位置影响。Agent 完成回复后，完整 HTML 与 HTML 代码块可在原位置预览，并通过图标按钮查看源码或打开全屏预览；该能力默认开启，可在“平台功能 / 通用设置”关闭，预览不执行脚本、联网、表单提交或窗口操作。
 - [x] **AI 回复与完整会话复制**：已完成的 AI 回复可从消息底部复制不含推理、工具日志和引用元数据的 Markdown 原文；完整会话复制复用同一条经过 Preload/Main 校验的剪贴板路径。
 - [x] **助手工作栏、多终端与可调布局**：工作栏开关位于明暗主题按钮旁；右侧工作栏使用持久“+”能力目录和应用 Tab，任务中心与工作区为不可关闭的单实例，浏览器可打开多个独立实例。任务中心可切换当前项目和所有项目，范围随布局保存；无项目任务在所有项目中标注“未绑定项目”。用户可为当前本机或托管 SSH 项目打开多个独立终端，获得有界输出、调整尺寸、结束与显式重连。关闭终端 Tab 会结束 Shell，应用重启只恢复已结束的 Tab 描述，不自动重启 Shell。主侧栏和魔法笔记编辑器的 AI 评论栏支持鼠标与键盘调宽；AI 评论栏记住显示状态及宽度，窄窗口下移至编辑器底部。
-- [ ] **项目 Agent Space**（规划中）：在 Project 中统一角色、知识、Skills/MCP、模型、审批策略、预算和超时，并支持模板复用。
+- [ ] **项目 Agent Space**（规划中）：在 Project 中统一角色、知识、Skills/MCP、模型、能力分配、预算和超时，并支持模板复用。
 - [x] **应用中心与导航**：底部“应用”和“设置”为显示文字的等高按钮，中间使用弱竖分隔线。“应用”带向上箭头，点击后向上展开轻量锚定菜单，无模态遮罩，只列已启用应用，不按打开历史或常驻筛选。点击应用行关闭菜单，本机推理监控打开保留底层工作区的独立 Modal，其余应用打开主内容区；底部“管理应用”使用 `LayoutGrid` 图标，打开标题仍为“应用中心”的可搜索列表及设置详情，布局与交互见 [UI 设计](./docs/features/application-tool-navigation/ui-design.md)。五个应用行均支持上下移动和拖动排序，不受启用或常驻状态限制；列表、菜单和经过过滤的侧栏共用一份保存顺序。知识库始终启用并常驻，提供“打开”和排序；监督者、魔法笔记和本机推理监控可设置启用与常驻。设备共享在测试阶段默认关闭，提供启用开关，不提供常驻开关。监督者沿用智能心跳身份，缺失启用设置时默认关闭，已明确保存的选择保留；关闭后保留计划和历史，拒绝新回顾并隐藏侧栏反馈，在途运行可完成。启用应用不会自动创建计划。旧应用顺序补齐默认项并保留已有相对顺序。设置持久化后的事件同步各入口，包括工具配置写入；重开中心刷新期间锁定修改，新快照覆盖迟到的旧读取。`local-inference` Modal 直接显示服务列表，不展示任务历史或外部连接；向量服务显示独立进程 CPU 与工作集内存，ASR／OCR 说明共享进程无法独立统计的原因。ASR 就绪状态未知，不从活动请求推断运行中。受支持的服务操作保留影响确认，失败后刷新列表并要求重新确认；TTS 显示不可用。取消中的推理在 Worker 确认或退出前仍计入活动任务及服务停止影响。实现已接入生产 App；验收记录分别列出完整 App、组件 fixture、真实本地引擎和剩余平台／安装包覆盖，不以历史失败代替当前全量结果，详见[验证进度](./docs/features/application-tool-navigation/progress.md)。
 - [x] **本地设备共享元数据**（源码已实现）：测试阶段默认关闭，先在应用中心启用，再从应用菜单或应用中心打开；已明确保存的启用选择保留，关闭会退出页面，但不清除目录或撤销已发布记录。可保存服务地址和设备名称、注册本机、浏览服务返回的目录、发布能力或知识元数据并撤销本机 ID 的条目。默认服务为 `http://127.0.0.1:8787`。服务未认证，ID 只用于识别；服务器来源不上传或同步内容，知识搜索／读取／下载标志是独立声明，不提供正文访问或远程执行。详见[范围与验证](./docs/features/device-sharing/README.md)。
 - [ ] **私有化应用市场**（规划中）：在应用管理基础上提供组织自己的目录与应用分发。当前只管理内置应用，尚无市场浏览或安装能力，详见 [FR-15](./docs/features/application-tool-navigation/prd.md#fr-15-私有化市场与-yaml-交换后续)。
-- [ ] **通用助手工作栏与执行空间后续能力**（规划中）：在现有工作栏和多终端基础上继续加入更完整的执行监督、统一 Runtime 监控、受管进程、可固定目标的工作区/浏览器/成果实例、底部停靠与独立窗口。Task Center 保持 Task 的单例索引，附件与知识库继续由会话输入区管理，未来的记忆与历史执行上下文归入关联 Task。详见 [Feature PRD](./docs/features/assistant-workbar/prd.md)。
+- [ ] **通用助手工作栏与执行空间后续能力**（规划中）：在现有工作栏和多终端基础上继续加入更完整的执行监督、统一 Runtime 监控、受管进程、可固定目标的工作区/浏览器实例、底部停靠与独立窗口。Task Center 保持 Task 的单例索引，附件与知识库继续由会话输入区管理，未来的记忆与历史执行上下文归入关联 Task。详见 [Feature PRD](./docs/features/assistant-workbar/prd.md)。
 - [ ] **ShareServer Office 协同编辑**（设计中）：通过可选 ShareServer 集成 ONLYOFFICE Docs，在助手工作栏中以文件名打开多个文档 Tab，支持 DOCX、XLSX、PPTX 的人工编辑、保存、撤销、源文件冲突保护和后续 AI 选区修改。Office 正文会由所选 ShareServer 和编辑引擎处理；Desktop 不内置或启动 Document Server，未配置服务时不宣称离线编辑。详见[设计文档](./docs/features/office-document-editing/README.md)。
 
 ### Agent Runtime 与模型连接
@@ -47,30 +47,30 @@
 - [x] **子任务历史去重与空间回收**：本机与托管 SSH 子任务事件只存变化，不再反复保存完整进度。首次升级自动转换旧记录并回收空间，显示进度且支持退出重试；保留聊天、执行详情、结果和远程事件去重。已随 0.13.2 发布的 schema 35 补修还会整理升级到 0.13.1 后重复写入的工具块，不删除事件；终态及时释放写入缓存，远程重复重放不重建已释放的缓存。普通结构升级不重新转换历史或回收正常空闲页，启动页区分结构更新、旧内容转换与实际空间回收。旧客户端不能打开升级后的数据库，具体规则见[执行记录存储与升级回收](./docs/features/assistant-workbar/execution-history-storage.md)。
 
 - [x] **直连模型 Runtime**：支持问答、知识总结、受控工具执行、图像生成，以及通过支持 OpenAI 兼容图片编辑接口的服务商进行参考图编辑。连续请求自动复用最近一次成功生成的图片和文字历史，已保存会话重开后仍可继续修改，本轮显式附图优先；上游明确不支持编辑时继续按文字生成，仅在回复底部提示未使用参考图。编辑使用 multipart 上传图片，结果仍只接受经过校验的内联图片，不下载服务商返回的图片 URL。详见[图片生成与连续修改](./docs/features/image-generation/README.md)。
-- [x] **当前会话图片工具**：为图片模型开启会话调用后，支持工具调用的聊天模型可在 Execute 中生成图片、修改上传图片或历史成果，无需另开会话或手动切换图片模型。直连文本模型、本地 OpenCode、Continue、DeepSeek Harness 和托管远程 OpenCode 复用统一服务，Runtime 分配由模型设置派生；图片请求可能产生费用，编辑需服务商支持。详见[实现与验证记录](./docs/features/conversation-media-generation/progress.md)。
+- [x] **当前会话图片工具**：为图片模型开启会话调用后，支持工具调用的聊天模型可生成图片、修改上传图片或历史成果，无需另开会话或手动切换图片模型。直连文本模型、本地 OpenCode、Continue、DeepSeek Harness 和托管远程 OpenCode 复用统一服务，Runtime 分配由模型设置派生；图片请求可能产生费用，编辑需服务商支持。详见[实现与验证记录](./docs/features/conversation-media-generation/progress.md)。
 - [x] **跨项目 Runtime 进程复用**：兼容配置的本地 OpenCode 和 DeepSeek Harness 共享重型进程，托管 OpenCode 会话在同一 Host 上复用进程。项目适配器及会话的工作区、模型、工具、问答和取消仍独立路由；远程待答问题和任务状态可在重连或桌面重启后恢复，不重发已接受请求。新的远程行为需要 Desktop `0.13.5` 与 Agent `0.13.0` 配套更新，详见[设计与实测](./docs/features/assistant-workbar/runtime-process-reuse-technical-design.md)。
-- [x] **直连模型编程 Agent**：本机直连文本模型可在 Execute 模式运行平台 Shell，并可按父请求模式、模型、工作区和能力范围委派一层编程 Subagent；OpenCode、Continue、DeepSeek Harness 和托管 SSH 不重复注入这两个工具。Windows 本机命令与真实模型“修改、测试、修复、复核”闭环已通过，macOS 与 Linux 真机命令仍待对应平台验收。
-- [x] **高效直连模型工作区工具**：直连模型使用随包 ripgrep 的原生参数发现文件和搜索内容，按行分页读取大型 UTF-8 文件，并在 Execute 中应用多文件补丁。Ask 限于工作区只读搜索和读取，Execute 按当前账号权限搜索；用户无需另行安装 ripgrep。搜索保留原生输出与退出码，大结果通过 `output_read` 完整续读，可处理的参数错误允许模型调整后继续。
+- [x] **直连模型编程 Agent**：本机直连文本模型可运行平台 Shell，并可按父请求模型、工作区和能力范围委派一层编程 Subagent；OpenCode、Continue、DeepSeek Harness 和托管 SSH 不重复注入这两个工具。Windows 本机命令与真实模型“修改、测试、修复、复核”闭环已通过，macOS 与 Linux 真机命令仍待对应平台验收。
+- [x] **高效直连模型工作区工具**：直连模型使用随包 ripgrep 的原生参数按当前账号权限发现文件和搜索内容，按行分页读取大型 UTF-8 文件，并应用多文件补丁；读取和补丁 API 保留工作区相对路径合同。用户无需另行安装 ripgrep。搜索保留原生输出与退出码，大结果通过 `output_read` 完整续读，可处理的参数错误允许模型调整后继续。
 - [x] **长上下文与工具输出分页**：历史消息、长回复和文档解析文本不再采用旧的固定截断限制。直连模型可分页续读已保存的搜索、命令和 Subagent 输出；所选模型的上下文窗口及传输边界仍然有效。
 - [x] **OpenCode 与 Continue**：使用隔离子进程、环境变量白名单、统一配置、取消、启动与控制请求时限、有界流式输出和活动记录；共享进程回收逻辑保留 Windows 完整进程树终止，并对采用独立进程组的 POSIX 子进程执行组回收。聊天状态检查使用一次性探测 Runtime 并在返回后立即回收，不进入按模型与项目隔离的执行 Runtime 缓存；本机 GoodBuddy 管理的 OpenCode 在该被动检查中只确认所选路径和模型凭据，不启动用后即毁的 Server，设置中的显式连接测试和原生能力清单仍执行完整启动及健康检查，原生能力清单随后与首次实际请求复用同一个执行 Runtime，不再重复冷启动；执行 Runtime 仍按项目复用，但 OpenCode 配置依赖和按内容摘要生成的 Skill 快照在所有本机项目间全局复用，会话数据、工具输出及请求级 MCP 状态继续隔离。本机 GoodBuddy 管理的 OpenCode 只对同一会话内的请求保持顺序，不同会话即使属于同一项目也可并行，不同项目同样可并行；请求级动态 MCP 通过默认通配禁用和当前请求精确放行保持隔离。托管的本机和远端 OpenCode 跳过界面未使用的自动 Git 快照，避免同步差异计算拖住会话，文件工具、子代理与工作区 Git 差异保留；Continue 持续排空不用展示的宿主 stdout，防止控制台输出填满管道。这些调整随新启动的 Runtime 生效，不改写外部 OpenCode Server 配置。OpenCode 与 Continue 不再按固定工具调用数或活动数中止单次运行，已观察到的工具与 Subagent 活动全部保留在本地会话，不再在原生任务继续执行时丢弃后续详情。交互提问只由前台对话回答，定时任务、远程通道和委派等后台执行遇到提问时会立即失败并提示改为前台运行，避免无限等待。本机 OpenCode 启动时直接使用已选择的绝对路径，不预先检查文件或运行 `--version`，路径失效时由实际启动返回错误；托管 Linux ARM Host 激活 Runtime 时复用准备阶段已验证的 registry 和 manifest，不重新哈希或检查完整 OpenCode 二进制。
-- [x] **托管 SSH OpenCode 与 Continue**：该能力由“设置 > 平台功能”中的独立“远程项目”页签控制并默认关闭；关闭时不影响本地项目、普通桌面功能或桌面发布。支持 Linux x64、Linux arm64 和 macOS arm64 Host，不支持 Intel Mac；通过 SSH 按需启动 detached Agent，不要求开机服务。Ask 在 Runtime 工具边界保持只读，Execute 使用所选 SSH 账号的完整权限。Agent 持有 Prompt、模型和工具轮次、Runtime 进程及语义 transcript，Desktop 断开后重新 Attach 原操作而不重发 Prompt；模型凭据仅在当前操作内存中使用，不写入 Renderer、SSH 参数、环境或磁盘。当前 Agent 可以常驻，更新替换的旧 Agent 排空活动任务后退出。任务完成后回收空闲 Runtime，共享进程仍有任务或待答问题时保留；下一轮重建 Runtime 并恢复对话历史。设置页按平台和架构显示包状态，用户显式下载、更新或导入/导出包含 Agent、固定 Node、OpenCode 和 Continue 的签名 `.gbagent`；三个目标共用一个签名 catalog，继续校验签名和 SHA-256。Continue 需要更新后的联合包与配套 Desktop。首次发布混合 catalog 前需先升级 Desktop，旧版 Linux-only 目录读取器无法解析包含 Darwin 的目录。历史 macOS OpenCode 原生安装、生命周期、Attach、真实 Ask/Execute 和独立进程组工具取消已在真实 Host 验证，不代表 Continue 的同等实机覆盖。当前 Agent 源码锁为 `0.15.3`，配套 Desktop 候选为 `0.15.10`；详细运行边界和 Linux 历史回归证据见[远程主机技术设计](docs/features/remote-host/technical-design.md)，正式发布状态以独立发布渠道为准。
+- [x] **托管 SSH OpenCode 与 Continue**：该能力由“设置 > 平台功能”中的独立“远程项目”页签控制并默认关闭；关闭时不影响本地项目、普通桌面功能或桌面发布。支持 Linux x64、Linux arm64 和 macOS arm64 Host，不支持 Intel Mac；通过 SSH 按需启动 detached Agent，不要求开机服务。请求使用所选 SSH 账号权限和已接入能力，无产品模式或一般工具审批。Agent 持有 Prompt、模型和工具轮次、Runtime 进程及语义 transcript，Desktop 断开后重新 Attach 原操作而不重发 Prompt；模型凭据仅在当前操作内存中使用，不写入 Renderer、SSH 参数、环境或磁盘。当前 Agent 可以常驻，更新替换的旧 Agent 排空活动任务后退出。任务完成后回收空闲 Runtime，共享进程仍有任务或待答问题时保留；下一轮重建 Runtime 并恢复对话历史。设置页按平台和架构显示包状态，用户显式下载、更新或导入/导出包含 Agent、固定 Node、OpenCode 和 Continue 的签名 `.gbagent`；三个目标共用一个签名 catalog，继续校验签名和 SHA-256。Continue 需要更新后的联合包与配套 Desktop。首次发布混合 catalog 前需先升级 Desktop，旧版 Linux-only 目录读取器无法解析包含 Darwin 的目录。历史 macOS OpenCode 原生安装、生命周期、Attach、真实 Ask/Execute 和独立进程组工具取消已在真实 Host 验证，不代表 Continue 的同等实机覆盖。当前 Agent 源码锁为 `0.15.3`，配套 Desktop 候选为 `0.15.10`；无模式源码要求 runtime/acp 6，发布前须重建配套工件。详细运行边界和 Linux 历史回归证据见[远程主机技术设计](docs/features/remote-host/technical-design.md)，正式发布状态以独立发布渠道为准。
 - [x] **SSH Host 手动环境准备源码链路**：Host Key、认证和系统探针成功后先保存 Host，并只读探测共享 Agent/Runtime；保存 Host、打开项目都不自动安装。Host 卡片只有一个按版本事实显示“安装远程环境”“更新远程环境”或“重新安装”的主按钮，次级 SegmentedControl 选择默认且不持久化的“自动”、Host 下载或 GoodBuddy 传输；“版本匹配”badge 不等同环境健康。自动模式只在 operation/prepare 前探测并择一，显式选择保持有效，任何 prepare、commit 或 adoption 失败都不跨 acquisition 自动 fallback。两种方式把同一签名 compound `.gbagent` 交付到固定 staging 后，共用 control-plane prepare、commit、Agent activate/health、Runtime activate、finalize 与显式 cleanup。GoodBuddy 路径可在同一次操作下载并验证缺失候选、缓存并取得 lease，再有界流式 SFTP 上传一个归档和其中已验证的 bootstrap Node，不把约 294 MiB 整包读入 Main `Buffer`；Host 在解包时完成一次完整 payload 校验。未完成操作只记录暂存 cleanup 所需的 operation ID；下次更新尽力清理旧暂存后重新 prepare，不保存远端 metadata 副本，也不让 cleanup 失败阻塞新更新或回滚健康环境。已有项目在实际使用 Workspace/Runtime 时按需解析 Host current identity 并执行固定 `attach-or-bootstrap`，注册后的 health、capabilities 和 prompt 启动不扫描完整 payload。详见 [设计说明](./docs/features/remote-host/environment-provisioning-technical-design.md)。
-- **SSH Host 环境准备验证记录**：当前源码已在隔离 Linux x64 环境通过包安装、Ask/Execute、原生子代理工作区外写入、重连及 stop/bootstrap。现有记录未覆盖 Host 卡片的完整 GitHub、北京镜像、Linux x64/arm64、取消和离线 GoodBuddy 传输矩阵，候选 CI/原生打包与系统休眠唤醒也尚未验证；开发记录不代表版本已经发布。
+- **SSH Host 环境准备验证记录**：此前源码已在隔离 Linux x64 环境通过包安装、Ask/Execute、原生子代理工作区外写入、重连及 stop/bootstrap。现有记录未覆盖 Host 卡片的完整 GitHub、北京镜像、Linux x64/arm64、取消和离线 GoodBuddy 传输矩阵，候选 CI/原生打包与系统休眠唤醒也尚未验证；开发记录不代表版本已经发布。
 - [x] **远程工作区与长任务更新**：Agent `0.11.23` 新增远程文件/Git 管理和可选模型限额，随包 Runtime 不再施加固定十分钟 Prompt 时限；无限请求时长仍保留独立连接超时。请先升级 Desktop 至 `0.12.11`，再下载并更新 Host 上的 Agent。
 - [x] **远程原生问答与取消修复**：Agent `0.11.24` 修复远程原生问答转交和取消待答后同一会话续发，需要先升级 Desktop 至 `0.13.0`。
-- [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；优先使用管理员提供的连接，否则跟随兼容的默认模型或首个兼容连接，无需单独重复选择，设置页显示实际管理员或回退模型来源。Ask 只允许调用 Host 中真实注册的 `read`、`skill` 以及 Main 管理的 Web Search/Fetch 和已启用的 Story Graph 代理，拒绝插件同名冒充，Execute 放行全部已启用内置及插件工具，并以当前用户权限运行。图像输入跟随所选模型连接的能力声明，文本模型在 Host 或模型调用前拒绝图片，图片模型通过有界内联内容和临时 Attachment Store 接收 JPEG/PNG。Windows Host 启动和 ACP 会话共用规范工作区路径，同目录不同写法可复用正常 Runtime，不再因路径不一致而创建会话失败。
-- [x] **DSH npm 插件市场**：市场默认关闭，由用户显式开启后搜索公共 npm 的 `dsh-plugin` 包，使用捆绑 npm 执行精确版本安装和普通 lifecycle scripts，并支持启停、JSON 配置、移除、失败启动自动停用和离线管理已安装插件；关闭市场只隐藏目录与管理界面，不改变已有插件的启停状态，第三方代码不受 Ask 初始化隔离。
-- [x] **Ask 与 Execute 工作模式**：Ask 保持只读；Execute 是用户对当前本机或 SSH 账号可用工具、进程、网络和可写路径的完整授权，包括工作区外路径及原生子代理工作。
-- **本地 Runtime 原生客户端（预览）**：输入区可按当前本地项目与模型，在工作栏终端打开 Continue/OpenCode，或在系统浏览器打开官方 DS Web。客户端使用独立会话，不导入 GoodBuddy 对话历史；关闭 DS 网页不停止服务，可在 GoodBuddy 中停止。Continue/OpenCode Ask 已通过原生权限映射 Main 绑定的只读工具。远程快捷入口未接通，托管标准 Node 交付和完整跨平台安装包验收仍有缺口；Windows 真实模型证据不代表全部会话能力等价，详见[实现与剩余工作](./docs/features/assistant-workbar/progress.md#2026-09-27-local-native-client-validation)。
+- [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；优先使用管理员提供的连接，否则跟随兼容的默认模型或首个兼容连接，无需单独重复选择，设置页显示实际管理员或回退模型来源。已注册内置工具及已启用插件工具以当前用户权限运行，Main 代理工具沿用能力分配和请求归属校验。图像输入跟随所选模型连接的能力声明，文本模型在 Host 或模型调用前拒绝图片，图片模型通过有界内联内容和临时 Attachment Store 接收 JPEG/PNG。Windows Host 启动和 ACP 会话共用规范工作区路径，同目录不同写法可复用正常 Runtime，不再因路径不一致而创建会话失败。
+- [x] **DSH npm 插件市场**：市场默认关闭，由用户显式开启后搜索公共 npm 的 `dsh-plugin` 包，使用捆绑 npm 执行精确版本安装和普通 lifecycle scripts，并支持启停、JSON 配置、移除、失败启动自动停用和离线管理已安装插件；关闭市场只隐藏目录与管理界面，不改变已有插件的启停状态，第三方初始化代码使用当前用户权限。
+- [x] **统一执行源码链路**：已移除 Ask/Execute、“安全”分类和 `toolApproval` 策略；请求按所选 Runtime、已启用能力及本机或 SSH 账号权限执行。“清除本地数据”位于“通用 > 平台功能”，保留二次确认。schema 60 和 Runtime 设置 22 清理旧字段；远程要求 runtime/acp 6，本地 Harness 控制协议为 2。原生工具清单不提供统一的逐工具开关。真实 Electron 与 Linux Host 定向证据见[进度](./docs/features/unified-execution/progress.md)，全量测试及配套发布包验证仍待完成。
+- **本地 Runtime 原生客户端（预览）**：输入区可按当前本地项目与模型，在工作栏终端打开 Continue/OpenCode，或在系统浏览器打开官方 DS Web。客户端使用独立会话，不导入 GoodBuddy 对话历史；关闭 DS 网页不停止服务，可在 GoodBuddy 中停止。Continue/OpenCode 使用 Main 按当前请求分配的工具，无产品工作模式。远程快捷入口未接通，托管标准 Node 交付和完整跨平台安装包验收仍有缺口；Windows 真实模型证据不代表全部会话能力等价，详见[实现与剩余工作](./docs/features/assistant-workbar/progress.md#2026-09-27-local-native-client-validation)。
 - **Runtime 遥测关闭配置**：本地 DS Web、远程 Runtime 和模型桥启动共用遥测关闭环境，不限制模型、MCP 或用户主动联网。Continue 在自动更新关闭时跳过检查；远程改动随配套 Agent 新启动的 Runtime 生效，当前源码 Linux x64 Agent/model 验证见 [0.15.0 发布准备](./docs/development/release-preparation-0.15.0.md)。
-- [x] **Runtime 原生交互转交**：OpenCode 与 Continue 的选择、yes/no、自由文本回答和跳过使用现有问答卡片，本机与托管 SSH OpenCode 同时转交属于当前请求的子会话提问。托管 SSH OpenCode 问答需要 Desktop `0.13.0`、Agent `0.11.24` 和新启动的托管 Runtime，不扩展到任意 ACP 服务。回答或跳过成功后在原位置保留问题与答案，支持多轮记录和本地会话重载；旧版本已丢弃的答案不能恢复。并行问题按顺序等待回答，重复事件保留草稿，提交失败可重试；取消远程待答后可在同一会话继续发送。Execute 权限确认自动处理，不等待第二次审批；具体支持范围见[交互边界](./docs/features/assistant-workbar/runtime-interactions.md)。
+- [x] **Runtime 原生交互转交**：OpenCode 与 Continue 的选择、yes/no、自由文本回答和跳过使用现有问答卡片，本机与托管 SSH OpenCode 同时转交属于当前请求的子会话提问。托管 SSH OpenCode 问答需要配套 Agent 和新启动的托管 Runtime，不扩展到任意 ACP 服务。回答或跳过成功后在原位置保留问题与答案，支持多轮记录和本地会话重载；旧版本已丢弃的答案不能恢复。并行问题按顺序等待回答，重复事件保留草稿，提交失败可重试；取消远程待答后可在同一会话继续发送。原生工具权限确认自动处理，不等待第二次审批；具体支持范围见[交互边界](./docs/features/assistant-workbar/runtime-interactions.md)。
 - [x] **原生执行清单**：OpenCode 和 Continue 在对话顶部更新只读执行清单，进度随会话保存。详情在可滚动的锚定浮层中展开，不挤动聊天内容；点击外部关闭，Escape 关闭后焦点返回入口。显式清空和远程重放保留请求归属，取消不把未完成条目标成完成；远程交付需要配套 Agent，详见[清单契约](./docs/features/assistant-workbar/runtime-checklist-technical-design.md)。
 - **取消后的历史**：模型可见历史保留已中断的部分回复或占位标记，避免旧问题合入下一轮；本地 OpenCode 复用会话时附带一次中断说明。
-- [x] **专家与 Subagent**：支持显式专家、团队分析和最多三个专家并行分析。专家继承父请求 Ask/Execute 模式，可使用已启用的本机直连模型工具，Ask 仍只读；这些工具不是远程 OpenCode 子会话。聊天先展示可逐项展开的专家完整输出，再在其下展示总 Agent 的综合结果，并随会话保存。
+- [x] **专家与 Subagent**：支持显式专家、团队分析和最多三个专家并行分析。专家继承父请求执行空间和能力范围，可使用已启用的本机直连模型工具；这些工具不是远程 OpenCode 子会话。聊天先展示可逐项展开的专家完整输出，再在其下展示总 Agent 的综合结果，并随会话保存。
 - [x] **OpenCode 子代理过程与最终结果**：子代理卡片按顺序显示文字、推理和工具过程，最终结果独立展示。远程实时过程需要 Agent `0.11.20`，旧包仍显示最终结果但不补造缺失过程。
 - [x] **OpenCode 事件连接回收**：聊天与原生上下文压缩在结束事件迭代前关闭各自订阅，覆盖完成、失败、取消和消费方提前结束，不取消其他并行会话。
 - [x] **准确的消息底部状态**：区分请求准备、等待重试、开始重试、工具活动、待回答和终态；本机 OpenCode 使用原生重试次数和计划时间，直连模型显示自身退避阶段。消息底部状态点保持静态，未接入的 Runtime 重试不编造提示，会话列表闪点及发送、停止行为不变。
-- [x] **直连模型命令工作目录**：Execute 命令可通过绝对路径、相对路径或符号链接使用工作区外目录；工作区仍为默认目录和相对路径基准，Ask 保持只读。
+- [x] **直连模型命令工作目录**：命令可通过绝对路径、相对路径或符号链接使用当前账号可访问的工作区外目录；工作区仍为默认目录和相对路径基准。
 - [x] **Runtime 与模型分层选择**：按会话、项目、全局逐字段解析 Runtime 和模型。会话双栏选择器显示来源，可覆盖或恢复项目默认；项目与通道设置共用规则，Main 在每次请求及排队派发时重新解析。已删除或不兼容的连接会回退，缺少凭据仍明确报错。schema 49 迁移已保存选择，用途模型仍为规划，详见[选择设计](./docs/features/model-connections/runtime-selection-design.md)。
 - [x] **角色绑定模型连接**：每个角色可继承默认模型或选择独立文本模型连接，失效连接安全回退默认模型，综合角色始终继承默认模型。
 - [x] **多协议模型配置**：支持 Anthropic Messages、OpenAI Responses、OpenAI Chat Completions、OpenAI Images 和无认证本机模型；新用户默认连接为本机 Ollama 兼容地址，不预置第三方云模型服务。升级时只替换从未配置凭据且仍完全等于旧内置值的历史默认连接，用户显式保存或加密凭据的连接保持不变；已有部署仅使用兼容环境变量提供凭据时继续沿用对应的历史连接参数，通用模型环境变量仍优先。“保存并测试模型”会发送有界的真实文本或图片生成请求并校验生成结果，而不是只检查 HTTP 连通性，因此可能产生少量服务商用量费用。
@@ -79,20 +79,20 @@
 - [x] **上下文用量与自动压缩**：直连模型按每次成功调用更新供应商用量，图片与工具轮次使用同一口径，供应商缺失 usage 时才回退估算；界面明确区分“本次模型调用”和“压缩后对话估算”，压缩线始终根据当前设置与所选模型窗口即时计算，不在每个对话中保存旧配置；压缩标识的前后值使用同一估算口径，运行记录仍保留各次模型调用的供应商 usage。对话与多轮工具 Agent 可在已完成调用越过阈值后自动重复压缩，规划时先为固定提示、工具定义和摘要预留预算；同一回复会分别保留 Agent 工具上下文与对话历史的压缩标识，并在应用重启或较早消息滚出本地历史窗口后继续复用摘要。
 - [x] **持久凭据保护**：API Key 由 Main 使用系统安全存储加密且不暴露给 Renderer。托管 SSH accepted Prompt 只把当前 profile 与密钥放入 Agent 内存，不写入 SSH 参数、远端环境或磁盘；其他路径仍在 Main 内使用。密钥随对应模型连接保存，修改服务地址或临时切换为无需认证不会要求重新输入；只有用户显式清除凭据或删除连接时才移除。
 - [x] **有界故障诊断**：Desktop 在用户数据目录中轮转保存启动、Runtime 和远程连接的固定阶段失败，最多 4 个 256 KiB 文件；GoodBuddy Agent 在各 installation 的私有 state 目录中轮转保存 daemon、连接、恢复和 Runtime 生命周期，最多 3 个 64 KiB 文件，并可通过固定 `diagnostics --installation-id` 命令读取。两端都只记录白名单阶段、稳定错误码/类型和固定短消息，不保存 Prompt、凭据、文件内容、路径、环境、SSH 参数或 Provider 原始响应；诊断写入失败不改变正常运行。
-- [x] **OpenCode Runtime 定制**：GoodBuddy 管理的内置 OpenCode 可发现原生 Agents、Tools、Commands、LSP、Formatters、MCP、Skills、Prompts 与 Resources；Tools 单独显示读取、文件修改、命令、网络、Agent 编排等类型、来源及 Ask/Execute 可用性，并隐藏 OpenCode 内部 `invalid` 与 GoodBuddy 临时 MCP 工具。支持保存默认 Agent、每次请求覆盖 Agent、通过原生 SDK 执行 Command、显示上下文用量并调用有总时限的原生 Compact；并发外部 Server 对话的提问使用请求级公开 ID 映射，回答不会串到其他会话。外部 OpenCode Server 只报告连接状态，不宣称原生清单可读。任意插件安装、Session Share、自动 Worktree 和 OpenCode 原生会话持久化仍不开放。
+- [x] **OpenCode Runtime 定制**：GoodBuddy 管理的内置 OpenCode 可发现原生 Agents、Tools、Commands、LSP、Formatters、MCP、Skills、Prompts 与 Resources；Tools 单独显示读取、文件修改、命令、网络、Agent 编排等类型、来源及描述，并隐藏 OpenCode 内部 `invalid` 与 GoodBuddy 临时 MCP 工具。支持保存默认 Agent、每次请求覆盖 Agent、通过原生 SDK 执行 Command、显示上下文用量并调用有总时限的原生 Compact；并发外部 Server 对话的提问使用请求级公开 ID 映射，回答不会串到其他会话。外部 OpenCode Server 只报告连接状态，不宣称原生清单可读。任意插件安装、Session Share、自动 Worktree 和 OpenCode 原生会话持久化仍不开放。
 - [x] **Continue Runtime 定制**：提供静态配置中的原生 Rules、Prompt 模板与 MCP 清单，以及可编辑的 GoodBuddy Rules/Prompt 配置预设；聊天可按请求选择预设和填入可继续编辑的 Prompt。当前 Continue Host 没有可信的静态原生 Tool 发现接口，且使用隔离的 `CONTINUE_GLOBAL_DIR`，因此界面明确标记 Tools 不支持静态发现，也不把 Host 实际不会加载的工作区或用户 Skills 冒充原生能力；GoodBuddy 分配的 Skills 仍按请求暂存执行。Continue 临时 Host 不复用原生会话压缩，手动压缩由 GoodBuddy 摘要模型完成并验证持久化摘要覆盖范围；Agent 交互提问转换为统一问答卡片。Resources、Hooks、后台 Job 和 Continue 原生会话管理继续暂缓。
-- [x] **Runtime 原生清单语义**：原生能力以 Agents、Tools、Commands、Skills、MCP、Rules、Prompts、Resources、LSP、Formatters 和上下文 11 个页签展示；清单状态独立于 Runtime 连通性，区分完整、部分、不可用、仅连接和不支持。DeepSeek Harness 通过 Host Registry 枚举有界的内置/插件 Tools 与 Skills，显示真实 Ask/Execute 边界，并排除 GoodBuddy 按请求分配的 Skills、Web/MCP 代理。
+- [x] **Runtime 原生清单语义**：原生能力以 Agents、Tools、Commands、Skills、MCP、Rules、Prompts、Resources、LSP、Formatters 和上下文 11 个页签展示；清单状态独立于 Runtime 连通性，区分完整、部分、不可用、仅连接和不支持。DeepSeek Harness 通过 Host Registry 枚举有界的内置/插件 Tools 与 Skills，显示来源和描述，并排除 GoodBuddy 按请求分配的 Skills、Web/MCP 代理。
 - [ ] **Runtime 监督栏目**（规划中）：在应用级助手工作栏的固定 Runtime 栏目统一承载 OpenCode、Continue 和 DeepSeek Harness 的 Task 级委派、后台执行、Workflow/Hook、长任务与原生会话监督；用户只选择 Conversation 或 Task，Job/Run 保持内部，不形成树或独立操作对象。
-- [ ] **Subagent 高级监督**（规划中）：在工作栏固定 Runtime 栏目按 Task 聚合，提供可配置的嵌套、并行、预算和生命周期控制。基础专家模式继承与单层直连模型编程委派已经可用。
+- [ ] **Subagent 高级监督**（规划中）：在工作栏固定 Runtime 栏目按 Task 聚合，提供可配置的嵌套、并行、预算和生命周期控制。基础专家能力继承与单层直连模型编程委派已经可用。
 
 ### Skills、MCP 与知识库
 
 - [x] **Skills 按需接入**：可分配给直连模型、OpenCode、Continue 和 DeepSeek Harness，并使用有界资源和受控 Runtime 边界。
 - [x] **本机工具执行环境源码链路**：在“能力与工具 > 工具执行环境”中为本机 Skills 与 stdio MCP 选择 GoodBuddy 托管 Node.js、按需安装的托管 Python，或经过真实验证的自定义解释器；提供独立的原生地址/OSS 镜像选择、诊断、安装进度、取消和删除。新的本机 Runtime 与 stdio MCP 获得不可变 PATH 快照，不修改普通终端、系统环境或远程 Host。Windows x64 托管 Node 与原生地址 Python 已通过真实安装验证；托管 Python 归档按目标文件系统验证，Linux 保留大小写不同的合法路径，所有目标仍拒绝完全重复路径和不安全条目。
 - **本机工具执行环境验证记录**：六个平台/架构的 OSS 镜像对象已完成字节、大小和 SHA-256 公开回读验证。托管 Python 保持按需下载，不向 Desktop 发行包额外带入许可证文件。每个标准打包任务使用目标架构原生 Runner，并在打包前真实安装托管 Python，验证 SSL、pip 与 venv。不可变的 `v0.12.0` 尝试在发布前通过 Windows 与 macOS，但暴露了 Linux TAR 大小写处理问题；`v0.12.1` 在同步 Agent 发布时于原生打包前取消。已发布的 `v0.12.2` 随后通过全部六个原生打包任务及其托管 Python 安装探针。现有记录未覆盖真实 Skill/MCP、自定义解释器和运行中进程协调。
-- [x] **内置 MCP 按需接入**：知识库、魔法笔记、GoodBuddy 配置与内置浏览器 MCP 可分别启停，并可分配给直连模型、GoodBuddy 管理的 OpenCode 和 Continue；这些 Server 在 DeepSeek Harness 中仍不支持。Story Graph 另通过 Main 代理支持 Harness。内置 MCP 仅通过当前请求的短期本机权限提供，Ask / Execute 读写边界不受用户配置放宽。
+- [x] **内置 MCP 按需接入**：知识库、魔法笔记、GoodBuddy 配置与内置浏览器 MCP 可分别启停，并可分配给直连模型、GoodBuddy 管理的 OpenCode 和 Continue；这些 Server 在 DeepSeek Harness 中仍不支持。Story Graph 另通过 Main 代理支持 Harness。内置 MCP 仅通过当前请求的短期本机权限提供，继续校验启用、分配和资源归属。
 - **Obsidian 接入（源码已实现，验收中）**：默认关闭，默认发现全部本机注册仓库，也可指定文件夹并在保存或启用前测试。随包提供 MCPVault 0.16.0，19 个共享工具保留全部上游能力；生产组件自动化、Electron 托管 Node、Windows 设置与聊天 UI，以及受限网络下的 Windows x64 解包应用已验证。物理断网、安装器及其他系统验收待完成。DeepSeek Harness 与远程执行保持不可用，详见[功能文档与验证记录](./docs/features/obsidian/README.md)；此项不表示已发布。
-- [x] **MCP Tools**：显式启用的自定义 MCP 可按 Runtime 分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent Execute 和 DeepSeek Harness，并仅在 Execute 加载；Agent 子进程只获得按请求签发的本机回环权限，MCP 地址、命令和凭据保留在 Main，动态工具仍经过发现、执行记录与权限边界。直连模型与 Harness 的健康调用复用当前请求已发现的工具清单，不在每次调用前重复发现。
+- [x] **MCP Tools**：显式启用的自定义 MCP 可按 Runtime 分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 和 DeepSeek Harness；Agent 子进程只获得按请求签发的本机回环权限，MCP 地址、命令和凭据保留在 Main，动态工具仍经过发现、执行记录与资源范围校验。直连模型与 Harness 的健康调用复用当前请求已发现的工具清单，不在每次调用前重复发现。
 - [x] **MCP Prompts 与 Resources 元数据**：MCP 测试仅在 Server 声明对应能力时发现有界的 Prompt、参数与 Resource 元数据，不读取 Resource 内容；Runtime 支持的 Prompt 可填入聊天草稿后继续编辑。OpenCode 可报告实验性 Resource 清单，Continue 当前版本明确不支持 Resources。
 - [x] **本地知识库**：支持文件、目录和网页导入、SQLite FTS5 检索及来源追溯。知识范围按对话保存，新对话默认不选择知识库；创建与检索高级参数默认折叠。文档区分可用、处理中和失败，支持打开来源、失败重试及移除来源前确认。
   内容来源与文档索引共用可搜索列表，单文档来源不重复占行，目录保留分组文档，失败来源保留恢复操作；任务历史和次级操作从统一入口访问。
@@ -113,18 +113,18 @@
 - [x] **分页画布笔记**：已集成 PeopleLib Fabric + Quill 编辑器，支持跨页正文、笔迹、高亮、对象选择及变换、浮动文字、图片和纸张模板。PDF 可作为分页底版导入并提取原生文字；正文和批注可导出为栅格 PDF，导出文件不保留可搜索文字层。用户手动保存后，记录正文与二进制资源存入本地笔记文件，SQLite 保留元数据、索引、修订、待办和评论。备份须协调保存 SQLite 与笔记目录，产品无一键备份入口。撤销/重做限当前批注页或 Quill 模式，不提供全局文档撤销、无限画布或 PNG 下载按钮。草稿、已保存记录和来源为画布的待办按默认模型图像输入能力使用页面图像加文字，或明确标注仅文字降级；“发送画布页数”可选 1～8，默认 1，按当前顺序发送前 N 页，文字和图片范围一致，保存与导出仍支持 50 页。纯视觉记录/草稿需要支持图像输入的模型。即时评论模式提供手动画布分析，保存后自动分析失败不阻断或回滚保存。提取文字不变时保留文字评论；布局变化使视觉评论失效，并在保存后自动评论模式下重新分析。MCP 禁止以纯文字覆写画布记录。实现已完成，最终验证状态见[功能进展](./docs/features/magic-notes/progress.md)。
   编辑与只读画布均支持 25%–300% 视图缩放、100% 还原及随视口调整的“适应宽度”，不改变保存内容或导出尺寸。
   历史正文迁移已改用文件存储，当前 schema 48 新增会话来源元数据；旧客户端不能再打开，回退需使用升级前备份。
-- [ ] **MCP Server Control Plane**（规划中）：统一 MCP 生命周期、健康检查、重连、Schema 缓存、隔离、审批和审计。
+- [ ] **MCP Server Control Plane**（规划中）：统一 MCP 生命周期、健康检查、重连、Schema 缓存、隔离、能力范围和审计。
 - [ ] **知识／网页摘录与 AI 编辑**（规划中）：在已实现的会话正文采集之外，扩展知识和网页摘录，并提供需确认的总结、改写和整理操作。
 
 ### 工作管理、长期协作与工作流
 
-- [x] **任务、活动与成果**：集中管理任务状态、审计活动和独立成果文件；普通聊天回复只保留在会话中，不再自动复制到成果栏，已有重复聊天 Markdown 从成果列表隐藏但不物理删除。运行记录改由 Main SQLite 保存，不再受旧 Renderer 的 500 条、单详情 4,000 字符或约 2 MB 上限影响，页面按批继续显示；不再常驻旧缓存截断警告，但不会恢复此前已丢失的历史。Token 用量按 Runtime 与模型归类，并针对 OpenAI 兼容与 Anthropic Messages 的不同上报口径归一化展示缓存命中率；用量按项目或会话分组时默认收起并显示汇总，展开后显示 Runtime / 模型子行，按模型分组时保持平铺。独立“系统任务”页签按来源汇总后台用量，支持手动刷新和记录更新后刷新；监督回顾、图片重新生成、图谱提取和远程嵌入补充用量记录，不补算缺失的历史或供应商数据。活动按会话分组并默认收起，避免长历史占满页面。
+- [x] **任务、活动与工作区文件**：集中管理任务状态和审计活动。成果页已移除，工作区按实际文件显示修改时间和可用的创建时间，支持排序及向所选本机或远程目录导入文件；远程上传需要更新后的 Agent。会话图片和附件保留在消息中，已有 artifact 数据不删除，也不自动复制到项目。运行记录改由 Main SQLite 保存，不再受旧 Renderer 的 500 条、单详情 4,000 字符或约 2 MB 上限影响，页面按批继续显示；不再常驻旧缓存截断警告，但不会恢复此前已丢失的历史。Token 用量按 Runtime 与模型归类，并针对 OpenAI 兼容与 Anthropic Messages 的不同上报口径归一化展示缓存命中率；用量按项目或会话分组时默认收起并显示汇总，展开后显示 Runtime / 模型子行，按模型分组时保持平铺。独立“系统任务”页签按来源汇总后台用量，支持手动刷新和记录更新后刷新；监督回顾、图片重新生成、图谱提取和远程嵌入补充用量记录，不补算缺失的历史或供应商数据。活动按会话分组并默认收起，避免长历史占满页面。
   OpenCode 的输入量已扣除缓存，计算命中率时会加回缓存读取和写入量；查询已有记录时也按此口径重算。
 - [x] **紧凑会话工具记录**：逐项展开工具记录即可查看和复制结果、错误及输入参数；会话与子任务进度使用简洁行，减少重复 Runtime 摘要。OpenCode、Continue、DeepSeek Harness 和直连模型可显示已有文件路径、命令或搜索摘要，并在工具完成和会话重载后保留。
-- [x] **Task 与定制任务体验**：每个产品级 Task 只关联一条 Conversation，一条 Conversation 可承载多个 Task；左侧会话列表通过行首展开按钮显示带共享状态点的 Task 子项，父会话行不重复任务标签，UI 只展示到 Task，不暴露 Job/Run 层级。新建定制任务可关联当前或新 Conversation，默认 Execute 并沿用 Runtime、工具和审批边界；重复触发复用同一 Task，文本结果回写 Conversation，独立文件和图片保留为成果。普通消息与到期 Scheduled Task 共用 Conversation 级持久发送队列，同一会话一次只执行一项；当前回复期间仍可继续发送，队列按顺序续跑，并允许删除或“立即中断并插入”。Task Center 继续作为完整索引，不建设独立 Automation Center。当前计划触发支持单次、每日和每周；高级时区、Cron、事件触发与重试治理仍按 PRD 逐步实现。详见 [Task Center PRD](./docs/features/task-and-job/task-center-prd.md) 和 [Scheduled Task PRD](./docs/features/task-and-job/scheduled-task-prd.md)。
+- [x] **Task 与定制任务体验**：每个产品级 Task 只关联一条 Conversation，一条 Conversation 可承载多个 Task；左侧会话列表通过行首展开按钮显示带共享状态点的 Task 子项，父会话行不重复任务标签，UI 只展示到 Task，不暴露 Job/Run 层级。新建定制任务可关联当前或新 Conversation，沿用 Runtime、已启用工具和资源范围；重复触发复用同一 Task，文本结果回写 Conversation，独立文件和图片保留为成果。普通消息与到期 Scheduled Task 共用 Conversation 级持久发送队列，同一会话一次只执行一项；当前回复期间仍可继续发送，队列按顺序续跑，并允许删除或“立即中断并插入”。Task Center 继续作为完整索引，不建设独立 Automation Center。当前计划触发支持单次、每日和每周；高级时区、Cron、事件触发与重试治理仍按 PRD 逐步实现。详见 [Task Center PRD](./docs/features/task-and-job/task-center-prd.md) 和 [Scheduled Task PRD](./docs/features/task-and-job/scheduled-task-prd.md)。
 - [x] **记忆与智能心跳**：计划触发共享增量回顾，不再单独生成心跳报告；可只更新记忆图谱，或从未决事项、分歧、修订和候选约定生成有依据的建议。接受未决事项创建暂停任务，确认约定写入长期背景；建议失败可单独重试，不撤销已完成回顾。
-- [x] **定时消息沿用会话**：定时消息使用会话当前历史、Runtime、工作模式和已保存的知识检索设置；任务详情显示实际运行模式，当前 occurrence 未结束时禁止重复“立即运行”。
-  任务中心通过状态数量和筛选定位运行中及待处理任务，审批操作保留在对应任务卡片中。
+- [x] **定时消息沿用会话**：定时消息使用会话当前历史、Runtime 和已保存的知识检索设置；任务详情显示运行状态，当前 occurrence 未结束时禁止重复“立即运行”。
+  任务中心通过状态数量和筛选定位运行中及待处理任务，结构化问题在对应会话中回答。
 - [x] **智能心跳设置与范围**：“监督者 > 智能心跳”统一管理 Global 或指定 Project 的每日、每周计划及建议，Task Center 和设置中心不复制表单。待处理建议不重复，忽略后有新依据才再次提出；项目与全局共用按来源版本维护的时间线进度，会话级实时主动介入仍为规划。详见[实现规则](./docs/features/conversation-supervision/logic-design.md)。
 - [x] **故事、经验与时间螺旋**：事件可组织为项目功能、子线索及可选跨项目故事，支持重命名、合并、调整归属、移除和撤销。经验保留形成及应用依据与人工调整标记，心跳可提示暂无进展故事或可能适用的经验。平铺和懒加载 WebGL 时间螺旋共用选择与来源，保留平铺回退及图形资源释放；整理与建议可能增加模型费用，自动结果须核对来源。详见[实施证据](./docs/features/conversation-supervision/progress.md)。
 - [x] **监督者回顾、故事线图谱与活动**：按范围和时间回顾工作，查看保存结果的图谱及来源，确认或修订实体，并带入相关回顾上下文继续讨论。侧栏可跟随或固定 Conversation、Task，并打开匹配结果。活动合并心跳触发与下游监督的阶段状态，保留失败和旧结果入口。自动与默认手动回顾只处理新增、修改及未处理来源，无变化时跳过模型；显式“重新整理”重读区间，但不推进或重置共享进度，自动回顾不续跑用户暂停的运行。回顾只读且禁止工具，模型调用可能产生费用，详见[实施与验证记录](./docs/features/conversation-supervision/progress.md)。
@@ -135,16 +135,16 @@
 - [ ] **批量运行与对比实验室**（规划中）：对模型、Prompt、角色和工作流配置执行批量对比，汇总质量、耗时、Token、费用、失败率和成果差异。
 - [ ] **时态记忆与事实冲突检测**（规划中）：为记忆和知识图谱增加有效期、当前事实、过期与矛盾检测、事实核验及证据回溯。
 - **Story Graph 只读工具（Desktop 0.15.9 / Agent 0.15.3）**：Agent 可搜索已保存工作、故事和经验，读取上下文并分页核对来源。监督者开关及 Runtime 分配同时控制发现和调用，旧会话也受限制；本地和远程路径共用桌面读取入口。共享来源版本事实按允许范围复用，关键词匹配和工具说明引导模型按需查询，不自动注入全图；经验是参考而非指令，查询本身不调用模型，`as_of` 仍未实现。详见[设计与验证](./docs/features/conversation-supervision/story-graph-mcp-design.md)。
-- [ ] **可视化受控工作流**（规划中）：提供版本化 DAG、条件分支、审批、取消和恢复，执行节点继续经过 Main Runtime 边界。
-- [ ] **统一 Run Graph 与回放**（规划中）：关联任务、Subagent、模型、知识、工具审批、用量和成果，支持失败定位、重试和脱敏导出。
+- [ ] **可视化受控工作流**（规划中）：提供版本化 DAG、条件分支、业务确认、取消和恢复，执行节点继续经过 Main Runtime 边界。
+- [ ] **统一 Run Graph 与回放**（规划中）：关联任务、Subagent、模型、知识、工具活动、用量和成果，支持失败定位、重试和脱敏导出。
 
 ### 浏览器、通信、语音与应用维护
 
-- [x] **Runtime 共享内置浏览器**：使用 GoodBuddy 内置的隔离 Chromium，不控制客户端已安装的浏览器；用户通过内置 MCP 总开关和 Runtime 分配决定是否提供给 Execute，开启后不逐次询问。关闭 Agent 浏览器能力不影响用户继续在浏览器工作栏中手动前往、返回、刷新、停止加载、交互或关闭浏览器。直连模型、GoodBuddy 管理的 OpenCode 和 Continue 通过请求级权限共享按 Conversation 归属的会话和串行操作路径，用户导航会改变 Agent 下一步看到的页面。
+- [x] **Runtime 共享内置浏览器**：使用 GoodBuddy 内置的隔离 Chromium，不控制客户端已安装的浏览器；用户通过内置 MCP 总开关和 Runtime 分配决定工具接入，开启后不逐次询问。关闭 Agent 浏览器能力不影响用户继续在浏览器工作栏中手动前往、返回、刷新、停止加载、交互或关闭浏览器。直连模型、GoodBuddy 管理的 OpenCode 和 Continue 通过请求级权限共享按 Conversation 归属的会话和串行操作路径，用户导航会改变 Agent 下一步看到的页面。
 - [x] **浏览器多页签与按需资源**：同一对话可打开多个共享登录状态、页面与导航独立的浏览器页签，模型请求固定使用开始时绑定的目标。未使用的请求预留不创建浏览器资源，已释放页面可重新打开；保留显式截图，普通操作不再触发无用的自动截图。
 - [x] **浏览器关闭与刷新**：AI 使用中的页签也可关闭，不取消整个请求；后续显式导航会创建独立替代页。空白页不能刷新，切换或关闭面板后清除旧操作错误。
 - [x] **客户端电脑控制工具**：与内置浏览器分开管理，并保留范围、取消、超时、输出边界和执行记录。
-- [x] **远程消息通道项目**：微信 ClawBot、企业微信和钉钉分别拥有系统管理的项目、独立远程会话、工作目录、处理后端、默认 Ask/Execute 模式及任务活动归属；完整回复交由各通道按平台能力控制长度与分段，不再由公共服务统一截断。
+- [x] **远程消息通道项目**：微信 ClawBot、企业微信和钉钉分别拥有系统管理的项目、独立远程会话、工作目录、处理后端及任务活动归属；完整回复交由各通道按平台能力控制长度与分段，不再由公共服务统一截断。
 - [x] **微信 ClawBot 扫码与媒体**：通过独立 Sidecar 完成本机扫码、验证码、加密凭据和文字收发；支持个人微信私聊图片与文件，单条消息最多 4 个附件、解密后合计不超过 12MB。
 - [x] **微信安全回传**：支持返回当前任务生成的图片，或在用户明确要求时将本次最终文本生成为 Markdown 附件；不自动读取或发送已有工作区文件。
 - [x] **企业微信与钉钉连接**：支持 Main-only 加密设置、环境变量只读覆盖、连接测试、动态启停、发送者范围和状态诊断。
@@ -190,9 +190,9 @@
 - [x] **远程任务委派**：仅在用户显式配置端点和令牌后启用，按全局内网兼容模式使用 HTTP(S)，结果进入持久化发件箱。
 - [ ] **Headless Runtime API**（规划中）：提供本机优先的任务、事件、状态和成果 API，以及有范围、有效期、限流和撤销能力的令牌。
 - [ ] **GoodBuddy Team Hub**（规划中）：以可选服务提供组织、RBAC、项目共享、远程 Agent、策略下发和租户审计。
-- **SSH 主机与远程执行空间验证记录**：主机 CRUD、Host Key、加密凭据、Project UI、Workspace、OpenCode ACP v5、Agent-owned Prompt/gateway/transcript、Ask 只读、Execute 完整账号权限、取消、detached Agent 精确重连和 release-only 双架构资源校验已经接线。Linux x64 当前源码已用真实模型与工具通过 detach、进程结束、relay 丢失、并发、取消、Provider 异常、Agent 重启和 Desktop SQLite 恢复矩阵；当前源码测试签名 Agent `0.11.17` 又通过两个并发 Ask 读取、一次 Execute 写入并读回，以及 6 次带自定义 Header 和 Body 的真实受管网关模型请求，未发现 Provider 请求重放，隔离 Agent state 中也没有 API Key 或自定义请求值。公开 signing key registry 已供应。控制面直连源码不等待新 installer-bearing 包；现有记录未覆盖当前 Linux x64/arm64 正式签名工件的完整公开核对及 GitHub/北京镜像、双架构和离线 GoodBuddy 传输矩阵，发布结果另行记录。
+- **SSH 主机与远程执行空间历史验证记录**：当时已接线主机 CRUD、Host Key、加密凭据、Project UI、Workspace、OpenCode ACP v5、Agent-owned Prompt/gateway/transcript、Ask 只读、Execute 完整账号权限、取消、detached Agent 精确重连和 release-only 双架构资源校验。Linux x64 当时源码已用真实模型与工具通过 detach、进程结束、relay 丢失、并发、取消、Provider 异常、Agent 重启和 Desktop SQLite 恢复矩阵；测试签名 Agent `0.11.17` 又通过两个并发 Ask 读取、一次 Execute 写入并读回，以及 6 次带自定义 Header 和 Body 的真实受管网关模型请求，未发现 Provider 请求重放，隔离 Agent state 中也没有 API Key 或自定义请求值。公开 signing key registry 已供应。控制面直连源码不等待新 installer-bearing 包；现有记录未覆盖当前 Linux x64/arm64 正式签名工件的完整公开核对及 GitHub/北京镜像、双架构和离线 GoodBuddy 传输矩阵，发布结果另行记录。
 - [ ] **主机管理与云环境管理**（规划中）：主机管理迁入应用中心，提供列表与详情工作页面；云环境管理作为同级应用，复用主机连接和执行能力。首版适配计划覆盖 AWS、Azure、阿里云、腾讯云、VMware vCenter / vSphere、ZStack，分批完成已有实例发现、接入及真实执行验收；实例创建、启停、销毁和网络编排后续交付。平台 API 尚未实现，现有云主机可按 SSH 条件手工接入。详见[产品范围](./docs/features/remote-host/prd.md)。
 
 ## 规划原则
 
-规划中的工作流、Subagent、MCP、远程 API 和沙盒能力不得绕过现有 Main Runtime、Ask/Execute、权限、取消、超时和审计边界。
+规划中的工作流、Subagent、MCP、远程 API 和沙盒能力不得绕过现有 Main Runtime、能力范围、权限、取消、超时和审计边界。

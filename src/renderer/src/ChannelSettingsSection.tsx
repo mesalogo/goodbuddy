@@ -19,7 +19,6 @@ import type {
 } from '../../shared/channel-settings-contracts'
 import type { RuntimeSettings } from '../../shared/contracts'
 import {
-  normalizeInteractiveWorkMode,
   projectChannels,
   type AssistantProject,
   type ProjectCreateInput,
@@ -176,9 +175,6 @@ function projectDraftsFrom(
               name: project.name,
               description: project.description,
               rootPath: project.rootPath,
-              defaultWorkMode: normalizeInteractiveWorkMode(
-                project.defaultWorkMode
-              ),
               runtimeSelection: project.runtimeSelection
             },
             runtimeSettings
@@ -192,7 +188,6 @@ function projectDraftKey(project: ChannelProjectDraft): string {
   return JSON.stringify({
     description: project.description,
     rootPath: project.rootPath,
-    defaultWorkMode: project.defaultWorkMode,
     runtimeSelection: project.runtimeSelection
   })
 }
@@ -960,7 +955,6 @@ export function ChannelSettingsSection({
             name: project!.name,
             description: project!.description,
             rootPath: project!.rootPath,
-            defaultWorkMode: project!.defaultWorkMode,
             runtimeSelection: project!.runtimeSelection
           })
         )

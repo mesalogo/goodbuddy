@@ -50,7 +50,7 @@
 验收：
 
 - Given 系统 PATH 没有 Node.js
-- When 本机 Execute 请求运行普通 JavaScript SKILL
+- When 本机请求运行普通 JavaScript SKILL
 - Then `node` 使用 GoodBuddy 托管来源
 - And `npm`、`npx` 与该 Node 来源一致
 - And 设置显示实际 Node 版本
@@ -234,16 +234,16 @@
 - 候选完整诊断成功后才发布
 - 更新失败继续使用健康旧版本
 
-### US-D6 安装解释器不扩大 Ask 权限
+### US-D6 安装解释器不改变能力范围
 
-作为 Ask 用户，我希望安装 Node/Python 后仍保持原有只读边界，以免环境准备改变授权范围。
+作为用户，我希望安装 Node/Python 后仍按已启用能力运行，内部文本调用保持无工具。
 
 验收：
 
 - 工具环境不新增 Runtime 工具
-- Ask 是否允许命令仍由当前 Runtime 边界决定
-- Ask 中禁止的写入和执行不会因解释器存在而放行
-- Execute 继续使用用户已授权的本机账号权限
+- 命令可用性由当前 Runtime 的实际注册能力决定
+- 内部文本调用不因解释器存在而获得工具
+- 工具继续使用本机账号权限
 
 ## 6. Epic E：受限网络与离线行为明确
 

@@ -93,11 +93,14 @@ additional hardening beyond the actual internal-network threat model:
 
 ## Runtime Behavior
 
-- Ask mode must remain read-only at the runtime boundary.
-- Execute mode is the user's full authorization for the selected SSH account.
-  It may use all tools, processes, network access, and writable paths available
-  to that account. Do not add T2/T3 trust tiers, separate consent checklists,
-  per-tool approvals, or a second "controlled execution" concept.
+- Normal requests use the selected Runtime, enabled capabilities, and execution
+  account permissions without Ask/Execute or the product `toolApproval` policy.
+  Do not restore a product work mode or general tool approval gate.
+  Implementation and validation status belongs
+  in `docs/features/unified-execution/progress.md`.
+- Respect explicit user instructions such as explanation-only requests. Keep
+  dedicated internal text tasks tool-free. Do not add T2/T3 trust tiers,
+  separate consent checklists, per-tool approvals, or a replacement work mode.
 - Preserve cancellation, timeout, bounded-output, and shutdown behavior.
 - When fixing Runtime behavior or limits, also inspect the remote Runtime path
   through GoodBuddy Agent (`gbagent`). Verify whether local and remote execution
@@ -107,7 +110,7 @@ additional hardening beyond the actual internal-network threat model:
   development validation rules below. If no separate remote fix is needed,
   record which shared implementation covers it or why the remote path is
   unaffected.
-- Keep model/provider credentials in Main, but do not otherwise reduce Execute
+- Keep model/provider credentials in Main, but do not otherwise reduce execution
   permissions with extra product policy gates. Keep child-process cleanup
   straightforward and reliable.
 - On test Hosts, GoodBuddy may install and start its own test resources and
@@ -330,8 +333,8 @@ validation are not substitutes for this development-time check.
   previously published Agent. Run the affected production path as soon as it is
   runnable and repeat the relevant scenario after the final change.
 - Select the real-Host scenario from the changed surface: attach/bootstrap or
-  update for installation changes; Ask/Execute and a bounded real model request
-  for Runtime or model-bridge changes; and the applicable disconnect, restart,
+  update for installation changes; unified tool execution and a bounded real
+  model request for Runtime or model-bridge changes; and the applicable disconnect, restart,
   cancellation, or reconnection sequence for lifecycle and recovery changes.
 - Use the existing pinned Host identity and GoodBuddy credential storage. Never
   add credentials to source, documentation, commands, logs, or test output, and

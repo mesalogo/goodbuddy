@@ -1,7 +1,7 @@
 # 远程主机与远程执行
 
 本功能负责 SSH Host 管理、Host Key、远程环境安装、GoodBuddy Agent、签名 Runtime、
-远程 Workspace 和 Ask/Execute 生产路径。
+远程 Workspace 和无模式工具执行生产路径。
 
 2026-09-28 新增待实现方向：主机管理迁入应用中心，与“云环境管理”成为同级应用；
 云平台发现已有实例，接入执行时复用 SSH 主机。产品范围见 [PRD](./prd.md)。

@@ -93,12 +93,12 @@ it('advances only saved portions, retries model and transaction failures, and dr
 it('keeps scope, inclusive time boundaries, task revisions and memory background distinct', async () => {
   const { db, sql, project, messages, supervisor, summarize } = await fixture()
   sql.prepare('UPDATE messages SET created_at = ? WHERE id = ?').run(request.timeRange.from, messages[0]!.id)
-  const second = db.createProject({ name: 'Other', description: '', rootPath: process.cwd(), defaultWorkMode: 'ask' })
+  const second = db.createProject({ name: 'Other', description: '', rootPath: process.cwd() })
   const scoped = { ...request, scope: { kind: 'projects' as const, projectIds: [project.id, second.id] } }
   await supervisor.run(scoped)
   expect((await supervisor.run({ ...scoped, scope: { kind: 'projects', projectIds: [second.id, project.id] } })).status).toBe('no_change')
   const id = randomUUID()
-  db.createTask({ id, projectId: project.id, title: 'Atlas task', instructions: 'Private instructions', workMode: 'ask' })
+  db.createTask({ id, projectId: project.id, title: 'Atlas task', instructions: 'Private instructions' })
   await supervisor.run(scoped)
   db.updateTaskStatus(id, 'completed')
   await supervisor.run(scoped)
@@ -171,7 +171,11 @@ it('preserves schema-45 plans, reports, IDs and foreign keys while extending sta
     sql.exec(`INSERT INTO ${table}_old SELECT * FROM ${table}; DROP TABLE ${table}; ALTER TABLE ${table}_old RENAME TO ${table};`)
     for (const index of indexes) sql.exec(String(index.sql))
   }
-  sql.exec('ALTER TABLE magic_note_entries DROP COLUMN source_json; PRAGMA user_version = 45; COMMIT; PRAGMA foreign_keys = ON;')
+  sql.exec(`ALTER TABLE magic_note_entries DROP COLUMN source_json;
+    ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+    ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+    ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
+    PRAGMA user_version = 45; COMMIT; PRAGMA foreign_keys = ON;`)
   db.initialize(directory)
   expect(db.getHeartbeatConfig(config.id)).toEqual(savedConfig)
   expect(db.listHeartbeatEntries(config.id)).toEqual(savedEntries)

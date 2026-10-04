@@ -37,7 +37,7 @@ afterEach(() => {
 })
 
 describe('production Runtime composition', () => {
-  it('loads Runtime metadata independently of Ask-only Host prerequisites', async () => {
+  it('loads Runtime metadata without obsolete confinement prerequisites', async () => {
     const fixture = await createRuntimeBundleTestFixture()
     const root = fixture.root
     temporaryPaths.push(root)

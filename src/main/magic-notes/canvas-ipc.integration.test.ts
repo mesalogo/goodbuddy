@@ -77,7 +77,7 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     dispose = registerIpcHandlers(window as never, { capability: 'text' } as never,
       'CommandOrControl+Shift+Space', { getResolvedSettings } as never, {} as never,
       { clear: vi.fn(), cancelImport: vi.fn() } as never, {} as never, database,
-      { clear: vi.fn() } as never, {} as never, async () => {}, undefined, undefined, undefined, undefined, applicationSettings)
+      {} as never, async () => {}, undefined, undefined, undefined, undefined, applicationSettings)
   }
   async function reopen() {
     await dispose?.()
@@ -104,7 +104,7 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
 
   it('captures verified source labels and preserves them after source deletion, edits and reopen', async () => {
     const project = database.createProject({ name: 'Actual project', rootPath: directory,
-      description: '', defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' } })
+      description: '', runtimeSelection: { provider: 'opencode' } })
     const header = { id: randomUUID(), title: 'Actual conversation', projectId: project.id, updatedAt: 1 }
     const messages = Array.from({ length: 120 }, (_, index) => ({ id: randomUUID(),
       role: index % 2 ? 'assistant' as const : 'user' as const,
@@ -263,7 +263,7 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     expect(modelFactory.mock.calls[0]![1]).toBe(settings)
     expect(requests).toHaveLength(1)
     expect(requests[0]?.prompt).toContain(todo.title)
-    expect(requests[0]?.workMode).toBe('ask')
+    expect(requests[0]).not.toHaveProperty('workMode')
     if (canvasSource) expect(requests[0]?.prompt).toContain('Annotation')
     if (inputMode === 'canvas-images') {
       expect(requests[0]?.images).toEqual([{ name: 'page-1.png', mediaType: 'image/png', data: png.split(',')[1] }])

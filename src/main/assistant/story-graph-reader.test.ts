@@ -25,7 +25,7 @@ async function fixture() {
   const sql = new DatabaseSync(path)
   cleanups.push(() => sql.close())
   const project = db.listProjects()[0]!
-  const other = db.createProject({ name: 'Other', description: '', rootPath: root, defaultWorkMode: 'ask' })
+  const other = db.createProject({ name: 'Other', description: '', rootPath: root })
   const messageId = randomUUID(), conversationId = randomUUID()
   const body = 'Choose A. Then explicitly revise A to B because of measured latency. Option C is only a proposal. '
   const update = (content: string, projectId = project.id) => db.saveLocalConversations([{ header: { id: conversationId, projectId, title: 'Decision', updatedAt: 1 },

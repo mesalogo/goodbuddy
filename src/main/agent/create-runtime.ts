@@ -1,5 +1,6 @@
 import {
   ModelAgentRuntime,
+  noModelTools,
   type ModelRuntimeOptions
 } from './model-runtime'
 import { ContinueAgentRuntime } from './continue-runtime'
@@ -30,7 +31,6 @@ import {
   type ContinueHostLauncher
 } from './continue-host-adapter'
 import type { BrowserToolService } from '../browser/browser-model-tools'
-import type { ModelToolProviderLike } from './model-tool-provider'
 import type { SubagentScheduler } from '../assistant/subagent-scheduler'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { ModelToolProvider } from './model-tool-provider'
@@ -45,19 +45,6 @@ import {
 } from '../execution-space'
 import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 import type { DesktopDiagnosticFailureObserver } from '../desktop-diagnostics'
-
-const noModelTaskTools: ModelToolProviderLike = {
-  listTools: async () => [],
-  getApproval: () => {
-    throw new Error('此模型任务不允许工具调用')
-  },
-  callTool: async () => {
-    throw new Error('此模型任务不允许工具调用')
-  },
-  releaseConversation: async () => undefined,
-  dispose: async () => undefined
-}
-
 export type AgentCapabilityContext = {
   observeFailure?: DesktopDiagnosticFailureObserver
   localRuntimeRegistry?: LocalRuntimeRegistry
@@ -143,7 +130,7 @@ export function createDefaultModelRuntime(
       settings,
       currentProfile
     ),
-    toolProvider: noModelTaskTools
+    toolProvider: noModelTools
   })
 }
 
@@ -167,7 +154,7 @@ export function createModelProfileRuntime(
       defaultRuntimeSettings.imageGenerationQuality,
     contextCompression: resolveContextCompression(settings, profile),
     defaultWorkspace: settings.workspacePath || defaultWorkspace,
-    toolProvider: noModelTaskTools
+    toolProvider: noModelTools
   })
 }
 
@@ -232,7 +219,7 @@ export function createAgentRuntime(
       createToolProvider: (directory) => new ModelToolProvider(
         new LocalWorkspaceAccess(directory), capabilities.mcpServers, undefined,
         capabilities.knowledgeGateway, capabilities.webSearchEnabled === true,
-        {}, capabilities.launchEnvironmentProvider
+        { runtimeTarget: 'deepseek-harness' }, capabilities.launchEnvironmentProvider
       )
     }
     const create = () => new DeepSeekHarnessRuntime(options)

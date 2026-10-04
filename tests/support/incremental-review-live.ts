@@ -57,7 +57,7 @@ void app.whenReady().then(async () => {
     const conversationId = `review-probe:${randomUUID()}`
     let text = ''
     try {
-      for await (const event of runtime.run({ requestId: randomUUID(), conversationId, workMode: 'ask', prompt },
+      for await (const event of runtime.run({ requestId: randomUUID(), conversationId, prompt },
         AbortSignal.timeout(90000), async () => 'deny')) {
         if (event.type === 'text') text += event.delta
         if (event.type === 'error') throw new Error(event.message)

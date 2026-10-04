@@ -15,7 +15,7 @@ const listDirectory = async (path: string): Promise<WorkspaceDirectoryListing> =
     ...(!path ? [{ name: 'documents', path: 'documents', type: 'directory' as const }] : []),
     ...Array.from({ length: 120 }, (_, index) => {
       const name = `file-${String(index + 1).padStart(3, '0')}-workspace-notes.md`
-      return { name, path: path ? `${path}/${name}` : name, type: 'file' as const }
+      return { name, path: path ? `${path}/${name}` : name, type: 'file' as const, modifiedAt: '2026-10-04T10:00:00.000Z', createdAt: '2026-10-01T10:00:00.000Z' }
     })
   ]
 })

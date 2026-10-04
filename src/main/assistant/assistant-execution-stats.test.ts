@@ -18,7 +18,7 @@ describe('persisted running-state duration', () => {
   const task = (options: Partial<Parameters<AssistantDatabase['createTask']>[0]> = {}): string => {
     const id = options.id ?? randomUUID()
     database.createTask({ id, projectId, conversationId, title: 'Reply', instructions: 'Reply',
-      workMode: 'ask', visible: false, ...options })
+      visible: false, ...options })
     return id
   }
   beforeEach(async () => {
@@ -150,7 +150,7 @@ describe('persisted running-state duration', () => {
 
   it.each(['running', 'waiting_approval'] as const)('recovers remote %s timing without counting known waiting or changing terminal checkpoints', (status) => {
     const project = database.createSshProject({
-      project: { name: 'Remote', description: '', rootPath: '/srv/project', defaultWorkMode: 'execute' },
+      project: { name: 'Remote', description: '', rootPath: '/srv/project' },
       executionSpace: { kind: 'ssh', hostId: randomUUID(), remoteRootPath: '/srv/project' }, assertCurrent: () => {}
     })
     const remoteConversationId = randomUUID()
@@ -201,7 +201,7 @@ describe('persisted running-state duration', () => {
 
   it('aggregates repeated schedule runs under the stable card without timing the parent', () => {
     const schedule = database.createSchedule({ projectId, conversationId, title: 'Scheduled', prompt: 'Run',
-      workMode: 'ask', recurrence: 'once', nextRunAt: new Date(now + 60_000).toISOString() })
+      recurrence: 'once', nextRunAt: new Date(now + 60_000).toISOString() })
     database.startExecutionTiming(schedule.taskId)
     for (let i = 0; i < 2; i++) {
       const item = database.queueScheduleNow(schedule.id)
@@ -227,6 +227,9 @@ describe('persisted running-state duration', () => {
       DROP INDEX conversations_timing_incomplete;
       ALTER TABLE conversations DROP COLUMN timing_incomplete;
       DROP INDEX messages_summary_idx;
+      ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
       PRAGMA user_version = 58;`)
     old.close()
     database.initialize(directory)

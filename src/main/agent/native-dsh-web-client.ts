@@ -11,7 +11,7 @@ import type { ResolvedModelProfile } from '../runtime-settings-store'
 import { createManagedModelBridge } from '../remote-agent/managed-model-bridge'
 import { terminateProcessTreeAndWait } from './child-process-termination'
 import { buildCredentialFilteredUserEnvironment, runtimePrivacyEnvironment } from './process-environment'
-import { nativeDshMcpToolName, nativeDshWebPatch, nativeDshWebPolicySource, type NativeDshMcpServer } from './native-dsh-web-policy'
+import { nativeDshWebPatch, type NativeDshMcpServer } from './native-dsh-web-policy'
 
 export type { NativeDshMcpServer } from './native-dsh-web-policy'
 
@@ -22,7 +22,6 @@ export type NativeDshWebRequest = {
   configurationKey?: string
   workspace: string
   profile: ResolvedModelProfile
-  workMode: 'ask' | 'execute'
   /** Directories containing SKILL.md, or roots containing skill bundles. */
   skillDirectories?: string[]
   /** Already resolved by Main; GoodBuddy-only tools need a caller-owned MCP adapter. */
@@ -129,7 +128,7 @@ export class NativeDshWebClientService {
       await instance.proxy?.close()
       instance.ledger?.close()
       // Native history and profile settings are persistent; only launch material is disposable.
-      await Promise.all(['cordis.patch.yml', 'goodbuddy-mode.mjs', 'bridge.sqlite', 'bridge.sqlite-wal', 'bridge.sqlite-shm']
+      await Promise.all(['cordis.patch.yml', 'bridge.sqlite', 'bridge.sqlite-wal', 'bridge.sqlite-shm']
         .map(name => rm(join(instance.home, name), { force: true })))
       if (this.instances.get(instance.id) === instance) this.instances.delete(instance.id)
     })()
@@ -160,17 +159,14 @@ export class NativeDshWebClientService {
       profileDigest: managed.profile.modelProfileDigest, profile: managed.profile
     }, message, context.signal) })
     const origin = await instance.proxy.listen()
-    const policyPath = join(instance.home, 'goodbuddy-mode.mjs')
     const mcpServers = request.mcpServers ?? []
     const patch = nativeDshWebPatch({
       model: request.profile.modelName,
       api: request.profile.protocol === 'anthropic-messages' ? 'anthropic-messages'
         : request.profile.protocol === 'openai-responses' ? 'openai-responses' : 'openai-completions',
-      baseURL: `${origin}/v1`, workMode: request.workMode, policyPath,
-      skillDirectories: request.skillDirectories ?? [], mcpServers,
-      readOnlyTools: mcpServers.flatMap(server => (server.readOnlyTools ?? []).map(name => nativeDshMcpToolName(server.serverName, name)))
+      baseURL: `${origin}/v1`,
+      skillDirectories: request.skillDirectories ?? [], mcpServers
     })
-    await writeFile(policyPath, nativeDshWebPolicySource, 'utf8')
     await writeFile(join(instance.home, 'cordis.patch.yml'), JSON.stringify(patch), 'utf8')
     signal.throwIfAborted()
     for (const name of Object.keys(environment)) if (name.startsWith('DSH_')) delete environment[name]

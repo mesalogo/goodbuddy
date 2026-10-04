@@ -150,7 +150,6 @@ const remotePromptOperationIdentityFields = {
   bindingId: agentIdentifierSchema,
   operationId: agentIdentifierSchema,
   requestId: agentIdentifierSchema,
-  workMode: z.enum(['ask', 'execute']),
   controllerId: agentIdentifierSchema,
   controllerGeneration: z.number().int().min(1).max(0xffff_ffff),
   connectionGeneration: z.number().int().min(1).max(0xffff_ffff),
@@ -356,7 +355,6 @@ export const remotePromptOperationAcceptanceSchema = z
     bindingId: agentIdentifierSchema,
     operationId: agentIdentifierSchema,
     requestId: agentIdentifierSchema,
-    workMode: z.enum(['ask', 'execute']),
     deadlineAt: z.string().datetime({ offset: true }),
     acceptedAt: z.string().datetime({ offset: true })
   })
@@ -386,7 +384,6 @@ export function assertRemotePromptAcceptanceMatchesPreparation(
     acceptance.bindingId !== preparation.bindingId ||
     acceptance.operationId !== preparation.operationId ||
     acceptance.requestId !== preparation.requestId ||
-    acceptance.workMode !== preparation.workMode ||
     acceptance.deadlineAt !== preparation.deadlineAt
   ) {
     throw new Error('Runtime prompt acceptance identity does not match')
@@ -669,6 +666,7 @@ export const remoteWorkspaceEntrySchema = z
     kind: remoteWorkspaceEntryKindSchema,
     byteLength: z.number().int().min(0).safe().optional(),
     modifiedAt: z.string().datetime({ offset: true }).optional(),
+    createdAt: z.string().datetime({ offset: true }).optional(),
     digest: sha256DigestSchema.optional(),
     executable: z.boolean()
   })

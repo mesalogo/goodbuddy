@@ -3,6 +3,11 @@ import type { workspace as chineseWorkspace } from '../zh-CN/workspace'
 
 export const workspace = {
   workspaceMenu: {
+    enter: 'Enter project', enterNamed: 'Enter project {{name}}',
+    archived: 'Archived', back: 'Back', restore: 'Restore', restoreNamed: 'Restore project {{name}}', restoring: 'Restoring…',
+    restored: '{{name}} restored to its project category.', restoreFailed: 'Could not restore the project.',
+    loadingArchives: 'Loading archived projects…', loadArchivesFailed: 'Could not load archived projects.',
+    retryArchives: 'Retry loading archives', noArchives: 'No archived projects. Archived projects can be restored here.',
     title: 'Projects and activity', close: 'Close projects and activity', search: 'Search projects',
     allProjects: 'All projects', local: 'Local', remote: 'Remote', channels: 'Channels', categories: 'Project categories',
     filter: 'Filter conversation status', conversations: 'Conversations', newConversation: 'New conversation',
@@ -31,6 +36,7 @@ export const workspace = {
     }
   },
   management: {
+    importFiles: 'Import files', importing: 'Importing…', importTarget: 'Destination: {{path}}', imported: 'Imported {{count}} files into {{path}}.', created: 'Created',
     gitWorkspace: 'Git Workspace', more: 'More actions for {{name}}', browse: 'Browse directory', parent: 'Parent directory',
     createFile: 'New file', createDirectory: 'New directory', rename: 'Rename', move: 'Move', delete: 'Delete', properties: 'Properties',
     defaultOpen: 'Open with default application', name: 'Name', nameOnly: 'Name cannot contain path separators', destination: 'Destination directory',
@@ -47,10 +53,6 @@ export const workspace = {
     description: 'GoodBuddy default workspace'
   },
   projectSwitcher: {
-    workModes: {
-      ask: 'Ask · Read-only',
-      execute: 'Execute · Full access'
-    },
     selector: {
       ariaLabel: 'Current project',
       userProjects: 'Local projects',
@@ -95,7 +97,6 @@ export const workspace = {
         description: 'Description',
         rootPath: 'Root folder',
         executionSpace: 'Execution space',
-        defaultMode: 'Default mode',
         defaultRuntime: 'Default Runtime for new conversations'
       },
       runtimeOptions: {
@@ -182,7 +183,7 @@ export const workspace = {
         select: 'Select this directory'
       },
       runtimeHelp:
-        'Managed SSH projects can use an installed OpenCode or Continue Runtime. Ask is read-only; Execute can use every permission available to the selected SSH account. Saving checks the Host, Agent, workspace, and selected Runtime.',
+        'Managed SSH projects can use an installed OpenCode or Continue Runtime. Saving checks the Host, Agent, workspace, and selected Runtime.',
       actions: {
         save: 'Save remote project',
         saving: 'Saving remote project…'
@@ -220,7 +221,7 @@ export const workspace = {
       notes: { label: 'Notes', description: 'Search notes, capture conversations, and append text.' },
       tasks: {
         label: 'Task center',
-        description: 'Review approvals and manage automations'
+        description: 'Review task status and manage automations'
       },
       workspace: {
         label: 'Files',
@@ -331,8 +332,6 @@ export const workspace = {
     tasks: {
       approvalsTitle: 'Awaiting approval',
       noApprovals: 'There are no operations awaiting approval.',
-      deny: 'Deny',
-      allowOnce: 'Allow once',
       taskIndexTitle: 'Project tasks',
       runningCount: '{{count}} running',
       stats: {
@@ -345,7 +344,7 @@ export const workspace = {
         incomplete: 'Some replies have no timing records. Only known durations are included.',
         partial: 'Partial records',
         timeHelp: 'About timing',
-        timeDescription: 'Adds the actual duration of each Agent reply, excluding idle time between replies. Missing durations are not estimated from conversation or task start and end times.',
+        timeDescription: 'Adds time while each Agent reply is running, excluding pauses, approval waits and idle time between replies. Old history and interrupted intervals are not reconstructed. Remote requests include only running time observed by the desktop.',
         taskDuration: 'Cumulative task time'
       },
       empty: 'Explicitly created tasks will appear here.',
@@ -410,11 +409,14 @@ export const workspace = {
       truncatedDiff: '\n\n[Output exceeded the safety limit and was truncated]'
     },
     results: {
-      back: 'Back to results',
       title: 'Results',
       sectionTitle: 'Generated and imported results',
       loadingImage: 'Loading image…',
-      import: 'Import PDF, image, or web page',
+      retryImage: 'Retry loading image',
+      import: 'Import files',
+      importProjectHelp: 'Add local files to this project’s results, not a knowledge base.',
+      importGlobalHelp: 'Add local files to global results, not a knowledge base.',
+      importTooltip: 'Supports PDF, images, text, JSON, and local HTML files. PDFs display extracted text.',
       empty:
         'Generated files, images, reports, and manually imported content will appear here.'
     },
@@ -479,14 +481,7 @@ export const workspace = {
       cancelled: 'Cancelled',
       interrupted: 'Interrupted'
     },
-    mode: {
-      conversation: 'Conversation settings',
-      ask: 'Ask',
-      execute: 'Execute',
-      unavailable: 'Mode unavailable'
-    },
     fields: {
-      mode: 'Mode',
       schedule: 'Schedule',
       nextRun: 'Next run',
       outcome: 'Latest result'

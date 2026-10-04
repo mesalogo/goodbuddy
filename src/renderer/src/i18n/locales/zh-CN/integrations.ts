@@ -3,11 +3,11 @@ export const integrations = {
     title: '图片生成与编辑',
     managed: '内置 · 自动管理',
     description: '由图片模型的「允许 AI 在会话中调用」设置自动管理。',
-    runtimeScope: '分配包含 GoodBuddy Agent 远程路径上的适用 Runtime。生成需要 Execute 模式及支持工具调用的聊天模型；勾选不代表 Runtime 已就绪。',
+    runtimeScope: '分配包含 GoodBuddy Agent 远程路径上的适用 Runtime。生成需要支持工具调用的聊天模型；勾选不代表 Runtime 已就绪。',
     openSettings: '前往图片模型设置',
     tools: {
       generate_image: '使用已允许会话调用的图片模型生成新图片，或基于会话中的图片进行编辑，结果保存在当前会话。',
-      save_image: '将当前会话中已生成或已上传的图片保存为 PNG、JPEG 或 WebP 文件；需要 Execute 模式，远程项目中文件写入远程主机。'
+      save_image: '将当前会话中已生成或已上传的图片保存为 PNG、JPEG 或 WebP 文件；远程项目中文件写入远程主机。'
     }
   },
   channels: {
@@ -33,7 +33,7 @@ export const integrations = {
       rootAriaLabel: '{{name}} 默认工作目录',
       selectRootAriaLabel: '选择 {{name}} 默认工作目录',
       select: '选择',
-      rootHelp: '远程 Execute 只能在此项目目录范围内运行。',
+      rootHelp: '此消息通道项目使用的工作目录。',
       backendLabel: '消息处理后端',
       backendAriaLabel: '{{name}} 消息处理后端',
       directModels: '直连模型',
@@ -54,18 +54,6 @@ export const integrations = {
       fixedRuntimeDescription: '通过 {{runtime}} 运行，固定使用 {{name}}。',
       runtimeDescription:
         '通过 {{runtime}} Agent Runtime 运行，并跟随“Agent Runtime”设置中的全局 {{runtime}} 配置。',
-      defaultMode: '默认模式',
-      defaultModeAriaLabel: '{{name}} 默认模式',
-      modes: {
-        ask: '对话',
-        execute: '执行'
-      },
-      overrideHelp:
-        '可在消息前加 /ask、/execute、对话：或执行：临时覆盖。',
-      executeRisk:
-        '执行消息会立即交给所选后端，不再逐次弹窗确认。',
-      askRisk:
-        '默认对话时，白名单发送者仍可用 /execute 临时发起执行，且不会弹窗确认。',
       riskSuffix: '请只连接可信账号，并将工作目录限制在必要范围。'
     },
     credential: {
@@ -196,7 +184,7 @@ export const integrations = {
       custom: '自定义 MCP'
     },
     customNotice:
-      '自定义 MCP 仅在 Execute 模式加载，可分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 或 DeepSeek Harness，新建时默认分配给直连模型。Server 及其工具具有当前用户权限，请仅添加可信服务；服务地址、命令和凭据由 GoodBuddy 主进程保管，远程访问令牌由系统安全存储加密，工具调用前仍需 GoodBuddy 审批。stdio Server 会以不含桌面会话变量的受限环境启动；需要电脑控制时请使用经过诊断的内置能力。',
+      '启用并分配后，该服务提供的工具可供对应 Runtime 使用。自定义 MCP 可分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 或 DeepSeek Harness，新建时默认分配给直连模型。Server 及其工具具有当前用户权限，请仅添加可信服务；服务地址、命令和凭据由 GoodBuddy 主进程保管，远程访问令牌由系统安全存储加密。stdio Server 会以不含桌面会话变量的受限环境启动；需要电脑控制时请使用经过诊断的内置能力。',
     computer: {
       title: '电脑控制能力',
       supported: '当前设备支持',
@@ -224,8 +212,7 @@ export const integrations = {
       runtimeAssignmentUnsupportedAriaLabel:
         '{{name}} 无法分配给 {{runtime}}，当前 Runtime 不支持内置 MCP',
       unsupportedSuffix: '（暂不支持）',
-      serverSummaryExecuteOnly: '仅 Execute',
-      serverSummaryMixed: '按模式读写',
+      serverSummaryMixed: '读写',
       serverSummaryReadOnly: '只读',
       serverSummaryDisabled: '未启用 · 需要开启魔法笔记',
       featureDisabled:
@@ -247,11 +234,11 @@ export const integrations = {
     },
     browser: {
       title: '内置浏览器',
-      subtitle: 'GoodBuddy 内置能力 · 隔离浏览器 · Execute',
+      subtitle: 'GoodBuddy 内置能力 · 隔离浏览器',
       description:
         '在 GoodBuddy 内置的临时隔离浏览器中打开并操作网页，不会控制客户端已安装的 Chrome、Edge 或其他浏览器。',
       control:
-        '此开关只控制 Agent：关闭时不向任何 Runtime 提供浏览器工具，但不影响你在浏览器工作栏中手动操作；开启后，已分配的 Runtime 可在 Execute 模式直接使用，不再逐次询问。',
+        '此开关只控制 Agent：关闭时不向任何 Runtime 提供浏览器工具，但不影响你在浏览器工作栏中手动操作；开启后，已分配的 Runtime 可直接使用。',
       enableAriaLabel: '启用 GoodBuddy 内置浏览器',
       enabled: '已启用',
       disabled: '已停用',
@@ -261,9 +248,9 @@ export const integrations = {
     },
     webSearch: {
       title: '联网搜索',
-      subtitle: '直连模型工具 · Exa MCP · Ask / Execute',
+      subtitle: '直连模型工具 · Exa MCP',
       description:
-        '提供 web_search 和 web_fetch，只允许搜索及读取公开网页；Ask 和 Execute 均可使用。',
+        '提供 web_search 和 web_fetch，只允许搜索及读取公开网页。',
       privacy:
         '查询词和公开网页地址会发送给第三方 Exa 服务，不会发送模型 API Key、本地文件或知识库内容。',
       enableAriaLabel: '启用直连模型联网搜索',

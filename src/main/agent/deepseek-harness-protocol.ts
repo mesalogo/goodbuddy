@@ -1,4 +1,4 @@
-export const GOODBUDDY_CONTROL_PROTOCOL_VERSION = 1
+export const GOODBUDDY_CONTROL_PROTOCOL_VERSION = 2
 export const GOODBUDDY_HANDSHAKE = 'goodbuddy/handshake'
 export const GOODBUDDY_PREPARE = 'goodbuddy/session/prepare'
 export const GOODBUDDY_RELEASE = 'goodbuddy/session/release'

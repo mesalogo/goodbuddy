@@ -100,7 +100,7 @@ to a public channel; follow the user's explicit publication instruction.
   production signing secrets, publish installable release artifacts, or modify
   the checked-in public key registry. The Darwin arm64 target uses `macos-15`
   and the same production locks. Native CI checks do not replace real Host
-  installation, Attach, Ask/Execute, and lifecycle validation during development.
+  installation, Attach, mode-free tool execution, and lifecycle validation during development.
 - `.github/workflows/agent-release.yml` is the only production compound Agent
   publication path. It requires an annotated immutable Agent tag, the protected
   `agent-signing` Environment, native x64/arm64 builds, one production

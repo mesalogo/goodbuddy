@@ -32,7 +32,6 @@ import {
   conversationContextCompressionStateSchema,
   actorConversationSubagentActivitySchema,
   legacyConversationSubagentActivitySchema,
-  legacyWorkModeSchema,
   type AssistantProject,
   type AssistantArtifact,
   type AssistantMemory,
@@ -352,7 +351,6 @@ export const agentRequestSchema = z
     queueItemId: z.string().uuid().optional(),
     runtimeSelection: optionalAgentRuntimeSelectionSchema,
     runtimeControl: runtimeControlSchema.optional(),
-    workMode: legacyWorkModeSchema.optional(),
     prompt: z.string().trim().min(1).max(100_000),
     knowledgeLibraryIds: z
       .array(z.string().uuid())
@@ -399,7 +397,6 @@ export const conversationQueueUserInputSchema = z
     expertId: z.string().uuid().optional(),
     teamMode: z.boolean().optional(),
     smartRouting: z.boolean().optional(),
-    workMode: legacyWorkModeSchema,
     includeMemoryContext: z.boolean().default(true),
     prompt: z.string().trim().min(1).max(100_000),
     attachments: z.array(conversationAttachmentSchema).max(maximumAttachmentsPerMessage).default([]),
@@ -432,13 +429,6 @@ export const runtimeProviderSchema = z.enum([
   'opencode',
   'continue',
   'deepseek-harness'
-])
-
-export const toolApprovalPolicySchema = z.enum([
-  'always',
-  'session',
-  'workspace',
-  'policy'
 ])
 
 export const continueModeSchema = z.enum(['chat', 'agent'])
@@ -549,8 +539,7 @@ export const defaultRuntimeSettings = {
   knowledgeRerankModel: 'rerank-v3.5',
   contextCompression: defaultContextCompressionSettings,
   runtimeCustomization: defaultRuntimeCustomizationSettings,
-  workspacePath: '',
-  toolApproval: 'always'
+  workspacePath: ''
 } as const
 
 export const runtimePathSchema = z
@@ -787,7 +776,6 @@ export const runtimeSettingsInputSchema = z
     continueModelSource: runtimeModelSourceSchema.optional(),
     deepseekHarnessModelSource: runtimeModelSourceSchema
       .default({ kind: 'platform' }),
-    toolApproval: toolApprovalPolicySchema
   }).strict()
   .superRefine((settings, context) => {
     if (
@@ -1153,7 +1141,6 @@ export type RuntimeSettings = {
     | { source: 'profile'; profileId: string; name: string; modelName: string }
     | { source: 'unavailable' }
   >
-  toolApproval: RuntimeSettingsInput['toolApproval']
   configured?: ConfiguredRuntimeSettings
   warnings?: SettingsWarning[]
 }
@@ -1808,10 +1795,6 @@ export type DesktopApi = {
     ) => Promise<AgentRuntimeStatus>
     run: (request: AgentRequest) => Promise<void>
     cancel: (requestId: string) => Promise<void>
-    respondApproval: (
-      approvalId: string,
-      decision: ApprovalDecision
-    ) => Promise<void>
     respondQuestion: (
       questionId: string,
       answers?: AgentQuestionAnswer[]
@@ -2134,6 +2117,7 @@ export type DesktopApi = {
     ) => () => void
   }
   workspace: {
+    importFiles: (projectId: string, path: string) => Promise<{ imported: string[]; failed: { name: string; error: string }[] }>
     manage: (projectId: string, action: import('./workspace-management-contracts').WorkspaceManagementAction) => Promise<import('./workspace-management-contracts').WorkspaceManagementResult>
     getChanges: (projectId: string) => Promise<WorkspaceChanges>
     getFileDiff: (projectId: string, path: string) => Promise<WorkspaceChanges>

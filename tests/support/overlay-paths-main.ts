@@ -25,6 +25,11 @@ app.whenReady().then(async () => {
   const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
   database.initialize(directory)
   const project = database.listProjects()[0]!
+  const archivedProject = database.createProject({ name: 'Archived workspace', description: '', rootPath: directory })
+  const archivedConversationId = randomUUID()
+  database.saveLocalConversations([{ header: { id: archivedConversationId, projectId: archivedProject.id, title: 'Archived history', updatedAt: 1 },
+    messages: [{ id: randomUUID(), role: 'assistant', state: 'complete', createdAt: 1, content: 'Preserved archived message' }] }])
+  database.setProjectArchived(archivedProject.id, true)
   const conversationId = randomUUID()
   const resultId = randomUUID()
   const html = '<html><body><a href="#end">Jump to end</a>' + '<p>Long preview text</p>'.repeat(80) +
@@ -36,6 +41,10 @@ app.whenReady().then(async () => {
         snippet: 'Saved citation', rank: 1, external: { kind: 'external', provider: 'fastgpt', instanceId: randomUUID(), remoteKnowledgeBaseId: 'review' } }]
     }, { id: randomUUID(), role: 'assistant', state: 'complete', createdAt: Date.now(),
       content: '```html\n<html><body><h1>Plain keyboard preview</h1>' + '<p>Long plain content</p>'.repeat(80) + '</body></html>\n```' }] }])
+  database.saveLocalConversations(Array.from({ length: 14 }, (_, i) => ({
+    header: { id: randomUUID(), projectId: project.id, title: `Earlier workspace conversation with a long title ${i}`,
+      updatedAt: new Date(2025, 8, 2, 10, i).getTime() }, messages: []
+  })))
   const settings = { ...defaultRuntimeSettings, workspacePath: directory, modelProfiles: [], embeddingConnections: [] }
   const applicationSettings = new ApplicationSettingsStore(join(directory, 'application.json'))
   await applicationSettings.update({ checkUpdatesOnStartup: false })
@@ -49,7 +58,7 @@ app.whenReady().then(async () => {
     capabilities, { clear() {}, cancelImport() {}, getDraft: () => [] } as never,
     { snapshot: () => ({ libraries: [], sources: [], documents: [], entities: [], relations: [], evidence: [], tasks: [] }),
       database: { externalStore: { listBindings: () => [] } }, external: { listInstances: () => [] } } as never,
-    database, { clear() {} } as never, {} as never, async () => {}, undefined, browser,
+    database, {} as never, async () => {}, undefined, browser,
     undefined, undefined, applicationSettings, undefined, undefined, undefined, undefined, undefined,
     undefined, undefined, undefined, undefined, undefined, { getPending: async () => undefined } as never)
   // Parsing payloads are fixtures; App, preload, window keyboard IPC and browser services are production.
@@ -161,13 +170,13 @@ app.whenReady().then(async () => {
     assert(await js('document.querySelector(".project-switcher__control").matches("button") && document.querySelectorAll(".project-switcher__picker button").length === 1 && !!document.querySelector(".project-switcher__trigger .project-switcher__activity")'))
     await screenshot('workspace-idle-trigger')
     database.createTask({ id: randomUUID(), projectId: project.id, conversationId,
-      title: 'Review workspace layout', instructions: 'Layout fixture only', workMode: 'ask', status: 'running' })
+      title: 'Review workspace layout', instructions: 'Layout fixture only', status: 'running' })
     win.webContents.send(ipcChannels.conversationsChanged)
     await wait('!!document.querySelector(".project-switcher__control .project-activity__running")')
     assert.equal(await js('document.querySelector(".project-switcher__control").getBoundingClientRect().height'), idleTrigger)
     await screenshot('workspace-active-trigger')
     const workspaceLayouts = []
-    for (const [width, height] of [[1280, 800], [1280, 480], [560, 640]]) {
+    for (const [width, height] of [[1280, 800], [1280, 480], [560, 640], [375, 480]]) {
       win.setContentSize(width!, height!)
       await wait(`innerWidth === ${width} && innerHeight === ${height}`)
       if (width! < 900) {
@@ -181,7 +190,7 @@ app.whenReady().then(async () => {
         await click('.project-switcher__activity')
         await wait('!!document.querySelector(".workspace-menu")')
         await js('Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})))')
-        const layout = await js<{ bounded: boolean; divider: boolean; compact: boolean; rows: boolean }>(`(() => {
+        const layout = await js<{ bounded: boolean; divider: boolean; compact: boolean; rows: boolean; gap: number; triggerHit: boolean; times: boolean; enter: boolean }>(`(() => {
           const rect = selector => document.querySelector(selector).getBoundingClientRect();
           const left = rect('.workspace-menu__projects'), input = rect('.workspace-menu__search');
           const menu = rect('.workspace-menu'), toolbar = rect('.workspace-menu__toolbar');
@@ -189,21 +198,87 @@ app.whenReady().then(async () => {
           const border = getComputedStyle(document.querySelector('.workspace-menu__projects'));
           const row = document.querySelector('.workspace-menu [role="menuitemradio"]');
           const parts = [...row.querySelector('span').children].map(e => e.getBoundingClientRect());
+          const trigger = document.querySelector('.project-switcher__control'), anchor = trigger.getBoundingClientRect();
+          const times = [...document.querySelectorAll('.workspace-menu__conversation time')];
+          const enter = rect('.workspace-menu__enter button'), right = rect('.workspace-menu__activity');
           return { bounded: input.left >= left.left && input.right <= left.right && menu.left >= 16 && menu.right <= innerWidth - 16 && menu.top >= 16 && menu.bottom <= innerHeight - 16,
             divider: border.borderRightWidth === '1px' && border.borderRightStyle === 'solid' && border.borderRightColor === getComputedStyle(document.querySelector('.workspace-menu__search')).borderRightColor,
             compact: toolbar.height < 70 && filters.right <= action.left && Math.abs(filters.top + filters.height / 2 - action.top - action.height / 2) < 2,
-            rows: parts.length >= 3 && parts[0].bottom <= parts[1].top && parts[1].bottom <= parts[2].top };
+            rows: parts.length >= 3 && parts[0].bottom <= parts[1].top && parts[1].bottom <= parts[2].top,
+            gap: menu.top - anchor.bottom,
+            triggerHit: [anchor.top + 8, anchor.bottom - 8].every(y => trigger.contains(document.elementFromPoint(anchor.left + anchor.width / 2, y))),
+            enter: enter.left >= right.left && Math.abs(enter.right - right.right + 8) <= 1 && Math.abs(enter.bottom - right.bottom + 8) <= 1 && enter.top >= toolbar.bottom,
+            times: times.length === 11 && times.every(time => {
+              const button = time.closest('button'), title = button.querySelector('strong').getBoundingClientRect(), r = time.getBoundingClientRect(), status = button.querySelector('.workspace-menu__metadata small');
+              return time.dateTime && time.title && title.width > 0 && title.right <= r.left && r.right <= button.getBoundingClientRect().right && (!status || status.getBoundingClientRect().top >= r.bottom);
+            }) };
         })()`)
-        assert.deepEqual(layout, { bounded: true, divider: true, compact: true, rows: true }, `${width}x${height} ${theme}: ${JSON.stringify(layout)}`)
+        assert.deepEqual(layout, { bounded: true, divider: true, compact: true, rows: true, gap: 8, triggerHit: true, times: true, enter: true }, `${width}x${height} ${theme}: ${JSON.stringify(layout)}`)
         await screenshot(`workspace-${width}x${height}-${theme}`)
+        await js('document.querySelector(".workspace-menu__conversation").focus()')
+        await key('End')
+        await wait('!!document.activeElement.closest(".workspace-menu__conversations [aria-posinset=\\"11\\"]")')
+        const wheelPoint = await js<{ x: number; y: number }>(`(() => {
+          const r = document.querySelector('.workspace-menu__conversations').getBoundingClientRect();
+          return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+        })()`)
+        win.webContents.sendInputEvent({ type: 'mouseWheel', ...wheelPoint, deltaX: 0, deltaY: -500, canScroll: true })
+        await wait('document.querySelector(".workspace-menu__conversations").scrollTop > 0')
+        const scrolling = await js<{ visible: boolean; scrolled: boolean; noOverflow: boolean; geometry: number[] }>(`(() => {
+          const list = document.querySelector('.workspace-menu__conversations'), row = document.activeElement;
+          const r = row.getBoundingClientRect(), bounds = list.getBoundingClientRect();
+          return { visible: r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1,
+            scrolled: list.scrollTop > 0, noOverflow: list.scrollWidth === list.clientWidth,
+            geometry: [r.top, r.bottom, bounds.top, bounds.bottom, list.scrollTop, list.scrollHeight, list.clientHeight, list.scrollWidth, list.clientWidth] };
+        })()`)
+        assert(scrolling.visible && scrolling.scrolled && scrolling.noOverflow, JSON.stringify(scrolling))
+        const stable = await js(`new Promise(resolve => {
+          const samples = [];
+          const sample = () => { const r = document.querySelector('.workspace-menu').getBoundingClientRect(); samples.push([r.top, r.height]);
+            if (samples.length < 12) requestAnimationFrame(sample); else resolve(samples.every(r => r[0] === samples[0][0] && r[1] === samples[0][1])); };
+          requestAnimationFrame(sample);
+        })`)
+        assert(stable, 'Menu geometry must remain stable during internal scroll')
+        if (width === 1280 && height === 800 && theme === 'light') {
+          win.setContentSize(1280, 480)
+          await wait(`(() => {
+            const menu = document.querySelector('.workspace-menu').getBoundingClientRect();
+            const trigger = document.querySelector('.project-switcher__control').getBoundingClientRect();
+            return innerHeight === 480 && menu.top === trigger.bottom + 8 && menu.bottom <= innerHeight - 16;
+          })()`)
+          win.setContentSize(width, height)
+          await wait('innerHeight === 800 && document.querySelector(".workspace-menu").getBoundingClientRect().height > 600')
+        }
         await key('Escape')
         await wait('!document.querySelector(".workspace-menu") && document.activeElement.matches(".project-switcher__trigger")')
-        workspaceLayouts.push({ width, height, theme, ...layout })
+        workspaceLayouts.push({ width, height, theme, ...layout, internalScroll: true, stable })
       }
     }
     evidence.workspaceLayouts = workspaceLayouts
     evidence.workspaceTriggerHeight = idleTrigger
     await key('Escape')
+    win.setContentSize(1280, 800)
+    await wait('innerWidth === 1280')
+    await click('.sidebar-toggle')
+    await wait('!document.querySelector(".sidebar").inert')
+    await click('.project-switcher__trigger')
+    await click('.workspace-menu__archived')
+    await click('.workspace-menu__archived-project button')
+    await wait('!document.querySelector(".workspace-menu__archived-project")')
+    assert.equal(database.getProject(archivedProject.id).status, 'active')
+    assert(await js(`!document.querySelector('.project-switcher__trigger').textContent.includes('Archived workspace')`), 'Restore must not switch project')
+    await click('.workspace-menu__archive-heading button')
+    const archivedRow = `[data-list-window-row="${archivedProject.id}"] [role="menuitemradio"]`
+    await js(`document.querySelector(${JSON.stringify(archivedRow)}).focus()`)
+    await wait('document.querySelector(".workspace-menu__conversations").textContent.includes("Archived history")')
+    await click('.workspace-menu__enter button')
+    await wait('document.querySelector(".project-switcher__trigger").textContent.includes("Archived workspace") && document.body.innerText.includes("Preserved archived message")')
+    assert.equal(database.listConversationSummaries().filter(item => item.projectId === archivedProject.id).length, 1, 'Entry must not create a replacement conversation')
+    await click('.project-switcher__trigger')
+    await js(`document.querySelector('[data-list-window-row="${project.id}"] [role="menuitemradio"]').focus()`)
+    await click('.workspace-menu__enter button')
+    await wait('!!document.querySelector(".message-html-preview")')
+    evidence.archiveRestored = true
     win.setContentSize(760, 700)
     await wait('document.querySelector(".sidebar").inert')
     await click('.sidebar-toggle')
@@ -221,7 +296,7 @@ app.whenReady().then(async () => {
       const tabs = [...document.querySelectorAll('.workspace-menu__categories [role="tab"]')];
       return tabs.length === 3 && tabs[0].getAttribute('aria-selected') === 'true' &&
         tabs.every(tab => tab.getBoundingClientRect().top === tabs[0].getBoundingClientRect().top) &&
-        document.querySelectorAll('.workspace-menu [role="menuitemradio"]').length === 1 &&
+         document.querySelectorAll('.workspace-menu [role="menuitemradio"]').length === 2 &&
         !document.querySelector('.workspace-menu__scope');
     })()`))
     evidence.workspaceCategories = true
@@ -312,7 +387,23 @@ app.whenReady().then(async () => {
       await waitNative(true)
       assert.equal(native()!.webContents.id, nativeId)
       assert.equal(await native()!.webContents.executeJavaScript('window.overlayToken'), 'same-document')
+      if (await js('document.querySelector(".sidebar").inert')) await click('.sidebar-toggle')
+      await wait('!document.querySelector(".sidebar").inert')
+      await js('Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})))')
+      await click('.project-switcher__trigger')
+      await wait('!!document.querySelector(".workspace-menu")')
+      const menuOverlaps = await js<boolean>(`(() => {
+        const a = document.querySelector('.workspace-menu').getBoundingClientRect(), b = document.querySelector('.assistant-sidebar__browser-viewport').getBoundingClientRect();
+        return a.right > b.left && a.left < b.right && a.top < b.bottom && a.bottom > b.top;
+      })()`)
+      assert.equal(menuOverlaps, width === 1000)
+      await waitNative(!menuOverlaps)
+      await key('Escape')
+      await waitNative(true)
+      assert.equal(native()!.webContents.id, nativeId)
+      assert.equal(await native()!.webContents.executeJavaScript('window.overlayToken'), 'same-document')
     }
+    evidence.workspaceBrowserOcclusion = true
     evidence.tooltip = true
     evidence.modelAttempts = (globalThis as typeof globalThis & { overlayModelAttempts?: number }).overlayModelAttempts ?? 0
     assert.equal(evidence.modelAttempts, 0)

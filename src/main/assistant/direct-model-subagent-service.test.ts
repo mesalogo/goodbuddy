@@ -24,7 +24,6 @@ afterEach(async () => {
 const parent: DirectModelSubagentParent<RequestContext> = {
   requestId: 'parent-request',
   projectId: 'project',
-  workMode: 'execute',
   requestContext: {
     authorizationSnapshot: 'snapshot'
   }
@@ -114,11 +113,12 @@ describe('DirectModelSubagentService', () => {
         parentRequestId: parent.requestId,
         childRunId: result.childRunId,
         projectId: parent.projectId,
-        conversationId: result.conversationId,
-        workMode: parent.workMode
+        conversationId: result.conversationId
       },
       requestContext: parent.requestContext
     })
+    expect(childInput?.context).not.toHaveProperty('workMode')
+    for (const event of harness.events) expect(event).not.toHaveProperty('workMode')
     expect(result.conversationId).toBe(
       `direct-model-subagent:${parent.requestId}:${result.childRunId}`
     )

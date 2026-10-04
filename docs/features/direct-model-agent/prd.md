@@ -18,7 +18,7 @@ GoodBuddy 直连模型已经可以读取、列出和写入工作区文本，使�
 Git 或项目脚本，因此无法独立验证结果。
 
 本功能设计时，GoodBuddy 已有面向用户专家协作的只读 Subagent，但直连模型尚不能在工具
-循环中主动委派编程子任务。当前专家协作已继承父请求 Ask/Execute 模式并使用本机直连模型
+循环中主动委派编程子任务。当前专家协作继承父请求能力范围并使用本机直连模型
 工具，与本功能的 `subagent_delegate` 仍为不同入口。OpenCode、Continue 和 DeepSeek Harness 一般已经提供
 Shell、Agent 或 Task 能力，再向它们注入 GoodBuddy 同名工具只会造成重复入口和语义冲突。
 
@@ -30,10 +30,10 @@ Shell、Agent 或 Task 能力，再向它们注入 GoodBuddy 同名工具只会�
 
 ## 2. 产品目标
 
-1. 让直连模型在 Execute 模式完成“读取代码 → 修改 → 运行 → 根据结果修正”的闭环。
+1. 让直连模型完成“读取代码 → 修改 → 运行 → 根据结果修正”的流程。
 2. 在 Windows、macOS 和 Linux 使用同一个模型工具契约，不要求模型调用平台专属工具名。
 3. 让直连模型可以把独立工作委派给临时 Subagent，并取得有界、可核验的结果。
-4. 保持 Ask 只读、Execute 完整授权、执行空间、取消、有界输出和进程回收语义不变。
+4. 使用当前账号权限，保留执行空间、取消、有界输出和进程回收语义。
 5. 不向已有原生执行能力的 Agent Runtime 重复注入 GoodBuddy 进程或 Subagent 工具。
 6. 使用安装包内置 ripgrep 提供跨平台一致的快速代码搜索，不依赖用户预装命令。
 
@@ -54,7 +54,7 @@ macOS/Linux 改用 `bash_execute`。
 
 | Runtime | GoodBuddy `process_execute` | GoodBuddy `subagent_delegate` |
 | --- | --- | --- |
-| 直连模型 `model` | Execute 提供 | Ask/Execute 提供 |
+| 直连模型 `model` | 本机 Shell 可用时提供 | 按既有委派设置提供 |
 | OpenCode | 不提供 | 不提供 |
 | Continue | 不提供 | 不提供 |
 | DeepSeek Harness | 不提供 | 不提供 |
@@ -64,25 +64,23 @@ Agent 或插件能力。
 
 ### 3.4 Subagent 继承，不扩权
 
-Subagent 使用父请求的项目、执行空间、工作模式、直连模型连接和已启用能力快照：
+Subagent 使用父请求的项目、执行空间、直连模型连接和已启用能力快照：
 
-- Ask 父请求只能创建 Ask Subagent。
-- Execute 父请求创建 Execute Subagent。
-- 子级不能切换父请求绑定的项目、工作区、Runtime、模型连接或工作模式；Execute 命令的
+- 子级不能切换父请求绑定的项目、工作区、Runtime 或模型连接；命令的
   单次工作目录选择遵循 FR-3。
 - 子级不再看到 `subagent_delegate`，首版最大委派深度固定为 1。
 - 子任务不是新的顶层 Task 或 Conversation，结果先返回父模型。
 
 ### 3.5 不新增权限档位
 
-Ask 禁止命令和写入。Execute 是用户对当前执行空间账号的完整授权。进程和 Subagent 不增加
+工具使用当前执行空间账号权限。进程和 Subagent 不增加
 “受控执行”“仅测试”“可信命令”或逐命令风险等级，也不重复弹出第二套确认。
 
 ### 3.6 精简工作区工具
 
 直连模型使用 `workspace_rg` 发现文件和搜索内容，使用 `workspace_read_text` 按行分页读取，
 使用 `workspace_apply_patch` 新增、修改或删除文本文件。新请求不再注入低效的单层目录列表和
-整文件覆盖工具。Ask 提供前两个只读工具；Execute 额外提供补丁工具。
+整文件覆盖工具。正常本机工具请求提供这三个工具。
 
 ## 4. 功能范围
 
@@ -107,7 +105,7 @@ Ask 禁止命令和写入。Execute 是用户对当前执行空间账号的完�
 - 向 OpenCode、Continue 或 DeepSeek Harness 注入本功能工具。
 - 递归 Subagent、长期运行的自治 Agent、Workflow、Hook 或恢复未完成子任务。
 - 新的权限矩阵、逐命令批准、沙箱档位或命令白名单。
-- 自动安装项目依赖；模型可以在 Execute 中显式运行项目已有的安装命令。
+- 自动安装项目依赖；模型可以按用户请求显式运行项目已有的安装命令。
 
 ## 5. 功能需求
 
@@ -134,18 +132,18 @@ Ask 禁止命令和写入。Execute 是用户对当前执行空间账号的完�
 - 本机执行只能发生在当前桌面执行空间。
 - 当前请求绑定 SSH 执行空间且没有远端进程后端时不注册工具，绝不在桌面目录回退执行。
 
-### FR-4 Ask/Execute
+### FR-4 统一执行
 
-- Ask 工具清单不包含 `process_execute`。
-- Runtime 边界必须再次拒绝 Ask 发起的伪造命令调用。
-- Execute 命令使用 GoodBuddy 客户端当前用户权限，不声称 Runtime OS 沙箱。
-- 消息通道的直连模型 Execute 继续服从该通道既有工具策略。
+- `process_execute` 按本机 Shell 与执行空间可用性提供，不依赖产品模式。
+- Runtime 边界拒绝未注册工具或失效请求的伪造调用。
+- 命令使用 GoodBuddy 客户端当前用户权限，不声称 Runtime OS 沙箱。
+- 消息通道沿用已启用能力和资源范围，不保留 `toolApproval` 策略。
 
 ### FR-5 Subagent 委派
 
 - `subagent_delegate` 接受一个清晰的任务说明，不要求用户预先创建专家。
 - 子级默认使用父请求选择的直连模型连接。
-- 子级继承父请求的工作模式和能力上限，但不获得再次委派能力。
+- 子级继承父请求的能力上限，但不获得再次委派能力。
 - 子级最终输出、部分输出、错误、用量和状态返回父请求。
 - 父模型负责综合结果并向用户作最终回答。
 
@@ -162,7 +160,7 @@ Ask 禁止命令和写入。Execute 是用户对当前执行空间账号的完�
 - 命令、Subagent 提示、单次返回的输出预览、队列和并发有界；完整输出不因超过预览容量而丢弃。
 - 预览省略内容时明确标记并提供续读位置。模型可用 `output_read` 逐页取得完整日志及
   Subagent 结果，包括失败或取消前已取得的部分输出。
-- Ask 和 Execute 均可续读当前会话的输出。会话或 Runtime 释放后，临时输出删除，旧句柄失效。
+- 可续读当前会话的输出。会话或 Runtime 释放后，临时输出删除，旧句柄失效。
 
 ### FR-8 环境和凭据
 
@@ -199,19 +197,19 @@ Ask 禁止命令和写入。Execute 是用户对当前执行空间账号的完�
   完全不可读；超长单行可使用返回的字节位置继续读取。
 - `workspace_apply_patch` 支持一个补丁新增、修改和删除多个 UTF-8 文件；执行前验证全部
   路径和 hunk，执行失败时准确报告已完成文件。
-- 搜索和读取在 Ask/Execute 均可用；补丁只在 Execute 可用，Main 调用边界再次检查模式。
-- `workspace_rg` 直接调用随包 ripgrep；Ask 限于工作区内只读搜索，Execute 使用当前账号权限。
+- 搜索、读取与补丁按已注册目录提供，Main 调用边界检查资源与请求归属。
+- `workspace_rg` 直接调用随包 ripgrep，使用当前账号权限。
   具体参数与模式边界见[工具契约](./technical-design.md#工具输入与执行)。
 - 工作区工具不限制文件总大小、补丁总大小、搜索表达式长度、glob 数量或模型请求的结果
   数量。单次返回按上下文容量截断或分页；读取结果提供续读位置，搜索完整输出通过 `output_read` 续读。
 
 ## 6. 产品验收
 
-- [ ] Windows 直连模型 Execute 使用 PowerShell 创建文件、运行测试并读取退出码。
-- [ ] macOS/Linux 直连模型 Execute 使用 Bash/Sh 完成同一工作流。
-- [ ] Ask 中模型看不到进程工具，伪造调用也在 Main 边界失败。
+- [ ] Windows 直连模型使用 PowerShell 创建文件、运行测试并读取退出码。
+- [ ] macOS/Linux 直连模型使用 Bash/Sh 完成同一工作流。
+- [ ] 未注册工具的伪造调用在 Main 边界失败。
 - [ ] 直连模型可以委派编程子任务，子级运行命令并把结果返回父模型。
-- [ ] Ask Subagent 保持只读；Execute Subagent 不增加第二套批准。
+- [ ] Subagent 继承能力范围，不增加第二套批准。
 - [ ] Subagent 不能递归委派，不能切换父请求工作区、模式或模型。
 - [ ] 切换到 OpenCode、Continue 或 DeepSeek Harness 后不出现本功能工具。
 - [ ] 非零退出、超时、取消和输出截断均准确展示。
@@ -221,7 +219,7 @@ Ask 禁止命令和写入。Execute 是用户对当前执行空间账号的完�
 - [ ] 子任务不进入 Task Center，不创建独立可导航 Conversation。
 - [ ] TLS 建连重置和请求超时在未输出内容时最多自动重试 3 次，成功后继续原请求。
 - [ ] 重试等待可取消，已显示部分内容的失败不自动重放。
-- [ ] Ask 可使用 ripgrep 搜索和分页读取，但不能应用补丁。
-- [ ] Execute 可通过一个补丁新增、修改和删除多个工作区文件，并运行测试验证。
+- [ ] 可使用 ripgrep 搜索和分页读取，无模式限制。
+- [ ] 可通过一个补丁新增、修改和删除多个工作区文件，并运行测试验证。
 - [ ] Windows、macOS、Linux 的 x64/arm64 安装包均携带对应 ripgrep，且无需系统预装。
 - [ ] 全量测试、类型检查、Lint 和生产构建通过。

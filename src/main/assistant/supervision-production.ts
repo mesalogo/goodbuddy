@@ -50,9 +50,9 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
     const conversationId = `supervision:${requestId}`
     // Hidden task row so model usage can be attributed to supervision.
     database.createTask({ id: requestId, conversationId, title: request.title, instructions: request.instructions,
-      workMode: 'ask', origin: 'assistant', visible: false })
+      origin: 'assistant', visible: false })
     try {
-      for await (const event of runtime.run({ requestId, conversationId, workMode: 'ask', prompt: request.prompt },
+      for await (const event of runtime.run({ requestId, conversationId, prompt: request.prompt },
         modelSignal, async approval => { await request.authorizeTool(approval.toolName ?? approval.scopeKey); return 'deny' })) {
         if (event.type === 'text') {
           output += event.delta
@@ -126,8 +126,12 @@ export function createProductionSupervisorService(
     background: request => database.reviewBackground(request.scope),
     start: (request, heartbeatRunId) => database.startSupervisionRun(request, heartbeatRunId),
     fail: (runId, error) => database.failSupervisionRun(runId, error), noChange: runId => database.noChangeSupervisionRun(runId),
-    candidates: async request => database.listSupervisionCandidates(request), save: async result => database.saveSupervisionResult(result)
-  }, { database: () => database.supervisionReviewStore(), withExecution: async operation => {
+    candidates: request => database.supervisionCandidates(request), save: async result => database.saveSupervisionResult(result)
+  }, { database: () => database.supervisionReviewStore(),
+    initialize: (runId, state, signal) => database.initializeSupervisionReview(runId, state, signal),
+    resume: (runId, signal) => database.resumeSupervisionReview(runId, signal),
+    context: (request, signal) => database.supervisionContext(request, signal),
+    withExecution: async operation => {
     runtime = await resolveRuntime((await getSettings())?.supervisorModelProfileId)
     try { return await operation() }
     finally {

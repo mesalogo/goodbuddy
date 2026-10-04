@@ -53,7 +53,6 @@ export function registerMagicNotesAnalysisIpcHandlers(
         id: requestId,
         title: `分析笔记：${note.title}`,
         instructions: '使用无工具模型对笔记记录进行只读分析',
-        workMode: 'ask',
         origin: 'assistant',
         visible: false
       })
@@ -122,7 +121,6 @@ export function registerMagicNotesAnalysisIpcHandlers(
         id: requestId,
         title: '分析未保存笔记草稿',
         instructions: '使用无工具模型对未保存笔记草稿进行只读分析',
-        workMode: 'ask',
         origin: 'assistant',
         visible: false
       })
@@ -199,7 +197,6 @@ export function registerMagicTodosAnalysisIpcHandlers(
         id: requestId,
         title: `分析待办：${todo.title}`,
         instructions: '使用无工具模型对魔法笔记待办进行只读分析',
-        workMode: 'ask',
         origin: 'assistant',
         visible: false
       })

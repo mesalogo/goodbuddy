@@ -94,7 +94,6 @@ function settings(
     knowledgeRerankModel: 'rerank-v3.5',
     runtimeCustomization: defaultRuntimeCustomizationSettings,
     workspacePath: process.cwd(),
-    toolApproval: 'always',
     ...overrides
   }
 }

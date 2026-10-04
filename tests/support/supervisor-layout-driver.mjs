@@ -150,7 +150,7 @@ app
           await wait('document.querySelectorAll(".supervisor-activity__item").length === 3')
         } else if (view === 'pending' || view === 'failure') {
           await js('document.querySelector(".supervisor-workspace__toolbar .primary-button").click()')
-          await wait(view === 'pending' ? '!!document.querySelector(".supervisor-workspace [role=status]")' : '!!document.querySelector(".supervisor-workspace [role=alert]")')
+          await wait(`document.documentElement.dataset.reviewNoticeTone === '${view === 'pending' ? 'info' : 'error'}'`)
         }
         await js('document.fonts.ready')
         for (const theme of ['light', 'dark']) {
@@ -171,7 +171,7 @@ app
                 tail:document.querySelector('.supervisor-workspace__prose')?.textContent.includes('长摘要末尾'),
                  controls:[...document.querySelectorAll('.supervisor-activity > .supervisor-workspace__action-bar > *')].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top};}),
                  toolbarControls:[...document.querySelectorAll('.supervisor-workspace__toolbar select, .supervisor-workspace__toolbar button')].map(e=>({disabled:e.disabled,text:e.textContent,top:e.getBoundingClientRect().top,bottom:e.getBoundingClientRect().bottom})),
-                 notice:box('.supervisor-workspace__run-status'), dismiss:box('.supervisor-workspace__run-status .icon-button'),
+                  notice:box('.supervisor-workspace__run-status'),
                  cancel:box('.supervisor-activity__item .danger-ghost') };
             })()`)
             assert(report.pageWidth <= width, 'No page overflow')
@@ -188,10 +188,8 @@ app
                assert(report.prose.left - report.recap.left <= 25, 'No separately centered inner body')
                if (view === 'pending') {
                  assert(report.toolbarControls.every(control => !control.disabled), 'Long review keeps toolbar enabled')
-                 assert.equal(report.toolbarControls[2].text, '回顾当前进展', 'Start name remains stable')
-                 assert(report.dismiss.width >= 28 && report.dismiss.height >= 28, 'Notice close target remains usable')
-                 assert(report.dismiss.right <= report.notice.right && report.dismiss.bottom <= report.notice.bottom, 'Close remains inside notice')
-                 assert(report.notice.right - report.dismiss.right <= 20, 'Notice close stays at the right edge on narrow screens')
+                  assert.equal(report.toolbarControls[2].text, '回顾', 'Start name remains stable')
+                  assert.equal(report.notice, undefined, 'Operation feedback does not occupy workspace layout')
                  if (width >= 1024) assert(Math.max(...report.toolbarControls.map(control => control.top)) - Math.min(...report.toolbarControls.map(control => control.top)) <= 4, 'Toolbar stays on one aligned row')
                }
             } else {
@@ -399,9 +397,9 @@ app
           await js('document.querySelector(".supervisor-workspace__toolbar .primary-button").click(); document.querySelector(".page-shell").scrollTop = 0')
           await settle()
           assert(await js('document.querySelector(".supervisor-workspace__recap").textContent.includes("上期结果")'))
-          assert(await js('document.querySelector(".supervisor-workspace [role=status]").textContent.includes("新回顾正在整理")'))
+          assert(await js('!document.querySelector(".supervisor-workspace__run-status")'))
           await writeFile(join(artifacts, 'recap-running-history-390.png'), (await win.webContents.capturePage()).toPNG())
-          await js('document.querySelector(".supervisor-workspace [role=status] button").click()')
+          await js('document.querySelector("#supervisor-tab-activity").click()')
           await wait('document.querySelector("#supervisor-tab-activity").getAttribute("aria-selected") === "true"')
         }
       }

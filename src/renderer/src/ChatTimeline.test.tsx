@@ -62,7 +62,6 @@ const callbacks = {
   onOpenCitationContext: vi.fn(async () => undefined),
   onOpenCitationSource: vi.fn(async () => undefined),
   onOpenImage: vi.fn(),
-  onRespondApproval: vi.fn(async () => undefined),
   onRespondQuestion: vi.fn(async () => undefined),
   onRetry: vi.fn(),
   onRevealEarlier: vi.fn()
@@ -1150,7 +1149,7 @@ describe('ChatTimeline', () => {
     ])
   })
 
-  it('labels direct-model subagents with their inherited work mode', () => {
+  it('labels direct-model subagents without work mode metadata', () => {
     const messages: Message[] = [
       {
         id: 'assistant-message',
@@ -1166,7 +1165,6 @@ describe('ChatTimeline', () => {
               label: '编程 Subagent'
             },
             routingMode: 'native',
-            workMode: 'execute',
             state: 'running',
             reason: '修复并验证聚焦变更'
           }
@@ -1195,7 +1193,7 @@ describe('ChatTimeline', () => {
         selector: 'strong'
       })
     ).toBeInTheDocument()
-    expect(within(region).getByText('直连模型 · Execute'))
+    expect(within(region).getByText('直连模型'))
       .toBeInTheDocument()
     expect(
       within(region).getByText('修复并验证聚焦变更')

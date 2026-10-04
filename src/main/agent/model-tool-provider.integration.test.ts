@@ -42,7 +42,6 @@ externalTest(
     const signal = new AbortController().signal
     const context = {
       conversationId: 'dynamic-mcp-integration',
-      workMode: 'execute'
     } as const
 
     try {

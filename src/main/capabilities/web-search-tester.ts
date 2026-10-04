@@ -29,8 +29,7 @@ export async function testWebSearch(
   const startedAt = Date.now()
   try {
     const context = {
-      conversationId: 'web-search-diagnostic',
-      workMode: 'ask' as const
+      conversationId: 'web-search-diagnostic'
     }
     const tools = await provider.listTools(context, controller.signal)
     if (

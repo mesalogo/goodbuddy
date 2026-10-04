@@ -557,7 +557,6 @@ describe('ActivityPanel', () => {
               kind: 'local',
               rootPath: 'C:\\Workspace'
             },
-            defaultWorkMode: 'ask',
             kind: 'user',
             builtInDefault: true,
             status: 'active',
@@ -610,7 +609,6 @@ describe('ActivityPanel', () => {
               kind: 'local',
               rootPath: 'C:\\Renamed'
             },
-            defaultWorkMode: 'ask',
             kind: 'user',
             status: 'active',
             createdAt: '2026-08-01T00:00:00.000Z',

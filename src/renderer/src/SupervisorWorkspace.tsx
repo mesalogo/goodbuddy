@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { ReactNode } from 'react'
 import { BookOpen, ChevronLeft, ChevronRight, Ellipsis, Info, Network, RefreshCw, X } from 'lucide-react'
 import { AnchoredMenu } from './AnchoredMenu'
-import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
+import type { AppNotificationInput } from './notifications'
 import { EmptyState, PageTabs } from './WorkspacePrimitives'
 import { SupervisionDiscussion } from './SupervisionDiscussion'
 import { SupervisionStoryDigest } from './SupervisionStoryDigest'
@@ -38,7 +38,7 @@ type Props = {
   graphNavigation?: SupervisionGraphNavigation
   tab?: 'overview' | 'graph' | 'plans' | 'activity' | 'settings'
   projects?: AssistantProject[]
-  onOpenActivity?: () => void
+  onNotify?: (notification: AppNotificationInput) => void
   onOpenConversation?: (conversationId: string) => void
   onTabChange?: (tab: 'overview' | 'graph' | 'plans' | 'activity' | 'settings') => void
 }
@@ -71,7 +71,7 @@ export function SupervisorWorkspace({
   tab = 'overview',
   projects = [],
   onTabChange,
-  onOpenActivity,
+  onNotify,
   onOpenConversation
 }: Props) {
   const { t, i18n } = useTranslation('heartbeat')
@@ -82,8 +82,6 @@ export function SupervisorWorkspace({
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string>()
   const [pending, setPending] = useState<string>()
-  const [error, setError] = useState<string>()
-  const [errorAction, setErrorAction] = useState<'run' | 'source' | 'action'>()
   const [selection, setSelection] = useState<Selection | undefined>(graphNavigation?.focus)
   const [listTab, setListTab] = useState<Selection['kind']>(graphNavigation?.focus?.kind ?? 'event')
   const [graphMode, setGraphMode] = useState<'flat' | 'spiral'>('flat')
@@ -97,12 +95,12 @@ export function SupervisorWorkspace({
   }>()
   const [projectId, setProjectId] = useState('global')
   const [days, setDays] = useState(7)
-  const [lastRequest, setLastRequest] = useState<SupervisionRunRequest>()
-  const [pausedReview, setPausedReview] = useState(false)
-  const [execution, setExecution] = useState<SupervisionReviewExecution>({ active: false })
-  const [running, setRunning] = useState(false)
   const runPending = useRef(false)
-  const [dismissedNotice, setDismissedNotice] = useState(false)
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   const [moreOpen, setMoreOpen] = useState(false)
   const [confirmReanalyze, setConfirmReanalyze] = useState(false)
   const moreRef = useRef<HTMLButtonElement>(null)
@@ -118,7 +116,6 @@ export function SupervisorWorkspace({
     setSelection(graphNavigation?.focus)
     if (graphNavigation?.focus) setListTab(graphNavigation.focus.kind)
     setPending(undefined)
-    setError(undefined)
     setLoadError(undefined)
   }
   const selectedResult = useRef<string | undefined>(undefined)
@@ -126,8 +123,6 @@ export function SupervisorWorkspace({
   const loadGeneration = useRef(0)
   const [confirmRemoval, setConfirmRemoval] = useState(false)
   const [revision, setRevision] = useState<string>()
-  const errorText = (reason: unknown) =>
-    reason instanceof Error ? reason.message : t('common.operationFailed')
   const date = (value: string) =>
     new Date(value).toLocaleString(i18n.resolvedLanguage)
   const shortDate = (value: string) =>
@@ -193,11 +188,9 @@ export function SupervisorWorkspace({
         )[0]
         return latestEvent ? { kind: 'event', id: latestEvent.id } : undefined
       })
-    } catch (reason) {
+    } catch {
       if (generation !== loadGeneration.current) return
-      setLoadError(
-        reason instanceof Error ? reason.message : t('common.operationFailed')
-      )
+      setLoadError(t('supervisor.loadFailed'))
     } finally {
       if (generation === loadGeneration.current) setLoading(false)
     }
@@ -213,35 +206,17 @@ export function SupervisorWorkspace({
     return () => { window.clearTimeout(task); invalidate() }
   }, [refresh, graphNavigation])
 
-  useEffect(() => {
-    if (!api) return
-    let disposed = false
-    let wasActive = false
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async () => {
-      try {
-        const next = await api.execution()
-        if (!disposed) {
-          setExecution(next)
-          if (next.active && !wasActive && !runPending.current) setDismissedNotice(false)
-          wasActive = next.active
-        }
-      } catch (reason) {
-        if (!disposed) setError(reason instanceof Error ? reason.message : t('common.operationFailed'))
-      } finally {
-        if (!disposed) timer = setTimeout(() => void poll(), 2000)
-      }
-    }
-    void poll()
-    return () => { disposed = true; clearTimeout(timer) }
-  }, [api, t])
-
   // A review is incremental by default. Only an explicit re-analysis reads the whole interval again.
   const run = async (reanalyze = false) => {
     if (!api) return
     setConfirmReanalyze(false)
-    setDismissedNotice(false)
-    if (runPending.current) return
+    const notice = (message: string, tone: AppNotificationInput['tone'] = 'info') => {
+      if (mounted.current) onNotify?.({ tone, message, dedupeKey: 'supervisor-review' })
+    }
+    if (runPending.current) {
+      notice(t('supervisor.reviewBusy'))
+      return
+    }
     runPending.current = true
     const generation = loadGeneration.current
     const to = new Date()
@@ -257,31 +232,37 @@ export function SupervisorWorkspace({
         to: to.toISOString()
       }
     }
-    setErrorAction('run')
-    setError(undefined)
+    let submitted = false
     try {
       const current = await api.execution()
-      setExecution(current)
-      if (current.active) return
-      setLastRequest(request)
-      setPausedReview(false)
-      setRunning(true)
+      if (!mounted.current) return
+      if (current.active) {
+        notice(t(current.stopping === 'cancelled' ? 'reviewSettings.cancelling' : current.stopping === 'paused' ? 'reviewSettings.pausing' : 'supervisor.reviewBusy'))
+        return
+      }
+      submitted = true
+      notice(t('supervisor.reviewStarted'))
       const outcome = await api.run(request) as { status?: string } | undefined
-      setExecution(await api.execution())
-      setPausedReview(outcome?.status === 'paused')
+      if (!mounted.current) return
+      switch (outcome?.status) {
+        case 'paused': notice(t('reviewSettings.pausedHint')); break
+        case 'cancelled': notice(t('supervisor.reviewCancelled')); break
+        case 'no_change': notice(t('supervisor.reviewNoChange')); break
+        case 'failed': notice(t('supervisor.reviewFailed'), 'error'); break
+        default: notice(t('supervisor.reviewCompleted'), 'success')
+      }
+      // Refresh/navigation can invalidate result selection, but not operation feedback.
       if (generation !== loadGeneration.current) return
       selectedResult.current = undefined
       await refresh()
     } catch (reason) {
       if (/SUPERVISION_REVIEW_BUSY/.test(String(reason))) {
-        setExecution({ active: true })
+        notice(t('supervisor.reviewBusy'))
         return
       }
-      if (generation !== loadGeneration.current) return
-      setError(errorText(reason))
+      notice(t(submitted ? 'supervisor.reviewFailed' : 'supervisor.reviewStartFailed'), 'error')
     } finally {
       runPending.current = false
-      setRunning(false)
     }
   }
 
@@ -438,8 +419,6 @@ export function SupervisorWorkspace({
     if (!api || !selection || pending) return
     const generation = loadGeneration.current
     setPending('action')
-    setError(undefined)
-    setErrorAction('action')
     try {
       if (selection.kind === 'entity')
         await api.entityAction({
@@ -456,9 +435,9 @@ export function SupervisorWorkspace({
       setRevision(undefined)
       if (kind === 'revoke') setSelection(undefined)
       await refresh()
-    } catch (reason) {
+    } catch {
       if (generation !== loadGeneration.current) return
-      setError(errorText(reason))
+      onNotify?.({ tone: 'error', message: t('common.operationFailed') })
     } finally {
       if (generation === loadGeneration.current) setPending(undefined)
     }
@@ -467,13 +446,14 @@ export function SupervisorWorkspace({
     if (!api || pending) return
     const generation = loadGeneration.current
     setPending('source')
-    setError(undefined)
     setSource(undefined)
-    setErrorAction('source')
     try {
       const item = await api.source(id)
       if (generation !== loadGeneration.current) return
-      if (!item) throw new Error(t('supervisor.sourceMissing'))
+      if (!item) {
+        onNotify?.({ tone: 'error', message: t('supervisor.sourceMissing') })
+        return
+      }
       setSource({
         id,
         title: String(item.title),
@@ -482,9 +462,9 @@ export function SupervisorWorkspace({
         conversationId: item.sourceType === 'conversation' && typeof item.sourceId === 'string'
           ? item.sourceId : undefined
       })
-    } catch (reason) {
+    } catch {
       if (generation !== loadGeneration.current) return
-      setError(errorText(reason))
+      onNotify?.({ tone: 'error', message: t('supervisor.sourceLoadFailed') })
     } finally {
       if (generation === loadGeneration.current) setPending(undefined)
     }
@@ -506,7 +486,6 @@ export function SupervisorWorkspace({
   const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
   const selectedExperience = selection?.kind === 'experience' ? storyState.view.experiences.find((item) => item.id === selection.id) : undefined
   const busy = !!api && (loading || pending !== undefined)
-  const showRunNotice = (execution.active || running || pausedReview) && !dismissedNotice
 
   return (
     <div className="supervisor-workspace" data-view={tab} aria-busy={busy}>
@@ -538,35 +517,6 @@ export function SupervisorWorkspace({
                 onClick={() => void refresh()}
               >
                 {t('center.actions.retry')}
-              </button>
-            </div>
-          )}
-          {showRunNotice && <div className="supervisor-workspace__run-status" role="status">
-            <span>{t(execution.stopping === 'cancelled' ? 'reviewSettings.cancelling' : execution.stopping === 'paused' ? 'reviewSettings.pausing' : pausedReview && !running && !execution.active ? 'reviewSettings.pausedHint' : 'supervisor.runningHint')}</span>
-            {onOpenActivity && <button className="link-button" onClick={onOpenActivity}>{t('activity.title')}</button>}
-            <button type="button" className="icon-button" aria-label={t('supervisor.dismiss')} title={t('supervisor.dismiss')} onClick={() => setDismissedNotice(true)}><X size={16} aria-hidden="true" /></button>
-          </div>}
-          {error && (
-            <div className="supervisor-workspace__inline-error" role="alert">
-              <strong>{t('common.operationFailed')}</strong>
-              <p>{error}</p>
-              {errorAction === 'run' && lastRequest && (
-                <p>
-                  {scopeText(lastRequest.scope)} ·{' '}
-                  {date(lastRequest.timeRange.from)} –{' '}
-                  {date(lastRequest.timeRange.to)}
-                </p>
-              )}
-              <button
-                className="secondary-button"
-                disabled={busy}
-                onClick={() =>
-                  errorAction === 'run' ? void run(lastRequest?.reanalyze === true) : setError(undefined)
-                }
-              >
-                {errorAction === 'run'
-                  ? t('supervisor.retryRun')
-                  : t('supervisor.dismiss')}
               </button>
             </div>
           )}

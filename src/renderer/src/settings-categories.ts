@@ -52,11 +52,6 @@ export const settingsCategoryList = [
     translationKey: 'capabilities'
   },
   {
-    id: 'security',
-    group: 'system',
-    translationKey: 'security'
-  },
-  {
     id: 'about',
     group: 'system',
     translationKey: 'about'

@@ -5,10 +5,10 @@ import { rgPath } from '@vscode/ripgrep'
 import { expect, it } from 'vitest'
 import { ModelToolProvider, type ModelToolResult } from './model-tool-provider'
 
-it('pages native rg output through the production provider in Ask and releases it', async () => {
+it('pages native rg output through the production provider and releases it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'goodbuddy-rg-provider-'))
   const provider = new ModelToolProvider(root, [], undefined, undefined, false, { ripgrepExecutablePath: rgPath })
-  const context = { conversationId: 'rg-pages', runtimeTarget: 'model' as const, workMode: 'ask' as const }
+  const context = { conversationId: 'rg-pages', runtimeTarget: 'model' as const,  }
   const signal = new AbortController().signal
   const parse = (result: ModelToolResult) => {
     expect(result.contextBytes).toBeLessThanOrEqual(256 * 1024)
@@ -36,8 +36,11 @@ it('pages native rg output through the production provider in Ask and releases i
     expect(output).toBe(text)
     const error = parse(await provider.callTool('workspace_rg', { args: ['[', '.'] }, signal, context))
     expect(error).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('regex parse error') })
-    await expect(provider.callTool('workspace_rg', { args: ['--pre=cmd', 'target'] }, signal, context))
-      .rejects.toMatchObject({ name: 'RecoverableModelToolError' })
+    const preprocessed = parse(await provider.callTool('workspace_rg', {
+      args: ['--pre=goodbuddy-nonexistent-preprocessor', 'target', 'large.txt']
+    }, signal, context))
+    expect(preprocessed.exitCode).toBe(2)
+    expect(preprocessed.stderr).toContain('goodbuddy-nonexistent-preprocessor')
     await provider.releaseConversation(context.conversationId)
     await expect(provider.callTool('output_read', { handle: reference.handle }, signal, context)).rejects.toThrow('不存在')
   } finally {

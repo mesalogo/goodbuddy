@@ -47,7 +47,7 @@ it.skipIf(!existsSync(binary))('keeps a real OpenCode answer completed after a d
       OPENCODE_DISABLE_LSP_DOWNLOAD: '1', OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1',
       OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: '1', OPENCODE_DISABLE_SHARE: '1',
       OPENCODE_CONFIG_CONTENT: JSON.stringify(createOpenCodeModelBridgeProviderConfig({
-        protocol: 'openai-chat-completions', model: 'local-ack', loopbackOrigin: origin, workMode: 'ask'
+        protocol: 'openai-chat-completions', model: 'local-ack', loopbackOrigin: origin
       }))
     }
   })
@@ -78,7 +78,7 @@ it.skipIf(!existsSync(binary))('keeps a real OpenCode answer completed after a d
     await Promise.race([
       (async () => {
         await owner.start({ bindingId: 'binding', operationId: 'operation', requestId: 'operation',
-          prompt: [{ type: 'text', text: 'Reply ACK_OK without using tools.' }] }, 'ask')
+          prompt: [{ type: 'text', text: 'Reply ACK_OK without using tools.' }] })
         await completion
       })(),
       new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Local ACP completion timed out')), 20_000) })

@@ -97,11 +97,11 @@ it.each(['local', 'remote'] as const)('%s HTTP MCP reads SQLite through Main and
   expect((await connection.listTools()).tools).toEqual([])
 })
 
-it.each(['ask', 'execute'] as const)('direct Model %s uses the same reader and runtime assignment gate', async workMode => {
+it('direct Model uses the same reader and runtime assignment gate', async () => {
   const f = fixture()
   const provider = new ModelToolProvider(process.cwd(), [], undefined, f.gateway)
   cleanups.push(() => provider.dispose())
-  const context = { conversationId: 'graph', workMode, knowledgeCapabilityToken: f.token }
+  const context = { conversationId: 'graph', knowledgeCapabilityToken: f.token }
   expect((await provider.listTools(context, f.wait.signal)).filter(tool => tool.name.startsWith('story_graph_')).map(tool => tool.name)).toEqual(storyGraphToolNames)
   const result = await provider.callTool('story_graph_search', { query: 'Decision' }, f.wait.signal, context)
   expect(JSON.stringify(result)).toContain(f.projectId)

@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { AgentModelCallLedger, AgentModelGateway } from '../../agent-daemon/agent-model-gateway'
 import {
@@ -27,12 +26,11 @@ export type NativeTerminalClientInput = {
   projectName: string
   directory: string
   runtime: 'continue' | 'opencode'
-  workMode: 'ask' | 'execute'
   settings: ResolvedRuntimeSettings
   size?: TerminalSize
   skillPackages?: RuntimeSkillPackage[]
   /** Session-lived, Main-owned MCP endpoints, such as the existing knowledge gateway. */
-  mcpServers?: Array<{ name: string; url: string; headers: Record<string, string>; readOnlyTools?: readonly string[] }>
+  mcpServers?: Array<{ name: string; url: string; headers: Record<string, string> }>
 }
 
 export type NativeTerminalClientOptions = {
@@ -46,9 +44,6 @@ export type NativeTerminalClientOptions = {
   fetcher?: typeof fetch
 }
 
-// Same native read permissions as the existing remote OpenCode adapter.
-const openCodeReadTools = ['read', 'glob', 'grep', 'list', 'lsp', 'webfetch', 'websearch', 'codesearch', 'question', 'external_directory']
-const continueReadTools = ['Read', 'List', 'Search', 'Fetch', 'Diff', 'AskQuestion', 'CheckBackgroundJob', 'Skills']
 const sharedOpenCodeConfigs = new Map<string, Promise<string>>()
 
 /** Copies the bundled OpenCode plugin tree once instead of on every terminal launch. */
@@ -83,7 +78,7 @@ export class NativeTerminalClient {
       ? input.settings.continueModelProfile
       : input.settings.opencodeModelProfile
     if (!profile) return Promise.reject(new Error('Native client requires the selected text model connection'))
-    const key = JSON.stringify([ownerId, input.projectId, input.runtime, input.workMode, createResolvedModelProfileDigest(profile)])
+    const key = JSON.stringify([ownerId, input.projectId, input.runtime, createResolvedModelProfileDigest(profile)])
     const existing = this.pending.get(key)
     if (existing) return existing
     const operation = this.launch(ownerId, structuredClone(input)).finally(() => this.pending.delete(key))
@@ -165,18 +160,11 @@ export class NativeTerminalClient {
       const origin = await proxy.listen()
       const skills = input.skillPackages ?? []
       const mcp = input.mcpServers ?? []
-      const allowedContinueTools = [...continueReadTools, ...mcp.flatMap(server => server.readOnlyTools ?? [])]
-      const allowedOpenCodeTools = [...openCodeReadTools, 'skill', ...mcp.flatMap(server => (server.readOnlyTools ?? []).map(name => `${server.name}_${name}`))]
       if (input.runtime === 'continue') {
         // Reuse the pinned adapter's protocol, permission-order and Windows fixes.
         const adapter = new ContinueHostAdapter({ binaryPath: detection.path,
           configPath: '', workspace: input.directory, cacheRoot: temporary, mode: 'chat' })
         const prepared = await adapter.getPreparedHost()
-        const bundlePath = join(dirname(prepared.entryPath), 'index.js')
-        const bundle = await readFile(bundlePath, 'utf8')
-        const executionMarker = 'async function hti(e,t={parallelToolCallCount:1}){'
-        if (bundle.split(executionMarker).length !== 2) throw new Error('Continue native tool execution entry point is incompatible')
-        await writeFile(bundlePath, bundle.replace(executionMarker, `${executionMarker}if(${JSON.stringify(input.workMode)}==="ask"&&!${JSON.stringify(allowedContinueTools)}.includes(e.name))throw new Error("GoodBuddy Ask mode is read-only");`))
         args[0] = prepared.entryPath
         const configured = input.settings.continueConfigPath.trim()
           ? await loadContinueConfig(input.settings.continueConfigPath.trim()) : {}
@@ -196,8 +184,7 @@ export class NativeTerminalClient {
         await stageRuntimeSkillPackages(history, skills, 'Continue')
         Object.assign(env, { CONTINUE_GLOBAL_DIR: history, GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1', CONTINUE_CLI_AUTO_UPDATED: '1', CONTINUE_CLI_ENABLE_TELEMETRY: '0', CONTINUE_METRICS_ENABLED: '0', CONTINUE_CLI_DISABLE_COMMIT_SIGNATURE: '1' })
         args.push('--config', configPath)
-        if (input.workMode === 'execute') args.push('--auto')
-        else args.push('--readonly', ...allowedContinueTools.flatMap(name => ['--allow', name]), '--exclude', '*')
+        args.push('--auto')
       } else {
         const bundledConfig = this.options.bundledRuntimePaths.opencodeConfig
         const configDirectory = bundledConfig
@@ -207,19 +194,14 @@ export class NativeTerminalClient {
         const skillsRoot = await stageRuntimeSkillPackages(join(temporary, 'opencode'), skills, 'OpenCode')
         const config = createOpenCodeModelBridgeProviderConfig({
           protocol: managed.profile.protocol, model: selected.modelName, name: selected.name,
-          loopbackOrigin: origin, supportsImageInput: selected.supportsImageInput, workMode: input.workMode
+          loopbackOrigin: origin, supportsImageInput: selected.supportsImageInput
         })
-        const permission = input.workMode === 'execute' ? 'allow' : Object.fromEntries([
-          ['*', 'deny'], ...allowedOpenCodeTools.map(name => [name, 'allow'])
-        ])
-        // A tool hook keeps the launch mode fixed even when the TUI changes agents.
-        const pluginPath = join(temporary, 'work-mode.mjs')
-        await writeFile(pluginPath, `export default async () => ({'tool.execute.before': async ({tool}) => { if (${JSON.stringify(input.workMode)} === 'ask' && !${JSON.stringify(allowedOpenCodeTools)}.includes(tool)) throw new Error('GoodBuddy Ask mode is read-only'); }});`, { mode: 0o600 })
+        const permission = 'allow'
         Object.assign(env, {
           OPENCODE_CONFIG_DIR: configDirectory,
           OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, permission,
             agent: { ...config.agent, build: { permission }, plan: { permission } },
-            plugin: [pathToFileURL(pluginPath).href], skills: { paths: [skillsRoot] },
+            skills: { paths: [skillsRoot] },
             mcp: Object.fromEntries(mcp.map(server => [server.name, { type: 'remote', url: server.url, headers: server.headers, enabled: true }]))
           }),
           OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_PROJECT_CONFIG: '1',

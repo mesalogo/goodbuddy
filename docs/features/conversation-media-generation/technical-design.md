@@ -25,7 +25,7 @@ Main 持有图片请求、取消句柄及结果保存职责，生命周期独立
 
 稳定图片工具 `generate_image` 同时负责生成和编辑。当前输入为 `prompt`、可选 `modelProfileId`、`intent`（`create` 或 `edit`）、`sourceArtifactIds` 和可选 `quality`；类型及编辑素材约束由 `src/shared/image-generation-contracts.ts` 校验。每次请求沿用已有协议的单图生成和尺寸行为，没有新增数量或尺寸参数。原会话、触发消息和工具调用关联由运行上下文绑定，LLM 不能自由指定结果写入位置或任意文件路径。
 
-每个新回合提供可调用图片模型的脱敏 ID、名称及生成、编辑能力，模型切换、配置变化或进程复用时刷新。Main 提交前重新校验工作模式、连接开关、所需能力及素材。优先由工具描述承载模型选择、图片引用和结果使用说明，不把 Skill 管理作为依赖。
+每个新回合提供可调用图片模型的脱敏 ID、名称及生成、编辑能力，模型切换、配置变化或进程复用时刷新。Main 提交前重新校验连接开关、所需能力及素材。优先由工具描述承载模型选择、图片引用和结果使用说明，不把 Skill 管理作为依赖。
 
 直连文本 Model Runtime 使用内置工具契约及分发；外部 Runtime 复用内部 MCP 注入，由 GoodBuddy 自动注册、配置和管理生命周期，远程路径经现有 Agent 工具桥接调用同一服务。内置 MCP 列表中的图片行只展示这项受管能力，不代表直连 Model 也通过 MCP 调用。无需用户创建 Skill、另建 MCP server 或复制凭据，不按模型连接复制工具或 Skill。
 
@@ -34,6 +34,19 @@ Main 从已保存图片 profile 的会话调用开关推导允许模型目录，
 不预建能力发现、查询或取消工具目录。只有实际 Runtime 协议要求独立发现、查询或取消交互，且现有工具描述、响应及 UI 操作不能满足时，才增加所需的最小适配，并记录协议依据；这些适配仍调用同一 Main 图片服务，不形成新的媒体平台。取消默认从会话卡片进入 Main。
 
 工具等待遵循现有超时约束，返回操作 ID、实际模型、真实状态及完成后的成果 ID，不把 Base64 塞入工具历史。原回合仍有效时通过合法工具响应返回结果；回合结束或 Runtime 切换后，Main 继续写原会话，下一回合读取操作摘要及成果引用，不补发旧响应、不自动唤起 LLM 或重发图片请求。
+
+## 图片保存工具
+
+`save_image` 的 `artifactId` 沿用已发布的会话图片引用，来自上传图片、消息 `artifactIds`
+或 `generate_image` 返回的图片 ID，不是已移除成果页的入口要求。图片字节仍保存在
+会话图片存储中；保存工具按 `path` 将实际文件写入 Runtime 主机，远程项目写到远程 Host。
+
+`ImageGenerationService.describeSave` 从 `imageSourceArtifactIds`、消息 `artifactIds`
+及 `imageOperations[].artifactIds` 收集引用，过滤不存在及非图片记录，按最近出现位置去重后
+保留最近 32 张，并按从旧到新排列。读取中的数据库错误继续上抛。即使没有启用图片生成模型，
+已有会话图片仍会启用保存工具；没有图片且不能生成时不提供该工具。
+远程 `preparePrompt` 转发同一保存说明，Agent MCP 使用共享输入契约并从 Desktop 分块读取
+图片后写文件。无需改名、数据库迁移或重新生成历史图片。
 
 ## 配置与持久化
 
@@ -69,9 +82,9 @@ Main 仅在图片和会话引用持久化成功后发布完成事件。素材必
 | 本地 Continue | 现有内部 MCP 注入转入同一服务 | 实际工具往返、能力刷新、生成编辑及切换 |
 | 本地 DeepSeek Harness | 现有内部 MCP 注入转入同一服务 | 实际工具往返、能力刷新、生成编辑及切换 |
 | GoodBuddy Agent 远程适用 Runtime | 复用桌面与 Agent 通信及工具桥接，将请求绑定原会话，由 Main 调用图片模型 | 逐一验证实际支持的远程 Runtime，覆盖真实 Host 工具往返、生成编辑、本地与远程双向切换、断连及成果归属 |
-| 无工具能力的聊天模型 | 说明自动调用限制，可使用已有直连图片工作流 | 不解析普通文字伪装工具调用，不新增表单；Ask 不提交 |
+| 无工具能力的聊天模型 | 说明自动调用限制，可使用已有直连图片工作流 | 不解析普通文字伪装工具调用，不新增表单 |
 
-本地 OpenCode、Continue 和 DeepSeek Harness 经内部 MCP gateway 注入；直连 Model 使用内置工具分发。远程通过 `main-image-tool-session.ts`、Agent 协议和 `image-tool-mcp.ts` 回到同一 Main 服务。当前受管远程 Runtime 包括 OpenCode 和 Continue；Continue 模型桥的会话 MCP 交付及 Ask 边界见[远程 Runtime](../remote-host/technical-design.md#runtime)。保留会话在目录清空时也刷新 MCP，Continue 准备失败时释放本次分配的令牌。工具发现、无计费测试接收端往返或 Skill 注入成功不能代替真实生成与编辑。
+本地 OpenCode、Continue 和 DeepSeek Harness 经内部 MCP gateway 注入；直连 Model 使用内置工具分发。远程通过 `main-image-tool-session.ts`、Agent 协议和 `image-tool-mcp.ts` 回到同一 Main 服务。当前受管远程 Runtime 包括 OpenCode 和 Continue；Continue 模型桥的会话 MCP 交付见[远程 Runtime](../remote-host/technical-design.md#runtime)。保留会话在目录清空时也刷新 MCP，Continue 准备失败时释放本次分配的令牌。工具发现、无计费测试接收端往返或 Skill 注入成功不能代替真实生成与编辑。
 
 Main 已接收的请求在桌面仍运行时独立于远程连接继续；未确认是否接收的请求不自动重放。聊天回合停止等待与用户取消图片是不同动作，须验证现有取消传播不会误杀 Main 图片请求。
 
@@ -79,7 +92,7 @@ Main 已接收的请求在桌面仍运行时独立于远程连接继续；未确
 
 实施工作包括配置与选择、Main 图片服务提取、各本地及远程 Runtime 工具适配、成果与状态 UI。它们共同完成本图片功能，不按 Runtime 划分交付范围。
 
-针对 L-1 至 L-5 验证选择优先级、失效配置、上传与历史素材、无视觉模型、Ask、会话归属、重复通知、取消及晚到结果。检查切换聊天模型、图片默认模型、本地与远程 Runtime 后的新生成和编辑，以及旧操作不重复提交。回归已有直连图片工作流。
+针对 L-1 至 L-5 验证选择优先级、失效配置、上传与历史素材、无视觉模型、会话归属、重复通知、取消及晚到结果。检查切换聊天模型、图片默认模型、本地与远程 Runtime 后的新生成和编辑，以及旧操作不重复提交。回归已有直连图片工作流。
 
 按 US-16 至 US-19 验证从零到一个开启模型、多个中关闭或删除一个、最后一个关闭或删除、重新开启，以及配置错误和 Runtime 离线时的派生分配、目录刷新、行可见性与只读交互。重开设置和应用后均从模型配置推导，不恢复独立分配值；辅助技术可读取标签、勾选状态和说明，键盘可到达模型设置导航。
 

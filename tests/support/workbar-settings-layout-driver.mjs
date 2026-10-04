@@ -128,7 +128,7 @@ app.whenReady().then(async () => {
         await settle()
         const scroll = "document.querySelector('.workbar-shell__tab-scroll')"
         for (const many of [false, true]) {
-          if (many) { await click('#many-tabs'); await wait('document.querySelectorAll("[role=tab]").length===16') }
+          if (many) { await click('#many-tabs'); await wait('document.querySelectorAll("[role=tab]").length===15') }
           await addVisible()
           assert(await js(`(() => {
             const s=${scroll}.getBoundingClientRect(),buttons=[...document.querySelectorAll('.workbar-shell__scroll-button')];
@@ -162,7 +162,7 @@ app.whenReady().then(async () => {
         await click('.workbar-shell__add')
         await wait('!!document.querySelector(".workbar-shell__catalog")')
         await click('.workbar-shell__catalog-choice:has(.workbar-shell__app-icon--browser)')
-        await wait('document.querySelectorAll("[role=tab]").length===17 && !document.querySelector(".workbar-shell__catalog")')
+        await wait('document.querySelectorAll("[role=tab]").length===16 && !document.querySelector(".workbar-shell__catalog")')
         await addVisible()
         await key('Left')
         await wait('document.querySelector(".workbar-shell__tab-item:nth-last-child(2) [role=tab]").getAttribute("aria-selected")==="true"')
@@ -175,8 +175,8 @@ app.whenReady().then(async () => {
         await wait('!document.querySelector(".workbar-shell__scroll-button:last-child").disabled')
         const closingId = await js('document.querySelector(".workbar-shell__tab-item--active [role=tab]").id')
         await click('.workbar-shell__tab-item--active .workbar-shell__tab-close')
-        await wait(`document.querySelectorAll('[role=tab]').length===16 && !document.getElementById(${JSON.stringify(closingId)})`)
-        observations.push({ locale, theme, workbar: 'default and 16 long tabs; native add/catalog/create, arrows, Home/End, close at right viewport edge with right arrow enabled' })
+        await wait(`document.querySelectorAll('[role=tab]').length===15 && !document.getElementById(${JSON.stringify(closingId)})`)
+        observations.push({ locale, theme, workbar: 'default and 15 long tabs; native add/catalog/create, arrows, Home/End, close at right viewport edge with right arrow enabled' })
 
         await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&locale=${locale}&theme=${theme}`)
         await wait('!!document.querySelector(".model-connection-detail select")')
@@ -189,7 +189,7 @@ app.whenReady().then(async () => {
             font: getComputedStyle(nav.querySelector('strong')).fontSize };
         })()`)
         assert.deepEqual(navigation.ids, ['appearance', 'platform-features', 'model', 'context-control', 'runtime',
-          'document-parsing', 'channels', 'roles', 'capabilities', 'security', 'about'].map(id => `settings-tab-${id}`))
+          'document-parsing', 'channels', 'roles', 'capabilities', 'about'].map(id => `settings-tab-${id}`))
         assert.equal(navigation.groups, 4)
         assert.equal(navigation.descriptions, 0)
         assert.equal(navigation.font, '13px')

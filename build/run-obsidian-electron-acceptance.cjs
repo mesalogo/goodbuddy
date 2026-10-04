@@ -66,7 +66,7 @@ if (!process.versions.electron || process.env.ELECTRON_RUN_AS_NODE === '1') {
       await wait(500)
     }
     if (chat) {
-      await js(`(async()=>{const p=(await window.goodbuddy.projects.list())[0];await window.goodbuddy.projects.update(p.id,{name:p.name,description:p.description,rootPath:${JSON.stringify(join(root,'chat-workspace'))},defaultWorkMode:'execute',runtimeSelection:{provider:'opencode'}})})()`)
+      await js(`(async()=>{const p=(await window.goodbuddy.projects.list())[0];await window.goodbuddy.projects.update(p.id,{name:p.name,description:p.description,rootPath:${JSON.stringify(join(root,'chat-workspace'))},runtimeSelection:{provider:'opencode'}})})()`)
       window.webContents.reload()
       await wait(1000)
     }

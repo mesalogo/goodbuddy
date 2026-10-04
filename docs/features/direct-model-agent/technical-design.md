@@ -21,8 +21,8 @@
 - `WorkspaceAccess` 的本机和远端工作区抽象。
 - 跨平台子进程树终止辅助函数。
 - 面向用户专家协作的 `SubagentScheduler` 和状态事件。专家使用具备已启用本机能力的
-  直连模型 Runtime，继承父请求 Ask/Execute 及 authorizer，工具事件记入子任务；
-  Ask 保持只读，不把这些本机工具表述为远程 OpenCode 子会话。
+  直连模型 Runtime，继承父请求执行空间与能力范围，工具事件记入子任务；
+  不把这些本机工具表述为远程 OpenCode 子会话。
 - OpenCode、Continue 和 DeepSeek Harness 各自的 Shell/Agent 能力。
 - 直连模型 `process_execute`、`subagent_delegate` 和 `output_read`。
 - 不创建顶层 Task/Conversation 的编程 Subagent actor 与活动归并。
@@ -66,11 +66,8 @@ type BuiltinModelToolSummary = {
 }
 ```
 
-`process_execute` 标记为 `write`，只在 Execute 清单中出现。
-`subagent_delegate` 的实际访问级别由父模式决定：
-
-- Ask 清单中提供只读委派定义。
-- Execute 清单中提供继承 Execute 的定义。
+`process_execute` 标记为 `write`，按本机进程能力提供。
+`subagent_delegate` 继承父请求实际能力，不按读写属性过滤：
 - `callTool` 不依赖静态 `access` 单独授权，必须检查父请求上下文。
 
 工具总数和 schema 总字节继续计入直连模型现有 100 个工具与 512 KiB 上限。
@@ -88,7 +85,7 @@ type BuiltinModelToolSummary = {
   覆盖跨多个页面的超长单行。
 - `workspace_apply_patch` 接受一个 `*** Begin Patch` 文本，支持 `Add File`、`Update File`
   和 `Delete File`。全部操作先解析并验证；更新文件保留原换行和权限位，单文件原子替换。
-- Ask 只注册前两个只读工具；Execute 注册全部三个工具。旧的目录列表和整文件覆盖不再进入
+- 本机正常工具请求注册全部三个工具。旧的目录列表和整文件覆盖不再进入
   新工具清单。
 - 输入和目标文件不设固定总量上限。单次工具结果仍遵守直连模型上下文边界；读取返回续读
   位置，搜索预览省略的内容通过 `output_read` 续读。
@@ -104,10 +101,8 @@ Runtime 向模型返回 `{ ok: false, recoverable: true, error, nextAction }` �
 提示不得原样重复失败参数。取消、远端断线、失效工作区、缺失 rg 可执行文件及未分类的内部
 错误继续向外传播，不转为可恢复结果。
 
-`workspace_read_text` 仍只接受工作区内相对路径。搜索在 Ask 中检查 cwd、搜索路径、模式文件
-和忽略文件位于工作区内，并阻止 `--pre`、`--hostname-bin`、`--follow/-L`、`--search-zip/-z`，
-避免只读调用启动外部命令或跟随链接越界。Execute 原样接受 rg 参数及账号可访问的路径，
-不增加逐工具授权。两种模式均禁用外部 rg 配置，不提升系统权限。
+`workspace_read_text` 仍只接受工作区内相对路径。搜索原样接受 rg 参数及账号可访问的路径，
+不增加逐工具授权；保留 `--no-config` 默认参数、原生退出码、取消和分页，不提升系统权限。
 
 ripgrep 结果按退出状态处理：
 
@@ -157,7 +152,7 @@ const processExecuteInputSchema = z.object({
   `..` 和符号链接，不限制目标位于工作区内。工具 schema 向模型明确这一规则。
 - 首版不接受 `env`、`stdin`、`background`、`pty`、`shell` 或任意 executable 参数。
 - Shell 选择由执行后端决定，防止模型绕过平台契约启动另一套受管接口。
-- 命令字符串仍可以调用当前账号本来有权运行的程序；Execute 不增加命令白名单。
+- 命令字符串仍可以调用当前账号本来有权运行的程序，不增加命令白名单。
 
 ### 4.2 结果
 
@@ -203,7 +198,7 @@ type ProcessExecuteResult = {
 位于 UTF-8 延续字节的输入 cursor、负数、越界和未知字段均拒绝。
 
 Provider 根据 `rg:`、`process:` 或 `subagent:` 前缀选择服务，以当前 `conversationId` 校验所有者，
-不接受模型另传 owner。Ask/Execute 均可用，工具总数为此预留一个槽位；不要求本轮能够启动
+不接受模型另传 owner。工具总数为此预留一个槽位；不要求本轮能够启动
 命令或再次委派。分页结果直接 JSON 序列化，不进行二次文本裁剪，以免 cursor 与内容不一致。
 32 KiB 的页面即使全部需要 JSON 转义，也能保留在现有工具结果容量内。
 
@@ -306,7 +301,6 @@ type DirectModelSubagentContext = {
   childRunId: string
   projectId?: string
   conversationId: string
-  workMode: 'ask' | 'execute'
 }
 ```
 
@@ -317,8 +311,8 @@ type DirectModelSubagentContext = {
 - 子级复用父请求已授权能力快照和知识范围。
 - 子级复用父 Provider；Main 写入的 `delegationDepth=1` 同时在清单和调用边界过滤
   `subagent_delegate`。
-- Ask 子级使用 Ask 清单；Execute 子级使用 Execute 清单。
-- Execute 子级经 `ModelSubagentRequestContext` 继承父 `browserTabId` 和浏览器所属
+- 子级使用父请求已启用的工具清单，不注册再次委派。
+- 子级经 `ModelSubagentRequestContext` 继承父 `browserTabId` 和浏览器所属
   `browserConversationId`。后者只在 Main 内部请求与工具上下文中传递：浏览器操作使用父
   Conversation，历史与分页输出仍使用子 Conversation。子级不新建标签页或申请使用租约，
   结束时只释放自己的临时会话，父标签页和租约仍由父请求生命周期管理。
@@ -354,7 +348,6 @@ type ModelToolCallContext = {
   conversationId: string
   requestId: string
   runtimeTarget: 'model'
-  workMode: 'ask' | 'execute'
   executionSpaceIdentity: string
   delegationDepth: 0 | 1
   knowledgeCapabilityToken?: string
@@ -363,19 +356,17 @@ type ModelToolCallContext = {
 
 要求：
 
-- `listTools` 根据模式、执行空间能力和深度生成快照。
-- `getApproval` 不为两个工具创建第二套逐次确认；沿用父 Execute 授权和现有通道工具策略。
-- `callTool` 再次检查 `runtimeTarget`、模式、执行空间 identity、深度和请求是否活动。
+- `listTools` 根据执行空间能力和深度生成快照。
+- 工具调用不进入一般审批等待，通道也不保留 `toolApproval` 策略。
+- `callTool` 再次检查 `runtimeTarget`、执行空间 identity、深度和请求是否活动。
 - `releaseConversation` 取消并释放该会话拥有的浏览器、Subagent 和进程。
 - `dispose` 等待有界清理，不因模型或子进程不响应而阻塞应用退出。
 
-### 8.1 Ask 工具循环
+### 8.1 工具循环
 
-普通 Ask 请求进入工具循环，不再依赖知识、联网搜索或 Subagent 是否启用。Runtime 对
-`workspace_rg`、`workspace_read_text`、`output_read` 三个明确只读工具免去 Ask authorizer
-调用，避免生产 authorizer 的默认拒绝使已列出的只读工具无法执行。Execute 仍沿用既有
-authorizer；补丁、进程和其他写入不因此获准。Provider 按清单和调用边界继续校验模式，
-浏览器工具不加入 Ask 免审批集合。内部上下文摘要使用 `noModelTools`，保留无工具问答路径。
+正常工具请求不依赖知识、联网搜索或 Subagent 开关来进入工具循环。Provider 按实际注册
+目录和调用边界检查能力与资源，不保留模式判断或只读免审批名单。内部上下文摘要使用
+`noModelTools`，保留无工具问答路径；模型不支持工具时仍可普通文本回答。
 
 ### 8.2 MCP 发现与调用
 
@@ -476,7 +467,7 @@ Runtime；GoodBuddy 不再额外保留最后 20 条或限制为 128,000 字符�
 ### 12.1 单元测试
 
 - 工具可见性矩阵和 Runtime target 过滤。
-- Ask 伪造进程调用拒绝。
+- 未注册或无对应执行空间的伪造进程调用拒绝。
 - Windows PowerShell、POSIX Bash/Sh 选择和参数。
 - cwd 默认、相对子目录、绝对路径、工作区外目录、指向外部的符号链接和不存在的目录。
 - exit 0、非零退出、spawn 失败、超时、取消和输出截断。
@@ -505,7 +496,7 @@ Runtime；GoodBuddy 不再额外保留最后 20 条或限制为 128,000 字符�
 
 使用一个最小真实直连文本模型请求：
 
-1. Execute 创建一段有缺陷的小程序。
+1. 在专用测试目录创建一段有缺陷的小程序。
 2. 调用进程工具运行聚焦测试并观察失败。
 3. 修改程序并再次运行到通过。
 4. 委派一个 Subagent 检查实现或补充测试。
@@ -537,7 +528,7 @@ GoodBuddy Agent 或桌面到 Agent 生产路径，因此不要求远端 Host 验
 
 1. Shared 工具摘要、schema 和 Runtime target 过滤。
 2. 本机 Shell 探测、进程执行、输出边界和进程树取消。
-3. `ModelToolProvider` Execute 接入及 UI 活动。
+3. `ModelToolProvider` 工具接入及 UI 活动。
 4. 编程 Subagent 服务、过滤 Provider、事件和用量。
 5. 设置能力目录与状态诊断。
 6. 三平台真实命令、真实模型和完整项目验证。

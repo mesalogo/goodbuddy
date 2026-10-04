@@ -189,7 +189,6 @@ async function runModelBridgeHelper(
     'protocol',
     'model',
     'supports-image-input',
-    'work-mode',
     'shared-sessions',
     'runtime-id',
     'continue-entrypoint',
@@ -199,8 +198,7 @@ async function runModelBridgeHelper(
     'socket-path',
     'protocol',
     'model',
-    'supports-image-input',
-    'work-mode'
+    'supports-image-input'
   ])
   const protocol = options.protocol
   if (
@@ -214,10 +212,6 @@ async function runModelBridgeHelper(
   if (imageInput !== 'true' && imageInput !== 'false') {
     throw new Error('Invalid model bridge image-input option')
   }
-  const workMode = options['work-mode']
-  if (workMode !== 'ask' && workMode !== 'execute') {
-    throw new Error('Invalid model bridge work-mode option')
-  }
   if (options['shared-sessions'] !== undefined && options['shared-sessions'] !== 'true') {
     throw new Error('Invalid model bridge shared-sessions option')
   }
@@ -225,7 +219,7 @@ async function runModelBridgeHelper(
     requireOptions(options, ['continue-entrypoint'])
     return runContinueAcpHelper({
       socketPath: options['socket-path']!, protocol, model: options.model!,
-      supportsImageInput: imageInput === 'true', workMode,
+      supportsImageInput: imageInput === 'true',
       sharedSessions: options['shared-sessions'] === 'true', entrypoint: options['continue-entrypoint']!
     })
   }
@@ -239,7 +233,6 @@ async function runModelBridgeHelper(
     protocol: protocol as ModelBridgeProtocol,
     model: options.model!,
     supportsImageInput: imageInput === 'true',
-    workMode,
     ...(options['shared-sessions'] === 'true' ? { sharedSessions: true } : {}),
     opencodeEntrypoint: options['opencode-entrypoint']!
   })

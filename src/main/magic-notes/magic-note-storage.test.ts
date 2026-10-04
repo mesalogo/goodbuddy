@@ -99,7 +99,11 @@ describe('Magic note SQLite and filesystem storage', () => {
     const modifiedAt = statSync(bodyPath).mtimeMs
     database.close()
     // Reconstruct the previous released schema; production never downgrades databases.
-    sql.exec('ALTER TABLE magic_note_entries DROP COLUMN source_json; PRAGMA user_version = 47;')
+    sql.exec(`ALTER TABLE magic_note_entries DROP COLUMN source_json;
+      ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
+      PRAGMA user_version = 47;`)
     upgradeAssistantStorage(path, () => undefined)
     expect(sql.prepare('PRAGMA user_version').get()).toEqual({ user_version: ASSISTANT_DATABASE_SCHEMA_VERSION })
     expect(sql.prepare('SELECT source_json FROM magic_note_entries').get()).toEqual({ source_json: null })
@@ -328,6 +332,9 @@ describe('Magic note SQLite and filesystem storage', () => {
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
+      ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
       PRAGMA user_version = 37`)
     rmSync(join(directory, 'notes'), { recursive: true })
     const progress: number[] = []

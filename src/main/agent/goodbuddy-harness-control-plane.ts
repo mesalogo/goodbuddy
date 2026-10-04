@@ -73,20 +73,15 @@ const MAX_MCP_PROXY_RESULT_BYTES = 256 * 1024
 const MAX_NATIVE_SKILLS = 200
 const MAX_NATIVE_TOOLS = 200
 const NATIVE_SNAPSHOT_TIMEOUT_MS = 2_000
-const MAIN_WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const GOODBUDDY_EXECUTION_GUIDANCE = [
-  'GoodBuddy work mode rules:',
-  '- In Execute mode, act through the available tools instead of writing a long implementation plan.',
+  'GoodBuddy execution guidance:',
+  '- Act through the available tools instead of writing a long implementation plan.',
   '- Inspect only what is needed, then create or update the requested workspace files promptly.',
   '- Work in small verifiable steps and use tool results as the source of truth.',
-  '- Keep reasoning concise. Do not narrate code that can be written and checked with tools.',
-  '- In Ask mode, remain read-only and do not attempt mutations.'
+  '- Keep reasoning concise. Do not narrate code that can be written and checked with tools.'
 ].join('\n')
-
-export type GoodBuddyWorkMode = 'ask' | 'execute'
-
 export type GoodBuddyHarnessCapabilities = {
-  controlProtocolVersion: 1
+  controlProtocolVersion: typeof GOODBUDDY_CONTROL_PROTOCOL_VERSION
   harnessVersion: string
   acpProtocolVersion: number
   supports: {
@@ -116,14 +111,12 @@ export type GoodBuddyHarnessControlConfig = {
     content: string
     directory: string
   }[]
-  trustedAskToolDefinitions?: ReadonlyMap<string, ToolDefinition>
   stream?: Stream
   maxEventCharacters?: number
 }
 
 type Preparation = {
   requestId: string
-  mode: GoodBuddyWorkMode
 }
 
 type OwnedSession = {
@@ -137,11 +130,9 @@ type OwnedSession = {
       dispose: () => void
     }
   >
-  askToolDefinitions: Map<string, ToolDefinition>
   inflight?: {
     requestId: string
     messageId: string
-    mode: GoodBuddyWorkMode
     turn?: number
     endReason?: string
     turnError?: unknown
@@ -702,34 +693,6 @@ export class GoodBuddyHarnessControlPlane {
       return
     }
     this.observing = true
-    this.ctx.on('tools/execute', async (exec, next) => {
-      const sessionId = exec.agent?.session.id
-      const record = sessionId
-        ? this.sessions.get(sessionId)
-        : undefined
-      if (
-        record &&
-        record.handle.agent === exec.agent &&
-        record.inflight?.mode === 'ask'
-      ) {
-        const registeredDefinition =
-          record.askToolDefinitions.get(exec.name)
-        const executingDefinition =
-          record.handle.agent.ctx.tools.get(
-            exec.name,
-            exec.agent
-          )
-        if (
-          !registeredDefinition ||
-          executingDefinition !== registeredDefinition
-        ) {
-          throw new Error(
-            `Ask 模式不允许执行非只读工具：${exec.name}`
-          )
-        }
-      }
-      return next()
-    })
     this.ctx.on('agent/assistant-stream', ({ agent, frame }) => {
       const record = this.sessions.get(agent.session.id)
       if (
@@ -910,7 +873,6 @@ export class GoodBuddyHarnessControlPlane {
       if (!nextNames.has(name)) {
         registration.dispose()
         record.proxyTools.delete(name)
-        record.askToolDefinitions.delete(name)
       }
     }
     for (const tool of tools) {
@@ -922,9 +884,6 @@ export class GoodBuddyHarnessControlPlane {
           definition,
           dispose
         })
-        if (MAIN_WEB_TOOL_NAMES.has(tool.name) || isStoryGraphTool(tool.name)) {
-          record.askToolDefinitions.set(tool.name, definition)
-        }
       }
     }
   }
@@ -1145,7 +1104,6 @@ export class GoodBuddyHarnessControlPlane {
           )
         }
         const sessionId = SessionId(randomUUID())
-        let genuineSkillDefinition: ToolDefinition | undefined
         const handle = await this.ctx.agents.create({
           sessionId,
           meta: { cwd: params.cwd },
@@ -1181,38 +1139,16 @@ export class GoodBuddyHarnessControlPlane {
               }
             )
             await agentCtx.plugin(ToolSkill)
-            genuineSkillDefinition =
-              agentCtx.tools.get('skill')
             await skillRegistrations
           }
         })
-        const askToolDefinitions = new Map(
-          this.config.trustedAskToolDefinitions ?? []
-        )
-        if (genuineSkillDefinition) {
-          askToolDefinitions.set(
-            'skill',
-            genuineSkillDefinition
-          )
-        }
         this.sessions.set(sessionId, {
           handle,
           attachmentRefs: [],
-          proxyTools: new Map(),
-          askToolDefinitions
+          proxyTools: new Map()
         })
         return {
-          sessionId,
-          modes: {
-            currentModeId: 'ask',
-            availableModes: [
-              {
-                id: 'ask',
-                name: 'Ask',
-                description: 'Read-only'
-              }
-            ]
-          }
+          sessionId
         }
       },
       prompt: async (params) => {
@@ -1264,7 +1200,6 @@ export class GoodBuddyHarnessControlPlane {
             record.inflight = {
               requestId: preparation.requestId,
               messageId: message.id,
-              mode: preparation.mode,
               resolve,
               reject,
               eventTail: Promise.resolve()
@@ -1373,13 +1308,6 @@ export class GoodBuddyHarnessControlPlane {
     if (method === GOODBUDDY_PREPARE) {
       const sessionId = requiredString(params, 'sessionId')
       const requestId = requiredString(params, 'requestId')
-      const mode = params.mode
-      if (mode !== 'ask' && mode !== 'execute') {
-        throw RequestError.invalidParams(
-          undefined,
-          'mode must be ask or execute'
-        )
-      }
       const record = this.requireSession(sessionId)
       if (record.inflight || record.preparation) {
         throw RequestError.invalidParams(
@@ -1387,7 +1315,7 @@ export class GoodBuddyHarnessControlPlane {
           'session is already prepared or running'
         )
       }
-      record.preparation = { requestId, mode }
+      record.preparation = { requestId }
       return { prepared: true }
     }
     if (method === GOODBUDDY_RELEASE) {
@@ -1454,4 +1382,3 @@ export class GoodBuddyHarnessControlPlane {
   }
 }
 import { imageToolDescriptionLimit } from '../../shared/image-generation-contracts'
-import { isStoryGraphTool } from '../../shared/story-graph-tools'

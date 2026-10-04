@@ -22,7 +22,7 @@ async function fixture() {
   const sql = new DatabaseSync(path)
   cleanups.push(async () => { sql.close(); db.close(); await rm(directory, { recursive: true, force: true }) })
   const a = db.listProjects()[0]!
-  const b = db.createProject({ name: 'B', description: '', rootPath: directory, defaultWorkMode: 'ask' })
+  const b = db.createProject({ name: 'B', description: '', rootPath: directory })
   const story = db.saveSupervisionResult.bind(db)
   // Publishes events directly on the timeline, one per title, owned by `projectId`.
   const publish = (projectId: string, titles: string[], day = 20) => story({

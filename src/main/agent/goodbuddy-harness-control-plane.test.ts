@@ -89,11 +89,9 @@ function stubAgentContext() {
       string,
       {
         handle: typeof handle
-        askToolDefinitions: Map<string, unknown>
         inflight: {
           requestId: string
           messageId: string
-          mode: 'ask' | 'execute'
           resolve: (reason: string) => void
           reject: (error: unknown) => void
           eventTail: Promise<void>
@@ -106,11 +104,9 @@ function stubAgentContext() {
   internals.connection = { extNotification }
   internals.sessions.set('session-output', {
     handle,
-    askToolDefinitions: genuineDefinitions,
     inflight: {
       requestId: 'request-output',
       messageId: 'message-output',
-      mode: 'ask',
       resolve: vi.fn(),
       reject: vi.fn(),
       eventTail: Promise.resolve()
@@ -256,22 +252,21 @@ describe('GoodBuddy Harness internal control plane', () => {
       subject.extensionMethod(GOODBUDDY_PREPARE, {
         sessionId: 'session',
         requestId: 'request',
-        mode: 'execute'
       })
     ).rejects.toThrow('GoodBuddy handshake is required')
     await expect(
       subject.extensionMethod(GOODBUDDY_HANDSHAKE, {
-        controlProtocolVersion: 9
+        controlProtocolVersion: 1
       })
     ).rejects.toThrow(
       'incompatible GoodBuddy Harness control protocol'
     )
     await expect(
       subject.extensionMethod(GOODBUDDY_HANDSHAKE, {
-        controlProtocolVersion: 1
+        controlProtocolVersion: 2
       })
     ).resolves.toMatchObject({
-      controlProtocolVersion: 1,
+      controlProtocolVersion: 2,
       supports: {
         cancellation: true,
         sessionRelease: true,
@@ -377,75 +372,8 @@ describe('GoodBuddy Harness internal control plane', () => {
     ).toBeUndefined()
   })
 
-  it('allows genuine read, skill, and web definitions but rejects plugin name spoofs in Ask', async () => {
-    const {
-      listeners,
-      handle,
-      genuineDefinitions,
-      resolvedDefinitions
-    } = stubAgentContext()
-    const executeTool = listeners.get('tools/execute')!
-    const next = vi.fn(async () => ({
-      isError: false,
-      value: {},
-      content: []
-    }))
-    const request = (name: string) => ({
-      name,
-      agent: handle.agent
-    })
-
-    for (const name of [
-      'write',
-      'edit',
-      'bash',
-      'pwsh',
-      'third_party_deploy'
-    ]) {
-      await expect(
-        Promise.resolve(executeTool(request(name), next))
-      ).rejects.toThrow('Ask 模式不允许')
-    }
-    for (const name of ['read', 'skill', 'web_search']) {
-      await expect(
-        Promise.resolve(executeTool(request(name), next))
-      ).resolves.toMatchObject({ isError: false })
-    }
-
-    for (const name of ['read', 'skill', 'web_search']) {
-      resolvedDefinitions.set(name, { name })
-      await expect(
-        Promise.resolve(executeTool(request(name), next))
-      ).rejects.toThrow('Ask 模式不允许')
-      resolvedDefinitions.set(
-        name,
-        genuineDefinitions.get(name)!
-      )
-    }
-  })
-
-  it('allows every registered tool in Execute', async () => {
-    const { listeners, handle, internals } = stubAgentContext()
-    internals.sessions.get('session-output')!.inflight.mode =
-      'execute'
-    const executeTool = listeners.get('tools/execute')!
-    const next = vi.fn(async () => ({
-      isError: false,
-      value: {},
-      content: []
-    }))
-
-    await expect(
-      Promise.resolve(
-        executeTool(
-          {
-            name: 'third_party_deploy',
-            agent: handle.agent
-          },
-          next
-        )
-      )
-    ).resolves.toMatchObject({ isError: false })
-    expect(next).toHaveBeenCalledOnce()
+  it('does not install a product tool execution gate', () => {
+    const { listeners } = stubAgentContext()
+    expect(listeners.has('tools/execute')).toBe(false)
   })
 })

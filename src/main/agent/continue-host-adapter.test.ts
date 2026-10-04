@@ -12,7 +12,6 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { scopedReadToolNames } from '../../shared/scoped-data-tools'
 import {
   ContinueHostAdapter,
   inspectContinueNativeConfiguration,
@@ -223,7 +222,7 @@ describe('ContinueHostAdapter', () => {
     expect(bundle).toContain('type:"text",delta:l')
     expect(bundle).toContain('onToolStart?.(c.name,c.arguments,c.id)')
     expect(bundle).toContain(
-      'function ZZo(e){let t=[];if(e.allow)'
+      'function ZZo(e){let t=[];if(e.exclude)'
     )
     expect(bundle).not.toContain(
       'toolPermissionOverrides:s,headless:!0});let'
@@ -301,7 +300,6 @@ describe('ContinueHostAdapter', () => {
         new AbortController().signal,
         async () => 'deny',
         {
-          workMode: 'ask',
           knowledgeCapability: {
             endpoint: 'http://127.0.0.1:4567/mcp',
             token: 'main-only-token'
@@ -346,7 +344,6 @@ describe('ContinueHostAdapter', () => {
       controller.signal,
       async () => 'deny',
       {
-        workMode: 'ask',
         knowledgeCapability: {
           endpoint: 'http://127.0.0.1:4567/mcp',
           token: 'main-only-token'
@@ -376,41 +373,6 @@ describe('ContinueHostAdapter', () => {
     await expect(
       adapter.run('hello', new AbortController().signal, async () => 'deny')
     ).rejects.toThrow('尚未配置模型连接')
-    expect(launchHost).not.toHaveBeenCalled()
-  })
-
-  it('rejects a custom MCP loopback capability outside Continue Agent Execute mode', async () => {
-    const launchHost = vi.fn()
-    const adapter = new ContinueHostAdapter({
-      binaryPath: 'C:\\unused\\cn.js',
-      configPath: '',
-      workspace: process.cwd(),
-      cacheRoot: 'C:\\unused\\cache',
-      launchHost: launchHost as unknown as ContinueHostLauncher,
-      modelProfile: {
-        id: '00000000-0000-4000-8000-000000000097',
-        name: 'Local model',
-        baseUrl: 'http://127.0.0.1:11434/v1',
-        modelName: 'qwen3',
-        protocol: 'openai-chat-completions',
-        authentication: 'none'
-      }
-    })
-
-    await expect(
-      adapter.run(
-        'hello',
-        new AbortController().signal,
-        async () => 'deny',
-        {
-          workMode: 'ask',
-          customMcpCapability: {
-            endpoint: 'http://127.0.0.1:4567/mcp',
-            token: 'request-token'
-          }
-        }
-      )
-    ).rejects.toThrow('仅允许在 Agent Execute 模式')
     expect(launchHost).not.toHaveBeenCalled()
   })
 
@@ -566,7 +528,7 @@ describe('ContinueHostAdapter', () => {
       trustedBundleHashes: [distribution.sourceHash],
       launchHost,
       launchEnvironmentProvider,
-      mode: 'chat',
+      mode: 'agent',
       skillPackages: [
         {
           id: 'longdoc-docx',
@@ -590,7 +552,6 @@ describe('ContinueHostAdapter', () => {
         new AbortController().signal,
         async () => 'deny',
         {
-          workMode: 'execute',
           customMcpCapability: {
             endpoint: 'http://127.0.0.1:4567/mcp',
             token: 'request-scoped-custom-token'
@@ -797,9 +758,7 @@ describe('ContinueHostAdapter', () => {
       expect(args).toEqual([
         '--config',
         expect.stringContaining('knowledge-config-'),
-        ...scopedReadToolNames.flatMap((name) => ['--allow', name]),
-        '--exclude',
-        '*',
+        '--auto',
         'serve',
         '--port',
         expect.any(String),
@@ -863,7 +822,6 @@ describe('ContinueHostAdapter', () => {
         new AbortController().signal,
         async () => 'deny',
         {
-          workMode: 'ask',
           knowledgeCapability: {
             endpoint: 'http://127.0.0.1:4567/mcp',
             token: 'main-only-token'
@@ -875,6 +833,7 @@ describe('ContinueHostAdapter', () => {
       name: 'Private Continue',
       models: [{ provider: 'ollama', model: 'qwen3' }],
       mcpServers: [
+        expect.objectContaining({ name: 'user-tools' }),
         {
           name: 'goodbuddy-knowledge',
           type: 'streamable-http',
@@ -887,7 +846,7 @@ describe('ContinueHostAdapter', () => {
         }
       ]
     })
-    expect(generatedConfig).not.toContain('user-tools')
+    expect(generatedConfig).toContain('user-tools')
     await expect(readFile(configPath, 'utf8')).resolves.toBe(
       originalConfig
     )
@@ -1027,7 +986,6 @@ describe('ContinueHostAdapter', () => {
           new AbortController().signal,
           async () => 'deny',
           {
-            workMode: 'ask',
             knowledgeCapability: {
               endpoint: 'http://127.0.0.1:4567/mcp',
               token: 'main-only-token'
@@ -1095,14 +1053,7 @@ describe('ContinueHostAdapter', () => {
       ])
       expect(launchedArgs).toEqual(
         expect.arrayContaining([
-          '--allow',
-          'knowledge_list',
-          '--allow',
-          'knowledge_search',
-          '--allow',
-          'note_search',
-          '--exclude',
-          '*'
+          '--auto'
         ])
       )
       expect(launchedArgs).not.toContain('--readonly')
@@ -1767,7 +1718,6 @@ describe('ContinueHostAdapter', () => {
         new AbortController().signal,
         authorize,
         {
-          workMode: 'execute',
           onEvent: (event) => {
             streamEvents.push(event)
           }

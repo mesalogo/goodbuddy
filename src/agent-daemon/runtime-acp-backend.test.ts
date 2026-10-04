@@ -342,7 +342,6 @@ async function ownedHarness(shared: boolean) {
 }
 
 function harness(input: {
-  workMode?: 'ask' | 'execute'
   now?: number
   maximumOutputBytes?: number
   bridgeCloseError?: boolean
@@ -359,14 +358,12 @@ function harness(input: {
   }
   launchError?: Error
 } = {}) {
-  const workMode = input.workMode ?? 'ask'
   let now = input.now ?? 1_000
   const journal = new MemoryAcpJournal()
   const process = new FakeProcess()
   input.configureProcess?.(process)
   const outputFrames: string[] = []
   const launches: Array<{
-    workMode: 'ask' | 'execute'
     scratch: string
   }> = []
   const lifecycle: string[] = []
@@ -411,7 +408,6 @@ function harness(input: {
       }
       launchModelBridges.push(launch.modelBridge)
       launches.push({
-        workMode: launch.workMode,
         scratch: launch.scratch
       })
       if (input.uniqueProcesses && launches.length > 1) {
@@ -480,7 +476,6 @@ function harness(input: {
       bindingId: openRequest.bindingId,
       operationId: 'request-1',
       requestId: 'request-1',
-      workMode,
       controllerId: context.controller.controllerId,
       controllerGeneration: context.controller.generation,
       connectionGeneration: context.controller.generation,
@@ -592,7 +587,7 @@ describe('RuntimeAcpBackend', () => {
   })
 
   it('binds MCP image calls to authenticated blob framing and closes each prompt endpoint', async () => {
-    const fixture = harness({ workMode: 'execute' })
+    const fixture = harness()
     const client = new Client({ name: 'image-backend-test', version: '1' })
     try {
       await open(fixture)
@@ -623,19 +618,19 @@ describe('RuntimeAcpBackend', () => {
     } finally { await client.close(); await fixture.backend.dispose() }
   })
 
-  it('rejects image tool preparation in Ask before launching a process or bridge', async () => {
+  it('accepts image tool preparation without a mode', async () => {
     const fixture = harness()
     try {
       await open(fixture)
       await expect(invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
         imageTool: { channelId: 'image-channel', channelEpoch: '1', description: 'Images' }
-      }))).rejects.toThrow('Execute')
-      expect(fixture.launches).toHaveLength(0)
+      }))).resolves.toHaveProperty('imageToolUrl')
+      expect(fixture.launches).toHaveLength(1)
       expect(fixture.lifecycle).not.toContain('bridge-listen')
     } finally { await fixture.backend.dispose() }
   })
 
-  it('binds Story Graph Ask discovery and reads to authenticated blob frames', async () => {
+  it('binds Story Graph discovery and reads to authenticated blob frames', async () => {
     const fixture = harness()
     const client = new Client({ name: 'graph-backend-test', version: '1' })
     try {
@@ -664,8 +659,8 @@ describe('RuntimeAcpBackend', () => {
       await expect(fetch(accepted.imageToolUrl)).rejects.toThrow()
     } finally { await client.close(); await fixture.backend.dispose() }
   })
-  it.each([false, true])('allows mode changes only on a shared Session (shared=%s)', async (shared) => {
-    const fixture = harness({ agentOwned: true, shareOwnedProcesses: shared, workMode: 'execute' })
+  it.each([false, true])('reuses a Session for mode-free prompts (shared=%s)', async (shared) => {
+    const fixture = harness({ agentOwned: true, shareOwnedProcesses: shared })
     try {
       await open(fixture)
       await invoke(fixture, 'runtime/preparePrompt', fixture.preparation())
@@ -673,19 +668,15 @@ describe('RuntimeAcpBackend', () => {
         bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1'
       })
       const next = fixture.preparation({
-        operationId: 'request-2', requestId: 'request-2', promptSequence: 1, workMode: 'ask'
+        operationId: 'request-2', requestId: 'request-2', promptSequence: 1
       })
-      if (shared) {
-        await expect(invoke(fixture, 'runtime/preparePrompt', next)).resolves.toMatchObject({ workMode: 'ask' })
-        await invoke(fixture, 'runtime/completePrompt', {
-          bindingId: 'binding-1', operationId: 'request-2', requestId: 'request-2'
-        })
-        await expect(invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
-          operationId: 'request-3', requestId: 'request-3', promptSequence: 2, workMode: 'execute'
-        }))).resolves.toMatchObject({ workMode: 'execute' })
-      } else {
-        await expect(invoke(fixture, 'runtime/preparePrompt', next)).rejects.toThrow('work mode cannot change')
-      }
+      await expect(invoke(fixture, 'runtime/preparePrompt', next)).resolves.not.toHaveProperty('workMode')
+      await invoke(fixture, 'runtime/completePrompt', {
+        bindingId: 'binding-1', operationId: 'request-2', requestId: 'request-2'
+      })
+      await expect(invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
+        operationId: 'request-3', requestId: 'request-3', promptSequence: 2
+      }))).resolves.not.toHaveProperty('workMode')
       expect(fixture.launches).toHaveLength(1)
     } finally {
       await fixture.backend.dispose()
@@ -793,7 +784,6 @@ describe('RuntimeAcpBackend', () => {
         channels.push({ bindingId, channelId: channel.channelId, channelEpoch: channel.channelEpoch })
         await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
           bindingId, workspaceIdentity, channelEpoch: channel.channelEpoch,
-          workMode: index % 2 ? 'execute' : 'ask',
           operationId: `operation-${index}`, requestId: `operation-${index}`
         }))
       }
@@ -985,11 +975,10 @@ describe('RuntimeAcpBackend', () => {
     expect(acceptance).toMatchObject({
       bindingId: 'binding-1',
       operationId: 'request-1',
-      workMode: 'ask',
       requestId: 'request-1'
     })
     expect(fixture.launches).toEqual([
-      { workMode: 'ask', scratch: '/scratch' }
+      { scratch: '/scratch' }
     ])
 
     fixture.journal.appendAcpFrame({
@@ -1058,10 +1047,10 @@ describe('RuntimeAcpBackend', () => {
     ])
   })
 
-  it.each(['ask', 'execute'] as const)(
-    'accepts %s as the complete prompt authorization',
-    async (workMode) => {
-      const fixture = harness({ workMode })
+  it(
+    'accepts a mode-free prompt',
+    async () => {
+      const fixture = harness()
       await open(fixture)
       await expect(
         invoke(
@@ -1069,7 +1058,7 @@ describe('RuntimeAcpBackend', () => {
           'runtime/preparePrompt',
           fixture.preparation()
         )
-      ).resolves.toMatchObject({ workMode })
+      ).resolves.not.toHaveProperty('workMode')
     }
   )
 
@@ -1313,7 +1302,6 @@ describe('RuntimeAcpBackend', () => {
         'runtime.exited',
         {
           runtimeId: 'opencode',
-          workMode: 'ask',
           outcome: 'failed'
         }
       )
@@ -1322,14 +1310,12 @@ describe('RuntimeAcpBackend', () => {
       'runtime.starting',
       {
         runtimeId: 'opencode',
-        workMode: 'ask'
       }
     )
     expect(fixture.diagnostics.tryRecord).toHaveBeenCalledWith(
       'runtime.started',
       {
         runtimeId: 'opencode',
-        workMode: 'ask'
       }
     )
     await fixture.backend.dispose()
@@ -1354,7 +1340,6 @@ describe('RuntimeAcpBackend', () => {
       'runtime.start.failed',
       {
         runtimeId: 'opencode',
-        workMode: 'ask',
         error: launchError
       }
     )
@@ -1934,7 +1919,6 @@ describe('RuntimeAcpBackend', () => {
           channelEpoch: channel.channelEpoch,
           operationId: `operation-${index}`,
           requestId: `operation-${index}`,
-          workMode: index % 2 ? 'execute' : 'ask'
         }))
         expect(journal.getAcpCursor(
           bindingId, channel.channelEpoch, 'runtime-to-main'

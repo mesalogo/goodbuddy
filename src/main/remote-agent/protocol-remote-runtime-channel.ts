@@ -595,9 +595,9 @@ export class ProtocolRemoteRuntimeChannel
   > {
     this.#imageTool?.close()
     this.#imageTool = undefined
-    const description = preparation.workMode === 'execute' ? await imageToolBinding?.describe() : undefined
+    const description = await imageToolBinding?.describe()
     const storyGraph = await storyGraphBinding?.available()
-    const saveDescription = preparation.workMode === 'execute' && imageToolBinding?.readForSave
+    const saveDescription = imageToolBinding?.readForSave
       ? await imageToolBinding.describeSave?.() : undefined
     waitSignal?.throwIfAborted()
     let imageTool: z.infer<typeof remotePromptOperationPreparationSchema>['imageTool']

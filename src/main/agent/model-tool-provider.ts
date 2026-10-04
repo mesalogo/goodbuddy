@@ -7,10 +7,10 @@ import {
   goodbuddyConfigWriteToolNames,
   magicNoteWriteToolNames,
   scopedDataToolByName,
-  scopedReadToolNames,
   type ScopedDataToolName
 } from '../../shared/scoped-data-tools'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
+import type { RuntimeTarget } from '../../shared/capability-contracts'
 import { createMcpTransport } from '../capabilities/mcp-client-transport'
 import {
   LocalWorkspaceAccess,
@@ -108,12 +108,6 @@ const magicNoteWriteToolNameSet = new Set<string>(
 const goodbuddyConfigWriteToolNameSet = new Set<string>(
   goodbuddyConfigWriteToolNames
 )
-const scopedReadToolNameSet = new Set<string>(scopedReadToolNames)
-const builtinModelToolAccessByName = new Map<string, 'read' | 'write'>(
-  builtinModelTools.map((tool) => [tool.name, tool.access])
-)
-const ASK_TOOL_DENIAL_MESSAGE =
-  'Ask 模式仅允许调用已声明的只读工具'
 const TOOL_RESULT_TRUNCATION_MARKER =
   '\n...[GoodBuddy result truncated]...'
 const scopedToolJsonSchemas = new Map(
@@ -268,7 +262,6 @@ export type ModelToolCallContext = {
   conversationId: string
   browserTabId?: BrowserTabId
   browserConversationId?: string
-  workMode: 'ask' | 'execute'
   requestId?: string
   runtimeTarget?: 'model'
   executionSpaceIdentity?: string
@@ -290,6 +283,7 @@ export type ModelSubagentBridge = {
 }
 
 export type ModelToolProviderProgrammingOptions = {
+  runtimeTarget?: RuntimeTarget
   processService?: DirectModelProcessService
   subagentService?: DirectModelSubagentService<ModelSubagentRequestContext>
   ripgrepExecutablePath?: string
@@ -341,7 +335,6 @@ type McpToolBinding = {
   client: Client
   definition: ModelToolDefinition
   originalName: string
-  readOnly: boolean
 }
 
 type ConnectedMcp = {
@@ -455,23 +448,6 @@ function toModelToolJsonSchema(
   }) as Record<string, unknown>
   Reflect.deleteProperty(value, '$schema')
   return value
-}
-
-function assertToolAuthorizedForWorkMode(
-  name: string,
-  context: ModelToolCallContext
-): void {
-  if (context.workMode !== 'ask') {
-    return
-  }
-  const access =
-    builtinModelToolAccessByName.get(name) ??
-    scopedDataToolByName.get(
-      name as Parameters<typeof scopedDataToolByName.get>[0]
-    )?.access
-  if (access !== 'read') {
-    throw new Error(ASK_TOOL_DENIAL_MESSAGE)
-  }
 }
 
 function parseMcpImage(
@@ -714,18 +690,13 @@ export class ModelToolProvider implements ModelToolProviderLike {
         ]
       }
     )
-    if (context.workMode !== 'execute') {
-      return tools.filter((tool) =>
-        scopedReadToolNameSet.has(tool.name)
-      )
-    }
     return tools
   }
 
   private getBrowserTools(
     context: ModelToolCallContext
   ): BrowserModelTools | undefined {
-    if (!this.browserService || context.workMode !== 'execute' || !context.browserTabId) {
+    if (!this.browserService || !context.browserTabId) {
       return undefined
     }
     let tools = this.browserToolsByContext.get(context)
@@ -817,7 +788,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         name: workspaceRipgrepTool.name,
         displayName: workspaceRipgrepTool.displayName,
         description:
-          'Run bundled rg with native args (no shell), e.g. ["--files","-g","*.ts"] or ["-n","-i","TODO","src"]. cwd defaults to the workspace. Returns native stdout, stderr and exitCode: 1 means no matches; 2 means incomplete search/error. Use output_read with output references to continue large results. Ask permits read-only workspace searches; Execute uses current-user permissions. External rg config is disabled.',
+          'Run bundled rg with native args (no shell), e.g. ["--files","-g","*.ts"] or ["-n","-i","TODO","src"]. cwd defaults to the workspace. Returns native stdout, stderr and exitCode: 1 means no matches; 2 means incomplete search/error. Use output_read with output references to continue large results. Uses current-user permissions. External rg config is disabled.',
         inputSchema: toModelToolJsonSchema(ripgrepInputSchema),
         source: 'builtin'
       },
@@ -897,8 +868,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
   ): Promise<ModelToolDefinition[]> {
     if (
       !this.programming.processService ||
-      context.runtimeTarget !== 'model' ||
-      context.workMode !== 'execute'
+      context.runtimeTarget !== 'model'
     ) {
       return []
     }
@@ -950,7 +920,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         displayName: subagentDelegateTool.displayName,
         description:
           'Delegate one focused task to a temporary direct-model Subagent. ' +
-          'The child inherits the current model, workspace, work mode, and enabled tools, cannot delegate again, and returns an output prefix preview to the parent. ' +
+          'The child inherits the current model, workspace, and enabled tools, cannot delegate again, and returns an output prefix preview to the parent. ' +
           'When outputReference is present, call output_read with its handle and nextCursor to read the rest, including partial output from failed or cancelled runs. ' +
           'Full output remains available until the parent conversation is released.',
         inputSchema: toModelToolJsonSchema(
@@ -978,7 +948,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
           'Read retained search, process or Subagent output from this conversation. ' +
           'Use the reference handle and nextCursor to continue a preview, or cursor 0 to reread. ' +
           'Follow each page nextCursor until eof; cursors are UTF-8 byte offsets. ' +
-          'Read-only in Ask and Execute. Handles expire when the conversation or runtime is released.',
+          'Handles expire when the conversation or runtime is released.',
         inputSchema: toModelToolJsonSchema(outputReadInputSchema),
         source: 'builtin'
       }
@@ -1073,9 +1043,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
     const bindings = tools.map((tool): McpToolBinding => ({
       client,
       originalName: tool.name,
-      readOnly:
-        tool.annotations?.readOnlyHint === true &&
-        tool.annotations?.destructiveHint !== true,
       definition: {
         name: createMcpToolName(server.id, tool.name),
         displayName: `${server.name} / ${tool.name}`.slice(0, 200),
@@ -1109,7 +1076,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
   ): Promise<Map<string, McpToolBinding>> {
     signal.throwIfAborted()
     const loaded = await Promise.all(
-      this.mcpServers.map((server) => {
+      this.mcpServers.filter(server => server.enabled && server.assignments.includes(this.programming.runtimeTarget ?? 'model')).map((server) => {
         let pending = this.mcpConnections.get(server)
         if (!pending) {
           pending = this.connectMcpServer(server, signal).catch((error) => {
@@ -1210,9 +1177,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         )
         if (
           [...EXA_TOOL_NAMES].some(
-            (name) =>
-              !byOriginalName.has(name) ||
-              !byOriginalName.get(name)?.readOnly
+            (name) => !byOriginalName.has(name)
           )
         ) {
           this.clients.delete(connection.client)
@@ -1256,28 +1221,17 @@ export class ModelToolProvider implements ModelToolProviderLike {
     const storyGraphAvailable = grantedTools.some(tool => tool.name.startsWith('story_graph_')) && context.knowledgeCapabilityToken && this.knowledgeGateway
       ? await this.knowledgeGateway.isStoryGraphAvailable(context.knowledgeCapabilityToken) : false
     const scopedTools = grantedTools.filter(tool => !tool.name.startsWith('story_graph_') || storyGraphAvailable)
-    const imageTool = context.workMode === 'execute' ? await imageToolDefinition(context.imageToolBinding) : undefined
-    const imageSaveTool = context.workMode === 'execute' ? await imageSaveToolDefinition(context.imageToolBinding) : undefined
+    const imageTool = await imageToolDefinition(context.imageToolBinding)
+    const imageSaveTool = await imageSaveToolDefinition(context.imageToolBinding)
     const webTools = this.webSearchEnabled
       ? this.getWebSearchDefinitions()
       : []
     const subagentTools = this.getSubagentTool(context)
     const outputTools = this.getOutputReadTool(context)
     const workspaceTools = await this.getWorkspaceTools(signal)
-    if (context.workMode !== 'execute') {
-      return [
-        ...workspaceTools.filter(
-          (tool) => builtinModelToolAccessByName.get(tool.name) === 'read'
-        ),
-        ...webTools,
-        ...subagentTools,
-        ...outputTools,
-        ...scopedTools
-      ]
-    }
+    const browserTools = this.getBrowserTools(context)?.listTools() ?? []
     const processTools = await this.getProcessTool(context, signal)
     const bindings = await this.getMcpBindings(signal, scopedTools.length, true)
-    const browserTools = this.getBrowserTools(context)
     return [
       ...workspaceTools,
       ...(imageTool ? [imageTool] : []),
@@ -1285,7 +1239,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       ...processTools,
       ...subagentTools,
       ...outputTools,
-      ...(browserTools?.listTools() ?? []),
+      ...browserTools,
       ...webTools,
       ...[...bindings.values()].map((binding) => binding.definition),
       ...scopedTools
@@ -1298,7 +1252,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
     argumentSummary: string,
     context: ModelToolCallContext
   ): RuntimeApprovalRequest {
-    assertToolAuthorizedForWorkMode(tool.name, context)
     const browserTools = this.getBrowserTools(context)
     if (browserTools?.ownsTool(tool.name)) {
       return browserTools.getApproval(
@@ -1386,7 +1339,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         scopeKey: 'model:builtin:subagent_delegate',
         title: '允许委派编程 Subagent？',
         description:
-          '子级继承当前模型、工作模式、工作区和已启用能力，不能再次委派。',
+          '子级继承当前模型、工作区和已启用能力，不能再次委派。',
         toolName: tool.displayName,
         argumentSummary,
         allowPermanent: false
@@ -1404,7 +1357,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       description:
         tool.source === 'mcp'
           ? `该工具由已启用的 MCP Server「${tool.serverName ?? '未知'}」执行，并使用当前用户权限。`
-          : tool.name === 'workspace_rg' && context.workMode === 'execute'
+          : tool.name === 'workspace_rg'
             ? '使用当前用户权限运行内置 rg。'
             : path
               ? `目标位于当前工作区：${path}`
@@ -1422,7 +1375,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
     context: ModelToolCallContext
   ): Promise<ModelToolResult> {
     signal.throwIfAborted()
-    assertToolAuthorizedForWorkMode(name, context)
     if (name.startsWith('story_graph_') && scopedDataToolByName.has(name as ScopedDataToolName)) {
       if (!this.knowledgeGateway || !context.knowledgeCapabilityToken) throw new Error('Story Graph capability is unavailable')
       return createTextToolResult(JSON.stringify(await this.knowledgeGateway.callStoryGraphTool(
@@ -1754,8 +1706,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
               this.workspaceAccess,
               signal,
               this.ripgrepService,
-              context.conversationId,
-              context.workMode
+              context.conversationId
             ),
             ['stdout', 'stderr'],
             'ripgrep output could not be serialized'
@@ -1786,22 +1737,21 @@ export class ModelToolProvider implements ModelToolProviderLike {
           '工作区读取目标不是有效 UTF-8 文本',
           '工作区读取范围无效'
         ].includes(error.message)
-        const rgModeError = name === 'workspace_rg' && error.message.startsWith('Ask mode does not allow ')
         if (!(error instanceof z.ZodError) &&
           !(typeof code === 'string' && expectedOsCodes.includes(code)) &&
           !(typeof remoteCode === 'string' && [
             ...expectedOsCodes, 'invalid-path', 'invalid-utf8',
             'not-directory', 'special-file', 'symlink-rejected'
           ].includes(remoteCode)) &&
-          !expectedWorkspaceError && !rgModeError) {
+          !expectedWorkspaceError) {
           throw error
         }
         let nextAction = name === 'workspace_rg'
-          ? 'Correct native rg args or cwd; use -F for literal text and workspace paths in Ask mode.'
+          ? 'Correct native rg args or cwd; use -F for literal text.'
           : 'Use a workspace-relative path to an existing readable UTF-8 file; correct the path or offset/limit, and discover the filename if needed.'
         nextAction += ' Do not retry identical arguments.'
         if ((await this.getProcessTool(context, signal)).length > 0) {
-          nextAction += ' For files outside the workspace, use process_execute in local Execute mode.'
+          nextAction += ' For files outside the workspace, use process_execute.'
         }
         signal.throwIfAborted()
         throw new RecoverableModelToolError(
@@ -1840,7 +1790,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
     if (name === 'process_execute') {
       if (
         context.runtimeTarget !== 'model' ||
-        context.workMode !== 'execute' ||
         !this.programming.processService
       ) {
         throw new Error('当前请求不允许进程执行')
@@ -1883,7 +1832,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
         task: input.task,
         parent: {
           requestId: context.requestId,
-          workMode: context.workMode,
           requestContext: context.subagentBridge.requestContext
         },
         signal,
@@ -2012,7 +1960,6 @@ function emitDirectModelSubagentEvent(
       label: '编程 Subagent'
     },
     routingMode: 'native',
-    workMode: event.workMode,
     state: event.state,
     reason: event.reason,
     ...(output !== undefined ? { output } : {}),

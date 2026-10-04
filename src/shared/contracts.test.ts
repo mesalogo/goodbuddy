@@ -9,9 +9,14 @@ import {
   browserStopLoadingRequestSchema,
   builtinEmbeddingConnectionId,
   clipboardTextSchema,
+  conversationQueueUserInputSchema,
   legacyEmbeddingConnectionId,
   runtimeSettingsInputSchema
 } from './contracts'
+import { projectCreateSchema, scheduleCreateSchema } from './assistant-contracts'
+import { channelInboundTextSchema } from './channel-contracts'
+import { runtimeNativeToolSchema } from './runtime-customization-contracts'
+import { webSearchCapabilitySchema } from './capability-contracts'
 
 describe('clipboard text contract', () => {
   it('accepts text and rejects non-text input', () => {
@@ -167,8 +172,34 @@ const baseInput = {
   workspacePath: 'workspace',
   apiKey: { action: 'keep' as const },
   deepseekHarnessModelSource: { kind: 'platform' as const },
-  toolApproval: 'always' as const
 }
+
+describe('unified execution contracts', () => {
+  it('accepts mode-free requests without adding a default mode', () => {
+    const request = { requestId: crypto.randomUUID(), conversationId: 'conversation', prompt: 'hello' }
+    expect(agentRequestSchema.parse(request)).not.toHaveProperty('workMode')
+    expect(conversationQueueUserInputSchema.parse({ conversationId: 'conversation', prompt: 'hello' })).not.toHaveProperty('workMode')
+    expect(projectCreateSchema.parse({ name: 'Project', description: '', rootPath: '/workspace' })).not.toHaveProperty('defaultWorkMode')
+    expect(scheduleCreateSchema.parse({ title: 'Task', prompt: 'hello', recurrence: 'once', nextRunAt: '2030-01-01T00:00:00Z' })).not.toHaveProperty('workMode')
+    expect(channelInboundTextSchema.parse({ channel: 'wecom', eventId: 'event', senderId: 'sender',
+      conversationId: 'conversation', conversationType: 'direct', text: 'hello' })).not.toHaveProperty('workMode')
+    expect(() => agentRequestSchema.parse({ ...request, workMode: undefined })).toThrow()
+  })
+
+  it('describes registered tools without mode availability fields', () => {
+    const native = { id: 'read', name: 'Read', description: 'Reads files', kind: 'read', source: 'runtime' }
+    expect(runtimeNativeToolSchema.parse(native)).toEqual(native)
+    expect(() => runtimeNativeToolSchema.parse({ ...native, ask: undefined, execute: undefined })).toThrow()
+    const web = { provider: 'exa', enabled: true, tools: ['web_search', 'web_fetch'] }
+    expect(webSearchCapabilitySchema.parse(web)).toEqual(web)
+    expect(() => webSearchCapabilitySchema.parse({ ...web, availableIn: undefined })).toThrow()
+  })
+
+  it('accepts settings without a tool policy and rejects the removed setting', () => {
+    expect(runtimeSettingsInputSchema.parse(baseInput)).not.toHaveProperty('toolApproval')
+    expect(() => runtimeSettingsInputSchema.parse({ ...baseInput, toolApproval: undefined })).toThrow()
+  })
+})
 
 describe('embedding connection settings input', () => {
   it('accepts additive builtin and user connection updates', () => {

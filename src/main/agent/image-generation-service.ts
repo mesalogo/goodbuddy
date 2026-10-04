@@ -48,13 +48,12 @@ export class ImageGenerationService {
     this.options.database.markUnfinishedImageOperationsUnconfirmed()
   }
 
-  bind(context: ImageRequestContext, currentWorkMode: () => 'ask' | 'execute' = () => context.workMode): ImageToolBinding {
+  bind(context: ImageRequestContext): ImageToolBinding {
     const bound = Object.freeze({ ...context })
     const submissions = new Map<string, Promise<ImageOperation>>()
     return {
       context: bound,
       describe: async () => {
-        if (bound.workMode !== 'execute' || currentWorkMode() !== 'execute') return undefined
         const settings = await this.options.getSettings()
         const profiles = settings.modelProfiles.filter(profile => profile.protocol === 'openai-images-generations' && profile.allowConversationInvocation === true)
         if (!profiles.length) return undefined
@@ -70,11 +69,10 @@ export class ImageGenerationService {
       },
       call: async (input, callId, signal) => {
         signal?.throwIfAborted()
-        if (bound.workMode !== 'execute' || currentWorkMode() !== 'execute') throw new Error('Image generation requires Execute mode')
         const key = JSON.stringify([bound.conversationId, bound.requestId, callId])
         let submitted = submissions.get(key)
         if (!submitted) {
-          submitted = this.submit(bound, imageToolInputSchema.parse(input), callId, currentWorkMode, signal)
+          submitted = this.submit(bound, imageToolInputSchema.parse(input), callId, signal)
           submissions.set(key, submitted)
           void submitted.catch(() => submissions.delete(key))
         }
@@ -93,13 +91,28 @@ export class ImageGenerationService {
         return this.getOperation(bound.conversationId, operation.id)
       },
       describeSave: async () => {
-        if (bound.workMode !== 'execute' || currentWorkMode() !== 'execute') return undefined
         const conversation = this.options.database.getConversation(bound.conversationId)
         // The model can only save IDs it has seen, so list them even when generate_image is unavailable.
-        const images = conversation.messages.flatMap(message => [
+        const references = conversation.messages.flatMap(message => [
           ...(message.imageSourceArtifactIds ?? []).map(id => ({ artifactId: id, kind: 'upload' })),
+          ...(message.artifactIds ?? []).map(id => ({ artifactId: id, kind: 'artifact' })),
           ...(message.imageOperations ?? []).flatMap(operation => operation.artifactIds.map(id => ({ artifactId: id, kind: 'generated' })))
-        ]).slice(-32)
+        ])
+        const images: typeof references = []
+        const seen = new Set<string>()
+        for (const reference of references.reverse()) {
+          if (seen.has(reference.artifactId)) continue
+          seen.add(reference.artifactId)
+          try {
+            if (this.options.database.getArtifact(reference.artifactId).kind !== 'image') continue
+          } catch (error) {
+            if (error instanceof Error && error.message === '成果不存在') continue
+            throw error
+          }
+          images.push(reference)
+          if (images.length === 32) break
+        }
+        images.reverse()
         if (!images.length) {
           const settings = await this.options.getSettings()
           if (!settings.modelProfiles.some(profile => profile.protocol === 'openai-images-generations' && profile.allowConversationInvocation === true)) return undefined
@@ -107,11 +120,9 @@ export class ImageGenerationService {
         return `${imageSaveToolDescription}\nConversation images (oldest first): ${images.length ? JSON.stringify(images) : 'none yet; images returned by generate_image can be saved'}`
       },
       save: async (input, signal) => {
-        if (bound.workMode !== 'execute' || currentWorkMode() !== 'execute') throw new Error('Saving images requires Execute mode')
         return this.saveImage(bound.conversationId, imageSaveToolInputSchema.parse(input), signal)
       },
       readForSave: async (artifactId, mimeType) => {
-        if (bound.workMode !== 'execute' || currentWorkMode() !== 'execute') throw new Error('Saving images requires Execute mode')
         return this.readImageForSave(bound.conversationId, artifactId, mimeType)
       }
     }
@@ -186,11 +197,11 @@ export class ImageGenerationService {
     return active.operation
   }
 
-  regenerate(context: ImageRequestContext, operationId: string, currentWorkMode?: () => 'ask' | 'execute'): Promise<ImageOperation> {
+  regenerate(context: ImageRequestContext, operationId: string): Promise<ImageOperation> {
     const previous = this.getOperation(context.conversationId, operationId)
     // Keep the originating request so usage stays attached to its task row;
     // the fresh call ID keeps the regenerated operation distinct.
-    return this.bind({ ...context, requestId: previous.requestId }, currentWorkMode)
+    return this.bind({ ...context, requestId: previous.requestId })
       .call({ ...previous.input, modelProfileId: previous.modelProfileId }, randomUUID())
   }
 
@@ -221,7 +232,7 @@ export class ImageGenerationService {
     this.options.onError?.(new Error(redactSensitiveText(safeToolErrorDetail(error) ?? 'Image operation notification or persistence failed')))
   }
 
-  private async submit(context: ImageRequestContext, input: ImageToolInput, callId: string, currentWorkMode: () => 'ask' | 'execute', signal?: AbortSignal): Promise<ImageOperation> {
+  private async submit(context: ImageRequestContext, input: ImageToolInput, callId: string, signal?: AbortSignal): Promise<ImageOperation> {
     if (this.closing) throw new Error('Image service is closing')
     const settings = await this.options.getSettings()
     const conversation = this.options.database.getConversation(context.conversationId)
@@ -248,7 +259,6 @@ export class ImageGenerationService {
     if (input.intent === 'edit' && (request.imageContextNotice || request.images?.length !== input.sourceArtifactIds.length)) throw new Error('Source image is missing or unsupported; select the image again')
     signal?.throwIfAborted()
     if (this.closing) throw new Error('Image service is closing')
-    if (currentWorkMode() !== 'execute') throw new Error('Image generation requires Execute mode')
     const operation = this.save({ id: randomUUID(), conversationId: context.conversationId, messageId: context.messageId, requestId: context.requestId,
       callId, modelProfileId: connection.id, modelName: connection.modelName, modelProfileName: connection.name,
       input: { ...input, quality: input.quality ?? connection.imageGenerationQuality ?? 'auto' },

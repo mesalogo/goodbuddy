@@ -358,7 +358,6 @@ export const webSearchCapabilitySchema = z
   .object({
     provider: z.literal('exa'),
     enabled: z.boolean(),
-    availableIn: z.tuple([z.literal('ask'), z.literal('execute')]),
     tools: z.tuple([
       z.literal('web_search'),
       z.literal('web_fetch')

@@ -382,7 +382,7 @@ describe('KnowledgeMcpGateway', () => {
     }
   })
 
-  it('exposes the assigned browser through a request-scoped conversation', async () => {
+  it('exposes the assigned browser reads and writes through a request-scoped conversation', async () => {
     const { service } = createService()
     const browserTabId = browserTabIdSchema.parse(
       '00000000-0000-4000-8000-000000000301'
@@ -407,12 +407,12 @@ describe('KnowledgeMcpGateway', () => {
         url: 'https://example.com/',
         origin: 'https://example.com'
       })),
-      snapshot: vi.fn(),
+      snapshot: vi.fn(async () => ({ url: 'https://example.com/', title: 'Example', nodes: [], truncated: false })),
       click: vi.fn(),
       type: vi.fn(),
       select: vi.fn(),
       back: vi.fn(),
-      screenshot: vi.fn(),
+      screenshot: vi.fn(async () => ({ type: 'image' as const, mimeType: 'image/jpeg' as const, data: '/9j/' })),
       releaseConversation: vi.fn(async () => undefined),
       acquireTabUsage,
       listTabs: vi.fn(() => [
@@ -470,7 +470,8 @@ describe('KnowledgeMcpGateway', () => {
       browserTabId,
       'browser-request'
     )
-    expect(gateway.getAvailableToolNames(token)).toEqual(browserToolNames)
+    const expectedTools = browserToolNames
+    expect(gateway.getAvailableToolNames(token)).toEqual(expectedTools)
     const client = new Client({
       name: 'browser-loopback-test',
       version: '1.0.0'
@@ -488,47 +489,53 @@ describe('KnowledgeMcpGateway', () => {
     try {
       const listed = await client.listTools()
       expect(listed.tools.map((tool) => tool.name)).toEqual(
-        browserToolNames
+        expectedTools
       )
-      await expect(
-        client.callTool({
-          name: 'browser_navigate',
-          arguments: { url: 'https://example.com' }
+      expect(listed.tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name))
+        .toEqual(['browser_snapshot', 'browser_screenshot'])
+      await client.callTool({ name: 'browser_snapshot', arguments: {} })
+      await client.callTool({ name: 'browser_screenshot', arguments: {} })
+      expect(browserService.snapshot).toHaveBeenCalledWith('browser-conversation', expect.any(AbortSignal), browserTabId)
+      expect(browserService.screenshot).toHaveBeenCalledWith('browser-conversation', expect.any(AbortSignal), browserTabId)
+        await expect(
+          client.callTool({
+            name: 'browser_navigate',
+            arguments: { url: 'https://example.com' }
+          })
+        ).resolves.toMatchObject({
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                url: 'https://example.com/',
+                origin: 'https://example.com'
+              })
+            }
+          ]
         })
-      ).resolves.toMatchObject({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              url: 'https://example.com/',
-              origin: 'https://example.com'
-            })
-          }
-        ]
-      })
-      expect(browserService.navigate).toHaveBeenCalledWith(
-        'browser-conversation',
-        'https://example.com',
-        expect.any(AbortSignal),
-        browserTabId
-      )
-      expect(browserService.listTabs).toHaveBeenCalledTimes(2)
-      vi.mocked(browserService.click).mockRejectedValueOnce(
-        new Error('浏览器标签页不存在或不属于当前对话')
-      )
-      await expect(
-        client.callTool({
-          name: 'browser_click',
-          arguments: { ref: 'b_boundTabReference' }
-        })
-      ).resolves.toMatchObject({ isError: true })
-      expect(browserService.click).toHaveBeenCalledWith(
-        'browser-conversation',
-        'b_boundTabReference',
-        expect.any(AbortSignal),
-        browserTabId
-      )
-      expect(browserService.listTabs).toHaveBeenCalledTimes(2)
+        expect(browserService.navigate).toHaveBeenCalledWith(
+          'browser-conversation',
+          'https://example.com',
+          expect.any(AbortSignal),
+          browserTabId
+        )
+        expect(browserService.listTabs).toHaveBeenCalledTimes(2)
+        vi.mocked(browserService.click).mockRejectedValueOnce(
+          new Error('浏览器标签页不存在或不属于当前对话')
+        )
+        await expect(
+          client.callTool({
+            name: 'browser_click',
+            arguments: { ref: 'b_boundTabReference' }
+          })
+        ).resolves.toMatchObject({ isError: true })
+        expect(browserService.click).toHaveBeenCalledWith(
+          'browser-conversation',
+          'b_boundTabReference',
+          expect.any(AbortSignal),
+          browserTabId
+        )
+        expect(browserService.listTabs).toHaveBeenCalledTimes(2)
       gateway.revoke(token)
       gateway.revoke(token)
       expect(releaseBrowserUsage).toHaveBeenCalledOnce()
@@ -623,7 +630,7 @@ describe('KnowledgeMcpGateway', () => {
     }
   })
 
-  it('exposes GoodBuddy config reads in Ask and apply only in Execute', async () => {
+  it('exposes GoodBuddy config tools according to the scoped grant', async () => {
     const { service } = createService()
     const configService = {
       getCapabilities: vi.fn(() => ({ server: 'goodbuddy_config' })),
@@ -922,7 +929,7 @@ describe('KnowledgeMcpGateway', () => {
     clock.mockRestore()
   })
 
-  it('keeps Ask read-only and supports revision-safe Magic Notes CRUD in Execute', async () => {
+  it('preserves scoped grants and supports revision-safe Magic Notes CRUD', async () => {
     const { service } = createService()
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-note-mcp-'))
     temporaryDirectories.push(directory)
@@ -1310,6 +1317,16 @@ describe('KnowledgeMcpGateway', () => {
       expect.stringMatching(/_second$/u)
     ])
     expect(listTools).toHaveBeenNthCalledWith(2, '')
+  })
+
+  it.each(['disabled', 'unassigned'] as const)('rejects grants for %s custom MCP servers', (state) => {
+    const { service } = createService()
+    const gateway = new KnowledgeMcpGateway(service)
+    gateways.push(gateway)
+    const server = customMcpServer('http://127.0.0.1:1/mcp')
+    if (state === 'disabled') server.enabled = false
+    else server.assignments = []
+    expect(() => gateway.grantCustomMcp('unavailable', [server], new AbortController().signal)).toThrow('无效 Server')
   })
 
   it('explicitly requests task execution for required tools from earlier pages', async () => {

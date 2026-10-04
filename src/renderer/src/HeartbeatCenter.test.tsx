@@ -128,7 +128,6 @@ function createProps(
           kind: 'local',
           rootPath: 'C:\\Workspace'
         },
-        defaultWorkMode: 'ask',
         kind: 'user',
         builtInDefault: true,
         status: 'active',

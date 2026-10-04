@@ -17,7 +17,6 @@ function project(
       kind: 'local',
       rootPath: 'C:\\Workspace'
     },
-    defaultWorkMode: 'ask',
     kind: 'user',
     status: 'active',
     createdAt: '2026-08-01T00:00:00.000Z',

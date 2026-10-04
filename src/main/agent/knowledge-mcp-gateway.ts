@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import type { DesktopDiagnosticFailureObserver, DesktopMcpDiagnosticMetadata } from '../desktop-diagnostics'
 import { isStoryGraphTool, storyGraphToolNames, type StoryGraphToolName } from '../../shared/story-graph-tools'
 import type { RuntimeTarget } from '../../shared/capability-contracts'
+import { builtinModelTools } from '../../shared/builtin-model-tools'
 
 export type StoryGraphBinding = { projectId?: string; conversationId?: string; runtimeTarget: RuntimeTarget }
 export type StoryGraphRemoteBinding = {
@@ -106,6 +107,9 @@ const CUSTOM_MCP_TIMEOUT_MS = 30_000
 const CUSTOM_MCP_MAX_TOTAL_TIMEOUT_MS = 5 * 60_000
 const CUSTOM_MCP_TASK_CANCEL_TIMEOUT_MS = 5_000
 const customMcpJsonSchemaValidator = new AjvJsonSchemaValidator()
+const builtinToolAccessByName = new Map<string, 'read' | 'write'>(
+  builtinModelTools.map((tool) => [tool.name, tool.access])
+)
 
 export {
   browserToolNames,
@@ -1381,8 +1385,7 @@ export class KnowledgeMcpGateway {
     input: unknown,
     signal?: AbortSignal
   ): Promise<Record<string, unknown>> {
-    const requiredAccess =
-      name === 'goodbuddy_config_apply' ? 'write' : 'read'
+    const requiredAccess = scopedDataToolByName.get(name)!.access
     const { capability, service, workspacePath } =
       this.requireConfig(token, requiredAccess)
     const effectiveSignal = signal
@@ -1432,7 +1435,7 @@ export class KnowledgeMcpGateway {
     token: string,
     input: unknown = {}
   ): MagicNoteToolSummary[] {
-    const { database } = this.requireMagicNotes(token, 'read')
+    const { database } = this.requireMagicNotes(token, magicNoteListTool.access)
     const { limit, tags } = magicNoteListTool.inputSchema.parse(input)
     const filter = tags ? magicNoteTagListSchema.parse(tags) : undefined
     const notes: MagicNoteToolSummary[] = []
@@ -1451,7 +1454,7 @@ export class KnowledgeMcpGateway {
   }
 
   getMagicNote(token: string, input: unknown): MagicNoteToolDetail {
-    const { database } = this.requireMagicNotes(token, 'read')
+    const { database } = this.requireMagicNotes(token, magicNoteGetTool.access)
     const { noteId } = magicNoteGetTool.inputSchema.parse(input)
     const detail = database.getMagicNote(noteId)
     const result: MagicNoteToolDetail = {
@@ -1493,7 +1496,7 @@ export class KnowledgeMcpGateway {
     input: unknown,
     signal?: AbortSignal
   ): MagicNoteSearchResult[] {
-    const { capability, database } = this.requireMagicNotes(token, 'read')
+    const { capability, database } = this.requireMagicNotes(token, magicNoteSearchTool.access)
     const { query, limit } = magicNoteSearchTool.inputSchema.parse(input)
     const effectiveSignal = signal
       ? AbortSignal.any([signal, capability.signal])
@@ -1515,7 +1518,7 @@ export class KnowledgeMcpGateway {
   }
 
   createMagicNote(token: string, input: unknown): MagicNoteToolDetail {
-    const { database } = this.requireMagicNotes(token, 'write')
+    const { database } = this.requireMagicNotes(token, magicNoteCreateTool.access)
     const parsed = magicNoteCreateTool.inputSchema.parse(input)
     const content =
       typeof parsed.content === 'string'
@@ -1534,7 +1537,7 @@ export class KnowledgeMcpGateway {
   }
 
   updateMagicNote(token: string, input: unknown): MagicNoteToolDetail {
-    const { database } = this.requireMagicNotes(token, 'write')
+    const { database } = this.requireMagicNotes(token, magicNoteUpdateTool.access)
     const parsed = magicNoteUpdateTool.inputSchema.parse(input)
     database.updateMagicNote({
       ...parsed,
@@ -1547,7 +1550,7 @@ export class KnowledgeMcpGateway {
     token: string,
     input: unknown
   ): MagicNoteToolDetail {
-    const { database } = this.requireMagicNotes(token, 'write')
+    const { database } = this.requireMagicNotes(token, magicNoteEntryCreateTool.access)
     const parsed = magicNoteEntryCreateTool.inputSchema.parse(input)
     const content = textContent(parsed.content)
     database.createMagicNoteEntry({
@@ -1562,7 +1565,7 @@ export class KnowledgeMcpGateway {
     token: string,
     input: unknown
   ): MagicNoteToolDetail {
-    const { database } = this.requireMagicNotes(token, 'write')
+    const { database } = this.requireMagicNotes(token, magicNoteEntryUpdateTool.access)
     const parsed = magicNoteEntryUpdateTool.inputSchema.parse(input)
     if (database.getMagicNoteEntry(parsed.entryId).content.version === 2) {
       throw new Error('画布记录不能通过纯文本工具覆盖，请在画布编辑器中修改，或追加新的纯文本记录')
@@ -1581,7 +1584,7 @@ export class KnowledgeMcpGateway {
     token: string,
     input: unknown
   ): MagicNoteToolDetail {
-    const { database } = this.requireMagicNotes(token, 'write')
+    const { database } = this.requireMagicNotes(token, magicNoteEntryDeleteTool.access)
     const parsed = magicNoteEntryDeleteTool.inputSchema.parse(input)
     const entry = database.getMagicNoteEntry(parsed.entryId)
     if (entry.revision !== parsed.expectedRevision) {
@@ -1595,7 +1598,7 @@ export class KnowledgeMcpGateway {
     token: string,
     input: unknown
   ): { deleted: true; noteId: string } {
-    const { database } = this.requireMagicNotes(token, 'write')
+    const { database } = this.requireMagicNotes(token, magicNoteDeleteTool.access)
     const parsed = magicNoteDeleteTool.inputSchema.parse(input)
     const note = database.getMagicNote(parsed.noteId)
     if (note.revision !== parsed.expectedRevision) {
@@ -1783,16 +1786,16 @@ export class KnowledgeMcpGateway {
               })
             : undefined
           const browserDefinitions = browserTools
-            ? browserTools.listTools().map(
+            ? browserTools.listTools().filter(
+                (definition) => availableTools.has(definition.name as BrowserToolName)
+              ).map(
                 (definition): Tool => ({
                   name: definition.name,
                   title: definition.displayName,
                   description: definition.description,
                   inputSchema: definition.inputSchema as Tool['inputSchema'],
                   annotations: {
-                    readOnlyHint:
-                      definition.name === 'browser_snapshot' ||
-                      definition.name === 'browser_screenshot',
+                    readOnlyHint: builtinToolAccessByName.get(definition.name) === 'read',
                     destructiveHint: false
                   }
                 })

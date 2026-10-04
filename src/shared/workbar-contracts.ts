@@ -23,7 +23,6 @@ export const workbarAppIdSchema = z.enum([
   'tasks',
   'workspace',
   'browser',
-  'results',
   'notes',
   'terminal'
 ])
@@ -133,20 +132,6 @@ export const WORKBAR_APP_DEFINITIONS = [
     description: '浏览任务相关内容。',
     instancePolicy: 'multiple',
     defaultContext: 'current-conversation',
-    defaultOpen: true,
-    required: false,
-    closable: true,
-    reorderable: true,
-    availability: { state: 'available' }
-  },
-  {
-    id: 'results',
-    visibleAcrossContextSwitches: true,
-    label: '成果',
-    icon: 'results',
-    description: '查看任务生成的成果。',
-    instancePolicy: 'single',
-    defaultContext: 'current-project',
     defaultOpen: true,
     required: false,
     closable: true,
@@ -357,6 +342,11 @@ export function normalizeWorkbarLayoutPreferences(
   value: unknown,
   defaultInstances: readonly WorkbarTabInstance[]
 ): WorkbarLayoutPreferences | undefined {
+  // Released layouts may contain the retired results tab; retain all other preferences.
+  if (value && typeof value === 'object' && 'instances' in value && Array.isArray(value.instances)) {
+    value = { ...value, instances: value.instances.filter((instance: unknown) =>
+      !instance || typeof instance !== 'object' || !('appId' in instance) || instance.appId !== 'results') }
+  }
   const parsed = workbarLayoutShapeSchema.safeParse(value)
   if (!parsed.success) {
     return undefined

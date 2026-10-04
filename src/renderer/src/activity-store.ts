@@ -431,10 +431,6 @@ export function createActivityStore(initial: readonly ActivityRecord[] = []) {
     updateRequest(requestId: string, status: ActivityRecord['status'], detail?: string): void {
       apply({ type: 'update-request', requestId, status, ...(detail === undefined ? {} : { detail }) })
     },
-    /** Resolves the newest pending approval of a conversation. */
-    updateApproval(conversationId: string, status: ActivityRecord['status'], detailLine: string): void {
-      apply({ type: 'resolve-approval', conversationId, status, detailLine })
-    },
     /** Drops every record of a request that never started. */
     removeByRequest(requestId: string): void {
       apply({ type: 'remove-request', requestId })

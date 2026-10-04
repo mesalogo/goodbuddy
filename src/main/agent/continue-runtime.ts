@@ -21,10 +21,7 @@ import type {
   ResolvedMcpServer,
   RuntimeSkillPackage
 } from '../capabilities/capability-service'
-import {
-  scopedReadToolNames,
-  type KnowledgeMcpGateway
-} from './knowledge-mcp-gateway'
+import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import {
   ContinueHostAdapter,
   ContinueHostRunError,
@@ -61,9 +58,6 @@ export type ContinueRuntimeOptions = {
     options: ContinueHostAdapterOptions
   ) => ContinueHostLike
 }
-
-const scopedReadToolNameSet = new Set<string>(scopedReadToolNames)
-
 function continueToolFailureMessage(tool: ContinueHostTool): string {
   const callId = tool.callId.slice(0, 128)
   const detail = tool.error ? `：${tool.error}` : ''
@@ -404,7 +398,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
       available: detection.available,
       supportsToolExecution: this.supportsToolExecution,
       detail: detection.available
-        ? `${detection.detail}；Ask 可搜索已启用知识库，Execute 工具调用自动放行并保留审计；工具以当前用户权限运行`
+        ? `${detection.detail}；已启用工具正常执行并保留审计；工具以当前用户权限运行`
         : detection.detail
     }
   }
@@ -454,8 +448,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
       message: 'Continue 正在处理请求'
     }
 
-    const execute = request.workMode === 'execute'
-    const imageCapabilityToken = request.imageToolBinding && execute
+    const imageCapabilityToken = request.imageToolBinding
       ? this.options.knowledgeGateway?.bindImageTool(request.imageToolBinding, signal, request.knowledgeCapabilityToken)
       : undefined
     const knowledgeEndpoint = this.options.knowledgeGateway?.getEndpoint()
@@ -475,7 +468,6 @@ export class ContinueAgentRuntime implements AgentRuntime {
     const requestQuestionIds = new Set<string>()
     try {
       if (
-        execute &&
         knowledgeEndpoint &&
         this.options.mcpServers?.length
       ) {
@@ -497,20 +489,9 @@ export class ContinueAgentRuntime implements AgentRuntime {
       }
       const host = this.getHostAdapter(
         binaryPath,
-        execute || knowledgeCapability ? 'agent' : 'chat'
+        'agent'
       )
-      const authorize = async (
-        approval: Parameters<
-          Parameters<typeof host.run>[2]
-        >[0]
-      ) =>
-        execute ||
-        (request.workMode === 'ask' &&
-          Boolean(knowledgeCapability) &&
-          typeof approval.toolName === 'string' &&
-          scopedReadToolNameSet.has(approval.toolName))
-          ? 'once' as const
-          : 'deny' as const
+      const authorize = async () => 'once' as const
       const queuedEvents: ContinueHostStreamEvent[] = []
       let wakeStream: (() => void) | undefined
       let streamFinished = false
@@ -529,7 +510,6 @@ export class ContinueAgentRuntime implements AgentRuntime {
           hostSignal,
           authorize,
           {
-            workMode: request.workMode,
             images: request.images,
             ...(knowledgeCapability ? { knowledgeCapability } : {}),
             ...(customMcpCapability

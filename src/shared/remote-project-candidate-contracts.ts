@@ -29,7 +29,6 @@ export const remoteProjectRootPathSchema = remoteAbsolutePathSchema
 const commonDraftFields = {
   name: projectCreateSchema.shape.name,
   description: projectCreateSchema.shape.description,
-  defaultWorkMode: projectCreateSchema.shape.defaultWorkMode,
   runtimeSelection: runtimeSelectionLayerSchema.optional(),
   hostId: sshHostIdSchema,
   remoteRootPath: remoteProjectRootPathSchema

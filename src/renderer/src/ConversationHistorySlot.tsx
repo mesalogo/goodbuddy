@@ -1,12 +1,9 @@
 import { memo, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 import type {
-  AssistantProject,
   AssistantSchedule,
   AssistantTask,
-  InteractiveWorkMode,
 } from "../../shared/assistant-contracts";
-import { normalizeInteractiveWorkMode } from "../../shared/assistant-contracts";
 import { ChatHistoryPane } from "./ChatHistoryPane";
 import type { Conversation } from "./chat-conversation";
 import { useConversation, type ConversationStore } from "./conversation-store";
@@ -48,9 +45,6 @@ export type ConversationHistorySlotProps = PaneProps & {
   /** Artifacts are read here, so a new result re-renders the panes, not App. */
   taskStore: TaskStore;
   loadHistory: (conversationId: string) => Promise<Conversation>;
-  /** The active conversation's effective mode; others use their own or the project's. */
-  workModeOverride?: InteractiveWorkMode;
-  projects: readonly AssistantProject[];
   tasks: AssistantTask[];
   schedules: AssistantSchedule[];
   selectedAssistantTaskId?: string;
@@ -71,8 +65,6 @@ export const ConversationHistorySlot = memo(function ConversationHistorySlot({
   store,
   taskStore,
   loadHistory,
-  workModeOverride,
-  projects,
   tasks,
   schedules,
   selectedAssistantTaskId,
@@ -85,10 +77,6 @@ export const ConversationHistorySlot = memo(function ConversationHistorySlot({
   const conversation = useConversation(store, conversationId);
   const artifactById = useArtifactById(taskStore);
   const remote = Boolean(conversation?.remote);
-  const conversationMode = workModeOverride ?? normalizeInteractiveWorkMode(
-    conversation?.workMode ??
-      projects.find(project => project.id === conversation?.projectId)?.defaultWorkMode,
-  );
   const selectedTaskId = tasks.some(task => task.id === selectedAssistantTaskId)
     ? selectedAssistantTaskId : undefined;
   const messages = conversation?.messages;
@@ -98,7 +86,6 @@ export const ConversationHistorySlot = memo(function ConversationHistorySlot({
     <div className="conversation-context-strips">
       {!remote && (
         <ConversationTaskStrip
-          conversationMode={conversationMode}
           locale={locale}
           onRemoveSchedule={onRemoveSchedule}
           onRunSchedule={onRunSchedule}
@@ -111,7 +98,7 @@ export const ConversationHistorySlot = memo(function ConversationHistorySlot({
       )}
       <RuntimeChecklistStrip messages={messages} activeMessageId={activeMessageId} />
     </div>
-  ), [remote, conversationMode, locale, onRemoveSchedule, onRunSchedule, onSelectTask,
+  ), [remote, locale, onRemoveSchedule, onRunSchedule, onSelectTask,
     onSetScheduleEnabled, schedules, selectedTaskId, tasks, messages, activeMessageId]);
   if (!conversation) return null;
   if (conversation.messageSummary) {

@@ -31,13 +31,11 @@ export type DirectModelSubagentContext = {
   childRunId: string
   projectId?: string
   conversationId: string
-  workMode: 'ask' | 'execute'
 }
 
 export type DirectModelSubagentParent<TRequestContext = unknown> = {
   requestId: string
   projectId?: string
-  workMode: 'ask' | 'execute'
   requestContext: TRequestContext
 }
 
@@ -52,7 +50,6 @@ export type DirectModelSubagentEvent = {
   parentRequestId: string
   childRunId: string
   conversationId: string
-  workMode: 'ask' | 'execute'
   state: DirectModelSubagentState
   reason: string
   output?: string
@@ -202,8 +199,7 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
         ? { projectId: input.parent.projectId }
         : {}),
       conversationId:
-        `direct-model-subagent:${input.parent.requestId}:${childRunId}`,
-      workMode: input.parent.workMode
+        `direct-model-subagent:${input.parent.requestId}:${childRunId}`
     }
     const controller = new AbortController()
     let settleOwnerRun!: () => void
@@ -296,7 +292,6 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
         parentRequestId: context.parentRequestId,
         childRunId: context.childRunId,
         conversationId: context.conversationId,
-        workMode: context.workMode,
         state,
         reason: task.slice(0, 240),
         ...((state === 'completed' ||

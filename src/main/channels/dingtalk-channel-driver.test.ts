@@ -73,7 +73,6 @@ describe('DingTalkChannelDriver', () => {
         conversationType: 'group',
         text: '请总结进展',
         mentioned: true,
-        workMode: 'ask',
         receivedAt: 1_800_000_000_000
       }
     ])

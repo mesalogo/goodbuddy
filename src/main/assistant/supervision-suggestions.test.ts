@@ -121,7 +121,11 @@ it('carries pending heartbeat memory proposals forward on upgrade without confir
   f.db.completeHeartbeatRun(claim, { summary: 'Legacy report', highlights: [], followUpTasks: [], proposedMemories: [
     { scope: 'global', type: 'preference', content: 'Keep answers short', confidence: 0.8, salience: 0.8 }] })
   f.sql.exec(`DROP TABLE supervision_suggestions; ALTER TABLE heartbeat_configs DROP COLUMN intervention;
-    ALTER TABLE heartbeat_runs DROP COLUMN suggestion_status; ALTER TABLE heartbeat_runs DROP COLUMN suggestion_error; PRAGMA user_version = 49;`)
+    ALTER TABLE heartbeat_runs DROP COLUMN suggestion_status; ALTER TABLE heartbeat_runs DROP COLUMN suggestion_error;
+    ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+    ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+    ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
+    PRAGMA user_version = 49;`)
   f.db.close()
   f.db.initialize(process.cwd())
   expect(f.db.getHeartbeatConfig(config.id).intervention).toBe('suggest')

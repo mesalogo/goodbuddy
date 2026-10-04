@@ -13,7 +13,6 @@ const profileId = '00000000-0000-4000-8000-000000000040'
 const draft = {
   name: '远程项目',
   description: 'Awaited save',
-  defaultWorkMode: 'ask' as const,
   runtimeSelection: {
     provider: 'opencode' as const,
     model: { kind: 'profile' as const, profileId }
@@ -51,18 +50,12 @@ describe('remote project save contracts', () => {
     ).toThrow()
   })
 
-  it('accepts Execute without consent or trust fields', () => {
-    expect(
-      remoteProjectCreateDraftSchema.parse({
-        ...draft,
-        defaultWorkMode: 'execute'
-      }).defaultWorkMode
-    ).toBe('execute')
+  it('accepts a project without consent or trust fields', () => {
+    expect(remoteProjectCreateDraftSchema.parse(draft)).toEqual(draft)
     expect(() =>
       remoteProjectCreateDraftSchema.parse({
         ...draft,
-        trust: {},
-        defaultWorkMode: 'execute'
+        trust: {}
       })
     ).toThrow()
   })

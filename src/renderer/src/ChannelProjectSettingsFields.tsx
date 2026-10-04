@@ -7,8 +7,6 @@ import {
   resolveRuntimeChoice
 } from '../../shared/runtime-selection-contracts'
 import { ProjectRuntimeSelector } from './ProjectRuntimeSelector'
-import { SegmentedControl } from './WorkspacePrimitives'
-import { InlineHelp } from './InlineHelp'
 
 export function channelProjectDraft(
   project: ProjectCreateInput,
@@ -19,8 +17,6 @@ export function channelProjectDraft(
     name: project.name,
     description: project.description,
     rootPath: project.rootPath,
-    defaultWorkMode: project.defaultWorkMode,
-    // Projects own their execution mode; fill in what older rows resolve to.
     runtimeSelection: {
       ...layer,
       provider: resolveRuntimeChoice(runtimeSettings, { project: layer }).provider
@@ -109,27 +105,7 @@ export function ChannelProjectSettingsFields({
         selection={value.runtimeSelection}
         textOnly
       />
-      <fieldset className="project-work-mode">
-        <legend><span className="inline-help-label">{t('channels.project.defaultMode')}<InlineHelp label={t('channels.project.defaultMode')}>{t('channels.project.overrideHelp')}</InlineHelp></span></legend>
-      <SegmentedControl
-        ariaLabel={t('channels.project.defaultModeAriaLabel', {
-          name: value.name
-        })}
-        disabled={disabled}
-        options={[
-          { value: 'ask', label: t('channels.project.modes.ask') },
-          { value: 'execute', label: t('channels.project.modes.execute') }
-        ]}
-        onChange={(defaultWorkMode) =>
-          onChange({ ...value, defaultWorkMode })
-        }
-        value={value.defaultWorkMode}
-      />
-      </fieldset>
       <p className="channel-project-settings__risk">
-        {value.defaultWorkMode === 'execute'
-          ? t('channels.project.executeRisk')
-          : t('channels.project.askRisk')}{' '}
         {t('channels.project.riskSuffix')}
       </p>
     </section>

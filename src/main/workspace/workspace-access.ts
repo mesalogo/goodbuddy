@@ -25,6 +25,8 @@ export type WorkspaceDirectoryEntry = {
   name: string
   path: string
   type: 'file' | 'directory' | 'other'
+  modifiedAt?: string
+  createdAt?: string
 }
 
 export type DirectoryPage = {

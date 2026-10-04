@@ -58,7 +58,7 @@ it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as c
   const address = model.address()
   if (!address || typeof address === 'string') throw new Error('No fixture port')
   const config = createOpenCodeModelBridgeProviderConfig({ protocol: 'openai-chat-completions',
-    model: 'fixture', loopbackOrigin: `http://127.0.0.1:${address.port}/${'a'.repeat(43)}`, workMode: 'execute' })
+    model: 'fixture', loopbackOrigin: `http://127.0.0.1:${address.port}/${'a'.repeat(43)}` })
   const child = spawn(binary, ['acp'], { cwd: root, stdio: 'pipe', env: {
     ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, plugin: [pathToFileURL(pluginPath).href] }),
     OPENCODE_CONFIG_DIR: join(process.cwd(), '.runtime-resources', 'opencode-config'),
@@ -88,7 +88,7 @@ it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as c
   })
   try {
     await owner.start({ bindingId: 'binding', operationId: 'operation', requestId: 'operation',
-      prompt: [{ type: 'text', text: 'Ask the native question tool for the decision.' }] }, 'execute')
+      prompt: [{ type: 'text', text: 'Ask the native question tool for the decision.' }] })
     let questionId: string | undefined
     await expect.poll(async () => {
       const page = transcript.page({ bindingId: 'binding', operationId: 'operation',

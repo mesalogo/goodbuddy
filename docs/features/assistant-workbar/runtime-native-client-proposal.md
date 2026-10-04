@@ -94,7 +94,7 @@ Skills/MCP 承接、取消和产品生命周期仍待实现与验证。此次可
 | FR-2 | 按项目执行空间启动 | 本地使用本地目录，SSH 使用绑定 Host 与远端目录；目录失效时说明原因 |
 | FR-3 | 注入点击时选定模型 | 客户端首轮直接使用该模型，无需重复输入供应商密钥 |
 | FR-4 | 创建独立客户端会话 | 不修改原聊天历史，不把打开操作伪装成当前聊天的续接 |
-| FR-5 | 保持所选工作模式的执行边界 | Ask 的 AI 工具路径只读；Execute 使用相应账号已有权限 |
+| FR-5 | 沿用统一执行与能力范围 | AI 工具路径使用已接入能力和相应账号已有权限，无产品模式 |
 | FR-6 | 管理启动、重开和关闭 | 不因收起工作栏或切换项目中断；关闭对应客户端资源时释放其桥接 |
 | FR-7 | 保留可处理的失败信息 | 启动、模型和远程错误可区分，允许修正后重试，不清空聊天草稿 |
 | FR-8 | 明确原生能力与 GoodBuddy 能力差异 | 已分配的 Skills、MCP 等逐项接入并验证；未接入项有明确说明 |
@@ -105,7 +105,7 @@ Task 关联恢复或客户端历史导入。原生客户端产生的历史由对
 活动记录中显示为已经同步的聊天内容。
 
 FR-8 的实施清单须区分原生工具、GoodBuddy 分配的 Skills、自定义 MCP、内置 MCP、知识工具
-以及遵循当前工作模式授权的配置工具。配置应用不再额外要求 GoodBuddy 原生确认，Ask 仍只读。
+以及按当前请求资源范围提供的配置工具。配置应用不再额外要求 GoodBuddy 原生确认。
 支持情况以真实调用为准；现有 DS 宿主插件能力不能
 直接算作 DS Web 能力。发现现有分配无法承接时，在实施评审中明确差异和处理方式，不能默默忽略。
 
@@ -121,18 +121,18 @@ FR-8 的实施清单须区分原生工具、GoodBuddy 分配的 Skills、自定�
 | US-4 | 启动期间连续点击 | 同一启动只创建一次；按钮显示启动中 | FR-6 |
 | US-5 | 已打开客户端后切换项目或模式 | 旧客户端保持原项目和启动模式；新操作使用新选择 | FR-5、6 |
 | US-6 | 启动失败或模型请求失败 | 保留原因与可操作的重试方式；聊天内容和草稿不变 | FR-7 |
-| US-7 | Ask 下从原生界面请求写文件、执行写命令或使用写入 MCP | AI 执行边界拒绝写入，不能通过客户端模式开关绕过 | FR-5、8 |
+| US-7 | 从原生界面请求写测试文件、执行命令或使用已分配 MCP | 工具正常执行，无产品模式拒绝；未启用能力不可调用 | FR-5、8 |
 | US-8 | 关闭终端、停止 DS 服务或退出 GoodBuddy | 对应进程和桥接释放，其他会话不受影响；原生历史保留 | FR-4、6 |
 
 ### 4.2 行为决策
 
-启动参数按点击时的项目、执行空间、Runtime、模型和工作模式确定。界面后续切换不修改已运行
+启动参数按点击时的项目、执行空间、Runtime、模型和能力配置确定。界面后续切换不修改已运行
 客户端。这里只需保留进程运行所需的内存记录，不增加持久启动快照、恢复日志或数据库迁移。
 
 Continue 和 OpenCode 启动成功后，每次新的点击创建独立终端。启动中的重复点击合并到同一
 进行中操作。终端会话数量沿用现有管理器规则，不新增一套数量控制。
 
-DS 按项目、模型配置及工作模式匹配运行服务。配置相同且服务可用时重新打开原服务；配置变更后
+DS 按项目、模型及能力配置匹配运行服务。配置相同且服务可用时重新打开原服务；配置变更后
 新建匹配实例，保留原实例直到用户停止或应用退出，避免在已有页面中静默改变模型和权限。
 同一匹配项并发启动只执行一次。服务已退出则清除内存记录，下一次点击重新启动。
 
@@ -148,16 +148,13 @@ DS 按项目、模型配置及工作模式匹配运行服务。配置相同且�
 | 系统浏览器打开失败 | 保留可重开的就绪服务，通知用户重试；不复制含令牌地址到普通日志 | US-6 |
 | 服务启动失败 | 清理本次创建的临时资源，再允许重试；不删除用户原生历史 | US-6 |
 
-Ask 沿用现有 Runtime 按工具命令名判断的只读规则，不改变用户手动终端的已有权限。
-DS 后台的 `read` 和原生 `skill` 可在 Ask 执行；`write`、`edit`、`pwsh`/`bash`
-在 Ask 拒绝，在 Execute 放行，代理工具沿用现有分类。工具出现在模型请求目录中不等于
-获准执行，判断仍在 `tools/execute` 路径。Web 接入复用这些规则，不增加 Shell 文本分析、
-目录围栏、逐工具二次确认或新的权限等级。Execute 使用当前账号已有的文件、进程和网络权限。
+原生客户端使用实际注册工具和已分配能力，不注入产品模式插件、只读名单或逐工具确认。
+Main 代理保留请求身份、启用与分配和参数校验。工具使用当前账号已有的文件、进程和网络权限，
+用户手动终端的 OS 权限不变。
 
 官方 `dsh-plan-mode@0.1.7-rc.2` 的 Plan 只改变规划提示和状态，工具目录不随之变化；
-权限预设由另外的 sandbox/approval 组件处理。因此不能把 Plan 名称当成 Ask 实现，
-也不能把官方默认“工作区内修改”当成 GoodBuddy Execute。接入时将启动模式接到现有
-工具名规则，原生页面的模式选择保持同一语义。
+权限预设由另外的 sandbox/approval 组件处理，不能与已移除的 GoodBuddy 工作模式混同。
+保留原生 full-access/approval 适配，不恢复 GoodBuddy 模式钩子。
 
 这些规则覆盖普通启动、使用、关闭和已知失败。尚需技术验证的项目见第 7 节；它们不构成新增
 授权层级或通用恢复框架的理由。
@@ -184,7 +181,7 @@ DS 服务运行后，打开入口仍显示“打开DSH Web”，旁边显示“�
 
 ### 6.1 进程职责
 
-Renderer 仅提交当前会话或项目标识及选择标识。Main 重新解析项目、模型配置、工作模式与
+Renderer 仅提交当前会话或项目标识及选择标识。Main 重新解析项目、模型配置与
 程序路径，通过共享 Zod 契约和显式 preload 方法完成调用。保留已有可信发送方校验，供应商
 密钥留在 Main 加密设置和模型请求路径中。
 
@@ -282,7 +279,7 @@ Runtime。远端配置与模型桥需要客户端生命周期，不能直接复�
 | 阶段 | 工作与应提交证据 | 通过条件 |
 | --- | --- | --- |
 | P1 原生配置验证 | 固定三个客户端版本；保存脱敏命令、环境与程序路径；隔离已有全局配置 | Continue/OpenCode 使用指定模型；DS 自动选中目标项目 |
-| P2 模型与模式 | 每个客户端发送最小真实请求；验证流式、取消、Ask 写入拒绝及 Execute 专用目录写入 | 请求确实经过 GoodBuddy 模型桥；客户端模式切换不能破坏 Ask 边界 |
+| P2 模型与工具 | 每个客户端发送最小真实请求；验证流式、取消及专用目录写入 | 请求确实经过 GoodBuddy 模型桥，工具沿用已接入能力 |
 | P3 生命周期接入 | 配置、PTY、DS 进程和模型桥接入现有管理路径 | 重开、失败重试、关闭及退出能释放对应资源，原生历史保留 |
 | P4 远程验证 | 在共享 Host 部署当前代码，验证 Continue/OpenCode 的 SSH PTY 与模型桥 | 启动、请求、取消、断开和重试均有真实 Host 证据 |
 | P5 UI 与交付资源 | 接入按钮、通知、停止 DS 服务；完善平台资源与文档 | 从真实按钮到客户端完成对话，无手动补依赖步骤 |
@@ -290,7 +287,7 @@ Runtime。远端配置与模型桥需要客户端生命周期，不能直接复�
 P1、P2 是实施前段的实验任务，完成后继续交付完整入口，不将实验程序或不可用按钮作为最终功能。
 
 DS 单项目工作区选中和当前模型桥协议已通过本轮验证。后续优先接入三个客户端的既有
-Ask/Execute 工具规则、Skills/MCP 配置及客户端生命周期，再完成快捷入口和交付资源。
+统一执行规则、Skills/MCP 配置及客户端生命周期，再完成快捷入口和交付资源。
 官方 DS 首次预览声明保留原生“继续”流程，模型配置提前准备。
 
 ## 8. 验收计划
@@ -299,11 +296,11 @@ Ask/Execute 工具规则、Skills/MCP 配置及客户端生命周期，再完成
 | --- | --- | --- |
 | 实际使用 | 每个本地客户端从 GoodBuddy 按钮进入当前项目，使用当前模型完成一轮真实对话 | FR-1～4、US-1、2 |
 | 配置隔离 | 预置另一套全局模型后，仍使用当前选择；两个项目不串目录或配置 | FR-2、3、US-5 |
-| 工作模式 | Ask 尝试文件写入、Shell 写入和 MCP 写入均不执行；Execute 在专用测试目录成功写入 | FR-5、8、US-7 |
+| 工具能力 | 在专用测试目录验证文件、Shell 和已分配 MCP 写入；关闭能力后不可调用，无模式限制 | FR-5、8、US-7 |
 | 能力复用 | 为声明支持的 Skills、MCP 各验证实际加载及最小调用；列出未承接能力 | FR-8 |
 | 生命周期 | 连点启动、切项目、隐藏工作栏、关闭页签、重开 DS、停止服务及退出 | FR-6、US-4、5、8 |
 | 已知失败 | Node/原生依赖缺失、失效目录、模型错误、浏览器打开失败、SSH 中断 | FR-7、9、US-6 |
-| 远程 | 当前源码在共享 Linux x64 Host 上完成 Continue/OpenCode 的 Ask/Execute、模型和断开场景 | FR-2、3、5、US-3 |
+| 远程 | 快捷入口接通后，须在共享 Linux x64 Host 验证 Continue/OpenCode 工具、模型和断开场景；普通远程 Runtime 验证不替代原生客户端入口 | FR-2、3、5、US-3 |
 | UI | 浅深色、键盘操作、窄输入区、无压缩按钮、空对话、200% 文字缩放 | FR-1、US-1、2 |
 | 平台资源 | 对实际交付的 Windows、macOS、Linux 架构逐项验证 Node、PTY、CLI 和 DS 原生依赖 | FR-9 |
 
@@ -324,6 +321,9 @@ The DS Web backend implementation and its focused validation are recorded below.
 [远程主机文档](../remote-host/README.md)。保持各自职责，不复制多个相互冲突的支持矩阵。
 
 ### 9.1 DS Web Backend, 2026-09-26
+
+本节保留 2026-09-26 的接口与测试记录，其中 `workMode` 和 Ask/Execute 限制已由
+[统一执行](../unified-execution/README.md)替代；不作为当前接口或工具权限规范。
 
 `src/main/agent/native-dsh-web-client.ts` exports `NativeDshWebClientService`.
 Construct it with `rootDirectory`, an async `resolveLaunchEnvironment` returning
@@ -380,20 +380,20 @@ launch paths are unchanged because this service supports local DS Web only.
 
 The production coordinator resolves the saved conversation/project and current
 settings for both `get` and `open`. Matching includes the selected model profile
-and credentials, work mode, capability assignments, knowledge scope, Obsidian
+and credentials, capability assignments, knowledge scope, Obsidian
 settings and local Node selection. Ready services keep their MCP gateway after an
 OS browser-open error and can be reopened or explicitly stopped by their owner.
 The coordinator passes its configuration key into the service's existing match
 hash, so the inner DS reuse decision also observes updated skill digests and
 launch settings even when directory paths are unchanged.
 
-For DS Ask, the built-in gateway's existing read grant supplies the allowed raw
-tool names; the Web adapter maps these through the official MCP naming contract.
-Custom MCP is exposed in Execute, matching the existing Runtime behavior; custom
-`readOnlyHint` annotations do not introduce a separate Ask permission rule.
+The gateway supplies enabled and assigned tools; the Web adapter maps these
+through the official MCP naming contract. Custom MCP follows the same assignment
+rules, without product-mode filtering or approval policy. `readOnlyHint` describes
+tool behavior and does not filter the catalog.
 Assigned skill directories containing `SKILL.md` load through the official skill
-plugin. Continue/OpenCode native Ask now retain Main-bound endpoints and map the
-granted read-tool names through both native permissions and execution hooks.
+plugin. Continue/OpenCode retain Main-bound endpoints and map the registered
+tool names through native configuration without GoodBuddy mode hooks.
 OpenCode prefixes names with the bound MCP server name; Continue uses raw names.
 Story Graph additionally rechecks Supervisor enablement on every call.
 

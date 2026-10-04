@@ -41,7 +41,7 @@ type AssistantDatabase = {
   getActivityHistoryPage: (input: unknown) => ActivityHistoryPage
   getActivityHistorySummary: (input: unknown) => ActivityHistorySummary
   reconcileActivityHistory: (input: unknown) => number
-  createTask: (input: { id: string; title: string; instructions: string; workMode: 'ask' }) => AssistantTask
+  createTask: (input: { id: string; title: string; instructions: string }) => AssistantTask
   updateTaskStatus: (taskId: string, status: AssistantTask['status']) => void
 }
 let AssistantDatabase: new (path: string) => AssistantDatabase
@@ -161,14 +161,6 @@ function oracle(initial: readonly ActivityRecord[]) {
       list = list.map((item) => item.requestId === requestId && item.kind === 'request'
         ? { ...item, status, detail: detail ?? item.detail } : item)
     },
-    updateApproval: (conversationId: string, status: ActivityRecord['status'], line: string) => {
-      let updated = false
-      list = list.map((item) => {
-        if (updated || item.conversationId !== conversationId || item.kind !== 'approval' || item.status !== 'pending') return item
-        updated = true
-        return { ...item, status, detail: `${item.detail}\n${line}` }
-      })
-    },
     removeByRequest: (requestId: string) => { list = list.filter((item) => item.requestId !== requestId) },
     removeToolByCallId: (requestId: string, callId: string) => {
       list = list.filter((item) => !(item.requestId === requestId && item.kind === 'tool' && item.callId === callId))
@@ -205,7 +197,7 @@ describe('activity history sync (paged)', () => {
       database.replaceActivityHistory({ records: stored, legacyHistoryMayBeIncomplete: false })
       const tasks: AssistantTask[] = []
       for (const [index, status] of (['completed', 'failed', 'running', 'cancelled'] as const).entries()) {
-        const created = database.createTask({ id: `request-${index}`, title: 't', instructions: 'i', workMode: 'ask' })
+        const created = database.createTask({ id: `request-${index}`, title: 't', instructions: 'i' })
         database.updateTaskStatus(created.id, status)
         tasks.push({ ...created, status })
       }
@@ -238,9 +230,6 @@ describe('activity history sync (paged)', () => {
           const detail = random() < 0.5 ? 'done' : undefined
           store.updateRequest(requestId, status, detail)
           expected.updateRequest(requestId, status, detail)
-        } else if (roll < 0.42) {
-          store.updateApproval(conversationId, 'denied', 'decision')
-          expected.updateApproval(conversationId, 'denied', 'decision')
         } else if (roll < 0.46) {
           store.removeByRequest(requestId)
           expected.removeByRequest(requestId)
@@ -346,7 +335,7 @@ describe('activity history sync (paged)', () => {
     const done = record({ status: 'running', requestId: 'finished', kind: 'request', detail: 'started' })
     const live = record({ status: 'running', requestId: 'live' })
     database.replaceActivityHistory({ records: [leftover, done, live], legacyHistoryMayBeIncomplete: false })
-    const task = database.createTask({ id: 'finished', title: 't', instructions: 'i', workMode: 'ask' })
+    const task = database.createTask({ id: 'finished', title: 't', instructions: 'i' })
     database.updateTaskStatus(task.id, 'completed')
     const api = databaseApi(database)
     const store = createActivityStore()

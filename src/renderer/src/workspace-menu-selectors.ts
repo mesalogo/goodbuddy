@@ -3,6 +3,24 @@ import { conversationActivityTime, getConversationDisplayTitle, type Conversatio
 import { useConversationStoreSelector, type ConversationStore } from './conversation-store'
 import type { ConversationActivity } from './conversation-activity'
 import { sameArrayItems } from './stable-derived-value'
+import { formatConversationListTime, type TimeFormatLocale } from './time-format'
+import { formatMediumDateTime } from './locale-formatters'
+
+export function useWorkspaceConversationTime(store: ConversationStore, id: string, locale: TimeFormatLocale) {
+  const selector = useCallback(() => {
+    const conversation = store.getConversation(id)
+    if (!conversation) return undefined
+    return {
+      dateTime: new Date(conversation.updatedAt).toISOString(),
+      label: formatConversationListTime(conversation.updatedAt, locale),
+      title: formatMediumDateTime(conversation.updatedAt, locale)
+    }
+  }, [store, id, locale])
+  const subscribe = useCallback((listener: () => void) => store.subscribeConversation(id, listener), [store, id])
+  // Streaming changes below the displayed precision do not need a React commit.
+  return useConversationStoreSelector(store, selector,
+    (a, b) => a?.label === b?.label && a?.title === b?.title, subscribe)
+}
 
 export type WorkspaceConversation = {
   id: string

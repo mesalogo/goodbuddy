@@ -321,7 +321,7 @@ function validCapabilities(): DaemonCapabilities {
   return {
     generation: 11,
     capabilities: [
-      { name: 'runtime/acp', version: 5, critical: true }
+      { name: 'runtime/acp', version: 6, critical: true }
     ],
     runtimes: [
       {
@@ -490,15 +490,15 @@ async function openChannel(fixture = connectionFixture()) {
 }
 
 describe('ProtocolRemoteRuntimeChannel', () => {
-  it('refreshes image binding descriptions per prompt, hides Ask, and closes failed preparations', async () => {
+  it('refreshes image binding descriptions per prompt and closes failed preparations', async () => {
     const fixture = await openChannel()
     const describe = vi.fn(async () => 'First image catalog')
     const binding: ImageToolBinding = {
-      context: { conversationId: 'conversation', messageId: 'message', requestId: 'operation-1', workMode: 'execute' },
+      context: { conversationId: 'conversation', messageId: 'message', requestId: 'operation-1' },
       describe, call: vi.fn()
     }
-    const prepare = (requestId: string, workMode: 'ask' | 'execute' = 'execute') => ({
-      bindingId: 'binding-1', operationId: requestId, requestId, workMode,
+    const prepare = (requestId: string) => ({
+      bindingId: 'binding-1', operationId: requestId, requestId,
       controllerId: 'controller-1', controllerGeneration: 1, connectionGeneration: fixture.channel.generation,
       channelEpoch: fixture.channel.channelEpoch, hostId: 'host-1', hostRevision: 1, hostKeyGeneration: 1,
       workspaceIdentity: 'workspace-1', agentInstallationId: 'agent-1', runtimeId: 'opencode',
@@ -509,7 +509,7 @@ describe('ProtocolRemoteRuntimeChannel', () => {
       if (method !== 'runtime/preparePrompt') return defaultResponse(method, params)
       const input = params as ReturnType<typeof prepare> & { imageTool?: { description: string } }
       return { bindingId: input.bindingId, operationId: input.operationId, requestId: input.requestId,
-        workMode: input.workMode, deadlineAt: input.deadlineAt, acceptedAt: new Date().toISOString(),
+        deadlineAt: input.deadlineAt, acceptedAt: new Date().toISOString(),
         ...(input.imageTool ? { imageToolUrl: 'http://127.0.0.1:1234/image' } : {}) }
     }
     try {
@@ -521,21 +521,27 @@ describe('ProtocolRemoteRuntimeChannel', () => {
       await fixture.channel.preparePrompt(prepare('operation-2'), binding, wait.signal)
       expect(fixture.client.blobBinaries[0]!.closed).toBe(true)
       expect(fixture.client.requests.at(-1)!.params).toMatchObject({ imageTool: { description: 'Refreshed image catalog' } })
-      await fixture.channel.preparePrompt(prepare('operation-3', 'ask'), binding, wait.signal)
+      await fixture.channel.preparePrompt(prepare('operation-3'), undefined, wait.signal)
       expect(describe).toHaveBeenCalledTimes(2)
       expect(fixture.client.blobBinaries[1]!.closed).toBe(true)
       expect(fixture.client.requests.at(-1)!.params).not.toHaveProperty('imageTool', expect.anything())
       const graph = { available: vi.fn(async () => true), call: vi.fn() }
-      await fixture.channel.preparePrompt(prepare('graph-ask', 'ask'), undefined, wait.signal, graph)
+      await fixture.channel.preparePrompt(prepare('graph'), undefined, wait.signal, graph)
       expect(fixture.client.requests.at(-1)!.params).toMatchObject({ imageTool: { storyGraph: true } })
       expect((fixture.client.requests.at(-1)!.params as { imageTool: object }).imageTool).not.toHaveProperty('description')
       graph.available.mockResolvedValue(false)
-      await fixture.channel.preparePrompt(prepare('graph-disabled', 'ask'), undefined, wait.signal, graph)
+      await fixture.channel.preparePrompt(prepare('graph-disabled'), undefined, wait.signal, graph)
       expect(fixture.client.blobBinaries[2]!.closed).toBe(true)
       expect(fixture.client.requests.at(-1)!.params).not.toHaveProperty('imageTool', expect.anything())
+      const saveOnly: ImageToolBinding = { ...binding, describe: async () => undefined,
+        describeSave: async () => 'Conversation image IDs', readForSave: vi.fn() }
+      await fixture.channel.preparePrompt(prepare('save-only'), saveOnly, wait.signal)
+      expect(fixture.client.requests.at(-1)!.params).toMatchObject({ imageTool: { saveDescription: 'Conversation image IDs' } })
+      expect((fixture.client.requests.at(-1)!.params as { imageTool: object }).imageTool).not.toHaveProperty('description')
       fixture.client.responder = () => { throw new Error('preparation response lost') }
       await expect(fixture.channel.preparePrompt(prepare('operation-4'), binding, wait.signal)).rejects.toThrow()
       expect(fixture.client.blobBinaries[3]!.closed).toBe(true)
+      expect(fixture.client.blobBinaries[4]!.closed).toBe(true)
     } finally { await fixture.channel.close() }
   })
   it('sends question replies on the authenticated control channel and rejects foreign bindings', async () => {
@@ -783,7 +789,6 @@ describe('ProtocolRemoteRuntimeChannel', () => {
         bindingId: 'binding-1',
         operationId: 'operation-1',
         requestId: 'operation-1',
-        workMode: 'execute',
         controllerId: 'controller-1',
         controllerGeneration: 1,
         connectionGeneration: fixture.channel.generation,
@@ -1106,16 +1111,16 @@ describe('ProtocolRemoteRuntimeChannel', () => {
       mutate: (capabilities: DaemonCapabilities): DaemonCapabilities => ({
         ...capabilities,
         capabilities: [
-          { name: 'runtime/acp', version: 3, critical: false }
+          { name: 'runtime/acp', version: 6, critical: false }
         ]
       })
     },
     {
-      label: 'non-exact capability version',
+      label: 'legacy mode-bearing capability version',
       mutate: (capabilities: DaemonCapabilities): DaemonCapabilities => ({
         ...capabilities,
         capabilities: [
-          { name: 'runtime/acp', version: 1, critical: true }
+          { name: 'runtime/acp', version: 5, critical: true }
         ]
       })
     },

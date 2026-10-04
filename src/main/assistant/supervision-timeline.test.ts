@@ -23,7 +23,7 @@ async function fixture(crossProject = false) {
   const sql = new DatabaseSync(path)
   cleanups.push(async () => { sql.close(); db.close(); await rm(directory, { recursive: true, force: true }) })
   const a = db.listProjects()[0]!
-  const b = db.createProject({ name: 'B', description: '', rootPath: directory, defaultWorkMode: 'ask' })
+  const b = db.createProject({ name: 'B', description: '', rootPath: directory })
   const message = (content: string, minutes: number) => ({ id: randomUUID(), role: 'user' as const, content, createdAt: base + minutes * 60_000, state: 'complete' as const })
   const conversations = [
     { id: randomUUID(), projectId: a.id, title: 'A', updatedAt: base, messages: [message('Choose SQLite for the timeline', 0), message('Measured: SQLite is fast enough', 90)] },
@@ -112,6 +112,9 @@ it('upgrades released per-scope progress and duplicated events into the shared t
     ALTER TABLE supervision_events DROP COLUMN started_at; ALTER TABLE supervision_events DROP COLUMN ended_at;
     ALTER TABLE supervision_events DROP COLUMN project_id; ALTER TABLE supervision_events DROP COLUMN superseded_by;
     ALTER TABLE supervision_sources DROP COLUMN source_key; ALTER TABLE supervision_sources DROP COLUMN source_revision;
+    ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+    ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+    ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
     PRAGMA user_version = 52;`)
   f.db.close()
   f.db.initialize(process.cwd())

@@ -518,15 +518,22 @@ export class LocalWorkspaceAccess implements WorkspaceAccess {
     })
     return {
       path: directory.path,
-      entries: entries.map((entry) => ({
+      entries: await Promise.all(entries.map(async (entry) => ({
         name: entry.name,
         path: [directory.path, entry.name].filter(Boolean).join('/'),
         type: entry.isDirectory()
           ? 'directory'
           : entry.isFile()
             ? 'file'
-            : 'other'
-      })),
+            : 'other',
+        ...await lstat(resolve(directory.canonicalPath, entry.name)).then((metadata) => ({
+          modifiedAt: metadata.mtime.toISOString(),
+          ...(metadata.birthtimeMs > 0 ? { createdAt: metadata.birthtime.toISOString() } : {})
+        })).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+          return {}
+        })
+      }))),
       truncated: listing.truncated
     }
   }

@@ -10,7 +10,7 @@ const entrypoint =
 describe.skipIf(!entrypoint)(
   'controlled DeepSeek Harness third-party plugin',
   () => {
-    it('loads and executes a real marketplace tool with full Execute capability', async () => {
+    it('loads and executes a registered marketplace tool', async () => {
       const workspace = await realpath(
         await mkdtemp(
           join(tmpdir(), 'goodbuddy-harness-marketplace-e2e-')

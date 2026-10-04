@@ -1,4 +1,4 @@
-import { ChevronDown, Plus, Server, X } from 'lucide-react'
+import { Archive, ArrowRight, ChevronDown, Plus, Server, X } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -7,16 +7,24 @@ import type { SshHost, SshHostAgentConnectionState } from '../../shared/ssh-host
 import type { ConversationActivity } from './conversation-activity'
 import type { ConversationStore } from './conversation-store'
 import { FloatingPortal } from './FloatingPortal'
+import { displayErrorMessage } from './error-message'
+import type { AppNotificationInput } from './notifications'
 import { getProjectDisplayText } from './project-display'
 import { useListWindow } from './use-list-window'
 import { PageTabs, SegmentedControl } from './WorkspacePrimitives'
-import { useWorkspaceConversations, workspaceConversationRows, type WorkspaceFilter } from './workspace-menu-selectors'
+import { useWorkspaceConversations, useWorkspaceConversationTime, workspaceConversationRows, type WorkspaceFilter } from './workspace-menu-selectors'
 import './workspace-menu.css'
 
 type ProjectCategory = 'allProjects' | 'local' | 'remote' | 'channels'
 type ProjectRow =
   | { id: string; kind: 'host'; hostId: string; label: string; state: SshHostAgentConnectionState }
   | { id: string; kind: 'project'; project: AssistantProject }
+
+function WorkspaceConversationTime({ store, id }: { store: ConversationStore; id: string }): React.JSX.Element | null {
+  const { i18n } = useTranslation()
+  const time = useWorkspaceConversationTime(store, id, i18n.resolvedLanguage === 'en-US' ? 'en-US' : 'zh-CN')
+  return time ? <time dateTime={time.dateTime} title={time.title}>{time.label}</time> : null
+}
 
 export type WorkspaceMenuProps = {
   projects: AssistantProject[]
@@ -32,6 +40,9 @@ export type WorkspaceMenuProps = {
   renderProject: (project: AssistantProject) => ReactNode
   onClose: () => void
   onCreateProject: () => void
+  onEnterProject: (projectId: string) => void
+  onRestore: (projectId: string) => Promise<void>
+  notify: (input: AppNotificationInput) => void
   onNewConversation: (projectId: string) => void
   onOpenConversation: (conversationId: string) => void
 }
@@ -39,7 +50,7 @@ export type WorkspaceMenuProps = {
 export function WorkspaceMenu({
   projects, activeProjectId, activities, conversationStore, remoteProjectsEnabled,
   hosts, connectionStates, anchorRef, controlsRef, id, renderProject,
-  onClose, onCreateProject, onNewConversation, onOpenConversation
+  onClose, onCreateProject, onEnterProject, onRestore, notify, onNewConversation, onOpenConversation
 }: WorkspaceMenuProps): React.JSX.Element {
   const { t } = useTranslation('workspace')
   const { t: tApp } = useTranslation('app')
@@ -48,18 +59,25 @@ export function WorkspaceMenu({
   const projectListRef = useRef<HTMLDivElement>(null)
   const conversationListRef = useRef<HTMLDivElement>(null)
   const categoriesRef = useRef<HTMLDivElement>(null)
+  const archiveButtonRef = useRef<HTMLButtonElement>(null)
   const [category, setCategory] = useState<ProjectCategory>('allProjects')
   if (category === 'remote' && !remoteProjectsEnabled) setCategory('allProjects')
   const [scope, setScope] = useState<string | null>(null)
   const [filter, setFilter] = useState<WorkspaceFilter>('all')
   const [query, setQuery] = useState('')
+  const [archivedView, setArchivedView] = useState(false)
+  const [archivedProjects, setArchivedProjects] = useState<AssistantProject[]>()
+  const [loadingArchives, setLoadingArchives] = useState(false)
+  const [restoringId, setRestoringId] = useState<string>()
+  const archivePending = useRef(false)
+  const restorePending = useRef(false)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
   const [keyboardProject, setKeyboardProject] = useState<string>()
   const [keyboardConversation, setKeyboardConversation] = useState<string>()
   const activityTimes = useSyncExternalStore(conversationStore.subscribeActivityTimes, conversationStore.getActivityTimes)
   const conversations = useWorkspaceConversations(conversationStore, tApp('conversation.defaultTitle'), activityTimes)
-  const visibleProjects = useMemo(() => projects.filter((project) =>
-    project.kind === 'channel' || project.executionSpace.kind !== 'ssh' || remoteProjectsEnabled
+  const visibleProjects = useMemo(() => projects.filter((project) => project.status === 'active' && (
+    project.kind === 'channel' || project.executionSpace.kind !== 'ssh' || remoteProjectsEnabled)
   ), [projects, remoteProjectsEnabled])
   const projectById = useMemo(() => new Map(visibleProjects.map((project) => [project.id, project])), [visibleProjects])
   const availableActivities = useMemo(() => activities.filter((activity) => !activity.projectId || projectById.has(activity.projectId)), [activities, projectById])
@@ -74,11 +92,13 @@ export function WorkspaceMenu({
   const projectRows = useMemo(() => {
     const hostById = new Map(hosts.map((host) => [host.id, host]))
     const search = query.trim().toLocaleLowerCase()
-    const matching = visibleProjects.filter((project) => {
+    const candidates = archivedView ? (archivedProjects ?? []).filter(project => project.kind === 'user' &&
+      (project.executionSpace.kind === 'local' || remoteProjectsEnabled)) : visibleProjects
+    const matching = candidates.filter((project) => {
       const host = project.executionSpace.kind === 'ssh' ? hostById.get(project.executionSpace.hostId) : undefined
       if (search) return `${getProjectDisplayText(project, t).name} ${project.rootPath} ${host?.name ?? ''} ${host?.hostname ?? ''} ${project.channel ?? ''}`.toLocaleLowerCase().includes(search)
       const kind = project.kind === 'channel' ? 'channels' : project.executionSpace.kind === 'ssh' ? 'remote' : 'local'
-      return category === 'allProjects' || category === kind
+      return archivedView || category === 'allProjects' || category === kind
     })
     const rows: ProjectRow[] = []
     const addProjects = (items: AssistantProject[]): void => {
@@ -103,17 +123,48 @@ export function WorkspaceMenu({
     }
     addProjects(matching.filter((project) => project.kind === 'channel'))
     return rows
-  }, [visibleProjects, hosts, query, category, t, remoteProjectsEnabled, connectionStates, collapsed])
+  }, [visibleProjects, archivedView, archivedProjects, hosts, query, category, t, remoteProjectsEnabled, connectionStates, collapsed])
   const rows = useMemo(() => workspaceConversationRows(availableConversations, availableActivities, scope, filter, activityTimes), [availableConversations, availableActivities, scope, filter, activityTimes])
   const projectIds = useMemo(() => projectRows.map((row) => row.id), [projectRows])
   const conversationIds = useMemo(() => rows.map((row) => row.id), [rows])
-  const projectWindow = useListWindow({ ids: projectIds, scope: `${category}:${query}`, scrollRef: projectListRef,
+  const projectWindow = useListWindow({ ids: projectIds, scope: `${archivedView}:${category}:${query}`, scrollRef: projectListRef,
     keepIds: [keyboardProject], enabled: true, resetScrollOnScopeChange: true, estimatedRowHeight: 64 })
   const conversationWindow = useListWindow({ ids: conversationIds, scope: `${scope}:${filter}`, scrollRef: conversationListRef,
     keepIds: [keyboardConversation], enabled: true, resetScrollOnScopeChange: true, estimatedRowHeight: 56 })
   const newProject = projectById.get(scope ?? activeProjectId)
   const scopeName = scope === null ? t('workspaceMenu.allProjects')
     : projectById.has(scope) ? getProjectDisplayText(projectById.get(scope)!, t).name : t('projectActivity.unassigned')
+
+  async function loadArchives(): Promise<void> {
+    if (archivePending.current) return
+    archivePending.current = true
+    setLoadingArchives(true)
+    try {
+      setArchivedProjects((await window.goodbuddy.projects.list(true)).filter(project => project.status === 'archived'))
+    } catch (reason) {
+      notify({ tone: 'error', message: displayErrorMessage(reason, t('workspaceMenu.loadArchivesFailed')) })
+    } finally {
+      archivePending.current = false
+      setLoadingArchives(false)
+    }
+  }
+
+  async function restore(project: AssistantProject): Promise<void> {
+    if (restorePending.current) return
+    restorePending.current = true
+    setRestoringId(project.id)
+    try {
+      await onRestore(project.id)
+      if (document.activeElement?.closest('[data-list-window-row]')?.getAttribute('data-list-window-row') === project.id) archiveButtonRef.current?.focus()
+      setArchivedProjects(current => current?.filter(item => item.id !== project.id))
+      notify({ tone: 'success', message: t('workspaceMenu.restored', { name: getProjectDisplayText(project, t).name }) })
+    } catch (reason) {
+      notify({ tone: 'error', message: displayErrorMessage(reason, t('workspaceMenu.restoreFailed')) })
+    } finally {
+      restorePending.current = false
+      setRestoringId(undefined)
+    }
+  }
 
   useLayoutEffect(() => {
     const menu = menuRef.current
@@ -124,12 +175,13 @@ export function WorkspaceMenu({
       const width = Math.min(920, window.innerWidth - 32)
       menu.style.width = `${width}px`
       menu.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))}px`
-      menu.style.top = `${Math.max(16, Math.min(rect.bottom + 8, window.innerHeight - menu.offsetHeight - 16))}px`
+      const top = Math.max(16, rect.bottom + 8)
+      menu.style.top = `${top}px`
+      menu.style.maxHeight = `${Math.max(0, window.innerHeight - top - 16)}px`
     }
     position()
     const observer = new ResizeObserver(position)
     observer.observe(anchor)
-    observer.observe(menu)
     window.addEventListener('resize', position)
     window.addEventListener('scroll', position, true)
     return () => {
@@ -190,7 +242,7 @@ export function WorkspaceMenu({
           flushSync(() => setKeyboardProject(scope ?? undefined))
           const row = Array.from(projectListRef.current?.querySelectorAll<HTMLElement>('[data-list-window-row]') ?? [])
             .find((item) => item.dataset.listWindowRow === scope)
-          const target = row?.querySelector<HTMLButtonElement>('button') ?? categoriesRef.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')
+           const target = row?.querySelector<HTMLButtonElement>('button') ?? (archivedView ? archiveButtonRef.current : categoriesRef.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]'))
           target?.focus()
         }
       }}>
@@ -202,16 +254,23 @@ export function WorkspaceMenu({
         <section className="workspace-menu__projects">
           <input className="field-control workspace-menu__search" type="search" aria-label={t('workspaceMenu.search')}
             placeholder={t('workspaceMenu.search')} value={query} onChange={(event) => setQuery(event.target.value)} />
-          <div className="workspace-menu__categories" ref={categoriesRef}>
+          <div className="workspace-menu__categories" ref={categoriesRef} hidden={archivedView}>
             <PageTabs ariaLabel={t('workspaceMenu.categories')} idPrefix={`${id}-categories`} variant="segmented"
               tabs={categoryTabs} value={category} onChange={(next) => {
                 setCategory(next)
                 if (next === 'allProjects') setScope(null)
               }} />
           </div>
-          <div className="workspace-menu__project-panel" role="tabpanel" id={`${id}-categories-panel-${category}`}
-            aria-labelledby={query.trim() ? undefined : `${id}-categories-tab-${category}`}
-            aria-label={query.trim() ? t('workspaceMenu.search') : undefined}>
+          {archivedView && <div className="workspace-menu__archive-heading">
+            <strong>{t('workspaceMenu.archived')}</strong>
+            <button type="button" className="secondary-button" onClick={() => {
+              flushSync(() => setArchivedView(false))
+              categoriesRef.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus()
+            }}>{t('workspaceMenu.back')}</button>
+          </div>}
+          <div className="workspace-menu__project-panel" role={archivedView ? 'region' : 'tabpanel'} id={`${id}-categories-panel-${category}`}
+            aria-labelledby={archivedView || query.trim() ? undefined : `${id}-categories-tab-${category}`}
+            aria-label={archivedView ? t('workspaceMenu.archived') : query.trim() ? t('workspaceMenu.search') : undefined}>
           <div className="workspace-menu__project-list" ref={projectListRef} role="menu" aria-label={t('projectSwitcher.selector.ariaLabel')}
             onScroll={projectWindow.onScroll} onFocus={projectWindow.onFocus} onBlur={projectWindow.onBlur}
             onKeyDown={(event) => moveFocus(event, 'projects')}>
@@ -228,9 +287,14 @@ export function WorkspaceMenu({
                 }} onFocus={(event) => {
                   if (row.kind === 'project' && (event.target as HTMLElement).matches('[role="menuitemradio"]')) setScope(row.project.id)
                  }}>
-                 {(category === 'allProjects' || query.trim()) && rowCategory !== previousCategory &&
+                  {(archivedView || category === 'allProjects' || query.trim()) && rowCategory !== previousCategory &&
                    <h3 className="workspace-menu__project-category">{t(`workspaceMenu.${rowCategory}`)}</h3>}
-                 {row.kind === 'project' ? renderProject(row.project)
+                  {row.kind === 'project' ? archivedView ? <div className="workspace-menu__archived-project">
+                    <span><strong>{getProjectDisplayText(row.project, t).name}</strong><small>{row.project.rootPath}</small></span>
+                    <button type="button" role="menuitem" className="secondary-button" disabled={Boolean(restoringId)}
+                      aria-label={t('workspaceMenu.restoreNamed', { name: getProjectDisplayText(row.project, t).name })}
+                      onClick={() => void restore(row.project)}>{t(restoringId === row.project.id ? 'workspaceMenu.restoring' : 'workspaceMenu.restore')}</button>
+                  </div> : renderProject(row.project)
                     : <button type="button" role="menuitem" className="project-switcher__host-heading workspace-menu__host"
                       aria-expanded={Boolean(query.trim()) || !collapsed.has(row.hostId)} onClick={() => setCollapsed((current) => {
                         const next = new Set(current)
@@ -244,11 +308,16 @@ export function WorkspaceMenu({
                     </button>}
               </div>
             })}
-            {!projectRows.length && <p className="workspace-menu__empty">{t('workspaceMenu.noProjects')}</p>}
+            {archivedView && loadingArchives ? <p className="workspace-menu__empty" role="status">{t('workspaceMenu.loadingArchives')}</p>
+              : archivedView && !archivedProjects ? <div className="workspace-menu__empty"><button type="button" className="secondary-button" onClick={() => void loadArchives()}>{t('workspaceMenu.retryArchives')}</button></div>
+              : !projectRows.length && <p className="workspace-menu__empty">{t(archivedView && !query.trim() ? 'workspaceMenu.noArchives' : 'workspaceMenu.noProjects')}</p>}
           </div>
           </div>
           <footer className="workspace-menu__footer"><button type="button" className="secondary-button" onClick={onCreateProject}>
             <Plus size={15} aria-hidden="true" />{t('projectSwitcher.selector.create')}
+          </button><button type="button" className="workspace-menu__archived" ref={archiveButtonRef} aria-pressed={archivedView}
+            onClick={() => { setArchivedView(!archivedView); if (!archivedView && !archivedProjects) void loadArchives() }}>
+            <Archive size={14} aria-hidden="true" />{t('workspaceMenu.archived')}
           </button></footer>
         </section>
         <section className="workspace-menu__activity" aria-label={scopeName}>
@@ -275,12 +344,23 @@ export function WorkspaceMenu({
                   <h3 className="workspace-menu__category">{t(`workspaceMenu.groups.${row.group}`)}</h3>}
                 <button type="button" className="workspace-menu__conversation" onClick={() => { onClose(); onOpenConversation(row.id) }}>
                   <span><strong>{row.title}</strong>{scope === null && <>{' '}<small>{project ? getProjectDisplayText(project, t).name : t('projectActivity.unassigned')}</small></>}</span>{' '}
-                  {row.status && <small className={`project-activity__${row.status === 'running' || row.status === 'completed' ? row.status : 'attention'}`}>{t(`projectActivity.status.${row.status}`)}</small>}
+                  <span className="workspace-menu__metadata">
+                    <WorkspaceConversationTime store={conversationStore} id={row.id} />{' '}
+                    {row.status && <small className={`project-activity__${row.status === 'running' || row.status === 'completed' ? row.status : 'attention'}`}>{t(`projectActivity.status.${row.status}`)}</small>}
+                  </span>
                 </button>
               </div>
             })}
             {!rows.length && <p className="workspace-menu__empty">{t('workspaceMenu.noConversations')}</p>}
           </div>
+          <footer className="workspace-menu__footer workspace-menu__enter">
+            <button type="button" className="primary-button" disabled={!newProject}
+              title={t('workspaceMenu.enterNamed', { name: newProject ? getProjectDisplayText(newProject, t).name : '' })}
+              aria-label={t('workspaceMenu.enterNamed', { name: newProject ? getProjectDisplayText(newProject, t).name : '' })}
+              onClick={() => { if (newProject) { onEnterProject(newProject.id); onClose() } }}>
+              {t('workspaceMenu.enter')}<ArrowRight size={15} aria-hidden="true" />
+            </button>
+          </footer>
         </section>
       </div>
     </div>

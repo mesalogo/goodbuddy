@@ -328,7 +328,7 @@ it('rejects changed source versions and rolls back offsets when batch persistenc
 
 it('round-robins projects and conversations and keeps semantic chunks independent of database page size', async () => {
   const f = await fixture([['a'.repeat(2500)], ['b'.repeat(2500)], ['c'.repeat(2500)]], { concurrency: 1, pageSize: 1 })
-  const other = f.db.createProject({ name: 'Other', description: '', rootPath: process.cwd(), defaultWorkMode: 'ask' })
+  const other = f.db.createProject({ name: 'Other', description: '', rootPath: process.cwd() })
   f.sql.prepare('UPDATE conversations SET project_id = ? WHERE id = ?').run(other.id, f.conversations[2]!.id)
   await f.service().run(request)
   const leaves = f.summarize.mock.calls.map(([call]) => call.evidence).filter(items => items[0]?.sourceType === 'conversation')

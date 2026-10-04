@@ -190,14 +190,6 @@ type OpenCodeSkillRegistration = {
 const sharedSkillPreparations = new Map<string, Promise<string>>();
 const sharedConfigPreparations = new Map<string, Promise<void>>();
 
-const executePermissionRules: PermissionRuleset = [
-  { permission: "*", pattern: "*", action: "allow" },
-];
-
-const readOnlyPermissionRules: PermissionRuleset = [
-  { permission: "*", pattern: "*", action: "deny" },
-];
-
 function resolveOpenCodeProvider(
   profile: ResolvedModelProfile,
 ): OpenCodeProviderDescriptor {
@@ -596,8 +588,6 @@ function mapOpenCodeNativeTools(
       name: id.slice(0, 200),
       kind: builtinKind ?? "other",
       source: builtinKind ? "runtime" : "unknown",
-      ask: id === "skill" ? "conditional" : "blocked",
-      execute: "allowed",
     });
   }
   return tools;
@@ -2287,7 +2277,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       }
     };
     const subscriptionController = new AbortController();
-    const imageCapabilityToken = request.imageToolBinding && request.workMode === 'execute'
+    const imageCapabilityToken = request.imageToolBinding
       ? this.options.knowledgeGateway?.bindImageTool(request.imageToolBinding, signal, request.knowledgeCapabilityToken)
       : undefined;
     const scopedCapabilityToken = imageCapabilityToken ?? request.knowledgeCapabilityToken;
@@ -2407,7 +2397,6 @@ export class OpenCodeRuntime implements AgentRuntime {
           .map((toolName) => `${knowledgeMcpName}_${toolName}`);
       }
       if (
-        request.workMode === "execute" &&
         this.usesEmbeddedPermissionMediation() &&
         this.options.knowledgeGateway?.getEndpoint() &&
         this.options.mcpServers?.length
@@ -2430,51 +2419,20 @@ export class OpenCodeRuntime implements AgentRuntime {
           );
         }
       }
-      const permission =
-        request.workMode === "execute"
-          ? [
-              ...executePermissionRules,
-              ...(this.usesEmbeddedPermissionMediation()
-                ? temporaryMcpDenyRules
-                : []),
-              ...nativeSkillPermissionRules,
-              ...knowledgeToolIds.map((toolId) => ({
-                permission: toolId,
-                pattern: "*",
-                action: "allow" as const,
-              })),
-            ]
-          : knowledgeToolIds.length > 0
-            ? [
-                ...readOnlyPermissionRules,
-                ...nativeSkillPermissionRules,
-                ...knowledgeToolIds.map((toolId) => ({
-                  permission: toolId,
-                  pattern: "*",
-                  action: "allow" as const,
-                })),
-              ]
-            : [...readOnlyPermissionRules, ...nativeSkillPermissionRules];
+      const permission = [
+        { permission: "*", pattern: "*", action: "allow" as const },
+        ...(this.usesEmbeddedPermissionMediation()
+          ? temporaryMcpDenyRules
+          : []),
+        ...nativeSkillPermissionRules,
+        ...knowledgeToolIds.map((toolId) => ({
+          permission: toolId,
+          pattern: "*",
+          action: "allow" as const,
+        })),
+      ];
       let toolOverrides: Record<string, boolean> | undefined;
-      if (request.workMode !== "execute") {
-        const tools = await this.controlRequest(
-          "读取工具清单",
-          (controlSignal) =>
-            client.tool.ids({ directory }, { signal: controlSignal }),
-          signal,
-        );
-        if (tools.error || !tools.data) {
-          throw new Error("OpenCode 无法确认工具已禁用，已阻止只读请求");
-        }
-        toolOverrides = {
-          ...Object.fromEntries(tools.data.map((toolId) => [toolId, false])),
-          ...temporaryMcpToolOverrides,
-          ...Object.fromEntries(
-            knowledgeToolIds.map((toolId) => [toolId, true]),
-          ),
-          ...(nativeSkillIds.length > 0 ? { skill: true } : {}),
-        };
-      } else if (this.usesEmbeddedPermissionMediation()) {
+      if (this.usesEmbeddedPermissionMediation()) {
         toolOverrides = {
           ...temporaryMcpToolOverrides,
           ...Object.fromEntries(
@@ -3095,9 +3053,6 @@ export class OpenCodeRuntime implements AgentRuntime {
                 summary,
               };
             }
-            const allowKnowledge =
-              request.workMode === "ask" &&
-              knowledgeToolIds.includes(permissionRequest.permission);
             const response = await this.controlRequest(
               "回复权限请求",
               (controlSignal) =>
@@ -3105,10 +3060,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                   {
                     requestID: permissionRequest.id,
                     directory,
-                    reply:
-                      request.workMode === "execute" || allowKnowledge
-                        ? "once"
-                        : "reject",
+                    reply: "once",
                   },
                   { signal: controlSignal },
                 ),

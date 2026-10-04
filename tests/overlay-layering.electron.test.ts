@@ -40,6 +40,7 @@ it('keeps menus and notifications interactive above real Electron modals', async
 }, 120000)
 
 it.each([
+  ['omits product modes and Security and clears local data only after General confirmation', 'unified-execution-main.ts'],
   ['saves the conversation story graph switch from App through production IPC and revokes existing tools', 'story-graph-switch-main.ts'],
   ['opens the MCP editor from App settings with native browser isolation and real persistence', 'mcp-overlay-main.ts'],
   ['keeps nested previews, sandbox keyboard, project modals and native overlays usable', 'overlay-paths-main.ts']
@@ -96,6 +97,9 @@ it.each([
     } else if (entry === 'story-graph-switch-main.ts') {
       expect(result).toMatchObject({ persistedAfterReload: true, revokedExistingBinding: true, hiddenWhenDisabled: true })
       expect(result.scenarios).toHaveLength(4)
+    } else if (entry === 'unified-execution-main.ts') {
+      expect(result).toMatchObject({ composer: true, project: true, securityAbsent: true,
+        generalClearData: true, cancelPreservedData: true, confirmedClear: true, persistedAfterReload: true })
     } else {
       expect(result).toMatchObject({ image: true, iframe: true, project: true, tooltip: true, citation: true })
     }

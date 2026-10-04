@@ -37,12 +37,11 @@ export type ImageRequestContext = {
   conversationId: string
   messageId: string
   requestId: string
-  workMode: 'ask' | 'execute'
 }
 
 export const imageSaveToolInputSchema = z.object({
-  artifactId: z.string().uuid(),
-  path: z.string().trim().min(1).max(4_096),
+  artifactId: z.string().uuid().describe('Image ID from the conversation image/upload references or generate_image results. No results page is required; never invent IDs.'),
+  path: z.string().trim().min(1).max(4_096).describe('Absolute destination file path on the runtime host (the remote host for remote projects). Writes the actual image file.'),
   overwrite: z.boolean().default(false)
 }).strict()
 export type ImageSaveToolInput = z.infer<typeof imageSaveToolInputSchema>
@@ -69,7 +68,7 @@ export function imageSaveMimeTypeForPath(path: string): ImageSaveResult['mimeTyp
 export const imageSaveMaximumBytes = 48 * 1024 * 1024
 
 export const imageSaveToolName = 'save_image' as const
-export const imageSaveToolDescription = 'Save an existing conversation image (generated result or uploaded source) to a local file. Use an artifactId listed in this conversation; never invent IDs. path must be absolute and end with .png, .jpg, .jpeg or .webp; the image is converted when the extension differs from its stored format (conversion to .webp is not supported). Missing parent folders are created. Existing files are kept unless overwrite=true. The file is written on the machine where this tool runs (the remote host for remote projects).'
+export const imageSaveToolDescription = 'Write an existing conversation image to an actual file on the runtime host (the remote host for remote projects). artifactId is the image ID from conversation image/upload references or generate_image results; no results page is required. Never invent IDs. path must be absolute and end with .png, .jpg, .jpeg or .webp; the image is converted when the extension differs from its stored format (conversion to .webp is not supported). Missing parent folders are created. Existing files are kept unless overwrite=true.'
 
 export const imageToolName = 'generate_image' as const
 export const imageToolDescriptionLimit = 16_000

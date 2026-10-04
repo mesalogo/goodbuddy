@@ -15,7 +15,7 @@
 
 FR-S11 的读取架构见[时态 Story Graph 内置 MCP 设计](./story-graph-mcp-design.md)。三个只读工具通过 `readStoryGraph` 投影现有 SQLite，Main 在发现、调用和返回前检查监督者启用、会话开关及 Runtime 分配。绑定携带会话 ID，按主键读取当前设置；原生客户端的复用键包含会话 ID 和开关值。本地 MCP、Model、Harness Main 代理和远程受管工具通道共用此入口；会话开关复用 `context_state_json`，无 schema 迁移。该文独立定义对象／版本合同、时间语义、配置映射及后续跨 scope 复用和记忆过渡。当前 memory 背景读取、精确 scope checkpoint 与候选身份保留；结果快照不支持 `as_of` 历史重建。
 
-生产入口由 `supervision-production.ts` 组装服务、SQLite、共享池和 ask Runtime。`supervision-review-store.ts` 保存冻结来源清单，按有界页和片段供 `SupervisorService` 派发；叶子及连续位置先提交，导航和完整结果之后发布。消息已有知识引用保留本地或外部 locator，已确认记忆通过独立背景输入提供。不会检索外部全库。详细存储、调度及当前限制统一见[分块调度第 0 节](./review-scheduling-design.md#0-生产接线与剩余边界)。
+生产入口由 `supervision-production.ts` 组装服务、SQLite、共享池和无工具 Runtime。`supervision-review-store.ts` 保存冻结来源清单，按有界页和片段供 `SupervisorService` 派发；叶子及连续位置先提交，导航和完整结果之后发布。消息已有知识引用保留本地或外部 locator，已确认记忆通过独立背景输入提供。不会检索外部全库。详细存储、调度及当前限制统一见[分块调度第 0 节](./review-scheduling-design.md#0-生产接线与剩余边界)。
 
 模型实体 `id` 只在单次输出内有效。Main 从同一 scope 的故事线提供最多 100 个未撤销实体候选，生产提示只暴露 `candidateRef`（如 `known_1`）、名称和说明。模型显式选择候选后，Main 转换为严格 UUID 类型的内部 `persistedId`。服务校验候选集成员和重复映射，保存事务再次按实体主键校验故事线归属及撤销状态。没有有效候选引用时分配新 UUID，不按名称或裸模型 ID 合并。来源仍按每次结果分配 UUID，保留原始 `source_id` 和 locator。
 
@@ -37,7 +37,7 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 
 继续讨论预览将 `supervision:continue-context` 返回的 `prompt` 直接作为可编辑草稿。侧栏与图谱入口发送当前草稿，不重新拼接原始上下文。`supervision:continue` 沿用现有正文校验（去除首尾空白，最多 12,000 字符），使用空 `attachments` 入队，无附件请求省略 `serializedContexts`；请求未指定 Runtime 时使用会话保存的选择。会话已有的记忆和知识库配置仍按普通会话发送规则处理。知识库预览与提交均检查目标库存在且为本地可写库，更新实体还检查其实际所属库。侧栏确认框展示 Main 返回的实体字段、目标库和来源正文，取消或写入失败后可以重新预览。
 
-监督来源清单将 UI 时间区间归一化为 UTC，先筛选再按稳定键分页。项目必须存在且 active；消息按闭区间筛选，任务按区间内创建或完成时间筛选。手动和自动监督共用该路径，自动清单另读取 supervisor checkpoint；手动心跳报告保留原有 collector。
+监督来源清单将 UI 时间区间归一化为 UTC，在 Worker 读快照内按范围筛选，元数据按小批次写入；后续片段按稳定键分页。项目必须存在且 active；消息按闭区间筛选，任务按区间内创建或完成时间筛选。手动和自动监督共用该路径，增量清单另读取 supervisor checkpoint；手动心跳报告保留原有 collector。Worker 连接、未完成初始化重建、取消确认和打包规则见[调度与存储](./review-scheduling-design.md#已接入的调度与存储)。
 
 已确认记忆作为当前背景，不参与新增正文覆盖。最多四条、每条 500 字符，时间来自真实更新时间；模型不能把背景引用为本批新增证据。旧结果继续保留原来源类型和 locator。监督正文上限现用于分批，余段继续处理；心跳报告的有界输入语义没有改变。
 
@@ -51,7 +51,7 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 
 监督整理超时由 run 创建时冻结；共享模型池仍采用实时设置上限。`supervision:pause` 取消该 run 的排队和在途工作，`supervision:resume` 继续已保存批次；监督整理输出在流中按 `supervisionReview.responseKiB` 检查响应容量，默认 1024 KiB，可在设置页调整为 100 至 16384 KiB。该容量每次请求读取当前设置，继续旧运行也采用新值；超限保留成功批次并提示调高后继续。生成摘要及事实内容不设独立短字符限制，监督旧摘要读取保留全文，具体边界见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界)。以下报告领取和租约规则继续适用。
 
-手动和自动监督均在桌面 Main 调用生产工厂，Runtime 解析请求只有 `workMode: ask`，不携带项目、Runtime 选择或执行空间。`resolveRequestRuntime` 因而返回桌面默认 Runtime，不进入 SSH 项目或 `selectedRuntimes.getRuntime` 分支；回顾 scope 只筛选证据。摘要校验、合并和持久化在 Main 完成，single-flight、取消及 UI 控制不改变 `gbagent`、远端 Runtime 启动或桌面到 Agent 协议。
+手动和自动监督均在桌面 Main 调用生产工厂，Runtime 解析请求不携带项目、Runtime 选择或执行空间，也不再注入 `workMode`。`resolveRequestRuntime` 返回桌面默认 Runtime，不进入 SSH 项目或 `selectedRuntimes.getRuntime` 分支；内部分析使用无工具构造，回顾 scope 只筛选证据。摘要校验、合并和持久化在 Main 完成，single-flight、取消及 UI 控制不改变 `gbagent`、远端 Runtime 启动或桌面到 Agent 协议。
 
 `ApplicationSettingsStore` 持久化报告和整理模型超时，均为 30..600 整数秒，默认 240。报告排队前冻结，监督创建 run 时冻结；计时从获槽及 Runtime 解析后开始，覆盖模型执行及其内部重试。流结束校验 signal 和完成事件，finally 释放临时会话，心跳报告保持原有 100KB 上限，监督整理使用上文的可调响应容量。采集、排队、保存和清理不计入模型超时。
 
@@ -69,7 +69,9 @@ schema 47 的四张批次相关表使用外键随监督运行清理，未完成�
 
 `supervision:execution` 返回进程内 `{ active, runId?, stopping? }`，配置读取期间可有 `active: true` 而尚无 runId。`supervision:cancel({ runId })` 先在既有 `supervision_runs` 写入 `cancelled`、清除错误并保存取消时间，再向父 controller 传播 abort；重复取消保留原时间。该接口等待执行 Promise 结束，包含并行批次的 `allSettled` 和 Runtime `releaseConversation`，之后才释放准入。暂停只请求 abort，执行停止后保存 `paused`；取消优先于暂停。迟到模型输出不得保存叶子、导航或完整结果，成功批次保留，自动 checkpoint 不推进。发布是同步 SQLite 事务，已完成或无变化的运行拒绝取消，不撤销已发布结果；本次无 schema 迁移。
 
-Preload 暴露类型化 `execution`、`cancel`，取消输入使用 UUID schema 并校验可信 sender。活动 UI 用实时执行状态覆盖持久记录的停止显示；工作回顾挂载期间每两秒读取执行状态，发起前再次查询，Main 仍作最终准入判断。`resume` IPC 直到运行结束才返回，Renderer 发出请求后释放提交锁并独立处理结果，确保继续中的回顾仍可暂停或取消。状态条 X 仅修改本地显示状态。
+Preload 暴露类型化 `execution`、`cancel`，取消输入使用 UUID schema 并校验可信 sender。活动 UI 用实时执行状态覆盖持久记录的停止显示；工作回顾只在发起前查询执行状态，Main 仍作最终准入判断。`resume` IPC 直到运行结束才返回，Renderer 发出请求后释放提交锁并独立处理结果，确保继续中的回顾仍可暂停或取消。
+
+`App` 将既有通知回调经 `HeartbeatCenter` 传给 `SupervisorWorkspace`。回顾操作用 `supervisor-review` 去重键发送本地化 Toast，结果读取失败仍写入 `loadError` 并就地重试；实体、关系操作和来源读取失败也使用通知。工作回顾不再为状态条轮询执行状态，历史读取不发送操作通知。请求锁覆盖发起前检查和整次运行；页面刷新只使旧结果选择失效，不丢弃运行结束反馈。卸载后忽略迟到响应，检查阶段尚未提交的回顾不再发起，已提交的后台运行不取消。活动查询、原始错误持久化和 Main 生命周期保持原路径。
 
 ### 心跳触发与建议（2026-09-30）
 
@@ -255,7 +257,7 @@ IPC 返回图谱查询结果时使用分页和有界字段；详情中的来源�
 
 ## 5. 安全与一致性
 
-- 监督者模型调用固定为 `ask` 语义，输入来自 `EvidenceCollector` 的有界快照，工具授权始终拒绝。
+- 监督者模型调用使用无工具构造，不依赖产品模式或提示词限制；生产输入来自冻结来源的分页读取，见分块调度设计。
 - `Global`、Project、多项目和固定 Conversation/Task/Experiment 目标在 Main 冻结；模型不能生成或改变范围。
 - 每个来源引用必须属于本次冻结范围，跨范围引用、伪造项目 ID 和不存在的来源 ID 直接使结果失败。
 - 心跳运行沿用现有 `heartbeat_runs` 的领取、租约和重试机制；监督运行按心跳运行 ID 关联，活动据此合并阶段。监督取消不撤销已保存的心跳报告，合并活动优先显示监督已取消状态。

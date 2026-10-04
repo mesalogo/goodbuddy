@@ -14,7 +14,7 @@ const cachedBinary = join(
 const binaryPath = process.env.GOODBUDDY_TEST_OPENCODE_BINARY || cachedBinary
 
 it.skipIf(!existsSync(binaryPath))(
-  'completes native Task external reads and concurrent structured questions while Ask disables tools',
+  'completes native Task external reads and concurrent structured questions with tools available on later requests',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-permissions-'))
     const workspace = join(root, 'workspace')
@@ -24,7 +24,7 @@ it.skipIf(!existsSync(binaryPath))(
     let requests = 0
     let readVerified = false
     let answerVerified = false
-    let askTools: string[] | undefined
+    let followupTools: string[] | undefined
     const model = createServer((request, response) => {
       void (async () => {
         let body = ''
@@ -39,9 +39,9 @@ it.skipIf(!existsSync(binaryPath))(
         const results = messages.filter(message => message.role === 'tool')
         let content: string | undefined
         let tool: { name: string; arguments: object; id: string } | undefined
-        if (user.includes('ASK_WITHOUT_TOOLS')) {
-          askTools = (input.tools ?? []).map((entry: { function: { name: string } }) => entry.function.name)
-          content = 'ASK_OK'
+        if (user.includes('CHECK_AVAILABLE_TOOLS')) {
+          followupTools = (input.tools ?? []).map((entry: { function: { name: string } }) => entry.function.name)
+          content = 'TOOLS_OK'
         } else if (user.includes('READ_EXTERNAL_SENTINEL')) {
           if (results.some(result => result.tool_call_id === 'external-read')) {
             readVerified = JSON.stringify(results).includes('EXTERNAL_DIRECTORY_READ_OK')
@@ -105,12 +105,12 @@ it.skipIf(!existsSync(binaryPath))(
       }
     })
     try {
-      for (const mode of ['execute', 'ask'] as const) {
+      for (const turn of ['first', 'second'] as const) {
         let text = ''
         const pending: Array<{ id: string; answers: string[][] }> = []
         for await (const event of runtime.run({
           requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(),
-          workMode: mode, prompt: mode === 'execute' ? 'USE_NATIVE_TASK' : 'ASK_WITHOUT_TOOLS'
+           prompt: turn === 'first' ? 'USE_NATIVE_TASK' : 'CHECK_AVAILABLE_TOOLS'
         }, AbortSignal.timeout(30_000))) {
           if (event.type === 'text') text += event.delta
           if (event.type === 'question') {
@@ -123,14 +123,12 @@ it.skipIf(!existsSync(binaryPath))(
             }
           }
         }
-        expect(text).toBe(mode === 'execute' ? 'PARENT_OK' : 'ASK_OK')
-        expect(pending).toHaveLength(mode === 'execute' ? 2 : 0)
+        expect(text).toBe(turn === 'first' ? 'PARENT_OK' : 'TOOLS_OK')
+        expect(pending).toHaveLength(turn === 'first' ? 2 : 0)
       }
       expect(readVerified).toBe(true)
       expect(answerVerified).toBe(true)
-      expect(askTools).toBeDefined()
-      expect(askTools).not.toEqual(expect.arrayContaining(['task']))
-      expect(askTools?.filter(name => ['bash', 'write', 'edit', 'read'].includes(name))).toEqual([])
+      expect(followupTools).toEqual(expect.arrayContaining(['task', 'bash', 'write', 'edit', 'read']))
       expect(requests).toBe(6)
     } finally {
       await runtime.dispose()

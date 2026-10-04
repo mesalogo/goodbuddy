@@ -32,6 +32,9 @@ it('migrates activity history and writes only changed records during streaming',
       DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       ALTER TABLE magic_note_entries DROP COLUMN source_json;
+      ALTER TABLE projects ADD COLUMN default_work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE conversations ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'ask';
+      ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute';
       PRAGMA user_version=43`)
     const legacySave = raw.prepare('UPDATE activity_history SET records_json = ?, legacy_history_may_be_incomplete = 1')
     legacySave.run(JSON.stringify(records))

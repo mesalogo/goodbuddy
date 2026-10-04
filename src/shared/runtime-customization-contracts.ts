@@ -374,9 +374,7 @@ export const runtimeNativeToolSchema = z
       'mcp',
       'skill',
       'unknown'
-    ]),
-    ask: z.enum(['allowed', 'blocked', 'conditional']),
-    execute: z.enum(['allowed', 'blocked', 'conditional'])
+    ])
   })
   .strict()
 
