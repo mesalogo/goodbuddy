@@ -65,6 +65,8 @@ import {
 import { createTrayIcon } from './tray-icon'
 import { resolveBundledRuntimePaths } from './agent/bundled-runtimes'
 import type { ContinueHostLauncher } from './agent/continue-host-adapter'
+import { CONTINUE_HOST_LAYOUT_VERSION } from './agent/continue-host-layout'
+import { removeStaleRuntimeCaches } from './stale-runtime-cache-cleanup'
 import { resolvePortableUserDataPath } from './portable-user-data'
 import { BrowserService } from './browser/browser-service'
 import { SubagentService } from './assistant/subagent-service'
@@ -1626,6 +1628,14 @@ if (hasSingleInstanceLock) {
     startupMark('main:load-main-window')
     removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow,
       new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion()))
+    // Disk only: old versions' runtime caches, removed well after the first frame.
+    setTimeout(() => {
+      void removeStaleRuntimeCaches({
+        userDataPath: app.getPath('userData'),
+        appVersion: app.getVersion(),
+        continueHostLayoutVersion: CONTINUE_HOST_LAYOUT_VERSION
+      })
+    }, 30_000).unref()
     setImmediate(() => {
       void repairStaleWindowsNotificationShortcuts({
         platform: process.platform,

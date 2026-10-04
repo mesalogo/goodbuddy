@@ -55,6 +55,7 @@ import { readBoundedResponseText } from './bounded-response'
 import { scopedReadToolNames } from '../../shared/scoped-data-tools'
 import { readBoundedFile } from '../workspace-file-access'
 import { terminateProcessTreeAndWait } from './child-process-termination'
+import { CONTINUE_HOST_LAYOUT_VERSION } from './continue-host-layout'
 
 const supportedVersion = '1.5.47'
 const supportedBundleHashes = new Set([
@@ -1052,7 +1053,7 @@ export class ContinueHostAdapter {
     const digest = sourceHash.slice(0, 16)
     const targetRoot = join(
       this.options.cacheRoot,
-      `host-v7-${supportedVersion}-${digest}`
+      `host-v${CONTINUE_HOST_LAYOUT_VERSION}-${supportedVersion}-${digest}`
     )
     const targetDist = join(targetRoot, 'dist')
     const targetBundle = join(targetDist, 'index.js')
