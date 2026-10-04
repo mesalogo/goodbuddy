@@ -362,6 +362,31 @@
   flex: 1;
   min-width: 0;
 }
+.supervisor-workspace__date-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  max-width: 100%;
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+.supervisor-workspace__toolbar .field-control {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.supervisor-workspace__period-field {
+  grid-column: 1 / -1;
+}
+.supervisor-workspace__period-help {
+  flex-basis: 100%;
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-secondary);
+}
+.supervisor-workspace__period-help[role='alert'] {
+  color: var(--danger);
+}
 .supervisor-workspace__history-menu [role="menuitemradio"] > span {
   flex: 1;
   min-width: 0;

@@ -95,7 +95,10 @@ export function SupervisorWorkspace({
     conversationId?: string
   }>()
   const [projectId, setProjectId] = useState('global')
-  const [days, setDays] = useState(7)
+  const [period, setPeriod] = useState('7')
+  const [customDays, setCustomDays] = useState('7')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [newReviewOpen, setNewReviewOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(Boolean(graphNavigation?.focus))
   const detailToggleRef = useRef<HTMLButtonElement>(null)
@@ -215,9 +218,40 @@ export function SupervisorWorkspace({
     return () => { window.clearTimeout(task); invalidate() }
   }, [refresh, graphNavigation])
 
+  const resolvePeriod = (now: Date): { range?: SupervisionRunRequest['timeRange']; label?: string; error?: string } => {
+    if (period === 'range') {
+      const from = new Date(`${startDate}T00:00:00`)
+      const end = new Date(`${endDate}T00:00:00`)
+      const validDate = (value: string, parsed: Date) => /^\d{4}-\d{2}-\d{2}$/.test(value)
+        && Number(value.slice(0, 4)) >= 1 && Number.isFinite(parsed.getTime())
+        && parsed.getFullYear() === Number(value.slice(0, 4))
+        && parsed.getMonth() + 1 === Number(value.slice(5, 7)) && parsed.getDate() === Number(value.slice(8, 10))
+      if (!validDate(startDate, from) || !validDate(endDate, end)) return { error: t('supervisor.invalidDates') }
+      if (from > now || end > now) return { error: t('supervisor.futureDates') }
+      if (from > end) return { error: t('supervisor.reversedDates') }
+      // The backend includes both endpoints. Advance by a local calendar day for DST.
+      const to = new Date(end)
+      to.setDate(to.getDate() + 1)
+      to.setHours(0, 0, 0, -1)
+      return { range: { from: from.toISOString(), to: new Date(Math.min(to.getTime(), now.getTime())).toISOString() },
+        label: t('supervisor.dateRangeLabel', { from: startDate, to: endDate }) }
+    }
+    const value = period === 'custom' ? customDays : period
+    const days = Number(value)
+    const from = new Date(now.getTime() - days * 86400_000)
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(days) || days < 1
+      || !Number.isFinite(from.getTime()) || from.getFullYear() < 1) return { error: t('supervisor.invalidDays') }
+    return { range: { from: from.toISOString(), to: now.toISOString() }, label: t('supervisor.recentDays', { count: days }) }
+  }
+  const reviewPeriod = resolvePeriod(new Date())
+  const today = new Date()
+  const maxDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
   // A review is incremental by default. Only an explicit re-analysis reads the whole interval again.
   const run = async (reanalyze = false) => {
     if (!api) return
+    const { range } = resolvePeriod(new Date())
+    if (!range) return
     setConfirmReanalyze(false)
     const notice = (message: string, tone: AppNotificationInput['tone'] = 'info') => {
       if (mounted.current) onNotify?.({ tone, message, dedupeKey: 'supervisor-review' })
@@ -228,7 +262,6 @@ export function SupervisorWorkspace({
     }
     runPending.current = true
     const generation = loadGeneration.current
-    const to = new Date()
     const request: SupervisionRunRequest = {
       trigger: 'manual',
       ...(reanalyze ? { reanalyze: true } : {}),
@@ -236,10 +269,7 @@ export function SupervisorWorkspace({
         projectId === 'global'
           ? { kind: 'global' }
           : { kind: 'projects', projectIds: [projectId] },
-      timeRange: {
-        from: new Date(to.getTime() - days * 86400_000).toISOString(),
-        to: to.toISOString()
-      }
+      timeRange: range
     }
     let submitted = false
     try {
@@ -578,7 +608,7 @@ export function SupervisorWorkspace({
                   <select
                     aria-label={t('supervisor.scope')}
                     value={projectId}
-                    onChange={(event) => setProjectId(event.target.value)}
+                    onChange={(event) => { setProjectId(event.target.value); setConfirmReanalyze(false) }}
                   >
                     <option value="global">{t('center.scope.global')}</option>
                     {projects
@@ -593,18 +623,39 @@ export function SupervisorWorkspace({
                 <label>
                   <select
                     aria-label={t('supervisor.period')}
-                    value={days}
-                    onChange={(event) => setDays(Number(event.target.value))}
+                    value={period}
+                    onChange={(event) => { setPeriod(event.target.value); setConfirmReanalyze(false) }}
                   >
                     {[1, 7, 30].map((value) => (
                       <option key={value} value={value}>
                         {t('supervisor.days', { count: value })}
                       </option>
                     ))}
+                    <option value="custom">{t('supervisor.customDays')}</option>
+                    <option value="range">{t('supervisor.dateRange')}</option>
                   </select>
                 </label>
+                {period === 'custom' && <label className="supervisor-workspace__period-field">
+                  <span>{t('supervisor.dayCount')}</span>
+                  <input className="field-control" type="number" min={1} step={1} required value={customDays}
+                    aria-invalid={Boolean(reviewPeriod.error)} aria-describedby={`${graphId}-period-help`}
+                    onChange={event => { setCustomDays(event.target.value); setConfirmReanalyze(false) }} />
+                </label>}
+                {period === 'range' && <div className="supervisor-workspace__date-range">
+                  <label><span>{t('supervisor.startDate')}</span>
+                    <input className="field-control" type="date" min="0001-01-01" max={maxDate} required value={startDate}
+                      aria-invalid={Boolean(reviewPeriod.error)} aria-describedby={`${graphId}-period-help`}
+                      onChange={event => { setStartDate(event.target.value); setConfirmReanalyze(false) }} />
+                  </label>
+                  <label><span>{t('supervisor.endDate')}</span>
+                    <input className="field-control" type="date" min={startDate || '0001-01-01'} max={maxDate} required value={endDate}
+                      aria-invalid={Boolean(reviewPeriod.error)} aria-describedby={`${graphId}-period-help`}
+                      onChange={event => { setEndDate(event.target.value); setConfirmReanalyze(false) }} />
+                  </label>
+                </div>}
                 <button
                   className="primary-button"
+                  disabled={!reviewPeriod.range}
                   onClick={() => void run()}
                 >
                   {t('supervisor.run')}
@@ -613,21 +664,25 @@ export function SupervisorWorkspace({
                   aria-haspopup="menu" aria-expanded={moreOpen} aria-controls={moreOpen ? moreId : undefined}
                   onClick={() => setMoreOpen(!moreOpen)}><Ellipsis size={16} aria-hidden="true" /></button>
                 {moreOpen && <AnchoredMenu anchorRef={moreRef} id={moreId} label={t('supervisor.more')} width={220} onClose={() => setMoreOpen(false)}>
-                  <button type="button" role="menuitem" onClick={() => {
+                  <button type="button" role="menuitem" disabled={!reviewPeriod.range} onClick={() => {
                     setMoreOpen(false)
                     moreRef.current?.focus()
                     setConfirmReanalyze(true)
                   }}>{t('supervisor.reanalyze')}</button>
                 </AnchoredMenu>}
+                {(period === 'custom' || period === 'range') && <p id={`${graphId}-period-help`}
+                  className="supervisor-workspace__period-help" role={reviewPeriod.error ? 'alert' : undefined}>
+                  {reviewPeriod.error ?? t(period === 'range' ? 'supervisor.dateRangeHelp' : 'supervisor.customDaysHelp')}
+                </p>}
               </div>
               {confirmReanalyze && <div className="supervisor-workspace__confirm" role="alertdialog" aria-labelledby={`${moreId}-title`}
                 aria-describedby={`${moreId}-description`} onKeyDown={(event) => { if (event.key === 'Escape') setConfirmReanalyze(false) }}>
                 <strong id={`${moreId}-title`}>{t('supervisor.reanalyzeTitle')}</strong>
                 <p id={`${moreId}-description`}>{t('supervisor.reanalyzeHint', { scope: projectId === 'global' ? t('center.scope.global')
-                  : projects.find(project => project.id === projectId)?.name ?? '', period: t('supervisor.days', { count: days }) })}</p>
+                  : projects.find(project => project.id === projectId)?.name ?? '', period: reviewPeriod.label })}</p>
                 <div>
                   <button type="button" className="secondary-button" autoFocus onClick={() => setConfirmReanalyze(false)}>{t('supervisor.cancel')}</button>
-                  <button type="button" className="primary-button" onClick={() => void run(true)}>{t('supervisor.reanalyzeConfirm')}</button>
+                  <button type="button" className="primary-button" disabled={!reviewPeriod.range} onClick={() => void run(true)}>{t('supervisor.reanalyzeConfirm')}</button>
                 </div>
               </div>}
             </>

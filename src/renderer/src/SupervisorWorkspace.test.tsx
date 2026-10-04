@@ -15,6 +15,111 @@ const selectHistory = (id: string) => {
 }
 
 describe('SupervisorWorkspace', () => {
+  it.each(['zh-CN', 'en-US'] as const)('submits custom days and keeps reanalysis confirmation consistent in %s', async locale => {
+    await changeUiLocale(locale)
+    const copy = i18nResources[locale].heartbeat.supervisor
+    const run = vi.fn().mockResolvedValue(undefined)
+    window.goodbuddy = { supervision: { overview: async () => [], run } } as never
+    render(<SupervisorWorkspace />)
+    await screen.findByText(copy.empty)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const now = new Date(2026, 9, 5, 15, 30)
+    vi.setSystemTime(now)
+    fireEvent.click(screen.getByRole('button', { name: copy.newReview }))
+    const picker = screen.getByLabelText(copy.period)
+    expect(within(picker).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['1', '7', '30', 'custom', 'range'])
+    expect(picker).toHaveValue('7')
+    fireEvent.change(picker, { target: { value: 'custom' } })
+    fireEvent.change(screen.getByRole('spinbutton', { name: copy.dayCount }), { target: { value: '45' } })
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: copy.run })))
+    const timeRange = { from: new Date(now.getTime() - 45 * 86400_000).toISOString(), to: now.toISOString() }
+    expect(run).toHaveBeenLastCalledWith({ trigger: 'manual', scope: { kind: 'global' }, timeRange })
+    fireEvent.click(screen.getByRole('button', { name: copy.more }))
+    fireEvent.click(screen.getByRole('menuitem', { name: copy.reanalyze }))
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(copy.recentDays.replace('{{count}}', '45'))
+    fireEvent.change(screen.getByRole('spinbutton', { name: copy.dayCount }), { target: { value: '46' } })
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: copy.more }))
+    fireEvent.click(screen.getByRole('menuitem', { name: copy.reanalyze }))
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(copy.recentDays.replace('{{count}}', '46'))
+    await act(async () => fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: copy.reanalyzeConfirm })))
+    expect(run).toHaveBeenLastCalledWith({ trigger: 'manual', reanalyze: true, scope: { kind: 'global' },
+      timeRange: { from: new Date(now.getTime() - 46 * 86400_000).toISOString(), to: now.toISOString() } })
+  })
+
+  it.each([
+    ['2025-11-02', '2025-11-02'],
+    ['2026-03-08', '2026-03-08'],
+    ['2026-09-29', '2026-10-02'],
+    ['2026-10-05', '2026-10-05']
+  ])('includes local calendar days %s through %s for review and reanalysis', async (start, end) => {
+    const copy = i18nResources['zh-CN'].heartbeat.supervisor
+    const run = vi.fn().mockResolvedValue(undefined)
+    window.goodbuddy = { supervision: { overview: async () => [], run } } as never
+    render(<SupervisorWorkspace />)
+    await screen.findByText(copy.empty)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const now = new Date(2026, 9, 5, 15, 30)
+    vi.setSystemTime(now)
+    fireEvent.click(screen.getByRole('button', { name: copy.newReview }))
+    fireEvent.change(screen.getByLabelText(copy.period), { target: { value: 'range' } })
+    fireEvent.change(screen.getByLabelText(copy.startDate), { target: { value: start } })
+    fireEvent.change(screen.getByLabelText(copy.endDate), { target: { value: end } })
+    const timeRange = { from: new Date(`${start}T00:00:00`).toISOString(),
+      to: end === '2026-10-05' ? now.toISOString() : new Date(`${end}T23:59:59.999`).toISOString() }
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: copy.run })))
+    expect(run).toHaveBeenLastCalledWith({ trigger: 'manual', scope: { kind: 'global' }, timeRange })
+    fireEvent.click(screen.getByRole('button', { name: copy.more }))
+    fireEvent.click(screen.getByRole('menuitem', { name: copy.reanalyze }))
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog).toHaveTextContent(copy.dateRangeLabel.replace('{{from}}', start).replace('{{to}}', end))
+    await act(async () => fireEvent.click(within(dialog).getByRole('button', { name: copy.reanalyzeConfirm })))
+    expect(run).toHaveBeenLastCalledWith({ trigger: 'manual', reanalyze: true, scope: { kind: 'global' }, timeRange })
+  })
+
+  it('blocks invalid days and dates before execution lookup, preserves drafts and recovers', async () => {
+    const copy = i18nResources['zh-CN'].heartbeat.supervisor
+    const run = vi.fn().mockResolvedValue(undefined)
+    const execution = vi.fn().mockResolvedValue({ active: false })
+    window.goodbuddy = { supervision: { overview: async () => [], run, execution } } as never
+    render(<SupervisorWorkspace />)
+    await screen.findByText(copy.empty)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 5, 15, 30))
+    fireEvent.click(screen.getByRole('button', { name: copy.newReview }))
+    const picker = screen.getByLabelText(copy.period)
+    fireEvent.change(picker, { target: { value: 'custom' } })
+    const days = screen.getByRole('spinbutton', { name: copy.dayCount })
+    for (const value of ['', '0', '-1', '1.5', '1e3', '999999999999999999999', '1000000']) {
+      fireEvent.change(days, { target: { value } })
+      expect(days).toHaveAttribute('aria-invalid', 'true')
+      expect(days).toHaveAccessibleDescription(copy.invalidDays)
+      expect(screen.getByRole('button', { name: copy.run })).toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: copy.run }))
+      fireEvent.click(screen.getByRole('button', { name: copy.more }))
+      expect(screen.getByRole('menuitem', { name: copy.reanalyze })).toBeDisabled()
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    }
+    fireEvent.change(days, { target: { value: '42' } })
+    fireEvent.change(picker, { target: { value: 'range' } })
+    for (const [start, end, error] of [
+      ['', '', copy.invalidDates], ['2026-02-30', '2026-03-02', copy.invalidDates],
+      ['2026-10-03', '', copy.invalidDates], ['2026-10-04', '2026-10-03', copy.reversedDates],
+      ['2026-10-04', '2026-10-06', copy.futureDates], ['2026-10-06', '2026-10-06', copy.futureDates]
+    ]) {
+      fireEvent.change(screen.getByLabelText(copy.startDate), { target: { value: start } })
+      fireEvent.change(screen.getByLabelText(copy.endDate), { target: { value: end } })
+      expect(screen.getByLabelText(copy.endDate)).toHaveAccessibleDescription(error)
+      expect(screen.getByRole('button', { name: copy.run })).toBeDisabled()
+    }
+    expect(execution).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+    fireEvent.change(picker, { target: { value: 'custom' } })
+    expect(screen.getByRole('spinbutton', { name: copy.dayCount })).toHaveValue(42)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: copy.run })))
+    expect(run).toHaveBeenCalledOnce()
+  })
+
   it.each(['overview', 'graph'] as const)('shows each history result scope and range only inside the %s picker', async tab => {
     const old = { ...result, id: 'old', createdAt: '2026-08-02T00:00:00.000Z',
       scope: { kind: 'projects', projectIds: ['11111111-1111-4111-8111-111111111111'] },

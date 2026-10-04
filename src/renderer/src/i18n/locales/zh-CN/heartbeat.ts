@@ -117,7 +117,12 @@ export const heartbeat = {
     newReview: '新回顾', summary: '工作总结', changes: '本次变化', runningHint: '新回顾正在整理，已有结果仍可阅读。',
     empty: '还没有成功回顾', emptyHint: '即使没有心跳计划，也可以手动回顾当前进展。', run: '回顾', running: '回顾整理中…',
     more: '更多回顾操作', reanalyze: '重新整理…', reanalyzeTitle: '重新整理这段时间？', reanalyzeConfirm: '重新整理',
-    reanalyzeHint: '将重新分析{{scope}}最近 {{period}}的全部内容，可能产生较多模型用量。已确认的内容和心跳处理进度不受影响。', retryRun: '重试回顾', dismiss: '关闭提示',
+    reanalyzeHint: '将重新分析{{scope}}在{{period}}内的全部内容，可能产生较多模型用量。已确认的内容和心跳处理进度不受影响。', retryRun: '重试回顾', dismiss: '关闭提示',
+    customDays: '自定义天数', dateRange: '指定日期', dayCount: '天数', startDate: '开始日期', endDate: '结束日期',
+    recentDays: '最近 {{count}} 天', dateRangeLabel: '{{from}} 至 {{to}}（本地日期，结束日期为今天时截至当前）',
+    customDaysHelp: '从当前时刻向前计算，每天按 24 小时计。', dateRangeHelp: '按本地日期计算，包含结束日期当天；结束日期为今天时截至当前时刻。',
+    invalidDays: '请输入正整数天数，且起始时间不能早于公元 1 年。',
+    invalidDates: '请输入有效的开始和结束日期。', futureDates: '日期不能晚于今天。', reversedDates: '开始日期不能晚于结束日期。',
     graphScope: '图谱范围', graphEmpty: '当前范围没有故事线事件', legend: '实线表示事件影响实体，虚线表示实体关系。时间轴逆时针排列，起止之间保留缺口。', start: '起点', end: '终点',
     listTabs: { event: '事件', entity: '实体', relation: '关系', story: '故事', experience: '经验' },
     experiences: {

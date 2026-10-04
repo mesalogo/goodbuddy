@@ -120,7 +120,12 @@ export const heartbeat = {
     newReview: 'New review', summary: 'Work summary', changes: 'Changes', runningHint: 'A new review is running. The existing result remains available to read.',
     empty: 'No successful review yet', emptyHint: 'You can review current progress manually even without an heartbeat plan.', run: 'Review', running: 'Reviewing…',
     more: 'More review actions', reanalyze: 'Reanalyze…', reanalyzeTitle: 'Reanalyze this period?', reanalyzeConfirm: 'Reanalyze',
-    reanalyzeHint: 'All content in {{scope}} from the last {{period}} will be analyzed again, which may use more model tokens. Confirmed content and heartbeat progress are not affected.', retryRun: 'Retry review', dismiss: 'Dismiss',
+    reanalyzeHint: 'All content in {{scope}} for {{period}} will be analyzed again, which may use more model tokens. Confirmed content and heartbeat progress are not affected.', retryRun: 'Retry review', dismiss: 'Dismiss',
+    customDays: 'Custom days', dateRange: 'Date range', dayCount: 'Number of days', startDate: 'Start date', endDate: 'End date',
+    recentDays: 'the last {{count}} days', dateRangeLabel: '{{from}} through {{to}} (local dates, through now if ending today)',
+    customDaysHelp: 'Counts back from now in 24-hour days.', dateRangeHelp: 'Local dates, including the end day. If ending today, includes content through now.',
+    invalidDays: 'Enter a positive whole number of days that produces a date in year 1 or later.',
+    invalidDates: 'Enter valid start and end dates.', futureDates: 'Dates cannot be in the future.', reversedDates: 'Start date must be on or before end date.',
     graphScope: 'Graph scope', graphEmpty: 'No story events in this scope', legend: 'Solid lines show event impact on entities; dashed lines show entity relations. Time runs counter-clockwise with a visible gap.', start: 'Start', end: 'End',
     listTabs: { event: 'Events', entity: 'Entities', relation: 'Relations', story: 'Stories', experience: 'Experiences' },
     experiences: {
