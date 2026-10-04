@@ -37,13 +37,17 @@ app.whenReady().then(async () => {
   let picks = 0
   // Only the native chooser is deterministic; App, preload, IPC and filesystem are production.
   dialog.showOpenDialog = (async () => { picks++; return { canceled: picks === 3, filePaths: picks === 3 ? [] : [join(source, 'import.bin')] } }) as typeof dialog.showOpenDialog
-  const run = <T = unknown>(code: string): Promise<T> => win.webContents.executeJavaScript(code, true)
+  const run = async <T = unknown>(code: string): Promise<T> => {
+    try { return await win.webContents.executeJavaScript(code, true) }
+    catch (error) { throw new Error(`Workspace import probe failed: ${code}`, { cause: error }) }
+  }
   const wait = async (code: string): Promise<void> => {
     for (let i = 0; i < 300; i++) { if (await run(code)) return; await new Promise(resolve => setTimeout(resolve, 50)) }
     throw new Error(`Timed out: ${code}`)
   }
   const button = (label: string): string => `[...document.querySelectorAll('button')].find(e=>(e.getAttribute('aria-label')||e.textContent.trim())===${JSON.stringify(label)}&&e.getClientRects().length)`
-  const click = async (label: string): Promise<void> => { await wait(`Boolean(${button(label)})`); await run(`${button(label)}.click()`) }
+  const ready = (label: string): string => `(() => { const target = ${button(label)}; return Boolean(target && !target.disabled) })()`
+  const click = async (label: string): Promise<void> => { await wait(ready(label)); await run(`${button(label)}.click()`) }
   try {
     await win.loadURL(process.env.GB_IMPORT_URL!)
     await wait('Boolean(document.querySelector(".message-generated-image img"))')
@@ -64,7 +68,7 @@ app.whenReady().then(async () => {
     await wait('document.body.innerText.includes("EEXIST")')
     assert.deepEqual(await readFile(join(project.rootPath, 'selected/import.bin')), bytes)
     await click('Import files')
-    await wait(`!${button('Import files')}.disabled`)
+    await wait(ready('Import files'))
     await win.reload()
     await wait('Boolean(document.querySelector(".message-generated-image img")) && document.querySelector(".message-generated-image img").naturalWidth===1')
     await writeFile(join(directory, 'result.json'), JSON.stringify({ passed: true, picks, bytes: bytes.length, imageAfterReload: true, artifactCount: database.listArtifacts().length, modelCalls: 0 }))
