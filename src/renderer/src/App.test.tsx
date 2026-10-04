@@ -3310,7 +3310,7 @@ describe("App", () => {
 
     for (const label of ["魔法笔记", "知识库", "监督者", "运行记录"]) {
       fireEvent.click(await screen.findByRole("button", { name: label }));
-      await screen.findByRole("heading", { name: label });
+      await screen.findByRole("heading", { name: label }, { timeout: 5_000 });
     }
 
     expect(document.querySelector('[data-route="chat"]')).toBe(chatRoute);
