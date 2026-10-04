@@ -125,6 +125,34 @@ describe('token usage aggregation', () => {
     })
   })
 
+  it.each([
+    { provider: 'goodbuddy-openai-chat', input: 60, cacheRead: 40, cacheWrite: 0, rate: 0.4 },
+    { provider: 'goodbuddy-openai-responses', input: 10, cacheRead: 90, cacheWrite: 0, rate: 0.9 },
+    { provider: 'custom', input: 0, cacheRead: 100, cacheWrite: 0, rate: 1 },
+    { provider: 'goodbuddy-anthropic', input: 50, cacheRead: 30, cacheWrite: 20, rate: 0.3 },
+    { provider: 'openai', input: 100, cacheRead: 0, cacheWrite: 0, rate: 0 }
+  ])('uses complete OpenCode input for $provider ($rate)', ({ provider, input, cacheRead, cacheWrite, rate }) => {
+    const usage = makeTokenUsage()
+    usage.records = [{
+      ...usage.records[0]!,
+      runtime: 'opencode', provider, input, cacheRead, cacheWrite
+    }]
+
+    expect(groupTokenUsage(usage, 'model')[0]).toMatchObject({
+      cacheInputTokens: 100,
+      cacheHitRate: rate
+    })
+    usage.records[0]!.cacheInput = 100
+    expect(groupTokenUsage(usage, 'model')[0]?.cacheHitRate).toBe(rate)
+
+    // Mixed Runtime groups must sum complete inputs, not average percentages.
+    usage.records.push({ ...makeTokenUsage().records[1]!, input: 300 })
+    expect(groupTokenUsage(usage, 'project')[0]).toMatchObject({
+      cacheInputTokens: 400,
+      cacheHitRate: cacheRead / 400
+    })
+  })
+
   it('uses fallback labels when grouping metadata is unavailable', () => {
     const usage = makeTokenUsage()
     usage.records = [

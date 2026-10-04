@@ -788,7 +788,9 @@ records are listed separately and do not introduce another feature status.
   without a persistent legacy-cache truncation warning; previously lost
   history is not restored. Token usage is grouped by Runtime and
   model and normalizes the different OpenAI-compatible and Anthropic Messages
-  cache-reporting semantics when showing cache hit rate. Project and conversation
+  cache-reporting semantics when showing cache hit rate. OpenCode usage adds cache
+  reads and writes back to its uncached input count before calculating the rate,
+  including when querying existing records. Project and conversation
   usage groups show collapsed totals by default and expand to Runtime/model child
   rows; model grouping remains flat. A separate System tasks tab groups
   background usage by source, with manual refresh and updates when usage is

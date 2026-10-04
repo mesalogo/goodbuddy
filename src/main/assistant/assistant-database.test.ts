@@ -7395,6 +7395,49 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
+  it.each([false, true])('normalizes persisted OpenCode cache input in records and totals (system=%s)', async (system) => {
+    const database = await createDatabase()
+    try {
+      const taskId = randomUUID()
+      database.createTask({
+        id: taskId,
+        conversationId: system ? `knowledge:${randomUUID()}` : randomUUID(),
+        title: 'Cache usage',
+        instructions: 'Cache usage',
+        workMode: 'ask'
+      })
+      const calls = [
+        { runtime: 'opencode', provider: 'goodbuddy-openai-chat', input: 60, cacheRead: 40, cacheWrite: 0 },
+        { runtime: 'opencode', provider: 'goodbuddy-openai-responses', input: 10, cacheRead: 90, cacheWrite: 0 },
+        { runtime: 'opencode', provider: 'custom', input: 0, cacheRead: 100, cacheWrite: 0 },
+        { runtime: 'opencode', provider: 'goodbuddy-anthropic', input: 50, cacheRead: 30, cacheWrite: 20 },
+        { runtime: 'model', provider: 'openai', input: 100, cacheRead: 40, cacheWrite: 0 },
+        { runtime: 'model', provider: 'anthropic', input: 50, cacheRead: 30, cacheWrite: 20 }
+      ]
+      for (const [index, call] of calls.entries()) {
+        database.upsertModelUsageCall({
+          requestId: taskId, callId: `call-${index}`, model: 'test-model',
+          output: 10, ...call
+        })
+      }
+      // Reopen persisted raw usage: existing records need no data migration.
+      database.close()
+      database.initialize('C:\\Workspace')
+      const summary = database.getTokenUsageSummary()
+      expect(summary.records).toHaveLength(6)
+      for (const record of summary.records) {
+        expect(record.cacheInput).toBe(100)
+      }
+      expect(summary.totals).toMatchObject({ callCount: 6, cacheRead: 330, cacheInput: 600 })
+      expect(system ? summary.systemTotals : summary.conversationTotals).toEqual(summary.totals)
+      expect(system ? summary.conversationTotals : summary.systemTotals).toMatchObject({
+        callCount: 0, cacheRead: 0, cacheInput: 0
+      })
+    } finally {
+      database.close()
+    }
+  })
+
   it('persists global magic notes and AI comments without todo proposals', async () => {
     const database = await createDatabase()
     const globalNote = database.createMagicNote({

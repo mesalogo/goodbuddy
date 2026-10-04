@@ -31,7 +31,8 @@ function usesSeparatedAnthropicInput(provider: unknown): boolean {
 
 function usageNumbers(
   source: unknown,
-  provider?: unknown
+  provider?: unknown,
+  runtime?: unknown
 ): TokenUsageTotals {
   const values = source as Record<string, unknown>
   const read = (preferred: string, legacy: string): number => {
@@ -50,7 +51,7 @@ function usageNumbers(
     Number.isFinite(reportedCacheInput)
       ? reportedCacheInput
       : inputTokens +
-        (usesSeparatedAnthropicInput(provider)
+        (runtime === 'opencode' || usesSeparatedAnthropicInput(provider)
           ? cacheReadTokens + cacheWriteTokens
           : 0)
 
@@ -172,7 +173,7 @@ export function groupTokenUsage(
       records.push(record)
       groupedRecords.set(identity.key, records)
     }
-    const usage = usageNumbers(record, record.provider)
+    const usage = usageNumbers(record, record.provider, record.runtime)
     const existing = rows.get(identity.key)
 
     if (existing) {

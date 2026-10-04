@@ -5918,6 +5918,13 @@ export class AssistantDatabase {
   }
 
   getTokenUsageSummary(): TokenUsageSummary {
+    // OpenCode reports uncached input for every provider, including OpenAI.
+    const cacheInputSql = `usage.input_tokens + CASE
+      WHEN usage.runtime = 'opencode'
+        OR LOWER(usage.provider) LIKE '%anthropic%'
+      THEN usage.cache_read_tokens + usage.cache_write_tokens
+      ELSE 0
+    END`
     const systemSourceSql = `CASE
              WHEN tasks.conversation_id LIKE 'heartbeat:%' THEN 'heartbeat'
              WHEN tasks.conversation_id LIKE 'supervision:%' THEN 'supervision'
@@ -5947,14 +5954,7 @@ export class AssistantDatabase {
              SUM(usage.output_tokens) AS output_tokens,
              SUM(usage.cache_read_tokens) AS cache_read_tokens,
              SUM(usage.cache_write_tokens) AS cache_write_tokens,
-             SUM(
-               usage.input_tokens +
-               CASE
-                 WHEN LOWER(usage.provider) LIKE '%anthropic%'
-                 THEN usage.cache_read_tokens + usage.cache_write_tokens
-                 ELSE 0
-               END
-             ) AS cache_input_tokens
+             SUM(${cacheInputSql}) AS cache_input_tokens
            FROM model_usage_calls usage
            JOIN tasks ON tasks.id = usage.request_id
            LEFT JOIN projects ON projects.id = tasks.project_id
@@ -6017,17 +6017,7 @@ export class AssistantDatabase {
            COALESCE(SUM(usage.output_tokens), 0) AS output_tokens,
            COALESCE(SUM(usage.cache_read_tokens), 0) AS cache_read_tokens,
            COALESCE(SUM(usage.cache_write_tokens), 0) AS cache_write_tokens,
-           COALESCE(
-             SUM(
-               usage.input_tokens +
-               CASE
-                 WHEN LOWER(usage.provider) LIKE '%anthropic%'
-                 THEN usage.cache_read_tokens + usage.cache_write_tokens
-                 ELSE 0
-               END
-             ),
-             0
-           ) AS cache_input_tokens
+           COALESCE(SUM(${cacheInputSql}), 0) AS cache_input_tokens
          FROM model_usage_calls usage
          LEFT JOIN tasks ON tasks.id = usage.request_id
          GROUP BY is_system`
