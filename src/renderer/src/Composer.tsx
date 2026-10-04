@@ -6,6 +6,7 @@ import {
   Library,
   LoaderCircle,
   Mic,
+  Network,
   Paperclip,
   RefreshCw,
   Send,
@@ -866,7 +867,10 @@ export const Composer = memo(function Composer({
               <strong>{t("composer.settings")}</strong>
               {supervisorEnabled && (
                 <label className="toggle-row">
-                  <span>{t("composer.storyGraph.label")}</span>
+                  <span className="composer__story-graph-label">
+                    <Network aria-hidden="true" size={16} />
+                    {t("composer.storyGraph.label")}
+                  </span>
                   <input
                     type="checkbox"
                     role="switch"
