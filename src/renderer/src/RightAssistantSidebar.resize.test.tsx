@@ -454,6 +454,20 @@ describe('RightAssistantSidebar resizing', () => {
     expect(screen.getByText('Project task a').closest('button')).toHaveAttribute('aria-current', 'true')
     expect(screen.getByText('Project task b').closest('article')).not.toHaveTextContent('任务累计用时')
 
+    view.rerender(sidebarElement({ ...props,
+      conversationStats: { ...props.conversationStats, replyDurationMs: 0 },
+      taskDurations: new Map([['a', { durationMs: 0, incomplete: true }]])
+    }))
+    expect(stats.getByText('暂无统计')).toBeVisible()
+    expect(stats.queryByText('00:00:00')).not.toBeInTheDocument()
+    expect(screen.getByText('任务累计用时: 暂无统计 (部分记录)')).toBeVisible()
+    view.rerender(sidebarElement({ ...props,
+      conversationStats: { ...props.conversationStats, replyDurationMs: 500 },
+      taskDurations: new Map([['a', { durationMs: 500, incomplete: true }]])
+    }))
+    expect(stats.getByText('00:00:00')).toBeVisible()
+    expect(screen.getByText('任务累计用时: 00:00:00 (部分记录)')).toBeVisible()
+
     view.rerender(sidebarElement({ ...props, activeConversationId: 'b' }))
     expect(stats.queryByText('Conversation A')).not.toBeInTheDocument()
     expect(stats.getAllByText('暂无统计')).toHaveLength(2)

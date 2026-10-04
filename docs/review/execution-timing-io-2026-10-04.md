@@ -14,6 +14,13 @@ requests remain paused during reconnection. Startup preserves closed intervals,
 discards unclosed intervals, and marks them incomplete; old history is not
 backfilled by scanning messages or events.
 
+An incomplete zero duration means no known timed interval, not a measured zero.
+Both conversation totals and task cards display "unavailable" in this case.
+Positive partial durations retain the incomplete warning; complete zero durations
+still display zero. The upgrade regression verifies that a new completed reply
+in an old conversation retains its accumulated milliseconds after reopening the
+database. This presentation fix does not restore pre-upgrade historical totals.
+
 Schema 59 stores timing rows and adds a covering index for conversation
 summaries. The old historical aggregation, its caches, dedicated reader/worker,
 worker build entries, and five-second statistics polling have been removed.

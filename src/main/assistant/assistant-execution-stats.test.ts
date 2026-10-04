@@ -240,6 +240,18 @@ describe('persisted running-state duration', () => {
     expect(raw().prepare('PRAGMA index_info(messages_summary_idx)').all().map(row => row.name))
       .toEqual(['conversation_id', 'sequence', 'role', 'created_at'])
     expect(raw().prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    const replyId = task()
+    database.startExecutionTiming(replyId)
+    now += 7000
+    database.updateTaskStatus(replyId, 'completed')
+    database.endExecutionTiming(replyId)
+    expect(stats()).toMatchObject({ durationMs: 7000, runningCount: 0, incomplete: true })
+    database.close()
+    now += 86_400_000
+    database.initialize(directory)
+    expect(stats()).toMatchObject({ durationMs: 7000, runningCount: 0, incomplete: true })
+    expect(raw().prepare('SELECT duration_ms FROM execution_timing WHERE task_id = ?').get(replyId))
+      .toEqual({ duration_ms: 7000 })
   })
 
   it('deletes timing with its conversation and notifies snapshot subscribers', async () => {

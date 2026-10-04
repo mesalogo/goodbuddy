@@ -838,7 +838,8 @@ function RightAssistantSidebarView({
   const currentStats = activeConversationId && conversationStats?.conversationId === activeConversationId
     ? conversationStats
     : undefined
-  const formatDuration = (durationMs: number): string => {
+  const formatDuration = (durationMs: number, incomplete = false): string => {
+    if (incomplete && durationMs === 0) return t('sidebar.tasks.stats.unavailable')
     const seconds = Math.floor(Math.max(0, durationMs) / 1000)
     return `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor(seconds / 60 % 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
   }
@@ -2105,7 +2106,7 @@ function RightAssistantSidebarView({
                 ? currentStats?.title ?? conversationTitles.get(activeConversationId) ?? t('sidebar.tasks.stats.currentConversation')
                 : t('sidebar.tasks.stats.noConversation')}</h3>
               <dl className="task-center__stat-grid">
-                <div><dt>{t('sidebar.tasks.stats.replyDuration')}</dt><dd>{currentStats ? formatDuration(currentStats.replyDurationMs) : t('sidebar.tasks.stats.unavailable')}</dd></div>
+                <div><dt>{t('sidebar.tasks.stats.replyDuration')}</dt><dd>{currentStats ? formatDuration(currentStats.replyDurationMs, currentStats.incomplete) : t('sidebar.tasks.stats.unavailable')}</dd></div>
                 <div><dt>{t('sidebar.tasks.stats.messages')}</dt><dd>{currentStats ? currentStats.messageCount.toLocaleString(locale) : t('sidebar.tasks.stats.unavailable')}</dd></div>
               </dl>
               {currentStats?.incomplete && <p className="task-center__incomplete">{t('sidebar.tasks.stats.incomplete')}</p>}
@@ -2253,7 +2254,7 @@ function RightAssistantSidebarView({
                       </span>
                       <span>{t(`task.status.${task.status}`)}</span>
                       {duration && <span title={t('sidebar.tasks.stats.taskDuration')}>
-                        {t('sidebar.tasks.stats.taskDuration')}: {formatDuration(duration.durationMs)}
+                        {t('sidebar.tasks.stats.taskDuration')}: {formatDuration(duration.durationMs, duration.incomplete)}
                         {duration.incomplete && ` (${t('sidebar.tasks.stats.partial')})`}
                       </span>}
                     </div>
