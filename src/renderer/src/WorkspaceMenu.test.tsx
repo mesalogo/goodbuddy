@@ -30,6 +30,26 @@ function setup({ projects = [local, other], conversations = [conversation('Local
 afterEach(async () => { cleanup(); vi.restoreAllMocks(); await i18n.changeLanguage('zh-CN') })
 
 describe('production workspace menu', () => {
+  it('opens with all projects and clears the previous preview when reopened', async () => {
+    await i18n.changeLanguage('en-US')
+    const { actions } = setup()
+    const trigger = screen.getByRole('button', { name: 'Current project' })
+    fireEvent.click(trigger)
+    const assertAllProjects = (): void => {
+      const region = screen.getByRole('region', { name: 'All projects' })
+      expect(within(region).getByRole('button', { name: /^Local chat/ })).toBeVisible()
+      expect(within(region).getByRole('button', { name: /^Other chat/ })).toBeVisible()
+      expect(document.querySelector('[data-preview="true"]')).toBeNull()
+    }
+    assertAllProjects()
+    fireEvent.pointerOver(screen.getByRole('menuitemradio', { name: /Other workspace/ }), { pointerType: 'mouse' })
+    expect(screen.getByRole('region', { name: other.name })).toBeVisible()
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    fireEvent.click(trigger)
+    assertAllProjects()
+    expect(actions.onSelect).not.toHaveBeenCalled()
+  })
+
   it('puts All Projects first in a fixed tab row and filters categories only when activated', async () => {
     await i18n.changeLanguage('en-US')
     const remote: AssistantProject = { ...other, id: 'remote', name: 'Remote workspace', rootPath: '/srv/workspace',
@@ -144,7 +164,7 @@ describe('production workspace menu', () => {
     }
   })
 
-  it('opens current-project activity from the unified button and offers all projects inside', async () => {
+  it('opens all-project activity from the unified button', async () => {
     await i18n.changeLanguage('en-US')
     const conversations = Array.from({ length: 12 }, (_, i) => conversation(`Finished ${i}`, local.id, 100 - i))
     const activities: ConversationActivity[] = conversations.map((row) => ({ conversationId: row.id, projectId: local.id,
@@ -158,14 +178,12 @@ describe('production workspace menu', () => {
     const menu = screen.getByRole('dialog', { name: 'Projects and activity' })
     expect(trigger).toHaveAttribute('aria-controls', menu.id)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByRole('region', { name: local.name })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'All projects' })).toBeVisible()
     const all = screen.getByRole('tab', { name: 'All projects' })
     expect(all).toHaveAttribute('aria-selected', 'true')
     expect(screen.getAllByRole('tab')[0]).toBe(all)
     const list = screen.getByRole('list', { name: 'Conversations' })
-    expect(within(list).getAllByRole('button')).toHaveLength(10)
-    expect(within(list).queryByText('Running chat')).not.toBeInTheDocument()
-    fireEvent.click(all)
+    expect(within(list).getByText('Running chat')).toBeVisible()
     expect(within(list).getAllByRole('button')).toHaveLength(11)
     expect(within(list).getAllByText(local.name)).toHaveLength(10)
     fireEvent.click(within(screen.getByRole('group', { name: 'Filter conversation status' })).getByRole('button', { name: 'Completed' }))
@@ -174,8 +192,8 @@ describe('production workspace menu', () => {
     expect(actions.onOpenConversation).toHaveBeenCalledExactlyOnceWith('Finished 0')
     rerender(<ProjectSwitcher {...props} activities={activities.filter((row) => row.conversationId !== 'Finished 0')} />)
     fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
-    expect(within(screen.getByRole('list', { name: 'Conversations' })).getByRole('button', { name: 'Finished 0' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: local.name })).toBeVisible()
+    expect(within(screen.getByRole('list', { name: 'Conversations' })).getByRole('button', { name: /^Finished 0 / })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'All projects' })).toBeVisible()
   })
 
   it('searches across categories, creates in preview scope, and explains channel restrictions', async () => {

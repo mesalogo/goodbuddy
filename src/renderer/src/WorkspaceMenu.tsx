@@ -50,7 +50,7 @@ export function WorkspaceMenu({
   const categoriesRef = useRef<HTMLDivElement>(null)
   const [category, setCategory] = useState<ProjectCategory>('allProjects')
   if (category === 'remote' && !remoteProjectsEnabled) setCategory('allProjects')
-  const [scope, setScope] = useState<string | null>(activeProjectId)
+  const [scope, setScope] = useState<string | null>(null)
   const [filter, setFilter] = useState<WorkspaceFilter>('all')
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())

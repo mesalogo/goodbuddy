@@ -331,7 +331,7 @@ describe('ProjectSwitcher project activity integration', () => {
     expect(trigger).toHaveTextContent('Local project')
     expect(trigger).toHaveAccessibleDescription('暂无活动')
     fireEvent.click(within(trigger).getByText('暂无活动'))
-    expect(screen.getByRole('region', { name: project.name })).toBeVisible()
+    expect(screen.getByRole('region', { name: '全部项目' })).toBeVisible()
     fireEvent.keyDown(screen.getByRole('dialog', { name: '项目与活动' }), { key: 'Escape' })
     expect(trigger).toHaveFocus()
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
