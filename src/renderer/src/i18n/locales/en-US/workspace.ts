@@ -105,6 +105,7 @@ export const workspace = {
         'Applies only to new conversations in this project. Existing conversations are unchanged.',
       channelManaged: 'GoodBuddy manages channel project names.',
       selectRoot: 'Select project root folder',
+      rootRequired: 'Required: select a root folder to create the project.',
       danger: {
         title: 'Danger zone',
         description:

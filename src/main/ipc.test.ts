@@ -6464,6 +6464,33 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   })
 
+  it('requires a directory through project creation IPC while preserving blank-path updates', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const harness = createHarness({}, undefined, 'always', undefined, false, undefined, undefined, undefined,
+      false, undefined, undefined, undefined, undefined, database)
+    try {
+      const event = trustedEvent(harness.webContents)
+      const create = electronMocks.handlers.get(ipcChannels.projectsCreate)!
+      const input = { name: 'Directory project', description: '', rootPath: '', defaultWorkMode: 'ask' as const }
+      const initialCount = database.listProjects().length
+      for (const rootPath of ['', '   ']) {
+        expect(() => create(event, { ...input, rootPath })).toThrow()
+      }
+      expect(database.listProjects()).toHaveLength(initialCount)
+      const created = create(event, { ...input, rootPath: ` ${process.cwd()} ` }) as AssistantProject
+      expect(database.getProject(created.id).rootPath).toBe(process.cwd())
+      database.updateProject(created.id, input)
+      await electronMocks.handlers.get(ipcChannels.projectsUpdate)!(event, {
+        projectId: created.id, input: { ...input, name: 'Renamed historical project' }
+      })
+      expect(database.getProject(created.id)).toMatchObject({ name: 'Renamed historical project', rootPath: '' })
+    } finally {
+      await harness.dispose()
+      database.close()
+    }
+  })
+
   it.each(['global', 'projects'] as const)('collects supervision within the exact UI timeRange before limits (%s)', async (kind) => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-22T08:00:00.000Z'))

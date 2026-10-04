@@ -76,6 +76,9 @@ function createSftp(options: {
         ) => void
       ) => callback(undefined, batches.shift() ?? [])
     ),
+    stat: vi.fn((_path, callback) => {
+      callback(new Error('Target unavailable'))
+    }),
     close: vi.fn(
       (
         _handle: Buffer,
@@ -169,6 +172,114 @@ describe('bounded directory SFTP', () => {
       '/',
       expect.any(Function)
     )
+  })
+
+  it('includes only directory link targets and preserves their entry paths', async () => {
+    const sftp = createSftp({
+      canonicalPath: '/',
+      batches: [[
+        entry('relative', 'symbolic-link'),
+        entry('absolute', 'symbolic-link'),
+        entry('file-link', 'symbolic-link'),
+        entry('broken', 'symbolic-link'),
+        entry('denied', 'symbolic-link'),
+        entry('loop', 'symbolic-link'),
+        entry('../invalid', 'symbolic-link'),
+        entry('regular')
+      ]]
+    })
+    sftp.stat = vi.fn((path, callback) => {
+      if (path === '/relative' || path === '/absolute') {
+        callback(undefined, entry('target').attrs)
+      } else if (path === '/file-link') {
+        callback(undefined, entry('target', 'file').attrs)
+      } else {
+        callback(Object.assign(new Error('Cannot stat target'), {
+          code: path === '/denied' ? 3 : 2
+        }))
+      }
+    })
+
+    const result = await listBoundedSftpDirectories(opener(sftp), '/')
+
+    expect(result.entries).toEqual([
+      { name: 'absolute', path: '/absolute' },
+      { name: 'regular', path: '/regular' },
+      { name: 'relative', path: '/relative' }
+    ])
+    expect(sftp.stat).toHaveBeenCalledTimes(6)
+    expect(sftp.realpath).toHaveBeenCalledTimes(2)
+    expect(sftp.close).toHaveBeenCalledOnce()
+    expect(sftp.end).toHaveBeenCalledOnce()
+  })
+
+  it('bounds link lookups by the scanned-entry limit and keeps the return limit', async () => {
+    const sftp = createSftp({ batches: [
+      Array.from({ length: 2_100 }, (_, index) =>
+        entry(`link-${index.toString().padStart(4, '0')}`, 'symbolic-link'))
+    ] })
+    sftp.stat = vi.fn((_path, callback) => {
+      callback(undefined, entry('target').attrs)
+    })
+
+    const result = await listBoundedSftpDirectories(opener(sftp))
+
+    expect(sftp.stat).toHaveBeenCalledTimes(2_000)
+    expect(sftp.readdir).toHaveBeenCalledOnce()
+    expect(result.entries).toHaveLength(500)
+    expect(result.entries[499]?.name).toBe('link-0499')
+    expect(result.truncated).toBe(true)
+    expect(sftp.close).toHaveBeenCalledOnce()
+    expect(sftp.end).toHaveBeenCalledOnce()
+  })
+
+  it.each(['abort', 'timeout', 'channel-error'] as const)(
+    'cleans up a pending STAT on %s and ignores late results', async (reason) => {
+      vi.useFakeTimers()
+      try {
+        const sftp = createSftp({ batches: [[
+          entry('first', 'symbolic-link'),
+          entry('second', 'symbolic-link')
+        ]] })
+        let callback: Parameters<DirectorySftp['stat']>[1] | undefined
+        sftp.stat = vi.fn((_path, next) => { callback = next })
+        const controller = new AbortController()
+        const pending = listBoundedSftpDirectories(opener(sftp), undefined, controller.signal)
+        const expected = expect(pending).rejects.toThrow(
+          reason === 'timeout' ? '目录浏览超时' : reason
+        )
+        expect(sftp.stat).toHaveBeenCalledOnce()
+        expect(sftp.readdir).toHaveBeenCalledOnce()
+        if (reason === 'timeout') {
+          await vi.advanceTimersByTimeAsync(30_000)
+        } else if (reason === 'abort') {
+          controller.abort(new Error(reason))
+        } else {
+          (sftp as unknown as EventEmitter).emit('error', new Error(reason))
+        }
+        await expected
+        callback?.(undefined, entry('target').attrs)
+        await Promise.resolve()
+        await Promise.resolve()
+        expect(sftp.stat).toHaveBeenCalledOnce()
+        expect(sftp.readdir).toHaveBeenCalledOnce()
+        expect(sftp.close).toHaveBeenCalledOnce()
+        expect(sftp.end).toHaveBeenCalledOnce()
+        expect((sftp as unknown as EventEmitter).listenerCount('error')).toBe(0)
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('closes resources if issuing STAT throws', async () => {
+    const sftp = createSftp({ batches: [[entry('link', 'symbolic-link')]] })
+    sftp.stat = vi.fn(() => { throw new Error('STAT failed') })
+
+    await expect(listBoundedSftpDirectories(opener(sftp))).rejects.toThrow('STAT failed')
+    expect(sftp.close).toHaveBeenCalledOnce()
+    expect(sftp.end).toHaveBeenCalledOnce()
   })
 
   it('sorts names by their UTF-8 bytes rather than UTF-16 code units', async () => {

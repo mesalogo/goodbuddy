@@ -479,6 +479,7 @@ OCR 模型可用性由 Main 校验，Worker 运行状态由实际持有它的 Re
 - 聚合状态新增 `completed`，全局和项目计数包含 `attention`、`running`、`completed`，
   同一 Conversation ID 只按最高优先级计数；活动行为空时以“暂无活动”替换计数，保留全局入口。
 - `App` 向 `ProjectSwitcher` 传入 `conversationStore`、活动行、侧栏可见状态和确切会话跳转、新建回调。`WorkspaceMenu` 持有分类、预览范围、搜索及状态筛选；分类复用 `PageTabs`，状态筛选复用 `SegmentedControl`，项目行与真实设置／创建表单继续由 `ProjectSwitcher` 提供。
+- 本地创建使用共享 `projectCreateSchema`，`rootPath` 经 trim 后要求 1 至 4096 个字符，`projectsCreate` IPC 在写库前校验。`projectUpdateSchema` 保留原有空目录兼容性，`projectsUpdate` 请求显式使用该 schema；持久化执行空间、默认项目和通道初始化不增加目录限制。`ProjectSwitcher` 在创建按钮和保存入口检查空目录，设置保存沿用原规则。
 - `workspace-menu-selectors.ts` 订阅会话 Store，投影 ID、项目、标题、排序时间及通道标记，以字段相等比较保留未变化结果；排序时间为 `Math.max(conversationActivityTime(conversation), activityTimes.get(conversation.id) ?? 0)`。与活动行按 ID 合并后派生分组和最近 10 条；仅有活动、尚无摘要的行使用 Store 时间，缺失时取 0。悬停只改变 Renderer 预览范围，不发 IPC、不加载详情或请求模型。打开菜单所需的既有主机快照读取与悬停预览分开。
 - Store 的 `activityTimes` 保存本次应用会话内的访问／状态变化时间，更新时间为 `Math.max(Date.now(), lastActivityTime + 1)`。`ProjectSwitcher` 调用 `recordActivityStatuses`：首次快照只建立基线，后续状态变化触发更新，但 `completed` 变为无状态的完成提醒清除不触发更新。`WorkspaceMenu` 经 `useSyncExternalStore` 订阅该时间映射；时间不持久化，悬停不更新，普通侧栏原有消息排序规则不变。
 - 项目、会话列表均使用共享 `useListWindow`，分别估算 `64px`、`56px` 行高并测量实际高度，保留键盘目标行；范围改变时重置滚动。窗口化仅限制挂载行数，不截断活动集合，不代表已有性能基准结果。

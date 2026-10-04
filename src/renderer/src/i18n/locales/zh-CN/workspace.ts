@@ -102,6 +102,7 @@ export const workspace = {
         '仅应用于此项目中新建的对话，不会更改已有对话。',
       channelManaged: '通道项目名称由 GoodBuddy 管理。',
       selectRoot: '选择项目根目录',
+      rootRequired: '根目录为必填项，请选择目录后创建项目。',
       danger: {
         title: '危险操作',
         description:

@@ -1,5 +1,15 @@
 # 应用导航实施进度
 
+## 2026-10-04：新建本地项目必选目录
+
+对应 FR-14 的项目创建入口，规则见 [PRD](./prd.md#fr-14-项目活动汇总)及[界面设计](./ui-design.md#10-项目活动汇总)。创建表单已增加中英文必填提示、无障碍关联及空目录提交检查；共享创建 schema 拒绝空白路径，更新 IPC 使用独立 schema，保留历史空目录项目的保存能力。
+
+- `npx vitest run --project unit src/renderer/src/ProjectSwitcher.test.tsx src/shared/assistant-contracts.test.ts`：57 项通过，覆盖空白目录、目录选择与取消、正常创建、中英文提示、历史空目录设置保存及既有 SSH 界面回归。
+- `npx vitest run src/main/ipc.test.ts -t "requires a directory through project creation IPC"`：1 项通过，172 项未选中。调用生产 IPC handler 和真实内存 SQLite，验证空目录创建不写库、有效目录创建落库，以及历史空目录更新成功。
+- `npm run typecheck` 和本次修改的 8 个源码／测试文件的定向 ESLint 检查通过。
+
+本次未运行完整测试集或原生 Electron 目录选择器验收，未修改远程主机文档、Agent 或远程连接流程；模型调用 0 次。
+
 ## 2026-10-04：双行入口合并为单个按钮
 
 对应 FR-14、US-E1 至 US-E3。项目名和活动摘要现在属于同一个 `60px` 按钮，共用键盘焦点、展开状态和菜单关联。点击任一行默认预览当前项目，全部项目范围在菜单内切换；活动描述和按钮外的恢复反馈通过 `aria-describedby` 关联。移除了独立摘要触发引用与入口范围状态，保留最近 10 条及现有活动计数，没有新增轮询。

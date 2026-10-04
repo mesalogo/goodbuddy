@@ -934,6 +934,7 @@ function ProjectSwitcherView({
   }
 
   const save = async (): Promise<void> => {
+    if (dialogMode === 'create' && !draft.rootPath.trim()) return
     setSaving(true)
     setError(undefined)
     try {
@@ -1346,7 +1347,12 @@ function ProjectSwitcherView({
                         {t('projectSwitcher.dialog.fields.rootPath')}
                       </span>
                       <div className="project-create-card__path">
-                        <input readOnly value={draft.rootPath} />
+                        <input
+                          aria-required={dialogMode === 'create' || undefined}
+                          aria-describedby={dialogMode === 'create' ? 'project-root-required' : undefined}
+                          readOnly
+                          value={draft.rootPath}
+                        />
                         <button
                           aria-label={t(
                             'projectSwitcher.dialog.selectRoot'
@@ -1360,6 +1366,11 @@ function ProjectSwitcherView({
                         </button>
                       </div>
                     </label>
+                    {dialogMode === 'create' && (
+                      <small id="project-root-required">
+                        {t('projectSwitcher.dialog.rootRequired')}
+                      </small>
+                    )}
                     <ProjectWorkModeFields
                       ariaLabel={t(
                         'projectSwitcher.dialog.fields.defaultMode'
@@ -1904,7 +1915,8 @@ function ProjectSwitcherView({
                 <button
                   className="primary-button"
                   disabled={
-                    busy || !draft.name.trim() || confirmingDelete
+                    busy || !draft.name.trim() || confirmingDelete ||
+                    (dialogMode === 'create' && !draft.rootPath.trim())
                   }
                   onClick={() => void save()}
                   type="button"

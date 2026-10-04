@@ -147,6 +147,7 @@ import {
   normalizeInteractiveWorkMode,
   projectChannelLabels,
   projectCreateSchema,
+  projectUpdateSchema,
   scheduleCreateSchema,
   expertCreateSchema,
   type AssistantSchedule,
@@ -729,7 +730,7 @@ const approvalResponseSchema = z
 const projectUpdateRequestSchema = z
   .object({
     projectId: assistantIdSchema,
-    input: projectCreateSchema
+    input: projectUpdateSchema
   })
   .strict()
 const projectArchiveRequestSchema = z

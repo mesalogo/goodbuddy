@@ -444,7 +444,7 @@ describe('ProjectSwitcher runtime fields', () => {
   })
 
   it('creates an ordinary project with DeepSeek Harness', async () => {
-    const { onCreate } = renderSwitcher()
+    const { onCreate, onSelectRoot } = renderSwitcher()
 
     openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
@@ -455,6 +455,9 @@ describe('ProjectSwitcher runtime fields', () => {
     // New projects start from a concrete execution mode.
     expect(runtime).not.toHaveValue('')
     fireEvent.change(runtime, { target: { value: 'deepseek-harness' } })
+    onSelectRoot.mockResolvedValue('C:\\Workspace')
+    fireEvent.click(within(dialog).getByRole('button', { name: '选择项目根目录' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '创建' })).toBeEnabled())
     fireEvent.click(
       within(dialog).getByRole('button', { name: '创建' })
     )
@@ -469,8 +472,41 @@ describe('ProjectSwitcher runtime fields', () => {
     )
   })
 
+  it('requires a local directory and preserves the selection when the picker is cancelled', async () => {
+    const { onCreate, onSelectRoot } = renderSwitcher()
+    openCreate('新建项目')
+    const dialog = screen.getByRole('dialog', { name: '新建项目' })
+    const create = within(dialog).getByRole('button', { name: '创建' })
+    const select = within(dialog).getByRole('button', { name: '选择项目根目录' })
+    const root = within(dialog).getByLabelText('根目录')
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: 'Directory project' } })
+    expect(root).toHaveAttribute('aria-required', 'true')
+    expect(root).toHaveAccessibleDescription('根目录为必填项，请选择目录后创建项目。')
+    expect(create).toBeDisabled()
+    fireEvent.click(create)
+    expect(onCreate).not.toHaveBeenCalled()
+
+    for (const selection of [undefined, '   ', 'C:\\Selected', undefined]) {
+      onSelectRoot.mockResolvedValueOnce(selection)
+      await act(async () => { fireEvent.click(select) })
+      if (selection === 'C:\\Selected' || root.getAttribute('value') === 'C:\\Selected') {
+        expect(root).toHaveValue('C:\\Selected')
+        expect(create).toBeEnabled()
+      } else {
+        expect(create).toBeDisabled()
+      }
+    }
+    fireEvent.click(create)
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ rootPath: 'C:\\Selected' }))
+      expect(screen.queryByRole('dialog', { name: '新建项目' })).not.toBeInTheDocument()
+    })
+  })
+
   it('edits an ordinary project to use DeepSeek Harness and switches work mode by keyboard', async () => {
-    const { onUpdate } = renderSwitcher()
+    const { onUpdate } = renderSwitcher({
+      ...project, rootPath: '', executionSpace: { kind: 'local', rootPath: '' }
+    })
 
     fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
     fireEvent.click(screen.getByRole('menuitem', {
@@ -501,6 +537,7 @@ describe('ProjectSwitcher runtime fields', () => {
       expect(onUpdate).toHaveBeenCalledWith(
         project.id,
         expect.objectContaining({
+          rootPath: '',
           defaultWorkMode: 'execute',
           runtimeSelection: { provider: 'deepseek-harness' }
         })
@@ -516,6 +553,8 @@ describe('ProjectSwitcher runtime fields', () => {
     const dialog = screen.getByRole('dialog', { name: 'New project' })
     expect(within(dialog).getByRole('group', { name: 'Default Runtime for new conversations' })).toBeInTheDocument()
     expect(within(dialog).getByLabelText('Execution mode')).not.toHaveValue('')
+    expect(within(dialog).getByLabelText('Root folder')).toHaveAttribute('aria-required', 'true')
+    expect(within(dialog).getByLabelText('Root folder')).toHaveAccessibleDescription('Required: select a root folder to create the project.')
     expect(
       within(dialog)
         .getAllByRole('group', { name: 'Default mode' })

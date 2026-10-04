@@ -18,6 +18,7 @@ export type DirectorySftp = Pick<
   | 'realpath'
   | 'opendir'
   | 'readdir'
+  | 'stat'
   | 'close'
   | 'end'
   | 'on'
@@ -67,7 +68,7 @@ function parentPath(path: string): string | null {
   return separator === 0 ? '/' : path.slice(0, separator)
 }
 
-function validDirectoryName(entry: FileEntryWithStats): boolean {
+function validDirectoryEntry(entry: FileEntryWithStats): boolean {
   const name = entry?.filename
   if (
     typeof name !== 'string' ||
@@ -84,9 +85,9 @@ function validDirectoryName(entry: FileEntryWithStats): boolean {
   try {
     return (
       typeof entry.attrs?.isDirectory === 'function' &&
-      entry.attrs.isDirectory() === true &&
       typeof entry.attrs.isSymbolicLink === 'function' &&
-      entry.attrs.isSymbolicLink() === false
+      (entry.attrs.isSymbolicLink() === true ||
+        entry.attrs.isDirectory() === true)
     )
   } catch {
     return false
@@ -221,6 +222,38 @@ export function listBoundedSftpDirectories(
       finishError(new Error('SSH 目录浏览超时'))
     }, OPERATION_TIMEOUT_MS)
 
+    const inspectEntries = async (
+      entries: FileEntryWithStats[]
+    ): Promise<void> => {
+      for (const entry of entries) {
+        if (settled) {
+          return
+        }
+        if (!validDirectoryEntry(entry)) {
+          continue
+        }
+        const path = joinPath(listingPath!, entry.filename)
+        if (!isCanonicalAbsolutePosixPath(path)) {
+          continue
+        }
+        if (entry.attrs.isSymbolicLink()) {
+          // STAT follows links; keep the entry path for later realpath navigation.
+          const isDirectory = await new Promise<boolean>((resolve) => {
+            sftp!.stat(path, (error, attrs) => {
+              resolve(!settled && !error && attrs?.isDirectory() === true)
+            })
+          })
+          if (settled) {
+            return
+          }
+          if (!isDirectory) {
+            continue
+          }
+        }
+        directories.add(entry.filename)
+      }
+    }
+
     const readNextBatch = (): void => {
       if (settled || !sftp || !handle) {
         return
@@ -267,26 +300,21 @@ export function listBoundedSftpDirectories(
             MAXIMUM_SCANNED_ENTRIES - scannedEntries
           const inspected = list.slice(0, remaining)
           scannedEntries += inspected.length
-          for (const entry of inspected) {
-            if (
-              validDirectoryName(entry) &&
-              isCanonicalAbsolutePosixPath(
-                joinPath(listingPath!, entry.filename)
-              )
-            ) {
-              directories.add(entry.filename)
+          void inspectEntries(inspected).then(() => {
+            if (settled) {
+              return
             }
-          }
-          if (
-            list.length > inspected.length ||
-            scannedEntries >= MAXIMUM_SCANNED_ENTRIES ||
-            readdirCallbacks >= MAXIMUM_READDIR_CALLBACKS
-          ) {
-            truncated = true
-            finishSuccess()
-          } else {
-            readNextBatch()
-          }
+            if (
+              list.length > inspected.length ||
+              scannedEntries >= MAXIMUM_SCANNED_ENTRIES ||
+              readdirCallbacks >= MAXIMUM_READDIR_CALLBACKS
+            ) {
+              truncated = true
+              finishSuccess()
+            } else {
+              readNextBatch()
+            }
+          }).catch(finishError)
         })
       } catch (error) {
         finishError(error)

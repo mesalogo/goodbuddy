@@ -159,6 +159,20 @@ describe('isUntouchedBuiltInDefaultProject', () => {
 })
 
 describe('project execution space contracts', () => {
+  it.each(['', '   ', '\t\n'])('rejects blank creation paths but preserves updates: %j', (rootPath) => {
+    const input = { name: 'Project', description: '', rootPath, defaultWorkMode: 'ask' }
+    const result = projectCreateSchema.safeParse(input)
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['rootPath'])
+    expect(projectUpdateSchema.parse(input).rootPath).toBe('')
+  })
+
+  it.each(['C:\\Workspace', '/home/user/project'])('accepts and trims a creation directory: %s', (rootPath) => {
+    expect(projectCreateSchema.parse({
+      name: 'Project', description: '', rootPath: ` ${rootPath} `, defaultWorkMode: 'ask'
+    }).rootPath).toBe(rootPath)
+  })
+
   it('parses strict local and SSH output without normalizing paths', () => {
     expect(
       projectExecutionSpaceSchema.parse({

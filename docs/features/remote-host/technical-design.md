@@ -279,7 +279,9 @@ Main 传入已规范化的绝对 POSIX root。Agent 返回 Workspace identity、
 
 - 创建项目时，用户可以直接输入远端工作目录，或通过输入框右侧的文件夹按钮浏览并选择目录。
 - 项目保存前的目录浏览使用 Main 管理的只读、有界 SFTP，只返回目录；每次请求重新解析并校验当前 Host revision 与 Host Key generation，不安装 Agent、不暴露任意 shell/SFTP 接口。
+- 普通目录直接列出；符号链接通过 `stat` 检查目标，仅列出目录目标。文件链接、断链、循环链接和目标不可读的链接不列出。返回项保留当前目录下的链接名称和路径，进入该项时沿用 `realpath` 解析目标路径。
 - 浏览从 SSH 账号 Home 或当前有效绝对路径开始，限制扫描次数、返回条目和总时限；取消、Host 变化、超时或连接失败时关闭 SFTP 并保留用户原先输入。
+- 每次浏览最多扫描 2,000 项、读取 64 批、返回 500 个目录，总时限 30 秒。链接检查逐项执行，计入同一次浏览的扫描及时间限制；检查期间取消、超时或通道报错仍关闭目录句柄和 SFTP 通道，忽略迟到的结果。
 - 选择目录只更新项目草稿，仍需通过正常的 Agent、Workspace、Runtime 验证和项目保存事务才会持久化。
 - Ask Workspace handle 不暴露写入方法。
 - Execute Workspace handle 可读写，但这不是 Execute 的唯一权限面；Execute Runtime 本身使用 SSH 账号的正常权限。
@@ -1093,3 +1095,30 @@ node "C:\Users\jiang\AppData\Local\Temp\opencode\lifecycle-host-run.cjs" driver 
 延迟或清理失败，也没有覆盖未知终态后的新 binding 场景、Continue、Execute、断线恢复、
 完整 UI 操作或签名包安装。故障时序与未知终态的下一次发送以本机定向回归为证据，不能用
 这两轮成功请求替代。
+
+## 目录符号链接验证（2026-10-04）
+
+`bounded-directory-sftp.ts` 已支持目录链接。该路径由 Desktop Main 的 SSH connection
+lease 调用，不经过 Agent daemon 或 Runtime；本次直接构建并运行修改后的 Main SFTP
+源码，无需更改 Host 上的 Agent 安装。
+
+聚焦命令 `npm test -- src/main/ssh/bounded-directory-sftp.test.ts src/main/ssh/ssh-host-directory-browser.test.ts src/main/ssh/ssh-connection-pool.test.ts`
+通过 3 个文件、40 项测试，覆盖目录目标筛选、条目路径、扫描及返回上限，以及等待
+`stat` 时取消、超时、通道错误、迟到回调和清理。`npm run lint` 通过。
+最终 `npm run typecheck` 通过；IPC 聚焦测试
+`npx vitest run src/main/ipc.test.ts -t "requires a directory through project creation IPC"`
+通过 1 项，172 项未选中。
+全量 `npm test` 在 120 秒后由执行器终止，结束前报告 Magic Notes storage 启动读取
+耗时测试失败；本轮没有全量通过结论。
+
+真实共享 Linux Host 验证复用 GoodBuddy safeStorage 凭据和固定 Host Key。LAN
+`192.168.0.23` 未建立连接，VPN `10.7.0.23` 成功。测试在独立
+`/root/tmp/gb-directory-links-*` 目录创建普通目录、相对及绝对目录链接、链式链接、
+文件链接、断链和循环链接，通过生产 `lease.listDirectories` 验证可见项与原始条目
+路径，再进入三类目录链接确认返回目标的规范路径及子目录。取消一次真实浏览后，
+同一 lease 再次浏览成功。测试目录已删除，模型调用 0 次。
+
+临时探测脚本为 `C:\Users\jiang\AppData\Local\Temp\opencode\directory-symlink-host.ts`，
+运行命令为 `node "C:\Users\jiang\AppData\Local\Temp\opencode\directory-symlink-host-run.cjs"`，
+退出码 0。Host 场景未注入目标权限错误或 `stat` 超时，这些失败分支由聚焦回归覆盖；
+本次验证范围不含 Renderer 操作和项目创建验证。

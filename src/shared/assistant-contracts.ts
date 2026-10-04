@@ -277,7 +277,7 @@ export function normalizeInteractiveWorkMode(
   return workMode === 'execute' ? 'execute' : 'ask'
 }
 
-export const projectCreateSchema = z
+export const projectUpdateSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().max(2_000),
@@ -288,7 +288,9 @@ export const projectCreateSchema = z
   })
   .strict()
 
-export const projectUpdateSchema = projectCreateSchema
+export const projectCreateSchema = projectUpdateSchema.extend({
+  rootPath: z.string().trim().min(1).max(4_096)
+})
 
 export type ProjectCreateInput = z.infer<typeof projectCreateSchema>
 
