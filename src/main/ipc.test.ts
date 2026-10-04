@@ -49,10 +49,19 @@ import { CapabilityService } from './capabilities/capability-service'
 import { ObsidianService } from './obsidian'
 import { packageObsidianMcpVault } from './obsidian/package-mcpvault'
 import {
-  registerIpcHandlers,
+  registerIpcHandlers as registerProductionIpcHandlers,
   sendRemoteEnvironmentUpdateProgress,
   sendRemoteProjectSaveProgress
 } from './ipc'
+
+// Most IPC tests use partial databases. Real database fixtures retain their timing implementation.
+function registerIpcHandlers(...args: Parameters<typeof registerProductionIpcHandlers>): ReturnType<typeof registerProductionIpcHandlers> {
+  const database = args[7]
+  database.onExecutionStatsChanged ??= vi.fn(() => () => {})
+  database.startExecutionTiming ??= vi.fn()
+  database.endExecutionTiming ??= vi.fn()
+  return registerProductionIpcHandlers(...args)
+}
 
 describe('embedding IPC boundary', () => {
   it('validates explicit IDs and keeps ZIP paths in the native dialog', async () => {
@@ -4435,13 +4444,13 @@ describe('registerIpcHandlers token usage', () => {
     vi.clearAllMocks()
   })
 
-  it('validates execution statistics scope and sender before reading evidence', async () => {
-    const summary = { durationMs: 5000, requestCount: 2, incompleteRequestCount: 1, activeRequestCount: 0, asOf: 10000, taskDurations: [{ id: 'task', durationMs: 5000, incompleteRequestCount: 1 }] }
+  it('validates execution statistics scope and sender before reading a timing snapshot', async () => {
+    const summary = { durationMs: 5000, runningCount: 0, incomplete: true, asOf: 10000, taskDurations: [{ id: 'task', durationMs: 5000, runningCount: 0, incomplete: true }] }
     const assistantDatabase = {
       queueDueSchedules: vi.fn(() => []),
       listConversationQueueItems: vi.fn(() => []),
       listPendingConversationQueueIds: vi.fn(() => []),
-      getExecutionStatsAsync: vi.fn(async () => summary)
+      getExecutionStats: vi.fn(() => summary)
     }
     const webContents = { on: vi.fn(), removeListener: vi.fn(),
       mainFrame: { url: 'file:///goodbuddy/index.html' },
@@ -4459,13 +4468,13 @@ describe('registerIpcHandlers token usage', () => {
       const event = { sender: webContents, senderFrame: webContents.mainFrame }
       const id = '00000000-0000-4000-8000-000000000301'
       for (const scope of [{ conversationId: id }, { projectId: id }]) {
-        await expect(handler(event, scope)).resolves.toEqual(summary)
-        expect(assistantDatabase.getExecutionStatsAsync).toHaveBeenLastCalledWith(scope, new Set(), expect.stringContaining('execution-stats-worker.js'))
+        expect(handler(event, scope)).toEqual(summary)
+        expect(assistantDatabase.getExecutionStats).toHaveBeenLastCalledWith(scope)
       }
       expect(() => handler(event, {})).toThrow()
       expect(() => handler(event, { projectId: id, conversationId: id })).toThrow()
       expect(() => handler({ sender: {}, senderFrame: webContents.mainFrame }, { projectId: id })).toThrow()
-      expect(assistantDatabase.getExecutionStatsAsync).toHaveBeenCalledTimes(2)
+      expect(assistantDatabase.getExecutionStats).toHaveBeenCalledTimes(2)
     } finally {
       await dispose()
     }
@@ -5796,6 +5805,128 @@ describe('registerIpcHandlers agent terminal state', () => {
     knowledgeLibraryIds: []
   })
 
+  it.each(['completed', 'failed', 'cancelled'] as const)('persists reply duration through the production lease and %s path', async (status) => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const projectId = database.listProjects()[0]!.id
+    const conversationId = crypto.randomUUID()
+    const requestId = crypto.randomUUID()
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    database.saveLocalConversations([{ header: { id: conversationId, projectId, title: 'Timing', updatedAt: now }, messages: [] }])
+    let finish!: () => void
+    const gate = new Promise<void>(resolve => { finish = resolve })
+    let started!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    const run = vi.fn(async function* (request: AgentExecutionRequest) {
+      started()
+      await gate
+      if (status !== 'completed') throw new Error('Stopped')
+      yield { type: 'done' as const, requestId: request.requestId }
+    })
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: true, run },
+      undefined, 'always', undefined, false, undefined, undefined, undefined, false,
+      undefined, undefined, undefined, undefined, database)
+    try {
+      const event = trustedEvent(harness.webContents)
+      await harness.handler!(event, { requestId, conversationId, projectId, prompt: 'Run', workMode: 'ask' })
+      await ready
+      now += 5000
+      const read = () => electronMocks.handlers.get(ipcChannels.tasksExecutionStats)!(event, { conversationId })
+      expect(read()).toMatchObject({ durationMs: 5000, runningCount: 1, incomplete: false })
+      if (status === 'cancelled') {
+        harness.cancelHandler!(event, requestId)
+        now += 60_000
+        expect(read()).toMatchObject({ durationMs: 5000, runningCount: 0 })
+      }
+      finish()
+      await vi.waitFor(() => expect(database.getTask(requestId).status).toBe(status))
+      now += 60_000
+      expect(read()).toMatchObject({ durationMs: 5000, runningCount: 0 })
+      expect(harness.webContents.send).toHaveBeenCalledWith(ipcChannels.tasksExecutionStatsChanged)
+    } finally {
+      finish()
+      await harness.dispose()
+      clock.mockRestore()
+      database.close()
+    }
+  })
+
+  it.each(['answer', 'runtime-event'] as const)('pauses ordinary question timing until the last %s resolution and retains failed answers', async (resolution) => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const projectId = database.listProjects()[0]!.id
+    const conversationId = crypto.randomUUID()
+    const requestId = crypto.randomUUID()
+    const questionIds = [crypto.randomUUID(), crypto.randomUUID()]
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    database.saveLocalConversations([{ header: { id: conversationId, projectId, title: 'Questions', updatedAt: now }, messages: [] }])
+    const deferred = () => {
+      let resolve!: () => void
+      const promise = new Promise<void>(complete => { resolve = complete })
+      return { promise, resolve }
+    }
+    const ready = deferred()
+    const finish = deferred()
+    const steps = questionIds.map(() => ({ release: deferred(), processed: deferred() }))
+    const respondToQuestion = vi.fn().mockRejectedValueOnce(new Error('Answer delivery failed')).mockResolvedValue(undefined)
+    const run = vi.fn(async function* () {
+      now += 2000
+      for (const questionId of questionIds) yield {
+        type: 'question' as const, requestId, questionId,
+        questions: [{ header: 'Input', question: 'Continue?', options: [], custom: true, multiple: false }]
+      }
+      ready.resolve()
+      for (const [index, questionId] of questionIds.entries()) {
+        await steps[index]!.release.promise
+        if (resolution === 'runtime-event') yield { type: 'question-resolved' as const, requestId, questionId }
+        steps[index]!.processed.resolve()
+      }
+      await finish.promise
+      yield { type: 'done' as const, requestId }
+    })
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: true, run, respondToQuestion },
+      undefined, 'always', undefined, false, undefined, undefined, undefined, false,
+      undefined, undefined, undefined, undefined, database)
+    const read = () => database.getExecutionStats({ conversationId })
+    try {
+      const event = trustedEvent(harness.webContents)
+      await harness.handler!(event, { requestId, conversationId, projectId, prompt: 'Ask me', workMode: 'ask' })
+      await ready.promise
+      expect(database.getTask(requestId).status).toBe('waiting_approval')
+      now += 60_000
+      expect(read()).toMatchObject({ durationMs: 2000, runningCount: 0 })
+      const answer = electronMocks.handlers.get(ipcChannels.agentQuestionRespond)!
+      await expect(answer(event, { questionId: questionIds[0], answers: [['Yes']] })).rejects.toThrow('Answer delivery failed')
+      now += 60_000
+      expect(database.getTask(requestId).status).toBe('waiting_approval')
+      expect(read()).toMatchObject({ durationMs: 2000, runningCount: 0 })
+      for (const [index, questionId] of questionIds.entries()) {
+        if (resolution === 'answer') await answer(event, { questionId, answers: index === 0 ? [['Yes']] : [] })
+        steps[index]!.release.resolve()
+        await steps[index]!.processed.promise
+        if (index === 0) {
+          now += 60_000
+          expect(database.getTask(requestId).status).toBe('waiting_approval')
+          expect(read()).toMatchObject({ durationMs: 2000, runningCount: 0 })
+        }
+      }
+      expect(database.getTask(requestId).status).toBe('running')
+      now += 3000
+      finish.resolve()
+      await vi.waitFor(() => expect(database.getTask(requestId).status).toBe('completed'))
+      expect(read()).toMatchObject({ durationMs: 5000, runningCount: 0 })
+      if (resolution === 'answer') expect(respondToQuestion).toHaveBeenLastCalledWith(questionIds[1], undefined)
+    } finally {
+      for (const step of steps) step.release.resolve()
+      finish.resolve()
+      await harness.dispose()
+      clock.mockRestore()
+      database.close()
+    }
+  })
+
   it('binds the production image service before text dispatch and routes regenerate, Ask rejection, and deletion through IPC', async () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
@@ -6721,11 +6852,14 @@ describe('registerIpcHandlers agent terminal state', () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
     const conversationId = crypto.randomUUID()
+    let timingNow = Date.now()
+    const timingClock = vi.spyOn(Date, 'now').mockImplementation(() => timingNow)
     database.saveLocalConversations([{
       header: { id: conversationId, title: 'Immediate', updatedAt: Date.now(), workMode: 'ask' },
       messages: []
     }])
     const run = vi.fn(async function* (request: AgentExecutionRequest) {
+      timingNow += 3000
       if (status === 'failed') {
         yield { type: 'error' as const, requestId: request.requestId, message: 'Runtime failed' }
         return
@@ -6773,8 +6907,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(run).toHaveBeenCalledOnce()
       expect(database.listConversationQueueItems()).toEqual([])
       expect(database.listSchedules()).toHaveLength(1)
+      expect(database.getExecutionStats({ conversationId })).toMatchObject({ durationMs: 3000, runningCount: 0, incomplete: false })
     } finally {
       await harness.dispose()
+      timingClock.mockRestore()
       database.close()
     }
   })

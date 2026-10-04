@@ -674,9 +674,10 @@ const api: DesktopApi & RuntimeNativeClientApi = {
   tasks: {
     list: vi.fn(async () => []),
     getExecutionStats: vi.fn(async () => ({
-      durationMs: 0, requestCount: 0, incompleteRequestCount: 0,
-      activeRequestCount: 0, asOf: Date.now(), taskDurations: [],
+      durationMs: 0, runningCount: 0, incomplete: false,
+      asOf: Date.now(), taskDurations: [],
     })),
+    onExecutionStatsChanged: vi.fn(() => () => {}),
     setStatus: vi.fn(async () => {}),
   },
   activityHistory: {
@@ -1437,6 +1438,10 @@ describe("App", () => {
         };
       });
     vi.mocked(api.tasks.list).mockReset().mockResolvedValue([]);
+    vi.mocked(api.tasks.getExecutionStats).mockReset().mockImplementation(async () => ({
+      durationMs: 0, runningCount: 0, incomplete: false, asOf: Date.now(), taskDurations: [],
+    }));
+    vi.mocked(api.tasks.onExecutionStatsChanged).mockReset().mockReturnValue(() => {});
     vi.mocked(api.activityHistory.get).mockReset().mockResolvedValue({
       records: [],
       legacyHistoryMayBeIncomplete: false,
@@ -7239,6 +7244,35 @@ describe("App", () => {
     await waitFor(() => expect(expertButton).toBeEnabled());
     expect(modeButton).toBeEnabled();
     expect(runtimeButton).toBeEnabled();
+  });
+
+  it("renders authoritative duration snapshots and refreshes them from timing notifications", async () => {
+    const conversationId = crypto.randomUUID();
+    vi.mocked(api.conversations.list).mockResolvedValue([{
+      id: conversationId, projectId, title: "Timed conversation", updatedAt: Date.now(), messages: [],
+    }]);
+    const summary = { durationMs: 2000, runningCount: 0, incomplete: true, asOf: Date.now(), taskDurations: [] };
+    vi.mocked(api.tasks.getExecutionStats).mockResolvedValue(summary);
+    let changed: (() => void) | undefined;
+    const unsubscribe = vi.fn();
+    vi.mocked(api.tasks.onExecutionStatsChanged).mockImplementation((listener) => {
+      changed = listener;
+      return unsubscribe;
+    });
+    render(<App />);
+    await waitFor(() => expect(api.conversationQueue.ready).toHaveBeenCalledWith(conversationId));
+    fireEvent.click(screen.getByRole("button", { name: "切换助手工作栏" }));
+    fireEvent.click(screen.getByRole("tab", { name: "任务中心" }));
+    const statistics = await screen.findByLabelText("当前会话统计");
+    expect(await within(statistics).findByText("00:00:02")).toBeVisible();
+    expect(within(statistics).getByText("部分回复缺少计时记录，时长仅包含已知记录。")).toBeVisible();
+    expect(api.tasks.getExecutionStats).toHaveBeenCalledWith({ conversationId });
+    expect(api.tasks.getExecutionStats).toHaveBeenCalledWith({ projectId });
+    vi.mocked(api.tasks.getExecutionStats).mockResolvedValue({ ...summary, durationMs: 65_000 });
+    act(() => changed?.());
+    expect(await within(statistics).findByText("00:01:05")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "切换助手工作栏" }));
+    await waitFor(() => expect(unsubscribe).toHaveBeenCalled());
   });
 
   it("associates live scheduled approvals using the dispatched task rather than another task in the conversation", async () => {

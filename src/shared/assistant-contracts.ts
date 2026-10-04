@@ -14,17 +14,16 @@ export const executionStatsInputSchema = z.union([
 ])
 export type ExecutionStatsInput = z.infer<typeof executionStatsInputSchema>
 export interface ExecutionStats {
-  /** Sum of evidenced top-level reply intervals, including tools and approvals. */
+  /** Accumulated running time, including open segments through asOf. */
   durationMs: number
-  requestCount: number
-  /** Requests/replies with missing timing evidence; confirmed live intervals are complete as of asOf. */
-  incompleteRequestCount: number
-  /** Requests currently leased by Main; does not authorize renderer extrapolation. */
-  activeRequestCount: number
-  /** Epoch milliseconds at query time. */
+  /** Number of open segments; the UI adds (now - asOf) * runningCount. */
+  runningCount: number
+  /** Pre-timing history or an interrupted segment has unknown duration. */
+  incomplete: boolean
+  /** Main epoch milliseconds at snapshot time. */
   asOf: number
   /** Project card totals; empty for conversation queries. */
-  taskDurations: Array<{ id: string; durationMs: number; incompleteRequestCount: number }>
+  taskDurations: Array<{ id: string; durationMs: number; runningCount: number; incomplete: boolean }>
 }
 export const interactiveWorkModes = ['ask', 'execute'] as const
 export const workModeSchema = z.enum(interactiveWorkModes)

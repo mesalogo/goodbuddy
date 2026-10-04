@@ -252,6 +252,7 @@ export const ipcChannels = {
   workspacePathOpen: 'workspace:path:open',
   tasksList: 'tasks:list',
   tasksExecutionStats: 'tasks:execution-stats',
+  tasksExecutionStatsChanged: 'tasks:execution-stats-changed',
   tasksSetStatus: 'tasks:set-status',
   activityHistoryGet: 'activity-history:get',
   activityHistoryReplace: 'activity-history:replace',

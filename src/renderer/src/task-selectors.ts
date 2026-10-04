@@ -109,17 +109,6 @@ export function useTaskActivityRows(store: TaskStore): TaskActivityRow[] {
   );
 }
 
-const selectStatsRevision = (tasks: AssistantTask[]): string =>
-  tasks.map((task) => `${task.id}:${task.status}:${task.completedAt ?? ""}`).join("|");
-const selectNoRevision = (): string => "";
-
-/**
- * Changes whenever a task starts, finishes or changes status; constant while
- * `enabled` is false, so nothing re-renders for statistics nobody sees.
- */
-export function useTaskStatsRevision(store: TaskStore, enabled: boolean): string {
-  return useTaskSelector(store, enabled ? selectStatsRevision : selectNoRevision);
-}
 /** Whether a task of this conversation is running or waiting for approval. */
 export function useConversationHasBusyTask(store: TaskStore, conversationId: string): boolean {
   const select = useCallback(

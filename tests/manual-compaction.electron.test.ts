@@ -34,7 +34,6 @@ it('compacts direct model context from App through preload, IPC, HTTP and SQLite
         } }
       ] })
     await build({ entryPoints: ['src/preload/index.ts'], outfile: join(directory, 'preload.cjs'), bundle: true, platform: 'node', format: 'cjs', external: ['electron'] })
-    await build({ entryPoints: ['src/main/execution-stats-worker.ts'], outfile: join(directory, 'out/main/execution-stats-worker.js'), bundle: true, platform: 'node', format: 'cjs' })
     await server.listen()
     const bootstrap = join(directory, 'bootstrap.cjs')
     await writeFile(bootstrap, `import(${JSON.stringify(pathToFileURL(driver).href)}).catch(error => { console.error(error); require('electron').app.exit(1) })`)

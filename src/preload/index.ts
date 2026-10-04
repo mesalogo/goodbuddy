@@ -1273,6 +1273,11 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.tasksList) as Promise<AssistantTask[]>,
     getExecutionStats: (input) =>
       ipcRenderer.invoke(ipcChannels.tasksExecutionStats, input) as Promise<ExecutionStats>,
+    onExecutionStatsChanged: (listener) => {
+      const handler = (): void => listener()
+      ipcRenderer.on(ipcChannels.tasksExecutionStatsChanged, handler)
+      return () => { ipcRenderer.removeListener(ipcChannels.tasksExecutionStatsChanged, handler) }
+    },
     setStatus: async (
       taskId: string,
       status: 'completed' | 'cancelled'

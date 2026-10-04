@@ -187,8 +187,11 @@ describe('assistant readonly worker', () => {
       const summaries = database.listConversationSummaries([conversations[2]!.id])
       const byId = new Map(summaries.map(item => [item.id, item]))
       expect(byId.get(conversations[2]!.id)).toEqual(database.getConversation(conversations[2]!.id))
-      // A streaming conversation always carries its messages.
-      expect(byId.get(conversations[1]!.id)).toEqual(database.getConversation(conversations[1]!.id))
+      // Streaming histories are loaded only when explicitly requested.
+      expect(byId.get(conversations[1]!.id)?.messages).toEqual([])
+      expect(byId.get(conversations[1]!.id)?.messageSummary).toEqual({ count: 2, firstRole: 'user', latestMessageAt: 2 })
+      expect(database.listConversationSummaries([conversations[1]!.id])
+        .find(item => item.id === conversations[1]!.id)).toEqual(database.getConversation(conversations[1]!.id))
       expect(byId.get(conversations[0]!.id)?.messageSummary).toEqual({ count: 0, firstRole: undefined, latestMessageAt: undefined })
       expect(byId.get(conversations[3]!.id)?.messageSummary).toEqual({ count: 1, firstRole: 'assistant', latestMessageAt: 3 })
       expect(byId.get(conversations[3]!.id)?.messages).toEqual([])
@@ -213,9 +216,10 @@ describe('assistant readonly worker', () => {
       const detailSets = [[], [conversations[3]!.id], conversations.map(item => item.id), [randomUUID()]]
       const expected = detailSets.map(ids => database.listConversationSummaries(ids))
       const expectedFull = conversations.map(item => database.getConversation(item.id))
-      // Summaries without details carry messageSummary; retained/streaming ones carry messages.
+      // Only explicitly retained histories carry messages, including during streaming.
       expect(expected[0]!.find(item => item.id === conversations[4]!.id)?.messageSummary).toEqual({ count: 4, firstRole: 'user', latestMessageAt: 43 })
-      expect(expected[0]!.find(item => item.id === conversations[5]!.id)?.messages).toHaveLength(5)
+      expect(expected[0]!.find(item => item.id === conversations[5]!.id)?.messages).toHaveLength(0)
+      expect(expected[0]!.find(item => item.id === conversations[5]!.id)?.messageSummary?.count).toBe(5)
       expect(expected[1]!.find(item => item.id === conversations[3]!.id)).toEqual(expectedFull[3])
 
       database.enableReadonlyWorker(workerPath)

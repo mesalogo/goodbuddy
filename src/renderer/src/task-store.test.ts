@@ -7,7 +7,6 @@ import {
   useProductTasks,
   useSidebarArtifacts,
   useTaskActivityRows,
-  useTaskStatsRevision,
   useTaskStatusRows,
 } from "./task-selectors";
 import { createTaskStore, mergeArtifacts } from "./task-store";
@@ -103,7 +102,6 @@ describe("task selectors", () => {
         status: useTaskStatusRows(store),
         activity: useTaskActivityRows(store),
         busy: useConversationHasBusyTask(store, "c1"),
-        revision: useTaskStatsRevision(store, false),
       };
     });
     const first = result.current;
@@ -124,13 +122,10 @@ describe("task selectors", () => {
     const { result } = renderHook(() => ({
       busy: useConversationHasBusyTask(store, "c1"),
       status: useTaskStatusRows(store),
-      revision: useTaskStatsRevision(store, true),
     }));
-    const revision = result.current.revision;
     act(() => store.setTasks((current) => current.map((item) => ({ ...item, status: "completed" }))));
     expect(result.current.busy).toBe(false);
     expect(result.current.status[0]!.status).toBe("completed");
-    expect(result.current.revision).not.toBe(revision);
   });
 
   it("keep the artifact map and sidebar entries while artifacts are unchanged", () => {

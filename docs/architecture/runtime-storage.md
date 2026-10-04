@@ -10,20 +10,11 @@ recovery. `SubagentProgressStorage` caches event encoding state, not task statis
 
 ## Runtime Read Design
 
-Execution statistics use one lazily started worker with a read-only connection.
-The worker performs the existing evidence query inside a short read transaction.
-Main supplies the current reply lease IDs and receives only scalar summaries.
-There is no worker pool or duplicate persisted summary. The worker is terminated
-when its owning database closes; errors reject reads, without a synchronous Main
-fallback. In-memory test databases use the synchronous query because independent
-connections cannot access the same private in-memory database.
-
-Derived caches must specify scope, capacity, lifetime and invalidation. Statistics
-keep at most eight scopes for 30 seconds. SQLite `data_version` detects other
-connections' commits; `total_changes()` detects writes on the owning connection.
-Reads inside an existing transaction clear and bypass the cache, so rolled-back
-values cannot escape. Closing the connection clears its cache. Live leases bypass
-the cache because elapsed time changes without a database write.
+Execution duration is persisted on running-state transitions in Main. Snapshots
+read small indexed timing rows; they require no historical evidence query, worker
+or result cache. Main owns current segments independently of renderer visibility.
+The [duration design](../features/task-and-job/technical-design.md) defines the
+state boundaries, restart handling and incomplete history.
 
 Read transactions end before replies are posted. Long-lived read transactions
 would prevent WAL checkpoints from reclaiming old pages. Each reader has its own
@@ -36,9 +27,10 @@ rules, without introducing a general query protocol before a second use case exi
 Hidden task panels use React `Activity` to preserve state while scheduling hidden
 render work below visible updates. Panel factories run inside that boundary.
 Terminal and browser panels retain their existing mounted effects and sessions.
-Statistics refresh only when the task center and document are visible. Results
-must remain scoped and late responses from a previous selection must be discarded.
+Duration snapshots refresh on Main change notifications while the task center is
+open. The renderer ticks locally for open segments and fetches fresh snapshots on
+reopening. Results remain scoped; superseded responses are discarded.
 
 The [task statistics design](../features/task-and-job/technical-design.md) owns the
-query contract and evidence rules. Tests and timings demonstrate only their fixture
+snapshot contract and timing rules. Tests and timings demonstrate only their fixture
 conditions; they do not establish a latency guarantee for arbitrary retained history.

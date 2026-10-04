@@ -74,7 +74,6 @@ it.each([
         } }
       ] })
     await build({ entryPoints: ['src/preload/index.ts'], outfile: join(directory, 'preload.cjs'), bundle: true, platform: 'node', format: 'cjs', external: ['electron'] })
-    await build({ entryPoints: ['src/main/execution-stats-worker.ts'], outfile: join(directory, 'out/main/execution-stats-worker.js'), bundle: true, platform: 'node', format: 'cjs' })
     await server.listen()
     const env: NodeJS.ProcessEnv = { ...process.env, GB_MCP_DIRECTORY: directory, GB_MCP_URL: server.resolvedUrls!.local[0] + 'mcp.html' }
     delete env.ELECTRON_RUN_AS_NODE

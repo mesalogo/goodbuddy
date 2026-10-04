@@ -173,7 +173,6 @@ import {
   useProductTasks,
   useSidebarArtifacts,
   useTaskActivityRows,
-  useTaskStatsRevision,
   useTaskStatusRows,
 } from "./task-selectors";
 import {
@@ -2797,20 +2796,18 @@ function App(): React.JSX.Element {
   // The supervisor page needs every task; App follows them only while it is shown.
   const heartbeatTasks = useAllTasks(taskStore, view !== "heartbeat");
   const executionStatsEnabled = assistantSidebarOpen && assistantSidebarTab === "tasks";
-  const executionStatsRevision = useTaskStatsRevision(taskStore, executionStatsEnabled);
   const statsConversation = activeConversation?.projectId === activeProjectId
     ? activeConversation : undefined;
   const statsMessageCount = statsConversation?.messageCount ?? 0;
   const executionStats = useExecutionStats(
     statsConversation?.id,
     activeProjectId || undefined,
-    `${executionStatsRevision}:${statsMessageCount}:${activeConversationIds.has(activeId)}`,
     executionStatsEnabled,
   );
   const taskDurations = useMemo(() => new Map(
     executionStats.project?.taskDurations.map((task) => [task.id, {
       durationMs: task.durationMs,
-      incomplete: task.incompleteRequestCount > 0,
+      incomplete: task.incomplete,
     }]) ?? [],
   ), [executionStats.project]);
   const tasksByConversation = useMemo(() => {
@@ -6717,7 +6714,7 @@ function App(): React.JSX.Element {
   );
   const statsConversationId = statsConversation?.id;
   const statsDurationMs = executionStats.conversation?.durationMs;
-  const statsIncomplete = (executionStats.conversation?.incompleteRequestCount ?? 0) > 0;
+  const statsIncomplete = executionStats.conversation?.incomplete ?? false;
   const conversationStats = useMemo(
     () =>
       statsConversationId && statsDurationMs !== undefined

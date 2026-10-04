@@ -2155,6 +2155,7 @@ export type DesktopApi = {
   tasks: {
     list: () => Promise<AssistantTask[]>
     getExecutionStats: (input: ExecutionStatsInput) => Promise<ExecutionStats>
+    onExecutionStatsChanged: (listener: () => void) => () => void
     setStatus: (
       taskId: string,
       status: Extract<AssistantTask['status'], 'completed' | 'cancelled'>

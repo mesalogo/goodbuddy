@@ -31,7 +31,6 @@ it('validates terminal UI through production model HTTP, IPC, persistence and re
       }) } }
     ] })
     await build({ entryPoints: ['src/preload/index.ts'], outfile: join(directory, 'preload.cjs'), bundle: true, platform: 'node', format: 'cjs', external: ['electron'] })
-    await build({ entryPoints: ['src/main/execution-stats-worker.ts'], outfile: join(directory, 'out/main/execution-stats-worker.js'), bundle: true, platform: 'node', format: 'cjs' })
     await server.listen()
     const bootstrap = join(directory, 'bootstrap.cjs')
     await writeFile(bootstrap, `import(${JSON.stringify(pathToFileURL(driver).href)}).catch(e=>{console.error(e);require('electron').app.exit(1)})`)

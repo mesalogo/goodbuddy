@@ -21,7 +21,7 @@ import {
   stat
 } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { basename, extname, join } from 'node:path'
+import { basename, extname } from 'node:path'
 import { z } from 'zod'
 import { documentResourceInputSchema } from '../shared/document-result-contracts'
 import { maximumAttachmentsPerMessage } from '../shared/attachment-limits'
@@ -1111,14 +1111,16 @@ export function registerIpcHandlers(
   }
   type ActiveRequestLease = {
     controller: AbortController
-    isReply: boolean
     conversationId: string
     detachOnApplicationExit: boolean
     teamMode?: boolean
     recoveredMessageId?: string
-    release(): void
+    release(incomplete?: boolean): void
   }
   const activeRequests = new Map<string, ActiveRequestLease>()
+  const removeExecutionStatsListener = assistantDatabase.onExecutionStatsChanged(() => {
+    if (!window.isDestroyed()) window.webContents.send(ipcChannels.tasksExecutionStatsChanged)
+  })
   const onRuntimeSettingsChanged = async (): Promise<void> => {
     // The expert scheduler cancels its work on replacement. Its parent must
     // not synthesize partial old-generation results with the replacement model.
@@ -1139,12 +1141,19 @@ export function registerIpcHandlers(
     controller: AbortController,
     isReply = true
   ): ActiveRequestLease => {
+    if (isReply) assistantDatabase.startExecutionTiming(requestId)
+    const stopTiming = (): void => {
+      if (isReply) assistantDatabase.endExecutionTiming(requestId)
+    }
+    controller.signal.addEventListener('abort', stopTiming, { once: true })
+    if (controller.signal.aborted) stopTiming()
     const lease: ActiveRequestLease = {
       controller,
-      isReply,
       conversationId,
       detachOnApplicationExit: false,
-      release: (): void => {
+      release: (incomplete = false): void => {
+        if (isReply) assistantDatabase.endExecutionTiming(requestId, incomplete)
+        controller.signal.removeEventListener('abort', stopTiming)
         if (activeRequests.get(requestId) === lease) {
           activeRequests.delete(requestId)
         }
@@ -1162,6 +1171,14 @@ export function registerIpcHandlers(
     string,
     { requestId: string; runtime: AgentRuntime; question: Extract<AgentEvent, { type: 'question' }> }
   >()
+  const resumeAfterQuestions = (requestId: string): boolean => {
+    const lease = activeRequests.get(requestId)
+    if (!lease || lease.controller.signal.aborted ||
+      [...pendingAgentQuestions.values()].some(pending => pending.requestId === requestId) ||
+      assistantDatabase.getTask(requestId).status !== 'waiting_approval') return false
+    assistantDatabase.updateTaskStatus(requestId, 'running')
+    return true
+  }
   const supervisionModelPool = new SupervisionModelPool()
   let activeSshDirectoryBrowse: AbortController | undefined
   let shuttingDown = false
@@ -1398,6 +1415,7 @@ export function registerIpcHandlers(
         preserveApplicationExitDetached &&
         lease.detachOnApplicationExit
       ) {
+        assistantDatabase.endExecutionTiming(requestId, true)
         continue
       }
       lease.controller.abort(new Error(reason))
@@ -1702,9 +1720,7 @@ export function registerIpcHandlers(
             assistantDatabase.updateTaskStatus(task.taskId, 'waiting_approval')
           } else {
             pendingAgentQuestions.delete(rawEvent.questionId)
-            if (![...pendingAgentQuestions.values()].some(pending => pending.requestId === task.taskId)) {
-              assistantDatabase.updateTaskStatus(task.taskId, 'running')
-            }
+            resumeAfterQuestions(task.taskId)
           }
           publishConversationChange()
           continue
@@ -1828,7 +1844,7 @@ export function registerIpcHandlers(
       for (const [id, pending] of pendingAgentQuestions) {
         if (pending.requestId === task.taskId) pendingAgentQuestions.delete(id)
       }
-      lease.release()
+      lease.release(!sawTerminal)
       publishConversationChange()
       assistantDatabase.completeTaskScheduleRun(task.taskId)
     }
@@ -2159,11 +2175,6 @@ export function registerIpcHandlers(
     const runtimeConversationId =
       remoteContext?.conversationId ??
       `${origin}:${schedule.id}`
-    const activeRequestLease = leaseActiveRequest(
-      requestId,
-      runtimeConversationId,
-      controller
-    )
     if (input.origin !== 'delegation') {
       assistantDatabase.updateTaskStatus(taskId, 'running')
     } else {
@@ -2178,6 +2189,11 @@ export function registerIpcHandlers(
         visible: false
       })
     }
+    const activeRequestLease = leaseActiveRequest(
+      requestId,
+      runtimeConversationId,
+      controller
+    )
     let output = ''
     let completed = false
     let backgroundQuestionError: Error | undefined
@@ -4423,10 +4439,13 @@ export function registerIpcHandlers(
               runtime: selectedRuntime,
               question: publicEvent
             })
+            assistantDatabase.updateTaskStatus(request.requestId, 'waiting_approval')
+            publishConversationChange()
           }
           if (publicEvent.type === 'question-resolved' &&
             pendingAgentQuestions.get(publicEvent.questionId)?.requestId === request.requestId) {
             pendingAgentQuestions.delete(publicEvent.questionId)
+            if (resumeAfterQuestions(request.requestId)) publishConversationChange()
           }
           if (publicEvent.type === 'error') {
             runtimeErrorEvent = publicEvent
@@ -4600,7 +4619,7 @@ export function registerIpcHandlers(
           }
         }
         knowledgeGateway?.revoke(request.knowledgeCapabilityToken)
-        activeRequestLease.release()
+        activeRequestLease.release(remoteRecoveryPending)
         if (remoteRecoveryPending && request.projectId) {
           startRemoteProjectRecovery(request.projectId)
         }
@@ -4696,15 +4715,8 @@ export function registerIpcHandlers(
         }))
       })
       pendingAgentQuestions.delete(response.questionId)
-      if (activeRequests.get(pending.requestId)?.recoveredMessageId) {
-        if (
-          ![...pendingAgentQuestions.values()].some(value => value.requestId === pending.requestId) &&
-          assistantDatabase.getTask(pending.requestId).status === 'waiting_approval'
-        ) {
-          assistantDatabase.updateTaskStatus(pending.requestId, 'running')
-        }
-      }
-      if (recorded) {
+      const resumed = resumeAfterQuestions(pending.requestId)
+      if (recorded || resumed) {
         publishConversationChange()
       }
     }
@@ -6344,9 +6356,13 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.conversationsListSummaries, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     const { detailIds } = conversationListRequestSchema.parse(input)
-    return projectConversationRequests(await assistantDatabase.listConversationSummariesAsync([
-      ...detailIds, ...[...activeRequests.values()].map(request => request.conversationId)
-    ]))
+    // Recovery needs the message carrying pending questions; ordinary active
+    // replies already reach the renderer through their event stream.
+    return projectConversationRequests(await assistantDatabase.listConversationSummariesAsync([...new Set([
+      ...detailIds, ...[...activeRequests.values()]
+        .filter(request => request.recoveredMessageId)
+        .map(request => request.conversationId)
+    ])]))
   })
   registerHandler(ipcChannels.conversationsGet, async (event, input: unknown) => {
     assertTrustedSender(event, window)
@@ -6840,11 +6856,7 @@ export function registerIpcHandlers(
   })
   registerHandler(ipcChannels.tasksExecutionStats, (event, input: unknown) => {
     assertTrustedSender(event, window)
-    return assistantDatabase.getExecutionStatsAsync(
-      executionStatsInputSchema.parse(input),
-      new Set([...activeRequests].filter(([, lease]) => lease.isReply && !lease.controller.signal.aborted).map(([id]) => id)),
-      join(app.getAppPath(), 'out/main/execution-stats-worker.js')
-    )
+    return assistantDatabase.getExecutionStats(executionStatsInputSchema.parse(input))
   })
   registerHandler(ipcChannels.tasksSetStatus, (event, input: unknown) => {
     assertTrustedSender(event, window)
@@ -7480,6 +7492,7 @@ export function registerIpcHandlers(
   registerKnowledgeIpcHandlers(registerHandler, window, knowledgeService, settingsStore)
 
   return async () => {
+    removeExecutionStatsListener()
     disposeWindowIpc()
     shuttingDown = true
     if (nativeClientCoordinator) window.webContents.removeListener('destroyed', closeNativeClients)

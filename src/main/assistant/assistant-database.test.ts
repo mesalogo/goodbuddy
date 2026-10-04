@@ -674,6 +674,30 @@ describe('AssistantDatabase', () => {
     } finally { database.close() }
   })
 
+  it('reads summaries from a covering index without loading active message metadata', async () => {
+    const database = await createDatabase()
+    try {
+      const id = randomUUID()
+      const message = { id: randomUUID(), role: 'assistant' as const, state: 'streaming' as const,
+        content: 'Partial reply', reasoning: 'x'.repeat(1_000_000), createdAt: 7 }
+      database.saveLocalConversations([{ header: { id, title: 'Active', updatedAt: 7 }, messages: [message] }])
+      database.createTask({ id: randomUUID(), conversationId: id, title: 'Active', instructions: '', workMode: 'ask', status: 'running' })
+      const raw = (database as unknown as { database: DatabaseSync }).database
+      const prepare = vi.spyOn(raw, 'prepare')
+      const summary = database.listConversationSummaries([]).find(item => item.id === id)!
+      expect(summary.messages).toEqual([])
+      expect(summary.messageSummary).toEqual({ count: 1, firstRole: 'assistant', latestMessageAt: 7 })
+      const statements = prepare.mock.calls.map(([sql]) => sql)
+      prepare.mockRestore()
+      expect(statements.some(sql => sql.includes('metadata_json'))).toBe(false)
+      const aggregate = statements.find(sql => sql.includes('count(*) AS count'))!
+      const plan = raw.prepare(`EXPLAIN QUERY PLAN ${aggregate}`).all().map(row => String(row.detail))
+      expect(plan.some(detail => /(?:SCAN|SEARCH) m USING COVERING INDEX messages_summary_idx/.test(detail))).toBe(true)
+      expect(plan.some(detail => /SEARCH f USING COVERING INDEX messages_summary_idx/.test(detail))).toBe(true)
+      expect(database.listConversationSummaries([id]).find(item => item.id === id)?.messages).toEqual([message])
+    } finally { database.close() }
+  })
+
   it.each([0, 1, 100, 500, 999])('keeps listTasks(%i) recent history plus old visible live tasks', async (limit) => {
     const database = await createDatabase()
     vi.useFakeTimers()

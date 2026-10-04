@@ -1,147 +1,95 @@
-# Execution Statistics Query
+# Execution Duration
 
-## Runtime Read Path
+## Running State
 
-WAL、连接所有权、内存缓存和后台读取的通用规则见
-[运行时存储架构](../../architecture/runtime-storage.md)。
+Main owns reply timing independently of the visible conversation or task panel.
+Acquiring a reply lease starts a segment after the request task has been created.
+Manual context compression uses a maintenance lease and creates no clock. Nested
+subagents and stable schedule parents are excluded; their work is already inside
+the top-level reply interval. Background and channel requests use the same lease.
 
-`tasks:execution-stats` 在 Main 校验来源、范围和当前回复租约，然后经
-`AssistantDatabase.getExecutionStatsAsync` 调用独立的 `execution-stats-worker`。
-worker 使用只读连接和短读事务执行下文查询，不运行数据库初始化或任务恢复。
-查询错误返回调用方，关闭数据库时终止 worker 并拒绝未完成请求。
+Task transitions away from `running` close the segment, including `paused`,
+`queued`, `waiting_approval`, completion, failure and cancellation. Resuming a
+leased request opens another segment. Repeated `running` notifications leave the
+original segment intact. Abort closes timing immediately, even when runtime
+cleanup is still pending. Releasing a lease prevents subsequent task updates from
+restarting its clock. Concurrent replies contribute their durations independently.
 
-worker 内按项目或会话范围缓存结果，最多 8 项、30 秒；每次读取先检查 SQLite 连接版本。
-活动回复绕过缓存，事务内读取清空并绕过缓存，关闭连接清空缓存。写入提交后的下一次读取
-会重新计算，覆盖本地消息、远程事件、任务删除和恢复。统计数据仍以查询快照时刻为准。
+Remote requests measure Main's observed running state. The existing committed
+terminal checkpoint closes their timing; event persistence, replay deduplication
+and Agent ACK order are unchanged. Disconnection/recovery gaps are incomplete.
+This duration does not claim to measure autonomous execution while the desktop
+is disconnected. Application exit closes observed detached remote intervals
+without cancelling the remote operation and marks the remaining duration unknown.
 
-Renderer 按会话及所属项目、项目分别保留内存统计快照，切回已查询范围时同步显示缓存，
-同时后台刷新；首次打开未缓存范围仍等待查询，缓存不跨应用重启保留，也不在前端推算时长。
-保留可见时 5 秒刷新以及 revision、focus、visibility 触发刷新；失败的范围清除缓存并显示
-不可用，旧范围的迟到结果丢弃。重复缓存结果保留对象引用，更新通过 `startTransition`
-提交，避免无变化的轮询反复更新 App 的任务时长映射。任务面板使用 React `Activity`
-保留状态并降低隐藏时的渲染优先级；面板工厂在该边界内部调用。浏览器和终端沿用原有挂载
-与 effect 生命周期。
+## Storage
+
+Schema 59 adds `execution_timing`: one row per timed request with its project,
+conversation, task-card owner, accumulated milliseconds, optional running start,
+and incomplete flag. Scope indexes keep snapshots separate from large task and
+message payloads. A schedule run copies the stable task association already
+stored in `parent_task_id`; repeated runs aggregate under that card. Task deletion
+cascades to its timing row.
+
+Only state transitions write timing. Tokens, tools, display ticks and snapshot
+reads do not update it. Startup drops any unclosed segment and marks it incomplete,
+retaining previously accumulated time. It never counts application downtime or
+uses recovery timestamps as execution endpoints.
+
+Migration marks existing conversations and visible task cards incomplete without
+reconstructing their past duration. Imported legacy conversation snapshots are
+also incomplete. No timing query reads historical messages, tools or task events.
+The same migration adds
+`messages_summary_idx ON messages(conversation_id, sequence, role, created_at)`
+for conversation summaries. It performs no history conversion or `VACUUM`.
 
 ## Contract
 
 `window.goodbuddy.tasks.getExecutionStats(input)` invokes `tasks:execution-stats`.
-`ExecutionStatsInput` accepts exactly one UUID scope: `{ conversationId }` or
-`{ projectId }`. Main validates the scope and trusted sender. The database returns:
+Input accepts exactly one UUID scope: `{ conversationId }` or `{ projectId }`.
+Main validates the scope and trusted sender, then reads the small timing rows
+synchronously. The old evidence query, cache, reader and statistics worker are
+removed.
 
 ```ts
 interface ExecutionStats {
-  durationMs: number
-  requestCount: number
-  incompleteRequestCount: number
-  activeRequestCount: number
-  asOf: number // epoch milliseconds at query time
+  durationMs: number // closed segments plus open segments through asOf
+  runningCount: number // open segments in this scope
+  incomplete: boolean
+  asOf: number // Main epoch milliseconds
   taskDurations: Array<{
     id: string
     durationMs: number
-    incompleteRequestCount: number
+    runningCount: number
+    incomplete: boolean
   }>
 }
 ```
 
-The project scope sums request evidence across its conversations and returns card
-totals in `taskDurations`. A scheduled execution uses `requestId = schedule_runs.id`;
-join its `schedule_id` to the stable task's `schedule_id` to aggregate repeated runs.
-Request creation also saves that proven relation in `parent_task_id`. Before plan
-deletion cascades its run records, bind older requests that still lack this link.
-Statistics can then use the retained link to a visible `origin = schedule` parent,
-even after the parent's `schedule_id` has been cleared. A shared conversation alone
-does not establish ownership. Other
-identified requests retain their own task ID. Visible tasks with no executions
-have a zero entry. Conversation queries return an empty `taskDurations` array.
-Message counts used to detect missing history stay in Main; no bodies are returned.
+Conversation snapshots have an empty `taskDurations` array. Historical request
+counts are no longer part of this API.
 
-## Evidence And Boundaries
+`onExecutionStatsChanged(listener)` returns an unsubscribe function. Main sends
+`tasks:execution-stats-changed` after timing transitions or history deletion;
+synchronous changes are coalesced into one notification. The renderer subscribes
+before fetching its current conversation and project snapshots and refreshes on
+notifications. It discards superseded responses and clears failed scopes.
 
-- Query all retained scoped task records, including hidden chat requests, without
-  the visible-task list's pagination. Require a persisted message `request_id`
-  link, a reply event (`text`, `reasoning`, `tool`, `done`, `error`, `subagent`,
-  `generated-image`, or `question`) associated by `task_events.task_id`, a schedule
-  run association, or a current reply lease. Local message snapshots do not persist
-  request links, so local replies normally use event membership and kind. Do not
-  parse each stream/tool payload merely to repeat its owning request ID.
-- Runtime status events also prove a reply when `requestId` matches the owning
-  task, `type` is `status`, and `message` is a string. Maintenance status events
-  such as `{ status: 'running' }` do not. Status-only interrupted replies retain
-  their last evidenced interval just like text/tool replies.
-- Exclude stable schedule parents (`schedule_id` is set) and expert tasks
-  (`origin = subagent`). Scheduled reply requests remain eligible. Nested expert
-  execution is already inside the parent's elapsed interval and is not added again.
-- Maintenance-only records do not establish reply identity. This excludes manual
-  context compression, heartbeat summaries, and unexecuted suggestions. A record
-  with no reply identity evidence cannot be classified; it is not counted.
-- Sum intervals from `started_at` or later `running` status events to terminal
-  events/statuses. Pause/queue closes an interval; a later run starts another.
-  Repeated approval/running transitions do not reset the start. Tools and approval
-  waits inside a reply are included; idle gaps between replies/runs are excluded.
-- `interrupted` may be written at application restart. Count only through the
-  preceding evidence, mark the request incomplete, and never use its recovery
-  `completed_at` as an execution endpoint. Missing or invalid timing also marks
-  the request incomplete; unknown time is not replaced with zero-length certainty.
-- A non-aborted reply lease confirms current execution: an open local interval
-  with a reliable start contributes through `asOf` and remains complete while active.
-  Manual context compression leases are excluded.
-  Without a live lease, stop at the latest evidence and mark an open interval
-  incomplete. Renderer must query again after `asOf`; it does not extrapolate.
-- Remote-recoverable records, tasks in persisted SSH project execution spaces,
-  and events with remote operation provenance are
-  incomplete and contribute no duration: their receipt timestamps cannot establish
-  remote execution intervals, particularly after replay. No Runtime, Agent, or
-  remote persistence behavior changes are required by this read-only query.
-  The SSH project check applies before the first provenance event, including
-  channel/delegation requests with `remote_recoverable = false`, so an unknown
-  remote duration is not first reported as complete local execution time.
-- Completed, failed, or running schedule runs with no request history count as
-  incomplete, including in their stable task card. Pending runs do not count.
-- Former schedule parents are never execution clocks, including after deletion.
-  A removed plan without retained execution ownership is reported as incomplete,
-  not a complete zero; its former lifetime cannot reconstruct missing runs.
-- Retained top-level assistant messages establish missing-history evidence.
-  Explicit missing request links count as incomplete; unlinked snapshots use a
-  count comparison within each conversation/task, after covering linked replies.
-  Missing schedule runs already counted above cover their messages, avoiding a
-  second missing count. Expert-task messages and nested subagent content are not
-  counted again. A wholly missing reply contributes zero known duration and one
-  incomplete request, not a complete zero.
-- Exclude the first local assistant message only when it has no request/task link
-  and exactly matches a shipped Chinese/English default greeting. Persisted
-  greetings have no separate marker. Other assistant-only history and identical
-  text later in the conversation remain eligible; do not discard all messages
-  before the first user turn.
-- These counts are a lower bound when local snapshots have no request links;
-  fully deleted history cannot be reconstructed. `requestCount` includes replies
-  inferred from missing-history evidence. Concurrent top-level requests may
-  overlap in wall-clock time; their durations are summed independently.
+The UI adds `max(0, now - asOf) * runningCount` locally once per second while an
+open segment exists, including the corresponding per-card calculation. Hidden
+panels unsubscribe and fetch fresh snapshots when reopened. There is no five-second
+statistics polling, message-count revision trigger, or tick-time IPC. Main timing
+continues while the panel is hidden or another conversation is selected.
 
-The query materializes scoped task evidence once, then returns only status and
-terminal events. Only status payloads use JSON extraction. Request membership and
-remote provenance inspect scalar event columns; last-event and pre-interruption
-timestamps use `(task_id, id)` index seeks. This preserves a tool/delta event as
-the last reliable boundary without loading its body. Grouped assistant-message
-counts read task metadata from message rows; event rows are not scanned for that count.
-It adds no tables, columns, migration, or persisted timing totals. Stable task
-lifecycle timestamps are never duration endpoints.
+## Validation
 
-## Validation Coverage
-
-The focused execution-statistics tests cover hidden requests, scope isolation,
-approval waits, repeated intervals, restart interruption, remote replay, missing
-start times, and history beyond visible-task pagination. IPC tests cover sender
-and scope validation; preload tests cover typed forwarding. Renderer integration
-must supply `getExecutionStats` in its `DesktopApi.tasks` mocks.
-
-The large-payload regression inspects the production query plan, measures paired
-conversation/project polling on 3,000 events with approximately 94 MiB of payload,
-and replaces stream/tool bodies with invalid JSON to prove they are not parsed.
-Run it with `npx vitest run src/main/assistant/assistant-execution-stats.test.ts -t seeks --reporter=verbose --disableConsoleIntercept`
-to print timings. These are synthetic warm-query measurements, not a guarantee
-for arbitrarily large histories. Scalar event filtering and per-message metadata
-work still grow with retained history; if that becomes measurable in deployment,
-prefer polling only during active execution and refreshing on history/task changes.
+`assistant-execution-stats.test.ts` exercises real SQLite state transitions,
+restart interruption, remote checkpoints/replay, schedule ownership, scope
+isolation, deletion, schema migration and read-only snapshots. It verifies that
+snapshot SQL never reads messages or task events. IPC tests cover trusted scope
+validation and production lease completion, failure and abort; preload tests cover
+the subscription bridge. Hook tests verify local ticking without polling, hidden
+panels, stale responses, and failed reads.
 
 ## Custom Task Creation
 
@@ -163,7 +111,8 @@ conversation queue pump. App does not follow creation with `runNow`. Execution
 uses the existing readiness and conversation serialization rules. A runtime
 failure belongs to the created task; it does not reject creation or create another
 task. Refresh failures after a successful creation are notifications, not a reason
-to retry creation. No schema migration or preload changes are required.
+to retry creation. No schema migration or preload changes are required for this
+creation command.
 
 `schedule-creation.test.ts` verifies transaction rollback and timer non-duplication
 with real SQLite. IPC tests exercise that database through the production queue
