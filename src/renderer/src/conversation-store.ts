@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 import type { Conversation } from "./chat-conversation";
+import { conversationActivityTime } from "./chat-conversation";
+import type { ConversationActivity } from "./conversation-activity";
 import {
   createLiveMessageStore,
   type ConversationsUpdate,
@@ -40,6 +42,19 @@ export function createConversationStore(
   let state = initial;
   const listeners = new Set<Listener>();
   const conversationListeners = new Map<string, Set<Listener>>();
+  const lastOpenedByProject = new Map<string, string>();
+  let activityTimes: ReadonlyMap<string, number> = new Map();
+  let activityStatuses: ReadonlyMap<string, ConversationActivity['status']> | undefined;
+  const activityListeners = new Set<Listener>();
+  let lastActivityTime = 0;
+  const touchActivity = (ids: readonly string[]): void => {
+    if (!ids.length) return;
+    lastActivityTime = Math.max(Date.now(), lastActivityTime + 1);
+    const next = new Map(activityTimes);
+    for (const id of ids) next.set(id, lastActivityTime);
+    activityTimes = next;
+    for (const listener of [...activityListeners]) listener();
+  };
 
   const notify = (previous: readonly Conversation[]): void => {
     if (conversationListeners.size) {
@@ -58,6 +73,41 @@ export function createConversationStore(
   };
 
   return {
+    rememberOpened(conversationId: string): void {
+      const conversation = state.find((item) => item.id === conversationId);
+      if (!conversation) return;
+      if (conversation?.projectId) lastOpenedByProject.set(conversation.projectId, conversationId);
+      touchActivity([conversationId]);
+    },
+    getActivityTimes(): ReadonlyMap<string, number> {
+      return activityTimes;
+    },
+    subscribeActivityTimes(listener: Listener): () => void {
+      activityListeners.add(listener);
+      return () => { activityListeners.delete(listener); };
+    },
+    recordActivityStatuses(activities: readonly Pick<ConversationActivity, 'conversationId' | 'status'>[]): void {
+      const next = new Map(activities.map((activity) => [activity.conversationId, activity.status]));
+      const changed: string[] = [];
+      // Initial activity is a baseline. Acknowledging a completion is not a new run.
+      if (activityStatuses) for (const id of new Set([...activityStatuses.keys(), ...next.keys()])) {
+        const before = activityStatuses.get(id);
+        const after = next.get(id);
+        if (before !== after && !(before === 'completed' && after === undefined)) changed.push(id);
+      }
+      activityStatuses = next;
+      touchActivity(changed);
+    },
+    projectConversation(projectId: string, channel: boolean, candidates = state): Conversation | undefined {
+      const remembered = lastOpenedByProject.get(projectId);
+      let recent: Conversation | undefined;
+      for (const item of candidates) {
+        if (item.projectId !== projectId || (channel && !item.remote)) continue;
+        if (item.id === remembered) return item;
+        if (!recent || conversationActivityTime(item) > conversationActivityTime(recent)) recent = item;
+      }
+      return recent;
+    },
     getState(): Conversation[] {
       return state;
     },

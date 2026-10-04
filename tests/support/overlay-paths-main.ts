@@ -25,10 +25,11 @@ app.whenReady().then(async () => {
   const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
   database.initialize(directory)
   const project = database.listProjects()[0]!
+  const conversationId = randomUUID()
   const resultId = randomUUID()
   const html = '<html><body><a href="#end">Jump to end</a>' + '<p>Long preview text</p>'.repeat(80) +
     '<h2 id="end">End</h2><script>window.parent.previewUnsafe=true</script><img src="https://example.invalid/leak"></body></html>'
-  database.saveLocalConversations([{ header: { id: randomUUID(), projectId: project.id, title: 'Overlay paths', updatedAt: Date.now() },
+  database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Overlay paths', updatedAt: Date.now() },
     messages: [{ id: randomUUID(), role: 'assistant', state: 'complete', createdAt: Date.now(), content: '```html\n' + html + '\n```',
       attachments: [{ id: randomUUID(), kind: 'text', name: 'review.pdf', size: 20, preview: 'Saved result', resultId }],
       sourceReferences: [{ libraryId: randomUUID(), libraryName: 'Review', documentName: 'Review source', sourceName: 'Fixture',
@@ -155,14 +156,94 @@ app.whenReady().then(async () => {
     await key('Escape')
     await wait('!document.querySelector(".html-preview-viewer")')
     evidence.iframe = true
+    const idleTrigger = await js<number>('document.querySelector(".project-switcher__control").getBoundingClientRect().height')
+    assert.equal(idleTrigger, 60)
+    assert(await js('document.querySelector(".project-switcher__control").matches("button") && document.querySelectorAll(".project-switcher__picker button").length === 1 && !!document.querySelector(".project-switcher__trigger .project-switcher__activity")'))
+    await screenshot('workspace-idle-trigger')
+    database.createTask({ id: randomUUID(), projectId: project.id, conversationId,
+      title: 'Review workspace layout', instructions: 'Layout fixture only', workMode: 'ask', status: 'running' })
+    win.webContents.send(ipcChannels.conversationsChanged)
+    await wait('!!document.querySelector(".project-switcher__control .project-activity__running")')
+    assert.equal(await js('document.querySelector(".project-switcher__control").getBoundingClientRect().height'), idleTrigger)
+    await screenshot('workspace-active-trigger')
+    const workspaceLayouts = []
+    for (const [width, height] of [[1280, 800], [1280, 480], [560, 640]]) {
+      win.setContentSize(width!, height!)
+      await wait(`innerWidth === ${width} && innerHeight === ${height}`)
+      if (width! < 900) {
+        await wait('document.querySelector(".sidebar").inert')
+        await click('.sidebar-toggle')
+        await wait('!document.querySelector(".sidebar").inert')
+      }
+      await js('Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})))')
+      for (const theme of ['light', 'dark']) {
+        await js(`document.documentElement.dataset.theme='${theme}'`)
+        await click('.project-switcher__activity')
+        await wait('!!document.querySelector(".workspace-menu")')
+        await js('Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})))')
+        const layout = await js<{ bounded: boolean; divider: boolean; compact: boolean; rows: boolean }>(`(() => {
+          const rect = selector => document.querySelector(selector).getBoundingClientRect();
+          const left = rect('.workspace-menu__projects'), input = rect('.workspace-menu__search');
+          const menu = rect('.workspace-menu'), toolbar = rect('.workspace-menu__toolbar');
+          const filters = rect('.workspace-menu__toolbar .segmented-control'), action = rect('.workspace-menu__new');
+          const border = getComputedStyle(document.querySelector('.workspace-menu__projects'));
+          const row = document.querySelector('.workspace-menu [role="menuitemradio"]');
+          const parts = [...row.querySelector('span').children].map(e => e.getBoundingClientRect());
+          return { bounded: input.left >= left.left && input.right <= left.right && menu.left >= 16 && menu.right <= innerWidth - 16 && menu.top >= 16 && menu.bottom <= innerHeight - 16,
+            divider: border.borderRightWidth === '1px' && border.borderRightStyle === 'solid' && border.borderRightColor === getComputedStyle(document.querySelector('.workspace-menu__search')).borderRightColor,
+            compact: toolbar.height < 70 && filters.right <= action.left && Math.abs(filters.top + filters.height / 2 - action.top - action.height / 2) < 2,
+            rows: parts.length >= 3 && parts[0].bottom <= parts[1].top && parts[1].bottom <= parts[2].top };
+        })()`)
+        assert.deepEqual(layout, { bounded: true, divider: true, compact: true, rows: true }, `${width}x${height} ${theme}: ${JSON.stringify(layout)}`)
+        await screenshot(`workspace-${width}x${height}-${theme}`)
+        await key('Escape')
+        await wait('!document.querySelector(".workspace-menu") && document.activeElement.matches(".project-switcher__trigger")')
+        workspaceLayouts.push({ width, height, theme, ...layout })
+      }
+    }
+    evidence.workspaceLayouts = workspaceLayouts
+    evidence.workspaceTriggerHeight = idleTrigger
+    await key('Escape')
     win.setContentSize(760, 700)
     await wait('document.querySelector(".sidebar").inert')
     await click('.sidebar-toggle')
-    await click('.project-switcher .icon-button')
+    await click('.project-switcher__trigger')
+    await wait('!!document.querySelector(".workspace-menu")')
+    assert(await js(`(() => {
+      const menu = document.querySelector('.workspace-menu'), r = menu.getBoundingClientRect();
+      return menu.closest('.floating-portal').parentElement === document.querySelector('.sidebar') &&
+        r.left >= 16 && r.right <= innerWidth - 16 && r.top >= 16 && r.bottom <= innerHeight - 16;
+    })()`))
+    await click('.workspace-menu__categories [role="tab"]:last-child')
+    assert(await js('document.querySelectorAll(".workspace-menu [role=menuitemradio]").length === 0'))
+    await click('.workspace-menu__categories [role="tab"]:first-child')
+    assert(await js(`(() => {
+      const tabs = [...document.querySelectorAll('.workspace-menu__categories [role="tab"]')];
+      return tabs.length === 3 && tabs[0].getAttribute('aria-selected') === 'true' &&
+        tabs.every(tab => tab.getBoundingClientRect().top === tabs[0].getBoundingClientRect().top) &&
+        document.querySelectorAll('.workspace-menu [role="menuitemradio"]').length === 1 &&
+        !document.querySelector('.workspace-menu__scope');
+    })()`))
+    evidence.workspaceCategories = true
+    await js('document.querySelector(".workspace-menu [role=menuitemradio]").focus()')
+    await key('Tab')
+    await wait('document.activeElement.matches(".project-switcher__menu-settings")')
+    await js('Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})))')
+    assert.equal(await js('getComputedStyle(document.activeElement).opacity'), '1')
+    await click('.project-switcher__menu-settings')
+    await wait('!!document.querySelector(".project-create-card")')
+    await key('Escape')
+    await wait('!document.querySelector(".project-create-card") && document.activeElement.matches(".project-switcher__trigger")')
+    await click('.project-switcher__trigger')
+    await key('Escape')
+    await wait('!document.querySelector(".workspace-menu") && document.activeElement.matches(".project-switcher__trigger")')
+    assert(await js('!document.querySelector(".sidebar").inert'))
+    await click('.project-switcher__trigger')
+    await click('.workspace-menu__footer button')
     await wait('!!document.querySelector(".project-create-card") && document.querySelector(".app-shell").inert')
     await key('Escape')
     await wait('!document.querySelector(".project-create-card")')
-    assert(await js('!document.querySelector(".sidebar").inert && document.activeElement.matches(".project-switcher .icon-button")'))
+    assert(await js('!document.querySelector(".sidebar").inert && document.activeElement.matches(".project-switcher__trigger")'))
     await key('Escape')
     await wait('document.querySelector(".sidebar").inert')
     evidence.project = true

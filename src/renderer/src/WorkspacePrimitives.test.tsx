@@ -118,6 +118,13 @@ describe('WorkspacePrimitives', () => {
     expect(platformFeaturesTabs).toBeDefined()
     expect(platformFeaturesTabs).toMatch(/flex:\s*0 0 auto;/u)
   })
+  it('keeps workspace category tabs fixed outside the scrolling project panel', () => {
+    const workspaceStylesheet = readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'workspace-menu.css'), 'utf8')
+    expect(workspaceStylesheet).toMatch(/\.workspace-menu__categories\s*\{[^}]*flex:\s*0 0 auto;/u)
+    expect(workspaceStylesheet).toMatch(/\.workspace-menu__project-panel\s*\{[^}]*flex:\s*1;[^}]*min-height:\s*0;/u)
+    expect(stylesheet).toMatch(/\.page-tabs\s*\{[^}]*overflow-x:\s*auto;[^}]*flex-wrap:\s*nowrap;/u)
+  })
+
   it('keeps shared segmented controls from collapsing beside scrollable content', () => {
     const segmentedStyles = stylesheet.match(
       /\.segmented-control,\s*\.page-tabs--segmented\s*\{(?<rules>[^}]*)\}/u

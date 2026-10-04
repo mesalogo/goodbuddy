@@ -1,4 +1,13 @@
 export const workspace = {
+  workspaceMenu: {
+    title: '项目与活动', close: '关闭项目与活动', search: '搜索项目',
+    allProjects: '全部项目', local: '本地', remote: '远程', channels: '消息通道', categories: '项目类型',
+    filter: '筛选会话状态', conversations: '会话', newConversation: '新建会话',
+    newIn: '在 {{name}} 中新建会话', noProjects: '没有匹配的项目，请尝试其他关键词。',
+    noConversations: '当前范围内没有符合筛选条件的会话。',
+    filters: { all: '全部', attention: '待处理', running: '运行中', completed: '已完成' },
+    groups: { attention: '待处理', running: '运行中', recent: '最近会话', completed: '已完成' }
+  },
   projectActivity: {
     title: '全项目活动',
     idle: '暂无活动',

@@ -1,5 +1,45 @@
 # 应用导航实施进度
 
+## 2026-10-04：双行入口合并为单个按钮
+
+对应 FR-14、US-E1 至 US-E3。项目名和活动摘要现在属于同一个 `60px` 按钮，共用键盘焦点、展开状态和菜单关联。点击任一行默认预览当前项目，全部项目范围在菜单内切换；活动描述和按钮外的恢复反馈通过 `aria-describedby` 关联。移除了独立摘要触发引用与入口范围状态，保留最近 10 条及现有活动计数，没有新增轮询。
+
+本次验证：`ProjectSwitcher`、`WorkspaceMenu`、`WorkspacePrimitives` 共 80 项通过；App 活动、审批、问题队列和流式侧栏相关测试 37 项通过；`npm run typecheck` 与 `npm run lint` 通过。真实 Electron overlay harness 在 `1280×800`、`1280×480`、`560×640` 的浅深主题下通过，验证单按钮、空闲与活动状态的 `60px` 高度、第二行点击、菜单布局和 Escape 焦点恢复，模型调用 0 次。
+
+## 2026-10-04：双行入口与菜单布局调整
+
+本节保留此次单按钮更正前的实现与验证记录；现行入口规则见上节。
+
+对应 FR-14、US-E1 至 US-E3。已核对 `ProjectSwitcher.tsx`、`WorkspaceMenu.tsx` 和 `workspace-menu.css`：左上角控件固定高 `60px`，项目名和全局活动为同级按钮，第二行无活动时显示“暂无活动”；恢复反馈位于控件下方并关联可访问描述。左栏搜索框使用 `border-box` 限制边界，两栏之间使用 `--border-control` 分隔线，全部项目及搜索结果补充分组标题，右栏状态工具栏收紧间距。菜单项目行继续按名称、活动、目录分行显示，高度随内容增长。具体规则见[活动界面](./ui-design.md#10-项目活动汇总)。
+
+以下结果由实现方提供，本次文档更新未重跑产品测试：
+
+- 79 项定向组件测试、68 项项目相关 App 测试通过。
+- 完整类型检查与修改范围 lint 通过。
+- 真实 Electron 在 `1280×800`、`1280×480`、`560×640` 的浅深主题下验证搜索框边界、分隔线、紧凑工具栏、项目三行信息，以及左上角控件在空闲和活动状态下的固定高度与焦点。
+- 模型调用 0 次。
+
+最近会话上限已由 5 条调整为 10 条，生产设计与验收条目已同步。最终运行 `npx vitest run --project unit src/renderer/src/workspace-menu-selectors.test.ts src/renderer/src/WorkspaceMenu.test.tsx src/renderer/src/ProjectSwitcher.test.tsx`，3 个文件共 44 项通过，覆盖最近 10 条、活动不占最近名额、已完成筛选超过 10 条，以及完成后保留历史。Demo 文件未修改，仍保留原型的最近 5 条行为。
+
+## 2026-10-04：生产统一工作空间菜单
+
+本节保留首次接入时的历史实现与验证范围，其中最近 5 条为当时上限，现行调整见上节。
+
+对应 FR-14、US-E1 至 US-E3。已核对生产 `WorkspaceMenu.tsx`、`workspace-menu-selectors.ts`、`ProjectSwitcher.tsx` 与 `App.tsx` 差异：项目入口与活动摘要共用菜单，替代独立 `ProjectActivity` 级联。已接入全部项目优先的分类 PageTabs、悬停预览与点击进入、最近 5 条、同排状态筛选与新建会话、真实项目设置和创建、项目三行信息，以及会话期内上次打开记录。预览只用内存数据，项目和会话列表复用共享窗口化；规则见[活动逻辑](./logic-design.md#9-项目活动汇总)与[技术设计](./technical-design.md#12-项目活动汇总)。
+
+最终源码补充：菜单最近时间取最新消息时间与 Store 会话期访问／状态时间的最大值；`recordActivityStatuses` 首次只建立基线，清除完成提醒不更新时间。项目上次打开 ID 仍只保留在内存，获准后的项目进入及新建回调使用 `commitView`，避免重复离开检查。
+
+以下为实现代理提供的验证结果，本次仅更新文档，未重跑产品测试：
+
+- 82 项定向测试通过。
+- 31 项选定 App 测试通过。
+- 1 项真实 Electron overlay 测试通过，最终场景也在全量测试运行中通过。
+- 最终完整 `npm run typecheck`、`npm run lint` 通过。
+- 全量 `npm test` 在 600 秒超时前未完成。已结束的 App 文件共 347 项，346 项通过、1 项监督者设置测试失败；`tests/supervisor-layout.electron.test.ts` 也失败。尚无证据将这些失败归为既有问题，全量测试未通过。
+- 首次 200 秒尝试报告 `activity-history-repository` worker 失败；第二次截至超时未报告该处失败。同期有并行性能修改，未确定失败原因，也不据此认定已修复。
+
+本次没有性能基准结论。README 保留未提交的工作空间 Demo 描述，并区分生产菜单与旧演示；下方级联菜单记录保留当时实现和验证范围，不再定义当前生产交互。
+
 ## 2026-10-01：设备共享入口
 
 新增 `device-sharing`，启用后应用菜单及管理 Modal 均进入主内容区页面；管理行可排序。
@@ -428,7 +468,7 @@ Windows Electron 43.2.0 / Chromium 150 的当前组件 fixture 验证浅深主�
 
 ## 2026-09-13：生产活动入口
 
-对应 [FR-14](./prd.md#fr-14-项目活动汇总)、[US-E1 / US-E2](./user-stories.md#6-epic-e项目活动级联)。
+对应 [FR-14](./prd.md#fr-14-项目活动汇总)、[US-E1 / US-E2](./user-stories.md#6-epic-e统一工作空间菜单)。
 本页只记录项目活动入口，不表示应用中心计划已交付。
 
 `App` 已接入 `ProjectActivity` 常驻摘要和锚定级联菜单。会话和项目计数继续使用现有

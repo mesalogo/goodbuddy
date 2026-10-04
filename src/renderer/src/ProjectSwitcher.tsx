@@ -7,16 +7,14 @@ import {
   Folder,
   FolderOpen,
   LoaderCircle,
-  Plus,
   RadioTower,
   RefreshCw,
-  Server,
   Settings,
   Trash2,
   X
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, memo } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, memo } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -34,7 +32,6 @@ import {
 } from '../../shared/remote-project-candidate-contracts'
 import type {
   SshDirectoryBrowseResult,
-  SshHost,
   SshHostAgentConnectionState,
   SshHostsSnapshot
 } from '../../shared/ssh-host-contracts'
@@ -58,12 +55,19 @@ import { ProjectWorkModeFields } from './ProjectWorkModeFields'
 import { ChannelIcon } from './ChannelIcon'
 import { SegmentedControl } from './WorkspacePrimitives'
 import { InlineHelp } from './InlineHelp'
-import { FloatingPortal } from './FloatingPortal'
+import { WorkspaceMenu } from './WorkspaceMenu'
+import type { ConversationActivity } from './conversation-activity'
+import type { ConversationStore } from './conversation-store'
 import { displayErrorMessage } from './error-message'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
   activeProjectId: string
+  conversationStore: ConversationStore
+  activities: ConversationActivity[]
+  visible?: boolean
+  onOpenConversation: (conversationId: string) => void
+  onNewConversation: (projectId: string) => void
   activityByProjectId?: Record<string, ProjectActivityCountsProps>
   remoteProjectsEnabled?: boolean
   runtimeSettings?: RuntimeSettings
@@ -93,6 +97,8 @@ const remoteProjectPhases: readonly RemoteProjectSavePhase[] = [
 type RemoteHostReadiness =
   | { status: 'ready' }
   | { status: 'unready' }
+
+const emptyHosts: SshHostsSnapshot['hosts'] = []
 
 function ProjectRecoveryStatus({
   state
@@ -215,6 +221,11 @@ function isRemoteAbsolutePath(value: string): boolean {
 function ProjectSwitcherView({
   projects,
   activeProjectId,
+  conversationStore,
+  activities,
+  visible = true,
+  onOpenConversation,
+  onNewConversation,
   activityByProjectId = {},
   remoteProjectsEnabled = false,
   runtimeSettings,
@@ -229,6 +240,9 @@ function ProjectSwitcherView({
   recoveryByProjectId = {}
 }: ProjectSwitcherProps): React.JSX.Element {
   const { t } = useTranslation('workspace')
+  useLayoutEffect(() => {
+    conversationStore.recordActivityStatuses(activities)
+  }, [activities, conversationStore])
   const [dialogMode, setDialogMode] = useState<
     'create' | 'settings'
   >()
@@ -275,18 +289,31 @@ function ProjectSwitcherView({
     useState<string>()
   const [remoteDirectoryListing, setRemoteDirectoryListing] =
     useState<SshDirectoryBrowseResult>()
-  const createButtonRef = useRef<HTMLButtonElement>(null)
   const directoryPickerTriggerRef = useRef<HTMLButtonElement>(null)
   const directoryPickerRef = useRef<HTMLDivElement>(null)
   const directoryBrowseRequestRef = useRef(0)
   const projectPickerRef = useRef<HTMLDivElement>(null)
   const projectPickerButtonRef = useRef<HTMLButtonElement>(null)
-  const projectPickerMenuRef = useRef<HTMLDivElement>(null)
+  const menuId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
   const restoreFocusTarget = useRef<
     'create' | 'picker' | undefined
   >(undefined)
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  if (!visible && projectMenuOpen) setProjectMenuOpen(false)
+  const closeProjectMenu = useCallback(() => setProjectMenuOpen(false), [])
+  const visibleActivities = useMemo(() => {
+    const visibleIds = new Set(projects.filter((project) => project.kind === 'channel' ||
+      project.executionSpace.kind !== 'ssh' || remoteProjectsEnabled).map((project) => project.id))
+    return activities.filter((activity) => !activity.projectId || visibleIds.has(activity.projectId))
+  }, [activities, projects, remoteProjectsEnabled])
+  const activityCounts = useMemo(() => {
+    const counts = { attention: 0, running: 0, completed: 0 }
+    for (const activity of visibleActivities) {
+      counts[activity.status === 'running' || activity.status === 'completed' ? activity.status : 'attention'] += 1
+    }
+    return counts
+  }, [visibleActivities])
   const [retryingRecoveryProjectId, setRetryingRecoveryProjectId] =
     useState<string>()
   const [dismissedRecoveryByProjectId, setDismissedRecoveryByProjectId] =
@@ -331,13 +358,13 @@ function ProjectSwitcherView({
     }
   }, [])
 
-  const visibleRecoveryByProjectId = Object.fromEntries(
+  const visibleRecoveryByProjectId = useMemo(() => Object.fromEntries(
     Object.entries(recoveryByProjectId).filter(
       ([projectId, state]) =>
         state.stage !== 'completed' ||
         dismissedRecoveryByProjectId[projectId] !== state.requestId
     )
-  )
+  ), [recoveryByProjectId, dismissedRecoveryByProjectId])
   const applySshHostsSnapshot = useCallback(
     (
       snapshot: SshHostsSnapshot,
@@ -419,58 +446,9 @@ function ProjectSwitcherView({
   const settingsProject = projects.find(
     (project) => project.id === settingsProjectId
   )
-  const localProjects = projects.filter(
-    (project) =>
-      project.kind === 'user' &&
-      project.executionSpace.kind === 'local'
-  )
-  const remoteProjects = projects.filter(
-    (project) =>
-      project.kind === 'user' &&
-      project.executionSpace.kind === 'ssh'
-  )
-  const sshHostById = new Map(
-    (sshHosts?.hosts ?? []).map((host) => [host.id, host])
-  )
-  const remoteProjectGroups = [
-    ...remoteProjects.reduce(
-      (
-        groups,
-        project
-      ) => {
-        if (project.executionSpace.kind !== 'ssh') {
-          return groups
-        }
-        const hostId = project.executionSpace.hostId
-        const current = groups.get(hostId)
-        if (current) {
-          current.projects.push(project)
-        } else {
-          groups.set(hostId, {
-            hostId,
-            host: sshHostById.get(hostId),
-            projects: [project]
-          })
-        }
-        return groups
-      },
-      new Map<
-        string,
-        {
-          hostId: string
-          host?: SshHost
-          projects: AssistantProject[]
-        }
-      >()
-    ).values()
-  ]
-  const channelProjects = projects.filter(
-    (project) => project.kind === 'channel'
-  )
-  const userProjects = [
-    ...localProjects,
-    ...(remoteProjectsEnabled ? remoteProjects : [])
-  ]
+  const userProjects = useMemo(() => projects.filter((project) =>
+    project.kind === 'user' && (project.executionSpace.kind === 'local' || remoteProjectsEnabled)
+  ), [projects, remoteProjectsEnabled])
   const busy =
     saving ||
     remoteSaving ||
@@ -741,64 +719,6 @@ function ProjectSwitcherView({
     }
   }
 
-  useLayoutEffect(() => {
-    if (!projectMenuOpen) return
-    const anchor = projectPickerButtonRef.current
-    const menu = projectPickerMenuRef.current
-    if (!anchor || !menu) return
-    const position = (): void => {
-      const rect = anchor.getBoundingClientRect()
-      const width = Math.min(380, window.innerWidth - 32)
-      menu.style.width = `${width}px`
-      menu.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))}px`
-      menu.style.top = `${Math.max(16, Math.min(rect.bottom + 8, window.innerHeight - menu.offsetHeight - 16))}px`
-    }
-    position()
-    const observer = new ResizeObserver(position)
-    observer.observe(anchor)
-    observer.observe(menu)
-    window.addEventListener('resize', position)
-    window.addEventListener('scroll', position, true)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', position)
-      window.removeEventListener('scroll', position, true)
-    }
-  }, [projectMenuOpen])
-
-  useEffect(() => {
-    if (!projectMenuOpen) {
-      return
-    }
-    const focusFrame = requestAnimationFrame(() => {
-      const items = Array.from(
-        projectPickerMenuRef.current?.querySelectorAll<HTMLButtonElement>(
-          '[role^="menuitem"]'
-        ) ?? []
-      )
-      const initialItem =
-        items.find((item) => item.getAttribute('aria-checked') === 'true') ??
-        items[0]
-      initialItem?.focus()
-    })
-    const closeOutside = (event: Event): void => {
-      if (
-        event.target instanceof Node &&
-        !projectPickerRef.current?.contains(event.target) &&
-        !projectPickerMenuRef.current?.contains(event.target)
-      ) {
-        setProjectMenuOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', closeOutside)
-    document.addEventListener('focusin', closeOutside)
-    return () => {
-      cancelAnimationFrame(focusFrame)
-      document.removeEventListener('pointerdown', closeOutside)
-      document.removeEventListener('focusin', closeOutside)
-    }
-  }, [projectMenuOpen])
-
   useEffect(() => {
     if (!directoryPickerOpen) {
       return
@@ -818,14 +738,14 @@ function ProjectSwitcherView({
     return activateModalFocus(
       () => dialogRef.current?.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled), select:not(:disabled)') ??
         dialogRef.current?.querySelector<HTMLElement>('button:not(:disabled)') ?? null,
-      () => restoreFocusTarget.current === 'create' ? createButtonRef.current : projectPickerButtonRef.current
+      () => projectPickerButtonRef.current
     )
   }, [dialogMode])
 
   useEffect(() => {
     if (!dialogMode) {
       if (restoreFocusTarget.current === 'create') {
-        createButtonRef.current?.focus()
+        projectPickerButtonRef.current?.focus()
       } else if (restoreFocusTarget.current === 'picker') {
         projectPickerButtonRef.current?.focus()
       }
@@ -1104,9 +1024,9 @@ function ProjectSwitcherView({
   }
 
   const renderProjectMenuItem = (
-    project: AssistantProject,
-    ProjectIcon: LucideIcon
+    project: AssistantProject
   ): React.JSX.Element => {
+    const ProjectIcon: LucideIcon = project.kind === 'channel' ? RadioTower : Folder
     const selected = project.id === activeProjectId
     const projectDisplay = getProjectDisplayText(project, t)
     const recovery =
@@ -1140,16 +1060,11 @@ function ProjectSwitcherView({
         <button
           aria-checked={selected}
           onClick={() => {
-            if (!selected || project.executionSpace.kind === 'ssh') {
-              onSelect(project.id)
-            }
+            onSelect(project.id)
             setProjectMenuOpen(false)
-            requestAnimationFrame(() =>
-              projectPickerButtonRef.current?.focus()
-            )
           }}
           role="menuitemradio"
-          tabIndex={selected ? 0 : -1}
+          tabIndex={0}
           type="button"
         >
           {project.kind === 'channel' && project.channel ? (
@@ -1160,10 +1075,10 @@ function ProjectSwitcherView({
           <span>
             <span className="project-switcher__project-heading">
               <b>{projectDisplay.name}</b>
-              {activityByProjectId[project.id] && (
-                <ProjectActivityCounts {...activityByProjectId[project.id]!} />
-              )}
             </span>
+            {activityByProjectId[project.id] && (
+              <ProjectActivityCounts {...activityByProjectId[project.id]!} />
+            )}
             <small>{detail}</small>
             {recovery && <ProjectRecoveryStatus state={recovery} />}
           </span>
@@ -1181,7 +1096,7 @@ function ProjectSwitcherView({
               disabled={retryingRecoveryProjectId === project.id}
               onClick={() => retryRecovery(project.id)}
               role="menuitem"
-              tabIndex={-1}
+              tabIndex={0}
               type="button"
             >
               <RefreshCw aria-hidden="true" size={14} />
@@ -1195,7 +1110,7 @@ function ProjectSwitcherView({
           className="project-switcher__menu-settings"
           onClick={() => openProjectSettings(project)}
           role="menuitem"
-          tabIndex={-1}
+          tabIndex={0}
           type="button"
         >
           <Settings aria-hidden="true" size={14} />
@@ -1213,10 +1128,15 @@ function ProjectSwitcherView({
         >
           <button
             aria-expanded={projectMenuOpen}
-            aria-haspopup="menu"
+            aria-haspopup="dialog"
+            aria-controls={projectMenuOpen ? menuId : undefined}
             aria-label={t('projectSwitcher.selector.ariaLabel')}
-            className="project-switcher__trigger"
-            onClick={() => setProjectMenuOpen((open) => !open)}
+            aria-describedby={`${menuId}-activity${activeProjectRecovery ? ` ${menuId}-recovery` : ''}`}
+            className="project-switcher__trigger project-switcher__control"
+            onClick={(event) => {
+              event.currentTarget.focus()
+              setProjectMenuOpen((open) => !open)
+            }}
             onKeyDown={(event) => {
               if (
                 !projectMenuOpen &&
@@ -1232,161 +1152,30 @@ function ProjectSwitcherView({
             title={activeProjectDisplay?.name}
             type="button"
           >
+            <Folder aria-hidden="true" size={16} />
             <span className="project-switcher__trigger-copy">
               <span>
                 {activeProjectDisplay?.name ??
                   t('projectSwitcher.selector.empty')}
               </span>
-              {activeProjectRecovery && (
-                <ProjectRecoveryStatus state={activeProjectRecovery} />
-              )}
+              <span className="project-switcher__activity" id={`${menuId}-activity`}>
+                {visibleActivities.length > 0
+                  ? <ProjectActivityCounts {...activityCounts} /> : t('projectActivity.idle')}
+              </span>
             </span>
             <ChevronDown aria-hidden="true" size={14} />
           </button>
-          {projectMenuOpen && (
-            <FloatingPortal anchorRef={projectPickerButtonRef}>
-            <div
-              aria-label={t('projectSwitcher.selector.ariaLabel')}
-              className="project-switcher__menu"
-              onKeyDown={(event) => {
-                const items = Array.from(
-                  event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                    '[role^="menuitem"]'
-                  )
-                )
-                const currentIndex = items.indexOf(
-                  document.activeElement as HTMLButtonElement
-                )
-                let nextIndex: number | undefined
-                if (event.key === 'ArrowDown') {
-                  nextIndex = (currentIndex + 1) % items.length
-                } else if (event.key === 'ArrowUp') {
-                  nextIndex =
-                    (currentIndex - 1 + items.length) % items.length
-                } else if (event.key === 'Home') {
-                  nextIndex = 0
-                } else if (event.key === 'End') {
-                  nextIndex = items.length - 1
-                } else if (event.key === 'Escape') {
-                  event.preventDefault()
-                  setProjectMenuOpen(false)
-                  projectPickerButtonRef.current?.focus()
-                }
-                const nextItem =
-                  nextIndex === undefined ? undefined : items.at(nextIndex)
-                if (nextItem) {
-                  event.preventDefault()
-                  const currentItem = items.at(currentIndex)
-                  if (currentItem) {
-                    currentItem.tabIndex = -1
-                  }
-                  nextItem.tabIndex = 0
-                  nextItem.focus()
-                }
-              }}
-              ref={projectPickerMenuRef}
-              role="menu"
-            >
-              {localProjects.length > 0 && (
-                <div
-                  aria-label={t(
-                    'projectSwitcher.selector.userProjects'
-                  )}
-                  className="project-switcher__group"
-                  role="group"
-                >
-                  <strong>
-                    {t('projectSwitcher.selector.userProjects')}
-                  </strong>
-                  {localProjects.map((project) =>
-                    renderProjectMenuItem(project, Folder)
-                  )}
-                </div>
-              )}
-              {remoteProjectsEnabled &&
-                remoteProjectGroups.length > 0 && (
-                  <div
-                    aria-label={t(
-                      'projectSwitcher.selector.remoteProjects'
-                    )}
-                    className="project-switcher__group"
-                    role="group"
-                  >
-                    <strong>
-                      {t('projectSwitcher.selector.remoteProjects')}
-                    </strong>
-                    {remoteProjectGroups.map(
-                      ({ hostId, host, projects: hostProjects }) => {
-                        const hostName =
-                          host?.name ??
-                          t(
-                            'projectSwitcher.selector.unavailableHost'
-                          )
-                        const state =
-                          agentConnectionStatusByHostId[hostId] ??
-                          'disconnected'
-                        return (
-                          <div
-                            aria-label={t(
-                              'projectSwitcher.selector.remoteHostGroup',
-                              { host: hostName }
-                            )}
-                            className="project-switcher__host-group"
-                            key={hostId}
-                            role="group"
-                          >
-                            <div className="project-switcher__host-heading">
-                              <span
-                                title={
-                                  host
-                                    ? `${host.username}@${host.hostname}:${host.port}`
-                                    : undefined
-                                }
-                              >
-                                <Server aria-hidden="true" size={14} />
-                                <b>{hostName}</b>
-                              </span>
-                              <span
-                                className={`status-badge project-switcher__host-status project-switcher__host-status--${state}`}
-                              >
-                                {t(
-                                  `projectSwitcher.selector.connectionStates.${state}`
-                                )}
-                              </span>
-                            </div>
-                            {hostProjects.map((project) =>
-                              renderProjectMenuItem(project, Folder)
-                            )}
-                          </div>
-                        )
-                      }
-                    )}
-                  </div>
-                )}
-              {channelProjects.length > 0 && (
-                <div
-                  aria-label={t(
-                    'projectSwitcher.selector.channelProjects'
-                  )}
-                  className="project-switcher__group"
-                  role="group"
-                >
-                  <strong>
-                    {t('projectSwitcher.selector.channelProjects')}
-                  </strong>
-                  {channelProjects.map((project) =>
-                    renderProjectMenuItem(project, RadioTower)
-                  )}
-                </div>
-              )}
-            </div>
-            </FloatingPortal>
-          )}
-        </div>
-        <button
-          aria-label={t('projectSwitcher.selector.create')}
-          className="icon-button"
-          onClick={() => {
+          {activeProjectRecovery && <span id={`${menuId}-recovery`} className="project-switcher__recovery-feedback">
+            <ProjectRecoveryStatus state={activeProjectRecovery} />
+          </span>}
+          {projectMenuOpen && <WorkspaceMenu
+            id={menuId} projects={projects} activeProjectId={activeProjectId}
+            activities={visibleActivities} conversationStore={conversationStore} remoteProjectsEnabled={remoteProjectsEnabled}
+            hosts={sshHosts?.hosts ?? emptyHosts} connectionStates={agentConnectionStatusByHostId}
+            anchorRef={projectPickerButtonRef} controlsRef={projectPickerRef}
+            renderProject={renderProjectMenuItem} onClose={closeProjectMenu}
+            onNewConversation={onNewConversation} onOpenConversation={onOpenConversation}
+            onCreateProject={() => {
             setProjectMenuOpen(false)
             setError(undefined)
             setConfirmingDelete(false)
@@ -1402,12 +1191,8 @@ function ProjectSwitcherView({
             })
             restoreFocusTarget.current = 'create'
             setDialogMode('create')
-          }}
-          ref={createButtonRef}
-          type="button"
-        >
-          <Plus size={15} />
-        </button>
+            }} />}
+        </div>
       </div>
       {dialogMode && createPortal(
         <div

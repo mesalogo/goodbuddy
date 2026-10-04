@@ -26,6 +26,20 @@ import type {
 } from '../../shared/remote-project-recovery-contracts'
 import i18n from './i18n'
 import { ProjectSwitcher } from './ProjectSwitcher'
+import { createConversationStores } from './conversation-store'
+import type { ConversationActivity } from './conversation-activity'
+
+const menuProps = {
+  conversationStore: createConversationStores([], { flushIntervalMs: 250 }).conversations,
+  activities: [] as ConversationActivity[],
+  onOpenConversation: vi.fn(),
+  onNewConversation: vi.fn()
+}
+
+function openCreate(name: '新建项目' | 'New project'): void {
+  if (!screen.queryByRole('menu')) fireEvent.click(screen.getByRole('button', { name: /^(当前项目|Current project)$/u }))
+  fireEvent.click(screen.getByRole('button', { name }))
+}
 
 const profileId = '00000000-0000-4000-8000-000000000011'
 const runtimeSettings: RuntimeSettings = {
@@ -116,6 +130,7 @@ function renderSwitcher(
   const onRetryRecovery = vi.fn(async () => undefined)
   render(
     <ProjectSwitcher
+      {...menuProps}
       activeProjectId={currentProject.id}
       onArchive={vi.fn(async () => undefined)}
       onCreate={onCreate}
@@ -309,6 +324,26 @@ function installRemoteApi(
 }
 
 describe('ProjectSwitcher project activity integration', () => {
+  it('uses one idle button for both rows and restores its keyboard focus', () => {
+    renderSwitcher()
+    const trigger = screen.getByRole('button', { name: '当前项目' })
+    expect(screen.getAllByRole('button')).toEqual([trigger])
+    expect(trigger).toHaveTextContent('Local project')
+    expect(trigger).toHaveAccessibleDescription('暂无活动')
+    fireEvent.click(within(trigger).getByText('暂无活动'))
+    expect(screen.getByRole('region', { name: project.name })).toBeVisible()
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '项目与活动' }), { key: 'Escape' })
+    expect(trigger).toHaveFocus()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    for (const key of ['Enter', ' ', 'ArrowDown']) {
+      fireEvent.keyDown(trigger, { key })
+      const menu = screen.getByRole('dialog', { name: '项目与活动' })
+      expect(trigger).toHaveAttribute('aria-controls', menu.id)
+      fireEvent.keyDown(menu, { key: 'Escape' })
+      expect(trigger).toHaveFocus()
+    }
+  })
+
   it('keeps per-project title counts and menu ordering stable across recovery and Host states', async () => {
     const api = installRemoteApi({ connectionState: 'connecting' })
     const remote: AssistantProject = {
@@ -317,6 +352,7 @@ describe('ProjectSwitcher project activity integration', () => {
     }
     const idle = { ...remote, id: 'idle-project', name: 'Idle remote' }
     const props = {
+      ...menuProps,
       activeProjectId: project.id, projects: [project, remote, idle],
       remoteProjectsEnabled: true, onArchive: vi.fn(), onCreate: vi.fn(),
       onDelete: vi.fn(), onRemoteCommitted: vi.fn(), onSelect: vi.fn(),
@@ -329,7 +365,7 @@ describe('ProjectSwitcher project activity integration', () => {
     const { rerender } = render(<ProjectSwitcher {...props} />)
     fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
     const menu = screen.getByRole('menu', { name: '当前项目' })
-    await within(menu).findByRole('group', { name: 'SSH 主机：Build host' })
+    await within(menu).findByRole('menuitem', { name: /Build host/u })
     for (const stage of ['agent', 'failed', 'completed'] as const) {
       rerender(<ProjectSwitcher {...props} recoveryByProjectId={{
         [remote.id]: { projectId: remote.id, requestId: 'activity-recovery', stage,
@@ -340,10 +376,12 @@ describe('ProjectSwitcher project activity integration', () => {
       expect(rows.map((row) => row.querySelector('b')?.textContent))
         .toEqual(['Local project', 'Remote activity', 'Idle remote'])
       expect(rows[0]!.querySelector('.project-switcher__project-heading'))
-        .toHaveTextContent('Local project 1 个运行中')
+        .toHaveTextContent('Local project')
+      expect(rows[0]!.querySelector('.project-activity__counts')).toHaveTextContent('1 个运行中')
       const heading = rows[1]!.querySelector('.project-switcher__project-heading')!
-      expect(heading).toHaveTextContent('Remote activity3 个待处理 2 个运行中')
-      expect(heading.querySelector('b')?.nextElementSibling).toHaveClass('project-activity__counts')
+      expect(heading).toHaveTextContent('Remote activity')
+      expect(heading.nextElementSibling).toHaveClass('project-activity__counts')
+      expect(heading.nextElementSibling).toHaveTextContent('3 个待处理 2 个运行中')
       expect(rows[2]!.querySelector('.project-activity__counts')).toBeNull()
     }
     fireEvent.click(within(menu).getByRole('menuitemradio', { name: /Remote activity/u }))
@@ -360,16 +398,17 @@ describe('ProjectSwitcher runtime fields', () => {
     const menu = screen.getByRole('menu')
     expect(trigger.closest('.project-switcher')).not.toContainElement(menu)
     expect(menu.closest('.floating-portal')?.parentElement).toBe(document.body)
-    expect(menu.style.width).toBe('380px')
+    const surface = screen.getByRole('dialog', { name: '项目与活动' })
+    expect(surface.style.width).toBe('920px')
     const selected = within(menu).getByRole('menuitemradio', { checked: true })
-    await waitFor(() => expect(selected).toHaveFocus())
+    await waitFor(() => expect(screen.getByRole('tab', { name: '全部项目' })).toHaveFocus())
     fireEvent.pointerDown(selected)
     expect(menu).toBeInTheDocument()
 
     const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(360)
     fireEvent(window, new Event('resize'))
-    expect(menu.style.width).toBe('328px')
-    expect(menu.style.left).toBe('16px')
+    expect(surface.style.width).toBe('328px')
+    expect(surface.style.left).toBe('16px')
     width.mockRestore()
     fireEvent.keyDown(selected, { key: 'Escape' })
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
@@ -383,14 +422,14 @@ describe('ProjectSwitcher runtime fields', () => {
   it.each(['新建项目', '项目设置'])('keeps %s outside the sidebar and restores focus after closing', (name) => {
     renderSwitcher()
     const trigger = screen.getByRole('button', {
-      name: name === '项目设置' ? '当前项目' : name
+      name: '当前项目'
     })
     fireEvent.click(trigger)
     if (name === '项目设置') {
       fireEvent.click(screen.getByRole('menuitem', {
         name: '管理项目 Local project'
       }))
-    }
+    } else openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name })
     expect(dialog.parentElement?.parentElement).toBe(document.body)
     const body = dialog.querySelector('.project-create-card__body')!
@@ -407,7 +446,7 @@ describe('ProjectSwitcher runtime fields', () => {
   it('creates an ordinary project with DeepSeek Harness', async () => {
     const { onCreate } = renderSwitcher()
 
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.change(within(dialog).getByLabelText('名称'), {
       target: { value: 'Harness project' }
@@ -473,7 +512,7 @@ describe('ProjectSwitcher runtime fields', () => {
     await i18n.changeLanguage('en-US')
     renderSwitcher()
 
-    fireEvent.click(screen.getByLabelText('New project'))
+    openCreate('New project')
     const dialog = screen.getByRole('dialog', { name: 'New project' })
     expect(within(dialog).getByRole('group', { name: 'Default Runtime for new conversations' })).toBeInTheDocument()
     expect(within(dialog).getByLabelText('Execution mode')).not.toHaveValue('')
@@ -544,23 +583,31 @@ describe('ProjectSwitcher managed SSH projects', () => {
       name: 'Current project'
     })
     const buildHost = await waitFor(() =>
-      within(menu).getByRole('group', {
-        name: 'SSH host: Build host'
+      within(menu).getByRole('menuitem', {
+        name: /Build host/u
       })
     )
-    const deployHost = within(menu).getByRole('group', {
-      name: 'SSH host: Deploy host'
+    const deployHost = within(menu).getByRole('menuitem', {
+      name: /Deploy host/u
     })
     expect(buildHost).toHaveTextContent('Connecting')
-    expect(buildHost).toHaveTextContent('/srv/api')
+    expect(within(menu).getByRole('menuitemradio', { name: /\/srv\/api/u })).toHaveTextContent('/srv/api')
     expect(deployHost).toHaveTextContent('Ready')
-    expect(deployHost).toHaveTextContent('/srv/web')
+    expect(within(menu).getByRole('menuitemradio', { name: /\/srv\/web/u })).toHaveTextContent('/srv/web')
     expect(within(menu).queryByText(/Managed SSH/u)).not.toBeInTheDocument()
 
     act(() => api.emitConnectionStatus('ready'))
     await waitFor(() =>
       expect(buildHost).toHaveTextContent('Ready')
     )
+    fireEvent.click(buildHost)
+    expect(buildHost).toHaveAttribute('aria-expanded', 'false')
+    expect(within(menu).queryByRole('menuitemradio', { name: /\/srv\/api/u })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '/srv/api' } })
+    expect(within(menu).getByRole('menuitemradio', { name: /\/srv\/api/u })).toBeInTheDocument()
+    expect(within(menu).queryByRole('menuitemradio', { name: /\/srv\/web/u })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+    expect(buildHost).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('does not let an older Host snapshot overwrite a newer connection event', async () => {
@@ -618,8 +665,8 @@ describe('ProjectSwitcher managed SSH projects', () => {
       await Promise.resolve()
     })
 
-    const hostGroup = await screen.findByRole('group', {
-      name: 'SSH host: Build host'
+    const hostGroup = await screen.findByRole('menuitem', {
+      name: /Build host/u
     })
     expect(hostGroup).toHaveTextContent('Ready')
     expect(hostGroup).not.toHaveTextContent('Disconnected')
@@ -669,7 +716,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
 
     expect(
       screen.getByRole('button', { name: 'Current project' })
-    ).toHaveTextContent('Restoring remote Agent…')
+    ).toHaveAccessibleDescription('No activity Restoring remote Agent…')
     fireEvent.click(
       screen.getByRole('button', { name: 'Current project' })
     )
@@ -694,6 +741,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
       executionSpace: { kind: 'ssh', hostId, remoteRootPath: '/srv/project' }
     }
     const props = {
+      ...menuProps,
       onArchive: vi.fn(), onCreate: vi.fn(), onDelete: vi.fn(),
       onRemoteCommitted: vi.fn(), onSelect: vi.fn(),
       onSelectRoot: vi.fn(), onUpdate: vi.fn(),
@@ -710,7 +758,8 @@ describe('ProjectSwitcher managed SSH projects', () => {
     )
     const { rerender, unmount } = render(view(remote.id))
     const trigger = screen.getByRole('button', { name: 'Current project' })
-    expect(within(trigger).getByRole('status')).toHaveTextContent('Recovery completed')
+    expect(trigger).toHaveAccessibleDescription('No activity Recovery completed')
+    expect(trigger).not.toContainElement(screen.getByRole('status'))
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
     rerender(view(project.id))
     fireEvent.click(trigger)
@@ -729,13 +778,15 @@ describe('ProjectSwitcher managed SSH projects', () => {
     const next = { ...completed, requestId: '00000000-0000-4000-8000-000000000302' }
     rerender(view(remote.id, { ...next, stage: 'network' }))
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
-    expect(within(trigger).getByRole('status')).toHaveAttribute('aria-busy', 'true')
+    expect(document.getElementById(trigger.getAttribute('aria-describedby')!.split(' ')[1]!)!.querySelector('[role="status"]')).toHaveAttribute('aria-busy', 'true')
     rerender(view(remote.id, next))
     expect(screen.getAllByText('Recovery completed')).toHaveLength(2)
     await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
     expect(screen.queryByText('Recovery completed')).not.toBeInTheDocument()
     rerender(view(remote.id, { ...next, requestId: 'new-request' }))
     unmount()
+    // Focusing the shared menu schedules jsdom's zero-delay selectionchange.
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -750,6 +801,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     const second = { ...remote, id: 'second-project', name: 'Second remote' }
     const onRetryRecovery = vi.fn(async () => undefined)
     const props = {
+      ...menuProps,
       activeProjectId: project.id,
       onArchive: vi.fn(), onCreate: vi.fn(), onDelete: vi.fn(),
       onRemoteCommitted: vi.fn(), onSelect: vi.fn(), onRetryRecovery,
@@ -807,6 +859,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     const onRetryRecovery = vi.fn(async () => undefined)
     render(
       <ProjectSwitcher
+        {...menuProps}
         activeProjectId={remoteProject.id}
         onArchive={vi.fn(async () => undefined)}
         onCreate={vi.fn()}
@@ -878,7 +931,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     ).not.toBeInTheDocument()
     expect(within(menu).queryByText('Remote project')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByLabelText('New project'))
+    openCreate('New project')
     const dialog = screen.getByRole('dialog', { name: 'New project' })
     expect(
       within(dialog).queryByRole('button', { name: 'Managed SSH' })
@@ -978,7 +1031,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     await i18n.changeLanguage('en-US')
     const api = installRemoteApi()
     const { onSelectRoot } = renderSwitcher()
-    fireEvent.click(screen.getByLabelText('New project'))
+    openCreate('New project')
     const dialog = screen.getByRole('dialog', { name: 'New project' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: 'Managed SSH' })
@@ -1017,7 +1070,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
   it('starts from the home directory when the typed path is invalid', async () => {
     const api = installRemoteApi()
     renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1058,7 +1111,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
       }
     )
     const { onSelectRoot } = renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1120,7 +1173,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
   it('keeps the outer dialog open and restores trigger focus after cancel and Escape', async () => {
     const api = installRemoteApi()
     renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1180,7 +1233,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
   it('closes the new-project dialog through its top-right button', () => {
     renderSwitcher()
 
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     const close = within(dialog).getByRole('button', {
       name: '关闭新建项目'
@@ -1206,7 +1259,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
       )
       .mockRejectedValueOnce(new Error('Permission denied'))
     renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1249,7 +1302,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
   it.each(['opencode', 'continue'])('saves %s Execute in one request without extra confirmation checklists', async (provider) => {
     const api = installRemoteApi()
     const { onRemoteCommitted } = renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1311,7 +1364,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
         })
     )
     renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1347,7 +1400,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     const api = installRemoteApi()
     api.save.mockRejectedValueOnce(new Error('Runtime unavailable'))
     renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1380,7 +1433,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     const api = installRemoteApi()
     api.save.mockImplementationOnce(() => new Promise(() => undefined))
     renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1454,7 +1507,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
   it('uses the local validated Host record and defers remote checks to the requested action', async () => {
     const api = installRemoteApi()
     renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1531,7 +1584,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
   it('never probes remote environments when the project form opens or reopens', async () => {
     const api = installRemoteApi()
     renderSwitcher()
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     let dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1546,7 +1599,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
       within(dialog).getByRole('button', { name: '取消' })
     )
 
-    fireEvent.click(screen.getByLabelText('新建项目'))
+    openCreate('新建项目')
     dialog = screen.getByRole('dialog', { name: '新建项目' })
     fireEvent.click(
       within(dialog).getByRole('button', { name: '托管 SSH' })
@@ -1556,7 +1609,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
         '此主机已验证。保存项目时才会连接并检查 Agent、工作区和 Runtime。'
       )
     ).toBeInTheDocument()
-    expect(api.getSnapshot).toHaveBeenCalledTimes(2)
+    expect(api.getSnapshot).toHaveBeenCalledTimes(4)
     expect(api.getRemoteEnvironment).not.toHaveBeenCalled()
     expect(api.updateRemoteEnvironment).not.toHaveBeenCalled()
   })

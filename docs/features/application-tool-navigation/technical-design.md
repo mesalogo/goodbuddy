@@ -468,7 +468,7 @@ OCR 模型可用性由 Main 校验，Worker 运行状态由实际持有它的 Re
 
 - `conversation-activity.ts` 从 `App.tsx` 的会话、`activeConversationIds`、全部可见
   `assistantTasks`、`completedConversationIds` 和项目元数据派生会话行、全局及项目计数，不新增持久化活动副本。
-  `ProjectActivity` 在有活动时渲染汇总与项目、会话级联菜单，`ProjectSwitcher` 复用项目计数。
+  `ProjectSwitcher` 使用单个固定双行按钮显示项目名与全局活动，活动为空时第二行显示空闲文案，统一打开 `WorkspaceMenu` 并默认预览当前项目；生产 `App` 不再挂载独立 `ProjectActivity` 级联菜单。按钮通过 `aria-describedby` 关联活动描述及控件外的恢复反馈，尺寸与样式见活动界面。
 - `use-unviewed-completions.ts` 在 Renderer 内存维护完成集合和上一轮 Task 状态；已观察到的
   顶层 Task 转为 `completed` 时加入集合，初始历史不生成通知。`App` 的本地 `done` 事件和
   活动运行持久化快照的成功终态调用 `markConversationCompleted`，失败、取消不调用。
@@ -477,16 +477,15 @@ OCR 模型可用性由 Main 校验，Worker 运行状态由实际持有它的 Re
   `visibilitychange`，文档不为 `hidden` 时才按当前会话清除通知。这使普通侧栏、活动菜单
   导航和可见性恢复共用查看规则，KeepAlive 挂载本身不代表查看。集合不写入 SQLite 或设置。
 - 聚合状态新增 `completed`，全局和项目计数包含 `attention`、`running`、`completed`，
-  同一 Conversation ID 只按最高优先级计数；活动行为空才隐藏摘要。
-- `App` 向 `ProjectActivity` 传入项目元数据、活动行、侧栏可见状态与既有精确跳转回调。
-  菜单按项目 ID 分组并记忆化派生集合；排序仅影响展示，不改聚合状态或持久化数据。
-- 两层菜单在同一 body Portal 内相接，桌面会话层使用独立 fixed 定位，不参与项目层高度计算。
-  项目层锚定摘要，会话层锚定选中项目行并独立限制窗口边界。布局在打开、层级变化、实时数据更新、窗口缩放和
-  滚动时按锚点重算；窄窗口隐藏项目面板并保留返回操作。菜单不调用 Modal 焦点隔离，
-  捕获阶段消费 Escape，防止触发窄侧栏的文档级监听；Tab 关闭后交还正常焦点顺序。
-  菜单关闭与焦点恢复在导航回调之前同步完成。
-- `role="menu"` 使浮层直接进入共享 `browser-viewport-occlusion.ts` 相交检测。未增加
-  浏览器实例的特殊隐藏条件，也不关闭或重建浏览器会话。
+  同一 Conversation ID 只按最高优先级计数；活动行为空时以“暂无活动”替换计数，保留全局入口。
+- `App` 向 `ProjectSwitcher` 传入 `conversationStore`、活动行、侧栏可见状态和确切会话跳转、新建回调。`WorkspaceMenu` 持有分类、预览范围、搜索及状态筛选；分类复用 `PageTabs`，状态筛选复用 `SegmentedControl`，项目行与真实设置／创建表单继续由 `ProjectSwitcher` 提供。
+- `workspace-menu-selectors.ts` 订阅会话 Store，投影 ID、项目、标题、排序时间及通道标记，以字段相等比较保留未变化结果；排序时间为 `Math.max(conversationActivityTime(conversation), activityTimes.get(conversation.id) ?? 0)`。与活动行按 ID 合并后派生分组和最近 10 条；仅有活动、尚无摘要的行使用 Store 时间，缺失时取 0。悬停只改变 Renderer 预览范围，不发 IPC、不加载详情或请求模型。打开菜单所需的既有主机快照读取与悬停预览分开。
+- Store 的 `activityTimes` 保存本次应用会话内的访问／状态变化时间，更新时间为 `Math.max(Date.now(), lastActivityTime + 1)`。`ProjectSwitcher` 调用 `recordActivityStatuses`：首次快照只建立基线，后续状态变化触发更新，但 `completed` 变为无状态的完成提醒清除不触发更新。`WorkspaceMenu` 经 `useSyncExternalStore` 订阅该时间映射；时间不持久化，悬停不更新，普通侧栏原有消息排序规则不变。
+- 项目、会话列表均使用共享 `useListWindow`，分别估算 `64px`、`56px` 行高并测量实际高度，保留键盘目标行；范围改变时重置滚动。窗口化仅限制挂载行数，不截断活动集合，不代表已有性能基准结果。
+- 菜单通过 `FloatingPortal` 显示同一双栏表面，定位和焦点恢复共用项目按钮的引用；尺寸、窗口和滚动变化时重算位置。非模态 `dialog` 不调用焦点隔离，Escape 关闭整个菜单，Tab 可访问内部控件，焦点离开后关闭。窄窗口仍为双栏，侧栏隐藏时卸载菜单。
+- 浮层沿用共享 `browser-viewport-occlusion.ts` 相交检测，不增加浏览器实例的特殊隐藏条件，也不关闭或重建浏览器会话。
+- `conversationStore.rememberOpened` 在 `App.setActiveId` 时为存在的会话记录访问时间，并记住其项目最后打开的 ID。`projectConversation` 优先返回仍在候选集合中的记忆 ID，否则按 `conversationActivityTime` 选择最近会话，不使用菜单的访问／状态时间；通道项目只选带 `remote` 的会话。记忆仅存在当前 Store 的 Map 中，不持久化、不跨重载恢复。普通项目无会话时创建，通道无会话时清空活动 ID。
+- 项目进入、新建会话及创建项目后的导航均经过 `requestWorkspaceLeave`。获准后的 `commitProjectSelection` 与新建会话 `ready` 回调直接调用 `commitView('chat')`，避免经 `setView` 再次触发离开检查；新建会话就绪后才提交项目、会话及输入框焦点。
 - 持久化快照刷新时，同一条仍在流式输出的消息保留本地待审批、待回答信息，持久化终态
   则清除这些信息。响应成功后对应 Task 立即退出等待状态；响应期间到达的新问题、审批或
   终态不能被旧响应覆盖。
@@ -503,5 +502,5 @@ OCR 模型可用性由 Main 校验，Worker 运行状态由实际持有它的 Re
 - 远程恢复成功提示沿用独立的自动消失计时器；活动汇总更新不重置或替代该计时器。
 
 完成通知的定向验证应覆盖本地成功、持久化活动运行成功、后台 Task 状态转换、初始历史、
-失败和取消、实时状态优先、三类计数、普通侧栏查看、设置覆盖、隐藏文档与恢复可见、无活动行隐藏。
-验证记录见[项目活动级联实施进度](./progress.md)；源码核对不能替代真实 Electron 路径验证。
+失败和取消、实时状态优先、三类计数、普通侧栏查看、设置覆盖、隐藏文档与恢复可见、无活动时的空闲占位。
+统一菜单还应覆盖固定双行单按钮及焦点、当前项目默认范围和菜单内全部项目切换、分类与跨分类搜索、搜索框边界与两栏分隔、紧凑工具栏、预览无 IPC、最近 10 条与不限量活动筛选、真实设置／创建入口、会话期恢复及窗口化键盘导航。验证记录见[实施进度](./progress.md)；源码核对不能替代真实 Electron 路径验证。

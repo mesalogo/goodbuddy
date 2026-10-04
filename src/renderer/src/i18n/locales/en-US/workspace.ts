@@ -2,6 +2,15 @@ import type { TranslationShape } from '../../resource-types'
 import type { workspace as chineseWorkspace } from '../zh-CN/workspace'
 
 export const workspace = {
+  workspaceMenu: {
+    title: 'Projects and activity', close: 'Close projects and activity', search: 'Search projects',
+    allProjects: 'All projects', local: 'Local', remote: 'Remote', channels: 'Channels', categories: 'Project categories',
+    filter: 'Filter conversation status', conversations: 'Conversations', newConversation: 'New conversation',
+    newIn: 'New conversation in {{name}}', noProjects: 'No matching projects. Try another search.',
+    noConversations: 'No conversations in this scope match the filter.',
+    filters: { all: 'All', attention: 'Attention', running: 'Running', completed: 'Completed' },
+    groups: { attention: 'Needs attention', running: 'Running', recent: 'Recent conversations', completed: 'Completed' }
+  },
   projectActivity: {
     title: 'All project activity',
     idle: 'No activity',

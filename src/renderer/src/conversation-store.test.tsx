@@ -34,6 +34,52 @@ afterEach(() => {
 });
 
 describe("conversation store", () => {
+  it("tracks visits and status transitions in session memory without changing persisted snapshots", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    const initial = [conversation("old", [], { projectId: "project", updatedAt: 10 })];
+    const store = createConversationStore(initial, createLiveMessageStore());
+    const persisted = vi.fn();
+    const activity = vi.fn();
+    store.subscribe(persisted);
+    store.subscribeActivityTimes(activity);
+    store.recordActivityStatuses([{ conversationId: "old", status: "running" }]);
+    expect(store.getActivityTimes().size).toBe(0);
+    store.rememberOpened("old");
+    expect(store.getActivityTimes().get("old")).toBe(1000);
+    const visited = store.getActivityTimes();
+    store.recordActivityStatuses([{ conversationId: "old", status: "running" }]);
+    expect(store.getActivityTimes()).toBe(visited);
+    store.recordActivityStatuses([{ conversationId: "old", status: "completed" }]);
+    expect(store.getActivityTimes().get("old")).toBe(1001);
+    const completed = store.getActivityTimes();
+    store.recordActivityStatuses([]);
+    expect(store.getActivityTimes()).toBe(completed);
+    expect(store.getState()).toBe(initial);
+    expect(store.getConversation("old")?.updatedAt).toBe(10);
+    expect(persisted).not.toHaveBeenCalled();
+    expect(activity).toHaveBeenCalledTimes(2);
+    store.recordActivityStatuses([{ conversationId: "old", status: "running" }]);
+    store.recordActivityStatuses([]);
+    expect(store.getActivityTimes().get("old")).toBe(1003);
+    expect(createConversationStore(initial, createLiveMessageStore()).getActivityTimes().size).toBe(0);
+  });
+
+  it("restores the last opened conversation per project and falls back after deletion", () => {
+    const older = conversation("older", [], { projectId: "project", updatedAt: 10 });
+    const recent = conversation("recent", [], { projectId: "project", updatedAt: 20 });
+    const other = conversation("other", [], { projectId: "other", updatedAt: 30 });
+    const store = createConversationStore([older, other, recent], createLiveMessageStore());
+    expect(store.projectConversation("project", false)?.id).toBe("recent");
+    store.rememberOpened("older");
+    store.rememberOpened("other");
+    expect(store.projectConversation("project", false)?.id).toBe("older");
+    expect(store.projectConversation("other", false)?.id).toBe("other");
+    expect(store.projectConversation("project", true)).toBeUndefined();
+    store.set([recent, other]);
+    expect(store.projectConversation("project", false)?.id).toBe("recent");
+  });
+
   it("applies updates synchronously, in dispatch order", () => {
     const store = createConversationStore([conversation("a")], createLiveMessageStore());
     store.set((current) => [...current, conversation("b")]);

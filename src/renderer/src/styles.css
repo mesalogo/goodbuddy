@@ -3334,7 +3334,7 @@ textarea:focus-visible {
   display: grid;
   align-items: center;
   gap: var(--space-2);
-  grid-template-columns: minmax(0, 1fr) 36px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .project-switcher__row > .icon-button {

@@ -21,16 +21,18 @@ function latestMessageTime(messages: readonly Message[]): number | undefined {
   return latest;
 }
 
+export function conversationActivityTime(conversation: Conversation): number {
+  const summaryTime = conversation.messageSummary?.latestMessageAt;
+  const messageTime = latestMessageTime(conversation.messages);
+  return (summaryTime === undefined ? messageTime : messageTime === undefined
+    ? summaryTime : Math.max(summaryTime, messageTime)) ?? conversation.updatedAt;
+}
+
 export function sortConversationsForDisplay(conversations: readonly Conversation[]): Conversation[] {
   // updatedAt tracks snapshot freshness, including every streaming delta.
   // Compute stable message times once per conversation, not per comparison.
   return conversations.map(conversation => {
-    const summaryTime = conversation.messageSummary?.latestMessageAt;
-    const messageTime = latestMessageTime(conversation.messages);
-    const latest = summaryTime === undefined
-      ? messageTime
-      : messageTime === undefined ? summaryTime : Math.max(summaryTime, messageTime);
-    return { conversation, time: latest ?? conversation.updatedAt };
+    return { conversation, time: conversationActivityTime(conversation) };
   }).sort((left, right) =>
     Number(Boolean(right.conversation.pinned)) - Number(Boolean(left.conversation.pinned)) ||
     right.time - left.time || left.conversation.id.localeCompare(right.conversation.id),

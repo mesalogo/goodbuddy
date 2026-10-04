@@ -215,7 +215,6 @@ import {
   ScopeBadge,
 } from "./WorkspacePrimitives";
 import { ProjectSwitcher } from "./ProjectSwitcher";
-import { ProjectActivity } from "./ProjectActivity";
 import { useStableHandlers } from "./stable-derived-value";
 import { useUnviewedCompletions } from "./use-unviewed-completions";
 import { useExecutionStats } from "./use-execution-stats";
@@ -1527,6 +1526,7 @@ function App(): React.JSX.Element {
         ? update(activeConversationIdRef.current)
         : update;
     activeConversationIdRef.current = next;
+    conversationStore.rememberOpened(next);
     if (next) {
       const now = Date.now();
       setCachedConversationViews((current) =>
@@ -1539,7 +1539,7 @@ function App(): React.JSX.Element {
       );
     }
     setActiveIdState(next);
-  }, [activeConversationViewIds]);
+  }, [activeConversationViewIds, conversationStore]);
   const [remoteProjectsEnabled, setRemoteProjectsEnabled] = useState(false);
   const [
     conversationHtmlRenderingEnabled,
@@ -1672,7 +1672,7 @@ function App(): React.JSX.Element {
   }), []);
   useEffect(() => {
     let active = true;
-    if (attachmentsRef.current.has(activeId) || conversationStore.getState().find((conversation) => conversation.id === activeId)?.remote) return;
+    if (!activeId || attachmentsRef.current.has(activeId) || conversationStore.getState().find((conversation) => conversation.id === activeId)?.remote) return;
     void window.goodbuddy.context.getDraft(activeId).then((saved) => {
       if (!active || attachmentsRef.current.has(activeId) || !saved.length) return;
       attachmentsRef.current.set(activeId, saved);
@@ -4244,11 +4244,7 @@ function App(): React.JSX.Element {
     candidateConversations = conversationStore.getState(),
   ): void => {
     setActiveProjectId(selected.id);
-    const conversation = candidateConversations.find(
-      (candidate) =>
-        candidate.projectId === selected.id &&
-        (selected.kind !== "channel" || candidate.remote !== undefined),
-    );
+    const conversation = conversationStore.projectConversation(selected.id, selected.kind === "channel", candidateConversations);
     if (conversation) {
       // Remote projects ignore incompatible conversation choices at resolution time
       // and say so in the picker, instead of silently rewriting saved conversations.
@@ -4264,7 +4260,7 @@ function App(): React.JSX.Element {
       setConversations((current) => [created, ...current]);
       setActiveId(created.id);
     }
-    setView("chat");
+    commitView("chat");
   };
 
   const selectProject = (projectId: string): void => {
@@ -4290,15 +4286,7 @@ function App(): React.JSX.Element {
   ): Promise<AssistantProject> => {
     const project = await window.goodbuddy.projects.create(input);
     setProjects((current) => [project, ...current]);
-    setActiveProjectId(project.id);
-    const conversation = createConversation(
-      project.id,
-      undefined,
-      t("conversation.greeting"),
-    );
-    setConversations((current) => [conversation, ...current]);
-    setActiveId(conversation.id);
-    setView("chat");
+    requestWorkspaceLeave("chat", () => commitProjectSelection(project));
     return project;
   };
 
@@ -4328,7 +4316,7 @@ function App(): React.JSX.Element {
           )
         : [project, ...current],
     );
-    commitProjectSelection(project);
+    requestWorkspaceLeave("chat", () => commitProjectSelection(project));
     if (
       !isProjectRecoveryUnsettled(
         projectRecoveryByProjectIdRef.current[project.id],
@@ -6580,7 +6568,16 @@ function App(): React.JSX.Element {
     onCreate: createProject,
     onDelete: deleteProject,
     onRemoteCommitted: loadCommittedRemoteProject,
-    onSelect: selectProject,
+    onSelect: (projectId: string) => requestWorkspaceLeave('chat', () => { selectProject(projectId); if (narrowWindow) closeNarrowSidebar(); }),
+    onNewConversation: (projectId: string) => requestWorkspaceLeave('chat', () => {
+      startNewConversation(projectId, { ready: (conversation) => {
+        setActiveProjectId(projectId);
+        setActiveId(conversation.id);
+        commitView('chat');
+        requestAnimationFrame(() => inputRef.current?.focus());
+        if (narrowWindow) closeNarrowSidebar();
+      } });
+    }),
     onSelectRoot: () => window.goodbuddy.settings.selectWorkspace(),
     onUpdate: updateProject,
   });
@@ -6805,6 +6802,10 @@ function App(): React.JSX.Element {
 
         <ProjectSwitcher
           activeProjectId={activeProjectId}
+          conversationStore={conversationStore}
+          activities={projectActivity.activities}
+          visible={sidebarOpen}
+          onOpenConversation={openActivityConversation}
           activityByProjectId={projectActivity.byProjectId}
           recoveryByProjectId={projectRecoveryByProjectId}
           runtimeSettings={runtimeSettings}
@@ -6812,12 +6813,6 @@ function App(): React.JSX.Element {
           onRetryRecovery={retryProjectRecovery}
           projects={projects}
           remoteProjectsEnabled={remoteProjectsEnabled}
-        />
-        <ProjectActivity
-          activities={projectActivity.activities}
-          projects={projects}
-          visible={sidebarOpen}
-          onOpenConversation={openActivityConversation}
         />
 
         <div

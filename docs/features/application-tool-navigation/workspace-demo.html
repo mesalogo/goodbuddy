@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoodBuddy · 工作空间实验</title>
+  <link rel="stylesheet" href="workspace-demo.css">
+  <script src="workspace-demo.js" defer></script>
+</head>
+<body>
+  <header class="lab"><strong>GoodBuddy / 工作空间实验</strong><div class="tools"><button id="simulate">模拟后台完成</button><button id="theme">切换深色</button><button id="reset">重置</button></div></header>
+  <main class="shell">
+    <aside class="sidebar">
+      <div class="brand"><b class="logo">G</b><strong>GoodBuddy</strong><span class="muted">个人空间</span></div>
+      <div class="workspace-control"><button id="workspace-trigger" aria-haspopup="dialog" aria-controls="overview" aria-expanded="false"><span class="eyebrow">工作空间</span><strong id="project-name"></strong><span class="expand">▾</span></button><button id="activity-trigger" aria-haspopup="dialog" aria-controls="overview" aria-expanded="false" aria-label="查看全部项目活动"></button></div>
+      <button class="new" id="new-chat">＋ 新会话</button>
+      <div class="section-label">会话</div><nav id="sessions" aria-label="会话窗口"></nav>
+    </aside>
+    <section class="workspace">
+      <header class="titlebar"><span id="breadcrumb"></span><span class="muted">会话窗口</span></header>
+      <article id="conversation" aria-live="polite"></article>
+      <form id="composer"><label for="message" class="eyebrow">继续这项工作</label><textarea id="message" placeholder="输入消息，继续与 GoodBuddy 协作…" rows="2" required></textarea><div><span class="muted">OpenCode · Execute</span><button class="primary" type="submit">发送 ↑</button></div></form>
+    </section>
+  </main>
+  <footer class="lab-foot"><span>Demo · 模拟数据</span></footer>
+  <section id="overview" popover="auto" role="dialog" aria-labelledby="overview-title">
+    <header class="menu-header"><strong id="overview-title">项目与活动</strong><button id="close-overview" aria-label="关闭项目与活动菜单">×</button></header>
+    <div class="menu-layout">
+      <aside class="project-pane">
+        <input id="project-search" type="search" aria-label="搜索项目" placeholder="搜索项目…" autocomplete="off">
+        <button id="all-projects" data-scope="all" aria-pressed="false">全部项目</button>
+        <div id="project-tabs" role="tablist" aria-label="项目类型"></div>
+        <nav id="desktops" role="tabpanel" aria-label="项目列表"></nav>
+      </aside>
+      <section class="activity-pane">
+        <div class="overview-toolbar"><div id="filters" role="group" aria-label="筛选会话状态"></div><button id="menu-new-chat">＋ 新建会话</button></div>
+        <div id="windows"></div>
+      </section>
+    </div>
+    <form id="project-form" hidden><label for="project-input">项目名称</label><input id="project-input" maxlength="40" required autocomplete="off"><button type="submit" class="primary">创建</button><button type="button" id="cancel-project">取消</button></form>
+    <footer class="overview-footer"><button id="new-project" aria-expanded="false" aria-controls="project-form">＋ 新建项目</button></footer>
+  </section>
+  <dialog id="project-settings" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <header><strong id="settings-title">项目设置</strong><button type="button" id="close-settings" aria-label="关闭项目设置">×</button></header>
+      <label>名称<input id="settings-name" maxlength="120" required></label>
+      <label>说明<textarea id="settings-description" rows="2"></textarea></label>
+      <label>执行空间<input id="settings-space" readonly></label>
+      <label>工作目录<input id="settings-path" required></label>
+      <label>默认模式<select id="settings-mode"><option value="ask">Ask · 只读问答</option><option value="execute">Execute · 完全权限</option></select></label>
+      <label>新对话默认 Runtime<select id="settings-runtime"><option>OpenCode</option><option>Continue</option><option>直连模型</option></select></label>
+      <footer><small class="muted">仅修改 Demo 数据</small><button type="button" id="cancel-settings">取消</button><button type="submit" class="primary">保存</button></footer>
+    </form>
+  </dialog>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

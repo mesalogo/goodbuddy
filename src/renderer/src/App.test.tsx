@@ -1498,6 +1498,41 @@ describe("App", () => {
     vi.restoreAllMocks();
   });
 
+  it("skips attachment draft reads for empty channel projects and restores local drafts", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000471";
+    const attachment = {
+      id: "00000000-0000-4000-8000-000000000472",
+      name: "restored-draft.txt",
+      size: 12,
+      preview: "Saved draft",
+      kind: "text" as const,
+    };
+    const channelProject = {
+      ...project,
+      id: "00000000-0000-4000-8000-000000000473",
+      name: "Empty channel",
+      kind: "channel" as const,
+      channel: "weixin" as const,
+    };
+    vi.mocked(api.projects.list).mockResolvedValueOnce([project, channelProject]);
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      { id: conversationId, projectId, title: "Saved conversation", updatedAt: 100, messages: [] },
+    ]);
+    render(<App />);
+    await waitFor(() => expect(api.context.getDraft).toHaveBeenCalledWith(conversationId));
+    vi.mocked(api.context.getDraft).mockClear();
+    selectProjectOption(channelProject.name);
+    expect(screen.getAllByText("尚无远程会话").length).toBeGreaterThan(0);
+    expect(api.context.getDraft).not.toHaveBeenCalled();
+
+    vi.mocked(api.context.getDraft).mockResolvedValueOnce([attachment]);
+    selectProjectOption(project.name);
+    await waitFor(() => {
+      expect(api.context.getDraft).toHaveBeenCalledExactlyOnceWith(conversationId);
+      expect(screen.getByText(attachment.name)).toBeInTheDocument();
+    });
+  });
+
   describe("project activity integration", () => {
     const otherProject = {
       ...project,
@@ -1532,7 +1567,7 @@ describe("App", () => {
       const search = await screen.findByLabelText("搜索对话");
       fireEvent.change(search, { target: { value: "no matching conversation" } });
       await act(async () => initialTasks.resolve([task, { ...task, id: "duplicate-task" }]));
-      const summary = await screen.findByRole("button", { name: /全项目活动/u });
+      const summary = await screen.findByRole("button", { name: "当前项目" });
       expect(summary).toHaveTextContent("1 个运行中");
       expect(screen.queryByTitle("Exact background discussion")).not.toBeInTheDocument();
       fireEvent.change(search, { target: { value: "Current discussion" } });
@@ -1543,22 +1578,23 @@ describe("App", () => {
       expect(projectRow).toHaveTextContent("1 个运行中");
       fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
       fireEvent.click(summary);
-      fireEvent.click(screen.getByRole("menuitem", { name: /Background project/u }));
-      const running = screen.getByRole("menu", { name: "Background project" });
-      expect(within(running).getAllByRole("menuitem")).toHaveLength(1);
-      expect(within(running).getByRole("menuitem", { name: /Exact background discussion/u })).toHaveTextContent("运行中");
+      fireEvent.pointerOver(screen.getByRole("menuitemradio", { name: /Background project/u }), { pointerType: 'mouse' });
+      const running = screen.getByRole("list", { name: "会话" });
+      expect(within(running).getAllByRole("button")).toHaveLength(2);
+      expect(within(running).getByRole("button", { name: /Exact background discussion/u })).toHaveTextContent("运行中");
 
       vi.mocked(api.tasks.list).mockResolvedValue([{ ...task, status: "completed" }]);
       act(() => conversationQueueChangeListener?.(task.conversationId!));
       await waitFor(() => expect(summary).toHaveTextContent("1 个已完成"));
       expect(summary).not.toHaveTextContent("待处理");
-      fireEvent.click(screen.getByRole("menuitem", { name: /Exact background discussion/u }));
+      fireEvent.click(within(running).getByRole("button", { name: /Exact background discussion/u }));
       expect(await screen.findByText("Exact conversation content")).toBeInTheDocument();
-      await waitFor(() => expect(summary).not.toBeInTheDocument());
-      expect(screen.queryByRole("menu", { name: "全项目活动" })).not.toBeInTheDocument();
+      await waitFor(() => expect(summary).toHaveTextContent("暂无活动"));
+      expect(screen.queryByRole("dialog", { name: "项目与活动" })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
       expect(within(screen.getByRole("menu")).getByRole("menuitemradio", { name: /Background project/u }))
         .not.toHaveTextContent("个运行中");
+      expect(within(screen.getByRole('list', { name: '会话' })).getByRole('button', { name: 'Exact background discussion' })).toBeInTheDocument();
     });
 
     it.each((["foreground", "background"] as const).flatMap((location) =>
@@ -1573,7 +1609,7 @@ describe("App", () => {
       await waitFor(() => expect(run).toHaveBeenCalledOnce());
       const request = run.mock.calls[0]![0];
       expect(request.conversationId).toBe("activity-current");
-      const summary = screen.getByRole("button", { name: /全项目活动/u });
+      const summary = screen.getByRole("button", { name: "当前项目" });
       expect(summary).toHaveTextContent("1 个运行中");
       await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalledWith(expect.arrayContaining([
         expect.objectContaining({ header: expect.objectContaining({ id: request.conversationId }), messages: expect.arrayContaining([
@@ -1608,8 +1644,8 @@ describe("App", () => {
         expect(summary).not.toHaveTextContent("运行中");
         expect(screen.getByText("Exact conversation content")).toBeVisible();
         fireEvent.click(summary);
-        fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(project.name, "u") }));
-        expect(screen.getByRole("menu", { name: project.name })).toHaveTextContent("已完成");
+        fireEvent.pointerOver(screen.getByRole("menuitemradio", { name: new RegExp(project.name, "u") }), { pointerType: 'mouse' });
+        expect(screen.getByRole("list", { name: '会话' })).toHaveTextContent("已完成");
         fireEvent.click(summary);
         expect(summary).toHaveTextContent("1 个已完成");
         selectProjectOption(project.name);
@@ -1617,10 +1653,10 @@ describe("App", () => {
           .findByTitle(saved.header.title));
       }
       expect(await screen.findByText("Local completion result")).toBeVisible();
-      await waitFor(() => expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("暂无活动"));
       selectProjectOption(otherProject.name);
-      await screen.findByTitle("Exact background discussion");
-      expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument();
+      await within(container.querySelector<HTMLElement>('.conversation-list')!).findByTitle("Exact background discussion");
+      expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("暂无活动");
     });
 
     it.each(["failed", "cancelled"] as const)("does not mark a background local run completed after %s", async (status) => {
@@ -1635,11 +1671,11 @@ describe("App", () => {
       selectProjectOption(otherProject.name);
       fireEvent.click(await screen.findByTitle("Exact background discussion"));
       await screen.findByText("Exact conversation content");
-      expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个运行中");
+      expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个运行中");
       act(() => agentListener?.({
         requestId: request.requestId, type: "error", status, message: `Local activity ${status}`,
       }));
-      await waitFor(() => expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("暂无活动"));
       expect(screen.getByText("Exact conversation content")).toBeVisible();
       fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
       expect(within(screen.getByRole("menu", { name: "当前项目" }))
@@ -1653,7 +1689,7 @@ describe("App", () => {
       const selected = (await within(container.querySelector<HTMLElement>(".conversation-list")!)
         .findByTitle("Current discussion")).closest("button")!;
       expect(selected).toHaveClass("conversation-item--active");
-      const summary = await screen.findByRole("button", { name: /全项目活动/u });
+      const summary = await screen.findByRole("button", { name: "当前项目" });
       expect(summary).toHaveTextContent("1 个运行中");
       fireEvent.click(screen.getByRole("button", { name: /^设置$/u }));
       const settings = await screen.findByRole("dialog", { name: "设置中心" });
@@ -1666,7 +1702,97 @@ describe("App", () => {
       fireEvent.click(within(settings).getByRole("button", { name: "关闭设置" }));
       await waitFor(() => expect(settings).not.toBeInTheDocument());
       expect(screen.getByLabelText("向 GoodBuddy 提问")).toBeVisible();
-      await waitFor(() => expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("暂无活动"));
+    });
+
+    it('promotes an old history visit into the first of ten recent workspace conversations', async () => {
+      vi.mocked(api.tasks.list).mockResolvedValue([]);
+      const history = Array.from({ length: 12 }, (_, index) => ({
+        id: `recent-${index}`, projectId, title: `Recent ${index}`, updatedAt: 1000 - index, messages: [],
+      }));
+      vi.mocked(api.conversations.list).mockResolvedValue([...history, {
+        id: 'old-visit', projectId, title: 'Older visit', updatedAt: 1,
+        messages: [{ id: 'old-message', role: 'assistant', content: 'Opened old history', createdAt: 1, state: 'complete' }],
+      }]);
+      render(<App />);
+      fireEvent.click(await screen.findByTitle('Older visit'));
+      await screen.findByText('Opened old history');
+      fireEvent.click(screen.getByRole('button', { name: '当前项目' }));
+      const rows = within(screen.getByRole('list', { name: '会话' })).getAllByRole('button');
+      expect(rows).toHaveLength(10);
+      expect(rows[0]).toHaveTextContent('Older visit');
+    });
+
+    it('promotes a background completion above newer-message history in the recent ten', async () => {
+      const newerHistory = Array.from({ length: 12 }, (_, index) => ({
+        id: `other-recent-${index}`, projectId: otherProject.id, title: `Other recent ${index}`, updatedAt: 1000 - index, messages: [],
+      }));
+      vi.mocked(api.conversations.list).mockResolvedValue([...conversations, ...newerHistory]);
+      render(<App />);
+      const summary = await screen.findByRole('button', { name: '当前项目' });
+      await waitFor(() => expect(summary).toHaveTextContent('1 个运行中'));
+      vi.mocked(api.tasks.list).mockResolvedValue([{ ...task, status: 'completed' }]);
+      act(() => conversationQueueChangeListener?.(task.conversationId!));
+      await waitFor(() => expect(summary).toHaveTextContent('1 个已完成'));
+      fireEvent.click(summary);
+      fireEvent.pointerOver(screen.getByRole('menuitemradio', { name: /Background project/u }), { pointerType: 'mouse' });
+      const rows = within(screen.getByRole('list', { name: '会话' })).getAllByRole('button');
+      expect(rows).toHaveLength(10);
+      expect(rows[0]).toHaveTextContent('Exact background discussion');
+      expect(rows[0]).toHaveTextContent('已完成');
+    });
+
+    it("restores each project's last opened conversation and its composer draft", async () => {
+      render(<App />);
+      await screen.findByLabelText('更多会话操作 Current discussion');
+      fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: 'Keep this local draft' } });
+      fireEvent.click(screen.getByRole('button', { name: '当前项目' }));
+      fireEvent.click(screen.getByRole('tab', { name: '全部项目' }));
+      fireEvent.click(within(screen.getByRole('list', { name: '会话' })).getByRole('button', { name: /Exact background discussion/u }));
+      await screen.findByText('Exact conversation content');
+      fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: 'Keep this background draft' } });
+      selectProjectOption(project.name);
+      await waitFor(() => expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('Keep this local draft'));
+      selectProjectOption(otherProject.name);
+      await waitFor(() => {
+        expect(screen.getByText('Exact conversation content')).toBeVisible();
+        expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('Keep this background draft');
+      });
+    });
+
+    it.each(['project', 'new conversation', 'new project'] as const)('guards the workspace %s action before changing project', async (action) => {
+      const createdProject = { ...otherProject, id: 'workspace-created', name: 'Created workspace' };
+      if (action === 'new project') vi.mocked(api.projects.create).mockResolvedValueOnce(createdProject);
+      render(<App />);
+      await screen.findByRole('button', { name: '当前项目' });
+      fireEvent.click(screen.getByRole('button', { name: '设置' }));
+      await screen.findByRole('heading', { name: '设置中心' });
+      fireEvent.click(screen.getByRole('tab', { name: '平台功能' }));
+      fireEvent.change(await screen.findByLabelText('默认工作区目录'), { target: { value: 'C:\\Unsaved workspace draft' } });
+      fireEvent.click(screen.getByRole('button', { name: '当前项目' }));
+      const target = screen.getByRole('menuitemradio', { name: /Background project/u });
+      if (action === 'project') fireEvent.click(target);
+      else if (action === 'new conversation') {
+        fireEvent.pointerOver(target, { pointerType: 'mouse' });
+        fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
+        const dialog = screen.getByRole('dialog', { name: '新建项目' });
+        fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: createdProject.name } });
+        fireEvent.click(within(dialog).getByRole('button', { name: '创建' }));
+      }
+      const discard = await screen.findByRole('button', { name: '放弃更改并关闭' });
+      expect(screen.getByRole('button', { name: '当前项目' })).not.toHaveTextContent('Background project');
+      expect(screen.getByLabelText('默认工作区目录')).toHaveValue('C:\\Unsaved workspace draft');
+      fireEvent.click(discard);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '当前项目' })).toHaveTextContent(action === 'new project' ? createdProject.name : 'Background project');
+        expect(screen.queryByRole('dialog', { name: '设置中心' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: '放弃更改并关闭' })).not.toBeInTheDocument();
+        expect(screen.getByLabelText('向 GoodBuddy 提问')).toBeVisible();
+        expect(screen.getByRole('button', { name: '对话' })).toHaveAttribute('aria-current', 'page');
+      });
+      if (action === 'new conversation') expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('');
     });
 
     it("opens the exact off-project conversation and clears task selection, search, menu and narrow sidebar", async () => {
@@ -1689,14 +1815,14 @@ describe("App", () => {
         await waitFor(() => expect(sidebar.querySelector(".conversation-more")).toBeInTheDocument());
         fireEvent.click(sidebar.querySelector<HTMLButtonElement>(".conversation-more")!);
         expect(screen.getByRole("menu")).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: /全项目活动/u }));
-        fireEvent.click(screen.getByRole("menuitem", { name: /Background project/u }));
-        fireEvent.click(screen.getByRole("menuitem", { name: /Exact background discussion/u }));
+        fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+        fireEvent.click(screen.getByRole('tab', { name: '全部项目' }));
+        fireEvent.click(within(screen.getByRole('list', { name: '会话' })).getByRole("button", { name: /Exact background discussion/u }));
         expect(await screen.findByText("Exact conversation content")).toBeInTheDocument();
         expect(sidebar).toHaveClass("sidebar--closed");
         expect(within(screen.getByRole("region", { name: "当前会话的任务" }))
           .getByRole("button", { name: /会话任务/u })).toHaveAttribute("aria-expanded", "false");
-        expect(screen.queryByRole("menu", { name: "全项目活动" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("dialog", { name: "项目与活动" })).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: "切换侧栏" }));
         expect(screen.getByLabelText("搜索对话")).toHaveValue("");
         expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("Background project");
@@ -1712,23 +1838,21 @@ describe("App", () => {
 
     it("keeps keyboard focus inside activity without dismissing the narrow sidebar", async () => {
       const { container } = render(<App />);
-      await screen.findByRole("button", { name: /全项目活动/u });
+      await screen.findByRole("button", { name: "当前项目" });
       const originalWidth = window.innerWidth;
       try {
         Object.defineProperty(window, "innerWidth", { configurable: true, value: 680 });
         act(() => window.dispatchEvent(new Event("resize")));
         fireEvent.click(screen.getByRole("button", { name: "切换侧栏" }));
-        const trigger = screen.getByRole("button", { name: /全项目活动/u });
+        const trigger = screen.getByRole("button", { name: "当前项目" });
         fireEvent.click(trigger);
-        const projectItem = screen.getByRole("menuitem", { name: /Background project/u });
-        expect(projectItem).toHaveFocus();
-        fireEvent.keyDown(projectItem, { key: "ArrowRight" });
-        expect(screen.getByRole("menuitem", { name: /Exact background discussion/u })).toHaveFocus();
+        expect(screen.getByRole('tab', { name: '全部项目' })).toHaveFocus();
+        fireEvent.click(screen.getByRole('tab', { name: '全部项目' }));
+        const conversation = within(screen.getByRole('list', { name: '会话' })).getByRole('button', { name: /Exact background discussion/u });
+        act(() => conversation.focus());
+        expect(conversation).toHaveFocus();
         fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-        expect(projectItem).toHaveFocus();
-        expect(container.querySelector(".sidebar")).not.toHaveClass("sidebar--closed");
-        fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-        expect(screen.queryByRole("menu", { name: "全项目活动" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("dialog", { name: "项目与活动" })).not.toBeInTheDocument();
         expect(container.querySelector(".sidebar")).not.toHaveClass("sidebar--closed");
         expect(trigger).toHaveFocus();
       } finally {
@@ -1738,14 +1862,14 @@ describe("App", () => {
 
     it("respects the Settings leave guard before changing project and conversation", async () => {
       render(<App />);
-      await screen.findByRole("button", { name: /全项目活动/u });
+      await screen.findByRole("button", { name: "当前项目" });
       fireEvent.click(await screen.findByRole('button', { name: '设置' }));
       await screen.findByRole("heading", { name: "设置中心" });
       fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
       fireEvent.change(await screen.findByLabelText("默认工作区目录"), { target: { value: "C:\\Unsaved activity draft" } });
-      fireEvent.click(screen.getByRole("button", { name: /全项目活动/u }));
-      fireEvent.click(screen.getByRole("menuitem", { name: /Background project/u }));
-      fireEvent.click(screen.getByRole("menuitem", { name: /Exact background discussion/u }));
+      fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+      fireEvent.click(screen.getByRole('tab', { name: '全部项目' }));
+      fireEvent.click(within(screen.getByRole('list', { name: '会话' })).getByRole("button", { name: /Exact background discussion/u }));
       expect(screen.getByRole("heading", { name: "设置中心" })).toBeVisible();
       expect(screen.getAllByRole("alert").some((alert) =>
         alert.textContent?.includes("当前设置有未保存更改")
@@ -1755,7 +1879,7 @@ describe("App", () => {
       fireEvent.click(screen.getByRole("button", { name: "放弃更改并关闭" }));
       expect(await screen.findByText("Exact conversation content")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("Background project");
-      expect(screen.queryByRole("menu", { name: "全项目活动" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "项目与活动" })).not.toBeInTheDocument();
     });
 
     it.each(["question", "approval"] as const)("preserves live %s across snapshot refresh and clears persisted terminal prompts", async (kind) => {
@@ -1792,7 +1916,7 @@ describe("App", () => {
         await screen.findAllByText(refreshed.title);
         if (kind === "question") expect(screen.getByText("还有 2 个待答问题，请依次回答。")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: kind === "question" ? "提交回答" : "仅此次" })).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个待处理");
+        expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个待处理");
       }
       let resolveReply: (() => void) | undefined;
       if (kind === "question") {
@@ -1816,7 +1940,7 @@ describe("App", () => {
       expect(screen.getByText("Persisted terminal result")).toBeInTheDocument();
       if (kind === "question") expect(screen.getByText("问题与回答")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: kind === "question" ? "提交回答" : "仅此次" })).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /全项目活动/u })).not.toHaveTextContent("待处理");
+      expect(screen.getByRole("button", { name: "当前项目" })).not.toHaveTextContent("待处理");
     });
 
     it.each((["question", "approval"] as const).flatMap((kind) =>
@@ -1842,7 +1966,7 @@ describe("App", () => {
         title: "Response approval", description: "Confirm response", toolName: "Bash", argumentSummary: "echo response", allowPermanent: false,
       };
       act(() => agentListener?.(kind === "question" ? questionEvent : approvalEvent));
-      expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个待处理 1 个运行中");
+      expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个待处理 1 个运行中");
       fireEvent.click(screen.getByRole("button", { name: kind === "question" ? "跳过" : "仅此次" }));
       await waitFor(() => expect(kind === "question" ? api.agent.respondQuestion : api.agent.respondApproval).toHaveBeenCalled());
       await act(async () => {
@@ -1854,7 +1978,7 @@ describe("App", () => {
           resolve();
         }
       });
-      const summary = screen.getByRole("button", { name: /全项目活动/u });
+      const summary = screen.getByRole("button", { name: "当前项目" });
       expect(summary).toHaveTextContent(outcome === "success" ? "2 个运行中"
         : outcome === "done" ? "1 个运行中" : "1 个待处理 1 个运行中");
       if (outcome === "success" || outcome === "done") expect(summary).not.toHaveTextContent("待处理");
@@ -1871,7 +1995,7 @@ describe("App", () => {
       fireEvent.click(screen.getByLabelText("发送"));
       await waitFor(() => expect(run).toHaveBeenCalledOnce());
       const request = run.mock.calls[0]![0];
-      expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("2 个运行中");
+      expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("2 个运行中");
       vi.mocked(api.tasks.list).mockResolvedValue([task, {
         ...task, id: "live-task", projectId, conversationId: request.conversationId, status: "waiting_approval",
       }]);
@@ -1885,16 +2009,16 @@ describe("App", () => {
         });
         conversationQueueChangeListener?.(request.conversationId!);
       });
-      await waitFor(() => expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个待处理 1 个运行中"));
-      fireEvent.click(screen.getByRole("button", { name: /全项目活动/u }));
-      const menu = screen.getByRole("menu", { name: "全项目活动" });
-      expect(within(menu).getAllByRole("menuitem")).toHaveLength(2);
-      fireEvent.click(within(menu).getByRole("menuitem", { name: /1 个待处理/u }));
-      const pending = screen.getByRole("menu", { name: project.name });
-      expect(within(pending).getAllByRole("menuitem")).toHaveLength(1);
+      await waitFor(() => expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个待处理 1 个运行中"));
+      fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+      const menu = screen.getByRole("dialog", { name: "项目与活动" });
+      fireEvent.click(within(screen.getByRole('group', { name: '筛选会话状态' })).getByRole('button', { name: '待处理' }));
+      const pending = screen.getByRole("list", { name: '会话' });
+      expect(within(pending).getAllByRole("button")).toHaveLength(1);
       expect(pending).toHaveTextContent(kind === "question" ? "等待你的回答" : "等待审批");
-      fireEvent.click(within(menu).getByRole("menuitem", { name: /Background project/u }));
-      expect(screen.getByRole("menu", { name: "Background project" })).toHaveTextContent("Exact background discussion");
+      fireEvent.click(within(screen.getByRole('group', { name: '筛选会话状态' })).getByRole('button', { name: '运行中' }));
+      fireEvent.pointerOver(within(menu).getByRole("menuitemradio", { name: /Background project/u }), { pointerType: 'mouse' });
+      expect(screen.getByRole("list", { name: '会话' })).toHaveTextContent("Exact background discussion");
       vi.mocked(api.tasks.list).mockResolvedValue([]);
       act(() => {
         agentListener?.(kind === "question"
@@ -1902,8 +2026,9 @@ describe("App", () => {
           : { requestId: request.requestId, type: "error", status: "failed", message: "Activity execution failed" });
         conversationQueueChangeListener?.(request.conversationId!);
       });
-      await waitFor(() => expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument());
-      expect(menu).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("暂无活动"));
+      expect(menu).toBeInTheDocument();
+      fireEvent.keyDown(menu, { key: 'Escape' });
     });
   });
 
@@ -2895,7 +3020,7 @@ describe("App", () => {
       });
     });
     await act(async () => { finishRefresh!(snapshots); });
-    expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个待处理");
+    expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个待处理");
     fireEvent.click(within(container.querySelector<HTMLElement>(".conversation-list")!).getByText(target.title));
     expect(await screen.findByText("Retained scheduled history")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "仅此次" })).toBeInTheDocument();
@@ -2946,7 +3071,7 @@ describe("App", () => {
     expect(await screen.findAllByText("请求写入工作区")).not.toHaveLength(0);
     expect(screen.getByText("仅此次")).toBeInTheDocument();
     expect(screen.getByLabelText("任务结果：发布任务")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个待处理");
+    expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个待处理");
     fireEvent.click(screen.getByRole("button", { name: "切换助手工作栏" }));
     fireEvent.click(screen.getByRole("tab", { name: /任务中心/u }));
     fireEvent.click(screen.getByRole("button", { name: /项目任务/u }));
@@ -2956,8 +3081,8 @@ describe("App", () => {
     fireEvent.click(within(taskRow).getByRole("button", { name: "仅此次允许" }));
     await waitFor(() => expect(api.agent.respondApproval).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000834", "once"));
     await waitFor(() => expect(within(taskRow).queryByLabelText("等待审批: write_file")).not.toBeInTheDocument());
-    await waitFor(() => expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个运行中"));
-    expect(screen.getByRole("button", { name: /全项目活动/u })).not.toHaveTextContent("待处理");
+    await waitFor(() => expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("1 个运行中"));
+    expect(screen.getByRole("button", { name: "当前项目" })).not.toHaveTextContent("待处理");
   });
 
   it("idle-preloads only the small Heartbeat route at startup", async () => {
@@ -8507,7 +8632,8 @@ describe("App", () => {
         .map((option) => option.querySelector("span")?.textContent),
     ).toEqual(["Ask · 只读问答", "Execute · 完全权限"]);
 
-    fireEvent.click(screen.getByLabelText("新建项目"));
+    fireEvent.click(screen.getByRole('button', { name: '当前项目' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
     const dialog = screen.getByRole("dialog", { name: "新建项目" });
     const defaultMode = within(dialog)
       .getAllByRole("group", { name: "默认模式" })
@@ -9697,12 +9823,10 @@ describe("App", () => {
     fireEvent.keyDown(trigger, { key: "ArrowDown" });
 
     const menu = screen.getByRole("menu", { name: "当前项目" });
-    expect(
-      within(menu).getByRole("group", { name: "本地项目" }),
-    ).toHaveTextContent("本地目录 · C:\\Users\\test");
-    expect(
-      within(menu).getByRole("group", { name: "远程通道" }),
-    ).toHaveTextContent("微信 ClawBot · 远程通道 · C:\\Users\\test");
+    const tabs = screen.getByRole('tablist', { name: '项目类型' });
+    expect(within(tabs).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['全部项目', '本地', '消息通道']);
+    expect(within(menu).getByRole('menuitemradio', { name: /本地目录/u })).toHaveTextContent("本地目录 · C:\\Users\\test");
+    expect(within(menu).getByRole('menuitemradio', { name: /微信 ClawBot/u })).toHaveTextContent("微信 ClawBot · 远程通道 · C:\\Users\\test");
     const selectedProject = within(menu)
       .getByText(project.name, { selector: "b" })
       .closest<HTMLButtonElement>('[role="menuitemradio"]');
@@ -9710,10 +9834,11 @@ describe("App", () => {
       name: `管理项目 ${channelProject.name}`,
     });
     expect(selectedProject).toHaveAttribute("aria-checked", "true");
-    await waitFor(() => expect(selectedProject).toHaveFocus());
+    await waitFor(() => expect(within(tabs).getByRole('tab', { name: '全部项目' })).toHaveFocus());
 
-    fireEvent.keyDown(selectedProject!, { key: "End" });
-    expect(remoteProjectSettings).toHaveFocus();
+    fireEvent.keyDown(menu, { key: "End" });
+    expect(within(menu).getByRole('menuitemradio', { name: /微信 ClawBot/u })).toHaveFocus();
+    act(() => remoteProjectSettings.focus());
     fireEvent.keyDown(remoteProjectSettings, { key: "Escape" });
     expect(trigger).toHaveFocus();
     expect(
@@ -12017,8 +12142,9 @@ describe("App", () => {
   it("opens project creation as an unobscured dialog", async () => {
     render(<App />);
 
-    const newProjectButton = await screen.findByLabelText("新建项目");
-    fireEvent.click(newProjectButton);
+    const projectButton = await screen.findByRole('button', { name: '当前项目' });
+    fireEvent.click(projectButton);
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
     let dialog = screen.getByRole("dialog", { name: "新建项目" });
     expect(dialog).toHaveClass("project-create-card");
     expect(within(dialog).getByRole("button", { name: "创建" })).toBeDisabled();
@@ -12028,9 +12154,10 @@ describe("App", () => {
     expect(
       screen.queryByRole("dialog", { name: "新建项目" }),
     ).not.toBeInTheDocument();
-    expect(newProjectButton).toHaveFocus();
+    expect(projectButton).toHaveFocus();
 
-    fireEvent.click(newProjectButton);
+    fireEvent.click(projectButton);
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
     dialog = screen.getByRole("dialog", { name: "新建项目" });
 
     fireEvent.change(within(dialog).getByLabelText("名称"), {
@@ -12054,7 +12181,8 @@ describe("App", () => {
     );
     render(<App />);
 
-    fireEvent.click(await screen.findByLabelText("新建项目"));
+    fireEvent.click(await screen.findByRole('button', { name: '当前项目' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
     const dialog = screen.getByRole("dialog", { name: "新建项目" });
     const nameInput = within(dialog).getByLabelText("名称");
     fireEvent.change(nameInput, {
@@ -13080,7 +13208,7 @@ describe("App", () => {
     expect(screen.getAllByText("问题与回答")).toHaveLength(3);
     act(() => agentListener?.(first));
     expect(screen.queryByRole("button", { name: "提交回答" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /全项目活动/u })).not.toHaveTextContent("待处理");
+    expect(screen.getByRole("button", { name: "当前项目" })).not.toHaveTextContent("待处理");
   });
 
   it("removes remotely resolved questions without recording a skip or blocking the next question", async () => {
@@ -13103,7 +13231,7 @@ describe("App", () => {
     expect(screen.getByRole("textbox", { name: "其他回答" })).toHaveValue("Retain draft");
     act(() => agentListener?.({ requestId, type: "question-resolved", questionId: "second" }));
     expect(screen.queryByRole("button", { name: "提交回答" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /全项目活动/u })).not.toHaveTextContent("待处理");
+    expect(screen.getByRole("button", { name: "当前项目" })).not.toHaveTextContent("待处理");
   });
 
   it("does not save a duplicate question-resolved event after the first resolution is persisted", async () => {
@@ -15198,7 +15326,7 @@ describe("App", () => {
     expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
   })
 
-  it('focuses the chat composer after a guarded Magic Notes leave to a new conversation', async () => {
+  it.each(['sidebar', 'project', 'new conversation'] as const)('opens chat after a single guarded Magic Notes discard from %s', async (entry) => {
     await api.updates!.updateSettings({ magicNotesEnabled: true })
     const note = {
       id: '00000000-0000-4000-8000-000000000602', title: 'Focus note', preview: '',
@@ -15207,17 +15335,39 @@ describe("App", () => {
     }
     vi.mocked(api.magicNotes.list).mockResolvedValue({ notes: [note], tags: [] })
     vi.mocked(api.magicNotes.get).mockResolvedValue(note)
+    const targetProject = { ...project, id: '00000000-0000-4000-8000-000000000607', name: 'Guarded workspace' }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([project, targetProject])
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '魔法笔记' }))
     fireEvent.click(await screen.findByRole('button', { name: /Focus note.*条记录/ }))
-    fireEvent.change(await screen.findByLabelText('笔记标题'), { target: { value: 'Unsaved focus title' } })
-    fireEvent.click(screen.getByRole('button', { name: /新建对话/ }))
+    const title = await screen.findByLabelText('笔记标题')
+    fireEvent.change(title, { target: { value: 'Unsaved focus title' } })
+    if (entry === 'sidebar') fireEvent.click(screen.getByRole('button', { name: /新建对话/ }))
+    else {
+      fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
+      const target = screen.getByRole('menuitemradio', { name: /Guarded workspace/ })
+      if (entry === 'project') fireEvent.click(target)
+      else {
+        fireEvent.pointerOver(target, { pointerType: 'mouse' })
+        fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
+      }
+    }
     const discard = await screen.findByRole('button', { name: '放弃草稿并切换' })
+    expect(title).toBeVisible()
+    expect(screen.getByRole('button', { name: '当前项目' })).not.toHaveTextContent(targetProject.name)
     await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)) })
     // A real pointer click moves focus to the confirmation button before the leave completes.
     discard.focus()
     fireEvent.click(discard)
-    await waitFor(() => expect(screen.getByRole('textbox', { name: '向 GoodBuddy 提问' })).toHaveFocus())
+    await waitFor(() => {
+      const composer = screen.getByRole('textbox', { name: '向 GoodBuddy 提问' })
+      expect(composer).toBeVisible()
+      if (entry !== 'project') expect(composer).toHaveFocus()
+      expect(screen.getByRole('button', { name: '对话' })).toHaveAttribute('aria-current', 'page')
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      expect(title).not.toBeVisible()
+      if (entry !== 'sidebar') expect(screen.getByRole('button', { name: '当前项目' })).toHaveTextContent(targetProject.name)
+    })
   })
 
   it.each(['title', 'text'])('guards real App navigation to multiple apps and discards only after confirmation (%s)', async (draft) => {
