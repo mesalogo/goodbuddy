@@ -4803,7 +4803,7 @@ button > svg {
   bottom: 0;
   left: 0;
   display: none;
-  width: 9px;
+  width: var(--space-1);
   padding: 0;
   cursor: col-resize;
   touch-action: none;
@@ -4841,7 +4841,7 @@ button > svg {
 
 .assistant-sidebar--open > .workbar-shell {
   /* Keep native browser views and terminal content outside the resize target. */
-  margin-left: 9px;
+  margin-left: var(--space-1);
 }
 
 .assistant-sidebar--browser-fullscreen > .workbar-shell {
