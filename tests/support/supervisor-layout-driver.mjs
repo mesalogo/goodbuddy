@@ -61,6 +61,41 @@ app
       await settle()
     }
     const reports = []
+    if (process.env.GOODBUDDY_SUPERVISOR_SPIRAL) {
+      await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + '?spiral=1&recap=1')
+      await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
+      await js('document.querySelector("#supervisor-tab-graph").click()')
+      await wait('[...document.querySelectorAll("button")].some(b => b.textContent === "时间螺旋")')
+      await js('[...document.querySelectorAll("button")].find(b => b.textContent === "时间螺旋").click()')
+      await wait('JSON.parse(document.documentElement.dataset.helix || "null")?.events.length === 8')
+      const geometry = await js('JSON.parse(document.documentElement.dataset.helix)')
+      assert.equal(geometry.points.length, 1401, 'One continuous, full-span helix')
+      const radii = geometry.points.map(p => p[0])
+      assert(Math.max(...radii) - Math.min(...radii) > 40, 'Actual rendered geometry reflects uneven attention')
+      geometry.points.forEach((point, i) => assert(Math.abs(point[1] - (-215 + 430 * i / 1400)) < 1e-8, 'Height advances uniformly'))
+      assert(!geometry.events.includes('outside-review'), 'Aggregate story events outside this review are not plotted')
+      for (const [width, theme] of [[1440, 'light'], [390, 'dark']]) {
+        win.setContentSize(width, 1000)
+        await js(`document.documentElement.dataset.theme = '${theme}'`)
+        await settle()
+        const boxes = await js(`(() => {
+          const selector = document.querySelector('.supervisor-workspace__result-navigation select');
+          const r = selector.getBoundingClientRect(), gl = document.querySelector('.story-graph-3d__gl').getBoundingClientRect();
+          return { value: selector.value, left: r.left, right: r.right, width: innerWidth, canvasWidth: gl.width, canvasHeight: gl.height, pageWidth: document.documentElement.scrollWidth };
+        })()`)
+        assert.equal(boxes.value, 'fixture-result')
+        assert(boxes.left >= 0 && boxes.right <= boxes.width && boxes.pageWidth <= boxes.width, 'History selector fits without horizontal overflow')
+        assert(boxes.canvasWidth > 0 && boxes.canvasHeight > 0, 'WebGL canvas is laid out')
+      }
+      await js(`(() => { const e = document.querySelector('.supervisor-workspace__result-navigation select');
+        e.value = 'older-result'; e.dispatchEvent(new Event('change', {bubbles:true})); })()`)
+      await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false" && JSON.parse(document.documentElement.dataset.helix || "null")?.events.length === 1')
+      await js('document.querySelector("#supervisor-tab-overview").click()')
+      await wait('document.querySelector(".supervisor-workspace__result-navigation select")?.value === "older-result"')
+      assert.deepEqual(errors, [])
+      console.log(JSON.stringify({ spiral: 'passed', vertices: geometry.points.length, radiusRange: [Math.min(...radii), Math.max(...radii)], widths: [1440, 390], errors }))
+      win.destroy(); app.quit(); return
+    }
     const checkDiscussion = async () => {
       const report = await js(`(() => {
         const editor = document.querySelector('.supervision-discussion-editor');

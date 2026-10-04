@@ -9308,10 +9308,17 @@ export class AssistantDatabase {
     if (!story) return { storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }
     const id = (story as { id: string }).id
     if (input.resultId) {
-      const row = database.prepare('SELECT graph_snapshot_json FROM supervision_results WHERE id = ?').get(input.resultId) as { graph_snapshot_json: string }
+      const row = database.prepare(`SELECT r.graph_snapshot_json, sr.scope_json, sr.time_range_json
+        FROM supervision_results r JOIN supervision_runs sr ON sr.id = r.run_id WHERE r.id = ?`).get(input.resultId) as {
+          graph_snapshot_json: string; scope_json: string; time_range_json: string
+        }
       const snapshot = JSON.parse(row.graph_snapshot_json) as { entities: unknown[]; relations: Array<{ confirmation_state: string }> }
+      const scope = JSON.parse(row.scope_json) as SupervisionRunRequest['scope']
+      const range = JSON.parse(row.time_range_json) as SupervisionRunRequest['timeRange']
       return {
         storyLine: story, ...snapshot, relations: snapshot.relations.filter((relation) => relation.confirmation_state !== 'revoked'),
+        attention: supervisionAttention(database, scope.kind === 'projects' ? scope.projectIds : undefined,
+          new Date(range.from).toISOString(), new Date(range.to).toISOString()),
         events: database.prepare('SELECT * FROM supervision_events WHERE result_id = ? ORDER BY occurred_at').all(input.resultId),
         sources: database.prepare('SELECT * FROM supervision_sources WHERE result_id = ?').all(input.resultId),
         eventEntities: database.prepare(`SELECT ee.event_id, ee.entity_id FROM supervision_event_entities ee JOIN supervision_events e ON e.id = ee.event_id WHERE e.result_id = ?`).all(input.resultId),

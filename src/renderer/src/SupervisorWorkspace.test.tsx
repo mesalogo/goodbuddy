@@ -11,6 +11,46 @@ const render = (ui: React.ReactNode) => {
 }
 
 describe('SupervisorWorkspace', () => {
+  it('defaults the graph history to latest and synchronizes selection in both directions, including empty graphs', async () => {
+    const old = { ...result, id: 'old', createdAt: '2026-08-01T00:00:00.000Z', summary: 'Old review' }
+    const graph = vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
+    window.goodbuddy = { supervision: { overview: async () => [result, old], graph } } as never
+    const view = render(<SupervisorWorkspace tab="graph" />)
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    expect(screen.getByLabelText('历史结果')).toHaveValue(result.id)
+    expect(graph).toHaveBeenLastCalledWith({ resultId: result.id, storyLineId: result.storyLineId })
+    fireEvent.change(screen.getByLabelText('历史结果'), { target: { value: old.id } })
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    view.rerender(<SupervisorWorkspace tab="overview" />)
+    expect(screen.getByLabelText('历史结果')).toHaveValue(old.id)
+    expect(screen.getByText('Old review')).toBeVisible()
+    fireEvent.change(screen.getByLabelText('历史结果'), { target: { value: result.id } })
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    view.rerender(<SupervisorWorkspace tab="graph" />)
+    expect(screen.getByLabelText('历史结果')).toHaveValue(result.id)
+    expect(graph).toHaveBeenCalledTimes(3)
+  })
+
+  it.each(['story', 'experience'] as const)('preserves explicit %s navigation over the latest default and history changes', async kind => {
+    const old = { ...result, id: 'old' }
+    const story = { id: 'target', name: 'Target story', projectId: 'p', projectName: 'P', parentId: null, level: 'feature',
+      description: '', state: 'active', stateEventId: null, userEdited: false, startedAt: null, endedAt: null, events: [] }
+    const experience = { id: 'target', statement: 'Target experience', conditions: '', boundaries: '', userEdited: false, events: [] }
+    const graph = vi.fn(async () => ({ storyLine: { id: 'story', scope_json: '{"kind":"global"}' },
+      events: [{ id: 'e', title: 'Event', description: '', occurred_at: result.createdAt }], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
+    window.goodbuddy = { supervision: { overview: async () => [result, old], graph,
+      stories: async () => ({ stories: [story], experiences: [experience], unassigned: 0, canUndo: false }) } } as never
+    const navigation = { resultId: old.id, focus: { kind, id: 'target' } }
+    const view = render(<SupervisorWorkspace tab="graph" graphNavigation={navigation} />)
+    await screen.findByRole('heading', { name: kind === 'story' ? 'Target story' : 'Target experience' })
+    expect(screen.getByLabelText('历史结果')).toHaveValue(old.id)
+    fireEvent.change(screen.getByLabelText('历史结果'), { target: { value: result.id } })
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={{ ...navigation }} />)
+    await screen.findByRole('heading', { name: kind === 'story' ? 'Target story' : 'Target experience' })
+    expect(screen.getByLabelText('历史结果')).toHaveValue(old.id)
+  })
+
   it('keeps source lookup failures retryable through notifications', async () => {
     const onNotify = vi.fn()
     const source = vi.fn().mockRejectedValueOnce(new TypeError('terminated')).mockResolvedValueOnce({ title: 'Source', content: 'Saved source', occurredAt: result.createdAt })

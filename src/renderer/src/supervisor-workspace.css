@@ -367,6 +367,12 @@
   width: 100%;
   min-width: 0;
 }
+.supervisor-workspace[data-view="graph"] > .supervisor-workspace__result-navigation {
+  margin-top: 0;
+}
+.supervisor-workspace[data-view="graph"] > .supervisor-workspace__result-navigation label {
+  flex: 0 1 480px;
+}
 .supervisor-workspace__recap li {
   margin: var(--space-2) 0;
   overflow-wrap: anywhere;

@@ -141,7 +141,7 @@ export const heartbeat = {
       legendTitle: 'Legend', legendClose: 'Close legend',
       legendItems: {
         time: 'Height is time; {{scale}}.',
-        radius: 'Spiral radius is conversation density at the time and only shows how concentrated the work was.',
+        radius: 'Radius compares user and assistant messages per hour within this review. Equal rates have equal radii; no recorded messages gives the minimum radius. It does not measure time spent or productivity.',
         stave: 'A stave spans its story from first to last event.',
         experience: 'Diamonds outside the barrel are experiences; arcs run from the stave they formed in to the stave that later used them.'
       },

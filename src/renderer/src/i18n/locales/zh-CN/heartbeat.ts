@@ -138,7 +138,7 @@ export const heartbeat = {
       legendTitle: '图例', legendClose: '关闭图例',
       legendItems: {
         time: '高度为时间，{{scale}}。',
-        radius: '螺旋半径为当时的对话密度，只表示投入集中程度。',
+        radius: '半径比较本次回顾内每小时的用户与助手消息数。密度相同则半径相同，无消息记录时取最小半径，不代表投入时长或工作效率。',
         stave: '木片上下跨度为故事的起止时间。',
         experience: '桶外菱形是经验，弧线从形成它的木片连到后来用上它的木片。'
       },

@@ -15,6 +15,7 @@ import { buildStoryTree, clusterEvents, experienceLinks, findNode, radiusLevels,
 type Props = {
   stories: SupervisionStory[]
   attention: SupervisionAttentionSlot[]
+  timeRange?: { from: string; to: string }
   selectedEventId?: string
   onSelectEvent: (id: string) => void
   onSelectStory: (id: string) => void
@@ -59,7 +60,7 @@ function webglAvailable(): boolean {
   catch { return false }
 }
 
-export default function StoryGraph3D({ stories, attention: attentionProp, selectedEventId, onSelectEvent, onSelectStory, experiences = noExperiences, selectedExperienceId, onSelectExperience }: Props) {
+export default function StoryGraph3D({ stories, attention: attentionProp, timeRange, selectedEventId, onSelectEvent, onSelectStory, experiences = noExperiences, selectedExperienceId, onSelectExperience }: Props) {
   const { t, i18n } = useTranslation('heartbeat')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -80,9 +81,10 @@ export default function StoryGraph3D({ stories, attention: attentionProp, select
   const camera = useRef<{ yaw: number; tilt: number; zoom: number; pan: number }>({ yaw: VIEWS.oblique.yaw, tilt: VIEWS.oblique.tilt, zoom: 1, pan: 0 })
   const engine = useRef<{ draw: () => void; update: (next: EngineState) => void; dispose: () => void; hit: (x: number, y: number) => { node?: StoryNode; cluster?: StoryCluster; link?: ExperienceLink } | undefined }>(undefined)
   const range = useMemo(() => {
+    if (timeRange) return storyWindow(Date.parse(timeRange.from), Date.parse(timeRange.to))
     const times = tree.events.map(event => event.t)
     return times.length ? storyWindow(Math.min(...times) - 1_800_000, Math.max(...times) + 1_800_000) : undefined
-  }, [tree])
+  }, [tree, timeRange])
   const level = visibleLevel(focus)
   const shownLinks = useMemo(() => experienceLinks(experiences, level.children), [experiences, level])
   const trail: StoryNode[] = []

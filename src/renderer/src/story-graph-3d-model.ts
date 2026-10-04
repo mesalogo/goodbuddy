@@ -26,7 +26,7 @@ export type StoryWindow = { from: number; to: number; turnHours: number; turns: 
 
 const TAU = Math.PI * 2
 export const TURN_STEPS = [3, 6, 12, 24, 168, 720, 2160, 8760]
-const TARGET_TURNS = 8, MAX_TURNS = 14, MAX_STEP = 0.22, TRANSITION = 0.3
+const TARGET_TURNS = 8, MAX_TURNS = 14, TRANSITION = 0.3
 
 /** Project › feature › thread, plus cross stories as root-level staves. Unassigned events are not staves. */
 export function buildStoryTree(stories: SupervisionStory[], projectNames: Map<string, string>): StoryNode {
@@ -78,32 +78,38 @@ export function layout(node: StoryNode, from: number, to: number): void {
 
 /** Turn length keeps about 8 turns, at most 14, for any span from hours to years. */
 export function storyWindow(from: number, to: number, turnHours?: number): StoryWindow {
-  const span = Math.max(1, (to - from) / 3_600_000)
+  const span = Math.max(1 / 3_600_000, (to - from) / 3_600_000)
   // Closest to the target among steps that stay within the maximum (13 days → 1 day per turn, not 1.9 weekly turns).
   const fitting = TURN_STEPS.filter(step => span / step <= MAX_TURNS)
   let hours = turnHours ?? fitting.reduce((best, step) => Math.abs(span / step - TARGET_TURNS) < Math.abs(span / best - TARGET_TURNS) ? step : best, fitting[0] ?? TURN_STEPS.at(-1)!)
   if (span / hours > MAX_TURNS) hours = fitting[0] ?? TURN_STEPS.at(-1)!
-  return { from, to: Math.max(to, from + 1), turnHours: hours, turns: Math.max(0.5, span / hours) }
+  return { from, to: Math.max(to, from + 1), turnHours: hours, turns: span / hours }
 }
 
 /**
  * Radius level 0..1 at position u (0..1) along the window. Each turn holds one radius from its
- * attention, so it reads as a circle; neighbouring turns differ by at most MAX_STEP and ease at the boundary.
+ * messages per hour, so it reads as a circle; neighbouring turns ease at the boundary.
+ * Hourly buckets are distributed by overlap; their within-hour timing is unavailable.
  */
 export function radiusLevels(window: StoryWindow, attention: SupervisionAttentionSlot[]): (u: number) => number {
   const n = Math.max(1, Math.ceil(window.turns - 1e-6))
   const perTurn = new Array<number>(n).fill(0)
+  const duration = (window.to - window.from) / window.turns
   for (const slot of attention) {
-    const t = Date.parse(slot.start) + 1_800_000
-    if (t < window.from || t > window.to) continue
-    perTurn[Math.min(n - 1, Math.floor((t - window.from) / (window.to - window.from) * window.turns))]! += slot.turns
+    // The review query includes its upper endpoint, including an exact hourly boundary.
+    if (Date.parse(slot.start) === window.to) { perTurn[n - 1]! += slot.turns; continue }
+    const start = Math.max(window.from, Date.parse(slot.start))
+    const end = Math.min(window.to, Date.parse(slot.start) + 3_600_000)
+    if (end <= start) continue
+    for (let d = 0; d < n; d++) {
+      const overlap = Math.max(0, Math.min(end, window.from + (d + 1) * duration) - Math.max(start, window.from + d * duration))
+      perTurn[d]! += slot.turns * overlap / (end - start)
+    }
   }
+  // Normalize rates, not totals: the last partial turn has a shorter exposure.
+  for (let d = 0; d < n; d++) perTurn[d]! /= Math.min(duration, window.to - window.from - d * duration) / 3_600_000
   const top = Math.max(1e-6, ...perTurn)
   const level = perTurn.map(value => Math.sqrt(value / top))
-  for (let pass = 0; pass < n; pass++) for (let d = 1; d < n; d++) {
-    if (level[d]! - level[d - 1]! > MAX_STEP) level[d - 1] = level[d]! - MAX_STEP
-    if (level[d - 1]! - level[d]! > MAX_STEP) level[d] = level[d - 1]! - MAX_STEP
-  }
   return (u: number) => {
     const x = Math.max(0, Math.min(1, u)) * window.turns
     const d = Math.min(n - 1, Math.floor(x)), f = x - d, half = TRANSITION / 2

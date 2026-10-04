@@ -38,7 +38,7 @@ describe('story graph 3d model', () => {
     expect(storyWindow(0, 3 * day, 3).turnHours).toBe(6)
   })
 
-  it('keeps each turn round: one radius per turn, bounded change between turns', () => {
+  it('keeps each turn round with continuous transitions and actual density differences', () => {
     const window = storyWindow(Date.parse(at(0)), Date.parse(at(8)))
     const attention = [{ start: at(0.5), turns: 100, characters: 1 }, { start: at(4.5), turns: 1, characters: 1 }]
     const level = radiusLevels(window, attention)
@@ -47,7 +47,35 @@ describe('story graph 3d model', () => {
     expect(level(0.5 / window.turns)).toBe(1)
     let previous = level(0), largest = 0
     for (let i = 1; i <= 800; i++) { const next = level(i / 800); largest = Math.max(largest, Math.abs(next - previous)); previous = next }
-    expect(largest).toBeLessThan(0.05)
+    expect(largest).toBeLessThan(0.06)
+    expect(level(4.5 / window.turns)).toBeCloseTo(0.1)
+    expect(level(2.5 / window.turns)).toBe(0)
+    for (let d = 1; d < window.turns; d++) {
+      expect(level((d - 1e-8) / window.turns)).toBeCloseTo(level((d + 1e-8) / window.turns), 6)
+    }
+  })
+
+  it('normalizes hourly rates including partial turns without inventing variation for equal densities', () => {
+    const window = storyWindow(Date.parse(at(0)), Date.parse(at(0)) + 7.5 * 3_600_000, 3)
+    const attention = Array.from({ length: 8 }, (_, hour) => ({
+      start: new Date(window.from + hour * 3_600_000).toISOString(), turns: hour === 7 ? 2 : 4, characters: 0
+    }))
+    const level = radiusLevels(window, attention)
+    for (const u of [0, 0.2, 0.5, 0.8, 1]) expect(level(u)).toBeCloseTo(1)
+    expect(radiusLevels(window, [])(0.5)).toBe(0)
+    expect(storyWindow(0, 1_800_000).turns).toBeCloseTo(1 / 6)
+  })
+
+  it('retains a clipped boundary bucket and ignores attention outside the selected interval', () => {
+    const from = Date.parse(at(0)) + 50 * 60_000
+    const window = storyWindow(from, from + 6 * 3_600_000, 3)
+    const level = radiusLevels(window, [
+      { start: at(-1), turns: 10000, characters: 0 },
+      { start: at(0), turns: 4, characters: 0 },
+      { start: new Date(from + 4 * 3_600_000).toISOString(), turns: 1, characters: 0 }
+    ])
+    expect(level(0.25)).toBe(1)
+    expect(level(0.75)).toBe(0.5)
   })
 
   it('merges events closer than the span and keeps the rest apart', () => {

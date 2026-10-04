@@ -4,6 +4,14 @@
 
 当前记录以已验证生产行为为准。监督者尚未覆盖全部 user stories。
 
+## 2026-10-04 图谱历史选择与螺旋密度
+
+图谱左上角增加与工作回顾共用的历史选择，默认最新结果，保留显式结果、故事、经验导航及请求代际检查。空图谱与失败状态也保留选择入口。交互规则见 [UI 设计](./ui-design.md#故事线图谱)。
+
+半径不变的直接原因是生产 UI 按 `resultId` 请求图谱，而该数据库分支没有返回 `attention`，只有聚合图谱分支返回。结果级分支现按保存的范围和时间区间统计当前消息；螺旋不再用范围内全部故事的跨度代替回顾区间。模型按每小时消息数归一化，修正边界小时桶、末尾半圈和短区间比例，移除把安静圈半径向峰值抬高的传播步骤。连续曲线、圆形圈段和余弦过渡保留；相同密度不制造半径差异。口径与限制见 [3D 密度规则](../story-graph/3d-concept.md)。
+
+验证：模型、工作区、真实 SQLite 时间线与历史回归共 51 项通过；`ipc.test.ts -t 'collects supervision within the exact UI timeRange'` 的 2 项通过，覆盖 global/projects 结果图谱的精确区间。设置 `GOODBUDDY_SUPERVISOR_SPIRAL=1` 运行 `tests/supervisor-layout.electron.test.ts` 通过：检查实际 Three.js 曲线的 1,401 个采样点、均匀高度、非均匀消息密度的半径差、结果事件过滤，以及 1440px 浅色、390px 深色布局和历史选择同步，未生成截图。Electron 使用模拟 API 数据，SQLite 与 IPC 另用隔离数据库验证，没有读取生产用户库或调用付费模型。Node/Agent/Web 类型检查、定向 ESLint 和 `git diff --check` 通过；未运行全量测试，未提交或推送。本次修改不涉及 Agent 或远程 Runtime 执行路径。
+
 ## 2026-10-04 回顾初始化阻塞修复
 
 对应 FR-S4、FR-S6、FR-S10、US-S12、US-S26、US-S27。原全局七天回顾在 Main 的一个 `BEGIN IMMEDIATE` 内扫描 25 页来源，首次 Electron 复现初始化 16.208 秒，IPC 等待 16.221 秒，阻塞发生在模型调用前。初始化现由现有 Worker 入口的独立连接执行，单次扫描后按 200 条写入；取消、未完成清单重建及发布事务的合同见[调度与存储](./review-scheduling-design.md#已接入的调度与存储)。继续前的全清单版本检查同样移出 Main；单批片段读取约 2 ms，保留原路径。候选、摘要和背景复用既有只读查询 Worker。

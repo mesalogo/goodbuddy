@@ -474,6 +474,11 @@ export function SupervisorWorkspace({
     ? (JSON.parse(graph.storyLine.scope_json) as SupervisionRunRequest['scope'])
     : undefined
   const storyState = useSupervisionStories(graphScope, tab === 'graph', graph)
+  // Story membership is current and scope-wide; only plot events selectable in this review.
+  const spiralStories = useMemo(() => {
+    const ids = new Set(graph.events.map(event => event.id))
+    return storyState.view.stories.map(story => ({ ...story, events: story.events.filter(event => ids.has(event.id)) }))
+  }, [storyState.view.stories, graph.events])
   const graphLayoutRef = useRef<HTMLDivElement>(null)
   // The graph column does not scroll: the graph scales to the height left in the window. Below 660px the flat
   // graph's labels would drop under 11px, so very short windows keep that height and scroll the page instead.
@@ -486,6 +491,21 @@ export function SupervisorWorkspace({
   const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
   const selectedExperience = selection?.kind === 'experience' ? storyState.view.experiences.find((item) => item.id === selection.id) : undefined
   const busy = !!api && (loading || pending !== undefined)
+  const historySelector = results.length > 0 && <div className="supervisor-workspace__result-navigation">
+    <label>
+      {t('supervisor.history')}
+      <select value={resultId ?? ''} disabled={busy}
+        onChange={(event) => { setSelection(undefined); setSource(undefined); void refresh(event.target.value) }}>
+        {!results.some((item) => item.id === resultId) && <option value={resultId ?? ''}>{t('supervisor.loading')}</option>}
+        {results.map((item) => <option key={item.id} value={item.id}>
+          {date(item.createdAt)} · {scopeText(item.scope)}
+        </option>)}
+      </select>
+    </label>
+    {tab === 'overview' && latest && <button className="secondary-button" onClick={() => onTabChange?.('graph')}>
+      {t('supervisor.graph')}
+    </button>}
+  </div>
 
   return (
     <div className="supervisor-workspace" data-view={tab} aria-busy={busy}>
@@ -586,26 +606,7 @@ export function SupervisorWorkspace({
                   <button type="button" className="primary-button" onClick={() => void run(true)}>{t('supervisor.reanalyzeConfirm')}</button>
                 </div>
               </div>}
-              {results.length > 0 && <div className="supervisor-workspace__result-navigation">
-                <label>
-                  {t('supervisor.history')}
-                  <select
-                    value={resultId ?? ''}
-                    disabled={busy}
-                    onChange={(event) => void refresh(event.target.value)}
-                  >
-                    {!results.some((item) => item.id === resultId) && <option value={resultId ?? ''}>{t('supervisor.loading')}</option>}
-                    {results.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {date(item.createdAt)} · {scopeText(item.scope)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {latest && <button className="secondary-button" onClick={() => onTabChange?.('graph')}>
-                  {t('supervisor.graph')}
-                </button>}
-              </div>}
+              {historySelector}
               {latest && recapStories.available && <SupervisionStoryDigest view={recapStories.view} range={latest.timeRange} date={date}
                 onOpen={(focus) => { select(focus); onTabChange?.('graph') }} />}
               {latest ? (
@@ -653,6 +654,7 @@ export function SupervisorWorkspace({
           )}
           {tab === 'graph' && (
             <>
+              {historySelector}
               {/* With a graph, scope and refresh live in the canvas heading; without one, they sit in the centred empty state. */}
               {!loading && !loadError && !graph.events.length && (
                 <div className="supervisor-workspace__graph-empty" ref={graphEmptyRef}>
@@ -827,7 +829,7 @@ export function SupervisorWorkspace({
                         <button type="button" className="link-button" onClick={() => setGraphMode('flat')}>{t('supervisor.graph3d.modes.flat')}</button>
                       </div>}>
                       <Suspense fallback={<p className="supervisor-workspace__muted" role="status">{t('supervisor.loading')}</p>}>
-                        <StoryGraph3D stories={storyState.view.stories} attention={graph.attention ?? noAttention}
+                        <StoryGraph3D stories={spiralStories} attention={graph.attention ?? noAttention} timeRange={latest?.timeRange}
                           selectedEventId={selection?.kind === 'event' ? selection.id : undefined}
                           onSelectEvent={(id) => { if (layout.eventMap.has(id)) select({ kind: 'event', id }) }}
                           onSelectStory={(id) => select({ kind: 'story', id })}

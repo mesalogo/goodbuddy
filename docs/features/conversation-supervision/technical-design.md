@@ -27,6 +27,8 @@ schema 42 为实体、实体变化和关系增加 `source_reference_ids_json`，
 
 schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、说明、确认状态、关系理由及本次来源引用。后续 run 只更新 `automatic` 的当前实体与关系，已确认、修订或移除状态受保护。历史结果读取自身内容；人工操作带 `resultId` 时先校验成员归属，在事务内更新当前对象及所选结果，其他结果不变。移除关系记录 `revoked`，防止后续相同端点和类型的自动关系恢复它。
 
+结果级图谱另由 `supervisionAttention` 按所属 run 保存的范围和时间区间查询当前消息，返回小时桶 `attention`；该字段不写入历史快照。既有 `supervisionGraph` IPC 和 Preload 原样传递，Renderer 按选定区间生成螺旋。归一化、小时内估算和历史数据限制见 [3D 密度规则](../story-graph/3d-concept.md)，故事与结果事件的对应规则见[故事线模型设计](./storyline-model-design.md#5-展示与使用)。
+
 升级从现有事件实体关联、实体变化和来源引用恢复结果成员，不猜测名称匹配；旧数据缺失的归属或已经覆盖的内容无法还原，原对象仍保留。新结果即使实体没有事件或来源，也会保存完整成员。结果内容与运行、事件、来源在同一事务提交。
 
 `overview({ target? })` 返回稳定的 `id`、`storyLineId` 及来源 ID。指定 Conversation/Task 时，Main 读取目标实际项目，查询同时要求目标来源匹配、结果 scope 为 global 或包含该项目；LIMIT 在过滤之后。卡片展示结果真实范围，global 结果不会伪装成单会话摘要。`graph({ resultId, storyLineId? })` 校验二者归属，只返回该结果的事件、对象和来源；显式 ID 无效时不回退到最新结果。继续讨论按结果主键读取，并验证来源属于该结果。

@@ -9,6 +9,7 @@ import { ASSISTANT_DATABASE_SCHEMA_VERSION, AssistantDatabase } from './assistan
 import { SupervisorService, type SupervisorSummarizerRequest } from './supervisor-service'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
 import type { ReviewConfiguration } from './supervision-review-store'
+import { supervisionGraphViewSchema } from '../../shared/supervision-contracts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -52,6 +53,24 @@ async function fixture(crossProject = false) {
 }
 
 const current = (sql: DatabaseSync) => sql.prepare('SELECT * FROM supervision_events WHERE superseded_by IS NULL ORDER BY started_at').all()
+
+it('supplies real message attention on the review-specific graph, bounded by its project and time range', async () => {
+  const f = await fixture()
+  await f.run({ kind: 'projects', projectIds: [f.a.id] })
+  const result = f.db.listSupervisionResults()[0]!
+  // Additional messages outside the selected review must not expand its attention span.
+  f.db.saveLocalConversations([{ header: { id: randomUUID(), projectId: f.a.id, title: 'Outside review', updatedAt: base },
+    messages: [
+      { id: randomUUID(), role: 'assistant', content: 'Before', createdAt: Date.parse('2026-09-18T08:00:00Z'), state: 'complete' },
+      { id: randomUUID(), role: 'assistant', content: 'Reply', createdAt: Date.parse('2026-09-20T08:15:00Z'), state: 'complete' },
+      { id: randomUUID(), role: 'assistant', content: 'Outside', createdAt: Date.parse('2026-09-23T08:00:00Z'), state: 'complete' }
+    ] }])
+  const graph = supervisionGraphViewSchema.parse(f.db.getSupervisionGraph({ resultId: result.id, storyLineId: result.storyLineId }))
+  expect(graph.attention).toEqual([
+    { start: '2026-09-20T08:00:00.000Z', turns: 2, characters: 35 },
+    { start: '2026-09-20T09:00:00.000Z', turns: 1, characters: 31 }
+  ])
+})
 
 it('extracts each source once for every scope: a project review then global reads only the other project', async () => {
   const f = await fixture()

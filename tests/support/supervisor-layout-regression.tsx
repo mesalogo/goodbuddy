@@ -13,6 +13,24 @@ import { installBundledUiFonts } from '../../src/renderer/src/fonts'
 installBundledUiFonts()
 
 const params = new URLSearchParams(location.search)
+if (params.has('spiral')) {
+  const THREE = await import('three')
+  const add = THREE.Group.prototype.add
+  let points: number[][] = []
+  const events = new Set<string>()
+  THREE.Group.prototype.add = function (...objects) {
+    for (const object of objects) {
+      const path = ((object as import('three').Mesh).geometry as import('three').TubeGeometry)?.parameters?.path as import('three').CatmullRomCurve3 | undefined
+      if (path?.points?.length === 1401) {
+        points = path.points.map(point => [Math.hypot(point.x, point.z), point.y])
+        events.clear()
+      }
+      for (const event of object.userData.node?.events ?? []) events.add(event.id)
+    }
+    document.documentElement.dataset.helix = JSON.stringify({ points, events: [...events] })
+    return add.apply(this, objects)
+  }
+}
 const stories = [
   {
     title: '监督者 · 故事图谱',
@@ -148,6 +166,13 @@ Object.defineProperty(window, 'goodbuddy', {
       ? {}
       : {
           supervision: {
+            ...(params.has('spiral') ? { stories: async () => ({ stories: [{
+              id: 'feature', projectId: 'p', projectName: 'Fixture project', parentId: null, level: 'feature', name: 'Fixture story',
+              description: '', state: 'active', stateEventId: null, userEdited: false, startedAt: null, endedAt: null,
+              events: [...graph.events, { id: 'outside-review', title: 'Outside review', occurred_at: '2026-08-01T00:00:00Z' }].map(event => ({
+                id: event.id, title: event.title, startedAt: event.occurred_at, endedAt: event.occurred_at, projectId: 'p', primary: true, userSet: false
+              }))
+            }], experiences: [], unassigned: 0, canUndo: false }) } : {}),
             continueContext: async () => ({ prompt: '模拟讨论上下文：本周已核对交付清单，负责人已确认。\n\n原始依据：模拟会议记录。外部评审时间仍待确认，下一步需要核对验收条件。' }),
             continue: async () => { throw new Error('Preview fixture must not send a message') },
             execution: async () => ({ active: params.has('activity'), ...(params.has('activity') ? { runId: 'activity-1' } : {}) }),
@@ -189,7 +214,7 @@ Object.defineProperty(window, 'goodbuddy', {
                  scope: { kind: 'global' }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-22T00:00:00Z' }, openItems: params.has('recap') ? ['确认外部评审时间，并回填交付清单。', '检查验收材料是否覆盖所有已确认需求。'] : [] },
                  ...(params.has('recap') ? [{ id: 'older-result', storyLineId: 'fixture', sourceId: 'source-1', summary: '上期结果：交付清单尚缺负责人，需要继续核对。', changeDigest: '', createdAt: '2026-09-15T00:00:00Z', scope: { kind: 'global' }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-15T00:00:00Z' }, openItems: ['核对负责人。'] }] : [])]
             },
-            graph: async () =>
+             graph: async (input?: { resultId?: string }) =>
               state === 'empty'
                 ? {
                     storyLine: null,
@@ -200,7 +225,12 @@ Object.defineProperty(window, 'goodbuddy', {
                     eventEntities: [],
                     eventSources: []
                   }
-                : graph,
+                : params.has('spiral') ? { ...graph,
+                  events: input?.resultId === 'older-result' ? graph.events.slice(0, 1) : graph.events,
+                  attention: [1, 1, 1, 100, 100, 4, 4].map((turns, index) => ({
+                    start: `2026-09-${String(1 + index * 3).padStart(2, '0')}T01:00:00.000Z`, turns, characters: turns * 20
+                  })).filter(slot => input?.resultId !== 'older-result' || slot.start < '2026-09-15')
+                } : graph,
              run: async () => {
                 if (params.has('recap') && !params.has('fail-run')) return new Promise(() => {})
               throw new Error('SIMULATED: 模型暂时不可用。此验证不调用模型。')

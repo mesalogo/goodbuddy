@@ -6646,6 +6646,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(database.getSupervisionSource(overview[0]!.sourceId)?.sourceId).toBe(conversationId)
       const graph = await electronMocks.handlers.get(ipcChannels.supervisionGraph)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id, storyLineId: overview[0]!.storyLineId }) as { sources: unknown[] }
       expect(graph.sources).toHaveLength(evidence.length)
+      expect(graph).toHaveProperty('attention', [{ start: from, turns: 2, characters: 14 }])
       expect(() => electronMocks.handlers.get(ipcChannels.supervisionGraph)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id, storyLineId: 'wrong-story' })).toThrow('不匹配')
       expect(() => electronMocks.handlers.get(ipcChannels.supervisionContinueContext)!(trustedEvent(harness.webContents), { resultId: 'wrong-result', sourceId: overview[0]!.sourceId })).toThrow('不匹配')
       const legacy = database.buildHeartbeatInput({ scope, lookbackHours: 1 }, new Date(to))
