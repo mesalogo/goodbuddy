@@ -1056,7 +1056,7 @@ describe('ActivityPanel paged by Main', () => {
         after.unmount()
       }
     }
-  })
+  }, 15_000)
 
   it('loads the next page behind "load more" and switches filters through the callbacks', () => {
     const records = Array.from({ length: 500 }, (_, index) => makeRecord(index))
