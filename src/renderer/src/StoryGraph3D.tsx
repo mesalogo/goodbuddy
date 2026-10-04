@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, Info, X } from 'lucide-react'
 import { AnchoredMenu } from './AnchoredMenu'
+import { SegmentedControl } from './WorkspacePrimitives'
 import { useTranslation } from 'react-i18next'
 import * as THREE from 'three'
-import type { SupervisionAttentionSlot } from '../../shared/supervision-contracts'
+import type { SupervisionAttentionSlot, SupervisionGraphView } from '../../shared/supervision-contracts'
 import type { SupervisionExperience, SupervisionStory } from '../../shared/supervision-story-contracts'
 import { buildStoryTree, clusterEvents, experienceLinks, findNode, radiusLevels, storyWindow, visibleLevel, type ExperienceLink, type StoryCluster, type StoryNode } from './story-graph-3d-model'
 
@@ -14,6 +15,8 @@ import { buildStoryTree, clusterEvents, experienceLinks, findNode, radiusLevels,
  */
 type Props = {
   stories: SupervisionStory[]
+  events: SupervisionGraphView['events']
+  projectNames: Map<string, string>
   attention: SupervisionAttentionSlot[]
   timeRange?: { from: string; to: string }
   selectedEventId?: string
@@ -60,7 +63,7 @@ function webglAvailable(): boolean {
   catch { return false }
 }
 
-export default function StoryGraph3D({ stories, attention: attentionProp, timeRange, selectedEventId, onSelectEvent, onSelectStory, experiences = noExperiences, selectedExperienceId, onSelectExperience }: Props) {
+export default function StoryGraph3D({ stories, events, projectNames, attention: attentionProp, timeRange, selectedEventId, onSelectEvent, onSelectStory, experiences = noExperiences, selectedExperienceId, onSelectExperience }: Props) {
   const { t, i18n } = useTranslation('heartbeat')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -71,7 +74,8 @@ export default function StoryGraph3D({ stories, attention: attentionProp, timeRa
   // Context creation failed or the GPU dropped the context; `attempt` recreates the scene on retry.
   const [failure, setFailure] = useState<'create' | 'lost'>()
   const [attempt, setAttempt] = useState(0)
-  const tree = useMemo(() => buildStoryTree(stories, new Map()), [stories])
+  const tree = useMemo(() => buildStoryTree(stories, projectNames, { events,
+    unassigned: t('supervisor.graph3d.unassigned'), unknownProject: t('supervisor.graph3d.unknownProject') }), [stories, events, projectNames, t])
   const [focusId, setFocusId] = useState('root')
   const focus = findNode(tree, focusId) ?? tree
   const [view, setView] = useState<ViewName>('oblique')
@@ -145,7 +149,7 @@ export default function StoryGraph3D({ stories, attention: attentionProp, timeRa
     const groups = new Map<string, StoryCluster[]>()
     const wisdom = cssColor(host, '--graph-node-4-border', '#b45309')
     const world = new THREE.Group(); scene.add(world)
-    const clusterSpan = () => CLUSTER_PX / (HEIGHT * Math.min(width / 500, height / 560) * camera.current.zoom) * (range.to - range.from)
+    const clusterSpan = () => CLUSTER_PX / (HEIGHT * Math.min(width / 560, height / 660) * camera.current.zoom) * (range.to - range.from)
     let builtSpan = -1
     const rebuild = () => {
       world.clear()
@@ -173,12 +177,11 @@ export default function StoryGraph3D({ stories, attention: attentionProp, timeRa
           const active = cluster.events.some(event => event.id === state.selected)
           world.add(tube(arc, (Math.min(6, 1.3 + Math.log2(cluster.events.length) * 1.1) + (active ? 2 : 0)) * 0.45, solid(color, emphasis === 'dim' ? 0.3 : 0.9), 20))
         }
-        // Connectors and the story's own colour on the helix only for the focused or hovered stave.
-        if (emphasis !== 'focus') continue
+        // Every event is represented at the root; connectors emphasize focus and selection only.
         for (const cluster of clusters) {
           const p = helix(cluster.t), active = cluster.events.some(event => event.id === state.selected)
-          world.add(tube([p, on(cluster.t, center(stave))], active ? 0.9 : 0.5, solid(color, active ? 1 : 0.6), 2))
-          const dot = new THREE.Mesh(own(new THREE.SphereGeometry(Math.min(6, 2.2 + Math.log2(cluster.events.length)) + (active ? 1.5 : 0), 16, 12)), solid(color))
+          if (emphasis === 'focus' || active) world.add(tube([p, on(cluster.t, center(stave))], active ? 0.9 : 0.5, solid(color, active ? 1 : 0.6), 2))
+          const dot = new THREE.Mesh(own(new THREE.SphereGeometry(Math.min(6, 2.2 + Math.log2(cluster.events.length)) + (active ? 1.5 : 0), 16, 12)), solid(color, emphasis === 'dim' ? 0.3 : 1))
           dot.position.copy(p); dot.userData.cluster = cluster; dot.userData.node = stave
           world.add(dot); meshes.push(dot)
         }
@@ -207,7 +210,8 @@ export default function StoryGraph3D({ stories, attention: attentionProp, timeRa
       view3d.position.copy(target).add(new THREE.Vector3(-Math.sin(yaw) * ct, st, Math.cos(yaw) * ct).multiplyScalar(DIST))
       view3d.up.set(Math.sin(yaw) * st, ct, -Math.cos(yaw) * st)
       view3d.lookAt(target)
-      view3d.fov = 2 * Math.atan(height / Math.min(width / 500, height / 560) / 2 / DIST) * 180 / Math.PI
+      // Leave room for the near rim in the default tilted perspective, including its lower edge.
+      view3d.fov = 2 * Math.atan(height / Math.min(width / 560, height / 660) / 2 / DIST) * 180 / Math.PI
       view3d.aspect = width / height; view3d.zoom = zoom; view3d.updateProjectionMatrix()
     }
     const draw = () => {
@@ -300,7 +304,7 @@ export default function StoryGraph3D({ stories, attention: attentionProp, timeRa
   }
   const choose = (name: ViewName) => { setView(name); if (name !== 'free') animate({ ...VIEWS[name], zoom: 1, pan: 0 }) }
   const open = (node: StoryNode) => {
-    if (node.level !== 'project') onSelectStory(node.id)
+    if (node.level !== 'project' && node.level !== 'unassigned') onSelectStory(node.id)
     setFocusId(node.id)
     setHovered(undefined)
   }
@@ -327,9 +331,9 @@ export default function StoryGraph3D({ stories, attention: attentionProp, timeRa
             : <button type="button" className="link-button" onClick={() => setFocusId(node.id)}>{node.level === 'root' ? t('supervisor.graph3d.all') : node.name}</button>}
         </span>)}
       </nav>
-      <div role="group" aria-label={t('supervisor.graph3d.views')}>
-        {(['oblique', 'side', 'top', 'free'] as const).map(name => <button key={name} type="button" className="secondary-button"
-          aria-pressed={view === name} onClick={() => choose(name)}>{t(`supervisor.graph3d.view.${name}`)}</button>)}
+      <div className="story-graph-3d__views">
+        <SegmentedControl ariaLabel={t('supervisor.graph3d.views')} value={view} onChange={choose}
+          options={(['oblique', 'side', 'top', 'free'] as const).map(value => ({ value, label: t(`supervisor.graph3d.view.${value}`) }))} />
         <button type="button" className="secondary-button" aria-expanded={legendOpen} aria-controls={legendId}
           onClick={() => setLegendOpen(value => !value)}><Info size={14} aria-hidden="true" />{t('supervisor.graph3d.legendTitle')}</button>
       </div>
@@ -338,10 +342,14 @@ export default function StoryGraph3D({ stories, attention: attentionProp, timeRa
         <PickerMenu label={t('supervisor.graph3d.staves')} button={t('supervisor.graph3d.pickChildren', { level: childLevelName, count: level.children.length })}
           items={level.children.map(node => ({ id: node.id, title: node.name, detail: `${t('supervisor.stories.count', { count: node.events.length })} · ${dateText(node.start)} – ${dateText(node.end)}`,
             current: node.id === focus.id, onPick: () => open(node) }))} />
+        <PickerMenu label={t('supervisor.events')} button={t('supervisor.graph3d.pickEvents', { count: focus.events.length })}
+          items={focus.events.map(event => ({ id: event.id, title: event.title, detail: dateText(event.t),
+            current: event.id === selectedEventId, onPick: () => onSelectEvent(event.id) }))} />
         {shownLinks.length > 0 && <PickerMenu label={t('supervisor.graph3d.experiences')} button={t('supervisor.graph3d.pickExperience', { count: shownLinks.length })}
           items={shownLinks.map(link => ({ id: link.id, title: link.statement, detail: `${link.from.stave.name} → ${link.to.stave.name}`,
             current: link.id === selectedExperienceId, onPick: () => onSelectExperience?.(link.id) }))} />}
       </div>
+      <span className="supervisor-workspace__muted">{t('supervisor.graph3d.membershipNote')}</span>
     </div>
     <div className="story-graph-3d__viewport">
       <canvas ref={canvasRef} tabIndex={0} aria-label={t('supervisor.graph3d.canvas')}

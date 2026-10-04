@@ -146,7 +146,10 @@ export const heartbeat = {
         experience: 'Diamonds outside the barrel are experiences; arcs run from the stave they formed in to the stave that later used them.'
       },
       // Picker buttons name what the list holds at the current level.
-      childLevels: { project: 'Projects', feature: 'Features', thread: 'Sub-threads', cross: 'Cross-project stories', mixed: 'Projects and cross-project stories' },
+      unassigned: 'No current story membership', unknownProject: 'Project unavailable',
+      membershipNote: 'Events from this review, grouped by current story membership. Historical membership was not saved.',
+      pickEvents: 'Events · {{count}}',
+      childLevels: { project: 'Projects', feature: 'Features', thread: 'Sub-threads', cross: 'Cross-project stories', unassigned: 'Unassigned events', mixed: 'Groups' },
       pickChildren: '{{level}} · {{count}}', pickExperience: 'Experiences · {{count}}',
       turns: { 3: '3 hours', 6: '6 hours', 12: '12 hours', 24: '1 day', 168: '1 week', 720: '1 month', 2160: '1 quarter', 8760: '1 year' },
       unsupported: 'This device cannot show 3D. Use the flat view and the story list.',

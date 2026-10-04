@@ -61,6 +61,77 @@ app
       await settle()
     }
     const reports = []
+    if (process.env.GOODBUDDY_SUPERVISOR_BACKUP) {
+      const resultId = process.env.GOODBUDDY_SUPERVISOR_RESULT
+      assert(resultId, 'Specify the historical result to measure')
+      await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + '?spiral=1&portable=1')
+      await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
+      await js('document.querySelector("#supervisor-tab-graph").click()')
+      await js(`(() => { const e = document.querySelector('.supervisor-workspace__result-navigation select'); e.value = ${JSON.stringify(resultId)}; e.dispatchEvent(new Event('change', {bubbles:true})); })()`)
+      await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false" && document.querySelectorAll(".supervisor-workspace__list-panel > button").length === 21')
+      await js('[...document.querySelectorAll("button")].find(b => b.textContent === "时间螺旋").click()')
+      await wait('JSON.parse(document.documentElement.dataset.helix || "null")?.dots.length === 21')
+      await js('document.fonts.ready')
+      await settle()
+      const geometry = await js('JSON.parse(document.documentElement.dataset.helix)')
+      const expected = await js(`fetch('/portable-review.json').then(r=>r.json()).then(data=>data.graphs[${JSON.stringify(resultId)}].events.map(e=>e.id))`)
+      assert.deepEqual([...geometry.events].sort(), [...expected].sort())
+      assert.deepEqual([...geometry.dots].sort(), [...expected].sort(), 'Real event clusters on the helix, not just empty staves')
+      assert.equal(geometry.points.length, 1401)
+      assert(geometry.clusters > 1 && geometry.clusters <= 21, 'Events occupy multiple real time positions after layout')
+      const radii = geometry.points.map(point => point[0])
+      assert(Math.max(...radii) - Math.min(...radii) > 40)
+      for (const [width, theme] of [[1440, 'light'], [390, 'dark']]) {
+        win.setContentSize(width, 1000)
+        await js(`document.documentElement.dataset.theme = '${theme}'`)
+        await settle()
+        const boxes = await js(`(() => {
+          const box = e => { const r=e.getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}; };
+          const column=document.querySelector('.supervisor-workspace__graph-canvas');
+          const selector=column.querySelector('.supervisor-workspace__result-navigation select');
+          const toolbar=document.querySelector('.story-graph-3d__toolbar');
+          const views=toolbar.querySelector('.story-graph-3d__views');
+          const segment=views.querySelector('.segmented-control');
+          const buttons=[...segment.querySelectorAll('button')].map(box);
+          return {width:innerWidth,pageWidth:document.documentElement.scrollWidth,column:box(column),selector:box(selector),
+            heading:box(column.querySelector('.supervisor-workspace__canvas-heading')),toolbar:box(toolbar),views:box(views),
+            canvas:box(document.querySelector('.story-graph-3d__gl')),gaps:buttons.slice(1).map((b,i)=>b.left-buttons[i].right),
+            segmentPadding:getComputedStyle(segment).paddingTop,controlGap:getComputedStyle(views).gap,
+            events:document.querySelectorAll('.supervisor-workspace__list-panel > button').length,
+            bounds:JSON.parse(document.documentElement.dataset.sceneBounds),
+            scene:JSON.parse(document.documentElement.dataset.helix).dots.length,
+            clusters:JSON.parse(document.documentElement.dataset.helix).clusters};
+        })()`)
+        assert(boxes.selector.left >= boxes.column.left + 16 && boxes.selector.right <= boxes.column.right - 16, 'Selector inside central-column padding')
+        assert(boxes.selector.top >= boxes.column.top && boxes.selector.bottom <= boxes.heading.bottom, 'History inside heading, not above three columns')
+        assert.equal(Math.round(boxes.toolbar.top - boxes.heading.bottom), 16, 'Toolbar top inset')
+        assert(boxes.gaps.every(gap => gap >= 2), 'Shared camera segment gaps')
+        assert.equal(boxes.segmentPadding, '3px')
+        assert.equal(boxes.controlGap, '8px')
+        assert(boxes.views.right <= boxes.column.right - 16 && boxes.pageWidth <= width, 'Controls fit without overflow')
+        assert(boxes.canvas.width > 0 && boxes.canvas.height > 0)
+        assert.equal(boxes.events, 21); assert.equal(boxes.scene, 21)
+        assert(Object.values(boxes.bounds).every(value => Math.abs(value) < 1), 'All root scene vertices fit within the camera viewport')
+        reports.push({ theme, ...boxes })
+        if (width === 1440 && !process.env.GOODBUDDY_SUPERVISOR_NO_SCREENSHOT) await writeFile(join(artifacts, 'portable-spiral.png'), (await win.webContents.capturePage()).toPNG())
+      }
+      await js('[...document.querySelectorAll(".story-graph-3d__picker")].find(b=>b.textContent.includes("事件")).click()')
+      await wait('document.querySelectorAll(".story-graph-3d__menu [role=menuitem]").length === 21')
+      await js('document.querySelector(".story-graph-3d__menu [role=menuitem]").click()')
+      await wait('document.querySelector(".supervisor-workspace__list-panel > button")?.getAttribute("aria-pressed") === "true"')
+      // The pre-assignment case uses the same real events with an explicitly empty membership response.
+      await js(`window.goodbuddy.supervision.stories = async () => ({stories:[],experiences:[],unassigned:21,canUndo:false}); document.querySelector('.supervisor-workspace__canvas-heading > .icon-button').click()`)
+      await wait('JSON.parse(document.documentElement.dataset.helix || "null")?.dots.length === 21 && document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
+      await js('document.querySelector(".story-graph-3d__picker").click()')
+      await wait('document.querySelectorAll(".story-graph-3d__menu [role=menuitem]").length === 1')
+      await js('document.querySelector(".story-graph-3d__menu [role=menuitem]").click()')
+      await wait('document.querySelector(".story-graph-3d__picker")?.textContent.includes("未归属事件")')
+      assert.equal(await js('JSON.parse(document.documentElement.dataset.helix).dots.length'), 21)
+      assert.deepEqual(errors, [])
+      await writeFile(join(artifacts, 'portable-measurements.json'), JSON.stringify({ resultId, reports, clusters: geometry.clusters, radiusRange: [Math.min(...radii), Math.max(...radii)], errors }, null, 2))
+      console.log(JSON.stringify({ resultId, reports, clusters: geometry.clusters, radiusRange: [Math.min(...radii), Math.max(...radii)], emptyMembershipEvents: 21, errors }))
+      win.destroy(); app.quit(); return
+    }
     if (process.env.GOODBUDDY_SUPERVISOR_SPIRAL) {
       await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + '?spiral=1&recap=1')
       await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')

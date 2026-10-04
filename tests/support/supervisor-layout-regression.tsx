@@ -1,10 +1,11 @@
-// Simulated visual fixture only. No preload, user database, or model is used.
+// Simulated fixture, or read-only production queries from an explicitly supplied local backup. No models.
 import { createRoot } from 'react-dom/client'
 import { HeartbeatCenter } from '../../src/renderer/src/HeartbeatCenter'
 import { SupervisionCard } from '../../src/renderer/src/RightAssistantSidebar'
 import { PageShell } from '../../src/renderer/src/WorkspacePrimitives'
 import { UiLocaleProvider } from '../../src/renderer/src/i18n/UiLocaleProvider'
 import type { SupervisionGraphView } from '../../src/shared/supervision-contracts'
+import type { AssistantProject } from '../../src/shared/assistant-contracts'
 import { applicationSettingsSchema, defaultLocalToolEnvironmentSettings } from '../../src/shared/application-settings-contracts'
 import '../../src/renderer/src/styles.css'
 import '@fontsource-variable/noto-sans-sc/wght.css'
@@ -16,8 +17,15 @@ const params = new URLSearchParams(location.search)
 if (params.has('spiral')) {
   const THREE = await import('three')
   const add = THREE.Group.prototype.add
+  const clear = THREE.Group.prototype.clear
   let points: number[][] = []
   const events = new Set<string>()
+  const dots = new Set<string>()
+  let clusters = 0
+  THREE.Group.prototype.clear = function () {
+    events.clear(); dots.clear(); clusters = 0
+    return clear.call(this)
+  }
   THREE.Group.prototype.add = function (...objects) {
     for (const object of objects) {
       const path = ((object as import('three').Mesh).geometry as import('three').TubeGeometry)?.parameters?.path as import('three').CatmullRomCurve3 | undefined
@@ -26,9 +34,28 @@ if (params.has('spiral')) {
         events.clear()
       }
       for (const event of object.userData.node?.events ?? []) events.add(event.id)
+      if (object.userData.cluster) {
+        clusters++
+        for (const event of object.userData.cluster.events) dots.add(event.id)
+      }
     }
-    document.documentElement.dataset.helix = JSON.stringify({ points, events: [...events] })
+    document.documentElement.dataset.helix = JSON.stringify({ points, events: [...events], dots: [...dots], clusters })
     return add.apply(this, objects)
+  }
+  if (params.has('portable')) {
+    THREE.Scene.prototype.onAfterRender = function (_renderer, scene, camera) {
+      const point = new THREE.Vector3(), bounds = { left: 1, right: -1, top: -1, bottom: 1 }
+      scene.traverse(object => {
+        const positions = (object as import('three').Mesh).geometry?.getAttribute('position')
+        if (!positions) return
+        for (let i = 0; i < positions.count; i++) {
+          point.fromBufferAttribute(positions, i).applyMatrix4(object.matrixWorld).project(camera)
+          bounds.left = Math.min(bounds.left, point.x); bounds.right = Math.max(bounds.right, point.x)
+          bounds.top = Math.max(bounds.top, point.y); bounds.bottom = Math.min(bounds.bottom, point.y)
+        }
+      })
+      document.documentElement.dataset.sceneBounds = JSON.stringify(bounds)
+    }
   }
 }
 const stories = [
@@ -256,6 +283,17 @@ Object.defineProperty(window, 'goodbuddy', {
           }
         }
 })
+let portableProjects: AssistantProject[] = []
+if (params.has('portable')) {
+  const data = await (await fetch('/portable-review.json')).json()
+  portableProjects = data.projects
+  Object.assign(window.goodbuddy.supervision, {
+    overview: async () => data.results,
+    graph: async ({ resultId }: { resultId: string }) => data.graphs[resultId],
+    stories: async ({ scope }: { scope: unknown }) => data.stories[JSON.stringify(scope)],
+    run: async () => { throw new Error('Read-only acceptance must not run reviews') }
+  })
+}
 const noop = async () => {}
 createRoot(document.getElementById('root')!).render(
   <UiLocaleProvider initialPreference="zh-CN">
@@ -277,8 +315,8 @@ createRoot(document.getElementById('root')!).render(
           gap: 'var(--space-3)'
         }}
       >
-        <span>SIMULATED FIXTURE / 单故事 API / {story.title}</span>
-        {stories.map((item, index) => (
+        <span>{params.has('portable') ? 'READ-ONLY PORTABLE BACKUP / 只读回顾验证' : `SIMULATED FIXTURE / 单故事 API / ${story.title}`}</span>
+        {!params.has('portable') && stories.map((item, index) => (
           <a key={item.title} href={`?story=${index}`}>
             {item.title}
           </a>
@@ -302,7 +340,7 @@ createRoot(document.getElementById('root')!).render(
           runs={menu ? [{ id: 'run', configId: 'plan', trigger: 'scheduled', scheduledFor: createdAt, status: 'completed', attemptCount: 1, createdAt, updatedAt: createdAt }] : []}
           entries={menu ? [{ id: 'report', configId: 'plan', runId: 'run', scheduledFor: createdAt, summary: '模拟历史心跳报告：交付计划已更新，待核对负责人和验收日期。', highlights: ['保留原始依据，核对交付时间。'], proposedMemoryIds: ['memory'], followUpTaskIds: ['task'], createdAt }] : []}
           memories={menu ? [{ id: 'memory', scope: 'global', type: 'preference', content: '模拟建议：周会总结保留负责人和下一次检查日期。', confidence: 0.9, salience: 0.8, status: 'proposed', createdAt, updatedAt: createdAt }] : []}
-          projects={[]}
+          projects={portableProjects}
           tasks={menu ? [{ id: 'task', title: '模拟行动：核对交付清单', instructions: '核对负责人、验收日期和原始讨论依据。', origin: 'assistant', status: 'paused', createdAt }] : []}
           onCreate={noop}
           onUpdate={noop}

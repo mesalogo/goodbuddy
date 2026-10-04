@@ -1,4 +1,4 @@
-import type { SupervisionAttentionSlot } from '../../shared/supervision-contracts'
+import type { SupervisionAttentionSlot, SupervisionGraphView } from '../../shared/supervision-contracts'
 import type { SupervisionExperience, SupervisionStory } from '../../shared/supervision-story-contracts'
 
 /*
@@ -10,7 +10,7 @@ import type { SupervisionExperience, SupervisionStory } from '../../shared/super
 export type StoryNode = {
   id: string
   name: string
-  level: 'root' | 'project' | 'feature' | 'thread' | 'cross'
+  level: 'root' | 'project' | 'feature' | 'thread' | 'cross' | 'unassigned'
   parent?: StoryNode
   children: StoryNode[]
   /** Primary events of this node and its descendants; for cross stories, the events they link. */
@@ -28,11 +28,18 @@ const TAU = Math.PI * 2
 export const TURN_STEPS = [3, 6, 12, 24, 168, 720, 2160, 8760]
 const TARGET_TURNS = 8, MAX_TURNS = 14, TRANSITION = 0.3
 
-/** Project › feature › thread, plus cross stories as root-level staves. Unassigned events are not staves. */
-export function buildStoryTree(stories: SupervisionStory[], projectNames: Map<string, string>): StoryNode {
+/** Current memberships of exact review IDs; missing memberships never imply replacement events. */
+export function buildStoryTree(stories: SupervisionStory[], projectNames: Map<string, string>, review?: {
+  events: SupervisionGraphView['events']; unassigned: string; unknownProject: string
+}): StoryNode {
+  const events = review && new Map(review.events.map(event => [event.id, event]))
+  if (events) stories = stories.map(story => ({ ...story, events: story.events.filter(event => events.has(event.id)) }))
   const root: StoryNode = { id: 'root', name: '', level: 'root', children: [], events: [], start: 0, end: 0, a0: 0, a1: TAU, concluded: false }
   const node = (story: SupervisionStory, parent: StoryNode): StoryNode => ({ id: story.id, name: story.name, level: story.level, parent, children: [],
-    events: story.events.filter(event => story.level === 'cross' || event.primary).map(event => ({ id: event.id, title: event.title, t: Date.parse(event.startedAt) })),
+    events: story.events.filter(event => story.level === 'cross' || event.primary).map(event => {
+      const saved = events?.get(event.id)
+      return { id: event.id, title: saved?.title ?? event.title, t: Date.parse(saved?.started_at ?? saved?.occurred_at ?? event.startedAt) }
+    }),
     start: 0, end: 0, a0: 0, a1: 0, concluded: story.state === 'concluded' })
   const projects = new Map<string, StoryNode>()
   for (const story of stories.filter(item => item.level === 'feature' && item.projectId)) {
@@ -48,6 +55,27 @@ export function buildStoryTree(stories: SupervisionStory[], projectNames: Map<st
     project.children.push(feature)
   }
   root.children.push(...stories.filter(item => item.level === 'cross').map(story => node(story, root)))
+  if (review) {
+    const assigned = new Set(stories.filter(story => story.level !== 'cross').flatMap(story => story.events.filter(event => event.primary).map(event => event.id)))
+    for (const event of review.events) {
+      if (assigned.has(event.id)) continue
+      const projectId = event.project_id ?? ''
+      let project = projects.get(projectId)
+      if (!project) {
+        project = { id: `project:${projectId}`, name: projectNames.get(projectId) ?? review.unknownProject, level: 'project',
+          parent: root, children: [], events: [], start: 0, end: 0, a0: 0, a1: 0, concluded: false }
+        projects.set(projectId, project)
+        root.children.push(project)
+      }
+      let unassigned = project.children.find(child => child.level === 'unassigned')
+      if (!unassigned) {
+        unassigned = { id: `unassigned:${projectId}`, name: review.unassigned, level: 'unassigned', parent: project,
+          children: [], events: [], start: 0, end: 0, a0: 0, a1: 0, concluded: false }
+        project.children.push(unassigned)
+      }
+      unassigned.events.push({ id: event.id, title: event.title, t: Date.parse(event.started_at ?? event.occurred_at) })
+    }
+  }
   finish(root)
   layout(root, 0, TAU)
   return root

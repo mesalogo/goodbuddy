@@ -44,6 +44,7 @@ describe('SupervisorWorkspace', () => {
     const view = render(<SupervisorWorkspace tab="graph" graphNavigation={navigation} />)
     await screen.findByRole('heading', { name: kind === 'story' ? 'Target story' : 'Target experience' })
     expect(screen.getByLabelText('历史结果')).toHaveValue(old.id)
+    expect(screen.getByLabelText('历史结果').closest('.supervisor-workspace__graph-canvas')).not.toBeNull()
     fireEvent.change(screen.getByLabelText('历史结果'), { target: { value: result.id } })
     await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
     view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={{ ...navigation }} />)

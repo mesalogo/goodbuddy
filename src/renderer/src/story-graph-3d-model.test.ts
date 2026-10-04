@@ -12,6 +12,25 @@ const story = (id: string, level: SupervisionStory['level'], days: number[], ext
 })
 
 describe('story graph 3d model', () => {
+  it('retains historical IDs and genuinely unassigned events without borrowing current replacements', () => {
+    const saved = (id: string, project_id: string | null, d: number) => ({ id, project_id, title: 'Same title', description: '', occurred_at: at(d), started_at: at(d - 0.5) })
+    const events = [saved('old-extraction', 'p1', 1), saved('never-assigned', 'p1', 2), saved('unknown-project', null, 3), saved('exact-member', 'p1', 4)]
+    const current = story('feature', 'feature', [1, 4], { events: [
+      { id: 'replacement', title: 'Same title', projectId: 'p1', startedAt: at(1), endedAt: at(1), primary: true, userSet: false },
+      { id: 'exact-member', title: 'Current title', projectId: 'p1', startedAt: at(9), endedAt: at(9), primary: true, userSet: false }
+    ] })
+    const tree = buildStoryTree([current], new Map([['p1', 'Project']]), { events, unassigned: 'Unassigned', unknownProject: 'Unknown' })
+    expect(tree.events.map(event => event.id)).toEqual(events.map(event => event.id))
+    expect(tree.children[0]!.children.map(node => [node.level, node.events.map(event => event.id)])).toEqual([
+      ['feature', ['exact-member']], ['unassigned', ['old-extraction', 'never-assigned']]
+    ])
+    expect(tree.children[1]!.name).toBe('Unknown')
+    expect(tree.events.at(-1)).toEqual({ id: 'exact-member', title: 'Same title', t: Date.parse(at(3.5)) })
+    const beforeStories = buildStoryTree([], new Map([['p1', 'Project']]), { events, unassigned: 'Unassigned', unknownProject: 'Unknown' })
+    expect(beforeStories.events).toEqual(tree.events)
+    expect(beforeStories.children.flatMap(project => project.children).every(node => node.level === 'unassigned')).toBe(true)
+  })
+
   it('builds project › feature › thread with cross stories at the root and spans from primary events', () => {
     const tree = buildStoryTree([story('feature', 'feature', [3, 1]), story('thread', 'thread', [5], { parentId: 'feature' }),
       story('empty', 'feature', []), story('cross', 'cross', [2, 8])], new Map())

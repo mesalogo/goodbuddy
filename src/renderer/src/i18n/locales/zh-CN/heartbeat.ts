@@ -143,7 +143,10 @@ export const heartbeat = {
         experience: '桶外菱形是经验，弧线从形成它的木片连到后来用上它的木片。'
       },
       // Picker buttons name what the list holds at the current level.
-      childLevels: { project: '项目', feature: '功能', thread: '子线索', cross: '跨项目故事', mixed: '项目与跨项目故事' },
+      unassigned: '当前无故事归属', unknownProject: '项目范围不可用',
+      membershipNote: '本次回顾事件按当前故事归属分组；未保存当时的故事归属。',
+      pickEvents: '事件 · {{count}}',
+      childLevels: { project: '项目', feature: '功能', thread: '子线索', cross: '跨项目故事', unassigned: '未归属事件', mixed: '分组' },
       pickChildren: '{{level}} · {{count}}', pickExperience: '经验 · {{count}}',
       turns: { 3: '3 小时', 6: '6 小时', 12: '12 小时', 24: '1 天', 168: '1 周', 720: '1 个月', 2160: '1 个季度', 8760: '1 年' },
       unsupported: '当前设备不支持三维显示，请使用平铺视图和左侧故事列表。',

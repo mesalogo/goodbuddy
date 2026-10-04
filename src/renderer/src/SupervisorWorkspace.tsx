@@ -474,11 +474,7 @@ export function SupervisorWorkspace({
     ? (JSON.parse(graph.storyLine.scope_json) as SupervisionRunRequest['scope'])
     : undefined
   const storyState = useSupervisionStories(graphScope, tab === 'graph', graph)
-  // Story membership is current and scope-wide; only plot events selectable in this review.
-  const spiralStories = useMemo(() => {
-    const ids = new Set(graph.events.map(event => event.id))
-    return storyState.view.stories.map(story => ({ ...story, events: story.events.filter(event => ids.has(event.id)) }))
-  }, [storyState.view.stories, graph.events])
+  const projectNames = useMemo(() => new Map(projects.map(project => [project.id, project.name])), [projects])
   const graphLayoutRef = useRef<HTMLDivElement>(null)
   // The graph column does not scroll: the graph scales to the height left in the window. Below 660px the flat
   // graph's labels would drop under 11px, so very short windows keep that height and scroll the page instead.
@@ -654,8 +650,8 @@ export function SupervisorWorkspace({
           )}
           {tab === 'graph' && (
             <>
-              {historySelector}
               {/* With a graph, scope and refresh live in the canvas heading; without one, they sit in the centred empty state. */}
+              {!graph.events.length && historySelector}
               {!loading && !loadError && !graph.events.length && (
                 <div className="supervisor-workspace__graph-empty" ref={graphEmptyRef}>
                   <EmptyState
@@ -797,8 +793,9 @@ export function SupervisorWorkspace({
                     aria-label={t('supervisor.canvas')}
                   >
                     <div className="supervisor-workspace__canvas-heading">
-                      {/* Title, then one line with scope, period, generation time and counts. */}
+                      {/* History stays inside the canvas column with its title and review metadata. */}
                       <div className="supervisor-workspace__canvas-title">
+                        {historySelector}
                         <strong>{t('supervisor.canvasTitle')}</strong>
                         <span>
                           {[
@@ -829,7 +826,7 @@ export function SupervisorWorkspace({
                         <button type="button" className="link-button" onClick={() => setGraphMode('flat')}>{t('supervisor.graph3d.modes.flat')}</button>
                       </div>}>
                       <Suspense fallback={<p className="supervisor-workspace__muted" role="status">{t('supervisor.loading')}</p>}>
-                        <StoryGraph3D stories={spiralStories} attention={graph.attention ?? noAttention} timeRange={latest?.timeRange}
+                        <StoryGraph3D stories={storyState.view.stories} events={graph.events} projectNames={projectNames} attention={graph.attention ?? noAttention} timeRange={latest?.timeRange}
                           selectedEventId={selection?.kind === 'event' ? selection.id : undefined}
                           onSelectEvent={(id) => { if (layout.eventMap.has(id)) select({ kind: 'event', id }) }}
                           onSelectStory={(id) => select({ kind: 'story', id })}

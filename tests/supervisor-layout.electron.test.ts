@@ -7,11 +7,34 @@ import { join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
+import { AssistantDatabase } from '../src/main/assistant/assistant-database'
+import { SupervisionStoryStore } from '../src/main/assistant/supervision-stories'
+import { SupervisionExperienceStore } from '../src/main/assistant/supervision-experiences'
 
 it(process.env.GOODBUDDY_SUPERVISOR_SIDEBAR
   ? 'renders the production supervision card at narrow widths in both themes'
   : 'renders the production supervisor at desktop, narrow, and mobile widths', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-supervisor-'))
+  // Optional local acceptance run against an online backup. Never initialize/migrate or run models.
+  let portable: string | undefined
+  if (process.env.GOODBUDDY_SUPERVISOR_BACKUP) {
+    const connection = new DatabaseSync(process.env.GOODBUDDY_SUPERVISOR_BACKUP, { readOnly: true })
+    try {
+      const database = new AssistantDatabase(process.env.GOODBUDDY_SUPERVISOR_BACKUP)
+      Reflect.set(database, 'database', connection)
+      const results = database.listSupervisionResults()
+      portable = JSON.stringify({ results,
+        projects: connection.prepare('SELECT id, name FROM projects').all(),
+        graphs: Object.fromEntries(results.map(result => [result.id, database.getSupervisionGraph({ resultId: result.id })])),
+        stories: Object.fromEntries(results.map(result => [JSON.stringify(result.scope), {
+          stories: new SupervisionStoryStore(connection).list(result.scope),
+          experiences: new SupervisionExperienceStore(connection).list(result.scope.kind === 'projects' ? result.scope.projectIds : undefined),
+          unassigned: new SupervisionStoryStore(connection).unassignedCount(result.scope), canUndo: false
+        }]))
+      })
+    } finally { connection.close() }
+  }
   const css = await readFile(
     'src/renderer/src/supervisor-workspace.css',
     'utf8'
@@ -25,6 +48,10 @@ it(process.env.GOODBUDDY_SUPERVISOR_SIDEBAR
       {
         name: 'supervisor-fixture',
         configureServer(server) {
+          if (portable) server.middlewares.use('/portable-review.json', (_request, response) => {
+            response.setHeader('Content-Type', 'application/json')
+            response.end(portable)
+          })
           server.middlewares.use(
             '/supervisor.html',
             async (_request, response) => {
