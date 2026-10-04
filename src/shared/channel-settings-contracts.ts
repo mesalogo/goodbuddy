@@ -15,7 +15,7 @@ export const CHANNEL_SETTINGS_LIMITS = {
 
 export const managedChannelSchema = projectChannelSchema
 export type ManagedChannel = ProjectChannel
-export const credentialChannelSchema = z.enum(['wecom', 'dingtalk'])
+export const credentialChannelSchema = z.enum(['wecom', 'dingtalk', 'telegram'])
 export type CredentialChannel = z.infer<
   typeof credentialChannelSchema
 >
@@ -29,6 +29,11 @@ const senderIdentifierSchema = identifierSchema.min(1)
 
 export const allowedSenderIdsSchema = z
   .array(senderIdentifierSchema)
+  .max(CHANNEL_SETTINGS_LIMITS.maximumAllowedSenders)
+  .transform((values) => [...new Set(values)])
+
+export const telegramAllowedSenderIdsSchema = z
+  .array(senderIdentifierSchema.regex(/^[1-9][0-9]*$/u))
   .max(CHANNEL_SETTINGS_LIMITS.maximumAllowedSenders)
   .transform((values) => [...new Set(values)])
 
@@ -77,6 +82,15 @@ export type DingTalkChannelSettingsInput = z.infer<
   typeof dingTalkChannelSettingsInputSchema
 >
 
+export const telegramChannelSettingsInputSchema = z.object({
+  ...editableChannelFields,
+  allowedSenderIds: telegramAllowedSenderIdsSchema,
+  allowGroupMessages: z.literal(false)
+}).strict()
+export type TelegramChannelSettingsInput = z.infer<
+  typeof telegramChannelSettingsInputSchema
+>
+
 export const weixinChannelSettingsInputSchema = z
   .object({
     enabled: z.boolean()
@@ -90,14 +104,16 @@ export const channelSettingsApplySchema = z
   .object({
     weixin: weixinChannelSettingsInputSchema.optional(),
     wecom: weComChannelSettingsInputSchema.optional(),
-    dingtalk: dingTalkChannelSettingsInputSchema.optional()
+    dingtalk: dingTalkChannelSettingsInputSchema.optional(),
+    telegram: telegramChannelSettingsInputSchema.optional()
   })
   .strict()
   .refine(
     (input) =>
       input.weixin !== undefined ||
       input.wecom !== undefined ||
-      input.dingtalk !== undefined,
+      input.dingtalk !== undefined ||
+      input.telegram !== undefined,
     '至少需要提供一个通道设置'
   )
 export type ChannelSettingsApply = z.infer<
@@ -140,6 +156,14 @@ export type ChannelRuntimeStatus = z.infer<
   typeof channelRuntimeStatusSchema
 >
 
+export const channelRuntimeStatusChangeSchema = z.object({
+  channel: managedChannelSchema,
+  status: channelRuntimeStatusSchema
+}).strict()
+export type ChannelRuntimeStatusChange = z.infer<
+  typeof channelRuntimeStatusChangeSchema
+>
+
 const publicChannelFields = {
   enabled: z.boolean(),
   secretConfigured: z.boolean(),
@@ -170,6 +194,13 @@ export type DingTalkChannelSettings = z.infer<
   typeof dingTalkChannelSettingsSchema
 >
 
+export const telegramChannelSettingsSchema = z.object({
+  ...publicChannelFields,
+  allowedSenderIds: telegramAllowedSenderIdsSchema,
+  allowGroupMessages: z.literal(false)
+}).strict()
+export type TelegramChannelSettings = z.infer<typeof telegramChannelSettingsSchema>
+
 export const weixinChannelSettingsSchema = z
   .object({
     enabled: z.boolean(),
@@ -188,6 +219,7 @@ export const channelSettingsSnapshotSchema = z
     weixin: weixinChannelSettingsSchema,
     wecom: weComChannelSettingsSchema,
     dingtalk: dingTalkChannelSettingsSchema,
+    telegram: telegramChannelSettingsSchema,
     warnings: settingsWarningsSchema.optional()
   })
   .strict()
@@ -199,6 +231,7 @@ export const channelConnectionTestResultSchema = z
   .object({
     channel: managedChannelSchema,
     ok: z.boolean(),
+    botUsername: identifierSchema.min(1).optional(),
     error: z
       .string()
       .trim()
@@ -208,6 +241,13 @@ export const channelConnectionTestResultSchema = z
   })
   .strict()
   .superRefine((result, context) => {
+    if (result.botUsername !== undefined && (!result.ok || result.channel !== 'telegram')) {
+      context.addIssue({
+        code: 'custom',
+        path: ['botUsername'],
+        message: 'Bot username requires a successful Telegram connection test'
+      })
+    }
     if (result.ok && result.error !== undefined) {
       context.addIssue({
         code: 'custom',

@@ -110,7 +110,7 @@ describe('subagent progress storage', () => {
       for (const [table, column] of [['projects', 'default_work_mode'], ['conversations', 'work_mode'], ['tasks', 'work_mode']]) {
         expect(check.prepare(`PRAGMA table_info(${table})`).all().map(row => row.name)).not.toContain(column)
       }
-      expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(60)
+      expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
       const readJson = (table: string, column: string, id: string) =>
         JSON.parse(check.prepare(`SELECT ${column} AS value FROM ${table} WHERE id = ?`).get(id)!.value as string)
       expect(readJson('conversations', 'context_state_json', header.id))
@@ -164,7 +164,7 @@ describe('subagent progress storage', () => {
       sql.prepare('UPDATE task_events SET payload_json = ? WHERE id = ?').run('{"workMode":"ask"}', damagedId)
       upgradeAssistantStorage(path, () => undefined)
       expect(sql.prepare('SELECT payload_json FROM task_events WHERE id = ?').get(damagedId)!.payload_json).toBe('{}')
-      expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(60)
+      expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
       expect(sql.prepare('PRAGMA integrity_check').get()!.integrity_check).toBe('ok')
     } finally { sql.close() }
   })

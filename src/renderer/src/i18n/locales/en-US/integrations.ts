@@ -17,7 +17,8 @@ export const integrations = {
     tabs: {
       weixin: 'WeChat ClawBot',
       wecom: 'WeCom',
-      dingtalk: 'DingTalk'
+      dingtalk: 'DingTalk',
+      telegram: 'Telegram'
     },
     status: {
       disabled: 'Not enabled',
@@ -72,7 +73,8 @@ export const integrations = {
       },
       secrets: {
         wecom: 'Secret',
-        dingtalk: 'Client Secret'
+        dingtalk: 'Client Secret',
+        telegram: 'Bot Token'
       },
       environmentSource: 'Provided by environment variables',
       secretSaved: 'Secret saved with encryption',
@@ -93,6 +95,23 @@ export const integrations = {
       groupMessages: 'Respond when mentioned in group chats',
       testing: 'Testing…',
       testConnection: 'Test {{channel}} connection'
+    },
+    telegram: {
+      unconfigured: 'Not configured',
+      botFather: 'Open official BotFather',
+      setup: 'Send /newbot to BotFather and enter the Token here. Test, enable and save the channel, then open a private chat with your Bot. You must send /start first, then /whoami to get your numeric user ID. Add that ID below and save again.',
+      access: 'Private text messages only. Allowed users can request operations using this project\'s working directory, Runtime and enabled tools.',
+      connectionHelp: 'Connection and offline messages',
+      network: 'GoodBuddy must stay running. Telegram follows the operating system proxy settings; configure your system proxy if needed, then test this connection. Browser access alone does not verify the channel. Use this Bot with only one GoodBuddy instance and remove any existing webhook at its source.',
+      offline: 'Re-enabling may process pending messages retained by Telegram for up to 24 hours, including tool requests. Interrupted tasks do not automatically resume after a crash. Check desktop task records and actual results before resending.',
+      noUsers: 'No users authorized. With the channel enabled and saved, /start and /whoami provide setup help only; business requests are not processed.',
+      sendersHelp: 'Enter numeric Telegram user IDs, one per line or separated by commas (up to 100). Usernames do not grant access.',
+      invalidSenders: 'Enter up to 100 positive numeric user IDs (at most 256 digits each), not @usernames.',
+      keepToken: 'Leave blank to keep the saved Token',
+      enterToken: 'Enter the BotFather Token',
+      clearToken: 'Clear the saved Token on save (stops the connection; keeps history)',
+      bot: 'Bot:',
+      verified: 'Telegram credentials verified. Testing does not enable message receiving.'
     },
     qr: {
       title: 'Connect WeChat ClawBot',

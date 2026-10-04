@@ -140,6 +140,14 @@ additional hardening beyond the actual internal-network threat model:
 
 ## Implementation Conventions
 
+- Read and follow
+  [`docs/architecture/performance-principles.md`](./docs/architecture/performance-principles.md)
+  before designing, implementing, or reviewing a feature. Treat its performance
+  budgets, process boundaries, state ownership, startup rules, and review
+  checklist as implementation constraints. Include this reference in parallel
+  agent assignments so all agents follow the same rules. For performance or
+  hot-path changes, provide the applicable measurements and validation required
+  by that document; do not claim improvements without evidence.
 - Follow surrounding TypeScript and React patterns.
 - Reuse installed libraries and shared contracts before adding dependencies.
 - Keep changes focused. Do not add unrelated refactors or documentation.

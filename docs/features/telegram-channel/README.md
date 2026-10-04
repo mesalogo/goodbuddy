@@ -1,14 +1,20 @@
 # Telegram 消息通道
 
-Telegram 消息通道计划通过用户自行创建的 Bot，将 Telegram 私聊接入 GoodBuddy 通道项目，支持文字问答和执行任务。首版采用长轮询，运行 GoodBuddy 的电脑需要在线并能访问 Telegram。
+Telegram 消息通道通过用户自行创建的 Bot，将授权用户的普通私聊文字接入 GoodBuddy 通道项目，复用项目的模型、Runtime 和工作目录。首版采用长轮询，运行 GoodBuddy 的电脑需要在线；生产驱动通过 Electron `net.fetch` 使用系统代理访问 Telegram。
 
 ## 文档导航
 
 | 文档 | 权威职责 |
 | --- | --- |
 | [Telegram 通道 PRD](./prd.md) | 产品目标、首版范围、配置流程、功能要求、限制与验收标准 |
+| [技术设计](./technical-design.md) | 生产模块、身份与持久化、IPC 状态、生命周期及实现边界 |
+| [实施与验证进度](./progress.md) | 日期化验证证据、当前阻塞与待验收项目 |
+| [API 联调操作说明](./api-testing.md) | 两类探针的命令、网络路径、输出含义及副作用 |
+| [独立 Node 探针](./telegram-probe.mjs) | 独立调用 Bot API，不经过生产驱动或模型 |
+| [生产探针启动器](./run-live-probe.mjs) | 构建探针、启动隔离 Electron 进程并清理临时目录 |
+| [生产探针入口](./live-probe-main.ts) | 生产驱动连接检查及可选 ChannelService 固定回复，不调用模型 |
 
-当前处于 PRD 草案阶段，尚未实现 Telegram 通道。详细逻辑、UI 和技术设计在实现前按需补充，不以本目录的建立作为功能完成证据。
+生产接入代码与本地自动化验证已落地，真实 Bot 与模型的完整链路尚未证明，不能记为全面验收通过。当前结果和待办以[进度记录](./progress.md)为准；2026-10-04 独立 Node 探针成功仅是历史 API 证据。
 
 ## 术语与依赖
 

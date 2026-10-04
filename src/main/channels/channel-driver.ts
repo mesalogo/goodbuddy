@@ -19,6 +19,14 @@ export interface ChannelDriver {
   stop(): void | Promise<void>
 }
 
+export function isPermanentChannelError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'permanent' in error &&
+    error.permanent === true
+  )
+}
+
 export interface DedupStore {
   claim(
     channel: string,
@@ -83,6 +91,7 @@ export interface Outbox {
   enqueue(message: ChannelResultMessage): OutboxEntry | Promise<OutboxEntry>
   markDelivered(id: string): void | Promise<void>
   markFailed(id: string): void | Promise<void>
+  markTerminal?(id: string): void | Promise<void>
   listUndelivered(
     channel?: string,
     limit?: number
@@ -134,6 +143,16 @@ export class MemoryOutbox implements Outbox {
     }
   }
 
+  markTerminal(id: string): void {
+    const entry = this.entries.get(id)
+    if (!entry) {
+      return
+    }
+    entry.state = 'terminal'
+    entry.attempts += 1
+    entry.message = this.withoutAttachments(entry.message)
+  }
+
   listUndelivered(
     channel?: string,
     limit = this.maximumEntries
@@ -146,6 +165,8 @@ export class MemoryOutbox implements Outbox {
       )
       .sort(
         (left, right) =>
+          Number(left.state === 'terminal') -
+            Number(right.state === 'terminal') ||
           left.attempts - right.attempts ||
           left.createdAt - right.createdAt
       )

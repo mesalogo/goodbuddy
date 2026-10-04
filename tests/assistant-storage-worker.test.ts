@@ -156,7 +156,7 @@ it('upgrades a fresh historical schema 59 through the real worker without recons
     const upgrade = getPendingAssistantStorageUpgrade(databasePath)!
     expect(upgrade).toEqual({ migrateNotes: false, reclaimSpace: false })
     expect((await runWorker(databasePath, upgrade)).at(-1)).toEqual({ done: true })
-    expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(60)
+    expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
     for (const [table, column] of [['projects', 'default_work_mode'], ['conversations', 'work_mode'], ['tasks', 'work_mode']] as const) {
       expect(sql.prepare(`PRAGMA table_info(${table})`).all().map(row => row.name)).not.toContain(column)
     }

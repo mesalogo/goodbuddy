@@ -1,8 +1,50 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { DesktopApi } from '../shared/contracts'
+import { ipcChannels } from '../shared/ipc-channels'
+
+const electron = vi.hoisted(() => ({
+  contextBridge: { exposeInMainWorld: vi.fn() },
+  ipcRenderer: { invoke: vi.fn(), on: vi.fn(), removeListener: vi.fn() },
+  webUtils: {}
+}))
+vi.mock('electron', () => electron)
 
 describe('sandboxed preload', () => {
+  it('forwards status deltas without the Electron event and removes the exact subscription', async () => {
+    await import('./index')
+    const api = electron.contextBridge.exposeInMainWorld.mock.calls[0]![1] as DesktopApi
+    const listener = vi.fn()
+    const unsubscribe = api.channels!.onStatusChanged(listener)
+    const [channel, handler] = electron.ipcRenderer.on.mock.calls.at(-1)!
+    expect(channel).toBe(ipcChannels.channelStatusChanged)
+    const change = { channel: 'telegram', status: { state: 'error', lastError: 'Network unavailable' } }
+    handler({ sender: 'main' }, change)
+    expect(listener).toHaveBeenCalledExactlyOnceWith(change)
+    unsubscribe()
+    expect(electron.ipcRenderer.removeListener).toHaveBeenCalledExactlyOnceWith(channel, handler)
+  })
+
+  it('forwards Telegram settings and draft or saved connection tests through channel IPC', async () => {
+    await import('./index')
+    const api = electron.contextBridge.exposeInMainWorld.mock.calls[0]![1] as DesktopApi
+    const settings = {
+      enabled: false, secret: { action: 'replace' as const, value: '456:test-token' },
+      allowedSenderIds: ['123'], allowGroupMessages: false as const
+    }
+    await api.channels!.getSnapshot()
+    await api.channels!.apply({ telegram: settings })
+    await api.channels!.testConnection('telegram', settings)
+    await api.channels!.testConnection('telegram')
+    expect(electron.ipcRenderer.invoke.mock.calls).toEqual([
+      [ipcChannels.channelSettingsGet],
+      [ipcChannels.channelSettingsApply, { telegram: settings }],
+      [ipcChannels.channelSettingsTest, { channel: 'telegram', settings }],
+      [ipcChannels.channelSettingsTest, { channel: 'telegram', settings: undefined }]
+    ])
+  })
+
   it('does not import Node built-ins unavailable in Electron sandbox', () => {
     const source = readFileSync(
       join(process.cwd(), 'src', 'preload', 'index.ts'),

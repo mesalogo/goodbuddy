@@ -35,6 +35,7 @@ import type {
 } from '../shared/ssh-host-contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
+import { ChannelSettingsStore } from './channels/channel-settings-store'
 import { SubagentService, createSubagentRuntime } from './assistant/subagent-service'
 import { ConversationAttachmentStorage } from './conversation-attachment-storage'
 import { DocumentResultStorage } from './document-result-storage'
@@ -350,6 +351,7 @@ const electronMocks = vi.hoisted(() => {
   return {
     handlers,
     invoke: vi.fn(),
+    fetch: vi.fn<typeof fetch>(),
     handle: vi.fn((channel: string, handler: InvokeHandler) => {
       handlers.set(channel, handler)
     }),
@@ -1391,6 +1393,7 @@ describe('registerIpcHandlers model download source routing', () => {
 })
 
 vi.mock('electron', () => ({
+  net: { fetch: electronMocks.fetch },
   contextBridge: { exposeInMainWorld: (name: string, value: unknown) => vi.stubGlobal(name, value) },
   ipcRenderer: { invoke: electronMocks.invoke },
   webUtils: {},
@@ -5374,7 +5377,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     obsidianService?: ObsidianService,
     nativeClientCoordinator?: Parameters<typeof registerIpcHandlers>[44],
     nativeTerminalManager?: Parameters<typeof registerIpcHandlers>[40],
-    applicationSettingsStore?: ApplicationSettingsStore
+    applicationSettingsStore?: ApplicationSettingsStore,
+    channelSettingsStore?: ChannelSettingsStore
   ) {
     runtime.getStatus ??= vi.fn(async () => ({
       id: runtime.runtimeId ?? 'model', available: true,
@@ -5625,6 +5629,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     args[44] = nativeClientCoordinator
     args[40] = nativeTerminalManager
     if (applicationSettingsStore) args[14] = applicationSettingsStore
+    args[13] = channelSettingsStore
     runtimeFactoryMocks.createModelProfileRuntime.mockReturnValue(runtime)
     const dispose = registerIpcHandlers(...args)
     return {
@@ -12150,6 +12155,131 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   })
 
+  it('routes Telegram settings and incoming messages through real channel handlers without modes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'goodbuddy-ipc-telegram-'))
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(root)
+    database.ensureChannelProjects(root)
+    const routeConversation = vi.spyOn(database, 'getOrCreateRemoteConversation')
+    const settingsStore = new ChannelSettingsStore(join(root, 'channels.json'), {
+      isAvailable: () => true,
+      encrypt: value => Buffer.from(value),
+      decrypt: value => value.toString()
+    }, {})
+    const requests: AgentExecutionRequest[] = []
+    const runtime = {
+      capability: 'chat', supportsToolExecution: true,
+      async *run(request: AgentExecutionRequest, _signal: AbortSignal, authorize?: unknown) {
+        expect(authorize).toBeUndefined()
+        requests.push(request)
+        yield { requestId: request.requestId, type: 'text', delta: 'Telegram result' }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    let delivered = false
+    const replies: unknown[] = []
+    electronMocks.fetch.mockImplementation(async (input, init) => {
+      const method = String(input).split('/').at(-1)
+      let result: unknown
+      if (method === 'getMe') result = { id: 456, is_bot: true, username: 'ipc_test_bot' }
+      else if (method === 'getWebhookInfo') result = { url: '' }
+      else if (method === 'getUpdates') {
+        result = delivered ? [] : [{
+          update_id: 789,
+          message: {
+            message_id: 1, date: Math.floor(Date.now() / 1000),
+            from: { id: 123, is_bot: false }, chat: { id: 123, type: 'private' },
+            text: '/execute preserve this literal prefix'
+          }
+        }]
+        delivered = true
+      } else if (method === 'sendMessage') {
+        replies.push(JSON.parse(String(init?.body)))
+        result = { message_id: 2 }
+      } else if (method === 'sendChatAction') result = true
+      else throw new Error(`Unexpected Telegram method: ${method}`)
+      return new Response(JSON.stringify({ ok: true, result }))
+    })
+    let harness: ReturnType<typeof createHarness> | undefined
+    try {
+      harness = createHarness(runtime, undefined, undefined, false, undefined, undefined,
+        undefined, false, undefined, undefined, undefined, undefined, database,
+        undefined, undefined, undefined, undefined, undefined, settingsStore)
+      const event = trustedEvent(harness.webContents)
+      const get = electronMocks.handlers.get(ipcChannels.channelSettingsGet)!
+      const apply = electronMocks.handlers.get(ipcChannels.channelSettingsApply)!
+      const test = electronMocks.handlers.get(ipcChannels.channelSettingsTest)!
+      const settings = {
+        enabled: false, secret: { action: 'replace', value: '456:test-token' },
+        allowedSenderIds: ['123'], allowGroupMessages: false
+      }
+      await expect(test(event, { channel: 'telegram', settings })).resolves.toEqual({
+        channel: 'telegram', ok: true, botUsername: 'ipc_test_bot'
+      })
+      await expect(get(event)).resolves.toMatchObject({ telegram: { secretConfigured: false } })
+      expect(delivered).toBe(false)
+      expect(() => test(event, {
+        channel: 'telegram', settings: { ...settings, allowedSenderIds: ['username'] }
+      })).toThrow()
+      expect(() => apply(event, { telegram: { ...settings, allowGroupMessages: true } })).toThrow()
+      expect(() => test({ sender: {}, senderFrame: harness!.webContents.mainFrame }, {
+        channel: 'telegram', settings
+      })).toThrow('拒绝来自未知窗口的 IPC 请求')
+      await expect(apply(event, { telegram: settings })).resolves.toMatchObject({
+        telegram: { enabled: false, secretConfigured: true, allowedSenderIds: ['123'] }
+      })
+      await expect(test(event, { channel: 'telegram' })).resolves.toEqual({
+        channel: 'telegram', ok: true, botUsername: 'ipc_test_bot'
+      })
+      await apply(event, { telegram: { ...settings, enabled: true, secret: { action: 'keep' } } })
+      await vi.waitFor(() => expect(replies).toContainEqual({ chat_id: '123', text: 'Telegram result' }))
+      expect(requests).toHaveLength(1)
+      const request = requests[0]!
+      const project = database.listProjects().find(item => item.channel === 'telegram')!
+      expect(project).toMatchObject({ kind: 'channel', name: 'Telegram' })
+      expect(routeConversation).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        projectId: project.id, channel: 'telegram', accountId: '456',
+        externalConversationId: '456:123', conversationType: 'direct'
+      }))
+      expect(database.getConversation(request.conversationId!)).toMatchObject({
+        projectId: project.id,
+        remote: { channel: 'telegram', conversationType: 'direct' },
+        messages: [
+          expect.objectContaining({ role: 'user', content: '/execute preserve this literal prefix' }),
+          expect.objectContaining({ role: 'assistant', content: 'Telegram result' })
+        ]
+      })
+      expect(database.getTask(request.requestId)).toMatchObject({
+        projectId: project.id, conversationId: request.conversationId,
+        origin: 'delegation', status: 'completed', instructions: '/execute preserve this literal prefix'
+      })
+      expect(request.prompt).toContain('/execute preserve this literal prefix')
+      expect(request).not.toHaveProperty('workMode')
+      expect(request).not.toHaveProperty('mode')
+      expect(harness.webContents.send).toHaveBeenCalledWith(ipcChannels.channelStatusChanged, {
+        channel: 'telegram', status: { state: 'starting' }
+      })
+      expect(harness.webContents.send).toHaveBeenCalledWith(ipcChannels.channelStatusChanged, {
+        channel: 'telegram', status: { state: 'running' }
+      })
+      const history = database.getConversation(request.conversationId!)
+      await expect(apply(event, { telegram: { ...settings, secret: { action: 'clear' } } })).resolves.toMatchObject({
+        telegram: { enabled: false, secretConfigured: false, status: { state: 'disabled' } }
+      })
+      expect(harness.webContents.send).toHaveBeenCalledWith(ipcChannels.channelStatusChanged, {
+        channel: 'telegram', status: { state: 'disabled' }
+      })
+      expect((await settingsStore.resolve('telegram')).secret).toBeUndefined()
+      expect(database.getProject(project.id)).toEqual(project)
+      expect(database.getConversation(request.conversationId!)).toEqual(history)
+    } finally {
+      await harness?.dispose()
+      electronMocks.fetch.mockReset()
+      database.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('bridges explanation-only channel requests without an authorizer', async () => {
     let received:
       | {
@@ -12231,7 +12361,8 @@ describe('registerIpcHandlers agent terminal state', () => {
   it.each([
     ['weixin', '微信 ClawBot'],
     ['wecom', '企业微信'],
-    ['dingtalk', '钉钉']
+    ['dingtalk', '钉钉'],
+    ['telegram', 'Telegram']
   ] as const)(
     'grants enabled Magic Notes write tools to %s channel requests',
     async (channel, channelLabel) => {
@@ -12341,6 +12472,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         )
       })
       expect(receivedRequest?.prompt).toContain('读取我的笔记')
+      expect(receivedRequest).not.toHaveProperty('workMode')
       expect(knowledgeGateway.revoke).toHaveBeenCalledWith(
         'channel-notes-capability'
       )

@@ -14,7 +14,8 @@ export const integrations = {
     tabs: {
       weixin: '微信 ClawBot',
       wecom: '企业微信',
-      dingtalk: '钉钉'
+      dingtalk: '钉钉',
+      telegram: 'Telegram'
     },
     status: {
       disabled: '未启用',
@@ -63,7 +64,8 @@ export const integrations = {
       },
       secrets: {
         wecom: 'Secret',
-        dingtalk: 'Client Secret'
+        dingtalk: 'Client Secret',
+        telegram: 'Bot Token'
       },
       environmentSource: '由环境变量提供',
       secretSaved: 'Secret 已加密保存',
@@ -84,6 +86,23 @@ export const integrations = {
       groupMessages: '允许群聊中被提及时响应',
       testing: '正在测试…',
       testConnection: '测试{{channel}}连接'
+    },
+    telegram: {
+      unconfigured: '未配置',
+      botFather: '打开官方 BotFather',
+      setup: '向 BotFather 发送 /newbot，将获得的 Token 填入下方。测试后启用并保存通道，再打开与 Bot 的私聊。必须先由你发送 /start，再发送 /whoami 获取自己的数字用户 ID；将 ID 填入白名单后再次保存。',
+      access: '仅支持普通私聊文字。白名单内的用户可以使用此项目的工作目录、Runtime 和已启用工具发起操作。',
+      connectionHelp: '连接与离线消息说明',
+      network: 'GoodBuddy 需要保持运行。Telegram 使用操作系统代理设置；如有需要，请配置系统代理后测试连接。浏览器能够访问不代表通道可用。同一 Bot 仅供一个 GoodBuddy 实例使用，已有 webhook 需在原接入处解除。',
+      offline: '重新启用后可能处理 Telegram 保留的离线消息，包括工具请求；平台最多保留 24 小时。应用异常退出后不会自动续跑中断任务，请先核对桌面任务记录和实际结果，再决定是否重发。',
+      noUsers: '尚未授权用户。启用并保存后，/start 和 /whoami 仅提供配置帮助，不处理业务请求。',
+      sendersHelp: '填写 Telegram 数字用户 ID，每行一个或用逗号分隔，最多 100 个；用户名不能用于授权。',
+      invalidSenders: '请填写正整数用户 ID，最多 100 个，每个不超过 256 位，不要填写 @用户名。',
+      keepToken: '留空以保留已保存的 Token',
+      enterToken: '请输入 BotFather 提供的 Token',
+      clearToken: '保存时清除 Token（停止连接，保留历史）',
+      bot: 'Bot：',
+      verified: 'Telegram 凭据验证成功；测试不会启用消息接收。'
     },
     qr: {
       title: '绑定微信 ClawBot',

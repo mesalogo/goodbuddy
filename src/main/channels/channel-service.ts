@@ -9,6 +9,7 @@ import {
 import {
   MemoryDedupStore,
   MemoryOutbox,
+  isPermanentChannelError,
   type ChannelDriver,
   type ChannelExecutor,
   type DedupStore,
@@ -64,7 +65,7 @@ export function redactChannelError(value: string): string {
 }
 
 export class ChannelService {
-  private readonly allowedSenderIds: ReadonlySet<string>
+  private allowedSenderIds: ReadonlySet<string> = new Set()
   private readonly allowGroupMessages: boolean
   private readonly maximumConcurrency: number
   private readonly maximumInputLength: number
@@ -76,6 +77,12 @@ export class ChannelService {
   private readonly conversationTails = new Map<string, Promise<void>>()
   private state: ServiceState = 'idle'
   private stopPromise?: Promise<void>
+  private readonly lifetime = new AbortController()
+  private readonly sending = new Set<string>()
+  private retryTimer?: ReturnType<typeof setTimeout>
+  private retryPromise?: Promise<void>
+  private retryRequested = false
+  private retryDelay = 1_000
 
   constructor(
     private readonly driver: ChannelDriver,
@@ -90,12 +97,7 @@ export class ChannelService {
       throw new Error('通道标识无效')
     }
 
-    this.allowedSenderIds = new Set(
-      (options.allowedSenderIds ?? []).map((senderId) => senderId.trim())
-    )
-    if (this.allowedSenderIds.has('')) {
-      throw new Error('通道白名单包含无效身份')
-    }
+    this.updateAllowedSenderIds(options.allowedSenderIds ?? [])
     this.allowGroupMessages = options.allowGroupMessages ?? false
     this.maximumConcurrency = boundedInteger(
       options.maximumConcurrency,
@@ -113,6 +115,14 @@ export class ChannelService {
     this.outbox = options.outbox ?? new MemoryOutbox()
     this.onDeliveryFailure = options.onDeliveryFailure
     this.onDeliverySuccess = options.onDeliverySuccess
+  }
+
+  updateAllowedSenderIds(senderIds: readonly string[]): void {
+    const allowed = new Set(senderIds.map((senderId) => senderId.trim()))
+    if (allowed.has('')) {
+      throw new Error('通道白名单包含无效身份')
+    }
+    this.allowedSenderIds = allowed
   }
 
   async start(): Promise<void> {
@@ -138,9 +148,11 @@ export class ChannelService {
           this.onDeliveryFailure?.(error)
         }
       })
-      await this.retryUndelivered()
+      this.scheduleRetry(0)
     } catch (error) {
-      this.state = 'idle'
+      if (!this.lifetime.signal.aborted) {
+        this.state = 'idle'
+      }
       throw error
     }
   }
@@ -168,6 +180,9 @@ export class ChannelService {
     }
 
     this.state = 'stopped'
+    this.lifetime.abort(new Error('通道服务已停止'))
+    clearTimeout(this.retryTimer)
+    this.retryTimer = undefined
     for (const controller of this.active.values()) {
       controller.abort(new Error('通道服务已停止'))
     }
@@ -180,6 +195,7 @@ export class ChannelService {
     const driverStop = Promise.resolve().then(() => this.driver.stop())
     const results = await Promise.allSettled([
       driverStop,
+      this.retryPromise,
       ...this.conversationTails.values()
     ])
     const driverResult = results[0]
@@ -188,12 +204,52 @@ export class ChannelService {
     }
   }
 
+  private scheduleRetry(delay = this.retryDelay): void {
+    if (this.state !== 'running') {
+      return
+    }
+    if (this.retryPromise) {
+      this.retryRequested = true
+      return
+    }
+    if (this.retryTimer) {
+      return
+    }
+    const run = (): void => {
+      this.retryTimer = undefined
+      this.retryRequested = false
+      this.retryPromise = this.retryUndelivered()
+        .catch((error: unknown) => {
+          if (!this.lifetime.signal.aborted) {
+            this.onDeliveryFailure?.(error)
+          }
+        })
+        .finally(() => {
+          this.retryPromise = undefined
+          if (this.retryRequested) {
+            this.scheduleRetry()
+          } else {
+            this.retryDelay = 1_000
+          }
+        })
+    }
+    if (delay === 0) {
+      run()
+    } else {
+      this.retryTimer = setTimeout(run, delay)
+      this.retryTimer.unref?.()
+    }
+  }
+
   private async retryUndelivered(): Promise<void> {
-    const entries = await this.outbox.listUndelivered(
+    // Live sends may finish while this snapshot is read or earlier retries await I/O.
+    const liveDeliveries = new Set(this.sending)
+    const entries = (await this.outbox.listUndelivered(
       this.driver.channel,
       100
-    )
+    )).filter((entry) => !liveDeliveries.has(entry.id) && !this.sending.has(entry.id))
     let consecutiveFailures = 0
+    let failed = false
     for (const entry of entries) {
       if (this.state !== 'running') {
         return
@@ -201,31 +257,49 @@ export class ChannelService {
       if (entry.state === 'terminal' || entry.attempts >= 5) {
         this.onDeliveryFailure?.(
           new Error(
-            `通道结果已达到重试上限，发件箱记录 ${entry.id} 已终止`
+            entry.attempts >= 5
+              ? `通道结果已达到重试上限，发件箱记录 ${entry.id} 已终止`
+              : `通道结果无法投递，发件箱记录 ${entry.id} 已终止`
           )
         )
+        continue
+      }
+      if (this.sending.has(entry.id)) {
         continue
       }
       try {
         await this.driver.send(
           entry.message,
-          new AbortController().signal
+          this.lifetime.signal
         )
         await this.outbox.markDelivered(entry.id)
         this.onDeliverySuccess?.()
         consecutiveFailures = 0
       } catch (error) {
-        await this.outbox.markFailed(entry.id)
-        this.onDeliveryFailure?.(error)
-        consecutiveFailures += 1
-        if (consecutiveFailures >= 3) {
+        if (this.lifetime.signal.aborted) {
           return
         }
+        await this.recordDeliveryFailure(entry.id, error)
+        failed = true
+        consecutiveFailures += 1
+        if (consecutiveFailures >= 3) {
+          break
+        }
       }
+    }
+    if (this.state === 'running') {
+      const remaining = await this.outbox.listUndelivered(this.driver.channel, 100)
+      this.retryRequested ||= remaining.some((entry) =>
+        entry.state !== 'terminal' && entry.attempts < 5 && !this.sending.has(entry.id)
+      )
+      this.retryDelay = failed ? Math.min(this.retryDelay * 2, 30_000) : 1_000
     }
   }
 
   private async process(rawMessage: unknown): Promise<void> {
+    if (this.state !== 'running') {
+      return
+    }
     const parsed = channelInboundTextSchema.safeParse(rawMessage)
     if (!parsed.success) {
       return
@@ -252,13 +326,16 @@ export class ChannelService {
 
     let durableResult = false
     try {
+      if (this.lifetime.signal.aborted || !this.allowedSenderIds.has(message.senderId)) {
+        return
+      }
       if (message.text.length > this.maximumInputLength) {
         durableResult = await this.tryDeliver(
           this.result(message, {
             status: 'rejected',
             error: `消息过长，最多允许 ${this.maximumInputLength} 个字符`
           }),
-          new AbortController().signal
+          this.lifetime.signal
         )
         return
       }
@@ -269,7 +346,7 @@ export class ChannelService {
             status: 'busy',
             error: '当前请求较多，请稍后重试'
           }),
-          new AbortController().signal
+          this.lifetime.signal
         )
         return
       }
@@ -292,7 +369,7 @@ export class ChannelService {
               status: cancelled ? 'cancelled' : 'failed',
               error: cancelled ? '请求已取消' : '请求处理失败'
             }),
-            new AbortController().signal
+            this.lifetime.signal
           )
           return
         }
@@ -302,7 +379,7 @@ export class ChannelService {
               status: 'cancelled',
               error: '请求已取消'
             }),
-            new AbortController().signal
+            this.lifetime.signal
           )
           return
         }
@@ -382,7 +459,10 @@ export class ChannelService {
         )
       }
       void Promise.resolve()
-        .then(() => this.executor(message, signal, reportProgress))
+        .then(() => {
+          signal.throwIfAborted()
+          return this.executor(message, signal, reportProgress)
+        })
         .then(
           (result) => finish(resolve, result),
           (error: unknown) => finish(reject, error)
@@ -429,15 +509,33 @@ export class ChannelService {
     signal: AbortSignal
   ): Promise<boolean> {
     const entry = await this.outbox.enqueue(message)
+    this.sending.add(entry.id)
     try {
-      await this.driver.send(message, signal)
+      const deliverySignal = AbortSignal.any([signal, this.lifetime.signal])
+      deliverySignal.throwIfAborted()
+      await this.driver.send(message, deliverySignal)
       await this.outbox.markDelivered(entry.id)
       this.onDeliverySuccess?.()
     } catch (error) {
-      await this.outbox.markFailed(entry.id)
-      this.onDeliveryFailure?.(error)
+      if (!this.lifetime.signal.aborted) {
+        await this.recordDeliveryFailure(entry.id, error)
+        if (!isPermanentChannelError(error)) {
+          this.scheduleRetry()
+        }
+      }
+    } finally {
+      this.sending.delete(entry.id)
     }
     return true
+  }
+
+  private async recordDeliveryFailure(id: string, error: unknown): Promise<void> {
+    if (isPermanentChannelError(error) && this.outbox.markTerminal) {
+      await this.outbox.markTerminal(id)
+    } else {
+      await this.outbox.markFailed(id)
+    }
+    this.onDeliveryFailure?.(error)
   }
 
   private async tryDeliver(

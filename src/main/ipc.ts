@@ -81,6 +81,7 @@ import {
 import {
   channelSettingsApplySchema,
   dingTalkChannelSettingsInputSchema,
+  telegramChannelSettingsInputSchema,
   weComChannelSettingsInputSchema
 } from '../shared/channel-settings-contracts'
 import { applicationSettingsUpdateSchema, defaultSupervisorModelConcurrency } from '../shared/application-settings-contracts'
@@ -345,6 +346,12 @@ const channelSettingsTestRequestSchema = z.discriminatedUnion('channel', [
     .object({
       channel: z.literal('dingtalk'),
       settings: dingTalkChannelSettingsInputSchema.optional()
+    })
+    .strict(),
+  z
+    .object({
+      channel: z.literal('telegram'),
+      settings: telegramChannelSettingsInputSchema.optional()
     })
     .strict()
 ])
@@ -3057,6 +3064,11 @@ export function registerIpcHandlers(
   const channelManager = channelSettingsStore
     ? new ChannelManager(channelSettingsStore, channelExecutor, {
         launchWechatSidecar,
+        onStatusChanged: (change) => {
+          if (!window.isDestroyed()) {
+            window.webContents.send(ipcChannels.channelStatusChanged, change)
+          }
+        },
         dedupStore: new SqliteChannelDedupStore(assistantDatabase),
         outbox: new SqliteChannelOutbox(assistantDatabase)
       })
@@ -5078,6 +5090,9 @@ export function registerIpcHandlers(
         throw new Error('消息通道设置服务不可用')
       }
       const request = channelSettingsTestRequestSchema.parse(input)
+      if (request.channel === 'telegram') {
+        return channelManager.testConnection('telegram', request.settings)
+      }
       return request.channel === 'wecom'
         ? channelManager.testConnection('wecom', request.settings)
         : channelManager.testConnection('dingtalk', request.settings)

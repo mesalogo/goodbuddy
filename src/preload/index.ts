@@ -92,10 +92,12 @@ import type {
 } from '../shared/assistant-contracts'
 import type {
   ChannelConnectionTestResult,
+  ChannelRuntimeStatusChange,
   ChannelSettingsApply,
   ChannelSettingsSnapshot,
   CredentialChannel,
   DingTalkChannelSettingsInput,
+  TelegramChannelSettingsInput,
   WeComChannelSettingsInput
 } from '../shared/channel-settings-contracts'
 import type {
@@ -626,6 +628,14 @@ const desktopApi: DesktopApi = {
     }
   },
   channels: {
+    onStatusChanged: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        change: ChannelRuntimeStatusChange
+      ): void => listener(change)
+      ipcRenderer.on(ipcChannels.channelStatusChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.channelStatusChanged, handler)
+    },
     getSnapshot: () =>
       ipcRenderer.invoke(
         ipcChannels.channelSettingsGet
@@ -637,7 +647,7 @@ const desktopApi: DesktopApi = {
       ) as Promise<ChannelSettingsSnapshot>,
     testConnection: (
       channel: CredentialChannel,
-      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
+      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
     ) =>
       ipcRenderer.invoke(ipcChannels.channelSettingsTest, {
         channel,

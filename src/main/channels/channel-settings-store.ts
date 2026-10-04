@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   CHANNEL_SETTINGS_LIMITS,
   allowedSenderIdsSchema,
+  telegramAllowedSenderIdsSchema,
   channelSettingsApplySchema,
   type ChannelRuntimeStatus,
   type ChannelSettingsApply,
@@ -10,6 +11,7 @@ import {
   type CredentialChannel,
   type DingTalkChannelSettingsInput,
   type ManagedChannel,
+  type TelegramChannelSettingsInput,
   type WeComChannelSettingsInput
 } from '../../shared/channel-settings-contracts'
 import { weixinAccountDisplay } from '../../shared/weixin-channel-contracts'
@@ -103,7 +105,16 @@ const storedSettingsSchema = z
       })
       .strict(),
     wecom: legacyStoredSettingsSchema.shape.wecom,
-    dingtalk: legacyStoredSettingsSchema.shape.dingtalk
+    dingtalk: legacyStoredSettingsSchema.shape.dingtalk,
+    telegram: z.object({
+      ...storedChannelFields,
+      allowedSenderIds: telegramAllowedSenderIdsSchema,
+      allowGroupMessages: z.literal(false)
+    }).strict().default({
+      enabled: false,
+      allowedSenderIds: [],
+      allowGroupMessages: false
+    })
   })
   .strict()
 
@@ -111,6 +122,7 @@ type StoredSettings = z.infer<typeof storedSettingsSchema>
 type StoredCredentialChannel =
   | StoredSettings['wecom']
   | StoredSettings['dingtalk']
+  | StoredSettings['telegram']
 type StoredEncryptedCredential = z.infer<
   typeof encryptedCredentialSchema
 >
@@ -120,7 +132,7 @@ class DeferredWeixinMigrationError extends Error {}
 const credentialPayloadSchema = z
   .object({
     version: z.literal(1),
-    channel: z.enum(['weixin', 'wecom', 'dingtalk']),
+    channel: z.enum(['weixin', 'wecom', 'dingtalk', 'telegram']),
     secret: z
       .string()
       .min(1)
@@ -167,9 +179,19 @@ type EnvironmentChannel = {
   allowedSenderIds: readonly string[]
   allowGroupMessages: boolean
   warning?: SettingsWarning
+  configurationError?: string
 }
 
 export type ResolvedChannelSettings =
+  | {
+      channel: 'telegram'
+      enabled: boolean
+      secret?: string
+      allowedSenderIds: readonly string[]
+      allowGroupMessages: false
+      source: 'none' | 'encrypted' | 'environment' | 'unreadable'
+      readOnly: boolean
+    }
   | {
       channel: 'weixin'
       enabled: boolean
@@ -205,6 +227,11 @@ export type ResolvedChannelSettings =
 
 const defaultStoredSettings: StoredSettings = {
   version: 3,
+  telegram: {
+    enabled: false,
+    allowedSenderIds: [],
+    allowGroupMessages: false
+  },
   weixin: {
     enabled: false
   },
@@ -337,20 +364,23 @@ export class ChannelSettingsStore {
   ) {
     this.environmentChannels = {
       wecom: this.readEnvironmentChannel('wecom'),
-      dingtalk: this.readEnvironmentChannel('dingtalk')
+      dingtalk: this.readEnvironmentChannel('dingtalk'),
+      telegram: this.readEnvironmentChannel('telegram')
     }
   }
 
   async snapshot(
     statuses: Partial<Record<ManagedChannel, ChannelRuntimeStatus>> = {}
   ): Promise<ChannelSettingsSnapshot> {
-    const [weixin, wecom, dingtalk] = await Promise.all([
+    const [weixin, wecom, dingtalk, telegram] = await Promise.all([
       this.resolve('weixin'),
       this.resolve('wecom'),
-      this.resolve('dingtalk')
+      this.resolve('dingtalk'),
+      this.resolve('telegram')
     ])
     const weComEnvironment = this.environmentChannel('wecom')
     const dingTalkEnvironment = this.environmentChannel('dingtalk')
+    const telegramEnvironment = this.environmentChannel('telegram')
     const warnings = [
       ...this.warnings,
       ...(this.runtimeRepairWarning ? [this.runtimeRepairWarning] : []),
@@ -363,6 +393,17 @@ export class ChannelSettingsStore {
         ) === index
     )
     return {
+      telegram: {
+        enabled: telegram.enabled,
+        secretConfigured: telegram.secret !== undefined,
+        source: telegram.source,
+        readOnly: telegram.readOnly,
+        allowedSenderIds: [...telegram.allowedSenderIds],
+        allowGroupMessages: false,
+        status: telegramEnvironment.configurationError
+          ? { state: 'error', lastError: telegramEnvironment.configurationError }
+          : statuses.telegram ?? defaultStatus(telegram.enabled)
+      },
       weixin: {
         enabled: weixin.enabled,
         bindingConfigured: weixin.token !== undefined,
@@ -418,6 +459,9 @@ export class ChannelSettingsStore {
     return this.snapshot(statuses)
   }
 
+  resolve(channel: 'telegram'): Promise<Extract<ResolvedChannelSettings, {
+    channel: 'telegram'
+  }>>
   resolve(channel: 'wecom'): Promise<Extract<ResolvedChannelSettings, {
     channel: 'wecom'
   }>>
@@ -463,6 +507,9 @@ export class ChannelSettingsStore {
         source: 'environment' as const,
         readOnly: true
       }
+      if (channel === 'telegram') {
+        return { channel, ...common, allowGroupMessages: false }
+      }
       return channel === 'wecom'
         ? {
             channel,
@@ -493,6 +540,9 @@ export class ChannelSettingsStore {
           : ('encrypted' as const),
       readOnly: false
     }
+    if (channel === 'telegram') {
+      return { channel, ...common, allowGroupMessages: false }
+    }
     return channel === 'wecom'
       ? { channel, botId: settings.wecom.botId, ...common }
       : { channel, clientId: settings.dingtalk.clientId, ...common }
@@ -501,12 +551,14 @@ export class ChannelSettingsStore {
   resolveAll(): Promise<readonly [
     Extract<ResolvedChannelSettings, { channel: 'weixin' }>,
     Extract<ResolvedChannelSettings, { channel: 'wecom' }>,
-    Extract<ResolvedChannelSettings, { channel: 'dingtalk' }>
+    Extract<ResolvedChannelSettings, { channel: 'dingtalk' }>,
+    Extract<ResolvedChannelSettings, { channel: 'telegram' }>
   ]> {
     return Promise.all([
       this.resolve('weixin'),
       this.resolve('wecom'),
-      this.resolve('dingtalk')
+      this.resolve('dingtalk'),
+      this.resolve('telegram')
     ])
   }
 
@@ -583,6 +635,12 @@ export class ChannelSettingsStore {
     if (input.weixin !== undefined) {
       current.weixin.enabled = input.weixin.enabled
     }
+    if (input.telegram !== undefined) {
+      if (this.environmentChannel('telegram').owned) {
+        throw new Error('Telegram 由环境变量配置，不能在设置中修改')
+      }
+      current.telegram = this.updateStoredChannel('telegram', current.telegram, input.telegram)
+    }
     if (input.wecom !== undefined) {
       if (this.environmentChannel('wecom').owned) {
         throw new Error('企业微信由环境变量配置，不能在设置中修改')
@@ -609,6 +667,7 @@ export class ChannelSettingsStore {
     }
     this.validateEnabledCredentialChannel('wecom', current.wecom)
     this.validateEnabledCredentialChannel('dingtalk', current.dingtalk)
+    this.validateEnabledCredentialChannel('telegram', current.telegram)
     await this.persist(current)
     this.settings = current
     if (!this.temporarilyDisabledWeixin) {
@@ -632,6 +691,11 @@ export class ChannelSettingsStore {
   }
 
   private updateStoredChannel(
+    channel: 'telegram',
+    current: StoredSettings['telegram'],
+    input: TelegramChannelSettingsInput
+  ): StoredSettings['telegram']
+  private updateStoredChannel(
     channel: 'wecom',
     current: StoredSettings['wecom'],
     input: WeComChannelSettingsInput
@@ -644,7 +708,7 @@ export class ChannelSettingsStore {
   private updateStoredChannel(
     channel: CredentialChannel,
     current: StoredCredentialChannel,
-    input: WeComChannelSettingsInput | DingTalkChannelSettingsInput
+    input: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
   ): StoredCredentialChannel {
     const credential =
       input.secret.action === 'keep'
@@ -661,6 +725,9 @@ export class ChannelSettingsStore {
       ...(credential === undefined ? {} : { credential }),
       allowedSenderIds,
       allowGroupMessages: input.allowGroupMessages
+    }
+    if (channel === 'telegram') {
+      return { ...common, allowGroupMessages: false }
     }
     return channel === 'wecom'
       ? {
@@ -691,6 +758,12 @@ export class ChannelSettingsStore {
     stored: StoredCredentialChannel
   ): void {
     if (!stored.enabled) {
+      return
+    }
+    if (channel === 'telegram') {
+      if (this.decryptCredential(channel, stored) === undefined) {
+        throw new Error('启用 Telegram 前需要配置 Bot Token')
+      }
       return
     }
     const identifier =
@@ -732,6 +805,7 @@ export class ChannelSettingsStore {
       return undefined
     }
     const warn = (): undefined => {
+      if (channel === 'telegram') return undefined
       this.addWarning({
         code:
           channel === 'wecom'
@@ -750,7 +824,7 @@ export class ChannelSettingsStore {
       if (payload.channel !== channel) {
         return warn()
       }
-      this.removeWarnings([
+      if (channel !== 'telegram') this.removeWarnings([
         channel === 'wecom'
           ? 'channel-wecom-credential-unreadable'
           : 'channel-dingtalk-credential-unreadable'
@@ -825,7 +899,8 @@ export class ChannelSettingsStore {
               enabled: false
             },
             wecom: legacy.wecom,
-            dingtalk: legacy.dingtalk
+            dingtalk: legacy.dingtalk,
+            telegram: structuredClone(defaultStoredSettings.telegram)
           }
         }
         await this.persist(this.settings)
@@ -924,7 +999,8 @@ export class ChannelSettingsStore {
           : {})
       },
       wecom: settings.wecom,
-      dingtalk: settings.dingtalk
+      dingtalk: settings.dingtalk,
+      telegram: structuredClone(defaultStoredSettings.telegram)
     }
   }
 
@@ -939,6 +1015,30 @@ export class ChannelSettingsStore {
   private readEnvironmentChannel(
     channel: CredentialChannel
   ): EnvironmentChannel {
+    if (channel === 'telegram') {
+      const secret = boundedEnvironmentValue(
+        this.environment, 'GOODBUDDY_TELEGRAM_BOT_TOKEN',
+        CHANNEL_SETTINGS_LIMITS.maximumSecretLength
+      )
+      const owned = secret.value !== undefined || secret.invalid
+      const enabled = environmentBoolean(this.environment, 'GOODBUDDY_TELEGRAM_ENABLED', true)
+      const senders = telegramAllowedSenderIdsSchema.safeParse(
+        this.environment.GOODBUDDY_TELEGRAM_ALLOWED_SENDERS?.trim()
+          ? this.environment.GOODBUDDY_TELEGRAM_ALLOWED_SENDERS.split(',')
+          : []
+      )
+      const groups = environmentBoolean(this.environment, 'GOODBUDDY_TELEGRAM_ALLOW_GROUPS', false)
+      const invalid = secret.invalid || enabled.invalid || !senders.success || groups.invalid || groups.value
+      return {
+        owned,
+        enabled: owned && !invalid && enabled.value,
+        id: '',
+        secret: secret.value,
+        allowedSenderIds: senders.success ? senders.data : [],
+        allowGroupMessages: false,
+        ...(owned && invalid ? { configurationError: 'Telegram 环境变量配置无效，请检查 Token、数字用户 ID 和私聊设置' } : {})
+      }
+    }
     const prefix =
       channel === 'wecom' ? 'GOODBUDDY_WECOM' : 'GOODBUDDY_DINGTALK'
     const idName =

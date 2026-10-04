@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -8,7 +9,7 @@ import {
 } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ChannelSettingsSnapshot } from '../../shared/channel-settings-contracts'
+import type { ChannelRuntimeStatusChange, ChannelSettingsSnapshot } from '../../shared/channel-settings-contracts'
 import {
   defaultRuntimeSettings,
   type DesktopApi,
@@ -71,6 +72,15 @@ const runtimeSettings: RuntimeSettings = {
 }
 
 const snapshot: ChannelSettingsSnapshot = {
+  telegram: {
+    enabled: false,
+    secretConfigured: false,
+    source: 'none',
+    readOnly: false,
+    allowedSenderIds: [],
+    allowGroupMessages: false,
+    status: { state: 'disabled' }
+  },
   weixin: {
     enabled: false,
     bindingConfigured: false,
@@ -102,7 +112,8 @@ const snapshot: ChannelSettingsSnapshot = {
 const projects: AssistantProject[] = [
   ['weixin', '微信 ClawBot'],
   ['wecom', '企业微信'],
-  ['dingtalk', '钉钉']
+  ['dingtalk', '钉钉'],
+  ['telegram', 'Telegram']
 ].map(([channel, name], index) => ({
   id: `00000000-0000-4000-8000-00000000000${index + 1}`,
   name: name!,
@@ -114,7 +125,7 @@ const projects: AssistantProject[] = [
   },
   runtimeSelection: { provider: 'model' },
   kind: 'channel',
-  channel: channel as 'weixin' | 'wecom' | 'dingtalk',
+  channel: channel as AssistantProject['channel'],
   status: 'active',
   createdAt: '2026-08-04T00:00:00.000Z',
   updatedAt: '2026-08-04T00:00:00.000Z'
@@ -167,6 +178,223 @@ afterEach(async () => {
 })
 
 describe('ChannelSettingsSection', () => {
+  it('keeps pushed channel status newer than loading and updates reconnect errors without resetting drafts', async () => {
+    let receive!: (change: ChannelRuntimeStatusChange) => void
+    const unsubscribe = vi.fn()
+    const onStatusChanged = vi.fn((listener: typeof receive) => {
+      receive = listener
+      return unsubscribe
+    })
+    const getSnapshot = vi.fn(async () => {
+      receive({ channel: 'telegram', status: { state: 'running' } })
+      return { ...snapshot, telegram: { ...snapshot.telegram, enabled: true, secretConfigured: true, status: { state: 'starting' } } }
+    })
+    const apply = vi.fn()
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: { ...bindingApi(), onStatusChanged, getSnapshot, apply, testConnection: vi.fn() },
+        settings: settingsApi(), projects: { update: vi.fn() }
+      } as unknown as DesktopApi
+    })
+    const { unmount } = renderChannelSettings({ initialChannel: 'telegram' })
+    const token = await screen.findByLabelText('TelegramBot Token')
+    expect(screen.getByText('已连接')).toBeInTheDocument()
+    expect(screen.queryByText('正在连接')).not.toBeInTheDocument()
+    fireEvent.change(token, { target: { value: 'unsaved-token-placeholder' } })
+    const senders = screen.getByLabelText('Telegram允许的发送者 ID')
+    fireEvent.change(senders, { target: { value: '12345\n67890' } })
+    act(() => receive({ channel: 'telegram', status: { state: 'error', lastError: 'Network unavailable' } }))
+    expect(screen.getByText('连接失败')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Network unavailable')
+    act(() => receive({ channel: 'telegram', status: { state: 'starting' } }))
+    expect(screen.getByText('正在连接')).toBeInTheDocument()
+    expect(screen.queryByText('Network unavailable')).not.toBeInTheDocument()
+    act(() => receive({ channel: 'telegram', status: { state: 'running' } }))
+    expect(screen.getByText('已连接')).toBeInTheDocument()
+    expect(token).toHaveValue('unsaved-token-placeholder')
+    expect(senders).toHaveValue('12345\n67890')
+    expect(getSnapshot).toHaveBeenCalledOnce()
+    expect(onStatusChanged).toHaveBeenCalledOnce()
+    expect(apply).not.toHaveBeenCalled()
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('tests and saves Telegram credentials, keeps them on whitelist edits, and clears them explicitly', async () => {
+    const configured = {
+      ...snapshot,
+      telegram: { ...snapshot.telegram, enabled: true, secretConfigured: true, source: 'encrypted' as const }
+    }
+    const apply = vi.fn()
+      .mockResolvedValueOnce(configured)
+      .mockResolvedValueOnce({ ...configured, telegram: { ...configured.telegram, allowedSenderIds: ['12345', '67890'] } })
+      .mockResolvedValueOnce(snapshot)
+    const testConnection = vi.fn(async () => ({ channel: 'telegram', ok: true, botUsername: 'goodbuddy_test_bot' }))
+    const updateProject = vi.fn(async (id: string, input: ProjectCreateInput) => ({ ...projects.find((p) => p.id === id)!, ...input }))
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: { ...bindingApi(), getSnapshot: vi.fn(async () => snapshot), apply, testConnection },
+        settings: settingsApi(),
+        projects: { update: updateProject }
+      } as unknown as DesktopApi
+    })
+    const onNotify = vi.fn()
+    renderChannelSettings({ initialChannel: 'telegram', onNotify })
+    const token = await screen.findByLabelText('TelegramBot Token')
+    expect(token).toHaveAttribute('type', 'password')
+    expect(screen.getByRole('link', { name: '打开官方 BotFather' })).toHaveAttribute('href', 'https://t.me/BotFather')
+    expect(screen.getByText(/尚未授权用户/u)).toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: /群聊/u })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/机器人 ID/u)).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: /默认模式/u })).not.toBeInTheDocument()
+    fireEvent.change(token, { target: { value: 'test-token-placeholder' } })
+    fireEvent.click(screen.getByRole('button', { name: '测试Telegram连接' }))
+    await waitFor(() => {
+      expect(testConnection).toHaveBeenCalledWith('telegram', {
+        enabled: false, secret: { action: 'replace', value: 'test-token-placeholder' }, allowedSenderIds: [], allowGroupMessages: false
+      })
+      expect(screen.getByRole('link', { name: '@goodbuddy_test_bot' })).toHaveAttribute('href', 'https://t.me/goodbuddy_test_bot')
+      expect(screen.getByRole('button', { name: '保存通道设置' })).toBeEnabled()
+    })
+    expect(apply).not.toHaveBeenCalled()
+    expect(screen.getByRole('switch', { name: '启用Telegram通道' })).not.toBeChecked()
+    expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ message: 'Telegram 凭据验证成功；测试不会启用消息接收。' }))
+    fireEvent.click(screen.getByRole('switch', { name: '启用Telegram通道' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存通道设置' }))
+    await waitFor(() => {
+      expect(apply).toHaveBeenLastCalledWith({ telegram: {
+        enabled: true, secret: { action: 'replace', value: 'test-token-placeholder' }, allowedSenderIds: [], allowGroupMessages: false
+      } })
+      expect(token).toHaveValue('')
+      expect(screen.getByRole('button', { name: '保存通道设置' })).toBeEnabled()
+    })
+    fireEvent.change(screen.getByLabelText('Telegram允许的发送者 ID'), { target: { value: '12345，67890\n12345' } })
+    fireEvent.change(screen.getByLabelText('Telegram 默认工作目录'), { target: { value: 'C:\\TelegramWorkspace' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存通道设置' }))
+    await waitFor(() => {
+      expect(apply).toHaveBeenLastCalledWith({ telegram: {
+        enabled: true, secret: { action: 'keep' }, allowedSenderIds: ['12345', '67890'], allowGroupMessages: false
+      } })
+      expect(screen.getByRole('button', { name: '保存通道设置' })).toBeEnabled()
+    })
+    expect(updateProject).toHaveBeenCalledWith(projects[3]!.id, expect.objectContaining({ rootPath: 'C:\\TelegramWorkspace' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /保存时清除 Token/u }))
+    expect(screen.queryByRole('link', { name: '@goodbuddy_test_bot' })).not.toBeInTheDocument()
+    expect(token).toBeDisabled()
+    expect(screen.getByRole('button', { name: '测试Telegram连接' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '保存通道设置' }))
+    await waitFor(() => {
+      expect(apply).toHaveBeenLastCalledWith({ telegram: {
+        enabled: false, secret: { action: 'clear' }, allowedSenderIds: ['12345', '67890'], allowGroupMessages: false
+      } })
+      expect(screen.queryByRole('checkbox', { name: /保存时清除 Token/u })).not.toBeInTheDocument()
+      expect(token).toHaveValue('')
+      expect(token).toBeEnabled()
+      expect(screen.getByRole('switch', { name: '启用Telegram通道' })).not.toBeChecked()
+    })
+  })
+
+  it('validates Telegram IDs and retains the draft after test and save failures', async () => {
+    const apply = vi.fn().mockRejectedValue(new Error('Save failed'))
+    const testConnection = vi.fn().mockResolvedValue({ channel: 'telegram', ok: false, error: 'Webhook in use' })
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: { ...bindingApi(), getSnapshot: vi.fn(async () => snapshot), apply, testConnection },
+        settings: settingsApi(), projects: { update: vi.fn(async () => projects[3]) }
+      } as unknown as DesktopApi
+    })
+    renderChannelSettings({ initialChannel: 'telegram' })
+    const token = await screen.findByLabelText('TelegramBot Token')
+    fireEvent.change(token, { target: { value: 'test-token-placeholder' } })
+    const senders = screen.getByLabelText('Telegram允许的发送者 ID')
+    fireEvent.change(senders, { target: { value: '@username' } })
+    expect(senders).toHaveAttribute('aria-invalid', 'true')
+    expect(senders).toHaveAccessibleDescription('请填写正整数用户 ID，最多 100 个，每个不超过 256 位，不要填写 @用户名。')
+    fireEvent.click(screen.getByRole('button', { name: '保存通道设置' }))
+    expect(apply).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '测试Telegram连接' })).toBeDisabled()
+    fireEvent.change(senders, { target: { value: '12345' } })
+    fireEvent.click(screen.getByRole('button', { name: '测试Telegram连接' }))
+    await waitFor(() => {
+      expect(screen.getByText('Webhook in use')).toBeInTheDocument()
+      expect(token).toBeEnabled()
+      expect(token).toHaveValue('test-token-placeholder')
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存通道设置' }))
+    await waitFor(() => {
+      expect(screen.getByText('Save failed')).toBeInTheDocument()
+      expect(token).toHaveValue('test-token-placeholder')
+      expect(senders).toHaveValue('12345')
+      expect(screen.getByRole('button', { name: '保存通道设置' })).toBeEnabled()
+    })
+  })
+
+  it('tests saved Telegram Tokens without replacement and locks edits until the result arrives', async () => {
+    let resolveTest!: (value: { channel: 'telegram'; ok: boolean; botUsername: string }) => void
+    const testConnection = vi.fn(() => new Promise((resolve) => { resolveTest = resolve }))
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          ...bindingApi(),
+          getSnapshot: vi.fn(async () => ({ ...snapshot, telegram: { ...snapshot.telegram, secretConfigured: true, source: 'encrypted' } })),
+          apply: vi.fn(), testConnection
+        },
+        settings: settingsApi(), projects: { update: vi.fn() }
+      } as unknown as DesktopApi
+    })
+    renderChannelSettings({ initialChannel: 'telegram' })
+    const token = await screen.findByLabelText('TelegramBot Token')
+    fireEvent.click(screen.getByRole('button', { name: '测试Telegram连接' }))
+    expect(testConnection).toHaveBeenCalledWith('telegram', {
+      enabled: false, secret: { action: 'keep' }, allowedSenderIds: [], allowGroupMessages: false
+    })
+    expect(token).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: /保存时清除 Token/u })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '保存通道设置' })).toBeDisabled()
+    await act(async () => resolveTest({ channel: 'telegram', ok: true, botUsername: 'saved_test_bot' }))
+    await waitFor(() => {
+      expect(token).toBeEnabled()
+      expect(screen.getByRole('link', { name: '@saved_test_bot' })).toBeInTheDocument()
+    })
+    fireEvent.change(token, { target: { value: 'replacement-placeholder' } })
+    expect(screen.queryByRole('link', { name: '@saved_test_bot' })).not.toBeInTheDocument()
+  })
+
+  it('renders English Telegram setup and tests read-only environment credentials', async () => {
+    const testConnection = vi.fn(async () => ({ channel: 'telegram', ok: true }))
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          ...bindingApi(),
+          getSnapshot: vi.fn(async () => ({ ...snapshot, telegram: { ...snapshot.telegram, secretConfigured: true, readOnly: true, source: 'environment' } })),
+          apply: vi.fn(), testConnection
+        },
+        settings: settingsApi(), projects: { update: vi.fn() }
+      } as unknown as DesktopApi
+    })
+    await i18n.changeLanguage('en-US')
+    renderChannelSettings({ initialChannel: 'telegram' })
+    expect(await screen.findByLabelText('Telegram Bot Token')).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'Enable the Telegram channel' })).toBeDisabled()
+    expect(screen.getByLabelText('Telegram allowed sender IDs')).toBeDisabled()
+    expect(screen.getByText(/Send \/newbot to BotFather/u)).toHaveTextContent('/whoami')
+    expect(screen.getByText(/No users authorized/u)).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Connection and offline messages' }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('operating system proxy')
+    fireEvent.click(screen.getByRole('button', { name: 'Test Telegram connection' }))
+    await waitFor(() => {
+      expect(testConnection).toHaveBeenCalledWith('telegram', undefined)
+      expect(screen.getByRole('button', { name: 'Test Telegram connection' })).toBeEnabled()
+    })
+    expect(screen.queryByRole('link', { name: /^@/u })).not.toBeInTheDocument()
+  })
+
   it('saves editable channel settings without returning stored secrets', async () => {
     const updateProject = vi.fn(async (
       projectId: string,
@@ -545,7 +773,7 @@ describe('ChannelSettingsSection', () => {
     expect(apply).not.toHaveBeenCalled()
   })
 
-  it('presents the three channel configurations as keyboard tabs', async () => {
+  it('presents the four channel configurations as keyboard tabs', async () => {
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: {
@@ -581,6 +809,7 @@ describe('ChannelSettingsSection', () => {
     expect(weixinTab).toHaveAttribute('aria-selected', 'true')
     expect(wecomTab).toHaveAttribute('tabindex', '-1')
     expect(dingtalkTab).toHaveAttribute('tabindex', '-1')
+    expect(within(tablist).getByRole('tab', { name: 'Telegram' })).toHaveAttribute('tabindex', '-1')
     expect(screen.getByText('项目设置')).toBeInTheDocument()
     expect(
       screen.getByText('与左上角当前通道项目的设置保持同步。')
@@ -601,6 +830,9 @@ describe('ChannelSettingsSection', () => {
     expect(
       screen.getByRole('switch', { name: '启用企业微信通道' })
     ).toBeInTheDocument()
+    fireEvent.keyDown(wecomTab, { key: 'End' })
+    expect(within(tablist).getByRole('tab', { name: 'Telegram' })).toHaveFocus()
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'channel-settings-tab-telegram')
   })
 
   it('opens the requested channel configuration', async () => {

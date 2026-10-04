@@ -95,10 +95,12 @@ import type {
 } from './magic-notes-contracts'
 import type {
   ChannelConnectionTestResult,
+  ChannelRuntimeStatusChange,
   ChannelSettingsApply,
   ChannelSettingsSnapshot,
   CredentialChannel,
   DingTalkChannelSettingsInput,
+  TelegramChannelSettingsInput,
   WeComChannelSettingsInput
 } from './channel-settings-contracts'
 import type {
@@ -1906,10 +1908,13 @@ export type DesktopApi = {
   }
   channels?: {
     getSnapshot: () => Promise<ChannelSettingsSnapshot>
+    onStatusChanged: (
+      listener: (change: ChannelRuntimeStatusChange) => void
+    ) => () => void
     apply: (input: ChannelSettingsApply) => Promise<ChannelSettingsSnapshot>
     testConnection: (
       channel: CredentialChannel,
-      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
+      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
     ) => Promise<ChannelConnectionTestResult>
     getWeixinBinding: () => Promise<WeixinBindingSnapshot>
     startWeixinBinding: () => Promise<WeixinBindingSnapshot>

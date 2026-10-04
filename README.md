@@ -56,7 +56,7 @@ current limitations.
 | Data and execution | Local SQLite and note-file storage, current-account tool execution, and recorded tool activity |
 | Knowledge | File, folder, and web imports with full-text, Chinese phrase, vector, and knowledge graph retrieval |
 | Desktop releases | Official Windows, macOS, and Linux builds for `x64` and `arm64`, plus an experimental LoongArch preview |
-| Integrations | Local or hosted model endpoints, custom MCP servers, WeChat ClawBot, WeCom, and DingTalk |
+| Integrations | Local or hosted model endpoints, custom MCP servers, WeChat ClawBot, WeCom, DingTalk, and Telegram ([live Bot + model acceptance pending](./docs/features/telegram-channel/progress.md)) |
 
 ## Product tour
 

@@ -2841,6 +2841,14 @@ describe('AssistantDatabase', () => {
       expect.objectContaining({
         kind: 'channel',
         channel: 'dingtalk'
+      }),
+      expect.objectContaining({
+        name: 'Telegram',
+        kind: 'channel',
+        channel: 'telegram',
+        rootPath: 'C:\\Users\\test',
+        executionSpace: { kind: 'local', rootPath: 'C:\\Users\\test' },
+        runtimeSelection: { provider: 'model' }
       })
     ])
     expect(second.map((project) => project.id)).toEqual(
@@ -2889,6 +2897,101 @@ describe('AssistantDatabase', () => {
       database.deleteProject(weixin.id, weixin.name)
     ).toThrow('系统通道项目不能删除')
     database.close()
+  })
+
+  it('relaxes schema 60 channel checks without rewriting or losing existing records', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-telegram-migration-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'assistant.sqlite')
+    const original = new AssistantDatabase(path)
+    original.initialize('C:\\Workspace')
+    const projects = original.ensureChannelProjects('C:\\Channels')
+    for (const project of projects.filter(project => project.channel !== 'telegram')) {
+      const conversation = original.getOrCreateRemoteConversation({
+        projectId: project.id, channel: project.channel!, accountId: 'legacy-account',
+        externalConversationId: 'legacy-chat', conversationType: 'direct',
+        title: 'Legacy conversation', accountDisplay: 'Legacy account',
+        runtimeSelection: { provider: 'model' }
+      })
+      original.appendRemoteConversationMessage({ conversationId: conversation.id, role: 'user', content: 'Preserve this message' })
+    }
+    original.close()
+    const legacy = new DatabaseSync(path)
+    legacy.enableDefensive(false)
+    legacy.exec(`PRAGMA foreign_keys = ON; DELETE FROM projects WHERE channel = 'telegram';
+      PRAGMA writable_schema = ON;
+      UPDATE sqlite_schema SET sql = replace(sql,
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'')',
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'')')
+      WHERE type = 'table' AND name IN ('projects', 'conversations');
+      PRAGMA writable_schema = RESET; PRAGMA user_version = 60;`)
+    const tables = ['projects', 'project_execution_spaces', 'conversations', 'messages']
+    const rows = tables.map(table => legacy.prepare(`SELECT rowid, * FROM ${table} ORDER BY rowid`).all())
+    const schema = legacy.prepare('SELECT type, name, tbl_name, rootpage, sql FROM sqlite_schema ORDER BY name').all()
+    expect(() => legacy.prepare("UPDATE projects SET channel = 'telegram' WHERE channel = 'weixin'").run()).toThrow(/CHECK/)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(path)
+    const progress = vi.fn()
+    migrated.upgradeStorage(progress, () => false, { migrateNotes: false, reclaimSpace: false })
+    expect(progress).not.toHaveBeenCalled()
+    const check = new DatabaseSync(path)
+    expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(61)
+    expect(tables.map(table => check.prepare(`SELECT rowid, * FROM ${table} ORDER BY rowid`).all())).toEqual(rows)
+    expect(check.prepare('SELECT type, name, tbl_name, rootpage, sql FROM sqlite_schema ORDER BY name').all()).toEqual(
+      schema.map(row => ['projects', 'conversations'].includes(row.name as string) && row.type === 'table'
+        ? { ...row, sql: (row.sql as string).replace("channel IN ('weixin', 'wecom', 'dingtalk')", "channel IN ('weixin', 'wecom', 'dingtalk', 'telegram')") }
+        : row)
+    )
+    expect(check.prepare('PRAGMA integrity_check').get()!.integrity_check).toBe('ok')
+    expect(check.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(() => check.prepare("UPDATE projects SET channel = 'invalid' WHERE channel = 'weixin'").run()).toThrow(/CHECK/)
+    expect(() => check.prepare("UPDATE conversations SET channel = 'invalid' WHERE channel = 'weixin'").run()).toThrow(/CHECK/)
+    check.close()
+
+    migrated.initialize('C:\\Workspace')
+    const telegram = migrated.ensureChannelProjects('C:\\Telegram').find(project => project.channel === 'telegram')!
+    const input = {
+      projectId: telegram.id, channel: 'telegram' as const, accountId: 'bot',
+      externalConversationId: '-100123', conversationType: 'group' as const,
+      title: 'Telegram chat', accountDisplay: 'Telegram', runtimeSelection: { provider: 'model' as const }
+    }
+    const conversation = migrated.getOrCreateRemoteConversation(input)
+    migrated.close()
+    const reopened = new AssistantDatabase(path)
+    reopened.initialize('C:\\Workspace')
+    expect(reopened.ensureChannelProjects('C:\\Ignored').find(project => project.channel === 'telegram')).toEqual(telegram)
+    expect(reopened.getOrCreateRemoteConversation(input).id).toBe(conversation.id)
+    expect(reopened.getConversation(conversation.id).remote?.channel).toBe('telegram')
+    reopened.close()
+  })
+
+  it('rolls back the channel CHECK migration if a schema definition is unexpected', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-telegram-rollback-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(path)
+    database.initialize('C:\\Workspace')
+    database.close()
+    const legacy = new DatabaseSync(path)
+    legacy.enableDefensive(false)
+    legacy.exec(`PRAGMA writable_schema = ON;
+      UPDATE sqlite_schema SET sql = replace(sql,
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'')',
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'')') WHERE name = 'projects';
+      UPDATE sqlite_schema SET sql = replace(sql,
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'')',
+        'channel IN (''weixin'')') WHERE name = 'conversations';
+      PRAGMA writable_schema = RESET; PRAGMA user_version = 60;`)
+    const before = legacy.prepare('SELECT * FROM sqlite_schema ORDER BY name').all()
+    legacy.close()
+    expect(() => database.upgradeStorage(() => undefined, () => false, { migrateNotes: false, reclaimSpace: false }))
+      .toThrow('Unrecognized channel constraint: conversations')
+    const check = new DatabaseSync(path)
+    expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(60)
+    expect(check.prepare('SELECT * FROM sqlite_schema ORDER BY name').all()).toEqual(before)
+    expect(check.prepare('PRAGMA integrity_check').get()!.integrity_check).toBe('ok')
+    check.close()
   })
 
   it('persists one protected remote conversation per channel identity', async () => {
@@ -3097,6 +3200,31 @@ describe('AssistantDatabase', () => {
     ])
     expect(terminal[0]?.message).not.toHaveProperty('attachments')
     database.close()
+  })
+
+  it('persists an immediate terminal result without attachments or repeated attempt counts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-channel-terminal-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(path)
+    database.initialize('C:\\Workspace')
+    const entry = database.enqueueChannelResult({
+      channel: 'telegram', eventId: 'permanent-failure', conversationId: 'chat',
+      recipientId: 'user', status: 'completed', output: 'Keep result text',
+      attachments: [{ name: 'result.txt', mimeType: 'text/plain', size: 1, kind: 'file', dataBase64: 'eA==' }]
+    })
+    database.markChannelResult(entry.id, 'terminal')
+    database.close()
+    const reopened = new AssistantDatabase(path)
+    reopened.initialize('C:\\Workspace')
+    reopened.markChannelResult(entry.id, 'terminal')
+    reopened.markChannelResult(entry.id, 'failed')
+    expect(reopened.listUndeliveredChannelResults('telegram')).toEqual([
+      expect.objectContaining({ id: entry.id, state: 'terminal', attempts: 1,
+        message: expect.objectContaining({ output: 'Keep result text' }) })
+    ])
+    expect(reopened.listUndeliveredChannelResults('telegram')[0]!.message).not.toHaveProperty('attachments')
+    reopened.close()
   })
 
   it('migrates exhausted legacy outbox failures to terminal state', async () => {

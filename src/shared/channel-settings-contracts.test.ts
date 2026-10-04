@@ -2,12 +2,57 @@ import { describe, expect, it } from 'vitest'
 import {
   CHANNEL_SETTINGS_LIMITS,
   channelConnectionTestResultSchema,
+  channelRuntimeStatusChangeSchema,
   channelSecretUpdateSchema,
   channelSettingsApplySchema,
   channelSettingsSnapshotSchema
 } from './channel-settings-contracts'
 
 describe('channel settings contracts', () => {
+  it('validates incremental runtime status changes without settings or credentials', () => {
+    const change = { channel: 'telegram', status: { state: 'running' } }
+    expect(channelRuntimeStatusChangeSchema.parse(change)).toEqual(change)
+    for (const invalid of [
+      { ...change, secret: 'unexpected' },
+      { ...change, channel: 'unknown' },
+      { ...change, status: { state: 'unknown' } },
+      { ...change, status: { state: 'error', lastError: 'x'.repeat(501) } }
+    ]) {
+      expect(channelRuntimeStatusChangeSchema.safeParse(invalid).success).toBe(false)
+    }
+  })
+  it('accepts Telegram help-only settings and positive numeric sender IDs', () => {
+    const telegram = {
+      enabled: true,
+      secret: { action: 'keep' },
+      allowedSenderIds: [],
+      allowGroupMessages: false
+    }
+    expect(channelSettingsApplySchema.parse({ telegram })).toEqual({ telegram })
+    expect(channelSettingsApplySchema.parse({
+      telegram: { ...telegram, allowedSenderIds: [' 123 ', '123', '456'] }
+    }).telegram?.allowedSenderIds).toEqual(['123', '456'])
+    for (const sender of ['0', '-1', '1.2', '@user', '01', '1e3', '']) {
+      expect(channelSettingsApplySchema.safeParse({
+        telegram: { ...telegram, allowedSenderIds: [sender] }
+      }).success).toBe(false)
+    }
+    for (const extra of [{ botId: '123' }, { allowGroupMessages: true }]) {
+      expect(channelSettingsApplySchema.safeParse({ telegram: { ...telegram, ...extra } }).success).toBe(false)
+    }
+  })
+
+  it('only exposes botUsername on successful Telegram tests', () => {
+    expect(channelConnectionTestResultSchema.parse({
+      channel: 'telegram', ok: true, botUsername: 'example_bot'
+    }).botUsername).toBe('example_bot')
+    for (const result of [
+      { channel: 'telegram', ok: false, error: 'failed' },
+      { channel: 'wecom', ok: true }
+    ]) {
+      expect(channelConnectionTestResultSchema.safeParse({ ...result, botUsername: 'example_bot' }).success).toBe(false)
+    }
+  })
   it('accepts bounded strict WeCom and DingTalk updates', () => {
     expect(
       channelSettingsApplySchema.parse({
@@ -75,6 +120,15 @@ describe('channel settings contracts', () => {
 
   it('models public credential source and runtime status without secrets', () => {
     const snapshot = channelSettingsSnapshotSchema.parse({
+      telegram: {
+        enabled: false,
+        secretConfigured: false,
+        source: 'none',
+        readOnly: false,
+        allowedSenderIds: [],
+        allowGroupMessages: false,
+        status: { state: 'disabled' }
+      },
       weixin: {
         enabled: true,
         bindingConfigured: true,

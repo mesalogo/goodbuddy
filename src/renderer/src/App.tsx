@@ -764,7 +764,7 @@ function isConversation(value: unknown): value is Conversation {
     (item.remote === undefined ||
       (typeof item.remote === "object" &&
         item.remote !== null &&
-        ["weixin", "wecom", "dingtalk"].includes(
+        ["weixin", "wecom", "dingtalk", "telegram"].includes(
           String((item.remote as Record<string, unknown>).channel),
         ))) &&
     typeof item.title === "string" &&

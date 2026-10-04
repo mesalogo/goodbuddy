@@ -9951,13 +9951,14 @@ describe("App", () => {
       ["weixin", "微信 ClawBot"],
       ["wecom", "企业微信"],
       ["dingtalk", "钉钉"],
+      ["telegram", "Telegram"],
     ].map(([channel, name], index) => ({
       ...project,
       id: `00000000-0000-4000-8000-00000000020${index + 1}`,
       name: name!,
       description: `${name}通道项目`,
       kind: "channel" as const,
-      channel: channel as "weixin" | "wecom" | "dingtalk",
+      channel: channel as AssistantProject["channel"],
       runtimeSelection: {
         provider: "model" as const,
         profileId: modelProfileId,
@@ -9991,7 +9992,17 @@ describe("App", () => {
       },
     );
     api.channels = {
+      onStatusChanged: vi.fn(() => () => undefined),
       getSnapshot: vi.fn(async () => ({
+        telegram: {
+          enabled: false,
+          secretConfigured: false,
+          source: "none" as const,
+          readOnly: false,
+          allowedSenderIds: [],
+          allowGroupMessages: false as const,
+          status: { state: "disabled" as const },
+        },
         weixin: {
           enabled: false,
           bindingConfigured: false,

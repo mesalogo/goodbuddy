@@ -41,7 +41,7 @@ GoodBuddy 是用于模型对话、编程 Agent、知识检索、笔记和定时�
 | 数据与执行 | 本地 SQLite 与笔记文件存储、当前账号权限下的工具执行、工具调用记录 |
 | 知识库 | 导入文件、目录和网页，通过全文、中文词组、向量和知识图谱检索 |
 | 桌面版本 | Windows、macOS、Linux 的 `x64` 与 `arm64` 正式版本，以及龙芯 LoongArch 实验预览版 |
-| 外部连接 | 本机或内网模型服务、自定义 MCP、微信 ClawBot、企业微信和钉钉 |
+| 外部连接 | 本机或内网模型服务、自定义 MCP、微信 ClawBot、企业微信、钉钉和 Telegram（[真实 Bot 与模型链路待验收](./docs/features/telegram-channel/progress.md)） |
 
 ## 产品界面
 

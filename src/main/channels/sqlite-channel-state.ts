@@ -33,6 +33,10 @@ export class SqliteChannelOutbox implements Outbox {
     this.database.markChannelResult(id, 'failed')
   }
 
+  markTerminal(id: string): void {
+    this.database.markChannelResult(id, 'terminal')
+  }
+
   listUndelivered(
     channel?: string,
     limit?: number

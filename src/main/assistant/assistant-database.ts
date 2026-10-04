@@ -136,7 +136,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 60
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 61
 
 function withoutHistoricalWorkMode(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
@@ -2623,6 +2623,11 @@ export class AssistantDatabase {
         channel: 'dingtalk',
         name: '钉钉',
         description: '钉钉远程消息与受控任务'
+      },
+      {
+        channel: 'telegram',
+        name: 'Telegram',
+        description: 'Telegram 远程消息与受控任务'
       }
     ]
     const find = database.prepare(
@@ -4084,7 +4089,7 @@ export class AssistantDatabase {
 
   markChannelResult(
     id: string,
-    state: 'delivered' | 'failed'
+    state: 'delivered' | 'failed' | 'terminal'
   ): void {
     this.requireDatabase()
       .prepare(
@@ -4096,11 +4101,11 @@ export class AssistantDatabase {
              END,
              attempts = attempts + 1,
              message_json = CASE
-               WHEN ? = 'delivered' OR attempts + 1 >= 5
+               WHEN ? IN ('delivered', 'terminal') OR attempts + 1 >= 5
                THEN json_remove(message_json, '$.attachments')
                ELSE message_json
              END
-         WHERE id = ?`
+         WHERE id = ? AND state NOT IN ('delivered', 'terminal')`
       )
       .run(state, state, state, id)
   }
@@ -4124,10 +4129,10 @@ export class AssistantDatabase {
         `WITH pending AS (
            SELECT id, message_json, state, attempts, created_at,
                   ROW_NUMBER() OVER (
-                    ORDER BY attempts ASC, created_at ASC
+                    ORDER BY (state = 'terminal') ASC, attempts ASC, created_at ASC, id ASC
                   ) AS position,
                   SUM(LENGTH(CAST(message_json AS BLOB))) OVER (
-                    ORDER BY attempts ASC, created_at ASC
+                    ORDER BY (state = 'terminal') ASC, attempts ASC, created_at ASC, id ASC
                   ) AS cumulative_bytes
            FROM channel_outbox
            WHERE state != 'delivered'
@@ -4136,7 +4141,7 @@ export class AssistantDatabase {
          SELECT id, message_json, state, attempts, created_at
          FROM pending
          WHERE position = 1 OR cumulative_bytes <= ?
-         ORDER BY attempts ASC, created_at ASC
+         ORDER BY (state = 'terminal') ASC, attempts ASC, created_at ASC, id ASC
          LIMIT ?`
       )
       .all(
@@ -10663,7 +10668,7 @@ export class AssistantDatabase {
               ADD COLUMN channel TEXT
                 CHECK(
                   channel IS NULL OR
-                  channel IN ('weixin', 'wecom', 'dingtalk')
+                  channel IN ('weixin', 'wecom', 'dingtalk', 'telegram')
                 );
           `)
         }
@@ -10694,7 +10699,7 @@ export class AssistantDatabase {
             ALTER TABLE conversations ADD COLUMN channel TEXT
               CHECK(
                 channel IS NULL OR
-                channel IN ('weixin', 'wecom', 'dingtalk')
+                channel IN ('weixin', 'wecom', 'dingtalk', 'telegram')
               );
           `)
         }
@@ -12298,6 +12303,36 @@ export class AssistantDatabase {
           COMMIT;
         `)
       } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+    if (version.user_version < 61) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // SQLite's metadata-only CHECK relaxation preserves table rows, rowids,
+        // indexes and references without rebuilding potentially large conversations.
+        const previous = "channel IN ('weixin', 'wecom', 'dingtalk')"
+        const expanded = "channel IN ('weixin', 'wecom', 'dingtalk', 'telegram')"
+        const schemaVersion = database.prepare('PRAGMA schema_version').get() as { schema_version: number }
+        database.enableDefensive(false)
+        for (const table of ['projects', 'conversations']) {
+          const definition = database.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) as { sql: string }
+          if (definition.sql.includes(expanded)) continue
+          if (!definition.sql.includes(previous)) throw new Error(`Unrecognized channel constraint: ${table}`)
+          database.exec('PRAGMA writable_schema = ON')
+          database.prepare("UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = ?")
+            .run(definition.sql.replace(previous, expanded), table)
+        }
+        database.exec(`PRAGMA schema_version = ${schemaVersion.schema_version + 1}; PRAGMA writable_schema = RESET;`)
+        // Reparse with writable_schema disabled so invalid definitions roll back.
+        database.prepare('SELECT channel FROM projects LIMIT 0').all()
+        database.prepare('SELECT channel FROM conversations LIMIT 0').all()
+        database.exec('PRAGMA user_version = 61; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      } finally {
+        database.exec('PRAGMA writable_schema = RESET')
+        database.enableDefensive(true)
+      }
     }
   }
 

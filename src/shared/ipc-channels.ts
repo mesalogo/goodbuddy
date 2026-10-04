@@ -114,6 +114,7 @@ export const ipcChannels = {
   channelSettingsGet: 'settings:channels:get',
   channelSettingsApply: 'settings:channels:apply',
   channelSettingsTest: 'settings:channels:test',
+  channelStatusChanged: 'channels:status-changed',
   weixinBindingGet: 'settings:channels:weixin:binding:get',
   weixinBindingStart: 'settings:channels:weixin:binding:start',
   weixinBindingVerify: 'settings:channels:weixin:binding:verify',

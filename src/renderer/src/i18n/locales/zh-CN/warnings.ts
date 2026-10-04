@@ -29,6 +29,10 @@ export const warnings = {
     '企业微信 Secret 无法读取。请重新输入或清除该凭据。',
   'channel-dingtalk-credential-unreadable':
     '钉钉 Client Secret 无法读取。请重新输入或清除该凭据。',
+  'channel-telegram-environment-invalid':
+    'Telegram 环境变量配置无效或不完整，通道保持关闭。',
+  'channel-telegram-credential-unreadable':
+    'Telegram Bot Token 无法读取。请重新输入或清除该凭据。',
   'channel-runtime-selections-repaired':
     '已修复 {{count}} 个无人值守通道的不可用后端选择。请检查各通道项目设置。'
 } as const

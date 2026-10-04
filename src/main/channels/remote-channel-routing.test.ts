@@ -55,7 +55,8 @@ describe('parseRemoteChannelPrompt', () => {
     expect(projectChannelLabels).toEqual({
       weixin: '微信 ClawBot',
       wecom: '企业微信',
-      dingtalk: '钉钉'
+      dingtalk: '钉钉',
+      telegram: 'Telegram'
     })
   })
 })

@@ -931,12 +931,13 @@ records are listed separately and do not introduce another feature status.
   action errors.
 - [x] **Client-computer control tools**: Managed separately from the built-in
   browser with scope, cancellation, timeout, output, and activity boundaries.
-- [x] **Remote messaging-channel projects**: WeChat ClawBot, WeCom, and
-  DingTalk each have a system-managed project, independent remote
+- [x] **Remote messaging-channel projects**: WeChat ClawBot, WeCom,
+  DingTalk, and Telegram each have a system-managed project, independent remote
   conversations, working directory, processing backend, and
   task/activity ownership. Each channel controls complete-response
   length and segmentation according to platform capabilities rather than
-  relying on a shared service truncation.
+  relying on a shared service truncation. Telegram's live Bot + model chain
+  remains [pending acceptance](./docs/features/telegram-channel/progress.md).
 - [x] **WeChat ClawBot QR login and media**: A separate Sidecar handles local
   QR scanning, verification codes, encrypted credentials, and text messaging.
   Personal WeChat chats support images and files, with at most four

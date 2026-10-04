@@ -1,15 +1,19 @@
 import {
   CHANNEL_SETTINGS_LIMITS,
   channelConnectionTestResultSchema,
+  channelSettingsApplySchema,
   dingTalkChannelSettingsInputSchema,
+  telegramChannelSettingsInputSchema,
   weComChannelSettingsInputSchema,
   type ChannelConnectionTestResult,
   type ChannelRuntimeStatus,
+  type ChannelRuntimeStatusChange,
   type ChannelSettingsApply,
   type ChannelSettingsSnapshot,
   type CredentialChannel,
   type DingTalkChannelSettingsInput,
   type ManagedChannel,
+  type TelegramChannelSettingsInput,
   type WeComChannelSettingsInput
 } from '../../shared/channel-settings-contracts'
 import type {
@@ -33,11 +37,17 @@ import type { WechatSidecarLauncher } from './wechat-sidecar-client'
 export type ManagedChannelService = Pick<
   ChannelService,
   'start' | 'stop'
->
+> & { updateAllowedSenderIds?: (ids: readonly string[]) => void }
 
 export type ChannelDriverFactory = (
-  settings: ResolvedChannelSettings
-) => ChannelDriver | Promise<ChannelDriver>
+  settings: ResolvedChannelSettings,
+  onStatus?: (status: ChannelRuntimeStatus) => void
+) => TestableChannelDriver | Promise<TestableChannelDriver>
+
+type TestableChannelDriver = ChannelDriver & {
+  testConnection?: () => Promise<{ botId: string; botUsername?: string }>
+  updateAllowedSenderIds?: (ids: readonly string[]) => void
+}
 
 export type ChannelServiceFactory = (
   driver: ChannelDriver,
@@ -53,6 +63,7 @@ export type ChannelServiceFactory = (
 ) => ManagedChannelService | Promise<ManagedChannelService>
 
 export type ChannelManagerOptions = {
+  onStatusChanged?: (change: ChannelRuntimeStatusChange) => void
   createDriver?: ChannelDriverFactory
   createService?: ChannelServiceFactory
   launchWechatSidecar?: WechatSidecarLauncher
@@ -62,6 +73,10 @@ export type ChannelManagerOptions = {
 
 type TestSettingsInput =
   | {
+      channel: 'telegram'
+      settings?: TelegramChannelSettingsInput
+    }
+  | {
       channel: 'wecom'
       settings?: WeComChannelSettingsInput
     }
@@ -70,10 +85,11 @@ type TestSettingsInput =
       settings?: DingTalkChannelSettingsInput
     }
 
-function defaultDriverFactory(
+async function defaultDriverFactory(
   settings: ResolvedChannelSettings,
-  launchWechatSidecar?: WechatSidecarLauncher
-): ChannelDriver {
+  launchWechatSidecar?: WechatSidecarLauncher,
+  onStatus?: (status: ChannelRuntimeStatus) => void
+): Promise<TestableChannelDriver> {
   if (settings.channel === 'weixin') {
     if (!launchWechatSidecar) {
       throw new Error('微信 Sidecar 启动器不可用')
@@ -82,6 +98,18 @@ function defaultDriverFactory(
   }
   if (settings.secret === undefined) {
     throw new Error('通道 Secret 尚未配置')
+  }
+  if (settings.channel === 'telegram') {
+    const [{ TelegramChannelDriver }, { net }] = await Promise.all([
+      import('./telegram-channel-driver'),
+      import('electron')
+    ])
+    return new TelegramChannelDriver({
+      secret: settings.secret,
+      allowedSenderIds: settings.allowedSenderIds,
+      fetch: (input, init) => net.fetch(input instanceof URL ? input.href : input, init),
+      onStatus
+    })
   }
   return settings.channel === 'wecom'
     ? new WeComChannelDriver({
@@ -136,6 +164,10 @@ function sanitizedManagerFailure(message: string): Error {
 }
 
 function validateResolved(settings: ResolvedChannelSettings): void {
+  if (settings.channel === 'telegram') {
+    if (!settings.secret) throw new Error('Telegram 需要 Bot Token')
+    return
+  }
   if (settings.channel === 'weixin') {
     if (
       settings.accountId.length === 0 ||
@@ -175,7 +207,13 @@ export class ChannelManager {
   private readonly createService: ChannelServiceFactory
   private readonly dedupStore?: ChannelServiceOptions['dedupStore']
   private readonly outbox?: ChannelServiceOptions['outbox']
+  private readonly onStatusChanged?: ChannelManagerOptions['onStatusChanged']
   private operationQueue: Promise<void> = Promise.resolve()
+  private readonly serviceGenerations = new Map<ManagedChannel, symbol>()
+  private activeTelegram?: {
+    settings: Extract<ResolvedChannelSettings, { channel: 'telegram' }>
+    driver: TestableChannelDriver
+  }
 
   constructor(
     private readonly store: ChannelSettingsStore,
@@ -184,11 +222,12 @@ export class ChannelManager {
   ) {
     this.createDriver =
       options.createDriver ??
-      ((settings) =>
-        defaultDriverFactory(settings, options.launchWechatSidecar))
+      ((settings, onStatus) =>
+        defaultDriverFactory(settings, options.launchWechatSidecar, onStatus))
     this.createService = options.createService ?? defaultServiceFactory
     this.dedupStore = options.dedupStore
     this.outbox = options.outbox
+    this.onStatusChanged = options.onStatusChanged
   }
 
   snapshot(): Promise<ChannelSettingsSnapshot> {
@@ -204,7 +243,7 @@ export class ChannelManager {
       const settings = await this.store.resolveAll()
       for (const channelSettings of settings) {
         if (!channelSettings.enabled) {
-          this.statuses.set(channelSettings.channel, {
+          this.setStatus(channelSettings.channel, {
             state: 'disabled'
           })
           continue
@@ -221,16 +260,33 @@ export class ChannelManager {
 
   apply(input: ChannelSettingsApply): Promise<ChannelSettingsSnapshot> {
     return this.enqueue(async () => {
+      input = channelSettingsApplySchema.parse(input)
+      if (input.telegram?.secret.action === 'replace') {
+        const result = await this.test('telegram', input.telegram)
+        if (!result.ok) throw sanitizedManagerFailure(result.error!)
+      }
       await this.store.apply(input)
       const channels: ManagedChannel[] = [
         ...(input.weixin === undefined ? [] : (['weixin'] as const)),
         ...(input.wecom === undefined ? [] : (['wecom'] as const)),
-        ...(input.dingtalk === undefined ? [] : (['dingtalk'] as const))
+        ...(input.dingtalk === undefined ? [] : (['dingtalk'] as const)),
+        ...(input.telegram === undefined ? [] : (['telegram'] as const))
       ]
       for (const channel of channels) {
         const settings = await this.store.resolve(channel)
         if (!settings.enabled) {
           await this.disableService(channel)
+          continue
+        }
+        const active = this.activeTelegram
+        const service = this.services.get(channel)
+        if (settings.channel === 'telegram' && active &&
+          active.settings.secret === settings.secret &&
+          (this.statuses.get(channel)?.state === 'running' || this.statuses.get(channel)?.state === 'starting') &&
+          active.driver.updateAllowedSenderIds && service?.updateAllowedSenderIds) {
+          active.driver.updateAllowedSenderIds(settings.allowedSenderIds)
+          service.updateAllowedSenderIds(settings.allowedSenderIds)
+          active.settings = settings
           continue
         }
         await this.replaceService(settings)
@@ -239,6 +295,10 @@ export class ChannelManager {
     })
   }
 
+  test(
+    channel: 'telegram',
+    settings?: TelegramChannelSettingsInput
+  ): Promise<ChannelConnectionTestResult>
   test(
     channel: 'wecom',
     settings?: WeComChannelSettingsInput
@@ -249,7 +309,7 @@ export class ChannelManager {
   ): Promise<ChannelConnectionTestResult>
   async test(
     channel: CredentialChannel,
-    settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
+    settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
   ): Promise<ChannelConnectionTestResult> {
     let resolved: ResolvedChannelSettings | undefined
     try {
@@ -258,7 +318,21 @@ export class ChannelManager {
         ...(settings === undefined ? {} : { settings })
       } as TestSettingsInput)
       validateResolved(resolved)
-      const service = await this.buildService(resolved)
+      if (channel === 'telegram') {
+        const driver = await this.createDriver(resolved)
+        try {
+          if (!driver.testConnection) throw new Error('Telegram connection test is unavailable')
+          const identity = await driver.testConnection()
+          return channelConnectionTestResultSchema.parse({
+            channel,
+            ok: true,
+            ...(identity.botUsername ? { botUsername: identity.botUsername } : {})
+          })
+        } finally {
+          await Promise.resolve(driver.stop()).catch(() => undefined)
+        }
+      }
+      const { service } = await this.buildService(resolved)
       try {
         await service.start()
       } finally {
@@ -285,6 +359,10 @@ export class ChannelManager {
   }
 
   testConnection(
+    channel: 'telegram',
+    settings?: TelegramChannelSettingsInput
+  ): Promise<ChannelConnectionTestResult>
+  testConnection(
     channel: 'wecom',
     settings?: WeComChannelSettingsInput
   ): Promise<ChannelConnectionTestResult>
@@ -294,8 +372,11 @@ export class ChannelManager {
   ): Promise<ChannelConnectionTestResult>
   testConnection(
     channel: CredentialChannel,
-    settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
+    settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
   ): Promise<ChannelConnectionTestResult> {
+    if (channel === 'telegram') {
+      return this.test(channel, settings as TelegramChannelSettingsInput | undefined)
+    }
     return channel === 'wecom'
       ? this.test(
           channel,
@@ -310,13 +391,15 @@ export class ChannelManager {
   stopAll(): Promise<void> {
     return this.enqueue(async () => {
       const active = [...this.services.entries()]
+      this.serviceGenerations.clear()
+      this.activeTelegram = undefined
       this.services.clear()
       const results = await Promise.allSettled(
         active.map(([, service]) => Promise.resolve(service.stop()))
       )
       const resolved = await this.store.resolveAll()
       for (const settings of resolved) {
-        this.statuses.set(settings.channel, {
+        this.setStatus(settings.channel, {
           state: settings.enabled ? 'stopped' : 'disabled'
         })
       }
@@ -344,17 +427,24 @@ export class ChannelManager {
   ): Promise<void> {
     const channel = settings.channel
     const previous = this.services.get(channel)
-    this.statuses.set(channel, { state: 'starting' })
+    const generation = Symbol(channel)
+    this.serviceGenerations.set(channel, generation)
+    this.setStatus(channel, { state: 'starting' })
     let replacement: ManagedChannelService | undefined
+    let driver: TestableChannelDriver | undefined
     try {
       validateResolved(settings)
-      replacement = await this.buildService(settings)
+      const built = await this.buildService(settings, generation)
+      replacement = built.service
+      driver = built.driver
       if (previous !== undefined) {
         await previous.stop()
         this.services.delete(channel)
       }
       await replacement.start()
     } catch (error) {
+      if (channel === 'telegram') this.activeTelegram = undefined
+      this.serviceGenerations.delete(channel)
       await Promise.resolve(replacement?.stop()).catch(() => undefined)
       if (
         previous !== undefined &&
@@ -368,7 +458,7 @@ export class ChannelManager {
           ? settings.token
           : settings.secret
       ])
-      this.statuses.set(channel, {
+      this.setStatus(channel, {
         state: 'error',
         lastError: redacted
       })
@@ -376,29 +466,48 @@ export class ChannelManager {
     }
 
     this.services.set(channel, replacement)
-    this.statuses.set(channel, { state: 'running' })
+    if (settings.channel === 'telegram') {
+      this.activeTelegram = { settings, driver: driver! }
+    } else if (this.statuses.get(channel)?.state === 'starting') {
+      this.setStatus(channel, { state: 'running' })
+    }
   }
 
   private async disableService(channel: ManagedChannel): Promise<void> {
+    if (channel === 'telegram') this.activeTelegram = undefined
+    this.serviceGenerations.delete(channel)
     const previous = this.services.get(channel)
     if (previous !== undefined) {
       await previous.stop()
       this.services.delete(channel)
     }
-    this.statuses.set(channel, { state: 'disabled' })
+    this.setStatus(channel, { state: 'disabled' })
   }
 
   private async buildService(
-    settings: ResolvedChannelSettings
-  ): Promise<ManagedChannelService> {
-    const driver = await this.createDriver(settings)
-    return this.createService(driver, this.executor, {
+    settings: ResolvedChannelSettings,
+    generation?: symbol
+  ): Promise<{ service: ManagedChannelService; driver: TestableChannelDriver }> {
+    const onStatus = (status: ChannelRuntimeStatus): void => {
+      if (generation === undefined || this.serviceGenerations.get(settings.channel) !== generation) return
+      this.setStatus(settings.channel, {
+        state: status.state,
+        ...(status.lastError ? {
+          lastError: redactManagerError(status.lastError, [
+            settings.channel === 'weixin' ? settings.token : settings.secret
+          ])
+        } : {})
+      })
+    }
+    const driver = await this.createDriver(settings, onStatus)
+    const service = await this.createService(driver, this.executor, {
       allowedSenderIds: settings.allowedSenderIds,
       allowGroupMessages: settings.allowGroupMessages,
       dedupStore: this.dedupStore,
       outbox: this.outbox,
       onDeliveryFailure: (error) => {
-        this.statuses.set(settings.channel, {
+        if (settings.channel === 'telegram') return
+        onStatus({
           state: 'error',
           lastError: redactManagerError(error, [
             settings.channel === 'weixin'
@@ -408,14 +517,28 @@ export class ChannelManager {
         })
       },
       onDeliverySuccess: () => {
-        this.statuses.set(settings.channel, { state: 'running' })
+        if (settings.channel === 'telegram') return
+        onStatus({ state: 'running' })
       }
     })
+    return { service, driver }
   }
 
   private async settingsForTest(
     input: TestSettingsInput
   ): Promise<ResolvedChannelSettings> {
+    if (input.channel === 'telegram') {
+      const current = await this.store.resolve('telegram')
+      if (input.settings === undefined) return current
+      if (current.readOnly) throw new Error('环境变量通道配置为只读，不能使用临时设置')
+      const parsed = telegramChannelSettingsInputSchema.parse(input.settings)
+      return {
+        channel: 'telegram',
+        enabled: parsed.enabled,
+        ...this.testCommonSettings(current.secret, parsed),
+        allowGroupMessages: false
+      }
+    }
     if (input.channel === 'wecom') {
       const current = await this.store.resolve('wecom')
       if (input.settings === undefined) {
@@ -450,7 +573,7 @@ export class ChannelManager {
 
   private testCommonSettings(
     currentSecret: string | undefined,
-    input: WeComChannelSettingsInput | DingTalkChannelSettingsInput
+    input: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
   ): {
     secret?: string
     allowedSenderIds: readonly string[]
@@ -471,6 +594,13 @@ export class ChannelManager {
       source: secret === undefined ? 'none' : 'encrypted',
       readOnly: false
     }
+  }
+
+  private setStatus(channel: ManagedChannel, status: ChannelRuntimeStatus): void {
+    const previous = this.statuses.get(channel)
+    if (previous?.state === status.state && previous.lastError === status.lastError) return
+    this.statuses.set(channel, status)
+    this.onStatusChanged?.({ channel, status: { ...status } })
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

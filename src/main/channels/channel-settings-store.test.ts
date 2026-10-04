@@ -40,6 +40,75 @@ function createCipher(available = true): ChannelCredentialCipher {
 }
 
 describe('ChannelSettingsStore', () => {
+  it('persists encrypted Telegram settings with empty whitelist and secret actions', async () => {
+    const filePath = await settingsPath()
+    const store = new ChannelSettingsStore(filePath, createCipher(), {})
+    const input = { enabled: true, allowedSenderIds: [], allowGroupMessages: false as const }
+    const snapshot = await store.apply({ telegram: {
+      ...input, secret: { action: 'replace', value: 'test-only-secret' }
+    } })
+    expect(snapshot.telegram).toMatchObject({ enabled: true, secretConfigured: true, source: 'encrypted' })
+    expect(JSON.stringify(snapshot)).not.toContain('test-only-secret')
+    expect(snapshot.telegram).not.toHaveProperty('botId')
+    expect(await readFile(filePath, 'utf8')).not.toContain('test-only-secret')
+    const reloaded = new ChannelSettingsStore(filePath, createCipher(), {})
+    expect(await reloaded.resolve('telegram')).toEqual({
+      channel: 'telegram', ...input, secret: 'test-only-secret', source: 'encrypted', readOnly: false
+    })
+    await reloaded.apply({ telegram: { ...input, secret: { action: 'keep' }, allowedSenderIds: ['123'] } })
+    expect((await reloaded.resolve('telegram')).secret).toBe('test-only-secret')
+    await reloaded.apply({ telegram: { ...input, secret: { action: 'replace', value: 'replacement-test-secret' } } })
+    expect((await reloaded.resolve('telegram')).secret).toBe('replacement-test-secret')
+    const unreadable = new ChannelSettingsStore(filePath, createCipher(false), {})
+    expect((await unreadable.snapshot()).telegram).toMatchObject({ source: 'unreadable', secretConfigured: false })
+    await reloaded.apply({ telegram: { ...input, enabled: false, secret: { action: 'clear' } } })
+    expect((await reloaded.snapshot()).telegram).toMatchObject({ enabled: false, source: 'none', secretConfigured: false })
+    await expect(reloaded.apply({ telegram: { ...input, secret: { action: 'keep' } } })).rejects.toThrow('Bot Token')
+  })
+
+  it('loads existing version 3 settings with Telegram defaults without rewriting', async () => {
+    const filePath = await settingsPath()
+    const original = JSON.stringify({
+      version: 3,
+      weixin: { enabled: false },
+      wecom: { enabled: false, botId: '', allowedSenderIds: [], allowGroupMessages: false },
+      dingtalk: { enabled: false, clientId: '', allowedSenderIds: [], allowGroupMessages: false }
+    })
+    await writeFile(filePath, original)
+    const store = new ChannelSettingsStore(filePath, createCipher(), {})
+    expect((await store.snapshot()).telegram).toEqual({
+      enabled: false, secretConfigured: false, source: 'none', readOnly: false,
+      allowedSenderIds: [], allowGroupMessages: false, status: { state: 'disabled' }
+    })
+    expect(await readFile(filePath, 'utf8')).toBe(original)
+  })
+
+  it('uses read-only Telegram environment credentials, including help-only startup', async () => {
+    const filePath = await settingsPath()
+    const environment = { GOODBUDDY_TELEGRAM_BOT_TOKEN: 'environment-test-secret' }
+    const store = new ChannelSettingsStore(filePath, createCipher(), environment)
+    expect(await store.resolve('telegram')).toEqual({
+      channel: 'telegram', enabled: true, secret: 'environment-test-secret',
+      allowedSenderIds: [], allowGroupMessages: false, source: 'environment', readOnly: true
+    })
+    await expect(store.apply({ telegram: {
+      enabled: false, secret: { action: 'clear' }, allowedSenderIds: [], allowGroupMessages: false
+    } })).rejects.toThrow('环境变量配置')
+    const configured = new ChannelSettingsStore(filePath, createCipher(), {
+      ...environment, GOODBUDDY_TELEGRAM_ALLOWED_SENDERS: '123, 456,123', GOODBUDDY_TELEGRAM_ENABLED: 'false'
+    })
+    expect(await configured.resolve('telegram')).toMatchObject({ enabled: false, allowedSenderIds: ['123', '456'] })
+    for (const invalid of [
+      { GOODBUDDY_TELEGRAM_ALLOWED_SENDERS: '@user' },
+      { GOODBUDDY_TELEGRAM_ALLOW_GROUPS: 'true' },
+      { GOODBUDDY_TELEGRAM_ENABLED: 'invalid' }
+    ]) {
+      const invalidStore = new ChannelSettingsStore(filePath, createCipher(), { ...environment, ...invalid })
+      expect((await invalidStore.snapshot()).telegram).toMatchObject({
+        enabled: false, readOnly: true, allowGroupMessages: false, status: { state: 'error' }
+      })
+    }
+  })
   it('encrypts secrets and supports keep, replace, and clear', async () => {
     const filePath = await settingsPath()
     const store = new ChannelSettingsStore(filePath, createCipher(), {})

@@ -4,17 +4,20 @@ import {
   Smartphone,
   Unplug
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
 import { createPortal } from 'react-dom'
 import QRCode from 'qrcode'
+import { telegramAllowedSenderIdsSchema } from '../../shared/channel-settings-contracts'
 import type {
   ChannelConnectionTestResult,
+  ChannelRuntimeStatus,
   ChannelSettingsApply,
   ChannelSettingsSnapshot,
   CredentialChannel,
   DingTalkChannelSettingsInput,
+  TelegramChannelSettingsInput,
   WeComChannelSettingsInput
 } from '../../shared/channel-settings-contracts'
 import type { RuntimeSettings } from '../../shared/contracts'
@@ -26,6 +29,8 @@ import {
 } from '../../shared/assistant-contracts'
 import type { WeixinBindingSnapshot } from '../../shared/weixin-channel-contracts'
 import type { AppNotificationInput } from './notifications'
+import { createChannelStatusStore, type ChannelStatusStore } from './channel-status-store'
+import { useChannelStatus } from './channel-status-selectors'
 import { trapTabFocus } from './dialog-focus'
 import { PageTabs } from './WorkspacePrimitives'
 import { ChannelIcon } from './ChannelIcon'
@@ -96,7 +101,7 @@ function draftFromSnapshot(
     identifier:
       channel === 'wecom'
         ? snapshot.wecom.botId
-        : snapshot.dingtalk.clientId,
+        : channel === 'dingtalk' ? snapshot.dingtalk.clientId : '',
     secret: '',
     clearSecret: false,
     allowedSenderIdsText: settings.allowedSenderIds.join('\n'),
@@ -113,16 +118,22 @@ function inputFor(
   draft: ChannelDraft
 ): DingTalkChannelSettingsInput
 function inputFor(
+  channel: 'telegram',
+  draft: ChannelDraft
+): TelegramChannelSettingsInput
+function inputFor(
   channel: CredentialChannel,
   draft: ChannelDraft
-): WeComChannelSettingsInput | DingTalkChannelSettingsInput {
+): WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput {
   const common = {
     enabled: draft.enabled,
     secret: secretUpdate(draft),
     allowedSenderIds: allowedSenderIds(draft.allowedSenderIdsText),
     allowGroupMessages: draft.allowGroupMessages
   }
-  return channel === 'wecom'
+  return channel === 'telegram'
+    ? { ...common, enabled: draft.enabled && !draft.clearSecret, allowGroupMessages: false }
+    : channel === 'wecom'
     ? { ...common, botId: draft.identifier.trim() }
     : { ...common, clientId: draft.identifier.trim() }
 }
@@ -139,7 +150,7 @@ function channelDraftChanged(
   const currentIdentifier =
     channel === 'wecom'
       ? snapshot.wecom.botId
-      : snapshot.dingtalk.clientId
+      : channel === 'dingtalk' ? snapshot.dingtalk.clientId : ''
   return (
     draft.enabled !== current.enabled ||
     draft.identifier.trim() !== currentIdentifier ||
@@ -222,7 +233,33 @@ function ChannelProjectCard({
   )
 }
 
+const ChannelStatus = memo(function ChannelStatus({
+  channel,
+  fallback,
+  store,
+  unconfigured = false,
+  errorOnly = false
+}: {
+  channel: ProjectChannel
+  fallback: ChannelRuntimeStatus
+  store: ChannelStatusStore
+  unconfigured?: boolean
+  errorOnly?: boolean
+}): React.JSX.Element | null {
+  const { t } = useTranslation('integrations')
+  const status = useChannelStatus(store, channel, fallback)
+  if (errorOnly) {
+    return status.lastError
+      ? <p className="settings-warning" role="alert">{status.lastError}</p>
+      : null
+  }
+  return <span>{unconfigured && (status.state === 'disabled' || status.state === 'stopped')
+    ? t('channels.telegram.unconfigured')
+    : t(`channels.status.${status.state}`)}</span>
+})
+
 function ChannelEditor({
+  busy,
   channel,
   draft,
   onChange,
@@ -232,8 +269,11 @@ function ChannelEditor({
   project,
   runtimeSettings,
   settings,
-  testing
+  statusStore,
+  testing,
+  botUsername
 }: {
+  busy: boolean
   channel: CredentialChannel
   draft: ChannelDraft
   onChange: (next: ChannelDraft) => void
@@ -243,15 +283,16 @@ function ChannelEditor({
   project: ChannelProjectDraft
   runtimeSettings: RuntimeSettings
   settings: ChannelSettingsSnapshot[CredentialChannel]
+  statusStore: ChannelStatusStore
   testing: boolean
+  botUsername?: string
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
   const title = t(`channels.tabs.${channel}`)
-  const identifierLabel = t(
-    `channels.credential.identifiers.${channel}`
-  )
+  const identifierLabel = channel === 'telegram' ? '' : t(`channels.credential.identifiers.${channel}`)
   const secretLabel = t(`channels.credential.secrets.${channel}`)
   const prefix = `channel-${channel}`
+  const invalidSenders = channel === 'telegram' && !telegramAllowedSenderIdsSchema.safeParse(allowedSenderIds(draft.allowedSenderIdsText)).success
 
   return (
     <>
@@ -269,7 +310,8 @@ function ChannelEditor({
                 : t('channels.credential.secretMissing')}
           </small>
         </div>
-        <span>{t(`channels.status.${settings.status.state}`)}</span>
+        <ChannelStatus channel={channel} fallback={settings.status} store={statusStore}
+          unconfigured={channel === 'telegram' && !settings.secretConfigured} />
       </div>
 
       {settings.readOnly && (
@@ -277,16 +319,12 @@ function ChannelEditor({
           {t('channels.credential.readOnly')}
         </p>
       )}
-      {settings.status.lastError && (
-        <p className="settings-warning" role="alert">
-          {settings.status.lastError}
-        </p>
-      )}
+      <ChannelStatus channel={channel} fallback={settings.status} store={statusStore} errorOnly />
 
       <label className="toggle-row" htmlFor={`${prefix}-enabled`}>
         <input
           checked={draft.enabled}
-          disabled={settings.readOnly}
+          disabled={settings.readOnly || busy}
           id={`${prefix}-enabled`}
           onChange={(event) =>
             onChange({ ...draft, enabled: event.target.checked })
@@ -297,21 +335,39 @@ function ChannelEditor({
         <span>{t('channels.credential.enable', { channel: title })}</span>
       </label>
 
-      <label className="field">
+      {channel === 'telegram' && (
+        <>
+          <p><a href="https://t.me/BotFather" target="_blank" rel="noreferrer">{t('channels.telegram.botFather')}</a></p>
+          <p>{t('channels.telegram.setup')}</p>
+          <p className="settings-notice">{t('channels.telegram.access')}</p>
+          <span className="inline-help-label">
+            {t('channels.telegram.connectionHelp')}
+            <InlineHelp label={t('channels.telegram.connectionHelp')}>
+              {t('channels.telegram.network')} {t('channels.telegram.offline')}
+            </InlineHelp>
+          </span>
+          {allowedSenderIds(draft.allowedSenderIdsText).length === 0 && (
+            <p className="settings-notice">{t('channels.telegram.noUsers')}</p>
+          )}
+          {botUsername && <p>{t('channels.telegram.bot')} <a href={`https://t.me/${botUsername}`} target="_blank" rel="noreferrer">@{botUsername}</a></p>}
+        </>
+      )}
+
+      {channel !== 'telegram' && <label className="field">
         <span>{identifierLabel}</span>
         <input
           aria-label={t('channels.credential.fieldAriaLabel', {
             channel: title,
             field: identifierLabel
           })}
-          disabled={settings.readOnly}
+          disabled={settings.readOnly || busy}
           maxLength={256}
           onChange={(event) =>
             onChange({ ...draft, identifier: event.target.value })
           }
           value={draft.identifier}
         />
-      </label>
+      </label>}
 
       <label className="field">
         <span>{secretLabel}</span>
@@ -321,15 +377,15 @@ function ChannelEditor({
             field: secretLabel
           })}
           autoComplete="off"
-          disabled={settings.readOnly || draft.clearSecret}
+          disabled={settings.readOnly || busy || draft.clearSecret}
           maxLength={4_096}
           onChange={(event) =>
             onChange({ ...draft, secret: event.target.value })
           }
           placeholder={
             settings.secretConfigured
-              ? t('channels.credential.keepSecret')
-              : t('channels.credential.enterSecret')
+              ? t(channel === 'telegram' ? 'channels.telegram.keepToken' : 'channels.credential.keepSecret')
+              : t(channel === 'telegram' ? 'channels.telegram.enterToken' : 'channels.credential.enterSecret')
           }
           type="password"
           value={draft.secret}
@@ -340,6 +396,7 @@ function ChannelEditor({
         <label className="check-field">
           <input
             checked={draft.clearSecret}
+            disabled={busy}
             onChange={(event) =>
               onChange({
                 ...draft,
@@ -349,18 +406,20 @@ function ChannelEditor({
             }
             type="checkbox"
           />
-          <span>{t('channels.credential.clearSecret')}</span>
+          <span>{t(channel === 'telegram' ? 'channels.telegram.clearToken' : 'channels.credential.clearSecret')}</span>
         </label>
       )}
 
       <label className="field">
         <span>{t('channels.credential.allowedSenders')}</span>
         <textarea
+          aria-invalid={invalidSenders || undefined}
+          aria-describedby={invalidSenders ? `${prefix}-senders-error` : undefined}
           aria-label={t(
             'channels.credential.allowedSendersAriaLabel',
             { channel: title }
           )}
-          disabled={settings.readOnly}
+          disabled={settings.readOnly || busy}
           onChange={(event) =>
             onChange({
               ...draft,
@@ -374,14 +433,15 @@ function ChannelEditor({
           value={draft.allowedSenderIdsText}
         />
         <small>
-          {t('channels.credential.allowedSendersHelp')}
+          {t(channel === 'telegram' ? 'channels.telegram.sendersHelp' : 'channels.credential.allowedSendersHelp')}
         </small>
+        {invalidSenders && <small className="field-error" id={`${prefix}-senders-error`} role="alert">{t('channels.telegram.invalidSenders')}</small>}
       </label>
 
-      <label className="toggle-row">
+      {channel !== 'telegram' && <label className="toggle-row">
         <input
           checked={draft.allowGroupMessages}
-          disabled={settings.readOnly}
+          disabled={settings.readOnly || busy}
           onChange={(event) =>
             onChange({
               ...draft,
@@ -392,11 +452,11 @@ function ChannelEditor({
           type="checkbox"
         />
         <span>{t('channels.credential.groupMessages')}</span>
-      </label>
+      </label>}
 
       <button
         className="secondary-button"
-        disabled={testing}
+        disabled={busy || draft.clearSecret || invalidSenders}
         onClick={onTest}
         type="button"
       >
@@ -658,7 +718,8 @@ function WeixinChannelEditor({
   onVerify,
   project,
   runtimeSettings,
-  settings
+  settings,
+  statusStore
 }: {
   binding: WeixinBindingSnapshot
   bindingButtonRef: React.RefObject<HTMLButtonElement | null>
@@ -676,6 +737,7 @@ function WeixinChannelEditor({
   project: ChannelProjectDraft
   runtimeSettings: RuntimeSettings
   settings: ChannelSettingsSnapshot['weixin']
+  statusStore: ChannelStatusStore
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
   return (
@@ -697,14 +759,10 @@ function WeixinChannelEditor({
                 : t('channels.weixin.unbound')}
             </small>
           </div>
-          <span>{t(`channels.status.${settings.status.state}`)}</span>
+          <ChannelStatus channel="weixin" fallback={settings.status} store={statusStore} />
         </div>
 
-        {settings.status.lastError && (
-          <p className="settings-warning" role="alert">
-            {settings.status.lastError}
-          </p>
-        )}
+        <ChannelStatus channel="weixin" fallback={settings.status} store={statusStore} errorOnly />
 
         <label className="toggle-row" htmlFor="channel-weixin-enabled">
           <input
@@ -799,9 +857,11 @@ export function ChannelSettingsSection({
   const channelTabs = [
     { id: 'weixin', label: t('channels.tabs.weixin'), icon: <ChannelIcon channel="weixin" /> },
     { id: 'wecom', label: t('channels.tabs.wecom'), icon: <ChannelIcon channel="wecom" /> },
-    { id: 'dingtalk', label: t('channels.tabs.dingtalk'), icon: <ChannelIcon channel="dingtalk" /> }
+    { id: 'dingtalk', label: t('channels.tabs.dingtalk'), icon: <ChannelIcon channel="dingtalk" /> },
+    { id: 'telegram', label: t('channels.tabs.telegram'), icon: <ChannelIcon channel="telegram" /> }
   ] as const
   const [snapshot, setSnapshot] = useState<ChannelSettingsSnapshot>()
+  const [statusStore] = useState(createChannelStatusStore)
   const [runtimeSettings, setRuntimeSettings] =
     useState<RuntimeSettings>()
   const [projectOverrides, setProjectOverrides] = useState<
@@ -819,10 +879,12 @@ export function ChannelSettingsSection({
     Record<CredentialChannel, ChannelDraft>
   >({
     wecom: { ...emptyDraft },
-    dingtalk: { ...emptyDraft }
+    dingtalk: { ...emptyDraft },
+    telegram: { ...emptyDraft }
   })
   const [busy, setBusy] = useState(false)
   const [testing, setTesting] = useState<CredentialChannel>()
+  const [telegramBotUsername, setTelegramBotUsername] = useState<string>()
   const [error, setError] = useState<string>()
   const bindingButtonRef = useRef<HTMLButtonElement>(null)
 
@@ -831,17 +893,20 @@ export function ChannelSettingsSection({
     setBindingOpen(false)
   }, [])
 
-  const applySnapshot = (next: ChannelSettingsSnapshot): void => {
+  const applySnapshot = useCallback((next: ChannelSettingsSnapshot): void => {
+    statusStore.seed(next)
     setSnapshot(next)
     setWeixinEnabled(next.weixin.enabled)
     setDrafts({
       wecom: draftFromSnapshot('wecom', next),
-      dingtalk: draftFromSnapshot('dingtalk', next)
+      dingtalk: draftFromSnapshot('dingtalk', next),
+      telegram: draftFromSnapshot('telegram', next)
     })
-  }
+  }, [statusStore])
 
   useEffect(() => {
     const api = window.goodbuddy.channels
+    const disconnectStatus = statusStore.connect(api)
     let active = true
     void (async () => {
       if (!api) {
@@ -882,14 +947,15 @@ export function ChannelSettingsSection({
     )
     return () => {
       active = false
+      disconnectStatus()
       removeBindingListener?.()
     }
-  }, [closeBinding])
+  }, [applySnapshot, closeBinding, statusStore])
 
-  const persistedProjects = runtimeSettings
+  const persistedProjects = useMemo(() => runtimeSettings
     ? projectDraftsFrom(projectList, runtimeSettings)
-    : {}
-  const projects = Object.fromEntries(
+    : {}, [projectList, runtimeSettings])
+  const projects = useMemo(() => Object.fromEntries(
     channelOrder.flatMap((channel) => {
       const persisted = persistedProjects[channel]
       if (!persisted) {
@@ -905,11 +971,15 @@ export function ChannelSettingsSection({
         ]
       ]
     })
-  ) as Partial<Record<ProjectChannel, ChannelProjectDraft>>
+  ) as Partial<Record<ProjectChannel, ChannelProjectDraft>>, [persistedProjects, projectOverrides])
 
   const save = async (): Promise<void> => {
     const api = window.goodbuddy.channels
     if (!api || !snapshot || !runtimeSettings) {
+      return
+    }
+    if (!snapshot.telegram.readOnly && !telegramAllowedSenderIdsSchema.safeParse(allowedSenderIds(drafts.telegram.allowedSenderIdsText)).success) {
+      setActiveChannel('telegram')
       return
     }
     const channelProjects = channelOrder.map(
@@ -943,6 +1013,10 @@ export function ChannelSettingsSection({
       ...(!snapshot.dingtalk.readOnly &&
       channelDraftChanged('dingtalk', drafts.dingtalk, snapshot)
         ? { dingtalk: inputFor('dingtalk', drafts.dingtalk) }
+        : {}),
+      ...(!snapshot.telegram.readOnly &&
+      channelDraftChanged('telegram', drafts.telegram, snapshot)
+        ? { telegram: inputFor('telegram', drafts.telegram) }
         : {})
     }
     setBusy(true)
@@ -1096,21 +1170,25 @@ export function ChannelSettingsSection({
       return
     }
     setTesting(channel)
+    if (channel === 'telegram') setTelegramBotUsername(undefined)
     setError(undefined)
     try {
       const settings = snapshot[channel].readOnly
         ? undefined
         : channel === 'wecom'
           ? inputFor('wecom', drafts.wecom)
-          : inputFor('dingtalk', drafts.dingtalk)
+          : channel === 'dingtalk'
+            ? inputFor('dingtalk', drafts.dingtalk)
+            : inputFor('telegram', drafts.telegram)
       const result: ChannelConnectionTestResult =
         await api.testConnection(channel, settings)
       if (!result.ok) {
         throw new Error(result.error)
       }
+      if (channel === 'telegram') setTelegramBotUsername(result.botUsername)
       onNotify({
         tone: 'success',
-        message: t('channels.connectionSuccess', {
+        message: t(channel === 'telegram' ? 'channels.telegram.verified' : 'channels.connectionSuccess', {
           channel: t(`channels.tabs.${channel}`)
         }),
         dedupeKey: `channel-test-${channel}`
@@ -1127,12 +1205,14 @@ export function ChannelSettingsSection({
   const weixinProject = projects.weixin
   const wecomProject = projects.wecom
   const dingtalkProject = projects.dingtalk
+  const telegramProject = projects.telegram
   if (
     !snapshot ||
     !runtimeSettings ||
     !weixinProject ||
     !wecomProject ||
-    !dingtalkProject
+    !dingtalkProject ||
+    !telegramProject
   ) {
     return (
       <>
@@ -1156,7 +1236,7 @@ export function ChannelSettingsSection({
         actions={
           <button
             className="primary-button"
-            disabled={busy}
+            disabled={busy || Boolean(testing)}
             onClick={() => void save()}
             type="button"
           >
@@ -1212,9 +1292,11 @@ export function ChannelSettingsSection({
             project={weixinProject}
             runtimeSettings={runtimeSettings}
             settings={snapshot.weixin}
+            statusStore={statusStore}
           />
         ) : activeChannel === 'wecom' ? (
           <ChannelEditor
+            busy={busy || Boolean(testing)}
             channel="wecom"
             draft={drafts.wecom}
             onChange={(next) =>
@@ -1226,10 +1308,31 @@ export function ChannelSettingsSection({
             project={wecomProject}
             runtimeSettings={runtimeSettings}
             settings={snapshot.wecom}
+            statusStore={statusStore}
             testing={testing === 'wecom'}
+          />
+        ) : activeChannel === 'telegram' ? (
+          <ChannelEditor
+            busy={busy || Boolean(testing)}
+            channel="telegram"
+            draft={drafts.telegram}
+            botUsername={telegramBotUsername}
+            onChange={(next) => {
+              if (next.secret !== drafts.telegram.secret || next.clearSecret !== drafts.telegram.clearSecret) setTelegramBotUsername(undefined)
+              setDrafts((current) => ({ ...current, telegram: next }))
+            }}
+            onProjectChange={(next) => updateProject('telegram', next)}
+            onSelectRoot={() => void selectRoot('telegram')}
+            onTest={() => void test('telegram')}
+            project={telegramProject}
+            runtimeSettings={runtimeSettings}
+            settings={snapshot.telegram}
+            statusStore={statusStore}
+            testing={testing === 'telegram'}
           />
         ) : (
           <ChannelEditor
+            busy={busy || Boolean(testing)}
             channel="dingtalk"
             draft={drafts.dingtalk}
             onChange={(next) =>
@@ -1243,6 +1346,7 @@ export function ChannelSettingsSection({
             project={dingtalkProject}
             runtimeSettings={runtimeSettings}
             settings={snapshot.dingtalk}
+            statusStore={statusStore}
             testing={testing === 'dingtalk'}
           />
         )}
