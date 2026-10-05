@@ -3056,7 +3056,8 @@ export function registerIpcHandlers(
       status:
         result.status === 'completed' ? 'completed' : 'failed'
     })
-    return result
+    const { status, output, error, attachments } = result
+    return { status, output, error, attachments }
     } finally {
       releaseRemoteContexts()
     }

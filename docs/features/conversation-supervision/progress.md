@@ -4,6 +4,24 @@
 
 当前记录以已验证生产行为为准。监督者尚未覆盖全部 user stories。
 
+## 2026-10-05 后端阶段审查 A03／A04／A05
+
+对应 SL-5、SL-8、FR-S6、FR-S10。生产候选读取现在将批次项目和跨项目设置传到只读 Worker；最终候选读取返回后检查暂停／取消；故事归属和拆分在原写事务内拒绝已移除或合并的目标。存储、停止与重试规则见[技术设计](./technical-design.md#单次执行与取消)。没有 schema 变更，原始消息、历史结果及人工确认字段保留。
+
+先加回归、后改实现的结果：8 个新用例中旧代码失败 7 个，取消用例原本通过。失败覆盖跨项目开／关两种生产候选、最终候选读取期间暂停、归属期间移除／合并目标、拆分前移除功能／子线索。旧暂停用例实际返回 `completed` 并发布结果；旧归属用例写入隐藏目标且把事件标为已处理。修复后暂停不发布结果或 checkpoint，继续仍复用原批次；失效故事批次回滚且事件可重试。生产身份测试补充真实项目事件关联，保留 UUID 别名、确认字段及失败后继续的断言。
+
+验证命令与结果：
+
+- `npm test -- src/main/assistant/supervision-production.test.ts src/main/assistant/supervision-worker.test.ts src/main/assistant/supervision-stories.test.ts src/main/assistant/supervision-review.test.ts src/main/assistant/supervision-timeline.test.ts src/main/assistant/supervision-experiences.test.ts src/main/assistant/supervisor-service.test.ts src/main/readonly-query-reader.test.ts`：8 个文件、96 项通过。Worker 回归每轮使用两个项目、422 条来源，并检查候选隔离、实体数量、外键及暂停后的完整发布。
+- 本次修改的 Main 源码、测试和验证脚本定向 ESLint、`git diff --check` 通过。`npm run typecheck` 首轮发现本轮 fixture 缺默认设置字段，修正后曾被并行 `tests/message-expansion.electron.test.ts:39` 类型错误阻塞；该文件由其负责方修正后，Main／Agent／Web 三组最终全部通过。本轮未修改该文件。
+- 定向验收时 `npm run lint` 曾被并行 OpenCode 修改中的三项错误阻塞；负责方修正后，最终全仓 lint 与 typecheck 均通过。两份后端文档扫描阻断项为 0；人工复核保留取消与事务顺序的边界说明。完整集成结果见[阶段修复验收](../../review/stage-audit-fixes-2026-10-05.md#最终检查)。
+- `node --import jiti/register scripts/supervision-audit-validation.ts scale <临时父目录>`：真实文件 SQLite，10 个项目、1,000 个实体、10,000 个事件、10,000 条事件实体关联、10 条来源，库文件 10,964,992 字节。三轮交替查询中，每轮十次旧相关子查询合计 3,517／5,302／4,190 ms；新 Worker 查询合计 39.18／34.01／36.04 ms，包含传输。逐项目返回的 100 个候选 ID 及顺序与旧 SQL 完全一致；跨项目读取每轮 0.95～1.79 ms。120 个事件的单批归属事务为 6.63 ms。计数不变，`foreign_key_check` 为空，`integrity_check` 为 `ok`。
+- 查询测量是同一合成库内的 SQL 对照，非完整 App 基线；同时有其他本地验证任务运行。原相关查询在修复传参后首次实测暴露每十次 3.60～4.65 秒耗时，随后改为实体集合查询。没有新增索引或迁移，也不据此宣称整窗性能改善。
+
+真实模型检查沿用 `scripts/supervision-production-live.ts` 的环境文件读取与 `ModelAgentRuntime` 无工具模式，由新增合成验证脚本执行。`node --import jiti/register scripts/supervision-audit-validation.ts live <临时父目录> .env.deepseek.local` 只发送一条 147 字符合成消息，真实生产工厂和文件 Worker 完成提取、保存及故事归属。外部请求准确为 **2 次**：提取 1 次、故事归属 1 次；无变化重跑新增请求 0 次。原文片段精确重建，外键与完整性检查通过，总耗时 3.84 秒。脚本上限为 3 次 HTTP 请求、每次模型阶段 45 秒、1,800 输出 token；凭据仅在进程内读取，终端与指标文件只输出计数和验证信息。本机继承的 TLS 环境设置未由本次修改。
+
+报告位于系统临时 `opencode/supervision-audit-Ggn5uW/metrics.json`（规模检查）和 `opencode/supervision-audit-WNu08s/metrics.json`（模型检查）。只写隔离合成库，未读取或修改用户库，未运行完整 App／Electron 回归或整包构建；没有提交。修改位于桌面监督服务及其 SQLite Worker，GoodBuddy Agent 与远程 Runtime 控制路径未改变。
+
 ## 2026-10-04 螺旋工具栏与事件颜色修正
 
 接续未提交的回顾布局调整。平铺与螺旋共用标题工具栏样式，项目层级菜单放在面包屑旁，画布内的视角入口和左下角圈数说明已移除。默认斜俯视，拖动及键盘操作保留；两种图谱均以共享 InlineHelp 的 i 图标打开图例。共用历史回顾栏、下钻返回、详情选择与中窄窗口详情面板保留。当前规则见 [UI 设计](./ui-design.md#故事线图谱)。

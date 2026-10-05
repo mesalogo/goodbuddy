@@ -13,11 +13,13 @@
 
 本文回答如何在现有 GoodBuddy 桌面端中实现监督者。它不改变产品范围，也不把模拟 Demo 当作生产数据模型。
 
-FR-S11 的读取架构见[时态 Story Graph 内置 MCP 设计](./story-graph-mcp-design.md)。三个只读工具通过 `readStoryGraph` 投影现有 SQLite，Main 在发现、调用和返回前检查监督者启用、会话开关及 Runtime 分配。绑定携带会话 ID，按主键读取当前设置；原生客户端的复用键包含会话 ID 和开关值。本地 MCP、Model、Harness Main 代理和远程受管工具通道共用此入口；会话开关复用 `context_state_json`，无 schema 迁移。该文独立定义对象／版本合同、时间语义、配置映射及后续跨 scope 复用和记忆过渡。当前 memory 背景读取、精确 scope checkpoint 与候选身份保留；结果快照不支持 `as_of` 历史重建。
+FR-S11 的读取架构见[时态 Story Graph 内置 MCP 设计](./story-graph-mcp-design.md)。三个只读工具通过 `readStoryGraph` 投影现有 SQLite，Main 在发现、调用和返回前检查监督者启用、会话开关及 Runtime 分配。绑定携带会话 ID，按主键读取当前设置；原生客户端的复用键包含会话 ID 和开关值。本地 MCP、Model、Harness Main 代理和远程受管工具通道共用此入口；会话开关复用 `context_state_json`，无 schema 迁移。当前监督阶段使用共享时间线 checkpoint；候选按下文的批次项目与跨项目设置筛选。memory 继续作为背景读取，结果快照不支持 `as_of` 历史重建。
 
 生产入口由 `supervision-production.ts` 组装服务、SQLite、共享池和无工具 Runtime。`supervision-review-store.ts` 保存冻结来源清单，按有界页和片段供 `SupervisorService` 派发；叶子及连续位置先提交，导航和完整结果之后发布。消息已有知识引用保留本地或外部 locator，已确认记忆通过独立背景输入提供。不会检索外部全库。详细存储、调度及当前限制统一见[分块调度第 0 节](./review-scheduling-design.md#0-生产接线与剩余边界)。
 
-模型实体 `id` 只在单次输出内有效。Main 从同一 scope 的故事线提供最多 100 个未撤销实体候选，生产提示只暴露 `candidateRef`（如 `known_1`）、名称和说明。模型显式选择候选后，Main 转换为严格 UUID 类型的内部 `persistedId`。服务校验候选集成员和重复映射，保存事务再次按实体主键校验故事线归属及撤销状态。没有有效候选引用时分配新 UUID，不按名称或裸模型 ID 合并。来源仍按每次结果分配 UUID，保留原始 `source_id` 和 locator。
+模型实体 `id` 只在单次输出内有效。生产服务将批次的 `projectId` 和 `crossProject` 经 `supervisionCandidates` 传到只读 Worker，再由 `listSupervisionCandidates` 查询共享时间线。跨项目关闭时，只提供该项目当前事件关联的未撤销实体；开启时允许其他项目的实体。候选仍最多 100 个，按更新时间和 ID 排序。查询先取得项目事件关联的实体集合，再筛选候选，避免对每个实体重复扫描事件。省略批次参数的旧读取入口保留精确 scope 查询。
+
+生产提示只暴露 `candidateRef`（如 `known_1`）、名称和说明。模型显式选择候选后，Main 转换为严格 UUID 类型的内部 `persistedId`。服务校验候选集成员和重复映射，保存事务再次按实体主键校验存在性及撤销状态。没有有效候选引用时分配新 UUID，不按名称或裸模型 ID 合并。来源仍按每次结果分配 UUID，保留原始 `source_id` 和 locator。
 
 新实体省略 `candidateRef`，不要求模型生成数据库 ID。未知非空 `candidateRef`、冲突身份和候选集之外的 UUID 均拒绝。旧输出中的 `persistedId` 仅在 UUID 合法且属于候选集时复用；空值、占位符和格式错误值不能证明已有身份，保留为独立新实体。局部 ID 或同名不会触发合并。
 
@@ -71,6 +73,10 @@ schema 47 的四张批次相关表使用外键随监督运行清理，未完成�
 
 `supervision:execution` 返回进程内 `{ active, runId?, stopping? }`，配置读取期间可有 `active: true` 而尚无 runId。`supervision:cancel({ runId })` 先在既有 `supervision_runs` 写入 `cancelled`、清除错误并保存取消时间，再向父 controller 传播 abort；重复取消保留原时间。该接口等待执行 Promise 结束，包含并行批次的 `allSettled` 和 Runtime `releaseConversation`，之后才释放准入。暂停只请求 abort，执行停止后保存 `paused`；取消优先于暂停。迟到模型输出不得保存叶子、导航或完整结果，成功批次保留，自动 checkpoint 不推进。发布是同步 SQLite 事务，已完成或无变化的运行拒绝取消，不撤销已发布结果；本次无 schema 迁移。
 
+发布前重读已保存批次所需候选后，再检查父 signal。此时收到暂停或取消，走原有停止分支；完整叶子和导航保留，结果及 checkpoint 尚未提交。该检查与同步保存之间没有新的异步等待。
+
+故事归属和子线索拆分在既有写事务内，按主键检查模型选中的目标、父故事和跨项目功能仍为 `current`。模型等待期间若用户移除或合并目标，整批写入回滚，包含新建故事和已处理标记；重新整理使用当前候选。拆分同样检查原功能及目标子线索。已发布回顾、用户调整和此前成功批次保留，不增加版本表或恢复日志。
+
 Preload 暴露类型化 `execution`、`cancel`，取消输入使用 UUID schema 并校验可信 sender。活动 UI 用实时执行状态覆盖持久记录的停止显示；工作回顾只在发起前查询执行状态，Main 仍作最终准入判断。`resume` IPC 直到运行结束才返回，Renderer 发出请求后释放提交锁并独立处理结果，确保继续中的回顾仍可暂停或取消。
 
 `App` 将既有通知回调经 `HeartbeatCenter` 传给 `SupervisorWorkspace`。回顾操作用 `supervisor-review` 去重键发送本地化 Toast，结果读取失败仍写入 `loadError` 并就地重试；实体、关系操作和来源读取失败也使用通知。工作回顾不再为状态条轮询执行状态，历史读取不发送操作通知。请求锁覆盖发起前检查和整次运行；页面刷新只使旧结果选择失效，不丢弃运行结束反馈。卸载后忽略迟到响应，检查阶段尚未提交的回顾不再发起，已提交的后台运行不取消。活动查询、原始错误持久化和 Main 生命周期保持原路径。
@@ -98,7 +104,7 @@ IPC `supervision:suggestions`、`supervision:suggestion-action`、`supervision:r
 
 只有实际送入模型、通过结果校验且成功落库的完整片段推进位置。心跳报告及其进度、监督结果及其进度分别在各自 SQLite 事务提交。监督服务串行执行，后续自动请求在前次保存后重新收集。报告成功而监督失败时，下一次自动检查跳过已成功的报告输入，但重试监督输入；无变化不创建报告、来源或图谱事件。
 
-已有同 scope 故事线的 scope 表示和实体 ID 保留；比较项目集合时忽略排序。模型接收最近摘要和同 scope 最多 100 个未撤销实体的候选引用、名称、说明，显式选择候选才复用，身份转换按上文执行。不同范围不合并，已有重复实体不自动修复。知识引用继续以独立来源保存 locator；当前记忆和旧摘要不作为新事件。
+已有故事线的 scope 表示和实体 ID 保留；比较项目集合时忽略排序。生产候选按上文的项目归属与跨项目设置读取，显式选择候选才复用；已有重复实体不自动修复。监督 checkpoint 的共享时间线规则见[故事线模型](./storyline-model-design.md)。知识引用继续以独立来源保存 locator；当前记忆和旧摘要不作为新事件。
 
 迁移在事务中扩展心跳计划及运行表的状态 CHECK，保留列、索引、ID、计划、报告与引用；消息版本列使用默认值，无需遍历或重写旧正文。进度初始为空，首次自动运行从配置窗口开始。报告保留期限覆盖 `no_change` 运行，但不删除来源进度；删除报告不触发重新消费。
 
@@ -326,7 +332,7 @@ IPC 返回图谱查询结果时使用分页和有界字段；详情中的来源�
 ## 当前剩余差距
 
 - 实体与关系 revoke 保存状态；界面没有 undo 或恢复入口。
-- 跨 run identity 依赖同 scope 候选 UUID 的显式引用，不自动合并历史重复实体；模型漏选候选时会创建新身份。
+- 跨 run identity 依赖候选 UUID 的显式引用，候选范围受批次项目及跨项目设置控制；不自动合并历史重复实体，模型漏选候选时会创建新身份。
 - 结果图谱使用真实事件实体连线，侧栏已按固定目标过滤并支持结果直达图谱；逐事件状态回放和 Experiment 尚未实现。
 - 用户暂停已接到排队/在途 signal，并保留已保存批次；源版本变更后的局部重算、完整模型配置冻结及其他限制见分块调度第 0 节。
 - 监督知识实体与知识库正文条目仍是不同对象，知识正文只能通过现有条目定位和预览接口处理。

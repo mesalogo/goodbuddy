@@ -158,6 +158,7 @@ export function SupervisorWorkspace({
   const refresh = useCallback(async (requestedId = selectedResult.current) => {
     if (!api) return
     const generation = ++loadGeneration.current
+    setPending(undefined)
     selectedResult.current = requestedId
     setLoading(true)
     setGraph(emptyGraph)

@@ -2559,6 +2559,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       const submittedChecklistCalls = new Set<string>();
       const pendingChecklistUpdates: RuntimeChecklist[] = [];
       let runFailed = false;
+      let submissionFailure: { error: unknown } | undefined;
       try {
         const promptText = promptWithUntrustedConversationHistory(
           request,
@@ -2643,7 +2644,15 @@ export class OpenCodeRuntime implements AgentRuntime {
                 ),
               signal,
             );
-        prompt.catch(() => undefined);
+        void prompt.then((result) => {
+          if (result.error) {
+            throw new Error(opencodeErrorMessage(result.error, "OpenCode 提交请求失败"));
+          }
+        }).catch((error: unknown) => {
+          submissionFailure = { error };
+          // Wake a silent SSE reader without cancelling any peer subscription.
+          subscriptionController.abort(error);
+        });
 
         const repliedPermissionIds = new Set<string>();
         const ownedSessions = new Set([sessionId]);
@@ -3174,7 +3183,7 @@ export class OpenCodeRuntime implements AgentRuntime {
             }
           }
         }
-        throw error;
+        throw submissionFailure?.error ?? error;
       } finally {
         signal.removeEventListener("abort", abortSession);
         // Keep the conversation locked until its session-wide abort settles.

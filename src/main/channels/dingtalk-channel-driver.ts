@@ -3,6 +3,7 @@ import type {
   ChannelResultMessage
 } from '../../shared/channel-contracts'
 import type { ChannelDriver, ChannelInboundHandler } from './channel-driver'
+import { readBoundedResponseText } from '../../shared/node/bounded-response'
 import {
   DingTalkDriver,
   type DingTalkStreamEnvelope,
@@ -133,6 +134,7 @@ class OfficialDingTalkTransport implements DingTalkStreamTransport {
     const timeout = setTimeout(() => {
       controller.abort(new Error('钉钉回复超时'))
     }, REPLY_TIMEOUT_MS)
+    let result: unknown
     try {
       const response = await this.fetchImpl(sessionWebhook, {
         method: 'POST',
@@ -144,21 +146,25 @@ class OfficialDingTalkTransport implements DingTalkStreamTransport {
         redirect: 'error',
         signal: controller.signal
       })
-      const responseLength = Number(
-        response.headers.get('content-length') ?? '0'
-      )
-      if (
-        !response.ok ||
-        !Number.isFinite(responseLength) ||
-        responseLength > MAXIMUM_RESPONSE_BYTES
-      ) {
+      if (!response.ok) {
+        await response.body?.cancel()
         throw new Error('钉钉回复请求失败')
       }
-      await response.body?.cancel()
+      result = JSON.parse(await readBoundedResponseText(response, {
+        maxBytes: MAXIMUM_RESPONSE_BYTES,
+        tooLargeMessage: '钉钉回复响应过大',
+        truncatedMessage: '钉钉回复响应不完整'
+      }))
     } catch {
       throw new Error('钉钉回复请求失败')
     } finally {
       clearTimeout(timeout)
+    }
+    if (typeof result !== 'object' || result === null || !('errcode' in result) || result.errcode !== 0) {
+      const code = typeof result === 'object' && result !== null && 'errcode' in result &&
+        typeof result.errcode === 'number' && Number.isSafeInteger(result.errcode)
+        ? ` (${result.errcode})` : ''
+      throw new Error(`钉钉回复请求失败${code}`)
     }
   }
 }
@@ -245,12 +251,8 @@ export class DingTalkChannelDriver implements ChannelDriver {
       throw new Error('钉钉回复上下文无效或已过期')
     }
 
-    try {
-      signal.throwIfAborted()
-      await this.driver.reply(record.context, resultText(message))
-    } catch {
-      throw new Error('钉钉消息回复失败')
-    }
+    signal.throwIfAborted()
+    await this.driver.reply(record.context, resultText(message))
     if (!message.attachments?.length) {
       this.replyContexts.delete(message.eventId)
     }

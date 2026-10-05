@@ -41,6 +41,7 @@ void app.whenReady().then(async () => {
   const updates: object[] = []
   let pollsAborted = 0
   let pollingUnavailable = false
+  let pollingConflict = false
   const originalNetFetch = net.fetch
   // This is the only Telegram substitution: production driver construction and IPC stay intact.
   net.fetch = async (input, init) => {
@@ -61,6 +62,9 @@ void app.whenReady().then(async () => {
         assert.deepEqual(body.allowed_updates, ['message'])
         try { await delay(50, undefined, { signal: init?.signal ?? undefined }) }
         catch (error) { pollsAborted++; throw error }
+        if (pollingConflict) {
+          return new Response(JSON.stringify({ ok: false, error_code: 409 }), { status: 409 })
+        }
         if (pollingUnavailable) {
           return new Response(JSON.stringify({ ok: false, error_code: 503 }), { status: 503 })
         }
@@ -174,6 +178,16 @@ void app.whenReady().then(async () => {
     assert.equal(database.getProject(conversation.projectId!).channel, 'telegram')
 
     await wait(() => run(`!document.querySelector('button.primary-button').disabled && document.querySelector('.channel-settings-card .capability-card__header > span')?.textContent === 'Connected'`), 'saved connection visible')
+    pollingConflict = true
+    await wait(() => run(`document.querySelector('.channel-settings-card [role="alert"]')?.textContent.includes('polling conflict')`), 'terminal polling conflict visible')
+    pollingConflict = false
+    const validationsBeforeRecovery = calls.filter(call => call.method === 'getMe').length
+    await click('button.primary-button')
+    await wait(() => calls.filter(call => call.method === 'getMe').length === validationsBeforeRecovery + 1, 'unchanged Save restarts conflicted poller')
+    await wait(() => run(`!document.querySelector('button.primary-button').disabled && document.querySelector('.channel-settings-card .capability-card__header > span')?.textContent === 'Connected'`), 'recovered connection visible')
+    await click('button.primary-button')
+    await wait(() => run(`!document.querySelector('button.primary-button').disabled`), 'healthy unchanged Save completed')
+    assert.equal(calls.filter(call => call.method === 'getMe').length, validationsBeforeRecovery + 1, 'Healthy Save must not restart polling')
     await fill('input[aria-label="Telegram Bot Token"]', 'unsaved-token-placeholder')
     await fill('textarea[aria-label="Telegram allowed sender IDs"]', '700001\n700003')
     pollingUnavailable = true
@@ -223,7 +237,7 @@ void app.whenReady().then(async () => {
     assert.deepEqual(blocked, [], 'No unexpected external requests')
     console.log(JSON.stringify({ telegramSmoke: 'passed', uiConfigSaveTest: true, productionPreloadIpc: true,
       productionExecutor: true, desktopConversationPersisted: true, reloadRestored: true,
-      disableCancelsModel: true, liveStatusPreservesDrafts: true, clearTokenDisablesAndPreservesHistory: true,
+      disableCancelsModel: true, liveStatusPreservesDrafts: true, unchangedSaveRecoversConflict: true, clearTokenDisablesAndPreservesHistory: true,
       modelCalls: payloads.length, telegramReplies: replies.length,
       pollsAborted, externalNetworkCalls: 0 }))
   } finally {

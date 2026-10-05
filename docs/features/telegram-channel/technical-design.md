@@ -27,6 +27,8 @@
 
 结果先进入现有发件箱，发送失败由服务有限重试，不重新调用模型；失败计数达到 5 或遇到永久错误后停止补发。发送前校验目标会话中的 Bot ID，拒绝把旧 Bot 结果交给新 Bot。附件只附加桌面查看提示。
 
+生成图片后，executor 先把 `artifactIds` 写入桌面会话，再向 `ChannelService` 返回通道契约中的状态、正文、错误和附件。图片字节保留在附件中；桌面成果 ID 不进入严格校验的通道结果，避免成功任务被误报为“无效结果”。该转换位于本地和远程 Runtime 事件处理之后，不改变 Runtime 或 Agent 协议。
+
 驱动按最多 4096 个 UTF-16 码元拆分纯文本，并避开代理对中间位置；不设置 `parse_mode` 或引用原消息。分段进度只在驱动内存保存，最多 128 条，停止时清空。单次发送的 429 最多等待重试 3 次，仍失败则交回发件箱处理。跨重启补发与不确定网络结果允许产生重复段落。
 
 停用会中止轮询、发送等待、活动执行与排队工作，等待活动操作结束后报告停止。清除凭据时设置页同时提交 `enabled=false`；底层拒绝启用但无 Token 的配置。Token 替换先验证，失败不停止旧服务。项目与历史不因停用或清除凭据删除。
@@ -36,5 +38,7 @@
 Manager 通过 `{ channel, status }` 增量 IPC 推送状态，忽略旧服务实例的迟到事件。Telegram 连接状态由驱动维护，发送成功不会覆盖轮询错误。状态值为 `disabled`、`starting`、`running`、`stopped`、`error`；重连使用 `starting` 加错误说明，未配置由界面结合凭据状态显示。
 
 Renderer 的 `channel-status-store.ts` 订阅事件，selector 只向状态区域提供对应通道数据。首次快照不会覆盖已收到的较新事件；状态更新不重新加载整份设置，不重置 Token 或白名单草稿。配置页复用共享页签、开关、项目设置字段和通知控件。
+
+保存时读取状态 store 的最新值。Telegram 已启用、配置可编辑且状态为 `error` 或 `stopped` 时，即使字段未变，也提交当前配置以重启连接；`running`、`starting` 状态下的无修改保存不重启轮询。环境变量配置仍为只读，测试连接不改变轮询状态。
 
 源码入口：[`telegram-channel-driver.ts`](../../../src/main/channels/telegram-channel-driver.ts)、[`channel-manager.ts`](../../../src/main/channels/channel-manager.ts)、[`channel-service.ts`](../../../src/main/channels/channel-service.ts)、[`channel-settings-store.ts`](../../../src/main/channels/channel-settings-store.ts)、[`channel-status-store.ts`](../../../src/renderer/src/channel-status-store.ts)、[`ChannelSettingsSection.tsx`](../../../src/renderer/src/ChannelSettingsSection.tsx)。

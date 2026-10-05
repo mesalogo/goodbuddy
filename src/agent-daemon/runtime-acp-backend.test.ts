@@ -518,6 +518,84 @@ function harness(input: {
 }
 
 describe('RuntimeAcpBackend', () => {
+  it.each(['watchdog', 'dispose'])('interrupts stalled native initialization through %s', async action => {
+    vi.useFakeTimers()
+    const fixture = harness({ agentOwned: true, shareOwnedProcesses: true })
+    try {
+      await open(fixture)
+      await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({ deadlineAt: UNBOUNDED_REMOTE_PROMPT_DEADLINE }))
+      let settled = false
+      const starting = invoke(fixture, 'runtime/startPrompt', {
+        bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1', prompt: [{ type: 'text', text: 'test' }]
+      }).catch(() => undefined).finally(() => { settled = true })
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fixture.process.writes).toHaveLength(1)
+      let disposalError: unknown
+      const disposal = action === 'dispose' ? fixture.backend.dispose().catch((error: unknown) => { disposalError = error }) : undefined
+      await vi.advanceTimersByTimeAsync(action === 'watchdog' ? 121000 : 10000)
+      const observed = { settled, stops: fixture.process.stops.length, disposalError }
+      const initialize = JSON.parse(Buffer.from(fixture.process.writes[0]!).toString())
+      await fixture.process.emit('stdout', `${JSON.stringify({ jsonrpc: '2.0', id: initialize.id, error: { code: -32603, message: 'release fixture' } })}\n`)
+      await Promise.all([starting, disposal])
+      await vi.advanceTimersByTimeAsync(100)
+      expect(observed).toEqual({ settled: true, stops: 1, disposalError: undefined })
+      expect(fixture.process.writes.map(payload => JSON.parse(Buffer.from(payload).toString()).method)).toEqual(['initialize'])
+    } finally {
+      vi.useRealTimers()
+      await fixture.backend.dispose().catch(() => undefined)
+    }
+  })
+
+  it.each(['cancel', 'deadline'])('keeps a shared peer responsive during native startup and %s', async reason => {
+    const fixture = await ownedHarness(true)
+    let releaseStartup: (() => Promise<void>) | undefined
+    try {
+      await fixture.start()
+      const process = fixture.processes[0]!
+      const originalWrite = process.onWrite!
+      process.onWrite = payload => {
+        const request = JSON.parse(Buffer.from(payload).toString())
+        if (request.method === 'session/new') {
+          releaseStartup = () => process.emit('stdout', `${JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { sessionId: 'late-session' } })}\n`)
+        } else originalWrite(payload)
+      }
+      const opened = await invoke(fixture, 'runtime/openAcpChannel', { ...fixture.openRequest, bindingId: 'starting' }) as { channelEpoch: string }
+      vi.useFakeTimers()
+      await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({ bindingId: 'starting', channelEpoch: opened.channelEpoch,
+        operationId: 'starting-request', requestId: 'starting-request',
+        deadlineAt: reason === 'deadline' ? new Date(1100).toISOString() : UNBOUNDED_REMOTE_PROMPT_DEADLINE }))
+      let startSettled = false
+      const starting = invoke(fixture, 'runtime/startPrompt', { bindingId: 'starting', operationId: 'starting-request', requestId: 'starting-request', prompt: [{ type: 'text', text: 'test' }] })
+        .catch(() => undefined).finally(() => { startSettled = true })
+      await vi.advanceTimersByTimeAsync(1)
+      expect(releaseStartup).toBeDefined()
+      let peerSettled = false
+      const peer = invoke(fixture, 'runtime/getAcpCursors', { bindingId: 'binding-1' }).then(() => { peerSettled = true })
+      let cancelled: Promise<unknown> | undefined
+      if (reason === 'cancel') cancelled = invoke(fixture, 'runtime/escalateCancellation', {
+        bindingId: 'starting', operationId: 'starting-request', requestId: 'starting-request', sessionId: 'opening', reason: 'requested'
+      })
+      await vi.advanceTimersByTimeAsync(200)
+      const observed = { peerSettled, startSettled, stops: process.stops.length }
+      // Release the fake native response even on the old implementation.
+      await releaseStartup!()
+      await vi.advanceTimersByTimeAsync(5000)
+      await Promise.all([starting, peer, cancelled])
+      expect(observed).toEqual({ peerSettled: true, startSettled: true, stops: 0 })
+      expect(fixture.transcript.attach('binding-1', 'request-1', fixture.context.controller.controllerId).state).toBe('running')
+      const writes = process.writes.map(payload => JSON.parse(Buffer.from(payload).toString()))
+      expect(writes.filter(request => request.method === 'session/prompt')).toHaveLength(1)
+      expect(writes).toContainEqual(expect.objectContaining({ method: 'session/close', params: { sessionId: 'late-session' } }))
+      await fixture.prompts[0]!()
+      await vi.advanceTimersByTimeAsync(1)
+    } finally {
+      await releaseStartup?.()
+      await fixture.prompts[0]?.()
+      vi.useRealTimers()
+      await fixture.cleanup()
+    }
+  })
+
   it.each([false, true])('commits completion before idle cleanup and preserves it on cleanup failure (shared=%s)', async shared => {
     for (const failure of ['stop', 'reconcile'] as const) {
       const fixture = await ownedHarness(shared)

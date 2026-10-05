@@ -1,5 +1,100 @@
 # 进度与证据
 
+## 2026-10-05 Runtime 生命周期审查修复
+
+A01（远程启动阻塞控制队列）和 A02（本机 OpenCode 提交失败后等待静默 SSE）已修复。
+远程启动等待释放 backend 控制队列及协议接收分派，取消、watchdog、关闭和其他
+binding 可以继续处理；Session owner 合并相同启动、拒绝冲突，并关闭取消后迟到的
+原生 Session。本机提交错误立即唤醒所属 SSE 消费，保留原错误和既有 Session 取消。
+两条实现均未增加整个 Prompt 的默认总时限；共享进程、终态提交和写帧顺序规则见
+[Runtime 进程复用设计](../assistant-workbar/runtime-process-reuse-technical-design.md)。
+
+### 确定性复现
+
+持久回归中，本机拒绝、错误响应、10 ms 提交超时三种情况在旧代码经过 100 ms
+假时钟后仍未结算；远程共享进程中的第二个 Session 启动被挂起时，旧代码经过
+200 ms 后，取消/截止时间和同进程另一 binding 的查询均未结算。上述五项先运行旧
+实现，全部按这些断言失败。真实 Host 首轮还定位到协议 dispatcher 串行等待启动
+响应，新增帧级回归在修复前只分派 `start`，没有分派后续 `cancel` 和 `peer`。
+
+修复后的九项新增回归通过，另覆盖启动 watchdog、默认关闭时限、相同启动重放及
+冲突。共享 peer 保持 running；迟到 Session 收到自身的 `session/close`，取消的
+启动不发送 Prompt。原始审查探针曾在 131 秒假时钟后观察到启动、取消、peer 查询
+仍等待，默认 10 秒 dispose 报超时且 stop 次数为 0，现有关闭与 watchdog 回归不再
+等待原生初始化响应。各假时钟值是确定性边界，不是系统性能测量。
+
+### 当前源码实机验证
+
+复用已有 lifecycle harness，用 esbuild 重建当前 Desktop driver、Agent daemon、
+CLI/helper；凭据从 GoodBuddy 已有加密配置的临时副本加载，SSH 校验已固定 Host
+identity。共享 Linux x64 经 `192.168.0.23` 连接，只使用 `/root/tmp/gb-lifecycle-*`
+专用目录和所属进程，未替换原 Host 安装或修改无关数据。
+
+| 场景 | 实际结果 | 真实文本提供商调用 |
+| --- | --- | ---: |
+| 首轮 Host 启动挂起 | backend 修复后，协议 dispatcher 仍阻塞；测试退出后所属进程为 0 | 0 |
+| OpenCode 启动取消及工具、detach、controller 恢复、测试 Agent 提升、重放 | 启动响应被挂起时控制查询 48 ms、取消 216 ms；工具与恢复完成；两个提供商响应均 HTTP 200 | 2 |
+| Continue 同场景 | 控制查询 60 ms、取消 258 ms；工具与恢复完成；两个提供商响应均 HTTP 200 | 2 |
+| Windows 当前源码 OpenCode 普通文本 | 真实原生二进制经有界 loopback 转发访问已配置模型，返回 `LOCAL_RUNTIME_OK`，0 工具调用；总耗时 4,727 ms | 1 |
+
+本轮合计 **5 次真实文本提供商调用、0 次图片生成调用**。两次本机脚本准备失败发生在
+SDK 动态加载阶段，均为 0 次模型调用，随后修正测试 bundle 并通过。所有成功场景均
+使用最终相关生产源码。Host 启动取消阶段各为 0 次模型调用，最终所属残留进程均为 0，
+专用目录由 harness 清理；本机 Runtime 和凭据临时副本也已清理。
+
+真实数据检查使用本轮原生工具和模型产生的事件：OpenCode 45 条写入、23 个 checkpoint，
+Continue 16 条写入、8 个 checkpoint，经生产 `AssistantDatabase` 和
+`RemoteEventBatcher` 写入隔离 SQLite，再重放确认全部去重。未迁移、改写用户生产
+历史库，也未以构造事件代替本轮 Host transcript。
+
+原始脚本和日志位于 `C:/Users/jiang/AppData/Local/Temp/opencode`：
+`a01-runtime-host-build.cjs`、`a01-runtime-host-run.cjs`、`a01-runtime-host/`，以及
+`a02-local-model.ts`、`a02-local-model-run.cjs` 和 `a02-local-model-1791142126078.log`。
+Host 成功日志为 `opencode-1791141713375.log`、`continue-1791141785721.log`。
+延迟为各场景一次实测，不宣称吞吐、p95 或完整桌面性能提升。
+
+### 检查命令与边界
+
+```text
+npx vitest run src/agent-daemon --testTimeout=30000 --hookTimeout=60000
+npx vitest run src/main/remote-agent src/main/agent/acp-remote-runtime.test.ts src/main/agent/runtime-controller.test.ts src/main/agent/local-runtime-registry.test.ts --testTimeout=30000
+npx vitest run src/main/agent/opencode-runtime.test.ts
+npx vitest run src/main/agent/opencode-runtime-lifecycle.test.ts --testTimeout=30000 --hookTimeout=60000
+npm run typecheck
+npm run lint
+```
+
+四组测试分别为 323 通过/33 跳过、393 通过、156 通过、4 通过，共 876 项通过；
+typecheck、全仓 lint 和修改范围 `git diff --check` 通过。初次合并运行中，既有
+OpenCode `cleanup-timeout` 用例失败一次；该用例独立复跑及随后完整 OpenCode 文件
+复跑通过，未改动该用例或相关产品清理逻辑。较早 Main 类型检查的并发监督者 fixture
+错误在最终全仓检查时已消失。
+
+验证覆盖当前源码、真实 Windows OpenCode 二进制和共享 Linux x64 Host，不含签名包
+安装验收、完整 UI 点击、macOS/Linux arm64 或用户生产大库性能测试。首轮定向验证
+未运行全仓 `npm test`，后续完整检查见下节；远程更新仍须部署包含本次源码的 Agent，
+未提交或发布。
+
+### SDK cleanup-timeout 复查
+
+后续全仓验证为 6,130 通过、1 失败、87 跳过，唯一失败是 OpenCode SDK
+`cleanup-timeout` 用例。复查通过独立 Node 子进程的十轮显式 GC 和受控取消复现：
+旧 fetch 替身只保存 `request.signal`，返回永不结算的 Promise，没有在途 Request
+所有者或 abort 处理。Request 及 Undici 内部 AbortController 被回收后，外层超时
+signal 已中止，保存的 Request signal 仍未中止。真实 loopback fetch 在同样 GC
+条件下保留 Request，取消后 SDK 返回错误，未观察到产品清理提前完成。
+
+修正仅涉及测试：挂起的 fetch 替身在 abort 时以 `request.signal.reason` 拒绝，
+闭包保持 Request 存活至取消。原有 `signals.every(signal => signal.aborted)`、调用
+顺序、错误脱敏及超时均保留。新增 GC 回归在旧替身上稳定失败，修正后通过；九项
+SDK 定向用例、Main 类型检查及该文件 ESLint 通过。本次跟进新增外部模型调用 0 次，
+生产代码与远程 Agent 路径均未改动，无需重新执行 Host 模型验证。
+
+修正后的完整 `npm test` 于 04:00:22 开始，852.63 秒完成，退出码 0：518 文件通过、
+15 文件跳过；6,136 项通过、0 失败、87 跳过。计数包含并发工作树中的其他修复。
+原始记录为 `C:/Users/jiang/AppData/Local/Temp/opencode/a02-cleanup-final-20261005.log`
+及同名 `.json`；GC/真实 loopback 对照脚本为该目录的 `a02-cleanup-gc-probe.mjs`。
+
 ## 2026-10-04 调研与设计
 
 调研阶段，用户确认彻底移除 Ask / Execute，包括界面、原生工具与 MCP 限制，并允许升级清理历史模式字段。该阶段先交付文档，随后用户确认删除安全设置并授权实施；实现结果见下文。

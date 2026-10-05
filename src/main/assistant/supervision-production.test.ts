@@ -211,7 +211,17 @@ function fixture(content = 'Atlas and Beacon are separate projects.') {
   const service = (responseKiB = 1024) => createProductionSupervisorService(db, async () => ({ supervisorModelConcurrency: 1,
     supervisionReview: { pageSize: 10, batchCharacters: 1000, batchMessages: 10, executionSeconds: 300, responseKiB } }),
     async () => ({ runtimeId: 'model', capability: 'chat', run } as AgentRuntime), pool)
-  return { db, request, respond, service }
+  // Project ownership comes from timeline events, not the scope that first saved an entity.
+  const associateCandidates = () => {
+    const sql = (db as unknown as { requireDatabase(): DatabaseSync }).requireDatabase()
+    const id = randomUUID()
+    sql.prepare(`INSERT INTO supervision_events (id, story_line_id, result_id, occurred_at, title, description, event_type, project_id)
+      SELECT ?, story_lines.id, supervision_results.id, ?, 'Seed ownership', '', 'discussion', ?
+      FROM story_lines, supervision_results LIMIT 1`).run(id, request.timeRange.from, db.listProjects()[0]!.id)
+    sql.prepare('INSERT INTO supervision_event_entities (event_id, entity_id, change_type) SELECT ?, id, ? FROM supervision_entities').run(id, 'associated')
+    sql.prepare('INSERT INTO supervision_story_assigned VALUES (?)').run(id)
+  }
+  return { db, request, respond, service, associateCandidates }
 }
 
 it('records supervisor model usage under a hidden supervision task', async () => {
@@ -237,6 +247,7 @@ it('production factory normalizes two absent identities, then reuses exact candi
   const first = await f.service().run(f.request)
   expect(first.output.entities).toHaveLength(2)
   for (const entity of first.output.entities) expect(entity).not.toHaveProperty('persistedId')
+  f.associateCandidates()
   const candidates = f.db.listSupervisionCandidates(f.request)
   expect(candidates).toHaveLength(2)
   expect(f.respond.mock.calls[0]![0]).toContain('KNOWN ENTITIES is empty. Every entity is new; omit candidateRef')
@@ -256,6 +267,7 @@ it('retains candidate mappings across leaf batches, failed merge and resume with
   const f = fixture('Atlas and Beacon. '.repeat(100))
   f.db.saveSupervisionResult({ request: f.request, evidence: [], output: { ...empty,
     entities: ['Atlas', 'Beacon'].map(label => ({ id: label, label, description: label, sourceReferenceIds: [] })) } })
+  f.associateCandidates()
   const candidates = f.db.listSupervisionCandidates(f.request)
   const original = f.respond.getMockImplementation()!
   let failMerge = true
@@ -346,6 +358,7 @@ it('reuses actual legacy text-key shapes through strict UUID aliases and preserv
     sql.prepare(`INSERT INTO supervision_entities (id, story_line_id, canonical_label, description, confirmation_state, updated_at, source_reference_ids_json)
       VALUES (?, ?, ?, 'Human description', 'confirmed', ?, '[]')`).run(id, String(story.id), id, new Date().toISOString())
   }
+  f.associateCandidates()
   const candidates = f.db.listSupervisionCandidates(f.request)
   const legacy = candidates.filter(candidate => candidate.storageId)
   expect(legacy).toHaveLength(2)

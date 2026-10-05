@@ -365,6 +365,12 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 同次验证复现原生 ACP 冷启动超过 15 秒控制超时。`runtime/startPrompt` 的控制等待
 现至少为 30 秒，其余控制请求沿用原时限；Runtime 外层仍保留启动超时和取消处理。
 
+2026-10-05 修复启动等待阻塞控制队列的问题：原生启动等待同时释放 backend 全局控制
+队列和协议接收分派，取消、watchdog 及其他 binding 的控制请求可继续处理。相同启动
+请求只执行一次，迟到返回的已取消 Session 单独关闭；不增加 Prompt 总时限或新协议
+阶段。实现规则见[共享进程与 Session 所有权](../assistant-workbar/runtime-process-reuse-technical-design.md#61-连接与所有权)，
+本次源码 Host 验证及调用计数见[统一执行进度](../unified-execution/progress.md#2026-10-05-runtime-生命周期审查修复)。
+
 ## ACP 与断线
 
 - 管控面只负责有界 JSON-RPC：连接、查询、启动、取消、关闭和重连。数据面只负责

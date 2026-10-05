@@ -23,6 +23,33 @@ afterEach(() => {
 })
 
 describe('AgentOwnedAcpPrompt', () => {
+  it('coalesces identical starts and rejects conflicting starts while initialization is pending', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'goodbuddy-owned-start-'))
+    temporary.push(root)
+    const transcript = new SemanticPromptStore(join(root, 'prompts.sqlite'))
+    transcript.prepare({ bindingId: 'binding-1', operationId: 'operation-1', requestId: 'operation-1',
+      controllerId: 'controller-1', preparationDigest: `sha256:${'a'.repeat(64)}`, promptSequence: 0 })
+    let initialize!: (value: { protocolVersion: number }) => void
+    let finish!: (value: PromptResponse) => void
+    const newSession = vi.fn(async () => ({ sessionId: 'session-1' }))
+    const prompt = vi.fn(() => new Promise<PromptResponse>(resolve => { finish = resolve }))
+    const owner = new AgentOwnedAcpPrompt({ bindingId: 'binding-1', controllerId: 'controller-1',
+      workspaceDirectory: '/workspace', process: new MemoryProcess(), transcript, completePrompt: async () => undefined,
+      createConnection: () => ({ initialize: () => new Promise(resolve => { initialize = resolve }), newSession, prompt }) as unknown as ClientSideConnection })
+    const request = { bindingId: 'binding-1', operationId: 'operation-1', requestId: 'operation-1', prompt: [{ type: 'text' as const, text: 'test' }] }
+    try {
+      const first = owner.start(request)
+      const replay = owner.start(request)
+      await expect(owner.start({ ...request, prompt: [{ type: 'text', text: 'different' }] })).rejects.toMatchObject({ code: 'conflict' })
+      initialize({ protocolVersion: 1 })
+      expect(await first).toEqual(await replay)
+      expect(newSession).toHaveBeenCalledOnce()
+      expect(prompt).toHaveBeenCalledOnce()
+      finish({ stopReason: 'end_turn' })
+      await vi.waitFor(() => expect(transcript.attach('binding-1', 'operation-1', 'controller-1').state).toBe('completed'))
+    } finally { owner.close(); transcript.close() }
+  })
+
   it('refreshes prompt tools on the retained session and authorizes execution', async () => {
     const root = mkdtempSync(join(tmpdir(), 'goodbuddy-owned-acp-modes-'))
     temporary.push(root)

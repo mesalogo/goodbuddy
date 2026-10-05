@@ -168,6 +168,11 @@ Session 和 Prompt 路由删除产品模式，按实际能力和请求归属接�
 使用独立的 ACP 取消路径。
 现有 `snapshot: false` 必须保留。
 
+提交 Prompt 的 Promise 与 SSE 消费同时运行。提交返回错误、抛错或控制请求超时后，
+立即中止本请求的 SSE 订阅并保留提交错误；不能等待服务端为未接受的 Prompt 发送
+`session.idle`。回收仍先 abort 订阅再结束迭代器，随后完成该 Session 的有界取消，
+不关闭其他会话的订阅或共享 Server。生产运行不增加整个 Prompt 的默认总时限。
+
 `mcpMutationTail` 目前属于 Runtime 对象；共享后同一原生目录的变更必须由同一 owner
 串行协调。注册名称、工具可见性、knowledge token 和清理仍按请求区分，不能用一个全局
 “当前 MCP 列表”覆盖同目录或跨目录的其他请求。探针未覆盖动态 MCP，这是实施验收项。
@@ -281,6 +286,16 @@ Agent 当前 Runtime installation + 兼容配置
   不增加第二份持久进程恢复账本。
 - 同一 PID 的多个 binding 不代表同一权限或同一 operation。Host/installation identity
   变化仍使用已有失效和退役规则，不把不同 Host、账号或 Runtime generation 合并。
+
+`runtime/startPrompt` 校验及 owner 登记经过 backend 控制队列，原生握手、Session
+创建/恢复和模型路由准备在队列外等待。协议接收端也不等待该 RPC 的最终响应才分派
+后续帧；未完成的响应继续占用已有 request channel，沿用连接通道容量限制及 FIFO
+写入。其他方法的分派顺序保持不变，Prompt 终态仍经 backend 控制队列提交。
+同一 binding 的相同启动请求共用 Promise，内容不同的并发启动返回冲突。
+
+启动等待属于 Session owner，可以被取消、启动 watchdog 或关闭中断。取消后不得
+发送 Prompt；原生调用迟到返回的 Session 只关闭自身，不能回收仍服务其他 binding
+的共享进程。原生握手本身仍由进程 owner 共享，一个等待者退出不取消其他等待者。
 
 原生 `chat.message` 在模型请求前设置该 Session 的工具与模型路由，不再按产品模式
 过滤 Shell、编辑或写入；请求级端点与子会话归属仍独立。

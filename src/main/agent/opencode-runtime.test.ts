@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import {
@@ -261,6 +262,16 @@ function runClient(events: Record<string, unknown>[]) {
     event: client.event,
     tool: client.tool,
   };
+}
+
+function stalledFetch(request: Request): Promise<Response> {
+  return new Promise<Response>((_resolve, reject) => {
+    // Like a live fetch, retain the Request until cancellation. Keeping only its
+    // signal lets Undici's weakly referenced controller disappear during GC.
+    const abort = (): void => reject(request.signal.reason);
+    if (request.signal.aborted) abort();
+    else request.signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function embeddedRuntime(
@@ -3323,6 +3334,35 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     }
   });
 
+  it("retains a stalled SDK fetch until abort even under garbage collection", () => {
+    const output = execFileSync(process.execPath, ["--expose-gc", "--input-type=module", "-e", `
+      import { createOpencodeClient } from '@opencode-ai/sdk/v2';
+      import { setImmediate as turn } from 'node:timers/promises';
+      const stalledFetch = ${stalledFetch.toString()};
+      const source = new AbortController();
+      let requestSignal, requestRef, result;
+      const sdk = createOpencodeClient({ baseUrl: 'http://127.0.0.1:1', throwOnError: false,
+        fetch: request => {
+          requestSignal = request.signal;
+          requestRef = new WeakRef(request);
+          return stalledFetch(request);
+        }
+      });
+      const operation = sdk.mcp.disconnect({ name: 'gc-fixture' }, { signal: source.signal });
+      operation.then(value => { result = value; });
+      while (!requestSignal) await turn();
+      for (let i = 0; i < 10; i++) { await turn(); gc(); await turn(); }
+      const requestRetained = Boolean(requestRef.deref());
+      source.abort(new Error('controlled deadline'));
+      await turn();
+      console.log(JSON.stringify({ requestRetained, sourceAborted: source.signal.aborted,
+        requestAborted: requestSignal.aborted, sdkSettledWithError: Boolean(result?.error) }));
+    `], { encoding: "utf8", timeout: 4_000 });
+    expect(JSON.parse(output)).toEqual({
+      requestRetained: true, sourceAborted: true, requestAborted: true, sdkSettledWithError: true,
+    });
+  });
+
   it.each(["recovered", "exhausted", "cleanup-false", "cleanup-transport", "cleanup-timeout", "http-401", "http-503", "unknown"])(
     "handles installed SDK fetch results: %s", async (scenario) => {
       const setup = runClient([
@@ -3344,7 +3384,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
             order.push("disconnect");
             signals.push(request.signal);
             if (scenario === "cleanup-transport") throw failure;
-            if (scenario === "cleanup-timeout") return new Promise<Response>(() => {});
+            if (scenario === "cleanup-timeout") return stalledFetch(request);
             return Response.json(scenario !== "cleanup-false");
           }
           order.push("add");
@@ -4678,6 +4718,53 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     expect(events.at(-1)).toMatchObject({ type: "done" });
     expect(session.abort).not.toHaveBeenCalled();
     await runtime.dispose();
+  });
+
+  it.each(["rejection", "error-result", "timeout"])("settles failed submission with silent SSE: %s", async (failure) => {
+    vi.useFakeTimers();
+    const setup = runClient([]);
+    const controller = new AbortController();
+    let readerClosed = false;
+    vi.mocked(setup.event.subscribe).mockImplementation(async (_input, options) => ({
+      stream: (async function* () {
+        try {
+          yield* [];
+          await new Promise<void>((resolve) => {
+            if (options?.signal?.aborted) resolve();
+            else options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        } finally { readerClosed = true; }
+      })(),
+    }) as never);
+    vi.mocked(setup.session.promptAsync).mockImplementation(async () => {
+      if (failure === "timeout") return await new Promise(() => {});
+      if (failure === "error-result") return { error: { data: { message: "submission rejected" } } } as never;
+      throw new Error("submission rejected");
+    });
+    const runtime = new OpenCodeRuntime(options({ embedded: false, baseUrl: "http://127.0.0.1:4096" }), {
+      createClient: () => setup.client, controlRequestTimeoutMs: 10,
+    });
+    let settled = false;
+    let error: unknown;
+    const pending = (async () => {
+      for await (const event of runtime.run({ requestId: "silent", conversationId: "silent", prompt: "test" }, controller.signal)) { void event; }
+    })().catch((failure: unknown) => { error = failure; }).finally(() => { settled = true; });
+    try {
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(true);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(failure === "timeout" ? "OpenCode 提交请求超时" : "submission rejected");
+      expect(setup.session.promptAsync).toHaveBeenCalledOnce();
+      expect(setup.session.abort).toHaveBeenCalledOnce();
+      expect(readerClosed).toBe(true);
+      expect(controller.signal.aborted).toBe(false);
+    } finally {
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(20);
+      await pending;
+      await runtime.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces a rejected async prompt instead of reporting success", async () => {

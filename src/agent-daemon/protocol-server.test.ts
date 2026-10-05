@@ -44,6 +44,30 @@ afterEach(() => {
 })
 
 describe('AgentProtocolServer connection bounds', () => {
+  it('dispatches cancellation and peer requests before a native startup response', async () => {
+    const gate = deferred<void>()
+    const calls: string[] = []
+    const harness = createHarness({ methods: {
+      'runtime/startPrompt': async () => { calls.push('start'); await gate.promise; return { started: true } },
+      'runtime/escalateCancellation': async () => { calls.push('cancel'); return { stopped: true } },
+      'runtime/getAcpCursors': async () => { calls.push('peer'); return {} }
+    } })
+    try {
+      harness.socket.receive(Buffer.concat([
+        controlRequest(harness.controller, 'start', '1', 1, 'runtime/startPrompt'),
+        controlRequest(harness.controller, 'cancel', '1', 1, 'runtime/escalateCancellation'),
+        controlRequest(harness.controller, 'peer', '1', 1, 'runtime/getAcpCursors')
+      ].map(Buffer.from)))
+      await new Promise(resolve => setImmediate(resolve))
+      expect(calls).toEqual(['start', 'cancel', 'peer'])
+      expect(harness.socket.writes).toHaveLength(4)
+      gate.resolve()
+      await waitFor(() => harness.socket.writes.length === 6)
+      expect(harness.socket.maximumConcurrentWrites).toBe(1)
+      expect(harness.socket.destroyCalled).toBe(false)
+    } finally { gate.resolve(); harness.close() }
+  })
+
   it('accepts a frame fragmented into single-byte socket chunks', async () => {
     const harness = createHarness()
     const frame = controlRequest(

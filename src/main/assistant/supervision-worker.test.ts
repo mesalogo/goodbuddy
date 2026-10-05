@@ -157,6 +157,76 @@ it('publishes full worker-selected coverage atomically and skips it on the next 
   expect(calls).toBe(before)
 })
 
+it.each([false, true])('production worker preserves batch candidate isolation with crossProject=%s', async crossProject => {
+  const f = await fixture()
+  const empty = { summary: 'Seed', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
+  const projects = f.db.listProjects()
+  for (const project of projects) f.db.saveSupervisionResult({
+    request: { ...f.state.request, scope: project.id === f.project.id ? { kind: 'global' } : { kind: 'projects', projectIds: [project.id] } },
+    evidence: [{ id: 's', sourceType: 'conversation', sourceId: randomUUID(), title: 'Seed', content: 'Seed',
+      occurredAt: f.state.request.timeRange.from, locator: { projectId: project.id } }],
+    output: { ...empty, entities: [{ id: 'entity', label: project.id, description: 'Owned knowledge', sourceReferenceIds: ['s'] }],
+      events: [{ title: 'Seed', description: '', occurredAt: f.state.request.timeRange.from, eventType: 'discussion', entityIds: ['entity'], sourceReferenceIds: ['s'] }] }
+  })
+  f.sql.exec('INSERT INTO supervision_story_assigned SELECT id FROM supervision_events')
+  const pool = new SupervisionModelPool()
+  cleanup.push(async () => pool.dispose())
+  const seen = new Set<string>()
+  const runtime = { async *run(input: { prompt: string }) {
+    if (!input.prompt.includes('These inputs are navigation summaries')) {
+      const evidence = JSON.parse(input.prompt.split('BOUNDED EVIDENCE:\n\n')[1]!.split('\n\nReturn only JSON.')[0]!) as Array<{ locator: { projectId: string } }>
+      const projectId = evidence[0]!.locator.projectId
+      const candidates = JSON.parse(input.prompt.split('KNOWN ENTITIES:\n\n')[1]!.split('\n\nPREVIOUS SUMMARY')[0]!) as Array<{ label: string }>
+      expect(candidates.map(item => item.label).sort()).toEqual((crossProject ? projects.map(p => p.id) : [projectId]).sort())
+      seen.add(projectId)
+    }
+    yield { type: 'text', delta: JSON.stringify(empty) }
+    yield { type: 'done' }
+  }, async dispose() {} } as unknown as AgentRuntime
+  const service = createProductionSupervisorService(f.db, async () => ({ supervisionReview: supervisionReviewSettingsSchema.parse({ crossProject }) }), async () => runtime, pool)
+  await expect(service.run(f.state.request)).resolves.toMatchObject({ status: 'completed', coverage: { sources: 422 } })
+  expect([...seen].sort()).toEqual(projects.map(p => p.id).sort())
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM supervision_entities').get()!.n).toBe(2)
+  expect(f.sql.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+})
+
+it.each(['paused', 'cancelled'] as const)('honors %s during the final production candidate read before publishing', async action => {
+  const f = await fixture()
+  const pool = new SupervisionModelPool()
+  cleanup.push(async () => pool.dispose())
+  const runtime = { async *run() {
+    yield { type: 'text', delta: JSON.stringify({ summary: 'Saved leaf', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
+    yield { type: 'done' }
+  }, async dispose() {} } as unknown as AgentRuntime
+  const service = createProductionSupervisorService(f.db, async () => ({}), async () => runtime, pool)
+  const candidates = f.db.supervisionCandidates.bind(f.db)
+  let stopped = false
+  let cancellation: Promise<void> | undefined
+  vi.spyOn(f.db, 'supervisionCandidates').mockImplementation(async (...args) => {
+    const result = await candidates(...args)
+    const runId = service.execution().runId!
+    if (!stopped && f.db.supervisionReviewStore().progress(runId).phase === 'saving') {
+      stopped = true
+      if (action === 'paused') service.pause(runId)
+      else cancellation = service.cancel(runId)
+    }
+    return result
+  })
+  const result = await service.run(f.state.request)
+  await cancellation
+  expect(stopped).toBe(true)
+  expect(result.status).toBe(action)
+  expect(f.db.listSupervisionResults()).toEqual([])
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints').get()!.n).toBe(0)
+  const saved = f.db.supervisionReviewStore().batches(result.runId!, 1000)
+  expect(saved.length).toBeGreaterThan(0)
+  if (action === 'paused') {
+    await expect(service.resume(result.runId!)).resolves.toMatchObject({ status: 'completed' })
+    expect(f.db.supervisionReviewStore().batches(result.runId!, 1000)).toEqual(saved)
+    expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints').get()!.n).toBe(422)
+  }
+})
+
 it.each(['crash', 'close'] as const)('settles writer %s before releasing pending work and can rebuild after reopening', async action => {
   const f = await fixture()
   const id = f.db.startSupervisionRun(f.state.request)

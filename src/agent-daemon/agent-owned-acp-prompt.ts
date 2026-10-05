@@ -18,6 +18,7 @@ import type {
 } from '../shared/remote-agent-contracts'
 import type { RuntimeAcpProcessOwner } from './runtime-acp-backend'
 import { AgentAcpConnection } from './agent-acp-connection'
+import { raceWithAbort } from './async-utils'
 import {
   SemanticPromptStore,
   SemanticPromptStoreError
@@ -63,6 +64,11 @@ export class AgentOwnedAcpPrompt {
   #promptSettled?: Promise<void>
   #closed = false
   #initialized = false
+  #starting?: {
+    digest: string
+    controller: AbortController
+    promise: Promise<RemoteOwnedPromptStartResult>
+  }
   #hasMcpServers = false
   readonly #questions = new Map<string, {
     endpoint: string; operationId: string; questionCount: number; notification: SessionNotification
@@ -86,6 +92,7 @@ export class AgentOwnedAcpPrompt {
   async start(
     request: RemoteOwnedPromptStartRequest
   ): Promise<RemoteOwnedPromptStartResult> {
+    if (this.#closed) throw new Error('ACP Session is closed')
     if (
       request.bindingId !== this.#options.bindingId
     ) {
@@ -95,6 +102,12 @@ export class AgentOwnedAcpPrompt {
       )
     }
     const startDigest = digest(canonicalJson(request))
+    if (this.#starting) {
+      if (this.#starting.digest !== startDigest) {
+        throw new SemanticPromptStoreError('Another ACP prompt is starting', 'conflict')
+      }
+      return this.#starting.promise
+    }
     const existing = this.#options.transcript.findStarted({
       bindingId: request.bindingId,
       operationId: request.operationId,
@@ -111,9 +124,39 @@ export class AgentOwnedAcpPrompt {
       )
     }
 
+    const controller = new AbortController()
+    const promise = this.#start(request, startDigest, controller.signal)
+    this.#starting = { digest: startDigest, controller, promise }
+    try {
+      return await promise
+    } finally {
+      this.#starting = undefined
+    }
+  }
+
+  async #start(
+    request: RemoteOwnedPromptStartRequest,
+    startDigest: string,
+    signal: AbortSignal
+  ): Promise<RemoteOwnedPromptStartResult> {
+    const whileStarting = async <T>(operation: Promise<T>): Promise<T> => {
+      const result = await raceWithAbort(this.#whileProcessAlive(operation), signal)
+      signal.throwIfAborted()
+      return result
+    }
+    const retainSession = async (operation: Promise<string>): Promise<string> =>
+      whileStarting(operation.then(sessionId => {
+        if (signal.aborted) {
+          // A native session can be created after its owner was cancelled.
+          void this.#connection.closeSession({ sessionId }).catch(() => undefined)
+        } else {
+          this.#sessionId = sessionId
+        }
+        return sessionId
+      }))
     const mcpServers = this.#options.mcpServers?.() ?? []
     if (!this.#initialized) {
-      const initialization = await this.#whileProcessAlive(
+      const initialization = await whileStarting(
         this.#transport.initialize({
           protocolVersion: PROTOCOL_VERSION,
           clientCapabilities: {
@@ -134,38 +177,36 @@ export class AgentOwnedAcpPrompt {
       }
       if (request.acpSessionId !== undefined && this.#sessionId === undefined) {
         if (initialization.agentCapabilities?.loadSession === true) {
-          await this.#whileProcessAlive(
+          this.#sessionId = await retainSession(
             this.#connection.loadSession({
               sessionId: request.acpSessionId,
               cwd: this.#options.workspaceDirectory,
               mcpServers
-            })
+            }).then(() => request.acpSessionId!)
           )
         } else if (
           initialization.agentCapabilities?.sessionCapabilities?.resume != null
         ) {
-          await this.#whileProcessAlive(
+          this.#sessionId = await retainSession(
             this.#connection.resumeSession({
               sessionId: request.acpSessionId,
               cwd: this.#options.workspaceDirectory,
               mcpServers
-            })
+            }).then(() => request.acpSessionId!)
           )
         } else {
           throw new Error('ACP Runtime cannot resume the requested session')
         }
-        this.#sessionId = request.acpSessionId
       } else if (this.#sessionId === undefined) {
-        const created = await this.#whileProcessAlive(
+        this.#sessionId = await retainSession(
           this.#connection.newSession({
             cwd: this.#options.workspaceDirectory,
             mcpServers
-          })
+          }).then(created => created.sessionId)
         )
-        this.#sessionId = created.sessionId
       }
       if (this.#options.expectedModel !== undefined) {
-        const configured = await this.#whileProcessAlive(
+        const configured = await whileStarting(
           this.#connection.setSessionConfigOption({
             sessionId: this.#sessionId!,
             configId: 'model',
@@ -190,13 +231,14 @@ export class AgentOwnedAcpPrompt {
     ) {
       throw new Error('ACP session identity cannot change within a binding')
     } else if (mcpServers.length > 0 || this.#hasMcpServers) {
-      await this.#whileProcessAlive(this.#connection.resumeSession({
+      await whileStarting(this.#connection.resumeSession({
         sessionId: this.#sessionId!, cwd: this.#options.workspaceDirectory,
         mcpServers
       }))
     }
     this.#hasMcpServers = mcpServers.length > 0
-    await this.#options.prepareSession?.(this.#sessionId!, request.operationId)
+    await whileStarting(Promise.resolve(this.#options.prepareSession?.(this.#sessionId!, request.operationId)))
+    signal.throwIfAborted()
     this.#active = {
       operationId: request.operationId
     }
@@ -251,6 +293,7 @@ export class AgentOwnedAcpPrompt {
   }
 
   async cancel(): Promise<void> {
+    this.#starting?.controller.abort(new Error('ACP prompt startup cancelled'))
     this.#acceptQuestions = false
     this.#questions.clear()
     if (this.#sessionId !== undefined && !this.#closed) {
@@ -396,6 +439,7 @@ export class AgentOwnedAcpPrompt {
       return
     }
     this.#closed = true
+    this.#starting?.controller.abort(new Error('ACP Session is closed'))
     this.#acceptQuestions = false
     this.#questions.clear()
     this.#unregisterSession?.()

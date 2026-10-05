@@ -182,6 +182,91 @@ afterEach(() => {
 })
 
 describe('ChatHistoryPane windowing', () => {
+  it('restores disclosures after eviction by more than eight row interactions with bounded DOM', async () => {
+    const messages = makeMessages(2_000).map(message => ({ ...message, role: 'assistant' as const, reasoning: 'Reasoning' }))
+    const tool = { callId: 'read', name: 'read', summary: 'Read file', state: 'completed' as const, input: '{"path":"file"}', output: 'File contents' }
+    Object.assign(messages[0]!, { tools: [tool], subagents: [{ childTaskId: 'child', expertId: 'expert', expertName: 'Expert',
+      routingMode: 'native', state: 'completed', progress: [{ id: 'child-tool', type: 'tool', tool }] }] })
+    const { container, chat } = setup(messages)
+    measure()
+    const visit = async (index: number) => {
+      act(() => { chat.scrollTop = index * 100; fireEvent.scroll(chat) })
+      await frame()
+      measure()
+    }
+    const disclosure = (index: number) => container.querySelector<HTMLDetailsElement>(`[data-message-id="m${index}"] details`)!
+    await visit(0)
+    const original = disclosure(0)
+    act(() => { original.open = true; fireEvent(original, new Event('toggle')) })
+    const toggle = (selector: string, open: boolean) => {
+      const element = container.querySelector<HTMLDetailsElement>(`[data-message-id="m0"] ${selector}`)!
+      act(() => { element.open = open; fireEvent(element, new Event('toggle')) })
+    }
+    toggle('.subagent-status-card', true)
+    toggle('.subagent-status-card .tool-execution', true)
+    toggle('.subagent-status-card .tool-execution__input', true)
+    // Collapsing a subagent unmounts its children even before row eviction.
+    toggle('.subagent-status-card', false)
+    toggle('.subagent-status-card', true)
+    expect(container.querySelector<HTMLDetailsElement>('.subagent-status-card .tool-execution__input')!.open).toBe(true)
+    for (let index = 1; index <= 12; index++) {
+      await visit(index * 100)
+      const details = disclosure(index * 100)
+      act(() => { details.open = true; fireEvent(details, new Event('toggle')) })
+      expect(renderedIds(container).length).toBeLessThanOrEqual(maxRenderedMessageCount + 8)
+    }
+    expect(original.isConnected).toBe(false)
+    await visit(0)
+    expect(disclosure(0)).not.toBe(original)
+    expect(disclosure(0).open).toBe(true)
+    expect(container.querySelector<HTMLDetailsElement>('[data-message-id="m0"] .subagent-status-card')!.open).toBe(true)
+    expect(container.querySelector<HTMLDetailsElement>('[data-message-id="m0"] .subagent-status-card .tool-execution__input')!.open).toBe(true)
+    // The parent and child deliberately share a tool call ID, but not state.
+    expect([...container.querySelectorAll<HTMLDetailsElement>('[data-message-id="m0"] .tool-execution')]
+      .find(element => !element.closest('.subagent-status-card'))!.open).toBe(false)
+    act(() => { disclosure(0).open = false; fireEvent(disclosure(0), new Event('toggle')) })
+    await visit(1500)
+    await visit(0)
+    expect(disclosure(0).open).toBe(false)
+  })
+
+  it.each(['legacy', 'blocks'] as const)('preserves %s streaming reasoning defaults and manual choices through eviction and completion', async representation => {
+    const messages = makeMessages(2_000).map(message => ({ ...message, role: 'assistant' as const, reasoning: 'Reasoning' }))
+    messages[0] = { ...messages[0]!, state: 'streaming' }
+    if (representation === 'blocks') Object.assign(messages[0]!, { blocks: [{ id: 'reason', type: 'reasoning', content: 'Reasoning' }] })
+    const { container, chat, props, rerender } = setup(messages)
+    measure()
+    const visit = async (index: number) => {
+      act(() => { chat.scrollTop = index * 100; fireEvent.scroll(chat) })
+      await frame(); measure()
+    }
+    const details = () => container.querySelector<HTMLDetailsElement>('[data-message-id="m0"] .message-reasoning')!
+    await visit(0)
+    expect(details().open).toBe(true)
+    act(() => { details().open = false; fireEvent(details(), new Event('toggle')) })
+    for (let index = 1; index <= 10; index++) {
+      await visit(index * 100)
+      const other = container.querySelector<HTMLDetailsElement>(`[data-message-id="m${index * 100}"] details`)!
+      act(() => { other.open = true; fireEvent(other, new Event('toggle')) })
+    }
+    expect(details()).toBeNull()
+    await visit(0)
+    expect(details().open).toBe(false)
+    act(() => { details().open = true; fireEvent(details(), new Event('toggle')) })
+    for (let index = 1; index <= 10; index++) {
+      await visit(index * 100)
+      const other = container.querySelector<HTMLDetailsElement>(`[data-message-id="m${index * 100}"] details`)!
+      act(() => { other.open = true; fireEvent(other, new Event('toggle')) })
+    }
+    expect(details()).toBeNull()
+    // Completion keeps the existing auto-close semantics rather than restoring
+    // the streaming expansion on the next mount.
+    const completed = messages.map((message, index) => index === 0 ? { ...message, state: 'complete' as const } : message)
+    rerender(<ChatHistoryPane {...props} conversation={conversationOf(completed)} />)
+    await visit(0)
+    expect(details().open).toBe(false)
+  })
+
   it('keeps the DOM bounded for a 2,000-message conversation at any scroll position', async () => {
     const messages = makeMessages(2_000)
     const { container, chat } = setup(messages)

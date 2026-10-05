@@ -36,6 +36,9 @@ import type {
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { ChannelSettingsStore } from './channels/channel-settings-store'
+import { ChannelService } from './channels/channel-service'
+import { SqliteChannelOutbox } from './channels/sqlite-channel-state'
+import type { ChannelDriver, ChannelInboundHandler } from './channels/channel-driver'
 import { SubagentService, createSubagentRuntime } from './assistant/subagent-service'
 import { ConversationAttachmentStorage } from './conversation-attachment-storage'
 import { DocumentResultStorage } from './document-result-storage'
@@ -12583,8 +12586,20 @@ describe('registerIpcHandlers agent terminal state', () => {
       throw new Error('Expected channel executor')
     }
 
-    await expect(
-      executor(
+    const outboxDatabase = new AssistantDatabase(':memory:')
+    outboxDatabase.initialize('C:\\Workspace')
+    const outbox = new SqliteChannelOutbox(outboxDatabase)
+    let inbound!: ChannelInboundHandler
+    const send = vi.fn<ChannelDriver['send']>(async () => undefined)
+    const service = new ChannelService({
+      channel: 'wecom',
+      start: (handler) => { inbound = handler },
+      send,
+      stop: () => undefined
+    }, executor, { allowedSenderIds: ['user-1'], outbox })
+    try {
+      await service.start()
+      await inbound(
         {
           channel: 'wecom',
           eventId: 'event-generated-image',
@@ -12594,34 +12609,38 @@ describe('registerIpcHandlers agent terminal state', () => {
           text: '生成结果图',
           mentioned: false
         },
-        new AbortController().signal
+        () => undefined
       )
-    ).resolves.toMatchObject({
-      status: 'completed',
-      attachments: [
-        {
-          name: '结果图.png',
-          mimeType: 'image/png',
-          size: image.byteLength,
-          kind: 'image',
-          dataBase64: image.toString('base64')
-        }
-      ],
-      artifactIds: [
-        '00000000-0000-4000-8000-000000000499'
-      ]
-    })
-    expect(
-      harness.assistantDatabase.appendRemoteConversationMessage
-    ).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        role: 'assistant',
-        artifactIds: [
-          '00000000-0000-4000-8000-000000000499'
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
+      expect(send.mock.calls[0]?.[0]).toMatchObject({
+        status: 'completed',
+        attachments: [
+          {
+            name: '结果图.png',
+            mimeType: 'image/png',
+            size: image.byteLength,
+            kind: 'image',
+            dataBase64: image.toString('base64')
+          }
         ]
       })
-    )
-    await harness.dispose()
+      expect(send.mock.calls[0]?.[0]).not.toHaveProperty('artifactIds')
+      expect(outbox.listUndelivered()).toEqual([])
+      expect(
+        harness.assistantDatabase.appendRemoteConversationMessage
+      ).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          role: 'assistant',
+          artifactIds: [
+            '00000000-0000-4000-8000-000000000499'
+          ]
+        })
+      )
+    } finally {
+      await service.stop()
+      outboxDatabase.close()
+      await harness.dispose()
+    }
   })
 
   it('creates a bounded result file only when the remote user explicitly requests one', async () => {

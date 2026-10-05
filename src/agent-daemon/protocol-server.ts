@@ -866,11 +866,19 @@ class ProtocolConnection {
     if (!('id' in request)) {
       await this.#invokeNotification(request, channel)
     } else {
-      await this.#invokeRequest(request, channel)
-      await this.#sendChannelClose(channel)
-      this.#channels.close(channel.channelId)
-      this.#channelKinds.delete(channel.channelId)
-      return
+      const completion = this.#invokeRequest(request, channel).then(async () => {
+        if (this.#closed) return
+        await this.#sendChannelClose(channel)
+        this.#channels.close(channel.channelId)
+        this.#channelKinds.delete(channel.channelId)
+      })
+      if (request.method === 'runtime/startPrompt') {
+        // Startup holds its admitted request channel (and its existing capacity
+        // slot), but must leave the socket free for cancellation and peer work.
+        void completion.catch(error => this.#close(protocolFailureCategory('dispatch', error)))
+      } else {
+        await completion
+      }
     }
   }
 
@@ -923,6 +931,7 @@ class ProtocolConnection {
         controllerTakeoverProven: this.#takeoverProven,
         signal: this.#abortController.signal
       })
+      if (this.#closed) return
       if (request.method === 'runtime/resumeAcpChannel') {
         this.#bindResumedAcpChannel(result)
       }
@@ -941,6 +950,7 @@ class ProtocolConnection {
         result: result ?? null
       })
     } catch (error) {
+      if (this.#closed) return
       const serviceCode = typedErrorCode(error)
       await this.#sendJson(channel, {
         jsonrpc: '2.0',

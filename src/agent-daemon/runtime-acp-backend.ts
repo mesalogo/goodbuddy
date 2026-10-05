@@ -440,7 +440,8 @@ export class RuntimeAcpBackend {
       'runtime/preparePrompt': (params, context) =>
         this.#enqueuePublicControl(() => this.#prepare(params, context)),
       'runtime/startPrompt': (params, context) =>
-        this.#enqueuePublicControl(() => this.#startOwnedPrompt(params, context)),
+        this.#enqueuePublicControl(() => this.#startOwnedPrompt(params, context))
+          .then(({ started }) => started),
       'runtime/attachPrompt': (params, context) =>
         this.#enqueuePublicControl(() => this.#attachOwnedPrompt(params, context)),
       'runtime/respondToQuestion': (params, context) =>
@@ -1441,7 +1442,7 @@ export class RuntimeAcpBackend {
     return completion
   }
 
-  async #startOwnedPrompt(
+  #startOwnedPrompt(
     params: unknown,
     context: ProtocolMethodContext
   ) {
@@ -1464,7 +1465,7 @@ export class RuntimeAcpBackend {
         clearTimeout(binding.ownedPromptStartTimer)
         binding.ownedPromptStartTimer = undefined
       }
-      return existing
+      return { started: Promise.resolve(existing) }
     }
     if (
       this.#options.semanticPrompts === undefined ||
@@ -1523,13 +1524,20 @@ export class RuntimeAcpBackend {
           binding.poisoned ? 'outcome-unknown' : status
       })
     }
-    const result = await binding.ownedAcp.start(request)
-    prepared.ownedPromptStarted = true
-    if (binding.ownedPromptStartTimer !== undefined) {
-      clearTimeout(binding.ownedPromptStartTimer)
-      binding.ownedPromptStartTimer = undefined
-    }
-    return result
+    const owner = binding.ownedAcp
+    // Native initialization must not hold the global control queue: cancellation,
+    // watchdogs and other bindings still need to make progress while it waits.
+    const started = owner.start(request).then(result => {
+      if (binding.ownedAcp === owner && binding.activeOperationId === request.operationId) {
+        prepared.ownedPromptStarted = true
+        if (binding.ownedPromptStartTimer !== undefined) {
+          clearTimeout(binding.ownedPromptStartTimer)
+          binding.ownedPromptStartTimer = undefined
+        }
+      }
+      return result
+    })
+    return { started }
   }
 
   #attachOwnedPrompt(

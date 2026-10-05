@@ -73,9 +73,9 @@ export function supersedeReextractedEvents(db: DatabaseSync, resultId: string): 
  */
 export function timelineCandidates(db: DatabaseSync, projectId: string, crossProject: boolean): Array<{ id: string; label: string; description: string }> {
   return db.prepare(`SELECT e.id, e.canonical_label AS label, e.description FROM supervision_entities e
-    WHERE e.confirmation_state != 'revoked' AND (? = 1 OR EXISTS (
-      SELECT 1 FROM supervision_event_entities ee JOIN supervision_events ev ON ev.id = ee.event_id
-      WHERE ee.entity_id = e.id AND ev.superseded_by IS NULL AND COALESCE(ev.project_id, '') = ?))
+    WHERE e.confirmation_state != 'revoked' AND (? = 1 OR e.id IN (
+      SELECT ee.entity_id FROM supervision_events ev JOIN supervision_event_entities ee ON ee.event_id = ev.id
+      WHERE ev.superseded_by IS NULL AND COALESCE(ev.project_id, '') = ?))
     ORDER BY e.updated_at DESC, e.id LIMIT 100`).all(crossProject ? 1 : 0, projectId) as Array<{ id: string; label: string; description: string }>
 }
 

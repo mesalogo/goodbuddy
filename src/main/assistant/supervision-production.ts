@@ -126,7 +126,7 @@ export function createProductionSupervisorService(
     background: request => database.reviewBackground(request.scope),
     start: (request, heartbeatRunId) => database.startSupervisionRun(request, heartbeatRunId),
     fail: (runId, error) => database.failSupervisionRun(runId, error), noChange: runId => database.noChangeSupervisionRun(runId),
-    candidates: request => database.supervisionCandidates(request), save: async result => database.saveSupervisionResult(result)
+    candidates: (request, batch) => database.supervisionCandidates(request, batch), save: async result => database.saveSupervisionResult(result)
   }, { database: () => database.supervisionReviewStore(),
     initialize: (runId, state, signal) => database.initializeSupervisionReview(runId, state, signal),
     resume: (runId, signal) => database.resumeSupervisionReview(runId, signal),

@@ -78,7 +78,8 @@ if (kind === 'checkpoint') {
       const scope = (request as ReviewState['request']).scope
       return database.readSnapshot(() => ({ summary: database.reviewSummary(scope, 'supervisor'), background: database.reviewBackground(scope) }))
     },
-    reviewCandidates: ([request]) => database.listSupervisionCandidates(request as ReviewState['request'])
+    reviewCandidates: ([request, batch]) => database.listSupervisionCandidates(request as ReviewState['request'],
+      batch as Parameters<AssistantDatabase['listSupervisionCandidates']>[1])
   }
 }
 

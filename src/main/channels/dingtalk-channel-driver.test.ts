@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createServer } from 'node:http'
+import { AssistantDatabase } from '../assistant/assistant-database'
+import { ChannelService } from './channel-service'
+import { SqliteChannelOutbox } from './sqlite-channel-state'
 import {
   DingTalkChannelDriver,
   createOfficialDingTalkTransportFactory
@@ -46,6 +50,65 @@ function envelope(
 }
 
 describe('DingTalkChannelDriver', () => {
+  it('retries an HTTP 200 business failure through the production transport and SQLite outbox', async () => {
+    const requests: string[] = []
+    const server = createServer(async (request, response) => {
+      let body = ''
+      for await (const chunk of request) body += String(chunk)
+      requests.push(body)
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify(requests.length === 1
+        ? { errcode: 130101, errmsg: 'synthetic rate limit' }
+        : { errcode: 0, errmsg: 'ok' }))
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address() as { port: number }
+    const database = new AssistantDatabase(':memory:')
+    database.initialize('C:\\Workspace')
+    const outbox = new SqliteChannelOutbox(database)
+    let receive!: (message: { headers: { messageId: string }; data: string }) => void
+    const driver = new DingTalkChannelDriver({
+      clientId: 'client-id', clientSecret: 'synthetic-secret', allowedSenderIds: ['user-1'],
+      transportFactory: createOfficialDingTalkTransportFactory({
+        clientFactory: async () => ({
+          registerCallbackListener: (_topic, listener) => { receive = listener },
+          socketCallBackResponse: () => undefined,
+          connect: async () => undefined, disconnect: () => undefined
+        }),
+        fetchImpl: (_input, init) => fetch(`http://127.0.0.1:${address.port}/reply`, init)
+      })
+    })
+    const executor = vi.fn(async () => ({ status: 'completed', output: 'synthetic reply' }))
+    const failure = vi.fn()
+    const service = new ChannelService(driver, executor, {
+      allowedSenderIds: ['user-1'], allowGroupMessages: true, outbox, onDeliveryFailure: failure
+    })
+    try {
+      await service.start()
+      receive(envelope())
+      await vi.waitFor(() => expect(failure).toHaveBeenCalledOnce())
+      expect(failure.mock.calls[0]?.[0]).toMatchObject({ message: '钉钉回复请求失败 (130101)' })
+      expect(outbox.listUndelivered()[0]).toMatchObject({ state: 'failed', attempts: 1 })
+      await vi.waitFor(() => expect(requests).toHaveLength(2), { timeout: 3000 })
+      await vi.waitFor(() => expect(outbox.listUndelivered()).toEqual([]))
+      expect(requests[1]).toBe(requests[0])
+      expect(executor).toHaveBeenCalledOnce()
+    } finally {
+      await service.stop()
+      database.close()
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+    }
+  })
+
+  it.each(['', '{}', 'null', 'not JSON', JSON.stringify({ errcode: 0, padding: 'x'.repeat(65_536) })])(
+    'rejects invalid or oversized successful HTTP responses (%#)', async (body) => {
+      const transport = await createOfficialDingTalkTransportFactory({
+        fetchImpl: async () => new Response(body)
+      }).create({ clientId: 'synthetic', clientSecret: 'synthetic' })
+      await expect(transport.replyText(SESSION_WEBHOOK, 'reply')).rejects.toThrow()
+    }
+  )
+
   it('adapts group text and consumes only the issued reply context', async () => {
     const transport = new FakeTransport()
     const factory: DingTalkTransportFactory = {
@@ -133,7 +196,7 @@ describe('DingTalkChannelDriver', () => {
       connect: vi.fn(async () => undefined),
       disconnect: vi.fn()
     }
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 200 }))
+    const fetchImpl = vi.fn(async () => Response.json({ errcode: 0, errmsg: 'ok' }))
     const factory = createOfficialDingTalkTransportFactory({
       clientFactory: async (credentials) => {
         expect(credentials).toEqual({

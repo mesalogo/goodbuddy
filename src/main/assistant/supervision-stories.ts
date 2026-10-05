@@ -236,6 +236,7 @@ export class SupervisionStoryStore {
           VALUES (?, ?, ?, 'thread', ?, ?, ?, ?)`).run(id, String(input.feature.project_id), featureId, thread.name, thread.description, now, now)
         ids.set(thread.key, id); existing.set(name, id); created++
       }
+      this.assertCurrent([featureId, ...output.moves.flatMap(item => ids.get(item.thread) ?? [])])
       const move = this.db.prepare('UPDATE supervision_event_stories SET story_id = ? WHERE event_id = ? AND story_id = ? AND is_primary = 1 AND user_set = 0')
       for (const item of output.moves) {
         const id = ids.get(item.thread)
@@ -250,6 +251,14 @@ export class SupervisionStoryStore {
     return new Set(this.db.prepare(`SELECT name, COALESCE(parent_id, '') AS parent FROM supervision_stories
       WHERE status = 'removed' AND (project_id = ? OR level = 'cross')`).all(projectId)
       .map(row => `${row.parent}|${nameKey(String(row.name))}`))
+  }
+
+  /** Check model-selected destinations under the caller's write transaction. */
+  private assertCurrent(ids: string[]): void {
+    const unique = [...new Set(ids)]
+    const count = this.db.prepare(`SELECT COUNT(*) AS n FROM supervision_stories
+      WHERE id IN (SELECT value FROM json_each(?)) AND status = 'current'`).get(JSON.stringify(unique))!.n
+    if (Number(count) !== unique.length) throw new Error('Story changed while organizing; retry with current stories')
   }
 
   /** Applies one validated model answer for one project chunk in a single transaction. */
@@ -336,6 +345,12 @@ export class SupervisionStoryStore {
         ids.set(story.key, id)
         created++
       }
+      const selected = [
+        ...output.assignments.flatMap(item => [item.story, ...(item.related ?? [])]),
+        ...output.stories.map(item => item.parent), ...output.concluded.map(item => item.story),
+        ...output.links.flatMap(item => [item.cross, item.feature])
+      ]
+      this.assertCurrent(selected.flatMap(ref => ref ? ids.get(ref) ?? (otherRefs.has(ref) ? String(otherRefs.get(ref)!.id) : []) : []))
       const link = this.db.prepare('INSERT OR IGNORE INTO supervision_event_stories (event_id, story_id, is_primary) VALUES (?, ?, ?)')
       const mark = this.db.prepare('INSERT OR IGNORE INTO supervision_story_assigned (event_id) VALUES (?)')
       let assigned = 0, unassigned = 0

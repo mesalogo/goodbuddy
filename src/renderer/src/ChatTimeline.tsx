@@ -1,5 +1,6 @@
 import { AttachmentResultButton } from './AttachmentResultButton'
 import { AttachmentActions, AttachmentStatus } from './AttachmentActions'
+import { MessageExpansionScope, useMessageExpansion } from './message-expansion'
 import {
   Bot,
   Check,
@@ -167,14 +168,17 @@ function formatAttachmentSize(size: number): string {
 }
 
 function MessageReasoning({
+  expansionId = 'reasoning',
   content,
   streaming
 }: {
+  expansionId?: string
   content: string
   streaming: boolean
 }): React.JSX.Element {
   const { t } = useTranslation('app')
   const contentRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useMessageExpansion(expansionId, streaming)
 
   useEffect(() => {
     if (!streaming || !contentRef.current) {
@@ -187,7 +191,7 @@ function MessageReasoning({
   }, [content, streaming])
 
   return (
-    <details className="message-reasoning" open={streaming}>
+    <details className="message-reasoning" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
       <summary>
         {streaming
           ? t('chat.reasoning.streaming')
@@ -239,12 +243,15 @@ const ToolDetail = memo(function ToolDetail({ label, content, formatJson = false
   )
 })
 
-const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, ...tool }: Pick<
+const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, expansionId, ...tool }: Pick<
   ToolActivity, 'name' | 'summary' | 'state' | 'input' | 'output' | 'error'
 > & {
+  expansionId: string
   onCopy: CopyContent
 }): React.JSX.Element {
   const { t } = useTranslation('app')
+  const [expanded, setExpanded] = useMessageExpansion(`tool:${expansionId}`)
+  const [inputExpanded, setInputExpanded] = useMessageExpansion(`tool-input:${expansionId}`)
   const summary = tool.summary.trim()
   // Only suppress known boilerplate; recovery hints and custom summaries remain visible.
   const summaryIdentity = summary.replace(
@@ -258,6 +265,7 @@ const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, ...tool }: Pic
   return (
     <li>
       <details
+        open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}
         className={`tool-execution tool-execution--${tool.state}`}
       >
         <summary>
@@ -290,7 +298,7 @@ const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, ...tool }: Pic
                 : tool.state === 'completed' ? 'chat.tools.emptyOutput' : 'chat.tools.noDetails')}</p>
           )}
           {tool.input && (
-            <details className="tool-execution__input">
+            <details className="tool-execution__input" open={inputExpanded} onToggle={event => setInputExpanded(event.currentTarget.open)}>
               <summary>{t('chat.tools.input')}</summary>
               <ToolDetail label={t('chat.tools.input')} content={tool.input} formatJson onCopy={onCopy} />
             </details>
@@ -322,6 +330,7 @@ function ToolExecutionList({
         {tools.map((tool) => (
           <ToolExecutionRow
             key={tool.callId ?? tool.name}
+            expansionId={tool.callId ?? tool.name}
             name={tool.name}
             summary={tool.summary}
             state={tool.state}
@@ -348,7 +357,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
   onCopy: CopyContent
 }): React.JSX.Element {
   const { t } = useTranslation('app')
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useMessageExpansion('subagent')
   const StateIcon =
     subagent.state === 'completed'
       ? CheckCircle2
@@ -389,6 +398,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
   return (
     <details
       className={`subagent-status-card subagent-status-card--${subagent.state}`}
+      open={expanded}
       onToggle={(event) => setExpanded(event.currentTarget.open)}
     >
       <summary>
@@ -450,6 +460,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
                     : item.block.type === 'reasoning' ? (
                       <MessageReasoning
                         key={item.block.id}
+                        expansionId={`reasoning:${item.block.id}`}
                         content={item.block.content}
                         streaming={false}
                       />
@@ -513,13 +524,12 @@ function SubagentStatusList({
       className="subagent-status-list"
     >
       {subagents.map((subagent) => (
-        <SubagentStatusCard
-          key={subagent.childTaskId}
+        <MessageExpansionScope key={subagent.childTaskId} id={`subagent:${subagent.childTaskId}`}><SubagentStatusCard
           renderHtml={renderHtml}
           subagent={subagent}
           questionFormId={pendingQuestions?.some((question) => question.childTaskId === subagent.childTaskId) ? questionFormId : undefined}
           onCopy={onCopy}
-        />
+        /></MessageExpansionScope>
       ))}
     </section>
   )
@@ -581,6 +591,7 @@ function ChatMessageRowView({
 }: ChatMessageRowProps): React.JSX.Element {
   const { t } = useTranslation('app')
   const [copied, setCopied] = useState(false)
+  const [citationsExpanded, setCitationsExpanded] = useMessageExpansion('citations')
   const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(copyResetTimer.current), [])
 
@@ -867,6 +878,7 @@ function ChatMessageRowView({
                 />
               ) : item.block.type === 'reasoning' ? (
                 <MessageReasoning
+                  expansionId={`reasoning:${item.block.id}`}
                   content={item.block.content}
                   key={item.block.id}
                   streaming={message.state === 'streaming'}
@@ -1054,7 +1066,7 @@ function ChatMessageRowView({
         )}
         {message.sourceReferences &&
           message.sourceReferences.length > 0 && (
-            <details className="message-citations">
+            <details className="message-citations" open={citationsExpanded} onToggle={event => setCitationsExpanded(event.currentTarget.open)}>
               <summary>
                 {t('chat.citations.view', {
                   count: message.sourceReferences.length
@@ -1272,7 +1284,7 @@ function ChatMessageRowView({
 export const ChatMessageRow = memo(function ChatMessageRow(
   props: ChatMessageRowProps
 ): React.JSX.Element {
-  return <ChatMessageRowView {...props} message={useLiveMessage(props.message)} />
+  return <MessageExpansionScope id={props.message.id}><ChatMessageRowView {...props} message={useLiveMessage(props.message)} /></MessageExpansionScope>
 })
 
 type ChatMessageWindowRowProps = ChatMessageRowProps & {

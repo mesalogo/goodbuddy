@@ -1002,6 +1002,9 @@ export function ChannelSettingsSection({
       )
       return
     }
+    const telegramState = (statusStore.getState().telegram ?? snapshot.telegram.status).state
+    const restartTelegram = drafts.telegram.enabled &&
+      (telegramState === 'error' || telegramState === 'stopped')
     const input: ChannelSettingsApply = {
       ...(weixinEnabled === snapshot.weixin.enabled
         ? {}
@@ -1015,7 +1018,7 @@ export function ChannelSettingsSection({
         ? { dingtalk: inputFor('dingtalk', drafts.dingtalk) }
         : {}),
       ...(!snapshot.telegram.readOnly &&
-      channelDraftChanged('telegram', drafts.telegram, snapshot)
+      (channelDraftChanged('telegram', drafts.telegram, snapshot) || restartTelegram)
         ? { telegram: inputFor('telegram', drafts.telegram) }
         : {})
     }

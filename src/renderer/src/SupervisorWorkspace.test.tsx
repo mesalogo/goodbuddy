@@ -15,6 +15,66 @@ const selectHistory = (id: string) => {
 }
 
 describe('SupervisorWorkspace', () => {
+  it.each(['locale', 'review'] as const)('releases pending source state on %s refresh without letting its late response clear a newer request', async trigger => {
+    let finishReview!: () => void
+    const run = vi.fn(() => new Promise<void>(resolve => { finishReview = resolve }))
+    let finishOld!: (value: unknown) => void
+    let finishNew!: (value: unknown) => void
+    const source = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishNew = resolve }))
+    const graph = vi.fn(async () => ({ storyLine: null,
+      events: [{ id: 'event', title: 'Event', description: '', occurred_at: result.createdAt }],
+      entities: [], relations: [], eventEntities: [], sources: [{ id: 'source', title: 'Source', occurred_at: result.createdAt }],
+      eventSources: [{ event_id: 'event', source_id: 'source' }] }))
+    window.goodbuddy = { supervision: { overview: async () => [result], graph, source, run } } as never
+    render(<SupervisorWorkspace tab="graph" />)
+    await screen.findByRole('button', { name: /Source/ })
+    if (trigger === 'review') {
+      fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
+      fireEvent.click(screen.getByRole('button', { name: '回顾' }))
+      await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    }
+    fireEvent.click(await screen.findByRole('button', { name: /Source/ }))
+    await waitFor(() => expect(source).toHaveBeenCalledTimes(1))
+    await act(async () => { if (trigger === 'locale') await changeUiLocale('en-US'); else finishReview() })
+    const refreshLabel = trigger === 'locale' ? 'Refresh' : '刷新'
+    await waitFor(() => {
+      expect(graph).toHaveBeenCalledTimes(2)
+      expect(screen.getByRole('button', { name: /Source/ })).toBeEnabled()
+      expect(screen.getByRole('button', { name: refreshLabel })).toBeEnabled()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Source/ }))
+    await act(async () => finishOld({ title: 'Source', content: 'Obsolete source', occurredAt: result.createdAt }))
+    expect(screen.queryByText('Obsolete source')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Source/ })).toBeDisabled()
+    await act(async () => finishNew({ title: 'Source', content: 'Current source', occurredAt: result.createdAt }))
+    expect(screen.getByText('Current source')).toBeVisible()
+    expect(screen.getByRole('button', { name: refreshLabel })).toBeEnabled()
+  })
+
+  it.each(['entity', 'relation'] as const)('releases a pending %s action when locale refresh invalidates it', async kind => {
+    let finish!: () => void
+    const action = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
+    const graph = vi.fn(async () => ({ storyLine: null,
+      events: [{ id: 'event', title: 'Event', description: '', occurred_at: result.createdAt }],
+      entities: [{ id: 'entity', canonical_label: 'Entity', description: '', confirmation_state: 'automatic' }],
+      relations: [{ id: 'relation', from_entity_id: 'entity', to_entity_id: 'entity', relation_type: 'related', reason: '', confirmation_state: 'automatic' }],
+      sources: [], eventEntities: [], eventSources: [] }))
+    window.goodbuddy = { supervision: { overview: async () => [result], graph, entityAction: action, relationAction: action } } as never
+    render(<SupervisorWorkspace tab="graph" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled())
+    fireEvent.change(screen.getByRole('combobox', { name: '图谱选择' }), { target: { value: kind } })
+    fireEvent.click(within(screen.getByRole('tabpanel')).getByRole('button', { name: /Entity/ }))
+    fireEvent.click(screen.getByRole('button', { name: i18nResources['zh-CN'].heartbeat.supervisor.confirm }))
+    await waitFor(() => expect(action).toHaveBeenCalledOnce())
+    await act(async () => { await changeUiLocale('en-US') })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled())
+    await act(async () => finish())
+    expect(graph).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+  })
+
   it.each(['zh-CN', 'en-US'] as const)('submits custom days and keeps reanalysis confirmation consistent in %s', async locale => {
     await changeUiLocale(locale)
     const copy = i18nResources[locale].heartbeat.supervisor

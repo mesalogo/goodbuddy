@@ -247,3 +247,37 @@ it('runs after publication inside the review and records failure without failing
   expect(f.stories.list({ kind: 'global' }).map(story => story.name)).toEqual(['Timeline'])
   await expect(service.run(request)).resolves.toMatchObject({ status: 'no_change', coverage: { stories: { status: 'completed', calls: 0 } } })
 })
+
+it.each(['remove', 'merge'] as const)('rejects an assignment whose selected story was changed by %s while awaiting the model', async action => {
+  const f = await fixture()
+  f.publish(f.a.id, ['First', 'Second'])
+  await assignStories(f.stories, answer({ stories: [{ key: 'new_1', level: 'feature', name: 'Alpha' }, { key: 'new_2', level: 'feature', name: 'Beta' }],
+    assignments: [{ event: 'e_1', story: 'new_1' }, { event: 'e_2', story: 'new_2' }] }), { kind: 'global' }, options)
+  const [alpha, beta] = f.stories.list({ kind: 'global' })
+  f.publish(f.a.id, ['New evidence'], 22)
+  const model = async () => {
+    f.stories.act(action === 'remove' ? { action, storyId: alpha!.id } : { action, storyId: alpha!.id, intoId: beta!.id })
+    return JSON.stringify({ stories: [{ key: 'new_1', level: 'feature', name: 'Must roll back' }], assignments: [{ event: 'e_1', story: 'story_1' }] })
+  }
+  await expect(assignStories(f.stories, model, { kind: 'global' }, options)).rejects.toThrow('Story changed')
+  expect(f.stories.pending({ kind: 'global' })).toHaveLength(1)
+  expect(f.stories.list({ kind: 'global' }).map(story => story.name)).toEqual(['Beta'])
+  expect(f.sql.prepare("SELECT COUNT(*) AS n FROM supervision_event_stories es JOIN supervision_stories s ON s.id = es.story_id WHERE s.status != 'current'").get()!.n).toBe(0)
+  await assignStories(f.stories, answer({ assignments: [{ event: 'e_1', story: 'story_1' }] }), { kind: 'global' }, { ...options, threadEvents: 100 })
+  expect(f.stories.pending({ kind: 'global' })).toEqual([])
+  expect(f.sql.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+})
+
+it.each(['feature', 'thread'] as const)('rejects a split after its %s was removed without leaving new threads', async removed => {
+  const f = await fixture()
+  f.publish(f.a.id, ['One', 'Two', 'Three', 'Four'])
+  await assignStories(f.stories, answer({ stories: [{ key: 'new_1', level: 'feature', name: 'Feature' }, { key: 'new_2', level: 'thread', name: 'Thread', parent: 'new_1' }],
+    assignments: [1, 2, 3, 4].map(n => ({ event: `e_${n}`, story: n === 4 ? 'new_2' : 'new_1' })) }), { kind: 'global' }, { ...options, threadEvents: 4 })
+  const [feature, thread] = f.stories.list({ kind: 'global' })
+  const input = f.stories.splitInput(feature!.id, 8000)
+  f.stories.act({ action: 'remove', storyId: removed === 'feature' ? feature!.id : thread!.id })
+  const before = f.stories.list({ kind: 'global' })
+  expect(() => f.stories.split(input, { threads: [], moves: [{ event: 'e_1', thread: 'thread_1' }] }, 4)).toThrow('Story changed')
+  expect(f.stories.list({ kind: 'global' })).toEqual(before)
+  expect(f.sql.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+})

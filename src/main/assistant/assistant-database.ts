@@ -12378,11 +12378,11 @@ export class AssistantDatabase {
     return { summary: this.reviewSummary(request.scope, 'supervisor'), background: this.reviewBackground(request.scope) }
   }
 
-  async supervisionCandidates(request: SupervisionRunRequest): Promise<ReturnType<AssistantDatabase['listSupervisionCandidates']>> {
+  async supervisionCandidates(request: SupervisionRunRequest, batch?: { projectId: string; crossProject: boolean }): Promise<ReturnType<AssistantDatabase['listSupervisionCandidates']>> {
     const reader = this.readonlyQueryReader()
-    if (reader) return reader.call('reviewCandidates', [request])
+    if (reader) return reader.call('reviewCandidates', [request, batch])
     if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
-    return this.listSupervisionCandidates(request)
+    return this.listSupervisionCandidates(request, batch)
   }
 
   supervisionSuggestions(): SupervisionSuggestionStore {

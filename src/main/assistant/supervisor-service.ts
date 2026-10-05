@@ -487,6 +487,7 @@ export class SupervisorService {
         for (const batch of saved) savedProjects.add(batch.projectId)
       }
       for (const projectId of savedProjects) await candidatesFor(projectId)
+      controller.signal.throwIfAborted()
       const result: StoredSupervisionResult = { runId, request, candidates: [...offered.values()],
         evidence: progress.batches === 1 ? first!.evidence : [], output: root!.output,
         status: 'completed', coverage: { ...db.progress(runId), complete: true } }

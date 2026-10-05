@@ -1,5 +1,14 @@
 # 工作栏实现与验证进度
 
+## 2026-10-05：Runtime 提交失败与启动取消
+
+本机 OpenCode 提交失败后会结束所属 SSE 等待；远程原生 Session 启动等待期间，
+取消与其他 binding 的控制请求可继续处理。保留无默认 Prompt 总时限、共享 peer
+隔离、取消后的会话清理及原有事件顺序。实现规则见
+[进程复用设计](./runtime-process-reuse-technical-design.md)，旧/新回归、当前源码
+Windows/Linux x64 实测、真实数据检查及本轮 5 次文本模型调用计数统一记录在
+[统一执行进度](../unified-execution/progress.md#2026-10-05-runtime-生命周期审查修复)。
+
 ## 2026-10-04：移除成果页，工作区导入与文件时间
 
 对应 [FR-WF1～FR-WF3、US-WF1～US-WF3](./workspace-files.md)。成果 Tab、目录注册及独立导入

@@ -17,6 +17,11 @@ Host 环境。2026-09-14 的已发布 Desktop `0.13.2` / Agent `0.11.25` 已包�
 
 ## 运行与失败
 
+OpenCode 提交请求失败时直接显示该失败，不等待没有被接受的请求产生结束事件。
+远程 Runtime 在原生 Session 启动期间也可取消；启动等待不阻塞其他会话的状态读取。
+取消及清理范围仍限于所属请求，完整规则见
+[Runtime 进程复用技术设计](./runtime-process-reuse-technical-design.md)。
+
 - 结构化 yes/no 是普通选项，不从日志、自然语言或 Shell 输出猜测用户意图。
 - 前台同一请求的待答问题按公开 `questionId` 去重，按到达顺序保存在消息的
   `pendingQuestions` 中。每次显示队首表单；有多个待答请求时显示数量。后续提问和重复

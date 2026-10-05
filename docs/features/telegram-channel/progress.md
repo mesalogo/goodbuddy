@@ -35,6 +35,26 @@ npm test
 
 集成集合及 301 项复跑的完整命令未随计数提供，这里不推测其文件清单。真实本地代理 fixture 见 [`tests/telegram-proxy.electron.test.ts`](../../../tests/telegram-proxy.electron.test.ts)；其本地代理结果不证明外部 Telegram Bot 可用。探针操作见 [API 联调](./api-testing.md)，探针成功也不包含模型验收。
 
+## 2026-10-05 通道审计修复验证
+
+A06 的图片结果回归使用现有 IPC executor 图片事件 fixture，接入生产 `ChannelService` 和内存 SQLite 发件箱。修复前回复状态为 `failed`；修复后状态为 `completed`，图片附件字节保持一致，桌面会话仍记录成果 ID。未调用付费图片模型。
+
+A07 的 Renderer 回归覆盖推送状态为 `error`、`stopped`、`running`、`starting`、`disabled` 的无修改保存。前两种状态在修复前没有提交配置，修复后能够提交；其余状态保持不提交。扩展的 Electron 场景通过真实设置 UI、Preload、IPC、Manager 和驱动验证 409 后无修改保存恢复轮询，以及正常连接时再次保存不重启。Telegram API 在网络边界使用替身；本次运行有 2 次本地 HTTP 模型调用、0 次外部请求。
+
+A08 的钉钉回归使用生产传输、服务和 SQLite 发件箱，HTTP 请求只发送到 loopback fixture。首次 HTTP 200 携带非零 `errcode`，修复前被当作成功；修复后记录一次失败并保留上下文，第二次成功响应完成投递，executor 只执行一次。另有空响应、缺少错误码、JSON null、无效 JSON 和超限响应回归。
+
+本轮聚焦验证：6 个 channel / Renderer suite 共 106 项通过；IPC 图片、文件与 Telegram 场景 3 项通过；Electron 场景 1 项通过。修复前选择性回归为 9 项失败、3 项通过。命令如下：
+
+```powershell
+npm test -- src/main/channels/dingtalk-channel-driver.test.ts src/renderer/src/ChannelSettingsSection.test.tsx src/main/channels/channel-manager.test.ts src/main/channels/channel-service.test.ts src/main/channels/telegram-channel-driver.test.ts src/main/channels/sqlite-channel-state.test.ts
+npm test -- src/main/ipc.test.ts -t "returns a generated image only|creates a bounded result file|routes Telegram settings"
+npm test -- tests/telegram-channel.electron.test.ts
+```
+
+这些结果验证本地生产连接关系，不替代真实平台收发或图片模型验收。本轮未改 Agent、Runtime 协议或执行策略，未做性能改善声明。
+
+补充检查：钉钉错误码断言加入后，单独复跑 9 项通过；修改的 TS 文件 ESLint、Renderer typecheck 和 `git diff --check` 通过。早期全仓检查受到并行修改中的类型与 lint 错误阻塞，负责方修正后最终检查均通过；完整测试为 6,136 项通过、0 失败、87 跳过。汇总见[阶段修复验收](../../review/stage-audit-fixes-2026-10-05.md#最终检查)。
+
 ## Main 性能对比
 
 基线为 `78afec77758f3c175f8e2b80e5be4327e13b4689` 的临时 detached worktree，当前为包含 Telegram 改动的工作区。按基线、当前交替执行 `npm run perf:main` 各 3 次。环境为 Windows x64、Intel Core Ultra X7 358H、Electron 44.5.1、Node 24.21.0；每轮使用隔离数据库，包含 1000 个会话、20008 条生成消息、24000 条活动记录，每个场景预热后测量 15 次，无外部模型调用。
@@ -62,7 +82,7 @@ worker 读取、活动启动、增量更新和同步首页查询在六轮中均�
 ## 待完成
 
 - 在可完成操作系统信任确认的环境中复跑显式启用的代理测试，记录最终结果；保留单次成功和后续导入超时两项证据，不把默认跳过视为通过。
-- 跟踪全量测试中的 Runtime 清理与帮助弹层间歇性失败；两者均有原样复跑通过证据，未为此修改无关产品逻辑。
+- Runtime 清理用例的 GC 生命周期问题已定位并修正测试夹具，完整集成测试通过，见[GC 复查](../unified-execution/progress.md#sdk-cleanup-timeout-复查)。历史帮助弹层间歇性失败在本轮完整测试中未出现。
 - 提供有效测试凭据后运行生产实时探针，记录连接及固定回复结果；本次缺少凭据的阻塞不以历史 Node 成功替代。
 - 从真实设置页保存并启用专用 Bot，在手机发送授权请求，经过实际模型产生回复并核对桌面历史；再按 PRD 验证连续上下文、隔离、无害工具任务和恢复场景。当前没有真实 Bot 与模型完整链路的通过记录。
 - Main 测量未覆盖迁移和完整 UI；后续验收需按[性能原则](../../architecture/performance-principles.md)区分实测路径与未测路径。

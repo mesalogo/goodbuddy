@@ -178,6 +178,39 @@ afterEach(async () => {
 })
 
 describe('ChannelSettingsSection', () => {
+  it.each(['error', 'stopped', 'running', 'starting', 'disabled'] as const)(
+    'only reapplies unchanged enabled Telegram settings when pushed state is %s and needs recovery',
+    async (state) => {
+      const configured: ChannelSettingsSnapshot = {
+        ...snapshot,
+        telegram: { ...snapshot.telegram, enabled: true, secretConfigured: true, source: 'encrypted', status: { state: 'running' } }
+      }
+      let receive!: (change: ChannelRuntimeStatusChange) => void
+      const apply = vi.fn(async () => configured)
+      const onNotify = vi.fn()
+      Object.defineProperty(window, 'goodbuddy', {
+        configurable: true,
+        value: {
+          channels: { ...bindingApi(), getSnapshot: async () => configured, apply,
+            onStatusChanged: (listener: typeof receive) => { receive = listener; return () => undefined } },
+          settings: settingsApi(), projects: { update: vi.fn(async () => projects[0]) }
+        } as unknown as DesktopApi
+      })
+      renderChannelSettings({ initialChannel: 'telegram', onNotify })
+      await screen.findByLabelText('TelegramBot Token')
+      act(() => receive({ channel: 'telegram', status: { state } }))
+      fireEvent.click(screen.getByRole('button', { name: '保存通道设置' }))
+      await waitFor(() => expect(onNotify).toHaveBeenCalled())
+      if (state === 'error' || state === 'stopped') {
+        expect(apply).toHaveBeenCalledWith({ telegram: {
+          enabled: true, secret: { action: 'keep' }, allowedSenderIds: [], allowGroupMessages: false
+        } })
+      } else {
+        expect(apply).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   it('keeps pushed channel status newer than loading and updates reconnect errors without resetting drafts', async () => {
     let receive!: (change: ChannelRuntimeStatusChange) => void
     const unsubscribe = vi.fn()

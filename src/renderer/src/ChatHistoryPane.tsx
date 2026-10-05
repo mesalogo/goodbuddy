@@ -18,6 +18,7 @@ import type {
 import type { ImageOperation } from "../../shared/image-generation-contracts";
 import { ChatTimeline, type ImageViewerItem, type Message } from "./ChatTimeline";
 import { isUnusedConversation, type Conversation } from "./chat-conversation";
+import { MessageExpansionProvider } from "./message-expansion";
 import {
   buildSegments,
   maxRenderedMessageCount,
@@ -246,8 +247,8 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   // Rows kept mounted outside the range: the focused row, the first message
   // after the final "load earlier" step.
   const [keptMessageIds, setKeptMessageIds] = useState<readonly string[]>([]);
-  // Rows the user changed (toggled a <details>, typed into a question card):
-  // their local state would be lost if they unmounted. Bounded, oldest out.
+  // Keep recent interactions warm (copy feedback, previews, typed answers).
+  // Disclosure choices also survive eviction in MessageExpansionProvider.
   const [interactedMessageIds, setInteractedMessageIds] = useState<readonly string[]>([]);
   // Rows holding the start and end of a non-empty text selection.
   const [selectionMessageIds, setSelectionMessageIds] = useState<readonly string[]>([]);
@@ -544,9 +545,8 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     return () => cancelAnimationFrame(frame);
   }, [active, captureAnchor, navigationTarget, view, visibleMessageCount]);
 
-  // Rows the user interacts with keep their local state (open details, typed
-  // question answers, "copied" feedback, Mermaid toggles) as they did when
-  // every loaded row stayed mounted.
+  // Keep a bounded set of recently interacted rows mounted. Disclosure state
+  // lives outside the rows, while pending questions are independently pinned.
   useEffect(() => {
     const list = listRef.current;
     if (!active || !list) return;
@@ -1065,7 +1065,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   };
 
   return (
-    <div
+    <MessageExpansionProvider messages={messages} messageIndexes={messageIndexById}><div
       aria-hidden={active ? undefined : "true"}
       className="chat-history-pane"
       data-active={active ? "true" : "false"}
@@ -1153,6 +1153,6 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
           <ArrowDown aria-hidden="true" size={18} />
         </button>
       )}
-    </div>
+    </div></MessageExpansionProvider>
   );
 });
