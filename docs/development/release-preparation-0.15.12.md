@@ -63,3 +63,12 @@ writable_schema/defensive 设置，保留行、rowid 和索引；schema 62 仅�
 公开核验六平台 Desktop 20 项资产/12 安装包、macOS 签名公证、双源索引、
 网站 12 种标准选择，以及 Agent 三平台目录/签名和生产读取器。
 不下载 Desktop 安装包，不发布已提交宣传稿。
+
+## 精确候选 CI
+
+`36e671a0` 的 Desktop CI `37273689682`：6254 通过、57 跳过、1 失败，
+生产构建未执行；Agent CI `37273689788` 通过。
+唯一失败为 Telegram Electron 探针启动时真实 safeStorage 不可用。
+Ubuntu 验证环境增加 gnome-keyring/D-Bus，在独立会话中以随机临时密码解锁
+CI keyring 后运行 sandboxed Electron 测试；不使用明文回退、不替换加密接口，
+保留生产配置加密保存断言。密码仅经管道交给临时 keyring，不写源码或日志。

@@ -43,7 +43,7 @@ jobs:
       - name: Prepare sandboxed Electron tests
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes xvfb xauth
+          sudo apt-get install --no-install-recommends --yes xvfb xauth dbus-x11 gnome-keyring
           sandbox="node_modules/electron/dist/chrome-sandbox"
           if [[ ! -f "$sandbox" ]]; then
             rm -rf node_modules/electron/dist
@@ -55,7 +55,12 @@ jobs:
 
       - name: Run validators
         run: |
-          xvfb-run --auto-servernum npm test
+          dbus-run-session -- bash -euo pipefail -c '
+            export XDG_CURRENT_DESKTOP=GNOME
+            # An isolated CI login keyring exercises real safeStorage encryption.
+            head -c 32 /dev/urandom | base64 | gnome-keyring-daemon --unlock --components=secrets
+            xvfb-run --auto-servernum npm test
+          '
           npm run typecheck
           npm run lint
 
