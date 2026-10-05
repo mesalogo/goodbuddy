@@ -2,6 +2,52 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.12",
+      "releasedAt": "2026-10-05",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**新增 Telegram 私聊通道，真实平台联调待完成**：可配置自建 Bot 的 Token 和数字用户白名单，通过通道项目处理文字请求并回复，使用 Electron 网络以支持系统代理。可先留空发送者 ID、启用并保存，再向 Bot 发送 `/whoami` 获取自己的 ID 后重新保存；连接测试不等于开始接收消息，真实 Bot 与模型完整收发仍待验证。",
+            "**按自定义时间回顾工作**：除最近 1、7、30 天，还可输入正整数天数或指定本地开始、结束日期。指定日期包含结束日全天，今天截到提交时刻，并校验未来日期及逆序区间；普通回顾仍跳过已处理且未变化的来源，重新整理需明确确认。"
+          ],
+          "fixes": [
+            "**减少监督者打开和切换时的等待**：概览不再提前加载完整图谱，来源正文按需读取，页面重查询交给现有 Worker，故事摘要复用结果，长选择列表只挂载附近条目。保留来源详情、键盘、焦点和历史选择；大型回顾最终发布仍可能短暂阻塞主进程，不宣称所有性能预算已达标。",
+            "**删除会话后继续未发布的回顾**：已删除会话涉及的未发布批次和依赖汇总会失效，混合批次按剩余来源重算，其余来源继续，并显示省略数量。历史已发布结果保持不变，全部来源删除时不生成空报告；已发送给模型的内容无法撤回，剩余来源修改或归档仍会要求处理冲突。",
+            "**修正回顾隔离、暂停与模型失败处理**：关闭跨项目时按当前项目读取候选，暂停后不再因晚到查询继续发布，故事分配拒绝已移除或合并的目标。临时网络错误、限流及部分服务端错误最多额外重试一次，保留已报告用量；认证、配置、取消、超时和容量错误不因此重试，额外尝试可能增加费用。",
+            "**让 Runtime 失败和取消及时结束**：远程原生启动和模型路由清理不再占住全局控制队列，其他会话的查询、取消和看门狗仍可推进，并清除迟到路由。修复本地 OpenCode 提交失败后持续等待的问题，保留原错误；远程修复需更新 Agent 0.15.5。",
+            "**保留通道待发结果并显示交付错误**：修复生成图片结果在通道契约处被拒、钉钉 HTTP 成功但业务失败被误记为送达的问题。Telegram 异常后原样保存可重启接收，轮询冲突时保留身份匹配的待发回复，发送错误可见，限流等待跨重试层保留并可取消。",
+            "**保留长会话展开状态并区分缺失计时**：浏览长会话时，展开过的详情在滚出再滚回后保持，仅保存用户修改过的状态，删除来源后清理。历史执行时长缺失不再显示成零，旧记录不通过扫描历史补算。"
+          ],
+          "notices": [
+            "首次启动升级到 schema 62：schema 61 扩展 Telegram 通道约束，schema 62 增加监督查询索引，不改写用户正文。升级前请关闭应用并备份完整数据目录，至少包括数据库、相邻 `notes/` 和设置文件；大库建索引可能耗时，旧客户端回退需恢复升级前备份。",
+            "远程修复请先升级 Desktop 0.15.12，再下载 Agent 0.15.5 并更新 Host；已有进程不会热更新，更新前妥善处理活动任务。runtime/acp 6、Electron、Node、OpenCode 和 Continue 的固定版本不变。",
+            "继续使用无 Ask/Execute 模式的统一执行，请求按启用能力及执行账号权限运行。Telegram 真实平台完整联调、跨平台性能和独立存储服务迁移不属于已完成验证；高频本地写入继续沿用 NORMAL 的断电持久性取舍。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Add Telegram private messaging, with live-platform acceptance pending**: Configure a self-created bot token and numeric sender allowlist to handle text requests through channel projects and send replies, using Electron networking for system proxy support. Sender IDs can initially be blank: enable and save, send `/whoami` to the bot, then save your ID; connection testing is not message reception, and complete real-bot-plus-model delivery remains unverified.",
+            "**Review a custom time range**: Alongside the last 1, 7, or 30 days, enter a positive number of days or choose local start and end dates. Date ranges include the whole end date, cap today at submission time, and reject future or reversed dates; ordinary reviews still skip unchanged processed sources, while reanalysis requires explicit confirmation."
+          ],
+          "fixes": [
+            "**Reduce waiting when opening and switching Supervisor views**: Overview no longer preloads the complete graph, source text loads on demand, heavy page reads use the existing Worker, story digests are reused, and long selection lists mount nearby rows. Source details, keyboard access, focus, and history selection remain available; large final review publication can still briefly block Main, so not all performance budgets are claimed met.",
+            "**Continue unpublished reviews after deleting conversations**: Unpublished batches and dependent summaries containing deleted conversations become invalid, mixed batches recompute surviving sources, and remaining work continues with an omitted-source count. Published historical results remain unchanged and deleting all sources produces no empty report; already-sent model input cannot be recalled, and changes or archival of surviving sources still require conflict handling.",
+            "**Correct review isolation, pause, and model failure handling**: Candidate reads honor the current project when cross-project work is disabled, late queries cannot publish after pause, and story assignment rejects removed or merged destinations. Transient network errors, rate limits, and selected server failures allow at most one additional attempt while retaining reported usage; authentication, configuration, cancellation, timeout, and capacity errors do not gain this retry, and extra attempts can add cost.",
+            "**Finish Runtime failures and cancellation promptly**: Remote native startup and model-route cleanup no longer hold the global control queue, allowing other conversations, cancellation, and watchdogs to progress while removing late routes. Local OpenCode submission failures now end the wait and preserve their original errors; remote fixes require Agent 0.15.5.",
+            "**Preserve pending channel replies and expose delivery errors**: Generated-image results no longer fail the channel contract, and DingTalk business failures in HTTP-success responses are no longer marked delivered. Saving unchanged Telegram settings can restart failed reception, polling conflicts retain identity-matched pending replies, send errors remain visible, and cancellable rate-limit waits survive retry-layer boundaries.",
+            "**Retain expanded conversation details and distinguish missing timing**: Details expanded in long conversations stay expanded after scrolling away and back, storing only user overrides and clearing deleted sources. Missing historical execution duration is no longer displayed as zero, and old timing is not reconstructed by scanning history."
+          ],
+          "notices": [
+            "First launch upgrades to schema 62: schema 61 extends Telegram channel constraints and schema 62 adds Supervisor lookup indexes without rewriting user text. Close the app and back up the complete data directory, including at least the database, adjacent `notes/`, and settings files; indexing large databases may take time, and downgrading requires the pre-upgrade backup.",
+            "For remote fixes, upgrade to Desktop 0.15.12, then download Agent 0.15.5 and update the Host; running processes are not hot-updated, so handle active tasks before updating. runtime/acp 6 and pinned Electron, Node, OpenCode, and Continue versions remain unchanged.",
+            "Unified execution remains in place without Ask/Execute modes, using enabled capabilities and execution-account permissions. Full live Telegram acceptance, cross-platform performance, and an independent storage-service migration are not completed validation; frequent local writes retain the NORMAL power-loss durability tradeoff."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.11",
       "releasedAt": "2026-10-04",
       "notes": {
