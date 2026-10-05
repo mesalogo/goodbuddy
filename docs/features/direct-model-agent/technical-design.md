@@ -98,8 +98,11 @@ type BuiltinModelToolSummary = {
 `EISDIR`、`EACCES`、`EPERM`、`ELOOP`、`ENAMETOOLONG` 等已列明的文件系统错误。
 Runtime 向模型返回 `{ ok: false, recoverable: true, error, nextAction }` 的 JSON 文本工具结果，
 工具活动记为 `recoverable`，继续工具循环，由模型修正路径、分页参数、glob 或搜索表达式；
-提示不得原样重复失败参数。取消、远端断线、失效工作区、缺失 rg 可执行文件及未分类的内部
-错误继续向外传播，不转为可恢复结果。
+提示不得原样重复失败参数。其他工具执行异常（包括进程启动或输出文件的 `ENOENT`、
+远端断线、失效工作区、缺失 rg 可执行文件）由 Runtime 返回 `{ ok: false, error }`，
+工具活动记为 `failed`，错误详情使用已有有界处理并保留 cause 信息。失败结果继续进入
+下一次模型请求，由模型决定重试、调整方法或说明失败；不自动重放工具，也不增加重试次数限制。
+Anthropic 的失败结果同时设置 `is_error: true`。请求取消及 `AbortError` 仍向外传播并停止循环。
 
 `workspace_read_text` 仍只接受工作区内相对路径。搜索原样接受 rg 参数及账号可访问的路径，
 不增加逐工具授权；保留 `--no-config` 默认参数、原生退出码、取消和分页，不提升系统权限。

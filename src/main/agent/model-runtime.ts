@@ -882,14 +882,18 @@ function getToolResultPreview(parts: ModelToolResultPart[]): string {
     .slice(0, 16_000)
 }
 
-function createRecoverableToolErrorResult(
-  error: RecoverableModelToolError
+function createToolErrorResult(
+  error: unknown
 ): ModelToolResult {
   const text = JSON.stringify({
     ok: false,
-    recoverable: true,
-    error: error.message.slice(0, 1_000),
-    nextAction: error.nextAction.slice(0, 1_000)
+    ...(error instanceof RecoverableModelToolError
+      ? {
+          recoverable: true,
+          error: error.message.slice(0, 1_000),
+          nextAction: error.nextAction.slice(0, 1_000)
+        }
+      : { error: safeToolErrorDetail(error) ?? 'Tool execution failed' })
   })
   return {
     parts: [{ type: 'text', text }],
@@ -3811,6 +3815,14 @@ export class ModelAgentRuntime implements AgentRuntime {
           }
           result = step.value
         } catch (error) {
+          signal.throwIfAborted()
+          if (typeof error === 'object' && error !== null && (
+            ('name' in error && error.name === 'AbortError') ||
+            ('cause' in error && typeof error.cause === 'object' && error.cause !== null &&
+              'name' in error.cause && error.cause.name === 'AbortError')
+          )) {
+            throw error
+          }
           const recoverable = error instanceof RecoverableModelToolError
           const detail = safeToolErrorDetail(error)
           if (showToolActivity) {
@@ -3828,14 +3840,8 @@ export class ModelAgentRuntime implements AgentRuntime {
               ...(detail ? { error: detail } : {})
             }
           }
-          if (recoverable) {
-            result = createRecoverableToolErrorResult(error)
-            toolFailed = true
-          } else {
-            throw new Error(`工具「${displayName}」执行失败`, {
-              cause: error
-            })
-          }
+          result = createToolErrorResult(error)
+          toolFailed = true
         }
         roundContextBytes += validateToolResult(result)
         if (responses) {

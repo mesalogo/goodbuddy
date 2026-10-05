@@ -10,7 +10,24 @@
 | 日期 | 2026-09-09 |
 | 关联入口 | [直连模型 Agent 能力](./README.md) |
 
-## 当前结论
+## 2026-10-05 工具执行异常回传
+
+- 普通工具执行异常也返回模型，保留失败活动与错误详情，由模型决定后续行动；规则见
+  [失败恢复](./technical-design.md#读取与搜索失败恢复)。请求取消与 `AbortError` 仍停止循环。
+- 新增三协议回归使用真实 Provider、进程服务和文件系统：无效 cwd 产生 `ENOENT`，
+  下一次模拟模型请求收到对应失败结果，再调用同一工具执行真实命令成功。另覆盖错误详情
+  有界处理和取消；未使用真实外部模型，不作为桌面 UI 或真实模型自主决策验收。
+- 修复验证中发现 `DOMException` 不一定满足 `instanceof Error`，改为按错误名称识别取消；
+  取消测试在意外后续模型请求时立即失败，避免模拟响应无限重复耗尽内存。
+- `model-runtime.test.ts`、`model-tool-provider.test.ts`、`direct-model-process-service.test.ts`：
+  161 项通过、1 项跳过。`npm run typecheck`、`npm run lint` 通过。
+- 全量 `npm test`：6,230 项通过、87 项跳过、1 项失败；失败为
+  `obsidian-electron.test.ts:29` 要求临时目录在仓库外，与本次按仓库规范设置
+  `TEMP`/`TMP` 到仓库 `temp/` 冲突。未修改该测试，全量不能记为通过。
+- 托管 SSH 使用远端 OpenCode/Continue 的工具循环，不运行本次修改的 `ModelAgentRuntime`；
+  不涉及 gbagent 生产路径。临时目录创建、保留和清理逻辑未修改。
+
+## 既有本机验收结论
 
 本机生产路径已经完成源码接线：直连模型 Execute 可运行平台 Shell，Ask/Execute 均可按
 父模式委派单层编程 Subagent；长输出可通过 `output_read` 续读。OpenCode、Continue、

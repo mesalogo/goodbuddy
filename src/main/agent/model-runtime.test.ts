@@ -4017,6 +4017,218 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
+  it.each(['openai-chat-completions', 'openai-responses', 'anthropic-messages'] as const)(
+    'returns ordinary ENOENT to %s and lets the model retry the same production tool',
+    async (protocol) => {
+      const tempRoot = join(process.cwd(), 'temp')
+      await mkdir(tempRoot, { recursive: true })
+      const workspace = await mkdtemp(join(tempRoot, 'model-tool-enoent-'))
+      const workspaceAccess = new LocalWorkspaceAccess(workspace)
+      const processService = new LocalDirectModelProcessService()
+      const toolProvider = new ModelToolProvider(
+        workspaceAccess, [], undefined, undefined, false, { processService }
+      )
+      const marker = 'process-retry-succeeded'
+      const calls = ['missing-cwd', '.'].map((cwd, index) => ({
+        id: `process-${index}`,
+        name: 'process_execute',
+        arguments: { command: `echo ${marker}`, cwd, timeoutMs: 10_000 }
+      }))
+      const responses = calls.map((call) => {
+        if (protocol === 'anthropic-messages') {
+          return { content: [{ type: 'tool_use', id: call.id, name: call.name, input: call.arguments }], stop_reason: 'tool_use' }
+        }
+        if (protocol === 'openai-responses') {
+          return { id: `response-${call.id}`, output: [{
+            type: 'function_call', id: `fc-${call.id}`, call_id: call.id,
+            name: call.name, arguments: JSON.stringify(call.arguments)
+          }] }
+        }
+        return { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{
+          id: call.id, type: 'function',
+          function: { name: call.name, arguments: JSON.stringify(call.arguments) }
+        }] } }] }
+      })
+      const fetcher = vi.fn<typeof fetch>(async () => {
+        const response = responses.shift()
+        if (response) return Response.json(response)
+        if (protocol === 'anthropic-messages') {
+          return Response.json({ content: [{ type: 'text', text: 'Command completed.' }], stop_reason: 'end_turn' })
+        }
+        if (protocol === 'openai-responses') {
+          return Response.json({ id: 'response-final', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Command completed.' }] }] })
+        }
+        return Response.json({ choices: [{ message: { role: 'assistant', content: 'Command completed.' } }] })
+      })
+      const runtime = new ModelAgentRuntime({
+        baseUrl: 'https://example.test/v1', model: 'test-model',
+        protocol, authentication: 'none', fetcher, toolProvider, workspaceAccess
+      })
+      const events: RuntimeEvent[] = []
+      try {
+        for await (const event of runtime.run({
+          requestId: crypto.randomUUID(), conversationId: `enoent-${protocol}`,
+          prompt: 'Run the command and correct the working directory if needed.'
+        }, new AbortController().signal)) events.push(event)
+
+        expect(fetcher).toHaveBeenCalledTimes(3)
+        let failure: unknown
+        for (const requestIndex of [1, 2]) {
+          const body = JSON.parse(String(fetcher.mock.calls[requestIndex]![1]!.body))
+          const entries = (body.input ?? body.messages) as Array<Record<string, unknown>>
+          for (let callIndex = 0; callIndex < requestIndex; callIndex++) {
+            const call = calls[callIndex]!
+            let text: string
+            if (protocol === 'anthropic-messages') {
+              const blocks = entries.flatMap((entry) => Array.isArray(entry.content)
+                ? entry.content as Array<Record<string, unknown>> : [])
+              expect(blocks.filter((block) => block.type === 'tool_use' && block.id === call.id)).toEqual([
+                expect.objectContaining({ name: call.name, input: call.arguments })
+              ])
+              const results = blocks.filter((block) => block.type === 'tool_result' && block.tool_use_id === call.id)
+              expect(results).toHaveLength(1)
+              expect(results[0]!.is_error).toBe(callIndex === 0 ? true : undefined)
+              text = (results[0]!.content as Array<{ text: string }>)[0]!.text
+            } else if (protocol === 'openai-responses') {
+              expect(entries.filter((entry) => entry.type === 'function_call' && entry.call_id === call.id)).toEqual([
+                expect.objectContaining({ name: call.name, arguments: JSON.stringify(call.arguments) })
+              ])
+              const results = entries.filter((entry) => entry.type === 'function_call_output' && entry.call_id === call.id)
+              expect(results).toHaveLength(1)
+              text = (results[0]!.output as Array<{ text: string }>)[0]!.text
+            } else {
+              const toolCalls = entries.flatMap((entry) => Array.isArray(entry.tool_calls)
+                ? entry.tool_calls as Array<Record<string, unknown>> : [])
+              expect(toolCalls.filter((entry) => entry.id === call.id)).toEqual([
+                expect.objectContaining({ function: { name: call.name, arguments: JSON.stringify(call.arguments) } })
+              ])
+              const results = entries.filter((entry) => entry.role === 'tool' && entry.tool_call_id === call.id)
+              expect(results).toHaveLength(1)
+              text = results[0]!.content as string
+            }
+            const result = JSON.parse(text)
+            if (callIndex === 0) {
+              expect(result).toEqual({ ok: false, error: expect.stringContaining('ENOENT') })
+              expect(result.error).toContain('missing-cwd')
+              expect(result.error.length).toBeLessThanOrEqual(2_000)
+              if (requestIndex === 1) failure = result
+              else expect(result).toEqual(failure)
+            } else {
+              expect(result).toMatchObject({ exitCode: 0, stdout: expect.stringContaining(marker), stderr: '' })
+            }
+          }
+        }
+        const toolEvents = events.filter((event) => event.type === 'tool')
+        expect(toolEvents.map((event) => [event.callId, event.state])).toEqual([
+          ['process-0', 'pending'], ['process-0', 'running'], ['process-0', 'failed'],
+          ['process-1', 'pending'], ['process-1', 'running'], ['process-1', 'completed']
+        ])
+        expect(toolEvents[2]).toMatchObject({ error: (failure as { error: string }).error })
+        expect(events).toContainEqual(expect.objectContaining({ type: 'text', delta: 'Command completed.' }))
+        expect(events.at(-1)).toMatchObject({ type: 'done' })
+      } finally {
+        try {
+          await runtime.dispose()
+          await processService.dispose()
+        } finally {
+          await rm(workspace, { recursive: true, force: true })
+        }
+      }
+    }
+  )
+
+  it('returns bounded ordinary tool error detail without control characters or a stack', async () => {
+    const error = new Error(`ENOENT\u0000: missing cwd ${'x'.repeat(4_000)} END-OF-DETAIL`)
+    error.stack = 'PRIVATE-STACK-MARKER'
+    const toolProvider = createToolProvider({
+      callTool: vi.fn(async () => { throw error })
+    })
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: {
+        role: 'assistant', content: null, tool_calls: [{
+          id: 'bounded-error', type: 'function',
+          function: { name: 'workspace_read_text', arguments: '{"path":"README.md"}' }
+        }]
+      } }] }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: {
+        role: 'assistant', content: 'Reported failure.'
+      } }] }))
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'https://example.test/v1', model: 'test-model',
+      protocol: 'openai-chat-completions', authentication: 'none', fetcher, toolProvider
+    })
+    const events: RuntimeEvent[] = []
+    try {
+      for await (const event of runtime.run({
+        requestId: crypto.randomUUID(), conversationId: 'bounded-tool-error',
+        prompt: 'Read the file.'
+      }, new AbortController().signal)) events.push(event)
+
+      expect(fetcher).toHaveBeenCalledTimes(2)
+      const body = JSON.parse(String(fetcher.mock.calls[1]![1]!.body)) as {
+        messages: Array<{ role: string; tool_call_id?: string; content: string }>
+      }
+      const results = body.messages.filter((message) => message.role === 'tool')
+      expect(results).toHaveLength(1)
+      expect(results[0]!.tool_call_id).toBe('bounded-error')
+      const result = JSON.parse(results[0]!.content)
+      expect(result).toEqual({ ok: false, error: expect.stringContaining('ENOENT: missing cwd') })
+      expect(result.error.length).toBeLessThanOrEqual(2_000)
+      expect(result.error).not.toContain('\u0000')
+      expect(result.error).not.toContain('END-OF-DETAIL')
+      expect(result.error).not.toContain('PRIVATE-STACK-MARKER')
+      expect(events.filter((event) => event.type === 'tool').map((event) => event.state))
+        .toEqual(['pending', 'running', 'failed'])
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'tool', callId: 'bounded-error', state: 'failed', error: result.error
+      }))
+      expect(events.at(-1)).toMatchObject({ type: 'done' })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it.each(['AbortSignal', 'AbortError'] as const)(
+    'propagates %s during tool execution without sending a failure result to the model',
+    async (cancellation) => {
+      const controller = new AbortController()
+      const error = cancellation === 'AbortError'
+        ? new DOMException('Tool cancelled', 'AbortError')
+        : new Error('Tool cancelled by user')
+      const toolProvider = createToolProvider({
+        callTool: vi.fn(async () => {
+          if (cancellation === 'AbortSignal') controller.abort(error)
+          throw error
+        })
+      })
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ choices: [{ message: {
+        role: 'assistant', content: null, tool_calls: [{
+          id: 'cancelled-call', type: 'function',
+          function: { name: 'workspace_read_text', arguments: '{"path":"README.md"}' }
+        }]
+      } }] })).mockRejectedValue(new Error('Unexpected model request after cancellation'))
+      const runtime = new ModelAgentRuntime({
+        baseUrl: 'https://example.test/v1', model: 'test-model',
+        protocol: 'openai-chat-completions', authentication: 'none', fetcher, toolProvider
+      })
+      const events: RuntimeEvent[] = []
+      try {
+        const consume = async () => {
+          for await (const event of runtime.run({
+            requestId: crypto.randomUUID(), conversationId: `tool-cancellation-${cancellation}`,
+            prompt: 'Read the file.'
+          }, controller.signal)) events.push(event)
+        }
+        await expect(consume()).rejects.toBe(error)
+        expect(toolProvider.callTool).toHaveBeenCalledOnce()
+        expect(fetcher).toHaveBeenCalledOnce()
+        expect(events).not.toContainEqual(expect.objectContaining({ type: 'done' }))
+      } finally {
+        await runtime.dispose()
+      }
+    }
+  )
+
   it('returns recoverable tool failures to the model instead of aborting the run', async () => {
     const responses = [
       {
