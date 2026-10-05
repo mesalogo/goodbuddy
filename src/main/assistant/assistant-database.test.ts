@@ -320,12 +320,13 @@ it('persists supervision knowledge locators and keeps memory sources distinct', 
     }
     database.saveSupervisionResult(result)
     const graph = database.getSupervisionGraph()
-    expect(graph.sources).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source_type: 'knowledge', locator_json: JSON.stringify({ libraryId: 'library-1', documentId: 'document-1', chunkId: 'chunk-1' }) }),
-      expect.objectContaining({ source_type: 'memory', locator_json: null })
+    const sources = (graph.sources as Array<{ id: string }>).map(source => database.getSupervisionSource(source.id)!)
+    expect(sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceType: 'knowledge', locatorJson: JSON.stringify({ libraryId: 'library-1', documentId: 'document-1', chunkId: 'chunk-1' }) }),
+      expect.objectContaining({ sourceType: 'memory', locatorJson: null })
     ]))
-    const source = (graph.sources as Array<{ id: string; source_type: string }>).find((item) => item.source_type === 'knowledge')!
-    expect(database.getSupervisionSource(source.id)).toMatchObject({ sourceType: 'knowledge', locatorJson: JSON.stringify({ libraryId: 'library-1', documentId: 'document-1', chunkId: 'chunk-1' }) })
+    const source = sources.find(item => item.sourceType === 'knowledge')!
+    expect(source).toMatchObject({ content: result.evidence[0]!.content, sourceType: 'knowledge', locatorJson: JSON.stringify({ libraryId: 'library-1', documentId: 'document-1', chunkId: 'chunk-1' }) })
   } finally {
     database.close()
   }
@@ -443,7 +444,8 @@ it.each(['same-project', 'different-project'] as const)('isolates supervision mo
         expect(graph.events).toHaveLength(1)
         expect(graph.entities).toHaveLength(2)
         expect(graph.sources).toHaveLength(1)
-        expect(graph.sources).toEqual(expect.arrayContaining([expect.objectContaining({ id: sourceId, locator_json: JSON.stringify(results.find((row) => row.id === event.result_id)!.summary === 'First' ? result.evidence[0]!.locator : next.evidence[0]!.locator) })]))
+        expect(graph.sources).toEqual(expect.arrayContaining([expect.objectContaining({ id: sourceId })]))
+        expect(database.getSupervisionSource(sourceId)).toMatchObject({ locatorJson: JSON.stringify(results.find((row) => row.id === event.result_id)!.summary === 'First' ? result.evidence[0]!.locator : next.evidence[0]!.locator) })
       }
       expect(inspected.prepare('PRAGMA foreign_key_check').all()).toEqual([])
     } finally { inspected.close() }
@@ -2936,7 +2938,7 @@ describe('AssistantDatabase', () => {
     migrated.upgradeStorage(progress, () => false, { migrateNotes: false, reclaimSpace: false })
     expect(progress).not.toHaveBeenCalled()
     const check = new DatabaseSync(path)
-    expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(61)
+    expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
     expect(tables.map(table => check.prepare(`SELECT rowid, * FROM ${table} ORDER BY rowid`).all())).toEqual(rows)
     expect(check.prepare('SELECT type, name, tbl_name, rootpage, sql FROM sqlite_schema ORDER BY name').all()).toEqual(
       schema.map(row => ['projects', 'conversations'].includes(row.name as string) && row.type === 'table'

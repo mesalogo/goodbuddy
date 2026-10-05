@@ -7071,7 +7071,7 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.supervisionOverview, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const request = supervisionOverviewRequestSchema.parse(input ?? {})
-    return assistantDatabase.listSupervisionResults(20, request.target, request.resultId)
+    return assistantDatabase.listSupervisionResultsAsync(20, request.target, request.resultId)
   })
   registerHandler(ipcChannels.supervisionRun, async (event, input: unknown) => {
     assertTrustedSender(event, window)
@@ -7083,7 +7083,7 @@ export function registerIpcHandlers(
   })
   registerHandler(ipcChannels.supervisionGraph, (event, input: unknown) => {
     assertTrustedSender(event, window)
-    return assistantDatabase.getSupervisionGraph(supervisionGraphRequestSchema.parse(input ?? {}))
+    return assistantDatabase.getSupervisionGraphAsync(supervisionGraphRequestSchema.parse(input ?? {}))
   })
   registerHandler(ipcChannels.supervisionSource, (event, input: unknown) => {
     assertTrustedSender(event, window)
@@ -7216,8 +7216,7 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     const { scope } = supervisionStoryListSchema.parse(input)
     if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return { stories: [], experiences: [], unassigned: 0, canUndo: false }
-    const stories = assistantDatabase.supervisionStories()
-    return { stories: stories.list(scope), experiences: assistantDatabase.supervisionExperiences().list(scope.kind === 'projects' ? scope.projectIds : undefined), unassigned: stories.unassignedCount(scope), canUndo: stories.canUndo() }
+    return assistantDatabase.getSupervisionStoriesAsync(scope)
   })
   registerHandler(ipcChannels.supervisionStoryAction, async (event, input: unknown) => {
     assertTrustedSender(event, window)

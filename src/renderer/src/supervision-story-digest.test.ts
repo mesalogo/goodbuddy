@@ -39,3 +39,17 @@ it('lists experiences formed in the period, or applied in it when formed earlier
   expect(storyDigest(view, range).experiences.map(entry => [entry.experience.id, entry.role, entry.events.map(item => item.id)]))
     .toEqual([['new', 'formed', ['a']], ['reused', 'applied', ['c']]])
 })
+
+it('preserves inclusive boundaries, tie ordering, orphan threads and direct-child aggregation', () => {
+  const view: SupervisionStoryView = { unassigned: 0, canUndo: false, experiences: [], stories: [
+    story('feature', [event('b', range.from), event('excluded', range.from, false)]),
+    story('child', [event('a', range.from), event('z', range.to)], { level: 'thread', parentId: 'feature' }),
+    story('grandchild', [event('deep', range.from)], { level: 'thread', parentId: 'child' }),
+    story('orphan', [event('orphan-event', range.to)], { level: 'thread', parentId: 'missing' }),
+    story('cross', [event('linked', range.from, false)], { level: 'cross' })
+  ] }
+  const digest = storyDigest(view, range)
+  expect(digest.started.map(entry => [entry.story.id, entry.events.map(item => item.id), entry.latest.id]))
+    .toEqual([['feature', ['a', 'b', 'z'], 'z'], ['orphan', ['orphan-event'], 'orphan-event'], ['cross', ['linked'], 'linked']])
+  expect(view.stories[0]!.events.map(item => item.id)).toEqual(['b', 'excluded'])
+})

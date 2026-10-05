@@ -141,12 +141,13 @@ const stories = [
 const story = stories[Number(params.get('story') ?? 0)] ?? stories[0]
 const titles = story.events
 const labels = story.entities
-const dense = params.has('dense')
+const windowed = params.has('windowed')
+const dense = params.has('dense') || windowed
 const long = params.has('long')
 const state = params.get('state')
 const graph: SupervisionGraphView = {
   storyLine: { id: 'fixture', scope_json: '{"kind":"global"}' },
-  events: Array.from({ length: dense ? 80 : 8 }, (_, index) => ({
+  events: Array.from({ length: windowed ? 600 : dense ? 80 : 8 }, (_, index) => ({
     id: `event-${index}`,
     title: dense
       ? `模拟事件 ${index + 1}`
@@ -158,7 +159,7 @@ const graph: SupervisionGraphView = {
       ? '2026-09-21T08:00:00.000Z'
       : `2026-09-${String(14 + index).padStart(2, '0')}T08:00:00.000Z`
   })),
-  entities: Array.from({ length: dense ? 40 : 6 }, (_, index) => ({
+  entities: Array.from({ length: windowed ? 600 : dense ? 40 : 6 }, (_, index) => ({
     id: `entity-${index}`,
     canonical_label: dense
       ? `模拟实体 ${index + 1}`
@@ -192,6 +193,12 @@ const graph: SupervisionGraphView = {
     event_id: `event-${index}`,
     source_id: 'source-1'
   }))
+}
+if (windowed) {
+  graph.relations = Array.from({ length: 600 }, (_, index) => ({ ...graph.relations[0]!, id: `relation-${index}`,
+    from_entity_id: `entity-${index}`, to_entity_id: `entity-${(index + 1) % 600}` }))
+  graph.eventEntities = graph.events.map((event, index) => ({ event_id: event.id, entity_id: `entity-${index}` }))
+  graph.eventSources = graph.events.map(event => ({ event_id: event.id, source_id: 'source-1' }))
 }
 if (params.has('short')) {
   graph.events = graph.events.slice(0, 1)
@@ -309,6 +316,20 @@ if (params.has('portable')) {
     stories: async ({ scope }: { scope: unknown }) => data.stories[JSON.stringify(scope)],
     run: async () => { throw new Error('Read-only acceptance must not run reviews') }
   })
+}
+if (windowed) {
+  const api = window.goodbuddy.supervision
+  const calls = { graph: 0, source: 0, edits: 0 }
+  const updateCalls = () => { document.documentElement.dataset.supervisorCalls = JSON.stringify(calls) }
+  const readGraph = api.graph, readSource = api.source
+  api.graph = async input => { calls.graph++; updateCalls(); return readGraph(input) }
+  api.source = async input => { calls.source++; updateCalls(); return readSource(input) }
+  api.entityAction = async input => {
+    calls.edits++; updateCalls()
+    const entity = graph.entities.find(item => item.id === input.entityId)
+    if (entity && input.action === 'revise' && input.label) entity.canonical_label = input.label
+  }
+  updateCalls()
 }
 const noop = async () => {}
 createRoot(document.getElementById('root')!).render(

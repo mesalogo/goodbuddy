@@ -81,7 +81,7 @@ it('supervision preserves result history and protected identities within scope t
     expect(read(latest.id).entities.find((entity) => entity.id === confirmedEntity.id)).toMatchObject({ ...confirmedEntity, confirmation_state: 'confirmed' })
     expect(read(latest.id).relations[0]).toMatchObject({ id: relationId, reason: 'Original reason', confirmation_state: 'confirmed' })
     const storedGraph = db.getSupervisionGraph({ resultId: latest.id })
-    const currentSource = (storedGraph.sources as Array<{ id: string; source_type: string }>).find((source) => source.source_type === 'conversation')!
+    const currentSource = (storedGraph.sources as Array<{ id: string }>).find((source) => db.getSupervisionSource(source.id)!.sourceType === 'conversation')!
     expect((storedGraph.entities as Array<{ source_reference_ids_json: string }>).every((entity) => entity.source_reference_ids_json === JSON.stringify([currentSource.id]))).toBe(true)
     expect(read(a.id)).toEqual(original)
     db.applySupervisionRelationAction({ resultId: latest.id, relationId, action: 'revoke' })

@@ -11,7 +11,7 @@ import { expect, it } from 'vitest'
 it('preserves virtualized disclosures with native Electron input and bounded large-history DOM', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-expansion-'))
   const require = createRequire(import.meta.url)
-  const source = process.env.GB_HISTORY_SOURCE
+  const source = process.env.GB_EXPANSION_SOURCE ?? process.env.GB_HISTORY_SOURCE
   const denseSource = process.env.GB_EXPANSION_DENSE_SOURCE
   const server = await createServer({
     configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),

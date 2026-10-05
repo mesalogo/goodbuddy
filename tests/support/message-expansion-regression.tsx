@@ -57,15 +57,21 @@ function Fixture() {
 const supervisor = new URLSearchParams(location.search).has('supervisor')
 if (supervisor) {
   const at = '2026-10-01T00:00:00.000Z'
+  let graphReads = 0
   Object.assign(window, { goodbuddy: { supervision: {
     overview: async () => [{ id: 'result', storyLineId: 'story', sourceId: null, summary: 'Synthetic review', changeDigest: '',
       createdAt: at, scope: { kind: 'global' }, timeRange: { from: at, to: at }, openItems: [] }],
-    graph: async () => ({ storyLine: null, events: [{ id: 'event', title: 'Event', description: '', occurred_at: at }],
-      entities: [], relations: [], eventEntities: [], sources: [{ id: 'source', title: 'Synthetic source', occurred_at: at }],
-      eventSources: [{ event_id: 'event', source_id: 'source' }] }),
+    graph: async () => {
+      const read = ++graphReads
+      // Keep the replacement read pending long enough to expose partial-state waits.
+      if (read > 1) await new Promise(resolve => setTimeout(resolve, 100))
+      return { storyLine: null, events: [{ id: 'event', title: 'Event', description: '', occurred_at: at }],
+      entities: [], relations: [], eventEntities: [], sources: [{ id: 'source', title: `Synthetic source ${read}`, occurred_at: at }],
+      eventSources: [{ event_id: 'event', source_id: 'source' }] }
+    },
     source: () => new Promise(resolve => Object.assign(window, { finishSource: () => resolve({ title: 'Synthetic source', content: 'Stale content', occurredAt: at }) }))
   } } })
 }
-createRoot(document.getElementById('root')!).render(<UiLocaleProvider>{supervisor
+createRoot(document.getElementById('root')!).render(<UiLocaleProvider initialPreference="zh-CN">{supervisor
   ? <><button id="change-language" onClick={() => void changeUiLocale('en-US')}>Change language</button><SupervisorWorkspace tab="graph" /></>
   : <Fixture />}</UiLocaleProvider>)

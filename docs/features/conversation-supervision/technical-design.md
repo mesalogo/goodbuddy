@@ -9,7 +9,7 @@
 | 产品设计 | [监督者应用产品设计](./supervisor-prd.md) |
 | 行为规则 | [监督者逻辑设计](./logic-design.md) |
 | 界面设计 | [监督者 UI 设计](./ui-design.md) |
-| 实施进度 | SQLite schema 50（心跳介入与监督建议见[心跳触发与建议](#心跳触发与建议2026-09-30)）；当前算法、设置和验收边界见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界) |
+| 实施进度 | SQLite schema 62；页面读取与索引见[页面读取与发布](#页面读取与发布2026-10-05)，当前算法、设置和验收边界见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界) |
 
 本文回答如何在现有 GoodBuddy 桌面端中实现监督者。它不改变产品范围，也不把模拟 Demo 当作生产数据模型。
 
@@ -33,7 +33,7 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 
 升级从现有事件实体关联、实体变化和来源引用恢复结果成员，不猜测名称匹配；旧数据缺失的归属或已经覆盖的内容无法还原，原对象仍保留。新结果即使实体没有事件或来源，也会保存完整成员。结果内容与运行、事件、来源在同一事务提交。
 
-`overview({ target? })` 返回稳定的 `id`、`storyLineId` 及来源 ID。指定 Conversation/Task 时，Main 读取目标实际项目，查询同时要求目标来源匹配、结果 scope 为 global 或包含该项目；LIMIT 在过滤之后。卡片展示结果真实范围，global 结果不会伪装成单会话摘要。`graph({ resultId, storyLineId? })` 校验二者归属，只返回该结果的事件、对象和来源；显式 ID 无效时不回退到最新结果。继续讨论按结果主键读取，并验证来源属于该结果。
+`overview({ target? })` 返回稳定的 `id`、`storyLineId` 及来源 ID。指定 Conversation/Task 时，只读 Worker 读取目标实际项目，查询同时要求目标来源匹配、结果 scope 为 global 或包含该项目；LIMIT 在过滤之后。卡片展示结果真实范围，global 结果不会伪装成单会话摘要。`graph({ resultId, storyLineId? })` 校验二者归属，只返回该结果的事件、对象和来源标题；显式 ID 无效时不回退到最新结果。继续讨论按结果主键读取，并验证来源属于该结果。
 
 工作回顾保存所选结果，切换或刷新使用请求序号忽略迟到图谱。侧栏按目标重建卡片，清空来源和预览，并忽略旧请求；工作栏 tasks 实例的 `targetRef` 可保存 conversation/task 固定目标，取消固定后恢复跟随当前选择。该绑定只控制监督卡片，不改变任务列表的项目范围。继续讨论预览显示实际目标名称和 ID，发送回调显式携带该会话 ID，由 Main 使用该会话的 Runtime 与项目。
 
@@ -44,6 +44,20 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 监督来源清单将 UI 时间区间归一化为 UTC，在 Worker 读快照内按范围筛选，元数据按小批次写入；后续片段按稳定键分页。项目必须存在且 active；消息按闭区间筛选，任务按区间内创建或完成时间筛选。手动和自动监督共用该路径，增量清单另读取 supervisor checkpoint；手动心跳报告保留原有 collector。Worker 连接、未完成初始化重建、取消确认和打包规则见[调度与存储](./review-scheduling-design.md#已接入的调度与存储)。
 
 已确认记忆作为当前背景，不参与新增正文覆盖。最多四条、每条 500 字符，时间来自真实更新时间；模型不能把背景引用为本批新增证据。旧结果继续保留原来源类型和 locator。监督正文上限现用于分批，余段继续处理；心跳报告的有界输入语义没有改变。
+
+## 页面读取与发布（2026-10-05）
+
+对应 K01 的来源投影及 K02、K05、K06。`supervision:overview`、`supervision:graph`、`supervision:stories` 的生产 IPC 校验后分别调用 `listSupervisionResultsAsync`、`getSupervisionGraphAsync`、`getSupervisionStoriesAsync`。它们复用 `readonly-query-worker` 的 AssistantDatabase 独立只读连接，每次领域读取包在一个 `readSnapshot` 内；故事响应中的故事、经验、未归属计数及撤销状态来自同一 SQLite 快照。调用前已提交的写入对下次读取可见。
+
+文件数据库缺少 Worker 配置、启动失败、崩溃或处于原有退避期时，请求直接失败，页面沿用既有错误与重试显示；这三个入口不使用 `readWithFallback`，不在 Main 重跑重查询。内存 SQLite 测试保留同步分支。原工具 `readStoryGraphAsync`、来源详情及其他存储入口保持各自原有实现，没有增加存储进程或通用协议。
+
+结果图谱和 scope 图谱的 `sources` 都只查询共享合同已有的 `id`、`title`、`occurred_at`，并按原表 rowid 顺序返回。正文、来源类型、locator 等仍完整保存在 `supervision_sources`，通过 `supervision:source`／`source-context` 按 ID 读取；历史结果、所有事件、对象和关联均保留。概览是否请求图谱由 Renderer 的页面加载规则决定，后端不截断图谱内容。
+
+schema 62 在既有迁移事务中新增 `supervision_sources(result_id, occurred_at, source_type, id)` 和 `supervision_results(created_at)` 索引。前者供每份概览的首来源定位，后者支持结果时间及 rowid 倒序读取。升级沿用启动存储 Worker，保留表内容和 rowid，不重写正文，不触发历史转换或 `VACUUM`。新版本仍遵守既有的禁止旧客户端打开更高 schema 规则。
+
+故事查询先按 scope 选择故事，再一次读取这些故事的事件成员；经验查询在 SQL 中筛选仍有形成事件、且与所选项目有关的经验，再一次读取其全部有效事件关联。经验的跨项目关联不会随项目筛选被裁掉。两类列表各至多两条 SQL，原列表和成员排序、人工调整状态及完整内容访问保留。
+
+发布继续使用 Main 原有 `BEGIN IMMEDIATE` 事务。每个叶子写入后收集当时的实体、关系及来源引用，末尾只写一次 `graph_snapshot_json`；重复持久身份仍采用原 SQL 分组规则，保留首叶子快照值和全部叶子详情。结果、运行状态、来源、时间线与 checkpoint 仍一起提交或回滚。没有将写入迁到 Worker，也没有把一个完整结果分多次提交。大批量发布仍超过 Main 16 ms 预算，实测与剩余限制见[实施进度](./progress.md#2026-10-05-监督页面读取与发布局部优化)。独立存储服务的职责迁移继续留在[目标方向](../../architecture/desktop-storage-direction.md)。
 
 ## 监督者模型连接
 
@@ -61,7 +75,7 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 
 `runSupervisionModel` 为提取、导航、故事、经验和建议共用一次临时错误重试，错误范围见[逻辑规则](./logic-design.md#监督者模型选择)。每次尝试使用新的 request／conversation ID 和隐藏任务，正文缓冲单独创建；用量按各次任务保存。失败后先清理计时器并释放临时会话，再等待；等待继续持有监督池槽位，受父 signal 和池取消控制，结束或失败后释放槽位。`error` 事件的 `status: cancelled` 优先于错误文字；抛出的结构化错误检查 status、statusCode 和 cause，字符串只识别明确的 HTTP 状态或已知网络／流中断格式。
 
-直连文本请求保留 HTTP 错误的 status，并在响应流失败前交出已收到的用量；没有提供方用量时不估算补记。重试决策只在监督包装层，直连传输原有重试、OpenCode 和 Continue 策略不变。429 使用同一 500ms 等待，不新增 Retry-After、UI 或配置项。
+直连文本请求保留 HTTP 错误的 status，并在响应流失败前交出已收到的用量；没有提供方用量时不估算补记。监督响应超容量后立即 abort 并清空正文，最多继续消费 1 秒，仅保存用量事件，不累积后续文本；随后请求关闭迭代器、释放临时会话和池槽位，迟到事件不再写入。容量错误保持原文，不被随后到达的超时或流错误替换，也不重试；已缓冲完成响应和中止响应均沿用原 call ID 记账。重试决策只在监督包装层，直连传输原有重试、OpenCode 和 Continue 策略不变。429 使用同一 500ms 等待，不新增 Retry-After、UI 或配置项。
 
 `supervisorModelConcurrency` 为 1 至 4 的整数，默认 1。报告和监督整理共用 Main 内 `SupervisionModelPool` FIFO 池，普通聊天不入池；降低上限不终止在途请求。报告槽位从领取前持有至报告完成或无变化提交后，在下游监督开始前释放，避免并发 1 时相互等待。监督服务外层运行仍串行；该池不是完整分块调度器，也不提供跨聊天与监督的提供商全局并发、RPM、TPM 或 Retry-After 控制。
 

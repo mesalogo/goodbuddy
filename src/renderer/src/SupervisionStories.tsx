@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
 import type { SupervisionExperience, SupervisionStory, SupervisionStoryAction, SupervisionStoryView } from '../../shared/supervision-story-contracts'
@@ -12,20 +12,32 @@ export function useSupervisionStories(scope: SupervisionRunRequest['scope'] | un
   const [view, setView] = useState<{ key: string; data: SupervisionStoryView }>({ key: '', data: empty })
   const [error, setError] = useState<string>()
   const [pending, setPending] = useState(false)
-  const latestKey = useRef(key)
-  useEffect(() => { latestKey.current = key }, [key])
+  const latest = useRef<{ key: string; revision: unknown } | undefined>(undefined)
+  const loaded = useRef<{ key: string; revision: unknown } | undefined>(undefined)
+  const generation = useRef(0)
+  useLayoutEffect(() => {
+    latest.current = { key, revision }
+    return () => { latest.current = undefined }
+  }, [key, revision])
   const load = useCallback(async () => {
-    if (!api?.stories || !key) return
+    const owner = latest.current
+    // A completed mutation may still hold the previous scope/refresh callback.
+    if (!api?.stories || !key || !owner || owner.key !== key || owner.revision !== revision) return
+    const request = ++generation.current
     try {
       const data = await api.stories({ scope: JSON.parse(key) as SupervisionRunRequest['scope'] })
-      if (latestKey.current === key) { setView({ key, data }); setError(undefined) }
-    } catch (reason) { if (latestKey.current === key) setError(reason instanceof Error ? reason.message : String(reason)) }
-  }, [api, key])
+      if (latest.current === owner && request === generation.current) {
+        loaded.current = { key, revision }
+        setView({ key, data }); setError(undefined)
+      }
+    } catch (reason) { if (latest.current === owner && request === generation.current) setError(reason instanceof Error ? reason.message : String(reason)) }
+  }, [api, key, revision])
   useEffect(() => {
-    if (!active) return
+    if (!active || (loaded.current?.key === key && loaded.current.revision === revision)) return
     const task = window.setTimeout(() => void load(), 0)
-    return () => window.clearTimeout(task)
-  }, [active, load, revision])
+    const invalidate = () => { generation.current++ }
+    return () => { window.clearTimeout(task); invalidate() }
+  }, [active, key, load, revision])
   const act = async (action: SupervisionStoryAction) => {
     if (!api?.storyAction || pending) return false
     setPending(true)

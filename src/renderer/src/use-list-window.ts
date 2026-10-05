@@ -184,6 +184,7 @@ export function useListWindow({
   const rowRefCallbacks = useRef(new Map<string, (element: HTMLElement | null) => void>())
   const observerRef = useRef<ResizeObserver | undefined>(undefined)
   const scrollAnchorRef = useRef<{ id: string; top: number } | undefined>(undefined)
+  const visibleFocusRef = useRef<HTMLElement | undefined>(undefined)
   // List-relative scroll position seen at the last scroll event or commit, and
   // the ids and offsets of the last committed windowed layout. Together they
   // locate the reader's row when ids change, without reading layout per scroll.
@@ -262,9 +263,23 @@ export function useListWindow({
     return { top, viewport: container ? container.clientHeight : window.innerHeight }
   }, [])
 
+  const captureVisibleFocus = useCallback((current: Geometry): void => {
+    visibleFocusRef.current = undefined
+    if (current.list.contains(document.activeElement)) {
+      const focused = document.activeElement?.closest<HTMLElement>(rowSelector)
+      if (focused) {
+        const rect = focused.getBoundingClientRect()
+        const top = viewportTop(current.container)
+        const height = current.container?.clientHeight ?? window.innerHeight
+        if (rect.top >= top - 1 && rect.bottom <= top + height + 1) visibleFocusRef.current = focused
+      }
+    }
+  }, [rowSelector])
+
   /** First mounted row reaching into the viewport, relative to the viewport top. */
   const captureScrollAnchor = useCallback((): void => {
     const current = geometry()
+    if (current) captureVisibleFocus(current)
     if (!current || position(current).top <= 0) {
       scrollAnchorRef.current = undefined
       return
@@ -278,7 +293,7 @@ export function useListWindow({
       }
     }
     scrollAnchorRef.current = undefined
-  }, [geometry, position, rowAttribute, rowSelector])
+  }, [captureVisibleFocus, geometry, position, rowAttribute, rowSelector])
 
   const activeRef = useRef(active)
   useLayoutEffect(() => {
@@ -295,8 +310,11 @@ export function useListWindow({
     if (heights.setViewport(viewport)) setMeasureVersion((version) => version + 1)
     // Hysteresis: re-window only when the viewport (plus a margin) leaves the
     // mounted rows, so a steady scroll remounts rows every screen or so.
-    if (!coversViewport(layoutNow, top)) setAnchorTop(top)
-  }, [geometry, heights, position])
+    if (!coversViewport(layoutNow, top)) {
+      captureVisibleFocus(current)
+      setAnchorTop(top)
+    }
+  }, [captureVisibleFocus, geometry, heights, position])
 
   // Row and viewport measurement.
   useLayoutEffect(() => {
@@ -387,6 +405,20 @@ export function useListWindow({
         if (offset !== undefined) delta = offset - scrollTopRef.current - anchor.top
       }
       if (delta !== undefined && Math.abs(delta) >= 0.5) {
+        if (container) container.scrollTop += delta
+        else window.scrollBy(0, delta)
+      }
+    }
+    // Height estimates can move a just-focused row past the viewport edge after
+    // keyboard navigation. Only follow focus that was visible before remeasurement.
+    const focused = visibleFocusRef.current
+    visibleFocusRef.current = undefined
+    if (windowed && focused?.isConnected && focused.contains(document.activeElement)) {
+      const rect = focused.getBoundingClientRect()
+      const top = viewportTop(container)
+      const height = container?.clientHeight ?? window.innerHeight
+      const delta = rect.bottom > top + height ? rect.bottom - top - height : Math.min(0, rect.top - top)
+      if (Math.abs(delta) >= 0.5) {
         if (container) container.scrollTop += delta
         else window.scrollBy(0, delta)
       }

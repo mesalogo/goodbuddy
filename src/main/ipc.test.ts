@@ -13,6 +13,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { ipcChannels } from '../shared/ipc-channels'
 import type {
   AssistantProject,
@@ -6456,6 +6457,50 @@ describe('registerIpcHandlers agent terminal state', () => {
     } finally { await harness.dispose(); database.close() }
   })
 
+  it('routes Supervisor overview, graph and stories IPC through the real readonly worker without Main fallback', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'supervision-ipc-worker-'))
+    const worker = join(directory, 'worker.cjs')
+    execFileSync(process.execPath, ['-e', `require('esbuild').buildSync(${JSON.stringify({
+      entryPoints: [join(process.cwd(), 'src/main/readonly-query-worker.ts')], outfile: worker,
+      bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent'
+    })})`], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } })
+    const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
+    database.initialize(directory)
+    const at = '2026-10-01T12:00:00.000Z'
+    database.saveSupervisionResult({ request: { trigger: 'manual', scope: { kind: 'global' }, timeRange: { from: at, to: at } },
+      evidence: [{ id: 'source', sourceType: 'conversation', sourceId: 'conversation', title: 'Source', content: 'Full body', occurredAt: at }],
+      output: { summary: 'Review', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] } })
+    const overview = database.listSupervisionResults()
+    const resultId = overview[0]!.id
+    const sourceId = overview[0]!.sourceId!
+    const harness = createHarness({}, undefined, undefined, false, undefined, undefined, undefined,
+      false, undefined, undefined, undefined, undefined, database)
+    try {
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
+      const event = trustedEvent(harness.webContents)
+      const requests = [[ipcChannels.supervisionOverview, {}], [ipcChannels.supervisionGraph, { resultId }],
+        [ipcChannels.supervisionStories, { scope: { kind: 'global' } }]] as const
+      for (const [channel, input] of requests) await expect(electronMocks.handlers.get(channel)!(event, input)).rejects.toThrow('worker is not configured')
+      database.enableReadonlyWorker(worker)
+      const reads = [vi.spyOn(database, 'listSupervisionResults'), vi.spyOn(database, 'getSupervisionGraph'), vi.spyOn(database, 'supervisionStories')]
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionOverview)!(event, {})).resolves.toEqual(overview)
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionGraph)!(event, { resultId })).resolves.toMatchObject({
+        sources: [{ id: sourceId, title: 'Source', occurred_at: at }] })
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionStories)!(event, { scope: { kind: 'global' } })).resolves.toEqual({
+        stories: [], experiences: [], unassigned: 0, canUndo: false })
+      expect(electronMocks.handlers.get(ipcChannels.supervisionSource)!(event, { sourceId })).toMatchObject({ content: 'Full body' })
+      await database.readonlyWorkerForTest!.terminateWorkerForTest()
+      for (const [channel, input] of requests) await expect(electronMocks.handlers.get(channel)!(event, input)).rejects.toThrow('backing off')
+      for (const read of reads) expect(read).not.toHaveBeenCalled()
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: false })
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionStories)!(event, { scope: { kind: 'global' } })).resolves.toEqual({
+        stories: [], experiences: [], unassigned: 0, canUndo: false })
+    } finally {
+      await harness.dispose(); database.close()
+      await rm(directory, { recursive: true, force: true, maxRetries: 10 })
+    }
+  }, 60_000)
+
   it('scopes supervision continuation context to source-linked graph evidence', async () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())
@@ -6650,12 +6695,12 @@ describe('registerIpcHandlers agent terminal state', () => {
       await expect(activity(trustedEvent(harness.webContents), { configId: 'unrelated-plan' })).resolves.toEqual([])
       await expect(activity(trustedEvent(harness.webContents), { configId: '' })).rejects.toThrow()
       await expect(activity({ sender: {} }, {})).rejects.toThrow()
-      expect(electronMocks.handlers.get(ipcChannels.supervisionOverview)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id })).toEqual(overview)
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionOverview)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id })).resolves.toEqual(overview)
       expect(database.getSupervisionSource(overview[0]!.sourceId)?.sourceId).toBe(conversationId)
       const graph = await electronMocks.handlers.get(ipcChannels.supervisionGraph)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id, storyLineId: overview[0]!.storyLineId }) as { sources: unknown[] }
       expect(graph.sources).toHaveLength(evidence.length)
       expect(graph).toHaveProperty('attention', [{ start: from, turns: 2, characters: 14 }])
-      expect(() => electronMocks.handlers.get(ipcChannels.supervisionGraph)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id, storyLineId: 'wrong-story' })).toThrow('不匹配')
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionGraph)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id, storyLineId: 'wrong-story' })).rejects.toThrow('不匹配')
       expect(() => electronMocks.handlers.get(ipcChannels.supervisionContinueContext)!(trustedEvent(harness.webContents), { resultId: 'wrong-result', sourceId: overview[0]!.sourceId })).toThrow('不匹配')
       const legacy = database.buildHeartbeatInput({ scope, lookbackHours: 1 }, new Date(to))
       expect(legacy.tasks.some(task => task.id === oldTask.id)).toBe(false)
@@ -6678,14 +6723,19 @@ describe('registerIpcHandlers agent terminal state', () => {
     database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'Evidence', updatedAt: Date.now() },
       messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'Review this decision', createdAt: Date.now() }] }])
     let first = true
+    let providerFailures = ending === 'provider' ? 2 : 0
     const releaseConversation = vi.fn(async () => undefined)
     if (ending === 'cleanup') releaseConversation.mockRejectedValueOnce(new Error('Release failed'))
     const run = vi.fn(async function* (request: AgentExecutionRequest, signal: AbortSignal) {
       yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify({ summary: 'Review', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
+      if (providerFailures > 0) {
+        providerFailures--
+        first = false
+        throw new Error('Provider HTTP 429: retry later')
+      }
       if (first) {
         first = false
         if (ending === 'incomplete') return
-        if (ending === 'provider') throw new Error('Provider HTTP 429: retry later')
         if (ending !== 'cleanup') await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
         if (ending === 'throw') throw new DOMException('This operation was aborted', 'AbortError')
       }
@@ -6708,10 +6758,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       await rejected
       expect(database.listSupervisionResults()).toEqual([])
       expect(database.listSupervisionActivity()).toEqual([expect.objectContaining({ status: 'failed', error })])
-      expect(releaseConversation).toHaveBeenCalledOnce()
+      expect(releaseConversation).toHaveBeenCalledTimes(ending === 'provider' ? 2 : 1)
       await invoke()
       expect(database.listSupervisionResults()).toHaveLength(1)
-      expect(releaseConversation).toHaveBeenCalledTimes(2)
+      expect(releaseConversation).toHaveBeenCalledTimes(ending === 'provider' ? 3 : 2)
     } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
   })
 

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { SupervisorWorkspace } from './SupervisorWorkspace'
 import { changeUiLocale, i18nResources } from './i18n'
+import * as digestModule from './supervision-story-digest'
 
 const result = { id: 'result-1', storyLineId: 'story', sourceId: null, summary: 'Recap', changeDigest: '', createdAt: '2026-09-22T00:00:00.000Z', scope: { kind: 'global' }, timeRange: { from: '2026-09-20T00:00:00.000Z', to: '2026-09-22T00:00:00.000Z' }, openItems: [] }
 const render = (ui: React.ReactNode) => {
@@ -15,6 +16,143 @@ const selectHistory = (id: string) => {
 }
 
 describe('SupervisorWorkspace', () => {
+  it('loads recap independently of graph and reuses the graph across recap switches until refreshed', async () => {
+    const data = { storyLine: null, events: [{ id: 'event', title: 'Event', description: '', occurred_at: result.createdAt }],
+      entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }
+    const graph = vi.fn().mockResolvedValue(data)
+    window.goodbuddy = { supervision: { overview: async () => [result], graph } } as never
+    const view = render(<SupervisorWorkspace />)
+    await screen.findByText('Recap')
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    expect(graph).not.toHaveBeenCalled()
+    view.rerender(<SupervisorWorkspace tab="graph" />)
+    await screen.findByRole('group', { name: '故事线图谱' })
+    expect(graph).toHaveBeenCalledOnce()
+    view.rerender(<SupervisorWorkspace />)
+    view.rerender(<SupervisorWorkspace tab="graph" />)
+    expect(screen.getByRole('group', { name: '故事线图谱' })).toBeVisible()
+    expect(graph).toHaveBeenCalledOnce()
+    view.rerender(<SupervisorWorkspace />)
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    expect(graph).toHaveBeenCalledOnce()
+    view.rerender(<SupervisorWorkspace tab="graph" />)
+    await waitFor(() => expect(graph).toHaveBeenCalledTimes(2))
+  })
+
+  it('computes one digest per story snapshot and keeps it on warm switches and unrelated edits', async () => {
+    const snapshot = { stories: [{ id: 's', name: 'Story', projectId: null, projectName: null, parentId: null, level: 'feature',
+      description: '', state: 'active', stateEventId: null, userEdited: false, startedAt: result.createdAt, endedAt: null,
+      events: [{ id: 'e', title: 'Evidence', projectId: null, startedAt: result.createdAt, endedAt: result.createdAt, primary: true, userSet: false }] }],
+      experiences: [], unassigned: 0, canUndo: false }
+    const stories = vi.fn().mockResolvedValue(snapshot)
+    const digest = vi.spyOn(digestModule, 'storyDigest')
+    window.goodbuddy = { supervision: { overview: async () => [result], stories,
+      graph: async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }) } } as never
+    const view = render(<SupervisorWorkspace />)
+    await screen.findByRole('article', { name: '按故事查看本次回顾' })
+    expect(digest.mock.calls.filter(([data]) => data === snapshot)).toHaveLength(1)
+    digest.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: '新回顾' }))
+    view.rerender(<SupervisorWorkspace tab="graph" />)
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    view.rerender(<SupervisorWorkspace />)
+    expect(stories).toHaveBeenCalledOnce()
+    expect(digest).not.toHaveBeenCalled()
+    digest.mockRestore()
+  })
+
+  it('bounds graph list rows while keeping the last record and keyboard traversal reachable', async () => {
+    const events = Array.from({ length: 600 }, (_, i) => ({ id: `e${i}`, title: `Event ${i}`, description: `Detail ${i}`, occurred_at: result.createdAt }))
+    window.goodbuddy = { supervision: { overview: async () => [result],
+      graph: async () => ({ storyLine: null, events, entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }) } } as never
+    render(<SupervisorWorkspace tab="graph" />)
+    await screen.findByRole('group', { name: '故事线图谱' })
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getAllByRole('button').length).toBeLessThanOrEqual(122)
+    fireEvent.keyDown(panel, { key: 'End' })
+    expect(within(panel).getByRole('button', { name: /600\. Event 599/ })).toHaveFocus()
+    fireEvent.click(document.activeElement!)
+    expect(screen.getByText('Detail 599')).toBeVisible()
+    fireEvent.keyDown(panel, { key: 'Home' })
+    expect(within(panel).getByRole('button', { name: /1\. Event 0 / })).toHaveFocus()
+    for (let i = 0; i < 125; i++) fireEvent.keyDown(document.activeElement!, { key: 'Tab' })
+    expect(within(panel).getByRole('button', { name: /126\. Event 125/ })).toHaveFocus()
+    expect(within(panel).getAllByRole('button').length).toBeLessThanOrEqual(123)
+  })
+
+  it('leaves a pending or failed graph without blocking recap and retries only on graph demand', async () => {
+    let finish!: (value: unknown) => void
+    const graphData = (title: string) => ({ storyLine: null, events: [{ id: 'e', title, description: '', occurred_at: result.createdAt }],
+      entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] })
+    const graph = vi.fn().mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      .mockRejectedValueOnce(new Error('graph failed')).mockResolvedValue(graphData('Current event'))
+    window.goodbuddy = { supervision: { overview: async () => [result], graph } } as never
+    const view = render(<SupervisorWorkspace />)
+    await screen.findByText('Recap')
+    view.rerender(<SupervisorWorkspace tab="graph" />)
+    await waitFor(() => expect(graph).toHaveBeenCalledOnce())
+    view.rerender(<SupervisorWorkspace />)
+    expect(screen.getByLabelText('历史结果')).toBeEnabled()
+    await act(async () => finish(graphData('Obsolete event')))
+    view.rerender(<SupervisorWorkspace tab="graph" />)
+    await screen.findByRole('alert')
+    expect(screen.queryByText('Obsolete event')).not.toBeInTheDocument()
+    view.rerender(<SupervisorWorkspace />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByText('Recap')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    expect(graph).toHaveBeenCalledTimes(2)
+    view.rerender(<SupervisorWorkspace tab="graph" />)
+    await screen.findByRole('group', { name: '故事线图谱' })
+    expect(graph).toHaveBeenCalledTimes(3)
+    expect(screen.queryByText('Obsolete event')).not.toBeInTheDocument()
+  })
+
+  it('keeps missing historical recap navigation retryable without falling back to the latest result', async () => {
+    const overview = vi.fn(async (input?: { resultId?: string }) => input?.resultId ? [] : [result])
+    const graph = vi.fn()
+    window.goodbuddy = { supervision: { overview, graph } } as never
+    render(<SupervisorWorkspace graphNavigation={{ resultId: 'deleted' }} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent(i18nResources['zh-CN'].heartbeat.supervisor.loadFailed)
+    expect(screen.queryByText('Recap')).not.toBeInTheDocument()
+    expect(graph).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(overview.mock.calls.filter(([input]) => input?.resultId === 'deleted')).toHaveLength(2))
+    expect(graph).not.toHaveBeenCalled()
+  })
+
+  it('invalidates a cached graph after entity edits and keeps source bodies demand-loaded', async () => {
+    let confirmed = false
+    const graph = vi.fn(async () => ({ storyLine: null,
+      events: [{ id: 'event', title: 'Event', description: '', occurred_at: result.createdAt }],
+      entities: [{ id: 'entity', canonical_label: 'Entity', description: '', confirmation_state: confirmed ? 'confirmed' : 'automatic' }],
+      relations: [], sources: [{ id: 'source', title: 'Source', occurred_at: result.createdAt }],
+      eventEntities: [{ event_id: 'event', entity_id: 'entity' }], eventSources: [{ event_id: 'event', source_id: 'source' }] }))
+    const entityAction = vi.fn(async () => { confirmed = true })
+    const source = vi.fn().mockResolvedValue({ title: 'Source', content: 'Full saved body', occurredAt: result.createdAt })
+    window.goodbuddy = { supervision: { overview: async () => [result], graph, source, entityAction } } as never
+    const view = render(<SupervisorWorkspace tab="graph" />)
+    await screen.findByRole('group', { name: '故事线图谱' })
+    expect(source).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('tab', { name: /实体/ }))
+    fireEvent.click(within(screen.getByRole('tabpanel')).getByRole('button', { name: 'Entity' }))
+    fireEvent.click(screen.getByRole('button', { name: i18nResources['zh-CN'].heartbeat.supervisor.confirm }))
+    await waitFor(() => {
+      expect(graph).toHaveBeenCalledTimes(2)
+      expect(screen.getByLabelText('历史结果')).toBeEnabled()
+    })
+    expect(entityAction).toHaveBeenCalledWith({ entityId: 'entity', resultId: result.id, action: 'confirm' })
+    fireEvent.click(screen.getByRole('button', { name: /Source/ }))
+    expect(await screen.findByText('Full saved body')).toBeVisible()
+    view.rerender(<SupervisorWorkspace />)
+    view.rerender(<SupervisorWorkspace tab="graph" />)
+    expect(graph).toHaveBeenCalledTimes(2)
+    expect(screen.getByText('Full saved body')).toBeVisible()
+    expect(source).toHaveBeenCalledOnce()
+  })
+
   it.each(['locale', 'review'] as const)('releases pending source state on %s refresh without letting its late response clear a newer request', async trigger => {
     let finishReview!: () => void
     const run = vi.fn(() => new Promise<void>(resolve => { finishReview = resolve }))
@@ -339,7 +477,7 @@ describe('SupervisorWorkspace', () => {
     expect(screen.getByLabelText('时间范围')).toHaveValue('30')
     expect(screen.getByLabelText('关注范围')).toHaveValue(project.id)
     expect(recap.textContent).toBe(frozenText)
-    expect(graph).toHaveBeenLastCalledWith({ resultId: 'old', storyLineId: 'story' })
+    expect(graph).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '回顾' }))
     await waitFor(() => expect(run).toHaveBeenCalledOnce())
     expect(recap.textContent).toBe(frozenText)
@@ -421,7 +559,7 @@ describe('SupervisorWorkspace', () => {
     let resolveSource!: (value: unknown) => void
     const source = vi.fn(() => new Promise(resolve => { resolveSource = resolve }))
     const graph = vi.fn(async () => ({ storyLine: null, events: [{ id: 'event', title: 'Event', description: '', occurred_at: result.createdAt }], entities: [], relations: [], sources: [{ id: 'source', title: 'Source', occurred_at: result.createdAt }], eventEntities: [], eventSources: [{ event_id: 'event', source_id: 'source' }] }))
-    window.goodbuddy = { supervision: { overview: async () => [result], graph, source } } as never
+    window.goodbuddy = { supervision: { overview: async () => [{ ...result, id: 'A' }, { ...result, id: 'B' }], graph, source } } as never
     const view = render(<SupervisorWorkspace tab="graph" graphNavigation={{ resultId: 'A' }} />)
     fireEvent.click(await screen.findByRole('button', { name: /Source/ }))
     view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={{ resultId: 'B' }} />)
@@ -450,6 +588,9 @@ describe('SupervisorWorkspace', () => {
     view.rerender(<SupervisorWorkspace graphNavigation={next} />)
     expect(screen.getByLabelText('历史结果')).toHaveValue('B')
     selectHistory('A')
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    expect(graph).toHaveBeenCalledTimes(2)
+    view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={next} />)
     await waitFor(() => expect(graph).toHaveBeenLastCalledWith({ resultId: 'A', storyLineId: 'story' }))
     view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={{ resultId: 'B' }} />)
     await waitFor(() => expect(graph).toHaveBeenLastCalledWith({ resultId: 'B', storyLineId: 'story' }))
@@ -458,14 +599,16 @@ describe('SupervisorWorkspace', () => {
 
   it('graph navigation requests results outside overview and keeps missing results retryable without latest fallback', async () => {
     const graph = vi.fn().mockRejectedValue(new Error('Missing requested result'))
-    window.goodbuddy = { supervision: { overview: async () => [result], graph } } as never
+    const overview = vi.fn(async (input?: { resultId?: string }) => input?.resultId ? [] : [result])
+    window.goodbuddy = { supervision: { overview, graph } } as never
     render(<SupervisorWorkspace tab="graph" graphNavigation={{ resultId: 'older' }} />)
     expect(await screen.findByRole('alert')).toHaveTextContent(i18nResources['zh-CN'].heartbeat.supervisor.loadFailed)
     expect(screen.queryByText('Missing requested result')).not.toBeInTheDocument()
-    expect(graph).toHaveBeenCalledWith({ resultId: 'older', storyLineId: undefined })
+    expect(graph).not.toHaveBeenCalled()
+    expect(overview).toHaveBeenCalledWith({ resultId: 'older' })
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
-    await waitFor(() => expect(graph).toHaveBeenCalledTimes(2))
-    expect(graph).toHaveBeenLastCalledWith({ resultId: 'older', storyLineId: undefined })
+    await waitFor(() => expect(overview.mock.calls.filter(([input]) => input?.resultId === 'older')).toHaveLength(2))
+    expect(graph).not.toHaveBeenCalled()
     expect(screen.queryByText('Recap')).not.toBeInTheDocument()
   })
   it('opens the selected result graph and ignores a late response from another project', async () => {
@@ -473,15 +616,18 @@ describe('SupervisorWorkspace', () => {
     const b = { ...result, id: 'B', storyLineId: 'story-B', summary: 'B recap' }
     const graphFor = (title: string) => ({ storyLine: null, events: [{ id: title, title, description: title, occurred_at: result.createdAt }], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] })
     let resolveA!: (value: unknown) => void
-    const graph = vi.fn().mockResolvedValueOnce(graphFor('B event')).mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve })).mockResolvedValueOnce(graphFor('B selected'))
+    const graph = vi.fn().mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve })).mockResolvedValueOnce(graphFor('B selected'))
     window.goodbuddy = { supervision: { overview: async () => [b, a], graph } } as never
     const onTabChange = vi.fn()
     const view = render(<SupervisorWorkspace onTabChange={onTabChange} />)
     await screen.findByText('B recap')
+    expect(graph).not.toHaveBeenCalled()
     selectHistory('A')
+    await waitFor(() => expect(screen.getByLabelText('历史结果')).toBeEnabled())
+    view.rerender(<SupervisorWorkspace tab="graph" onTabChange={onTabChange} />)
     await waitFor(() => expect(graph).toHaveBeenLastCalledWith({ resultId: 'A', storyLineId: 'story-A' }))
     const navigation = { resultId: 'B' }
-    view.rerender(<SupervisorWorkspace graphNavigation={navigation} onTabChange={onTabChange} />)
+    view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={navigation} onTabChange={onTabChange} />)
     await waitFor(() => expect(graph).toHaveBeenLastCalledWith({ resultId: 'B', storyLineId: 'story-B' }))
     await act(async () => resolveA(graphFor('Wrong A event')))
     view.rerender(<SupervisorWorkspace tab="graph" graphNavigation={navigation} onTabChange={onTabChange} />)
@@ -495,7 +641,7 @@ describe('SupervisorWorkspace', () => {
       expect(tokens, token).toContain(`${token}:`)
     }
   })
-  afterEach(async () => { cleanup(); vi.useRealTimers(); window.goodbuddy = {} as never; await changeUiLocale('zh-CN') })
+  afterEach(async () => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); window.goodbuddy = {} as never; await changeUiLocale('zh-CN') })
   it('shows unavailable immediately and does not call supervision APIs when the bridge is absent', () => {
     window.goodbuddy = {} as never
 
@@ -849,7 +995,8 @@ describe('SupervisorWorkspace', () => {
     expect(circles).toHaveLength(8)
     expect(new Set(circles.map(circle => `${circle.getAttribute('cx')},${circle.getAttribute('cy')}`)).size).toBe(8)
     const list = screen.getByRole('complementary', { name: '图谱选择' })
-    expect(within(list).getAllByRole('button')).toHaveLength(80)
+    expect(within(list).getAllByRole('button').length).toBeLessThan(80)
+    fireEvent.keyDown(within(list).getByRole('tabpanel'), { key: 'End' })
     fireEvent.click(within(list).getByRole('button', { name: /80\. 事件 79/ }))
     expect(within(graph).getByRole('button', { name: '事件 79' })).toHaveAttribute('aria-pressed', 'true')
     expect(within(screen.getByRole('complementary', { name: '详情与来源' })).getByText('详情 79')).toBeInTheDocument()

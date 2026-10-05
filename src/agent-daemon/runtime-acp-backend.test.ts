@@ -518,6 +518,92 @@ function harness(input: {
 }
 
 describe('RuntimeAcpBackend', () => {
+  it.each(['cancel', 'deadline'])('does not hold peer control while releasing a startup route after %s', async reason => {
+    const fixture = await ownedHarness(true)
+    const releaseRoute = deferred()
+    let finishModel: (() => Promise<void>) | undefined
+    let releasing = false
+    try {
+      await fixture.start()
+      const process = fixture.processes[0]!
+      const originalWrite = process.onWrite!
+      process.onWrite = payload => {
+        const request = JSON.parse(Buffer.from(payload).toString())
+        const reply = (result: unknown) => process.emit('stdout', `${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`)
+        if (request.method === 'session/new') void reply({ sessionId: 'starting-session' })
+        else if (request.method === 'session/set_config_option' && request.params.sessionId === 'starting-session') {
+          finishModel = () => reply({ configOptions: [{ id: 'model', name: 'Model', type: 'select', currentValue: request.params.value, options: [] }] })
+        } else originalWrite(payload)
+      }
+      const opened = await invoke(fixture, 'runtime/openAcpChannel', { ...fixture.openRequest, bindingId: 'starting' }) as { channelEpoch: string }
+      vi.useFakeTimers()
+      await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({ bindingId: 'starting', channelEpoch: opened.channelEpoch,
+        operationId: 'starting-request', requestId: 'starting-request',
+        deadlineAt: reason === 'deadline' ? new Date(1100).toISOString() : UNBOUNDED_REMOTE_PROMPT_DEADLINE }))
+      const starting = invoke(fixture, 'runtime/startPrompt', { bindingId: 'starting', operationId: 'starting-request', requestId: 'starting-request', prompt: [{ type: 'text', text: 'test' }] }).catch(error => error)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(finishModel).toBeDefined()
+      vi.mocked(AgentAcpConnection.prototype.setModelRoute).mockImplementation(async (_session, _operation, socket) => {
+        if (!socket) { releasing = true; await releaseRoute.promise }
+      })
+      let cancelled = reason === 'deadline', peer = false
+      const cancellation = reason === 'cancel' ? invoke(fixture, 'runtime/escalateCancellation', {
+        bindingId: 'starting', operationId: 'starting-request', requestId: 'starting-request', sessionId: 'starting-session', reason: 'requested'
+      }).then(() => { cancelled = true }) : undefined
+      await vi.advanceTimersByTimeAsync(200)
+      expect(releasing).toBe(true)
+      const query = invoke(fixture, 'runtime/getAcpCursors', { bindingId: 'binding-1' }).then(() => { peer = true })
+      await vi.advanceTimersByTimeAsync(200)
+      const observed = { cancelled, peer }
+      releaseRoute.resolve()
+      await finishModel!()
+      finishModel = undefined
+      await Promise.all([starting, cancellation, query])
+      expect(observed).toEqual({ cancelled: true, peer: true })
+      expect(process.stops).toHaveLength(0)
+      expect(fixture.transcript.attach('binding-1', 'request-1', fixture.context.controller.controllerId).state).toBe('running')
+      expect(fixture.page().events.filter(event => event.kind === 'prompt-terminal')).toHaveLength(0)
+    } finally {
+      releaseRoute.resolve(); await finishModel?.(); await fixture.prompts[0]?.()
+      vi.useRealTimers(); await fixture.cleanup()
+    }
+  })
+
+  it('removes a late startup route after cancellation without revoking its peer route', async () => {
+    const fixture = await ownedHarness(true)
+    const install = deferred()
+    const entered = deferred()
+    const routes = new Map<string, string>([['session-1', 'request-1']])
+    try {
+      await fixture.start()
+      const process = fixture.processes[0]!
+      const originalWrite = process.onWrite!
+      process.onWrite = payload => {
+        const request = JSON.parse(Buffer.from(payload).toString())
+        if (request.method === 'session/new') void process.emit('stdout', `${JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { sessionId: 'starting-session' } })}\n`)
+        else originalWrite(payload)
+      }
+      vi.mocked(AgentAcpConnection.prototype.setModelRoute).mockImplementation(async (session, operation, socket) => {
+        if (socket) { entered.resolve(); await install.promise; routes.set(session, operation) }
+        else if (routes.get(session) === operation) routes.delete(session)
+      })
+      const opened = await invoke(fixture, 'runtime/openAcpChannel', { ...fixture.openRequest, bindingId: 'starting' }) as { channelEpoch: string }
+      await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({ bindingId: 'starting', channelEpoch: opened.channelEpoch,
+        operationId: 'starting-request', requestId: 'starting-request', deadlineAt: UNBOUNDED_REMOTE_PROMPT_DEADLINE }))
+      const starting = invoke(fixture, 'runtime/startPrompt', { bindingId: 'starting', operationId: 'starting-request', requestId: 'starting-request', prompt: [{ type: 'text', text: 'test' }] }).catch(error => error)
+      await entered.promise
+      await invoke(fixture, 'runtime/escalateCancellation', { bindingId: 'starting', operationId: 'starting-request', requestId: 'starting-request', sessionId: 'starting-session', reason: 'requested' })
+      expect(await starting).toBeInstanceOf(Error)
+      install.resolve()
+      await new Promise(resolve => setImmediate(resolve))
+      expect([...routes]).toEqual([['session-1', 'request-1']])
+      expect(process.stops).toHaveLength(0)
+      const page = fixture.transcript.page({ bindingId: 'starting', operationId: 'starting-request', controllerId: fixture.context.controller.controllerId, afterSequence: '0', limit: 10 })
+      expect(page.state).toBe('cancelled')
+      expect(page.events.filter(event => event.kind === 'prompt-terminal')).toHaveLength(1)
+    } finally { install.resolve(); await fixture.prompts[0]?.(); await fixture.cleanup() }
+  })
+
   it.each(['watchdog', 'dispose'])('interrupts stalled native initialization through %s', async action => {
     vi.useFakeTimers()
     const fixture = harness({ agentOwned: true, shareOwnedProcesses: true })

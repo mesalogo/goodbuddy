@@ -14110,6 +14110,25 @@ describe("App", () => {
     expect(screen.queryByLabelText("切换助手工作栏")).toBeInTheDocument();
   });
 
+  it("does not reload artifacts on first or warm Supervisor entry", async () => {
+    render(<App />);
+    await waitFor(() => {
+      expect(api.artifacts.list).toHaveBeenCalled();
+      expect(api.heartbeats.history).toHaveBeenCalled();
+    });
+    const artifactReads = vi.mocked(api.artifacts.list).mock.calls.length;
+    const historyReads = vi.mocked(api.heartbeats.history).mock.calls.length;
+    fireEvent.click(await screen.findByRole("button", { name: "监督者" }));
+    await screen.findByRole("heading", { name: "监督者" });
+    await waitFor(() => expect(api.heartbeats.history).toHaveBeenCalledTimes(historyReads + 1));
+    expect(api.artifacts.list).toHaveBeenCalledTimes(artifactReads);
+    const navigation = within(screen.getByRole("navigation", { name: "主导航" }));
+    fireEvent.click(navigation.getByRole("button", { name: "对话" }));
+    fireEvent.click(navigation.getByRole("button", { name: "监督者" }));
+    await waitFor(() => expect(api.heartbeats.history).toHaveBeenCalledTimes(historyReads + 2));
+    expect(api.artifacts.list).toHaveBeenCalledTimes(artifactReads);
+  });
+
   it("counts only pending supervisor suggestions in the navigation badge", async () => {
     vi.mocked(api.supervision.suggestions).mockResolvedValue([
       { id: "00000000-0000-4000-8000-000000000901", resultId: null, heartbeatRunId: null, scope: { kind: "global" },

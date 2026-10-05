@@ -12,6 +12,7 @@ import type {
   RuntimeAcpProcessOwner
 } from './runtime-acp-backend'
 import { AgentOwnedAcpPrompt } from './agent-owned-acp-prompt'
+import { AgentAcpConnection } from './agent-acp-connection'
 import { SemanticPromptStore } from './semantic-prompt-store'
 
 const temporary: string[] = []
@@ -23,6 +24,35 @@ afterEach(() => {
 })
 
 describe('AgentOwnedAcpPrompt', () => {
+  it.each(['dispose', 'exit'])('aborts pending route HTTP requests on transport %s', async action => {
+    const process = new MemoryProcess()
+    let client!: Client
+    const transport = new AgentAcpConnection(process, undefined, factory => {
+      client = factory()
+      return {} as ClientSideConnection
+    })
+    const signals: AbortSignal[] = []
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => new Promise((_resolve, reject) => {
+      const signal = init!.signal!
+      signals.push(signal)
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    }))
+    vi.stubGlobal('fetch', fetcher)
+    try {
+      await client.extNotification!('goodbuddy/modelBridgeReady', { origin: `http://127.0.0.1:1234/${'a'.repeat(43)}` })
+      const install = transport.setModelRoute('session-1', 'operation-1', '/broker').catch(error => error)
+      const release = transport.setModelRoute('session-2', 'operation-2').catch(error => error)
+      expect(signals.every(signal => !signal.aborted)).toBe(true)
+      if (action === 'dispose') transport.dispose()
+      else await process.emitExit()
+      expect(signals.every(signal => signal.aborted)).toBe(true)
+      expect(await install).toBeInstanceOf(Error)
+      expect(await release).toBeInstanceOf(Error)
+      await expect(transport.setModelRoute('session-1', 'operation-1')).rejects.toThrow()
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally { transport.dispose(); vi.unstubAllGlobals() }
+  })
+
   it('coalesces identical starts and rejects conflicting starts while initialization is pending', async () => {
     const root = mkdtempSync(join(tmpdir(), 'goodbuddy-owned-start-'))
     temporary.push(root)
@@ -88,7 +118,7 @@ describe('AgentOwnedAcpPrompt', () => {
           bindingId: 'binding-1', operationId, requestId: operationId,
           prompt: [{ type: 'text', text: 'Continue' }]
         })
-        expect(prepareSession).toHaveBeenLastCalledWith('session-1', operationId)
+        expect(prepareSession).toHaveBeenLastCalledWith('session-1', operationId, expect.any(AbortSignal))
         if (index !== 2) {
           expect(index === 0 ? newSession : resumeSession).toHaveBeenLastCalledWith(expect.objectContaining({ mcpServers: mcpServers() }))
         }

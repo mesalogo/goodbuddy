@@ -88,6 +88,7 @@ it(process.env.GOODBUDDY_SUPERVISOR_SIDEBAR
       resolve('tests/support/supervisor-layout-driver.mjs'),
       driver
     )
+    await copyFile(resolve('tests/support/supervisor-selection-driver.mjs'), join(directory, 'supervisor-selection-driver.mjs'))
     const child = spawn(createRequire(import.meta.url)('electron'), [driver], {
       env,
       stdio: ['ignore', 'pipe', 'pipe']

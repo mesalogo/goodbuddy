@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import console from 'node:console'
 import { setTimeout } from 'node:timers/promises'
+import { validateSupervisorSelection } from './supervisor-selection-driver.mjs'
 
 const directory = process.env.GOODBUDDY_SUPERVISOR_DIRECTORY
 const artifacts = process.env.GOODBUDDY_SUPERVISOR_ARTIFACTS || directory
@@ -63,6 +64,12 @@ app
       await settle()
     }
     const reports = []
+    if (process.env.GOODBUDDY_SUPERVISOR_WINDOWING) {
+      await validateSupervisorSelection(win, js, wait, process.env.GOODBUDDY_SUPERVISOR_URL)
+      assert.deepEqual(errors, [])
+      console.log('Supervisor source Electron selection, history, source and edit interactions passed')
+      win.destroy(); app.quit(); return
+    }
     const selectHistory = async (id) => {
       await js('document.querySelector(".supervisor-workspace__result-navigation button").click()')
       await wait('!!document.querySelector(".supervisor-workspace__history-menu")')
@@ -164,7 +171,7 @@ app
       await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
       await js('document.querySelector("#supervisor-tab-graph").click()')
       await selectHistory(resultId)
-      await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false" && document.querySelectorAll(".supervisor-workspace__list-panel > button").length === 21')
+      await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false" && document.querySelectorAll(".supervisor-workspace__list-panel button").length === 21')
       await js('[...document.querySelectorAll("button")].find(b => b.textContent === "时间螺旋").click()')
       await wait('JSON.parse(document.documentElement.dataset.helix || "null")?.dots.length === 21')
       await js('document.fonts.ready')
@@ -196,7 +203,7 @@ app
             context:box(document.querySelector('.supervisor-workspace__review-context')),toolbar:box(toolbar),views:box(views),
             canvas:box(document.querySelector('.story-graph-3d__gl')),gaps:buttons.slice(1).map((b,i)=>b.left-buttons[i].right),
             segmentPadding:getComputedStyle(segment).paddingTop,
-            events:document.querySelectorAll('.supervisor-workspace__list-panel > button').length,
+            events:document.querySelectorAll('.supervisor-workspace__list-panel button').length,
             bounds:JSON.parse(document.documentElement.dataset.sceneBounds),
             scene:JSON.parse(document.documentElement.dataset.helix).dots.length,
             clusters:JSON.parse(document.documentElement.dataset.helix).clusters};
@@ -212,8 +219,8 @@ app
         reports.push({ theme, ...boxes, colors: await checkSpiral() })
         if (width === 1440 && !process.env.GOODBUDDY_SUPERVISOR_NO_SCREENSHOT) await writeFile(join(artifacts, 'portable-spiral.png'), (await win.webContents.capturePage()).toPNG())
       }
-      await js('document.querySelector(".supervisor-workspace__list-panel > button").click()')
-      await wait('document.querySelector(".supervisor-workspace__list-panel > button")?.getAttribute("aria-pressed") === "true"')
+      await js('document.querySelector(".supervisor-workspace__list-panel button").click()')
+      await wait('document.querySelector(".supervisor-workspace__list-panel button")?.getAttribute("aria-pressed") === "true"')
       // The pre-assignment case uses the same real events with an explicitly empty membership response.
       await js(`window.goodbuddy.supervision.stories = async () => ({stories:[],experiences:[],unassigned:21,canUndo:false}); document.querySelector('.supervisor-workspace__review-context > .secondary-button').click()`)
       await wait('JSON.parse(document.documentElement.dataset.helix || "null")?.dots.length === 21 && document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
@@ -317,7 +324,7 @@ app
       win.setContentSize(1024, 900)
       await settle()
       assert(await js('!document.querySelector(".supervisor-workspace__detail").getClientRects().length'), 'Medium details closed by default')
-      await js('document.querySelector(".supervisor-workspace__list-panel > button").click()')
+      await js('document.querySelector(".supervisor-workspace__list-panel button").click()')
       await wait('document.activeElement === document.querySelector(".supervisor-workspace__detail")')
       assert(await js(`(() => { const panel = document.querySelector('.supervisor-workspace__detail').getBoundingClientRect();
         const graph = document.querySelector('.supervisor-workspace__graph-layout').getBoundingClientRect();
@@ -984,6 +991,7 @@ app
       app.quit()
       return
     }
+    await validateSupervisorSelection(win, js, wait, process.env.GOODBUDDY_SUPERVISOR_URL)
     await open(false)
     await js(
       'document.querySelector(".supervisor-workspace__canvas-tools .link-button").click()'
@@ -1176,6 +1184,9 @@ app
     for (const width of [1440, 1024, 390]) {
       win.setContentSize(width, 1100)
       await settle()
+      await js(`(() => {const list=document.querySelector('.supervisor-workspace__list-panel'); list.scrollIntoView({block:'end'}); list.scrollTop=list.scrollHeight;list.dispatchEvent(new Event('scroll'))})()`)
+      await wait('!!document.querySelector("[data-list-window-row=event-79] button")')
+      await settle()
       const scrolling = await js(`(() => {
         const sidebar = document.querySelector('.supervisor-workspace__graph-list');
         const list = sidebar.querySelector('[role=tabpanel]');
@@ -1185,7 +1196,7 @@ app
         const pageHeight = shell.scrollHeight, pageTop = shell.scrollTop;
         list.scrollTop = list.scrollHeight;
         const last = list.lastElementChild.getBoundingClientRect();
-        const button = list.querySelector('button:last-of-type');
+        const button = list.querySelector('[data-list-window-row="event-79"] button');
         const b = button.getBoundingClientRect(), r = list.getBoundingClientRect();
         return { width: innerWidth, height: sidebar.getBoundingClientRect().height, canvasHeight: canvas.getBoundingClientRect().height,
           clientHeight: list.clientHeight, scrollHeight: list.scrollHeight, scrollTop: list.scrollTop,
@@ -1275,9 +1286,10 @@ app
       'Selected relation endpoints must remain visible'
     )
     await js('document.querySelectorAll(".supervisor-workspace__graph-list [role=tab]")[0].click()')
+    await js(`document.querySelector('.supervisor-workspace__list-panel').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))`)
     await settle()
     const target = await js(
-      `(() => { const e = document.querySelectorAll('.supervisor-workspace__list-panel button')[79]; e.scrollIntoView({block:'center'}); const r = e.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), hit: e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }; })()`
+      `(() => { const e = document.querySelector('[data-list-window-row="event-79"] button'); e.scrollIntoView({block:'center'}); const r = e.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), hit: e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }; })()`
     )
     assert(target.hit, 'Last event is not reachable')
     win.webContents.sendInputEvent({
@@ -1300,12 +1312,7 @@ app
         `!!document.querySelector('.supervisor-workspace__map [aria-label="模拟事件 80"][aria-pressed=true]')`
       )
     )
-    assert.equal(
-      await js(
-        'document.querySelectorAll(".supervisor-workspace__list-panel button").length'
-      ),
-      80
-    )
+    assert(await js('document.querySelectorAll(".supervisor-workspace__list-panel button").length < 80'), 'Dense list is windowed without losing the last event')
     const positions = await js(
       '[...document.querySelectorAll(".supervisor-workspace__node:not(.supervisor-workspace__entity) circle")].map(e => [e.getAttribute("cx"), e.getAttribute("cy")].join())'
     )

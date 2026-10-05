@@ -136,7 +136,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 61
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 62
 
 function withoutHistoricalWorkMode(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
@@ -9144,6 +9144,7 @@ export class AssistantDatabase {
         resultId, runId, result.output.summary, result.output.changeDigest,
         JSON.stringify(result.output.openItems), JSON.stringify(result.coverage ?? { evidence: result.evidence.length }), timestamp
       )
+      const graph: { entities: Record<string, unknown>[]; relations: Record<string, unknown>[] } = { entities: [], relations: [] }
       const saveFacts = (result: StoredSupervisionResult) => {
       // Model IDs are local to one batch, never persistent cross-run identities.
       const sourceIds = new Map(result.evidence.map((source) => [source.id, randomUUID()]))
@@ -9222,15 +9223,8 @@ export class AssistantDatabase {
         story.id, persistentId(entityIds, relation.fromEntityId), persistentId(entityIds, relation.toEntityId), relation.relationType),
         source_reference_ids_json: sourceReferences(relation.sourceReferenceIds)
       }))
-      database.prepare(`UPDATE supervision_results SET graph_snapshot_json = json_object(
-        'entities', json((SELECT json_group_array(json(value)) FROM (
-          SELECT value FROM json_each(supervision_results.graph_snapshot_json, '$.entities')
-          UNION ALL SELECT value FROM json_each(?)
-        ))),
-        'relations', json((SELECT json_group_array(json(value)) FROM (
-          SELECT value FROM json_each(supervision_results.graph_snapshot_json, '$.relations')
-          UNION ALL SELECT value FROM json_each(?)
-        )))) WHERE id = ?`).run(JSON.stringify(entities), JSON.stringify(relations), resultId)
+      for (const entity of entities) graph.entities.push(entity)
+      for (const relation of relations) graph.relations.push(relation)
       }
       if (result.coverage && result.runId) {
         for (let offset = 0;; offset += 10) {
@@ -9242,12 +9236,15 @@ export class AssistantDatabase {
         // each leaf's full description and references remain independently readable.
         database.prepare(`UPDATE supervision_results SET graph_snapshot_json = json_object(
           'entities', json((SELECT json_group_array(json(value)) FROM (
-            SELECT value FROM json_each(supervision_results.graph_snapshot_json, '$.entities') GROUP BY json_extract(value, '$.id')))),
+            SELECT value FROM json_each(?) GROUP BY json_extract(value, '$.id')))),
           'relations', json((SELECT json_group_array(json(value)) FROM (
-            SELECT value FROM json_each(supervision_results.graph_snapshot_json, '$.relations') GROUP BY json_extract(value, '$.id')))))
-          WHERE id = ?`).run(resultId)
+            SELECT value FROM json_each(?) GROUP BY json_extract(value, '$.id')))))
+          WHERE id = ?`).run(JSON.stringify(graph.entities), JSON.stringify(graph.relations), resultId)
         this.supervisionReviewStore().commitCheckpoints(result.runId, result.request)
-      } else saveFacts(result)
+      } else {
+        saveFacts(result)
+        database.prepare('UPDATE supervision_results SET graph_snapshot_json = ? WHERE id = ?').run(JSON.stringify(graph), resultId)
+      }
       placeTimelineEvents(database, resultId)
       supersedeReextractedEvents(database, resultId)
       if (result.batch) this.saveReviewCheckpoints(result.batch)
@@ -9271,6 +9268,36 @@ export class AssistantDatabase {
 
   getSupervisionResult(id: string): { id: string; summary: string } | undefined {
     return this.requireDatabase().prepare('SELECT id, summary FROM supervision_results WHERE id = ?').get(id) as { id: string; summary: string } | undefined
+  }
+
+  async listSupervisionResultsAsync(limit = 20, target?: SupervisionTarget, resultId?: string): Promise<ReturnType<AssistantDatabase['listSupervisionResults']>> {
+    this.requireDatabase()
+    const reader = this.readonlyQueryReader()
+    if (reader) return reader.call('supervisionOverview', [limit, target, resultId])
+    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
+    return this.listSupervisionResults(limit, target, resultId)
+  }
+
+  async getSupervisionGraphAsync(input: SupervisionGraphRequest = {}): Promise<Record<string, unknown>> {
+    this.requireDatabase()
+    const reader = this.readonlyQueryReader()
+    if (reader) return reader.call('supervisionGraph', [input])
+    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
+    return this.getSupervisionGraph(input)
+  }
+
+  getSupervisionStories(scope: SupervisionRunRequest['scope']) {
+    const stories = this.supervisionStories()
+    return { stories: stories.list(scope), experiences: this.supervisionExperiences().list(scope.kind === 'projects' ? scope.projectIds : undefined),
+      unassigned: stories.unassignedCount(scope), canUndo: stories.canUndo() }
+  }
+
+  async getSupervisionStoriesAsync(scope: SupervisionRunRequest['scope']): Promise<ReturnType<AssistantDatabase['getSupervisionStories']>> {
+    this.requireDatabase()
+    const reader = this.readonlyQueryReader()
+    if (reader) return reader.call('supervisionStories', [scope])
+    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
+    return this.getSupervisionStories(scope)
   }
 
   listSupervisionResults(limit = 20, target?: SupervisionTarget, resultId?: string) {
@@ -9325,7 +9352,7 @@ export class AssistantDatabase {
         attention: supervisionAttention(database, scope.kind === 'projects' ? scope.projectIds : undefined,
           new Date(range.from).toISOString(), new Date(range.to).toISOString()),
         events: database.prepare('SELECT * FROM supervision_events WHERE result_id = ? ORDER BY occurred_at').all(input.resultId),
-        sources: database.prepare('SELECT * FROM supervision_sources WHERE result_id = ?').all(input.resultId),
+        sources: database.prepare('SELECT id, title, occurred_at FROM supervision_sources WHERE result_id = ? ORDER BY rowid').all(input.resultId),
         eventEntities: database.prepare(`SELECT ee.event_id, ee.entity_id FROM supervision_event_entities ee JOIN supervision_events e ON e.id = ee.event_id WHERE e.result_id = ?`).all(input.resultId),
         eventSources: database.prepare(`SELECT es.event_id, es.source_id FROM supervision_event_sources es JOIN supervision_events e ON e.id = es.event_id WHERE e.result_id = ?`).all(input.resultId)
       }
@@ -9352,9 +9379,9 @@ export class AssistantDatabase {
           GROUP BY r.from_entity_id, r.to_entity_id, r.relation_type`).all(id),
         eventEntities: database.prepare('SELECT event_id, entity_id FROM supervision_event_entities WHERE event_id IN (SELECT id FROM temp.story_events)').all(),
         eventSources: database.prepare('SELECT event_id, source_id FROM supervision_event_sources WHERE event_id IN (SELECT id FROM temp.story_events)').all(),
-        sources: database.prepare(`SELECT * FROM supervision_sources WHERE id IN (SELECT source_id FROM supervision_event_sources
+        sources: database.prepare(`SELECT id, title, occurred_at FROM supervision_sources WHERE id IN (SELECT source_id FROM supervision_event_sources
           WHERE event_id IN (SELECT id FROM temp.story_events)) OR result_id IN (SELECT r.id FROM supervision_results r
-          JOIN supervision_runs sr ON sr.id = r.run_id WHERE sr.scope_json = ?)`).all(String((story as { scope_json: string }).scope_json)),
+          JOIN supervision_runs sr ON sr.id = r.run_id WHERE sr.scope_json = ?) ORDER BY rowid`).all(String((story as { scope_json: string }).scope_json)),
         attention: this.storyAttention(scope)
       }
     } finally { database.exec('DROP TABLE IF EXISTS temp.story_events') }
@@ -12333,6 +12360,17 @@ export class AssistantDatabase {
         database.exec('PRAGMA writable_schema = RESET')
         database.enableDefensive(true)
       }
+    }
+    if (version.user_version < 62) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec(`
+          CREATE INDEX IF NOT EXISTS supervision_sources_result ON supervision_sources(result_id, occurred_at, source_type, id);
+          CREATE INDEX IF NOT EXISTS supervision_results_created ON supervision_results(created_at);
+          PRAGMA user_version = 62;
+          COMMIT;
+        `)
+      } catch (error) { database.exec('ROLLBACK'); throw error }
     }
   }
 

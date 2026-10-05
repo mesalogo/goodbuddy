@@ -6,7 +6,7 @@
 
 设置页经生产 Preload 和 IPC 调用 `ChannelManager`，由 `ChannelSettingsStore` 保存配置。Manager 按需加载 `TelegramChannelDriver`，向其注入 Electron `net.fetch`；驱动默认网络实现也使用 `net.fetch`。请求走 Electron 网络栈及系统代理，不依赖 Node 的 `HTTPS_PROXY` 配置，不使用 grammY 或 Telegraf。
 
-驱动先调用 `getMe` 与 `getWebhookInfo`，拒绝已有 webhook，不删除外部配置。测试连接只做这两项检查，不启动轮询。启用后使用 `getUpdates`，`timeout=30`、`limit=100`、`allowed_updates=['message']`；普通请求超时 15 秒，轮询请求超时 40 秒。临时错误以 1～30 秒退避重连，429 按 `retry_after` 等待；其他 4xx 停止轮询并报告错误。
+驱动先调用 `getMe` 与 `getWebhookInfo`，已有 webhook 时拒绝启动轮询，不删除外部配置。`getMe` 验证的 Bot 身份独立保留；启动 webhook 冲突与运行中的轮询冲突均不阻止身份匹配的已保存回复发送，也不因此终止其发件箱记录。测试连接只做这两项检查，不启动轮询或改写运行中的身份。启用后使用 `getUpdates`，`timeout=30`、`limit=100`、`allowed_updates=['message']`；普通请求超时 15 秒，轮询请求超时 40 秒。临时错误以 1～30 秒退避重连，429 按 `retry_after` 等待；其他 4xx 停止轮询并报告错误。
 
 ## 身份、执行与保存
 
@@ -29,13 +29,15 @@
 
 生成图片后，executor 先把 `artifactIds` 写入桌面会话，再向 `ChannelService` 返回通道契约中的状态、正文、错误和附件。图片字节保留在附件中；桌面成果 ID 不进入严格校验的通道结果，避免成功任务被误报为“无效结果”。该转换位于本地和远程 Runtime 事件处理之后，不改变 Runtime 或 Agent 协议。
 
-驱动按最多 4096 个 UTF-16 码元拆分纯文本，并避开代理对中间位置；不设置 `parse_mode` 或引用原消息。分段进度只在驱动内存保存，最多 128 条，停止时清空。单次发送的 429 最多等待重试 3 次，仍失败则交回发件箱处理。跨重启补发与不确定网络结果允许产生重复段落。
+驱动按最多 4096 个 UTF-16 码元拆分纯文本，并避开代理对中间位置；不设置 `parse_mode` 或引用原消息。分段进度只在驱动内存保存，最多 128 条，停止时清空。单次发送遇到 429 最多额外尝试 3 次；最后一次仍被限流时，先等待该响应的 `retry_after`，再将失败交回发件箱，避免服务层提前重发。等待沿用调用方与服务生命周期的取消信号；停止期间不增加失败计数。跨重启补发与不确定网络结果允许产生重复段落。
 
 停用会中止轮询、发送等待、活动执行与排队工作，等待活动操作结束后报告停止。清除凭据时设置页同时提交 `enabled=false`；底层拒绝启用但无 Token 的配置。Token 替换先验证，失败不停止旧服务。项目与历史不因停用或清除凭据删除。
 
 ## 状态与界面
 
 Manager 通过 `{ channel, status }` 增量 IPC 推送状态，忽略旧服务实例的迟到事件。Telegram 连接状态由驱动维护，发送成功不会覆盖轮询错误。状态值为 `disabled`、`starting`、`running`、`stopped`、`error`；重连使用 `starting` 加错误说明，未配置由界面结合凭据状态显示。
+
+Manager 在当前服务实例内保留最近一次发送错误，经既有脱敏函数处理后，附在连接状态的错误说明中。轮询正常时仍显示已连接，同时提示 `Telegram sending failed: ...`；健康轮询不会清除该提示。若同时有轮询错误，优先显示轮询原因；恢复接收后仍可看到未清除的发送错误。后续投递成功清除发送提示，停用或替换服务释放该实例的错误状态，无新增持久化记录或 IPC 字段。
 
 Renderer 的 `channel-status-store.ts` 订阅事件，selector 只向状态区域提供对应通道数据。首次快照不会覆盖已收到的较新事件；状态更新不重新加载整份设置，不重置 Token 或白名单草稿。配置页复用共享页签、开关、项目设置字段和通知控件。
 

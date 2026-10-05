@@ -318,6 +318,18 @@ describe('TelegramChannelDriver', () => {
     expect(onStatus.mock.calls.at(-1)?.[0]).toEqual({ state: 'stopped' })
   })
 
+  it('rechecks a transient webhook failure before polling after identifying the Bot', async () => {
+    const { driver, fetch, calls, onStatus } = setup()
+    fetch.mockResolvedValueOnce(ok({ id: 42, is_bot: true }))
+      .mockResolvedValueOnce(error(503))
+    await driver.start(vi.fn())
+    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith(expect.objectContaining({ state: 'starting', lastError: expect.stringContaining('503') })))
+    expect(calls.some(call => call.method === 'getUpdates')).toBe(false)
+    await vi.waitFor(() => expect(calls.some(call => call.method === 'getUpdates')).toBe(true), { timeout: 2500 })
+    expect(fetch.mock.calls.map(([input]) => String(input).split('/').at(-1)))
+      .toEqual(['getMe', 'getWebhookInfo', 'getWebhookInfo', 'getUpdates'])
+  })
+
   it('caller cancellation releases an identity waiter without cancelling startup', async () => {
     const { driver, fetch, onStatus } = setup()
     let validationSignal: AbortSignal | undefined

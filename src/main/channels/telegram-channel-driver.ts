@@ -95,7 +95,11 @@ export class TelegramChannelDriver implements ChannelDriver {
   }
 
   testConnection(): Promise<BotIdentity> {
-    return this.track(this.validate(this.lifecycle.signal))
+    return this.track((async () => {
+      const identity = await this.identify(this.lifecycle.signal)
+      await this.checkWebhook(this.lifecycle.signal)
+      return identity
+    })())
   }
 
   updateAllowedSenderIds(ids: readonly string[]): void {
@@ -184,23 +188,32 @@ export class TelegramChannelDriver implements ChannelDriver {
     }
   }
 
-  private async validate(signal: AbortSignal): Promise<BotIdentity> {
+  private async identify(signal: AbortSignal): Promise<BotIdentity> {
     const me = await this.request<{ id: number; is_bot: boolean; username?: string }>('getMe', {}, signal)
     if (!positiveId(me?.id) || me.is_bot !== true) throw new Error('Telegram returned an invalid Bot identity.')
+    return { botId: String(me.id), ...(me.username ? { botUsername: me.username } : {}) }
+  }
+
+  private async checkWebhook(signal: AbortSignal): Promise<void> {
     const webhook = await this.request<{ url: string }>('getWebhookInfo', {}, signal)
     if (typeof webhook?.url !== 'string') throw new Error('Telegram returned invalid webhook information.')
     if (webhook.url) throw new TelegramError(409)
-    return { botId: String(me.id), ...(me.username ? { botUsername: me.username } : {}) }
   }
 
   private async poll(handler: ChannelInboundHandler, signal: AbortSignal): Promise<void> {
     let failures = 0
+    let pollingReady = false
     while (!signal.aborted) {
       const started = Date.now()
       try {
         if (!this.identity) {
-          this.identity = await this.validate(signal)
+          // Outgoing replies need the Bot identity, not permission to long-poll.
+          this.identity = await this.identify(signal)
           checkSignal(signal)
+        }
+        if (!pollingReady) {
+          await this.checkWebhook(signal)
+          pollingReady = true
           for (const notify of this.readinessWaiters) notify()
           failures = 0
           this.status({ state: 'running' })
@@ -317,8 +330,10 @@ export class TelegramChannelDriver implements ChannelDriver {
       } finally {
         clearTimeout(timer)
       }
-      if (failure.code !== 429 || !retryRateLimit || attempt >= 3) throw failure
+      if (failure.code !== 429 || !retryRateLimit) throw failure
+      // The outbox may retry as soon as this call rejects, including the final attempt.
       await wait(failure.retryAfter * 1000, signal)
+      if (attempt >= 3) throw failure
     }
   }
 

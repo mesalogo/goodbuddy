@@ -1,5 +1,71 @@
 # 进度与证据
 
+## 2026-10-05 K07/K08 局部修复
+
+最终集成补注：排除并行删除功能后，待提交内容的隔离全量测试为 6,212 项通过、0 失败、87 跳过，类型检查及 lint 通过。下文分组阶段的失败轮次不是最终结果；完整证据见[KISS 验收](../../review/kiss-local-fixes-2026-10-05.md#最终检查)。
+
+K07 已修复共享 Runtime 在模型路由清理阶段阻塞控制队列、取消后迟到安装留下路由的
+问题。broker 关闭与终态提交顺序保留，原生路由撤销在队列外完成；迟到安装按原
+transport／Session／operation 再次清理。transport 退出中止未完成路由 HTTP 请求。
+规则见[Session 所有权](../assistant-workbar/runtime-process-reuse-technical-design.md#61-连接与所有权)。
+
+K08 在监督正文超容量时立即取消，清空正文并只消费用量事件，清理等待上限 1 秒。
+原容量错误优先于后续流错误与超时，不重试、不重复记账；超时以后返回的事件不写库。
+该路径由桌面直连模型执行，远程项目的监督也使用同一实现；具体用量规则见
+[监督模型调度](../conversation-supervision/technical-design.md#模型阶段超时与调度)。
+
+### 回归与检查
+
+首轮七项持久回归在修复前全部失败：取消／截止时间后的 peer 查询仍等待路由释放，
+迟到安装残留，OpenAI／Anthropic 已收到的 12 input／3 output 用量丢失，以及超限后的
+记账消费与清理边界不符。修复后增加缓冲完成响应、transport dispose／exit 回归，
+共十一项新增用例通过。检查取消终态只有一条、peer 仍 running、无重复 Prompt、
+用量只有一个 call，以及迟到事件不会在池槽释放后写入。
+
+```text
+npx --no-install vitest run src/main/assistant/supervision-model-retry.test.ts src/main/assistant/supervision-production.test.ts src/main/agent/model-runtime.test.ts src/agent-daemon/runtime-acp-backend.test.ts src/agent-daemon/agent-owned-acp-prompt.test.ts src/agent-daemon/protocol-server.test.ts
+npm run typecheck
+npm run lint
+```
+
+上述六文件 243 项通过、1 项跳过；12:22 的 Main／Agent／Renderer 类型检查及全仓 lint 通过。
+并发工作树的完整 `npm test` 为 6,214 项通过、5 项失败、87 项跳过，耗时 870.20 秒；
+失败位于监督布局、IPC 的 provider 重试、监督恢复和快照读取测试，K07/K08 文件均通过。
+原始输出为批准临时目录中的 `k07-full-tests-1791174423486.log` 及同名 `.json`。
+这轮结果不能当作全仓验收通过；未修改其他任务负责的数据库、IPC 或界面文件。
+12:45 单独复跑 IPC provider 场景通过（1 项通过、190 项按筛选跳过）；期间其他任务仍在
+修改测试，后一次类型检查报 `supervision-ui-reads.test.ts` 的 `publishing` phase 类型
+错误。最终整体检查需由合并工作树的负责方复跑，不能用本模块的通过结果替代。
+
+### Linux x64 当前源码
+
+复用前阶段 `a01-runtime-host` 的凭据与 SSH 固定身份入口，仅以 esbuild 生成当前
+Desktop driver、Agent daemon 和 CLI/helper 测试 bundle。使用 Host 已安装的原生
+OpenCode／Continue，在 `/root/tmp/gb-lifecycle-*` 专用目录运行，未安装生产包或更换
+Host current。阻塞点只由 harness 注入；路由安装、撤销及 409 缺失校验通过真实 helper。
+
+| 场景 | peer 查询 | 取消完成 | 外部文本 HTTP 请求 | 结果 |
+| --- | ---: | ---: | ---: | --- |
+| 首轮 OpenCode | 51 ms | 206 ms | 2 | 取消及迟到路由清理通过；后续工具恢复触及旧夹具的两次调用上限 |
+| 最终 OpenCode | 13 ms | 176 ms | 3 | peer 完成、工具执行、detach／恢复、测试 Agent 提升、终态重放通过 |
+| 最终 Continue | 46 ms | 194 ms | 3 | 同上 |
+
+准确合计 **8 次外部文本提供商 HTTP 请求、0 次图片提供商调用**，八个响应均 HTTP 200。
+最终每个 Runtime 包含一次短文本 peer 调用和两次工具／恢复调用，预算在 harness 中
+显式设为三次；被取消的启动未调用提供商。三个运行结束时所属进程均为 0，额外的
+只读 SSH/SFTP 检查确认本轮时间范围内的专用目录残留为 0，该检查新增模型调用 0 次。
+延迟是单次场景观察，不作为 p95 或桌面性能预算结论。
+
+最终 Host 事件通过现有批处理器和隔离 SQLite 校验：OpenCode 41 条事件、21 个
+checkpoint；Continue 16 条事件、8 个 checkpoint；重放去重通过。没有读写用户生产库。
+
+原始脚本位于 `C:/Users/jiang/AppData/Local/Temp/opencode`：
+`k07-runtime-host-build.cjs`、`k07-runtime-host-run.cjs`、`k07-host-cleanup-build.cjs`。
+日志位于其 `k07-runtime-host/` 子目录：`opencode-1791173985798.log`、
+`opencode-1791174187014.log`、`continue-1791174187010.log`、`inspect-1791175306647.log`。
+验证不覆盖签名安装包、macOS、Linux arm64、完整 UI 操作或生产规模性能；远程修复需
+部署包含本次源码的 Agent，当前未提交或发布。
+
 ## 2026-10-05 Runtime 生命周期审查修复
 
 A01（远程启动阻塞控制队列）和 A02（本机 OpenCode 提交失败后等待静默 SSE）已修复。

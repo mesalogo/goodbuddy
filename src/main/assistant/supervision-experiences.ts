@@ -196,20 +196,32 @@ export class SupervisionExperienceStore {
   }
 
   list(projectIds?: string[]): SupervisionExperience[] {
-    const rows = this.db.prepare("SELECT * FROM supervision_experiences WHERE status = 'current' ORDER BY created_at, rowid").all()
-    const links = this.db.prepare(`SELECT x.event_id, x.role, x.note, e.title, e.project_id, COALESCE(e.started_at, e.occurred_at) AS at,
-        (SELECT s.id FROM supervision_event_stories es JOIN supervision_stories s ON s.id = es.story_id WHERE es.event_id = e.id AND es.is_primary = 1) AS story_id,
-        (SELECT s.name FROM supervision_event_stories es JOIN supervision_stories s ON s.id = es.story_id WHERE es.event_id = e.id AND es.is_primary = 1) AS story_name
+    const rows = this.db.prepare(`SELECT * FROM supervision_experiences WHERE status = 'current'
+      AND id IN (SELECT x.experience_id FROM supervision_experience_events x JOIN supervision_events e ON e.id = x.event_id
+        WHERE x.role = 'formed' AND e.superseded_by IS NULL)
+      AND (? IS NULL OR id IN (SELECT x.experience_id FROM supervision_experience_events x JOIN supervision_events e ON e.id = x.event_id
+        WHERE e.superseded_by IS NULL AND e.project_id != '' AND e.project_id IN (SELECT value FROM json_each(?))))
+      ORDER BY created_at, rowid`).all(projectIds ? 1 : null, JSON.stringify(projectIds ?? []))
+    if (!rows.length) return []
+    // Scope selects experiences, not their links: cross-project context remains complete.
+    const links = this.db.prepare(`SELECT x.experience_id, x.event_id, x.role, x.note, e.title, e.project_id,
+        COALESCE(e.started_at, e.occurred_at) AS at, s.id AS story_id, s.name AS story_name
       FROM supervision_experience_events x JOIN supervision_events e ON e.id = x.event_id
-      WHERE x.experience_id = ? AND e.superseded_by IS NULL ORDER BY at, e.id`)
-    return rows.map(row => {
-      const events = links.all(String(row.id)).map(link => ({ id: String(link.event_id), role: link.role as 'formed' | 'applied', note: String(link.note),
+        LEFT JOIN supervision_event_stories es ON es.event_id = e.id AND es.is_primary = 1
+        LEFT JOIN supervision_stories s ON s.id = es.story_id
+      WHERE x.experience_id IN (SELECT value FROM json_each(?)) AND e.superseded_by IS NULL
+      ORDER BY x.experience_id, at, e.id, x.role`).all(JSON.stringify(rows.map(row => row.id)))
+    const byExperience = new Map<string, SupervisionExperience['events']>()
+    for (const link of links) {
+      const id = String(link.experience_id)
+      const events = byExperience.get(id) ?? []
+      events.push({ id: String(link.event_id), role: link.role as 'formed' | 'applied', note: String(link.note),
         title: String(link.title), projectId: link.project_id ? String(link.project_id) : null, at: String(link.at),
-        storyId: link.story_id ? String(link.story_id) : null, storyName: link.story_name ? String(link.story_name) : null }))
-      return { id: String(row.id), statement: String(row.statement), conditions: String(row.conditions), boundaries: String(row.boundaries),
-        userEdited: row.user_edited === 1, events }
-    // Experiences are global; a project view keeps those formed or applied in its projects.
-    }).filter(item => item.events.some(event => event.role === 'formed') && (!projectIds || item.events.some(event => event.projectId && projectIds.includes(event.projectId))))
+        storyId: link.story_id ? String(link.story_id) : null, storyName: link.story_name ? String(link.story_name) : null })
+      byExperience.set(id, events)
+    }
+    return rows.map(row => ({ id: String(row.id), statement: String(row.statement), conditions: String(row.conditions), boundaries: String(row.boundaries),
+      userEdited: row.user_edited === 1, events: byExperience.get(String(row.id)) ?? [] }))
   }
 
   /** Snapshot of the experiences and links an adjustment changes, for undo. */

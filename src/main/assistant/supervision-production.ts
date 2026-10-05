@@ -73,22 +73,37 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
       }, timeoutSeconds * 1000)
       const responseKiB = settings?.supervisionReview?.responseKiB ?? 1024
       let output = '', completed = false
+      let overflowError: Error | undefined
+      let drainTimeout: ReturnType<typeof setTimeout> | undefined
+      let drainDeadline: Promise<never> | undefined
+      let events: ReturnType<AgentRuntime['run']> | undefined
       const requestId = randomUUID()
       const conversationId = `supervision:${requestId}`
       try {
         // Each attempt has its own hidden task so reported usage survives retries.
         database.createTask({ id: requestId, conversationId, title: request.title, instructions: request.instructions,
           origin: 'assistant', visible: false })
-        for await (const event of runtime.run({ requestId, conversationId, prompt: request.prompt },
-          modelSignal, async approval => { await request.authorizeTool(approval.toolName ?? approval.scopeKey); return 'deny' })) {
-          if (event.type === 'text') {
-            output += event.delta
-            if (Buffer.byteLength(output) > responseKiB * 1024) {
-              controller.abort(new Error(`单次模型响应超过 ${responseKiB} KiB。请在监督者设置中调高响应容量后继续；已保存批次会保留。`))
-              modelSignal.throwIfAborted()
-            }
-          }
+        events = runtime.run({ requestId, conversationId, prompt: request.prompt },
+          modelSignal, async approval => { await request.authorizeTool(approval.toolName ?? approval.scopeKey); return 'deny' })
+        while (true) {
+          const next = events.next()
+          const step = await (drainDeadline ? Promise.race([next, drainDeadline]) : next)
+          if (step.done) break
+          const event = step.value
           if (event.type === 'model-usage') persistUsage(event)
+          if (overflowError) continue
+          if (event.type === 'text') {
+            if (Buffer.byteLength(output + event.delta) > responseKiB * 1024) {
+              overflowError = new Error(`单次模型响应超过 ${responseKiB} KiB。请在监督者设置中调高响应容量后继续；已保存批次会保留。`)
+              output = ''
+              controller.abort(overflowError)
+              // Let the aborted stream emit usage, but never retain further text
+              // or let an unresponsive iterator hold the supervisor pool forever.
+              drainDeadline = new Promise<never>((_resolve, reject) => {
+                drainTimeout = setTimeout(() => reject(overflowError), 1_000)
+              })
+            } else output += event.delta
+          }
           if (event.type === 'tool') throw new Error('监督者只允许只读模型摘要，不允许工具调用')
           if (event.type === 'error') {
             const error = new Error(event.message)
@@ -102,7 +117,7 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
         database.updateTaskStatus(requestId, 'completed')
         return output
       } catch (error) {
-        const failure = timeoutError ?? (modelSignal.aborted ? modelSignal.reason : error)
+        const failure = overflowError ?? timeoutError ?? (modelSignal.aborted ? modelSignal.reason : error)
         try {
           database.updateTaskStatus(requestId, modelSignal.aborted ? 'cancelled' : 'failed',
             failure instanceof Error ? failure.message.slice(0, 2_000) : '监督者模型调用失败')
@@ -110,7 +125,10 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
         if (attempt > 0 || modelSignal.aborted || !isTransientSupervisionError(failure)) throw failure
       } finally {
         clearTimeout(timeout)
+        clearTimeout(drainTimeout)
         controller.abort()
+        const closing = events?.return().catch(() => undefined)
+        if (!overflowError) await closing
         await runtime.releaseConversation?.(conversationId)
       }
       signal.throwIfAborted()

@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { SupervisionStoryView } from '../../shared/supervision-story-contracts'
-import { storyDigest, type StoryDigestEntry } from './supervision-story-digest'
+import type { StoryDigest, StoryDigestEntry } from './supervision-story-digest'
 
 type Focus = { kind: 'story' | 'experience'; id: string }
 const shown = 6
@@ -11,15 +10,13 @@ const shown = 6
  * started, finished or stayed quiet, and which experiences formed or were used. Reads stored
  * stories only; each item opens the story or experience in the graph.
  */
-export function SupervisionStoryDigest({ view, range, date, onOpen }: {
-  view: SupervisionStoryView
-  range: { from: string; to: string }
+export function SupervisionStoryDigest({ digest, date, onOpen }: {
+  digest: StoryDigest
   date: (value: string) => string
   onOpen: (focus: Focus) => void
 }): React.JSX.Element {
   const { t } = useTranslation('heartbeat')
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const digest = storyDigest(view, range)
   const total = digest.advanced.length + digest.started.length + digest.concluded.length + digest.experiences.length
   const limit = <T,>(key: string, items: T[]) => expanded[key] ? items : items.slice(0, shown)
   const more = (key: string, count: number) => count > shown && !expanded[key]

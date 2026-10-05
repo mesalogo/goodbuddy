@@ -55,6 +55,32 @@ npm test -- tests/telegram-channel.electron.test.ts
 
 补充检查：钉钉错误码断言加入后，单独复跑 9 项通过；修改的 TS 文件 ESLint、Renderer typecheck 和 `git diff --check` 通过。早期全仓检查受到并行修改中的类型与 lint 错误阻塞，负责方修正后最终检查均通过；完整测试为 6,136 项通过、0 失败、87 跳过。汇总见[阶段修复验收](../../review/stage-audit-fixes-2026-10-05.md#最终检查)。
 
+## 2026-10-05 K09 投递修复
+
+本轮只修改 Telegram 驱动、Manager 及其测试，复用现有服务重试、SQLite 发件箱和状态 IPC。未改数据库结构、Main IPC、Runtime 或 Agent；本地与远程任务完成后的通道结果均使用同一发送路径，无需独立 Agent 修复。
+
+修复前先运行持久回归：`telegram-delivery.test.ts` 的 3 项 loopback HTTP／SQLite 用例和 Manager 的状态用例共 4 项失败。启动 webhook 冲突时，同 Bot 的待发回复未发出且变为终止记录；403 后状态仍为 `running` 且无错误；连续 429 的最后响应要求等待 3 秒，下一次发送却只间隔约 1.010 秒。扩展的 Electron 设置 fixture 也在“已连接时显示发送失败”断言处失败。
+
+修复后，启动阶段保留 `getMe` 确认的身份，已有 webhook 时发送同 Bot 的待发回复，其他 Bot 的记录仍被拒绝，轮询状态仍报告冲突。发送错误经脱敏后由现有状态区域显示，健康轮询不清除；发送成功清除投递提示但不覆盖轮询错误。驱动在内部重试耗尽后仍完成最后一次 `retry_after` 等待，再返回发件箱；新增取消用例验证等待可中断、记录保持 `pending / attempts=0`，重新启用后只补发一次且不运行 executor。
+
+| 检查 | 最终结果 |
+| --- | --- |
+| 9 个通道／Renderer 聚焦文件 | 127 项通过，包含 4 项 loopback HTTP／SQLite 回归 |
+| 现有 Electron 设置 fixture | 1 项通过；生产设置 UI、Preload、IPC、Manager、驱动与 SQLite，403 提示、已连接状态、Token／白名单草稿、重载恢复均通过 |
+| 修改的 6 个 TS 文件 ESLint | 通过 |
+| `npm run typecheck` | Main、Agent 通过；Renderer 被并行工作区的 `App.tsx:174` 未使用 `refreshArtifacts` 导入阻塞，未修改该文件 |
+
+最终聚焦命令：
+
+```powershell
+npm exec -- vitest run src/main/channels/telegram-delivery.test.ts src/main/channels/telegram-channel-driver.test.ts src/main/channels/channel-manager.test.ts src/main/channels/channel-service.test.ts src/main/channels/channel-settings-store.test.ts src/main/channels/sqlite-channel-state.test.ts src/renderer/src/ChannelSettingsSection.test.tsx src/renderer/src/channel-status-store.test.ts src/main/channels/dingtalk-channel-driver.test.ts
+npm exec -- vitest run tests/telegram-channel.electron.test.ts
+npm exec -- eslint src/main/channels/telegram-channel-driver.ts src/main/channels/channel-manager.ts src/main/channels/telegram-delivery.test.ts src/main/channels/telegram-channel-driver.test.ts src/main/channels/channel-manager.test.ts tests/support/telegram-main.ts
+npm run typecheck
+```
+
+Electron 最终运行使用 2 次本地 HTTP 模型响应；连同修复前失败运行和中间验证，本轮共 6 次本地 fixture 请求、0 次外部 Provider 请求、0 次真实 Telegram 收件人消息。未读取 `.env`，未运行生产构建。完整测试、全仓 lint 及合并后的类型检查由协调方执行；本节不声明全仓验收通过或性能提升。
+
 ## Main 性能对比
 
 基线为 `78afec77758f3c175f8e2b80e5be4327e13b4689` 的临时 detached worktree，当前为包含 Telegram 改动的工作区。按基线、当前交替执行 `npm run perf:main` 各 3 次。环境为 Windows x64、Intel Core Ultra X7 358H、Electron 44.5.1、Node 24.21.0；每轮使用隔离数据库，包含 1000 个会话、20008 条生成消息、24000 条活动记录，每个场景预热后测量 15 次，无外部模型调用。

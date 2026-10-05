@@ -1502,11 +1502,17 @@ export class RuntimeAcpBackend {
         process: binding.process,
         ...(binding.sharedProcess ? {
           transport: binding.sharedProcess.transport,
-          prepareSession: async (sessionId: string, operationId: string) => {
-            await binding.sharedProcess!.transport.setModelRoute(
-              sessionId, operationId, binding.modelBridgeBroker!.socketPath,
-              binding.imageTool ? remoteImageToolMcpName(binding.request.bindingId) : undefined
-            )
+          prepareSession: async (sessionId: string, operationId: string, signal: AbortSignal) => {
+            const transport = binding.sharedProcess!.transport
+            try {
+              await transport.setModelRoute(
+                sessionId, operationId, binding.modelBridgeBroker!.socketPath,
+                binding.imageTool ? remoteImageToolMcpName(binding.request.bindingId) : undefined
+              )
+            } finally {
+              // Cancellation can release the route before this installation finishes.
+              if (signal.aborted) await transport.setModelRoute(sessionId, operationId).catch(() => undefined)
+            }
           }
         } : {}),
         transcript: this.#options.semanticPrompts,
@@ -1897,7 +1903,9 @@ export class RuntimeAcpBackend {
     binding.modelBridgeClient = undefined
     let brokerError: unknown
     if (binding.sharedProcess && binding.ownedAcp?.sessionId && binding.activeOperationId) {
-      await binding.sharedProcess.transport.setModelRoute(
+      // Broker shutdown below revokes dispatch authority. Native route cleanup
+      // is bounded by the transport and must not hold the global control queue.
+      void binding.sharedProcess.transport.setModelRoute(
         binding.ownedAcp.sessionId, binding.activeOperationId
       ).catch(() => undefined)
     }

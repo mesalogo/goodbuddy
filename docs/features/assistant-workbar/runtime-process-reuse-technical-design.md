@@ -297,6 +297,12 @@ Agent 当前 Runtime installation + 兼容配置
 发送 Prompt；原生调用迟到返回的 Session 只关闭自身，不能回收仍服务其他 binding
 的共享进程。原生握手本身仍由进程 owner 共享，一个等待者退出不取消其他等待者。
 
+模型路由撤销不等待原生 HTTP 响应后才释放 backend 控制队列；broker 关闭、凭据释放
+及 terminal 提交仍按原顺序执行。启动准备保存原 transport 和取消 signal，安装完成时
+若已取消，按原 Session／operation 再撤销一次，避免早先清理被迟到安装覆盖。撤销沿用
+helper 的 operation 匹配检查，不删除同 Session 的其他 operation。HTTP 沿用 10 秒
+超时，进程退出或 transport dispose 中止未完成请求；无需新的持久状态或协议阶段。
+
 原生 `chat.message` 在模型请求前设置该 Session 的工具与模型路由，不再按产品模式
 过滤 Shell、编辑或写入；请求级端点与子会话归属仍独立。
 OpenCode 1.18.29 的 ACP 不转发未注册子 Session 的权限请求，且原生子代理只继承父

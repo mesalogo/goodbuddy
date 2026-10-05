@@ -32,7 +32,7 @@ export type AgentOwnedAcpPromptOptions = {
   expectedModel?: string
   process: RuntimeAcpProcessOwner
   transport?: AgentAcpConnection
-  prepareSession?: (sessionId: string, operationId: string) => Promise<void>
+  prepareSession?: (sessionId: string, operationId: string, signal: AbortSignal) => Promise<void>
   transcript: SemanticPromptStore
   completePrompt: (
     operationId: string,
@@ -237,7 +237,7 @@ export class AgentOwnedAcpPrompt {
       }))
     }
     this.#hasMcpServers = mcpServers.length > 0
-    await whileStarting(Promise.resolve(this.#options.prepareSession?.(this.#sessionId!, request.operationId)))
+    await whileStarting(Promise.resolve(this.#options.prepareSession?.(this.#sessionId!, request.operationId, signal)))
     signal.throwIfAborted()
     this.#active = {
       operationId: request.operationId

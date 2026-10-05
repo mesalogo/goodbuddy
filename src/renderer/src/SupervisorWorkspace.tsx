@@ -10,6 +10,7 @@ import { storyDigest } from './supervision-story-digest'
 import { SupervisionDiscussion } from './SupervisionDiscussion'
 import { SupervisionStoryDigest } from './SupervisionStoryDigest'
 import { useFillHeight } from './use-fill-height'
+import { SupervisorSelectionList } from './SupervisorSelectionList'
 import { SupervisionEventStory, SupervisionExperienceDetail, SupervisionExperienceList, SupervisionStoryDetail, SupervisionStoryList, useSupervisionStories } from './SupervisionStories'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 import { heartbeatScopeSchema } from '../../shared/assistant-contracts'
@@ -81,8 +82,10 @@ export function SupervisorWorkspace({
   const api = window.goodbuddy?.supervision
   const [results, setResults] = useState<SupervisionResultView[]>([])
   const [graph, setGraph] = useState(emptyGraph)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string>()
+  const [overviewLoading, setOverviewLoading] = useState(true)
+  const [overviewError, setOverviewError] = useState<string>()
+  const [graphResultId, setGraphResultId] = useState<string>()
+  const [graphError, setGraphError] = useState<string>()
   const [pending, setPending] = useState<string>()
   const [selection, setSelection] = useState<Selection | undefined>(graphNavigation?.focus)
   const [listTab, setListTab] = useState<Selection['kind']>(graphNavigation?.focus?.kind ?? 'event')
@@ -122,26 +125,29 @@ export function SupervisorWorkspace({
     setAppliedNavigation(graphNavigation)
     setResultId(graphNavigation?.resultId)
     setGraph(emptyGraph)
-    setLoading(true)
+    setGraphResultId(undefined)
+    setGraphError(undefined)
+    setOverviewLoading(true)
     setSource(undefined)
     setSelection(graphNavigation?.focus)
     setDetailOpen(Boolean(graphNavigation?.focus))
     if (graphNavigation?.focus) setListTab(graphNavigation.focus.kind)
     setPending(undefined)
-    setLoadError(undefined)
+    setOverviewError(undefined)
   }
   const selectedResult = useRef<string | undefined>(undefined)
   const requestedNavigation = useRef<SupervisionGraphNavigation | undefined>(undefined)
   const loadGeneration = useRef(0)
   const [confirmRemoval, setConfirmRemoval] = useState(false)
   const [revision, setRevision] = useState<string>()
-  const date = (value: string) =>
-    new Date(value).toLocaleString(i18n.resolvedLanguage)
-  const shortDate = (value: string) =>
-    new Date(value).toLocaleDateString(i18n.resolvedLanguage, {
-      month: '2-digit',
-      day: '2-digit'
-    })
+  const dateFormatter = useMemo(() => new Intl.DateTimeFormat(i18n.resolvedLanguage, {
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric'
+  }), [i18n.resolvedLanguage])
+  const shortDateFormatter = useMemo(() => new Intl.DateTimeFormat(i18n.resolvedLanguage, {
+    month: '2-digit', day: '2-digit'
+  }), [i18n.resolvedLanguage])
+  const date = (value: string) => dateFormatter.format(new Date(value))
+  const shortDate = (value: string) => shortDateFormatter.format(new Date(value))
   const scopeText = (scope: SupervisionRunRequest['scope']) =>
     scope.kind === 'global'
       ? t('center.scope.global')
@@ -160,13 +166,15 @@ export function SupervisorWorkspace({
     const generation = ++loadGeneration.current
     setPending(undefined)
     selectedResult.current = requestedId
-    setLoading(true)
+    setOverviewLoading(true)
     setGraph(emptyGraph)
+    setGraphResultId(undefined)
+    setGraphError(undefined)
     setResultId(requestedId)
     setSource(undefined)
     setConfirmRemoval(false)
     setRevision(undefined)
-    setLoadError(undefined)
+    setOverviewError(undefined)
     try {
       const overview = (await api.overview()).map((item) => supervisionResultViewSchema.parse(item))
       if (generation !== loadGeneration.current) return
@@ -177,35 +185,15 @@ export function SupervisorWorkspace({
       }
       const selected = requestedId ? overview.find((item) => item.id === requestedId) : overview[0]
       setResults(overview)
+      if (requestedId && !selected) throw new Error('Requested supervision result is unavailable')
       const nextId = requestedId ?? selected?.id
       setResultId(nextId)
       selectedResult.current = nextId
-      const nextGraph = nextId ? await api.graph({ resultId: nextId, storyLineId: selected?.storyLineId }) : emptyGraph
-      if (generation !== loadGeneration.current) return
-      const parsedGraph = supervisionGraphViewSchema.parse(nextGraph)
-      if (parsedGraph.storyLine)
-        heartbeatScopeSchema.parse(JSON.parse(parsedGraph.storyLine.scope_json))
-      setGraph(parsedGraph)
-      setSelection((current) => {
-        const records =
-          current?.kind === 'event'
-            ? parsedGraph.events
-            : current?.kind === 'entity'
-              ? parsedGraph.entities
-              : parsedGraph.relations
-        if (current?.kind === 'story' || current?.kind === 'experience') return current
-        if (current && records.some((item) => item.id === current.id))
-          return current
-        const latestEvent = [...parsedGraph.events].sort(
-          (a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at)
-        )[0]
-        return latestEvent ? { kind: 'event', id: latestEvent.id } : undefined
-      })
     } catch {
       if (generation !== loadGeneration.current) return
-      setLoadError(t('supervisor.loadFailed'))
+      setOverviewError(t('supervisor.loadFailed'))
     } finally {
-      if (generation === loadGeneration.current) setLoading(false)
+      if (generation === loadGeneration.current) setOverviewLoading(false)
     }
   }, [api, t])
   useEffect(() => {
@@ -218,6 +206,36 @@ export function SupervisorWorkspace({
     const task = window.setTimeout(() => void refresh(requestedId), 0)
     return () => { window.clearTimeout(task); invalidate() }
   }, [refresh, graphNavigation])
+
+  const latest = resultId ? results.find((item) => item.id === resultId) : results[0]
+  const storyLineId = latest?.storyLineId
+  // The selected result is the only graph cache. Refresh/navigation invalidate it;
+  // switching tabs keeps it, and an obsolete in-flight read cannot refill it.
+  useEffect(() => {
+    if (!api || tab !== 'graph' || overviewLoading || overviewError || !resultId || graphResultId === resultId || graphError) return
+    let active = true
+    const generation = loadGeneration.current
+    void api.graph({ resultId, storyLineId }).then(value => {
+      if (!active || generation !== loadGeneration.current) return
+      const parsed = supervisionGraphViewSchema.parse(value)
+      if (parsed.storyLine) heartbeatScopeSchema.parse(JSON.parse(parsed.storyLine.scope_json))
+      setGraph(parsed)
+      setGraphResultId(resultId)
+      setSelection(current => {
+        if (current?.kind === 'story' || current?.kind === 'experience') return current
+        const records = current?.kind === 'event' ? parsed.events : current?.kind === 'entity' ? parsed.entities : parsed.relations
+        if (current && records.some(item => item.id === current.id)) return current
+        const newest = parsed.events.reduce<SupervisionGraphView['events'][number] | undefined>((found, event) =>
+          !found || Date.parse(event.occurred_at) > Date.parse(found.occurred_at) ? event : found, undefined)
+        return newest ? { kind: 'event', id: newest.id } : undefined
+      })
+    }).catch(() => {
+      if (active && generation === loadGeneration.current) setGraphError(t('supervisor.loadFailed'))
+    })
+    return () => { active = false }
+  }, [api, tab, overviewLoading, overviewError, resultId, storyLineId, graphResultId, graphError, t])
+  const loadError = overviewError ?? (tab === 'graph' ? graphError : undefined)
+  const loading = overviewLoading || (tab === 'graph' && Boolean(resultId) && graphResultId !== resultId && !loadError)
 
   const resolvePeriod = (now: Date): { range?: SupervisionRunRequest['timeRange']; label?: string; error?: string } => {
     if (period === 'range') {
@@ -510,11 +528,10 @@ export function SupervisorWorkspace({
       if (generation === loadGeneration.current) setPending(undefined)
     }
   }
-  const latest = resultId ? results.find((item) => item.id === resultId) : results[0]
-  const graphScope = graph.storyLine
+  const graphScope = useMemo(() => graph.storyLine
     ? (JSON.parse(graph.storyLine.scope_json) as SupervisionRunRequest['scope'])
-    : undefined
-  const storyState = useSupervisionStories(graphScope, tab === 'graph', graph)
+    : undefined, [graph.storyLine])
+  const storyState = useSupervisionStories(latest?.scope ?? graphScope, tab === 'graph' || tab === 'overview', results)
   const projectNames = useMemo(() => new Map(projects.map(project => [project.id, project.name])), [projects])
   const graphLayoutRef = useRef<HTMLDivElement>(null)
   // Flat labels need a taller minimum; the spiral can use short windows without that constraint.
@@ -523,8 +540,8 @@ export function SupervisorWorkspace({
   // Without a graph, the empty state takes the visible height so its message sits in the middle of the page.
   useFillHeight(graphEmptyRef, tab === 'graph' && !loading && !loadError && graph.events.length === 0, 24, 320)
   // The work review reads the selected result's own scope, so it matches the period shown.
-  const recapStories = useSupervisionStories(latest?.scope, tab === 'overview', latest?.id)
-  const digest = latest && recapStories.available ? storyDigest(recapStories.view, latest.timeRange) : undefined
+  const digest = useMemo(() => latest && storyState.available ? storyDigest(storyState.view, latest.timeRange) : undefined,
+    [latest, storyState.available, storyState.view])
   const hasDigest = digest && [digest.advanced, digest.started, digest.concluded, digest.experiences, digest.quiet].some(items => items.length > 0)
   const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
   const selectedExperience = selection?.kind === 'experience' ? storyState.view.experiences.find((item) => item.id === selection.id) : undefined
@@ -713,7 +730,7 @@ export function SupervisorWorkspace({
                         </ul>
                       </>
                     )}
-                    {hasDigest && <SupervisionStoryDigest view={recapStories.view} range={latest.timeRange} date={date}
+                    {hasDigest && <SupervisionStoryDigest digest={digest} date={date}
                       onOpen={(focus) => { select(focus); onTabChange?.('graph') }} />}
                   </aside>}
                 </article>
@@ -774,7 +791,11 @@ export function SupervisorWorkspace({
                           { id: 'experience' as const, label: `${t('supervisor.listTabs.experience')} ${storyState.view.experiences.length}` }] : [])
                       ]}
                     />
-                    <div
+                    {listTab === 'event' || listTab === 'entity' || listTab === 'relation' ? <SupervisorSelectionList
+                      key={`${resultId}:${listTab}`} kind={listTab} events={layout.events} entities={layout.entities} relations={graph.relations}
+                      entityMap={layout.entityMap} selectedId={selection?.kind === listTab ? selection.id : undefined}
+                      onSelect={select} date={date} shortDate={shortDate} entityTone={entityTone}
+                      id={`${graphId}-list-panel-${listTab}`} labelledBy={`${graphId}-list-tab-${listTab}`} /> : <div
                       key={listTab}
                       className="supervisor-workspace__list-panel"
                       role="tabpanel"
@@ -782,10 +803,6 @@ export function SupervisorWorkspace({
                       aria-labelledby={`${graphId}-list-tab-${listTab}`}
                       tabIndex={0}
                     >
-                    {((listTab === 'entity' && !layout.entities.length) ||
-                      (listTab === 'relation' && !graph.relations.length)) && (
-                      <p className="supervisor-workspace__muted">{t('supervisor.listEmpty')}</p>
-                    )}
                     {listTab === 'story' && <>
                       {storyState.error && <p role="alert">{storyState.error}</p>}
                       {!storyState.view.stories.length && <p className="supervisor-workspace__muted">{t('supervisor.stories.empty')}</p>}
@@ -800,67 +817,7 @@ export function SupervisorWorkspace({
                       <SupervisionExperienceList experiences={storyState.view.experiences} selectedId={selectedExperience?.id}
                         onSelect={(id) => select({ kind: 'experience', id })} />
                     </>}
-                    {listTab === 'event' && layout.events.map((event, index) => (
-                      <button
-                        key={event.id}
-                        aria-label={`${index + 1}. ${event.title} · ${date(event.occurred_at)}`}
-                        aria-pressed={selection?.id === event.id}
-                        onClick={() => select({ kind: 'event', id: event.id })}
-                      >
-                        <span className="supervisor-workspace__event-index">
-                          {index + 1}.
-                        </span>
-                        <span className="supervisor-workspace__list-copy">
-                          {event.title}
-                          <small title={date(event.occurred_at)}>
-                            {shortDate(event.occurred_at)}
-                          </small>
-                        </span>
-                      </button>
-                    ))}
-                    {listTab === 'entity' && layout.entities.map((entity) => (
-                      <button
-                        key={entity.id}
-                        data-tone={entityTone(entity.id)}
-                        aria-pressed={selection?.id === entity.id}
-                        onClick={() =>
-                          select({ kind: 'entity', id: entity.id })
-                        }
-                      >
-                        <i
-                          className="supervisor-workspace__entity-dot"
-                          aria-hidden="true"
-                        />
-                        <span className="supervisor-workspace__list-copy">
-                          {entity.canonical_label}
-                        </span>
-                      </button>
-                    ))}
-                    {listTab === 'relation' && graph.relations.map((relation) => (
-                      <button
-                        key={relation.id}
-                        aria-pressed={selection?.id === relation.id}
-                        onClick={() =>
-                          select({ kind: 'relation', id: relation.id })
-                        }
-                      >
-                        {
-                          layout.entityMap.get(relation.from_entity_id)
-                            ?.canonical_label
-                        }{' '}
-                        →{' '}
-                        {
-                          layout.entityMap.get(relation.to_entity_id)
-                            ?.canonical_label
-                        }{' '}
-                        ·{' '}
-                        {t(
-                          `supervisor.relationTypes.${relation.relation_type}`,
-                          { defaultValue: relation.relation_type }
-                        )}
-                      </button>
-                    ))}
-                    </div>
+                    </div>}
                     <p className="supervisor-workspace__muted">
                       {t('supervisor.legend')}
                     </p>

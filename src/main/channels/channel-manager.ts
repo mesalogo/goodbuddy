@@ -488,12 +488,16 @@ export class ChannelManager {
     settings: ResolvedChannelSettings,
     generation?: symbol
   ): Promise<{ service: ManagedChannelService; driver: TestableChannelDriver }> {
+    let connectionStatus: ChannelRuntimeStatus = { state: 'starting' }
+    let deliveryError: string | undefined
     const onStatus = (status: ChannelRuntimeStatus): void => {
       if (generation === undefined || this.serviceGenerations.get(settings.channel) !== generation) return
+      connectionStatus = status
+      const lastError = status.lastError ?? deliveryError
       this.setStatus(settings.channel, {
         state: status.state,
-        ...(status.lastError ? {
-          lastError: redactManagerError(status.lastError, [
+        ...(lastError ? {
+          lastError: redactManagerError(lastError, [
             settings.channel === 'weixin' ? settings.token : settings.secret
           ])
         } : {})
@@ -506,7 +510,11 @@ export class ChannelManager {
       dedupStore: this.dedupStore,
       outbox: this.outbox,
       onDeliveryFailure: (error) => {
-        if (settings.channel === 'telegram') return
+        if (settings.channel === 'telegram') {
+          deliveryError = `Telegram sending failed: ${redactManagerError(error, [settings.secret])}`
+          onStatus(connectionStatus)
+          return
+        }
         onStatus({
           state: 'error',
           lastError: redactManagerError(error, [
@@ -517,7 +525,11 @@ export class ChannelManager {
         })
       },
       onDeliverySuccess: () => {
-        if (settings.channel === 'telegram') return
+        if (settings.channel === 'telegram') {
+          deliveryError = undefined
+          onStatus(connectionStatus)
+          return
+        }
         onStatus({ state: 'running' })
       }
     })

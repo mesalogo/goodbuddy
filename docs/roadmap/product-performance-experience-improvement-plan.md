@@ -1019,6 +1019,10 @@ Renderer 主线程降速 4 倍（Main 不降速，每次 reload 后重新应用�
 
 ### PERF-15 存储接口异步化
 
+2026-10-05 范围澄清：目标职责与迁移边界见[桌面存储方向](../architecture/desktop-storage-direction.md)。
+当前先实施[监督者及执行路径的 KISS 局部修复](../review/kiss-local-fixes-2026-10-05.md)，
+完成、验证并提交后再讨论全面迁移。局部 Worker 复用不等于 PERF-15/16 已完成。
+
 - **优先级 / 状态：** P1 / 进行中（热点读走 worker；高频写降为 NORMAL、checkpoint 移出 Main、启动恢复按索引，见 7.2.2；接口异步化未开始）
 - **范围：** 在原进程内把 `AssistantDatabase`、`KnowledgeDatabase` 等对外接口改为异步，
   调用方全部 `await`；会话列表只返回摘要，搜索下推到 SQL，活动记录改为增量追加。
@@ -1030,9 +1034,10 @@ Renderer 主线程降速 4 倍（Main 不降速，每次 reload 后重新应用�
 
 - **优先级 / 状态：** P1 / 待开始
 - **实施条件：** `PERF-15` 完成，调用方已全部异步。
-- **范围：** 新增独占 SQLite 的 `utilityProcess`，承接会话、知识库、向量检索、Story Graph
-  （含 Agent 主动调用的检索）、远程 Runtime 事件持久化、活动记录及文档解析；Main 只转发；
-  保证同一时刻只有一个写入方。吸收 `PERF-06` 的范围。
+- **范围：** 目标为统一管理业务 SQLite 的 `utilityProcess`，承接会话、知识库、Story Graph、
+  远程 Runtime 事件持久化和活动记录的业务事务；Main 只做校验与转发。重查询由受管只读 Worker
+  分担，解析、OCR 与 Runtime 执行保持独立，每个数据库明确一个写入所有者；不合并现有数据库。
+  职责、生命周期及 VS Code 对照以[桌面存储方向](../architecture/desktop-storage-direction.md)为准。
 - **验收：** 大知识库检索、会话列表和文档导入期间 Main event-loop 延迟达到批次目标；取消、
   崩溃恢复和迁移语义不回退。
 

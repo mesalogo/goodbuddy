@@ -371,6 +371,12 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 阶段。实现规则见[共享进程与 Session 所有权](../assistant-workbar/runtime-process-reuse-technical-design.md#61-连接与所有权)，
 本次源码 Host 验证及调用计数见[统一执行进度](../unified-execution/progress.md#2026-10-05-runtime-生命周期审查修复)。
 
+同日 K07 补齐模型路由准备后的取消：broker 关闭及终态提交保持原顺序，原生路由
+撤销的 HTTP 等待移出全局控制队列。安装晚于取消完成时，以捕获的 transport、Session
+和 operation 再次撤销该路由；原生 helper 只删除 operation 匹配的项。路由 HTTP 请求
+仍有 10 秒上限，transport 退出或释放时中止未完成请求。当前源码的 OpenCode／Continue
+实机证据见[局部修复验证](../unified-execution/progress.md#2026-10-05-k07k08-局部修复)。
+
 ## ACP 与断线
 
 - 管控面只负责有界 JSON-RPC：连接、查询、启动、取消、关闭和重连。数据面只负责

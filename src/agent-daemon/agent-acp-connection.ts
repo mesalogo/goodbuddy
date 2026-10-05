@@ -18,6 +18,7 @@ export class AgentAcpConnection {
   private closed = false
   private closeInput?: () => void
   private bridgeOrigin?: string
+  private readonly routeLifetime = new AbortController()
 
   constructor(
     process: RuntimeAcpProcessOwner,
@@ -43,6 +44,7 @@ export class AgentAcpConnection {
     this.unsubscribeExit = process.subscribeExit?.(() => {
       if (this.closed) return
       const error = new Error('ACP Runtime process exited')
+      this.routeLifetime.abort(error)
       controller?.error(error)
       controller = undefined
       rejectExit(error)
@@ -89,17 +91,19 @@ export class AgentAcpConnection {
     socketPath?: string,
     imageToolName?: string
   ): Promise<void> {
+    this.routeLifetime.signal.throwIfAborted()
     if (!this.bridgeOrigin) throw new Error('Shared model bridge is not ready')
     const response = await fetch(`${this.bridgeOrigin}/session`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId, operationId, ...(socketPath ? { socketPath, imageToolName } : { release: true }) }),
-      signal: AbortSignal.timeout(10_000)
+      signal: AbortSignal.any([this.routeLifetime.signal, AbortSignal.timeout(10_000)])
     })
     if (!response.ok) throw new Error(`Shared model bridge route failed (${response.status})`)
   }
   dispose(): void {
     if (this.closed) return
     this.closed = true
+    this.routeLifetime.abort(new Error('ACP transport is closed'))
     this.sessions.clear()
     this.unsubscribeOutput()
     this.unsubscribeExit()

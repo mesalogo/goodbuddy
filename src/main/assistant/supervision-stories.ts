@@ -389,12 +389,22 @@ export class SupervisionStoryStore {
         AND EXISTS (SELECT 1 FROM supervision_event_stories es JOIN supervision_events e ON e.id = es.event_id
           WHERE es.story_id = s.id AND e.project_id IN (SELECT value FROM json_each(?)))))
       ORDER BY s.level, s.name`).all(projects, projects, projects ?? '[]')
-    const events = this.db.prepare(`SELECT es.event_id, es.is_primary, es.user_set, e.title, e.project_id,
+    if (!rows.length) return []
+    const events = this.db.prepare(`SELECT es.story_id, es.event_id, es.is_primary, es.user_set, e.title, e.project_id,
         COALESCE(e.started_at, e.occurred_at) AS started_at, COALESCE(e.ended_at, e.occurred_at) AS ended_at
-      FROM supervision_event_stories es JOIN supervision_events e ON e.id = es.event_id WHERE es.story_id = ? AND e.superseded_by IS NULL ORDER BY started_at, e.id`)
+      FROM supervision_event_stories es JOIN supervision_events e ON e.id = es.event_id
+      WHERE es.story_id IN (SELECT value FROM json_each(?)) AND e.superseded_by IS NULL
+      ORDER BY es.story_id, started_at, e.id`).all(JSON.stringify(rows.map(row => row.id)))
+    const byStory = new Map<string, SupervisionStory['events']>()
+    for (const e of events) {
+      const id = String(e.story_id)
+      const linked = byStory.get(id) ?? []
+      linked.push({ id: String(e.event_id), title: String(e.title), projectId: e.project_id ? String(e.project_id) : null,
+        startedAt: String(e.started_at), endedAt: String(e.ended_at), primary: e.is_primary === 1, userSet: e.user_set === 1 })
+      byStory.set(id, linked)
+    }
     return rows.map(row => {
-      const linked = events.all(String(row.id)).map(e => ({ id: String(e.event_id), title: String(e.title), projectId: e.project_id ? String(e.project_id) : null,
-        startedAt: String(e.started_at), endedAt: String(e.ended_at), primary: e.is_primary === 1, userSet: e.user_set === 1 }))
+      const linked = byStory.get(String(row.id)) ?? []
       // A cross story's span comes from the events it links.
       const spanning = row.level === 'cross' ? linked : linked.filter(e => e.primary)
       return { id: String(row.id), projectId: row.project_id ? String(row.project_id) : null, projectName: row.project_name ? String(row.project_name) : null,

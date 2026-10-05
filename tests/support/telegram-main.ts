@@ -42,6 +42,7 @@ void app.whenReady().then(async () => {
   let pollsAborted = 0
   let pollingUnavailable = false
   let pollingConflict = false
+  let sendingForbidden = false
   const originalNetFetch = net.fetch
   // This is the only Telegram substitution: production driver construction and IPC stay intact.
   net.fetch = async (input, init) => {
@@ -71,7 +72,10 @@ void app.whenReady().then(async () => {
         result = updates.splice(0)
         break
       case 'sendChatAction': result = true; break
-      case 'sendMessage': result = { message_id: 1000 }; break
+      case 'sendMessage':
+        if (sendingForbidden) return new Response(JSON.stringify({ ok: false, error_code: 403,
+          description: `https://api.telegram.org/bot${token}/sendMessage` }), { status: 403 })
+        result = { message_id: 1000 }; break
       default: throw new Error(`Unexpected Telegram method: ${method}`)
     }
     return new Response(JSON.stringify({ ok: true, result }), { headers: { 'content-type': 'application/json' } })
@@ -223,6 +227,28 @@ void app.whenReady().then(async () => {
     await click('#channel-settings-panel-telegram input[role="switch"]')
     await click('button.primary-button')
     await wait(() => run(`!document.querySelector('button.primary-button').disabled && document.querySelector('.channel-settings-card .capability-card__header > span')?.textContent === 'Connected'`), 're-enabled before clearing credentials')
+    sendingForbidden = true
+    database.enqueueChannelResult({ channel: 'telegram', eventId: 'delivery-status-fixture',
+      conversationId: '123456:700001', recipientId: '700001', status: 'completed', output: 'Synthetic saved reply' })
+    pollingConflict = true
+    await wait(() => run(`document.querySelector('.channel-settings-card [role="alert"]')?.textContent.includes('polling conflict')`), 'conflict before saved reply retry')
+    pollingConflict = false
+    await click('button.primary-button')
+    await wait(() => run(`document.querySelector('.channel-settings-card .capability-card__header > span')?.textContent === 'Connected' && document.querySelector('.channel-settings-card [role="alert"]')?.textContent.includes('Telegram sending failed:')`), 'sending failure visible while polling stays connected')
+    assert.equal(database.listUndeliveredChannelResults('telegram').find(entry => entry.message.eventId === 'delivery-status-fixture')?.state, 'terminal')
+    const visibleFailure = await run<string>(`document.querySelector('.channel-settings-card [role="alert"]').textContent`)
+    assert(visibleFailure.includes('forbidden'))
+    assert(!visibleFailure.includes(token) && !visibleFailure.includes('api.telegram.org'))
+    await fill('input[aria-label="Telegram Bot Token"]', 'unsaved-delivery-token')
+    await fill('textarea[aria-label="Telegram allowed sender IDs"]', '700001\n700004')
+    const pollsBefore = calls.filter(call => call.method === 'getUpdates').length
+    await wait(() => calls.filter(call => call.method === 'getUpdates').length >= pollsBefore + 2, 'healthy polls after delivery failure')
+    assert.equal(await run(`document.querySelector('.channel-settings-card [role="alert"]').textContent`), visibleFailure)
+    assert.equal(await run(`document.querySelector('input[aria-label="Telegram Bot Token"]').value`), 'unsaved-delivery-token')
+    assert.equal(await run(`document.querySelector('textarea[aria-label="Telegram allowed sender IDs"]').value`), '700001\n700004')
+    await win.reload()
+    await wait(() => run(`document.querySelector('.channel-settings-card [role="alert"]')?.textContent.includes('Telegram sending failed:')`), 'delivery error restored from snapshot')
+    sendingForbidden = false
     const projectBeforeClear = database.getProject(conversation.projectId!)
     const historyBeforeClear = database.getConversation(conversation.id)
     await click('#channel-settings-panel-telegram input[type="checkbox"]:not([role="switch"])')
@@ -238,6 +264,7 @@ void app.whenReady().then(async () => {
     console.log(JSON.stringify({ telegramSmoke: 'passed', uiConfigSaveTest: true, productionPreloadIpc: true,
       productionExecutor: true, desktopConversationPersisted: true, reloadRestored: true,
       disableCancelsModel: true, liveStatusPreservesDrafts: true, unchangedSaveRecoversConflict: true, clearTokenDisablesAndPreservesHistory: true,
+      sendingFailureRetainsPollingStateAndDrafts: true,
       modelCalls: payloads.length, telegramReplies: replies.length,
       pollsAborted, externalNetworkCalls: 0 }))
   } finally {

@@ -229,3 +229,94 @@ it('retries an actual interrupted direct-model stream and retains its reported u
   expect(f.release).toHaveBeenCalledTimes(2)
   expect(f.dispose).toHaveBeenCalledOnce()
 })
+
+it.each([
+  ['openai-chat-completions', false], ['anthropic-messages', false],
+  ['openai-chat-completions', true], ['anthropic-messages', true]
+] as const)(
+  'retains reported usage when %s output exceeds capacity without retrying (buffered=%s)', async (protocol, buffered) => {
+    const text = 'x'.repeat(1024 * 1024 + 1)
+    const events = protocol === 'anthropic-messages'
+      ? [{ type: 'message_start', message: { id: 'call', model: 'fake', usage: { input_tokens: 12, output_tokens: 3 } } },
+          { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }]
+      : [{ choices: [{ delta: { content: text } }], usage: { prompt_tokens: 12, completion_tokens: 3 } }]
+    let body!: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream<Uint8Array>({ start(controller) { body = controller } })
+    body.enqueue(new TextEncoder().encode(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
+    if (buffered) {
+      body.enqueue(new TextEncoder().encode(protocol === 'anthropic-messages' ? 'data: {"type":"message_stop"}\n\n' : 'data: [DONE]\n\n'))
+      body.close()
+    }
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      if (!buffered) init!.signal!.addEventListener('abort', () => body.error(init!.signal!.reason), { once: true })
+      return new Response(stream)
+    })
+    const runtime = new ModelAgentRuntime({ baseUrl: 'https://model.invalid', model: 'fake', authentication: 'none',
+      protocol, toolProvider: noModelTools, fetcher })
+    const f = fixture(runtime.run.bind(runtime))
+    f.release.mockImplementation(runtime.releaseConversation.bind(runtime))
+    f.dispose.mockImplementation(runtime.dispose.bind(runtime))
+    await expect(f.start()).rejects.toThrow('1024 KiB')
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(stream.locked).toBe(false)
+    expect(f.db.getTokenUsageSummary().systemTotals).toMatchObject({ callCount: 1, input: 12, output: 3 })
+    expect(f.release).toHaveBeenCalledOnce()
+    expect(f.dispose).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+it('drains usage only after overflow and preserves the cap error over later errors and timeout', async () => {
+  let reason: unknown
+  const finalized = vi.fn()
+  const f = fixture(async function* (input, signal) {
+    try {
+      yield { type: 'text', requestId: input.requestId, delta: 'x'.repeat(1024 * 1024 + 1) }
+      reason = signal.reason
+      expect(signal.aborted).toBe(true)
+      await new Promise(resolve => setTimeout(resolve, 200))
+      yield { type: 'text', requestId: input.requestId, delta: 'discard trailing text' }
+      yield { type: 'model-usage', requestId: input.requestId, callId: 'call', runtime: 'model', provider: 'openai',
+        model: 'fake', inputTokens: 12, outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 }
+      yield { type: 'error', requestId: input.requestId, status: 'failed', message: 'terminated' }
+      yield { type: 'done', requestId: input.requestId }
+    } finally { finalized() }
+  }, 0.1)
+  const pending = f.start().catch(error => error)
+  await vi.advanceTimersByTimeAsync(250)
+  expect(await pending).toBe(reason)
+  expect(reason).toBeInstanceOf(Error)
+  expect((reason as Error).message).toContain('1024 KiB')
+  expect(f.runtime.run).toHaveBeenCalledOnce()
+  expect(finalized).toHaveBeenCalledOnce()
+  expect(f.db.getTokenUsageSummary().systemTotals).toMatchObject({ callCount: 1, input: 12, output: 3 })
+  expect(f.release).toHaveBeenCalledOnce()
+  expect(f.dispose).toHaveBeenCalledOnce()
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+it('bounds overflow accounting drain and ignores events arriving after cleanup', async () => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const finalized = vi.fn()
+  const f = fixture(async function* (input) {
+    try {
+      yield { type: 'text', requestId: input.requestId, delta: 'x'.repeat(1024 * 1024 + 1) }
+      await gate
+      yield { type: 'model-usage', requestId: input.requestId, callId: 'late', runtime: 'model', provider: 'openai',
+        model: 'fake', inputTokens: 12, outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 }
+    } finally { finalized() }
+  })
+  const pending = f.start().catch(error => error)
+  try {
+    await vi.advanceTimersByTimeAsync(999)
+    expect(f.release).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await pending).toMatchObject({ message: expect.stringContaining('1024 KiB') })
+    expect(f.release).toHaveBeenCalledOnce()
+    expect(f.dispose).toHaveBeenCalledOnce()
+    await expect(f.pool.run(async () => 'released')).resolves.toBe('released')
+  } finally { release(); await vi.advanceTimersByTimeAsync(1) }
+  expect(finalized).toHaveBeenCalledOnce()
+  expect(f.db.getTokenUsageSummary().systemTotals).toMatchObject({ callCount: 0 })
+  expect(vi.getTimerCount()).toBe(0)
+})

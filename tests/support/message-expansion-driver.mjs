@@ -10,11 +10,23 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: true, width: 1280, height: 800, useContentSize: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } })
   const errors = []
-  win.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message) })
+  win.webContents.on('console-message', event => {
+    if (event.level === 'error') { errors.push(event.message); console.error('RendererError', event.message) }
+  })
   const evaluate = source => win.webContents.executeJavaScript(source)
+  const started = Date.now()
+  const mark = phase => {
+    console.log('MessageExpansionPhase ' + JSON.stringify({ phase, elapsedMs: Date.now() - started }))
+  }
   const waitFor = source => evaluate(`new Promise((resolve, reject) => {
-    const deadline = performance.now() + 10000;
-    const check = () => { if (${source}) resolve(true); else if (performance.now() > deadline) reject(new Error(${JSON.stringify(source)})); else requestAnimationFrame(check); }; check(); })`)
+    let frame;
+    const timeout = setTimeout(() => { cancelAnimationFrame(frame); reject(new Error(${JSON.stringify(source)})); }, 10000);
+    const check = () => {
+      try {
+        if (${source}) { clearTimeout(timeout); resolve(true); }
+        else frame = requestAnimationFrame(check);
+      } catch (error) { clearTimeout(timeout); reject(error); }
+    }; check(); })`)
   const frames = () => evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))')
   const click = async selector => {
     await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`)
@@ -26,12 +38,14 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 })
     win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 })
   }
-  for (const count of [2000, 10000]) {
+  for (const count of process.env.GB_EXPANSION_SUPERVISOR_ONLY ? [] : [2000, 10000]) {
+    mark(`history-${count}-load`)
     await win.loadURL(process.env.GB_EXPANSION_URL + '?count=' + count)
     win.focus()
     win.webContents.focus()
     await waitFor('document.hasFocus() && document.querySelector("[data-message-id=m0] details")')
     await evaluate('document.fonts.ready.then(() => true)')
+    mark(`history-${count}-sweep`)
     const untouched = await evaluate(`(async () => {
       const start = performance.now(), visited = new Set(); let maxRows = 0;
       for (let index = 0; index < ${count}; index += Math.floor(${count} / 200)) {
@@ -55,6 +69,7 @@ app.whenReady().then(async () => {
     if (process.env.GB_EXPANSION_DENSE_SOURCE) assert.ok(untouched.entries >= untouched.visited, JSON.stringify(untouched))
     else if (!process.env.GB_HISTORY_SOURCE) assert.equal(untouched.entries, 0)
     const times = []
+    mark(`history-${count}-disclosures`)
     let maxRows = 0
     let maxNodes = 0
     const visit = async index => {
@@ -110,12 +125,15 @@ app.whenReady().then(async () => {
       navigationTwoFramesMedianMs: times[Math.floor(times.length/2)], maxRows, maxNodes, restored, untouched, changedEntries, afterDeletion,
       electron: process.versions.electron, platform: process.platform, arch: process.arch }))
   }
+  mark('supervisor-load')
   await win.loadURL(process.env.GB_EXPANSION_URL + '?supervisor=1')
+  mark('supervisor-source-ready')
   await waitFor('document.querySelector(".supervisor-workspace__detail .link-button")')
   await click('.supervisor-workspace__detail .link-button')
   await waitFor('typeof window.finishSource === "function"')
   await click('#change-language')
-  await waitFor('document.documentElement.lang === "en-US" && document.querySelector(".supervisor-workspace__detail .link-button")')
+  mark('supervisor-language-refresh')
+  await waitFor('document.documentElement.lang === "en-US" && document.querySelector(".supervisor-workspace__detail .link-button")?.textContent.includes("Synthetic source 2")')
   await evaluate('window.finishSource()')
   await frames()
   const stuck = await evaluate('document.querySelector(".supervisor-workspace__detail .link-button").disabled')
@@ -123,6 +141,7 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate('document.body.innerText.includes("Stale content")'), false)
   console.log('MessageExpansion ' + JSON.stringify({ scenario: 'supervisor-invalidation', version: process.env.GB_HISTORY_SOURCE ? 'baseline' : 'fixed', stuck }))
   assert.deepEqual(errors, [])
+  mark('complete')
   win.destroy()
   app.quit()
 }).catch(error => { console.error(error); app.exit(1) })

@@ -28,10 +28,17 @@ export function storyDigest(view: SupervisionStoryView, range: { from: string; t
   const inRange = (value: string) => { const at = Date.parse(value); return at >= from && at <= to }
   const digest: StoryDigest = { advanced: [], started: [], concluded: [], quiet: [], experiences: [], unassigned: view.unassigned }
   // Features show their threads' work too; threads are listed on their own only when the feature is absent.
-  const children = (story: SupervisionStory) => view.stories.filter(child => child.parentId === story.id)
+  const ids = new Set(view.stories.map(story => story.id))
+  const children = new Map<string, SupervisionStory[]>()
   for (const story of view.stories) {
-    if (story.level === 'thread' && view.stories.some(parent => parent.id === story.parentId)) continue
-    const events = [...own(story), ...children(story).flatMap(own)].sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id))
+    if (story.parentId === null) continue
+    const siblings = children.get(story.parentId)
+    if (siblings) siblings.push(story)
+    else children.set(story.parentId, [story])
+  }
+  for (const story of view.stories) {
+    if (story.level === 'thread' && story.parentId !== null && ids.has(story.parentId)) continue
+    const events = [...own(story), ...(children.get(story.id) ?? []).flatMap(own)].sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id))
     if (!events.length) continue
     const during = events.filter(event => inRange(event.startedAt))
     const before = events.filter(event => Date.parse(event.startedAt) < from)

@@ -152,7 +152,9 @@ function createProps(
 
 it('graph navigation reopens the graph tab on repeated requests and preserves normal tab changes', async () => {
   const graph = vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
-  window.goodbuddy = { supervision: { execution: async () => ({ active: false }), overview: async () => [], graph } } as never
+  const result = { id: 'A', storyLineId: 'story-A', sourceId: null, summary: 'Saved review', changeDigest: '',
+    createdAt: '2026-09-22T00:00:00Z', scope: { kind: 'global' }, openItems: [], timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-22T00:00:00Z' } }
+  window.goodbuddy = { supervision: { execution: async () => ({ active: false }), overview: async () => [result], graph } } as never
   const props = createProps({ graphNavigation: { resultId: 'A' } })
   const view = renderComponent(<HeartbeatCenter {...props} />)
   const tab = screen.getByRole('tab', { name: '故事线图谱' })
@@ -236,7 +238,7 @@ describe('HeartbeatCenter', () => {
         expect(within(panel).getByRole('button', { name: t('center.actions.refresh') })).toBeVisible()
       }
       if (key === 'supervisor.graph') {
-        const graphNavigation = within(panel).getByRole('tablist', { name: t('supervisor.selection') })
+        const graphNavigation = await within(panel).findByRole('tablist', { name: t('supervisor.selection') })
         expect(screen.getAllByRole('tablist')).toEqual([navigation, graphNavigation])
         expect(within(panel).getAllByRole('tablist')).toEqual([graphNavigation])
         const graphTabs = ['event', 'entity', 'relation'].map((kind) =>
@@ -292,11 +294,14 @@ describe('HeartbeatCenter', () => {
     expect(await screen.findByText('Older review body')).toBeVisible()
     expect(screen.getByRole('tab', { name: '工作回顾' })).toHaveAttribute('aria-selected', 'true')
     expect(overview).toHaveBeenCalledWith({ resultId: 'old' })
-    expect(graph).toHaveBeenLastCalledWith({ resultId: 'old', storyLineId: 'story' })
+    expect(graph).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('tab', { name: '活动记录' }))
     fireEvent.click(await screen.findByRole('button', { name: '在图谱中查看' }))
     expect(screen.getByRole('tab', { name: '故事线图谱' })).toHaveAttribute('aria-selected', 'true')
-    await waitFor(() => expect(graph).toHaveBeenCalledTimes(2))
+    await waitFor(() => {
+      expect(graph).toHaveBeenCalledOnce()
+      expect(graph).toHaveBeenLastCalledWith({ resultId: 'old', storyLineId: 'story' })
+    })
   })
 
   it.each(['zh-CN', 'en-US'])('edits the supervision timeout and concurrency and preserves failed edits (%s)', async (language) => {

@@ -171,7 +171,6 @@ import {
   useTaskStatusRows,
 } from "./task-selectors";
 import {
-  refreshArtifacts,
   refreshTasks,
   useArtifactHydration,
   useInitialArtifactSync,
@@ -3878,8 +3877,8 @@ function App(): React.JSX.Element {
   }, [loadHeartbeats, projects.length]);
 
   const refreshHeartbeatCenter = useCallback(async (): Promise<void> => {
-    await Promise.all([refreshArtifacts(taskStore), refreshHeartbeats()]);
-  }, [refreshHeartbeats, taskStore]);
+    await refreshHeartbeats();
+  }, [refreshHeartbeats]);
 
   const retryHeartbeatLoad = useCallback(async (): Promise<void> => {
     setHeartbeatLoading(true);

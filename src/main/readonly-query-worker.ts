@@ -66,6 +66,10 @@ if (kind === 'checkpoint') {
   handlers = {
     readStoryGraph: ([name, input, projectId], signal) => database.readStoryGraph(
       name as Parameters<AssistantDatabase['readStoryGraph']>[0], input, projectId as string | undefined, signal),
+    supervisionOverview: ([limit, target, resultId]) => database.readSnapshot(() => database.listSupervisionResults(
+      limit as number, target as Parameters<AssistantDatabase['listSupervisionResults']>[1], resultId as string | undefined)),
+    supervisionGraph: ([input]) => database.readSnapshot(() => database.getSupervisionGraph(input as Parameters<AssistantDatabase['getSupervisionGraph']>[0])),
+    supervisionStories: ([scope]) => database.readSnapshot(() => database.getSupervisionStories(scope as ReviewState['request']['scope'])),
     searchConversations: ([query]) => database.searchConversations(query as string),
     // Several statements each: read them from one snapshot.
     listConversationSummaries: ([detailIds]) => database.readSnapshot(() =>
