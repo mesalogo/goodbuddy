@@ -12,6 +12,8 @@
 
 Main 的手动 IPC 和心跳完成回调均使用 `createProductionSupervisorService`，该工厂连接 `SupervisorService`、`SupervisionReviewStore`、共享模型池及无工具 Runtime。生产路径不再调用旧的 20 会话 × 20 消息 collector，也不使用旧服务分支的 100 条 / 48,000 字符裁剪。旧的有界服务注入方式仍供原有测试和实验脚本使用；心跳报告本身继续使用原报告预算。
 
+2026-10-05 起，监督模型包装层对可识别的临时失败统一重试一次，包含 429、可恢复 5xx 和网络／响应流中断；取消、模型超时、配置及容量错误不重试。每次尝试独立计时，等待可取消，成功批次保留。具体错误与生命周期合同见[技术设计](./technical-design.md#模型阶段超时与调度)；下文旧草案中“不增加节点网络重试”的描述已由此规则替代。
+
 ### 已接入的调度与存储
 
 schema 47 增加运行配置、来源清单、成功批次、导航节点四张表和一个实时来源视图。迁移只创建新结构，保留此前迁移、结果及用户数据。清单只保存来源身份、版本、长度及增量起点；正文随后按主键和有界 `substr` 读取，派发顺序仍由 `(project_id, conversation_id, sequence, source)` 决定。
@@ -50,7 +52,7 @@ schema 47 增加运行配置、来源清单、成功批次、导航节点四张�
 | `supervisionReview.executionSeconds` | 300 | 30..3600 | 旧设置兼容字段，执行时忽略，设置页不再展示；恢复旧 run 同样不按此值暂停 |
 | `supervisionReview.crossProject` | 关闭 | 开关 | 创建回顾时冻结；关闭时每批只以本项目已有实体为候选，也不生成跨项目故事；开启后候选来自全部项目，故事归属可建立跨项目故事 |
 | `supervisionReview.storyThreadEvents` | 20 | 4..500 | 创建回顾时冻结；功能的事件数低于此值时，模型提出的子线索并入功能 |
-| `supervisorOrganizeTimeoutSeconds` | 240 | 30..600 | 创建回顾时冻结，节点获槽并解析 Runtime 后计时 |
+| `supervisorOrganizeTimeoutSeconds` | 240 | 30..600 | 创建回顾时冻结，节点获槽并解析 Runtime 后，每次模型尝试独立计时 |
 | `heartbeatReportTimeoutSeconds` | 240 | 30..600 | 维持报告发起时冻结及既有租约规则 |
 | `supervisorModelConcurrency` | 1 | 1..4 | 回顾保存接纳并发；共享池上限仍随应用设置实时变化，实际执行取较小值 |
 

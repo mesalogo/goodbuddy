@@ -55,9 +55,13 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 
 监督整理超时由 run 创建时冻结；共享模型池仍采用实时设置上限。`supervision:pause` 取消该 run 的排队和在途工作，`supervision:resume` 继续已保存批次；监督整理输出在流中按 `supervisionReview.responseKiB` 检查响应容量，默认 1024 KiB，可在设置页调整为 100 至 16384 KiB。该容量每次请求读取当前设置，继续旧运行也采用新值；超限保留成功批次并提示调高后继续。生成摘要及事实内容不设独立短字符限制，监督旧摘要读取保留全文，具体边界见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界)。以下报告领取和租约规则继续适用。
 
-手动和自动监督均在桌面 Main 调用生产工厂，Runtime 解析请求不携带项目、Runtime 选择或执行空间，也不再注入 `workMode`。`resolveRequestRuntime` 返回桌面默认 Runtime，不进入 SSH 项目或 `selectedRuntimes.getRuntime` 分支；内部分析使用无工具构造，回顾 scope 只筛选证据。摘要校验、合并和持久化在 Main 完成，single-flight、取消及 UI 控制不改变 `gbagent`、远端 Runtime 启动或桌面到 Agent 协议。
+手动和自动监督均在桌面 Main 调用生产工厂，由 `resolveSupervisorRuntime` 解析上文的直连模型，不进入 SSH 项目或 `selectedRuntimes.getRuntime` 分支；内部分析使用无工具构造，回顾 scope 只筛选证据。摘要校验、合并和持久化在 Main 完成，single-flight、取消及 UI 控制不改变 `gbagent`、远端 Runtime 启动或桌面到 Agent 协议。
 
-`ApplicationSettingsStore` 持久化报告和整理模型超时，均为 30..600 整数秒，默认 240。报告排队前冻结，监督创建 run 时冻结；计时从获槽及 Runtime 解析后开始，覆盖模型执行及其内部重试。流结束校验 signal 和完成事件，finally 释放临时会话，心跳报告保持原有 100KB 上限，监督整理使用上文的可调响应容量。采集、排队、保存和清理不计入模型超时。
+`ApplicationSettingsStore` 持久化报告和整理模型超时，均为 30..600 整数秒，默认 240。报告排队前冻结，监督创建 run 时冻结；计时从获槽及 Runtime 解析后开始，覆盖单次 Runtime 执行及其内部重试。监督包装层的第二次尝试重新按同一秒数计时，500ms 等待和临时会话清理不计入该时限。流结束校验 signal 和完成事件，finally 释放临时会话，心跳报告保持原有 100KB 上限，监督整理使用上文的可调响应容量。采集、排队、保存和清理不计入模型超时。
+
+`runSupervisionModel` 为提取、导航、故事、经验和建议共用一次临时错误重试，错误范围见[逻辑规则](./logic-design.md#监督者模型选择)。每次尝试使用新的 request／conversation ID 和隐藏任务，正文缓冲单独创建；用量按各次任务保存。失败后先清理计时器并释放临时会话，再等待；等待继续持有监督池槽位，受父 signal 和池取消控制，结束或失败后释放槽位。`error` 事件的 `status: cancelled` 优先于错误文字；抛出的结构化错误检查 status、statusCode 和 cause，字符串只识别明确的 HTTP 状态或已知网络／流中断格式。
+
+直连文本请求保留 HTTP 错误的 status，并在响应流失败前交出已收到的用量；没有提供方用量时不估算补记。重试决策只在监督包装层，直连传输原有重试、OpenCode 和 Continue 策略不变。429 使用同一 500ms 等待，不新增 Retry-After、UI 或配置项。
 
 `supervisorModelConcurrency` 为 1 至 4 的整数，默认 1。报告和监督整理共用 Main 内 `SupervisionModelPool` FIFO 池，普通聊天不入池；降低上限不终止在途请求。报告槽位从领取前持有至报告完成或无变化提交后，在下游监督开始前释放，避免并发 1 时相互等待。监督服务外层运行仍串行；该池不是完整分块调度器，也不提供跨聊天与监督的提供商全局并发、RPM、TPM 或 Retry-After 控制。
 

@@ -3168,9 +3168,9 @@ export class ModelAgentRuntime implements AgentRuntime {
         } catch {
           detail = undefined
         }
-        throw new Error(
+        throw Object.assign(new Error(
           detail ?? `模型接口请求失败（HTTP ${response.status}）`
-        )
+        ), { status: response.status })
       }
 
       let receivedStop = false
@@ -3208,6 +3208,8 @@ export class ModelAgentRuntime implements AgentRuntime {
       }
       return { answer, usage }
     } catch (error) {
+      const usageEvent = createUsageEvent(request.requestId, anthropic ? 'anthropic' : 'openai', this.options.model, usage)
+      if (usageEvent) yield usageEvent
       return normalizeRequestError(error, modelRequest.timedOut())
     } finally {
       modelRequest.clear()

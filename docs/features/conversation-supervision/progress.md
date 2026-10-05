@@ -4,6 +4,17 @@
 
 当前记录以已验证生产行为为准。监督者尚未覆盖全部 user stories。
 
+## 2026-10-05 监督模型临时失败重试
+
+对应 FR-S6。`runSupervisionModel` 已接入一次可取消的临时失败重试，覆盖监督者各模型阶段；错误分类、清理及每次尝试的超时规则见[技术设计](./technical-design.md#模型阶段超时与调度)。直连文本请求保留 HTTP status，并交出失败流中已报告的用量。OpenCode／Continue、直连传输重试和叶子／导航输出重试未改。监督者仍在桌面 Main 直连模型，不经过远程 Agent 或模型桥。
+
+验证结果：
+
+- `npx vitest run src/main/assistant/supervision-model-retry.test.ts src/main/assistant/supervision-production.test.ts src/main/assistant/supervision-review.test.ts src/main/assistant/supervision-model-pool.test.ts src/main/agent/model-runtime.test.ts`：5 个文件，177 项通过，1 项原有跳过。覆盖 429、可恢复 5xx、部分正文后 terminated、连续失败最多两次包装层调用、认证／配置／容量／超时不重试、等待中取消、流和会话清理、用量保留，以及已保存叶子在失败和继续后不重算。
+- `npx tsc --noEmit -p tsconfig.node.json`、`npx tsc --noEmit -p tsconfig.agent.json`、4 个改动 TypeScript 文件的定向 ESLint 和 `git diff --check` 通过。
+
+请求验证使用生产 `ModelAgentRuntime` 和注入的假 fetch／响应流，数据保存使用内存 SQLite；外部模型调用为 0。未运行全量测试、真实模型或远程 Host 验证，未提交或推送。
+
 ## 2026-10-05 后端阶段审查 A03／A04／A05
 
 对应 SL-5、SL-8、FR-S6、FR-S10。生产候选读取现在将批次项目和跨项目设置传到只读 Worker；最终候选读取返回后检查暂停／取消；故事归属和拆分在原写事务内拒绝已移除或合并的目标。存储、停止与重试规则见[技术设计](./technical-design.md#单次执行与取消)。没有 schema 变更，原始消息、历史结果及人工确认字段保留。
@@ -156,7 +167,7 @@ FR-S13 已接通监督者“设置 → 模型”、应用设置持久化和 Main
 
 - 叶子批次输出不可用（无效 JSON、结构不符、引用不存在的来源或实体）时，在同一段待处理正文上缩小到 1/2、再到 1/4（不少于 500 字符）重试，最多 2 次；缩小只是先处理前一部分，其余正文留在待处理里，不跳过、不截断。
 - 导航合并输出不可用时，用相同输入再问 1 次。
-- 提供方错误、超时、取消和响应超出容量不重试，仍按原来的方式失败并保留已保存批次。
+- 当时提供方错误、超时、取消和响应超出容量不重试，失败保留已保存批次。2026-10-05 起临时提供方错误采用上文的一次重试；超时、取消和响应超出容量仍不重试。
 
 改后结果（DeepSeek `deepseek-flash`）：
 

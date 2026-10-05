@@ -181,6 +181,7 @@ it('stops oversized runtime responses with a readable error while preserving res
   const f = fixture()
   f.respond.mockReturnValue({ ...empty, summary: 'x'.repeat(110_000) })
   await expect(f.service(100).run(f.request)).rejects.toThrow('单次模型响应超过 100 KiB')
+  expect(f.respond).toHaveBeenCalledOnce()
   expect(f.db.listSupervisionResults()).toHaveLength(0)
   expect(f.db.listSupervisionActivity()[0]!.reviewProgress).toMatchObject({ batches: 0, remainingSources: 1 })
   const runId = f.db.listSupervisionActivity()[0]!.id
@@ -263,7 +264,7 @@ it('production factory normalizes two absent identities, then reuses exact candi
   expect(f.respond).toHaveBeenCalledTimes(2)
 })
 
-it('retains candidate mappings across leaf batches, failed merge and resume without replaying leaves', async () => {
+it.each([false, true])('retains candidate mappings across leaf batches, failed merge and resume without replaying leaves (transient: %s)', async transient => {
   const f = fixture('Atlas and Beacon. '.repeat(100))
   f.db.saveSupervisionResult({ request: f.request, evidence: [], output: { ...empty,
     entities: ['Atlas', 'Beacon'].map(label => ({ id: label, label, description: label, sourceReferenceIds: [] })) } })
@@ -275,13 +276,15 @@ it('retains candidate mappings across leaf batches, failed merge and resume with
     if (prompt.includes('These inputs are navigation summaries')) {
       expect(prompt).toContain('KNOWN ENTITIES:\n\n[]')
       expect(prompt).toContain('"entities":[]')
-      if (failMerge) { failMerge = false; throw new Error('Merge interrupted') }
+      if (failMerge) throw transient ? Object.assign(new Error('Merge interrupted'), { status: 503 }) : new Error('Merge interrupted')
       return empty
     }
     const output = original(prompt) as { entities: Array<{ label: string }> }
     return { ...output, entities: output.entities.map(entity => ({ ...entity, persistedId: candidates.find(candidate => candidate.label === entity.label)!.id })) }
   })
   await expect(f.service().run(f.request)).rejects.toThrow('Merge interrupted')
+  expect(f.respond.mock.calls.filter(([prompt]) => prompt.includes('These inputs are navigation summaries'))).toHaveLength(transient ? 2 : 1)
+  failMerge = false
   const runId = f.db.listSupervisionActivity().find(item => item.status === 'failed')!.id
   const saved = f.db.supervisionReviewStore().batches(runId)
   expect(saved).toHaveLength(2)

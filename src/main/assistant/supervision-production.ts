@@ -20,7 +20,33 @@ type SupervisionModelDependencies = {
   persistUsage: (event: RuntimeModelUsageEvent) => void
 }
 
-/** One bounded, tool-free text call that shares the supervisor concurrency pool. */
+function isTransientSupervisionError(error: unknown): boolean {
+  let transient = false
+  const seen = new Set<unknown>()
+  for (let current = error; current && typeof current === 'object' && !seen.has(current);) {
+    seen.add(current)
+    const record = current as Record<string, unknown>
+    const message = typeof record.message === 'string' ? record.message : ''
+    const code = typeof record.code === 'string' ? record.code : ''
+    // Direct-model errors retain status; runtime events carry only the public message.
+    const status = record.status ?? record.statusCode ?? /\bHTTP\s+(\d{3})\b/iu.exec(message)?.[1]
+    const failureText = Number(status) === 504 ? message.replace(/\bgateway (?:timeout|timed out)\b/giu, '') : message
+    if (record.name === 'AbortError' || record.name === 'TimeoutError' ||
+      /^(?:ENOTFOUND|ERR_INVALID_URL|CERT_.*|.*CERTIFICATE.*|DEPTH_ZERO_SELF_SIGNED_CERT)$/u.test(code) ||
+      /abort|cancel|timed?\s*out|timeout|超时|取消|容量|context[_ ](?:length|window)|max[_ ]tokens|quota|billing|insufficient|capacity|api[_ -]?key|unauthori[sz]ed|forbidden|authentication|configuration/iu.test(`${code} ${failureText}`)) return false
+    if (status !== undefined) {
+      if (![429, 500, 502, 503, 504].includes(Number(status))) return false
+      transient = true
+    }
+    if (/^(?:ECONNRESET|ECONNREFUSED|EPIPE|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|UND_ERR_SOCKET)$/u.test(code) ||
+      /^(?:TypeError:\s*)?(?:terminated|fetch failed|network error|socket hang up)$/iu.test(message) ||
+      message === '模型接口流式响应意外中断' || /^rate limit (?:exceeded|reached)\b/iu.test(message)) transient = true
+    current = record.cause
+  }
+  return transient
+}
+
+/** One bounded, tool-free text call, with one transient retry in the supervisor pool. */
 async function runSupervisionModel(dependencies: SupervisionModelDependencies, request: {
   prompt: string
   title: string
@@ -36,49 +62,64 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
   return pool.run(async signal => {
     const timeoutSeconds = request.timeoutSeconds ?? settings?.supervisorOrganizeTimeoutSeconds ?? defaultSupervisionTimeoutSeconds
     const runtime = await resolveRuntime()
-    const controller = new AbortController()
-    const modelSignal = AbortSignal.any([signal, controller.signal, ...(request.signal ? [request.signal] : [])])
-    modelSignal.throwIfAborted()
-    let timeoutError: Error | undefined
-    const timeout = setTimeout(() => {
-      timeoutError = new Error(request.timeoutMessage(timeoutSeconds))
-      controller.abort(timeoutError)
-    }, timeoutSeconds * 1000)
-    const responseKiB = settings?.supervisionReview?.responseKiB ?? 1024
-    let output = '', completed = false
-    const requestId = randomUUID()
-    const conversationId = `supervision:${requestId}`
-    // Hidden task row so model usage can be attributed to supervision.
-    database.createTask({ id: requestId, conversationId, title: request.title, instructions: request.instructions,
-      origin: 'assistant', visible: false })
-    try {
-      for await (const event of runtime.run({ requestId, conversationId, prompt: request.prompt },
-        modelSignal, async approval => { await request.authorizeTool(approval.toolName ?? approval.scopeKey); return 'deny' })) {
-        if (event.type === 'text') {
-          output += event.delta
-          if (Buffer.byteLength(output) > responseKiB * 1024) {
-            controller.abort(new Error(`单次模型响应超过 ${responseKiB} KiB。请在监督者设置中调高响应容量后继续；已保存批次会保留。`))
-            modelSignal.throwIfAborted()
-          }
-        }
-        if (event.type === 'model-usage') persistUsage(event)
-        if (event.type === 'tool') throw new Error('监督者只允许只读模型摘要，不允许工具调用')
-        if (event.type === 'error') throw new Error(event.message)
-        if (event.type === 'done') completed = true
-      }
-      modelSignal.throwIfAborted()
-      if (!completed) throw new Error('监督者模型未报告完成')
-      database.updateTaskStatus(requestId, 'completed')
-      return output
-    } catch (error) {
-      const failure = timeoutError ?? error
+    for (let attempt = 0; ; attempt++) {
+      signal.throwIfAborted()
+      const controller = new AbortController()
+      const modelSignal = AbortSignal.any([signal, controller.signal])
+      let timeoutError: Error | undefined
+      const timeout = setTimeout(() => {
+        timeoutError = new Error(request.timeoutMessage(timeoutSeconds))
+        controller.abort(timeoutError)
+      }, timeoutSeconds * 1000)
+      const responseKiB = settings?.supervisionReview?.responseKiB ?? 1024
+      let output = '', completed = false
+      const requestId = randomUUID()
+      const conversationId = `supervision:${requestId}`
       try {
-        database.updateTaskStatus(requestId, modelSignal.aborted ? 'cancelled' : 'failed',
-          failure instanceof Error ? failure.message.slice(0, 2_000) : '监督者模型调用失败')
-      } catch { /* status bookkeeping must not mask the model failure */ }
-      throw failure
+        // Each attempt has its own hidden task so reported usage survives retries.
+        database.createTask({ id: requestId, conversationId, title: request.title, instructions: request.instructions,
+          origin: 'assistant', visible: false })
+        for await (const event of runtime.run({ requestId, conversationId, prompt: request.prompt },
+          modelSignal, async approval => { await request.authorizeTool(approval.toolName ?? approval.scopeKey); return 'deny' })) {
+          if (event.type === 'text') {
+            output += event.delta
+            if (Buffer.byteLength(output) > responseKiB * 1024) {
+              controller.abort(new Error(`单次模型响应超过 ${responseKiB} KiB。请在监督者设置中调高响应容量后继续；已保存批次会保留。`))
+              modelSignal.throwIfAborted()
+            }
+          }
+          if (event.type === 'model-usage') persistUsage(event)
+          if (event.type === 'tool') throw new Error('监督者只允许只读模型摘要，不允许工具调用')
+          if (event.type === 'error') {
+            const error = new Error(event.message)
+            if (event.status === 'cancelled') controller.abort(error)
+            throw error
+          }
+          if (event.type === 'done') completed = true
+        }
+        modelSignal.throwIfAborted()
+        if (!completed) throw new Error('监督者模型未报告完成')
+        database.updateTaskStatus(requestId, 'completed')
+        return output
+      } catch (error) {
+        const failure = timeoutError ?? (modelSignal.aborted ? modelSignal.reason : error)
+        try {
+          database.updateTaskStatus(requestId, modelSignal.aborted ? 'cancelled' : 'failed',
+            failure instanceof Error ? failure.message.slice(0, 2_000) : '监督者模型调用失败')
+        } catch { /* status bookkeeping must not mask the model failure */ }
+        if (attempt > 0 || modelSignal.aborted || !isTransientSupervisionError(failure)) throw failure
+      } finally {
+        clearTimeout(timeout)
+        controller.abort()
+        await runtime.releaseConversation?.(conversationId)
+      }
+      signal.throwIfAborted()
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(wait); reject(signal.reason) }
+        const wait = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, 500)
+        signal.addEventListener('abort', abort, { once: true })
+      })
     }
-    finally { clearTimeout(timeout); await runtime.releaseConversation?.(conversationId) }
   }, request.signal)
 }
 
