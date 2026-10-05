@@ -7785,6 +7785,7 @@ button > svg {
 }
 
 .composer-wrap {
+  position: relative;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -7793,6 +7794,17 @@ button > svg {
     var(--chat-inline-padding)
     var(--space-2);
   background: var(--surface-raised);
+}
+
+.composer-wrap::before {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  height: var(--space-4);
+  background: linear-gradient(to bottom, transparent, var(--surface-raised));
+  content: "";
+  pointer-events: none;
 }
 
 .composer {
