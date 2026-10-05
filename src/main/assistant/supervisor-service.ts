@@ -9,7 +9,7 @@ import {
 } from '../../shared/supervision-contracts'
 import { reviewScope, type ReviewBatch } from './review-checkpoint'
 import { createHash } from 'node:crypto'
-import type { SupervisionReviewStore, ReviewConfiguration, ReviewState } from './supervision-review-store'
+import { ReviewSourcesOmitted, type SupervisionReviewStore, type ReviewConfiguration, type ReviewState } from './supervision-review-store'
 import type { SupervisionReviewExecution, SupervisionReviewProgress } from '../../shared/supervision-review-contracts'
 
 export type SupervisorSummarizerRequest = {
@@ -287,7 +287,7 @@ export class SupervisorService {
       const includedBatch = batch ? { ...batch, checkpoints: batch.checkpoints.filter((checkpoint) =>
         batch.evidence.some((source) => source.locator?.source === checkpoint.source &&
           source.locator?.end === checkpoint.offset && boundedEvidence.some((included) =>
-            included.id === source.id && included.content === source.content))) } : undefined
+          included.id === source.id && included.content === source.content))) } : undefined
       const result = { runId, request, evidence: boundedEvidence, output, candidates, batch: includedBatch }
       await this.store.save(result)
       return result
@@ -361,19 +361,23 @@ export class SupervisorService {
         controller.signal.throwIfAborted()
         const context = !navigation && this.review!.context ? await this.review!.context(request, controller.signal) : undefined
         controller.signal.throwIfAborted()
+        if (!navigation) {
+          db.omitDeletedConversations(runId)
+          if (!db.hasSources(runId, evidence)) throw new ReviewSourcesOmitted('Deleted conversation sources omitted')
+        }
         activity.inFlight++
         let raw: unknown
         try {
-        raw = await this.summarizer.summarize({ request, evidence, candidates: navigation ? [] : candidates,
-          signal: controller.signal, timeoutSeconds: config.timeoutSeconds,
-          systemInstruction: systemInstruction + (navigation
-            ? '\nThese inputs are navigation summaries, not original evidence. Return summary, changeDigest and openItems. Omit events, entities, entityChanges and relations or return them as empty arrays. All original leaf results are retained separately.'
-            : '\nRetain atomic decisions, constraints, corrections, conflicting statements and unresolved items with source references. Attribute assistant proposals as proposals. Source locators use Unicode code points; split task JSON is a source fragment, not a complete object.') +
+          raw = await this.summarizer.summarize({ request, evidence, candidates: navigation ? [] : candidates,
+            signal: controller.signal, timeoutSeconds: config.timeoutSeconds,
+            systemInstruction: systemInstruction + (navigation
+              ? '\nThese inputs are navigation summaries, not original evidence. Return summary, changeDigest and openItems. Omit events, entities, entityChanges and relations or return them as empty arrays. All original leaf results are retained separately.'
+              : '\nRetain atomic decisions, constraints, corrections, conflicting statements and unresolved items with source references. Attribute assistant proposals as proposals. Source locators use Unicode code points; split task JSON is a source fragment, not a complete object.') +
             '\nWrite concise navigation while retaining decisions, qualifications and unresolved items. Entity IDs use only ASCII letters, numbers, underscore or hyphen (1..120 characters).',
-          previousSummary: navigation ? undefined : context ? context.summary : this.store.summary?.(request),
-          outputContract: navigation ? navigationContract : entityContract(candidates),
-          background: navigation ? [] : context ? context.background : this.store.background?.(request),
-          authorizeTool: async name => { throw new Error(`Supervisor tools are disabled: ${name}`) } })
+            previousSummary: navigation ? undefined : context ? context.summary : this.store.summary?.(request),
+            outputContract: navigation ? navigationContract : entityContract(candidates),
+            background: navigation ? [] : context ? context.background : this.store.background?.(request),
+            authorizeTool: async name => { throw new Error(`Supervisor tools are disabled: ${name}`) } })
         } finally { activity.inFlight-- }
         controller.signal.throwIfAborted()
         try {
@@ -385,115 +389,142 @@ export class SupervisorService {
         }
       }
       for (;;) {
-        if (controller.signal.aborted) return stopped()
-        const groups = db.groups(runId, config.concurrency)
-        if (!groups.length) break
-        const results = await Promise.allSettled(groups.map(async group => {
-          controller.signal.throwIfAborted()
-          const candidates = await candidatesFor(group.projectId)
-          // An unusable answer is retried on a smaller prefix of the same pending text; nothing is skipped,
-          // the rest of the text stays pending for the next batch.
-          for (let attempt = 0; ; attempt++) {
-            const scale = 2 ** attempt
-            const sized = attempt ? { ...config, batchCharacters: Math.max(500, Math.floor(config.batchCharacters / scale)),
-              batchMessages: Math.max(1, Math.ceil(config.batchMessages / scale)) } : config
-            const evidence = db.chunk(runId, group.projectId, group.conversationId, sized)
-            if (!evidence.length) throw new Error('Pending source produced no reviewable content')
-            try {
-              const output = await summarize(evidence, false, candidates)
+        const omittedBefore = db.progress(runId).omittedSources ?? 0
+        try {
+          db.omitDeletedConversations(runId)
+          if (db.progress(runId).remainingSources) db.setPhase(runId, 'extracting')
+          for (;;) {
+            if (controller.signal.aborted) return stopped()
+            const groups = db.groups(runId, config.concurrency)
+            if (!groups.length) break
+            const results = await Promise.allSettled(groups.map(async group => {
               controller.signal.throwIfAborted()
-              db.save(runId, group.projectId, group.conversationId, evidence, output)
-              return
-            } catch (error) {
-              if (!(error instanceof SupervisionOutputError) || attempt >= outputRetries || controller.signal.aborted) throw error
+              const candidates = await candidatesFor(group.projectId)
+              // An unusable answer is retried on a smaller prefix of the same pending text; nothing is skipped,
+              // the rest of the text stays pending for the next batch.
+              for (let attempt = 0; ; attempt++) {
+                const scale = 2 ** attempt
+                const sized = attempt ? { ...config, batchCharacters: Math.max(500, Math.floor(config.batchCharacters / scale)),
+                  batchMessages: Math.max(1, Math.ceil(config.batchMessages / scale)) } : config
+                const evidence = db.chunk(runId, group.projectId, group.conversationId, sized)
+                if (!evidence.length) return
+                try {
+                  const output = await summarize(evidence, false, candidates)
+                  controller.signal.throwIfAborted()
+                  db.save(runId, group.projectId, group.conversationId, evidence, output)
+                  return
+                } catch (error) {
+                  db.omitDeletedConversations(runId)
+                  if (!db.hasSources(runId, evidence)) return
+                  if (!(error instanceof SupervisionOutputError) || attempt >= outputRetries || controller.signal.aborted) throw error
+                }
+              }
+            }))
+            if (controller.signal.aborted) return stopped()
+            const failure = results.find(result => result.status === 'rejected')
+            if (failure?.status === 'rejected') throw failure.reason
+          }
+          if (db.omitDeletedConversations(runId)) continue
+          const progress = db.progress(runId)
+          if (progress.remainingSources) continue
+          const checkOmissions = () => {
+            db.omitDeletedConversations(runId)
+            if ((db.progress(runId).omittedSources ?? 0) !== (progress.omittedSources ?? 0)) {
+              throw new ReviewSourcesOmitted('Deleted conversation sources omitted; rebuild review navigation')
             }
           }
-        }))
-        if (controller.signal.aborted) return stopped()
-        const failure = results.find(result => result.status === 'rejected')
-        if (failure?.status === 'rejected') throw failure.reason
-      }
-      const progress = db.progress(runId)
-      if (!progress.batches) {
-        this.store.noChange?.(runId)
-        // Earlier events may still await assignment (an upgrade backlog or a failed attempt).
-        await this.organizeStories(db, runId, request, config, controller.signal)
-        return { runId, request, evidence: [], output: empty, status: 'no_change', coverage: db.progress(runId) }
-      }
-      type Card = { id: string; output: SupervisionSummaryOutput }
-      db.setPhase(runId, 'summarizing')
-      const merge = async (left: Card, right: Card): Promise<Card> => {
-        const id = createHash('sha256').update(JSON.stringify([left.id, right.id])).digest('hex')
-        const cached = db.navigation(runId, id)
-        if (cached) return { id, output: cached }
-        const evidence = [left, right].map(card => ({ id: card.id, sourceType: 'note' as const, sourceId: card.id,
-          title: 'Retained review navigation', content: card.output.summary, occurredAt: request.timeRange.to }))
-        // A navigation merge has fixed inputs; an unusable answer is asked again once before the run fails.
-        let output: SupervisionSummaryOutput
-        try { output = await summarize(evidence, true) } catch (error) {
-          if (!(error instanceof SupervisionOutputError) || controller.signal.aborted) throw error
-          output = await summarize(evidence, true)
-        }
-        controller.signal.throwIfAborted()
-        db.saveNavigation(runId, id, [left.id, right.id], output)
-        return { id, output }
-      }
-      // Reduce conversations, then projects, then scope. Binary carry stacks are logarithmic;
-      // singleton groups pass through, so the whole tree still uses exactly N-1 merges.
-      type Stack = Array<Card | undefined>
-      const conversationStack: Stack = [], projectStack: Stack = [], scopeStack: Stack = []
-      const push = async (stack: Stack, input: Card) => {
-        let card = input, depth = 0
-        while (stack[depth]) {
-          card = await merge(stack[depth]!, card)
-          stack[depth++] = undefined
-        }
-        stack[depth] = card
-      }
-      const finish = async (stack: Stack) => {
-        let root: Card | undefined
-        for (const card of stack.reverse()) if (card) root = root ? await merge(root, card) : card
-        stack.length = 0
-        return root
-      }
-      let previousProject: string | undefined, previousConversation: string | undefined
-      let first: ReturnType<SupervisionReviewStore['batches']>[number] | undefined
-      for (let offset = 0;; offset += 10) {
-        const batches = db.batches(runId, 10, offset)
-        if (!batches.length) break
-        for (const batch of batches) {
-          validateReferences(batch.output, batch.evidence)
-          first ??= batch
-          if (previousConversation !== undefined && (batch.conversationId !== previousConversation || batch.projectId !== previousProject)) {
-            await push(projectStack, (await finish(conversationStack))!)
+          if (!progress.batches) {
+            this.store.noChange?.(runId)
+            // Earlier events may still await assignment (an upgrade backlog or a failed attempt).
+            await this.organizeStories(db, runId, request, config, controller.signal)
+            return { runId, request, evidence: [], output: empty, status: 'no_change', coverage: db.progress(runId) }
           }
-          if (previousProject !== undefined && batch.projectId !== previousProject) await push(scopeStack, (await finish(projectStack))!)
-          await push(conversationStack, batch)
-          previousProject = batch.projectId
-          previousConversation = batch.conversationId
+          type Card = { id: string; output: SupervisionSummaryOutput }
+          db.setPhase(runId, 'summarizing')
+          const merge = async (left: Card, right: Card): Promise<Card> => {
+            checkOmissions()
+            const id = createHash('sha256').update(JSON.stringify([left.id, right.id])).digest('hex')
+            const cached = db.navigation(runId, id)
+            if (cached) return { id, output: cached }
+            const evidence = [left, right].map(card => ({ id: card.id, sourceType: 'note' as const, sourceId: card.id,
+              title: 'Retained review navigation', content: card.output.summary, occurredAt: request.timeRange.to }))
+            // A navigation merge has fixed inputs; an unusable answer is asked again once before the run fails.
+            let output: SupervisionSummaryOutput
+            try { output = await summarize(evidence, true) } catch (error) {
+              checkOmissions()
+              if (!(error instanceof SupervisionOutputError) || controller.signal.aborted) throw error
+              output = await summarize(evidence, true)
+            }
+            controller.signal.throwIfAborted()
+            checkOmissions()
+            db.saveNavigation(runId, id, [left.id, right.id], output)
+            return { id, output }
+          }
+          // Reduce conversations, then projects, then scope. Binary carry stacks are logarithmic;
+          // singleton groups pass through, so the whole tree still uses exactly N-1 merges.
+          type Stack = Array<Card | undefined>
+          const conversationStack: Stack = [], projectStack: Stack = [], scopeStack: Stack = []
+          const push = async (stack: Stack, input: Card) => {
+            let card = input, depth = 0
+            while (stack[depth]) {
+              card = await merge(stack[depth]!, card)
+              stack[depth++] = undefined
+            }
+            stack[depth] = card
+          }
+          const finish = async (stack: Stack) => {
+            let root: Card | undefined
+            for (const card of stack.reverse()) if (card) root = root ? await merge(root, card) : card
+            stack.length = 0
+            return root
+          }
+          let previousProject: string | undefined, previousConversation: string | undefined
+          let first: ReturnType<SupervisionReviewStore['batches']>[number] | undefined
+          for (let offset = 0;; offset += 10) {
+            checkOmissions()
+            const batches = db.batches(runId, 10, offset)
+            if (!batches.length) break
+            for (const batch of batches) {
+              validateReferences(batch.output, batch.evidence)
+              first ??= batch
+              if (previousConversation !== undefined && (batch.conversationId !== previousConversation || batch.projectId !== previousProject)) {
+                await push(projectStack, (await finish(conversationStack))!)
+              }
+              if (previousProject !== undefined && batch.projectId !== previousProject) await push(scopeStack, (await finish(projectStack))!)
+              await push(conversationStack, batch)
+              previousProject = batch.projectId
+              previousConversation = batch.conversationId
+            }
+          }
+          await push(projectStack, (await finish(conversationStack))!)
+          await push(scopeStack, (await finish(projectStack))!)
+          const root = await finish(scopeStack)
+          controller.signal.throwIfAborted()
+          checkOmissions()
+          db.assertComplete(runId)
+          db.setPhase(runId, 'saving')
+          // A resumed run reuses leaves saved earlier; offer their projects' candidates too.
+          const savedProjects = new Set<string>()
+          for (let offset = 0;; offset += 10) {
+            const saved = db.batches(runId, 10, offset)
+            if (!saved.length) break
+            for (const batch of saved) savedProjects.add(batch.projectId)
+          }
+          for (const projectId of savedProjects) await candidatesFor(projectId)
+          controller.signal.throwIfAborted()
+          checkOmissions()
+          const result: StoredSupervisionResult = { runId, request, candidates: [...offered.values()],
+            evidence: progress.batches === 1 ? first!.evidence : [], output: root!.output,
+            status: 'completed', coverage: { ...db.progress(runId), complete: true } }
+          await this.store.save(result)
+          await this.organizeStories(db, runId, request, config, controller.signal)
+          return { ...result, coverage: { ...db.progress(runId), complete: true } }
+        } catch (error) {
+          db.omitDeletedConversations(runId)
+          if (error instanceof ReviewSourcesOmitted || (db.progress(runId).omittedSources ?? 0) !== omittedBefore) continue
+          throw error
         }
       }
-      await push(projectStack, (await finish(conversationStack))!)
-      await push(scopeStack, (await finish(projectStack))!)
-      const root = await finish(scopeStack)
-      controller.signal.throwIfAborted()
-      db.assertComplete(runId)
-      db.setPhase(runId, 'saving')
-      // A resumed run reuses leaves saved earlier; offer their projects' candidates too.
-      const savedProjects = new Set<string>()
-      for (let offset = 0;; offset += 10) {
-        const saved = db.batches(runId, 10, offset)
-        if (!saved.length) break
-        for (const batch of saved) savedProjects.add(batch.projectId)
-      }
-      for (const projectId of savedProjects) await candidatesFor(projectId)
-      controller.signal.throwIfAborted()
-      const result: StoredSupervisionResult = { runId, request, candidates: [...offered.values()],
-        evidence: progress.batches === 1 ? first!.evidence : [], output: root!.output,
-        status: 'completed', coverage: { ...db.progress(runId), complete: true } }
-      await this.store.save(result)
-      await this.organizeStories(db, runId, request, config, controller.signal)
-      return { ...result, coverage: { ...db.progress(runId), complete: true } }
     } catch (error) {
       if (controller.signal.aborted) return stopped()
       this.store.fail?.(runId, error instanceof Error ? error.message : 'Review failed')

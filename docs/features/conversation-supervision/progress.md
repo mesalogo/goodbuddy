@@ -44,6 +44,18 @@
 
 剩余预算问题：故事读取有一次 19.74 ms 的 Main 间隔，超过 16 ms；大图谱仍要等待数百毫秒的 Worker 查询；首次 Worker 启动也会增加小库概览等待。Main 最终发布仍有约 271～303 ms 的同步阻塞，并未达到性能原则。业务写入迁移、独立存储服务、IPC 实际序列化与并发写锁等待不在本次已验证范围，后续方向见[桌面存储职责](../../architecture/desktop-storage-direction.md)。本轮不迁移全部写入，也不放宽预算。外部模型调用为 0；没有读取用户正文、修改用户库、读取环境文件、生产构建、打包或启动已打包应用，没有提交。
 
+## 2026-10-05 删除会话后继续未发布回顾
+
+对应 FR-S9、US-S35。删除会话现在使受影响的未发布批次及依赖导航失效，其他来源继续；混合批次重算、省略覆盖和历史保留规则见[逻辑设计](./logic-design.md#未发布回顾遇到会话删除)。活动和运行详情已增加中英文省略数量提示。原先因已删除会话而标记需要重建的运行，可重新继续；现存来源的修改或归档仍失败。
+
+验证使用隔离文件 SQLite、真实初始化／恢复 Worker 和可控模型返回，未接触用户数据库：
+
+- `npx vitest run src/main/assistant/supervision-review.test.ts src/main/assistant/supervision-worker.test.ts src/main/assistant/supervision-production.test.ts src/renderer/src/SupervisorActivity.test.tsx`：4 文件、95 项通过。新增场景包括恢复前删除整会话及知识引用／任务、Worker 复制清单时删除、两路处理及导航期间删除、发布前另一连接删除、混合批次存活来源重做、父导航递归失效、历史结果及来源逐字段不变、全部来源删除无空报告和中英文省略提示。
+- Node/Web TypeScript 检查、11 个改动 TS/TSX 文件的定向 ESLint、`git diff --check` 通过。差异检查仅有仓库既有 LF/CRLF 提示。
+- `npx vitest run src/main/assistant/assistant-database.test.ts -t explicitly.deletes.only.local`：既有本地会话删除与消息级联回归通过，其余 124 项按筛选跳过。
+
+外部模型调用为 0；未运行全量测试、Electron 界面实测或大库删除延迟测量，未提交或推送。回顾仍在桌面直连模型路径执行，不改变远程 Agent。已发出的请求可在删除后返回，结果会被丢弃；不承诺撤回已发送给模型的输入。旧清单若未保存任务会话归属且任务早已被外部删除，不能推断其归属，仍按来源不可用失败。
+
 ## 2026-10-05 监督模型临时失败重试
 
 对应 FR-S6。`runSupervisionModel` 已接入一次可取消的临时失败重试，覆盖监督者各模型阶段；错误分类、清理及每次尝试的超时规则见[技术设计](./technical-design.md#模型阶段超时与调度)。直连文本请求保留 HTTP status，并交出失败流中已报告的用量。OpenCode／Continue、直连传输重试和叶子／导航输出重试未改。监督者仍在桌面 Main 直连模型，不经过远程 Agent 或模型桥。

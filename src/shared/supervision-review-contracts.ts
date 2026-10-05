@@ -37,6 +37,8 @@ export type SupervisionReviewProgress = {
   characters: number
   sources: number
   remainingSources: number
+  /** Sources excluded because their owning conversation was deleted; not reviewed coverage. */
+  omittedSources?: number
   complete: boolean
   restartRequired?: boolean
   inFlight?: number

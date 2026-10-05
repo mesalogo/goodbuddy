@@ -17,6 +17,20 @@ const render = (ui: React.ReactNode) => {
 }
 afterEach(async () => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); await changeUiLocale('zh-CN') })
 
+it.each(['zh-CN', 'en-US'] as const)('shows deletion omissions alongside surviving coverage in %s', async locale => {
+  await changeUiLocale(locale)
+  vi.stubGlobal('goodbuddy', { supervision: { activity: vi.fn().mockResolvedValue([{
+    ...row, status: 'no_change', supervisionStatus: 'no_change', reviewProgress: {
+      runId: 'saved-run', batches: 0, characters: 0, sources: 0, remainingSources: 0, omittedSources: 3, complete: true
+    }
+  }]) } })
+  render(<SupervisorActivity active projects={[]} onOpenResult={vi.fn()} />)
+  const notices = await screen.findAllByText(i18nResources[locale].heartbeat.activity.omittedSources.replace('{{count}}', '3'))
+  expect(notices[0]).toBeVisible()
+  expect(notices).toHaveLength(2)
+  expect(screen.queryByRole('button', { name: i18nResources[locale].heartbeat.reviewSettings.resume })).not.toBeInTheDocument()
+})
+
 it.each(['zh-CN', 'en-US'] as const)('retains operational failure details and recovery in %s', async locale => {
   await changeUiLocale(locale)
   const copy = i18nResources[locale].heartbeat

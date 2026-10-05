@@ -228,6 +228,7 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
               {row.timeRange && <div><dt>{t('supervisor.period')}</dt><dd>{date(row.timeRange.from)} / {date(row.timeRange.to)}</dd></div>}
             </dl>
             {row.reviewProgress && <p>{t('reviewSettings.progress', { batches: row.reviewProgress.batches, characters: row.reviewProgress.characters, remaining: row.reviewProgress.remainingSources })}</p>}
+            {!!row.reviewProgress?.omittedSources && <p>{t('activity.omittedSources', { count: row.reviewProgress.omittedSources })}</p>}
             {row.reviewProgress?.navigationNodes !== undefined && <p>{t('activity.navigationSaved', { count: row.reviewProgress.navigationNodes })}</p>}
             {row.summary && <p className="supervisor-activity__summary">{row.summary}</p>}
             {row.reviewProgress?.settings && <details><summary>{t('reviewSettings.configuration')}</summary>

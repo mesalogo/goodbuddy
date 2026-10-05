@@ -3806,6 +3806,11 @@ export class AssistantDatabase {
              )`
         )
         .run(conversationId)
+      // Older pending manifests grouped tasks without their conversation owner.
+      database.prepare(`UPDATE supervision_review_sources SET conversation_id = ?
+        WHERE source IN (SELECT 'task:' || id FROM tasks WHERE conversation_id = ?)
+          AND run_id IN (SELECT id FROM supervision_runs WHERE status IN ('running', 'paused', 'failed'))`)
+        .run(conversationId, conversationId)
       database
         .prepare('DELETE FROM tasks WHERE conversation_id = ?')
         .run(conversationId)
@@ -3814,6 +3819,12 @@ export class AssistantDatabase {
           'DELETE FROM conversations WHERE id = ? AND channel IS NULL'
         )
         .run(conversationId).changes === 1
+      if (deleted) {
+        const reviews = this.supervisionReviewStore()
+        for (const row of database.prepare('SELECT DISTINCT run_id FROM supervision_review_sources WHERE conversation_id = ?').all(conversationId)) {
+          reviews.omitDeletedConversations(String(row.run_id))
+        }
+      }
       database.exec('COMMIT')
       if (deleted) this.executionTiming?.changed()
       return deleted
@@ -9117,6 +9128,7 @@ export class AssistantDatabase {
     const timestamp = new Date().toISOString()
     database.exec('BEGIN IMMEDIATE')
     try {
+      if (result.coverage && result.runId) this.supervisionReviewStore().assertComplete(result.runId, result.coverage.omittedSources ?? 0)
       let story = database.prepare(
         'SELECT id FROM story_lines WHERE scope_json = ? LIMIT 1'
       ).get(JSON.stringify(result.request.scope)) as { id: string } | undefined

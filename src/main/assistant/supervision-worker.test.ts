@@ -64,7 +64,8 @@ it('preserves every source, revision, Unicode length and checkpoint for global, 
       const id = f.db.startSupervisionRun(state.request)
       await f.db.initializeSupervisionReview(id, state, new AbortController().signal)
       const expected = rows.filter(row => scope.kind === 'global' || row.project_id === f.project.id).map(row => ({
-        source: row.source, revision: hash(row.context), project_id: row.project_id, conversation_id: row.conversation_id,
+        source: row.source, revision: hash(row.context), project_id: row.project_id,
+        conversation_id: row.type === 'task' ? f.conversations[0]!.id : row.conversation_id,
         sequence: row.sequence, length: Array.from(String(row.body)).length,
         initial_offset: !reanalyze && row.source === source.source ? 3 : 0,
         processed_offset: !reanalyze && row.source === source.source ? 3 : 0
@@ -135,6 +136,28 @@ it('fails explicitly when the worker entry is missing instead of running the sca
   await expect(f.db.initializeSupervisionReview(id, f.state, new AbortController().signal)).rejects.toThrow()
   expect(f.db.supervisionReviewStore().load(id).initializing).toBe(true)
   expect(f.db.supervisionReviewStore().progress(id).sources).toBe(0)
+})
+
+it('worker resume omits hard-deleted owners including knowledge references and tasks', async () => {
+  const f = await fixture()
+  const id = f.db.startSupervisionRun(f.state.request)
+  await f.db.initializeSupervisionReview(id, f.state, new AbortController().signal)
+  f.sql.prepare('DELETE FROM conversations WHERE id = ?').run(f.conversations[0]!.id)
+  await f.db.resumeSupervisionReview(id, new AbortController().signal)
+  expect(f.db.supervisionReviewStore().progress(id)).toMatchObject({ sources: 210, remainingSources: 210, omittedSources: 212 })
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM supervision_review_sources WHERE run_id = ? AND conversation_id = ?').get(id, f.conversations[0]!.id)!.n).toBe(0)
+})
+
+it('drops conversation sources deleted while the worker copies its initialization manifest', async () => {
+  const f = await fixture()
+  const id = f.db.startSupervisionRun(f.state.request)
+  f.sql.exec(`CREATE TRIGGER delete_during_manifest AFTER INSERT ON supervision_review_sources
+    WHEN (SELECT COUNT(*) FROM supervision_review_sources) = 200 BEGIN
+      DELETE FROM conversations WHERE id = '${f.conversations[0]!.id}';
+    END`)
+  await f.db.initializeSupervisionReview(id, f.state, new AbortController().signal)
+  expect(f.db.supervisionReviewStore().progress(id)).toMatchObject({ sources: 210, omittedSources: 212, remainingSources: 210 })
+  expect(() => f.db.getConversation(f.conversations[0]!.id)).toThrow('对话不存在')
 })
 
 it('publishes full worker-selected coverage atomically and skips it on the next production review', async () => {

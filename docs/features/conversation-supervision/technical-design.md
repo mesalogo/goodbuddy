@@ -83,6 +83,10 @@ schema 62 在既有迁移事务中新增 `supervision_sources(result_id, occurre
 
 schema 47 的四张批次相关表使用外键随监督运行清理，未完成运行不新增自动过期删除规则。启动时原有 running 记录会标 failed，但已保存批次和配置保留，活动页仍可继续。发布逐页读取叶子并复用现有结果/来源/图谱写入，在同一事务更新完成状态和自动 checkpoint。
 
+会话删除复用 `SupervisionReviewStore.omitDeletedConversations`，只处理 `running/paused/failed` 的暂存记录。删除入口在事务内补齐旧任务清单的会话归属；新清单由 Worker 在初始化时记录任务所属的现存会话。初始化完成、恢复、分块读取、模型调用前及返回落库、导航合并和发布前均检查删除。初始化中的清单仍可丢弃重建，省略计数在完整清单提交后计算。
+
+失效计算只取批次的来源键，不把保存正文作为删除会话的替代输入；依赖导航沿 `children_json` 递归删除。省略数写入既有 `state_json.omittedSources`，透出到活动进度及结果 `coverage_json`，不增加 schema。发布事务先核对省略数与待发布结果一致，再保存事实和 checkpoint；若删除使摘要过时，服务返回现有提取／合并循环。已发布历史不参与失效，行为定义见[逻辑规则](./logic-design.md#未发布回顾遇到会话删除)。
+
 当前设置及冻结范围见[当前设置合同](./review-scheduling-design.md#当前设置合同)。未实现的高级参数继续保留在目标清单，不显示为可保存控件；没有兼容原型数据库的读取器。
 
 ### 单次执行与取消

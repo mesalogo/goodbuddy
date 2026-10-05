@@ -433,3 +433,128 @@ it('does not let a heartbeat silently resume a review the user paused', async ()
   expect(next.runId).not.toBe(pausedId)
   expect(f.db.listSupervisionActivity().find(row => row.id === pausedId)?.status).toBe('paused')
 })
+
+it('omits a deleted conversation, its knowledge and tasks before resume without changing published history', async () => {
+  const f = await fixture([['Delete me'], ['Keep me']])
+  const deleted = f.conversations[0]!
+  f.sql.prepare('UPDATE messages SET metadata_json = ? WHERE id = ?').run(JSON.stringify({ sourceReferences: [
+    { documentId: 'doc', documentName: 'Reference', snippet: 'Deleted knowledge', chunkId: 'chunk' }
+  ] }), deleted.messages[0]!.id)
+  const taskId = randomUUID()
+  f.db.createTask({ id: taskId, conversationId: deleted.id, projectId: deleted.projectId,
+    title: 'Deleted task', instructions: 'Test', origin: 'user', visible: true })
+  f.db.updateTaskStatus(taskId, 'completed')
+  f.sql.prepare('UPDATE tasks SET created_at = ?, completed_at = ? WHERE id = ?').run(new Date(time).toISOString(), new Date(time).toISOString(), taskId)
+  await f.service().run(request)
+  const history = f.sql.prepare('SELECT * FROM supervision_results').all()
+  const historySources = f.sql.prepare('SELECT * FROM supervision_sources ORDER BY id').all()
+  const historyBatches = f.sql.prepare('SELECT * FROM supervision_review_batches ORDER BY id').all()
+  f.sql.exec("CREATE TRIGGER fail_publication BEFORE INSERT ON supervision_results BEGIN SELECT RAISE(ABORT, 'Publication failed'); END")
+  await expect(f.service().run(request)).rejects.toThrow('Publication failed')
+  const runId = String(f.sql.prepare("SELECT id FROM supervision_runs WHERE status = 'failed'").get()!.id)
+  const store = f.db.supervisionReviewStore()
+  const kept = store.batches(runId).filter(batch => batch.conversationId !== deleted.id)
+  expect(f.db.deleteLocalConversation(deleted.id)).toBe(true)
+  expect(store.progress(runId)).toMatchObject({ omittedSources: 3, sources: 1, batches: kept.length, restartRequired: undefined })
+  expect(store.batches(runId)).toEqual(kept)
+  f.sql.exec('DROP TRIGGER fail_publication')
+  const calls = f.summarize.mock.calls.length
+  f.db.close(); f.db.initialize(f.directory)
+  const result = await f.service().resume(runId)
+  expect(result).toMatchObject({ status: 'completed', coverage: { omittedSources: 3, sources: 1, complete: true } })
+  expect(f.summarize).toHaveBeenCalledTimes(calls)
+  expect(f.sql.prepare('SELECT * FROM supervision_results WHERE id = ?').get(String(history[0]!.id))).toEqual(history[0])
+  expect(f.sql.prepare('SELECT * FROM supervision_sources WHERE result_id = ? ORDER BY id').all(String(history[0]!.id))).toEqual(historySources)
+  expect(f.sql.prepare('SELECT * FROM supervision_review_batches WHERE run_id = ? ORDER BY id').all(String(history[0]!.run_id))).toEqual(historyBatches)
+  expect(() => f.db.getConversation(deleted.id)).toThrow('对话不存在')
+  expect(f.db.listSupervisionActivity().find(row => row.id === runId)?.reviewProgress?.omittedSources).toBe(3)
+})
+
+it.each(['leaf', 'navigation', 'publication', 'publication from another connection'] as const)('continues after deletion during %s without publishing deleted input', async phase => {
+  const f = await fixture([['Delete me'], ['Keep me']], { concurrency: 2 })
+  const base = f.summarize.getMockImplementation()!
+  f.summarize.mockImplementation(async input => ({ ...await base(input), summary: input.evidence.map(item => item.content).join(', ') }))
+  let deletedId: string | undefined
+  const remove = () => {
+    deletedId = f.conversations[0]!.id
+    if (phase === 'publication from another connection') f.sql.prepare('DELETE FROM conversations WHERE id = ?').run(deletedId)
+    else f.db.deleteLocalConversation(deletedId)
+  }
+  if (phase.startsWith('publication')) {
+    const save = f.db.saveSupervisionResult.bind(f.db)
+    vi.spyOn(f.db, 'saveSupervisionResult').mockImplementationOnce(result => { remove(); save(result) })
+  } else f.summarize.mockImplementation(async input => {
+    if (!deletedId && (phase === 'leaf' ? input.evidence.some(item => item.locator?.conversationId === f.conversations[0]!.id) : input.evidence[0]?.sourceType === 'note')) remove()
+    return { ...await base(input), summary: input.evidence.map(item => item.content).join(', ') }
+  })
+  const result = await f.service().run({ ...request, reanalyze: undefined })
+  expect(result).toMatchObject({ status: 'completed', coverage: { omittedSources: 1, sources: 1, batches: 1, complete: true } })
+  expect(result.output.summary).toBe('Keep me')
+  expect(f.db.listSupervisionResults()[0]!.summary).toBe('Keep me')
+  const sources = f.sql.prepare('SELECT locator_json FROM supervision_sources').all()
+  expect(sources).toHaveLength(1)
+  expect(JSON.parse(String(sources[0]!.locator_json)).conversationId).toBe(f.conversations[1]!.id)
+  expect(f.sql.prepare('SELECT source FROM review_checkpoints').all()).toEqual([{ source: `message:${f.conversations[1]!.messages[0]!.id}` }])
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM supervision_review_navigation').get()!.n).toBe(0)
+})
+
+it.each(['before resume', 'in flight'] as const)('finishes with an explicit omission and no empty report when every source is deleted %s', async when => {
+  const f = await fixture([['Only source']], { concurrency: 1 })
+  const service = f.service()
+  let runId: string
+  if (when === 'before resume') {
+    f.summarize.mockRejectedValueOnce(new Error('Provider unavailable'))
+    await expect(service.run(request)).rejects.toThrow('Provider unavailable')
+    runId = f.db.listSupervisionActivity()[0]!.id
+    f.db.deleteLocalConversation(f.conversations[0]!.id)
+  } else {
+    f.summarize.mockImplementationOnce(async () => { f.db.deleteLocalConversation(f.conversations[0]!.id); return empty })
+    const result = await service.run(request)
+    runId = result.runId!
+    expect(result).toMatchObject({ status: 'no_change', coverage: { omittedSources: 1, sources: 0, complete: true } })
+  }
+  if (when === 'before resume') await expect(service.resume(runId)).resolves.toMatchObject({ status: 'no_change', coverage: { omittedSources: 1, sources: 0, complete: true } })
+  expect(f.db.listSupervisionResults()).toEqual([])
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints').get()!.n).toBe(0)
+})
+
+it('resets mixed-leaf survivors only and invalidates their dependent navigation transitively', async () => {
+  const f = await fixture([['Deleted'], ['Survivor'], ['Unrelated']], { concurrency: 1 })
+  const store = f.db.supervisionReviewStore()
+  const runId = f.db.startSupervisionRun(request)
+  store.initialize(runId, { request, config: f.config })
+  const evidence = f.conversations.map(c => store.chunk(runId, c.projectId, c.id, f.config))
+  store.save(runId, f.conversations[0]!.projectId, '', [...evidence[0]!, ...evidence[1]!], empty)
+  store.save(runId, f.conversations[2]!.projectId, f.conversations[2]!.id, evidence[2]!, empty)
+  const batches = store.batches(runId)
+  const mixed = batches.find(b => b.evidence.length === 2)!, kept = batches.find(b => b.evidence.length === 1)!
+  store.saveNavigation(runId, 'affected', [mixed.id], empty)
+  store.saveNavigation(runId, 'unaffected', [kept.id], empty)
+  store.saveNavigation(runId, 'root', ['affected', 'unaffected'], empty)
+  f.db.deleteLocalConversation(f.conversations[0]!.id)
+  expect(store.batches(runId)).toEqual([kept])
+  expect(store.navigation(runId, 'affected')).toBeUndefined()
+  expect(store.navigation(runId, 'root')).toBeUndefined()
+  expect(store.navigation(runId, 'unaffected')).toEqual(empty)
+  expect(store.progress(runId)).toMatchObject({ sources: 2, remainingSources: 1, omittedSources: 1 })
+  await f.service().resume(runId)
+  expect(f.summarize.mock.calls.filter(([input]) => input.evidence[0]?.sourceType !== 'note').map(([input]) => input.evidence.map(e => e.content))).toEqual([['Survivor']])
+  expect(store.batches(runId)).toContainEqual(kept)
+})
+
+it('recovers the earlier deletion failure but keeps archived and modified existing conversations as explicit failures', async () => {
+  const f = await fixture([['Source']])
+  const store = f.db.supervisionReviewStore()
+  const id = f.db.startSupervisionRun(request)
+  store.initialize(id, { request, config: f.config })
+  f.sql.prepare("UPDATE supervision_review_runs SET state_json = json_set(state_json, '$.restartRequired', json('true')) WHERE run_id = ?").run(id)
+  f.db.failSupervisionRun(id, `Review source changed or was removed (message:${f.conversations[0]!.messages[0]!.id}); start a new review`)
+  f.sql.prepare('DELETE FROM conversations WHERE id = ?').run(f.conversations[0]!.id)
+  expect(store.progress(id).restartRequired).toBe(false)
+  await expect(f.service().resume(id)).resolves.toMatchObject({ status: 'no_change', coverage: { omittedSources: 1 } })
+  const g = await fixture([['Archived source']])
+  g.summarize.mockRejectedValueOnce(new Error('Pause'))
+  await expect(g.service().run(request)).rejects.toThrow('Pause')
+  g.sql.prepare("UPDATE conversations SET status = 'archived' WHERE id = ?").run(g.conversations[0]!.id)
+  await expect(g.service().resume(g.db.listSupervisionActivity()[0]!.id)).rejects.toThrow('source changed')
+})
