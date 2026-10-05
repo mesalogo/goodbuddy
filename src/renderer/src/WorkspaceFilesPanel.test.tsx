@@ -35,10 +35,10 @@ describe('WorkspaceFilesPanel', () => {
     })
   })
 
-  it('sorts siblings by real modification times, keeps directories first and omits unavailable creation times', async () => {
+  it('sorts siblings by modification time and shows only that time even when creation times are available', async () => {
     const { container } = render(<WorkspaceFilesPanel projectId="project" changedFiles={[]} onLoadDiff={vi.fn()} onOpenFile={vi.fn()}
       onListDirectory={async path => ({ path, truncated: false, entries: [
-        { name: 'old', path: 'old', type: 'file', modifiedAt: '2026-01-01T00:00:00.000Z' },
+        { name: 'old', path: 'old', type: 'file', modifiedAt: '2026-01-01T00:00:00.000Z', createdAt: '2025-12-01T00:00:00.000Z' },
         { name: 'new', path: 'new', type: 'file', modifiedAt: '2026-10-01T00:00:00.000Z' },
         { name: 'unknown', path: 'unknown', type: 'file' },
         { name: 'docs', path: 'docs', type: 'directory' }
@@ -50,6 +50,9 @@ describe('WorkspaceFilesPanel', () => {
     expect(names()).toEqual(['docs', 'old', 'new', 'unknown'])
     expect(screen.queryByRole('button', { name: '创建时间' })).not.toBeInTheDocument()
     expect(container.querySelector('time[datetime="2026-01-01T00:00:00.000Z"]')).toBeInTheDocument()
+    expect(container.querySelectorAll('time')).toHaveLength(4)
+    expect(container.querySelector('time[datetime="2025-12-01T00:00:00.000Z"]')).not.toBeInTheDocument()
+    expect(container.querySelector('time[datetime="2026-01-01T00:00:00.000Z"]')).toHaveAttribute('title', new Date('2026-01-01T00:00:00.000Z').toLocaleString())
   })
   it('groups view switching and refresh, and only shows actions for the active view', async () => {
     const onRefresh = vi.fn(async () => undefined)

@@ -94,7 +94,7 @@ export function flattenFileTree(
   expandedPaths: ReadonlySet<string>,
   loadingPaths: ReadonlySet<string>,
   errors: Readonly<Record<string, string | undefined>>,
-  sort: { field: 'name' | 'modifiedAt' | 'createdAt'; descending: boolean } = { field: 'name', descending: false }
+  sort: { field: 'name' | 'modifiedAt'; descending: boolean } = { field: 'name', descending: false }
 ): FileTreeRow[] {
   const rows: FileTreeRow[] = []
   const visit = (items: readonly WorkspaceDirectoryEntry[], depth: number): void => {
@@ -194,7 +194,7 @@ export function WorkspaceFilesPanel({
   const [refreshing, setRefreshing] = useState(false)
   const [importing, setImporting] = useState(false)
   const importingRef = useRef(false)
-  const [sort, setSort] = useState<{ field: 'name' | 'modifiedAt' | 'createdAt'; descending: boolean }>({ field: 'name', descending: false })
+  const [sort, setSort] = useState<{ field: 'name' | 'modifiedAt'; descending: boolean }>({ field: 'name', descending: false })
   const repositoryKnown = useRef<{ projectId?: string; available: boolean }>({ available: false })
   useEffect(() => { if (!gitError && isRepository !== undefined) repositoryKnown.current = { projectId, available: isRepository } }, [gitError, isRepository, projectId])
   const showGit = isRepository === true || (Boolean(gitError) && repositoryKnown.current.projectId === projectId && repositoryKnown.current.available)
@@ -477,7 +477,7 @@ export function WorkspaceFilesPanel({
             {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
             <span title={entry.path}>{entry.name}</span>
           </button>
-          {renderTimes(entry)}
+          {renderModifiedTime(entry)}
           {entryMenu(entry)}
         </div>
       )
@@ -505,20 +505,18 @@ export function WorkspaceFilesPanel({
             </small>
           )}
         </button>
-        {renderTimes(entry)}
+        {renderModifiedTime(entry)}
         {entryMenu(entry)}
       </div>
     )
   }
 
   const root = listings[browsedPath]
-  const showCreated = useMemo(() => Object.values(listings).some(listing => listing.entries.some(entry => entry.createdAt)), [listings])
-  const renderTimes = (entry: WorkspaceDirectoryEntry): React.JSX.Element => <>
-    {(['modifiedAt', ...(showCreated ? ['createdAt' as const] : [])] as const).map(field =>
-      <time className="workspace-files__time" key={field} dateTime={entry[field]} title={entry[field] ? new Date(entry[field]).toLocaleString() : undefined}>
-        {entry[field] ? new Date(entry[field]).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
-      </time>)}
-  </>
+  const renderModifiedTime = (entry: WorkspaceDirectoryEntry): React.JSX.Element => (
+    <time className="workspace-files__time" dateTime={entry.modifiedAt} title={entry.modifiedAt ? new Date(entry.modifiedAt).toLocaleString() : undefined}>
+      {entry.modifiedAt ? new Date(entry.modifiedAt).toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '-'}
+    </time>
+  )
   const treeRows = useMemo(
     () => flattenFileTree(root?.entries ?? [], listings, expandedPaths, loadingPaths, errors, sort),
     [errors, expandedPaths, listings, loadingPaths, root, sort]
@@ -566,7 +564,7 @@ export function WorkspaceFilesPanel({
     </pre>
   )
   return (
-    <div ref={panelRef} className="workspace-files" data-created-time={showCreated}>
+    <div ref={panelRef} className="workspace-files">
     {diff && <section className="assistant-sidebar__preview" aria-busy={!diff.value && !diff.error}>
       <header>
         <button ref={backRef} className="assistant-sidebar__back" type="button" onClick={() => {
@@ -667,8 +665,8 @@ export function WorkspaceFilesPanel({
         <>
           <div ref={treeRef} className="workspace-files__tree" onBlur={treeWindow.onBlur} onFocus={treeWindow.onFocus}>
             <div className="workspace-files__columns">
-              {(['name', 'modifiedAt', ...(showCreated ? ['createdAt' as const] : [])] as const).map(field => <button type="button" key={field} aria-pressed={sort.field === field} onClick={() => setSort(current => ({ field, descending: current.field === field ? !current.descending : field !== 'name' }))}>
-                {t(field === 'name' ? 'management.name' : field === 'modifiedAt' ? 'management.modified' : 'management.created')}{sort.field === field ? (sort.descending ? ' ↓' : ' ↑') : ''}
+              {(['name', 'modifiedAt'] as const).map(field => <button type="button" key={field} aria-pressed={sort.field === field} onClick={() => setSort(current => ({ field, descending: current.field === field ? !current.descending : field !== 'name' }))}>
+                {t(field === 'name' ? 'management.name' : 'management.modified')}{sort.field === field ? (sort.descending ? ' ↓' : ' ↑') : ''}
               </button>)}
             </div>
             {treeWindow.segments.map((segment) => {

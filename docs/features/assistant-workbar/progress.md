@@ -1,5 +1,14 @@
 # 工作栏实现与验证进度
 
+## 2026-10-05：文件列表只保留修改时间
+
+按 [FR-WF3、US-WF2](./workspace-files.md) 移除创建时间列及排序入口，修改时间采用紧凑格式，
+完整日期保留在悬停提示中。更多操作与时间共用行尾空间，悬停、聚焦及菜单展开时文件名宽度不变。
+本机与远程共用 Renderer，无文件访问或 Agent 协议变化。
+
+验证：`WorkspaceFilesPanel.test.tsx` 41 项通过，Renderer TypeScript 检查、相关文件 ESLint
+及 `git diff --check` 通过。尚未进行真实 Electron 窗口视觉验收。
+
 ## 2026-10-05：Runtime 提交失败与启动取消
 
 本机 OpenCode 提交失败后会结束所属 SSE 等待；远程原生 Session 启动等待期间，
@@ -12,7 +21,7 @@ Windows/Linux x64 实测、真实数据检查及本轮 5 次文本模型调用�
 ## 2026-10-04：移除成果页，工作区导入与文件时间
 
 对应 [FR-WF1～FR-WF3、US-WF1～US-WF3](./workspace-files.md)。成果 Tab、目录注册及独立导入
-界面已移除，旧布局过滤成果实例。工作区显示实际文件的修改时间与可用创建时间，支持同级排序，
+界面已移除，旧布局过滤成果实例。工作区显示实际文件的修改时间（2026-10-05 收敛为唯一时间列），支持同级排序，
 向所选目录导入原件。本机及远程共用分块管理动作，同名文件不覆盖，失败项独立反馈并清理部分文件。
 
 来源检查确认：`AssistantDatabase.createImageArtifact` 把图片保存为 `artifacts.inline_content`

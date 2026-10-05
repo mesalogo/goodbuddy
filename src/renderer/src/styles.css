@@ -5563,27 +5563,21 @@ button > svg {
 
 .workspace-files__row {
   padding: var(--space-2);
-  padding-right: 38px;
+  min-width: 0;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
 }
 
 .workspace-files__entry {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 152px;
+  grid-template-columns: minmax(0, 1fr) 112px;
   align-items: center;
-  padding-right: 32px;
 }
 
 .workspace-files__columns {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 152px;
-  padding-right: 32px;
+  grid-template-columns: minmax(0, 1fr) 112px;
   border-bottom: 1px solid var(--border-subtle);
-}
-
-.workspace-files[data-created-time="true"] :is(.workspace-files__entry, .workspace-files__columns) {
-  grid-template-columns: minmax(160px, 1fr) 152px 152px;
 }
 
 .workspace-files__columns button {
@@ -5596,9 +5590,19 @@ button > svg {
 }
 
 .workspace-files__time {
+  overflow: hidden;
+  padding-right: var(--space-2);
   color: var(--text-muted);
   font-size: var(--font-caption);
+  text-align: right;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspace-files__entry:hover .workspace-files__time,
+.workspace-files__entry:focus-within .workspace-files__time,
+.workspace-files__entry:has(.workspace-files__more[aria-expanded="true"]) .workspace-files__time {
+  opacity: 0;
 }
 
 .workspace-files__destination {
@@ -5667,11 +5671,7 @@ button > svg {
 }
 
 .workspace-files__tree {
-  min-width: 344px;
-}
-
-.workspace-files[data-created-time="true"] .workspace-files__tree {
-  min-width: 496px;
+  min-width: 0;
 }
 
 .workspace-files__children {
@@ -19493,7 +19493,10 @@ textarea.field-control {
 .workspace-git__commit { display: grid; width: 100%; padding: var(--space-2); grid-template-columns: minmax(0, 1fr); gap: var(--space-1); border-bottom: 1px solid var(--border-subtle); text-align: left; }
 .workspace-git__commit strong, .workspace-git__commit small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-git__commit span, .workspace-git__commit small { color: var(--text-secondary); font-size: var(--font-caption); }
-@media (hover: none), (pointer: coarse) { .workspace-files__more { opacity: 1; } }
+@media (hover: none), (pointer: coarse) {
+  .workspace-files__more { opacity: 1; }
+  .workspace-files__time { padding-right: 36px; }
+}
 .document-result-preview {
   display: flex;
   flex-direction: column;
