@@ -39,6 +39,8 @@ Manager 通过 `{ channel, status }` 增量 IPC 推送状态，忽略旧服务�
 
 Renderer 的 `channel-status-store.ts` 订阅事件，selector 只向状态区域提供对应通道数据。首次快照不会覆盖已收到的较新事件；状态更新不重新加载整份设置，不重置 Token 或白名单草稿。配置页复用共享页签、开关、项目设置字段和通知控件。
 
+首次配置说明、空白名单提示和发送者 ID 字段帮助均明确：ID 可先留空，先启用并保存通道，连接后私聊自己的 Bot 发送 `/whoami`，取得本人数字用户 ID 后填入并再次保存。仅测试连接不启动消息接收；用户名和 Bot ID 不能代替发送者 ID。白名单为空时仍只提供帮助，不接受 AI 请求。
+
 保存时读取状态 store 的最新值。Telegram 已启用、配置可编辑且状态为 `error` 或 `stopped` 时，即使字段未变，也提交当前配置以重启连接；`running`、`starting` 状态下的无修改保存不重启轮询。环境变量配置仍为只读，测试连接不改变轮询状态。
 
 源码入口：[`telegram-channel-driver.ts`](../../../src/main/channels/telegram-channel-driver.ts)、[`channel-manager.ts`](../../../src/main/channels/channel-manager.ts)、[`channel-service.ts`](../../../src/main/channels/channel-service.ts)、[`channel-settings-store.ts`](../../../src/main/channels/channel-settings-store.ts)、[`channel-status-store.ts`](../../../src/renderer/src/channel-status-store.ts)、[`ChannelSettingsSection.tsx`](../../../src/renderer/src/ChannelSettingsSection.tsx)。
