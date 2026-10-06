@@ -7,6 +7,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
+import fs from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -106,6 +107,7 @@ async function createDistribution(version = '1.5.47'): Promise<{
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   for (const restoreEnvironment of environmentRestorations.splice(0)) {
     restoreEnvironment()
@@ -309,7 +311,7 @@ describe('ContinueHostAdapter', () => {
     ).rejects.toThrow('未通过宿主兼容性校验')
     await expect(readdir(distribution.cacheRoot)).resolves.not.toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^model-config-/u)
+        expect.stringMatching(/^goodbuddy-model-config-/u)
       ])
     )
   })
@@ -355,9 +357,79 @@ describe('ContinueHostAdapter', () => {
     expect(launchHost).not.toHaveBeenCalled()
     await expect(readdir(distribution.cacheRoot)).resolves.not.toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^model-config-/u)
+        expect.stringMatching(/^goodbuddy-model-config-/u)
       ])
     )
+  })
+
+  it('removes a partially written owned config and preserves external files', async () => {
+    const distribution = await createDistribution()
+    await mkdir(distribution.cacheRoot)
+    const external = join(distribution.cacheRoot, 'external.yaml')
+    await writeFile(external, 'keep')
+    const adapter = new ContinueHostAdapter({ binaryPath: distribution.entryPath,
+      configPath: external, workspace: process.cwd(), cacheRoot: distribution.cacheRoot })
+    const realOpen = fs.open
+    vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+      const handle = await realOpen(...args)
+      vi.spyOn(handle, 'writeFile').mockImplementation(async () => {
+        await handle.write('partial')
+        throw new Error('disk full')
+      })
+      return handle
+    })
+    await expect((adapter as unknown as {
+      writeTemporaryConfig(prefix: string, value: object, root: string): Promise<string>
+    }).writeTemporaryConfig('model-config', {}, distribution.cacheRoot)).rejects.toThrow('disk full')
+    expect(await readdir(distribution.cacheRoot)).toEqual(['external.yaml'])
+    expect(await readFile(external, 'utf8')).toBe('keep')
+  })
+
+  it('preserves an existing config when exclusive creation fails', async () => {
+    const distribution = await createDistribution()
+    await mkdir(distribution.cacheRoot)
+    const id = crypto.randomUUID()
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue(id)
+    const path = join(distribution.cacheRoot, `goodbuddy-model-config-${id}.yaml`)
+    await writeFile(path, 'existing')
+    const adapter = new ContinueHostAdapter({ binaryPath: distribution.entryPath,
+      configPath: '', workspace: process.cwd(), cacheRoot: distribution.cacheRoot })
+    await expect((adapter as unknown as {
+      writeTemporaryConfig(prefix: string, value: object, root: string): Promise<string>
+    }).writeTemporaryConfig('model-config', {}, distribution.cacheRoot)).rejects.toMatchObject({ code: 'EEXIST' })
+    expect(await readFile(path, 'utf8')).toBe('existing')
+  })
+
+  it('preserves an existing global directory when exclusive creation fails', async () => {
+    const distribution = await createDistribution()
+    const id = crypto.randomUUID()
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue(id)
+    const path = join(distribution.cacheRoot, `goodbuddy-isolated-global-${id}`)
+    await mkdir(path, { recursive: true })
+    await writeFile(join(path, 'history'), 'existing')
+    const adapter = new ContinueHostAdapter({ binaryPath: distribution.entryPath,
+      configPath: '', workspace: process.cwd(), cacheRoot: distribution.cacheRoot })
+    await expect((adapter as unknown as {
+      createRunGlobalDirectory(root: string): Promise<string>
+    }).createRunGlobalDirectory(distribution.cacheRoot)).rejects.toMatchObject({ code: 'EEXIST' })
+    expect(await readFile(join(path, 'history'), 'utf8')).toBe('existing')
+  })
+
+  it('preserves the prepared cache and external config after skill setup fails', async () => {
+    const distribution = await createDistribution()
+    const configPath = join(distribution.cacheRoot, 'external.json')
+    await mkdir(distribution.cacheRoot)
+    await writeFile(configPath, '{}')
+    const adapter = new ContinueHostAdapter({ binaryPath: distribution.entryPath,
+      configPath, workspace: process.cwd(), cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      skillPackages: [{ id: 'missing', directory: join(distribution.cacheRoot, 'missing') }] })
+    const prepared = await adapter.getPreparedHost()
+    const before = await readdir(distribution.cacheRoot)
+    await expect(adapter.run('test', new AbortController().signal, async () => 'once')).rejects.toThrow('Skill')
+    expect(await readdir(distribution.cacheRoot)).toEqual(before)
+    expect(existsSync(prepared.entryPath)).toBe(true)
+    expect(await readFile(configPath, 'utf8')).toBe('{}')
   })
 
   it('blocks runs without an explicit model profile or config file', async () => {

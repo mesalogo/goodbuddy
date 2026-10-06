@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import type spawn from "cross-spawn";
@@ -857,6 +857,10 @@ describe("OpenCodeRuntime embedded launcher", () => {
         available: true,
       });
       const firstEnvironment = first.spawnMock.mock.calls[0]?.[2]?.env;
+      const launchDirectory = dirname(firstEnvironment?.XDG_DATA_HOME ?? "");
+      expect(dirname(launchDirectory)).toBe(sharedCacheRoot);
+      const ownerPath = join(sharedCacheRoot, `.${basename(launchDirectory)}.owner.json`);
+      expect(JSON.parse(await readFile(ownerPath, "utf8"))).toEqual({ creatorPid: process.pid, childPid: firstChild.pid });
       const firstConfigDirectory = firstEnvironment?.OPENCODE_CONFIG_DIR ?? "";
       const firstConfig = JSON.parse(
         firstEnvironment?.OPENCODE_CONFIG_CONTENT ?? "{}",
@@ -887,6 +891,8 @@ describe("OpenCodeRuntime embedded launcher", () => {
         OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1",
       });
       await firstRuntime.dispose();
+      await expect(stat(launchDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(ownerPath)).rejects.toMatchObject({ code: "ENOENT" });
       await expect(
         readFile(join(firstSkillsRoot, "shared-skill", "SKILL.md"), "utf8"),
       ).resolves.toContain("name: shared-skill");

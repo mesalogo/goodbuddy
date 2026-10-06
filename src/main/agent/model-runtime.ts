@@ -32,6 +32,7 @@ import {
   type ModelToolCallContext,
   type ModelToolDefinition,
   type ModelToolProviderLike,
+  type ModelToolProviderProgrammingOptions,
   type ModelToolResult,
   type ModelToolResultPart,
   type ModelSubagentRequestContext
@@ -87,6 +88,7 @@ type ConversationMessage = {
 // the parent's browser tab and its owning conversation. They acquire no lease.
 type ModelExecutionRequest = AgentExecutionRequest & {
   browserConversationId?: string
+  outputHistory?: ModelToolCallContext['outputHistory']
 }
 
 type ProviderConversationMessage = Pick<
@@ -233,6 +235,8 @@ function getCurrentTimeInstruction(now = new Date()): string {
 }
 
 export type ModelRuntimeOptions = {
+  outputStore?: ModelToolProviderProgrammingOptions['outputStore']
+  outputAdopt?: ModelToolProviderProgrammingOptions['outputAdopt']
   apiKey?: string
   baseUrl: string
   model: string
@@ -867,7 +871,7 @@ function getChatToolResultText(parts: ModelToolResultPart[]): string {
     .join('\n\n')
 }
 
-function getToolResultPreview(parts: ModelToolResultPart[]): string {
+function getToolResultPreview(parts: ModelToolResultPart[], limit = 16_000): string {
   let imageNumber = 0
   return parts
     .map((part) => {
@@ -879,7 +883,7 @@ function getToolResultPreview(parts: ModelToolResultPart[]): string {
     })
     .filter(Boolean)
     .join('\n\n')
-    .slice(0, 16_000)
+    .slice(0, limit)
 }
 
 function createToolErrorResult(
@@ -1666,6 +1670,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       const directModelSubagentService =
         options.directModelSubagentScheduler
           ? new DirectModelSubagentService<ModelSubagentRequestContext>({
+              outputStore: options.outputStore,
               scheduler: options.directModelSubagentScheduler,
               runChild: (input) =>
                 this.runDirectModelSubagent(input),
@@ -1682,7 +1687,10 @@ export class ModelAgentRuntime implements AgentRuntime {
         options.knowledgeGateway,
         options.webSearchEnabled,
         {
+          outputStore: options.outputStore,
+          outputAdopt: options.outputAdopt,
           processService: new LocalDirectModelProcessService({
+            outputStore: options.outputStore,
             environment: options.launchEnvironmentProvider?.(),
             ...(options.ripgrepExecutablePath
               ? { toolBinDirectory: dirname(options.ripgrepExecutablePath) }
@@ -1704,6 +1712,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       {
         requestId: input.context.childRunId,
         conversationId: input.context.conversationId,
+        outputHistory: input.requestContext.outputHistory,
         browserTabId: input.requestContext.browserTabId,
         browserConversationId:
           input.requestContext.browserConversationId,
@@ -1722,7 +1731,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       input.requestContext.authorize
     )) {
       if (event.type === 'text') {
-        input.onOutput(event.delta)
+        await input.onOutput(event.delta)
       } else if (event.type === 'model-usage') {
         input.onModelUsage(event)
       } else if (event.type === 'tool') {
@@ -3415,7 +3424,11 @@ export class ModelAgentRuntime implements AgentRuntime {
       wakeNestedEvents?.()
       wakeNestedEvents = undefined
     }
+    const outputHistory = request.outputHistory ?? (request.currentAssistantMessageId
+      ? { conversationId: request.conversationId, messageId: request.currentAssistantMessageId }
+      : undefined)
     const toolContext: ModelToolCallContext = {
+      outputHistory,
       imageToolBinding: request.imageToolBinding,
       conversationId: request.conversationId,
       browserTabId: request.browserTabId,
@@ -3430,6 +3443,7 @@ export class ModelAgentRuntime implements AgentRuntime {
         ? {
             subagentBridge: {
               requestContext: {
+                outputHistory,
                 authorize,
                 browserTabId: request.browserTabId,
                 browserConversationId:
@@ -3879,7 +3893,11 @@ export class ModelAgentRuntime implements AgentRuntime {
             state: 'completed',
             summary,
             input,
-            output: getToolResultPreview(result.parts)
+            // These results already bound previews and reference spilled streams.
+            // A second truncation would discard inline stdout/stderr from history.
+            output: getToolResultPreview(result.parts,
+              tool.name === 'process_execute' || tool.name === 'workspace_rg' ? 256 * 1024 : 16_000),
+            ...(result.outputReferences ? { outputReferences: result.outputReferences } : {})
           }
         }
       }

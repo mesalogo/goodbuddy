@@ -13,6 +13,7 @@ import type { AgentRuntime } from '../agent/runtime'
 import { supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
 import type { ReviewState } from './supervision-review-store'
 import { ReadonlyQueryReader } from '../readonly-query-reader'
+import { asyncSupervisionStorage } from '../../../tests/support/async-supervision-storage'
 
 let directory: string, workerPath: string
 const cleanup: Array<() => Promise<void>> = []
@@ -30,7 +31,8 @@ async function fixture() {
   const path = join(root, 'assistant.sqlite')
   const db = new AssistantDatabase(path)
   db.initialize(root)
-  db.enableReadonlyWorker(workerPath)
+  const reader = new ReadonlyQueryReader('assistant', path, workerPath)
+  const storage = asyncSupervisionStorage(db, undefined, reader).supervision
   const sql = new DatabaseSync(path)
   const project = db.listProjects()[0]!
   const other = db.createProject({ name: 'Other', description: '', rootPath: root })
@@ -47,8 +49,8 @@ async function fixture() {
   const state: ReviewState = { request: { trigger: 'manual', scope: { kind: 'global' },
     timeRange: { from: '2026-01-01T00:00:00.000Z', to: '2027-01-01T00:00:00.000Z' } },
     config: { ...supervisionReviewSettingsSchema.parse({}), version: 1, timeoutSeconds: 30, concurrency: 1 }, phase: 'collecting' }
-  cleanup.push(async () => { sql.close(); db.close(); await rm(root, { recursive: true, force: true, maxRetries: 10 }) })
-  return { root, path, db, sql, state, project, conversations }
+  cleanup.push(async () => { await reader.close(); sql.close(); db.close(); await rm(root, { recursive: true, force: true, maxRetries: 10 }) })
+  return { root, path, db, sql, state, project, conversations, storage }
 }
 
 it('preserves every source, revision, Unicode length and checkpoint for global, project and re-analysis scopes', async () => {
@@ -62,7 +64,7 @@ it('preserves every source, revision, Unicode length and checkpoint for global, 
     for (const reanalyze of [false, true]) {
       const state = { ...f.state, request: { ...f.state.request, scope, reanalyze } }
       const id = f.db.startSupervisionRun(state.request)
-      await f.db.initializeSupervisionReview(id, state, new AbortController().signal)
+      await f.storage.initializeSupervisionReview(id, state, new AbortController().signal)
       const expected = rows.filter(row => scope.kind === 'global' || row.project_id === f.project.id).map(row => ({
         source: row.source, revision: hash(row.context), project_id: row.project_id,
         conversation_id: row.type === 'task' ? f.conversations[0]!.id : row.conversation_id,
@@ -76,8 +78,8 @@ it('preserves every source, revision, Unicode length and checkpoint for global, 
       expect(f.db.supervisionReviewStore().load(id).initializing).toBeUndefined()
     }
   }
-  expect(await f.db.supervisionContext(f.state.request)).toEqual({ summary: f.db.reviewSummary(f.state.request.scope, 'supervisor'), background: f.db.reviewBackground(f.state.request.scope) })
-  expect(await f.db.supervisionCandidates(f.state.request)).toEqual(f.db.listSupervisionCandidates(f.state.request))
+  expect(await f.storage.supervisionContext(f.state.request)).toEqual({ summary: f.db.reviewSummary(f.state.request.scope, 'supervisor'), background: f.db.reviewBackground(f.state.request.scope) })
+  expect(await f.storage.supervisionCandidates(f.state.request)).toEqual(f.db.listSupervisionCandidates(f.state.request))
 })
 
 it('rebuilds a partially written manifest after restart and validates completed legacy manifests on resume', async () => {
@@ -85,18 +87,18 @@ it('rebuilds a partially written manifest after restart and validates completed 
   const id = f.db.startSupervisionRun(f.state.request)
   f.sql.exec(`CREATE TRIGGER fail_manifest BEFORE INSERT ON supervision_review_sources
     WHEN (SELECT COUNT(*) FROM supervision_review_sources) >= 200 BEGIN SELECT RAISE(ABORT, 'interrupted initialization'); END`)
-  await expect(f.db.initializeSupervisionReview(id, f.state, new AbortController().signal)).rejects.toThrow('interrupted initialization')
+  await expect(f.storage.initializeSupervisionReview(id, f.state, new AbortController().signal)).rejects.toThrow('interrupted initialization')
   expect(f.db.supervisionReviewStore().progress(id).sources).toBe(200)
   expect(() => f.db.supervisionReviewStore().assertComplete(id)).toThrow('incomplete source manifest')
   f.sql.exec('DROP TRIGGER fail_manifest')
   f.db.close()
   f.db.initialize(f.root)
-  await f.db.resumeSupervisionReview(id, new AbortController().signal)
+  await f.storage.resumeSupervisionReview(id, new AbortController().signal)
   expect(f.db.supervisionReviewStore().progress(id).sources).toBe(422)
   expect(f.db.supervisionReviewStore().load(id).initializing).toBeUndefined()
   // Existing saved runs have no initialization flag and retain their frozen versions.
   f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('Changed', f.conversations[0]!.messages[0]!.id)
-  await expect(f.db.resumeSupervisionReview(id, new AbortController().signal)).rejects.toThrow('source changed')
+  await expect(f.storage.resumeSupervisionReview(id, new AbortController().signal)).rejects.toThrow('source changed')
   expect(f.db.supervisionReviewStore().load(id).restartRequired).toBe(true)
 })
 
@@ -105,10 +107,10 @@ it.each(['paused', 'cancelled'] as const)('accepts %s during production initiali
   const pool = new SupervisionModelPool()
   cleanup.push(async () => pool.dispose())
   const run = vi.fn(async function* () { throw new Error('Model must not start'); yield { type: 'done' } })
-  const service = createProductionSupervisorService(f.db, async () => ({}), async () => ({ run, dispose: async () => {} }) as unknown as AgentRuntime, pool)
-  const initialize = f.db.initializeSupervisionReview.bind(f.db)
+  const service = createProductionSupervisorService(f.storage, async () => ({}), async () => ({ run, dispose: async () => {} }) as unknown as AgentRuntime, pool)
+  const initialize = f.storage.initializeSupervisionReview.bind(f.storage)
   let cancellation: Promise<void> | undefined
-  vi.spyOn(f.db, 'initializeSupervisionReview').mockImplementation((id, state, signal) => {
+  vi.spyOn(f.storage, 'initializeSupervisionReview').mockImplementation((id, state, signal) => {
     const pending = initialize(id, state, signal)
     if (status === 'paused') service.pause(id)
     else cancellation = service.cancel(id)
@@ -124,16 +126,17 @@ it.each(['paused', 'cancelled'] as const)('accepts %s during production initiali
   expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints').get()!.n).toBe(0)
   if (status === 'cancelled') await expect(service.resume(result.runId!)).rejects.toThrow('SUPERVISION_REVIEW_CANCELLED')
   else {
-    await f.db.resumeSupervisionReview(result.runId!, new AbortController().signal)
+    await f.storage.resumeSupervisionReview(result.runId!, new AbortController().signal)
     expect(f.db.supervisionReviewStore().progress(result.runId!).sources).toBe(422)
   }
 })
 
 it('fails explicitly when the worker entry is missing instead of running the scan on Main', async () => {
   const f = await fixture()
-  f.db.enableReadonlyWorker(join(directory, 'missing-worker.cjs'))
+  const reader = new ReadonlyQueryReader('assistant', f.path, join(directory, 'missing-worker.cjs'))
+  cleanup.unshift(() => reader.close())
   const id = f.db.startSupervisionRun(f.state.request)
-  await expect(f.db.initializeSupervisionReview(id, f.state, new AbortController().signal)).rejects.toThrow()
+  await expect(f.db.supervisionReviewStore().initializeWithReader(id, f.state, reader.reviewManifest(id))).rejects.toThrow()
   expect(f.db.supervisionReviewStore().load(id).initializing).toBe(true)
   expect(f.db.supervisionReviewStore().progress(id).sources).toBe(0)
 })
@@ -141,9 +144,9 @@ it('fails explicitly when the worker entry is missing instead of running the sca
 it('worker resume omits hard-deleted owners including knowledge references and tasks', async () => {
   const f = await fixture()
   const id = f.db.startSupervisionRun(f.state.request)
-  await f.db.initializeSupervisionReview(id, f.state, new AbortController().signal)
+  await f.storage.initializeSupervisionReview(id, f.state, new AbortController().signal)
   f.sql.prepare('DELETE FROM conversations WHERE id = ?').run(f.conversations[0]!.id)
-  await f.db.resumeSupervisionReview(id, new AbortController().signal)
+  await f.storage.resumeSupervisionReview(id, new AbortController().signal)
   expect(f.db.supervisionReviewStore().progress(id)).toMatchObject({ sources: 210, remainingSources: 210, omittedSources: 212 })
   expect(f.sql.prepare('SELECT COUNT(*) AS n FROM supervision_review_sources WHERE run_id = ? AND conversation_id = ?').get(id, f.conversations[0]!.id)!.n).toBe(0)
 })
@@ -155,7 +158,7 @@ it('drops conversation sources deleted while the worker copies its initializatio
     WHEN (SELECT COUNT(*) FROM supervision_review_sources) = 200 BEGIN
       DELETE FROM conversations WHERE id = '${f.conversations[0]!.id}';
     END`)
-  await f.db.initializeSupervisionReview(id, f.state, new AbortController().signal)
+  await f.storage.initializeSupervisionReview(id, f.state, new AbortController().signal)
   expect(f.db.supervisionReviewStore().progress(id)).toMatchObject({ sources: 210, omittedSources: 212, remainingSources: 210 })
   expect(() => f.db.getConversation(f.conversations[0]!.id)).toThrow('对话不存在')
 })
@@ -170,7 +173,7 @@ it('publishes full worker-selected coverage atomically and skips it on the next 
     yield { type: 'text', delta: JSON.stringify({ summary: 'Local stub', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
     yield { type: 'done' }
   }, async dispose() {}, async releaseConversation() {} } as unknown as AgentRuntime
-  const service = createProductionSupervisorService(f.db, async () => ({}), async () => runtime, pool)
+  const service = createProductionSupervisorService(f.storage, async () => ({}), async () => runtime, pool)
   const result = await service.run(f.state.request)
   expect(result).toMatchObject({ status: 'completed', coverage: { sources: 422, remainingSources: 0, complete: true } })
   expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints').get()!.n).toBe(422)
@@ -206,7 +209,7 @@ it.each([false, true])('production worker preserves batch candidate isolation wi
     yield { type: 'text', delta: JSON.stringify(empty) }
     yield { type: 'done' }
   }, async dispose() {} } as unknown as AgentRuntime
-  const service = createProductionSupervisorService(f.db, async () => ({ supervisionReview: supervisionReviewSettingsSchema.parse({ crossProject }) }), async () => runtime, pool)
+  const service = createProductionSupervisorService(f.storage, async () => ({ supervisionReview: supervisionReviewSettingsSchema.parse({ crossProject }) }), async () => runtime, pool)
   await expect(service.run(f.state.request)).resolves.toMatchObject({ status: 'completed', coverage: { sources: 422 } })
   expect([...seen].sort()).toEqual(projects.map(p => p.id).sort())
   expect(f.sql.prepare('SELECT COUNT(*) AS n FROM supervision_entities').get()!.n).toBe(2)
@@ -221,11 +224,11 @@ it.each(['paused', 'cancelled'] as const)('honors %s during the final production
     yield { type: 'text', delta: JSON.stringify({ summary: 'Saved leaf', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
     yield { type: 'done' }
   }, async dispose() {} } as unknown as AgentRuntime
-  const service = createProductionSupervisorService(f.db, async () => ({}), async () => runtime, pool)
-  const candidates = f.db.supervisionCandidates.bind(f.db)
+  const service = createProductionSupervisorService(f.storage, async () => ({}), async () => runtime, pool)
+  const candidates = f.storage.supervisionCandidates.bind(f.storage)
   let stopped = false
   let cancellation: Promise<void> | undefined
-  vi.spyOn(f.db, 'supervisionCandidates').mockImplementation(async (...args) => {
+  vi.spyOn(f.storage, 'supervisionCandidates').mockImplementation(async (...args) => {
     const result = await candidates(...args)
     const runId = service.execution().runId!
     if (!stopped && f.db.supervisionReviewStore().progress(runId).phase === 'saving') {
@@ -250,18 +253,18 @@ it.each(['paused', 'cancelled'] as const)('honors %s during the final production
   }
 })
 
-it.each(['crash', 'close'] as const)('settles writer %s before releasing pending work and can rebuild after reopening', async action => {
+it.each(['crash', 'close'] as const)('settles scan %s before releasing pending work and can rebuild after reopening', async action => {
   const f = await fixture()
   const id = f.db.startSupervisionRun(f.state.request)
   f.db.supervisionReviewStore().prepareInitialization(id, f.state)
-  const reader = new ReadonlyQueryReader('supervision', f.path, workerPath)
-  const pending = reader.call('initialize', [id, f.state])
+  const reader = new ReadonlyQueryReader('assistant', f.path, workerPath)
+  const pending = f.db.supervisionReviewStore().resumeWithReader(id, reader.reviewManifest(id))
   const failure = expect(pending).rejects.toThrow()
   if (action === 'close') reader.close()
   else await reader.terminateWorkerForTest()
   await failure
   expect(reader.pendingCount).toBe(0)
   reader.close()
-  await f.db.resumeSupervisionReview(id, new AbortController().signal)
+  await f.storage.resumeSupervisionReview(id, new AbortController().signal)
   expect(f.db.supervisionReviewStore().progress(id).sources).toBe(422)
 })

@@ -309,6 +309,15 @@ export class AgentModelCallLedger {
   }
 }
 
+/** Remote Agent uses the concrete ledger; desktop awaits its storage host. */
+export type ModelCallLedger = {
+  [K in keyof AgentModelCallLedger]: (
+    ...args: Parameters<AgentModelCallLedger[K]>
+  ) => ReturnType<AgentModelCallLedger[K]> | Promise<ReturnType<AgentModelCallLedger[K]>>
+}
+
+export type ModelCallLedgerFactory = (path: string) => Promise<ModelCallLedger>
+
 export type AgentModelGatewayContext = {
   bindingId: string
   operationId: string
@@ -319,11 +328,11 @@ export type AgentModelGatewayContext = {
 }
 
 export class AgentModelGateway {
-  readonly #ledger: AgentModelCallLedger
+  readonly #ledger: ModelCallLedger
   readonly #fetch: typeof fetch
 
   constructor(options: {
-    ledger: AgentModelCallLedger
+    ledger: ModelCallLedger
     fetcher?: typeof fetch
   }) {
     this.#ledger = options.ledger
@@ -348,7 +357,7 @@ export class AgentModelGateway {
     )
     const requestDigest = sha256(prepared.canonicalRequest)
     const callId = createAgentModelCallId(context)
-    this.#ledger.claim({
+    await this.#ledger.claim({
       callId,
       bindingId: context.bindingId,
       operationId: context.operationId,
@@ -366,6 +375,7 @@ export class AgentModelGateway {
     timer?.unref?.()
     let response: Response
     try {
+      signal.throwIfAborted()
       response = await this.#fetch(prepared.url, {
         method: 'POST',
         redirect: 'error',
@@ -380,7 +390,7 @@ export class AgentModelGateway {
         : signal.aborted
           ? 'cancelled'
           : 'outcome-unknown'
-      this.#ledger.outcomeUnknown(callId, code)
+      await this.#ledger.outcomeUnknown(callId, code)
       throw new AgentModelGatewayError(
         code,
         'Provider dispatch outcome is unknown'
@@ -403,7 +413,7 @@ export class AgentModelGateway {
           : error instanceof BoundedResponseTooLargeError
             ? 'response-too-large'
             : 'outcome-unknown'
-      this.#ledger.outcomeUnknown(callId, code)
+      await this.#ledger.outcomeUnknown(callId, code)
       throw error instanceof AgentModelGatewayError
         ? error
         : new AgentModelGatewayError(
@@ -418,7 +428,7 @@ export class AgentModelGateway {
     clearTimeout(timer)
     if (signal.aborted || timeout.signal.aborted) {
       const code = timeout.signal.aborted ? 'timeout' : 'cancelled'
-      this.#ledger.outcomeUnknown(callId, code)
+      await this.#ledger.outcomeUnknown(callId, code)
       throw new AgentModelGatewayError(
         code,
         'Provider response arrived after cancellation'
@@ -441,7 +451,7 @@ export class AgentModelGateway {
       headers,
       bodyBase64: Buffer.from(bytes).toString('base64')
     })
-    this.#ledger.complete(callId)
+    await this.#ledger.complete(callId)
     let finalized = false
     return {
       response: bridgeResponse,
@@ -453,7 +463,7 @@ export class AgentModelGateway {
           )
         }
         finalized = true
-        this.#ledger.delivered(callId)
+        await this.#ledger.delivered(callId)
       },
       failDelivery: () => {
         finalized = true

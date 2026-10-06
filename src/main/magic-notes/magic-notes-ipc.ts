@@ -13,18 +13,18 @@ import {
   magicNoteUpdateSchema,
   magicTodoUpdateSchema
 } from '../../shared/magic-notes-contracts'
-import type { AssistantDatabase } from '../assistant/assistant-database'
+import type { AssistantStoragePort } from '../assistant-storage-port'
 import { assertTrustedSender } from '../trusted-ipc-sender'
 import { magicNotePlainText, validateMagicNoteContent } from './rich-content'
 
 export function registerMagicNotesIpcHandlers(
   registerHandler: typeof ipcMain.handle,
   window: BrowserWindow,
-  assistantDatabase: AssistantDatabase
+  assistantDatabase: AssistantStoragePort
 ): void {
-  const resolveMagicNoteSource = (source?: MagicNoteSource): MagicNoteSource | undefined => {
+  const resolveMagicNoteSource = async (source?: MagicNoteSource): Promise<MagicNoteSource | undefined> => {
     if (!source) return undefined
-    const conversation = assistantDatabase.getConversation(source.conversationId)
+    const conversation = await assistantDatabase.getConversation(source.conversationId)
     const messages = new Map(conversation.messages.map((message) => [message.id, message]))
     for (const id of source.messageIds) {
       const message = messages.get(id)
@@ -32,7 +32,7 @@ export function registerMagicNotesIpcHandlers(
         throw new Error('Invalid conversation source message')
       }
     }
-    const project = conversation.projectId ? assistantDatabase.getProject(conversation.projectId) : undefined
+    const project = conversation.projectId ? await assistantDatabase.getProject(conversation.projectId) : undefined
     return {
       kind: source.kind,
       conversationId: conversation.id,
@@ -49,11 +49,11 @@ export function registerMagicNotesIpcHandlers(
     return assistantDatabase.searchMagicNoteSummaries(query, limit)
   })
 
-  registerHandler(ipcChannels.magicNotesList, (event) => {
+  registerHandler(ipcChannels.magicNotesList, async (event) => {
     assertTrustedSender(event, window)
     return {
-      notes: assistantDatabase.listMagicNotes(),
-      tags: assistantDatabase.listMagicNoteTags()
+      notes: await assistantDatabase.listMagicNotes(),
+      tags: await assistantDatabase.listMagicNoteTags()
     }
   })
 
@@ -65,7 +65,7 @@ export function registerMagicNotesIpcHandlers(
   registerHandler(ipcChannels.magicNotesDeleteTag, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const { tagId } = magicNoteTagDeleteSchema.parse(input)
-    assistantDatabase.deleteMagicNoteTag(tagId)
+    return assistantDatabase.deleteMagicNoteTag(tagId)
   })
 
   registerHandler(ipcChannels.magicNotesGet, (event, input: unknown) => {
@@ -74,10 +74,10 @@ export function registerMagicNotesIpcHandlers(
     return assistantDatabase.getMagicNote(noteId)
   })
 
-  registerHandler(ipcChannels.magicNotesCreate, (event, input: unknown) => {
+  registerHandler(ipcChannels.magicNotesCreate, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     const parsed = magicNoteCreateSchema.parse(input)
-    return assistantDatabase.createMagicNote({ ...parsed, source: resolveMagicNoteSource(parsed.source) })
+    return assistantDatabase.createMagicNote({ ...parsed, source: await resolveMagicNoteSource(parsed.source) })
   })
 
   registerHandler(ipcChannels.magicNotesUpdate, (event, input: unknown) => {
@@ -90,19 +90,19 @@ export function registerMagicNotesIpcHandlers(
   registerHandler(ipcChannels.magicNotesDelete, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const { noteId } = magicNoteDeleteSchema.parse(input)
-    assistantDatabase.deleteMagicNote(noteId)
+    return assistantDatabase.deleteMagicNote(noteId)
   })
 
   registerHandler(
     ipcChannels.magicNotesCreateEntry,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const parsed = magicNoteEntryCreateSchema.parse(input)
       const content = validateMagicNoteContent(parsed.content)
       return assistantDatabase.createMagicNoteEntry({
         noteId: parsed.noteId,
         content,
-        source: resolveMagicNoteSource(parsed.source),
+        source: await resolveMagicNoteSource(parsed.source),
         plainText: magicNotePlainText(content)
       })
     }
@@ -136,13 +136,13 @@ export function registerMagicNotesIpcHandlers(
 export function registerMagicTodosIpcHandlers(
   registerHandler: typeof ipcMain.handle,
   window: BrowserWindow,
-  assistantDatabase: AssistantDatabase
+  assistantDatabase: AssistantStoragePort
 ): void {
   registerHandler(
     ipcChannels.magicTodosList,
-    (event) => {
+    async (event) => {
       assertTrustedSender(event, window)
-      return { todos: assistantDatabase.listMagicTodos() }
+      return { todos: await assistantDatabase.listMagicTodos() }
     }
   )
 
@@ -156,14 +156,14 @@ export function registerMagicTodosIpcHandlers(
 
   registerHandler(
     ipcChannels.magicTodosUpdate,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const todo = assistantDatabase.updateMagicTodo(
+      const todo = await assistantDatabase.updateMagicTodo(
         magicTodoUpdateSchema.parse(input)
       )
       return {
         todo,
-        note: assistantDatabase.getMagicNote(todo.noteId)
+        note: await assistantDatabase.getMagicNote(todo.noteId)
       }
     }
   )

@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os'
 import net from 'node:net'
 import { Duplex } from 'node:stream'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import fs from 'node:fs/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   REMOTE_MODEL_GATEWAY_LIMITS,
@@ -58,6 +60,67 @@ afterEach(() => {
 })
 
 describe('model bridge loopback helper', () => {
+  it('removes a partially created plugin and listeners on write failure', async () => {
+    let pluginPath = ''
+    const write = fs.writeFile
+    vi.spyOn(fs, 'writeFile').mockImplementationOnce(async (...args) => {
+      pluginPath = String(args[0])
+      await write(...args)
+      throw new Error('disk full')
+    })
+    const listeners = process.listenerCount('SIGTERM')
+    await expect(runOpenCodeModelBridgeHelper({ socketPath: join(privateTemporaryDirectory(), 'unused.sock'),
+      protocol: 'openai-chat-completions', model: 'test', supportsImageInput: false,
+      opencodeEntrypoint: resolve('unused') })).rejects.toThrow('disk full')
+    expect(pluginPath).not.toBe('')
+    expect(existsSync(pluginPath)).toBe(false)
+    expect(process.listenerCount('SIGTERM')).toBe(listeners)
+  })
+
+  it.each(['SIGTERM', 'SIGINT'] as const)('waits for child exit before plugin cleanup on %s', async signal => {
+    const child = Object.assign(new EventEmitter(), { kill: vi.fn() })
+    const spawn = vi.fn<ModelBridgeHelperSpawn>(() => child)
+    const listeners = process.listenerCount(signal)
+    const running = runOpenCodeModelBridgeHelper({ socketPath: join(privateTemporaryDirectory(), 'unused.sock'),
+      protocol: 'openai-chat-completions', model: 'test', supportsImageInput: false,
+      opencodeEntrypoint: resolve('unused'), spawn,
+      environment: { HOME: tmpdir(), LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', PATH: process.env.PATH,
+        TMPDIR: tmpdir(), XDG_CACHE_HOME: tmpdir(), XDG_CONFIG_HOME: tmpdir(),
+        XDG_DATA_HOME: tmpdir(), XDG_STATE_HOME: tmpdir() } })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    const config = JSON.parse(spawn.mock.calls[0]![2].env.OPENCODE_CONFIG_CONTENT!)
+    const plugin = fileURLToPath(config.plugin[0])
+    try {
+      process.emit(signal)
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+      expect(existsSync(plugin)).toBe(true)
+    } finally {
+      child.emit('close', null, 'SIGTERM')
+      await expect(running).resolves.toBe(128)
+    }
+    expect(existsSync(plugin)).toBe(false)
+    expect(process.listenerCount(signal)).toBe(listeners)
+  })
+
+  it('does not spawn after a signal during plugin creation', async () => {
+    const write = fs.writeFile
+    let plugin = ''
+    vi.spyOn(fs, 'writeFile').mockImplementationOnce(async (...args) => {
+      plugin = String(args[0])
+      await write(...args)
+      process.emit('SIGTERM')
+    })
+    const spawn = vi.fn<ModelBridgeHelperSpawn>()
+    await expect(runOpenCodeModelBridgeHelper({ socketPath: join(privateTemporaryDirectory(), 'unused.sock'),
+      protocol: 'openai-chat-completions', model: 'test', supportsImageInput: false,
+      opencodeEntrypoint: resolve('unused'), spawn,
+      environment: { HOME: tmpdir(), LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', PATH: process.env.PATH,
+        TMPDIR: tmpdir(), XDG_CACHE_HOME: tmpdir(), XDG_CONFIG_HOME: tmpdir(),
+        XDG_DATA_HOME: tmpdir(), XDG_STATE_HOME: tmpdir() } })).resolves.toBe(128)
+    expect(spawn).not.toHaveBeenCalled()
+    expect(existsSync(plugin)).toBe(false)
+  })
+
   it(
     'preserves launch profile offline resources in the final OpenCode spawn',
     async () => {

@@ -165,9 +165,10 @@ export function SupervisorWorkspace({
     if (!api) return
     const generation = ++loadGeneration.current
     setPending(undefined)
+    // Keep the current canvas mounted while reloading the same review.
+    if (requestedId !== selectedResult.current) setGraph(emptyGraph)
     selectedResult.current = requestedId
     setOverviewLoading(true)
-    setGraph(emptyGraph)
     setGraphResultId(undefined)
     setGraphError(undefined)
     setResultId(requestedId)
@@ -187,6 +188,7 @@ export function SupervisorWorkspace({
       setResults(overview)
       if (requestedId && !selected) throw new Error('Requested supervision result is unavailable')
       const nextId = requestedId ?? selected?.id
+      if (nextId !== requestedId) setGraph(emptyGraph)
       setResultId(nextId)
       selectedResult.current = nextId
     } catch {
@@ -854,6 +856,7 @@ export function SupervisorWorkspace({
                         <StoryGraph3D stories={storyState.view.stories} events={graph.events} projectNames={projectNames} attention={graph.attention ?? noAttention} timeRange={latest?.timeRange}
                           toolbar={graphTools}
                           selectedEventId={selection?.kind === 'event' ? selection.id : undefined}
+                          selectedStoryId={selection?.kind === 'story' ? selection.id : undefined}
                           onSelectEvent={(id) => { if (layout.eventMap.has(id)) select({ kind: 'event', id }) }}
                           onSelectStory={(id) => select({ kind: 'story', id })}
                           experiences={storyState.view.experiences}

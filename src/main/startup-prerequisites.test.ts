@@ -21,6 +21,29 @@ function deferred<T = void>(): {
 }
 
 describe('runStartupPrerequisites', () => {
+  it.each([false, true])('awaits asynchronous assistant recovery, rejected=%s', async rejected => {
+    const assistant = deferred()
+    const result = runStartupPrerequisites({
+      prepareDeepSeekHome: async () => undefined,
+      initializeKnowledgeAndGateway: async () => undefined,
+      hydrateConfiguredRuntime: async () => ({ id: 'configured' }),
+      initializeAssistant: () => assistant.promise
+    })
+    const settled = vi.fn()
+    void result.then(settled, settled)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+    if (rejected) {
+      const error = new Error('Recovery write failed')
+      assistant.reject(error)
+      await expect(result).rejects.toMatchObject({ stage: 'assistant-database', cause: error })
+    } else {
+      assistant.resolve()
+      await expect(result).resolves.toEqual({ id: 'configured' })
+    }
+  })
+
   it('starts independent work before synchronous initialization and waits for every branch', async () => {
     const order: string[] = []
     const deepSeekHome = deferred()

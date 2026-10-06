@@ -9,7 +9,7 @@ import {
 import { createDefaultModelRuntime } from '../agent/create-runtime'
 import type { RuntimeModelUsageEvent } from '../agent/runtime'
 import type { ApplicationSettingsStore } from '../application-settings-store'
-import type { AssistantDatabase } from '../assistant/assistant-database'
+import type { AssistantStoragePort, Awaitable } from '../assistant-storage-port'
 import type { RuntimeSettingsStore } from '../runtime-settings-store'
 import { assertTrustedSender } from '../trusted-ipc-sender'
 import {
@@ -21,10 +21,10 @@ import { magicNotePlainText, validateMagicNoteContent } from './rich-content'
 
 type AnalysisDependencies = {
   window: BrowserWindow
-  assistantDatabase: AssistantDatabase
+  assistantDatabase: AssistantStoragePort
   settingsStore: Pick<RuntimeSettingsStore, 'getResolvedSettings'>
   applicationSettingsStore?: Pick<ApplicationSettingsStore, 'get'>
-  persistModelUsage: (event: RuntimeModelUsageEvent) => void
+  persistModelUsage: (event: RuntimeModelUsageEvent) => Awaitable<void>
   safeRuntimeError: (error: unknown, fallback: string) => string
 }
 
@@ -39,24 +39,24 @@ export function registerMagicNotesAnalysisIpcHandlers(
       const { entryId, requestId, direction, format, canvasImages, canvasPageText, expectedRevision } =
         magicNoteAnalyzeSchema.parse(input)
       const settings = await settingsStore.getResolvedSettings()
-      const entry = assistantDatabase.getMagicNoteEntry(entryId)
+      const entry = await assistantDatabase.getMagicNoteEntry(entryId)
       if (expectedRevision !== undefined && entry.revision !== expectedRevision) {
         throw new Error('记录已被更新，请重新捕获并分析')
       }
-      const note = assistantDatabase.getMagicNoteContext(entry.noteId)
+      const note = await assistantDatabase.getMagicNoteContext(entry.noteId)
       const canvasPageCount = (await applicationSettingsStore?.get())?.magicNoteCanvasPageCount ?? 1
       const analysisRuntime = createDefaultModelRuntime(
         settings.workspacePath,
         settings
       )
-      assistantDatabase.createTask({
-        id: requestId,
-        title: `分析笔记：${note.title}`,
-        instructions: '使用无工具模型对笔记记录进行只读分析',
-        origin: 'assistant',
-        visible: false
-      })
       try {
+        await assistantDatabase.createTask({
+          id: requestId,
+          title: `分析笔记：${note.title}`,
+          instructions: '使用无工具模型对笔记记录进行只读分析',
+          origin: 'assistant',
+          visible: false
+        })
         const comments = await analyzeMagicNoteEntry(
           analysisRuntime,
           entry,
@@ -80,16 +80,16 @@ export function registerMagicNotesAnalysisIpcHandlers(
           persistModelUsage,
           { supportsImageInput: settings.supportsImageInput === true, canvasPageCount }
         )
-        const analyzedNote = assistantDatabase.saveMagicNoteAnalysis({
+        const analyzedNote = await assistantDatabase.saveMagicNoteAnalysis({
           entryId,
           expectedRevision: entry.revision,
           comments
         })
-        assistantDatabase.updateTaskStatus(requestId, 'completed')
+        await assistantDatabase.updateTaskStatus(requestId, 'completed')
         return analyzedNote
       } catch (error) {
         const message = safeRuntimeError(error, '魔法笔记 AI 分析失败')
-        assistantDatabase.updateTaskStatus(requestId, 'failed', message)
+        await assistantDatabase.updateTaskStatus(requestId, 'failed', message)
         throw new Error(message, { cause: error })
       } finally {
         try {
@@ -117,14 +117,14 @@ export function registerMagicNotesAnalysisIpcHandlers(
         settings
       )
       const { requestId, direction, format, canvasImages, canvasPageText } = parsed
-      assistantDatabase.createTask({
-        id: requestId,
-        title: '分析未保存笔记草稿',
-        instructions: '使用无工具模型对未保存笔记草稿进行只读分析',
-        origin: 'assistant',
-        visible: false
-      })
       try {
+        await assistantDatabase.createTask({
+          id: requestId,
+          title: '分析未保存笔记草稿',
+          instructions: '使用无工具模型对未保存笔记草稿进行只读分析',
+          origin: 'assistant',
+          visible: false
+        })
         const comments = await analyzeMagicNoteDraft(
           analysisRuntime,
           plainText,
@@ -148,7 +148,7 @@ export function registerMagicNotesAnalysisIpcHandlers(
           persistModelUsage,
           { supportsImageInput: settings.supportsImageInput === true, content, canvasPageCount }
         )
-        assistantDatabase.updateTaskStatus(requestId, 'completed')
+        await assistantDatabase.updateTaskStatus(requestId, 'completed')
         return {
           id: randomUUID(),
           comments,
@@ -157,7 +157,7 @@ export function registerMagicNotesAnalysisIpcHandlers(
         }
       } catch (error) {
         const message = safeRuntimeError(error, '魔法笔记草稿 AI 分析失败')
-        assistantDatabase.updateTaskStatus(requestId, 'failed', message)
+        await assistantDatabase.updateTaskStatus(requestId, 'failed', message)
         throw new Error(message, { cause: error })
       } finally {
         try {
@@ -183,9 +183,9 @@ export function registerMagicTodosAnalysisIpcHandlers(
       const { todoId, requestId, direction, format, canvasImages, canvasPageText, sourceEntryRevision } =
         magicTodoIdSchema.parse(input)
       const settings = await settingsStore.getResolvedSettings()
-      const todo = assistantDatabase.getMagicTodo(todoId)
+      const todo = await assistantDatabase.getMagicTodo(todoId)
       const canvasPageCount = (await applicationSettingsStore?.get())?.magicNoteCanvasPageCount ?? 1
-      const entry = assistantDatabase.getMagicNoteEntry(todo.entryId)
+      const entry = await assistantDatabase.getMagicNoteEntry(todo.entryId)
       if (sourceEntryRevision !== undefined && entry.revision !== sourceEntryRevision) {
         throw new Error('来源记录已被更新，请重新捕获并分析')
       }
@@ -193,14 +193,14 @@ export function registerMagicTodosAnalysisIpcHandlers(
         settings.workspacePath,
         settings
       )
-      assistantDatabase.createTask({
-        id: requestId,
-        title: `分析待办：${todo.title}`,
-        instructions: '使用无工具模型对魔法笔记待办进行只读分析',
-        origin: 'assistant',
-        visible: false
-      })
       try {
+        await assistantDatabase.createTask({
+          id: requestId,
+          title: `分析待办：${todo.title}`,
+          instructions: '使用无工具模型对魔法笔记待办进行只读分析',
+          origin: 'assistant',
+          visible: false
+        })
         const comments = await analyzeMagicTodo(
           analysisRuntime,
           todo,
@@ -224,17 +224,17 @@ export function registerMagicTodosAnalysisIpcHandlers(
           persistModelUsage,
           { supportsImageInput: settings.supportsImageInput === true, content: entry.content, canvasPageCount }
         )
-        const analyzedTodo = assistantDatabase.saveMagicTodoAnalysis({
+        const analyzedTodo = await assistantDatabase.saveMagicTodoAnalysis({
           todoId,
           expectedRevision: todo.revision,
           sourceEntryRevision: entry.revision,
           comments
         })
-        assistantDatabase.updateTaskStatus(requestId, 'completed')
+        await assistantDatabase.updateTaskStatus(requestId, 'completed')
         return analyzedTodo
       } catch (error) {
         const message = safeRuntimeError(error, '魔法笔记待办 AI 分析失败')
-        assistantDatabase.updateTaskStatus(requestId, 'failed', message)
+        await assistantDatabase.updateTaskStatus(requestId, 'failed', message)
         throw new Error(message, { cause: error })
       } finally {
         try {

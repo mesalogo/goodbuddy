@@ -44,12 +44,12 @@ type RemoteDelegationOptions = {
   transport?: RemoteTransport
   intervalMs?: number
   outbox?: {
-    listPending: () => Array<{ taskId: string; result: RemoteResult }>
+    listPending: () => Array<{ taskId: string; result: RemoteResult }> | Promise<Array<{ taskId: string; result: RemoteResult }>>
     getStatus: (
       taskId: string
-    ) => 'pending' | 'delivered' | undefined
-    save: (taskId: string, result: RemoteResult) => void
-    markDelivered: (taskId: string) => void
+    ) => 'pending' | 'delivered' | undefined | Promise<'pending' | 'delivered' | undefined>
+    save: (taskId: string, result: RemoteResult) => void | Promise<void>
+    markDelivered: (taskId: string) => void | Promise<void>
   }
 }
 
@@ -207,7 +207,7 @@ export class RemoteDelegationService {
     this.activeRequest = controller
     try {
       const address = await this.resolveAddress()
-      const durablePending = this.options.outbox?.listPending()[0]
+      const durablePending = (await this.options.outbox?.listPending())?.[0]
       const memoryPending = this.pendingResults.entries().next().value
       const pending = durablePending
         ? ([durablePending.taskId, durablePending.result] as const)
@@ -219,7 +219,7 @@ export class RemoteDelegationService {
           address,
           controller.signal
         )
-        this.markDelivered(pending[0])
+        await this.markDelivered(pending[0])
       }
       const nextUrl = endpointUrl(this.endpoint, '/goodbuddy/tasks/next')
       const response = await this.transport(
@@ -238,14 +238,13 @@ export class RemoteDelegationService {
       const task = remoteTaskSchema.parse(JSON.parse(response.body))
       if (
         this.deliveredIds.has(task.id) ||
-        this.options.outbox?.getStatus(task.id) === 'delivered'
+        (await this.options.outbox?.getStatus(task.id)) === 'delivered'
       ) {
         return
       }
       const existingResult =
-        this.options.outbox
-          ?.listPending()
-          .find((item) => item.taskId === task.id)?.result ??
+        (await this.options.outbox?.listPending())
+          ?.find((item) => item.taskId === task.id)?.result ??
         this.pendingResults.get(task.id)
       let result: RemoteResult
       if (existingResult) {
@@ -260,13 +259,13 @@ export class RemoteDelegationService {
           }
         }
         if (this.options.outbox) {
-          this.options.outbox.save(task.id, result)
+          await this.options.outbox.save(task.id, result)
         } else {
           this.pendingResults.set(task.id, result)
         }
       }
       await this.deliverResult(task.id, result, address, controller.signal)
-      this.markDelivered(task.id)
+      await this.markDelivered(task.id)
     } finally {
       if (this.activeRequest === controller) {
         this.activeRequest = undefined
@@ -301,9 +300,9 @@ export class RemoteDelegationService {
     }
   }
 
-  private markDelivered(taskId: string): void {
+  private async markDelivered(taskId: string): Promise<void> {
+    await this.options.outbox?.markDelivered(taskId)
     this.pendingResults.delete(taskId)
-    this.options.outbox?.markDelivered(taskId)
     this.deliveredIds.add(taskId)
     if (this.deliveredIds.size > 1_000) {
       const oldest = this.deliveredIds.values().next().value

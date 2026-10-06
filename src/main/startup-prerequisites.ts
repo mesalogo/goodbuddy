@@ -2,7 +2,7 @@ export type StartupPrerequisiteDependencies<ConfiguredRuntime> = {
   prepareDeepSeekHome: () => Promise<void>
   initializeKnowledgeAndGateway: () => Promise<void>
   hydrateConfiguredRuntime: () => Promise<ConfiguredRuntime>
-  initializeAssistant: () => void
+  initializeAssistant: () => void | Promise<void>
 }
 
 export type StartupPrerequisiteStage =
@@ -100,7 +100,7 @@ export function createStartupFailureDiagnostic(
   })
 }
 
-function startObserved<T>(operation: () => Promise<T>): Promise<T> {
+function startObserved<T>(operation: () => T | Promise<T>): Promise<T> {
   let started: Promise<T>
   try {
     started = Promise.resolve(operation())
@@ -124,20 +124,14 @@ export async function runStartupPrerequisites<ConfiguredRuntime>(
     dependencies.hydrateConfiguredRuntime
   )
 
-  let assistantInitializationFailed = false
-  let assistantInitializationError: unknown
-  try {
-    dependencies.initializeAssistant()
-  } catch (error) {
-    assistantInitializationFailed = true
-    assistantInitializationError = error
-  }
+  const assistantReady = startObserved(dependencies.initializeAssistant)
 
-  const [deepSeekHome, knowledgeAndGateway, configuredRuntime] =
+  const [deepSeekHome, knowledgeAndGateway, configuredRuntime, assistant] =
     await Promise.allSettled([
       deepSeekHomeReady,
       knowledgeAndGatewayReady,
-      configuredRuntimeReady
+      configuredRuntimeReady,
+      assistantReady
     ] as const)
 
   const failures: Array<
@@ -146,10 +140,10 @@ export async function runStartupPrerequisites<ConfiguredRuntime>(
       cause: unknown
     }>
   > = []
-  if (assistantInitializationFailed) {
+  if (assistant.status === 'rejected') {
     failures.push({
       stage: 'assistant-database',
-      cause: assistantInitializationError
+      cause: assistant.reason
     })
   }
   if (deepSeekHome.status === 'rejected') {

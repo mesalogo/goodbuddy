@@ -1,14 +1,15 @@
 import { Worker } from 'node:worker_threads'
+import type { EventEmitter } from 'node:events'
 import { z } from 'zod'
+import type { ReviewManifestReader } from './assistant/supervision-review-store'
 
-// PERF-15/16 first slice: hot read paths run in a read-only worker per database
-// file so a long scan does not block the Main event loop. The worker opens its
-// own read-only connection (WAL), so it observes committed data only. The narrow
-// supervision writer reuses this transport and waits for cancellation settlement.
+// Request correlation shared by the read-only query workers and the desktop
+// storage utility process. A worker opens its own read-only WAL connection, so it
+// observes committed data only; business writes stay with the storage owner.
 
 export type ReadonlyQueryKind = 'assistant' | 'knowledge'
 
-/** Worker infrastructure failure; callers fall back to the synchronous path. */
+/** Worker infrastructure failure; the owner reports it without a SQL fallback. */
 export class ReadonlyWorkerUnavailableError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
@@ -36,10 +37,20 @@ type Pending = {
   cleanup: () => void
 }
 
+type Waiting = { start: () => void; cancel: () => void }
+
+/** The utility-process adapter uses the same request correlation as read workers. */
+export type QueryTransport = Pick<EventEmitter, 'on' | 'once'> & Pick<Worker, 'postMessage' | 'ref' | 'unref' | 'terminate'>
+export interface QueryTransportOptions {
+  createTransport: () => QueryTransport
+  /** In-flight bound; further requests wait in order instead of failing. */
+  maxPending?: number
+}
+
 const MAX_PENDING = 32
 const RESTART_BACKOFF_MS = 30_000
 
-export function deserializeWorkerError(error: { name: string; message: string; issues?: unknown }): Error {
+export function deserializeWorkerError(error: { name: string; message: string; issues?: unknown; code?: string; cause?: Parameters<typeof deserializeWorkerError>[0] }): Error {
   if (error.name === 'ZodError' && Array.isArray(error.issues)) {
     return new z.ZodError(error.issues as z.core.$ZodIssue[])
   }
@@ -47,43 +58,78 @@ export function deserializeWorkerError(error: { name: string; message: string; i
     : error.name === 'TypeError' ? TypeError : Error
   const result = new Constructor(error.message)
   if (result.name !== error.name) result.name = error.name
+  if (error.code) Object.assign(result, { code: error.code })
+  if (error.cause) result.cause = deserializeWorkerError(error.cause)
   return result
 }
 
 export class ReadonlyQueryReader {
-  private worker?: Worker
+  private worker?: QueryTransport
   private nextId = 0
   private disabledUntil = 0
   private closed = false
   private readonly pending = new Map<number, Pending>()
+  private readonly waiting: Waiting[] = []
+  private highWaterOperations = 0
+  private closePromise?: Promise<void>
+  private drained?: () => void
+  private stopping?: Promise<void>
 
   constructor(
-    private readonly kind: ReadonlyQueryKind | 'supervision',
+    private readonly kind: ReadonlyQueryKind,
     private readonly databasePath: string,
     private readonly workerPath: string,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly transportOptions?: QueryTransportOptions
   ) {}
+
+  private get maxPending(): number { return this.transportOptions?.maxPending ?? MAX_PENDING }
 
   /** False while backing off after a crash or startup failure. */
   get available(): boolean {
-    return !this.closed && this.now() >= this.disabledUntil && this.pending.size < MAX_PENDING
+    return !this.closed && !this.stopping && this.now() >= this.disabledUntil && this.pending.size < this.maxPending
   }
 
-  get pendingCount(): number {
-    return this.pending.size
+  get pendingCount(): number { return this.pending.size }
+  get waitingCount(): number { return this.waiting.length }
+  get admissionHighWaterOperations(): number { return this.highWaterOperations }
+
+  reviewManifest(runId: string): ReviewManifestReader {
+    return {
+      scan: (state, signal) => this.call('reviewManifestScan', [runId, state], signal),
+      page: (offset, signal) => this.call('reviewManifestPage', [runId, offset], signal),
+      release: () => this.call('reviewManifestRelease', [runId]),
+      changedSource: (rows, signal) => this.call('reviewChangedSource', [rows], signal)
+    }
   }
 
   call<T>(op: string, args: unknown[], signal?: AbortSignal): Promise<T> {
     if (this.closed) return Promise.reject(new ReadonlyWorkerUnavailableError('Readonly query reader closed'))
+    if (signal?.aborted) return Promise.reject(signal.reason)
+    if (this.pending.size < this.maxPending && !this.waiting.length) return this.dispatch(op, args, signal)
+    // Read workers keep their original busy rejection; storage requests wait in order.
+    if (!this.transportOptions) return Promise.reject(new ReadonlyWorkerUnavailableError('Readonly query worker is busy'))
+    return new Promise<T>((resolve, reject) => {
+      const entry: Waiting = {
+        start: () => { signal?.removeEventListener('abort', entry.cancel); this.dispatch<T>(op, args, signal).then(resolve, reject) },
+        cancel: () => {
+          const index = this.waiting.indexOf(entry)
+          if (index >= 0) this.waiting.splice(index, 1)
+          reject(signal?.reason)
+        }
+      }
+      signal?.addEventListener('abort', entry.cancel, { once: true })
+      this.waiting.push(entry)
+    })
+  }
+
+  private dispatch<T>(op: string, args: unknown[], signal?: AbortSignal): Promise<T> {
+    if (this.closed) return Promise.reject(new ReadonlyWorkerUnavailableError('Readonly query reader closed'))
     if (signal?.aborted) return Promise.reject(signal.reason as Error)
-    if (this.now() < this.disabledUntil) {
+    if (this.stopping || this.now() < this.disabledUntil) {
       return Promise.reject(new ReadonlyWorkerUnavailableError('Readonly query worker is backing off'))
     }
-    // Bound outstanding work; the caller runs the query synchronously instead.
-    if (this.pending.size >= MAX_PENDING) {
-      return Promise.reject(new ReadonlyWorkerUnavailableError('Readonly query worker is busy'))
-    }
-    let worker: Worker
+    let worker: QueryTransport
     try {
       worker = this.ensureWorker()
     } catch (error) {
@@ -96,21 +142,16 @@ export class ReadonlyQueryReader {
     return new Promise<T>((resolve, reject) => {
       const onAbort = (): void => {
         Atomics.store(flag, 0, 1)
-        // A writer must acknowledge cancellation before its caller releases the slot.
-        if (this.kind === 'supervision') return
-        const request = this.pending.get(id)
-        if (!request) return
-        this.pending.delete(id)
-        request.cleanup()
-        if (this.pending.size === 0) worker.unref()
-        reject(signal!.reason as Error)
+        // Storage keeps the slot until the host settles: a write may still commit.
+        if (this.transportOptions) worker.postMessage({ type: 'cancel', id })
       }
       signal?.addEventListener('abort', onAbort, { once: true })
       this.pending.set(id, {
-        resolve: value => signal?.aborted ? reject(signal.reason) : resolve(value as T),
-        reject: error => reject(signal?.aborted ? signal.reason : error),
+        resolve: value => !this.transportOptions && signal?.aborted ? reject(signal.reason) : resolve(value as T),
+        reject: error => reject(!this.transportOptions && signal?.aborted ? signal.reason : error),
         cleanup: () => signal?.removeEventListener('abort', onAbort)
       })
+      this.highWaterOperations = Math.max(this.highWaterOperations, this.pending.size)
       // Keep the process alive only while a request is outstanding.
       worker.ref()
       try {
@@ -119,15 +160,20 @@ export class ReadonlyQueryReader {
         this.pending.delete(id)
         signal?.removeEventListener('abort', onAbort)
         if (this.pending.size === 0) worker.unref()
-        // DataCloneError etc. are caller errors, but stay safe and let the caller fall back.
+        // Posting failures must reject; callers must not repeat the operation in SQL.
         reject(new ReadonlyWorkerUnavailableError('Readonly query could not be posted', { cause: error }))
+        this.startWaiting()
       }
     })
   }
 
-  private ensureWorker(): Worker {
+  private startWaiting(): void {
+    while (this.waiting.length && this.pending.size < this.maxPending) this.waiting.shift()!.start()
+  }
+
+  private ensureWorker(): QueryTransport {
     if (this.worker) return this.worker
-    const worker = new Worker(this.workerPath, {
+    const worker = this.transportOptions?.createTransport() ?? new Worker(this.workerPath, {
       workerData: { kind: this.kind, databasePath: this.databasePath }
     })
     this.worker = worker
@@ -140,6 +186,8 @@ export class ReadonlyQueryReader {
       if (this.pending.size === 0) worker.unref()
       if ('error' in message) request.reject(deserializeWorkerError(message.error))
       else request.resolve(message.result)
+      this.startWaiting()
+      if (this.pending.size === 0) this.drained?.()
     })
     const failed = (error: Error): void => {
       if (this.worker !== worker) return
@@ -151,12 +199,15 @@ export class ReadonlyQueryReader {
       const reject = (): void => {
         for (const request of pending) {
           request.cleanup()
-          request.reject(new ReadonlyWorkerUnavailableError(error.message, { cause: error }))
+          request.reject(this.transportOptions
+            ? Object.assign(new Error('Storage process lost; unconfirmed writes require domain reconciliation', { cause: error }), { code: 'STORAGE_UNCONFIRMED' })
+            : new ReadonlyWorkerUnavailableError(error.message, { cause: error }))
         }
+        // Waiting requests were never sent; they fail as unavailable, not unconfirmed.
+        for (const waiting of this.waiting.splice(0)) waiting.start()
+        this.drained?.()
       }
-      const terminated = worker.terminate()
-      if (this.kind === 'supervision') void terminated.then(reject, reject)
-      else { reject(); void terminated }
+      this.stopping = worker.terminate().then(reject, reject).finally(() => { this.stopping = undefined })
     }
     worker.once('error', failed)
     worker.once('exit', (code) => failed(new Error(`Readonly query worker exited (${code})`)))
@@ -167,6 +218,7 @@ export class ReadonlyQueryReader {
   /** Test hook: simulate a crash by terminating the worker. */
   async terminateWorkerForTest(): Promise<void> {
     await this.worker?.terminate()
+    await this.stopping
   }
 
   /** Test hook: end the post-crash backoff. */
@@ -174,8 +226,20 @@ export class ReadonlyQueryReader {
     this.disabledUntil = 0
   }
 
-  close(): void {
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise
     this.closed = true
+    for (const waiting of this.waiting.splice(0)) waiting.start()
+    if (this.transportOptions) {
+      this.closePromise = (async () => {
+        if (this.pending.size) await new Promise<void>(resolve => { this.drained = resolve })
+        await this.stopping
+        const worker = this.worker
+        this.worker = undefined
+        await worker?.terminate()
+      })()
+      return this.closePromise
+    }
     const worker = this.worker
     this.worker = undefined
     const pending = [...this.pending.values()]
@@ -187,29 +251,7 @@ export class ReadonlyQueryReader {
       }
     }
     const terminated = worker?.terminate()
-    if (this.kind === 'supervision' && terminated) void terminated.then(reject, reject)
-    else { reject(); if (terminated) void terminated }
-  }
-}
-
-/**
- * Runs `op` in the worker when available, otherwise synchronously. Worker
- * infrastructure failures fall back to the synchronous path; query errors and
- * aborts propagate unchanged.
- */
-export async function readWithFallback<T>(
-  reader: ReadonlyQueryReader | undefined,
-  op: string,
-  args: unknown[],
-  signal: AbortSignal | undefined,
-  sync: () => T
-): Promise<T> {
-  signal?.throwIfAborted()
-  if (!reader?.available) return sync()
-  try {
-    return await reader.call<T>(op, args, signal)
-  } catch (error) {
-    if (error instanceof ReadonlyWorkerUnavailableError && !signal?.aborted) return sync()
-    throw error
+    this.closePromise = Promise.all([terminated, this.stopping]).then(reject)
+    return this.closePromise
   }
 }

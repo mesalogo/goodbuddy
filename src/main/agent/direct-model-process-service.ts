@@ -19,7 +19,8 @@ import {
   PagedOutputStore,
   type PagedOutputPage,
   type PagedOutputReference,
-  type PagedOutputWriter
+  type PagedOutputWriter,
+  type PagedOutputStoreOptions
 } from './paged-output-store'
 
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -100,11 +101,17 @@ export interface DirectModelProcessService {
 }
 
 type ProcessOutput = {
+  pause?(): unknown
+  resume?(): unknown
   on(event: 'data', listener: (chunk: Buffer | string) => void): unknown
   once(event: 'error', listener: (error: Error) => void): unknown
   removeListener?(
     event: 'error',
     listener: (error: Error) => void
+  ): unknown
+  removeListener?(
+    event: 'data',
+    listener: (chunk: Buffer | string) => void
   ): unknown
 }
 
@@ -128,6 +135,7 @@ export type DirectModelProcessSpawn = (
 ) => DirectModelProcessChild
 
 export type LocalDirectModelProcessServiceOptions = {
+  outputStore?: PagedOutputStoreOptions
   outputPrefix?: string
   platform?: NodeJS.Platform
   environment?: NodeJS.ProcessEnv
@@ -348,7 +356,7 @@ export class LocalDirectModelProcessService
   constructor(
     private readonly options: LocalDirectModelProcessServiceOptions = {}
   ) {
-    this.outputs = new PagedOutputStore(options.outputPrefix ?? 'process')
+    this.outputs = new PagedOutputStore(options.outputPrefix ?? 'process', options.outputStore)
     this.shell = resolveProcessShell(options)
   }
 
@@ -515,9 +523,6 @@ export class LocalDirectModelProcessService
     stdout: PagedOutputWriter,
     stderr: PagedOutputWriter
   ): Promise<ProcessExecuteResult> {
-    child.stdout?.on('data', (chunk) => stdout.append(chunk))
-    child.stderr?.on('data', (chunk) => stderr.append(chunk))
-
     return new Promise((resolveResult, rejectResult) => {
       let settled = false
       let cleanupStarted = false
@@ -525,12 +530,16 @@ export class LocalDirectModelProcessService
       let terminationReason: 'timeout' | 'cancelled' | undefined
       let exitCode: number | null = null
       let exitSignal: string | undefined
+      const outputListeners: Array<{ stream: ProcessOutput; listener: (chunk: Buffer | string) => void }> = []
 
       const removeListeners = (): void => {
         clearTimeout(timeout)
         cancellationSignal.removeEventListener('abort', cancel)
         child.stdout?.removeListener?.('error', failFromOutput)
         child.stderr?.removeListener?.('error', failFromOutput)
+        for (const { stream, listener } of outputListeners) {
+          stream.removeListener?.('data', listener)
+        }
       }
       const result = async (): Promise<ProcessExecuteResult> => {
         const stdoutResult = await stdout.finish()
@@ -618,6 +627,23 @@ export class LocalDirectModelProcessService
         failure = error
         startCleanup()
       }
+      const capture = (stream: ProcessOutput | null | undefined, writer: PagedOutputWriter): void => {
+        if (!stream) return
+        const listener = (chunk: Buffer | string): void => {
+          if (settled) return
+          stream.pause?.()
+          try {
+            void writer.append(chunk).then(
+              () => { if (!settled) stream.resume?.() },
+              (error: Error) => { failFromOutput(error) }
+            )
+          } catch (error) {
+            failFromOutput(error instanceof Error ? error : new Error('Unable to capture tool output'))
+          }
+        }
+        outputListeners.push({ stream, listener })
+        stream.on('data', listener)
+      }
       const timeout = timeoutMs === undefined ? undefined : setTimeout(() => {
         if (settled || terminationReason === 'cancelled') {
           return
@@ -627,6 +653,8 @@ export class LocalDirectModelProcessService
       }, timeoutMs)
       timeout?.unref?.()
 
+      capture(child.stdout, stdout)
+      capture(child.stderr, stderr)
       child.stdout?.once('error', failFromOutput)
       child.stderr?.once('error', failFromOutput)
       child.once('error', (error: unknown) => {
@@ -674,7 +702,10 @@ export class LocalDirectModelProcessService
   }
 
   dispose(): Promise<void> {
-    this.disposePromise ??= this.disposeOnce()
+    this.disposePromise ??= this.disposeOnce().catch((error: unknown) => {
+      this.disposePromise = undefined
+      throw error
+    })
     return this.disposePromise
   }
 

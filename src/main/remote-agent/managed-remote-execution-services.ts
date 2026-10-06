@@ -1,5 +1,4 @@
-import { join } from 'node:path'
-import { SqliteRuntimeSessionBindingStore } from '../agent/runtime-session-binding-store'
+import type { RuntimeSessionBindingStore } from '../agent/runtime-session-binding-store'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import type {
   AgentRuntimeSelection,
@@ -27,9 +26,8 @@ import {
 } from './managed-model-bridge'
 import { boundedDiagnostic } from './bounded-diagnostic'
 
-const RUNTIME_BINDING_DATABASE_NAME = 'remote-runtime-bindings.sqlite'
-
 export type ManagedRemoteExecutionServicesOptions = {
+  bindingStore: RuntimeSessionBindingStore
   sshHostStore: SshHostStore
   agentServices: Pick<
     RemoteAgentServices,
@@ -39,7 +37,6 @@ export type ManagedRemoteExecutionServicesOptions = {
     | 'connectionManager'
     | 'controllerState'
   >
-  userDataPath: string
   appPath: string
   resourcesPath: string
   packaged: boolean
@@ -60,7 +57,7 @@ export class ManagedRemoteExecutionServices {
   readonly runtimeInstallationManager: RemoteRuntimeInstallationManager
   readonly runtimeValidator: ManagedRemoteProjectRuntimeValidator
   readonly workspaceAccessFactory: ManagedRemoteWorkspaceAccessFactory
-  readonly bindingStore: SqliteRuntimeSessionBindingStore
+  readonly bindingStore: RuntimeSessionBindingStore
 
   #disposePromise?: Promise<void>
   readonly #readiness: Promise<void>
@@ -138,9 +135,7 @@ export class ManagedRemoteExecutionServices {
         installationManager:
           options.agentServices.installationManager
       })
-    this.bindingStore = new SqliteRuntimeSessionBindingStore(
-      join(options.userDataPath, RUNTIME_BINDING_DATABASE_NAME)
-    )
+    this.bindingStore = options.bindingStore
     this.#readiness = Promise.resolve()
   }
 
@@ -213,7 +208,6 @@ export class ManagedRemoteExecutionServices {
       }
     }
     await settle(() => this.runtimeInstallationManager.dispose())
-    await settle(() => this.bindingStore.dispose())
     if (errors.length > 0) {
       throw new AggregateError(
         errors,

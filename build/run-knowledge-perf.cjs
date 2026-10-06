@@ -1,12 +1,12 @@
-// Knowledge retrieval benchmark (PERF-05). Bundles the production
+// Owner-local knowledge/read-worker microbenchmark (PERF-05), not a Main IPC probe.
+// Bundles the production
 // KnowledgeDatabase with esbuild, seeds synthetic libraries of increasing size
 // in a temporary SQLite file and times the synchronous search calls that the
-// Electron Main process runs inline during retrieval. Because these calls are
-// synchronous, their duration is the time Main is blocked per query.
+// storage owner runs during retrieval. Synchronous duration measures this harness's
+// event loop, not the Electron Main process of the application.
 const { buildSync } = require('esbuild')
 const { createHash } = require('node:crypto')
-const { mkdtempSync, rmSync, writeFileSync } = require('node:fs')
-const { tmpdir } = require('node:os')
+const { mkdtempSync, rmSync, writeFileSync, mkdirSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const { monitorEventLoopDelay, performance } = require('node:perf_hooks')
 
@@ -31,12 +31,16 @@ const dimensions = Number(process.env.GB_KPERF_DIMENSIONS || 384)
 const chunksPerDocument = 100
 const queries = Number(process.env.GB_KPERF_QUERIES || 15)
 
-const directory = mkdtempSync(join(tmpdir(), 'goodbuddy-knowledge-perf-'))
+const temporaryRoot = join(root, 'temp', 'goodbuddy-storage-foundation')
+mkdirSync(temporaryRoot, { recursive: true })
+const directory = mkdtempSync(join(temporaryRoot, 'knowledge-perf-'))
 const bundle = join(directory, 'knowledge-database.cjs')
 const workerBundle = join(directory, 'readonly-query-worker.cjs')
+const readerBundle = join(directory, 'readonly-query-reader.cjs')
 for (const [entry, outfile] of [
   ['src/main/knowledge/knowledge-database.ts', bundle],
-  ['src/main/readonly-query-worker.ts', workerBundle]
+  ['src/main/readonly-query-worker.ts', workerBundle],
+  ['src/main/readonly-query-reader.ts', readerBundle]
 ]) {
   buildSync({
     entryPoints: [join(root, entry)],
@@ -51,6 +55,8 @@ for (const [entry, outfile] of [
   })
 }
 const { KnowledgeDatabase } = require(bundle)
+const { ReadonlyQueryReader } = require(readerBundle)
+const ownedDatabases = new Set(), readers = new Set()
 
 // Deterministic pseudo-random generator so runs are comparable.
 let seed = 42
@@ -76,7 +82,7 @@ function time(body) {
 }
 const round = value => Math.round(value * 10) / 10
 
-// Main event-loop delay while `queries` searches run back to back. A sync
+// Harness event-loop delay while `queries` searches run back to back. A sync
 // search blocks the loop for its whole duration; a worker search should not.
 async function loopDelay(body) {
   const histogram = monitorEventLoopDelay({ resolution: 5 })
@@ -103,6 +109,7 @@ async function main() {
   for (const size of sizes) {
     const path = join(directory, `knowledge-${size}.sqlite`)
     const database = new KnowledgeDatabase(path)
+    ownedDatabases.add(database)
     database.initialize()
     const library = database.createKnowledgeBase({ name: `Perf ${size}`, storageMode: 'reference' })
     const sqlite = database.database
@@ -119,6 +126,7 @@ async function main() {
 
     // Reopen so timings start from a fresh connection, like an app restart.
     const reopened = new KnowledgeDatabase(path)
+    ownedDatabases.add(reopened)
     reopened.initialize()
     const query = vector()
     const entry = {
@@ -129,20 +137,24 @@ async function main() {
       vectorMs: time(() => reopened.vectorSearch({ knowledgeBaseId: library.id, provider: 'perf', model: 'perf-model', vector: query, limit: 40 })),
       hybridMs: time(() => reopened.hybridSearchWithDiagnostics(hybridOptions(library.id, query)))
     }
-    // Main event-loop delay: synchronous search on Main vs the readonly worker.
+    // Harness loop delay: owner-local synchronous search vs its explicit read worker.
     entry.mainLoopDelaySyncMs = await loopDelay(async () => reopened.hybridSearchWithDiagnostics(hybridOptions(library.id, query)))
-    reopened.enableReadonlyWorker(workerBundle)
-    entry.mainLoopDelayWorkerMs = await loopDelay(() => reopened.hybridSearchWithDiagnosticsAsync(hybridOptions(library.id, query)))
+    const reader = new ReadonlyQueryReader('knowledge', path, workerBundle)
+    readers.add(reader)
+    entry.mainLoopDelayWorkerMs = await loopDelay(() => reader.call('hybridSearchWithDiagnostics', [hybridOptions(library.id, query)]))
+    await reader.close()
     reopened.close()
     results.push(entry)
     console.log(`[kperf] ${size} chunks: fts p95 ${entry.ftsMs.p95} ms, vector p95 ${entry.vectorMs.p95} ms, hybrid p95 ${entry.hybridMs.p95} ms (seed ${entry.seedSeconds} s)`)
     console.log(`[kperf] ${size} chunks: Main loop delay max sync ${entry.mainLoopDelaySyncMs.max} ms vs worker ${entry.mainLoopDelayWorkerMs.max} ms (p99 ${entry.mainLoopDelaySyncMs.p99} / ${entry.mainLoopDelayWorkerMs.p99} ms; per query ${entry.mainLoopDelaySyncMs.perQueryMs} / ${entry.mainLoopDelayWorkerMs.perQueryMs} ms)`)
   }
   const output = process.env.GB_KPERF_OUTPUT
-  if (output) writeFileSync(output, JSON.stringify({ kind: 'goodbuddy-knowledge-retrieval-benchmark', node: process.version, results }, null, 2))
+  if (output) writeFileSync(output, JSON.stringify({ kind: 'goodbuddy-knowledge-retrieval-benchmark', executionBoundary: 'owner-local', node: process.version, results }, null, 2))
   console.table(results.map(r => ({ chunks: r.chunks, 'fts p50/p95': `${r.ftsMs.p50} / ${r.ftsMs.p95}`, 'vector p50/p95': `${r.vectorMs.p50} / ${r.vectorMs.p95}`, 'hybrid p50/p95': `${r.hybridMs.p50} / ${r.hybridMs.p95}`, 'loop max sync/worker': `${r.mainLoopDelaySyncMs.max} / ${r.mainLoopDelayWorkerMs.max}` })))
 }
 const hybridOptions = (knowledgeBaseId, vector) => ({ knowledgeBaseId, query: 'lighthouse budget', limit: 40, provider: 'perf', model: 'perf-model', vector, graphEnabled: false, candidateMultiplier: 1 })
-main().catch(error => { process.exitCode = 1; console.error(error) }).finally(() => {
+main().catch(error => { process.exitCode = 1; console.error(error) }).finally(async () => {
+  await Promise.all([...readers].map(reader => reader.close()))
+  for (const database of ownedDatabases) database.close()
   rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })

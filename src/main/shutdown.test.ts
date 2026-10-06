@@ -18,7 +18,7 @@ describe('waitForCleanup', () => {
       'utf8'
     )
     const cleanup = source.match(
-      /const cleanup = settleCleanupPhases\(\[[\s\S]*?\]\)\s+globalShortcut/u
+      /const cleanup = settleCleanupPhases\(\[[\s\S]*?\s+globalShortcut/u
     )?.[0] ?? ''
 
     expect(cleanup).toContain('runtime?.detachForApplicationExit()')
@@ -28,6 +28,26 @@ describe('waitForCleanup', () => {
     expect(cleanup.indexOf('runtime?.detachForApplicationExit()')).toBeLessThan(
       cleanup.indexOf('runtime?.dispose()')
     )
+    const storageClose = cleanup.indexOf('desktopStorage?.close()')
+    expect(storageClose).toBeGreaterThan(0)
+    for (const drain of [
+      'applicationStartup', 'runtimeTemporaryCleanup', 'removeIpcHandlers?.()',
+      'startupSubagentService?.dispose()', 'imageGenerationService?.dispose()',
+      'nativeClientCoordinator?.dispose()', 'startupContextManager?.dispose()',
+      'runtime?.dispose()', 'selectedRuntimeManager?.dispose()',
+      'terminalSessionManager?.dispose()', 'managedRemoteExecutionServices?.dispose()',
+      'knowledgeGateway?.dispose()', 'knowledgeService?.dispose()',
+      'documentParsingService?.dispose()'
+    ]) {
+      expect(cleanup.indexOf(drain), drain).toBeGreaterThanOrEqual(0)
+      expect(cleanup.indexOf(drain), drain).toBeLessThan(storageClose)
+    }
+    expect(source).not.toContain('assistantDatabase?.close()')
+    const quitting = source.slice(source.indexOf("app.on('before-quit'"))
+    expect(quitting.indexOf('runtimeTemporaryCleanupController.abort()')).toBeLessThan(
+      quitting.indexOf('const cleanup = settleCleanupPhases')
+    )
+    expect(quitting).toContain('clearTimeout(runtimeTemporaryCleanupTimer)')
   })
 
   it('reports completed and failed cleanup as settled', async () => {

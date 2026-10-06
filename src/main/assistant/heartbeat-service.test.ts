@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
 import { HeartbeatService, type HeartbeatActions } from './heartbeat-service'
+import { asyncSupervisionStorage } from '../../../tests/support/async-supervision-storage'
 
 const temporaryDirectories: string[] = []
 
@@ -38,8 +39,8 @@ describe('HeartbeatService', () => {
     const database = await createDatabase()
     const review = vi.fn<HeartbeatActions['review']>(async () => ({ status: 'completed', runId: 'supervision-1' }))
     const suggest = vi.fn<NonNullable<HeartbeatActions['suggest']>>(async () => 2)
-    const service = new HeartbeatService(database, { review, suggest })
-    const config = service.create(configInput(), now)
+    const service = new HeartbeatService(asyncSupervisionStorage(database).heartbeat, { review, suggest })
+    const config = await service.create(configInput(), now)
     expect(config.intervention).toBe('suggest')
 
     const run = await service.runNow({ id: config.id, idempotencyKey: 'first' }, now)
@@ -48,7 +49,7 @@ describe('HeartbeatService', () => {
     expect(review.mock.calls[0]![0]).toMatchObject({ config: { id: config.id }, run: { id: run.id } })
     expect(suggest).toHaveBeenCalledWith(expect.objectContaining({ supervisionRunId: 'supervision-1' }))
     expect(run).toMatchObject({ status: 'completed', entryId: undefined })
-    expect(service.history({ configId: config.id }).entries).toEqual([])
+    expect((await service.history({ configId: config.id })).entries).toEqual([])
     expect(database.listArtifacts()).toEqual([])
     database.close()
   })
@@ -56,8 +57,8 @@ describe('HeartbeatService', () => {
   it('stays quiet when the review finds no change', async () => {
     const database = await createDatabase()
     const suggest = vi.fn(async () => 1)
-    const service = new HeartbeatService(database, { review: async () => ({ status: 'no_change', runId: 'r' }), suggest })
-    const config = service.create(configInput(), now)
+    const service = new HeartbeatService(asyncSupervisionStorage(database).heartbeat, { review: async () => ({ status: 'no_change', runId: 'r' }), suggest })
+    const config = await service.create(configInput(), now)
     const run = await service.runNow({ id: config.id, idempotencyKey: 'quiet' }, now)
     expect(run.status).toBe('no_change')
     expect(suggest).not.toHaveBeenCalled()
@@ -68,8 +69,8 @@ describe('HeartbeatService', () => {
   it('only updates memory when the plan intervention is memory', async () => {
     const database = await createDatabase()
     const suggest = vi.fn(async () => 1)
-    const service = new HeartbeatService(database, { review: async () => ({ status: 'completed', runId: 'r' }), suggest })
-    const config = service.create({ ...configInput(), intervention: 'memory' }, now)
+    const service = new HeartbeatService(asyncSupervisionStorage(database).heartbeat, { review: async () => ({ status: 'completed', runId: 'r' }), suggest })
+    const config = await service.create({ ...configInput(), intervention: 'memory' }, now)
     expect(config.intervention).toBe('memory')
     await service.runNow({ id: config.id, idempotencyKey: 'memory' }, now)
     expect(suggest).not.toHaveBeenCalled()
@@ -78,11 +79,11 @@ describe('HeartbeatService', () => {
 
   it('keeps the review when suggestions fail and exposes the failure in activity', async () => {
     const database = await createDatabase()
-    const service = new HeartbeatService(database, {
+    const service = new HeartbeatService(asyncSupervisionStorage(database).heartbeat, {
       review: async () => ({ status: 'completed', runId: 'r' }),
       suggest: async () => { throw new Error('Phrase failed') }
     })
-    const config = service.create(configInput(), now)
+    const config = await service.create(configInput(), now)
     const run = await service.runNow({ id: config.id, idempotencyKey: 'suggest-fail' }, now)
     expect(run.status).toBe('completed')
     const [activity] = database.listSupervisionActivity(10, 0, config.id)
@@ -93,8 +94,8 @@ describe('HeartbeatService', () => {
   it('reports a failed review in activity without retrying the trigger', async () => {
     const database = await createDatabase()
     const review = vi.fn(async () => { throw new Error('Model timed out') })
-    const service = new HeartbeatService(database, { review })
-    const config = service.create(configInput(), now)
+    const service = new HeartbeatService(asyncSupervisionStorage(database).heartbeat, { review })
+    const config = await service.create(configInput(), now)
     const run = await service.runNow({ id: config.id, idempotencyKey: 'review-fail' }, now)
     expect(run.status).toBe('completed')
     const [activity] = database.listSupervisionActivity(10, 0, config.id)
@@ -108,9 +109,9 @@ describe('HeartbeatService', () => {
   it('claims at most one due plan per tick', async () => {
     const database = await createDatabase()
     const review = vi.fn(async () => ({ status: 'no_change' as const }))
-    const service = new HeartbeatService(database, { review })
-    const first = service.create(configInput(), now)
-    service.create({ ...configInput(), name: 'Second' }, now)
+    const service = new HeartbeatService(asyncSupervisionStorage(database).heartbeat, { review })
+    const first = await service.create(configInput(), now)
+    await service.create({ ...configInput(), name: 'Second' }, now)
     const due = new Date(first.nextRunAt)
     expect(await service.processDue(due)).toHaveLength(1)
     expect(await service.processDue(due)).toHaveLength(1)
@@ -121,22 +122,22 @@ describe('HeartbeatService', () => {
 
   it('validates inputs and supports update, pause, list, and remove', async () => {
     const database = await createDatabase()
-    const service = new HeartbeatService(database, { review: async () => ({ status: 'no_change' }) })
-    expect(() => service.create({ ...configInput(), unknown: true }, now)).toThrow()
-    expect(() => service.create({ ...configInput(), intervention: 'interrupt' }, now)).toThrow()
-    const config = service.create(configInput(), now)
-    const updated = service.update({ id: config.id, config: {
+    const service = new HeartbeatService(asyncSupervisionStorage(database).heartbeat, { review: async () => ({ status: 'no_change' }) })
+    await expect(service.create({ ...configInput(), unknown: true }, now)).rejects.toThrow()
+    await expect(service.create({ ...configInput(), intervention: 'interrupt' }, now)).rejects.toThrow()
+    const config = await service.create(configInput(), now)
+    const updated = await service.update({ id: config.id, config: {
       ...configInput(), name: 'Weekly review', intervention: 'memory',
       recurrence: { type: 'weekly', weekday: 1, localTime: '09:00' }
     } }, now)
     expect(updated).toMatchObject({ name: 'Weekly review', intervention: 'memory', nextRunAt: '2026-08-03T09:00:00.000Z' })
     // Editing without the field keeps the saved intervention.
-    expect(service.update({ id: config.id, config: configInput() }, now).intervention).toBe('memory')
-    service.pause({ id: config.id, paused: true })
-    expect(service.list()).toEqual([expect.objectContaining({ id: config.id, enabled: false })])
-    expect(() => service.history({ configId: config.id, limit: 201 })).toThrow()
-    service.remove({ id: config.id })
-    expect(service.list()).toEqual([])
+    expect((await service.update({ id: config.id, config: configInput() }, now)).intervention).toBe('memory')
+    await service.pause({ id: config.id, paused: true })
+    expect(await service.list()).toEqual([expect.objectContaining({ id: config.id, enabled: false })])
+    await expect(service.history({ configId: config.id, limit: 201 })).rejects.toThrow()
+    await service.remove({ id: config.id })
+    expect(await service.list()).toEqual([])
     database.close()
   })
 })

@@ -11,9 +11,11 @@ import { strToU8, zipSync } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ExtractStructured } from './graph-extractor'
 import { embeddingStorageProvider } from './embedding-provider-key'
-import { KnowledgeService } from './knowledge-service'
+import { TestKnowledgeService as KnowledgeService } from '../../../tests/support/knowledge-test-service'
 import type { EmbeddingProvider, RerankProvider } from './types'
 import { UrlImporter } from './url-importer'
+import type { DocumentResultStorageAccess } from '../desktop-storage-files'
+import { DocumentResultStorage } from '../document-result-storage'
 
 const temporaryDirectories: string[] = []
 const services: KnowledgeService[] = []
@@ -126,6 +128,123 @@ afterEach(async () => {
 })
 
 describe('KnowledgeService', () => {
+  it.each([false, true])('awaits failed-publication release through disposal (release rejects: %s)', async (rejectRelease) => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-knowledge-release-'))
+    temporaryDirectories.push(directory)
+    const results = new DocumentResultStorage(join(directory, 'results'))
+    const service = new KnowledgeService({
+      databasePath: join(directory, 'knowledge.sqlite'),
+      managedRoot: join(directory, 'managed'),
+      documentResults: results,
+      parseDocument: async () => ({
+        title: 'Publication cleanup', sourceFormat: '.txt',
+        content: 'Searchable publication cleanup content.',
+        sections: [{ locator: 'text', content: 'Searchable publication cleanup content.' }],
+        warnings: [],
+        parsingSettings: {
+          chatWorkflow: 'fast-text', knowledgeWorkflow: 'fast-index',
+          localOcrModelId: 'test-ocr', maximumPages: 10, pageTimeoutSeconds: 30
+        }
+      })
+    })
+    services.push(service)
+    await service.initialize()
+    const sourcePath = join(directory, 'publication.txt')
+    await writeFile(sourcePath, 'Searchable publication cleanup content.')
+    const library = await service.createLibrary({
+      name: 'Publication cleanup', storageMode: 'managed', graphEnabled: false
+    })
+    await service.importPaths(library.id, [sourcePath])
+    const document = (await service.snapshot(library.id)).documents[0]!
+    const previousResultId = document.metadata.parsedResultId as string
+    const previousDirectory = join(directory, 'knowledge-assets', library.id, document.id, previousResultId)
+    const publicationError = new Error('Publication failed')
+    const cleanupError = new Error('Result release failed')
+    vi.spyOn(service.database, 'publishDocument').mockRejectedValueOnce(publicationError)
+    const release = results.release.bind(results)
+    let settleRelease!: () => void
+    const releaseGate = new Promise<void>((resolve) => { settleRelease = resolve })
+    const releaseSpy = vi.spyOn(results, 'release').mockImplementationOnce(async (id) => {
+      await releaseGate
+      if (rejectRelease) throw cleanupError
+      await release(id)
+    })
+    let rebuildingSettled = false
+    const rebuilding = service.rebuildDocument({ knowledgeBaseId: library.id, documentId: document.id })
+    const outcome = rebuilding.catch((error: unknown) => error).finally(() => { rebuildingSettled = true })
+    let disposing: Promise<void> | undefined
+    try {
+      await vi.waitFor(() => expect(releaseSpy).toHaveBeenCalledTimes(1))
+      const resultId = releaseSpy.mock.calls[0]![0]
+      expect(resultId).not.toBe(previousResultId)
+      const resultDirectory = results.location(resultId).directory
+      expect(await service.database.getDocument(document.id)).toEqual(expect.objectContaining({
+        metadata: expect.objectContaining({ parsedResultId: previousResultId })
+      }))
+      let disposed = false
+      disposing = service.dispose().then(() => { disposed = true })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(rebuildingSettled).toBe(false)
+      expect(disposed).toBe(false)
+      settleRelease()
+      const error = await outcome
+      if (rejectRelease) {
+        expect(error).toBeInstanceOf(AggregateError)
+        expect(error).toMatchObject({
+          message: publicationError.message, cause: publicationError,
+          errors: [publicationError, cleanupError]
+        })
+        expect(results.isTemporaryResult(resultId)).toBe(true)
+        await expect(access(resultDirectory)).resolves.toBeUndefined()
+      } else {
+        expect(error).toBe(publicationError)
+        expect(results.isTemporaryResult(resultId)).toBe(false)
+        await expect(access(resultDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+      await disposing
+      await results.close()
+      expect(results.isTemporaryResult(resultId)).toBe(false)
+      await expect(access(resultDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(access(previousDirectory)).resolves.toBeUndefined()
+      await expect(access(sourcePath)).resolves.toBeUndefined()
+    } finally {
+      settleRelease()
+      await outcome
+      await disposing
+      await results.close()
+    }
+  })
+
+  it('awaits temporary-result ownership during reconciliation through the file facade', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-knowledge-results-'))
+    temporaryDirectories.push(directory)
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    const documentId = '22222222-2222-4222-8222-222222222222'
+    const orphanId = '33333333-3333-4333-8333-333333333333'
+    const temporaryId = '44444444-4444-4444-8444-444444444444'
+    const root = join(directory, 'knowledge-assets', libraryId, documentId)
+    await mkdir(join(root, orphanId), { recursive: true })
+    await mkdir(join(root, temporaryId), { recursive: true })
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected result operation') }
+    const results: DocumentResultStorageAccess = {
+      save: unexpected, get: unexpected, image: unexpected, original: unexpected,
+      release: unexpected, move: unexpected, detach: unexpected,
+      isTemporaryResult: vi.fn(async id => id === temporaryId),
+      close: vi.fn(async () => undefined)
+    }
+    const service = new KnowledgeService({
+      databasePath: join(directory, 'knowledge.sqlite'),
+      managedRoot: join(directory, 'managed'),
+      documentResults: results
+    })
+    services.push(service)
+    await service.initialize()
+    await expect(access(join(root, orphanId))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(join(root, temporaryId))).resolves.toBeUndefined()
+    expect(results.isTemporaryResult).toHaveBeenCalledTimes(2)
+    expect(results.close).not.toHaveBeenCalled()
+  })
+
   it('imports real DOCX and PDF files from disk into searchable chunks', async () => {
     const { directory, service } = await createService()
     const docxPath = join(directory, '蓝鲸发布手册.docx')
@@ -140,15 +259,15 @@ describe('KnowledgeService', () => {
         )
       )
     ])
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: '真实办公文档',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
 
     await service.importPaths(library.id, [docxPath, pdfPath])
 
-    const snapshot = service.snapshot(library.id)
+    const snapshot = (await service.snapshot(library.id))
     expect(snapshot.libraries[0]).toMatchObject({
       documentCount: 2,
       indexedDocumentCount: 2,
@@ -174,16 +293,16 @@ describe('KnowledgeService', () => {
     expect(docxDocument).toBeDefined()
     expect(pdfDocument).toBeDefined()
     expect(
-      service.getDocumentSource({
+      (await service.getDocumentSource({
         knowledgeBaseId: library.id,
         documentId: docxDocument!.id
-      })
+      }))
     ).toMatchObject({
       document: { sourceLocation: docxPath },
       source: { knowledgeBaseId: library.id }
     })
-    const docxChunks = service.database.listChunks(docxDocument!.id)
-    const pdfChunks = service.database.listChunks(pdfDocument!.id)
+    const docxChunks = (await service.database.listChunks(docxDocument!.id))
+    const pdfChunks = (await service.database.listChunks(pdfDocument!.id))
     expect(docxChunks.map((chunk) => chunk.content).join('\n')).toContain(
       '发布前必须完成审批和回归测试'
     )
@@ -195,11 +314,11 @@ describe('KnowledgeService', () => {
       '第 2 页'
     ])
 
-    expect(service.search(library.id, '发布审批')[0]?.document.id).toBe(
+    expect((await service.search(library.id, '发布审批'))[0]?.document.id).toBe(
       docxDocument!.id
     )
     expect(
-      service.search(library.id, 'verified package')[0]?.document.id
+      (await service.search(library.id, 'verified package'))[0]?.document.id
     ).toBe(pdfDocument!.id)
   })
 
@@ -226,11 +345,11 @@ describe('KnowledgeService', () => {
     )
     const sourcePath = join(directory, 'role-aware.md')
     await writeFile(sourcePath, 'role aware knowledge content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Role-aware library',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
 
     await service.importPaths(library.id, [sourcePath])
     expect(embedDocuments).toHaveBeenCalled()
@@ -271,21 +390,21 @@ describe('KnowledgeService', () => {
     const secondPath = join(directory, 'second.md')
     await writeFile(firstPath, 'first vector document', 'utf8')
     await writeFile(secondPath, 'second vector document', 'utf8')
-    const first = service.createLibrary({
+    const first = (await service.createLibrary({
       name: 'First vector library',
       storageMode: 'reference',
       graphEnabled: false
-    })
-    const second = service.createLibrary({
+    }))
+    const second = (await service.createLibrary({
       name: 'Second vector library',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(first.id, [firstPath])
     await service.importPaths(second.id, [secondPath])
-    const firstDocument = service.snapshot(first.id).documents[0]!
-    const secondDocument = service.snapshot(second.id).documents[0]!
-    service.database.upsertDocument(
+    const firstDocument = (await service.snapshot(first.id)).documents[0]!
+    const secondDocument = (await service.snapshot(second.id)).documents[0]!
+    await service.database.upsertDocument(
       {
         id: firstDocument.id,
         knowledgeBaseId: first.id,
@@ -297,7 +416,7 @@ describe('KnowledgeService', () => {
       },
       [{ ordinal: 0, content: 'first changed content' }]
     )
-    service.database.upsertDocument(
+    await service.database.upsertDocument(
       {
         id: secondDocument.id,
         knowledgeBaseId: second.id,
@@ -328,18 +447,18 @@ describe('KnowledgeService', () => {
 
     expect(embed).toHaveBeenCalledTimes(1)
     expect(
-      service.database.getEmbeddingIndexState(
+      (await service.database.getEmbeddingIndexState(
         firstDocument.id,
         embeddingStorageProvider(provider),
         provider.model
-      )
+      ))
     ).toMatchObject({ status: 'ready' })
     expect(
-      service.database.getEmbeddingIndexState(
+      (await service.database.getEmbeddingIndexState(
         secondDocument.id,
         embeddingStorageProvider(provider),
         provider.model
-      )
+      ))
     ).toBeUndefined()
     expect(
       (
@@ -370,16 +489,16 @@ describe('KnowledgeService', () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, 'cancel-vector.md')
     await writeFile(sourcePath, 'cancel this vector rebuild', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Cancellable vector library',
       storageMode: 'reference',
       graphEnabled: false
-    })
-    const other = service.createLibrary({
+    }))
+    const other = (await service.createLibrary({
       name: 'Other vector library',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
     await service.setEmbeddingProvider(provider)
 
@@ -415,16 +534,16 @@ describe('KnowledgeService', () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, '产品说明.md')
     await writeFile(sourcePath, '# GoodBuddy\n跨平台桌面智能助手', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: '产品知识',
       storageMode: 'reference',
       graphEnabled: false,
       graphStrategy: 'rules'
-    })
+    }))
 
     await service.importPaths(library.id, [sourcePath])
-    const snapshot = service.snapshot(library.id)
-    const results = service.search(library.id, '跨平台桌面')
+    const snapshot = (await service.snapshot(library.id))
+    const results = (await service.search(library.id, '跨平台桌面'))
 
     expect(snapshot.sources).toHaveLength(1)
     expect(snapshot.documents).toHaveLength(1)
@@ -469,33 +588,33 @@ describe('KnowledgeService', () => {
     services.push(service)
     const sourcePath = join(directory, 'contextual.md')
     await writeFile(sourcePath, '# Contextual\nfirst import content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Contextual knowledge',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
 
     const importing = service.importPaths(library.id, [sourcePath])
     await parserStarted
-    const updated = service.updateSettings({
+    const updated = (await service.updateSettings({
       knowledgeBaseId: library.id,
       chunking: {
         ...library.chunkingSettings,
         contextualIndexingEnabled: true
       }
-    })
+    }))
 
     expect(updated.chunkingRebuildRequired).toBe(false)
 
     releaseParser?.()
     await importing
 
-    const snapshot = service.snapshot(library.id)
+    const snapshot = (await service.snapshot(library.id))
     const document = snapshot.documents[0]
     expect(snapshot.libraries[0]?.chunkingRebuildRequired).toBe(false)
     expect(document).toBeDefined()
     expect(
-      service.database.getEmbeddingIndexDocument(document!.id)?.items[0]
+      (await service.database.getEmbeddingIndexDocument(document!.id))?.items[0]
         ?.content
     ).toContain('[context ')
   })
@@ -505,15 +624,15 @@ describe('KnowledgeService', () => {
     const original = join(directory, 'original')
     await mkdir(original)
     await writeFile(join(original, 'notes.txt'), '托管目录知识', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: '托管知识',
       storageMode: 'managed',
       graphEnabled: false,
       graphStrategy: 'rules'
-    })
+    }))
 
     await service.importPaths(library.id, [original])
-    const [source] = service.snapshot(library.id).sources
+    const [source] = (await service.snapshot(library.id)).sources
     expect(source?.location).not.toBe(original)
     if (!source) {
       throw new Error('Managed source was not created')
@@ -538,12 +657,12 @@ describe('KnowledgeService', () => {
       })
     })
     const { service } = await createService(importer)
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: '网页知识',
       storageMode: 'managed',
       graphEnabled: false,
       graphStrategy: 'rules'
-    })
+    }))
 
     await service.importUrl(
       library.id,
@@ -551,12 +670,12 @@ describe('KnowledgeService', () => {
       new AbortController().signal
     )
 
-    expect(service.snapshot(library.id).sources[0]).toMatchObject({
+    expect((await service.snapshot(library.id)).sources[0]).toMatchObject({
       type: 'url',
       status: 'ready',
       displayName: '帮助中心'
     })
-    expect(service.search(library.id, '安装配置')).not.toHaveLength(0)
+    expect((await service.search(library.id, '安装配置'))).not.toHaveLength(0)
     await service.dispose()
   })
 
@@ -568,15 +687,15 @@ describe('KnowledgeService', () => {
       'GoodBuddy（产品）依赖 Electron（框架）。',
       'utf8'
     )
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: '架构图谱',
       storageMode: 'reference',
       graphEnabled: true,
       graphStrategy: 'rules'
-    })
+    }))
 
     await service.importPaths(library.id, [sourcePath])
-    const snapshot = service.snapshot(library.id)
+    const snapshot = (await service.snapshot(library.id))
 
     expect(snapshot.entities.length).toBeGreaterThan(0)
     expect(snapshot.evidence.length).toBeGreaterThan(0)
@@ -617,20 +736,20 @@ describe('KnowledgeService', () => {
       '# 可检索文档\n即使图谱失败，全文内容仍应可用。',
       'utf8'
     )
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: '模型图谱容错',
       storageMode: 'reference',
       graphEnabled: true,
       graphStrategy: 'model'
-    })
+    }))
 
     await expect(
       service.importPaths(library.id, [sourcePath])
     ).resolves.toBeUndefined()
 
-    const snapshot = service.snapshot(library.id)
+    const snapshot = (await service.snapshot(library.id))
     expect(snapshot.documents).toHaveLength(1)
-    expect(service.search(library.id, '全文内容')).toHaveLength(1)
+    expect((await service.search(library.id, '全文内容'))).toHaveLength(1)
     expect(snapshot.tasks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -654,46 +773,46 @@ describe('KnowledgeService', () => {
       'GoodBuddy（产品）依赖 Electron（框架）。',
       'utf8'
     )
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: '重新抽取',
       storageMode: 'reference',
       graphEnabled: true,
       graphStrategy: 'rules'
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    const stale = service.database.createEntity({
+    const stale = (await service.database.createEntity({
       knowledgeBaseId: library.id,
       name: '过期实体',
       type: '概念',
       locked: false
-    })
-    const manual = service.database.createEntity({
+    }))
+    const manual = (await service.database.createEntity({
       knowledgeBaseId: library.id,
       name: '人工实体',
       type: '概念',
       locked: true
-    })
+    }))
 
     await service.reextractGraph(library.id)
 
-    const snapshot = service.snapshot(library.id)
+    const snapshot = (await service.snapshot(library.id))
     expect(snapshot.evidence.length).toBeGreaterThan(0)
-    expect(service.database.getEntity(stale.id)).toBeUndefined()
-    expect(service.database.getEntity(manual.id)).toBeDefined()
+    expect((await service.database.getEntity(stale.id))).toBeUndefined()
+    expect((await service.database.getEntity(manual.id))).toBeDefined()
   })
 
   it('prunes generated graph records after chunk evidence is removed', async () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, 'chunk-graph.md')
     await writeFile(sourcePath, '# Disposable Entity', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Chunk graph cleanup',
       storageMode: 'reference',
       graphEnabled: true,
       graphStrategy: 'rules'
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    const snapshot = service.snapshot(library.id)
+    const snapshot = (await service.snapshot(library.id))
     const document = snapshot.documents[0]!
     const generatedEntity = snapshot.entities.find(
       (entity) => entity.name === 'Disposable Entity'
@@ -709,8 +828,8 @@ describe('KnowledgeService', () => {
       content: 'Replacement text without graph evidence'
     })
 
-    expect(service.database.getEntity(generatedEntity.id)).toBeUndefined()
-    expect(service.snapshot(library.id).evidence).toEqual([])
+    expect((await service.database.getEntity(generatedEntity.id))).toBeUndefined()
+    expect((await service.snapshot(library.id)).evidence).toEqual([])
   })
 
   it('keeps a committed chunk edit successful when graph refresh fails', async () => {
@@ -724,18 +843,18 @@ describe('KnowledgeService', () => {
     )
     const sourcePath = join(directory, 'edit-graph-failure.md')
     await writeFile(sourcePath, 'initial edit content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Edit graph failure',
       storageMode: 'reference',
       graphEnabled: false,
       graphStrategy: 'model'
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    service.database.updateKnowledgeBase(library.id, { graphEnabled: true })
-    const document = service.snapshot(library.id).documents[0]!
-    const chunk = service.database
-      .listChunks(document.id)
-      .find((candidate) => candidate.role !== 'parent')!
+    await service.database.updateKnowledgeBase(library.id, { graphEnabled: true })
+    const document = (await service.snapshot(library.id)).documents[0]!
+    const chunk = (await (await service.database
+      .listChunks(document.id))
+      .find((candidate) => candidate.role !== 'parent'))!
 
     await expect(service.updateChunk({
       knowledgeBaseId: library.id,
@@ -746,7 +865,7 @@ describe('KnowledgeService', () => {
       content: 'committed edit survives graph failure'
     })
     await vi.waitFor(() => expect(extractStructured).toHaveBeenCalled())
-    expect(service.search(library.id, 'committed')).toHaveLength(1)
+    expect((await service.search(library.id, 'committed'))).toHaveLength(1)
   })
 
   it('coalesces edit graph refreshes so stale extraction cannot publish last', async () => {
@@ -765,18 +884,18 @@ describe('KnowledgeService', () => {
     )
     const sourcePath = join(directory, 'coalesced-edit-graph.md')
     await writeFile(sourcePath, 'initial graph content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Coalesced edit graph',
       storageMode: 'reference',
       graphEnabled: false,
       graphStrategy: 'model'
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    service.database.updateKnowledgeBase(library.id, { graphEnabled: true })
-    const document = service.snapshot(library.id).documents[0]!
-    const chunk = service.database
-      .listChunks(document.id)
-      .find((candidate) => candidate.role !== 'parent')!
+    await service.database.updateKnowledgeBase(library.id, { graphEnabled: true })
+    const document = (await service.snapshot(library.id)).documents[0]!
+    const chunk = (await (await service.database
+      .listChunks(document.id))
+      .find((candidate) => candidate.role !== 'parent'))!
 
     await service.updateChunk({
       knowledgeBaseId: library.id,
@@ -797,14 +916,14 @@ describe('KnowledgeService', () => {
     resolvers.shift()?.({ entities: [], relations: [] })
     await vi.waitFor(() => expect(resolvers).toHaveLength(1))
     resolvers.shift()?.({ entities: [], relations: [] })
-    await vi.waitFor(() => {
+    await vi.waitFor(async () => {
       expect(
-        service.snapshot(library.id).tasks.filter(
+        (await (await service.snapshot(library.id)).tasks.filter(
           (task) => task.kind === 'graph' && task.status === 'succeeded'
-        )
+        ))
       ).toHaveLength(1)
     })
-    expect(service.database.listChunks(document.id)).toEqual(
+    expect((await service.database.listChunks(document.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ content: 'second graph edit' })
       ])
@@ -822,22 +941,22 @@ describe('KnowledgeService', () => {
     )
     const sourcePath = join(directory, 'hybrid-fallback.md')
     await writeFile(sourcePath, '# 本地实体', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: '混合抽取',
       storageMode: 'reference',
       graphEnabled: false,
       graphStrategy: 'hybrid'
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    service.database.updateKnowledgeBase(library.id, {
+    await service.database.updateKnowledgeBase(library.id, {
       graphEnabled: true
     })
 
     await expect(service.reextractGraph(library.id)).rejects.toThrow(
       '模型未返回图谱内容'
     )
-    expect(service.snapshot(library.id).entities).toHaveLength(0)
-    expect(service.snapshot(library.id).tasks).toEqual(
+    expect((await service.snapshot(library.id)).entities).toHaveLength(0)
+    expect((await service.snapshot(library.id)).tasks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           kind: 'graph',
@@ -862,23 +981,23 @@ describe('KnowledgeService', () => {
     const { directory, service } = await createService(undefined, provider)
     const sourcePath = join(directory, 'vectors.txt')
     await writeFile(sourcePath, 'orbital telescope notes', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Vector knowledge',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
 
     await service.importPaths(library.id, [sourcePath])
-    const document = service.snapshot(library.id).documents[0]
+    const document = (await service.snapshot(library.id)).documents[0]
     if (!document) {
       throw new Error('Indexed document missing')
     }
     expect(
-      service.database.getEmbeddingIndexState(
+      (await service.database.getEmbeddingIndexState(
         document.id,
         provider.provider,
         provider.model
-      )
+      ))
     ).toMatchObject({ status: 'ready', dimensions: 2 })
 
     const results = await service.searchHybrid(
@@ -902,27 +1021,27 @@ describe('KnowledgeService', () => {
     )
     const sourcePath = join(directory, 'fingerprint.txt')
     await writeFile(sourcePath, 'fingerprint compatibility', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Fingerprint knowledge',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    const document = service.snapshot(library.id).documents[0]!
+    const document = (await service.snapshot(library.id)).documents[0]!
 
     expect(
-      service.database.getEmbeddingIndexState(
+      (await service.database.getEmbeddingIndexState(
         document.id,
         embeddingStorageProvider(firstProvider),
         firstProvider.model
-      )
+      ))
     ).toMatchObject({ status: 'ready' })
     expect(
-      service.database.getEmbeddingIndexState(
+      (await service.database.getEmbeddingIndexState(
         document.id,
         firstProvider.provider,
         firstProvider.model
-      )
+      ))
     ).toBeUndefined()
     const firstResponse = await service.retrieve({
       knowledgeBaseId: library.id,
@@ -974,37 +1093,37 @@ describe('KnowledgeService', () => {
     const { directory, service } = await createService(undefined, provider)
     const sourcePath = join(directory, 'fallback.txt')
     await writeFile(sourcePath, 'lexical fallback remains searchable', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Fallback knowledge',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
 
     await service.importPaths(library.id, [sourcePath])
-    const document = service.snapshot(library.id).documents[0]
+    const document = (await service.snapshot(library.id)).documents[0]
     if (!document) {
       throw new Error('Indexed document missing')
     }
     expect(document.status).toBe('ready')
-    expect(service.snapshot(library.id).sources[0]?.status).toBe('ready')
-    expect(service.search(library.id, 'fallback')).toHaveLength(1)
+    expect((await service.snapshot(library.id)).sources[0]?.status).toBe('ready')
+    expect((await service.search(library.id, 'fallback'))).toHaveLength(1)
     expect(
-      service.database.getEmbeddingIndexState(
+      (await service.database.getEmbeddingIndexState(
         document.id,
         provider.provider,
         provider.model
-      )
+      ))
     ).toMatchObject({
       status: 'error',
       lastError: '向量服务暂时不可用。'
     })
     expect(
       JSON.stringify(
-        service.database.getEmbeddingIndexState(
+        (await service.database.getEmbeddingIndexState(
           document.id,
           provider.provider,
           provider.model
-        )
+        ))
       )
     ).not.toContain('sk-private')
     const results = await service.searchHybrid(library.id, 'fallback')
@@ -1027,18 +1146,18 @@ describe('KnowledgeService', () => {
     services.push(service)
     const sourcePath = join(directory, 'failure.txt')
     await writeFile(sourcePath, 'failure source', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Bounded task errors',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
 
     await expect(
       service.importPaths(library.id, [sourcePath])
     ).rejects.toThrow()
-    const failedTasks = service
-      .snapshot(library.id)
-      .tasks.filter((task) => task.status === 'failed')
+    const failedTasks = (await (await service
+      .snapshot(library.id))
+      .tasks.filter((task) => task.status === 'failed'))
     expect(failedTasks.length).toBeGreaterThan(0)
     expect(
       failedTasks.every(
@@ -1053,13 +1172,13 @@ describe('KnowledgeService', () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, 'existing.txt')
     await writeFile(sourcePath, 'existing semantic content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Existing knowledge',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    const document = service.snapshot(library.id).documents[0]!
+    const document = (await service.snapshot(library.id)).documents[0]!
     const provider: EmbeddingProvider = {
       provider: 'late-provider',
       model: 'late-model',
@@ -1069,11 +1188,11 @@ describe('KnowledgeService', () => {
     await service.setEmbeddingProvider(provider)
 
     expect(
-      service.database.getEmbeddingIndexState(
+      (await service.database.getEmbeddingIndexState(
         document.id,
         provider.provider,
         provider.model
-      )
+      ))
     ).toBeUndefined()
   })
 
@@ -1091,11 +1210,11 @@ describe('KnowledgeService', () => {
     for (const index of [1, 2]) {
       const sourcePath = join(directory, `library-${index}.txt`)
       await writeFile(sourcePath, `shared topic ${index}`, 'utf8')
-      const library = service.createLibrary({
+      const library = (await service.createLibrary({
         name: `Library ${index}`,
         storageMode: 'reference',
         graphEnabled: false
-      })
+      }))
       libraryIds.push(library.id)
       await service.importPaths(library.id, [sourcePath])
     }
@@ -1130,10 +1249,10 @@ describe('KnowledgeService', () => {
     })
     services.push(service)
     await service.initialize()
-    const instance = service.external.saveInstance({
+    const instance = (await service.external.saveInstance({
       name: 'Test', provider: 'dify', baseUrl: 'https://kb.example', enabled: true,
       credential: { action: 'replace', value: 'test-key' }
-    })
+    }))
     const bindings = []
     for (const remoteKnowledgeBaseId of ['first', 'second']) {
       bindings.push(await service.external.saveBinding({
@@ -1181,14 +1300,14 @@ describe('KnowledgeService', () => {
     for (const index of [1, 2]) {
       const sourcePath = join(directory, `rerank-library-${index}.txt`)
       await writeFile(sourcePath, `shared rerank topic ${index}`, 'utf8')
-      const library = service.createLibrary({
+      const library = (await service.createLibrary({
         name: `Rerank library ${index}`,
         storageMode: 'reference',
         graphEnabled: false
-      })
+      }))
       libraryIds.push(library.id)
       await service.importPaths(library.id, [sourcePath])
-      service.updateSettings({
+      await service.updateSettings({
         knowledgeBaseId: library.id,
         retrieval: {
           ...library.retrievalSettings,
@@ -1221,14 +1340,14 @@ describe('KnowledgeService', () => {
       ].join('\n'),
       'utf8'
     )
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Learned rerank',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    const original = service.snapshot(library.id).documents[0]!
-    service.database.upsertDocument(
+    const original = (await service.snapshot(library.id)).documents[0]!
+    await service.database.upsertDocument(
       {
         ...original,
         title: original.title
@@ -1294,11 +1413,11 @@ describe('KnowledgeService', () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, 'rerank-fallback.txt')
     await writeFile(sourcePath, 'fallback keyword content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Rerank fallback',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
     await service.setRerankProvider({
       provider: 'cohere-compatible',
@@ -1377,13 +1496,13 @@ describe('KnowledgeService', () => {
       ).join('\n'),
       'utf8'
     )
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Budget',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    service.updateSettings({
+    await service.updateSettings({
       knowledgeBaseId: library.id,
       retrieval: {
         ...library.retrievalSettings,
@@ -1418,13 +1537,13 @@ describe('KnowledgeService', () => {
     const secondPath = join(directory, 'second.txt')
     await writeFile(firstPath, 'first old content', 'utf8')
     await writeFile(secondPath, 'second stable content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Scoped rebuild',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [firstPath, secondPath])
-    const documents = service.snapshot(library.id).documents
+    const documents = (await service.snapshot(library.id)).documents
     const first = documents.find((document) =>
       document.sourceLocation?.endsWith('first.txt')
     )!
@@ -1439,8 +1558,8 @@ describe('KnowledgeService', () => {
       documentId: first.id
     })
 
-    expect(service.search(library.id, 'rebuilt')[0]?.document.id).toBe(first.id)
-    expect(service.database.getDocument(second.id)?.checksum).toBe(
+    expect((await service.search(library.id, 'rebuilt'))[0]?.document.id).toBe(first.id)
+    expect((await service.database.getDocument(second.id))?.checksum).toBe(
       secondChecksum
     )
   })
@@ -1468,16 +1587,16 @@ describe('KnowledgeService', () => {
     )
     const sourcePath = join(directory, 'atomic-rebuild.md')
     await writeFile(sourcePath, '# Original Entity\nold searchable text', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Atomic rebuild',
       storageMode: 'reference',
       graphEnabled: true,
       graphStrategy: 'hybrid'
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    const before = service.snapshot(library.id)
+    const before = (await service.snapshot(library.id))
     const document = before.documents[0]!
-    const oldChunk = service.database.listChunks(document.id)[0]!
+    const oldChunk = (await service.database.listChunks(document.id))[0]!
     const oldEvidence = before.evidence
     failExtraction = true
     await writeFile(sourcePath, '# Replacement Entity\nnew searchable text', 'utf8')
@@ -1487,16 +1606,16 @@ describe('KnowledgeService', () => {
       documentId: document.id
     })).rejects.toThrow('synthetic graph failure')
 
-    expect(service.search(library.id, 'old')[0]?.chunk.id).toBe(oldChunk.id)
-    expect(service.search(library.id, 'new')).toEqual([])
-    expect(service.database.vectorSearch({
+    expect((await service.search(library.id, 'old'))[0]?.chunk.id).toBe(oldChunk.id)
+    expect((await service.search(library.id, 'new'))).toEqual([])
+    expect((await service.database.vectorSearch({
       knowledgeBaseId: library.id,
       provider: embeddingStorageProvider(provider),
       model: provider.model,
       vector: [1, 0],
       limit: 1
-    })[0]?.chunk.id).toBe(oldChunk.id)
-    expect(service.snapshot(library.id).evidence).toEqual(oldEvidence)
+    }))[0]?.chunk.id).toBe(oldChunk.id)
+    expect((await service.snapshot(library.id)).evidence).toEqual(oldEvidence)
   })
 
   it('serializes a rebuild and chunk edit so the latest mutation wins', async () => {
@@ -1539,16 +1658,16 @@ describe('KnowledgeService', () => {
     services.push(service)
     const sourcePath = join(directory, 'mutation-gate.txt')
     await writeFile(sourcePath, 'initial content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Mutation gate',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    const document = service.snapshot(library.id).documents[0]!
-    const originalChunk = service.database
-      .listChunks(document.id)
-      .find((chunk) => chunk.role !== 'parent')!
+    const document = (await service.snapshot(library.id)).documents[0]!
+    const originalChunk = (await (await service.database
+      .listChunks(document.id))
+      .find((chunk) => chunk.role !== 'parent'))!
     blockParser = true
     await writeFile(sourcePath, 'rebuilt source bytes', 'utf8')
 
@@ -1568,8 +1687,8 @@ describe('KnowledgeService', () => {
     await expect(editing).rejects.toThrow(
       'Chunk must belong to the requested document'
     )
-    expect(service.search(library.id, 'rebuilt')).toHaveLength(1)
-    expect(service.search(library.id, 'manual')).toEqual([])
+    expect((await service.search(library.id, 'rebuilt'))).toHaveLength(1)
+    expect((await service.search(library.id, 'manual'))).toEqual([])
   })
 
   it('aborts standalone document rebuild work and keeps child capabilities honest', async () => {
@@ -1594,19 +1713,19 @@ describe('KnowledgeService', () => {
     services.push(service)
     const sourcePath = join(directory, 'cancel-rebuild.txt')
     await writeFile(sourcePath, 'initial content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Cancel rebuild',
       storageMode: 'reference',
       graphEnabled: false
-    })
-    const source = service.database.upsertSource({
+    }))
+    const source = (await service.database.upsertSource({
       knowledgeBaseId: library.id,
       type: 'file',
       location: sourcePath,
       displayName: 'cancel-rebuild.txt',
       status: 'ready'
-    })
-    const document = service.database.upsertDocument(
+    }))
+    const document = (await service.database.upsertDocument(
       {
         knowledgeBaseId: library.id,
         sourceId: source.id,
@@ -1615,21 +1734,21 @@ describe('KnowledgeService', () => {
         sourceLocation: sourcePath
       },
       [{ ordinal: 0, content: 'old content' }]
-    )
+    ))
 
     const rebuilding = service.rebuildDocument({
       knowledgeBaseId: library.id,
       documentId: document.id
     })
     await vi.waitFor(() => expect(parserSignal).toBeDefined())
-    const task = service
-      .snapshot(library.id)
-      .tasks.find((candidate) => candidate.kind === 'document-rebuild')!
+    const task = (await (await service
+      .snapshot(library.id))
+      .tasks.find((candidate) => candidate.kind === 'document-rebuild'))!
     expect(task.canCancel).toBe(true)
     expect(await service.cancelTask(task.id)).toBe(true)
     await expect(rebuilding).rejects.toBeDefined()
     expect(parserSignal?.aborted).toBe(true)
-    expect(service.database.getKnowledgeTask(task.id)).toMatchObject({
+    expect((await service.database.getKnowledgeTask(task.id))).toMatchObject({
       status: 'cancelled',
       canCancel: false,
       canRetry: true
@@ -1664,19 +1783,19 @@ describe('KnowledgeService', () => {
     services.push(service)
     const sourcePath = join(directory, 'dedupe-rebuild.txt')
     await writeFile(sourcePath, 'initial content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Dedupe rebuild',
       storageMode: 'reference',
       graphEnabled: false
-    })
-    const source = service.database.upsertSource({
+    }))
+    const source = (await service.database.upsertSource({
       knowledgeBaseId: library.id,
       type: 'file',
       location: sourcePath,
       displayName: 'dedupe-rebuild.txt',
       status: 'ready'
-    })
-    const document = service.database.upsertDocument(
+    }))
+    const document = (await service.database.upsertDocument(
       {
         knowledgeBaseId: library.id,
         sourceId: source.id,
@@ -1685,7 +1804,7 @@ describe('KnowledgeService', () => {
         sourceLocation: sourcePath
       },
       [{ ordinal: 0, content: 'old content' }]
-    )
+    ))
 
     const first = service.rebuildDocument({
       knowledgeBaseId: library.id,
@@ -1697,9 +1816,9 @@ describe('KnowledgeService', () => {
       documentId: document.id
     })
     expect(
-      service
-        .snapshot(library.id)
-        .tasks.filter((task) => task.kind === 'document-rebuild')
+      (await (await service
+        .snapshot(library.id))
+        .tasks.filter((task) => task.kind === 'document-rebuild'))
     ).toHaveLength(1)
     releaseParser?.()
 
@@ -1722,18 +1841,18 @@ describe('KnowledgeService', () => {
       })
     } as unknown as UrlImporter
     const { service } = await createService(importer)
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Delete syncing source',
       storageMode: 'managed',
       graphEnabled: false
-    })
-    const source = service.database.upsertSource({
+    }))
+    const source = (await service.database.upsertSource({
       knowledgeBaseId: library.id,
       type: 'url',
       location: 'https://example.com/syncing',
       displayName: 'Syncing URL',
       status: 'ready'
-    })
+    }))
 
     const syncing = service.syncSource(source.id)
     void syncing.catch(() => undefined)
@@ -1741,7 +1860,7 @@ describe('KnowledgeService', () => {
     await expect(service.removeSource(source.id)).resolves.toBe(true)
     await expect(syncing).rejects.toBeDefined()
     expect(importerSignal?.aborted).toBe(true)
-    expect(service.database.getSource(source.id)).toBeUndefined()
+    expect((await service.database.getSource(source.id))).toBeUndefined()
   })
 
   it('leaves a paused source paused after aborting its active sync', async () => {
@@ -1757,25 +1876,25 @@ describe('KnowledgeService', () => {
       })
     } as unknown as UrlImporter
     const { service } = await createService(importer)
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Pause syncing source',
       storageMode: 'managed',
       graphEnabled: false
-    })
-    const source = service.database.upsertSource({
+    }))
+    const source = (await service.database.upsertSource({
       knowledgeBaseId: library.id,
       type: 'url',
       location: 'https://example.com/pausing',
       displayName: 'Pausing URL',
       status: 'ready'
-    })
+    }))
 
     const syncing = service.syncSource(source.id)
     void syncing.catch(() => undefined)
     await vi.waitFor(() => expect(importerSignal).toBeDefined())
-    service.pauseSource(source.id)
+    await service.pauseSource(source.id)
     await expect(syncing).rejects.toBeDefined()
-    expect(service.database.getSource(source.id)).toMatchObject({
+    expect((await service.database.getSource(source.id))).toMatchObject({
       status: 'paused',
       lastError: undefined
     })
@@ -1788,23 +1907,23 @@ describe('KnowledgeService', () => {
       })
     } as unknown as UrlImporter
     const { service } = await createService(importer)
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Failed URL refresh',
       storageMode: 'managed',
       graphEnabled: false
-    })
-    const source = service.database.upsertSource({
+    }))
+    const source = (await service.database.upsertSource({
       knowledgeBaseId: library.id,
       type: 'url',
       location: 'https://example.com/failure',
       displayName: 'Existing URL',
       status: 'ready'
-    })
+    }))
 
     await expect(service.syncSource(source.id)).rejects.toThrow(
       'URL refresh unavailable'
     )
-    expect(service.database.getSource(source.id)).toMatchObject({
+    expect((await service.database.getSource(source.id))).toMatchObject({
       status: 'error',
       lastError: 'URL refresh unavailable'
     })
@@ -1832,18 +1951,18 @@ describe('KnowledgeService', () => {
       }))
     } as unknown as UrlImporter
     const { service } = await createService(importer)
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Failed refreshed URL',
       storageMode: 'managed',
       graphEnabled: false
-    })
-    const source = service.database.upsertSource({
+    }))
+    const source = (await service.database.upsertSource({
       knowledgeBaseId: library.id,
       type: 'url',
       location: 'https://example.com/original',
       displayName: 'Original title',
       status: 'ready'
-    })
+    }))
     vi.spyOn(service.database, 'publishDocument').mockImplementationOnce(
       () => {
         throw new Error('synthetic indexing failure')
@@ -1853,7 +1972,7 @@ describe('KnowledgeService', () => {
     await expect(service.syncSource(source.id)).rejects.toThrow(
       'synthetic indexing failure'
     )
-    expect(service.database.getSource(source.id)).toMatchObject({
+    expect((await service.database.getSource(source.id))).toMatchObject({
       location: 'https://example.com/redirected',
       displayName: 'Redirected title',
       status: 'error',
@@ -1884,15 +2003,15 @@ describe('KnowledgeService', () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, 'serial-background.txt')
     await writeFile(sourcePath, 'initial content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Serialized background embeddings',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
     await service.setEmbeddingProvider(provider)
-    const document = service.snapshot(library.id).documents[0]!
-    const chunk = service.database.listChunks(document.id, 1)[0]!
+    const document = (await service.snapshot(library.id)).documents[0]!
+    const chunk = (await service.database.listChunks(document.id, 1))[0]!
 
     await service.updateChunk({
       knowledgeBaseId: library.id,
@@ -1941,14 +2060,14 @@ describe('KnowledgeService', () => {
     )
     const sourcePath = join(directory, 'delete-library-graph.md')
     await writeFile(sourcePath, 'GoodBuddy depends on Electron.', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Delete active graph library',
       storageMode: 'reference',
       graphEnabled: false,
       graphStrategy: 'model'
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    service.database.updateKnowledgeBase(library.id, { graphEnabled: true })
+    await service.database.updateKnowledgeBase(library.id, { graphEnabled: true })
 
     const rebuilding = service.reextractGraph(library.id)
     void rebuilding.catch(() => undefined)
@@ -1956,21 +2075,21 @@ describe('KnowledgeService', () => {
     await expect(service.deleteLibrary(library.id)).resolves.toBe(true)
     await expect(rebuilding).rejects.toBeDefined()
     expect(extractionSignal?.aborted).toBe(true)
-    expect(service.database.getKnowledgeBase(library.id)).toBeUndefined()
+    expect((await service.database.getKnowledgeBase(library.id))).toBeUndefined()
   })
 
   it('retries source sync with one top-level lineage row and linked children', async () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, 'retry-source.txt')
     await writeFile(sourcePath, 'retry source content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Retry source',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
-    const source = service.snapshot(library.id).sources[0]!
-    const original = service.database.createKnowledgeTask({
+    const source = (await service.snapshot(library.id)).sources[0]!
+    const original = (await service.database.createKnowledgeTask({
       libraryId: library.id,
       sourceId: source.id,
       documentName: source.displayName,
@@ -1978,11 +2097,11 @@ describe('KnowledgeService', () => {
       kind: 'source-sync',
       status: 'failed',
       error: { message: 'synthetic retryable failure' }
-    })
+    }))
 
     await service.retryTask(original.id)
 
-    const tasks = service.snapshot(library.id).tasks
+    const tasks = (await service.snapshot(library.id)).tasks
     const retries = tasks.filter(
       (task) =>
         task.kind === 'source-sync' && task.retryOfTaskId === original.id
@@ -2015,19 +2134,19 @@ describe('KnowledgeService', () => {
       )
     } as unknown as UrlImporter
     const { service } = await createService(importer)
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Dedupe source retry',
       storageMode: 'managed',
       graphEnabled: false
-    })
-    const source = service.database.upsertSource({
+    }))
+    const source = (await service.database.upsertSource({
       knowledgeBaseId: library.id,
       type: 'url',
       location: 'https://example.com/dedupe',
       displayName: 'Dedupe URL',
       status: 'ready'
-    })
-    const failed = service.database.createKnowledgeTask({
+    }))
+    const failed = (await service.database.createKnowledgeTask({
       libraryId: library.id,
       sourceId: source.id,
       documentName: source.displayName,
@@ -2035,7 +2154,7 @@ describe('KnowledgeService', () => {
       kind: 'source-sync',
       status: 'failed',
       error: { message: 'retry me' }
-    })
+    }))
 
     const syncing = service.syncSource(source.id)
     void syncing.catch(() => undefined)
@@ -2063,11 +2182,11 @@ describe('KnowledgeService', () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, 'snapshot-embedding.txt')
     await writeFile(sourcePath, 'snapshot embedding content', 'utf8')
-    const library = service.createLibrary({
+    const library = (await service.createLibrary({
       name: 'Snapshot embedding',
       storageMode: 'reference',
       graphEnabled: false
-    })
+    }))
     await service.importPaths(library.id, [sourcePath])
     await service.setEmbeddingProvider(provider)
     await service.rebuildEmbeddingIndex(library.id, {
@@ -2077,16 +2196,16 @@ describe('KnowledgeService', () => {
     })
     await vi.waitFor(() => expect(resolveEmbedding).toBeDefined())
     expect(
-      service
-        .snapshot(library.id)
-        .tasks.find((task) => task.kind === 'embedding-rebuild')
+      (await (await service
+        .snapshot(library.id))
+        .tasks.find((task) => task.kind === 'embedding-rebuild'))
     ).toMatchObject({ status: 'running', canCancel: true })
     resolveEmbedding?.([[1, 0]])
-    await vi.waitFor(() => {
+    await vi.waitFor(async () => {
       expect(
-        service
-          .snapshot(library.id)
-          .tasks.find((task) => task.kind === 'embedding-rebuild')
+        (await (await service
+          .snapshot(library.id))
+          .tasks.find((task) => task.kind === 'embedding-rebuild'))
       ).toMatchObject({ status: 'succeeded', progress: 100 })
     })
   })

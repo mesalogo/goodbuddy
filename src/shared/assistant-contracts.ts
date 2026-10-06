@@ -344,6 +344,14 @@ export type ConversationQueueItem = z.infer<
   typeof conversationQueueItemSchema
 >
 
+export const toolOutputReferenceSchema = z.object({
+  handle: z.string().min(1),
+  nextCursor: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative()
+}).strict()
+
+export type ToolOutputReference = z.infer<typeof toolOutputReferenceSchema>
+
 export const conversationToolActivitySchema = z
   .object({
     callId: z.string().optional(),
@@ -360,6 +368,7 @@ export const conversationToolActivitySchema = z
     summary: z.string(),
     input: z.string().optional(),
     output: z.string().optional(),
+    outputReferences: z.array(toolOutputReferenceSchema).optional(),
     error: z.string().optional()
   })
   .strict()
@@ -436,6 +445,7 @@ const conversationSubagentActivityBaseSchema = z.object({
   reason: z.string().trim().min(1).max(240).optional(),
   progress: conversationMessageBlocksSchema.optional(),
   output: z.string().optional(),
+  outputReference: toolOutputReferenceSchema.optional(),
   error: z.string().trim().min(1).max(1_000).optional()
 })
 

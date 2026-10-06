@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { FileOutputBacking, outputFixtureRoot } from '../../../tests/support/paged-output-backing'
 import { join, relative } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LocalWorkspaceAccess } from '../workspace'
@@ -31,9 +32,21 @@ class FakeChild extends EventEmitter implements DirectModelProcessChild {
 }
 
 const temporaryDirectories: string[] = []
+const backings: FileOutputBacking[] = []
+
+function outputStore() {
+  const backingStore = new FileOutputBacking()
+  backings.push(backingStore)
+  return { backingStore }
+}
+
+// The development shell may run Vitest using Electron's Node mode.
+const spawnNode: DirectModelProcessSpawn = (executable, args, options) =>
+  spawn(executable, args, { ...options, env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' } })
 
 afterEach(async () => {
   vi.useRealTimers()
+  await Promise.all(backings.splice(0).map((backing) => backing.dispose()))
   for (const directory of temporaryDirectories.splice(0)) {
     await import('node:fs/promises').then(({ rm }) =>
       rm(directory, { recursive: true, force: true })
@@ -45,7 +58,8 @@ async function workspace(): Promise<{
   root: string
   access: LocalWorkspaceAccess
 }> {
-  const root = await mkdtemp(join(tmpdir(), 'goodbuddy-process-'))
+  await mkdir(outputFixtureRoot, { recursive: true })
+  const root = await mkdtemp(join(outputFixtureRoot, 'process-'))
   temporaryDirectories.push(root)
   return { root, access: new LocalWorkspaceAccess(root) }
 }
@@ -65,6 +79,7 @@ function fakeService(
 ) {
   const spawnProcess = vi.fn<DirectModelProcessSpawn>(() => child)
   const service = new LocalDirectModelProcessService({
+    outputStore: outputStore(),
     platform: options.platform ?? 'linux',
     environment: options.environment ?? { PATH: '/usr/bin' },
     executableExists:
@@ -201,7 +216,7 @@ describe('LocalDirectModelProcessService', () => {
     'resolves an existing %s working directory without workspace containment',
     async (kind) => {
       const { root, access } = await workspace()
-      const outside = await mkdtemp(join(tmpdir(), 'goodbuddy-outside-'))
+      const outside = await mkdtemp(join(outputFixtureRoot, 'outside-'))
       temporaryDirectories.push(outside)
       const nested = join(root, 'nested')
       await mkdir(nested)
@@ -425,6 +440,7 @@ describe('LocalDirectModelProcessService', () => {
     )
     const terminated: DirectModelProcessChild[] = []
     const service = new LocalDirectModelProcessService({
+      outputStore: outputStore(),
       platform: 'linux',
       executableExists: async (path) => path === '/bin/bash',
       spawnProcess,
@@ -510,7 +526,7 @@ describe('LocalDirectModelProcessService', () => {
 
   it('pages complete stdout and stderr from a real shell', async () => {
     const { access } = await workspace()
-    const service = new LocalDirectModelProcessService()
+    const service = new LocalDirectModelProcessService({ outputStore: outputStore() })
     try {
       expect((await service.getCapability()).available).toBe(true)
       const command = process.platform === 'win32'
@@ -537,6 +553,73 @@ describe('LocalDirectModelProcessService', () => {
       await service.dispose()
       await expect(service.readOutput('real-pages', result.stdoutReference!.handle)).rejects.toThrow()
     } finally {
+      await service.dispose()
+    }
+  })
+
+  it('backpressures real child output larger than the capture budget and retains failed output', async () => {
+    const { access } = await workspace()
+    const storage = outputStore()
+    const service = new LocalDirectModelProcessService({ outputStore: storage, spawnProcess: spawnNode })
+    try {
+      const result = await service.executeFile(process.execPath, ['-e', `
+        const { once } = require('node:events');
+        (async () => {
+          for (let i = 0; i < 160; i++) {
+            if (!process.stdout.write('x'.repeat(65536))) await once(process.stdout, 'drain');
+          }
+          process.exitCode = 7;
+        })();
+      `], { conversationId: 'large', workspace: access, signal: new AbortController().signal })
+      expect(result.exitCode).toBe(7)
+      expect(result.stderr).toBe('')
+      expect(storage.backingStore.count).toBe(1)
+      expect(storage.backingStore.maximumWriteBytes).toBeLessThanOrEqual(65536)
+      expect(result.stdoutReference?.totalBytes).toBe(10 * 1024 * 1024)
+      let cursor = result.stdoutReference!.nextCursor
+      while (cursor < result.stdoutReference!.totalBytes) {
+        const page = await service.readOutput('large', result.stdoutReference!.handle, cursor)
+        expect(page.content).toBe('x'.repeat(page.nextCursor - cursor))
+        cursor = page.nextCursor
+      }
+      vi.spyOn(storage.backingStore, 'release').mockRejectedValueOnce(new Error('file busy'))
+      await expect(service.dispose()).rejects.toThrow('file busy')
+    } finally {
+      await service.dispose()
+    }
+    expect(storage.backingStore.count).toBe(0)
+  })
+
+  it('awaits pending file IO when a real child is cancelled and retains captured bytes', async () => {
+    const { access } = await workspace()
+    const storage = outputStore()
+    const controller = new AbortController()
+    const append = storage.backingStore.append.bind(storage.backingStore)
+    let resume!: () => void
+    const gate = new Promise<void>((resolve) => { resume = resolve })
+    const writing = vi.spyOn(storage.backingStore, 'append').mockImplementationOnce(async (...args) => {
+      controller.abort()
+      await gate
+      await append(...args)
+    })
+    const service = new LocalDirectModelProcessService({ outputStore: storage, spawnProcess: spawnNode })
+    try {
+      let settled = false
+      const execution = service.executeFile(process.execPath, ['-e',
+        "process.stdout.write('x'.repeat(200000)); setInterval(() => {}, 1000)"
+      ], { conversationId: 'cancel-io', workspace: access, signal: controller.signal })
+        .finally(() => { settled = true })
+      await vi.waitFor(() => expect(writing).toHaveBeenCalled())
+      expect(settled).toBe(false)
+      resume()
+      const result = await execution
+      expect(result.terminationReason).toBe('cancelled')
+      expect(result.stdoutReference).toBeDefined()
+      const page = await service.readOutput('cancel-io', result.stdoutReference!.handle,
+        result.stdoutReference!.nextCursor)
+      expect(page.content).toMatch(/^x+$/)
+    } finally {
+      resume()
       await service.dispose()
     }
   })

@@ -54,7 +54,7 @@ function createService() {
   )
   const service = {
     database: {
-      listKnowledgeBases: () => [
+      listKnowledgeBases: async () => [
         {
           id: firstLibraryId,
           name: '一号知识库',
@@ -765,18 +765,18 @@ describe('KnowledgeMcpGateway', () => {
       'knowledge_list',
       'knowledge_search'
     ])
-    expect(gateway.listLibraries(token!)).toEqual([
+    expect(await gateway.listLibraries(token!)).toEqual([
       {
         id: secondLibraryId,
         name: '二号知识库',
         description: '已授权知识'
       }
     ])
-    expect(() =>
+    await expect(
       gateway.listLibraries(token!, {
         libraryIds: [firstLibraryId]
       })
-    ).toThrow()
+    ).rejects.toThrow()
     const references = await gateway.search(token!, {
       query: '  要找什么  ',
       limit: 1
@@ -852,10 +852,10 @@ describe('KnowledgeMcpGateway', () => {
     clock.mockRestore()
   })
 
-  it('keeps Magic Notes available during long requests without a knowledge scope', () => {
+  it('keeps Magic Notes available during long requests without a knowledge scope', async () => {
     const { service } = createService()
     const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000)
-    const searchMagicNotes = vi.fn(() => [
+    const searchMagicNotes = vi.fn(async () => [
       {
         noteId: '00000000-0000-4000-8000-000000000701',
         noteTitle: '发布计划',
@@ -907,7 +907,7 @@ describe('KnowledgeMcpGateway', () => {
       'note_search'
     ])
     expect(
-      gateway.searchMagicNotes(token, {
+      await gateway.searchMagicNotes(token, {
         query: '  发布  ',
         limit: 3
       })
@@ -918,12 +918,12 @@ describe('KnowledgeMcpGateway', () => {
       })
     ])
     expect(searchMagicNotes).toHaveBeenCalledWith('发布', 3)
-    expect(() =>
+    await expect(
       gateway.searchMagicNotes(token, {
         query: '发布',
         noteIds: ['not-allowed']
       })
-    ).toThrow()
+    ).rejects.toThrow()
     gateway.revoke(token)
     expect(() => gateway.getAvailableToolNames(token)).toThrow('Tool authorization is unavailable')
     clock.mockRestore()
@@ -941,7 +941,18 @@ describe('KnowledgeMcpGateway', () => {
     databases.push(database)
     database.initialize('C:\\Workspace')
     const gateway = new KnowledgeMcpGateway(service, {
-      magicNotesDatabase: database
+      magicNotesDatabase: {
+        listMagicNotes: async (...args) => database.listMagicNotes(...args),
+        getMagicNote: async (...args) => database.getMagicNote(...args),
+        getMagicNoteEntry: async (...args) => database.getMagicNoteEntry(...args),
+        searchMagicNotes: async (...args) => database.searchMagicNotes(...args),
+        createMagicNote: async (...args) => { await Promise.resolve(); return database.createMagicNote(...args) },
+        updateMagicNote: async (...args) => { await Promise.resolve(); return database.updateMagicNote(...args) },
+        deleteMagicNote: async (...args) => { await Promise.resolve(); database.deleteMagicNote(...args) },
+        createMagicNoteEntry: async (...args) => { await Promise.resolve(); return database.createMagicNoteEntry(...args) },
+        updateMagicNoteEntry: async (...args) => { await Promise.resolve(); return database.updateMagicNoteEntry(...args) },
+        deleteMagicNoteEntry: async (...args) => { await Promise.resolve(); return database.deleteMagicNoteEntry(...args) }
+      }
     })
     gateways.push(gateway)
     const readToken = gateway.grant(
@@ -973,15 +984,15 @@ describe('KnowledgeMcpGateway', () => {
       'note_entry_delete',
       'note_delete'
     ])
-    expect(() =>
+    await expect(
       gateway.createMagicNote(readToken, { title: '不允许创建' })
-    ).toThrow('unavailable')
+    ).rejects.toThrow('unavailable')
 
-    const created = gateway.createMagicNote(writeToken, {
+    const created = await gateway.createMagicNote(writeToken, {
       title: '发布计划',
       content: '核对构建产物'
     })
-    expect(gateway.listMagicNotes(readToken)).toEqual([
+    expect(await gateway.listMagicNotes(readToken)).toEqual([
       expect.objectContaining({
         id: created.id,
         title: '发布计划',
@@ -991,13 +1002,13 @@ describe('KnowledgeMcpGateway', () => {
     ])
     expect(created.entries[0]?.content).toBe('核对构建产物')
     expect(onMagicNotesChanged).toHaveBeenCalledTimes(1)
-    gateway.updateMagicNote(writeToken, {
+    await gateway.updateMagicNote(writeToken, {
       noteId: created.id,
       title: 'Updated plan',
       expectedRevision: created.revision
     })
     expect(onMagicNotesChanged).toHaveBeenCalledTimes(2)
-    const withEntry = gateway.createMagicNoteEntry(writeToken, {
+    const withEntry = await gateway.createMagicNoteEntry(writeToken, {
       noteId: created.id,
       content: '通知发布负责人'
     })
@@ -1005,7 +1016,7 @@ describe('KnowledgeMcpGateway', () => {
     expect(entry.content).toBe('通知发布负责人')
     expect(onMagicNotesChanged).toHaveBeenCalledTimes(3)
 
-    const updatedEntry = gateway.updateMagicNoteEntry(writeToken, {
+    const updatedEntry = await gateway.updateMagicNoteEntry(writeToken, {
       entryId: entry.id,
       content: '核对六个平台构建产物',
       expectedRevision: entry.revision
@@ -1013,15 +1024,15 @@ describe('KnowledgeMcpGateway', () => {
     expect(updatedEntry.entries[1]?.content).toBe(
       '核对六个平台构建产物'
     )
-    expect(() =>
+    await expect(
       gateway.deleteMagicNoteEntry(writeToken, {
         entryId: entry.id,
         expectedRevision: entry.revision
       })
-    ).toThrow('已被更新')
+    ).rejects.toThrow('已被更新')
     expect(onMagicNotesChanged).toHaveBeenCalledTimes(4)
 
-    const withoutEntry = gateway.deleteMagicNoteEntry(writeToken, {
+    const withoutEntry = await gateway.deleteMagicNoteEntry(writeToken, {
       entryId: entry.id,
       expectedRevision: updatedEntry.entries[1]!.revision
     })
@@ -1029,34 +1040,34 @@ describe('KnowledgeMcpGateway', () => {
       expect.objectContaining({ content: '核对构建产物' })
     ])
     expect(
-      gateway.deleteMagicNote(writeToken, {
+      await gateway.deleteMagicNote(writeToken, {
         noteId: created.id,
         expectedRevision: withoutEntry.revision
       })
     ).toEqual({ deleted: true, noteId: created.id })
     expect(onMagicNotesChanged).toHaveBeenCalledTimes(6)
-    expect(() =>
+    await expect(
       gateway.getMagicNote(readToken, { noteId: created.id })
-    ).toThrow('笔记不存在')
+    ).rejects.toThrow('笔记不存在')
 
     const canvas = database.getMagicNote(database.createMagicNote({ title: 'Canvas', content: {
       version: 2, kind: 'paged-canvas', assets: [],
       pages: [{ id: 'page', width: 794, height: 1123, background: { type: 'template', template: 'blank' }, objects: [{ type: 'IText', text: 'Canvas text' }] }]
     } }).id)
-    const canvasEntry = gateway.getMagicNote(readToken, { noteId: canvas.id }).entries[0]!
+    const canvasEntry = (await gateway.getMagicNote(readToken, { noteId: canvas.id })).entries[0]!
     expect(canvasEntry).toMatchObject({ content: 'Canvas text', contentKind: 'paged-canvas', contentVersion: 2, plainTextEditable: false })
-    expect(() => gateway.updateMagicNoteEntry(writeToken, { entryId: canvasEntry.id, expectedRevision: canvasEntry.revision, content: 'overwrite' })).toThrow('画布记录不能')
+    await expect(gateway.updateMagicNoteEntry(writeToken, { entryId: canvasEntry.id, expectedRevision: canvasEntry.revision, content: 'overwrite' })).rejects.toThrow('画布记录不能')
     expect(database.getMagicNote(canvas.id)).toEqual(canvas)
 
     // Tags: normalized on write, AND-filtered on list, replaced as a whole on update.
-    const tagged = gateway.createMagicNote(writeToken, { title: 'Tagged', tags: ['  Work ', 'work', 'Q4'] })
+    const tagged = await gateway.createMagicNote(writeToken, { title: 'Tagged', tags: ['  Work ', 'work', 'Q4'] })
     expect(tagged.tags).toEqual(['Work', 'Q4'])
-    expect(gateway.listMagicNotes(readToken, { tags: ['WORK', 'q4'] })).toEqual([
+    expect(await gateway.listMagicNotes(readToken, { tags: ['WORK', 'q4'] })).toEqual([
       expect.objectContaining({ id: tagged.id, tags: ['Work', 'Q4'] })
     ])
-    expect(gateway.listMagicNotes(readToken, { tags: ['Work', 'missing'] })).toEqual([])
-    expect(() => gateway.createMagicNote(writeToken, { title: 'Bad', tags: ['a,b'] })).toThrow()
-    const cleared = gateway.updateMagicNote(writeToken, { noteId: tagged.id, tags: [], expectedRevision: tagged.revision })
+    expect(await gateway.listMagicNotes(readToken, { tags: ['Work', 'missing'] })).toEqual([])
+    await expect(gateway.createMagicNote(writeToken, { title: 'Bad', tags: ['a,b'] })).rejects.toThrow()
+    const cleared = await gateway.updateMagicNote(writeToken, { noteId: tagged.id, tags: [], expectedRevision: tagged.revision })
     expect(cleared.tags).toEqual([])
     expect(database.listMagicNoteTags()).toEqual([])
   })
@@ -1072,7 +1083,7 @@ describe('KnowledgeMcpGateway', () => {
     gateways.push(gateway)
     const token = gateway.grant('notes-search-http', [], new AbortController().signal, 'write')!
     for (let index = 0; index < 12; index += 1) {
-      gateway.createMagicNote(token, { title: `Search regression ${index}`, content: 'Matching entry' })
+      await gateway.createMagicNote(token, { title: `Search regression ${index}`, content: 'Matching entry' })
     }
     await gateway.start()
     const client = new Client({ name: 'note-search-test', version: '1.0.0' })

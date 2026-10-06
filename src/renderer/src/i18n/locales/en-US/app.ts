@@ -472,6 +472,11 @@ export const app = {
       waitingOutput: 'Running; no result yet.',
       emptyOutput: 'Completed with no returned content.',
       copyAction: 'Copy',
+      fullOutput: 'Read full output {{index}}',
+      nextOutputPage: 'Next page',
+      copyOutputPage: 'Copy page',
+      loadingOutput: 'Loading output...',
+      readOutputFailed: 'Could not read saved output. Try again.',
       copy: 'Copy {{label}}',
       copied: 'Tool details copied',
       states: {

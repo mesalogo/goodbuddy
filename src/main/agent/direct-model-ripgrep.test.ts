@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { FileOutputBacking, outputFixtureRoot } from '../../../tests/support/paged-output-backing'
 import { join } from 'node:path'
 import { rgPath } from '@vscode/ripgrep'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -10,14 +10,18 @@ import { searchWorkspaceWithRipgrep } from './direct-model-ripgrep'
 let root: string
 let workspace: LocalWorkspaceAccess
 let service: LocalDirectModelProcessService
+let backingStore: FileOutputBacking
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'goodbuddy-rg-'))
+  await mkdir(outputFixtureRoot, { recursive: true })
+  root = await mkdtemp(join(outputFixtureRoot, 'rg-'))
   workspace = new LocalWorkspaceAccess(root)
-  service = new LocalDirectModelProcessService()
+  backingStore = new FileOutputBacking()
+  service = new LocalDirectModelProcessService({ outputStore: { backingStore } })
   await writeFile(join(root, 'valid.txt'), 'before\ntarget\nafter\n')
 })
 afterEach(async () => {
   await service.dispose()
+  await backingStore.dispose()
   await rm(root, { recursive: true, force: true })
 })
 const search = (args: string[], signal = new AbortController().signal) =>
@@ -71,7 +75,7 @@ describe('native ripgrep', () => {
     } finally { await configured.dispose() }
   })
   it('allows external paths and directory links with current-user permissions', async () => {
-    const outside = await mkdtemp(join(tmpdir(), 'goodbuddy-rg-outside-'))
+    const outside = await mkdtemp(join(outputFixtureRoot, 'rg-outside-'))
     try {
       await writeFile(join(outside, 'outside.txt'), 'target\n')
       await symlink(outside, join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir')

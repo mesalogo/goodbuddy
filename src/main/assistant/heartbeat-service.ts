@@ -11,10 +11,8 @@ import {
   type AssistantHeartbeatEntry,
   type AssistantHeartbeatRun
 } from '../../shared/assistant-contracts'
-import {
-  AssistantDatabase,
-  type ClaimedHeartbeatRun
-} from './assistant-database'
+import type { ClaimedHeartbeatRun } from './assistant-database'
+import type { HeartbeatDomainPort } from './supervision-domain-ports'
 
 export type HeartbeatHistory = {
   runs: AssistantHeartbeatRun[]
@@ -51,40 +49,40 @@ export class HeartbeatService {
   private readonly pendingManualRuns = new Map<string, Promise<AssistantHeartbeatRun>>()
 
   constructor(
-    private readonly database: AssistantDatabase,
+    private readonly database: HeartbeatDomainPort,
     private readonly actions: HeartbeatActions
   ) {}
 
-  list(input: unknown = {}): AssistantHeartbeatConfig[] {
+  async list(input: unknown = {}): Promise<AssistantHeartbeatConfig[]> {
     const parsed = heartbeatListSchema.parse(input)
     return this.database.listHeartbeatConfigs(parsed.projectId)
   }
 
-  create(input: unknown, now = new Date()): AssistantHeartbeatConfig {
+  async create(input: unknown, now = new Date()): Promise<AssistantHeartbeatConfig> {
     const parsed = heartbeatCreateSchema.parse(input)
     return this.database.createHeartbeatConfig(parsed, now)
   }
 
-  update(input: unknown, now = new Date()): AssistantHeartbeatConfig {
+  async update(input: unknown, now = new Date()): Promise<AssistantHeartbeatConfig> {
     const parsed = heartbeatUpdateRequestSchema.parse(input)
     return this.database.updateHeartbeatConfig(parsed.id, parsed.config, now)
   }
 
-  pause(input: unknown): void {
+  async pause(input: unknown): Promise<void> {
     const parsed = heartbeatPauseSchema.parse(input)
-    this.database.setHeartbeatPaused(parsed.id, parsed.paused)
+    await this.database.setHeartbeatPaused(parsed.id, parsed.paused)
   }
 
-  remove(input: unknown): void {
+  async remove(input: unknown): Promise<void> {
     const parsed = heartbeatIdSchema.parse(input)
-    this.database.removeHeartbeatConfig(parsed.id)
+    await this.database.removeHeartbeatConfig(parsed.id)
   }
 
-  history(input: unknown = {}): HeartbeatHistory {
+  async history(input: unknown = {}): Promise<HeartbeatHistory> {
     const parsed = heartbeatHistorySchema.parse(input)
     return {
-      runs: this.database.listHeartbeatRuns(parsed.configId, parsed.limit),
-      entries: this.database.listHeartbeatEntries(parsed.configId, parsed.limit)
+      runs: await this.database.listHeartbeatRuns(parsed.configId, parsed.limit),
+      entries: await this.database.listHeartbeatEntries(parsed.configId, parsed.limit)
     }
   }
 
@@ -94,7 +92,7 @@ export class HeartbeatService {
     if (pending) return pending
     const operation = (async () => {
       const startedAt = now ?? new Date()
-      const claim = this.database.claimHeartbeatNow(
+      const claim = await this.database.claimHeartbeatNow(
         parsed.id, parsed.idempotencyKey, this.workerId, startedAt, triggerLeaseMilliseconds
       )
       if (!claim.acquired) return claim.run
@@ -111,7 +109,7 @@ export class HeartbeatService {
   async processDue(now?: Date): Promise<AssistantHeartbeatRun[]> {
     // The database claims at most one due heartbeat per tick; repeated missed
     // times collapse into that one check.
-    const claims = this.database.claimDueHeartbeats(this.workerId, now ?? new Date(), triggerLeaseMilliseconds)
+    const claims = await this.database.claimDueHeartbeats(this.workerId, now ?? new Date(), triggerLeaseMilliseconds)
     const results: AssistantHeartbeatRun[] = []
     for (const claim of claims) results.push(await this.executeClaim(claim, now))
     return results
@@ -119,9 +117,9 @@ export class HeartbeatService {
 
   /** Re-derive suggestions for a completed heartbeat whose intervention failed. */
   async retrySuggestions(heartbeatRunId: string): Promise<number> {
-    const run = this.database.getHeartbeatRun(heartbeatRunId)
-    const config = this.database.getHeartbeatConfig(run.configId)
-    const supervisionRunId = this.database.supervisionRunForHeartbeat(heartbeatRunId)
+    const run = await this.database.getHeartbeatRun(heartbeatRunId)
+    const config = await this.database.getHeartbeatConfig(run.configId)
+    const supervisionRunId = await this.database.supervisionRunForHeartbeat(heartbeatRunId)
     if (!supervisionRunId || !this.actions.suggest) throw new Error('此次自动监督没有可生成建议的回顾结果')
     return this.intervene({ config, run }, supervisionRunId)
   }
@@ -129,38 +127,39 @@ export class HeartbeatService {
   private async executeClaim(claim: ClaimedHeartbeatRun, now?: Date): Promise<AssistantHeartbeatRun> {
     let run: AssistantHeartbeatRun
     try {
-      run = this.database.completeHeartbeatTrigger(claim, now ?? new Date())
+      run = await this.database.completeHeartbeatTrigger(claim, now ?? new Date())
     } catch (error) {
       return this.database.failHeartbeatRun(claim, error instanceof Error ? error.message : 'Heartbeat failed', now ?? new Date())
     }
     const trigger = { config: claim.config, run }
-    this.database.setHeartbeatProjection(run.id, 'running', claim.config.scope)
+    await this.database.setHeartbeatProjection(run.id, 'running', claim.config.scope)
     let outcome: HeartbeatReviewOutcome
     try {
       outcome = await this.actions.review(trigger)
     } catch (error) {
-      this.database.setHeartbeatProjection(run.id, 'failed', undefined,
+      await this.database.setHeartbeatProjection(run.id, 'failed', undefined,
         error instanceof Error ? error.message : 'Supervision failed')
       return this.database.getHeartbeatRun(run.id)
     }
-    if (outcome.status === 'no_change') this.database.markHeartbeatNoChange(run.id, claim.config.id)
-    this.database.setHeartbeatProjection(run.id, 'completed')
+    if (outcome.status === 'no_change') await this.database.markHeartbeatNoChange(run.id, claim.config.id)
+    await this.database.setHeartbeatProjection(run.id, 'completed')
     if (outcome.status === 'completed' && outcome.runId && (claim.config.intervention ?? 'suggest') === 'suggest' && this.actions.suggest) {
-      await this.intervene(trigger, outcome.runId).catch(() => undefined)
+      await this.intervene(trigger, outcome.runId, true)
     }
     return this.database.getHeartbeatRun(run.id)
   }
 
-  private async intervene(trigger: HeartbeatTrigger, supervisionRunId: string): Promise<number> {
-    this.database.setHeartbeatSuggestionStatus(trigger.run.id, 'running')
+  private async intervene(trigger: HeartbeatTrigger, supervisionRunId: string, preserveReview = false): Promise<number> {
+    await this.database.setHeartbeatSuggestionStatus(trigger.run.id, 'running')
     try {
       const count = await this.actions.suggest!({ ...trigger, supervisionRunId })
-      this.database.setHeartbeatSuggestionStatus(trigger.run.id, count ? 'completed' : 'skipped')
+      await this.database.setHeartbeatSuggestionStatus(trigger.run.id, count ? 'completed' : 'skipped')
       return count
     } catch (error) {
       // The published graph and incremental progress stay committed.
-      this.database.setHeartbeatSuggestionStatus(trigger.run.id, 'failed',
+      await this.database.setHeartbeatSuggestionStatus(trigger.run.id, 'failed',
         error instanceof Error ? error.message : 'Suggestion failed')
+      if (preserveReview) return 0
       throw error
     }
   }

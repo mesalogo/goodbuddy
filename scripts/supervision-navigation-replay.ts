@@ -7,6 +7,7 @@ import { AssistantDatabase } from '../src/main/assistant/assistant-database'
 import { createProductionSupervisorService } from '../src/main/assistant/supervision-production'
 import { SupervisionModelPool } from '../src/main/assistant/supervision-model-pool'
 import type { AgentRuntime } from '../src/main/agent/runtime'
+import { asyncSupervisionStorage } from '../tests/support/async-supervision-storage'
 
 async function main() {
   const [sourcePath, destinationPath, runId] = process.argv.slice(2)
@@ -37,7 +38,7 @@ async function main() {
     const leaves = store.batches(runId, 20)
     assert.equal(leaves.length, 6)
     assert.equal(store.progress(runId).remainingSources, 0)
-    const service = createProductionSupervisorService(db, async () => ({ supervisorModelConcurrency: 1 }),
+    const service = createProductionSupervisorService(asyncSupervisionStorage(db).supervision, async () => ({ supervisorModelConcurrency: 1 }),
       async () => ({ runtimeId: 'offline-replay', capability: 'chat', run } as AgentRuntime), pool)
     const result = await service.resume(runId)
     assert.equal(result.status, 'completed')

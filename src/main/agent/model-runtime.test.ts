@@ -18,6 +18,7 @@ import { LocalWorkspaceAccess } from '../workspace'
 import { LocalDirectModelProcessService } from './direct-model-process-service'
 import { browserTabIdSchema } from '../../shared/contracts'
 import type { BrowserToolService } from '../browser/browser-model-tools'
+import { FileOutputBacking } from '../../../tests/support/paged-output-backing'
 
 const toolPng = Buffer.from([
   0x89, 0x50, 0x4e, 0x47,
@@ -2254,7 +2255,8 @@ describe('ModelAgentRuntime', () => {
   it('runs workspace search, text reads and output paging without generic approval or optional capabilities', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-ask-tools-'))
     const workspaceAccess = new LocalWorkspaceAccess(workspace)
-    const processService = new LocalDirectModelProcessService()
+    const backingStore = new FileOutputBacking()
+    const processService = new LocalDirectModelProcessService({ outputStore: { backingStore } })
     const toolProvider = new ModelToolProvider(
       workspaceAccess, [], undefined, undefined, false,
       { processService, ripgrepExecutablePath: rgPath }
@@ -2325,6 +2327,7 @@ describe('ModelAgentRuntime', () => {
       expect(await readFile(join(workspace, 'README.md'), 'utf8')).toBe('readonly-marker\n')
     } finally {
       await runtime.dispose()
+      await backingStore.dispose()
       await rm(workspace, { recursive: true, force: true })
     }
   })

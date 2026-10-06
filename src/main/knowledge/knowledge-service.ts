@@ -29,7 +29,7 @@ import {
   parseDocumentOffMain,
   sha256OffMain
 } from '../document-parse-client'
-import type { DocumentResultStorage } from '../document-result-storage'
+import type { DocumentResultStorageAccess } from '../desktop-storage-files'
 import { parsedCompleteness } from '../document-result-storage'
 import {
   knowledgeChunkDeleteInputSchema,
@@ -74,15 +74,15 @@ import type {
 } from '../../shared/embedding-contracts'
 import {
   extractKnowledgeGraph,
-  normalizeEntityAlias,
   type ExtractStructured,
   type GraphChunk,
   type GraphExtractionResult
 } from './graph-extractor'
-import {
+import type {
   KnowledgeDatabase,
-  type PreparedEmbeddingReplacement
+  PreparedEmbeddingReplacement
 } from './knowledge-database'
+import type { KnowledgeStoragePort } from './knowledge-storage-port'
 import {
   containsHanText,
   contextualIndexText,
@@ -152,18 +152,16 @@ export type KnowledgeSnapshot = {
 }
 
 export type KnowledgeServiceOptions = {
-  documentResults?: DocumentResultStorage
+  documentResults?: DocumentResultStorageAccess
   credentialCipher?: import('../settings-credential-cipher').SettingsCredentialCipher
   externalFetcher?: typeof fetch
-  databasePath: string
+  database: KnowledgeStoragePort
   managedRoot: string
   extractStructured?: ExtractStructured
   urlImporter?: UrlImporter
   embeddingProvider?: EmbeddingProvider
   rerankProvider?: RerankProvider
   embeddingBatchSize?: number
-  /** Read-only query worker bundle; searches run off the Main thread when set. */
-  readonlyQueryWorkerPath?: string
   parseDocument?: (
     name: string,
     buffer: Buffer,
@@ -223,9 +221,9 @@ function embedKnowledgeQuery(
 
 export class KnowledgeService {
   readonly external: ExternalKnowledgeService
-  readonly database: KnowledgeDatabase
+  readonly database: KnowledgeStoragePort
   private readonly managedRoot: string
-  private readonly documentResults?: DocumentResultStorage
+  private readonly documentResults?: DocumentResultStorageAccess
   private readonly extractStructured?: ExtractStructured
   private readonly urlImporter: UrlImporter
   private readonly documentParser: NonNullable<
@@ -268,19 +266,13 @@ export class KnowledgeService {
     EmbeddingIndexCoordinator
   >()
   private readonly lifecycleController = new AbortController()
-  private readonly readonlyQueryWorkerPath?: string
+  private shutdownWrite?: Promise<unknown>
 
   constructor(options: KnowledgeServiceOptions) {
-    this.database = new KnowledgeDatabase(options.databasePath)
-    this.readonlyQueryWorkerPath = options.readonlyQueryWorkerPath
+    this.database = options.database
     this.external = new ExternalKnowledgeService(this.database, options.credentialCipher, options.externalFetcher)
     this.managedRoot = resolve(options.managedRoot)
     this.documentResults = options.documentResults
-    this.documentResults?.setPersistentLookup((id) => {
-      const document = this.database.getDocumentByParsedResultId(id)
-      if (!document?.sourceLocation) return undefined
-      return { directory: this.resultDirectory(document.knowledgeBaseId, document.id, id), original: document.sourceLocation }
-    })
     this.extractStructured = options.extractStructured
     this.urlImporter = options.urlImporter ?? new UrlImporter()
     this.documentParser =
@@ -303,13 +295,9 @@ export class KnowledgeService {
 
   async initialize(): Promise<void> {
     await mkdir(this.managedRoot, { recursive: true })
-    this.database.initialize()
-    if (this.readonlyQueryWorkerPath) {
-      this.database.enableReadonlyWorker(this.readonlyQueryWorkerPath)
-    }
     await this.reconcileDocumentResults()
-    for (const library of this.database.listKnowledgeBases()) {
-      for (const source of this.database.listSourcesForSnapshot(library.id)) {
+    for (const library of (await this.database.listKnowledgeBases())) {
+      for (const source of (await this.database.listSourcesForSnapshot(library.id))) {
         if (
           library.storageMode === 'reference' &&
           source.type !== 'url' &&
@@ -326,13 +314,15 @@ export class KnowledgeService {
     this.lifecycleController.abort(
       new Error('Knowledge service is shutting down')
     )
-    this.database.interruptActiveKnowledgeTasks('应用关闭，任务已中断')
     for (const controller of this.taskControllers.values()) {
       controller.abort(new Error('Knowledge task cancelled during shutdown'))
     }
     for (const controller of this.libraryRebuildControllers.values()) {
       controller.abort(new Error('Knowledge rebuild cancelled during shutdown'))
     }
+    this.shutdownWrite = Promise.resolve().then(() =>
+      this.database.interruptActiveKnowledgeTasks('应用关闭，任务已中断'))
+    void this.shutdownWrite.catch(() => undefined)
   }
 
   async dispose(): Promise<void> {
@@ -371,7 +361,8 @@ export class KnowledgeService {
     this.sourceSyncTaskIds.clear()
     this.libraryRebuildControllers.clear()
     this.documentMutationTails.clear()
-    this.database.close()
+    await this.shutdownWrite
+    await Promise.all(embeddingCompletions)
   }
 
   setEmbeddingProvider(provider?: EmbeddingProvider): Promise<void> {
@@ -400,24 +391,24 @@ export class KnowledgeService {
     knowledgeBaseId: string,
     configuration?: EmbeddingConfigurationSummary
   ): Promise<KnowledgeEmbeddingIndexSnapshot> {
-    const library = this.requireLibrary(knowledgeBaseId)
+    const library = await this.requireLibrary(knowledgeBaseId)
     const provider = this.embeddingProvider
     const coordinator =
       await this.getEmbeddingIndexCoordinator(library.id)
     const fallbackTotal = provider
       ? 0
-      : this.database.countEmbeddingIndexDocuments(library.id)
-    this.reconcileEmbeddingTask(library.id, coordinator.status().job)
+      : (await this.database.countEmbeddingIndexDocuments(library.id))
+    await this.reconcileEmbeddingTask(library.id, coordinator.status().job)
     return {
       knowledgeBaseId: library.id,
       enabled: Boolean(provider),
       ...(provider && configuration ? { configuration } : {}),
       coverage: provider
-        ? this.database.getEmbeddingIndexCoverage(
+        ? (await this.database.getEmbeddingIndexCoverage(
             library.id,
             embeddingStorageProvider(provider),
             provider.model
-          )
+          ))
         : {
             total: fallbackTotal,
             indexed: 0,
@@ -440,10 +431,10 @@ export class KnowledgeService {
     const coordinator =
       await this.getEmbeddingIndexCoordinator(knowledgeBaseId)
     const job = coordinator.startRebuild(provider as EmbeddingIndexProvider)
-    this.createKnowledgeTask({
+    await this.createKnowledgeTask({
       libraryId: knowledgeBaseId,
       retryOfTaskId,
-      documentName: this.requireLibrary(knowledgeBaseId).name,
+      documentName: (await this.requireLibrary(knowledgeBaseId)).name,
       scope: 'library',
       kind: 'embedding-rebuild',
       stage: 'queued',
@@ -452,7 +443,7 @@ export class KnowledgeService {
       embeddingJobId: job.id,
       attempt:
         retryOfTaskId
-          ? (this.database.getKnowledgeTask(retryOfTaskId)?.attempt ?? 0) + 1
+          ? ((await this.database.getKnowledgeTask(retryOfTaskId))?.attempt ?? 0) + 1
           : 1,
       totalItems: job.progress.total
     })
@@ -466,7 +457,7 @@ export class KnowledgeService {
     knowledgeBaseId: string,
     jobId: string
   ): Promise<boolean> {
-    this.requireLibrary(knowledgeBaseId)
+    await this.requireLibrary(knowledgeBaseId)
     const coordinator =
       await this.getEmbeddingIndexCoordinator(knowledgeBaseId)
     return coordinator.cancel(jobId)
@@ -475,7 +466,7 @@ export class KnowledgeService {
   private async getEmbeddingIndexCoordinator(
     knowledgeBaseId: string
   ): Promise<EmbeddingIndexCoordinator> {
-    this.requireLibrary(knowledgeBaseId)
+    await this.requireLibrary(knowledgeBaseId)
     const existing = this.embeddingIndexCoordinators.get(knowledgeBaseId)
     if (existing) {
       return existing
@@ -495,7 +486,7 @@ export class KnowledgeService {
     return coordinator
   }
 
-  private createKnowledgeTask(input: {
+  private async createKnowledgeTask(input: {
     libraryId: string
     parentTaskId?: string
     retryOfTaskId?: string
@@ -514,8 +505,8 @@ export class KnowledgeService {
     attempt?: number
     dedupeKey?: string
     embeddingJobId?: string
-  }): KnowledgeTaskItem {
-    return this.database.createKnowledgeTask({
+  }): Promise<KnowledgeTaskItem> {
+    return await this.database.createKnowledgeTask({
       ...input,
       scope:
         input.scope ??
@@ -527,7 +518,7 @@ export class KnowledgeService {
     })
   }
 
-  private updateKnowledgeTask(
+  private async updateKnowledgeTask(
     taskId: string,
     update: {
       status?: KnowledgeTaskSnapshot['status']
@@ -540,8 +531,8 @@ export class KnowledgeService {
       totalItems?: number
       embeddingJobId?: string
     }
-  ): void {
-    this.database.updateKnowledgeTask(taskId, {
+  ): Promise<void> {
+    await this.database.updateKnowledgeTask(taskId, {
       ...update,
       progress:
         update.progress === undefined
@@ -564,8 +555,8 @@ export class KnowledgeService {
       : ''
   }
 
-  private failKnowledgeTask(taskId: string, error: unknown): void {
-    const current = this.database.getKnowledgeTask(taskId)
+  private async failKnowledgeTask(taskId: string, error: unknown): Promise<void> {
+    const current = await this.database.getKnowledgeTask(taskId)
     if (
       current?.status === 'succeeded' ||
       current?.status === 'skipped'
@@ -573,7 +564,7 @@ export class KnowledgeService {
       return
     }
     const message = KnowledgeService.taskErrorMessage(error)
-    this.database.updateKnowledgeTask(taskId, {
+    await this.database.updateKnowledgeTask(taskId, {
       status: 'failed',
       message,
       error: { message }
@@ -633,7 +624,7 @@ export class KnowledgeService {
         operations.add(operation)
       }
       if (task.parentTaskId) {
-        const parent = this.database.getKnowledgeTask(task.parentTaskId)
+        const parent = await this.database.getKnowledgeTask(task.parentTaskId)
         if (parent) {
           pending.push(parent)
         }
@@ -685,7 +676,7 @@ export class KnowledgeService {
         (chunk.role ?? 'standalone') !== 'parent'
     )
     const replacementId =
-      this.database.beginPreparedDocumentEmbeddingReplacement(
+      await this.database.beginPreparedDocumentEmbeddingReplacement(
         documentId,
         providerStorageKey,
         provider.model
@@ -737,7 +728,7 @@ export class KnowledgeService {
             vector
           }
         })
-        this.database.appendPreparedDocumentEmbeddingBatch(
+        await this.database.appendPreparedDocumentEmbeddingBatch(
           replacementId,
           documentId,
           providerStorageKey,
@@ -755,7 +746,7 @@ export class KnowledgeService {
         model: provider.model
       }
     } catch (error) {
-      this.database.discardDocumentEmbeddingReplacement(replacementId)
+      await this.database.discardDocumentEmbeddingReplacement(replacementId)
       throw error
     }
   }
@@ -771,12 +762,12 @@ export class KnowledgeService {
     signal?.throwIfAborted()
     const documentId = input.id ?? randomUUID()
     const imagesOnly = parsedCompleteness(parsed) === 'images-only'
-    if (imagesOnly && this.database.getDocument(documentId)?.metadata.status === 'ready') throw new Error('未提取到可索引文字，保留上次正文与索引')
+    if (imagesOnly && (await this.database.getDocument(documentId))?.metadata.status === 'ready') throw new Error('未提取到可索引文字，保留上次正文与索引')
     const chunks = imagesOnly ? [] : await this.createDocumentChunks(parsed, library)
     let embeddingReplacement: PreparedEmbeddingReplacement | undefined
     let embeddingFailure: PreparedDocumentPublication['embeddingFailure']
     const embeddingProvider = this.embeddingProvider
-    const embeddingTask = this.createKnowledgeTask({
+    const embeddingTask = await this.createKnowledgeTask({
       libraryId: library.id,
       parentTaskId,
       sourceId: input.sourceId,
@@ -785,12 +776,12 @@ export class KnowledgeService {
       kind: 'embedding'
     })
     if (!embeddingProvider || imagesOnly) {
-      this.updateKnowledgeTask(embeddingTask.id, {
+      await this.updateKnowledgeTask(embeddingTask.id, {
         status: 'skipped',
         message: imagesOnly ? '无可索引文字，不生成向量' : '未启用向量化'
       })
     } else {
-      this.updateKnowledgeTask(embeddingTask.id, {
+      await this.updateKnowledgeTask(embeddingTask.id, {
         status: 'running',
         stage: 'embedding',
         progress: 5,
@@ -804,33 +795,33 @@ export class KnowledgeService {
         signal
       )
       if (embeddingReplacement) {
-        this.updateKnowledgeTask(embeddingTask.id, {
+        await this.updateKnowledgeTask(embeddingTask.id, {
           progress: 90,
           message: `已生成 ${chunks.length} 个候选分块向量`
         })
       }
     } catch (error) {
       if (signal?.aborted) {
-        this.database.cancelKnowledgeTask(embeddingTask.id, '文档处理已取消')
+        await this.database.cancelKnowledgeTask(embeddingTask.id, '文档处理已取消')
         throw signal.reason
       }
       const safeError = classifyEmbeddingError(error)
       if (embeddingProvider) {
-        this.failKnowledgeTask(embeddingTask.id, safeError)
+        await this.failKnowledgeTask(embeddingTask.id, safeError)
         embeddingFailure = {
           provider: embeddingStorageProvider(embeddingProvider),
           model: embeddingProvider.model,
           message: safeError.message
         }
       } else {
-        this.updateKnowledgeTask(embeddingTask.id, {
+        await this.updateKnowledgeTask(embeddingTask.id, {
           status: 'skipped',
           message: '未启用向量化'
         })
       }
     }
     let graph: GraphExtractionResult | undefined
-    const graphTask = this.createKnowledgeTask({
+    const graphTask = await this.createKnowledgeTask({
       libraryId: library.id,
       parentTaskId,
       sourceId: input.sourceId,
@@ -841,21 +832,21 @@ export class KnowledgeService {
     try {
       signal?.throwIfAborted()
       if (!imagesOnly && library.graphEnabled && library.graphStrategy !== 'ask') {
-        this.updateKnowledgeTask(graphTask.id, {
+        await this.updateKnowledgeTask(graphTask.id, {
           status: 'running',
           stage: 'graph',
           progress: 10,
           message: '正在抽取候选知识图谱'
         })
         graph = await this.extractGraphChunks(library, chunks, signal)
-        this.updateKnowledgeTask(graphTask.id, {
+        await this.updateKnowledgeTask(graphTask.id, {
           progress: 90,
           message:
             `已生成 ${graph.entities.length} 个候选实体、${graph.relations.length} 条候选关系` +
             KnowledgeService.graphWarningsSuffix(graph)
         })
       } else {
-        this.updateKnowledgeTask(graphTask.id, {
+        await this.updateKnowledgeTask(graphTask.id, {
           status: 'skipped',
           message: imagesOnly ? '无可索引文字，不抽取知识图谱' : library.graphEnabled
             ? '按需询问策略不自动抽取'
@@ -865,19 +856,19 @@ export class KnowledgeService {
       signal?.throwIfAborted()
     } catch (error) {
       if (!signal?.aborted && options.allowGraphFailure) {
-        this.failKnowledgeTask(graphTask.id, error)
+        await this.failKnowledgeTask(graphTask.id, error)
       } else {
       if (embeddingReplacement) {
-        this.database.discardDocumentEmbeddingReplacement(
+        await this.database.discardDocumentEmbeddingReplacement(
           embeddingReplacement.replacementId
         )
         if (signal?.aborted) {
-          this.database.cancelKnowledgeTask(
+          await this.database.cancelKnowledgeTask(
             embeddingTask.id,
             '文档处理已取消'
           )
         } else {
-          this.updateKnowledgeTask(embeddingTask.id, {
+          await this.updateKnowledgeTask(embeddingTask.id, {
             status: 'skipped',
             message: '因文档发布前处理失败而未保存向量'
           })
@@ -885,25 +876,25 @@ export class KnowledgeService {
       } else if (
         !embeddingFailure &&
         !['skipped', 'failed'].includes(
-          this.database.getKnowledgeTask(embeddingTask.id)?.status ?? ''
+          (await this.database.getKnowledgeTask(embeddingTask.id))?.status ?? ''
         )
       ) {
         if (signal?.aborted) {
-          this.database.cancelKnowledgeTask(
+          await this.database.cancelKnowledgeTask(
             embeddingTask.id,
             '文档处理已取消'
           )
         } else {
-          this.updateKnowledgeTask(embeddingTask.id, {
+          await this.updateKnowledgeTask(embeddingTask.id, {
             status: 'skipped',
             message: '因文档发布前处理失败而未保存向量'
           })
         }
       }
       if (signal?.aborted) {
-        this.database.cancelKnowledgeTask(graphTask.id, '文档处理已取消')
+        await this.database.cancelKnowledgeTask(graphTask.id, '文档处理已取消')
       } else {
-        this.failKnowledgeTask(graphTask.id, error)
+        await this.failKnowledgeTask(graphTask.id, error)
       }
       throw error
       }
@@ -921,7 +912,7 @@ export class KnowledgeService {
         metadata = { ...metadata, parsedResultId: result.id }
       } catch (error) {
         if (resultId) await this.documentResults.release(resultId)
-        if (embeddingReplacement) this.database.discardDocumentEmbeddingReplacement(embeddingReplacement.replacementId)
+        if (embeddingReplacement) await this.database.discardDocumentEmbeddingReplacement(embeddingReplacement.replacementId)
         throw error
       }
     }
@@ -937,44 +928,40 @@ export class KnowledgeService {
     }
   }
 
-  private publishPreparedDocument(
-    library: KnowledgeBase,
+  private async publishPreparedDocument(
+    _library: KnowledgeBase,
     prepared: PreparedDocumentPublication
-  ): Document {
-    const previous = prepared.input.id ? this.database.getDocument(prepared.input.id) : undefined
+  ): Promise<Document> {
+    const previous = prepared.input.id ? (await this.database.getDocument(prepared.input.id)) : undefined
     let published = false
     try {
       prepared.signal?.throwIfAborted()
-      const document = this.database.publishDocument(
+      const document = await this.database.publishDocument(
         prepared.input,
         prepared.chunks,
         {
           embeddingReplacement: prepared.embeddingReplacement,
           embeddingError: prepared.embeddingFailure,
-          afterChunksInserted: prepared.graph
-            ? (document) => {
-                this.storeExtractedGraph(library, document, prepared.graph!)
-              }
-            : undefined
+          graph: prepared.graph
         }
       )
       published = true
-      if (typeof document.metadata.parsedResultId === 'string') this.documentResults?.detach(document.metadata.parsedResultId)
+      if (typeof document.metadata.parsedResultId === 'string') await this.documentResults?.detach(document.metadata.parsedResultId)
       if (prepared.embeddingReplacement) {
-        this.updateKnowledgeTask(prepared.embeddingTaskId, {
+        await this.updateKnowledgeTask(prepared.embeddingTaskId, {
           documentId: document.id,
           documentName: document.title,
           status: 'succeeded',
           message: `已发布 ${prepared.chunks.length} 个分块向量`
         })
       } else {
-        this.updateKnowledgeTask(prepared.embeddingTaskId, {
+        await this.updateKnowledgeTask(prepared.embeddingTaskId, {
           documentId: document.id,
           documentName: document.title
         })
       }
       if (prepared.graph) {
-        this.updateKnowledgeTask(prepared.graphTaskId, {
+        await this.updateKnowledgeTask(prepared.graphTaskId, {
           documentId: document.id,
           documentName: document.title,
           status: 'succeeded',
@@ -983,7 +970,7 @@ export class KnowledgeService {
             KnowledgeService.graphWarningsSuffix(prepared.graph)
         })
       } else {
-        this.updateKnowledgeTask(prepared.graphTaskId, {
+        await this.updateKnowledgeTask(prepared.graphTaskId, {
           documentId: document.id,
           documentName: document.title
         })
@@ -994,48 +981,57 @@ export class KnowledgeService {
       return document
     } catch (error) {
       if (published) throw error
+      let failure = error
       if (typeof prepared.input.metadata?.parsedResultId === 'string' && prepared.input.metadata.parsedResultId !== previous?.metadata.parsedResultId) {
-        void this.documentResults?.release(prepared.input.metadata.parsedResultId).catch(() => undefined)
+        try {
+          await this.documentResults?.release(prepared.input.metadata.parsedResultId)
+        } catch (cleanupError) {
+          failure = new AggregateError(
+            [error, cleanupError],
+            KnowledgeService.taskErrorMessage(error),
+            { cause: error }
+          )
+        }
       }
       const currentEmbeddingTask =
-        this.database.getKnowledgeTask(prepared.embeddingTaskId)
+        await this.database.getKnowledgeTask(prepared.embeddingTaskId)
       if (prepared.embeddingReplacement) {
         try {
-          this.database.discardDocumentEmbeddingReplacement(
+          await this.database.discardDocumentEmbeddingReplacement(
             prepared.embeddingReplacement.replacementId
           )
         } catch {
           // The enclosing database transaction may already have rolled back.
         }
-        this.failKnowledgeTask(prepared.embeddingTaskId, error)
+        await this.failKnowledgeTask(prepared.embeddingTaskId, error)
       } else if (
         currentEmbeddingTask?.status === 'queued' ||
         currentEmbeddingTask?.status === 'running'
       ) {
-        this.updateKnowledgeTask(prepared.embeddingTaskId, {
+        await this.updateKnowledgeTask(prepared.embeddingTaskId, {
           status: 'skipped',
           message: '因文档发布失败而未保存向量'
         })
       }
       if (prepared.graph) {
-        this.failKnowledgeTask(prepared.graphTaskId, error)
+        await this.failKnowledgeTask(prepared.graphTaskId, error)
       }
-      throw error
+      throw failure
     }
   }
 
-  private reconcileEmbeddingTask(
+  private async reconcileEmbeddingTask(
     libraryId: string,
     job: EmbeddingIndexJob | null
-  ): void {
+  ): Promise<void> {
     if (!job) {
       return
     }
     const task =
-      this.database.getKnowledgeTaskByEmbeddingJobId(libraryId, job.id) ??
-      this.createKnowledgeTask({
+      (await this.database.getKnowledgeTaskByEmbeddingJobId(libraryId, job.id)) ??
+      (await this.createKnowledgeTask({
         libraryId,
-        documentName: this.requireLibrary(libraryId).name,
+        documentName: (await this.requireLibrary(libraryId)).name,
         scope: 'library',
         kind: 'embedding-rebuild',
         stage: job.status === 'queued' ? 'queued' : 'embedding',
@@ -1054,7 +1050,7 @@ export class KnowledgeService {
             ? { message: job.error?.message ?? '向量索引重建失败' }
             : undefined,
         embeddingJobId: job.id
-      })
+      }))
     const status: KnowledgeTaskStatus =
       job.status === 'completed'
         ? 'succeeded'
@@ -1088,7 +1084,7 @@ export class KnowledgeService {
     ) {
       return
     }
-    this.database.updateKnowledgeTask(task.id, {
+    await this.database.updateKnowledgeTask(task.id, {
       status,
       stage,
       progress,
@@ -1099,27 +1095,27 @@ export class KnowledgeService {
     })
   }
 
-  createLibrary(input: CreateKnowledgeBaseInput): KnowledgeBase {
-    return this.database.createKnowledgeBase(input)
+  async createLibrary(input: CreateKnowledgeBaseInput): Promise<KnowledgeBase> {
+    return await this.database.createKnowledgeBase(input)
   }
 
   async deleteLibrary(id: string): Promise<boolean> {
-    const library = this.database.getKnowledgeBase(id)
+    const library = await this.database.getKnowledgeBase(id)
     if (!library) {
       return false
     }
-    for (const source of this.database.listSourcesForSnapshot(id)) {
+    for (const source of (await this.database.listSourcesForSnapshot(id))) {
       this.stopWatcher(source.id)
     }
     await this.cancelTasks(
-      this.database.listActiveKnowledgeTasks(id),
+      (await this.database.listActiveKnowledgeTasks(id)),
       'Knowledge library deleted'
     )
     const embeddingCoordinator = this.embeddingIndexCoordinators.get(id)
     embeddingCoordinator?.cancel()
     await embeddingCoordinator?.waitForCompletion()
     this.embeddingIndexCoordinators.delete(id)
-    const deleted = this.database.deleteKnowledgeBase(id)
+    const deleted = await this.database.deleteKnowledgeBase(id)
     if (deleted) await rm(join(dirname(this.managedRoot), 'knowledge-assets', id), { recursive: true, force: true })
     if (deleted && library.storageMode === 'managed') {
       const path = join(this.managedRoot, id)
@@ -1130,9 +1126,9 @@ export class KnowledgeService {
     return deleted
   }
 
-  snapshot(selectedLibraryId?: string): KnowledgeSnapshot {
-    const libraryCounts = this.database.getKnowledgeBaseCounts()
-    const libraries = this.database.listKnowledgeBases().map((library) => {
+  async snapshot(selectedLibraryId?: string): Promise<KnowledgeSnapshot> {
+    const libraryCounts = await this.database.getKnowledgeBaseCounts()
+    const libraries = (await this.database.listKnowledgeBases()).map((library) => {
       const counts = libraryCounts.get(library.id) ?? {
         sourceCount: 0,
         documentCount: 0,
@@ -1160,13 +1156,13 @@ export class KnowledgeService {
     const embeddingCoordinator =
       this.embeddingIndexCoordinators.get(libraryId)
     if (embeddingCoordinator) {
-      this.reconcileEmbeddingTask(
+      await this.reconcileEmbeddingTask(
         libraryId,
         embeddingCoordinator.status().job
       )
     }
     const libraryDocuments =
-      this.database.listDocumentsForSnapshot(libraryId)
+      await this.database.listDocumentsForSnapshot(libraryId)
     const documentCountsBySource = new Map<string, number>()
     for (const document of libraryDocuments) {
       documentCountsBySource.set(
@@ -1174,8 +1170,8 @@ export class KnowledgeService {
         (documentCountsBySource.get(document.sourceId) ?? 0) + 1
       )
     }
-    const sources = this.database
-      .listSourcesForSnapshot(libraryId)
+    const sources = (await this.database
+      .listSourcesForSnapshot(libraryId))
       .map((source) => ({
       ...source,
       documentCount: documentCountsBySource.get(source.id) ?? 0,
@@ -1190,8 +1186,8 @@ export class KnowledgeService {
           ? source.metadata.lastSyncedAt
           : undefined
       }))
-    const chunkCounts = this.database.getDocumentChunkCounts(libraryId)
-    const tasks = this.database.listKnowledgeTasks(libraryId)
+    const chunkCounts = await this.database.getDocumentChunkCounts(libraryId)
+    const tasks = await this.database.listKnowledgeTasks(libraryId)
     const library = libraries.find((item) => item.id === libraryId)
     const graphTaskByDocument = new Map<
       string,
@@ -1206,7 +1202,8 @@ export class KnowledgeService {
         graphTaskByDocument.set(task.documentId, task)
       }
     }
-    const documents = libraryDocuments.map((document) => {
+    const documents: KnowledgeDocumentSnapshot[] = []
+    for (const document of libraryDocuments) {
       const status =
         typeof document.metadata.status === 'string' &&
         ['queued', 'parsing', 'indexing', 'ready', 'failed'].includes(
@@ -1214,7 +1211,7 @@ export class KnowledgeService {
         )
           ? (document.metadata.status as KnowledgeDocumentSnapshot['status'])
           : 'ready'
-      return {
+      documents.push({
         ...document,
         chunkCount: chunkCounts.get(document.id) ?? 0,
         status,
@@ -1224,14 +1221,14 @@ export class KnowledgeService {
             : status === 'failed'
               ? ('failed' as const)
               : ('waiting' as const),
-        vectorIndexStatus: (() => {
+        vectorIndexStatus: await (async () => {
           if (!this.embeddingProvider) {
             return 'disabled' as const
           }
           if (status !== 'ready') {
             return 'waiting' as const
           }
-          const state = this.database.getEmbeddingIndexState(
+          const state = await this.database.getEmbeddingIndexState(
             document.id,
             embeddingStorageProvider(this.embeddingProvider),
             this.embeddingProvider.model
@@ -1269,9 +1266,9 @@ export class KnowledgeService {
           typeof document.metadata.error === 'string'
             ? document.metadata.error
             : undefined
-      }
-    })
-    const graph = this.database.listGraphSnapshot(libraryId)
+      })
+    }
+    const graph = await this.database.listGraphSnapshot(libraryId)
     return {
       libraries,
       sources,
@@ -1283,8 +1280,8 @@ export class KnowledgeService {
     }
   }
 
-  search(knowledgeBaseId: string, query: string, limit = 6): SearchResult[] {
-    return this.database.search({
+  async search(knowledgeBaseId: string, query: string, limit = 6): Promise<SearchResult[]> {
+    return await this.database.search({
       knowledgeBaseId,
       query,
       limit
@@ -1299,9 +1296,9 @@ export class KnowledgeService {
     signal = signal ? AbortSignal.any([signal, this.lifecycleController.signal]) : this.lifecycleController.signal
     signal.throwIfAborted()
     const input = knowledgeRetrieveInputSchema.parse(rawInput)
-    const library = this.requireLibrary(input.knowledgeBaseId, false)
+    const library = await this.requireLibrary(input.knowledgeBaseId, false)
     const settings = input.settings ?? library.retrievalSettings
-    const binding = this.database.externalStore.getBinding(library.id)
+    const binding = await this.database.externalStore.getBinding(library.id)
     if (binding) {
       const response = await this.external.retrieve({instanceId:binding.instanceId,remoteKnowledgeBaseId:binding.remoteKnowledgeBaseId,commonConfig:binding.commonConfig,providerConfig:binding.providerConfig,query:input.query}, signal)
       signal.throwIfAborted()
@@ -1362,7 +1359,7 @@ export class KnowledgeService {
       100,
       settings.topK * settings.candidateMultiplier
     )
-    const searchPage = await this.database.hybridSearchWithDiagnosticsAsync({
+    const searchPage = await this.database.hybridSearchWithDiagnostics({
       knowledgeBaseId: library.id,
       query: input.query,
       limit: candidateLimit,
@@ -1642,7 +1639,7 @@ export class KnowledgeService {
     const emittedChunks = new Set<string>()
     const groups: KnowledgeRetrievalResponse['context']['groups'] = []
     for (const result of results) {
-      const reference = this.database.getChunkForReference(
+      const reference = await this.database.getChunkForReference(
         result.knowledgeBaseId,
         result.documentId,
         result.chunkId
@@ -1650,8 +1647,8 @@ export class KnowledgeService {
       if (!reference) {
         continue
       }
-      const chunks = this.database
-        .listContextChunks(reference.chunk, settings.adjacentChunkCount)
+      const chunks = (await this.database
+        .listContextChunks(reference.chunk, settings.adjacentChunkCount))
         .filter((chunk) => !emittedChunks.has(chunk.id))
       if (chunks.length === 0) {
         continue
@@ -1742,12 +1739,17 @@ export class KnowledgeService {
   > {
     signal = signal ? AbortSignal.any([signal, this.lifecycleController.signal]) : this.lifecycleController.signal
     signal.throwIfAborted()
-    const libraries = [...new Set(knowledgeBaseIds)].map((id) =>
-      this.requireLibrary(id, false)
-    )
-    const preparedEmbedding = libraries.some(
-      (library) => !this.database.externalStore.hasBinding(library.id) && library.retrievalSettings.vectorWeight > 0
-    )
+    const libraries = await Promise.all([...new Set(knowledgeBaseIds)].map(async (id) =>
+      (await this.requireLibrary(id, false))
+    ))
+    let needsEmbedding = false
+    for (const library of libraries) {
+      if (library.retrievalSettings.vectorWeight > 0 && !(await this.database.externalStore.hasBinding(library.id))) {
+        needsEmbedding = true
+        break
+      }
+    }
+    const preparedEmbedding = needsEmbedding
       ? await this.prepareQueryEmbedding(query, signal)
       : undefined
     signal?.throwIfAborted()
@@ -1795,14 +1797,14 @@ export class KnowledgeService {
     return outcomes
   }
 
-  updateSettings(rawInput: KnowledgeSettingsUpdateInput): KnowledgeBase {
+  async updateSettings(rawInput: KnowledgeSettingsUpdateInput): Promise<KnowledgeBase> {
     const input = knowledgeSettingsUpdateInputSchema.parse(rawInput)
-    this.requireLibrary(input.knowledgeBaseId)
-    return this.database.updateKnowledgeSettings(input)
+    await this.requireLibrary(input.knowledgeBaseId)
+    return await this.database.updateKnowledgeSettings(input)
   }
 
-  listChunks(input: KnowledgeChunksListInput) {
-    return this.database.listChunksPage(
+  async listChunks(input: KnowledgeChunksListInput) {
+    return await this.database.listChunksPage(
       knowledgeChunksListInputSchema.parse(input)
     )
   }
@@ -1811,14 +1813,14 @@ export class KnowledgeService {
     rawInput: KnowledgeChunkUpdateInput
   ): Promise<ReturnType<KnowledgeDatabase['updateChunk']>> {
     const input = knowledgeChunkUpdateInputSchema.parse(rawInput)
-    this.requireLibrary(input.knowledgeBaseId)
+    await this.requireLibrary(input.knowledgeBaseId)
     return this.withDocumentMutation(input.documentId, async () => {
-      const current = this.database.getChunkForReference(
+      const current = (await this.database.getChunkForReference(
         input.knowledgeBaseId,
         input.documentId,
         input.chunkId
-      )?.chunk
-      const chunk = this.database.updateChunk(input)
+      ))?.chunk
+      const chunk = await this.database.updateChunk(input)
       if (
         current &&
         (
@@ -1829,28 +1831,28 @@ export class KnowledgeService {
         )
       ) {
         this.scheduleEmbeddingReindex(input.documentId)
-        const library = this.requireLibrary(input.knowledgeBaseId)
+        const library = await this.requireLibrary(input.knowledgeBaseId)
         if (library.graphEnabled && library.graphStrategy !== 'ask') {
           this.scheduleGraphReindex(input.documentId)
         }
       }
-      this.database.pruneUnreferencedGeneratedGraph(input.knowledgeBaseId)
+      await this.database.pruneUnreferencedGeneratedGraph(input.knowledgeBaseId)
       return chunk
     })
   }
 
   async deleteChunk(rawInput: KnowledgeChunkDeleteInput): Promise<boolean> {
     const input = knowledgeChunkDeleteInputSchema.parse(rawInput)
-    this.requireLibrary(input.knowledgeBaseId)
+    await this.requireLibrary(input.knowledgeBaseId)
     return this.withDocumentMutation(input.documentId, async () => {
-      const deleted = this.database.deleteChunk(input)
+      const deleted = await this.database.deleteChunk(input)
       if (deleted) {
         this.scheduleEmbeddingReindex(input.documentId)
-        const library = this.requireLibrary(input.knowledgeBaseId)
+        const library = await this.requireLibrary(input.knowledgeBaseId)
         if (library.graphEnabled && library.graphStrategy !== 'ask') {
           this.scheduleGraphReindex(input.documentId)
         }
-        this.database.pruneUnreferencedGeneratedGraph(
+        await this.database.pruneUnreferencedGeneratedGraph(
           input.knowledgeBaseId
         )
       }
@@ -1858,9 +1860,9 @@ export class KnowledgeService {
     })
   }
 
-  getReferenceContext(rawInput: KnowledgeReferenceContextInput) {
+  async getReferenceContext(rawInput: KnowledgeReferenceContextInput) {
     const input = knowledgeReferenceContextInputSchema.parse(rawInput)
-    const reference = this.database.getChunkForReference(
+    const reference = await this.database.getChunkForReference(
       input.knowledgeBaseId,
       input.documentId,
       input.chunkId
@@ -1870,20 +1872,20 @@ export class KnowledgeService {
     }
     return {
       ...reference,
-      contextChunks: this.database.listContextChunks(reference.chunk, 2)
+      contextChunks: await this.database.listContextChunks(reference.chunk, 2)
     }
   }
 
-  getDocumentSource(rawInput: KnowledgeDocumentOpenInput) {
+  async getDocumentSource(rawInput: KnowledgeDocumentOpenInput) {
     const input = knowledgeDocumentOpenInputSchema.parse(rawInput)
-    const document = this.database.getDocument(input.documentId)
+    const document = await this.database.getDocument(input.documentId)
     if (
       !document ||
       document.knowledgeBaseId !== input.knowledgeBaseId
     ) {
       return undefined
     }
-    const source = this.database.getSource(document.sourceId)
+    const source = await this.database.getSource(document.sourceId)
     if (
       !source ||
       source.knowledgeBaseId !== input.knowledgeBaseId
@@ -1899,10 +1901,10 @@ export class KnowledgeService {
     limit = 6,
     signal?: AbortSignal
   ): Promise<HybridSearchResult[]> {
-    const library = this.requireLibrary(knowledgeBaseId)
+    const library = await this.requireLibrary(knowledgeBaseId)
     const settings = library.retrievalSettings
     const vector = await this.embedQuery(query, signal)
-    return this.database.hybridSearchAsync({
+    return await this.database.hybridSearch({
       knowledgeBaseId,
       query,
       limit: Math.min(limit, settings.topK),
@@ -1988,7 +1990,7 @@ export class KnowledgeService {
     selectedPaths: string[],
     graphStrategy?: Exclude<GraphStrategy, 'ask'>
   ): Promise<void> {
-    const library = this.requireLibrary(knowledgeBaseId)
+    const library = await this.requireLibrary(knowledgeBaseId)
     if (selectedPaths.length === 0 || selectedPaths.length > 20) {
       throw new Error('每次请选择 1 至 20 个文件或目录')
     }
@@ -2009,7 +2011,7 @@ export class KnowledgeService {
               basename(canonicalPath)
             )
           : canonicalPath
-      let source = this.database.upsertSource({
+      let source = await this.database.upsertSource({
         id: sourceId,
         knowledgeBaseId,
         type: sourceType,
@@ -2021,7 +2023,7 @@ export class KnowledgeService {
           progress: 0
         }
       })
-      const sourceTask = this.createKnowledgeTask({
+      const sourceTask = await this.createKnowledgeTask({
         libraryId: library.id,
         sourceId: source.id,
         documentName: source.displayName,
@@ -2055,7 +2057,7 @@ export class KnowledgeService {
             graphStrategy
           )
           effectiveSignal.throwIfAborted()
-          source = this.database.upsertSource({
+          source = (await this.database.upsertSource({
             ...source,
             status: 'ready',
             metadata: {
@@ -2063,26 +2065,26 @@ export class KnowledgeService {
               progress: 100,
               lastSyncedAt: new Date().toISOString()
             }
-          })
+          }))
           if (library.storageMode === 'reference') {
             this.startWatcher(source)
           }
-          this.updateKnowledgeTask(sourceTask.id, {
+          await this.updateKnowledgeTask(sourceTask.id, {
             status: 'succeeded',
             stage: 'finalizing',
             message: '知识来源导入完成'
           })
         } catch (error) {
           if (effectiveSignal.aborted) {
-            this.database.cancelKnowledgeTask(
+            await this.database.cancelKnowledgeTask(
               sourceTask.id,
               '知识来源导入已取消'
             )
           } else {
-            this.failKnowledgeTask(sourceTask.id, error)
+            await this.failKnowledgeTask(sourceTask.id, error)
           }
-          if (this.database.getSource(source.id)) {
-            this.database.upsertSource({
+          if ((await this.database.getSource(source.id))) {
+            await this.database.upsertSource({
               ...source,
               status: effectiveSignal.aborted ? 'paused' : 'error',
               lastError:
@@ -2133,8 +2135,8 @@ export class KnowledgeService {
     mutationDocumentId?: string,
     documentMutationHeld = false
   ): Promise<void> {
-    const library = this.requireLibrary(knowledgeBaseId)
-    const parsingTask = this.createKnowledgeTask({
+    const library = await this.requireLibrary(knowledgeBaseId)
+    const parsingTask = await this.createKnowledgeTask({
       libraryId: library.id,
       parentTaskId,
       sourceId,
@@ -2156,7 +2158,7 @@ export class KnowledgeService {
       let result: Awaited<ReturnType<UrlImporter['import']>>
       try {
         effectiveSignal.throwIfAborted()
-        this.updateKnowledgeTask(parsingTask.id, {
+        await this.updateKnowledgeTask(parsingTask.id, {
           status: 'running',
           stage: 'reading',
           progress: 10,
@@ -2164,20 +2166,20 @@ export class KnowledgeService {
         })
         result = await this.urlImporter.import(input, effectiveSignal)
         effectiveSignal.throwIfAborted()
-        this.updateKnowledgeTask(parsingTask.id, {
+        await this.updateKnowledgeTask(parsingTask.id, {
           stage: 'indexing',
           progress: 70,
           message: '正在保存网页内容'
         })
       } catch (error) {
         if (effectiveSignal.aborted) {
-          this.database.cancelKnowledgeTask(parsingTask.id, '网页处理已取消')
+          await this.database.cancelKnowledgeTask(parsingTask.id, '网页处理已取消')
         } else {
-          this.failKnowledgeTask(parsingTask.id, error)
+          await this.failKnowledgeTask(parsingTask.id, error)
         }
         throw error
       }
-      let source = this.database.upsertSource({
+      let source = await this.database.upsertSource({
         id: sourceId,
         knowledgeBaseId,
         type: 'url',
@@ -2193,15 +2195,15 @@ export class KnowledgeService {
       })
       try {
         effectiveSignal.throwIfAborted()
-        const effectiveLibrary = this.resolveImportLibrary(
+        const effectiveLibrary = await this.resolveImportLibrary(
           knowledgeBaseId,
           graphStrategy
         )
         const previousDocument = mutationDocumentId
-          ? this.database.getDocument(mutationDocumentId)
-          : this.database
-              .listDocumentsForSource(source.id)
-              .find((document) => document.externalId === result.url)
+          ? (await this.database.getDocument(mutationDocumentId))
+          : ((await this.database
+              .listDocumentsForSource(source.id))
+              .find((document) => document.externalId === result.url))
         const documentId =
           mutationDocumentId ?? previousDocument?.id ?? randomUUID()
         const publish = async (): Promise<Document> => {
@@ -2228,7 +2230,7 @@ export class KnowledgeService {
               parsingTask.id,
               { allowGraphFailure: previousDocument === undefined }
             )
-            return this.publishPreparedDocument(effectiveLibrary, prepared)
+            return await this.publishPreparedDocument(effectiveLibrary, prepared)
         }
         const document = documentMutationHeld
           ? await publish()
@@ -2237,7 +2239,7 @@ export class KnowledgeService {
               publish,
               effectiveSignal
             )
-        this.updateKnowledgeTask(parsingTask.id, {
+        await this.updateKnowledgeTask(parsingTask.id, {
           documentId: document.id,
           documentName: document.title,
           stage: 'finalizing',
@@ -2245,7 +2247,7 @@ export class KnowledgeService {
           message: '网页解析与索引完成'
         })
         effectiveSignal.throwIfAborted()
-        source = this.database.upsertSource({
+        source = (await this.database.upsertSource({
           ...source,
           status: 'ready',
           metadata: {
@@ -2253,20 +2255,20 @@ export class KnowledgeService {
             progress: 100,
             lastSyncedAt: new Date().toISOString()
           }
-        })
-        this.updateKnowledgeTask(parsingTask.id, {
+        }))
+        await this.updateKnowledgeTask(parsingTask.id, {
           status: 'succeeded',
           stage: 'finalizing',
           message: '网页处理完成'
         })
       } catch (error) {
         if (effectiveSignal.aborted) {
-          this.database.cancelKnowledgeTask(parsingTask.id, '网页处理已取消')
+          await this.database.cancelKnowledgeTask(parsingTask.id, '网页处理已取消')
         } else {
-          this.failKnowledgeTask(parsingTask.id, error)
+          await this.failKnowledgeTask(parsingTask.id, error)
         }
         if (!effectiveSignal.aborted) {
-          this.database.upsertSource({
+          await this.database.upsertSource({
             ...source,
             status: 'error',
             lastError:
@@ -2288,15 +2290,15 @@ export class KnowledgeService {
     }
   }
 
-  pauseSource(sourceId: string): void {
-    const source = this.requireSource(sourceId)
+  async pauseSource(sourceId: string): Promise<void> {
+    const source = await this.requireSource(sourceId)
     this.stopWatcher(sourceId)
     const taskId = this.sourceSyncTaskIds.get(sourceId)
     const controller = taskId
       ? this.taskControllers.get(taskId)
       : undefined
     controller?.abort(new Error('Knowledge source paused'))
-    this.database.upsertSource({
+    await this.database.upsertSource({
       ...source,
       status: 'paused'
     })
@@ -2380,16 +2382,16 @@ export class KnowledgeService {
     parentTaskId?: string,
     retryOfTaskId?: string
   ): Promise<Document> {
-    const document = this.database.getDocument(input.documentId)
+    const document = await this.database.getDocument(input.documentId)
     if (!document || document.knowledgeBaseId !== input.knowledgeBaseId) {
       throw new Error('文档不属于指定知识库')
     }
-    const library = this.requireLibrary(input.knowledgeBaseId)
-    const source = this.database.getSource(document.sourceId)
+    const library = await this.requireLibrary(input.knowledgeBaseId)
+    const source = await this.database.getSource(document.sourceId)
     if (!source) {
       throw new Error('知识来源不存在')
     }
-    const task = this.createKnowledgeTask({
+    const task = await this.createKnowledgeTask({
       libraryId: library.id,
       parentTaskId,
       retryOfTaskId,
@@ -2403,7 +2405,7 @@ export class KnowledgeService {
         : `document-rebuild:${document.id}`,
       attempt:
         retryOfTaskId
-          ? (this.database.getKnowledgeTask(retryOfTaskId)?.attempt ?? 0) + 1
+          ? ((await this.database.getKnowledgeTask(retryOfTaskId))?.attempt ?? 0) + 1
           : 1
     })
     const ownController = parentTaskId ? undefined : new AbortController()
@@ -2421,7 +2423,7 @@ export class KnowledgeService {
     const operation = (async (): Promise<Document> => {
       effectiveSignal.throwIfAborted()
       if (source.type === 'url') {
-        this.updateKnowledgeTask(task.id, {
+        await this.updateKnowledgeTask(task.id, {
           status: 'running',
           stage: 'reading',
           progress: 5,
@@ -2438,8 +2440,8 @@ export class KnowledgeService {
           true
         )
         effectiveSignal.throwIfAborted()
-        const rebuilt = this.database.getDocument(document.id) ?? document
-        this.updateKnowledgeTask(task.id, {
+        const rebuilt = (await this.database.getDocument(document.id)) ?? document
+        await this.updateKnowledgeTask(task.id, {
           status: 'succeeded',
           stage: 'finalizing',
           message: '文档重建完成'
@@ -2454,7 +2456,7 @@ export class KnowledgeService {
       if (!fileStat.isFile() || fileStat.isSymbolicLink()) {
         throw new Error('原始文件不存在或不是普通文件')
       }
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'running',
         stage: 'reading',
         progress: 5,
@@ -2467,7 +2469,7 @@ export class KnowledgeService {
         '文件不是普通文件'
       )
       effectiveSignal.throwIfAborted()
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         stage: 'parsing',
         progress: 20,
         message: '正在解析文档'
@@ -2479,7 +2481,7 @@ export class KnowledgeService {
         effectiveSignal
       )
       effectiveSignal.throwIfAborted()
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         stage: 'chunking',
         progress: 45,
         message: '正在切分文档'
@@ -2499,14 +2501,14 @@ export class KnowledgeService {
         effectiveSignal,
         task.id
       )
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         stage: 'finalizing',
         progress: 92,
         message: '正在发布重建结果'
       })
       effectiveSignal.throwIfAborted()
-      const rebuilt = this.publishPreparedDocument(library, prepared)
-      this.updateKnowledgeTask(task.id, {
+      const rebuilt = await this.publishPreparedDocument(library, prepared)
+      await this.updateKnowledgeTask(task.id, {
         status: 'succeeded',
         stage: 'finalizing',
         message: '文档重建完成'
@@ -2518,9 +2520,9 @@ export class KnowledgeService {
       return await operation
     } catch (error) {
       if (effectiveSignal.aborted) {
-        this.database.cancelKnowledgeTask(task.id, '文档重建已取消')
+        await this.database.cancelKnowledgeTask(task.id, '文档重建已取消')
       } else {
-        this.failKnowledgeTask(task.id, error)
+        await this.failKnowledgeTask(task.id, error)
       }
       throw error
     } finally {
@@ -2536,7 +2538,7 @@ export class KnowledgeService {
     retryOfTaskId?: string
   ): Promise<{ rebuilt: number; failed: number }> {
     const input = knowledgeLibraryRebuildInputSchema.parse(rawInput)
-    const library = this.requireLibrary(input.knowledgeBaseId)
+    const library = await this.requireLibrary(input.knowledgeBaseId)
     const ownController = new AbortController()
     const previous = this.libraryRebuildControllers.get(library.id)
     if (previous) {
@@ -2550,8 +2552,8 @@ export class KnowledgeService {
           this.lifecycleController.signal
         ])
       : AbortSignal.any([ownController.signal, this.lifecycleController.signal])
-    const documents = this.database.listDocumentsForLibraryRebuild(library.id)
-    const task = this.createKnowledgeTask({
+    const documents = await this.database.listDocumentsForLibraryRebuild(library.id)
+    const task = await this.createKnowledgeTask({
       libraryId: library.id,
       retryOfTaskId,
       documentName: library.name,
@@ -2563,7 +2565,7 @@ export class KnowledgeService {
       dedupeKey: `library-rebuild:${library.id}`,
       attempt:
         retryOfTaskId
-          ? (this.database.getKnowledgeTask(retryOfTaskId)?.attempt ?? 0) + 1
+          ? ((await this.database.getKnowledgeTask(retryOfTaskId))?.attempt ?? 0) + 1
           : 1
     })
     this.registerTaskController(task.id, ownController)
@@ -2573,7 +2575,7 @@ export class KnowledgeService {
       rebuilt: number
       failed: number
     }> => {
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'running',
         stage: 'parsing',
         message: '正在重建知识库'
@@ -2596,7 +2598,7 @@ export class KnowledgeService {
           }
           failed += 1
         }
-        this.updateKnowledgeTask(task.id, {
+        await this.updateKnowledgeTask(task.id, {
           progress: ((rebuilt + failed) / Math.max(documents.length, 1)) * 100,
           completedItems: rebuilt + failed,
           totalItems: documents.length,
@@ -2604,19 +2606,19 @@ export class KnowledgeService {
         })
       }
       if (failed === 0) {
-        this.database.markKnowledgeChunkingRebuilt(library.id)
+        await this.database.markKnowledgeChunkingRebuilt(library.id)
         if (library.graphEnabled && library.graphStrategy !== 'ask') {
-          this.database.markKnowledgeOntologyRebuilt(library.id)
+          await this.database.markKnowledgeOntologyRebuilt(library.id)
         }
       }
       if (failed === 0) {
-        this.updateKnowledgeTask(task.id, {
+        await this.updateKnowledgeTask(task.id, {
           status: 'succeeded',
           stage: 'finalizing',
           message: `已重建 ${rebuilt} 个文档`
         })
       } else {
-        this.database.updateKnowledgeTask(task.id, {
+        await this.database.updateKnowledgeTask(task.id, {
           status: 'failed',
           stage: 'finalizing',
           message: `${failed} 个文档重建失败`,
@@ -2630,9 +2632,9 @@ export class KnowledgeService {
       return await operation
     } catch (error) {
       if (effectiveSignal.aborted) {
-        this.database.cancelKnowledgeTask(task.id, '知识库重建已取消')
+        await this.database.cancelKnowledgeTask(task.id, '知识库重建已取消')
       } else {
-        this.failKnowledgeTask(task.id, error)
+        await this.failKnowledgeTask(task.id, error)
       }
       throw error
     } finally {
@@ -2653,7 +2655,7 @@ export class KnowledgeService {
   }
 
   async cancelTask(taskId: string): Promise<boolean> {
-    const task = this.database.getKnowledgeTask(taskId)
+    const task = await this.database.getKnowledgeTask(taskId)
     if (!task || !task.canCancel) {
       return false
     }
@@ -2662,7 +2664,7 @@ export class KnowledgeService {
         await this.getEmbeddingIndexCoordinator(task.libraryId)
       const cancelled = coordinator.cancel(task.embeddingJobId)
       if (cancelled) {
-        this.database.cancelKnowledgeTask(task.id, '向量索引重建已取消')
+        await this.database.cancelKnowledgeTask(task.id, '向量索引重建已取消')
       }
       return cancelled
     }
@@ -2670,20 +2672,20 @@ export class KnowledgeService {
       task.kind === 'library-rebuild' &&
       this.cancelLibraryRebuild(task.libraryId)
     ) {
-      this.database.cancelKnowledgeTask(task.id, '知识库重建已取消')
+      await this.database.cancelKnowledgeTask(task.id, '知识库重建已取消')
       return true
     }
     const controller = this.taskControllers.get(task.id)
     if (controller && !controller.signal.aborted) {
       controller.abort(new Error('Knowledge task cancelled'))
-      this.database.cancelKnowledgeTask(task.id)
+      await this.database.cancelKnowledgeTask(task.id)
       return true
     }
     return false
   }
 
   async retryTask(taskId: string): Promise<void> {
-    const task = this.database.getKnowledgeTask(taskId)
+    const task = await this.database.getKnowledgeTask(taskId)
     if (!task || !task.canRetry) {
       throw new Error('该任务当前不可重试')
     }
@@ -2745,7 +2747,7 @@ export class KnowledgeService {
     knowledgeBaseId: string,
     retryOfTaskId?: string
   ): Promise<void> {
-    const existing = this.database.getActiveKnowledgeTaskByDedupeKey(
+    const existing = await this.database.getActiveKnowledgeTaskByDedupeKey(
       knowledgeBaseId,
       `graph-rebuild:${knowledgeBaseId}`
     )
@@ -2763,7 +2765,7 @@ export class KnowledgeService {
     knowledgeBaseId: string,
     retryOfTaskId?: string
   ): Promise<void> {
-    const library = this.requireLibrary(knowledgeBaseId)
+    const library = await this.requireLibrary(knowledgeBaseId)
     if (!library.graphEnabled) {
       throw new Error('请先启用知识图谱')
     }
@@ -2771,8 +2773,8 @@ export class KnowledgeService {
       throw new Error('按需询问策略不会自动抽取，请在设置中选择其他策略')
     }
     const documents =
-      this.database.listDocumentsForLibraryRebuild(library.id)
-    const parentTask = this.createKnowledgeTask({
+      await this.database.listDocumentsForLibraryRebuild(library.id)
+    const parentTask = await this.createKnowledgeTask({
       libraryId: library.id,
       retryOfTaskId,
       documentName: library.name,
@@ -2785,7 +2787,7 @@ export class KnowledgeService {
       dedupeKey: `graph-rebuild:${library.id}`,
       attempt:
         retryOfTaskId
-          ? (this.database.getKnowledgeTask(retryOfTaskId)?.attempt ?? 0) + 1
+          ? ((await this.database.getKnowledgeTask(retryOfTaskId))?.attempt ?? 0) + 1
           : 1
     })
     const controller = new AbortController()
@@ -2802,7 +2804,7 @@ export class KnowledgeService {
         if (!document) {
           continue
         }
-        const task = this.createKnowledgeTask({
+        const task = await this.createKnowledgeTask({
           libraryId: library.id,
           parentTaskId: parentTask.id,
           sourceId: document.sourceId,
@@ -2816,7 +2818,7 @@ export class KnowledgeService {
           await this.withDocumentMutation(
             document.id,
             async () => {
-              this.updateKnowledgeTask(task.id, {
+              await this.updateKnowledgeTask(task.id, {
                 status: 'running',
                 progress: 10,
                 message: '正在重新抽取知识图谱'
@@ -2827,15 +2829,13 @@ export class KnowledgeService {
                 effectiveSignal
               )
               effectiveSignal.throwIfAborted()
-              this.updateKnowledgeTask(task.id, {
+              await this.updateKnowledgeTask(task.id, {
                 progress: 85,
                 message: '正在保存实体和关系'
               })
-              this.database.replaceEvidenceForDocument(document.id, () => {
-                this.storeExtractedGraph(library, document, result)
-              })
+              await this.database.replaceDocumentGraph(library, document, result)
               effectiveSignal.throwIfAborted()
-              this.updateKnowledgeTask(task.id, {
+              await this.updateKnowledgeTask(task.id, {
                 status: 'succeeded',
                 message:
                   `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系` +
@@ -2844,7 +2844,7 @@ export class KnowledgeService {
             },
             effectiveSignal
           )
-          this.updateKnowledgeTask(parentTask.id, {
+          await this.updateKnowledgeTask(parentTask.id, {
             progress: ((index + 1) / Math.max(documents.length, 1)) * 100,
             completedItems: index + 1,
             totalItems: documents.length,
@@ -2852,20 +2852,20 @@ export class KnowledgeService {
           })
         } catch (error) {
           if (effectiveSignal.aborted) {
-            this.database.cancelKnowledgeTask(
+            await this.database.cancelKnowledgeTask(
               task.id,
               '知识图谱重建已取消'
             )
           } else {
-            this.failKnowledgeTask(task.id, error)
+            await this.failKnowledgeTask(task.id, error)
           }
           throw error
         }
       }
       effectiveSignal.throwIfAborted()
-      this.database.pruneUnreferencedGeneratedGraph(library.id)
-      this.database.markKnowledgeOntologyRebuilt(library.id)
-      this.updateKnowledgeTask(parentTask.id, {
+      await this.database.pruneUnreferencedGeneratedGraph(library.id)
+      await this.database.markKnowledgeOntologyRebuilt(library.id)
+      await this.updateKnowledgeTask(parentTask.id, {
         status: 'succeeded',
         stage: 'finalizing',
         message: `已重建 ${documents.length} 个文档的知识图谱`
@@ -2876,23 +2876,23 @@ export class KnowledgeService {
       await operation
     } catch (error) {
       if (effectiveSignal.aborted) {
-        this.database.cancelKnowledgeTask(
+        await this.database.cancelKnowledgeTask(
           parentTask.id,
           '知识图谱重建已取消'
         )
       } else {
-        this.failKnowledgeTask(parentTask.id, error)
+        await this.failKnowledgeTask(parentTask.id, error)
       }
       for (const childTask of tasks) {
-        const current = this.database.getKnowledgeTask(childTask.id)
+        const current = await this.database.getKnowledgeTask(childTask.id)
         if (current?.status === 'queued' || current?.status === 'running') {
           if (effectiveSignal.aborted) {
-            this.database.cancelKnowledgeTask(
+            await this.database.cancelKnowledgeTask(
               childTask.id,
               '知识图谱重建已取消'
             )
           } else {
-            this.updateKnowledgeTask(childTask.id, {
+            await this.updateKnowledgeTask(childTask.id, {
               status: 'skipped',
               message: '因前序图谱任务失败而未执行'
             })
@@ -2906,25 +2906,25 @@ export class KnowledgeService {
   }
 
   async removeSource(sourceId: string): Promise<boolean> {
-    const source = this.requireSource(sourceId)
-    const library = this.requireLibrary(source.knowledgeBaseId)
+    const source = await this.requireSource(sourceId)
+    const library = await this.requireLibrary(source.knowledgeBaseId)
     this.stopWatcher(sourceId)
     const sourceTaskId = this.sourceSyncTaskIds.get(sourceId)
     await this.cancelTasks(
-      this.database
-        .listActiveKnowledgeTasks(library.id)
+      ((await this.database
+        .listActiveKnowledgeTasks(library.id))
         .filter(
           (task) =>
             task.sourceId === sourceId ||
             (sourceTaskId !== undefined && task.id === sourceTaskId)
-        ),
+        )),
       'Knowledge source deleted'
     )
-    const sourceDocuments = this.database.listDocumentsForSource(sourceId)
-    const removed = this.database.removeSource(sourceId)
+    const sourceDocuments = await this.database.listDocumentsForSource(sourceId)
+    const removed = await this.database.removeSource(sourceId)
     if (removed) {
       await Promise.all(sourceDocuments.map((document) => rm(join(dirname(this.managedRoot), 'knowledge-assets', library.id, document.id), { recursive: true, force: true })))
-      this.database.pruneUnreferencedGeneratedGraph(library.id)
+      await this.database.pruneUnreferencedGeneratedGraph(library.id)
     }
     if (
       removed &&
@@ -2953,8 +2953,8 @@ export class KnowledgeService {
     for (const libraryId of await directories(root)) {
       for (const documentId of await directories(join(root, libraryId))) {
         for (const resultId of await directories(join(root, libraryId, documentId))) {
-          if (this.documentResults?.isTemporaryResult(resultId)) continue
-          const document = this.database.getDocument(documentId)
+          if (await this.documentResults?.isTemporaryResult(resultId)) continue
+          const document = await this.database.getDocument(documentId)
           if (document?.knowledgeBaseId === libraryId && document.metadata.parsedResultId === resultId) continue
           await rm(this.resultDirectory(libraryId, documentId, resultId), { recursive: true, force: true })
         }
@@ -2966,9 +2966,9 @@ export class KnowledgeService {
     sourceId: string,
     retryOfTaskId?: string
   ): Promise<void> {
-    let source = this.requireSource(sourceId)
-    const library = this.requireLibrary(source.knowledgeBaseId)
-    const task = this.createKnowledgeTask({
+    let source = await this.requireSource(sourceId)
+    const library = await this.requireLibrary(source.knowledgeBaseId)
+    const task = await this.createKnowledgeTask({
       libraryId: library.id,
       sourceId: source.id,
       documentName: source.displayName,
@@ -2981,7 +2981,7 @@ export class KnowledgeService {
       retryOfTaskId,
       attempt:
         retryOfTaskId
-          ? (this.database.getKnowledgeTask(retryOfTaskId)?.attempt ?? 0) + 1
+          ? ((await this.database.getKnowledgeTask(retryOfTaskId))?.attempt ?? 0) + 1
           : 1
     })
     const controller = new AbortController()
@@ -3001,22 +3001,22 @@ export class KnowledgeService {
           undefined,
           task.id
         )
-        this.updateKnowledgeTask(task.id, {
+        await this.updateKnowledgeTask(task.id, {
           status: 'succeeded',
           stage: 'finalizing',
           message: '知识来源同步完成'
         })
         return
       }
-      source = this.database.upsertSource({
+      source = (await this.database.upsertSource({
         ...source,
         status: 'indexing',
         lastError: null,
         metadata: { ...source.metadata, progress: 0 }
-      })
+      }))
       await this.indexSource(library, source, effectiveSignal, task.id)
       effectiveSignal.throwIfAborted()
-      source = this.database.upsertSource({
+      source = (await this.database.upsertSource({
         ...source,
         status: 'ready',
         metadata: {
@@ -3024,11 +3024,11 @@ export class KnowledgeService {
           progress: 100,
           lastSyncedAt: new Date().toISOString()
         }
-      })
+      }))
       if (library.storageMode === 'reference') {
         this.startWatcher(source)
       }
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'succeeded',
         stage: 'finalizing',
         message: '知识来源同步完成'
@@ -3039,21 +3039,21 @@ export class KnowledgeService {
       await operation
     } catch (error) {
       if (effectiveSignal.aborted) {
-        this.database.cancelKnowledgeTask(task.id, '知识来源同步已取消')
-        if (this.database.getSource(source.id)) {
-          this.database.upsertSource({
+        await this.database.cancelKnowledgeTask(task.id, '知识来源同步已取消')
+        if ((await this.database.getSource(source.id))) {
+          await this.database.upsertSource({
             ...source,
             status: 'paused',
             lastError: null
           })
         }
       } else {
-        this.failKnowledgeTask(task.id, error)
+        await this.failKnowledgeTask(task.id, error)
       }
       if (!effectiveSignal.aborted) {
-        const currentSource = this.database.getSource(source.id)
+        const currentSource = await this.database.getSource(source.id)
         if (currentSource) {
-          this.database.upsertSource({
+          await this.database.upsertSource({
             ...currentSource,
             status: 'error',
             lastError:
@@ -3082,7 +3082,7 @@ export class KnowledgeService {
     signal.throwIfAborted()
     const files = await this.scanSource(source.location)
     signal.throwIfAborted()
-    const existing = this.database
+    const existing = await this.database
       .listDocumentsForSource(source.id)
     const currentExternalIds = new Set(files.map((file) => file.relativePath))
     for (const document of existing) {
@@ -3090,9 +3090,9 @@ export class KnowledgeService {
       if (!currentExternalIds.has(document.externalId)) {
         await this.withDocumentMutation(
           document.id,
-          () => {
+          async () => {
             this.cancelScheduledEmbeddingReindex(document.id)
-            const removed = this.database.removeDocument(document.id)
+            const removed = await this.database.removeDocument(document.id)
             if (removed) void rm(join(dirname(this.managedRoot), 'knowledge-assets', library.id, document.id), { recursive: true, force: true }).catch(() => undefined)
             return removed
           },
@@ -3103,7 +3103,7 @@ export class KnowledgeService {
     if (existing.some(
       (document) => !currentExternalIds.has(document.externalId)
     )) {
-      this.database.pruneUnreferencedGeneratedGraph(library.id)
+      await this.database.pruneUnreferencedGeneratedGraph(library.id)
     }
 
     const failures: string[] = []
@@ -3113,7 +3113,7 @@ export class KnowledgeService {
       if (!file) {
         continue
       }
-      const parsingTask = this.createKnowledgeTask({
+      const parsingTask = await this.createKnowledgeTask({
         libraryId: library.id,
         parentTaskId,
         sourceId: source.id,
@@ -3122,7 +3122,7 @@ export class KnowledgeService {
         kind: 'parsing'
       })
       try {
-        this.updateKnowledgeTask(parsingTask.id, {
+        await this.updateKnowledgeTask(parsingTask.id, {
           status: 'running',
           stage: 'reading',
           progress: 10,
@@ -3135,7 +3135,7 @@ export class KnowledgeService {
           '文件不是普通文件'
         )
         signal.throwIfAborted()
-        this.updateKnowledgeTask(parsingTask.id, {
+        await this.updateKnowledgeTask(parsingTask.id, {
           stage: 'parsing',
           progress: 35,
           message: '正在解析文档内容'
@@ -3145,7 +3145,7 @@ export class KnowledgeService {
           (document) => document.externalId === file.relativePath
         )
         if (previous?.checksum === checksum) {
-          this.updateKnowledgeTask(parsingTask.id, {
+          await this.updateKnowledgeTask(parsingTask.id, {
             status: 'skipped',
             message: '文档内容未发生变化'
           })
@@ -3158,12 +3158,12 @@ export class KnowledgeService {
           signal
         )
         signal.throwIfAborted()
-        this.updateKnowledgeTask(parsingTask.id, {
+        await this.updateKnowledgeTask(parsingTask.id, {
           stage: 'indexing',
           progress: 75,
           message: '正在保存解析结果'
         })
-        const effectiveLibrary = this.resolveImportLibrary(
+        const effectiveLibrary = await this.resolveImportLibrary(
           library.id,
           graphStrategy
         )
@@ -3195,11 +3195,11 @@ export class KnowledgeService {
               parsingTask.id,
               { allowGraphFailure: previous === undefined }
             )
-            return this.publishPreparedDocument(effectiveLibrary, prepared)
+            return await this.publishPreparedDocument(effectiveLibrary, prepared)
           },
           signal
         )
-        this.updateKnowledgeTask(parsingTask.id, {
+        await this.updateKnowledgeTask(parsingTask.id, {
           documentId: document.id,
           documentName: document.title,
           stage: 'finalizing',
@@ -3207,27 +3207,27 @@ export class KnowledgeService {
           message: '文档解析与索引完成'
         })
         signal.throwIfAborted()
-        this.updateKnowledgeTask(parsingTask.id, {
+        await this.updateKnowledgeTask(parsingTask.id, {
           status: 'succeeded',
           stage: 'finalizing',
           message: '文档处理完成'
         })
       } catch (error) {
         if (signal.aborted) {
-          this.database.cancelKnowledgeTask(
+          await this.database.cancelKnowledgeTask(
             parsingTask.id,
             '文档处理已取消'
           )
           throw signal.reason
         }
-        this.failKnowledgeTask(parsingTask.id, error)
+        await this.failKnowledgeTask(parsingTask.id, error)
         failures.push(
           `${file.relativePath}: ${
             KnowledgeService.taskErrorMessage(error)
           }`
         )
       }
-      this.database.upsertSource({
+      await this.database.upsertSource({
         ...source,
         status: 'indexing',
         metadata: {
@@ -3271,7 +3271,7 @@ export class KnowledgeService {
     const operation = (async () => {
       do {
         this.pendingEmbeddingReindexes.delete(documentId)
-        const document = this.database.getDocument(documentId)
+        const document = await this.database.getDocument(documentId)
         if (
           !document ||
           !this.embeddingProvider ||
@@ -3310,11 +3310,11 @@ export class KnowledgeService {
     const operation = (async () => {
       do {
         this.pendingGraphReindexes.delete(documentId)
-        const document = this.database.getDocument(documentId)
+        const document = await this.database.getDocument(documentId)
         if (!document || this.lifecycleController.signal.aborted) {
           return
         }
-        const library = this.database.getKnowledgeBase(
+        const library = await this.database.getKnowledgeBase(
           document.knowledgeBaseId
         )
         if (
@@ -3350,23 +3350,23 @@ export class KnowledgeService {
     this.cancelScheduledEmbeddingReindex(document.id)
     const provider = requestedProvider ?? this.embeddingProvider
     const task = operationTaskId
-      ? this.createKnowledgeTask({
+      ? (await this.createKnowledgeTask({
           libraryId: document.knowledgeBaseId,
           parentTaskId: operationTaskId,
           sourceId: document.sourceId,
           documentId: document.id,
           documentName: document.title,
           kind: 'embedding'
-        })
-      : this.createKnowledgeTask({
+        }))
+      : (await this.createKnowledgeTask({
           libraryId: document.knowledgeBaseId,
           sourceId: document.sourceId,
           documentId: document.id,
           documentName: document.title,
           kind: 'embedding'
-        })
+        }))
     if (!provider) {
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'skipped',
         message: '未启用向量化'
       })
@@ -3379,19 +3379,19 @@ export class KnowledgeService {
     let replacementId: string | undefined
     try {
       effectiveSignal.throwIfAborted()
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'running',
         stage: 'embedding',
         progress: 5,
         message: '正在准备文档分块'
       })
-      const chunks = this.database
-        .getEmbeddingIndexDocument(document.id)?.items ?? []
-      replacementId = this.database.beginDocumentEmbeddingReplacement(
+      const chunks = (await this.database
+        .getEmbeddingIndexDocument(document.id))?.items ?? []
+      replacementId = (await this.database.beginDocumentEmbeddingReplacement(
         document.id,
         providerStorageKey,
         provider.model
-      )
+      ))
       let expectedDimensions: number | undefined
       for (
         let offset = 0;
@@ -3433,14 +3433,14 @@ export class KnowledgeService {
             vector
           })
         }
-        this.database.appendDocumentEmbeddingBatch(
+        await this.database.appendDocumentEmbeddingBatch(
           replacementId,
           document.id,
           providerStorageKey,
           provider.model,
           embeddings
         )
-        this.updateKnowledgeTask(task.id, {
+        await this.updateKnowledgeTask(task.id, {
           progress:
             5 +
             ((offset + batch.length) / Math.max(chunks.length, 1)) * 85,
@@ -3452,41 +3452,41 @@ export class KnowledgeService {
       }
       effectiveSignal.throwIfAborted()
       if (this.embeddingProvider !== provider) {
-        this.database.discardDocumentEmbeddingReplacement(
+        await this.database.discardDocumentEmbeddingReplacement(
           replacementId
         )
         replacementId = undefined
-        this.updateKnowledgeTask(task.id, {
+        await this.updateKnowledgeTask(task.id, {
           status: 'skipped',
           message: '向量模型配置已变化'
         })
         return
       }
-      this.database.finishDocumentEmbeddingReplacement(
+      await this.database.finishDocumentEmbeddingReplacement(
         replacementId,
         document.id,
         providerStorageKey,
         provider.model
       )
       replacementId = undefined
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'succeeded',
         message: `已向量化 ${chunks.length} 个分块`
       })
     } catch (error) {
       if (replacementId) {
-        this.database.discardDocumentEmbeddingReplacement(
+        await this.database.discardDocumentEmbeddingReplacement(
           replacementId
         )
       }
       if (effectiveSignal.aborted) {
-        this.database.cancelKnowledgeTask(task.id, '向量化已取消')
+        await this.database.cancelKnowledgeTask(task.id, '向量化已取消')
         throw effectiveSignal.reason
       }
       const safeError = classifyEmbeddingError(error)
-      this.failKnowledgeTask(task.id, safeError)
+      await this.failKnowledgeTask(task.id, safeError)
       try {
-        this.database.recordEmbeddingIndexError(
+        await this.database.recordEmbeddingIndexError(
           document.id,
           providerStorageKey,
           provider.model,
@@ -3505,30 +3505,30 @@ export class KnowledgeService {
     signal?: AbortSignal
   ): Promise<void> {
     const task = operationTaskId
-      ? this.createKnowledgeTask({
+      ? (await this.createKnowledgeTask({
           libraryId: library.id,
           parentTaskId: operationTaskId,
           sourceId: document.sourceId,
           documentId: document.id,
           documentName: document.title,
           kind: 'graph'
-        })
-      : this.createKnowledgeTask({
+        }))
+      : (await this.createKnowledgeTask({
           libraryId: library.id,
           sourceId: document.sourceId,
           documentId: document.id,
           documentName: document.title,
           kind: 'graph'
-        })
+        }))
     if (!library.graphEnabled) {
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'skipped',
         message: '知识图谱未启用'
       })
       return
     }
     if (library.graphStrategy === 'ask') {
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'skipped',
         message: '按需询问策略不自动抽取'
       })
@@ -3536,7 +3536,7 @@ export class KnowledgeService {
     }
     try {
       signal?.throwIfAborted()
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'running',
         stage: 'graph',
         progress: 10,
@@ -3548,16 +3548,14 @@ export class KnowledgeService {
         signal
       )
       signal?.throwIfAborted()
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         progress: 85,
         message: '正在保存实体和关系'
       })
-      this.database.replaceEvidenceForDocument(document.id, () => {
-        this.storeExtractedGraph(library, document, result)
-      })
-      this.database.pruneUnreferencedGeneratedGraph(library.id)
+      await this.database.replaceDocumentGraph(library, document, result)
+      await this.database.pruneUnreferencedGeneratedGraph(library.id)
       signal?.throwIfAborted()
-      this.updateKnowledgeTask(task.id, {
+      await this.updateKnowledgeTask(task.id, {
         status: 'succeeded',
         message:
           `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系` +
@@ -3565,9 +3563,9 @@ export class KnowledgeService {
       })
     } catch (error) {
       if (signal?.aborted) {
-        this.database.cancelKnowledgeTask(task.id, '知识图谱处理已取消')
+        await this.database.cancelKnowledgeTask(task.id, '知识图谱处理已取消')
       } else {
-        this.failKnowledgeTask(task.id, error)
+        await this.failKnowledgeTask(task.id, error)
       }
       throw error
     }
@@ -3580,7 +3578,7 @@ export class KnowledgeService {
   ): Promise<GraphExtractionResult> {
     return this.extractGraphChunks(
       library,
-      this.database.listChunks(document.id, 10_000),
+      (await this.database.listChunks(document.id, 10_000)),
       signal
     )
   }
@@ -3608,110 +3606,6 @@ export class KnowledgeService {
         signal
       }
     )
-  }
-
-  private storeExtractedGraph(
-    library: KnowledgeBase,
-    document: Document,
-    result: GraphExtractionResult
-  ): void {
-    const chunksById = new Map(
-      this.database
-        .listChunks(document.id)
-        .map((chunk) => [chunk.id, chunk])
-    )
-    const entityIds = new Map<string, string>()
-    const existingEntitiesByIdentity = new Map<string, GraphEntity>()
-    for (const entity of this.database.listEntitiesForIdentity(library.id)) {
-      for (const name of [entity.name, ...entity.aliases]) {
-        existingEntitiesByIdentity.set(
-          `${entity.type}\0${normalizeEntityAlias(name)}`,
-          entity
-        )
-      }
-    }
-    for (const entity of result.entities) {
-      const identity = `${entity.type}\0${normalizeEntityAlias(entity.name)}`
-      const existing = existingEntitiesByIdentity.get(identity)
-      const stored = existing
-        ? existing.locked
-          ? existing
-          : this.database.updateEntity(existing.id, {
-              aliases: [...new Set([...existing.aliases, ...entity.aliases])]
-            })
-        : this.database.createEntity({
-            knowledgeBaseId: library.id,
-            name: entity.name,
-            type: entity.type,
-            aliases: entity.aliases,
-            locked: false
-          })
-      for (const name of [stored.name, ...stored.aliases]) {
-        existingEntitiesByIdentity.set(
-          `${stored.type}\0${normalizeEntityAlias(name)}`,
-          stored
-        )
-      }
-      entityIds.set(entity.id, stored.id)
-      for (const evidence of entity.evidence) {
-        this.database.createEvidence({
-          knowledgeBaseId: library.id,
-          entityId: stored.id,
-          documentId: document.id,
-          chunkId: evidence.chunkId,
-          quote: evidence.quote,
-          location: chunksById.get(evidence.chunkId)?.location,
-          start: evidence.start,
-          end: evidence.end,
-          confidence: evidence.confidence,
-          source: evidence.source,
-          provenance: {
-            strategy: result.strategy,
-            ontologyVersion: library.ontologySettings.version
-          }
-        })
-      }
-    }
-    for (const relation of result.relations) {
-      const sourceEntityId = entityIds.get(relation.sourceId)
-      const targetEntityId = entityIds.get(relation.targetId)
-      if (!sourceEntityId || !targetEntityId) {
-        continue
-      }
-      const existing = this.database.findRelationByIdentity(
-        library.id,
-        sourceEntityId,
-        targetEntityId,
-        relation.type
-      )
-      const stored =
-        existing ??
-        this.database.createRelation({
-          knowledgeBaseId: library.id,
-          sourceEntityId,
-          targetEntityId,
-          type: relation.type,
-          locked: false
-        })
-      for (const evidence of relation.evidence) {
-        this.database.createEvidence({
-          knowledgeBaseId: library.id,
-          relationId: stored.id,
-          documentId: document.id,
-          chunkId: evidence.chunkId,
-          quote: evidence.quote,
-          location: chunksById.get(evidence.chunkId)?.location,
-          start: evidence.start,
-          end: evidence.end,
-          confidence: evidence.confidence,
-          source: evidence.source,
-          provenance: {
-            strategy: result.strategy,
-            ontologyVersion: library.ontologySettings.version
-          }
-        })
-      }
-    }
   }
 
   private async scanSource(rootPath: string): Promise<ScannedFile[]> {
@@ -3873,11 +3767,11 @@ export class KnowledgeService {
     }))
   }
 
-  private resolveImportLibrary(
+  private async resolveImportLibrary(
     knowledgeBaseId: string,
     graphStrategy?: Exclude<GraphStrategy, 'ask'>
-  ): KnowledgeBase {
-    const library = this.requireLibrary(knowledgeBaseId)
+  ): Promise<KnowledgeBase> {
+    const library = await this.requireLibrary(knowledgeBaseId)
     return graphStrategy
       ? { ...library, graphStrategy }
       : library
@@ -3903,19 +3797,19 @@ export class KnowledgeService {
       : candidate
   }
 
-  private requireLibrary(id: string, localOnly = true): KnowledgeBase {
-    if (localOnly && this.database.externalStore.hasBinding(id)) {
+  private async requireLibrary(id: string, localOnly = true): Promise<KnowledgeBase> {
+    if (localOnly && (await this.database.externalStore.hasBinding(id))) {
       throw new Error('EXTERNAL_KB_READ_ONLY')
     }
-    const library = this.database.getKnowledgeBase(id)
+    const library = await this.database.getKnowledgeBase(id)
     if (!library) {
       throw new Error('知识库不存在')
     }
     return library
   }
 
-  private requireSource(id: string): KnowledgeSource {
-    const source = this.database.getSource(id)
+  private async requireSource(id: string): Promise<KnowledgeSource> {
+    const source = await this.database.getSource(id)
     if (source) {
       return source
     }

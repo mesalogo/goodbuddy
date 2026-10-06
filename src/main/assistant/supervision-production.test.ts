@@ -7,6 +7,7 @@ import { AssistantDatabase } from './assistant-database'
 import { createProductionSupervisorService, createProductionSuggestionPhraser } from './supervision-production'
 import { SupervisionModelPool } from './supervision-model-pool'
 import { supervisionEntitySchema } from '../../shared/supervision-contracts'
+import { asyncSupervisionStorage } from '../../../tests/support/async-supervision-storage'
 
 const cleanups: Array<() => void> = []
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup() })
@@ -45,7 +46,7 @@ it('keeps one model across extraction, navigation, stories and experiences, and 
   } as AgentRuntime))
   const pool = new SupervisionModelPool()
   cleanups.push(() => pool.dispose())
-  const service = createProductionSupervisorService(f.db, async () => ({ supervisorModelProfileId: profileId,
+  const service = createProductionSupervisorService(asyncSupervisionStorage(f.db).supervision, async () => ({ supervisorModelProfileId: profileId,
     supervisionReview: { pageSize: 10, batchCharacters: 1000, batchMessages: 10, executionSeconds: 300, experienceMinEvents: 2 } }), resolve, pool)
   const result = await service.run(f.request)
   expect(phases).toEqual(['extraction', 'extraction', 'navigation', 'stories', 'experiences'])
@@ -70,7 +71,7 @@ it('releases a failed review runtime and uses the current model when continuing 
   } as AgentRuntime))
   const pool = new SupervisionModelPool()
   cleanups.push(() => pool.dispose())
-  const service = createProductionSupervisorService(f.db, async () => ({ supervisorModelProfileId: profileId }), resolve, pool)
+  const service = createProductionSupervisorService(asyncSupervisionStorage(f.db).supervision, async () => ({ supervisorModelProfileId: profileId }), resolve, pool)
   await expect(service.run(f.request)).rejects.toThrow('Provider unavailable')
   expect(dispose).toHaveBeenCalledOnce()
   expect(service.execution().active).toBe(false)
@@ -88,7 +89,7 @@ it('uses the supervisor selection for suggestions and disposes its runtime on fa
   } as AgentRuntime))
   const pool = new SupervisionModelPool()
   cleanups.push(() => pool.dispose())
-  const phrase = createProductionSuggestionPhraser(f.db, async () => ({ supervisorModelProfileId: 'reviewer' }), resolve, pool)
+  const phrase = createProductionSuggestionPhraser(asyncSupervisionStorage(f.db).supervision, async () => ({ supervisorModelProfileId: 'reviewer' }), resolve, pool)
   await expect(phrase({ systemInstruction: 'Suggest', outputContract: '{}', candidates: [] })).rejects.toThrow('Provider unavailable')
   expect(resolve).toHaveBeenCalledExactlyOnceWith('reviewer')
   expect(dispose).toHaveBeenCalledOnce()
@@ -209,7 +210,7 @@ function fixture(content = 'Atlas and Beacon are separate projects.') {
     yield { type: 'text', requestId: input.requestId, delta: JSON.stringify(respond(input.prompt)) }
     yield { type: 'done', requestId: input.requestId }
   }
-  const service = (responseKiB = 1024) => createProductionSupervisorService(db, async () => ({ supervisorModelConcurrency: 1,
+  const service = (responseKiB = 1024) => createProductionSupervisorService(asyncSupervisionStorage(db).supervision, async () => ({ supervisorModelConcurrency: 1,
     supervisionReview: { pageSize: 10, batchCharacters: 1000, batchMessages: 10, executionSeconds: 300, responseKiB } }),
     async () => ({ runtimeId: 'model', capability: 'chat', run } as AgentRuntime), pool)
   // Project ownership comes from timeline events, not the scope that first saved an entity.
@@ -233,7 +234,7 @@ it('records supervisor model usage under a hidden supervision task', async () =>
       model: 'gpt-review', inputTokens: 40, outputTokens: 8, cacheReadTokens: 0, cacheWriteTokens: 0 }
     yield { type: 'done', requestId: input.requestId }
   }
-  const service = createProductionSupervisorService(f.db, async () => ({ supervisorModelConcurrency: 1,
+  const service = createProductionSupervisorService(asyncSupervisionStorage(f.db).supervision, async () => ({ supervisorModelConcurrency: 1,
     supervisionReview: { pageSize: 10, batchCharacters: 1000, batchMessages: 10, executionSeconds: 300, responseKiB: 1024 } }),
     async () => ({ runtimeId: 'model', capability: 'chat', run } as AgentRuntime), new SupervisionModelPool())
   await service.run(f.request)

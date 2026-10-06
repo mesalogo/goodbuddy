@@ -17,7 +17,7 @@ import type { DocumentParsingSettingsStore } from './document-parsing-settings-s
 import { HttpDocumentOcr } from './http-document-ocr'
 import { hasExtractedDocumentText } from './document-extracted-text'
 import { renderOcrPdf, renderSelectedOcrPdf } from './render-ocr-pdf'
-import type { DocumentResultStorage } from './document-result-storage'
+import type { DocumentResultStorageAccess } from './desktop-storage-files'
 import {
   extractPdfTextPagesOffMain,
   extractPptxPagesOffMain,
@@ -161,11 +161,13 @@ function nativePdfSections(pages: PdfTextPage[]): ParsedSection[] {
 
 export class DocumentParsingService {
   private readonly diagnosticOperations = new Map<string, AbortController>()
+  private readonly diagnostics = new Map<AbortController, Promise<void>>()
+  private disposed = false
   constructor(
     private readonly settingsStore: DocumentParsingSettingsStore,
     private readonly modelManager: DocumentOcrModelManager,
     private readonly ocrBroker: DocumentOcrBroker,
-    readonly results?: DocumentResultStorage
+    readonly results?: DocumentResultStorageAccess
   ) {}
 
   async snapshot(): Promise<DocumentParsingSnapshot> {
@@ -633,12 +635,15 @@ export class DocumentParsingService {
     purpose: DocumentParsingPurpose = 'diagnostic',
     operationId?: string
   ): Promise<DocumentParsingDiagnostic> {
+    if (this.disposed) throw new Error('Document parsing service is closed')
     const startedAt = Date.now()
     const controller = new AbortController()
     if (operationId) {
       if (this.diagnosticOperations.has(operationId)) throw new Error('解析任务已在运行')
       this.diagnosticOperations.set(operationId, controller)
     }
+    let settle!: () => void
+    this.diagnostics.set(controller, new Promise(resolve => { settle = resolve }))
     try {
     const parsed = await this.parse(name, buffer, purpose, controller.signal)
     controller.signal.throwIfAborted()
@@ -673,6 +678,8 @@ export class DocumentParsingService {
     })
     } finally {
       if (operationId) this.diagnosticOperations.delete(operationId)
+      this.diagnostics.delete(controller)
+      settle()
     }
   }
 
@@ -681,7 +688,9 @@ export class DocumentParsingService {
   }
 
   async dispose(): Promise<void> {
-    for (const controller of this.diagnosticOperations.values()) controller.abort(new Error('应用正在退出'))
+    this.disposed = true
+    for (const controller of this.diagnostics.keys()) controller.abort(new Error('应用正在退出'))
+    await Promise.all(this.diagnostics.values())
     await this.results?.close()
   }
 }

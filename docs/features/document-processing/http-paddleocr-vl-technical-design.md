@@ -116,13 +116,11 @@ confidence 改为可选，保持本地返回原值；多块内容组成逐页 se
       original.<ext>
     documents/<attachmentId>/
       original.<ext>
-      parsed.md
       manifest.json
       images/<imageId>.<ext>
   knowledge/<kbId>/<sourceId>/
     <managed-original-files>
   knowledge-assets/<kbId>/<documentId>/
-    parsed.md
     manifest.json
     images/<imageId>.<ext>
   temp/document-parsing/<operationId>/
@@ -155,7 +153,7 @@ confidence 改为可选，保持本地返回原值；多块内容组成逐页 se
 也需验证同一规则。采用暂存、现有事务和按数据库引用核对清理，不新增恢复引擎。
 
 测试解析使用任务临时目录，结束预览且无有效引用后清理。知识库正文及 chunks 继续存数据库，
-`knowledge-assets` 的 `parsed.md` 为解析正文文件，随同一次结果提交保持一致，不独立修改
+`knowledge-assets` 的 `manifest.json` 保存解析正文，随同一次结果提交保持一致，不独立修改
 或替代数据库中的检索内容。图片归知识库文档所有，不依赖聊天存活；managed 与 reference
 派生文件均存该目录，reference 外部原件保持原路径，现有 managed 原件目录不迁移。
 重解析或同步先在本次暂存目录完成新结果与必要资源校验，成功提交替换后清理无引用旧资源；

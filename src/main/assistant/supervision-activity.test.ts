@@ -68,7 +68,7 @@ it.each([false, true])('groups heartbeat and downstream supervision with truthfu
       const result = await supervisor.run({ ...request, trigger: 'heartbeat' }, run.id)
       return { status: result.status ?? 'completed', runId: result.runId }
     } })
-    const config = heartbeat.create({ name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }, new Date('2026-09-23T00:00:00Z'))
+    const config = await heartbeat.create({ name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }, new Date('2026-09-23T00:00:00Z'))
     const pending = failed ? heartbeat.runNow({ id: config.id, idempotencyKey: crypto.randomUUID() })
       : heartbeat.processDue(new Date('2026-09-23T09:00:00Z'))
     await started
@@ -85,7 +85,7 @@ it('records supervision failures against the heartbeat that triggered them', asy
   db.initialize(process.cwd())
   try {
     const heartbeat = new HeartbeatService(db, { review: async () => { throw new Error('Callback failed') } })
-    const config = heartbeat.create({ name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
+    const config = await heartbeat.create({ name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
     await heartbeat.runNow({ id: config.id, idempotencyKey: crypto.randomUUID() })
     expect(db.listSupervisionActivity()[0]).toMatchObject({ status: 'failed', error: 'Callback failed', scope: request.scope, heartbeatStatus: 'completed', supervisionStatus: null })
   } finally { db.close() }
@@ -96,8 +96,8 @@ it('filters by exact plan ID before pagination, including plans with the same na
   try {
     const heartbeat = new HeartbeatService(db, { review: async () => { throw new Error('Expected failure') } })
     const input = { name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily' as const, localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }
-    const first = heartbeat.create(input)
-    const second = heartbeat.create(input)
+    const first = await heartbeat.create(input)
+    const second = await heartbeat.create(input)
     await heartbeat.runNow({ id: first.id, idempotencyKey: crypto.randomUUID() })
     const firstId = db.listSupervisionActivity()[0]!.id
     await heartbeat.runNow({ id: second.id, idempotencyKey: crypto.randomUUID() })
@@ -158,7 +158,7 @@ it('uses actual manual heartbeat and downstream finish times', async () => {
       vi.setSystemTime(new Date('2026-09-23T10:03:00Z'))
       throw new Error('Projection failed')
     } })
-    const config = heartbeat.create({ name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
+    const config = await heartbeat.create({ name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
     const run = await heartbeat.runNow({ id: config.id, idempotencyKey: crypto.randomUUID() })
     expect(run.completedAt).toBe('2026-09-23T10:00:00.000Z')
     expect(db.listSupervisionActivity()[0]).toMatchObject({ startedAt: '2026-09-23T10:00:00.000Z', completedAt: '2026-09-23T10:03:00.000Z', status: 'failed' })

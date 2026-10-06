@@ -1321,6 +1321,7 @@ export type AgentEvent =
       summary: string
       input?: string
       output?: string
+      outputReferences?: import('./assistant-contracts').ToolOutputReference[]
       error?: string
     }
   | {
@@ -2335,6 +2336,7 @@ export type DesktopApi = {
     cancelParsing: (operationId: string) => Promise<void>
     sendOriginal: (conversationId: string, id: string) => Promise<ContextAttachment[]>
     openOriginal: (id: string) => Promise<void>
+    readOutput: (input: { conversationId: string; handle: string; cursor?: number; limitBytes?: number }) => Promise<import('./conversation-output').ConversationOutputPage>
     addResultImages: (conversationId: string, resultId: string, imageIds: string[]) => Promise<ContextAttachment[]>
     onDraftChanged: (listener: (conversationId: string, attachments: ContextAttachment[]) => void) => () => void
     getDraft: (conversationId: string) => Promise<ContextAttachment[]>
@@ -2432,6 +2434,11 @@ export type DesktopApi = {
     importDroppedFiles: (
       libraryId: string,
       files: File[],
+      graphStrategy?: 'rules' | 'model' | 'hybrid'
+    ) => Promise<void>
+    importPaths?: (
+      libraryId: string,
+      paths: string[],
       graphStrategy?: 'rules' | 'model' | 'hybrid'
     ) => Promise<void>
     importUrl: (

@@ -33,6 +33,8 @@ export class DocumentResultStorage {
     return location
   }
 
+  location(id: string): { directory: string; original: string } { return this.require(id) }
+
   isTemporaryResult(id: string): boolean { return this.results.has(id) }
 
   async move(id: string, directory: string): Promise<void> {
@@ -52,10 +54,12 @@ export class DocumentResultStorage {
     try {
       await mkdir(join(directory, 'images'), { recursive: true })
       if (original) await writeFile(originalPath, original)
-      const images = await Promise.all((parsed.images ?? []).map(async ({ data, ...image }) => {
+      const images: DocumentResult['images'] = []
+      for (const { data, ...image } of parsed.images ?? []) {
+        signal?.throwIfAborted()
         await writeFile(join(directory, 'images', image.id), data)
-        return { ...image, size: data.byteLength }
-      }))
+        images.push({ ...image, size: data.byteLength })
+      }
       const result = documentResultSchema.parse({
         id, fileName: name, sourceFormat: parsed.sourceFormat, content: parsed.content,
         sections: parsed.sections, images, pageCount: parsed.pageCount,
@@ -64,7 +68,6 @@ export class DocumentResultStorage {
         completeness: parsedCompleteness(parsed),
         parsedAt: new Date().toISOString(), durationMs, settings, restructure: parsed.restructure
       })
-      await writeFile(join(directory, 'parsed.md'), parsed.content)
       await writeFile(join(directory, 'manifest.json'), JSON.stringify(result))
       signal?.throwIfAborted()
       return result

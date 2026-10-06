@@ -1,4 +1,5 @@
 import { AttachmentResultButton } from './AttachmentResultButton'
+import { ToolOutputReader } from './ToolOutputReader'
 import { AttachmentActions, AttachmentStatus } from './AttachmentActions'
 import { MessageExpansionScope, useMessageExpansion } from './message-expansion'
 import {
@@ -243,9 +244,10 @@ const ToolDetail = memo(function ToolDetail({ label, content, formatJson = false
   )
 })
 
-const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, expansionId, ...tool }: Pick<
-  ToolActivity, 'name' | 'summary' | 'state' | 'input' | 'output' | 'error'
+const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, expansionId, conversationId, ...tool }: Pick<
+  ToolActivity, 'name' | 'summary' | 'state' | 'input' | 'output' | 'error' | 'outputReferences'
 > & {
+  conversationId: string
   expansionId: string
   onCopy: CopyContent
 }): React.JSX.Element {
@@ -303,6 +305,9 @@ const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, expansionId, .
               <ToolDetail label={t('chat.tools.input')} content={tool.input} formatJson onCopy={onCopy} />
             </details>
           )}
+          {tool.outputReferences?.map((reference, index) => <ToolOutputReader
+            key={`${conversationId}:${reference.handle}`} conversationId={conversationId}
+            reference={reference} index={index + 1} onCopy={onCopy} />)}
         </div>
       </details>
       {tool.error && (
@@ -313,9 +318,11 @@ const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, expansionId, .
 })
 
 function ToolExecutionList({
+  conversationId,
   tools,
   onCopy
 }: {
+  conversationId: string
   tools: ToolActivity[]
   onCopy: CopyContent
 }): React.JSX.Element {
@@ -329,6 +336,7 @@ function ToolExecutionList({
       <ol>
         {tools.map((tool) => (
           <ToolExecutionRow
+            conversationId={conversationId}
             key={tool.callId ?? tool.name}
             expansionId={tool.callId ?? tool.name}
             name={tool.name}
@@ -336,6 +344,7 @@ function ToolExecutionList({
             state={tool.state}
             input={tool.input}
             output={tool.output}
+            outputReferences={tool.outputReferences}
             error={tool.error}
             onCopy={onCopy}
           />
@@ -346,11 +355,13 @@ function ToolExecutionList({
 }
 
 const SubagentStatusCard = memo(function SubagentStatusCard({
+  conversationId,
   renderHtml,
   subagent,
   questionFormId,
   onCopy
 }: {
+  conversationId: string
   renderHtml: boolean
   subagent: SubagentActivity
   questionFormId?: string
@@ -450,7 +461,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
               <div className="subagent-status-card__progress">
                 {groupMessageBlocks(progress).map((item) =>
                   item.kind === 'tools' ? (
-                    <ToolExecutionList key={item.id} onCopy={onCopy} tools={item.tools.map((tool) =>
+                    <ToolExecutionList conversationId={conversationId} key={item.id} onCopy={onCopy} tools={item.tools.map((tool) =>
                       (tool.state === 'pending' || tool.state === 'running') &&
                       subagent.state !== 'queued' && subagent.state !== 'running'
                         ? { ...tool, state: subagent.state === 'cancelled' ? 'cancelled' : 'interrupted' }
@@ -497,6 +508,9 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
                 <p>{subagent.error}</p>
               </section>
             )}
+          {subagent.outputReference && <ToolOutputReader
+            key={`${conversationId}:${subagent.outputReference.handle}`} conversationId={conversationId}
+            reference={subagent.outputReference} index={1} onCopy={onCopy} />}
         </div>
       )}
     </details>
@@ -504,12 +518,14 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
 })
 
 function SubagentStatusList({
+  conversationId,
   renderHtml,
   subagents,
   pendingQuestions,
   questionFormId,
   onCopy
 }: {
+  conversationId: string
   renderHtml: boolean
   subagents: SubagentActivity[]
   pendingQuestions?: Message['pendingQuestions']
@@ -525,6 +541,7 @@ function SubagentStatusList({
     >
       {subagents.map((subagent) => (
         <MessageExpansionScope key={subagent.childTaskId} id={`subagent:${subagent.childTaskId}`}><SubagentStatusCard
+          conversationId={conversationId}
           renderHtml={renderHtml}
           subagent={subagent}
           questionFormId={pendingQuestions?.some((question) => question.childTaskId === subagent.childTaskId) ? questionFormId : undefined}
@@ -863,9 +880,10 @@ function ChatMessageRowView({
             {groupMessageBlocks(message.blocks).map((item) =>
               item.kind === 'question' ? renderQuestion(item.questionId)
               : item.kind === 'tools' ? (
-                <ToolExecutionList key={item.id} tools={item.tools} onCopy={onCopyMessage} />
+                <ToolExecutionList conversationId={conversationId} key={item.id} tools={item.tools} onCopy={onCopyMessage} />
               ) : item.kind === 'subagents' ? (
                 <SubagentStatusList
+                  conversationId={conversationId}
                   pendingQuestions={message.pendingQuestions}
                   questionFormId={questionFormId}
                   onCopy={onCopyMessage}
@@ -927,6 +945,7 @@ function ChatMessageRowView({
         )}
         {unorderedSubagents && unorderedSubagents.length > 0 && (
           <SubagentStatusList
+            conversationId={conversationId}
             pendingQuestions={message.pendingQuestions}
             questionFormId={questionFormId}
             onCopy={onCopyMessage}
@@ -1139,7 +1158,7 @@ function ChatMessageRowView({
         {(!message.blocks || message.blocks.length === 0) &&
           message.tools &&
           message.tools.length > 0 && (
-            <ToolExecutionList tools={message.tools} onCopy={onCopyMessage} />
+            <ToolExecutionList conversationId={conversationId} tools={message.tools} onCopy={onCopyMessage} />
           )}
         {message.approval && (
           <div className="approval-card">

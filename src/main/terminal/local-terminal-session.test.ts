@@ -93,6 +93,20 @@ function sessionDependencies(
 }
 
 describe('local terminal launch resolution', () => {
+  it('awaits native child ownership registration and preserves an exit during registration', async () => {
+    const pty = new FakePty()
+    let release!: () => void
+    const recorded = new Promise<void>(resolve => { release = resolve })
+    const onSpawn = vi.fn(async (pid: number) => { expect(pid).toBe(pty.pid); await recorded })
+    const pending = LocalTerminalSession.create({ ...baseOptions,
+      spawnSpec: { executable: '/runtime', args: [], cwd: '/project', env: {}, label: 'Native', onSpawn },
+      dependencies: sessionDependencies(pty) })
+    await vi.waitFor(() => expect(onSpawn).toHaveBeenCalledOnce())
+    pty.emitExit(0)
+    release()
+    expect((await pending).snapshot().state).toBe('exited')
+  })
+
   it('spawns a Main-owned native executable directly without typing a shell command', async () => {
     const pty = new FakePty()
     const dependencies = sessionDependencies(pty)

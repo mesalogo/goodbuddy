@@ -4,8 +4,6 @@ import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text
 import { knowledgeReferenceKey } from '../../shared/knowledge-reference'
 import { appendConversationQuestionBlock } from '../../shared/conversation-question-blocks'
 import { DatabaseSync } from 'node:sqlite'
-import { Worker } from 'node:worker_threads'
-import { ReadonlyQueryReader, readWithFallback } from '../readonly-query-reader'
 import { ActivityHistoryRepository, migrateActivityHistoryOrder } from './activity-history-repository'
 import { statSync } from 'node:fs'
 import { MagicNoteStorage } from '../magic-notes/magic-note-storage'
@@ -158,8 +156,6 @@ export const MESSAGE_RECOVERY_CANDIDATE_SQL = `(state = 'streaming'
   OR instr(metadata_json, '"state":"queued"') > 0
   OR instr(metadata_json, '"state":"saving"') > 0
   OR instr(metadata_json, '"state":"cancelling"') > 0)`
-/** Main's automatic checkpoint threshold while the checkpoint worker runs (16 MB of 4 KB pages). */
-const WAL_SAFETY_CHECKPOINT_PAGES = 4_000
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -1587,6 +1583,7 @@ function reduceRecoveredAgentEvent(
       summary: event.summary,
       input: event.input,
       output: event.output,
+      outputReferences: event.outputReferences,
       error: event.error
     }
     const tools = [...(message.tools ?? [])]
@@ -1613,6 +1610,7 @@ function reduceRecoveredAgentEvent(
       reason: event.reason,
       progress: event.progress,
       output: event.output,
+      outputReference: event.outputReference,
       error: event.error
     }
     const subagent: ConversationSubagentActivity =
@@ -2070,10 +2068,6 @@ export class AssistantDatabase {
   private database?: DatabaseSync
   private activityHistoryRepository?: { database: DatabaseSync; repository: ActivityHistoryRepository }
   private executionTiming?: ExecutionTiming
-  private readonlyReader?: ReadonlyQueryReader
-  private supervisionWorker?: ReadonlyQueryReader
-  private checkpointWorker?: Worker
-  private readonlyWorkerPath?: string
   private foldedSearchConnection?: DatabaseSync
   private readonly noteStorage: MagicNoteStorage
   private readonly dirtyMagicNotes = new Set<string>()
@@ -2508,12 +2502,7 @@ export class AssistantDatabase {
   }
 
   close(): void {
-    this.stopWalCheckpointWorker()
     this.executionTiming = undefined
-    this.readonlyReader?.close()
-    this.readonlyReader = undefined
-    this.supervisionWorker?.close()
-    this.supervisionWorker = undefined
     this.foldedSearchConnection = undefined
     this.activityHistoryRepository = undefined
     this.database?.close()
@@ -3125,25 +3114,6 @@ export class AssistantDatabase {
     return this.readConversationList(new Set(detailIds))
   }
 
-  /**
-   * Conversation summaries on the readonly worker (PERF-15). Every write runs
-   * synchronously on Main, so once no transaction is open, everything written
-   * before this call is committed and visible to the worker. Inside an open
-   * transaction the synchronous path keeps read-your-writes semantics.
-   */
-  listConversationSummariesAsync(detailIds: string[] = [], signal?: AbortSignal): Promise<import('../../shared/assistant-contracts').ConversationListSnapshot[]> {
-    const database = this.requireDatabase()
-    return readWithFallback(database.isTransaction ? undefined : this.readonlyQueryReader(),
-      'listConversationSummaries', [detailIds], signal, () => this.listConversationSummaries(detailIds))
-  }
-
-  /** Full conversation history on the readonly worker; same rules as listConversationSummariesAsync. */
-  getConversationAsync(conversationId: string, signal?: AbortSignal): Promise<ConversationSnapshot> {
-    const database = this.requireDatabase()
-    return readWithFallback(database.isTransaction ? undefined : this.readonlyQueryReader(),
-      'getConversation', [conversationId], signal, () => this.getConversation(conversationId))
-  }
-
   private listConversationRows(): ConversationRow[] {
     const database = this.requireDatabase()
     return database
@@ -3243,14 +3213,6 @@ export class AssistantDatabase {
                     AND goodbuddy_folded_includes(m.content, ?1)))
        ORDER BY c.pinned DESC, c.updated_at DESC`
     ).all(normalized) as { id: string }[]).map(row => row.id)
-  }
-
-  /** Conversation search on the readonly worker; falls back to the synchronous query. */
-  searchConversationsAsync(query: string, signal?: AbortSignal): Promise<string[]> {
-    this.requireDatabase()
-    if (!query.trim()) return Promise.resolve([])
-    return readWithFallback(this.readonlyQueryReader(), 'searchConversations', [query], signal,
-      () => this.searchConversations(query))
   }
 
   getConversation(conversationId: string): ConversationSnapshot {
@@ -5102,16 +5064,9 @@ export class AssistantDatabase {
     this.database = new DatabaseSync(this.databasePath, { readOnly: true, timeout: 5_000 })
   }
 
-  /** Worker-only connection: no startup recovery, schema migration or Main object sharing. */
-  openSupervisionWorker(): void {
-    if (this.database) throw new Error('Database already open')
-    this.database = new DatabaseSync(this.databasePath, { timeout: 5_000 })
-    this.database.exec('PRAGMA foreign_keys = ON; PRAGMA wal_autocheckpoint = 0')
-  }
-
   /**
    * Opens a connection used only to checkpoint the WAL from a worker thread
-   * (PERF-15). It never writes rows; see enableWalCheckpointWorker.
+   * owned by DesktopStorageOwner. It never writes business rows.
    */
   openCheckpointer(): void {
     if (this.database) throw new Error('Database already open')
@@ -5127,55 +5082,8 @@ export class AssistantDatabase {
   }
 
   /**
-   * Moves WAL checkpoints off Main (PERF-15). SQLite's automatic checkpoint
-   * runs inside the commit that crosses 1,000 WAL pages, so on a large
-   * database one ordinary write now and then blocked Main for 100-250 ms
-   * while pages were copied and synced. A worker thread checkpoints on its
-   * own connection instead. While it runs, Main's automatic checkpoint stays
-   * as a safety net at a higher threshold: under sustained writes a passive
-   * checkpoint never catches up exactly, so the WAL could not reset; Main's
-   * checkpoint then finds almost every frame already copied and only
-   * finishes the rest. The default threshold comes back if the worker stops.
-   */
-  enableWalCheckpointWorker(workerPath: string, intervalMs = 250): void {
-    const database = this.database
-    if (!database || this.checkpointWorker || this.databasePath === ':memory:') return
-    let worker: Worker
-    try {
-      worker = new Worker(workerPath, {
-        workerData: { kind: 'checkpoint', databasePath: this.databasePath, intervalMs }
-      })
-    } catch {
-      return
-    }
-    this.checkpointWorker = worker
-    worker.unref()
-    const restore = (): void => {
-      if (this.checkpointWorker !== worker) return
-      this.checkpointWorker = undefined
-      if (this.database === database) database.exec('PRAGMA wal_autocheckpoint = 1000')
-    }
-    worker.on('message', (message: { ready?: boolean }) => {
-      if (message.ready && this.checkpointWorker === worker && this.database === database) {
-        database.exec(`PRAGMA wal_autocheckpoint = ${WAL_SAFETY_CHECKPOINT_PAGES}`)
-      }
-    })
-    worker.once('error', restore)
-    worker.once('exit', restore)
-  }
-
-  private stopWalCheckpointWorker(): void {
-    const worker = this.checkpointWorker
-    if (!worker) return
-    this.checkpointWorker = undefined
-    this.database?.exec('PRAGMA wal_autocheckpoint = 1000')
-    void worker.terminate()
-  }
-
-  /**
    * Runs multi-statement reads against one WAL snapshot. Used by the readonly
-   * worker, where Main may commit between statements; on Main itself the
-   * event loop already serializes reads and writes.
+   * worker, where the storage owner may commit between statements.
    */
   readSnapshot<T>(read: () => T): T {
     const database = this.requireDatabase()
@@ -5189,25 +5097,6 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
-  }
-
-  /**
-   * Routes heavy read-only queries (story graph, conversation search) through a
-   * read-only worker thread. In-memory databases keep the synchronous path.
-   */
-  enableReadonlyWorker(workerPath: string): void {
-    this.readonlyWorkerPath = workerPath
-  }
-
-  private readonlyQueryReader(): ReadonlyQueryReader | undefined {
-    if (!this.readonlyWorkerPath || this.databasePath === ':memory:') return undefined
-    this.readonlyReader ??= new ReadonlyQueryReader('assistant', this.databasePath, this.readonlyWorkerPath)
-    return this.readonlyReader
-  }
-
-  /** Test hook for the worker crash and cancellation paths. */
-  get readonlyWorkerForTest(): ReadonlyQueryReader | undefined {
-    return this.readonlyQueryReader()
   }
 
   /** Activity history storage and queries (PERF-15); the SQL lives in the repository. */
@@ -5268,19 +5157,6 @@ export class AssistantDatabase {
 
   getActivityHistorySummary(input: unknown): ActivityHistorySummary {
     return this.readSnapshot(() => this.activityHistory().summary(input))
-  }
-
-  /** Pages and the summary on the readonly worker; same rules as listConversationSummariesAsync. */
-  getActivityHistoryPageAsync(input: unknown): Promise<ActivityHistoryPage> {
-    const database = this.requireDatabase()
-    return readWithFallback(database.isTransaction ? undefined : this.readonlyQueryReader(),
-      'activityHistoryPage', [input], undefined, () => this.getActivityHistoryPage(input))
-  }
-
-  getActivityHistorySummaryAsync(input: unknown): Promise<ActivityHistorySummary> {
-    const database = this.requireDatabase()
-    return readWithFallback(database.isTransaction ? undefined : this.readonlyQueryReader(),
-      'activityHistorySummary', [input], undefined, () => this.getActivityHistorySummary(input))
   }
 
   /** Ends records left running by requests that are no longer active (see the repository). */
@@ -9271,45 +9147,14 @@ export class AssistantDatabase {
     return readStoryGraph(this.requireDatabase(), name, input, projectId, signal)
   }
 
-  /** Story graph read on the readonly worker; falls back to the synchronous read. */
-  readStoryGraphAsync(name: import('../../shared/story-graph-tools').StoryGraphToolName, input: unknown, projectId?: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    this.requireDatabase()
-    return readWithFallback(this.readonlyQueryReader(), 'readStoryGraph', [name, input, projectId], signal,
-      () => this.readStoryGraph(name, input, projectId, signal))
-  }
-
   getSupervisionResult(id: string): { id: string; summary: string } | undefined {
     return this.requireDatabase().prepare('SELECT id, summary FROM supervision_results WHERE id = ?').get(id) as { id: string; summary: string } | undefined
-  }
-
-  async listSupervisionResultsAsync(limit = 20, target?: SupervisionTarget, resultId?: string): Promise<ReturnType<AssistantDatabase['listSupervisionResults']>> {
-    this.requireDatabase()
-    const reader = this.readonlyQueryReader()
-    if (reader) return reader.call('supervisionOverview', [limit, target, resultId])
-    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
-    return this.listSupervisionResults(limit, target, resultId)
-  }
-
-  async getSupervisionGraphAsync(input: SupervisionGraphRequest = {}): Promise<Record<string, unknown>> {
-    this.requireDatabase()
-    const reader = this.readonlyQueryReader()
-    if (reader) return reader.call('supervisionGraph', [input])
-    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
-    return this.getSupervisionGraph(input)
   }
 
   getSupervisionStories(scope: SupervisionRunRequest['scope']) {
     const stories = this.supervisionStories()
     return { stories: stories.list(scope), experiences: this.supervisionExperiences().list(scope.kind === 'projects' ? scope.projectIds : undefined),
       unassigned: stories.unassignedCount(scope), canUndo: stories.canUndo() }
-  }
-
-  async getSupervisionStoriesAsync(scope: SupervisionRunRequest['scope']): Promise<ReturnType<AssistantDatabase['getSupervisionStories']>> {
-    this.requireDatabase()
-    const reader = this.readonlyQueryReader()
-    if (reader) return reader.call('supervisionStories', [scope])
-    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
-    return this.getSupervisionStories(scope)
   }
 
   listSupervisionResults(limit = 20, target?: SupervisionTarget, resultId?: string) {
@@ -12396,43 +12241,6 @@ export class AssistantDatabase {
 
   supervisionReviewStore(signal?: AbortSignal): SupervisionReviewStore {
     return new SupervisionReviewStore(this.requireDatabase(), signal)
-  }
-
-  async initializeSupervisionReview(runId: string, state: import('./supervision-review-store').ReviewState, signal: AbortSignal): Promise<void> {
-    const store = this.supervisionReviewStore()
-    store.prepareInitialization(runId, state)
-    await this.runSupervisionWorker('initialize', [runId, state], signal)
-  }
-
-  async resumeSupervisionReview(runId: string, signal: AbortSignal): Promise<void> {
-    await this.runSupervisionWorker('resume', [runId], signal)
-  }
-
-  private async runSupervisionWorker(op: 'initialize' | 'resume', args: unknown[], signal: AbortSignal): Promise<void> {
-    if (this.databasePath === ':memory:') {
-      const store = this.supervisionReviewStore()
-      if (op === 'resume') store.resume(String(args[0]), signal)
-      else store.initializeSources(String(args[0]), args[1] as import('./supervision-review-store').ReviewState, signal)
-      return
-    }
-    // Fail explicitly when packaging/startup is broken; never freeze Main as a fallback.
-    if (!this.readonlyWorkerPath) throw new Error('Supervision worker is not configured')
-    this.supervisionWorker ??= new ReadonlyQueryReader('supervision', this.databasePath, this.readonlyWorkerPath)
-    await this.supervisionWorker.call(op, args, signal)
-  }
-
-  async supervisionContext(request: SupervisionRunRequest, signal?: AbortSignal): Promise<{ summary: string | undefined; background: ReviewBatch['evidence'] }> {
-    const reader = this.readonlyQueryReader()
-    if (reader) return reader.call('reviewContext', [request], signal)
-    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
-    return { summary: this.reviewSummary(request.scope, 'supervisor'), background: this.reviewBackground(request.scope) }
-  }
-
-  async supervisionCandidates(request: SupervisionRunRequest, batch?: { projectId: string; crossProject: boolean }): Promise<ReturnType<AssistantDatabase['listSupervisionCandidates']>> {
-    const reader = this.readonlyQueryReader()
-    if (reader) return reader.call('reviewCandidates', [request, batch])
-    if (this.databasePath !== ':memory:') throw new Error('Supervision worker is not configured')
-    return this.listSupervisionCandidates(request, batch)
   }
 
   supervisionSuggestions(): SupervisionSuggestionStore {

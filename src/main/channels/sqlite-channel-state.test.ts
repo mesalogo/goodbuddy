@@ -25,46 +25,46 @@ const message = {
 }
 
 describe('SqliteChannelOutbox', () => {
-  it('marks a permanent failure terminal, releases media and counts the attempt once', () => {
+  it('marks a permanent failure terminal, releases media and counts the attempt once', async () => {
     const outbox = createOutbox()
-    const entry = outbox.enqueue(message)
-    outbox.markTerminal(entry.id)
-    outbox.markTerminal(entry.id)
-    outbox.markFailed(entry.id)
-    outbox.markDelivered(entry.id)
-    expect(outbox.listUndelivered()).toEqual([{
+    const entry = await outbox.enqueue(message)
+    await outbox.markTerminal(entry.id)
+    await outbox.markTerminal(entry.id)
+    await outbox.markFailed(entry.id)
+    await outbox.markDelivered(entry.id)
+    expect(await outbox.listUndelivered()).toEqual([{
       ...entry, state: 'terminal', attempts: 1,
       message: { ...message, attachments: undefined }
     }])
-    expect(outbox.listUndelivered()[0]!.message).not.toHaveProperty('attachments')
+    expect((await outbox.listUndelivered())[0]!.message).not.toHaveProperty('attachments')
   })
 
-  it('keeps retryable entries ahead of terminal entries under channel and global limits', () => {
+  it('keeps retryable entries ahead of terminal entries under channel and global limits', async () => {
     const outbox = createOutbox()
-    const terminal = outbox.enqueue(message)
-    outbox.markTerminal(terminal.id)
-    const retry = outbox.enqueue({ ...message, eventId: 'retry' })
-    outbox.markFailed(retry.id)
-    outbox.markFailed(retry.id)
+    const terminal = await outbox.enqueue(message)
+    await outbox.markTerminal(terminal.id)
+    const retry = await outbox.enqueue({ ...message, eventId: 'retry' })
+    await outbox.markFailed(retry.id)
+    await outbox.markFailed(retry.id)
     for (const channel of [undefined, 'telegram']) {
-      expect(outbox.listUndelivered(channel, 1).map(entry => entry.id)).toEqual([retry.id])
-      expect(outbox.listUndelivered(channel).map(entry => entry.id)).toEqual([retry.id, terminal.id])
+      expect((await outbox.listUndelivered(channel, 1)).map(entry => entry.id)).toEqual([retry.id])
+      expect((await outbox.listUndelivered(channel)).map(entry => entry.id)).toEqual([retry.id, terminal.id])
     }
-    expect(outbox.listUndelivered('weixin')).toEqual([])
+    expect(await outbox.listUndelivered('weixin')).toEqual([])
   })
 
-  it('budgets retry bytes after putting terminal results last in both windows', () => {
+  it('budgets retry bytes after putting terminal results last in both windows', async () => {
     const outbox = createOutbox()
     // Retained terminal text alone exceeds the 20 MiB retry window.
     for (let index = 0; index < 22; index++) {
-      const entry = outbox.enqueue({ ...message, eventId: `terminal-${index}`, output: 'x'.repeat(1024 * 1024) })
-      outbox.markTerminal(entry.id)
+      const entry = await outbox.enqueue({ ...message, eventId: `terminal-${index}`, output: 'x'.repeat(1024 * 1024) })
+      await outbox.markTerminal(entry.id)
     }
-    const retry = outbox.enqueue({ ...message, eventId: 'retry' })
-    outbox.markFailed(retry.id)
-    outbox.markFailed(retry.id)
+    const retry = await outbox.enqueue({ ...message, eventId: 'retry' })
+    await outbox.markFailed(retry.id)
+    await outbox.markFailed(retry.id)
     for (const channel of [undefined, 'telegram']) {
-      const entries = outbox.listUndelivered(channel)
+      const entries = await outbox.listUndelivered(channel)
       expect(entries[0]!.id).toBe(retry.id)
       expect(entries.length).toBeLessThan(23)
     }

@@ -1,9 +1,11 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   installManagedPython,
+  cleanupManagedPythonOperations,
   removeManagedPython
 } from './managed-python-install'
 
@@ -22,6 +24,22 @@ afterEach(async () => {
 })
 
 describe('Managed Python staged operations', () => {
+  it('reclaims only known abandoned operation layouts inside the owned root', async () => {
+    const rootDirectory = await root()
+    await cleanupManagedPythonOperations(rootDirectory)
+    const retained = ['cache', 'history', 'python-3.13.15', `.managed-python-download-${randomUUID()}`]
+    for (const name of retained) await mkdir(join(rootDirectory, name))
+    await writeFile(join(rootDirectory, '.managed-python-download-unrecognized'), 'keep')
+    await writeFile(join(rootDirectory, `.managed-python-download-${'-'.repeat(36)}`), 'keep')
+    await writeFile(join(rootDirectory, `.managed-python-download-${randomUUID()}`), 'partial archive')
+    await mkdir(join(rootDirectory, `.managed-python-stage-${randomUUID()}`))
+    await mkdir(join(rootDirectory, `.managed-python-backup-${randomUUID()}`))
+    await cleanupManagedPythonOperations(rootDirectory)
+    expect((await readdir(rootDirectory)).sort()).toEqual([
+      '.goodbuddy-managed-python', '.managed-python-download-unrecognized',
+      `.managed-python-download-${'-'.repeat(36)}`, ...retained
+    ].sort())
+  })
   it('publishes only after validation succeeds', async () => {
     const rootDirectory = await root()
     const installed = await installManagedPython({

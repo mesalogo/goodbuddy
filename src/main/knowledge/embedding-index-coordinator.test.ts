@@ -134,6 +134,44 @@ function provider(
 }
 
 describe('EmbeddingIndexCoordinator', () => {
+  it('holds the rebuild slot until the final status commit settles', async () => {
+    const repository = new MemoryRepository()
+    let commit!: () => void
+    vi.spyOn(repository, 'saveStatus').mockImplementation(async status => {
+      if (status.job?.status === 'completed') {
+        await new Promise<void>(resolve => { commit = resolve })
+      }
+    })
+    const coordinator = new EmbeddingIndexCoordinator(repository)
+    const model = provider(async inputs => inputs.map(() => [1, 0]))
+    coordinator.startRebuild(model)
+    await vi.waitFor(() => expect(commit).toBeTypeOf('function'))
+    expect(() => coordinator.startRebuild(model)).toThrow('already active')
+    commit()
+    await expect(coordinator.waitForCompletion()).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('retains success when the final document commits before cancellation', async () => {
+    const repository = new MemoryRepository()
+    const coordinator = new EmbeddingIndexCoordinator(repository)
+    const finish = repository.finishDocumentReplacement.bind(repository)
+    vi.spyOn(repository, 'finishDocumentReplacement').mockImplementation(async (replacement, document) => {
+      await finish(replacement, document)
+      if (document === 'document-2') coordinator.cancel()
+    })
+    coordinator.startRebuild(provider(async inputs => inputs.map(() => [1, 0])))
+    await expect(coordinator.waitForCompletion()).resolves.toMatchObject({ status: 'completed' })
+    expect(repository.pendingRecords.size).toBe(0)
+  })
+
+  it('surfaces a failed status commit at the completion barrier', async () => {
+    const repository = new MemoryRepository()
+    vi.spyOn(repository, 'saveStatus').mockRejectedValue(new Error('storage exited'))
+    const coordinator = new EmbeddingIndexCoordinator(repository)
+    coordinator.startRebuild(provider(async inputs => inputs.map(() => [1, 0])))
+    await expect(coordinator.waitForCompletion()).rejects.toThrow('storage exited')
+  })
+
   it('performs a real embedding request for diagnostics', async () => {
     const repository = new MemoryRepository()
     const embed = vi.fn(async () => [[0.25, 0.5, 0.75]])

@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
-import { extractExperiences } from './supervision-experiences'
-import { assignStories } from './supervision-stories'
+import { extractExperiences } from './experience-extraction-service'
+import { assignStories } from './story-assignment-service'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })

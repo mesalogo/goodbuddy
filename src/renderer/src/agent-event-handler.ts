@@ -486,6 +486,7 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
         summary: event.summary,
         input: event.input,
         output: event.output,
+        outputReferences: event.outputReferences,
         error: event.error,
       };
       if (index >= 0) {
@@ -602,6 +603,7 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
         reason: event.reason,
         progress: event.progress,
         output: event.output,
+        outputReference: event.outputReference,
         error: event.error,
       };
       const subagent: SubagentActivity =

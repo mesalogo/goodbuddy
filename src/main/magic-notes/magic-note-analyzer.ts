@@ -167,7 +167,7 @@ async function analyzeComments(
   },
   options: MagicNoteAnalysisOptions,
   onText?: (delta: string) => void,
-  onModelUsage?: (event: RuntimeModelUsageEvent) => void
+  onModelUsage?: (event: RuntimeModelUsageEvent) => void | Promise<void>
 ): Promise<MagicNoteComment[]> {
   const source = input.source.trim()
   if (!source && !input.images?.length) {
@@ -238,7 +238,7 @@ ${outputInstructions}`,
           }
         }
       } else if (event.type === 'model-usage') {
-        onModelUsage?.(event)
+        await onModelUsage?.(event)
       } else if (event.type === 'tool') {
         throw new Error('魔法笔记 AI 分析不允许工具调用')
       } else if (event.type === 'generated-image') {
@@ -304,7 +304,7 @@ export async function analyzeMagicNoteEntry(
   entry: MagicNoteEntry,
   options: MagicNoteAnalysisOptions,
   onText?: (delta: string) => void,
-  onModelUsage?: (event: RuntimeModelUsageEvent) => void,
+  onModelUsage?: (event: RuntimeModelUsageEvent) => void | Promise<void>,
   context?: NoteAnalysisContext
 ): Promise<MagicNoteComment[]> {
   const input = canvasAnalysisInput(entry.content, options, context?.supportsImageInput === true, context?.canvasPageCount)
@@ -328,7 +328,7 @@ export async function analyzeMagicNoteDraft(
   plainText: string,
   options: MagicNoteAnalysisOptions,
   onText?: (delta: string) => void,
-  onModelUsage?: (event: RuntimeModelUsageEvent) => void,
+  onModelUsage?: (event: RuntimeModelUsageEvent) => void | Promise<void>,
   context?: NoteAnalysisContext
 ): Promise<MagicNoteComment[]> {
   const input = canvasAnalysisInput(context?.content, options, context?.supportsImageInput === true, context?.canvasPageCount)
@@ -352,7 +352,7 @@ export async function analyzeMagicTodo(
   todo: MagicTodoItem,
   options: MagicNoteAnalysisOptions,
   onText?: (delta: string) => void,
-  onModelUsage?: (event: RuntimeModelUsageEvent) => void,
+  onModelUsage?: (event: RuntimeModelUsageEvent) => void | Promise<void>,
   context?: NoteAnalysisContext
 ): Promise<MagicNoteComment[]> {
   const input = canvasAnalysisInput(

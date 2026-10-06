@@ -1,11 +1,15 @@
 // @vitest-environment node
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NativeDshWebClientService, resolveNativeDshCli, type NativeDshWebRequest } from './native-dsh-web-client'
 import { nativeDshWebPatch } from './native-dsh-web-policy'
+import { AgentModelCallLedger } from '../../agent-daemon/agent-model-gateway'
+import { runtimeTemporaryRoot, runtimeTemporaryProcessIsActive } from '../runtime-temporary-directory'
+
+const openModelCallLedger = async (path: string) => new AgentModelCallLedger(path)
 
 const roots: string[] = []
 const services: NativeDshWebClientService[] = []
@@ -42,11 +46,58 @@ describe('native DS Web configuration', () => {
 
 const standardNode = process.env.NATIVE_DSH_TEST_NODE ?? (!process.versions.electron ? process.execPath : undefined)
 describe.skipIf(!standardNode)('official DS Web process', () => {
+  it('awaits host ledger close before removing launch material', async () => {
+    const root = await temporary()
+    let release!: () => void
+    const closed = new Promise<void>(resolve => { release = resolve })
+    const closing = vi.fn()
+    let delayClose = false
+    let ledgerPath = ''
+    const scratch = runtimeTemporaryRoot(root, 'test', 'native')
+    const service = new NativeDshWebClientService({
+      temporaryRoot: scratch,
+      rootDirectory: join(root, 'homes'), cliPath: process.env.NATIVE_DSH_TEST_CLI,
+      resolveLaunchEnvironment: async () => ({ nodeExecutablePath: standardNode!, environment: process.env }),
+      openModelCallLedger: async path => {
+        ledgerPath = path
+        const ledger = new AgentModelCallLedger(path)
+        return {
+          claim: ledger.claim.bind(ledger), complete: ledger.complete.bind(ledger),
+          delivered: ledger.delivered.bind(ledger), outcomeUnknown: ledger.outcomeUnknown.bind(ledger),
+          get: ledger.get.bind(ledger), close: async () => { closing(); if (delayClose) await closed; ledger.close() }
+        }
+      }
+    })
+    services.push(service)
+    try {
+      const handle = await service.start({ projectId: 'close-order', workspace: root, profile })
+      delayClose = true
+      expect(ledgerPath.startsWith(scratch)).toBe(true)
+      const launch = dirname(ledgerPath)
+      const ownerFile = join(dirname(launch), `.${basename(launch)}.owner.json`)
+      const owner = JSON.parse(await readFile(ownerFile, 'utf8'))
+      expect(owner.creatorPid).toBe(process.pid)
+      expect(runtimeTemporaryProcessIsActive(owner.childPid)).toBe(true)
+      const stopping = service.stop(handle.id)
+      await vi.waitFor(() => expect(closing).toHaveBeenCalledOnce())
+      expect(runtimeTemporaryProcessIsActive(owner.childPid)).toBe(false)
+      expect(await readFile(join(launch, 'cordis.patch.yml'), 'utf8')).toContain('test-model')
+      expect((await readFile(ledgerPath)).length).toBeGreaterThan(0)
+      release()
+      await stopping
+      await expect(readFile(ledgerPath)).rejects.toThrow()
+      await expect(readFile(ownerFile)).rejects.toThrow()
+    } finally { release() }
+  }, 60_000)
+
   it('initializes the workspace, coalesces starts, isolates configuration and preserves history on stop', async () => {
     const root = await temporary()
     const workspace = join(root, 'workspace')
     await mkdir(workspace)
+    let ledgerPath = ''
     const service = new NativeDshWebClientService({
+      openModelCallLedger: async path => { ledgerPath = path; return openModelCallLedger(path) },
+      temporaryRoot: runtimeTemporaryRoot(root, 'test', 'history'),
       rootDirectory: join(root, 'homes'),
       cliPath: process.env.NATIVE_DSH_TEST_CLI,
       resolveLaunchEnvironment: async () => ({ nodeExecutablePath: standardNode!, environment: process.env })
@@ -55,7 +106,7 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
     const request: NativeDshWebRequest = { projectId: 'one', workspace, profile }
     const [first, repeated] = await Promise.all([service.start(request), service.start(request)])
     expect(first).toEqual(repeated)
-    const config = await readFile(join(root, 'homes', first.id, 'cordis.patch.yml'), 'utf8')
+    const config = await readFile(join(dirname(ledgerPath), 'cordis.patch.yml'), 'utf8')
     expect(config).toContain('test-model')
     expect(config).not.toContain(profile.apiKey)
     const auth = await fetch(first.url, { redirect: 'manual' })
@@ -63,9 +114,17 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
     const page = await fetch(new URL('/', first.url), { headers: { cookie } })
     expect(page.status).toBe(200)
     expect(await page.text()).toContain('<html')
+    const created = await fetch(new URL('/api/session/create', first.url), {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie, origin: new URL(first.url).origin },
+      body: JSON.stringify({ type: 'client-request', rpcId: crypto.randomUUID(), method: 'session/create', payload: { args: { request: { cwd: workspace } } } })
+    })
+    const session = await created.json() as { result: { ok: boolean; value: { sessionId: string } } }
+    expect(session.result.ok).toBe(true)
     expect(await service.start(request)).toEqual(first)
     const history = join(root, 'homes', first.id, 'history-marker')
     await writeFile(history, 'retained')
+    const preferences = join(root, 'homes', first.id, 'cordis.patch.yml')
+    await writeFile(preferences, '[]\n')
     const changedConfiguration = await service.start({ ...request, configurationKey: 'updated-skill-digest' })
     expect(changedConfiguration.id).not.toBe(first.id)
     expect(await service.start({ ...request, configurationKey: 'updated-skill-digest' })).toEqual(changedConfiguration)
@@ -73,10 +132,18 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
     await service.stop(first.id)
     await expect(fetch(first.url)).rejects.toThrow()
     expect(await readFile(history, 'utf8')).toBe('retained')
-    await expect(readFile(join(root, 'homes', first.id, 'cordis.patch.yml'))).rejects.toThrow()
+    expect(await readFile(preferences, 'utf8')).toBe('[]\n')
     const restarted = await service.start(request)
     expect(restarted.id).toBe(first.id)
     expect(restarted.url).not.toBe(first.url)
+    const nextAuth = await fetch(restarted.url, { redirect: 'manual' })
+    const nextCookie = nextAuth.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+    const listed = await fetch(new URL('/api/session/list', restarted.url), {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie: nextCookie, origin: new URL(restarted.url).origin },
+      body: JSON.stringify({ type: 'client-request', rpcId: crypto.randomUUID(), method: 'session/list', payload: { args: { _request: {} } } })
+    })
+    expect(await listed.text()).toContain(session.result.value.sessionId)
+    expect(await readFile(preferences, 'utf8')).toBe('[]\n')
     await service.dispose()
     await expect(service.start(request)).rejects.toThrow('disposed')
   }, 120_000)
@@ -127,7 +194,7 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
         usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }) + 'data: [DONE]\n\n',
       { headers: { 'content-type': 'text/event-stream' } })
     }
-    const service = new NativeDshWebClientService({ rootDirectory: join(root, 'homes'), fetcher,
+    const service = new NativeDshWebClientService({ openModelCallLedger, rootDirectory: join(root, 'homes'), fetcher,
       cliPath: process.env.NATIVE_DSH_TEST_CLI,
       resolveLaunchEnvironment: async () => ({ nodeExecutablePath: standardNode!, environment: process.env }) })
     services.push(service)
@@ -173,19 +240,23 @@ describe.skipIf(!standardNode)('official DS Web process', () => {
 
   it('cleans failed launches and permits retry', async () => {
     const root = await temporary()
-    const service = new NativeDshWebClientService({ rootDirectory: join(root, 'homes'), cliPath: join(root, 'missing.js'),
+    const cliPath = join(root, 'failed.mjs')
+    await writeFile(cliPath, 'process.exit(1)')
+    const scratch = runtimeTemporaryRoot(root, 'test', 'failure')
+    const service = new NativeDshWebClientService({ openModelCallLedger, rootDirectory: join(root, 'homes'), cliPath, temporaryRoot: scratch,
       resolveLaunchEnvironment: async () => ({ nodeExecutablePath: standardNode!, environment: process.env }) })
     services.push(service)
     const request: NativeDshWebRequest = { projectId: 'one', workspace: root, profile }
     await expect(service.start(request)).rejects.toThrow()
     await expect(service.start(request)).rejects.toThrow()
+    expect(await readdir(scratch)).toEqual([])
   })
 
   it('cancels an in-progress launch when disposed', async () => {
     const root = await temporary()
     const cliPath = join(root, 'waiting.mjs')
     await writeFile(cliPath, 'setInterval(() => {}, 1000)')
-    const service = new NativeDshWebClientService({ rootDirectory: join(root, 'homes'), cliPath,
+    const service = new NativeDshWebClientService({ openModelCallLedger, rootDirectory: join(root, 'homes'), cliPath,
       resolveLaunchEnvironment: async () => ({ nodeExecutablePath: standardNode!, environment: process.env }) })
     services.push(service)
     const starting = service.start({ projectId: 'pending', workspace: root, profile })

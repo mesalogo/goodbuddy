@@ -1,4 +1,4 @@
-import type { AssistantDatabase } from '../assistant/assistant-database'
+import type { AssistantStoragePort, Awaitable } from '../assistant-storage-port'
 import type {
   DedupStore,
   Outbox,
@@ -7,40 +7,40 @@ import type {
 import type { ChannelResultMessage } from '../../shared/channel-contracts'
 
 export class SqliteChannelDedupStore implements DedupStore {
-  constructor(private readonly database: AssistantDatabase) {}
+  constructor(private readonly database: Pick<AssistantStoragePort, 'claimChannelEvent' | 'releaseChannelEvent'>) {}
 
-  claim(channel: string, accountId: string, eventId: string): boolean {
+  claim(channel: string, accountId: string, eventId: string): Awaitable<boolean> {
     return this.database.claimChannelEvent(channel, accountId, eventId)
   }
 
-  release(channel: string, accountId: string, eventId: string): void {
-    this.database.releaseChannelEvent(channel, accountId, eventId)
+  release(channel: string, accountId: string, eventId: string): Awaitable<void> {
+    return this.database.releaseChannelEvent(channel, accountId, eventId)
   }
 }
 
 export class SqliteChannelOutbox implements Outbox {
-  constructor(private readonly database: AssistantDatabase) {}
+  constructor(private readonly database: Pick<AssistantStoragePort, 'enqueueChannelResult' | 'markChannelResult' | 'listUndeliveredChannelResults'>) {}
 
-  enqueue(message: ChannelResultMessage): OutboxEntry {
+  enqueue(message: ChannelResultMessage): Awaitable<OutboxEntry> {
     return this.database.enqueueChannelResult(message)
   }
 
-  markDelivered(id: string): void {
-    this.database.markChannelResult(id, 'delivered')
+  markDelivered(id: string): Awaitable<void> {
+    return this.database.markChannelResult(id, 'delivered')
   }
 
-  markFailed(id: string): void {
-    this.database.markChannelResult(id, 'failed')
+  markFailed(id: string): Awaitable<void> {
+    return this.database.markChannelResult(id, 'failed')
   }
 
-  markTerminal(id: string): void {
-    this.database.markChannelResult(id, 'terminal')
+  markTerminal(id: string): Awaitable<void> {
+    return this.database.markChannelResult(id, 'terminal')
   }
 
   listUndelivered(
     channel?: string,
     limit?: number
-  ): readonly OutboxEntry[] {
+  ): Awaitable<readonly OutboxEntry[]> {
     return this.database.listUndeliveredChannelResults(
       channel,
       limit

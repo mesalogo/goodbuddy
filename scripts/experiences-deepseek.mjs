@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { parseEnv } from 'node:util'
 import { AssistantDatabase } from '../src/main/assistant/assistant-database.ts'
-import { extractExperiences } from '../src/main/assistant/supervision-experiences.ts'
+import { extractExperiences } from '../src/main/assistant/experience-extraction-service.ts'
 
 const [prepared, envPath, directory, maxCallsArg] = process.argv.slice(2)
 const config = parseEnv(readFileSync(envPath, 'utf8'))

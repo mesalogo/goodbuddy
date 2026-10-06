@@ -6,11 +6,18 @@ import type { AgentPromptModelProfile } from '../shared/model-bridge-contracts'
 import { REMOTE_MODEL_GATEWAY_LIMITS } from '../shared/remote-model-gateway-contracts'
 import {
   AgentModelCallLedger,
-  AgentModelGateway
+  AgentModelGateway,
+  type ModelCallLedger
 } from './agent-model-gateway'
 
 const temporary: string[] = []
 const secret = 'provider-secret-never-persist'
+
+function gate() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => { resolve = done })
+  return { promise, resolve }
+}
 
 function setup(fetcher: typeof fetch) {
   const root = mkdtempSync(join(tmpdir(), 'goodbuddy-agent-model-'))
@@ -66,6 +73,70 @@ afterEach(() => {
 })
 
 describe('AgentModelGateway', () => {
+  it('awaits host claim, completion and delivery before their dependent actions', async () => {
+    const claimGate = gate()
+    const completeGate = gate()
+    const deliveryGate = gate()
+    const ledger: ModelCallLedger = {
+      claim: vi.fn(() => claimGate.promise), complete: vi.fn(() => completeGate.promise),
+      delivered: vi.fn(() => deliveryGate.promise), outcomeUnknown: vi.fn(), get: vi.fn(), close: vi.fn()
+    }
+    const fetcher = vi.fn<typeof fetch>(async () => new Response('{}'))
+    const gateway = new AgentModelGateway({ ledger, fetcher })
+    const settled = vi.fn()
+    const pending = gateway.dispatch(context, request, new AbortController().signal).then(result => { settled(); return result })
+    await Promise.resolve()
+    expect(fetcher).not.toHaveBeenCalled()
+    claimGate.resolve()
+    await vi.waitFor(() => expect(ledger.complete).toHaveBeenCalledOnce())
+    expect(settled).not.toHaveBeenCalled()
+    completeGate.resolve()
+    const result = await pending
+    const acknowledged = vi.fn()
+    const delivery = result.acknowledgeDelivery().then(acknowledged)
+    await Promise.resolve()
+    expect(acknowledged).not.toHaveBeenCalled()
+    deliveryGate.resolve()
+    await delivery
+    expect(acknowledged).toHaveBeenCalledOnce()
+  })
+
+  it.each(['claim', 'complete', 'delivered'] as const)('propagates a rejected host %s without claiming success', async method => {
+    const failure = new Error('storage unavailable')
+    const ledger: ModelCallLedger = {
+      claim: vi.fn(), complete: vi.fn(), delivered: vi.fn(), outcomeUnknown: vi.fn(), get: vi.fn(), close: vi.fn(),
+      [method]: vi.fn(async () => { throw failure })
+    }
+    const fetcher = vi.fn<typeof fetch>(async () => new Response('{}'))
+    const gateway = new AgentModelGateway({ ledger, fetcher })
+    const pending = gateway.dispatch(context, request, new AbortController().signal)
+    if (method === 'delivered') await expect((await pending).acknowledgeDelivery()).rejects.toBe(failure)
+    else await expect(pending).rejects.toBe(failure)
+    expect(fetcher).toHaveBeenCalledTimes(method === 'claim' ? 0 : 1)
+  })
+
+  it('settles cancellation during claim only after recording uncertainty, without dispatch', async () => {
+    const claimGate = gate()
+    const unknownGate = gate()
+    const ledger: ModelCallLedger = {
+      claim: () => claimGate.promise, complete: vi.fn(), delivered: vi.fn(),
+      outcomeUnknown: vi.fn(() => unknownGate.promise), get: vi.fn(), close: vi.fn()
+    }
+    const fetcher = vi.fn<typeof fetch>()
+    const gateway = new AgentModelGateway({ ledger, fetcher })
+    const controller = new AbortController()
+    const settled = vi.fn()
+    const pending = gateway.dispatch(context, request, controller.signal).catch(error => { settled(); throw error })
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'cancelled' })
+    controller.abort()
+    claimGate.resolve()
+    await vi.waitFor(() => expect(ledger.outcomeUnknown).toHaveBeenCalledOnce())
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(settled).not.toHaveBeenCalled()
+    unknownGate.resolve()
+    await rejected
+  })
+
   it('keeps a slow provider request alive past 60 seconds and still cancels it', async () => {
     vi.useFakeTimers()
     let providerSignal: AbortSignal | undefined

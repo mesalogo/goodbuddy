@@ -14,12 +14,12 @@ import {
   referenceActivitySummary
 } from '../../shared/activity-history-reference'
 import { AssistantDatabase } from './assistant-database'
+import { ReadonlyQueryReader } from '../readonly-query-reader'
 
 const directories: string[] = []
 const opened: AssistantDatabase[] = []
 afterEach(() => {
   for (const database of opened.splice(0)) database.close()
-  // A readonly worker ends asynchronously after close and may still hold the file briefly.
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
@@ -217,13 +217,15 @@ describe('ActivityHistoryRepository', () => {
     const summaryRequest = { conversationIds: ['conversation-1', 'conversation-4'] }
     const expectedPage = database.getActivityHistoryPage(pageRequest)
     const expectedSummary = database.getActivityHistorySummary(summaryRequest)
-    database.enableReadonlyWorker(workerPath)
-    expect(await database.getActivityHistoryPageAsync(pageRequest)).toEqual(expectedPage)
-    expect(await database.getActivityHistorySummaryAsync(summaryRequest)).toEqual(expectedSummary)
-    // A committed write is visible to the next worker read.
-    database.updateActivityHistory({ changes: [{ type: 'upsert', position: 'front', record: { ...list[0]!, id: 'fresh', status: 'failed' } }] })
-    expect((await database.getActivityHistoryPageAsync(pageRequest)).records[0]!.id).toBe('fresh')
-    await expect(database.getActivityHistoryPageAsync({ limit: 501 })).rejects.toThrow()
+    const reader = new ReadonlyQueryReader('assistant', join(directory, 'assistant.sqlite'), workerPath)
+    try {
+      expect(await reader.call('activityHistoryPage', [pageRequest])).toEqual(expectedPage)
+      expect(await reader.call('activityHistorySummary', [summaryRequest])).toEqual(expectedSummary)
+      // A committed write is visible to the next worker read.
+      database.updateActivityHistory({ changes: [{ type: 'upsert', position: 'front', record: { ...list[0]!, id: 'fresh', status: 'failed' } }] })
+      expect((await reader.call<ReturnType<AssistantDatabase['getActivityHistoryPage']>>('activityHistoryPage', [pageRequest])).records[0]!.id).toBe('fresh')
+      await expect(reader.call('activityHistoryPage', [{ limit: 501 }])).rejects.toThrow()
+    } finally { await reader.close() }
   }, 60_000)
 
   it('clears everything in one call', () => {

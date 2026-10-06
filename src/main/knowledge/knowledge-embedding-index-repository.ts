@@ -3,21 +3,26 @@ import type {
   EmbeddingIndexRecord,
   EmbeddingIndexRepository
 } from './embedding-index-coordinator'
-import type { KnowledgeDatabase } from './knowledge-database'
+import type { KnowledgeStoragePort } from './knowledge-storage-port'
 
 export class KnowledgeEmbeddingIndexRepository
 implements EmbeddingIndexRepository {
   constructor(
-    private readonly database: KnowledgeDatabase,
+    private readonly database: Pick<KnowledgeStoragePort,
+      'getLastEmbeddingIndexJob' | 'saveEmbeddingIndexJob' |
+      'listEmbeddingIndexDocumentIds' | 'getEmbeddingIndexDocument' |
+      'beginDocumentEmbeddingReplacement' | 'appendDocumentEmbeddingBatch' |
+      'finishDocumentEmbeddingReplacement' | 'discardDocumentEmbeddingReplacement' |
+      'recordEmbeddingIndexError'>,
     private readonly knowledgeBaseId: string
   ) {}
 
   async getLastJob(): Promise<EmbeddingIndexStatus['job']> {
-    return this.database.getLastEmbeddingIndexJob(this.knowledgeBaseId)
+    return await this.database.getLastEmbeddingIndexJob(this.knowledgeBaseId)
   }
 
   async saveStatus(status: EmbeddingIndexStatus): Promise<void> {
-    this.database.saveEmbeddingIndexJob(
+    await this.database.saveEmbeddingIndexJob(
       this.knowledgeBaseId,
       status.job
     )
@@ -26,7 +31,7 @@ implements EmbeddingIndexRepository {
   async listIndexDocumentIds(signal: AbortSignal) {
     signal.throwIfAborted()
     const documentIds =
-      this.database.listEmbeddingIndexDocumentIds(
+      await this.database.listEmbeddingIndexDocumentIds(
         this.knowledgeBaseId
       )
     signal.throwIfAborted()
@@ -39,7 +44,7 @@ implements EmbeddingIndexRepository {
   ) {
     signal.throwIfAborted()
     const document =
-      this.database.getEmbeddingIndexDocument(documentId)
+      await this.database.getEmbeddingIndexDocument(documentId)
     signal.throwIfAborted()
     return document
   }
@@ -52,12 +57,11 @@ implements EmbeddingIndexRepository {
   ): Promise<string> {
     signal.throwIfAborted()
     const replacementId =
-      this.database.beginDocumentEmbeddingReplacement(
+      await this.database.beginDocumentEmbeddingReplacement(
         documentId,
         provider,
         model
       )
-    signal.throwIfAborted()
     return replacementId
   }
 
@@ -70,7 +74,7 @@ implements EmbeddingIndexRepository {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    this.database.appendDocumentEmbeddingBatch(
+    await this.database.appendDocumentEmbeddingBatch(
       replacementId,
       documentId,
       provider,
@@ -92,19 +96,18 @@ implements EmbeddingIndexRepository {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    this.database.finishDocumentEmbeddingReplacement(
+    await this.database.finishDocumentEmbeddingReplacement(
       replacementId,
       documentId,
       provider,
       model
     )
-    signal.throwIfAborted()
   }
 
   async discardDocumentReplacement(
     replacementId: string
   ): Promise<void> {
-    this.database.discardDocumentEmbeddingReplacement(
+    await this.database.discardDocumentEmbeddingReplacement(
       replacementId
     )
   }
@@ -115,7 +118,7 @@ implements EmbeddingIndexRepository {
     model: string,
     error: string
   ): Promise<void> {
-    this.database.recordEmbeddingIndexError(
+    await this.database.recordEmbeddingIndexError(
       documentId,
       provider,
       model,

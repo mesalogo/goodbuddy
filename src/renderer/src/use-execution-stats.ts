@@ -15,14 +15,22 @@ export function useExecutionStats(
     if (!enabled || !projectId) return
     let cancelled = false
     let revision = 0
+    let inFlight = false
+    let queued = false
     const refresh = async (): Promise<void> => {
-      const current = ++revision
+      revision++
+      if (inFlight) { queued = true; return }
+      inFlight = true
+      queued = false
+      const current = revision
       const [conversation, project] = await Promise.allSettled([
         conversationId
           ? window.goodbuddy.tasks.getExecutionStats({ conversationId })
           : Promise.resolve(undefined),
         window.goodbuddy.tasks.getExecutionStats({ projectId })
       ])
+      inFlight = false
+      if (!cancelled && queued) { void refresh(); return }
       if (cancelled || current !== revision) return
       startTransition(() => {
         if (cancelled || current !== revision) return

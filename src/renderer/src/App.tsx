@@ -3332,7 +3332,8 @@ function App(): React.JSX.Element {
       refreshTimer = window.setTimeout(() => {
         refreshTimer = undefined;
         refreshQueued = false;
-        const conversationIds = refreshAll
+        // One authoritative snapshot replaces a burst of per-conversation display reads.
+        const conversationIds = refreshAll || pendingConversationIds.size > 1
           ? undefined
           : [...pendingConversationIds];
         refreshAll = false;

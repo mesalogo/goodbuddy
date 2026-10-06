@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { KnowledgeService } from './knowledge-service'
+import { TestKnowledgeService as KnowledgeService } from '../../../tests/support/knowledge-test-service'
 import { OpenAIEmbeddingClient } from './openai-embedding-client'
 
 const endpoint =
@@ -38,11 +38,11 @@ describe('live knowledge embeddings', () => {
           '在没有网络的环境中，先准备经过校验的安装包，再导入本地部署。',
           'utf8'
         )
-        const library = service.createLibrary({
+        const library = (await service.createLibrary({
           name: 'Live embedding test',
           storageMode: 'reference',
           graphEnabled: false
-        })
+        }))
         await service.importPaths(library.id, [sourcePath])
 
         const response = await service.retrieve({

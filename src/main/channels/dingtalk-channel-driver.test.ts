@@ -88,9 +88,9 @@ describe('DingTalkChannelDriver', () => {
       receive(envelope())
       await vi.waitFor(() => expect(failure).toHaveBeenCalledOnce())
       expect(failure.mock.calls[0]?.[0]).toMatchObject({ message: '钉钉回复请求失败 (130101)' })
-      expect(outbox.listUndelivered()[0]).toMatchObject({ state: 'failed', attempts: 1 })
+      expect((await outbox.listUndelivered())[0]).toMatchObject({ state: 'failed', attempts: 1 })
       await vi.waitFor(() => expect(requests).toHaveLength(2), { timeout: 3000 })
-      await vi.waitFor(() => expect(outbox.listUndelivered()).toEqual([]))
+      await vi.waitFor(async () => expect(await outbox.listUndelivered()).toEqual([]))
       expect(requests[1]).toBe(requests[0])
       expect(executor).toHaveBeenCalledOnce()
     } finally {

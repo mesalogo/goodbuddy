@@ -4,7 +4,7 @@ import { mkdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { RuntimeNativeClientResult } from '../../shared/runtime-native-client-contracts'
-import type { AssistantDatabase } from '../assistant/assistant-database'
+import type { AssistantStoragePort } from '../assistant-storage-port'
 import type { ApplicationSettingsStore } from '../application-settings-store'
 import type { CapabilityService } from '../capabilities/capability-service'
 import type { ExecutionSpaceResolver } from '../execution-space/execution-space-resolver'
@@ -13,12 +13,12 @@ import type { RuntimeSettingsStore } from '../runtime-settings-store'
 import type { TerminalSessionManager } from '../terminal/terminal-session-manager'
 import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
-import { NativeDshWebClientService } from './native-dsh-web-client'
+import { NativeDshWebClientService, type NativeDshWebClientOptions } from './native-dsh-web-client'
 import { NativeTerminalClient } from './native-terminal-client'
 import { applyRuntimeSelection, resolveLayeredRuntimeSelection } from './runtime-selection'
 
 type Options = {
-  database: AssistantDatabase
+  database: Pick<AssistantStoragePort, 'getConversation' | 'getProject'>
   settingsStore: RuntimeSettingsStore
   applicationSettingsStore: ApplicationSettingsStore
   capabilities: CapabilityService
@@ -27,8 +27,10 @@ type Options = {
   localEnvironment: Pick<LocalToolEnvironmentService, 'launchEnvironmentProvider' | 'whenReady'>
   bundledRuntimePaths: BundledRuntimePaths
   rootDirectory: string
+  temporaryRoot?: string
   managedNodeDirectory: string
   npmCliPath: string
+  openModelCallLedger: NativeDshWebClientOptions['openModelCallLedger']
   resourcesPath?: string
   createGateway: () => KnowledgeMcpGateway
   openExternal: (url: string) => Promise<void>
@@ -45,7 +47,9 @@ export class NativeClientCoordinator {
   constructor(private readonly options: Options) {
     this.browser = new NativeDshWebClientService({
       rootDirectory: join(options.rootDirectory, 'dsh'),
+      temporaryRoot: options.temporaryRoot,
       resourcesPath: options.resourcesPath,
+      openModelCallLedger: options.openModelCallLedger,
       resolveLaunchEnvironment: async () => ({
         nodeExecutablePath: await this.prepareNode(),
         environment: options.localEnvironment.launchEnvironmentProvider()
@@ -80,9 +84,9 @@ export class NativeClientCoordinator {
   }
 
   private async resolve(conversationId: string) {
-    const conversation = this.options.database.getConversation(conversationId)
+    const conversation = await this.options.database.getConversation(conversationId)
     if (!conversation.projectId) throw new Error('Native clients require a saved project conversation')
-    const project = this.options.database.getProject(conversation.projectId)
+    const project = await this.options.database.getProject(conversation.projectId)
     const settings = await this.options.settingsStore.getResolvedSettings()
     const selected = applyRuntimeSelection(settings, resolveLayeredRuntimeSelection(
       settings,
@@ -184,6 +188,8 @@ export class NativeClientCoordinator {
       const nodeExecutable = selected.target === 'continue' ? await this.prepareNode() : undefined
       this.assertOwner(ownerId)
       const terminal = await new NativeTerminalClient({
+        temporaryRoot: this.options.temporaryRoot,
+        openModelCallLedger: this.options.openModelCallLedger,
         rootDirectory: join(this.options.rootDirectory, 'terminal'), bundledRuntimePaths: this.options.bundledRuntimePaths,
         nodeExecutable, launchEnvironmentProvider: this.options.localEnvironment.launchEnvironmentProvider,
         terminalManager: { create: async (owner, input, launch) => {

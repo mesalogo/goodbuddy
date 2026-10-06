@@ -725,7 +725,7 @@ describe('RemoteEnvironmentPreparer', () => {
     expect(value.operationStore.remove).toHaveBeenCalledTimes(2)
   })
 
-  it('does not block a fresh prepare when stale staging cleanup fails', async () => {
+  it('retains failed staging cleanup and retries it before overwriting the operation record', async () => {
     const originalTarget = target()
     let cleanupCalls = 0
     const value = fixture({
@@ -757,10 +757,14 @@ describe('RemoteEnvironmentPreparer', () => {
       'remote-download',
       undefined,
       new AbortController().signal
-    )).resolves.toBeUndefined()
+    )).rejects.toThrow('Previous remote staging cleanup failed')
 
+    expect(value.prepare).not.toHaveBeenCalled()
+    expect(value.operationStore.remove).not.toHaveBeenCalled()
+    expect(value.operationStore.save).not.toHaveBeenCalled()
+    await value.preparer.prepare(HOST_ID, 'remote-download', undefined, new AbortController().signal)
     expect(value.prepare).toHaveBeenCalledOnce()
-    expect(value.cleanup).toHaveBeenCalledTimes(2)
+    expect(value.cleanup).toHaveBeenCalledTimes(3)
     expect(value.operationStore.remove).toHaveBeenCalledTimes(2)
   })
 

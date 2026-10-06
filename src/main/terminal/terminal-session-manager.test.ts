@@ -112,7 +112,7 @@ function harness(
   })
   const dependencies = {
     database: {
-      getProject: vi.fn(() => ({
+      getProject: vi.fn(async () => ({
         id: projectId,
         name: 'Workspace',
         rootPath: 'legacy',

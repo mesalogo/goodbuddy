@@ -1,4 +1,4 @@
-import type { AssistantDatabase } from '../assistant/assistant-database'
+import type { AssistantStoragePort, Awaitable } from '../assistant-storage-port'
 import type {
   ComputerControlAuditEvent,
   ComputerControlAuditSink
@@ -7,9 +7,9 @@ import type {
 export class DatabaseComputerControlAuditSink
   implements ComputerControlAuditSink
 {
-  constructor(private readonly database: AssistantDatabase) {}
+  constructor(private readonly database: Pick<AssistantStoragePort, 'persistComputerControlAudit'>) {}
 
-  write(event: ComputerControlAuditEvent): void {
-    this.database.persistComputerControlAudit(event)
+  write(event: ComputerControlAuditEvent): Awaitable<void> {
+    return this.database.persistComputerControlAudit(event)
   }
 }

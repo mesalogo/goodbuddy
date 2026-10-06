@@ -107,11 +107,11 @@ const knowledgeUpdateRelationSchema = z
   })
   .strict()
 
-function getKnowledgeSnapshot(
+async function getKnowledgeSnapshot(
   service: KnowledgeService,
   selectedLibraryId?: string
-): KnowledgeSnapshot {
-  const snapshot = service.snapshot(selectedLibraryId)
+): Promise<KnowledgeSnapshot> {
+  const snapshot = await service.snapshot(selectedLibraryId)
   const activeLibraryId =
     selectedLibraryId ?? snapshot.libraries[0]?.id
   const documentsById = new Map(
@@ -134,9 +134,9 @@ function getKnowledgeSnapshot(
     }
   }
   const bindingsByLibraryId = new Map(
-    service.database.externalStore
-      .listBindings()
-      .map((binding) => [binding.knowledgeBaseId, binding])
+    ((await service.database.externalStore
+      .listBindings())
+      .map((binding) => [binding.knowledgeBaseId, binding]))
   )
   return {
     libraries: snapshot.libraries.map((library) => ({
@@ -239,33 +239,33 @@ export function registerKnowledgeIpcHandlers(
   knowledgeService: KnowledgeService,
   settingsStore: RuntimeSettingsStore
 ): void {
-  registerHandler(ipcChannels.externalInstancesList, (event) => {assertTrustedSender(event,window);return knowledgeService.external.listInstances()})
-  registerHandler(ipcChannels.externalInstancesSave, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.saveInstance(externalKnowledgeInstanceSaveInputSchema.parse(input))})
+  registerHandler(ipcChannels.externalInstancesList, async (event) => {assertTrustedSender(event,window);return await knowledgeService.external.listInstances()})
+  registerHandler(ipcChannels.externalInstancesSave, async (event,input:unknown) => {assertTrustedSender(event,window);return await knowledgeService.external.saveInstance(externalKnowledgeInstanceSaveInputSchema.parse(input))})
   registerHandler(ipcChannels.externalInstancesTest, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.testInstance(externalKnowledgeInstanceInputSchema.parse(input).instanceId)})
-  registerHandler(ipcChannels.externalInstancesSetEnabled, (event,input:unknown) => {assertTrustedSender(event,window);const value=externalKnowledgeInstanceEnabledInputSchema.parse(input);return knowledgeService.external.setEnabled(value.instanceId,value.enabled)})
-  registerHandler(ipcChannels.externalInstancesDelete, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.deleteInstance(externalKnowledgeInstanceInputSchema.parse(input).instanceId)})
+  registerHandler(ipcChannels.externalInstancesSetEnabled, async (event,input:unknown) => {assertTrustedSender(event,window);const value=externalKnowledgeInstanceEnabledInputSchema.parse(input);return await knowledgeService.external.setEnabled(value.instanceId,value.enabled)})
+  registerHandler(ipcChannels.externalInstancesDelete, async (event,input:unknown) => {assertTrustedSender(event,window);return await knowledgeService.external.deleteInstance(externalKnowledgeInstanceInputSchema.parse(input).instanceId)})
   registerHandler(ipcChannels.externalCatalogList, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.listCatalog(externalKnowledgeCatalogListInputSchema.parse(input))})
   registerHandler(ipcChannels.externalCatalogGet, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.getCatalog(externalKnowledgeCatalogGetInputSchema.parse(input))})
   registerHandler(ipcChannels.externalRetrievalTest, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.testRetrieval(externalKnowledgeBindingTestInputSchema.parse(input))})
-  registerHandler(ipcChannels.externalBindingsCreate, async (event,input:unknown) => {assertTrustedSender(event,window);await knowledgeService.external.saveBinding(externalKnowledgeBindingSaveInputSchema.parse(input));return getKnowledgeSnapshot(knowledgeService)})
-  registerHandler(ipcChannels.externalBindingsUpdate, async (event,input:unknown) => {assertTrustedSender(event,window);await knowledgeService.external.saveBinding(externalKnowledgeBindingUpdateInputSchema.parse(input));return getKnowledgeSnapshot(knowledgeService)})
-  registerHandler(ipcChannels.knowledgeSnapshot, (event, input: unknown) => {
+  registerHandler(ipcChannels.externalBindingsCreate, async (event,input:unknown) => {assertTrustedSender(event,window);await knowledgeService.external.saveBinding(externalKnowledgeBindingSaveInputSchema.parse(input));return await getKnowledgeSnapshot(knowledgeService)})
+  registerHandler(ipcChannels.externalBindingsUpdate, async (event,input:unknown) => {assertTrustedSender(event,window);await knowledgeService.external.saveBinding(externalKnowledgeBindingUpdateInputSchema.parse(input));return await getKnowledgeSnapshot(knowledgeService)})
+  registerHandler(ipcChannels.knowledgeSnapshot, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     const libraryId =
       input === undefined ? undefined : knowledgeIdSchema.parse(input)
-    return getKnowledgeSnapshot(knowledgeService, libraryId)
+    return await getKnowledgeSnapshot(knowledgeService, libraryId)
   })
 
   registerHandler(
     ipcChannels.knowledgeCreateLibrary,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeCreateSchema.parse(input)
-      const library = knowledgeService.createLibrary(value)
-      const created = getKnowledgeSnapshot(
+      const library = await knowledgeService.createLibrary(value)
+      const created = (await getKnowledgeSnapshot(
         knowledgeService,
         library.id
-      ).libraries.find((item) => item.id === library.id)
+      )).libraries.find((item) => item.id === library.id)
       if (!created) {
         throw new Error('知识库创建失败')
       }
@@ -283,10 +283,10 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeUpdateLibrary,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeUpdateLibrarySchema.parse(input)
-      knowledgeService.database.updateKnowledgeBase(value.libraryId, {
+      await knowledgeService.database.updateKnowledgeBase(value.libraryId, {
         name: value.name,
         description: value.description,
         graphEnabled: value.graphEnabled,
@@ -382,7 +382,7 @@ export function registerKnowledgeIpcHandlers(
     ],
     [
       ipcChannels.knowledgePauseSource,
-      (id: string) => knowledgeService.pauseSource(id)
+      async (id: string) => (await knowledgeService.pauseSource(id))
     ],
     [
       ipcChannels.knowledgeRetrySource,
@@ -406,17 +406,17 @@ export function registerKnowledgeIpcHandlers(
       return []
     }
     const availableLibraries =
-      knowledgeService.database.listKnowledgeBases(100)
+      await knowledgeService.database.listKnowledgeBases(100)
     const libraries = [...new Set(value.libraryIds)]
     const names = new Map(
       availableLibraries.map((library) => [library.id, library.name])
     )
-    const results = (
+    const results =
       await knowledgeService.retrieveMany(
         libraries,
         value.query
       )
-    )
+
     const failures = results.flatMap(item => item.response.diagnostics.failure ? [item.response.diagnostics.failure] : [])
     if (failures.length === results.length) throw new Error(failures.join('; '))
     const references = results.flatMap(({ knowledgeBaseId, response }) => response.results.map(result => ({
@@ -442,14 +442,14 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeUpdateSettings,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeSettingsUpdateInputSchema.parse(input)
-      knowledgeService.updateSettings(value)
-      const library = getKnowledgeSnapshot(
+      await knowledgeService.updateSettings(value)
+      const library = (await getKnowledgeSnapshot(
         knowledgeService,
         value.knowledgeBaseId
-      ).libraries.find((item) => item.id === value.knowledgeBaseId)
+      )).libraries.find((item) => item.id === value.knowledgeBaseId)
       if (!library) {
         throw new Error('知识库不存在')
       }
@@ -459,9 +459,9 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeListChunks,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const page = knowledgeService.listChunks(
+      const page = await knowledgeService.listChunks(
         knowledgeChunksListInputSchema.parse(input)
       )
       return knowledgeChunkPageSchema.parse({
@@ -514,7 +514,7 @@ export function registerKnowledgeIpcHandlers(
       assertTrustedSender(event, window)
       const value = knowledgeDocumentRebuildInputSchema.parse(input)
       await knowledgeService.rebuildDocument(value)
-      return getKnowledgeSnapshot(
+      return await getKnowledgeSnapshot(
         knowledgeService,
         value.knowledgeBaseId
       )
@@ -633,7 +633,7 @@ export function registerKnowledgeIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeDocumentOpenInputSchema.parse(input)
-      const reference = knowledgeService.getDocumentSource(value)
+      const reference = await knowledgeService.getDocumentSource(value)
       if (!reference) {
         throw new Error('文档来源不存在')
       }
@@ -666,10 +666,10 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeReferenceContext,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeReferenceContextInputSchema.parse(input)
-      const reference = knowledgeService.getReferenceContext(value)
+      const reference = await knowledgeService.getReferenceContext(value)
       if (!reference) {
         throw new Error('引用上下文不存在或已停用')
       }
@@ -698,7 +698,7 @@ export function registerKnowledgeIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeReferenceOpenInputSchema.parse(input)
-      const reference = knowledgeService.getReferenceContext(value)
+      const reference = await knowledgeService.getReferenceContext(value)
       if (!reference) {
         throw new Error('引用来源不存在或已停用')
       }
@@ -732,10 +732,10 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeCreateEntity,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeCreateEntitySchema.parse(input)
-      knowledgeService.database.createEntity({
+      await knowledgeService.database.createEntity({
         knowledgeBaseId: value.libraryId,
         name: value.input.label,
         type: value.input.type,
@@ -748,10 +748,10 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeUpdateEntity,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeEntityPayloadSchema.parse(input)
-      knowledgeService.database.updateEntity(value.entityId, {
+      await knowledgeService.database.updateEntity(value.entityId, {
         name: value.update.label,
         type: value.update.type,
         description: value.update.description || null,
@@ -763,14 +763,14 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeMoveEntity,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeMoveEntitySchema.parse(input)
-      const entity = knowledgeService.database.getEntity(value.entityId)
+      const entity = await knowledgeService.database.getEntity(value.entityId)
       if (!entity) {
         throw new Error('图谱实体不存在')
       }
-      knowledgeService.database.updateEntity(entity.id, {
+      await knowledgeService.database.updateEntity(entity.id, {
         properties: {
           ...entity.properties,
           x: value.position.x,
@@ -782,18 +782,18 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeDeleteEntity,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      knowledgeService.database.deleteEntity(knowledgeIdSchema.parse(input))
+      await knowledgeService.database.deleteEntity(knowledgeIdSchema.parse(input))
     }
   )
 
   registerHandler(
     ipcChannels.knowledgeMergeEntities,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeMergeSchema.parse(input)
-      knowledgeService.database.mergeEntities(
+      await knowledgeService.database.mergeEntities(
         value.targetEntityId,
         value.sourceEntityId
       )
@@ -802,10 +802,10 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeCreateRelation,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeCreateRelationSchema.parse(input)
-      knowledgeService.database.createRelation({
+      await knowledgeService.database.createRelation({
         knowledgeBaseId: value.libraryId,
         sourceEntityId: value.input.sourceId,
         targetEntityId: value.input.targetId,
@@ -818,10 +818,10 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeUpdateRelation,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = knowledgeUpdateRelationSchema.parse(input)
-      knowledgeService.database.updateRelation(value.relationId, {
+      await knowledgeService.database.updateRelation(value.relationId, {
         sourceEntityId: value.input.sourceId,
         targetEntityId: value.input.targetId,
         type: value.input.type,
@@ -833,9 +833,9 @@ export function registerKnowledgeIpcHandlers(
 
   registerHandler(
     ipcChannels.knowledgeDeleteRelation,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      knowledgeService.database.deleteRelation(knowledgeIdSchema.parse(input))
+      await knowledgeService.database.deleteRelation(knowledgeIdSchema.parse(input))
     }
   )
 }

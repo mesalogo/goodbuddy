@@ -1,8 +1,7 @@
 import { runtimePrivacyEnvironment } from '../shared/runtime-privacy-environment'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { spawn as nodeSpawn } from 'node:child_process'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import fs, { mkdtemp, rm } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { openCodeSubagentPluginSource } from './opencode-subagent-plugin'
 import {
@@ -13,7 +12,7 @@ import {
   type ServerResponse
 } from 'node:http'
 import type { Socket } from 'node:net'
-import { isAbsolute, resolve, join } from 'node:path'
+import { dirname, isAbsolute, resolve, join } from 'node:path'
 import type {
   ModelBridgeModelProtocol
 } from '../shared/model-bridge-contracts'
@@ -93,6 +92,7 @@ export type OpenCodeModelBridgeProviderConfig = {
 }
 
 export type ModelBridgeHelperChild = {
+  kill?(signal?: NodeJS.Signals): unknown
   once(event: 'error', listener: (error: Error) => void): unknown
   once(
     event: 'close',
@@ -467,12 +467,23 @@ export async function runOpenCodeModelBridgeHelper(options: {
   )
   const exchange = createUnixModelBridgeExchange({ socketPath })
   const proxy = new ModelBridgeLoopbackProxy({ exchange, sharedSessions: options.sharedSessions })
-  const origin = await proxy.listen()
   let pluginDirectory: string | undefined
+  let child: ModelBridgeHelperChild | undefined
+  let stopping = false
+  const stop = (): void => {
+    if (stopping) return
+    stopping = true
+    child?.kill?.('SIGTERM')
+  }
+  process.on('SIGTERM', stop)
+  process.on('SIGINT', stop)
   try {
-    pluginDirectory = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-plugin-'))
+    const origin = await proxy.listen()
+    const launchRoot = join(dirname(socketPath), 'goodbuddy-runtime-launch')
+    await fs.mkdir(launchRoot, { recursive: true, mode: 0o700 })
+    pluginDirectory = await mkdtemp(join(launchRoot, 'goodbuddy-opencode-plugin-'))
     const pluginPath = join(pluginDirectory, 'subagent.mjs')
-    await writeFile(pluginPath, openCodeSubagentPluginSource(options.sharedSessions ? origin : undefined), 'utf8')
+    await fs.writeFile(pluginPath, openCodeSubagentPluginSource(options.sharedSessions ? origin : undefined), 'utf8')
     const config = createOpenCodeModelBridgeProviderConfig({
       protocol: options.protocol,
       model: options.model,
@@ -486,12 +497,13 @@ export async function runOpenCodeModelBridgeHelper(options: {
         plugin: [pathToFileURL(pluginPath).href]
       })
     )
+    if (stopping) return 128
     if (options.sharedSessions) {
       process.stdout.write(JSON.stringify({
         jsonrpc: '2.0', method: 'goodbuddy/modelBridgeReady', params: { origin }
       }) + '\n')
     }
-    const child = (options.spawn ?? defaultHelperSpawn)(
+    child = (options.spawn ?? defaultHelperSpawn)(
       opencodeEntrypoint,
       ['acp'],
       {
@@ -500,9 +512,10 @@ export async function runOpenCodeModelBridgeHelper(options: {
         env: environment
       }
     )
+    const runningChild = child
     return await new Promise<number>((resolveExit, reject) => {
-      child.once('error', reject)
-      child.once('close', (code, signal) => {
+      runningChild.once('error', reject)
+      runningChild.once('close', (code, signal) => {
         if (signal !== null) {
           resolveExit(128)
           return
@@ -511,9 +524,15 @@ export async function runOpenCodeModelBridgeHelper(options: {
       })
     })
   } finally {
-    await proxy.close()
-    if (pluginDirectory) {
-      await rm(pluginDirectory, { recursive: true, force: true })
+    try {
+      await proxy.close()
+    } finally {
+      try {
+        if (pluginDirectory) await rm(pluginDirectory, { recursive: true, force: true })
+      } finally {
+        process.off('SIGTERM', stop)
+        process.off('SIGINT', stop)
+      }
     }
   }
 }

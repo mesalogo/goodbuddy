@@ -76,6 +76,11 @@ export function startConversationRefresh(deps: ConversationRefreshDependencies):
   let refreshQueued = false;
 
   const queueRefresh = (): void => {
+    // While hidden, the next visible refresh supersedes every display-only
+    // update. Persistence and agent events continue through their own paths.
+    if (doc.visibilityState === "hidden") {
+      return;
+    }
     refreshSequence += 1;
     refreshQueued = true;
     if (refreshInFlight || refreshTimer !== undefined) {

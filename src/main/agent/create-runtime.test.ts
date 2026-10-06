@@ -72,6 +72,19 @@ function settings(
 }
 
 describe('createAgentRuntime model compatibility', () => {
+  it('forwards the existing attachment owner to direct-model output consumers', async () => {
+    const backingStore = {
+      create: vi.fn(), append: vi.fn(), finish: vi.fn(), read: vi.fn(), release: vi.fn()
+    }
+    const outputAdopt = vi.fn()
+    const outputStore = { backingStore }
+    const runtime = createAgentRuntime(process.cwd(), settings(), { outputStore, outputAdopt })
+    try {
+      expect(runtime).toMatchObject({ options: { outputStore, outputAdopt } })
+      expect(backingStore.create).not.toHaveBeenCalled()
+    } finally { await runtime.dispose() }
+  })
+
   it('passes the desktop failure observer to local OpenCode', async () => {
     const observeFailure = vi.fn()
     const runtime = createAgentRuntime(process.cwd(), settings({ provider: 'opencode' }), { observeFailure })

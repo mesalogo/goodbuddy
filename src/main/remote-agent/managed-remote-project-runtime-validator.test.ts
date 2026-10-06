@@ -180,6 +180,17 @@ function harness(options: {
 }
 
 describe('ManagedRemoteProjectRuntimeValidator', () => {
+  it('invalidates a live lease when cancelled or when its Agent identity changes', async () => {
+    const test = harness()
+    const controller = new AbortController()
+    const lease = await test.validator.validate({ ...test.input, signal: controller.signal })
+    controller.abort(new Error('save cancelled'))
+    expect(() => lease.assertCurrent()).toThrow('save cancelled')
+    const current = await test.validator.validate(test.input)
+    test.connection.status.draining = true
+    expect(() => current.assertCurrent()).toThrow(/identity/iu)
+  })
+
   it('installs, refreshes, and leases the current Runtime', async () => {
     const test = harness()
     const lease = await test.validator.validate(test.input)

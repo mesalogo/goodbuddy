@@ -4,20 +4,20 @@ import { defaultSupervisionTimeoutSeconds, defaultSupervisorModelConcurrency } f
 import { defaultExperienceMinEvents, defaultStoryThreadEvents, supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
 import type { ReviewConfiguration } from './supervision-review-store'
-import { assignStories } from './supervision-stories'
-import { extractExperiences } from './supervision-experiences'
+import { assignStories } from './story-assignment-service'
+import { extractExperiences } from './experience-extraction-service'
 import type { AgentRuntime, RuntimeModelUsageEvent } from '../agent/runtime'
-import type { AssistantDatabase } from './assistant-database'
+import type { Awaitable, SupervisionDomainPort } from './supervision-domain-ports'
 import type { SupervisionModelPool } from './supervision-model-pool'
 import type { SuggestionPhraser } from './supervision-suggester'
 import { SupervisorService } from './supervisor-service'
 
 type SupervisionModelDependencies = {
-  database: AssistantDatabase
+  database: SupervisionDomainPort
   getSettings: () => Promise<Partial<ApplicationSettings> | undefined>
   resolveRuntime: () => Promise<AgentRuntime>
   pool: SupervisionModelPool
-  persistUsage: (event: RuntimeModelUsageEvent) => void
+  persistUsage: (event: RuntimeModelUsageEvent) => Awaitable<void>
 }
 
 function isTransientSupervisionError(error: unknown): boolean {
@@ -79,10 +79,16 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
       let events: ReturnType<AgentRuntime['run']> | undefined
       const requestId = randomUUID()
       const conversationId = `supervision:${requestId}`
+      let persistenceFailed = false
+      const commit = async <T>(operation: () => Awaitable<T>): Promise<T> => {
+        try { return await operation() }
+        catch (error) { persistenceFailed = true; throw error }
+      }
       try {
         // Each attempt has its own hidden task so reported usage survives retries.
-        database.createTask({ id: requestId, conversationId, title: request.title, instructions: request.instructions,
-          origin: 'assistant', visible: false })
+        await commit(() => database.createTask({ id: requestId, conversationId, title: request.title, instructions: request.instructions,
+          origin: 'assistant', visible: false }))
+        modelSignal.throwIfAborted()
         events = runtime.run({ requestId, conversationId, prompt: request.prompt },
           modelSignal, async approval => { await request.authorizeTool(approval.toolName ?? approval.scopeKey); return 'deny' })
         while (true) {
@@ -90,7 +96,7 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
           const step = await (drainDeadline ? Promise.race([next, drainDeadline]) : next)
           if (step.done) break
           const event = step.value
-          if (event.type === 'model-usage') persistUsage(event)
+          if (event.type === 'model-usage') await commit(() => persistUsage(event))
           if (overflowError) continue
           if (event.type === 'text') {
             if (Buffer.byteLength(output + event.delta) > responseKiB * 1024) {
@@ -114,15 +120,15 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
         }
         modelSignal.throwIfAborted()
         if (!completed) throw new Error('监督者模型未报告完成')
-        database.updateTaskStatus(requestId, 'completed')
+        await commit(() => database.updateTaskStatus(requestId, 'completed'))
         return output
       } catch (error) {
         const failure = overflowError ?? timeoutError ?? (modelSignal.aborted ? modelSignal.reason : error)
         try {
-          database.updateTaskStatus(requestId, modelSignal.aborted ? 'cancelled' : 'failed',
+          await database.updateTaskStatus(requestId, modelSignal.aborted ? 'cancelled' : 'failed',
             failure instanceof Error ? failure.message.slice(0, 2_000) : '监督者模型调用失败')
-        } catch { /* status bookkeeping must not mask the model failure */ }
-        if (attempt > 0 || modelSignal.aborted || !isTransientSupervisionError(failure)) throw failure
+        } catch { persistenceFailed = true /* Keep the model error, but do not retry after an unconfirmed write. */ }
+        if (persistenceFailed || attempt > 0 || modelSignal.aborted || !isTransientSupervisionError(failure)) throw failure
       } finally {
         clearTimeout(timeout)
         clearTimeout(drainTimeout)
@@ -142,24 +148,24 @@ async function runSupervisionModel(dependencies: SupervisionModelDependencies, r
 }
 
 function dependencies(
-  database: AssistantDatabase,
+  database: SupervisionDomainPort,
   getSettings: () => Promise<Partial<ApplicationSettings> | undefined>,
   resolveRuntime: (profileId?: string | null) => Promise<AgentRuntime>,
   pool: SupervisionModelPool,
-  persistUsage?: (event: RuntimeModelUsageEvent) => void
+  persistUsage?: (event: RuntimeModelUsageEvent) => Awaitable<void>
 ): SupervisionModelDependencies {
-  return { database, getSettings, resolveRuntime, pool, persistUsage: persistUsage ?? (event => database.upsertModelUsageCall({
+  return { database, getSettings, resolveRuntime, pool, persistUsage: persistUsage ?? (async event => { await database.upsertModelUsageCall({
     requestId: event.requestId, callId: event.callId, runtime: event.runtime, provider: event.provider, model: event.model,
     input: event.inputTokens, output: event.outputTokens, cacheRead: event.cacheReadTokens, cacheWrite: event.cacheWriteTokens
-  })) }
+  }) }) }
 }
 
 export function createProductionSupervisorService(
-  database: AssistantDatabase,
+  database: SupervisionDomainPort,
   getSettings: () => Promise<Partial<ApplicationSettings> | undefined>,
   resolveRuntime: (profileId?: string | null) => Promise<AgentRuntime>,
   pool: SupervisionModelPool,
-  persistUsage?: (event: RuntimeModelUsageEvent) => void
+  persistUsage?: (event: RuntimeModelUsageEvent) => Awaitable<void>
 ): SupervisorService {
   // The service admits only one execution at a time, including resume and story retry.
   let runtime: AgentRuntime | undefined
@@ -185,11 +191,11 @@ export function createProductionSupervisorService(
     background: request => database.reviewBackground(request.scope),
     start: (request, heartbeatRunId) => database.startSupervisionRun(request, heartbeatRunId),
     fail: (runId, error) => database.failSupervisionRun(runId, error), noChange: runId => database.noChangeSupervisionRun(runId),
-    candidates: (request, batch) => database.supervisionCandidates(request, batch), save: async result => database.saveSupervisionResult(result)
+    candidates: async (request, batch) => database.supervisionCandidates(request, batch), save: async result => database.saveSupervisionResult(result)
   }, { database: () => database.supervisionReviewStore(),
-    initialize: (runId, state, signal) => database.initializeSupervisionReview(runId, state, signal),
-    resume: (runId, signal) => database.resumeSupervisionReview(runId, signal),
-    context: (request, signal) => database.supervisionContext(request, signal),
+    initialize: async (runId, state, signal) => database.initializeSupervisionReview(runId, state, signal),
+    resume: async (runId, signal) => database.resumeSupervisionReview(runId, signal),
+    context: async (request, signal) => database.supervisionContext(request, signal),
     withExecution: async operation => {
     runtime = await resolveRuntime((await getSettings())?.supervisorModelProfileId)
     try { return await operation() }
@@ -216,7 +222,7 @@ async function organizeSupervisionStories(model: SupervisionModelDependencies, r
   const result = await assignStoriesStep(model, request, config, signal)
   // Experiences read stories, so they follow assignment; a failure keeps the assigned stories.
   try {
-    const experiences = await extractExperiences(model.database.supervisionExperiences(), (prompt, modelSignal) => run('监督者经验整理', prompt, modelSignal),
+    const experiences = await extractExperiences(await model.database.supervisionExperiences(), (prompt, modelSignal) => run('监督者经验整理', prompt, modelSignal),
       { minEvents: config.experienceMinEvents ?? defaultExperienceMinEvents, batchCharacters: Math.max(4000, config.batchCharacters * 2), signal })
     return { ...result, experiences: { status: 'completed' as const, ...experiences } }
   } catch (error) {
@@ -226,7 +232,7 @@ async function organizeSupervisionStories(model: SupervisionModelDependencies, r
 }
 
 async function assignStoriesStep(model: SupervisionModelDependencies, request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal) {
-  const result = await assignStories(model.database.supervisionStories(), (prompt, modelSignal) => runSupervisionModel(model, {
+  const result = await assignStories(await model.database.supervisionStories(), (prompt, modelSignal) => runSupervisionModel(model, {
     title: '监督者故事整理', instructions: '把已发布的事件归入故事',
     timeoutMessage: seconds => `监督者故事整理超过 ${seconds} 秒，已停止；回顾结果已保留`, timeoutSeconds: config.timeoutSeconds,
     signal: modelSignal, authorizeTool: async name => { throw new Error(`监督者禁止调用工具: ${name}`) }, prompt
@@ -237,11 +243,11 @@ async function assignStoriesStep(model: SupervisionModelDependencies, request: S
 
 /** Phrases rule-selected suggestion candidates in one bounded model call. */
 export function createProductionSuggestionPhraser(
-  database: AssistantDatabase,
+  database: SupervisionDomainPort,
   getSettings: () => Promise<Partial<ApplicationSettings> | undefined>,
   resolveRuntime: (profileId?: string | null) => Promise<AgentRuntime>,
   pool: SupervisionModelPool,
-  persistUsage?: (event: RuntimeModelUsageEvent) => void
+  persistUsage?: (event: RuntimeModelUsageEvent) => Awaitable<void>
 ): SuggestionPhraser {
   return async request => {
     const runtime = await resolveRuntime((await getSettings())?.supervisorModelProfileId)

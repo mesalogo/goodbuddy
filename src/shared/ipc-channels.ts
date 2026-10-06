@@ -182,6 +182,7 @@ export const ipcChannels = {
   contextCancelParsing: 'context:cancel-parsing',
   contextSendOriginal: 'context:send-original',
   contextOpenOriginal: 'context:open-original',
+  contextReadOutput: 'context:read-output',
   contextCancelImport: 'context:cancel-import',
   contextPendingParsing: 'context:pending-parsing',
   contextRetryParsing: 'context:retry-parsing',

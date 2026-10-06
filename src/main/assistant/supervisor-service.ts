@@ -11,6 +11,7 @@ import { reviewScope, type ReviewBatch } from './review-checkpoint'
 import { createHash } from 'node:crypto'
 import { ReviewSourcesOmitted, type SupervisionReviewStore, type ReviewConfiguration, type ReviewState } from './supervision-review-store'
 import type { SupervisionReviewExecution, SupervisionReviewProgress } from '../../shared/supervision-review-contracts'
+import type { Awaitable, ReviewDomainPort } from './supervision-domain-ports'
 
 export type SupervisorSummarizerRequest = {
   signal?: AbortSignal
@@ -46,12 +47,12 @@ export type StoredSupervisionResult = {
 }
 
 export interface SupervisorResultStore {
-  scope?(scope: SupervisionRunRequest['scope']): SupervisionRunRequest['scope']
-  summary?(request: SupervisionRunRequest): string | undefined
-  background?(request: SupervisionRunRequest): SupervisionEvidence[]
-  start?(request: SupervisionRunRequest, heartbeatRunId?: string): string
-  fail?(runId: string, error: string): void
-  noChange?(runId: string): void
+  scope?(scope: SupervisionRunRequest['scope']): Awaitable<SupervisionRunRequest['scope']>
+  summary?(request: SupervisionRunRequest): Awaitable<string | undefined>
+  background?(request: SupervisionRunRequest): Awaitable<SupervisionEvidence[]>
+  start?(request: SupervisionRunRequest, heartbeatRunId?: string): Awaitable<string>
+  fail?(runId: string, error: string): Awaitable<void>
+  noChange?(runId: string): Awaitable<void>
   /** Known entities a batch may join; `batch` narrows them to the batch's project unless cross-project is on. */
   candidates?(request: SupervisionRunRequest, batch?: { projectId: string; crossProject: boolean }): Promise<SupervisionCandidate[]>
   save(result: StoredSupervisionResult): Promise<void>
@@ -176,7 +177,7 @@ export class SupervisionOutputError extends Error {}
 const outputRetries = 2
 
 export class SupervisorService {
-  private active?: { settled: Promise<unknown>; runId?: string; stopping?: 'paused' | 'cancelled' }
+  private active?: { settled: Promise<StoredSupervisionResult>; runId?: string; stopping?: 'paused' | 'cancelled'; cancellation?: Promise<void> }
   private readonly controllers = new Map<string, AbortController>()
   private readonly activity = new Map<string, { inFlight: number }>()
   constructor(
@@ -184,7 +185,7 @@ export class SupervisorService {
     private readonly summarizer: SupervisorSummarizer,
     private readonly store: SupervisorResultStore,
     private readonly review?: {
-      database: () => SupervisionReviewStore
+      database: () => Awaitable<ReviewDomainPort>
       configuration: () => Promise<ReviewConfiguration>
       initialize?: (runId: string, state: ReviewState, signal: AbortSignal) => Promise<void>
       resume?: (runId: string, signal: AbortSignal) => Promise<void>
@@ -196,13 +197,13 @@ export class SupervisorService {
   ) {}
 
   /** Never fails a published review: errors are recorded and retried by the next review. */
-  private async organizeStories(db: SupervisionReviewStore, runId: string, request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal): Promise<void> {
+  private async organizeStories(db: ReviewDomainPort, runId: string, request: SupervisionRunRequest, config: ReviewConfiguration, signal: AbortSignal): Promise<void> {
     if (!this.review?.stories) return
-    db.setStories(runId, { status: 'running' })
+    await db.setStories(runId, { status: 'running' })
     try {
-      db.setStories(runId, await this.review.stories(request, config, signal))
+      await db.setStories(runId, await this.review.stories(request, config, signal))
     } catch (error) {
-      db.setStories(runId, { status: 'failed', error: signal.aborted ? 'SUPERVISION_STORIES_STOPPED' : error instanceof Error ? error.message.slice(0, 2000) : 'Story assignment failed' })
+      await db.setStories(runId, { status: 'failed', error: signal.aborted ? 'SUPERVISION_STORIES_STOPPED' : error instanceof Error ? error.message.slice(0, 2000) : 'Story assignment failed' })
     }
   }
 
@@ -210,16 +211,16 @@ export class SupervisorService {
   async organizeStoriesFor(runId: string): Promise<SupervisionReviewProgress> {
     if (!this.review?.stories) throw new Error('Story assignment is unavailable')
     return this.admit(async () => {
-      const db = this.review!.database()
-      const state = db.load(runId)
-      const progress = db.progress(runId)
+      const db = await this.review!.database()
+      const state = await db.load(runId)
+      const progress = await db.progress(runId)
       if (!progress.complete) throw new Error('SUPERVISION_STORIES_UNPUBLISHED: 回顾尚未完成，完成后再整理故事。')
       const controller = new AbortController()
       this.controllers.set(runId, controller)
       if (this.active) this.active.runId = runId
       try { await this.organizeStories(db, runId, state.request, state.config, controller.signal) }
       finally { this.controllers.delete(runId) }
-      return { runId, request: state.request, evidence: [], output: { summary: '', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }, coverage: db.progress(runId) }
+      return { runId, request: state.request, evidence: [], output: { summary: '', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }, coverage: await db.progress(runId) }
     }).then(result => result.coverage!)
   }
 
@@ -238,7 +239,10 @@ export class SupervisorService {
       await this.active.settled.catch(() => undefined)
     }
     // Reserve before any asynchronous configuration, collection or resume work.
-    const active = { settled: Promise.resolve().then(() => this.review?.withExecution ? this.review.withExecution(operation) : operation()) }
+    const active: NonNullable<SupervisorService['active']> = {
+      settled: Promise.resolve().then(() => this.review?.withExecution ? this.review.withExecution(operation) : operation())
+        .finally(async () => { await active.cancellation?.catch(() => undefined) })
+    }
     this.active = active
     try { return await active.settled }
     finally { if (this.active === active) this.active = undefined }
@@ -247,14 +251,14 @@ export class SupervisorService {
   private async execute(input: unknown, heartbeatRunId?: string): Promise<StoredSupervisionResult> {
     const request = supervisionRunRequestSchema.parse(input)
     request.timeRange = { from: new Date(request.timeRange.from).toISOString(), to: new Date(request.timeRange.to).toISOString() }
-    request.scope = this.store.scope?.(request.scope) ?? JSON.parse(reviewScope(request.scope)) as SupervisionRunRequest['scope']
+    request.scope = await this.store.scope?.(request.scope) ?? JSON.parse(reviewScope(request.scope)) as SupervisionRunRequest['scope']
     if (this.review) return this.executeReview(request, heartbeatRunId)
-    const runId = this.store.start?.(request, heartbeatRunId)
+    const runId = await this.store.start?.(request, heartbeatRunId)
     try {
       let remainingCharacters = 48_000
       const batch = request.trigger === 'heartbeat' ? await this.collector.incremental?.(request) : undefined
       if (batch && batch.evidence.length === 0) {
-        if (runId) this.store.noChange?.(runId)
+        if (runId) await this.store.noChange?.(runId)
         return { runId, request, evidence: [], status: 'no_change', output: {
           summary: 'No new or changed evidence', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: []
         } }
@@ -272,7 +276,7 @@ export class SupervisorService {
       const candidates = await this.store.candidates?.(request) ?? []
       const rawOutput = await this.summarizer.summarize({
         candidates,
-        previousSummary: this.store.summary?.(request),
+        previousSummary: await this.store.summary?.(request),
         request,
         systemInstruction,
         evidence: boundedEvidence,
@@ -292,7 +296,7 @@ export class SupervisorService {
       await this.store.save(result)
       return result
     } catch (error) {
-      if (runId) this.store.fail?.(runId, error instanceof Error ? error.message : 'Supervision failed')
+      if (runId) await this.store.fail?.(runId, error instanceof Error ? error.message : 'Supervision failed')
       throw error
     }
   }
@@ -304,13 +308,15 @@ export class SupervisorService {
 
   async cancel(runId: string): Promise<void> {
     if (!this.review) throw new Error('SUPERVISION_REVIEW_UNAVAILABLE: 此回顾不支持取消。')
-    this.review.database().cancel(runId)
     const active = this.active?.runId === runId ? this.active : undefined
     if (active) {
       active.stopping = 'cancelled'
       this.controllers.get(runId)?.abort(new Error('Review cancelled by user'))
-      await active.settled.catch(() => undefined)
     }
+    const cancellation = active?.cancellation ?? (async () => { await (await this.review!.database()).cancel(runId) })()
+    if (active) active.cancellation = cancellation
+    try { await cancellation }
+    finally { await active?.settled.catch(() => undefined) }
   }
 
   progress(progress: SupervisionReviewProgress): SupervisionReviewProgress {
@@ -323,30 +329,32 @@ export class SupervisorService {
   }
 
   private async executeReview(input?: SupervisionRunRequest, heartbeatRunId?: string, resumeId?: string): Promise<StoredSupervisionResult> {
-    const db = this.review!.database()
-    const existing = resumeId ?? (input?.trigger === 'heartbeat' ? db.unfinished(input) : undefined)
-    const state = existing ? db.load(existing) : { request: input!, config: await this.review!.configuration() }
+    const db = await this.review!.database()
+    const existing = resumeId ?? (input?.trigger === 'heartbeat' ? await db.unfinished(input) : undefined)
+    const state = existing ? await db.load(existing) : { request: input!, config: await this.review!.configuration() }
     const { request, config } = state
-    const runId = existing ?? this.store.start!(request, heartbeatRunId)
+    const runId = existing ?? await this.store.start!(request, heartbeatRunId)
     if (this.active) this.active.runId = runId
     const controller = new AbortController()
     this.controllers.set(runId, controller)
     const activity = { inFlight: 0 }
     this.activity.set(runId, activity)
     const empty: SupervisionSummaryOutput = { summary: 'No new evidence', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
-    const stopped = (): StoredSupervisionResult => {
+    let published = false
+    const stopped = async (): Promise<StoredSupervisionResult> => {
       const status = this.active?.stopping === 'cancelled' ? 'cancelled' : 'paused'
-      if (status === 'paused') db.pause(runId, 'Review paused by user')
-      return { runId, request, evidence: [], output: empty, status, coverage: db.progress(runId) }
+      if (status === 'cancelled') await this.active?.cancellation
+      if (status === 'paused') await db.pause(runId, 'Review paused by user')
+      return { runId, request, evidence: [], output: empty, status, coverage: await db.progress(runId) }
     }
     try {
       if (existing) {
         if (this.review!.resume) await this.review!.resume(runId, controller.signal)
-        else db.resume(runId, controller.signal)
+        else await db.resume(runId, controller.signal)
       } else {
         const initial = { ...state, phase: 'collecting' as const }
         if (this.review!.initialize) await this.review!.initialize(runId, initial, controller.signal)
-        else db.initialize(runId, initial, controller.signal)
+        else await db.initialize(runId, initial, controller.signal)
       }
       controller.signal.throwIfAborted()
       // Every candidate offered to any batch, so publication can resolve all chosen identities.
@@ -356,15 +364,16 @@ export class SupervisorService {
         for (const candidate of list) offered.set(candidate.id, candidate)
         return list
       }
-      if (db.progress(runId).remainingSources) db.setPhase(runId, 'extracting')
+      if ((await db.progress(runId)).remainingSources) await db.setPhase(runId, 'extracting')
       const summarize = async (evidence: SupervisionEvidence[], navigation = false, candidates: SupervisionCandidate[] = []) => {
         controller.signal.throwIfAborted()
         const context = !navigation && this.review!.context ? await this.review!.context(request, controller.signal) : undefined
         controller.signal.throwIfAborted()
         if (!navigation) {
-          db.omitDeletedConversations(runId)
-          if (!db.hasSources(runId, evidence)) throw new ReviewSourcesOmitted('Deleted conversation sources omitted')
+          await db.omitDeletedConversations(runId)
+          if (!await db.hasSources(runId, evidence)) throw new ReviewSourcesOmitted('Deleted conversation sources omitted')
         }
+        controller.signal.throwIfAborted()
         activity.inFlight++
         let raw: unknown
         try {
@@ -374,9 +383,9 @@ export class SupervisorService {
               ? '\nThese inputs are navigation summaries, not original evidence. Return summary, changeDigest and openItems. Omit events, entities, entityChanges and relations or return them as empty arrays. All original leaf results are retained separately.'
               : '\nRetain atomic decisions, constraints, corrections, conflicting statements and unresolved items with source references. Attribute assistant proposals as proposals. Source locators use Unicode code points; split task JSON is a source fragment, not a complete object.') +
             '\nWrite concise navigation while retaining decisions, qualifications and unresolved items. Entity IDs use only ASCII letters, numbers, underscore or hyphen (1..120 characters).',
-            previousSummary: navigation ? undefined : context ? context.summary : this.store.summary?.(request),
+            previousSummary: navigation ? undefined : context ? context.summary : await this.store.summary?.(request),
             outputContract: navigation ? navigationContract : entityContract(candidates),
-            background: navigation ? [] : context ? context.background : this.store.background?.(request),
+            background: navigation ? [] : context ? context.background : await this.store.background?.(request),
             authorizeTool: async name => { throw new Error(`Supervisor tools are disabled: ${name}`) } })
         } finally { activity.inFlight-- }
         controller.signal.throwIfAborted()
@@ -389,13 +398,13 @@ export class SupervisorService {
         }
       }
       for (;;) {
-        const omittedBefore = db.progress(runId).omittedSources ?? 0
+        const omittedBefore = (await db.progress(runId)).omittedSources ?? 0
         try {
-          db.omitDeletedConversations(runId)
-          if (db.progress(runId).remainingSources) db.setPhase(runId, 'extracting')
+          await db.omitDeletedConversations(runId)
+          if ((await db.progress(runId)).remainingSources) await db.setPhase(runId, 'extracting')
           for (;;) {
-            if (controller.signal.aborted) return stopped()
-            const groups = db.groups(runId, config.concurrency)
+            if (controller.signal.aborted) return await stopped()
+            const groups = await db.groups(runId, config.concurrency)
             if (!groups.length) break
             const results = await Promise.allSettled(groups.map(async group => {
               controller.signal.throwIfAborted()
@@ -406,58 +415,61 @@ export class SupervisorService {
                 const scale = 2 ** attempt
                 const sized = attempt ? { ...config, batchCharacters: Math.max(500, Math.floor(config.batchCharacters / scale)),
                   batchMessages: Math.max(1, Math.ceil(config.batchMessages / scale)) } : config
-                const evidence = db.chunk(runId, group.projectId, group.conversationId, sized)
+                const evidence = await db.chunk(runId, group.projectId, group.conversationId, sized)
                 if (!evidence.length) return
                 try {
                   const output = await summarize(evidence, false, candidates)
                   controller.signal.throwIfAborted()
-                  db.save(runId, group.projectId, group.conversationId, evidence, output)
+                  await db.save(runId, group.projectId, group.conversationId, evidence, output)
                   return
                 } catch (error) {
-                  db.omitDeletedConversations(runId)
-                  if (!db.hasSources(runId, evidence)) return
+                  await db.omitDeletedConversations(runId)
+                  if (!await db.hasSources(runId, evidence)) return
                   if (!(error instanceof SupervisionOutputError) || attempt >= outputRetries || controller.signal.aborted) throw error
                 }
               }
             }))
-            if (controller.signal.aborted) return stopped()
+            if (controller.signal.aborted) return await stopped()
             const failure = results.find(result => result.status === 'rejected')
             if (failure?.status === 'rejected') throw failure.reason
           }
-          if (db.omitDeletedConversations(runId)) continue
-          const progress = db.progress(runId)
+          if (await db.omitDeletedConversations(runId)) continue
+          const progress = await db.progress(runId)
           if (progress.remainingSources) continue
-          const checkOmissions = () => {
-            db.omitDeletedConversations(runId)
-            if ((db.progress(runId).omittedSources ?? 0) !== (progress.omittedSources ?? 0)) {
+          const checkOmissions = async () => {
+            await db.omitDeletedConversations(runId)
+            if (((await db.progress(runId)).omittedSources ?? 0) !== (progress.omittedSources ?? 0)) {
               throw new ReviewSourcesOmitted('Deleted conversation sources omitted; rebuild review navigation')
             }
           }
           if (!progress.batches) {
-            this.store.noChange?.(runId)
+            controller.signal.throwIfAborted()
+            await this.store.noChange?.(runId)
+            published = true
             // Earlier events may still await assignment (an upgrade backlog or a failed attempt).
             await this.organizeStories(db, runId, request, config, controller.signal)
-            return { runId, request, evidence: [], output: empty, status: 'no_change', coverage: db.progress(runId) }
+            return { runId, request, evidence: [], output: empty, status: 'no_change', coverage: await db.progress(runId) }
           }
           type Card = { id: string; output: SupervisionSummaryOutput }
-          db.setPhase(runId, 'summarizing')
+          await db.setPhase(runId, 'summarizing')
           const merge = async (left: Card, right: Card): Promise<Card> => {
-            checkOmissions()
+            await checkOmissions()
             const id = createHash('sha256').update(JSON.stringify([left.id, right.id])).digest('hex')
-            const cached = db.navigation(runId, id)
+            const cached = await db.navigation(runId, id)
             if (cached) return { id, output: cached }
             const evidence = [left, right].map(card => ({ id: card.id, sourceType: 'note' as const, sourceId: card.id,
               title: 'Retained review navigation', content: card.output.summary, occurredAt: request.timeRange.to }))
             // A navigation merge has fixed inputs; an unusable answer is asked again once before the run fails.
             let output: SupervisionSummaryOutput
             try { output = await summarize(evidence, true) } catch (error) {
-              checkOmissions()
+              await checkOmissions()
               if (!(error instanceof SupervisionOutputError) || controller.signal.aborted) throw error
               output = await summarize(evidence, true)
             }
             controller.signal.throwIfAborted()
-            checkOmissions()
-            db.saveNavigation(runId, id, [left.id, right.id], output)
+            await checkOmissions()
+            controller.signal.throwIfAborted()
+            await db.saveNavigation(runId, id, [left.id, right.id], output)
             return { id, output }
           }
           // Reduce conversations, then projects, then scope. Binary carry stacks are logarithmic;
@@ -481,8 +493,8 @@ export class SupervisorService {
           let previousProject: string | undefined, previousConversation: string | undefined
           let first: ReturnType<SupervisionReviewStore['batches']>[number] | undefined
           for (let offset = 0;; offset += 10) {
-            checkOmissions()
-            const batches = db.batches(runId, 10, offset)
+            await checkOmissions()
+            const batches = await db.batches(runId, 10, offset)
             if (!batches.length) break
             for (const batch of batches) {
               validateReferences(batch.output, batch.evidence)
@@ -500,34 +512,38 @@ export class SupervisorService {
           await push(scopeStack, (await finish(projectStack))!)
           const root = await finish(scopeStack)
           controller.signal.throwIfAborted()
-          checkOmissions()
-          db.assertComplete(runId)
-          db.setPhase(runId, 'saving')
+          await checkOmissions()
+          await db.assertComplete(runId)
+          await db.setPhase(runId, 'saving')
           // A resumed run reuses leaves saved earlier; offer their projects' candidates too.
           const savedProjects = new Set<string>()
           for (let offset = 0;; offset += 10) {
-            const saved = db.batches(runId, 10, offset)
+            const saved = await db.batches(runId, 10, offset)
             if (!saved.length) break
             for (const batch of saved) savedProjects.add(batch.projectId)
           }
           for (const projectId of savedProjects) await candidatesFor(projectId)
           controller.signal.throwIfAborted()
-          checkOmissions()
+          await checkOmissions()
           const result: StoredSupervisionResult = { runId, request, candidates: [...offered.values()],
             evidence: progress.batches === 1 ? first!.evidence : [], output: root!.output,
-            status: 'completed', coverage: { ...db.progress(runId), complete: true } }
+            status: 'completed', coverage: { ...await db.progress(runId), complete: true } }
+          controller.signal.throwIfAborted()
           await this.store.save(result)
+          published = true
           await this.organizeStories(db, runId, request, config, controller.signal)
-          return { ...result, coverage: { ...db.progress(runId), complete: true } }
+          return { ...result, coverage: { ...await db.progress(runId), complete: true } }
         } catch (error) {
-          db.omitDeletedConversations(runId)
-          if (error instanceof ReviewSourcesOmitted || (db.progress(runId).omittedSources ?? 0) !== omittedBefore) continue
+          if (published) throw error
+          await db.omitDeletedConversations(runId)
+          if (error instanceof ReviewSourcesOmitted || ((await db.progress(runId)).omittedSources ?? 0) !== omittedBefore) continue
           throw error
         }
       }
     } catch (error) {
-      if (controller.signal.aborted) return stopped()
-      this.store.fail?.(runId, error instanceof Error ? error.message : 'Review failed')
+      if (published) throw error
+      if (controller.signal.aborted) return await stopped()
+      await this.store.fail?.(runId, error instanceof Error ? error.message : 'Review failed')
       throw error
     } finally { this.controllers.delete(runId); this.activity.delete(runId) }
   }

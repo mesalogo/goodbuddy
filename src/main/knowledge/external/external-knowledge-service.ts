@@ -20,7 +20,7 @@ import {
   encryptSettingsCredential,
   type SettingsCredentialCipher
 } from '../../settings-credential-cipher'
-import type { KnowledgeDatabase } from '../knowledge-database'
+import type { KnowledgeStoragePort } from '../knowledge-storage-port'
 import { ExternalKnowledgeClient, ExternalKnowledgeError } from './external-knowledge-client'
 import type { StoredExternalInstance } from './external-knowledge-store'
 
@@ -31,7 +31,7 @@ export class ExternalKnowledgeService {
   private readonly controllers = new Map<AbortController, string>()
 
   constructor(
-    private readonly database: KnowledgeDatabase,
+    private readonly database: Pick<KnowledgeStoragePort, 'externalStore' | 'saveExternalBinding'>,
     private readonly cipher?: SettingsCredentialCipher,
     private readonly fetcher?: typeof fetch
   ) {}
@@ -58,9 +58,10 @@ export class ExternalKnowledgeService {
     }
   }
 
-  private instance(id: string): StoredExternalInstance {
+  private async instance(id: string): Promise<StoredExternalInstance> {
     this.checkActive()
-    const value = this.database.externalStore.getInstance(id)
+    const value = await this.database.externalStore.getInstance(id)
+    this.checkActive()
     if (!value) {
       throw new Error('EXTERNAL_KB_NOT_FOUND')
     }
@@ -82,13 +83,13 @@ export class ExternalKnowledgeService {
     }
   }
 
-  listInstances(): ExternalKnowledgeInstanceSummary[] {
+  async listInstances(): Promise<ExternalKnowledgeInstanceSummary[]> {
     this.checkActive()
     const bindingCounts = new Map<string, number>()
-    for (const binding of this.database.externalStore.listBindings()) {
+    for (const binding of (await this.database.externalStore.listBindings())) {
       bindingCounts.set(binding.instanceId, (bindingCounts.get(binding.instanceId) ?? 0) + 1)
     }
-    return this.database.externalStore.listInstances().map(({ credential, ...value }) => {
+    return (await this.database.externalStore.listInstances()).map(({ credential, ...value }) => {
       let credentialStatus: ExternalKnowledgeInstanceSummary['credentialStatus'] = 'missing'
       if (credential) {
         try {
@@ -102,22 +103,22 @@ export class ExternalKnowledgeService {
     })
   }
 
-  private summary(id: string): ExternalKnowledgeInstanceSummary {
-    const summary = this.listInstances().find((item) => item.id === id)
+  private async summary(id: string): Promise<ExternalKnowledgeInstanceSummary> {
+    const summary = (await this.listInstances()).find((item) => item.id === id)
     if (!summary) {
       throw new Error('EXTERNAL_KB_NOT_FOUND')
     }
     return summary
   }
 
-  saveInstance(raw: ExternalKnowledgeInstanceSaveInput): ExternalKnowledgeInstanceSummary {
+  async saveInstance(raw: ExternalKnowledgeInstanceSaveInput): Promise<ExternalKnowledgeInstanceSummary> {
     this.checkActive()
     const input = externalKnowledgeInstanceSaveInputSchema.parse(raw)
-    const previous = input.id ? this.instance(input.id) : undefined
+    const previous = input.id ? (await this.instance(input.id)) : undefined
     if (
       previous &&
       previous.provider !== input.provider &&
-      this.database.externalStore.getBindingsForInstance(previous.id).length > 0
+      (await this.database.externalStore.getBindingsForInstance(previous.id)).length > 0
     ) {
       throw new Error('EXTERNAL_KB_INSTANCE_IN_USE')
     }
@@ -144,28 +145,31 @@ export class ExternalKnowledgeService {
       credential,
       probeStatus: 'untested'
     }
-    this.database.externalStore.saveInstance(value)
     // In-flight requests were authorized against the replaced configuration.
     this.cancelInstance(value.id)
-    return this.summary(value.id)
+    await this.database.externalStore.saveInstance(value)
+    this.cancelInstance(value.id)
+    return await this.summary(value.id)
   }
 
-  setEnabled(id: string, enabled: boolean): ExternalKnowledgeInstanceSummary {
-    const instance = this.instance(id)
-    this.database.externalStore.saveInstance({ ...instance, enabled })
+  async setEnabled(id: string, enabled: boolean): Promise<ExternalKnowledgeInstanceSummary> {
+    const instance = await this.instance(id)
     if (!enabled) {
       this.cancelInstance(id)
     }
-    return this.summary(id)
+    await this.database.externalStore.saveInstance({ ...instance, enabled })
+    if (!enabled) this.cancelInstance(id)
+    return await this.summary(id)
   }
 
-  deleteInstance(id: string): void {
-    this.instance(id)
-    if (this.database.externalStore.getBindingsForInstance(id).length > 0) {
+  async deleteInstance(id: string): Promise<void> {
+    await this.instance(id)
+    if ((await this.database.externalStore.getBindingsForInstance(id)).length > 0) {
       throw new Error('EXTERNAL_KB_INSTANCE_IN_USE')
     }
     this.cancelInstance(id)
-    this.database.externalStore.deleteInstance(id)
+    await this.database.externalStore.deleteInstance(id)
+    this.cancelInstance(id)
   }
 
   private async request<T>(
@@ -174,11 +178,7 @@ export class ExternalKnowledgeService {
     signal: AbortSignal | undefined,
     operation: (client: ExternalKnowledgeClient, signal: AbortSignal) => Promise<T>
   ): Promise<T> {
-    const instance = this.instance(id)
-    if (!instance.enabled) {
-      throw new Error('EXTERNAL_KB_DISABLED')
-    }
-    const key = this.credential(instance)
+    this.checkActive()
     const controller = new AbortController()
     this.controllers.set(controller, id)
     const timeoutSignal = AbortSignal.timeout(timeout)
@@ -188,6 +188,10 @@ export class ExternalKnowledgeService {
       ...(signal ? [signal] : [])
     ])
     try {
+      const instance = await this.instance(id)
+      combined.throwIfAborted()
+      if (!instance.enabled) throw new Error('EXTERNAL_KB_DISABLED')
+      const key = this.credential(instance)
       combined.throwIfAborted()
       return await operation(
         new ExternalKnowledgeClient({
@@ -216,11 +220,15 @@ export class ExternalKnowledgeService {
   }
 
   async testInstance(id: string): Promise<ExternalKnowledgeInstanceSummary> {
-    this.instance(id)
+    this.checkActive()
+    const controller = new AbortController()
+    this.controllers.set(controller, id)
+    try {
+    await this.instance(id)
     let probeStatus: StoredExternalInstance['probeStatus'] = 'catalog-ready'
     let lastErrorCode: string | undefined
     try {
-      await this.listCatalog({ instanceId: id })
+      await this.listCatalog({ instanceId: id }, controller.signal)
     } catch (error) {
       lastErrorCode =
         error instanceof ExternalKnowledgeError
@@ -242,17 +250,22 @@ export class ExternalKnowledgeService {
               ? 'unreachable'
               : 'failed'
     }
-    const current = this.database.externalStore.getInstance(id)
+    const current = await this.database.externalStore.getInstance(id)
+    this.checkActive()
+    if (controller.signal.aborted) throw new ExternalKnowledgeError('EXTERNAL_KB_CANCELLED', 'External knowledge request was cancelled')
     if (!current) {
       throw new Error('EXTERNAL_KB_NOT_FOUND')
     }
-    this.database.externalStore.saveInstance({
+    await this.database.externalStore.saveInstance({
       ...current,
       probeStatus,
       lastErrorCode,
       lastTestedAt: new Date().toISOString()
     })
-    return this.summary(id)
+    return await this.summary(id)
+    } finally {
+      this.controllers.delete(controller)
+    }
   }
 
   listCatalog(
@@ -300,7 +313,7 @@ export class ExternalKnowledgeService {
     signal?: AbortSignal
   ): Promise<ExternalKnowledgeTestResult> {
     const input = externalKnowledgeRetrievalInputSchema.parse(raw)
-    if (this.instance(input.instanceId).provider !== input.providerConfig.provider) {
+    if ((await this.instance(input.instanceId)).provider !== input.providerConfig.provider) {
       throw new Error('EXTERNAL_KB_CONFIG_INVALID')
     }
     const started = Date.now()
@@ -329,7 +342,7 @@ export class ExternalKnowledgeService {
   ): Promise<ExternalKnowledgeTestResult> {
     const input = externalKnowledgeBindingTestInputSchema.parse(raw)
     const config = input.providerConfig
-    if (this.instance(input.instanceId).provider !== config.provider) {
+    if ((await this.instance(input.instanceId)).provider !== config.provider) {
       throw new Error('EXTERNAL_KB_CONFIG_INVALID')
     }
     const started = Date.now()
@@ -366,22 +379,22 @@ export class ExternalKnowledgeService {
         : undefined
     const input = update ?? externalKnowledgeBindingSaveInputSchema.parse(raw)
     const existing = update
-      ? this.database.externalStore.getBinding(update.knowledgeBaseId)
+      ? (await this.database.externalStore.getBinding(update.knowledgeBaseId))
       : undefined
     if (update && !existing) {
       throw new Error('EXTERNAL_KB_NOT_FOUND')
     }
-    this.instance(input.instanceId)
-    const duplicate = (): boolean =>
-      this.database.externalStore
-        .listBindings()
+    await this.instance(input.instanceId)
+    const duplicate = async (): Promise<boolean> =>
+      ((await this.database.externalStore
+        .listBindings())
         .some(
           (item) =>
             item.instanceId === input.instanceId &&
             item.remoteKnowledgeBaseId === input.remoteKnowledgeBaseId &&
             item.knowledgeBaseId !== existing?.knowledgeBaseId
-        )
-    if (duplicate()) {
+        ))
+    if (await duplicate()) {
       throw new Error('EXTERNAL_KB_DUPLICATE_BINDING')
     }
     await this.testRetrieval({
@@ -393,10 +406,11 @@ export class ExternalKnowledgeService {
     })
     // Another binding for the same remote target may have landed while the
     // verification request was in flight; the unique index is the final guard.
-    if (duplicate()) {
+    if (await duplicate()) {
       throw new Error('EXTERNAL_KB_DUPLICATE_BINDING')
     }
-    return this.database.saveExternalBinding(
+    this.checkActive()
+    return await this.database.saveExternalBinding(
       {
         instanceId: input.instanceId,
         provider: input.providerConfig.provider,

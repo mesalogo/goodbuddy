@@ -2,7 +2,7 @@ import spawn from 'cross-spawn'
 import { parseContinueChecklist, runtimeChecklistSchema, type RuntimeChecklist } from '../../shared/runtime-checklist'
 import { toolOperationSummary } from './tool-operation-summary'
 import { createHash, randomBytes } from 'node:crypto'
-import {
+import fs, {
   copyFile,
   mkdir,
   readFile,
@@ -55,6 +55,7 @@ import { readBoundedResponseText } from './bounded-response'
 import { readBoundedFile } from '../workspace-file-access'
 import { terminateProcessTreeAndWait } from './child-process-termination'
 import { CONTINUE_HOST_LAYOUT_VERSION } from './continue-host-layout'
+import { createRuntimeTemporaryDirectory, ensureRuntimeTemporaryRoot, recordRuntimeTemporaryChild, removeRuntimeTemporaryDirectory } from '../runtime-temporary-directory'
 
 const supportedVersion = '1.5.47'
 const supportedBundleHashes = new Set([
@@ -1066,8 +1067,9 @@ export class ContinueHostAdapter {
     const stagingRoot = `${targetRoot}.staging-${crypto.randomUUID()}`
     const stagingDist = join(stagingRoot, 'dist')
     try {
+      await ensureRuntimeTemporaryRoot(this.options.cacheRoot)
       await mkdir(stagingDist, { recursive: true })
-      await Promise.all([
+      const writes = await Promise.allSettled([
         writeFile(join(stagingDist, 'index.js'), patched, 'utf8'),
         copyFile(join(distribution, 'cn.js'), join(stagingDist, 'cn.js')),
         copyFile(
@@ -1081,6 +1083,8 @@ export class ContinueHostAdapter {
         ),
         copyFile(packagePath, join(stagingRoot, 'package.json'))
       ])
+      const failedWrite = writes.find(result => result.status === 'rejected')
+      if (failedWrite?.status === 'rejected') throw failedWrite.reason
       await writeFile(
         join(stagingRoot, '.ready'),
         JSON.stringify({ sourceHash, patchedHash }),
@@ -1233,23 +1237,32 @@ export class ContinueHostAdapter {
 
   private async writeTemporaryConfig(
     prefix: string,
-    config: Record<string, unknown>
+    config: Record<string, unknown>,
+    runRoot: string
   ): Promise<string> {
     await mkdir(this.options.cacheRoot, { recursive: true })
     const configPath = join(
-      this.options.cacheRoot,
-      `${prefix}-${crypto.randomUUID()}.yaml`
+      runRoot,
+      `goodbuddy-${prefix}-${crypto.randomUUID()}.yaml`
     )
-    await writeFile(configPath, JSON.stringify(config), {
-      encoding: 'utf8',
-      mode: 0o600,
-      flag: 'wx'
-    })
+    const contents = JSON.stringify(config)
+    const handle = await fs.open(configPath, 'wx', 0o600)
+    try {
+      try {
+        await handle.writeFile(contents, 'utf8')
+      } finally {
+        await handle.close()
+      }
+    } catch (error) {
+      await rm(configPath, { force: true })
+      throw error
+    }
     return configPath
   }
 
   private async createRunConfig(
-    runOptions: ContinueHostRunOptions
+    runOptions: ContinueHostRunOptions,
+    runRoot: string
   ): Promise<string | undefined> {
     const knowledgeCapability = runOptions.knowledgeCapability
     const customMcpCapability = runOptions.customMcpCapability
@@ -1357,7 +1370,7 @@ export class ContinueHostAdapter {
             ...retainedServers,
             ...capabilityServers
           ]
-        }
+        }, runRoot
       )
     }
 
@@ -1447,21 +1460,23 @@ export class ContinueHostAdapter {
             mcpServers: capabilityServers
           }
         : {})
-    })
+    }, runRoot)
   }
 
-  private async createRunGlobalDirectory(): Promise<string> {
+  private async createRunGlobalDirectory(runRoot: string): Promise<string> {
     const root = join(
-      this.options.cacheRoot,
-      `isolated-global-${crypto.randomUUID()}`
+      runRoot,
+      `goodbuddy-isolated-global-${crypto.randomUUID()}`
     )
     await mkdir(root, { recursive: false, mode: 0o700 })
-    const skillPackages = this.options.skillPackages ?? []
-    if (skillPackages.length === 0) {
+    try {
+      const skillPackages = this.options.skillPackages ?? []
+      if (skillPackages.length) await stageRuntimeSkillPackages(root, skillPackages, 'Continue')
       return root
+    } catch (error) {
+      await rm(root, { recursive: true, force: true })
+      throw error
     }
-    await stageRuntimeSkillPackages(root, skillPackages, 'Continue')
-    return root
   }
 
   async run(
@@ -1481,20 +1496,18 @@ export class ContinueHostAdapter {
     }
     let generatedConfigPath: string | undefined
     let isolatedGlobalDirectory: string | undefined
+    const runRoot = await createRuntimeTemporaryDirectory(this.options.cacheRoot, 'goodbuddy-continue-')
+    let launchedChild: ContinueHostChild | undefined
+    let childClosed = false
     try {
-      generatedConfigPath = await this.createRunConfig(runOptions)
+      generatedConfigPath = await this.createRunConfig(runOptions, runRoot)
     const [{ entryPath }, port] = await Promise.all([
       this.getPreparedHost(),
       getAvailableLoopbackPort()
-    ]).catch(async (error) => {
-      if (generatedConfigPath) {
-        await rm(generatedConfigPath, { force: true })
-      }
-      throw error
-    })
+    ])
     const token = randomBytes(32).toString('base64url')
     const origin = `http://127.0.0.1:${port}`
-    isolatedGlobalDirectory = await this.createRunGlobalDirectory()
+    isolatedGlobalDirectory = await this.createRunGlobalDirectory(runRoot)
     const args: string[] = []
     const configPath =
       generatedConfigPath ?? this.options.configPath.trim()
@@ -1574,12 +1587,15 @@ export class ContinueHostAdapter {
       throw error
     }
     this.children.add(child)
+    launchedChild = child
+    child.once('close', () => { childClosed = true })
     let childFailure: Error | undefined
     child.once('error', (error) => {
       childFailure = new Error('Continue 宿主进程启动失败', {
         cause: error
       })
     })
+    await recordRuntimeTemporaryChild(runRoot, child.pid)
     let stderrBytes = 0
     child.stderr?.on('data', (chunk: Buffer | string) => {
       stderrBytes += Buffer.byteLength(chunk)
@@ -1867,24 +1883,15 @@ export class ContinueHostAdapter {
       } finally {
         await this.terminate(child)
         this.children.delete(child)
-        if (generatedConfigPath) {
-          await rm(generatedConfigPath, { force: true })
-        }
-        await rm(isolatedGlobalDirectory, {
-          recursive: true,
-          force: true
-        })
       }
     }
     } finally {
-      if (generatedConfigPath) {
-        await rm(generatedConfigPath, { force: true })
+      if (launchedChild) {
+        await this.terminate(launchedChild)
+        this.children.delete(launchedChild)
       }
-      if (isolatedGlobalDirectory) {
-        await rm(isolatedGlobalDirectory, {
-          recursive: true,
-          force: true
-        })
+      if (!launchedChild || childClosed || launchedChild.exitCode !== null || !launchedChild.pid) {
+        await removeRuntimeTemporaryDirectory(runRoot)
       }
     }
   }

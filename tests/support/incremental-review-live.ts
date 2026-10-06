@@ -94,7 +94,7 @@ void app.whenReady().then(async () => {
       const result = await supervisor.run(request, run.id)
       return { status: result.status ?? 'completed', runId: result.runId }
     } })
-    const config = heartbeat.create({ name: 'Isolated live test', scope: request.scope, timezone: 'UTC',
+    const config = await heartbeat.create({ name: 'Isolated live test', scope: request.scope, timezone: 'UTC',
       recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }, now)
     let tick = 0
     const due = async () => {

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationListSnapshot, LocalConversationSaveBatch } from "../../shared/assistant-contracts";
 import type { Message } from "./ChatTimeline";
 import type { Conversation } from "./chat-conversation";
-import { createConversationPersistence } from "./conversation-persistence";
+import { createConversationPersistence, createLocalConversationSaveBatch, LOCAL_CONVERSATION_SAVE_BYTES } from "./conversation-persistence";
+import { storageDataBytes } from "../../shared/storage-data-size";
 import { startConversationRefresh, type ConversationRefreshApi } from "./conversation-refresh";
 import { createConversationStore } from "./conversation-store";
 import { createLiveMessageStore } from "./live-message-store";
@@ -37,6 +38,33 @@ afterEach(() => {
 });
 
 describe("conversation persistence", () => {
+  it("batches by bytes, keeps a single large history complete, and drains every batch on quit", async () => {
+    const histories = Array.from({ length: 5 }, (_, index) => conversation(`large-${index}`, [
+      message(`message-${index}`, { content: "x".repeat(2 * 1024 * 1024) }),
+    ]));
+    const first = createLocalConversationSaveBatch(histories, new Map(), new Set());
+    expect(first.batch).toHaveLength(1);
+    expect(storageDataBytes(first.batch, Infinity)).toBeLessThan(LOCAL_CONVERSATION_SAVE_BYTES);
+    const huge = conversation("huge", [message("huge-message", { content: "y".repeat(20 * 1024 * 1024) })]);
+    const oversized = createLocalConversationSaveBatch([huge], new Map(), new Set());
+    expect(oversized.batch[0]!.messages[0]!.content).toBe(huge.messages[0]!.content);
+    expect(oversized.acknowledgements).toEqual([huge]);
+    const { persistence, saveLocal } = setup([...histories, huge]);
+    const stop = persistence.start();
+    await persistence.flushForQuit();
+    expect(saveLocal.mock.calls.flatMap(([batch]) => batch.map(row => row.header.id))).toEqual([...histories, huge].map(row => row.id));
+    expect(saveLocal).toHaveBeenCalledTimes(6);
+    stop();
+  });
+
+  it("does not turn a failed final byte-bounded batch into a successful quit flush", async () => {
+    const { persistence } = setup([conversation("failure")], vi.fn(async () => { throw new Error("disk full"); }));
+    const stop = persistence.start();
+    await expect(persistence.flushForQuit()).rejects.toThrow("disk full");
+    expect(persistence.acknowledged().size).toBe(0);
+    stop();
+  });
+
   it("saves only changed local conversations and only their changed messages", async () => {
     const remote = conversation("r", undefined, { remote: remoteSource });
     const { store, persistence, saveLocal } = setup([conversation("a"), conversation("b"), remote]);

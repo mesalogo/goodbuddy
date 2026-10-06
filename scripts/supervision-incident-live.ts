@@ -8,6 +8,7 @@ import { AssistantDatabase } from '../src/main/assistant/assistant-database'
 import { createProductionSupervisorService } from '../src/main/assistant/supervision-production'
 import { SupervisionModelPool } from '../src/main/assistant/supervision-model-pool'
 import { ModelAgentRuntime } from '../src/main/agent/model-runtime'
+import { asyncSupervisionStorage } from '../tests/support/async-supervision-storage'
 
 async function main() {
   const [directory, envPath, mode] = process.argv.slice(2)
@@ -68,7 +69,7 @@ async function main() {
     const candidates = db.listSupervisionCandidates(state.request)
     writeFileSync(join(directory, 'candidates.private.json'), JSON.stringify(candidates))
     metrics.originalCandidates = candidates.length
-    const service = createProductionSupervisorService(db, async () => ({ supervisorModelConcurrency: 1, supervisorOrganizeTimeoutSeconds: 120 }), async () => runtime, pool)
+    const service = createProductionSupervisorService(asyncSupervisionStorage(db).supervision, async () => ({ supervisorModelConcurrency: 1, supervisorOrganizeTimeoutSeconds: 120 }), async () => runtime, pool)
     const originalStore = db.supervisionReviewStore.bind(db)
     const save = store.save.bind(store)
     store.save = (...args) => { save(...args); service.pause(incident.run.id) }

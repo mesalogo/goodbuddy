@@ -10,16 +10,17 @@ import { AssistantDatabase, ASSISTANT_DATABASE_SCHEMA_VERSION } from './assistan
 import { getPendingAssistantStorageUpgrade, upgradeAssistantStorage } from './assistant-storage-upgrade'
 import { supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
 import type { SupervisionSummaryOutput } from '../../shared/supervision-contracts'
+import { ReadonlyQueryReader } from '../readonly-query-reader'
 
 let directory: string, workerPath: string
-const cleanups: Array<() => void> = []
+const cleanups: Array<() => void | Promise<void>> = []
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'supervision-ui-reads-'))
   workerPath = join(directory, 'worker.cjs')
   await build({ entryPoints: [resolve('src/main/readonly-query-worker.ts')], outfile: workerPath,
     bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' })
 }, 60_000)
-afterEach(() => { vi.restoreAllMocks(); for (const close of cleanups.splice(0)) close() })
+afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanups.splice(0)) await close() })
 afterAll(async () => { await rm(directory, { recursive: true, force: true, maxRetries: 10 }) })
 
 const at = '2026-10-01T12:00:00.000Z'
@@ -94,20 +95,21 @@ it('serves UI reads on the real worker and observes writes committed before the 
   const graph = f.db.getSupervisionGraph({ resultId: f.result.id })
   const stories = { stories: f.db.supervisionStories().list(request.scope), experiences: f.db.supervisionExperiences().list(),
     unassigned: f.db.supervisionStories().unassignedCount(request.scope), canUndo: false }
-  f.db.enableReadonlyWorker(workerPath)
+  const reader = new ReadonlyQueryReader('assistant', f.path, workerPath)
+  cleanups.unshift(() => reader.close())
   const syncOverview = vi.spyOn(f.db, 'listSupervisionResults').mockImplementation(() => { throw new Error('Main overview') })
   const syncGraph = vi.spyOn(f.db, 'getSupervisionGraph').mockImplementation(() => { throw new Error('Main graph') })
   const syncStories = vi.spyOn(f.db, 'supervisionStories').mockImplementation(() => { throw new Error('Main stories') })
-  expect(await f.db.listSupervisionResultsAsync()).toEqual(overview)
-  expect(await f.db.getSupervisionGraphAsync({ resultId: f.result.id })).toEqual(graph)
-  expect(await f.db.getSupervisionStoriesAsync(request.scope)).toEqual(stories)
+  expect(await reader.call('supervisionOverview', [])).toEqual(overview)
+  expect(await reader.call('supervisionGraph', [{ resultId: f.result.id }])).toEqual(graph)
+  expect(await reader.call('supervisionStories', [request.scope])).toEqual(stories)
   f.sql.prepare('UPDATE supervision_results SET summary = ? WHERE id = ?').run('Committed', f.result.id)
-  expect((await f.db.listSupervisionResultsAsync())[0]!.summary).toBe('Committed')
-  await expect(f.db.getSupervisionGraphAsync({ resultId: f.result.id, storyLineId: 'wrong' })).rejects.toThrow('不匹配')
-  await f.db.readonlyWorkerForTest!.terminateWorkerForTest()
-  await expect(f.db.listSupervisionResultsAsync()).rejects.toThrow('backing off')
-  await expect(f.db.getSupervisionGraphAsync({ resultId: f.result.id })).rejects.toThrow('backing off')
-  await expect(f.db.getSupervisionStoriesAsync(request.scope)).rejects.toThrow('backing off')
+  expect((await reader.call<ReturnType<AssistantDatabase['listSupervisionResults']>>('supervisionOverview', []))[0]!.summary).toBe('Committed')
+  await expect(reader.call('supervisionGraph', [{ resultId: f.result.id, storyLineId: 'wrong' }])).rejects.toThrow('不匹配')
+  await reader.terminateWorkerForTest()
+  await expect(reader.call('supervisionOverview', [])).rejects.toThrow('backing off')
+  await expect(reader.call('supervisionGraph', [{ resultId: f.result.id }])).rejects.toThrow('backing off')
+  await expect(reader.call('supervisionStories', [request.scope])).rejects.toThrow('backing off')
   expect(syncOverview).not.toHaveBeenCalled()
   expect(syncGraph).not.toHaveBeenCalled()
   expect(syncStories).not.toHaveBeenCalled()
@@ -115,11 +117,9 @@ it('serves UI reads on the real worker and observes writes committed before the 
 
 it('rejects missing production worker configuration instead of performing a synchronous UI read', async () => {
   const f = fixture()
-  await expect(f.db.listSupervisionResultsAsync()).rejects.toThrow('worker is not configured')
-  await expect(f.db.getSupervisionGraphAsync({ resultId: f.result.id })).rejects.toThrow('worker is not configured')
-  await expect(f.db.getSupervisionStoriesAsync(request.scope)).rejects.toThrow('worker is not configured')
-  f.db.enableReadonlyWorker(join(directory, 'missing.cjs'))
-  await expect(f.db.listSupervisionResultsAsync()).rejects.toThrow()
+  const reader = new ReadonlyQueryReader('assistant', f.path, join(directory, 'missing.cjs'))
+  cleanups.unshift(() => reader.close())
+  await expect(reader.call('supervisionOverview', [])).rejects.toThrow()
 })
 
 it('keeps a multi-statement UI read on one WAL snapshot while another connection commits', () => {

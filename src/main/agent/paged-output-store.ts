@@ -1,13 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import {
-  closeSync,
-  openSync,
-  readSync,
-  writeSync
-} from 'node:fs'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 export const PAGED_OUTPUT_DEFAULT_PAGE_BYTES = 32 * 1024
 export const PAGED_OUTPUT_MAX_PAGE_BYTES = 32 * 1024
@@ -29,56 +20,111 @@ export type PagedOutputPage = {
 
 type OutputEntry = {
   ownerId: string
-  path: string
   totalBytes: number
 }
 
-export type PagedOutputStoreOptions = {
-  temporaryParentDirectory?: string
+// Implement in the existing attachment/storage owner. The handle identifies the
+// same content during capture, paging and history adoption; release drops only
+// the call's reference, never a reference already adopted by persisted history.
+export interface PagedOutputBackingStore {
+  create(ownerId: string, handle: string): Promise<void>
+  append(ownerId: string, handle: string, bytes: Uint8Array): Promise<void>
+  finish(ownerId: string, handle: string, totalBytes: number): Promise<void>
+  read(ownerId: string, handle: string, cursor: number, length: number): Promise<Uint8Array>
+  release(ownerId: string, handle: string): Promise<void>
 }
 
+export type PagedOutputStoreOptions = {
+  backingStore?: PagedOutputBackingStore
+}
+
+const MAX_CAPTURE_BYTES = 8 * 1024 * 1024
+const MAX_OUTPUTS = 4096
+const WRITE_BYTES = 64 * 1024
+// Shared across process, search and subagent stores, including in-flight writes.
+let captureBytes = 0
+
 export class PagedOutputWriter {
-  private preview = Buffer.alloc(0)
+  private preview: Buffer
+  private previewLength = 0
   private totalBytes = 0
   private failure?: Error
   private closed = false
+  private pending = Promise.resolve()
+  private pendingCount = 0
+  private backed = false
+  private released = false
+  private finishing?: Promise<{ text: string; truncated: boolean; reference?: PagedOutputReference }>
 
   constructor(
     private readonly store: PagedOutputStore,
     readonly handle: string,
     readonly ownerId: string,
-    readonly path: string,
-    private readonly descriptor: number,
     private readonly previewBytes: number
-  ) {}
+  ) {
+    if (captureBytes + previewBytes > MAX_CAPTURE_BYTES) throw new Error('Tool output capture is busy')
+    this.preview = Buffer.alloc(previewBytes)
+    captureBytes += previewBytes
+  }
 
-  append(chunk: Buffer | string): void {
+  append(chunk: Buffer | string): Promise<void> {
     if (this.closed || this.failure) {
-      return
+      throw this.failure ?? new Error('分页输出已经关闭')
     }
-    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    try {
-      let offset = 0
-      while (offset < value.byteLength) {
-        const written = writeSync(this.descriptor, value, offset)
-        if (written === 0) throw new Error('Unable to write tool output')
-        offset += written
+    const length = Buffer.byteLength(chunk)
+    if (!length) return Promise.resolve()
+    const previousLength = this.previewLength
+    const spill = this.backed || this.totalBytes + length > this.previewBytes
+    if (spill) {
+      try {
+        void this.store.backing
+      } catch (error) {
+        this.failure = error as Error
+        throw error
       }
-      this.totalBytes += value.byteLength
-      if (this.preview.byteLength < this.previewBytes) {
-        const remaining = this.previewBytes - this.preview.byteLength
-        this.preview = Buffer.concat([
-          this.preview,
-          value.subarray(0, remaining)
-        ])
+    }
+    if (spill && (captureBytes + length > MAX_CAPTURE_BYTES || this.pendingCount >= 1024)) {
+      this.failure = new Error('Tool output capture is busy; producer must await append')
+      throw this.failure
+    }
+    const value = Buffer.from(chunk)
+    this.previewLength += value.copy(this.preview, this.previewLength, 0, this.previewBytes - this.previewLength)
+    this.totalBytes += length
+    if (!spill) return Promise.resolve()
+    const create = !this.backed
+    this.backed = true
+    captureBytes += length
+    this.pendingCount += 1
+    const write = this.pending.then(async () => {
+      if (this.failure) throw this.failure
+      if (create) {
+        await this.store.backing.create(this.ownerId, this.handle)
+        await this.write(this.preview.subarray(0, previousLength))
       }
-    } catch (error) {
-      this.failure =
-        error instanceof Error ? error : new Error('无法保存分页输出')
+      await this.write(value)
+    }).finally(() => {
+      captureBytes -= length
+      this.pendingCount -= 1
+    })
+    this.pending = write.catch((error: unknown) => {
+      this.failure = error instanceof Error ? error : new Error('无法保存分页输出')
+    })
+    return write
+  }
+
+  private async write(value: Buffer): Promise<void> {
+    for (let offset = 0; offset < value.length; offset += WRITE_BYTES) {
+      await this.store.backing.append(this.ownerId, this.handle, value.subarray(offset, offset + WRITE_BYTES))
     }
   }
 
-  async finish(): Promise<{
+  finish(): Promise<{ text: string; truncated: boolean; reference?: PagedOutputReference }> {
+    if (this.closed) return Promise.reject(new Error('分页输出已经关闭'))
+    this.finishing = this.finishOnce()
+    return this.finishing
+  }
+
+  private async finishOnce(): Promise<{
     text: string
     truncated: boolean
     reference?: PagedOutputReference
@@ -87,12 +133,12 @@ export class PagedOutputWriter {
       throw new Error('分页输出已经关闭')
     }
     this.closed = true
-    closeSync(this.descriptor)
+    await this.pending
     if (this.failure) {
       await this.store.discard(this)
       throw new Error('无法保存完整工具输出', { cause: this.failure })
     }
-    let previewLength = utf8PrefixLength(this.preview)
+    let previewLength = utf8PrefixLength(this.preview, this.previewLength)
     let text = this.preview.subarray(0, previewLength).toString('utf8')
     // Tool results are JSON: escaped control characters also consume context.
     if (Buffer.byteLength(JSON.stringify(text)) - 2 > this.previewBytes) {
@@ -114,7 +160,21 @@ export class PagedOutputWriter {
       await this.store.discard(this)
       return { text, truncated: false }
     }
-    this.store.retain(this, this.totalBytes)
+    try {
+      if (!this.backed) {
+        void this.store.backing
+        this.backed = true
+        await this.store.backing.create(this.ownerId, this.handle)
+        await this.write(this.preview.subarray(0, this.previewLength))
+      }
+      await this.store.backing.finish(this.ownerId, this.handle, this.totalBytes)
+      this.store.retain(this, this.totalBytes)
+    } catch (error) {
+      await this.store.discard(this)
+      throw error
+    } finally {
+      this.releaseMemory()
+    }
     return {
       text,
       truncated: true,
@@ -127,11 +187,23 @@ export class PagedOutputWriter {
   }
 
   async abort(): Promise<void> {
-    if (!this.closed) {
-      this.closed = true
-      closeSync(this.descriptor)
-    }
+    this.closed = true
+    await this.finishing?.catch(() => undefined)
+    await this.pending
     await this.store.discard(this)
+  }
+
+  releaseMemory(): void {
+    captureBytes -= this.preview.byteLength
+    this.preview = Buffer.alloc(0)
+  }
+
+  async releaseBacking(): Promise<void> {
+    this.releaseMemory()
+    if (this.backed && !this.released) {
+      await this.store.backing.release(this.ownerId, this.handle)
+      this.released = true
+    }
   }
 }
 
@@ -151,7 +223,6 @@ function utf8Prefix(value: Buffer): string {
 export class PagedOutputStore {
   private readonly entries = new Map<string, OutputEntry>()
   private readonly writers = new Set<PagedOutputWriter>()
-  private directoryPromise?: Promise<string>
   private disposed = false
   private disposePromise?: Promise<void>
 
@@ -160,6 +231,11 @@ export class PagedOutputStore {
     private readonly options: PagedOutputStoreOptions = {}
   ) {}
 
+  get backing(): PagedOutputBackingStore {
+    if (!this.options.backingStore) throw new Error('Full output storage owner is not configured')
+    return this.options.backingStore
+  }
+
   async create(
     ownerId: string,
     previewBytes: number
@@ -167,17 +243,15 @@ export class PagedOutputStore {
     if (this.disposed) {
       throw new Error('分页输出存储已关闭')
     }
-    const directory = await this.getDirectory()
-    if (this.disposed) throw new Error('分页输出存储已关闭')
+    if (!Number.isSafeInteger(previewBytes) || previewBytes < 1 || previewBytes > MAX_CAPTURE_BYTES) {
+      throw new Error('Invalid output preview size')
+    }
+    if (this.writers.size + this.entries.size >= MAX_OUTPUTS) throw new Error('Tool output store is busy')
     const id = randomUUID()
-    const path = join(directory, id)
-    const descriptor = openSync(path, 'wx')
     const writer = new PagedOutputWriter(
       this,
       `${this.handlePrefix}:${id}`,
       ownerId,
-      path,
-      descriptor,
       previewBytes
     )
     this.writers.add(writer)
@@ -206,14 +280,11 @@ export class PagedOutputStore {
     }
 
     const requestedBytes = Math.min(limitBytes + 3, entry.totalBytes - cursor)
-    const buffer = Buffer.alloc(requestedBytes)
-    const descriptor = openSync(entry.path, 'r')
-    let bytesRead: number
-    try {
-      bytesRead = readSync(descriptor, buffer, 0, requestedBytes, cursor)
-    } finally {
-      closeSync(descriptor)
-    }
+    const buffer = requestedBytes === 0 ? Buffer.alloc(0) : Buffer.from(
+      await this.backing.read(ownerId, handle, cursor, requestedBytes)
+    )
+    const bytesRead = buffer.byteLength
+    if (bytesRead !== requestedBytes) throw new Error('Incomplete stored tool output')
     if (bytesRead && (buffer[0]! & 0xc0) === 0x80) {
       throw new Error('分页输出 cursor 必须位于 UTF-8 字符边界')
     }
@@ -244,27 +315,25 @@ export class PagedOutputStore {
       ([, entry]) => entry.ownerId === ownerId
     )
     for (const [handle] of owned) {
+      await this.backing.release(ownerId, handle)
       this.entries.delete(handle)
     }
-    await Promise.allSettled(
-      owned.map(([, entry]) => rm(entry.path, { force: true }))
-    )
   }
 
   dispose(): Promise<void> {
-    this.disposePromise ??= this.disposeOnce()
+    this.disposePromise ??= this.disposeOnce().catch((error: unknown) => {
+      this.disposePromise = undefined
+      throw error
+    })
     return this.disposePromise
   }
 
   private async disposeOnce(): Promise<void> {
     this.disposed = true
     await Promise.all([...this.writers].map((writer) => writer.abort()))
-    this.entries.clear()
-    if (this.directoryPromise) {
-      const directory = await this.directoryPromise.catch(() => undefined)
-      if (directory) {
-        await rm(directory, { recursive: true, force: true })
-      }
+    for (const [handle, entry] of this.entries) {
+      await this.backing.release(entry.ownerId, handle)
+      this.entries.delete(handle)
     }
   }
 
@@ -272,25 +341,13 @@ export class PagedOutputStore {
     this.writers.delete(writer)
     this.entries.set(writer.handle, {
       ownerId: writer.ownerId,
-      path: writer.path,
       totalBytes
     })
   }
 
   async discard(writer: PagedOutputWriter): Promise<void> {
+    await writer.releaseBacking()
     this.writers.delete(writer)
     this.entries.delete(writer.handle)
-    await rm(writer.path, { force: true })
-  }
-
-  private getDirectory(): Promise<string> {
-    this.directoryPromise ??= this.createDirectory()
-    return this.directoryPromise
-  }
-
-  private async createDirectory(): Promise<string> {
-    const parent = this.options.temporaryParentDirectory ?? tmpdir()
-    await mkdir(parent, { recursive: true })
-    return await mkdtemp(join(parent, `goodbuddy-${this.handlePrefix}-`))
   }
 }

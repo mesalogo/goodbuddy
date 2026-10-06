@@ -7,7 +7,7 @@ import {
   type TerminalSize,
   type TerminalSnapshot
 } from '../../shared/terminal-contracts'
-import type { AssistantDatabase } from '../assistant/assistant-database'
+import type { AssistantStoragePort } from '../assistant-storage-port'
 import {
   type ExecutionSpaceDescriptor,
   type ExecutionSpaceResolver
@@ -48,7 +48,7 @@ export type ManagedTerminalSession = {
 }
 
 export type TerminalSessionManagerDependencies = {
-  database: Pick<AssistantDatabase, 'getProject'>
+  database: Pick<AssistantStoragePort, 'getProject'>
   executionSpaceResolver: Pick<ExecutionSpaceResolver, 'resolveProject'>
   targetResolver: RemoteAgentTargetResolver
   sshPool: SshConnectionPool
@@ -345,9 +345,9 @@ export class TerminalSessionManager {
       return { kind: 'local', targetLabel: '本机' }
     }
 
-    let project: ReturnType<AssistantDatabase['getProject']>
+    let project: Awaited<ReturnType<AssistantStoragePort['getProject']>>
     try {
-      project = this.dependencies.database.getProject(
+      project = await this.dependencies.database.getProject(
         request.target.projectId
       )
     } catch (error) {

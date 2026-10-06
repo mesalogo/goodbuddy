@@ -44,16 +44,20 @@ PPTX 回退提示按实际 OCR 来源显示，并在图片处理失败时包含�
   conversation-assets/<conversationId>/
     images/<resourceId>/original.<ext>
     documents/<resourceId>/original.<ext>
-    documents/<resourceId>/parsed.md
     documents/<resourceId>/manifest.json
     documents/<resourceId>/images/<imageId>
   knowledge/<libraryId>/<sourceId>/<managed-original>
   knowledge-assets/<libraryId>/<documentId>/<resultId>/
-    parsed.md
     manifest.json
     images/<imageId>
   temp/document-parsing/<resourceId>/
 ```
+
+S04 (2026-10-05): new results store parsed content in `manifest.json` only;
+`parsed.md` is no longer written or copied. Released manifests remain readable,
+including directories containing the old duplicate. Async storage-host integration
+and its remaining composition work are specified in
+[Desktop File Storage Integration](../../architecture/desktop-storage-files.md).
 
 会话资产的 `request.json` 保存已转换的请求内容，用于恢复内存 context；原件字节单独保存，
 缩放和 JPEG 请求副本不覆盖原图。提取图片文件使用 UUID 无扩展名，MIME 在清单记录。

@@ -6,6 +6,7 @@ import process from 'node:process'
 import console from 'node:console'
 import { setTimeout } from 'node:timers/promises'
 import { validateSupervisorSelection } from './supervisor-selection-driver.mjs'
+import { validateStoryGraphFocus } from './story-graph-focus-driver.mjs'
 
 const directory = process.env.GOODBUDDY_SUPERVISOR_DIRECTORY
 const artifacts = process.env.GOODBUDDY_SUPERVISOR_ARTIFACTS || directory
@@ -64,6 +65,11 @@ app
       await settle()
     }
     const reports = []
+    if (process.env.GOODBUDDY_STORY_GRAPH_FOCUS) {
+      await validateStoryGraphFocus(win, js, wait, process.env.GOODBUDDY_SUPERVISOR_URL)
+      assert.deepEqual(errors, [])
+      win.destroy(); app.quit(); return
+    }
     if (process.env.GOODBUDDY_SUPERVISOR_WINDOWING) {
       await validateSupervisorSelection(win, js, wait, process.env.GOODBUDDY_SUPERVISOR_URL)
       assert.deepEqual(errors, [])

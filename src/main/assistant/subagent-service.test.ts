@@ -45,6 +45,41 @@ function database() {
 }
 
 describe('SubagentService', () => {
+  it('waits for asynchronous creation and cancellation persistence during shutdown', async () => {
+    let created!: () => void
+    let saved!: () => void
+    const db = {
+      createTask: vi.fn(() => new Promise<void>(resolve => { created = resolve })),
+      updateTaskStatus: vi.fn(() => new Promise<void>(resolve => { saved = resolve })),
+      appendTaskEvent: vi.fn()
+    }
+    const createRuntime = vi.fn()
+    const service = new SubagentService(createRuntime, db as never)
+    const run = service.run({ parentRequest, expert, routingMode: 'manual', signal: new AbortController().signal, onEvent: vi.fn() })
+    const rejected = expect(run).rejects.toThrow()
+    const closed = vi.fn()
+    const closing = service.dispose().then(closed)
+    await Promise.resolve()
+    expect(closed).not.toHaveBeenCalled()
+    created()
+    await vi.waitFor(() => expect(db.updateTaskStatus).toHaveBeenCalledWith(expect.any(String), 'cancelled', expect.any(String)))
+    expect(createRuntime).not.toHaveBeenCalled()
+    expect(closed).not.toHaveBeenCalled()
+    saved()
+    await rejected
+    await closing
+  })
+
+  it('reports rejected persistence to the caller and shutdown', async () => {
+    const failure = new Error('Task storage unavailable')
+    const db = { ...database(), createTask: async () => { throw failure } }
+    const createRuntime = vi.fn()
+    const service = new SubagentService(createRuntime, db as never)
+    await expect(service.run({ parentRequest, expert, routingMode: 'manual', signal: new AbortController().signal, onEvent: vi.fn() })).rejects.toBe(failure)
+    expect(createRuntime).not.toHaveBeenCalled()
+    await expect(service.dispose()).rejects.toBe(failure)
+  })
+
   it.each(['opencode', 'continue'] as const)('saves SSH expert images through the %s Host adapter, never the Desktop save binding', async provider => {
     // Load the Agent entry dynamically: Main and Agent are separate TS projects.
     const { AgentImageToolMcp } = await import('../../agent-daemon/' + 'image-tool-mcp')
@@ -184,7 +219,7 @@ describe('SubagentService', () => {
       expert,
       routingMode: 'smart',
       signal: new AbortController().signal,
-      onEvent: (event) => events.push(event)
+      onEvent: (event) => { events.push(event) }
     })
 
     expect(result.output).toBe(expertOutput)
@@ -282,7 +317,7 @@ describe('SubagentService', () => {
       expert,
       routingMode: 'manual',
       signal: new AbortController().signal,
-      onEvent: (event) => events.push(event),
+      onEvent: (event) => { events.push(event) },
       authorize
     })).resolves.toMatchObject({ output: '部分结果' })
     expect(receivedAuthorize).toBe(authorize)

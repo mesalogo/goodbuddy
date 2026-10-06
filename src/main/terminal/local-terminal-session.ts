@@ -40,6 +40,7 @@ export type NativeTerminalSpawnSpec = {
   cwd: string
   env: NodeJS.ProcessEnv
   label: string
+  onSpawn?: (pid: number) => Promise<void>
 }
 
 export type LocalPtySpawn = (
@@ -409,6 +410,13 @@ export class LocalTerminalSession {
           this.handleExit(result.exitCode, result.signal)
         )
       )
+      if (spec?.onSpawn) {
+        // ConPTY supplies its child PID asynchronously after spawn returns.
+        await waitUntil(() => this.pty!.pid > 0 || this.state !== 'starting', 5_000)
+        if (this.pty.pid <= 0) throw new Error('Native terminal child PID is unavailable')
+        await spec.onSpawn(this.pty.pid)
+      }
+      if (this.state !== 'starting') return
       this.state = 'running'
       this.emit({ type: 'state', state: 'running' })
     } catch (cause) {

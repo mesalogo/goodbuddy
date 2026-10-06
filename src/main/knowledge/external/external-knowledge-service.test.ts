@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it, vi } from 'vitest'
-import { KnowledgeService } from '../knowledge-service'
+import { TestKnowledgeService as KnowledgeService } from '../../../../tests/support/knowledge-test-service'
 import { KnowledgeMcpGateway } from '../../agent/knowledge-mcp-gateway'
 import { knowledgeReferenceKey, toKnowledgeReference } from '../../../shared/knowledge-reference'
 import { conversationMessageSchema } from '../../../shared/assistant-contracts'
@@ -36,8 +36,8 @@ const records = (count = 1, size = 16) => ({ records: Array.from({ length: count
   score: 0.8, segment: { id: `chunk-${index}`, content: 'e'.repeat(size), document: { id: 'remote-doc', name: 'Handbook' } }
 })) })
 
-function instance(service: KnowledgeService, baseUrl = 'https://kb.example/v1') {
-  return service.external.saveInstance({ name: 'Dify', provider: 'dify', baseUrl, enabled: true, credential: { action: 'replace', value: 'test-key' } })
+async function instance(service: KnowledgeService, baseUrl = 'https://kb.example/v1') {
+  return (await service.external.saveInstance({ name: 'Dify', provider: 'dify', baseUrl, enabled: true, credential: { action: 'replace', value: 'test-key' } }))
 }
 
 function bindingInput(instanceId: string, remoteKnowledgeBaseId = 'dataset') {
@@ -61,7 +61,7 @@ it('routes the real HTTP client through directory, detail, binding and scoped MC
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address() as { port: number }
   const { service } = await setup()
-  const saved = instance(service, `http://127.0.0.1:${address.port}/v1`)
+  const saved = await instance(service, `http://127.0.0.1:${address.port}/v1`)
   expect(saved).not.toHaveProperty('credential')
   expect((await service.external.listCatalog({ instanceId: saved.id })).items).toHaveLength(1)
   expect(await service.external.getCatalog({ instanceId: saved.id, remoteKnowledgeBaseId: 'dataset' })).toMatchObject({ id: 'dataset' })
@@ -73,7 +73,7 @@ it('routes the real HTTP client through directory, detail, binding and scoped MC
     expect(references).toHaveLength(1)
     expect(references[0]).toMatchObject({ external: { remoteDocumentId: 'remote-doc', remoteChunkId: 'chunk-0', providerScore: 0.8 } })
     expect(references[0]?.documentId).toBeUndefined()
-    expect(service.database.listDocuments(binding.knowledgeBaseId)).toEqual([])
+    expect((await service.database.listDocuments(binding.knowledgeBaseId))).toEqual([])
     expect(requests).toEqual(['GET /v1/datasets?page=1&limit=100', 'GET /v1/datasets/dataset', 'POST /v1/datasets/dataset/retrieve', 'POST /v1/datasets/dataset/retrieve'])
   } finally { await gateway.dispose() }
 })
@@ -81,7 +81,7 @@ it('routes the real HTTP client through directory, detail, binding and scoped MC
 it('keeps actual failures, bounds mixed retrieval to 48k, and rejects local mutations', async () => {
   const fetcher = vi.fn<typeof fetch>(async () => Response.json(records(20, 8000)))
   const { service } = await setup(fetcher)
-  const saved = instance(service)
+  const saved = await instance(service)
   const first = await service.external.saveBinding(bindingInput(saved.id))
   const second = await service.external.saveBinding(bindingInput(saved.id, 'second'))
   const results = await service.retrieveMany([first.knowledgeBaseId, second.knowledgeBaseId], 'policy')
@@ -91,50 +91,52 @@ it('keeps actual failures, bounds mixed retrieval to 48k, and rejects local muta
   expect(failed[0]?.response.diagnostics.failure).toBe('EXTERNAL_KB_AUTH')
   await expect(service.importPaths(first.knowledgeBaseId, [])).rejects.toThrow('EXTERNAL_KB_READ_ONLY')
   await expect(service.rebuildLibrary({ knowledgeBaseId: first.knowledgeBaseId })).rejects.toThrow('EXTERNAL_KB_READ_ONLY')
-  expect(() => service.updateSettings({ knowledgeBaseId: first.knowledgeBaseId, retrieval: service.database.getKnowledgeBase(first.knowledgeBaseId)!.retrievalSettings })).toThrow('EXTERNAL_KB_READ_ONLY')
-  expect(() => service.database.updateKnowledgeBase(first.knowledgeBaseId, { graphEnabled: true })).toThrow('EXTERNAL_KB_READ_ONLY')
+  await expect((async () => (await service.updateSettings({ knowledgeBaseId: first.knowledgeBaseId, retrieval: (await service.database.getKnowledgeBase(first.knowledgeBaseId))!.retrievalSettings })))()).rejects.toThrow('EXTERNAL_KB_READ_ONLY')
+  await expect((async () => (await service.database.updateKnowledgeBase(first.knowledgeBaseId, { graphEnabled: true })))()).rejects.toThrow('EXTERNAL_KB_READ_ONLY')
 })
 
 it('rolls metadata back with binding failures and rejects concurrent duplicate creates', async () => {
   const { service, path } = await setup(async () => Response.json(records()))
-  const saved = instance(service)
+  const saved = await instance(service)
   const first = await service.external.saveBinding(bindingInput(saved.id))
   const inspection = new DatabaseSync(path)
   inspection.exec("CREATE TRIGGER reject_binding BEFORE UPDATE ON external_knowledge_bindings BEGIN SELECT RAISE(ABORT, 'binding failed'); END")
   try {
     await expect(service.external.saveBinding({ ...bindingInput(saved.id), knowledgeBaseId: first.knowledgeBaseId, name: 'Changed' })).rejects.toThrow('binding failed')
-    expect(service.database.getKnowledgeBase(first.knowledgeBaseId)?.name).toBe('Handbook')
+    expect((await service.database.getKnowledgeBase(first.knowledgeBaseId))?.name).toBe('Handbook')
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({ user_version: 13 })
   } finally { inspection.close() }
   const outcomes = await Promise.allSettled([service.external.saveBinding(bindingInput(saved.id, 'new')), service.external.saveBinding(bindingInput(saved.id, 'new'))])
   expect(outcomes.filter(item => item.status === 'fulfilled')).toHaveLength(1)
-  expect(service.database.listKnowledgeBases()).toHaveLength(2)
+  expect((await service.database.listKnowledgeBases())).toHaveLength(2)
 })
 
 it('cancels pending probes on disable and prevents shutdown writeback', async () => {
   let release!: (value: Response) => void
   const fetcher = vi.fn<typeof fetch>(() => new Promise<Response>(resolve => { release = resolve }))
   const { service } = await setup(fetcher)
-  const saved = instance(service)
+  const saved = await instance(service)
   const probe = service.external.testInstance(saved.id)
-  service.external.setEnabled(saved.id, false)
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+  await service.external.setEnabled(saved.id, false)
   release(Response.json({ data: [], has_more: false }))
   await expect(probe).rejects.toMatchObject({ code: 'EXTERNAL_KB_CANCELLED' })
-  expect(service.external.listInstances()[0]).toMatchObject({ enabled: false, probeStatus: 'untested' })
-  expect(service.database.externalStore.getInstance(saved.id)?.lastTestedAt).toBeUndefined()
-  service.external.setEnabled(saved.id, true)
+  expect((await service.external.listInstances())[0]).toMatchObject({ enabled: false, probeStatus: 'untested' })
+  expect((await service.database.externalStore.getInstance(saved.id))?.lastTestedAt).toBeUndefined()
+  await service.external.setEnabled(saved.id, true)
   const pending = service.external.saveBinding(bindingInput(saved.id))
   const rejected = expect(pending).rejects.toThrow()
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
   await service.dispose()
   services.splice(services.indexOf(service), 1)
   release(Response.json(records()))
   await rejected
-  expect(() => service.external.listInstances()).toThrow('EXTERNAL_KB_CANCELLED')
+  await expect((async () => (await service.external.listInstances()))()).rejects.toThrow('EXTERNAL_KB_CANCELLED')
 })
 
 it('persists external locators without local IDs and distinguishes remote chunks', async () => {
   const { service } = await setup(async () => Response.json(records(2)))
-  const binding = await service.external.saveBinding(bindingInput(instance(service).id))
+  const binding = await service.external.saveBinding(bindingInput((await instance(service)).id))
   const response = await service.retrieve({ knowledgeBaseId: binding.knowledgeBaseId, query: 'policy' })
   const references = response.results.map(result => toKnowledgeReference(result, 'Handbook'))
   expect(knowledgeReferenceKey(references[0]!)).not.toBe(knowledgeReferenceKey(references[1]!))
@@ -145,43 +147,43 @@ it('persists external locators without local IDs and distinguishes remote chunks
 it('reports unusable credentials and preserves the stored key when encryption fails', async () => {
   const fetcher = vi.fn<typeof fetch>(async () => Response.json(records()))
   const { service, cipher } = await setup(fetcher)
-  const saved = instance(service)
-  const before = service.database.externalStore.getInstance(saved.id)
+  const saved = await instance(service)
+  const before = (await service.database.externalStore.getInstance(saved.id))
   const decrypt = vi.spyOn(cipher, 'decrypt').mockImplementation(() => { throw new Error('OS key unavailable') })
-  expect(service.external.listInstances()[0]?.credentialStatus).toBe('unavailable')
+  expect((await service.external.listInstances())[0]?.credentialStatus).toBe('unavailable')
   await expect(service.external.testRetrieval(retrievalInput(saved.id))).rejects.toThrow('EXTERNAL_KB_CREDENTIAL_UNAVAILABLE')
   decrypt.mockReturnValue(JSON.stringify('  '))
-  expect(service.external.listInstances()[0]?.credentialStatus).toBe('unavailable')
+  expect((await service.external.listInstances())[0]?.credentialStatus).toBe('unavailable')
   await expect(service.external.testRetrieval(retrievalInput(saved.id))).rejects.toThrow('EXTERNAL_KB_CREDENTIAL_UNAVAILABLE')
   expect(fetcher).not.toHaveBeenCalled()
   decrypt.mockRestore()
   vi.spyOn(cipher, 'encrypt').mockImplementation(() => { throw new Error('OS encryption failed') })
-  expect(() => service.external.saveInstance({ id: saved.id, name: 'Changed', provider: saved.provider, baseUrl: saved.baseUrl, enabled: true,
-    credential: { action: 'replace', value: 'new-key' } })).toThrow('EXTERNAL_KB_CREDENTIAL_UNAVAILABLE')
-  expect(service.database.externalStore.getInstance(saved.id)).toEqual(before)
-  expect(service.external.listInstances()[0]?.credentialStatus).toBe('configured')
+  await expect((async () => (await service.external.saveInstance({ id: saved.id, name: 'Changed', provider: saved.provider, baseUrl: saved.baseUrl, enabled: true,
+    credential: { action: 'replace', value: 'new-key' } })))()).rejects.toThrow('EXTERNAL_KB_CREDENTIAL_UNAVAILABLE')
+  expect((await service.database.externalStore.getInstance(saved.id))).toEqual(before)
+  expect((await service.external.listInstances())[0]?.credentialStatus).toBe('configured')
 })
 
 it('persists keep and clear credential mutations and normalized binding updates across restart', async () => {
   const { service, options } = await setup(async () => Response.json(records()))
-  const saved = instance(service)
+  const saved = await instance(service)
   const binding = await service.external.saveBinding(bindingInput(saved.id))
-  const credential = service.database.externalStore.getInstance(saved.id)?.credential
-  service.external.saveInstance({ id: saved.id, name: 'Renamed', provider: saved.provider, baseUrl: saved.baseUrl, enabled: true, credential: { action: 'keep' } })
+  const credential = (await service.database.externalStore.getInstance(saved.id))?.credential
+  await service.external.saveInstance({ id: saved.id, name: 'Renamed', provider: saved.provider, baseUrl: saved.baseUrl, enabled: true, credential: { action: 'keep' } })
   const updated = await service.external.saveBinding({ ...bindingInput(saved.id), knowledgeBaseId: ` ${binding.knowledgeBaseId} `, name: 'Updated' })
   expect(updated.knowledgeBaseId).toBe(binding.knowledgeBaseId)
-  expect(service.database.externalStore.getInstance(saved.id)?.credential).toEqual(credential)
+  expect((await service.database.externalStore.getInstance(saved.id))?.credential).toEqual(credential)
   await service.dispose()
   services.splice(services.indexOf(service), 1)
   const reopened = new KnowledgeService(options)
   services.push(reopened)
   await reopened.initialize()
-  expect(reopened.external.listInstances()[0]).toMatchObject({ name: 'Renamed', credentialStatus: 'configured', bindingCount: 1 })
-  expect(reopened.database.getKnowledgeBase(binding.knowledgeBaseId)?.name).toBe('Updated')
-  expect(reopened.database.externalStore.listBindings()).toEqual([updated])
+  expect((await reopened.external.listInstances())[0]).toMatchObject({ name: 'Renamed', credentialStatus: 'configured', bindingCount: 1 })
+  expect((await reopened.database.getKnowledgeBase(binding.knowledgeBaseId))?.name).toBe('Updated')
+  expect((await reopened.database.externalStore.listBindings())).toEqual([updated])
   await expect(reopened.external.testRetrieval(retrievalInput(saved.id))).resolves.toMatchObject({ results: [expect.anything()] })
-  reopened.external.saveInstance({ id: saved.id, name: 'Renamed', provider: saved.provider, baseUrl: saved.baseUrl, enabled: true, credential: { action: 'clear' } })
-  expect(reopened.external.listInstances()[0]).toMatchObject({ credentialStatus: 'missing', bindingCount: 1 })
+  await reopened.external.saveInstance({ id: saved.id, name: 'Renamed', provider: saved.provider, baseUrl: saved.baseUrl, enabled: true, credential: { action: 'clear' } })
+  expect((await reopened.external.listInstances())[0]).toMatchObject({ credentialStatus: 'missing', bindingCount: 1 })
   const inspection = new DatabaseSync(options.databasePath)
   try {
     const row = inspection.prepare('SELECT value_json FROM external_knowledge_instances WHERE id=?').get(saved.id)!
@@ -191,25 +193,25 @@ it('persists keep and clear credential mutations and normalized binding updates 
 })
 
 it('does not invalidate retrieval or binding verification when a concurrent probe persists its result', async () => {
-  const releases: ((response: Response) => void)[] = []
-  const { service } = await setup(() => new Promise<Response>(resolve => releases.push(resolve)))
-  const saved = instance(service)
+  const releases: { url: string; resolve: (response: Response) => void }[] = []
+  const { service } = await setup(url => new Promise<Response>(resolve => releases.push({ url: String(url), resolve })))
+  const saved = await instance(service)
   const binding = service.external.saveBinding(bindingInput(saved.id))
   const retrieval = service.external.testRetrieval(retrievalInput(saved.id))
   const probe = service.external.testInstance(saved.id)
-  releases[2]!(Response.json({ data: [], has_more: false }))
+  await vi.waitFor(() => expect(releases).toHaveLength(3))
+  releases.find(item => !item.url.includes('/retrieve'))!.resolve(Response.json({ data: [], has_more: false }))
   await expect(probe).resolves.toMatchObject({ probeStatus: 'catalog-ready' })
-  releases[0]!(Response.json(records()))
-  releases[1]!(Response.json(records()))
+  for (const release of releases.filter(item => item.url.includes('/retrieve'))) release.resolve(Response.json(records()))
   await expect(binding).resolves.toMatchObject({ instanceId: saved.id })
   await expect(retrieval).resolves.toMatchObject({ results: [expect.anything()] })
-  expect(service.external.listInstances()[0]?.probeStatus).toBe('catalog-ready')
+  expect((await service.external.listInstances())[0]?.probeStatus).toBe('catalog-ready')
 })
 
 it('normalizes pre-request cancellation and persists network probe failures as unreachable', async () => {
   const fetcher = vi.fn<typeof fetch>(async () => { throw new TypeError('fetch failed') })
   const { service } = await setup(fetcher)
-  const saved = instance(service)
+  const saved = await instance(service)
   await expect(service.external.testRetrieval(retrievalInput(saved.id), AbortSignal.abort())).rejects.toMatchObject({ code: 'EXTERNAL_KB_CANCELLED' })
   expect(fetcher).not.toHaveBeenCalled()
   await expect(service.external.testInstance(saved.id)).resolves.toMatchObject({ probeStatus: 'unreachable', lastErrorCode: 'EXTERNAL_KB_NETWORK' })
@@ -223,7 +225,7 @@ it('includes the RAGFlow capability check in the retrieval timeout budget', asyn
       : { code: 0, data: { chunks: [] } })
   })
   const { service } = await setup(fetcher)
-  const saved = service.external.saveInstance({ name: 'RAGFlow', provider: 'ragflow', baseUrl: 'https://kb.example', enabled: true, credential: { action: 'replace', value: 'test-key' } })
+  const saved = (await service.external.saveInstance({ name: 'RAGFlow', provider: 'ragflow', baseUrl: 'https://kb.example', enabled: true, credential: { action: 'replace', value: 'test-key' } }))
   await expect(service.external.testRetrieval({ ...retrievalInput(saved.id), providerConfig: {
     provider: 'ragflow', similarityThreshold: 0.2, vectorSimilarityWeight: 0.3, knnTopK: 10, useKg: true, includeKnowledgeCompilation: false
   } })).rejects.toMatchObject({ code: 'EXTERNAL_KB_TIMEOUT' })

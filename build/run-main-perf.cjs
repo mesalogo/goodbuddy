@@ -1,10 +1,11 @@
-// Main-process database benchmark (PERF-15). Bundles the production
+// Owner-local database/read-worker microbenchmark (PERF-15). Not a Main IPC latency probe.
+// Bundles the production
 // AssistantDatabase and readonly worker with esbuild, seeds a temporary
 // assistant database (default 1,000 conversations / 20,000 messages and 24,000
 // activity records) and measures, for the IPC paths the renderer hits often:
 //   - per-call time
-//   - Main event-loop delay while the calls run back to back
-// for the previous synchronous path ("sync") and the current path ("after").
+//   - harness event-loop delay while the calls run back to back
+// for owner-local SQL ("sync") and explicit read-worker dispatch ("after").
 //   conversations:list-summaries  sync listConversationSummaries vs worker
 //   conversations:get             sync getConversation vs worker
 //   activity-history:replace      legacy replace (zod parse + BEGIN IMMEDIATE +
@@ -17,7 +18,6 @@
 // GB_MPERF_CALLS, GB_MPERF_OUTPUT (JSON), GB_MPERF_NODE=1 (skip Electron).
 const { buildSync } = require('esbuild')
 const { mkdtempSync, rmSync, writeFileSync, mkdirSync } = require('node:fs')
-const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 const { randomUUID } = require('node:crypto')
 const { monitorEventLoopDelay, performance } = require('node:perf_hooks')
@@ -41,13 +41,17 @@ const messageCount = Number(process.env.GB_MPERF_MESSAGES || 20000)
 const activityCount = Number(process.env.GB_MPERF_ACTIVITY || 24000)
 const calls = Number(process.env.GB_MPERF_CALLS || 15)
 
-const directory = mkdtempSync(join(tmpdir(), 'goodbuddy-main-perf-'))
+const temporaryRoot = join(root, 'temp', 'goodbuddy-storage-foundation')
+mkdirSync(temporaryRoot, { recursive: true })
+const directory = mkdtempSync(join(temporaryRoot, 'main-perf-'))
 const bundle = join(directory, 'assistant-database.cjs')
 const workerBundle = join(directory, 'readonly-query-worker.cjs')
 const schemaBundle = join(directory, 'assistant-contracts.cjs')
+const readerBundle = join(directory, 'readonly-query-reader.cjs')
 for (const [entry, outfile] of [
   ['src/main/assistant/assistant-database.ts', bundle],
   ['src/main/readonly-query-worker.ts', workerBundle],
+  ['src/main/readonly-query-reader.ts', readerBundle],
   ['src/shared/assistant-contracts.ts', schemaBundle]
 ]) {
   buildSync({
@@ -56,6 +60,8 @@ for (const [entry, outfile] of [
   })
 }
 const { AssistantDatabase } = require(bundle)
+const { ReadonlyQueryReader } = require(readerBundle)
+let ownedDatabase, reader
 const { activityHistorySnapshotSchema } = require(schemaBundle)
 
 let seed = 42
@@ -70,7 +76,7 @@ const percentile = (values, p) => {
 
 /**
  * Runs `body` `calls` times (after one warm-up) and reports the per-call wall
- * time and the Main event-loop delay histogram (p99/max) over the run.
+ * time and the harness event-loop delay histogram (p99/max) over the run.
  */
 async function measure(body) {
   await body(-1)
@@ -154,6 +160,7 @@ async function main() {
   mkdirSync(workspace)
   const path = join(directory, 'assistant.sqlite')
   const seeding = new AssistantDatabase(path)
+  ownedDatabase = seeding
   seeding.initialize(workspace)
   const seedStarted = performance.now()
   const projectId = seeding.listProjects()[0].id
@@ -186,6 +193,7 @@ async function main() {
   seeding.close()
 
   const database = new AssistantDatabase(path)
+  ownedDatabase = database
   database.initialize(workspace)
   const raw = database.database
   const totalMessages = counts.reduce((sum, value) => sum + value, 0)
@@ -199,10 +207,10 @@ async function main() {
   results.listSummariesSync = await measure(async () => database.listConversationSummaries(detailIds))
   results.getLargestSync = await measure(async () => database.getConversation(largest))
   results.getTypicalSync = await measure(async () => database.getConversation(typical))
-  database.enableReadonlyWorker(workerBundle)
-  results.listSummariesWorker = await measure(() => database.listConversationSummariesAsync(detailIds))
-  results.getLargestWorker = await measure(() => database.getConversationAsync(largest))
-  results.getTypicalWorker = await measure(() => database.getConversationAsync(typical))
+  reader = new ReadonlyQueryReader('assistant', path, workerBundle)
+  results.listSummariesWorker = await measure(() => reader.call('listConversationSummaries', [detailIds]))
+  results.getLargestWorker = await measure(() => reader.call('getConversation', [largest]))
+  results.getTypicalWorker = await measure(() => reader.call('getConversation', [typical]))
 
   // The renderer sends a fresh structured clone of the whole list every save.
   const unchanged = () => structuredClone({ records, legacyHistoryMayBeIncomplete: false })
@@ -236,11 +244,12 @@ async function main() {
   results.activityFirstPageSync = await measure(async () => database.getActivityHistoryPage(firstPageRequest))
   results.activitySummarySync = await measure(async () => database.getActivityHistorySummary(summaryRequest()))
   results.activityStartupWorker = await measure(async () => {
-    const page = await database.getActivityHistoryPageAsync(firstPageRequest)
-    await database.getActivityHistorySummaryAsync({ conversationIds: [...new Set(page.records.map(record => record.conversationId))] })
+    const page = await reader.call('activityHistoryPage', [firstPageRequest])
+    await reader.call('activityHistorySummary', [{ conversationIds: [...new Set(page.records.map(record => record.conversationId))] }])
   })
   results.activityFullLoadBytes = JSON.stringify(database.getActivityHistory()).length
   results.activityFirstPageBytes = JSON.stringify(database.getActivityHistoryPage(firstPageRequest)).length
+  await reader.close()
   database.close()
 
   console.log(`[mperf] seeded ${results.conversations} conversations / ${results.messages} messages (largest ${results.largestConversationMessages}), ${results.activityRecords} activity records in ${seedSeconds} s`)
@@ -264,9 +273,11 @@ async function main() {
   })))
   console.log(`[mperf] activity payload: full list ${results.activityFullLoadBytes} bytes, first page ${results.activityFirstPageBytes} bytes`)
   const output = process.env.GB_MPERF_OUTPUT
-  if (output) writeFileSync(output, JSON.stringify({ kind: 'goodbuddy-main-database-benchmark', node: process.version, results }, null, 2))
+  if (output) writeFileSync(output, JSON.stringify({ kind: 'goodbuddy-main-database-benchmark', executionBoundary: 'owner-local', node: process.version, results }, null, 2))
 }
 
-main().catch(error => { process.exitCode = 1; console.error(error) }).finally(() => {
+main().catch(error => { process.exitCode = 1; console.error(error) }).finally(async () => {
+  await reader?.close()
+  ownedDatabase?.close()
   rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })

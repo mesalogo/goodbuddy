@@ -26,8 +26,7 @@ import type {
 import { encodeBoundedJpeg } from './bounded-jpeg'
 import { parseDocument } from './knowledge/document-parser'
 import type { ParsedDocument } from './knowledge/document-parser'
-import type { ConversationAttachmentStorage } from './conversation-attachment-storage'
-import type { DocumentResultStorage } from './document-result-storage'
+import type { AttachmentStorageAccess, DocumentResultStorageAccess } from './desktop-storage-files'
 import { originalImageMime, parsedCompleteness } from './document-result-storage'
 import { maximumAttachmentsPerMessage, maximumContextBytes, maximumContextCount } from '../shared/attachment-limits'
 
@@ -109,12 +108,13 @@ function remoteAttachmentName(value: string): string {
 
 export class ContextManager {
   private importController?: AbortController
+  private importDone?: Promise<void>
   private importInterrupted = false
   private shuttingDown = false
   private importConversationId?: string
   private importOperationId?: string
-  private readonly validateConversation?: (conversationId: string) => void
-  readonly assets?: ConversationAttachmentStorage
+  private readonly validateConversation?: (conversationId: string) => void | Promise<void>
+  readonly assets?: AttachmentStorageAccess
   private readonly contexts = new Map<string, StoredContext>()
   private totalBytes = 0
   private readonly documentParser: (
@@ -125,8 +125,8 @@ export class ContextManager {
   ) => Promise<ParsedDocument>
 
   constructor(options?: {
-    validateConversation?: (conversationId: string) => void
-    assets?: ConversationAttachmentStorage
+    validateConversation?: (conversationId: string) => void | Promise<void>
+    assets?: AttachmentStorageAccess
     parseDocument?: (
       name: string,
       buffer: Buffer,
@@ -175,7 +175,7 @@ export class ContextManager {
     }
   }
 
-  private storeText(name: string, content: string, id?: string, original?: Buffer): ContextAttachment {
+  private async storeText(name: string, content: string, id?: string, original?: Buffer): Promise<ContextAttachment> {
     const size = Buffer.byteLength(content)
     if (size === 0) {
       throw new Error('所选内容为空')
@@ -194,14 +194,20 @@ export class ContextManager {
       context.attachmentId = context.id
       context.originalName = name
       context.originalSize = original?.length ?? Buffer.byteLength(content)
-      this.assets.save(this.toPublic(context), JSON.stringify(context), original ?? Buffer.from(content))
     }
     this.contexts.set(context.id, context)
     this.totalBytes += context.size
+    try {
+      if (this.assets && !id) await this.assets.save(this.toPublic(context), JSON.stringify(context), original ?? Buffer.from(content))
+    } catch (error) {
+      this.contexts.delete(context.id)
+      this.totalBytes -= context.size
+      throw error
+    }
     return this.toPublic(context)
   }
 
-  private storeImage(name: string, image: NativeImage, original?: Buffer): ContextAttachment {
+  private async storeImage(name: string, image: NativeImage, original?: Buffer): Promise<ContextAttachment> {
     if (image.isEmpty()) {
       throw new Error('没有可用的图片内容')
     }
@@ -223,8 +229,8 @@ export class ContextManager {
       mediaType: 'image/jpeg',
       data: buffer.toString('base64')
     }
-    if (this.assets) {
-      const source = original ?? image.toPNG()
+    const source = this.assets ? original ?? image.toPNG() : undefined
+    if (source) {
       context.resourceId = context.id
       context.attachmentId = context.id
       context.originalName = name
@@ -233,14 +239,20 @@ export class ContextManager {
       context.imageWidth = size.width
       context.imageHeight = size.height
       context.sendMode = 'image'
-      this.assets.save(this.toPublic(context), JSON.stringify(context), source)
     }
     this.contexts.set(context.id, context)
     this.totalBytes += context.size
+    try {
+      if (source) await this.assets!.save(this.toPublic(context), JSON.stringify(context), source)
+    } catch (error) {
+      this.contexts.delete(context.id)
+      this.totalBytes -= context.size
+      throw error
+    }
     return this.toPublic(context)
   }
 
-  storePastedImage(input: PastedImageInput): ContextAttachment {
+  async storePastedImage(input: PastedImageInput): Promise<ContextAttachment> {
     if (
       input.mimeType !== 'image/jpeg' &&
       input.mimeType !== 'image/png' &&
@@ -355,6 +367,8 @@ export class ContextManager {
     if (this.importController) throw new Error('已有文件正在导入')
     const controller = new AbortController()
     this.importController = controller
+    let settleImport!: () => void
+    this.importDone = new Promise(resolve => { settleImport = resolve })
     this.importOperationId = crypto.randomUUID()
     this.importConversationId = conversationId
     this.importInterrupted = false
@@ -367,7 +381,7 @@ export class ContextManager {
     try {
       for (const [index, selectedPath] of selectedPaths.entries()) {
         controller.signal.throwIfAborted()
-        if (conversationId) this.validateConversation?.(conversationId)
+        if (conversationId) await this.validateConversation?.(conversationId)
         const canonicalPath = await realpath(selectedPath)
         const fileName = basename(canonicalPath)
         const reportProgress = (
@@ -403,7 +417,7 @@ export class ContextManager {
             const original = await handle.readFile()
             const image = nativeImage.createFromBuffer(original)
             attachments.push(
-              this.storeImage(basename(canonicalPath), image, original)
+              await this.storeImage(basename(canonicalPath), image, original)
             )
             controller.signal.throwIfAborted()
           } finally {
@@ -421,7 +435,7 @@ export class ContextManager {
               throw new Error('PDF 或 Office 文档必须小于 20MB 且不能是目录')
             }
             const original = await handle.readFile()
-            if (conversationId && this.assets) pending.push(this.assets.beginParsing(conversationId, fileName, original))
+            if (conversationId && this.assets) pending.push(await this.assets.beginParsing(conversationId, fileName, original))
             reportProgress('parsing')
             const parsed = await this.documentParser(
               fileName,
@@ -456,27 +470,37 @@ export class ContextManager {
         } finally {
           await handle.close()
         }
-        attachments.push(this.storeText(basename(canonicalPath), content, undefined, originalText))
+        attachments.push(await this.storeText(basename(canonicalPath), content, undefined, originalText))
         controller.signal.throwIfAborted()
       }
       controller.signal.throwIfAborted()
-      if (conversationId) this.validateConversation?.(conversationId)
-      for (const id of pending) this.assets?.release('parsing', id)
-      this.assets?.collect([...this.contexts.keys()])
+      if (conversationId) await this.validateConversation?.(conversationId)
+      for (const id of pending) await this.assets?.release('parsing', id)
+      await this.assets?.collect([...this.contexts.keys()])
       return attachments
     } catch (error) {
-      for (const attachment of attachments) this.remove(attachment.id)
+      for (const attachment of attachments) await this.remove(attachment.id)
       for (const id of pending) {
-        if (!this.assets?.has(id)) continue
-        if (controller.signal.aborted && !this.importInterrupted) this.assets.release('parsing', id)
-        else this.assets.parsingFailed(id, this.importInterrupted, error instanceof Error && !('code' in error) ? error.message : '文档读取或保存失败，请检查文件权限与磁盘空间')
+        if (!this.assets || !await this.assets.has(id)) continue
+        if (controller.signal.aborted && !this.importInterrupted) await this.assets.release('parsing', id)
+        else await this.assets.parsingFailed(id, this.importInterrupted, error instanceof Error && !('code' in error) ? error.message : '文档读取或保存失败，请检查文件权限与磁盘空间')
       }
-      this.assets?.collect([...this.contexts.keys()])
+      await this.assets?.collect([...this.contexts.keys()])
       if (error instanceof Error && !('code' in error)) throw error
       // Filesystem causes can contain absolute paths and must not cross IPC.
       // eslint-disable-next-line preserve-caught-error
       throw new Error('无法读取所选文件，请检查文件权限和状态')
-    } finally { this.importController = undefined; this.importConversationId = undefined; this.importOperationId = undefined; this.importInterrupted = false }
+    } finally {
+      this.importController = undefined; this.importConversationId = undefined; this.importOperationId = undefined; this.importInterrupted = false
+      settleImport()
+    }
+  }
+
+  async dispose(): Promise<void> {
+    this.cancelImport(true)
+    await this.importDone
+    this.clear()
+    await this.assets?.collect()
   }
 
   cancelImport(interrupted = false, operationId?: string): void {
@@ -486,10 +510,12 @@ export class ContextManager {
     this.importController?.abort(new Error(interrupted ? '解析已中断' : '文件导入已取消'))
   }
 
-  cancelUnavailableImport(): void {
-    if (!this.importConversationId) return
-    try { this.validateConversation?.(this.importConversationId) }
-    catch { this.cancelImport() }
+  async cancelUnavailableImport(): Promise<void> {
+    const conversationId = this.importConversationId
+    const operationId = this.importOperationId
+    if (!conversationId) return
+    try { await this.validateConversation?.(conversationId) }
+    catch { if (operationId === this.importOperationId) this.cancelImport() }
   }
 
   async captureScreen(window: BrowserWindow): Promise<ContextAttachment> {
@@ -584,9 +610,8 @@ export class ContextManager {
     throw new Error('剪贴板中没有可用的文本或图片')
   }
 
-  enrichRequest(request: AgentRequest): AgentExecutionRequest {
-    this.validateForSend(request.contextIds ?? [])
-    for (const id of request.contextIds ?? []) this.restoreAsset(id)
+  async enrichRequest(request: AgentRequest): Promise<AgentExecutionRequest> {
+    await this.validateForSend(request.contextIds ?? [])
     const normalizedRequest: AgentExecutionRequest = {
       ...request
     }
@@ -642,31 +667,32 @@ export class ContextManager {
     }
   }
 
-  remove(contextId: string): void {
+  async remove(contextId: string): Promise<void> {
     const context = this.contexts.get(contextId)
     if (context) {
       this.totalBytes -= context.size
       this.contexts.delete(contextId)
     }
-    this.assets?.collect([...this.contexts.keys()])
+    await this.assets?.collect([...this.contexts.keys()])
   }
 
-  serializeForQueue(contextIds: string[]): string {
+  async serializeForQueue(contextIds: string[]): Promise<string> {
     if (contextIds.length > maximumAttachmentsPerMessage) {
       throw new Error('单次消息最多添加 8 个附件')
     }
-    const contexts = contextIds.map((contextId) => {
-      this.restoreAsset(contextId)
+    const contexts: StoredContext[] = []
+    for (const contextId of contextIds) {
+      await this.restoreAsset(contextId)
       const context = this.contexts.get(contextId)
       if (!context) {
         throw new Error('附件上下文已失效，请重新添加')
       }
-      return context
-    })
+      contexts.push(context)
+    }
     return JSON.stringify(contexts)
   }
 
-  restoreFromQueue(serialized: string): void {
+  async restoreFromQueue(serialized: string): Promise<void> {
     if (
       Buffer.byteLength(serialized) >
       maximumContextBytes * 2 + 2_000_000
@@ -763,15 +789,16 @@ export class ContextManager {
         }
       }
       restoredIds.add(context.id)
-      if (this.assets?.has(context.id)) Object.assign(context, this.assets.get(context.id))
+      if (await this.assets?.has(context.id)) Object.assign(context, await this.assets!.get(context.id))
       restoredContexts.push(context)
     }
-    const restoredBytes = restoredContexts.reduce(
+    const missing = restoredContexts.filter(context => !this.contexts.has(context.id))
+    const restoredBytes = missing.reduce(
       (total, context) => total + context.size,
       0
     )
     if (
-      this.contexts.size + restoredContexts.length >
+      this.contexts.size + missing.length >
       maximumContextCount
     ) {
       throw new Error('最多可暂存 16 个上下文项目')
@@ -779,7 +806,7 @@ export class ContextManager {
     if (this.totalBytes + restoredBytes > maximumContextBytes) {
       throw new Error('上下文总大小不能超过 12MB')
     }
-    for (const context of restoredContexts) {
+    for (const context of missing) {
       this.contexts.set(context.id, context)
       this.totalBytes += context.size
     }
@@ -795,7 +822,7 @@ export class ContextManager {
     if (!this.assets) return this.storeText(name, text)
     const id = await this.assets.saveDocument(name, original, parsed)
     try {
-      this.storeText(name, text, id)
+      await this.storeText(name, text, id)
       const context = this.contexts.get(id)!
       context.resourceId = id
       context.attachmentId = id
@@ -804,91 +831,96 @@ export class ContextManager {
       context.originalName = name
       context.originalSize = original.length
       context.originalMime = originalImageMime(original)
-      this.assets.adoptDocument(this.toPublic(context), JSON.stringify(context))
+      await this.assets.adoptDocument(this.toPublic(context), JSON.stringify(context))
       return this.toPublic(context)
     } catch (error) {
-      this.remove(id)
+      await this.remove(id)
       await this.assets.discardResult(id)
       throw error
     }
   }
 
-  private restoreAsset(id: string): void {
-    if (this.contexts.has(id) || !this.assets?.has(id)) return
-    this.restoreFromQueue(`[${this.assets.request(id)}]`)
-    Object.assign(this.contexts.get(id)!, this.assets.get(id))
+  private async restoreAsset(id: string): Promise<void> {
+    if (this.contexts.has(id) || !await this.assets?.has(id)) return
+    await this.restoreFromQueue(`[${await this.assets!.request(id)}]`)
+    Object.assign(this.contexts.get(id)!, await this.assets!.get(id))
   }
 
-  getDraft(conversationId: string): ContextAttachment[] {
-    const attachments = this.assets?.draft(conversationId) ?? []
+  async getDraft(conversationId: string): Promise<ContextAttachment[]> {
+    const attachments = await this.assets?.draft(conversationId) ?? []
     return attachments
   }
 
   activeContextIds(): string[] { return [...this.contexts.keys()] }
 
-  hasImageInputs(ids: string[]): boolean {
-    return ids.some((id) => (this.contexts.get(id) ?? (this.assets?.has(id) ? this.assets.get(id) : undefined))?.kind === 'image')
+  async hasImageInputs(ids: string[]): Promise<boolean> {
+    for (const id of ids) {
+      const context = this.contexts.get(id) ?? (await this.assets?.has(id) ? await this.assets!.get(id) : undefined)
+      if (context?.kind === 'image') return true
+    }
+    return false
   }
 
-  validateForSend(ids: string[]): void {
-    const selected = ids.map((id) => {
-      this.restoreAsset(id)
+  async validateForSend(ids: string[]): Promise<void> {
+    const selected: StoredContext[] = []
+    for (const id of ids) {
+      await this.restoreAsset(id)
       const context = this.contexts.get(id)
       if (!context) throw new Error('附件上下文已失效，请重新添加')
-      return context
-    })
+      selected.push(context)
+    }
     for (const parent of selected.filter((context) => context.completeness === 'images-only')) {
       if (!selected.some((context) => context.provenance?.resultId === parent.resultId && (context.kind === 'image' || context.sendMode === 'text'))) throw new Error('此文档仅有图片。请选择至少一张文档图片，或移除该文档后发送。')
     }
   }
 
-  async copyToDraft(conversationId: string, id: string, parse: (name: string, data: Buffer) => Promise<ParsedDocument>, signal?: AbortSignal, validateTarget?: () => void): Promise<ContextAttachment[]> {
+  async copyToDraft(conversationId: string, id: string, parse: (name: string, data: Buffer) => Promise<ParsedDocument>, signal?: AbortSignal, validateTarget?: () => void | Promise<void>): Promise<ContextAttachment[]> {
     if (!this.assets) throw new Error('附件资源存储不可用')
-    if (this.getDraft(conversationId).length >= maximumAttachmentsPerMessage) throw new Error('草稿附件已满，请先整理附件')
-    const previous = this.assets.get(id)
-    const original = this.assets.original(id)
+    if ((await this.getDraft(conversationId)).length >= maximumAttachmentsPerMessage) throw new Error('草稿附件已满，请先整理附件')
+    const previous = await this.assets.get(id)
+    const original = await this.assets.original(id)
     const parsed = await parse(original.name, original.data)
     const next = await this.storeParsed(original.name, original.data, parsed)
     try {
       signal?.throwIfAborted()
-      validateTarget?.()
-      if (!this.assets.has(id)) throw new Error('来源附件已不可用')
+      await validateTarget?.()
+      if (!await this.assets.has(id)) throw new Error('来源附件已不可用')
       const stored = this.contexts.get(next.id)!
       stored.provenance = previous.provenance
       if (previous.sendMode) { stored.sendMode = 'text'; stored.name = `${original.name} · 提取文字` }
-      this.assets.update(this.toPublic(stored), JSON.stringify(stored))
-      this.saveDraft(conversationId, [...this.getDraft(conversationId).map((item) => item.id), next.id])
+      await this.assets.update(this.toPublic(stored), JSON.stringify(stored))
+      await this.saveDraft(conversationId, [...(await this.getDraft(conversationId)).map((item) => item.id), next.id])
       return this.getDraft(conversationId)
-    } catch (error) { this.remove(next.id); throw error }
+    } catch (error) { await this.remove(next.id); throw error }
   }
 
   async retryParsing(conversationId: string, id: string, signal?: AbortSignal): Promise<ContextAttachment[]> {
-    if (!this.assets?.pendingParsing(conversationId).some((item) => item.id === id)) throw new Error('中断记录不存在')
-    const current = this.getDraft(conversationId)
+    if (!this.assets || !(await this.assets.pendingParsing(conversationId)).some((item) => item.id === id)) throw new Error('中断记录不存在')
+    const current = await this.getDraft(conversationId)
     if (current.length >= maximumAttachmentsPerMessage) throw new Error('草稿附件已满，请先整理附件')
-    const original = this.assets.original(id)
+    const original = await this.assets.original(id)
     const parsed = await this.documentParser(original.name, original.data, 'chat-attachment', signal)
     const next = await this.storeParsed(original.name, original.data, parsed)
     try {
       signal?.throwIfAborted()
-      this.saveDraft(conversationId, [...this.getDraft(conversationId).map((item) => item.id), next.id])
-      this.assets.release('parsing', id)
-      this.assets.collect([...this.contexts.keys()])
+      await this.saveDraft(conversationId, [...(await this.getDraft(conversationId)).map((item) => item.id), next.id])
+      await this.assets.release('parsing', id)
+      await this.assets.collect([...this.contexts.keys()])
       return this.getDraft(conversationId)
-    } catch (error) { this.remove(next.id); throw error }
+    } catch (error) { await this.remove(next.id); throw error }
   }
 
-  saveDraft(conversationId: string, ids: string[]): void {
-    this.validateConversation?.(conversationId)
+  async saveDraft(conversationId: string, ids: string[]): Promise<void> {
+    await this.validateConversation?.(conversationId)
     if (ids.length > maximumAttachmentsPerMessage) throw new Error('单次消息最多添加 8 个附件')
-    this.serializeForQueue(ids)
-    this.assets?.reference(conversationId, 'draft', conversationId, ids)
-    this.assets?.collect([...this.contexts.keys()])
+    await this.serializeForQueue(ids)
+    await this.assets?.reference(conversationId, 'draft', conversationId, ids)
+    await this.assets?.collect([...this.contexts.keys()])
   }
 
-  async addResultImages(conversationId: string, resultId: string, imageIds: string[], results: DocumentResultStorage, validateTarget?: () => void): Promise<ContextAttachment[]> {
+  async addResultImages(conversationId: string, resultId: string, imageIds: string[], results: DocumentResultStorageAccess, validateTarget?: () => void | Promise<void>): Promise<ContextAttachment[]> {
     if (!this.assets) throw new Error('附件资源存储不可用')
-    const draft = this.getDraft(conversationId)
+    const draft = await this.getDraft(conversationId)
     const selected = [...new Set(imageIds)].filter((id) => !draft.some((attachment) => attachment.provenance?.resultId === resultId && attachment.provenance.imageId === id))
     if (draft.length + selected.length > maximumAttachmentsPerMessage) throw new Error(`草稿已有 ${draft.length} 个附件，本次选择 ${selected.length} 张；每条消息最多 8 个附件`)
     const result = await results.get(resultId)
@@ -904,32 +936,32 @@ export class ContextManager {
         const original = Buffer.from(encoded.slice(encoded.indexOf(',') + 1), 'base64')
         const extension = image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType === 'image/png' ? 'png' : 'webp'
         const location = image.locator ?? `${result.sourceFormat === '.pptx' ? `幻灯片 ${image.pageNumber}` : `第 ${image.pageNumber} 页`} · 图片 ${result.images.indexOf(image) + 1}`
-        const attachment = this.storeImage(`${result.fileName} · ${location}.${extension}`, nativeImage.createFromBuffer(original), original)
+        const attachment = await this.storeImage(`${result.fileName} · ${location}.${extension}`, nativeImage.createFromBuffer(original), original)
         created.push(attachment)
         const stored = this.contexts.get(attachment.id)!
         stored.provenance = { resultId, imageId: image.id, documentName: result.fileName, pageNumber: image.pageNumber }
-        this.assets.update(this.toPublic(stored), JSON.stringify(stored))
+        await this.assets.update(this.toPublic(stored), JSON.stringify(stored))
       }
-      validateTarget?.()
-      this.saveDraft(conversationId, [...this.getDraft(conversationId), ...created].map((attachment) => attachment.id))
+      await validateTarget?.()
+      await this.saveDraft(conversationId, [...await this.getDraft(conversationId), ...created].map((attachment) => attachment.id))
       return this.getDraft(conversationId)
     } catch (error) {
-      for (const attachment of created) this.remove(attachment.id)
+      for (const attachment of created) await this.remove(attachment.id)
       throw error
     }
   }
 
   async reparseDraft(conversationId: string, id: string, parse: (name: string, data: Buffer) => Promise<ParsedDocument>, signal?: AbortSignal): Promise<ContextAttachment[]> {
     if (!this.assets) throw new Error('附件资源存储不可用')
-    const draft = this.getDraft(conversationId)
+    const draft = await this.getDraft(conversationId)
     const previous = draft.find((attachment) => attachment.id === id)
     if (!previous) throw new Error('附件不在此会话草稿中')
-    const original = this.assets.original(id)
+    const original = await this.assets.original(id)
     const parsed = await parse(original.name, original.data)
     const next = await this.storeParsed(original.name, original.data, parsed)
     try {
       signal?.throwIfAborted()
-      if (!this.getDraft(conversationId).some((attachment) => attachment.id === id)) throw new Error('解析期间附件已从草稿移除')
+      if (!(await this.getDraft(conversationId)).some((attachment) => attachment.id === id)) throw new Error('解析期间附件已从草稿移除')
       const context = this.contexts.get(next.id)!
       context.provenance = previous.provenance
       context.attachmentId = previous.attachmentId ?? previous.id
@@ -937,29 +969,29 @@ export class ContextManager {
         context.sendMode = 'text'
         context.name = `${original.name} · 提取文字`
       }
-      this.assets.update(this.toPublic(context), JSON.stringify(context))
-      this.saveDraft(conversationId, this.getDraft(conversationId).map((attachment) => attachment.id === id ? next.id : attachment.id))
-      this.remove(id)
+      await this.assets.update(this.toPublic(context), JSON.stringify(context))
+      await this.saveDraft(conversationId, (await this.getDraft(conversationId)).map((attachment) => attachment.id === id ? next.id : attachment.id))
+      await this.remove(id)
       return this.getDraft(conversationId)
-    } catch (error) { this.remove(next.id); throw error }
+    } catch (error) { await this.remove(next.id); throw error }
   }
 
-  sendOriginal(conversationId: string, id: string): ContextAttachment[] {
+  async sendOriginal(conversationId: string, id: string): Promise<ContextAttachment[]> {
     if (!this.assets) throw new Error('附件资源存储不可用')
-    const draft = this.getDraft(conversationId)
+    const draft = await this.getDraft(conversationId)
     const previous = draft.find((attachment) => attachment.id === id)
     if (!previous?.sendMode) throw new Error('请选择图片草稿附件')
-    const original = this.assets.original(id)
-    const next = this.storeImage(original.name, nativeImage.createFromBuffer(original.data), original.data)
+    const original = await this.assets.original(id)
+    const next = await this.storeImage(original.name, nativeImage.createFromBuffer(original.data), original.data)
     const stored = this.contexts.get(next.id)!
     stored.provenance = previous.provenance
     stored.attachmentId = previous.attachmentId ?? previous.id
     try {
-      if (this.assets.copyResult(id, next.id)) { stored.resultId = next.id; stored.completeness = previous.completeness }
-      this.assets.update(this.toPublic(stored), JSON.stringify(stored))
-      this.saveDraft(conversationId, draft.map((attachment) => attachment.id === id ? next.id : attachment.id))
-      this.remove(id)
+      if (await this.assets.copyResult(id, next.id)) { stored.resultId = next.id; stored.completeness = previous.completeness }
+      await this.assets.update(this.toPublic(stored), JSON.stringify(stored))
+      await this.saveDraft(conversationId, draft.map((attachment) => attachment.id === id ? next.id : attachment.id))
+      await this.remove(id)
       return this.getDraft(conversationId)
-    } catch (error) { this.remove(next.id); throw error }
+    } catch (error) { await this.remove(next.id); throw error }
   }
 }

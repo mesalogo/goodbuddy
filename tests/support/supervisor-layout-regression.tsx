@@ -14,6 +14,18 @@ import { installBundledUiFonts } from '../../src/renderer/src/fonts'
 installBundledUiFonts()
 
 const params = new URLSearchParams(location.search)
+if (params.has('focus')) {
+  const request = window.requestAnimationFrame.bind(window), cancel = window.cancelAnimationFrame.bind(window)
+  const pending = new Set<number>()
+  Reflect.set(window, 'focusRafs', pending)
+  window.requestAnimationFrame = callback => {
+    const tracked = new Error().stack?.includes('StoryGraph3D.tsx')
+    const id = request(now => { pending.delete(id); callback(now) })
+    if (tracked) pending.add(id)
+    return id
+  }
+  window.cancelAnimationFrame = id => { pending.delete(id); cancel(id) }
+}
 if (params.has('spiral')) {
   const THREE = await import('three')
   const add = THREE.Group.prototype.add
@@ -60,6 +72,30 @@ if (params.has('spiral')) {
   }
     THREE.Scene.prototype.onAfterRender = function (_renderer, scene, camera) {
       document.documentElement.dataset.camera = JSON.stringify(camera.position.toArray())
+      if (params.has('focus')) {
+        const frames = Reflect.get(window, 'focusFrames') ?? []
+        const direction = camera.getWorldDirection(new THREE.Vector3())
+        const snapshot = { at: performance.now(), position: camera.position.toArray(), yaw: Math.atan2(direction.x, -direction.z), zoom: (camera as import('three').PerspectiveCamera).zoom }
+        frames.push(snapshot)
+        if (frames.length > 240) frames.shift()
+        Reflect.set(window, 'focusFrames', frames)
+        const targets: unknown[] = []
+        scene.traverse(object => {
+          if (object.userData.node && !object.userData.cluster) {
+            const positions = (object as import('three').Mesh).geometry.getAttribute('position')
+            const mid = Math.floor(positions.count / 4) * 2
+            const p = new THREE.Vector3().fromBufferAttribute(positions, mid)
+              .lerp(new THREE.Vector3().fromBufferAttribute(positions, mid + 1), 0.37).project(camera)
+            targets.push({ id: object.userData.node.id, kind: 'story', x: p.x, y: p.y })
+          }
+          if (!object.userData.cluster && !object.userData.link) return
+          const p = object.position.clone().project(camera)
+          targets.push({ id: object.userData.link?.id ?? object.userData.cluster.events[0].id,
+            kind: object.userData.link ? 'experience' : 'event', x: p.x, y: p.y })
+        })
+        Reflect.set(window, 'focusTargets', targets)
+        return
+      }
       const point = new THREE.Vector3(), bounds = { left: 1, right: -1, top: -1, bottom: 1 }
       scene.traverse(object => {
         const positions = (object as import('three').Mesh).geometry?.getAttribute('position')
@@ -221,7 +257,10 @@ Object.defineProperty(window, 'goodbuddy', {
               events: [...graph.events, { id: 'outside-review', title: 'Outside review', occurred_at: '2026-08-01T00:00:00Z' }].filter((_event, index) => index % 2 === storyIndex).map(event => ({
                 id: event.id, title: event.title, startedAt: event.occurred_at, endedAt: event.occurred_at, projectId: 'p', primary: true, userSet: false
               }))
-            })), experiences: [], unassigned: 0, canUndo: false }) } : {}),
+            })), experiences: params.has('focus') ? [{ id: 'focus-experience', statement: 'Fixture experience', conditions: '', boundaries: '', userEdited: false,
+              events: [0, 1].map(index => ({ id: `event-${index}`, role: index ? 'applied' : 'formed', note: '', title: graph.events[index]!.title,
+                projectId: 'p', at: graph.events[index]!.occurred_at, storyId: index ? 'secondary' : 'feature', storyName: index ? 'Secondary story' : 'Fixture story' }))
+            }] : [], unassigned: 0, canUndo: false }) } : {}),
             continueContext: async () => ({ prompt: '模拟讨论上下文：本周已核对交付清单，负责人已确认。\n\n原始依据：模拟会议记录。外部评审时间仍待确认，下一步需要核对验收条件。' }),
             continue: async () => { throw new Error('Preview fixture must not send a message') },
             execution: async () => ({ active: params.has('activity'), ...(params.has('activity') ? { runId: 'activity-1' } : {}) }),
@@ -307,6 +346,27 @@ Object.defineProperty(window, 'goodbuddy', {
         }
 })
 let portableProjects: AssistantProject[] = []
+if (params.has('real-export')) {
+  // Use the checked-in read-only export. Its proposed feature grouping is not user-confirmed.
+  const data: { range: string[]; projects: Array<{ name: string; features: Array<{ id: string; name: string; events: Array<{ id: string; at: string; title: string; text: string }> }> }> } = await (await fetch('/focus-export.json')).json()
+  const savedEvents = new Map<string, SupervisionGraphView['events'][number]>()
+  const exportedStories = data.projects.flatMap((project, index) => project.features.map(feature => ({
+    id: feature.id, projectId: `export-${index}`, projectName: project.name, parentId: null, level: 'feature' as const, name: feature.name,
+    description: '', state: 'active' as const, stateEventId: null, userEdited: false, startedAt: null, endedAt: null,
+    events: feature.events.filter(event => {
+      if (savedEvents.has(event.id)) return false
+      savedEvents.set(event.id, { id: event.id, title: event.title || event.id, description: event.text, occurred_at: event.at, project_id: `export-${index}` })
+      return true
+    }).map(event => ({ id: event.id, title: event.title || event.id, startedAt: event.at, endedAt: event.at, projectId: `export-${index}`, primary: true, userSet: false }))
+  })))
+  const api = window.goodbuddy.supervision, overview = api.overview
+  Object.assign(api, {
+    overview: async () => (await overview()).map(result => ({ ...result, timeRange: { from: `${data.range[0]}T00:00:00Z`, to: `${data.range[1]}T00:00:00Z` } })),
+    graph: async () => ({ ...graph, events: [...savedEvents.values()], attention: [], eventEntities: [], eventSources: [] }),
+    stories: async () => ({ stories: exportedStories, experiences: [], unassigned: 0, canUndo: false })
+  })
+  document.documentElement.dataset.exportCounts = JSON.stringify({ projects: data.projects.length, stories: exportedStories.length, events: savedEvents.size })
+}
 if (params.has('portable')) {
   const data = await (await fetch('/portable-review.json')).json()
   portableProjects = data.projects

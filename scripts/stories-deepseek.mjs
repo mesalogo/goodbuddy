@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { parseEnv } from 'node:util'
 import { AssistantDatabase } from '../src/main/assistant/assistant-database.ts'
-import { assignStories } from '../src/main/assistant/supervision-stories.ts'
+import { assignStories } from '../src/main/assistant/story-assignment-service.ts'
 
 const [prepared, envPath, directory, mode, maxCallsArg] = process.argv.slice(2)
 const config = parseEnv(readFileSync(envPath, 'utf8'))

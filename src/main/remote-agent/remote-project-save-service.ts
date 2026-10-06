@@ -15,10 +15,8 @@ import type {
   AgentRuntimeSelection,
   RuntimeSelectionLayer
 } from '../../shared/runtime-selection-contracts'
-import type {
-  AssistantDatabase,
-  SshProjectWrite
-} from '../assistant/assistant-database'
+import type { SshProjectWrite } from '../assistant/assistant-database'
+import type { AssistantStoragePort, Awaitable } from '../assistant-storage-port'
 import type {
   SshConnectionTarget,
   SshHostStore
@@ -115,12 +113,10 @@ type PreparedRemoteProject = Readonly<{
 }>
 
 export type RemoteProjectSaveServiceOptions = {
-  database: Pick<
-    AssistantDatabase,
-    | 'getProject'
-    | 'createSshProject'
-    | 'updateSshProject'
-  >
+  database: Pick<AssistantStoragePort, 'getProject'> & {
+    createSshProject(write: Omit<SshProjectWrite, 'assertCurrent'>): Awaitable<AssistantProject>
+    updateSshProject(projectId: string, expectedUpdatedAt: string, write: Omit<SshProjectWrite, 'assertCurrent'>): Awaitable<AssistantProject>
+  }
   sshHosts: Pick<
     SshHostStore,
     'resolveConnectionTarget' | 'assertConnectionTargetCurrent'
@@ -213,7 +209,7 @@ export class RemoteProjectSaveService {
   ): Promise<AssistantProject> {
     const expectedUpdatedAt =
       request.intent === 'update'
-        ? this.#readUpdateRevision(request)
+        ? await this.#readUpdateRevision(request)
         : undefined
     const prepared = await this.#prepare(
       owner,
@@ -224,6 +220,11 @@ export class RemoteProjectSaveService {
     this.#progress(owner, 'saving')
     active.controller.signal.throwIfAborted()
     const write = this.#projectWrite(request, prepared)
+    this.#sshHosts.assertConnectionTargetCurrent(toCurrentSshConnectionTarget(prepared.target))
+    assertConnectionIdentity(prepared.target, prepared.installation, prepared.connection)
+    assertCriticalWorkspaceRead(prepared.connection)
+    prepared.runtimeLease.assertCurrent()
+    active.controller.signal.throwIfAborted()
     return request.intent === 'create'
       ? this.#database.createSshProject(write)
       : this.#database.updateSshProject(
@@ -332,10 +333,10 @@ export class RemoteProjectSaveService {
     }
   }
 
-  #readUpdateRevision(
+  async #readUpdateRevision(
     request: Extract<RemoteProjectSaveRequest, { intent: 'update' }>
-  ): string {
-    const project = this.#database.getProject(request.draft.projectId)
+  ): Promise<string> {
+    const project = await this.#database.getProject(request.draft.projectId)
     if (
       project.kind !== 'user' ||
       project.channel !== undefined ||
@@ -354,14 +355,11 @@ export class RemoteProjectSaveService {
   #projectWrite(
     request: RemoteProjectSaveRequest,
     prepared: PreparedRemoteProject
-  ): SshProjectWrite {
+  ): Omit<SshProjectWrite, 'assertCurrent'> {
     const {
       runtimeSelection,
       target,
-      installation,
-      connection,
-      workspace,
-      runtimeLease
+      workspace
     } = prepared
     return {
       project: {
@@ -374,14 +372,6 @@ export class RemoteProjectSaveService {
         kind: 'ssh',
         hostId: target.host.id,
         remoteRootPath: workspace.canonicalDisplayPath
-      },
-      assertCurrent: () => {
-        this.#sshHosts.assertConnectionTargetCurrent(
-          toCurrentSshConnectionTarget(target)
-        )
-        assertConnectionIdentity(target, installation, connection)
-        assertCriticalWorkspaceRead(connection)
-        runtimeLease.assertCurrent()
       }
     }
   }

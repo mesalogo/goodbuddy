@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AgentExecutionRequest, AgentRuntime, RuntimeModelUsageEvent } from '../agent/runtime'
 import type {
   MagicNoteEntry,
@@ -23,6 +23,17 @@ const entry: MagicNoteEntry = {
 }
 
 describe('magic note analyzer', () => {
+  it('awaits model usage persistence and rejects analysis if the write fails', async () => {
+    const { runtime } = recordingRuntime()
+    let reject!: (error: Error) => void
+    const persist = vi.fn(() => new Promise<void>((_resolve, fail) => { reject = fail }))
+    const pending = analyzeMagicNoteEntry(runtime, entry, options, undefined, persist)
+    const rejected = expect(pending).rejects.toThrow('Usage write failed')
+    await vi.waitFor(() => expect(persist).toHaveBeenCalledOnce())
+    reject(new Error('Usage write failed'))
+    await rejected
+  })
+
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII='
   const canvasEntry = {
     ...entry,
@@ -127,7 +138,7 @@ describe('magic note analyzer', () => {
     const usage: RuntimeModelUsageEvent[] = []
     const comments = await analyzeMagicNoteEntry(
       runtime, canvasEntry, options, undefined,
-      (event) => usage.push(event), { supportsImageInput: true, canvasPageCount: 2 }
+      (event) => { usage.push(event) }, { supportsImageInput: true, canvasPageCount: 2 }
     )
     expect(requests).toHaveLength(1)
     expect(requests[0]?.images).toEqual([

@@ -1019,34 +1019,38 @@ Renderer 主线程降速 4 倍（Main 不降速，每次 reload 后重新应用�
 
 ### PERF-15 存储接口异步化
 
-2026-10-05 范围澄清：目标职责与迁移边界见[桌面存储方向](../architecture/desktop-storage-direction.md)。
-当前先实施[监督者及执行路径的 KISS 局部修复](../review/kiss-local-fixes-2026-10-05.md)，
-完成、验证并提交后再讨论全面迁移。局部 Worker 复用不等于 PERF-15/16 已完成。
+2026-10-05 决策更新：[KISS 局部修复](../review/kiss-local-fixes-2026-10-05.md)已以 `b90ff50f` 提交。
+用户随后确定 PERF-15／PERF-16 及必要守护按一个完整架构候选交付，不拆成多轮局部产品交付。
+职责与 KISS 边界以[桌面存储与并发执行](../architecture/desktop-storage-direction.md)为准，
+多项目、多会话、多子任务的共同验收见[并发规范](../quality/concurrent-desktop-acceptance.md)。
+当前候选已完成存储宿主及主要生产组合，完整迁移验收尚未完成；以下编号保留为职责索引，不表示分别验收的发布阶段。实现状态汇总见[存储升级实施记录](../quality/storage-upgrade-implementation-2026-10-05.md)。
 
-- **优先级 / 状态：** P1 / 进行中（热点读走 worker；高频写降为 NORMAL、checkpoint 移出 Main、启动恢复按索引，见 7.2.2；接口异步化未开始）
-- **范围：** 在原进程内把 `AssistantDatabase`、`KnowledgeDatabase` 等对外接口改为异步，
-  调用方全部 `await`；会话列表只返回摘要，搜索下推到 SQL，活动记录改为增量追加。
-  远程 Runtime 实时事件改用已有的 `appendRemoteTaskEventsBatch` 批量写入，不再逐条同步事务。
-  Story Graph 检索先补测耗时，扫描规模设上限，匹配尽量下推到 SQL。
-- **验收：** 行为与测试不变；`PERF-11` Main event-loop 延迟不变差。
+- **优先级 / 状态：** P1 / 进行中（存储域接口和主要生产调用已异步化；完整调用清理、异常路径和 C01-C07/A01-A10 验收仍未完成）
+- **范围：** 为桌面业务存储建立异步领域接口，保留完整事务和先写后读顺序；包含 Assistant、
+  Knowledge、附件、桌面 Runtime 绑定和本机原生客户端账本。跨边界调用方等待实际完成；同步缓存读取
+  与内部纯计算无需变成 IPC。已完成的摘要、SQL 搜索、活动增量和远程事件批处理继续复用。
+- **验收：** 与 PERF-16 一起通过 SA-01～SA-07；只增加 Promise 或保留 Main 同步执行不计完成。
 
 ### PERF-16 数据进程
 
-- **优先级 / 状态：** P1 / 待开始
-- **实施条件：** `PERF-15` 完成，调用方已全部异步。
+- **优先级 / 状态：** P1 / 进行中（`utilityProcess` 宿主已接入 Assistant、Knowledge、文件和 Runtime 域；全量生产路径与并发验收仍未完成）
+- **接口条件：** 每条跨进程业务操作具备异步调用及事务边界；与 PERF-15 在同一候选完成和验收，不单独交付半迁移状态。
 - **范围：** 目标为统一管理业务 SQLite 的 `utilityProcess`，承接会话、知识库、Story Graph、
   远程 Runtime 事件持久化和活动记录的业务事务；Main 只做校验与转发。重查询由受管只读 Worker
   分担，解析、OCR 与 Runtime 执行保持独立，每个数据库明确一个写入所有者；不合并现有数据库。
   职责、生命周期及 VS Code 对照以[桌面存储方向](../architecture/desktop-storage-direction.md)为准。
-- **验收：** 大知识库检索、会话列表和文档导入期间 Main event-loop 延迟达到批次目标；取消、
-  崩溃恢复和迁移语义不回退。
+- **验收：** Main 无目标业务 SQLite 直接或间接访问、无同步回退；多项目／会话／子任务、重查询、
+  导入及发布重叠时满足性能原则。完整矩阵、取消、故障、旧库和平台要求按并发验收执行。
 
 ### PERF-17 架构守护
 
-- **优先级 / 状态：** P2 / 待开始
-- **范围：** lint 禁止 `src/main` 使用同步文件 API 和在数据进程外引用 `DatabaseSync`；禁止
-  组件直接订阅 `window.goodbuddy.*.on*`；限制 `App.tsx` 规模；`PERF-11` 关键指标设置回归阈值。
-- **验收：** 违反规则的改动在 lint 或基准阶段失败。
+- **优先级 / 状态：** P2 / 部分实施（已有 lint 与历史回归上限；间接访问、单调收紧及并发性能检查待补）
+- **范围：** 按实际执行环境检查 Main 同步文件操作、直接和间接 SQLite 打开；存储宿主、受管 Worker、
+  测试及远端 Agent 的合法连接按[并发验收的自动检查规则](../quality/concurrent-desktop-acceptance.md#自动检查与交付记录)列明，
+  不按目录一概禁止。禁止组件直接订阅 `window.goodbuddy.*.on*`，限制 `App.tsx` 规模，
+  为 `PERF-11` 及并发场景建立符合性能原则的检查。
+- **验收：** 违反规则的改动在 lint 或基准阶段失败；本次完整架构所需守护随同一候选交付。
+  历史性能回归上限不能替代规范预算，无 CI／性能环境结果时不标记验收通过。
 
 ## 8. 体验与可访问性
 

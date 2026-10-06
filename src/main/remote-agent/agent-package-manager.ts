@@ -5,7 +5,7 @@ import {
   verify
 } from 'node:crypto'
 import { constants } from 'node:fs'
-import {
+import fs, {
   lstat,
   mkdir,
   open,
@@ -307,6 +307,9 @@ export class AgentPackageManager {
   async getInventory(
     options: { refresh?: boolean } = {}
   ): Promise<AgentPackageInventory> {
+    for (const directory of this.#pendingRemovals) {
+      await this.#removeWhenUnused(directory).catch(() => undefined)
+    }
     if (options.refresh) {
       this.#installed.clear()
     }
@@ -1074,12 +1077,16 @@ export class AgentPackageManager {
         // Invalid cache entries remain visible as an invalid inventory state.
       }
     }
-    return verified.sort((left, right) =>
+    const [current, ...obsolete] = verified.sort((left, right) =>
       compareSemanticVersions(
         right.verified.descriptor.version,
         left.verified.descriptor.version
       )
-    )[0]
+    )
+    for (const record of obsolete) {
+      await this.#removeWhenUnused(record.directory).catch(() => undefined)
+    }
+    return current
   }
 
   async #installArchive(
@@ -1869,21 +1876,19 @@ export class AgentPackageManager {
         return
       }
       this.#leaseCounts.delete(key)
-      if (this.#pendingRemovals.delete(key)) {
-        void rm(key, {
-          recursive: true,
-          force: true
-        }).catch(() => undefined)
+      if (this.#pendingRemovals.has(key)) {
+        void this.#removeWhenUnused(key).catch(() => undefined)
       }
     }
   }
 
   async #removeWhenUnused(directory: string): Promise<void> {
+    this.#pendingRemovals.add(directory)
     if ((this.#leaseCounts.get(directory) ?? 0) > 0) {
-      this.#pendingRemovals.add(directory)
       return
     }
-    await rm(directory, { recursive: true, force: true })
+    await fs.rm(directory, { recursive: true, force: true })
+    this.#pendingRemovals.delete(directory)
   }
 
   #runExclusive<T>(

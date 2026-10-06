@@ -1625,6 +1625,7 @@ const desktopApi: DesktopApi = {
     cancelParsing: (operationId) => ipcRenderer.invoke(ipcChannels.contextCancelParsing, operationId),
     sendOriginal: (conversationId, id) => ipcRenderer.invoke(ipcChannels.contextSendOriginal, { conversationId, id }),
     openOriginal: (id) => ipcRenderer.invoke(ipcChannels.contextOpenOriginal, id),
+    readOutput: (input) => ipcRenderer.invoke(ipcChannels.contextReadOutput, input),
     addResultImages: (conversationId, resultId, imageIds) => ipcRenderer.invoke(ipcChannels.contextAddResultImages, { conversationId, resultId, imageIds }),
     onDraftChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, conversationId: string, attachments: ContextAttachment[]): void => listener(conversationId, attachments)
@@ -1838,6 +1839,13 @@ const desktopApi: DesktopApi = {
       const paths = files
         .map((file) => webUtils.getPathForFile(file))
         .filter(Boolean)
+      await ipcRenderer.invoke(ipcChannels.knowledgeImportPaths, {
+        libraryId,
+        paths,
+        graphStrategy
+      })
+    },
+    importPaths: async (libraryId, paths, graphStrategy) => {
       await ipcRenderer.invoke(ipcChannels.knowledgeImportPaths, {
         libraryId,
         paths,

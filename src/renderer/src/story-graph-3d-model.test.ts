@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SupervisionStory } from '../../shared/supervision-story-contracts'
-import { buildStoryTree, clusterEvents, experienceLinks, radiusLevels, storyWindow, timelineSegments, visibleLevel } from './story-graph-3d-model'
+import { buildStoryTree, clusterEvents, experienceLinks, radiusLevels, selectionFocus, storyWindow, timelineSegments, visibleLevel } from './story-graph-3d-model'
 
 const day = 86_400_000
 const at = (d: number) => new Date(Date.parse('2026-09-01T00:00:00Z') + d * day).toISOString()
@@ -12,6 +12,37 @@ const story = (id: string, level: SupervisionStory['level'], days: number[], ext
 })
 
 describe('story graph 3d model', () => {
+  it('resolves external selections across hidden hierarchies without moving visible events to another level', () => {
+    const tree = buildStoryTree([story('a', 'feature', [1]), story('thread', 'thread', [2], { parentId: 'a' }),
+      story('b', 'feature', [3], { projectId: 'p2' }), story('cross', 'cross', [4])], new Map())
+    const a = tree.children[0]!.children[0]!
+    const b = tree.children[1]!.children[0]!
+    expect(selectionFocus(tree, tree, { kind: 'event', id: 'b-0' }, [])?.node).toBe(tree)
+    expect(selectionFocus(tree, a, { kind: 'event', id: 'b-0' }, [])?.node).toBe(b)
+    expect(selectionFocus(tree, b, { kind: 'event', id: 'thread-0' }, [])?.node).toBe(a.children[0])
+    const featureEvent = selectionFocus(tree, b, { kind: 'event', id: 'a-0' }, [])!
+    expect(featureEvent.node).toBe(a.parent)
+    expect(visibleLevel(featureEvent.node).children.some(node => node.events.some(event => event.id === 'a-0'))).toBe(true)
+    expect(selectionFocus(tree, b, { kind: 'story', id: 'a' }, [])).toMatchObject({ node: a, angle: (a.a0 + a.a1) / 2, time: (a.start + a.end) / 2 })
+    expect(selectionFocus(tree, a, { kind: 'story', id: 'cross' }, [])?.node.level).toBe('cross')
+    expect(selectionFocus(tree, a, { kind: 'event', id: 'missing' }, [])).toBeUndefined()
+  })
+
+  it('finds a hidden experience at its linking level even outside the default six-link limit', () => {
+    const tree = buildStoryTree([story('a', 'feature', [1]), story('b', 'feature', [3])], new Map())
+    const experiences = Array.from({ length: 7 }, (_, i) => ({ id: `w${i}`, statement: '', conditions: '', boundaries: '', userEdited: false,
+      events: ['a-0', 'b-0'].map((id, index) => ({ id, role: index ? 'applied' as const : 'formed' as const, at: at(index ? 3 : 1), note: '', title: '', projectId: 'p1', storyId: null, storyName: null })) }))
+    expect(experienceLinks(experiences, tree.children[0]!.children).some(link => link.id === 'w6')).toBe(false)
+    const target = selectionFocus(tree, tree, { kind: 'experience', id: 'w6' }, experiences)
+    expect(target?.node).toBe(tree.children[0])
+    expect(target?.time).toBe(Date.parse(at(2)))
+    expect(selectionFocus(tree, tree, { kind: 'experience', id: 'missing' }, experiences)).toBeUndefined()
+    const nested = buildStoryTree([story('feature', 'feature', []), story('a', 'thread', [1], { parentId: 'feature' }),
+      story('b', 'thread', [3], { parentId: 'feature' })], new Map())
+    const project = nested.children[0]!
+    expect(selectionFocus(nested, project, { kind: 'experience', id: 'w6' }, experiences)?.node).toBe(project.children[0])
+  })
+
   it('retains historical IDs and genuinely unassigned events without borrowing current replacements', () => {
     const saved = (id: string, project_id: string | null, d: number) => ({ id, project_id, title: 'Same title', description: '', occurred_at: at(d), started_at: at(d - 0.5) })
     const events = [saved('old-extraction', 'p1', 1), saved('never-assigned', 'p1', 2), saved('unknown-project', null, 3), saved('exact-member', 'p1', 4)]

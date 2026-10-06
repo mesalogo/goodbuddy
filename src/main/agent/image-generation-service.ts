@@ -5,7 +5,7 @@ import {
   imageSaveMaximumBytes, imageSaveMimeTypeForPath, imageSaveToolDescription, imageSaveToolInputSchema, imageToolDescription, imageToolInputSchema,
   type ImageOperation, type ImageRequestContext, type ImageSaveResult, type ImageSaveToolInput, type ImageToolInput
 } from '../../shared/image-generation-contracts'
-import type { AssistantDatabase } from '../assistant/assistant-database'
+import type { AssistantStoragePort, Awaitable } from '../assistant-storage-port'
 import { ModelAgentRuntime, type ModelRuntimeOptions } from './model-runtime'
 import { withImageConversationContext } from './image-conversation-context'
 import type { AgentImage, RuntimeEvent } from './runtime'
@@ -26,10 +26,10 @@ export type ImageServiceSettings = {
   defaultImageModelProfileId?: string | null
 }
 export type ImageGenerationServiceOptions = {
-  database: Pick<AssistantDatabase, 'getConversation' | 'getArtifact' | 'saveConversationImageOperation' | 'saveConversationImageSources' | 'markUnfinishedImageOperationsUnconfirmed'>
+  database: Pick<AssistantStoragePort, 'getConversation' | 'getArtifact' | 'saveConversationImageOperation' | 'saveConversationImageSources' | 'markUnfinishedImageOperationsUnconfirmed'>
   getSettings(): Promise<ImageServiceSettings>
   onOperation?(operation: ImageOperation): void
-  onUsage?(event: Extract<RuntimeEvent, { type: 'model-usage' }>): void
+  onUsage?(event: Extract<RuntimeEvent, { type: 'model-usage' }>): Awaitable<void>
   /** Diagnostic sink for observer or terminal-persistence failures; must not throw. */
   onError?(error: Error): void
   fetcher?: typeof fetch
@@ -41,11 +41,13 @@ export type ImageGenerationServiceOptions = {
 export class ImageGenerationService {
   private readonly active = new Map<string, { operation: ImageOperation; controller: AbortController; done: Promise<void> }>()
   private closing = false
+  private persistenceFailure?: unknown
+  private readonly pending = new Set<Promise<ImageOperation>>()
 
   constructor(private readonly options: ImageGenerationServiceOptions) {}
 
-  initialize(): void {
-    this.options.database.markUnfinishedImageOperationsUnconfirmed()
+  async initialize(): Promise<void> {
+    await this.options.database.markUnfinishedImageOperationsUnconfirmed()
   }
 
   bind(context: ImageRequestContext): ImageToolBinding {
@@ -57,7 +59,7 @@ export class ImageGenerationService {
         const settings = await this.options.getSettings()
         const profiles = settings.modelProfiles.filter(profile => profile.protocol === 'openai-images-generations' && profile.allowConversationInvocation === true)
         if (!profiles.length) return undefined
-        const conversation = this.options.database.getConversation(bound.conversationId)
+        const conversation = await this.options.database.getConversation(bound.conversationId)
         const references = conversation.messages.flatMap(message => [
           ...(message.imageSourceArtifactIds ?? []).map(id => ({ id, kind: 'upload' })),
           ...(message.artifactIds ?? []).map(id => ({ id, kind: 'artifact' }))
@@ -72,18 +74,18 @@ export class ImageGenerationService {
         const key = JSON.stringify([bound.conversationId, bound.requestId, callId])
         let submitted = submissions.get(key)
         if (!submitted) {
-          submitted = this.submit(bound, imageToolInputSchema.parse(input), callId, signal)
+          submitted = this.track(this.submit(bound, imageToolInputSchema.parse(input), callId, signal))
           submissions.set(key, submitted)
           void submitted.catch(() => submissions.delete(key))
         }
         const operation = await submitted
         const active = this.active.get(operation.id)
         if (active) {
-          await new Promise<void>(resolve => {
+          await new Promise<void>((resolve, reject) => {
             const finish = (): void => { clearTimeout(timer); signal?.removeEventListener('abort', finish); resolve() }
             const timer = setTimeout(finish, this.options.toolWaitMs ?? 15_000)
             signal?.addEventListener('abort', finish, { once: true })
-            void active.done.then(finish)
+            void active.done.then(finish, error => { clearTimeout(timer); signal?.removeEventListener('abort', finish); reject(error) })
             if (signal?.aborted) finish()
           })
           return active.operation
@@ -91,7 +93,7 @@ export class ImageGenerationService {
         return this.getOperation(bound.conversationId, operation.id)
       },
       describeSave: async () => {
-        const conversation = this.options.database.getConversation(bound.conversationId)
+        const conversation = await this.options.database.getConversation(bound.conversationId)
         // The model can only save IDs it has seen, so list them even when generate_image is unavailable.
         const references = conversation.messages.flatMap(message => [
           ...(message.imageSourceArtifactIds ?? []).map(id => ({ artifactId: id, kind: 'upload' })),
@@ -104,7 +106,7 @@ export class ImageGenerationService {
           if (seen.has(reference.artifactId)) continue
           seen.add(reference.artifactId)
           try {
-            if (this.options.database.getArtifact(reference.artifactId).kind !== 'image') continue
+            if ((await this.options.database.getArtifact(reference.artifactId)).kind !== 'image') continue
           } catch (error) {
             if (error instanceof Error && error.message === '成果不存在') continue
             throw error
@@ -149,17 +151,18 @@ export class ImageGenerationService {
 
   /** Returns a conversation-visible image encoded as the requested format; used for local and remote saves. */
   async readImageForSave(conversationId: string, artifactId: string, targetMimeType: ImageSaveResult['mimeType']): Promise<Buffer> {
-    const conversation = this.options.database.getConversation(conversationId)
+    const conversation = await this.options.database.getConversation(conversationId)
     const allowed = new Set(conversation.messages.flatMap(message => [
       ...(message.artifactIds ?? []), ...(message.imageSourceArtifactIds ?? []),
       ...(message.imageOperations?.flatMap(operation => operation.artifactIds) ?? [])
     ]))
     if (!allowed.has(artifactId)) throw new Error('Image is not available in this conversation')
-    let artifact: ReturnType<AssistantDatabase['getArtifact']>
+    let artifact: Awaited<ReturnType<AssistantStoragePort['getArtifact']>>
     try {
-      artifact = this.options.database.getArtifact(artifactId)
-    } catch {
-      throw new Error('Image is not available in this conversation')
+      artifact = await this.options.database.getArtifact(artifactId)
+    } catch (error) {
+      if (error instanceof Error && error.message === '成果不存在') throw new Error('Image is not available in this conversation', { cause: error })
+      throw error
     }
     const match = artifact.kind === 'image'
       ? artifact.content?.match(/^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/u)
@@ -177,48 +180,63 @@ export class ImageGenerationService {
     return bytes
   }
 
-  persistUploads(context: Pick<ImageRequestContext, 'conversationId' | 'messageId'>, images: readonly AgentImage[]): string[] {
+  async persistUploads(context: Pick<ImageRequestContext, 'conversationId' | 'messageId'>, images: readonly AgentImage[]): Promise<string[]> {
     return this.options.database.saveConversationImageSources({ ...context, images })
   }
 
-  getOperation(conversationId: string, operationId: string): ImageOperation {
-    const operation = this.options.database.getConversation(conversationId).messages
+  async getOperation(conversationId: string, operationId: string): Promise<ImageOperation> {
+    const operation = (await this.options.database.getConversation(conversationId)).messages
       .flatMap(message => message.imageOperations ?? []).find(item => item.id === operationId)
     if (!operation) throw new Error('Image operation does not exist in this conversation')
     return operation
   }
 
-  cancel(conversationId: string, operationId: string): ImageOperation {
-    const previous = this.getOperation(conversationId, operationId)
+  cancel(conversationId: string, operationId: string): Promise<ImageOperation> {
+    return this.track(this.cancelOperation(conversationId, operationId))
+  }
+
+  private async cancelOperation(conversationId: string, operationId: string): Promise<ImageOperation> {
+    const previous = await this.getOperation(conversationId, operationId)
     const active = this.active.get(operationId)
     if (!active) return previous
-    active.operation = this.save({ ...active.operation, state: 'cancelling', cancellationRequested: true })
+    active.operation = { ...active.operation, state: 'cancelling', cancellationRequested: true }
+    await this.save(active.operation)
     active.controller.abort(new Error('Stopped waiting; the image provider may still generate the image'))
     return active.operation
   }
 
-  regenerate(context: ImageRequestContext, operationId: string): Promise<ImageOperation> {
-    const previous = this.getOperation(context.conversationId, operationId)
+  async regenerate(context: ImageRequestContext, operationId: string): Promise<ImageOperation> {
+    const previous = await this.getOperation(context.conversationId, operationId)
     // Keep the originating request so usage stays attached to its task row;
     // the fresh call ID keeps the regenerated operation distinct.
     return this.bind({ ...context, requestId: previous.requestId })
       .call({ ...previous.input, modelProfileId: previous.modelProfileId }, randomUUID())
   }
 
-  cancelConversation(conversationId: string): void {
+  async cancelConversation(conversationId: string): Promise<void> {
     for (const active of this.active.values()) {
-      if (active.operation.conversationId === conversationId) this.cancel(conversationId, active.operation.id)
+      if (active.operation.conversationId === conversationId) await this.cancel(conversationId, active.operation.id)
     }
   }
 
   async dispose(): Promise<void> {
     this.closing = true
+    await Promise.allSettled(this.pending)
     for (const active of this.active.values()) active.controller.abort(new Error('Application is closing; image result is unconfirmed'))
-    await Promise.all([...this.active.values()].map(active => active.done))
+    await Promise.allSettled([...this.active.values()].map(active => active.done))
+    if (this.persistenceFailure) throw this.persistenceFailure
   }
 
-  private save(operation: ImageOperation, image?: { mimeType: 'image/png' | 'image/jpeg' | 'image/webp'; data: string }): ImageOperation {
-    const saved = this.options.database.saveConversationImageOperation({ ...operation, updatedAt: Date.now() }, image)
+  private track(operation: Promise<ImageOperation>): Promise<ImageOperation> {
+    this.pending.add(operation)
+    void operation.then(() => this.pending.delete(operation), () => this.pending.delete(operation))
+    return operation
+  }
+
+  private async save(operation: ImageOperation, image?: { mimeType: 'image/png' | 'image/jpeg' | 'image/webp'; data: string }): Promise<ImageOperation> {
+    let saved: ImageOperation
+    try { saved = await this.options.database.saveConversationImageOperation({ ...operation, updatedAt: Date.now() }, image) }
+    catch (error) { this.persistenceFailure = error; throw error }
     try {
       this.options.onOperation?.(saved)
     } catch (error) {
@@ -235,7 +253,7 @@ export class ImageGenerationService {
   private async submit(context: ImageRequestContext, input: ImageToolInput, callId: string, signal?: AbortSignal): Promise<ImageOperation> {
     if (this.closing) throw new Error('Image service is closing')
     const settings = await this.options.getSettings()
-    const conversation = this.options.database.getConversation(context.conversationId)
+    const conversation = await this.options.database.getConversation(context.conversationId)
     const existing = conversation.messages.flatMap(message => message.imageOperations ?? [])
       .find(operation => operation.requestId === context.requestId && operation.callId === callId)
     if (existing) return existing
@@ -255,11 +273,22 @@ export class ImageGenerationService {
     if (!profile || !profile.allowConversationInvocation || profile.protocol !== 'openai-images-generations') throw new Error('Selected image model is unavailable; select another model')
     if (profile.authentication === 'api-key' && !profile.apiKey) throw new Error('Selected image model has no API key configured')
     const connection = structuredClone(profile)
-    const request = withImageConversationContext({ requestId: context.requestId, conversationId: context.conversationId, prompt: input.prompt, imageContextArtifactIds: input.sourceArtifactIds }, id => this.options.database.getArtifact(id))
+    const artifacts = new Map<string, Awaited<ReturnType<AssistantStoragePort['getArtifact']>>>()
+    for (const id of input.sourceArtifactIds) {
+      try { artifacts.set(id, await this.options.database.getArtifact(id)) }
+      catch (error) {
+        if (!(error instanceof Error) || error.message !== '成果不存在') throw error
+      }
+    }
+    const request = withImageConversationContext({ requestId: context.requestId, conversationId: context.conversationId, prompt: input.prompt, imageContextArtifactIds: input.sourceArtifactIds }, id => {
+      const artifact = artifacts.get(id)
+      if (!artifact) throw new Error('成果不存在')
+      return artifact
+    })
     if (input.intent === 'edit' && (request.imageContextNotice || request.images?.length !== input.sourceArtifactIds.length)) throw new Error('Source image is missing or unsupported; select the image again')
     signal?.throwIfAborted()
     if (this.closing) throw new Error('Image service is closing')
-    const operation = this.save({ id: randomUUID(), conversationId: context.conversationId, messageId: context.messageId, requestId: context.requestId,
+    const operation = await this.save({ id: randomUUID(), conversationId: context.conversationId, messageId: context.messageId, requestId: context.requestId,
       callId, modelProfileId: connection.id, modelName: connection.modelName, modelProfileName: connection.name,
       input: { ...input, quality: input.quality ?? connection.imageGenerationQuality ?? 'auto' },
       state: 'running', artifactIds: [], createdAt: Date.now(), updatedAt: Date.now() })
@@ -268,14 +297,19 @@ export class ImageGenerationService {
     const active = { operation, controller: new AbortController(), done: Promise.resolve() }
     this.active.set(operation.id, active)
     active.done = (async () => {
+      let persistenceError: unknown
       try {
         for await (const event of runtime.generateImage(request, active.controller.signal)) {
           if (event.type === 'model-usage') {
-            try { this.options.onUsage?.(event) } catch (error) { this.report(error) }
+            try { await this.options.onUsage?.(event) }
+            catch (error) { persistenceError = error; throw error }
           }
           if (event.type === 'generated-image') {
-            active.operation = this.save({ ...active.operation, state: 'saving' })
-            active.operation = this.save(active.operation, event)
+            try {
+              const saving = await this.save({ ...active.operation, state: 'saving' })
+              active.operation = { ...saving, cancellationRequested: active.operation.cancellationRequested ?? saving.cancellationRequested }
+              active.operation = await this.save(active.operation, event)
+            } catch (error) { persistenceError = error; throw error }
           }
         }
       } catch (error) {
@@ -284,12 +318,14 @@ export class ImageGenerationService {
         const suffix = detail.match(/（HTTP [^）]+）$/u)?.[0] ?? ''
         const publicDetail = redactSensitiveText(suffix ? detail.slice(0, -suffix.length) : detail) + suffix
         active.operation = { ...active.operation, state, error: publicDetail.slice(0, 2_000), updatedAt: Date.now() }
-        try { active.operation = this.save(active.operation) } catch (storageError) { this.report(storageError) }
+        active.operation = await this.save(active.operation)
+        if (persistenceError) throw persistenceError
       } finally {
         await runtime.dispose()
         this.active.delete(operation.id)
       }
     })()
+    void active.done.catch(error => { this.persistenceFailure = error; this.report(error) })
     return operation
   }
 }

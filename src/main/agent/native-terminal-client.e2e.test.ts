@@ -10,6 +10,7 @@ import type { NativeTerminalLaunch } from '../terminal/terminal-session-manager'
 import { LocalTerminalSession } from '../terminal/local-terminal-session'
 import { resolveBundledRuntimePaths } from './bundled-runtimes'
 import { NativeTerminalClient } from './native-terminal-client'
+import { AgentModelCallLedger } from '../../agent-daemon/agent-model-gateway'
 
 // Opt-in because these tests execute the installed native clients and a real PTY.
 describe.skipIf(!process.env.GOODBUDDY_NATIVE_NODE)('installed native terminal clients', () => {
@@ -21,6 +22,7 @@ describe.skipIf(!process.env.GOODBUDDY_NATIVE_NODE)('installed native terminal c
       const requests: Array<Record<string, unknown>> = []
       const profile = { id: 'native-test', name: 'Native Test Model', modelName: 'native-test-model', baseUrl: 'https://native-test.invalid/v1', protocol: 'openai-chat-completions' as const, authentication: 'api-key' as const, apiKey: 'test-provider-secret' }
       const client = new NativeTerminalClient({
+        openModelCallLedger: async path => new AgentModelCallLedger(path),
         rootDirectory: root,
         nodeExecutable: process.env.GOODBUDDY_NATIVE_NODE,
         bundledRuntimePaths: resolveBundledRuntimePaths({ appPath: process.cwd(), resourcesPath: '', packaged: false }),

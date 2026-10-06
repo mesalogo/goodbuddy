@@ -456,6 +456,11 @@ export const app = {
       waitingOutput: '执行中，尚无结果。',
       emptyOutput: '执行完成，无返回内容。',
       copyAction: '复制',
+      fullOutput: '读取完整输出 {{index}}',
+      nextOutputPage: '下一页',
+      copyOutputPage: '复制本页',
+      loadingOutput: '正在读取输出…',
+      readOutputFailed: '无法读取已保存的输出，请重试。',
       copy: '复制{{label}}',
       copied: '已复制工具详情',
       states: {

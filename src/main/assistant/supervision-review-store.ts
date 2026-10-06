@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { isIncrementalReview, type SupervisionEvidence, type SupervisionRunRequest, type SupervisionSummaryOutput } from '../../shared/supervision-contracts'
 import type { SupervisionReviewBatch, SupervisionReviewProgress, SupervisionReviewSettings } from '../../shared/supervision-review-contracts'
+import { setImmediate as yieldTurn } from 'node:timers/promises'
 /**
  * Supervisor progress is one shared timeline: each source version is extracted once,
  * whichever scope reviewed it. Scopes only filter what a review reads and shows.
@@ -12,6 +13,19 @@ export type ReviewConfiguration = SupervisionReviewSettings & { timeoutSeconds: 
 export type ReviewState = { request: SupervisionRunRequest; config: ReviewConfiguration; initializing?: boolean; restartRequired?: boolean; omittedSources?: number; phase?: SupervisionReviewProgress['phase']; stories?: SupervisionReviewProgress['stories'] }
 
 export class ReviewSourcesOmitted extends Error {}
+
+export type ReviewManifestRow = {
+  source: string; revision: string; project_id: string; conversation_id: string;
+  sequence: number; length: number; initial_offset: number
+}
+export type ReviewRevisionRow = Pick<ReviewManifestRow, 'source' | 'revision'>
+/** Only read operations cross to the existing read worker. All writes stay here. */
+export interface ReviewManifestReader {
+  scan(state: ReviewState, signal?: AbortSignal): Promise<void>
+  page(offset: number, signal?: AbortSignal): Promise<ReviewManifestRow[]>
+  release(): Promise<void>
+  changedSource(rows: ReviewRevisionRow[], signal?: AbortSignal): Promise<string | undefined>
+}
 
 // Only the manifest is materialized. Source bodies are read in bounded substrings.
 export const supervisionReviewMigration = `
@@ -86,6 +100,22 @@ export class SupervisionReviewStore {
   }
 
   initializeSources(runId: string, state: ReviewState, signal?: AbortSignal): void {
+    this.createSourceManifest(state, signal)
+    try {
+      while (this.clearSourceBatch(runId)) signal?.throwIfAborted()
+      for (let offset = 0;; offset += 200) {
+        signal?.throwIfAborted()
+        const rows = this.sourceManifestPage(offset)
+        if (!rows.length) break
+        this.appendSourceBatch(runId, rows)
+      }
+      signal?.throwIfAborted()
+      this.finishInitialization(runId)
+    } finally { this.releaseSourceManifest() }
+  }
+
+  /** Read-worker-only temporary data. This never mutates the business database. */
+  createSourceManifest(state: ReviewState, signal?: AbortSignal): void {
     const { request } = state
     signal?.throwIfAborted()
     if (request.scope.kind === 'projects') {
@@ -113,28 +143,85 @@ export class SupervisionReviewStore {
           request.timeRange.from, request.timeRange.to, request.scope.kind,
           JSON.stringify(request.scope.kind === 'projects' ? request.scope.projectIds : []))
       this.db.exec('COMMIT')
-    } catch (error) { this.db.exec('ROLLBACK'); throw error }
+    } catch (error) { this.db.exec('ROLLBACK'); this.releaseSourceManifest(); throw error }
+  }
+
+  sourceManifestPage(offset: number): ReviewManifestRow[] {
+    return this.db.prepare('SELECT * FROM temp.review_manifest WHERE rowid > ? AND rowid <= ? ORDER BY rowid')
+      .all(offset, offset + 200) as ReviewManifestRow[]
+  }
+
+  releaseSourceManifest(): void { this.db.exec('DROP TABLE IF EXISTS temp.review_manifest') }
+
+  private clearSourceBatch(runId: string): boolean {
+    return this.db.prepare(`DELETE FROM supervision_review_sources WHERE run_id = ? AND source IN
+      (SELECT source FROM supervision_review_sources WHERE run_id = ? LIMIT 200)`).run(runId, runId).changes > 0
+  }
+
+  private appendSourceBatch(runId: string, rows: ReviewManifestRow[]): void {
+    if (rows.length > 200) throw new RangeError('Review manifest batch exceeds 200 rows')
+    const insert = this.db.prepare('INSERT INTO supervision_review_sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    this.db.exec('BEGIN IMMEDIATE')
     try {
-      // Incomplete manifests are disposable. The saved flag survives shutdown and
-      // makes resume rebuild them before extraction or publication can proceed.
-      for (;;) {
-        signal?.throwIfAborted()
-        const removed = this.db.prepare(`DELETE FROM supervision_review_sources WHERE run_id = ? AND source IN
-          (SELECT source FROM supervision_review_sources WHERE run_id = ? LIMIT 200)`).run(runId, runId)
-        if (!removed.changes) break
-      }
-      const insert = this.db.prepare(`INSERT INTO supervision_review_sources
-        SELECT ?, source, revision, project_id, conversation_id, sequence, length, initial_offset, initial_offset
-        FROM temp.review_manifest WHERE rowid > ? AND rowid <= ?`)
-      const count = Number(this.db.prepare('SELECT COUNT(*) AS n FROM temp.review_manifest').get()!.n)
-      for (let offset = 0; offset < count; offset += 200) {
-        signal?.throwIfAborted()
-        insert.run(runId, offset, offset + 200)
-      }
-      signal?.throwIfAborted()
+      for (const row of rows) insert.run(runId, row.source, row.revision, row.project_id, row.conversation_id,
+        row.sequence, row.length, row.initial_offset, row.initial_offset)
+      this.db.exec('COMMIT')
+    } catch (error) { this.db.exec('ROLLBACK'); throw error }
+  }
+
+  private finishInitialization(runId: string): void {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
       this.db.prepare("UPDATE supervision_review_runs SET state_json = json_remove(state_json, '$.initializing') WHERE run_id = ?").run(runId)
       this.omitDeletedConversations(runId)
-    } finally { this.db.exec('DROP TABLE IF EXISTS temp.review_manifest') }
+      this.db.exec('COMMIT')
+    } catch (error) { this.db.exec('ROLLBACK'); throw error }
+  }
+
+  async initializeWithReader(runId: string, state: ReviewState, reader: ReviewManifestReader, signal?: AbortSignal): Promise<void> {
+    this.prepareInitialization(runId, state)
+    await this.initializeSourcesWithReader(runId, state, reader, signal)
+  }
+
+  private checkRunning(runId: string, signal?: AbortSignal): void {
+    signal?.throwIfAborted()
+    if (this.db.prepare('SELECT status FROM supervision_runs WHERE id = ?').get(runId)?.status !== 'running') {
+      throw new Error('Review stopped during manifest processing')
+    }
+  }
+
+  private async initializeSourcesWithReader(runId: string, state: ReviewState, reader: ReviewManifestReader, signal?: AbortSignal): Promise<void> {
+    this.checkRunning(runId, signal)
+    try {
+      await reader.scan(state, signal)
+      for (;;) {
+        this.checkRunning(runId, signal)
+        if (!this.clearSourceBatch(runId)) break
+        await yieldTurn()
+      }
+      for (let offset = 0;; offset += 200) {
+        this.checkRunning(runId, signal)
+        const rows = await reader.page(offset, signal)
+        this.checkRunning(runId, signal)
+        if (!rows.length) break
+        this.appendSourceBatch(runId, rows)
+        await yieldTurn()
+      }
+    } finally {
+      // Uncancelled cleanup settles the scan connection before releasing its slot.
+      await reader.release()
+    }
+    this.checkRunning(runId, signal)
+    this.finishInitialization(runId)
+  }
+
+  changedSource(rows: ReviewRevisionRow[], signal?: AbortSignal): string | undefined {
+    if (rows.length > 200) throw new RangeError('Review revision batch exceeds 200 rows')
+    for (const row of rows) {
+      signal?.throwIfAborted()
+      if (this.currentSource(row.source, 0, 0)?.current_revision !== row.revision) return row.source
+    }
+    return undefined
   }
 
   load(runId: string): ReviewState {
@@ -156,6 +243,23 @@ export class SupervisionReviewStore {
   }
 
   resume(runId: string, signal?: AbortSignal): void {
+    const state = this.prepareResume(runId)
+    if (state.initializing) { this.initializeSources(runId, state, signal); return }
+    // Existing sources must still match their frozen versions.
+    let after = ''
+    for (;;) {
+      const rows = this.resumePage(runId, after)
+      if (!rows.length) break
+      const changed = this.changedSource(rows, signal)
+      if (changed) {
+        if (this.omitDeletedConversations(runId)) return this.resume(runId, signal)
+        this.sourceChanged(runId, changed)
+      }
+      after = rows.at(-1)!.source
+    }
+  }
+
+  private prepareResume(runId: string): ReviewState {
     const status = this.db.prepare('SELECT status FROM supervision_runs WHERE id = ?').get(runId)?.status
     if (status === 'cancelled') throw new Error('SUPERVISION_REVIEW_CANCELLED: 此回顾已取消，不能继续。请开始新的回顾。')
     this.omitDeletedConversations(runId)
@@ -163,23 +267,31 @@ export class SupervisionReviewStore {
     const changed = this.db.prepare(`UPDATE supervision_runs SET status = 'running', error = NULL, completed_at = NULL
       WHERE id = ? AND status IN ('paused', 'failed', 'running')`).run(runId)
     if (!changed.changes) throw new Error('SUPERVISION_REVIEW_NOT_RESUMABLE: 此回顾已完成或不存在，请开始新的回顾。')
-    if (this.load(runId).initializing) {
-      this.initializeSources(runId, this.load(runId), signal)
-      return
-    }
-    // Existing sources must still match their frozen versions.
+    return this.load(runId)
+  }
+
+  private resumePage(runId: string, after: string): ReviewRevisionRow[] {
+    return this.db.prepare('SELECT source, revision FROM supervision_review_sources WHERE run_id = ? AND source > ? ORDER BY source LIMIT 200')
+      .all(runId, after) as ReviewRevisionRow[]
+  }
+
+  async resumeWithReader(runId: string, reader: ReviewManifestReader, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
+    const state = this.prepareResume(runId)
+    if (state.initializing) { await this.initializeSourcesWithReader(runId, state, reader, signal); return }
     let after = ''
     for (;;) {
-      const rows = this.db.prepare('SELECT source, revision FROM supervision_review_sources WHERE run_id = ? AND source > ? ORDER BY source LIMIT 200').all(runId, after)
+      this.checkRunning(runId, signal)
+      const rows = this.resumePage(runId, after)
       if (!rows.length) break
-      for (const row of rows) {
-        signal?.throwIfAborted()
-        if (this.currentSource(String(row.source), 0, 0)?.current_revision !== row.revision) {
-          if (this.omitDeletedConversations(runId)) return this.resume(runId, signal)
-          this.sourceChanged(runId, String(row.source))
-        }
-        after = String(row.source)
+      const changed = await reader.changedSource(rows, signal)
+      this.checkRunning(runId, signal)
+      if (changed) {
+        if (this.omitDeletedConversations(runId)) { after = ''; continue }
+        this.sourceChanged(runId, changed)
       }
+      after = rows.at(-1)!.source
+      await yieldTurn()
     }
   }
 

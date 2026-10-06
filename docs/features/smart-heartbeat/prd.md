@@ -196,7 +196,7 @@ type HeartbeatScope =
 - Main 在创建、编辑、列出和执行时验证 Project 归属。
 - Global 读取所有 Project 的有界会话和任务，但长期记忆仍只读取 Global。
 - 指定 Project 读取选中项目的有界会话和任务，以及 Global 与选中项目记忆。
-- 现有输入条数、字符预算、输出大小、超时、重试、租约和工具禁用边界继续生效。报告与监督整理共用监督专用并发池，普通聊天不入池；具体设置、租约和未实现的限流边界见[当前控制清单](../conversation-supervision/review-scheduling-design.md#当前超时与调度控制清单已实现)。
+- 心跳交接、监督分页与输出容量、模型阶段超时、重试和工具禁用边界以[生产接线](../conversation-supervision/review-scheduling-design.md#0-生产接线与剩余边界)及[模型阶段调度](../conversation-supervision/technical-design.md#模型阶段超时与调度)为准。监督模型池不限制普通聊天，不将历史独立报告阶段作为当前必须执行的路径。
 - 多项目汇总后统一应用上限，不能按项目倍增预算。
 - 心跳结果默认不在系统通知中暴露私人正文。
 - 数据迁移必须使用 SQLite 事务，保留外键、级联删除和现有历史。

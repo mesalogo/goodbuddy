@@ -8,6 +8,7 @@ import { AssistantDatabase } from '../src/main/assistant/assistant-database'
 import { createProductionSupervisorService } from '../src/main/assistant/supervision-production'
 import { SupervisionModelPool } from '../src/main/assistant/supervision-model-pool'
 import { ModelAgentRuntime } from '../src/main/agent/model-runtime'
+import { asyncSupervisionStorage } from '../tests/support/async-supervision-storage'
 
 async function main() {
   const [sourceArg, outputArg, envArg, mode] = process.argv.slice(2)
@@ -79,7 +80,7 @@ async function main() {
       title: 'Private selected conversation', updatedAt: Date.parse(scope.lastAt) },
       messages: messages.map(message => ({ id: message.id, content: message.content, role: message.role,
         createdAt: Date.parse(message.created_at), state: 'complete' })) }])
-    const service = createProductionSupervisorService(db, async () => ({ heartbeatEnabled: true,
+    const service = createProductionSupervisorService(asyncSupervisionStorage(db).supervision, async () => ({ heartbeatEnabled: true,
       supervisorModelConcurrency: 2, supervisorOrganizeTimeoutSeconds: 180,
       supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 20, executionSeconds: 600 }
     }), async () => runtime, pool)

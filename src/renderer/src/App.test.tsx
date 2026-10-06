@@ -931,6 +931,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     cancelParsing: vi.fn(async () => undefined),
     sendOriginal: vi.fn(async () => []),
     openOriginal: vi.fn(async () => undefined),
+    readOutput: vi.fn(async () => ({ content: '', cursor: 0, nextCursor: 0, totalBytes: 0, eof: true })),
     addResultImages: vi.fn(async () => []),
     onDraftChanged: vi.fn(() => () => undefined),
     getDraft: vi.fn(async () => []),

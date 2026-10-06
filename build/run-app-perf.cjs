@@ -6,16 +6,17 @@
 const { spawn } = require('node:child_process')
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs')
 const { createServer } = require('node:http')
-const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 
-const root = resolve(__dirname, '..')
+const runnerRoot = resolve(__dirname, '..')
+const root = resolve(process.env.GB_PERF_ROOT || runnerRoot)
+const concurrentMode = process.env.GB_PERF_MODE?.startsWith('C')
 // 11434 is the fresh-profile default endpoint. Another GoodBuddy (or Ollama)
 // may already use it; GB_PERF_MODEL_PORT moves the fake model and points the
 // isolated profile at it through the GOODBUDDY_MODEL_* environment variables.
 const defaultModelPort = 11434
 const modelPort = Number(process.env.GB_PERF_MODEL_PORT || defaultModelPort)
-const totalTimeoutMs = Number(process.env.GB_PERF_TIMEOUT_MS || 600_000)
+const totalTimeoutMs = Number(process.env.GB_PERF_TIMEOUT_MS || (process.env.GB_PERF_MODE === 'C06' ? 900_000 : 600_000))
 const keepProfile = process.env.GB_PERF_KEEP_PROFILE === '1'
 const streamBytes = Number(process.env.GB_PERF_STREAM_BYTES || 40_000)
 const chunkChars = Number(process.env.GB_PERF_CHUNK_CHARS || 12)
@@ -55,6 +56,11 @@ function startModelServer(ledger) {
       response.end(JSON.stringify({ object: 'list', data: [{ id: 'qwen3', object: 'model' }] }))
       return
     }
+    if (request.method === 'GET' && request.url === '/c03-knowledge.txt') {
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+      response.end('C03 deterministic knowledge source\n'.repeat(80))
+      return
+    }
     if (request.method !== 'POST' || !request.url?.endsWith('/chat/completions')) {
       response.writeHead(404).end()
       return
@@ -67,6 +73,55 @@ function startModelServer(ledger) {
       const messages = Array.isArray(parsed.messages) ? parsed.messages : []
       const last = messages.at(-1)
       const lastText = typeof last?.content === 'string' ? last.content : JSON.stringify(last?.content ?? '')
+      if (concurrentMode && lastText.includes('gb-fault:hang')) {
+        entry.kind = 'fault-hung'
+        entry.identity = 'fault-hung'
+        entry.stream = true
+        entry.aborted = false
+        // Keep the production request in flight until the UI cancels it.
+        response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+        const timer = setTimeout(() => {
+          if (!response.destroyed) response.end('data: [DONE]\n\n')
+        }, 120_000)
+        response.on('close', () => { clearTimeout(timer); entry.aborted = !response.writableFinished; entry.finishedAt = Date.now() })
+        return
+      }
+      if (concurrentMode && messages.some(message => typeof message.content === 'string' && message.content.includes('gb-concurrent:'))) {
+        const marker = messages.map(message => typeof message.content === 'string' ? message.content : '').join('\n').match(/gb-concurrent:(parent|child):([a-zA-Z0-9-]+)/)
+        const child = marker?.[1] === 'child'
+        const toolsDone = messages.some(message => message.role === 'tool')
+        entry.kind = child ? 'concurrent-child' : 'concurrent-parent'
+        entry.identity = marker?.[2]
+        entry.stream = parsed.stream === true
+        const durationMs = child ? 12_000 : toolsDone ? 1_000 : 12_000
+        const count = Math.ceil(durationMs / 16)
+        const calls = !child && !toolsDone ? [0, 1].map(index => ({ index, id: `child-${marker?.[2]}-${index}`, type: 'function', function: { name: 'subagent_delegate', arguments: JSON.stringify({ task: `gb-concurrent:child:${marker?.[2]}-${index} deterministic output` }) } })) : []
+        entry.offeredFragments = count
+        entry.offeredToolCalls = calls.length
+        entry.chunks = 0
+        entry.bytes = 0
+        entry.latenessMs = []
+        response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+        const send = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ id: entry.identity, object: 'chat.completion.chunk', model: 'qwen3', choices: [{ index: 0, delta, finish_reason }] })}\n\n`)
+        const started = performance.now()
+        const tick = () => {
+          if (response.destroyed) { entry.aborted = true; entry.settledAt = Date.now(); return }
+          while (entry.chunks < count && performance.now() >= started + entry.chunks * 16) {
+            entry.latenessMs.push(performance.now() - started - entry.chunks * 16)
+            const text = `[${entry.identity}:${String(entry.chunks).padStart(5, '0')}] sample\n`
+            send({ content: text })
+            entry.bytes += Buffer.byteLength(text)
+            entry.chunks++
+          }
+          if (entry.chunks < count) { setTimeout(tick, 4); return }
+          if (calls.length) send({ tool_calls: calls })
+          send({}, calls.length ? 'tool_calls' : 'stop')
+          response.end('data: [DONE]\n\n')
+          entry.finishedAt = Date.now()
+        }
+        tick()
+        return
+      }
       const benchmark = lastText.includes('perf-stream')
       entry.kind = benchmark ? 'benchmark-stream' : 'auxiliary'
       entry.stream = parsed.stream === true
@@ -153,10 +208,27 @@ function printSummary(report) {
 }
 
 async function main() {
+  const taskDirectory = join(runnerRoot, 'temp', 'goodbuddy-concurrent-upgrade')
+  mkdirSync(taskDirectory, { recursive: true })
+  if (process.argv.includes('--launch')) {
+    const { openSync, closeSync } = require('node:fs')
+    const output = resolve(process.env.GB_PERF_OUTPUT || join(taskDirectory, `run-${Date.now()}`))
+    mkdirSync(output, { recursive: true })
+    const log = openSync(join(output, 'execution.log'), 'w')
+    const child = spawn(process.execPath, [__filename], {
+      detached: true, stdio: ['ignore', log, log],
+      env: { ...process.env, GB_PERF_OUTPUT: output }
+    })
+    closeSync(log)
+    writeFileSync(join(output, 'supervisor.json'), JSON.stringify({ pid: child.pid, startedAt: new Date().toISOString(), root, mode: process.env.GB_PERF_MODE, timeoutMs: totalTimeoutMs }))
+    child.unref()
+    console.log(`Supervisor ${child.pid}; logs ${output}`)
+    return
+  }
   const required = ['out/main/index.js', 'out/preload/index.cjs', 'out/renderer/index.html']
   const missing = required.filter(file => !existsSync(join(root, file)))
   if (missing.length) throw new Error(`Missing production build (${missing.join(', ')}); run npm run build:bundle first`)
-  const runDirectory = mkdtempSync(join(tmpdir(), 'goodbuddy-app-perf-'))
+  const runDirectory = mkdtempSync(join(taskDirectory, 'profile-'))
   const outputDirectory = resolve(process.env.GB_PERF_OUTPUT || join(runDirectory, 'artifacts'))
   mkdirSync(outputDirectory, { recursive: true })
   const ledger = []
@@ -166,7 +238,8 @@ async function main() {
   } catch (error) {
     throw new Error(`Cannot listen on 127.0.0.1:${modelPort} for the fake model (${error.code ?? error.message}); stop the local service using that port, or set GB_PERF_MODEL_PORT to a free port`, { cause: error })
   }
-  const environment = { ...process.env, GB_PERF_DIRECTORY: runDirectory, GB_PERF_ARTIFACTS: outputDirectory, GB_PERF_ROOT: root }
+  const environment = { ...process.env, GB_PERF_DIRECTORY: runDirectory, GB_PERF_ARTIFACTS: outputDirectory, GB_PERF_ROOT: root, TEMP: runDirectory, TMP: runDirectory, TMPDIR: runDirectory }
+  if (concurrentMode) environment.GB_PERF_DRIVER_TIMEOUT_MS = String(totalTimeoutMs - 30_000)
   delete environment.ELECTRON_RUN_AS_NODE
   delete environment.ELECTRON_RENDERER_URL
   for (const key of ['GOODBUDDY_MODEL_API_KEY', 'GOODBUDDY_MODEL_BASE_URL', 'GOODBUDDY_MODEL_NAME', 'GOODBUDDY_BIGTOKEN_API_KEY', 'GOODBUDDY_BIGTOKEN_BASE_URL', 'GOODBUDDY_BIGTOKEN_MODEL']) delete environment[key]
@@ -179,7 +252,8 @@ async function main() {
   environment.GOODBUDDY_WORKSPACE = join(runDirectory, 'workspace')
   mkdirSync(environment.GOODBUDDY_WORKSPACE, { recursive: true })
   const started = Date.now()
-  const child = spawn(require('electron'), [join(root, 'tests', 'support', 'app-perf-driver.mjs')], { cwd: root, env: environment, stdio: 'inherit', windowsHide: false })
+  const child = spawn(require('electron'), [join(runnerRoot, 'tests', 'support', 'app-perf-driver.mjs')], { cwd: root, env: environment, stdio: 'inherit', windowsHide: false })
+  writeFileSync(join(outputDirectory, 'owned-processes.json'), JSON.stringify({ supervisorPid: process.pid, electronPid: child.pid, root, runDirectory, startedAt: new Date().toISOString() }))
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true
@@ -200,13 +274,13 @@ async function main() {
     total: ledger.length,
     benchmarkStreams: ledger.filter(entry => entry.kind === 'benchmark-stream').length,
     auxiliary: ledger.filter(entry => entry.kind === 'auxiliary').length,
-    ledger: ledger.map(({ method, path, kind, stream, chunks, bytes, aborted, startedAt, finishedAt }) => ({ method, path, kind, stream, chunks, bytes, aborted, durationMs: finishedAt ? finishedAt - startedAt : null }))
+    ledger: ledger.map(({ method, path, kind, stream, chunks, bytes, aborted, startedAt, finishedAt, identity, offeredFragments, offeredToolCalls, latenessMs }) => ({ method, path, kind, stream, chunks, bytes, aborted, startedAt, finishedAt, identity, offeredFragments, offeredToolCalls, latenessMs, durationMs: finishedAt ? finishedAt - startedAt : null }))
   }
   if (timedOut || exit.code !== 0) report.status = 'failed'
   writeFileSync(resultPath, JSON.stringify(report, null, 2))
   printSummary(report)
   console.log(`\nreport: ${resultPath}`)
-  if (!keepProfile) rmSync(join(runDirectory, 'profile'), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+   if (!keepProfile) rmSync(runDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   process.exitCode = String(report.status).startsWith('passed') ? 0 : 1
   // PERF-17: GB_PERF_CHECK=1 gates the run on build/perf-thresholds.json
   // (exit 1 on a regression, 2 when the report cannot be judged, e.g. throttled).

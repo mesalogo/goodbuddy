@@ -46,6 +46,8 @@ import {
 import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 import type { DesktopDiagnosticFailureObserver } from '../desktop-diagnostics'
 export type AgentCapabilityContext = {
+  outputStore?: ModelRuntimeOptions['outputStore']
+  outputAdopt?: ModelRuntimeOptions['outputAdopt']
   observeFailure?: DesktopDiagnosticFailureObserver
   localRuntimeRegistry?: LocalRuntimeRegistry
   skillInstructions?: string
@@ -219,7 +221,11 @@ export function createAgentRuntime(
       createToolProvider: (directory) => new ModelToolProvider(
         new LocalWorkspaceAccess(directory), capabilities.mcpServers, undefined,
         capabilities.knowledgeGateway, capabilities.webSearchEnabled === true,
-        { runtimeTarget: 'deepseek-harness' }, capabilities.launchEnvironmentProvider
+        {
+          runtimeTarget: 'deepseek-harness',
+          outputStore: capabilities.outputStore,
+          outputAdopt: capabilities.outputAdopt
+        }, capabilities.launchEnvironmentProvider
       )
     }
     const create = () => new DeepSeekHarnessRuntime(options)
@@ -353,6 +359,8 @@ export function createAgentRuntime(
       (modelAuthentication === 'none' || modelApiKey))
   ) {
     return new ModelAgentRuntime({
+      outputStore: capabilities.outputStore,
+      outputAdopt: capabilities.outputAdopt,
       apiKey: modelApiKey ?? '',
       baseUrl:
         defaultModelProfile?.baseUrl ||

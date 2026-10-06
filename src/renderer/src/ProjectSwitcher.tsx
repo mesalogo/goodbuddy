@@ -1894,5 +1894,9 @@ function ProjectSwitcherView({
   )
 }
 
+/** Keep the hidden sidebar's project menus and activity rows out of the tree. */
+const ProjectSwitcherWhenVisible = (props: ProjectSwitcherProps): React.JSX.Element | null =>
+  props.visible === false ? null : <ProjectSwitcherView {...props} />
+
 /** Memoized: App re-renders on chat updates; this view re-renders only when its props change. */
-export const ProjectSwitcher = memo(ProjectSwitcherView)
+export const ProjectSwitcher = memo(ProjectSwitcherWhenVisible)

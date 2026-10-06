@@ -4,6 +4,7 @@ import { ModelAgentRuntime, noModelTools } from '../agent/model-runtime'
 import { AssistantDatabase } from './assistant-database'
 import { SupervisionModelPool } from './supervision-model-pool'
 import { createProductionSuggestionPhraser } from './supervision-production'
+import { asyncSupervisionStorage } from '../../../tests/support/async-supervision-storage'
 
 const cleanups: Array<() => void> = []
 afterEach(() => {
@@ -20,7 +21,7 @@ function fixture(run: AgentRuntime['run'], timeoutSeconds = 30) {
   const dispose = vi.fn(async () => {})
   const runtime = { run: vi.fn(run), releaseConversation: release, dispose } as unknown as AgentRuntime
   const statuses = vi.spyOn(db, 'updateTaskStatus')
-  const phrase = createProductionSuggestionPhraser(db, async () => ({ supervisorModelConcurrency: 1,
+  const phrase = createProductionSuggestionPhraser(asyncSupervisionStorage(db).supervision, async () => ({ supervisorModelConcurrency: 1,
     supervisorOrganizeTimeoutSeconds: timeoutSeconds }), async () => runtime, pool)
   cleanups.push(() => { pool.dispose(); db.close() })
   return { db, pool, runtime, release, dispose, statuses,

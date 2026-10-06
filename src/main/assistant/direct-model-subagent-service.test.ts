@@ -11,14 +11,17 @@ import {
   type DirectModelSubagentServiceDependencies
 } from './direct-model-subagent-service'
 import { SubagentScheduler } from './subagent-scheduler'
+import { FileOutputBacking } from '../../../tests/support/paged-output-backing'
 
 type RequestContext = {
   authorizationSnapshot: string
 }
 
 const services: DirectModelSubagentService<RequestContext>[] = []
+const backings: FileOutputBacking[] = []
 afterEach(async () => {
   await Promise.all(services.splice(0).map((service) => service.dispose()))
+  await Promise.all(backings.splice(0).map((backing) => backing.dispose()))
 })
 
 const parent: DirectModelSubagentParent<RequestContext> = {
@@ -40,7 +43,10 @@ function createHarness(
   const events: DirectModelSubagentEvent[] = []
   const usageEvents: unknown[] = []
   const releaseConversation = vi.fn(async () => undefined)
+  const backingStore = new FileOutputBacking()
+  backings.push(backingStore)
   const service = new DirectModelSubagentService<RequestContext>({
+    outputStore: { backingStore },
     scheduler,
     runChild,
     releaseConversation
@@ -59,6 +65,7 @@ function createHarness(
       ...overrides
     })
   return {
+    backingStore,
     service,
     scheduler,
     events,
@@ -89,7 +96,7 @@ describe('DirectModelSubagentService', () => {
     }
     const harness = createHarness(async (input) => {
       childInput = input
-      input.onOutput('completed output')
+      await input.onOutput('completed output')
       input.onModelUsage(usage)
     })
 
@@ -136,6 +143,7 @@ describe('DirectModelSubagentService', () => {
       })
     ])
     expect(harness.releaseConversation).toHaveBeenCalledOnce()
+    expect(harness.backingStore.createdDirectory).toBe(false)
     expect(harness.releaseConversation).toHaveBeenCalledWith(
       result.conversationId,
       childInput?.context
@@ -145,7 +153,7 @@ describe('DirectModelSubagentService', () => {
 
   it('returns failed state with partial output and bounded errors', async () => {
     const harness = createHarness(async (input) => {
-      input.onOutput('partial output')
+      await input.onOutput('partial output')
       throw new Error('错'.repeat(3_000))
     })
 
@@ -170,8 +178,8 @@ describe('DirectModelSubagentService', () => {
 
   it('bounds UTF-8 output by bytes and marks partial output explicitly', async () => {
     const harness = createHarness(async (input) => {
-      input.onOutput('你'.repeat(100_000))
-      input.onOutput('late output')
+      await input.onOutput('你'.repeat(100_000))
+      await input.onOutput('late output')
     })
 
     const result = await harness.run()
@@ -201,7 +209,7 @@ describe('DirectModelSubagentService', () => {
   it('returns cancelled state with partial output on parent cancellation', async () => {
     const controller = new AbortController()
     const harness = createHarness(async (input) => {
-      input.onOutput('partial before cancel')
+      await input.onOutput('partial before cancel')
       await new Promise<void>((resolve) => {
         input.signal.addEventListener('abort', () => resolve(), {
           once: true
@@ -233,7 +241,7 @@ describe('DirectModelSubagentService', () => {
     const controller = new AbortController()
     const text = 'x'.repeat(DIRECT_MODEL_SUBAGENT_OUTPUT_MAX_BYTES) + 'tail'
     const harness = createHarness(async (input) => {
-      input.onOutput(text)
+      await input.onOutput(text)
       if (status === 'cancelled') controller.abort(new Error('cancelled'))
       throw new Error('failed')
     })
@@ -245,6 +253,18 @@ describe('DirectModelSubagentService', () => {
     })
     await harness.service.dispose()
     await expect(harness.service.readOutput('owner', reference.handle)).rejects.toThrow()
+    harness.scheduler.dispose()
+  })
+
+  it('retries backing release after a failed service shutdown', async () => {
+    const harness = createHarness(async (input) => {
+      await input.onOutput('x'.repeat(DIRECT_MODEL_SUBAGENT_OUTPUT_MAX_BYTES + 1))
+    })
+    await harness.run()
+    vi.spyOn(harness.backingStore, 'release').mockRejectedValueOnce(new Error('file busy'))
+    await expect(harness.service.dispose()).rejects.toThrow('file busy')
+    await harness.service.dispose()
+    expect(harness.backingStore.count).toBe(0)
     harness.scheduler.dispose()
   })
 
@@ -264,7 +284,7 @@ describe('DirectModelSubagentService', () => {
       if (input.task === 'first') {
         await firstGate
       }
-      input.onOutput(input.task)
+      await input.onOutput(input.task)
     }, scheduler)
 
     const first = harness.run({ task: 'first', ownerId: 'first-owner' })
@@ -292,10 +312,10 @@ describe('DirectModelSubagentService', () => {
   it('cancels only runs belonging to the released owner', async () => {
     const harness = createHarness(async (input) => {
       if (input.task === 'other') {
-        input.onOutput('other completed')
+        await input.onOutput('other completed')
         return
       }
-      input.onOutput('owned partial')
+      await input.onOutput('owned partial')
       await new Promise<void>((resolve) => {
         input.signal.addEventListener('abort', () => resolve(), {
           once: true

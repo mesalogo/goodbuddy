@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NativeClientCoordinator } from './native-client-coordinator'
 import { NativeDshWebClientService, type NativeDshWebClientOptions } from './native-dsh-web-client'
+import { NativeTerminalClient } from './native-terminal-client'
+import { join } from 'node:path'
 import type { LocalToolRuntimeSelection } from '../../shared/local-tool-environment-contracts'
 
 const coordinators: NativeClientCoordinator[] = []
@@ -11,11 +13,11 @@ afterEach(async () => {
 })
 
 function fixture(whenReady: () => Promise<void> = async () => undefined) {
-  const profile = { id: 'selected', name: 'Selected', protocol: 'openai-chat-completions',
+  const profile = { id: '11111111-1111-4111-8111-111111111111', name: 'Selected', protocol: 'openai-chat-completions',
     authentication: 'api-key', apiKey: 'secret', baseUrl: 'https://example.com/v1', modelName: 'selected-model' }
   const settings = { provider: 'deepseek-harness', modelProfiles: [profile], deepseekHarnessModelProfile: profile }
   const conversation = { projectId: 'project', knowledgeLibraryIds: ['library'], storyGraphEnabled: true }
-  const project = { id: 'project', runtimeSelection: { provider: 'deepseek-harness', profileId: profile.id } }
+  const project = { id: 'project', runtimeSelection: { provider: 'deepseek-harness', model: { kind: 'profile', profileId: profile.id } } }
   const application = { heartbeatEnabled: false, magicNotesEnabled: true, localToolEnvironment: { node: { source: 'managed' } as LocalToolRuntimeSelection } }
   const gateway = { start: vi.fn(), dispose: vi.fn(), grant: vi.fn(() => 'builtin-token'),
     grantCustomMcp: vi.fn(() => 'custom-token'), getEndpoint: () => 'http://127.0.0.1:1234/mcp',
@@ -30,7 +32,7 @@ function fixture(whenReady: () => Promise<void> = async () => undefined) {
   const stop = vi.spyOn(NativeDshWebClientService.prototype, 'stop').mockImplementation(async id => { handles.delete(id) })
   const openExternal = vi.fn(async () => {})
   const coordinator = new NativeClientCoordinator({
-    database: { getConversation: (id: string) => ({ ...conversation, id }), getProject: () => project },
+    database: { getConversation: async (id: string) => ({ ...conversation, id }), getProject: async () => project },
     settingsStore: { getResolvedSettings: async () => settings },
     applicationSettingsStore: { get: async () => application },
     capabilities: { getRuntimeSkillContext: async () => ({ packages: [{ directory: '/skills/test', id: 'test', digest: 'one' }] }),
@@ -38,13 +40,37 @@ function fixture(whenReady: () => Promise<void> = async () => undefined) {
       getObsidianSettings: async () => ({}) },
     executionSpaceResolver: { resolveProject: () => ({ kind: 'local', rootPath: '/workspace', cacheIdentity: '/workspace' }) },
     terminalManager: { closeOwner: vi.fn() }, localEnvironment: { launchEnvironmentProvider: () => process.env, whenReady },
-    rootDirectory: '/clients', createGateway: () => gateway, openExternal
+    rootDirectory: '/clients', temporaryRoot: '/runtime-launch', createGateway: () => gateway, openExternal
   } as unknown as ConstructorParameters<typeof NativeClientCoordinator>[0])
   coordinators.push(coordinator)
-  return { coordinator, profile, conversation, application, gateway, start, stop, openExternal }
+  return { coordinator, profile, project, conversation, application, gateway, start, stop, openExternal }
 }
 
 describe('native client coordinator', () => {
+  it('forwards the same temporary root to browser and terminal clients without moving retained roots', async () => {
+    const { coordinator, project, start } = fixture()
+    let browserOptions: NativeDshWebClientOptions | undefined
+    start.mockImplementation(async function (this: NativeDshWebClientService) {
+      browserOptions = (this as unknown as { options: NativeDshWebClientOptions }).options
+      return { id: 'browser', url: 'http://127.0.0.1:1234/' }
+    })
+    await coordinator.open(1, 'browser-conversation')
+    expect(browserOptions).toMatchObject({
+      temporaryRoot: '/runtime-launch', rootDirectory: join('/clients', 'dsh')
+    })
+    let terminalOptions: ConstructorParameters<typeof NativeTerminalClient>[0] | undefined
+    const terminalOpen = vi.spyOn(NativeTerminalClient.prototype, 'open').mockImplementation(async function (this: NativeTerminalClient) {
+      terminalOptions = (this as unknown as { options: ConstructorParameters<typeof NativeTerminalClient>[0] }).options
+      return { sessionId: 'terminal', state: 'running' } as Awaited<ReturnType<NativeTerminalClient['open']>>
+    })
+    project.runtimeSelection.provider = 'opencode'
+    await coordinator.open(1, 'terminal-conversation')
+    expect(terminalOpen).toHaveBeenCalledOnce()
+    expect(terminalOptions).toMatchObject({
+      temporaryRoot: '/runtime-launch', rootDirectory: join('/clients', 'terminal')
+    })
+  })
+
   it('binds story graph to its conversation and does not reuse another conversation or disabled configuration', async () => {
     const { coordinator, conversation, application, gateway } = fixture()
     application.heartbeatEnabled = true

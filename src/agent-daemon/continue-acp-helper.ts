@@ -1,9 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import fs, { rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION, type Agent, type McpServer } from '@agentclientprotocol/sdk'
 import { ContinueHostAdapter } from '../main/agent/continue-host-adapter'
@@ -27,8 +26,7 @@ export async function runContinueAcpHelper(options: {
     exchange: createUnixModelBridgeExchange({ socketPath: options.socketPath }),
     sharedSessions: options.sharedSessions
   })
-  const origin = await proxy.listen()
-  const root = await mkdtemp(join(tmpdir(), 'goodbuddy-continue-'))
+  let root: string | undefined
   const questions = new Map<string, { sessionId: string; adapter: ContinueHostAdapter }>()
   const token = randomBytes(32).toString('base64url')
   const replies = createServer((request, response) => { void (async () => {
@@ -42,14 +40,26 @@ export async function runContinueAcpHelper(options: {
     questions.delete(value.questionId)
     response.writeHead(200).end('{}')
   })().catch(() => response.writeHead(400).end()) })
-  await new Promise<void>((resolve, reject) => { replies.once('error', reject); replies.listen(0, '127.0.0.1', resolve) })
-  const questionEndpoint = `http://127.0.0.1:${(replies.address() as import('node:net').AddressInfo).port}/${token}`
   const sessions = new Map<string, {
     cwd: string
     mcpServers: McpServer[]
     history: NonNullable<AgentExecutionRequest['history']>
     active?: { abort: AbortController; adapter: ContinueHostAdapter; finished: Promise<void> }
   }>()
+  let stop!: () => void
+  let stopping = false
+  const stopped = new Promise<void>(resolve => { stop = () => { stopping = true; resolve() } })
+  process.on('SIGTERM', stop)
+  process.on('SIGINT', stop)
+  try {
+  const origin = await proxy.listen()
+  const launchRoot = join(dirname(options.socketPath), 'goodbuddy-runtime-launch')
+  await fs.mkdir(launchRoot, { recursive: true, mode: 0o700 })
+  root = await fs.mkdtemp(join(launchRoot, 'goodbuddy-continue-'))
+  const cacheRoot = root
+  await new Promise<void>((resolve, reject) => { replies.once('error', reject); replies.listen(0, '127.0.0.1', resolve) })
+  const questionEndpoint = `http://127.0.0.1:${(replies.address() as import('node:net').AddressInfo).port}/${token}`
+  if (stopping) return 128
   const modelId = openCodeModelBridgeModelId(options.protocol, options.model)
   const configOptions = [{ id: 'model', name: 'Model', type: 'select' as const, currentValue: modelId,
     options: [{ value: modelId, name: options.model }] }]
@@ -82,20 +92,21 @@ export async function runContinueAcpHelper(options: {
     },
     prompt: async ({ sessionId, prompt }) => {
       const session = sessions.get(sessionId)
-      if (!session || session.active) throw new Error('Continue Session is unavailable or busy')
+      if (stopping || !session || session.active) throw new Error('Continue Session is unavailable or busy')
       const route = options.sharedSessions ? await fetch(`${origin}/session?sessionId=${encodeURIComponent(sessionId)}`, {
         signal: AbortSignal.timeout(10_000)
       }).then(async response => {
         if (!response.ok) throw new Error('Continue model route is unavailable')
         return await response.json() as { operationId: string }
       }) : undefined
+      if (stopping) throw new Error('Continue helper is stopping')
       const sessionMcpServers = session.mcpServers.map(server => {
         if (!('type' in server) || server.type !== 'http') throw new Error('Continue remote MCP requires HTTP')
         return { name: server.name, type: 'streamable-http' as const, url: server.url,
           requestOptions: { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } }
       })
       const adapter = new ContinueHostAdapter({
-        binaryPath: options.entrypoint, configPath: '', workspace: session.cwd, cacheRoot: root, mode: 'agent',
+        binaryPath: options.entrypoint, configPath: '', workspace: session.cwd, cacheRoot, mode: 'agent',
         modelProfile: { id: 'agent-bridge', name: 'GoodBuddy', modelName: options.model,
           protocol: options.protocol, authentication: 'api-key', apiKey: MODEL_BRIDGE_SDK_AUTH_SENTINEL,
           baseUrl: `${origin}/v1`, supportsImageInput: options.supportsImageInput,
@@ -159,10 +170,13 @@ export async function runContinueAcpHelper(options: {
         if (abort.signal.aborted) return { stopReason: 'cancelled' }
         throw error
       } finally {
-        await adapter.dispose()
-        for (const [id, pending] of questions) if (pending.adapter === adapter) questions.delete(id)
-        session.active = undefined
-        finish()
+        try {
+          await adapter.dispose()
+        } finally {
+          for (const [id, pending] of questions) if (pending.adapter === adapter) questions.delete(id)
+          session.active = undefined
+          finish()
+        }
       }
     },
     cancel: async ({ sessionId }) => {
@@ -179,16 +193,27 @@ export async function runContinueAcpHelper(options: {
   const connection = new AgentSideConnection(() => agent, ndJsonStream(
     Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)
   ))
-  try {
     if (options.sharedSessions) await connection.extNotification('goodbuddy/modelBridgeReady', { origin })
-    await connection.closed
+    await Promise.race([connection.closed, stopped])
     return 0
   } finally {
+    stopping = true
     for (const session of sessions.values()) session.active?.abort.abort()
     await Promise.all([...sessions.values()].map(session => session.active?.finished))
-    await proxy.close()
-    replies.closeAllConnections()
-    await new Promise<void>(resolve => replies.close(() => resolve()))
-    await rm(root, { recursive: true, force: true })
+    try {
+      await proxy.close()
+    } finally {
+      try {
+        replies.closeAllConnections()
+        await new Promise<void>(resolve => replies.close(() => resolve()))
+      } finally {
+        try {
+          if (root) await rm(root, { recursive: true, force: true })
+        } finally {
+          process.off('SIGTERM', stop)
+          process.off('SIGINT', stop)
+        }
+      }
+    }
   }
 }

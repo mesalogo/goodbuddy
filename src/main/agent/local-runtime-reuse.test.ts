@@ -14,7 +14,7 @@ import { LocalRuntimeRegistry } from './local-runtime-registry'
 import { OpenCodeRuntime } from './opencode-runtime'
 import { SelectedRuntimeManager } from './selected-runtime-manager'
 import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
-import { KnowledgeService } from '../knowledge/knowledge-service'
+import { TestKnowledgeService as KnowledgeService } from '../../../tests/support/knowledge-test-service'
 
 const binaryPath = join(
   process.cwd(), '.runtime-resources', process.arch,

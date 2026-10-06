@@ -33,23 +33,64 @@ function setup(fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [
     allowConversationInvocation: true, baseUrl: 'https://provider.test/v1', authentication: 'api-key' as const, apiKey: 'test-secret' }
   const settings: ImageServiceSettings = { modelProfiles: [profile], defaultImageModelProfileId: profile.id }
   const events: ImageOperation[] = []
-  const service = new ImageGenerationService({ database, getSettings: async () => settings, fetcher,
+  const storage = {
+    getConversation: async (...args: Parameters<AssistantDatabase['getConversation']>) => database.getConversation(...args),
+    getArtifact: async (...args: Parameters<AssistantDatabase['getArtifact']>) => database.getArtifact(...args),
+    saveConversationImageOperation: async (...args: Parameters<AssistantDatabase['saveConversationImageOperation']>) => database.saveConversationImageOperation(...args),
+    saveConversationImageSources: async (...args: Parameters<AssistantDatabase['saveConversationImageSources']>) => database.saveConversationImageSources(...args),
+    markUnfinishedImageOperationsUnconfirmed: async () => database.markUnfinishedImageOperationsUnconfirmed()
+  }
+  const service = new ImageGenerationService({ database: storage, getSettings: async () => settings, fetcher,
     onOperation: operation => { imageOperationSchema.parse(operation); events.push(operation); observers.onOperation?.(operation) }, onUsage: observers.onUsage, onError: observers.onError })
   service.initialize()
   cleanups.push(() => service.dispose())
-  return { database, service, context, fetcher, settings, profile, events, header, message }
+  return { database, storage, service, context, fetcher, settings, profile, events, header, message }
 }
 
 describe('Main conversation image service', () => {
-  it('does not let a destroyed Renderer or usage observer prevent submission or overwrite completion', async () => {
+  it('awaits usage persistence and reports its failure to callers and shutdown', async () => {
+    let rejectUsage!: (error: Error) => void
+    const onUsage = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectUsage = reject }))
+    const h = setup(vi.fn<typeof fetch>(async () => Response.json({ data: [{ b64_json: png }], usage: { input_tokens: 2, output_tokens: 3 } })), { onUsage })
+    const pending = h.service.bind(h.context).call({ intent: 'create', prompt: 'Blue' }, 'usage')
+    const rejected = expect(pending).rejects.toThrow('Usage storage failed')
+    await vi.waitFor(() => expect(onUsage).toHaveBeenCalledOnce())
+    expect(h.events.at(-1)?.state).not.toBe('completed')
+    rejectUsage(new Error('Usage storage failed'))
+    await rejected
+    await expect(h.service.dispose()).rejects.toThrow('Usage storage failed')
+    cleanups.pop()
+  })
+
+  it('does not notify completion or finish shutdown before the image write commits', async () => {
+    const h = setup()
+    const save = h.database.saveConversationImageOperation.bind(h.database)
+    let commit!: () => void
+    vi.spyOn(h.storage, 'saveConversationImageOperation').mockImplementation((operation, image) => {
+      if (!image) return Promise.resolve(save(operation, image))
+      return new Promise(resolve => { commit = () => resolve(save(operation, image)) })
+    })
+    const pending = h.service.bind(h.context).call({ intent: 'create', prompt: 'Blue' }, 'delayed-write')
+    await vi.waitFor(() => expect(commit).toBeTypeOf('function'))
+    expect(h.events.at(-1)?.state).toBe('saving')
+    const closed = vi.fn()
+    const closing = h.service.dispose().then(closed)
+    await Promise.resolve()
+    expect(closed).not.toHaveBeenCalled()
+    commit()
+    expect((await pending).state).toBe('completed')
+    await closing
+  })
+
+  it('does not let a destroyed Renderer prevent submission or overwrite completion', async () => {
     const onError = vi.fn()
     const h = setup(vi.fn<typeof fetch>(async () => Response.json({ data: [{ b64_json: png }], usage: { input_tokens: 2, output_tokens: 3 } })), {
       onOperation: () => { throw new Error('Renderer is destroyed') },
-      onUsage: () => { throw new Error('Usage observer failed') }, onError
+      onUsage: async () => {}, onError
     })
     const operation = await h.service.bind(h.context).call({ intent: 'create', prompt: 'Blue' }, 'observer')
     expect(operation.state).toBe('completed')
-    expect(h.service.getOperation(h.context.conversationId, operation.id).state).toBe('completed')
+    expect((await h.service.getOperation(h.context.conversationId, operation.id)).state).toBe('completed')
     expect(h.fetcher).toHaveBeenCalledOnce()
     expect(onError).toHaveBeenCalled()
   })
@@ -61,8 +102,9 @@ describe('Main conversation image service', () => {
       vi.spyOn(h.database, 'saveConversationImageOperation').mockImplementation(() => { throw new Error('Disk full') })
       return Response.json({ data: [{ b64_json: png }] })
     })
-    const operation = await h.service.bind(h.context).call({ intent: 'create', prompt: 'Blue' }, 'disk-full')
-    expect(operation).toMatchObject({ state: 'failed', error: 'Disk full', artifactIds: [] })
+    await expect(h.service.bind(h.context).call({ intent: 'create', prompt: 'Blue' }, 'disk-full')).rejects.toThrow('Disk full')
+    await expect(h.service.dispose()).rejects.toThrow('Disk full')
+    cleanups.pop()
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Disk full' }))
     expect(h.fetcher).toHaveBeenCalledOnce()
   })
@@ -72,7 +114,7 @@ describe('Main conversation image service', () => {
     expect(first.state).toBe('completed')
     expect(h.database.getArtifact(first.artifactIds[0]!).content).toContain(png)
     h.database.saveLocalConversations([{ header: h.header, messages: [h.message] }])
-    expect(h.service.getOperation(h.context.conversationId, first.id)).toEqual(first)
+    expect(await h.service.getOperation(h.context.conversationId, first.id)).toEqual(first)
     expect(h.database.getConversation(h.context.conversationId).messages[0]!.artifactIds).toEqual(first.artifactIds)
     h.settings.defaultImageModelProfileId = randomUUID()
     const second = await h.service.bind({ ...h.context, requestId: randomUUID() }).call({ intent: 'edit', prompt: 'Turn red', sourceArtifactIds: first.artifactIds }, 'edit')
@@ -84,7 +126,7 @@ describe('Main conversation image service', () => {
 
   it('persists upload bytes and rejects cross-conversation or missing source references', async () => {
     const h = setup()
-    const ids = h.service.persistUploads(h.context, [{ name: 'upload.png', mediaType: 'image/png', data: png }])
+    const ids = await h.service.persistUploads(h.context, [{ name: 'upload.png', mediaType: 'image/png', data: png }])
     h.database.saveLocalConversations([{ header: h.header, messages: [h.message] }])
     expect(h.database.getConversation(h.context.conversationId).messages[0]!.imageSourceArtifactIds).toEqual(ids)
     const binding = h.service.bind(h.context)
@@ -136,7 +178,7 @@ describe('Main conversation image service', () => {
     const one = binding.call(input, 'same')
     const two = binding.call(input, 'same')
     await vi.waitFor(() => expect(h.events).toHaveLength(1))
-    h.service.cancel(h.context.conversationId, h.events[0]!.id)
+    await h.service.cancel(h.context.conversationId, h.events[0]!.id)
     resolve(Response.json({ data: [{ b64_json: png }] }))
     const completed = await one
     expect(await two).toEqual(completed)
@@ -150,7 +192,7 @@ describe('Main conversation image service', () => {
 
   it('never falls back to a paid generation after an edit rejection and redacts provider errors', async () => {
     const h = setup(vi.fn<typeof fetch>(async () => Response.json({ error: { message: 'Image editing not supported Authorization: Bearer private-key' } }, { status: 405 })))
-    const ids = h.service.persistUploads(h.context, [{ name: 'source', mediaType: 'image/png', data: png }])
+    const ids = await h.service.persistUploads(h.context, [{ name: 'source', mediaType: 'image/png', data: png }])
     const result = await h.service.bind(h.context).call({ intent: 'edit', prompt: 'Blue', sourceArtifactIds: ids }, 'edit')
     expect(result.state).toBe('failed')
     expect(result.error).toContain('405')
@@ -165,7 +207,9 @@ describe('Main conversation image service', () => {
     await vi.waitFor(() => expect(h.fetcher).toHaveBeenCalledOnce())
     h.database.deleteLocalConversation(h.context.conversationId)
     resolve(Response.json({ data: [{ b64_json: png }] }))
-    await pending
+    await expect(pending).rejects.toThrow()
+    await expect(h.service.dispose()).rejects.toThrow()
+    cleanups.pop()
     expect(() => h.database.getConversation(h.context.conversationId)).toThrow()
     expect(h.database.listArtifacts()).toHaveLength(0)
   })
@@ -189,7 +233,7 @@ describe('Main conversation image service', () => {
     }))
     const pending = h.service.bind(h.context).call({ intent: 'create', prompt: 'Blue' }, 'cancel')
     await vi.waitFor(() => expect(h.fetcher).toHaveBeenCalledTimes(2))
-    h.service.cancel(h.context.conversationId, h.events.at(-1)!.id)
+    await h.service.cancel(h.context.conversationId, h.events.at(-1)!.id)
     expect(await pending).toMatchObject({ state: 'stopped', cancellationRequested: true })
     expect(h.fetcher).toHaveBeenCalledTimes(2)
   })
@@ -278,7 +322,7 @@ describe('Main conversation image service', () => {
     const text = h.database.createTextArtifact({ title: 'Text reply', content: 'Not an image' })
     h.database.saveLocalConversations([{ header: h.header, messages: [{ ...h.message, artifactIds: [text.id, randomUUID()] }] }])
     expect(await binding.describeSave!()).toBeUndefined()
-    const [uploadId] = h.service.persistUploads(h.context, [{ name: 'upload.png', mediaType: 'image/png', data: png }])
+    const [uploadId] = await h.service.persistUploads(h.context, [{ name: 'upload.png', mediaType: 'image/png', data: png }])
     // IDs are listed so the model can save images even when it cannot generate.
     expect(await binding.describeSave!()).toContain(uploadId)
     expect(await h.service.bind(h.context).describeSave!()).toContain(uploadId)
@@ -315,7 +359,7 @@ describe('Main conversation image service', () => {
   it('filters missing and non-image references and deduplicates before limiting recent images', async () => {
     const h = setup()
     const generated = await h.service.bind(h.context).call({ intent: 'create', prompt: 'Blue' }, 'catalog')
-    const [upload] = h.service.persistUploads(h.context, [{ name: 'upload.png', mediaType: 'image/png', data: png }])
+    const [upload] = await h.service.persistUploads(h.context, [{ name: 'upload.png', mediaType: 'image/png', data: png }])
     h.profile.allowConversationInvocation = false
     const text = h.database.createTextArtifact({ title: 'Text', content: 'Not an image' })
     const missing = randomUUID()

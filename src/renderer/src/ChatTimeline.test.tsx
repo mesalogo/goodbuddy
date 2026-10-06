@@ -79,6 +79,39 @@ function createMessages(): Message[] {
 }
 
 describe('ChatTimeline', () => {
+  it('opens persisted tool and cancelled subagent output through the conversation-scoped reader', async () => {
+    const readOutput = vi.fn(async ({ handle }: { handle: string }) => ({
+      content: `stored:${handle}`, cursor: 0, nextCursor: 20, totalBytes: 20, eof: true
+    }))
+    vi.stubGlobal('goodbuddy', { context: { readOutput } })
+    const toolReference = { handle: 'process:stored-tool', nextCursor: 10, totalBytes: 20 }
+    const childReference = { handle: 'subagent:stored-child', nextCursor: 10, totalBytes: 20 }
+    const childTaskId = 'child'
+    const tool = { callId: 'call', name: 'Process', state: 'completed' as const, summary: 'Saved process', output: 'preview', outputReferences: [toolReference] }
+    const message: Message = { id: 'output-message', role: 'assistant', content: '', state: 'error', createdAt: 1,
+      terminalStatus: 'cancelled', tools: [tool],
+      blocks: [{ id: 'tool-block', type: 'tool', tool }, { id: 'child-block', type: 'subagent', childTaskId }],
+      subagents: [{ childTaskId, routingMode: 'native', state: 'cancelled', actor: { kind: 'direct-model', label: '编程 Subagent' },
+        output: 'partial', outputReference: childReference }] }
+    try {
+      const view = render(<ChatTimeline {...callbacks} artifactById={new Map()} conversationId="output-conversation"
+        hiddenMessageCount={0} isUnusedConversation={false} locale="zh-CN" messageStartIndex={0} totalMessageCount={1} messages={[message]} />)
+      for (const details of view.container.querySelectorAll<HTMLDetailsElement>('details')) {
+        details.open = true
+        fireEvent(details, new Event('toggle'))
+      }
+      expect(readOutput).not.toHaveBeenCalled()
+      const buttons = screen.getAllByRole('button', { name: '读取完整输出 1' })
+      expect(buttons).toHaveLength(2)
+      for (const button of buttons) await act(async () => fireEvent.click(button))
+      expect(readOutput.mock.calls.map(([input]) => input)).toEqual([
+        { conversationId: 'output-conversation', handle: toolReference.handle, cursor: 0 },
+        { conversationId: 'output-conversation', handle: childReference.handle, cursor: 0 }
+      ])
+      expect(screen.getByText(`stored:${childReference.handle}`)).toBeVisible()
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it.each(['cancelled', 'failed'] as const)('renders saved %s status and offers editing only with usable input', (terminalStatus) => {
     const props = {
       ...callbacks, artifactById: new Map(), conversationId: 'terminal',

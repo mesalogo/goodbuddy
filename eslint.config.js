@@ -12,9 +12,8 @@ import tseslint from 'typescript-eslint'
 // assigns it (data process, async fs, domain store, layout shell).
 // ---------------------------------------------------------------------------
 
-// PERF-16: SQLite belongs to a dedicated data process (utilityProcess); Main
-// only routes messages. Files that imported DatabaseSync from 'node:sqlite'
-// (including `import type`) on 2026-10-02. Shrink only.
+// Concrete SQLite implementations, executed by storage owners or the remote Agent.
+// Type imports do not grant permission to execute SQLite.
 const databaseSyncAllowlist = [
   'src/agent-daemon/agent-model-gateway.ts',
   'src/agent-daemon/event-journal.ts',
@@ -24,18 +23,82 @@ const databaseSyncAllowlist = [
   'src/main/agent/runtime-session-binding-store.ts',
   'src/main/assistant/assistant-database.ts',
   'src/main/assistant/assistant-storage-upgrade.ts',
-  'src/main/assistant/story-graph-reader.ts',
-  'src/main/assistant/subagent-progress-storage.ts',
-  'src/main/assistant/supervision-experiences.ts',
-  'src/main/assistant/supervision-review-store.ts',
-  'src/main/assistant/supervision-stories.ts',
-  'src/main/assistant/supervision-suggestions.ts',
-  'src/main/assistant/supervision-timeline.ts',
   'src/main/conversation-attachment-storage.ts',
   'src/main/knowledge/external/external-knowledge-store.ts',
   'src/main/knowledge/knowledge-database.ts',
   'src/shared/node/private-sqlite-database.ts'
 ]
+
+// Explicit execution contexts, not a src/main or *worker* naming exemption.
+const sqliteExecutionContexts = [
+  'src/agent-daemon/agent-owned-acp-prompt.ts',
+  'src/agent-daemon/daemon.ts',
+  'src/agent-daemon/direct-linux-stdio-process-owner.ts',
+  'src/agent-daemon/index.ts',
+  'src/agent-daemon/runtime-composition.ts',
+  'src/main/desktop-storage-owner.ts',
+  'src/main/desktop-storage-files.ts',
+  'src/main/desktop-storage-runtime-operations.ts',
+  'src/main/desktop-storage-entry.ts',
+  'src/main/desktop-storage-runtime-host-fixture.ts',
+  'src/main/readonly-query-worker.ts',
+  'src/main/assistant-storage-worker.ts',
+  'src/main/agent/private-sqlite-database.ts'
+]
+
+// Match known module entry points, including the legacy opener re-export. This
+// guards imports rather than trying to infer arbitrary transitive call graphs.
+const sqliteValueImports = {
+  'node:sqlite': ['DatabaseSync'],
+  'private-sqlite-database': ['openPrivateSqliteDatabase', 'PreparedPrivateSqliteDatabaseFile'],
+  'assistant-database': ['AssistantDatabase'],
+  'knowledge-database': ['KnowledgeDatabase'],
+  'external-knowledge-store': ['ExternalKnowledgeStore'],
+  'conversation-attachment-storage': ['ConversationAttachmentStorage'],
+  'runtime-session-binding-store': ['SqliteRuntimeSessionBindingStore'],
+  'agent-model-gateway': ['AgentModelCallLedger'],
+  'event-journal': ['EventJournal'],
+  'runtime-owner-registry': ['RuntimeOwnerRegistry'],
+  'semantic-prompt-store': ['SemanticPromptStore'],
+  'assistant-storage-upgrade': ['getPendingAssistantStorageUpgrade', 'upgradeAssistantStorage'],
+  'desktop-storage-owner': ['DesktopStorageOwner'],
+  'desktop-storage-files': ['openDesktopStorageFiles'],
+  'desktop-storage-runtime-operations': ['DesktopStorageRuntimeOwner']
+}
+const sqliteExecutionRule = {
+  meta: { type: 'problem', schema: [], messages: {
+    owner: 'SQLite value access belongs in an explicit storage owner, worker or remote Agent context (SA-07). Main must use the async storage interface; type imports are allowed.'
+  } },
+  create(context) {
+    function check(node, source, specifiers) {
+      if (node.importKind === 'type' || node.exportKind === 'type') return
+      const path = source?.type === 'TemplateLiteral' && source.expressions.length === 0
+        ? source.quasis[0].value.cooked : source?.value
+      if (typeof path !== 'string') return
+      const name = path.split('/').at(-1).replace(/\.(?:[cm]?[jt]s)$/, '')
+      const restricted = /(?:^|\/)agent-daemon(?:\/index(?:\.[cm]?[jt]s)?)?$/.test(path)
+        ? ['AgentModelCallLedger', 'EventJournal', 'RuntimeOwnerRegistry', 'SemanticPromptStore']
+        : sqliteValueImports[name]
+      if (!restricted) return
+      if (!specifiers || specifiers.length === 0 || specifiers.some(specifier => {
+        if (specifier.importKind === 'type' || specifier.exportKind === 'type') return false
+        const imported = specifier.imported ?? specifier.local
+        return !['ImportSpecifier', 'ExportSpecifier'].includes(specifier.type)
+          || restricted.includes(imported?.name ?? imported?.value)
+      })) context.report({ node, messageId: 'owner' })
+    }
+    return {
+      ImportDeclaration: node => check(node, node.source, node.specifiers),
+      ExportNamedDeclaration: node => check(node, node.source, node.specifiers),
+      ExportAllDeclaration: node => check(node, node.source),
+      ImportExpression: node => check(node, node.source),
+      CallExpression: node => {
+        if (node.callee.type === 'Identifier' && node.callee.name === 'require') check(node, node.arguments[0])
+      },
+      TSImportEqualsDeclaration: node => check(node, node.moduleReference.expression)
+    }
+  }
+}
 
 // PERF-15/PERF-16 rule 1: Main must not block its event loop on file IO.
 // Synchronous fs functions; also caught as `fs.xxxSync` member access.
@@ -48,15 +111,9 @@ const syncFsFunctions = [
   'symlinkSync', 'truncateSync', 'unlinkSync', 'utimesSync', 'writeFileSync', 'writeSync', 'writevSync'
 ]
 const syncFsMessage = 'Synchronous fs APIs block the Main event loop (PERF-17). Use node:fs/promises, or move the work to the data process (PERF-16).'
-const databaseSyncRestriction = [{
-  name: 'node:sqlite',
-  importNames: ['DatabaseSync'],
-  message: 'DatabaseSync may only be used by the data process (PERF-16); other code must go through its async interface (PERF-15). The allowlist in eslint.config.js must only shrink.'
-}]
 const syncFsRestriction = ['node:fs', 'fs', 'original-fs'].map(name => ({ name, importNames: syncFsFunctions, message: syncFsMessage }))
 // Files under src/main (non-test) that used synchronous fs APIs on 2026-10-02. Shrink only.
 const mainSyncFsAllowlist = [
-  'src/main/agent/paged-output-store.ts',
   'src/main/assistant/assistant-database.ts',
   'src/main/assistant/assistant-storage-upgrade.ts',
   'src/main/conversation-attachment-storage.ts',
@@ -98,6 +155,7 @@ export default tseslint.config(
       'docs/**/vendor/**',
       'node_modules/**',
       'out/**',
+      'temp/**',
       'shareserver/**'
     ]
   },
@@ -170,26 +228,16 @@ export default tseslint.config(
     }
   },
   // --- Architecture ratchets (PERF-17), see allowlists at the top. ---------
-  // Rules a (DatabaseSync) and b (sync fs) share `no-restricted-imports`, and a
-  // later flat-config block replaces an earlier block's options for the same
-  // rule. The blocks below therefore partition the files so that each file
-  // gets exactly the restrictions it is subject to.
-  // DatabaseSync outside the data process (all of src, both value and type imports).
   {
-    files: ['src/**/*.{ts,tsx}'],
-    ignores: ['**/*.test.{ts,tsx}', ...databaseSyncAllowlist],
-    rules: { 'no-restricted-imports': ['error', { paths: databaseSyncRestriction }] }
+    files: ['src/**/*.{ts,tsx,js,mjs,cjs}'],
+    ignores: ['**/*.test.{ts,tsx,js}', ...databaseSyncAllowlist, ...sqliteExecutionContexts],
+    plugins: { architecture: { rules: { 'sqlite-execution-context': sqliteExecutionRule } } },
+    rules: { 'architecture/sqlite-execution-context': 'error' }
   },
-  // Synchronous fs in Main: files not allowlisted for either rule get both restrictions.
+  // Synchronous fs in Main.
   {
     files: ['src/main/**/*.ts'],
-    ignores: ['**/*.test.ts', ...mainSyncFsAllowlist, ...databaseSyncAllowlist],
-    rules: { 'no-restricted-imports': ['error', { paths: [...databaseSyncRestriction, ...syncFsRestriction] }] }
-  },
-  // Main files allowlisted for DatabaseSync but not for sync fs.
-  {
-    files: databaseSyncAllowlist.filter(file => file.startsWith('src/main/')),
-    ignores: mainSyncFsAllowlist,
+    ignores: ['**/*.test.ts', ...mainSyncFsAllowlist],
     rules: { 'no-restricted-imports': ['error', { paths: syncFsRestriction }] }
   },
   // `fs.readFileSync(...)` style access through a namespace/default import.

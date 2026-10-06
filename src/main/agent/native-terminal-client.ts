@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { AgentModelCallLedger, AgentModelGateway } from '../../agent-daemon/agent-model-gateway'
+import { AgentModelGateway, type ModelCallLedger, type ModelCallLedgerFactory } from '../../agent-daemon/agent-model-gateway'
 import {
   ModelBridgeLoopbackProxy,
   MODEL_BRIDGE_SDK_AUTH_SENTINEL,
@@ -20,6 +20,7 @@ import { ContinueHostAdapter, loadContinueConfig } from './continue-host-adapter
 import { detectRuntimeBinary } from './runtime-discovery'
 import { applyLaunchEnvironmentPath, buildCredentialFilteredUserEnvironment, runtimePrivacyEnvironment } from './process-environment'
 import { stageRuntimeSkillPackages } from './runtime-skill-packages'
+import { createRuntimeTemporaryDirectory, recordRuntimeTemporaryChild, removeRuntimeTemporaryDirectory, runtimeTemporaryProcessIsActive } from '../runtime-temporary-directory'
 
 export type NativeTerminalClientInput = {
   projectId: string
@@ -34,9 +35,12 @@ export type NativeTerminalClientInput = {
 }
 
 export type NativeTerminalClientOptions = {
+  openModelCallLedger: ModelCallLedgerFactory
   terminalManager: Pick<TerminalSessionManager, 'create'>
   /** GoodBuddy user-data directory; native history is retained here. */
   rootDirectory: string
+  /** Application version/run launch root; retained histories stay in rootDirectory. */
+  temporaryRoot?: string
   bundledRuntimePaths: BundledRuntimePaths
   /** Standard Node resolved by the local tool environment, never Electron. */
   nodeExecutable?: string
@@ -137,9 +141,12 @@ export class NativeTerminalClient {
     }
     const root = this.options.rootDirectory
     await mkdir(root, { recursive: true })
-    const temporary = await mkdtemp(join(root, 'launch-'))
+    const temporary = await createRuntimeTemporaryDirectory(
+      this.options.temporaryRoot ?? join(root, 'goodbuddy-runtime-launch'), `goodbuddy-${input.runtime}-`)
+    let childPid: number | undefined
     const history = join(root, input.runtime, randomUUID())
-    let ledger: AgentModelCallLedger | undefined
+    let ledger: ModelCallLedger | undefined
+    let ledgerOpening = false
     let gateway: AgentModelGateway
     const bindingId = randomUUID()
     const proxy = new ModelBridgeLoopbackProxy({ exchange: (request, context) => gateway.dispatch({
@@ -148,13 +155,16 @@ export class NativeTerminalClient {
     }, request, context.signal) })
     let disposal: Promise<void> | undefined
     const dispose = (): Promise<void> => disposal ??= (async () => {
+      if (childPid && runtimeTemporaryProcessIsActive(childPid)) throw new Error('Native terminal child exit is unconfirmed')
       try { await proxy.close() } finally {
-        ledger?.close()
-        await rm(temporary, { recursive: true, force: true })
+        await ledger?.close()
+        // A lost open reply can leave a live connection in the host.
+        if (!ledgerOpening || ledger) await removeRuntimeTemporaryDirectory(temporary)
       }
     })()
     try {
-      ledger = new AgentModelCallLedger(join(temporary, 'model-calls.sqlite'))
+      ledgerOpening = true
+      ledger = await this.options.openModelCallLedger(join(temporary, 'model-calls.sqlite'))
       gateway = new AgentModelGateway({ ledger, fetcher: this.options.fetcher })
       await mkdir(history, { recursive: true })
       const origin = await proxy.listen()
@@ -212,7 +222,9 @@ export class NativeTerminalClient {
         })
         args.push('--model', config.model)
       }
-      return { spawnSpec: { executable, args, cwd: input.directory, env, label: input.runtime }, title: `${input.runtime} · ${input.projectName}`, dispose }
+      return { spawnSpec: { executable, args, cwd: input.directory, env, label: input.runtime,
+        onSpawn: async pid => { childPid = pid; await recordRuntimeTemporaryChild(temporary, pid) }
+      }, title: `${input.runtime} · ${input.projectName}`, dispose }
     } catch (error) {
       await dispose()
       throw error

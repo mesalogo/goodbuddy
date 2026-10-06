@@ -184,6 +184,44 @@ export function findNode(root: StoryNode, id: string): StoryNode | undefined {
   return undefined
 }
 
+export type StorySelection = { kind: 'story' | 'event' | 'experience'; id: string }
+
+/** Resolve against the displayed hierarchy first; only leave it when the target is hidden. */
+export function selectionFocus(root: StoryNode, focus: StoryNode, selection: StorySelection, experiences: SupervisionExperience[]) {
+  if (selection.kind === 'story') {
+    const node = findNode(root, selection.id)
+    return node && { node, angle: (node.a0 + node.a1) / 2, time: (node.start + node.end) / 2, radius: 188 }
+  }
+  if (selection.kind === 'event') {
+    const event = root.events.find(event => event.id === selection.id)
+    if (!event) return
+    const contains = (node: StoryNode) => node.events.some(event => event.id === selection.id)
+    let node = focus
+    if (!visibleLevel(node).children.some(contains)) {
+      node = root
+      while (true) {
+        const child = node.children.find(child => child.level !== 'cross' && contains(child))
+        if (!child) break
+        node = child
+      }
+      // A feature can own events in addition to its threads; show its stave for those events.
+      if (node.children.length && !node.children.some(contains)) node = node.parent ?? root
+    }
+    return { node, time: event.t }
+  }
+  const experience = experiences.find(item => item.id === selection.id)
+  if (!experience) return
+  const levels = [focus]
+  for (let i = 0; i < levels.length; i++) {
+    const node = levels[i]!
+    const link = experienceLinks([experience], visibleLevel(node).children)[0]
+    if (link) return { node, angle: link.angle, time: link.t, radius: 232 }
+    // After checking the current view, search every branch from the root.
+    if (i === 0) levels.push(root)
+    else levels.push(...node.children.filter(child => child.children.length))
+  }
+}
+
 export type ExperienceLink = {
   id: string
   statement: string

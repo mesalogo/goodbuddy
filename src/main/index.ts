@@ -44,7 +44,13 @@ import {
   sendRemoteProjectSaveProgress
 } from './ipc'
 import { KnowledgeService } from './knowledge/knowledge-service'
-import { AssistantDatabase } from './assistant/assistant-database'
+import { DesktopStorageClient } from './desktop-storage-client'
+import type { AssistantStorageProgress } from '../shared/assistant-storage-contracts'
+import { createAssistantStoragePort, createAssistantStorageOnChanged, type AsyncAssistantStoragePort } from './assistant-storage-port'
+import { createDesktopStorageFiles, type DesktopFilesCaller } from './desktop-storage-files'
+import { createKnowledgeStoragePort } from './knowledge/knowledge-storage-port'
+import { createSupervisionDomainPorts } from './assistant/supervision-domain-ports'
+import { createDesktopRuntimeStorageAdapters, type DesktopRuntimeStorageCall } from './desktop-storage-runtime-operations'
 import { prepareAssistantStorage } from './assistant-storage-startup'
 import { createModelGraphExtractor } from './knowledge/model-extractor'
 import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
@@ -64,8 +70,7 @@ import {
 import { createTrayIcon } from './tray-icon'
 import { resolveBundledRuntimePaths } from './agent/bundled-runtimes'
 import type { ContinueHostLauncher } from './agent/continue-host-adapter'
-import { CONTINUE_HOST_LAYOUT_VERSION } from './agent/continue-host-layout'
-import { removeStaleRuntimeCaches } from './stale-runtime-cache-cleanup'
+import { cleanupRuntimeTemporaryDirectories, runtimeTemporaryRoot } from './runtime-temporary-directory'
 import { resolvePortableUserDataPath } from './portable-user-data'
 import { BrowserService } from './browser/browser-service'
 import { SubagentService, createSubagentRuntime } from './assistant/subagent-service'
@@ -101,8 +106,6 @@ import { DocumentOcrModelManager } from './document-ocr-model-manager'
 import { DocumentOcrBroker } from './document-ocr-broker'
 import { DocumentParsingService } from './document-parsing-service'
 import { configureDocumentParseWorker } from './document-parse-client'
-import { DocumentResultStorage } from './document-result-storage'
-import { ConversationAttachmentStorage } from './conversation-attachment-storage'
 import { ReleaseNotesService } from './release-notes-service'
 import { GoodBuddyConfigService } from './goodbuddy-config-service'
 import {
@@ -222,14 +225,16 @@ let selectedRuntimeManager: SelectedRuntimeManager | undefined
 const localRuntimeRegistry = new LocalRuntimeRegistry()
 let knowledgeService: KnowledgeService | undefined
 let knowledgeGateway: KnowledgeMcpGateway | undefined
-let assistantDatabase: AssistantDatabase | undefined
+let desktopStorage: DesktopStorageClient | undefined
+let assistantDatabase: AsyncAssistantStoragePort | undefined
 let imageGenerationService: ImageGenerationService | undefined
 let browserService: BrowserService | undefined
 let globalTlsPolicy: GlobalTlsPolicy | undefined
 let feedbackService: FeedbackService | undefined
 let documentOcrBroker: DocumentOcrBroker | undefined
 let documentParsingService: DocumentParsingService | undefined
-let conversationAttachmentStorage: ConversationAttachmentStorage | undefined
+let startupContextManager: ContextManager | undefined
+let startupSubagentService: SubagentService | undefined
 let documentOcrModelManager: DocumentOcrModelManager | undefined
 let embeddingModelManager: EmbeddingModelManager | undefined
 const embeddingBrokers = new Set<EmbeddingInferenceBroker>()
@@ -244,27 +249,28 @@ let managedRemoteExecutionServices:
   | undefined
 let directModelSubagentScheduler: SubagentScheduler | undefined
 let localToolEnvironmentService: LocalToolEnvironmentService | undefined
+const knowledgeUsageWrites = new Set<Promise<void>>()
+let knowledgeUsageFailure: unknown
 
 function recordKnowledgeUsage(
   bucket: SystemModelUsageInput['bucket'],
   usage: Omit<SystemModelUsageInput, 'source' | 'bucket'>
-): void {
-  try {
-    assistantDatabase?.recordSystemModelUsage({
+): Promise<void> {
+  const operation = assistantDatabase!.recordSystemModelUsage({
       ...usage,
       source: 'knowledge',
       bucket
+    }).then(() => undefined)
+  knowledgeUsageWrites.add(operation)
+  // Some provider observers return void; still observe and drain their writes.
+  void operation.then(() => knowledgeUsageWrites.delete(operation), error => {
+    knowledgeUsageWrites.delete(operation)
+    knowledgeUsageFailure = error
+    observeDesktopFailure({
+      component: 'desktop', stage: 'knowledge', code: 'knowledge.usage.persist-failed', error
     })
-  } catch (error) {
-    void desktopDiagnostics
-      .recordFailure({
-        component: 'desktop',
-        stage: 'knowledge',
-        code: 'knowledge.usage.persist-failed',
-        error
-      })
-      .catch(() => undefined)
-  }
+  })
+  return operation
 }
 
 type ManagedEmbeddingProvider = EmbeddingProvider & {
@@ -555,6 +561,10 @@ function buildTray(): Tray {
 
 const storageUpgradeController = new AbortController()
 let storageUpgrade: Promise<void> | undefined
+let applicationStartup: Promise<void> | undefined
+const runtimeTemporaryCleanupController = new AbortController()
+let runtimeTemporaryCleanupTimer: ReturnType<typeof setTimeout> | undefined
+let runtimeTemporaryCleanup: Promise<unknown> | undefined
 
 startupMark('main:module-evaluated')
 if (hasSingleInstanceLock) {
@@ -564,7 +574,7 @@ if (hasSingleInstanceLock) {
     }
   })
 
-  void app.whenReady().then(async () => {
+  applicationStartup = app.whenReady().then(async () => {
     startupMark('main:when-ready')
     session.defaultSession.setPermissionRequestHandler(
       (webContents, permission, callback, details) => {
@@ -587,6 +597,32 @@ if (hasSingleInstanceLock) {
         details.mediaType === 'audio'
     )
 
+    const defaultWorkspace = process.env.GOODBUDDY_WORKSPACE ?? homedir()
+    const notifyStorageChange = (channel: string): void => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send(channel)
+      }
+    }
+    // Start the storage process before creating the window so their startup
+    // overlaps. Progress before the window attaches keeps only the latest value.
+    let publishStorageProgress: ((progress: AssistantStorageProgress) => void) | undefined
+    let earlyStorageProgress: AssistantStorageProgress | undefined
+    const storageClient = desktopStorage = new DesktopStorageClient({
+      userDataPath: app.getPath('userData'),
+      assistantPath: join(app.getPath('userData'), 'assistant.sqlite'),
+      knowledgePath: join(app.getPath('userData'), 'knowledge.sqlite'),
+      defaultRootPath: defaultWorkspace,
+      onProgress: progress => publishStorageProgress ? publishStorageProgress(progress) : (earlyStorageProgress = progress),
+      onChanged: createAssistantStorageOnChanged({
+        onMagicNotesChanged: () => notifyStorageChange(ipcChannels.magicNotesChanged),
+        onMagicTodosChanged: () => notifyStorageChange(ipcChannels.magicTodosStatusChanged),
+        onModelUsageChanged: () => notifyStorageChange(ipcChannels.tokenUsageChanged),
+        onExecutionStatsChanged: () => notifyStorageChange(ipcChannels.tasksExecutionStatsChanged)
+      }),
+      onFailure: error => observeDesktopFailure({
+        component: 'desktop', stage: 'storage', code: 'desktop.storage.failed', error
+      })
+    })
     startupMark('main:create-window:start')
     mainWindow = createMainWindow(() => isQuitting, observeDesktopFailure)
     startupMark('main:create-window:end')
@@ -595,12 +631,25 @@ if (hasSingleInstanceLock) {
     startupMark('main:tray-built')
     storageUpgrade = prepareAssistantStorage(
       mainWindow,
-      join(app.getPath('userData'), 'assistant.sqlite'),
+      publish => {
+        publishStorageProgress = publish
+        if (earlyStorageProgress) publish(earlyStorageProgress)
+        return storageClient
+      },
       storageUpgradeController.signal
     )
     await startupSpan('main:storage-upgrade-check', () => storageUpgrade!)
     if (storageUpgradeController.signal.aborted) return
-    const defaultWorkspace = process.env.GOODBUDDY_WORKSPACE ?? homedir()
+    const storage = desktopStorage!
+    // The path is shared by all local runtimes; their existing owners create it lazily.
+    const runtimeLaunchRoot = runtimeTemporaryRoot(app.getPath('userData'), app.getVersion())
+    const startupAssistantDatabase = createAssistantStoragePort(storage)
+    assistantDatabase = startupAssistantDatabase
+    const storageFiles = createDesktopStorageFiles({ call: storage.call.bind(storage) as DesktopFilesCaller['call'] })
+    const supervisionPorts = createSupervisionDomainPorts(storage)
+    const runtimeStorage = createDesktopRuntimeStorageAdapters(
+      storage.call.bind(storage) as DesktopRuntimeStorageCall
+    )
     const secureCipher = {
       isAvailable: () =>
         safeStorage.isEncryptionAvailable() &&
@@ -728,7 +777,7 @@ if (hasSingleInstanceLock) {
       new ManagedRemoteExecutionServices({
         sshHostStore,
         agentServices: startupRemoteAgentServices,
-        userDataPath: app.getPath('userData'),
+        bindingStore: runtimeStorage.bindingStore,
         appPath: app.getAppPath(),
         resourcesPath: process.resourcesPath,
         packaged: app.isPackaged,
@@ -747,9 +796,9 @@ if (hasSingleInstanceLock) {
           return selection.provider === 'continue' ? resolved.continueModelProfile : resolved.opencodeModelProfile
         }
       })
-    await startupSpan('main:managed-remote-init', () => startupManagedRemoteExecutionServices.initialize())
     managedRemoteExecutionServices =
       startupManagedRemoteExecutionServices
+    await startupSpan('main:managed-remote-init', () => startupManagedRemoteExecutionServices.initialize())
     const beginRemoteHostInvalidation = (hostId: string): void => {
       const invalidations = [
         startupRemoteAgentServices.invalidateHost(hostId)
@@ -860,7 +909,7 @@ if (hasSingleInstanceLock) {
       documentParsingSettingsStore,
       documentOcrModelManager,
       documentOcrBroker,
-      new DocumentResultStorage(join(app.getPath('userData'), 'temp', 'document-parsing'))
+      storageFiles.results
     )
     localInferenceService.register('ocr', {
       snapshot: async () => {
@@ -953,13 +1002,11 @@ if (hasSingleInstanceLock) {
         onExtensionStartupFailures: (extensionIds) =>
           runtimeExtensionStore.markStartupFailed(extensionIds)
       })
-    const readonlyQueryWorkerPath = join(app.getAppPath(), 'out/main/readonly-query-worker.js')
     const startupKnowledgeService = new KnowledgeService({
-      documentResults: documentParsingService.results,
+      documentResults: storageFiles.results,
       credentialCipher: secureCipher,
-      databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
+      database: createKnowledgeStoragePort(storage),
       managedRoot: join(app.getPath('userData'), 'knowledge'),
-      readonlyQueryWorkerPath,
       extractStructured: createModelGraphExtractor(
         settingsStore,
         fetch,
@@ -979,45 +1026,6 @@ if (hasSingleInstanceLock) {
     let activeRerankProvider:
       | ReturnType<typeof createRerankProvider>
       | undefined
-    const startupAssistantDatabase = new AssistantDatabase(
-      join(app.getPath('userData'), 'assistant.sqlite'),
-      {
-        onMagicNotesChanged: () => {
-          queueMicrotask(() => {
-            if (
-              mainWindow &&
-              !mainWindow.isDestroyed() &&
-              !mainWindow.webContents.isDestroyed()
-            ) {
-              mainWindow.webContents.send(ipcChannels.magicNotesChanged)
-            }
-          })
-        },
-        onMagicTodosChanged: () => {
-          queueMicrotask(() => {
-            if (
-              mainWindow &&
-              !mainWindow.isDestroyed() &&
-              !mainWindow.webContents.isDestroyed()
-            ) {
-              mainWindow.webContents.send(
-                ipcChannels.magicTodosStatusChanged
-              )
-            }
-          })
-        },
-        onModelUsageChanged: () => {
-          if (
-            mainWindow &&
-            !mainWindow.isDestroyed() &&
-            !mainWindow.webContents.isDestroyed()
-          ) {
-            mainWindow.webContents.send(ipcChannels.tokenUsageChanged)
-          }
-        }
-      }
-    )
-    assistantDatabase = startupAssistantDatabase
     imageGenerationService = new ImageGenerationService({
       database: startupAssistantDatabase,
       getSettings: () => settingsStore.getResolvedSettings(),
@@ -1059,9 +1067,9 @@ if (hasSingleInstanceLock) {
         observeFailure: observeDesktopFailure,
         storyGraphService: {
           available: async ({ runtimeTarget, conversationId }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
-            (!conversationId || startupAssistantDatabase.isConversationStoryGraphEnabled(conversationId)) &&
+            (!conversationId || await startupAssistantDatabase.isConversationStoryGraphEnabled(conversationId)) &&
             (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
-          read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraphAsync(name, input, projectId, signal)
+          read: (name, input, projectId, signal) => storage.call('assistant', 'readStoryGraph', [name, input, projectId], { signal })
         },
         magicNotesDatabase: startupAssistantDatabase,
         configService: goodbuddyConfigService,
@@ -1109,20 +1117,15 @@ if (hasSingleInstanceLock) {
             : Promise.resolve([])
         ])
       return createAgentRuntime(defaultWorkspace, settings, {
+        outputStore: { backingStore: storageFiles.backingStore },
+        outputAdopt: storageFiles.attachments.outputAdopt,
         observeFailure: observeDesktopFailure,
         localRuntimeRegistry,
         skillInstructions: skillContext.instructions,
         skillPackages: skillContext.packages,
         mcpServers,
-        continueHostCacheRoot: join(
-          app.getPath('userData'),
-          'continue-host'
-        ),
-        opencodeSharedCacheRoot: join(
-          app.getPath('userData'),
-          'opencode-runtime',
-          app.getVersion()
-        ),
+        continueHostCacheRoot: runtimeLaunchRoot,
+        opencodeSharedCacheRoot: runtimeLaunchRoot,
         bundledRuntimePaths,
         continueHostLauncher: launchContinueHost,
         deepseekHarnessLauncher: launchDeepSeekHarness,
@@ -1195,7 +1198,9 @@ if (hasSingleInstanceLock) {
       )
       return resolved.target === 'opencode'
         ? createAgentRuntime(defaultWorkspace, resolved.settings, {
-            bundledRuntimePaths
+            bundledRuntimePaths,
+            continueHostCacheRoot: runtimeLaunchRoot,
+            opencodeSharedCacheRoot: runtimeLaunchRoot
           })
         : createRuntimeWithCapabilities(
             resolved.settings,
@@ -1203,7 +1208,7 @@ if (hasSingleInstanceLock) {
           )
     }
     startupMark('main:services-constructed')
-    const configuredRuntime = await startupSpan('main:prerequisites', () => runStartupPrerequisites({
+    await startupSpan('main:prerequisites', () => runStartupPrerequisites({
       prepareDeepSeekHome: async () => {
         await mkdir(deepSeekHarnessHome, {
           recursive: true,
@@ -1239,20 +1244,21 @@ if (hasSingleInstanceLock) {
         ])
         await startupSpan('main:knowledge-gateway-start', () => startupKnowledgeGateway.start())
       },
-      hydrateConfiguredRuntime: () =>
-        startupSpan('main:runtime-hydrate', () => createConfiguredRuntime(initialResolvedSettings)),
-      initializeAssistant: () => {
+      hydrateConfiguredRuntime: async () => {
+        const configured = await startupSpan('main:runtime-hydrate', () => createConfiguredRuntime(initialResolvedSettings))
+        // Retain ownership even if another prerequisite fails after hydration.
+        runtime = new AgentRuntimeController(configured, undefined, observeDesktopFailure)
+        return configured
+      },
+      initializeAssistant: async () => {
         startupMark('main:assistant-db-init:start')
-        startupAssistantDatabase.initialize(defaultWorkspace)
-        startupAssistantDatabase.enableReadonlyWorker(readonlyQueryWorkerPath)
-        startupAssistantDatabase.enableWalCheckpointWorker(readonlyQueryWorkerPath)
-        imageGenerationService!.initialize()
-        startupAssistantDatabase.ensureChannelProjects(
+        await imageGenerationService!.initialize()
+        await startupAssistantDatabase.ensureChannelProjects(
           defaultWorkspace,
           initialRuntimeSettings.defaultModelProfileId
         )
         channelSettingsStore.reportRuntimeSelectionRepairs(
-          startupAssistantDatabase.repairConversationRuntimeSelections(
+          await startupAssistantDatabase.repairConversationRuntimeSelections(
             initialRuntimeSettings
           )
         )
@@ -1271,11 +1277,8 @@ if (hasSingleInstanceLock) {
         (settings, space) => createRuntimeWithCapabilities(settings, 'model', space), createSelectedRuntime),
       startupAssistantDatabase
     )
-    runtime = new AgentRuntimeController(
-      configuredRuntime,
-      undefined,
-      observeDesktopFailure
-    )
+    startupSubagentService = subagentService
+    if (storageUpgradeController.signal.aborted) return
     selectedRuntimeManager = new SelectedRuntimeManager(
       createSelectedRuntime,
       undefined,
@@ -1284,17 +1287,14 @@ if (hasSingleInstanceLock) {
       createSelectedStatusRuntime,
       (conversationId) => localRuntimeRegistry.releaseConversation(conversationId)
     )
-    startupMark('main:attachments-reconcile:start')
-    conversationAttachmentStorage = new ConversationAttachmentStorage(app.getPath('userData'), documentParsingService.results!)
-    conversationAttachmentStorage.reconcile((conversationId, kind, ownerId) => startupAssistantDatabase.hasAttachmentOwner(conversationId, kind, ownerId), true)
-    startupMark('main:attachments-reconcile:end')
     const contextManager = new ContextManager({
       parseDocument: documentParsingService.parse,
-      assets: conversationAttachmentStorage,
-      validateConversation: (id) => {
-        if (!startupAssistantDatabase.hasAttachmentOwner(id, 'draft', id)) throw new Error('目标会话已删除')
+      assets: storageFiles.attachments,
+      validateConversation: async (id) => {
+        if (!await startupAssistantDatabase.hasAttachmentOwner(id, 'draft', id)) throw new Error('目标会话已删除')
       }
     })
+    startupContextManager = contextManager
 
     const shortcutSettingsService = new ShortcutSettingsService(
       new ShortcutSettingsStore(
@@ -1470,10 +1470,12 @@ if (hasSingleInstanceLock) {
       }
     })
     nativeClientCoordinator = new NativeClientCoordinator({
+      openModelCallLedger: runtimeStorage.openModelCallLedger,
       database: startupAssistantDatabase, settingsStore, applicationSettingsStore,
       capabilities: capabilityService, executionSpaceResolver, terminalManager: terminalSessionManager,
       localEnvironment: startupLocalToolEnvironmentService, bundledRuntimePaths,
       rootDirectory: join(app.getPath('userData'), 'native-clients'),
+      temporaryRoot: runtimeLaunchRoot,
       managedNodeDirectory: join(toolEnvironmentRoot, 'native-node-22.22.0'),
       npmCliPath: npmCliPaths.npmCliPath,
       resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
@@ -1482,9 +1484,9 @@ if (hasSingleInstanceLock) {
         observeFailure: observeDesktopFailure,
         storyGraphService: {
           available: async ({ runtimeTarget, conversationId }) => (await applicationSettingsStore.get()).heartbeatEnabled === true &&
-            (!conversationId || startupAssistantDatabase.isConversationStoryGraphEnabled(conversationId)) &&
+            (!conversationId || await startupAssistantDatabase.isConversationStoryGraphEnabled(conversationId)) &&
             (await capabilityService.getEnabledBuiltinMcpServerIds(runtimeTarget)).includes('story-graph'),
-          read: (name, input, projectId, signal) => startupAssistantDatabase.readStoryGraphAsync(name, input, projectId, signal)
+          read: (name, input, projectId, signal) => storage.call('assistant', 'readStoryGraph', [name, input, projectId], { signal })
         },
         magicNotesDatabase: startupAssistantDatabase, configService: goodbuddyConfigService,
         obsidianService, launchEnvironmentProvider: startupLocalToolEnvironmentService.launchEnvironmentProvider,
@@ -1492,15 +1494,15 @@ if (hasSingleInstanceLock) {
       })
     })
     startupMark('main:ipc-register:start')
-    removeIpcHandlers = registerIpcHandlers(
+    removeIpcHandlers = await registerIpcHandlers(
       mainWindow,
-      runtime,
+      runtime!,
       legacyDefaultShortcut,
       settingsStore,
       capabilityService,
       contextManager,
       knowledgeService,
-      assistantDatabase,
+      startupAssistantDatabase,
       bundledRuntimePaths,
       reconfigureRuntimes,
       async () => {
@@ -1553,8 +1555,10 @@ if (hasSingleInstanceLock) {
       startupLocalToolEnvironmentService,
       imageGenerationService,
       obsidianService,
-      nativeClientCoordinator
+      nativeClientCoordinator,
+      supervisionPorts
     )
+    if (storageUpgradeController.signal.aborted) return
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
       mainWindow,
       startupFeedbackService
@@ -1564,12 +1568,17 @@ if (hasSingleInstanceLock) {
     startupMark('main:load-main-window')
     removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow,
       new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion()))
-    // Disk only: old versions' runtime caches, removed well after the first frame.
-    setTimeout(() => {
-      void removeStaleRuntimeCaches({
+    // Reclaim confirmed inactive runs, including their shared immutable caches.
+    runtimeTemporaryCleanupTimer = setTimeout(() => {
+      runtimeTemporaryCleanupTimer = undefined
+      if (runtimeTemporaryCleanupController.signal.aborted) return
+      runtimeTemporaryCleanup = cleanupRuntimeTemporaryDirectories({
         userDataPath: app.getPath('userData'),
-        appVersion: app.getVersion(),
-        continueHostLayoutVersion: CONTINUE_HOST_LAYOUT_VERSION
+        signal: runtimeTemporaryCleanupController.signal
+      }).catch(error => {
+        observeDesktopFailure({
+          component: 'desktop', stage: 'runtime-cleanup', code: 'desktop.runtime-cleanup.failed', error
+        })
       })
     }, 30_000).unref()
     setImmediate(() => {
@@ -1621,6 +1630,7 @@ if (hasSingleInstanceLock) {
       }
     })
   }).catch((error: unknown) => {
+    if (storageUpgradeController.signal.aborted) return
     void desktopDiagnostics.recordFailure({
       component: 'desktop',
       stage: 'startup',
@@ -1645,6 +1655,8 @@ let cleanupComplete = false
 app.on('before-quit', (event) => {
   isQuitting = true
   storageUpgradeController.abort()
+  runtimeTemporaryCleanupController.abort()
+  clearTimeout(runtimeTemporaryCleanupTimer)
   if (cleanupComplete) {
     return
   }
@@ -1654,20 +1666,26 @@ app.on('before-quit', (event) => {
   }
   cleanupStarted = true
   void (async () => {
+    let cleanupFailed = false
     try {
       const cleanup = settleCleanupPhases([
+        [() => applicationStartup],
         [
-          () => storageUpgrade,
+          () => runtimeTemporaryCleanup,
           () => feedbackService?.dispose(),
           () => removeFeedbackIpcHandler?.(),
           () => removeDeviceSharingIpc?.(),
           () => dshExtensionInstaller?.dispose(),
-          () => imageGenerationService?.dispose(),
           () => knowledgeService?.beginShutdown(),
-          () => nativeClientCoordinator?.dispose(),
           () => removeIpcHandlers?.()
         ],
         [() => stopRuntimeReconfiguration?.()],
+        [
+          () => startupSubagentService?.dispose(),
+          () => imageGenerationService?.dispose(),
+          () => nativeClientCoordinator?.dispose(),
+          () => startupContextManager?.dispose()
+        ],
         [
           () => runtime?.detachForApplicationExit(),
           () => selectedRuntimeManager?.detachForApplicationExit()
@@ -1678,36 +1696,57 @@ app.on('before-quit', (event) => {
           () => {
             directModelSubagentScheduler?.dispose()
             return directModelSubagentScheduler?.waitForIdle()
-          },
-          () => browserService?.dispose(),
-          () => globalTlsPolicy?.dispose(),
-          () =>
-            Promise.allSettled(
-              [...embeddingBrokers].map((broker) => broker.shutdown())
-            ).then(() => undefined),
-          () => embeddingModelManager?.dispose(),
-          () => documentOcrModelManager?.dispose(),
-          () => documentOcrBroker?.dispose(),
-          () => documentParsingService?.dispose(),
-          () => conversationAttachmentStorage?.close()
+          }
         ],
         [() => localRuntimeRegistry.dispose()],
         [() => terminalSessionManager?.dispose()],
+        [() => knowledgeGateway?.dispose()],
+        [() => knowledgeService?.dispose()],
+        [async () => {
+          await Promise.allSettled(knowledgeUsageWrites)
+          if (knowledgeUsageFailure) throw knowledgeUsageFailure
+        }],
+        [() => documentParsingService?.dispose()],
+        [
+          () => browserService?.dispose(),
+          () => globalTlsPolicy?.dispose(),
+          async () => {
+            const results = await Promise.allSettled(
+              [...embeddingBrokers].map((broker) => broker.shutdown())
+            )
+            const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+            if (failures.length) throw new AggregateError(failures, 'Embedding brokers failed to shut down')
+          },
+          () => embeddingModelManager?.dispose(),
+          () => documentOcrModelManager?.dispose(),
+          () => documentOcrBroker?.dispose()
+        ],
         [() => localToolEnvironmentService?.dispose()],
         [() => managedRemoteExecutionServices?.dispose()],
         [() => remoteAgentServices?.dispose()],
-        [() => knowledgeGateway?.dispose()],
-        [() => knowledgeService?.dispose()],
+        [() => desktopStorage?.close()],
         [() => desktopDiagnostics.dispose()]
-      ])
+      ].map((phase, phaseIndex) => phase.map(operation => async () => {
+        try {
+          await operation()
+        } catch (error) {
+          cleanupFailed = true
+          console.error(`Desktop shutdown phase ${phaseIndex} failed`, error)
+          await desktopDiagnostics.recordFailure({
+            component: 'desktop', stage: 'shutdown', code: 'desktop.shutdown.drain-failed', error
+          }).catch(() => undefined)
+        }
+      })))
       globalShortcut.unregisterAll()
       tray?.destroy()
-      await runCleanupBeforeDeadline(cleanup, 8_000, () => {
-        assistantDatabase?.close()
-      })
+      const completed = await runCleanupBeforeDeadline(cleanup, 8_000, () => undefined)
+      if (!completed) {
+        cleanupFailed = true
+        console.error('Desktop shutdown deadline expired before storage drain was confirmed')
+      }
     } finally {
       cleanupComplete = true
-      app.exit(0)
+      app.exit(cleanupFailed ? 1 : 0)
     }
   })()
 })

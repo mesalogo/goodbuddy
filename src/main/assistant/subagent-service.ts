@@ -13,7 +13,7 @@ import type {
   RuntimeAuthorizer,
   RuntimeModelUsageEvent
 } from '../agent/runtime'
-import type { AssistantDatabase } from './assistant-database'
+import type { AssistantStoragePort, Awaitable } from '../assistant-storage-port'
 import { SubagentScheduler } from './subagent-scheduler'
 import { ExecutionSpaceResolver, type ExecutionSpaceDescriptor } from '../execution-space'
 import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
@@ -42,8 +42,8 @@ export type SubagentRunInput = {
   routingMode: 'manual' | 'smart'
   reason?: string
   signal: AbortSignal
-  onEvent: (event: SubagentEvent) => void
-  onModelUsage?: (event: RuntimeModelUsageEvent) => void
+  onEvent: (event: SubagentEvent) => Awaitable<void>
+  onModelUsage?: (event: RuntimeModelUsageEvent) => Awaitable<void>
   authorize?: RuntimeAuthorizer
 }
 
@@ -76,20 +76,30 @@ export async function createSubagentRuntime(
 }
 
 export class SubagentService {
+  private readonly pending = new Set<Promise<SubagentRunResult>>()
+  private cancellation = new AbortController()
+  private persistenceFailure?: unknown
   constructor(
     private readonly createRuntime: (input: SubagentRunInput) => Promise<AgentRuntime>,
-    private readonly database: AssistantDatabase,
+    private readonly database: Pick<AssistantStoragePort, 'createTask' | 'updateTaskStatus' | 'appendTaskEvent'>,
     private readonly scheduler = new SubagentScheduler()
   ) {}
 
   async dispose(): Promise<void> {
+    this.cancellation.abort(new Error('Subagent service is closing'))
     this.scheduler.dispose()
     await this.scheduler.waitForIdle()
+    await Promise.allSettled(this.pending)
+    if (this.persistenceFailure) throw this.persistenceFailure
   }
 
   async cancelAll(reason: string): Promise<void> {
+    this.cancellation.abort(new Error(reason))
+    this.cancellation = new AbortController()
     this.scheduler.cancelAll(new Error(reason))
     await this.scheduler.waitForIdle()
+    await Promise.allSettled(this.pending)
+    if (this.persistenceFailure) throw this.persistenceFailure
   }
 
   synthesize(
@@ -97,7 +107,7 @@ export class SubagentService {
     prompt: string,
     signal: AbortSignal,
     runtime: AgentRuntime,
-    onModelUsage?: (event: RuntimeModelUsageEvent) => void
+    onModelUsage?: (event: RuntimeModelUsageEvent) => Awaitable<void>
   ): Promise<string> {
     return this.scheduler.schedule(async (scheduledSignal) => {
       const conversationId = `subagent-synthesis:${request.requestId}`
@@ -120,7 +130,7 @@ export class SubagentService {
           async () => 'deny'
         )) {
           if (event.type === 'model-usage') {
-            onModelUsage?.(event)
+            await this.persist(() => onModelUsage?.(event))
           } else if (event.type === 'generated-image') {
             throw new Error('专家综合不允许生成图片')
           } else if (event.type === 'tool') {
@@ -144,10 +154,17 @@ export class SubagentService {
   }
 
   run(input: SubagentRunInput): Promise<SubagentRunResult> {
+    const pending = this.runInternal({ ...input, signal: AbortSignal.any([input.signal, this.cancellation.signal]) })
+    this.pending.add(pending)
+    void pending.then(() => this.pending.delete(pending), () => this.pending.delete(pending))
+    return pending
+  }
+
+  private async runInternal(input: SubagentRunInput): Promise<SubagentRunResult> {
     const childTaskId = randomUUID()
     const childConversationId =
       `subagent:${input.parentRequest.requestId}:${childTaskId}`
-    this.database.createTask({
+    await this.persist(() => this.database.createTask({
       id: childTaskId,
       projectId: input.parentRequest.projectId,
       conversationId: input.parentRequest.conversationId,
@@ -159,8 +176,8 @@ export class SubagentService {
       origin: 'subagent',
       status: 'queued',
       visible: false
-    })
-    this.emit(input, {
+    }))
+    await this.emit(input, {
       childTaskId,
       state: 'queued',
       reason: input.reason
@@ -169,12 +186,12 @@ export class SubagentService {
     let started = false
     return this.scheduler.schedule(async (scheduledSignal) => {
       started = true
-      this.database.updateTaskStatus(childTaskId, 'running')
-      this.emit(input, { childTaskId, state: 'running' })
       let runtime: AgentRuntime | undefined
       let output = ''
       let completed = false
       try {
+        await this.persist(() => this.database.updateTaskStatus(childTaskId, 'running'))
+        await this.emit(input, { childTaskId, state: 'running' })
         if (input.parentRequest.projectId && !input.executionSpace) {
           throw new Error('Expert project execution space is unavailable')
         }
@@ -202,18 +219,18 @@ export class SubagentService {
           input.authorize
         )) {
           if (event.type === 'model-usage') {
-            input.onModelUsage?.(event)
+            await this.persist(() => input.onModelUsage?.(event))
             continue
           }
           if (event.type === 'generated-image') {
             throw new Error('专家子任务不允许生成图片')
           }
           if (event.type === 'tool') {
-            this.database.appendTaskEvent(
+            await this.persist(() => this.database.appendTaskEvent(
               childTaskId,
               event.type,
               event
-            )
+            ))
             continue
           }
           if (event.type === 'error') {
@@ -228,8 +245,8 @@ export class SubagentService {
         if (!completed) {
           throw new Error('专家子任务未报告完成')
         }
-        this.database.updateTaskStatus(childTaskId, 'completed')
-        this.emit(input, {
+        await this.persist(() => this.database.updateTaskStatus(childTaskId, 'completed'))
+        await this.emit(input, {
           childTaskId,
           state: 'completed',
           output
@@ -239,12 +256,12 @@ export class SubagentService {
         const cancelled = scheduledSignal.aborted || input.signal.aborted
         const message =
           safeToolErrorDetail(error, 1_000) ?? '专家子任务失败'
-        this.database.updateTaskStatus(
+        await this.persist(() => this.database.updateTaskStatus(
           childTaskId,
           cancelled ? 'cancelled' : 'failed',
           message
-        )
-        this.emit(input, {
+        ))
+        await this.emit(input, {
           childTaskId,
           state: cancelled ? 'cancelled' : 'failed',
           output: output || undefined,
@@ -258,17 +275,17 @@ export class SubagentService {
           await runtime?.dispose()
         }
       }
-    }, input.signal).catch((error: unknown) => {
+    }, input.signal).catch(async (error: unknown) => {
       if (!started) {
         const cancelled = input.signal.aborted
         const message =
           safeToolErrorDetail(error, 1_000) ?? '专家子任务排队失败'
-        this.database.updateTaskStatus(
+        await this.persist(() => this.database.updateTaskStatus(
           childTaskId,
           cancelled ? 'cancelled' : 'failed',
           message
-        )
-        this.emit(input, {
+        ))
+        await this.emit(input, {
           childTaskId,
           state: cancelled ? 'cancelled' : 'failed',
           error: message
@@ -276,6 +293,11 @@ export class SubagentService {
       }
       throw error
     })
+  }
+
+  private async persist<T>(write: () => Awaitable<T>): Promise<T> {
+    try { return await write() }
+    catch (error) { this.persistenceFailure = error; throw error }
   }
 
   private emit(
@@ -287,8 +309,8 @@ export class SubagentService {
       output?: string
       error?: string
     }
-  ): void {
-    input.onEvent(subagentEventSchema.parse({
+  ): Awaitable<void> {
+    return this.persist(() => input.onEvent(subagentEventSchema.parse({
       requestId: input.parentRequest.requestId,
       type: 'subagent',
       childTaskId: event.childTaskId,
@@ -305,6 +327,6 @@ export class SubagentService {
       ...(event.error
         ? { error: event.error.slice(0, 1_000) }
         : {})
-    }))
+    })))
   }
 }

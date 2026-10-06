@@ -33,7 +33,6 @@ import type {
   VerifiedRemoteAgentInstallCandidate
 } from './agent-package-manager'
 import type {
-  PendingRemoteEnvironmentOperation,
   RemoteEnvironmentOperationStore
 } from './remote-environment-operation-store'
 import type {
@@ -548,13 +547,7 @@ export class RemoteEnvironmentPreparer implements Preparer {
     ) => void,
     signal: AbortSignal
   ): Promise<void> {
-    let pending: PendingRemoteEnvironmentOperation | undefined
-    try {
-      pending = await this.#operationStore.load(hostId)
-    } catch {
-      await this.#operationStore.remove(hostId)
-      return
-    }
+    const pending = await this.#operationStore.load(hostId)
     if (!pending) {
       return
     }
@@ -570,19 +563,19 @@ export class RemoteEnvironmentPreparer implements Preparer {
       await this.#sshPool.acquireRemotePackageBootstrap(
         target,
         signal
-      ).catch(() => undefined)
+      )
     try {
-      if (!bootstrapLease) {
-        return
-      }
       assertLeaseMatchesTarget(bootstrapLease, target)
-      await bootstrapLease.cleanup(
+      const result = await bootstrapLease.cleanup(
         pending.operationId,
         { signal }
-      ).catch(() => undefined)
-    } finally {
-      bootstrapLease?.release()
+      )
+      if (!result.cleaned && result.reason !== 'operation-unavailable') {
+        throw new Error('Previous remote staging cleanup failed; retry environment preparation')
+      }
       await this.#operationStore.remove(hostId)
+    } finally {
+      bootstrapLease.release()
     }
   }
 }

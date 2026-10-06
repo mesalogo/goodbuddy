@@ -9,6 +9,9 @@ import type { Message } from "./ChatTimeline";
 import { sortConversationsForDisplay, type Conversation } from "./chat-conversation";
 import type { ConversationStore } from "./conversation-store";
 import { mergeMessageImageState } from "./message-image-state";
+import { storageDataBytes } from "../../shared/storage-data-size";
+
+export const LOCAL_CONVERSATION_SAVE_BYTES = 8 * 1024 * 1024;
 
 /**
  * Local conversation persistence and history loading, outside React.
@@ -79,6 +82,7 @@ export function createLocalConversationSaveBatch(
 } {
   const batch: LocalConversationSaveBatch = [];
   const acknowledgements: Conversation[] = [];
+  let bytes = 0;
   for (const conversation of conversations) {
     if (
       conversation.remote ||
@@ -91,12 +95,17 @@ export function createLocalConversationSaveBatch(
     const previousMessages = new Map(
       previous?.messages.map((message) => [message.id, message]) ?? [],
     );
-    batch.push({
+    const change = {
       header: toLocalConversationHeader(conversation),
       messages: conversation.messages
         .filter((message) => previousMessages.get(message.id) !== message)
         .map(toConversationMessage),
-    });
+    };
+    const size = storageDataBytes(change, Infinity);
+    if (batch.length && bytes + size > LOCAL_CONVERSATION_SAVE_BYTES) break;
+    // A single large conversation remains complete; storage transports it in frames.
+    batch.push(change);
+    bytes += size;
     acknowledgements.push(conversation);
     if (batch.length === 100) {
       break;
@@ -307,7 +316,7 @@ export function createConversationPersistence(options: ConversationPersistenceOp
   };
 
   /** Queues a save of every changed local conversation, then releases idle history. */
-  const persist = (): void => {
+  const persist = (): Promise<void> => {
     const operation = queue.then(async () => {
       if (paused) {
         return;
@@ -329,6 +338,7 @@ export function createConversationPersistence(options: ConversationPersistenceOp
     });
     queue = operation.catch(() => undefined);
     void operation.catch(() => host.onSaveFailed());
+    return operation;
   };
 
   const ensureHistory = (conversationId: string): Promise<Conversation> => {
@@ -418,8 +428,12 @@ export function createConversationPersistence(options: ConversationPersistenceOp
     async flushForQuit(): Promise<void> {
       if (!started) return;
       flushRequested = false;
-      persist();
       await queue;
+      while (!paused) {
+        const { batch } = createLocalConversationSaveBatch(store.getState(), acknowledged, deleting);
+        if (!batch.length) break;
+        await persist();
+      }
     },
   };
 }

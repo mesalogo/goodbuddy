@@ -47,6 +47,8 @@ import {
   directModelSubagentInputSchema
 } from '../assistant/direct-model-subagent-service'
 import type { LaunchEnvironmentProvider } from '../local-tool-environment'
+import type { AttachmentStorageAccess } from '../desktop-storage-files'
+import type { PagedOutputReference, PagedOutputStoreOptions } from './paged-output-store'
 import type { BrowserTabId } from '../../shared/contracts'
 import { ripgrepInputSchema, searchWorkspaceWithRipgrep } from './direct-model-ripgrep'
 import { applyWorkspacePatch } from './workspace-apply-patch'
@@ -254,12 +256,14 @@ export type ModelToolResultPart =
 export type ModelToolResult = {
   parts: ModelToolResultPart[]
   contextBytes: number
+  outputReferences?: PagedOutputReference[]
 }
 
 export type ModelToolCallContext = {
   imageToolBinding?: ImageToolBinding
   toolCallId?: string
   conversationId: string
+  outputHistory?: { conversationId: string; messageId: string }
   browserTabId?: BrowserTabId
   browserConversationId?: string
   requestId?: string
@@ -271,6 +275,7 @@ export type ModelToolCallContext = {
 }
 
 export type ModelSubagentRequestContext = {
+  outputHistory?: { conversationId: string; messageId: string }
   authorize?: RuntimeAuthorizer
   browserTabId?: BrowserTabId
   browserConversationId?: string
@@ -283,6 +288,8 @@ export type ModelSubagentBridge = {
 }
 
 export type ModelToolProviderProgrammingOptions = {
+  outputStore?: PagedOutputStoreOptions
+  outputAdopt?: AttachmentStorageAccess['outputAdopt']
   runtimeTarget?: RuntimeTarget
   processService?: DirectModelProcessService
   subagentService?: DirectModelSubagentService<ModelSubagentRequestContext>
@@ -632,6 +639,11 @@ export class ModelToolProvider implements ModelToolProviderLike {
   private readonly clients = new Set<Client>()
   private readonly customMcpClients = new Set<Client>()
   private readonly webSearchClients = new Set<Client>()
+  private readonly outputCalls = new Set<{
+    ownerId: string
+    controller: AbortController
+    settled: Promise<ModelToolResult>
+  }>()
 
   constructor(
     workspace: string | WorkspaceAccess,
@@ -643,13 +655,16 @@ export class ModelToolProvider implements ModelToolProviderLike {
       ModelToolProviderProgrammingOptions = {},
     private readonly launchEnvironmentProvider?: LaunchEnvironmentProvider
   ) {
+    this.ripgrepService = new LocalDirectModelProcessService({
+      outputPrefix: 'rg', outputStore: programming.outputStore
+    })
     this.workspaceAccess =
       typeof workspace === 'string'
         ? new LocalWorkspaceAccess(workspace)
         : workspace
   }
 
-  private readonly ripgrepService = new LocalDirectModelProcessService({ outputPrefix: 'rg' })
+  private readonly ripgrepService: LocalDirectModelProcessService
   private readonly workspaceAccess: WorkspaceAccess
 
   private getScopedTools(
@@ -1374,6 +1389,29 @@ export class ModelToolProvider implements ModelToolProviderLike {
     signal: AbortSignal,
     context: ModelToolCallContext
   ): Promise<ModelToolResult> {
+    if (!['process_execute', 'workspace_rg', 'subagent_delegate'].includes(name)) {
+      return this.callToolOnce(name, argumentsValue, signal, context)
+    }
+    const controller = new AbortController()
+    const call = {
+      ownerId: context.conversationId,
+      controller,
+      settled: this.callToolOnce(name, argumentsValue, AbortSignal.any([signal, controller.signal]), context)
+    }
+    this.outputCalls.add(call)
+    try {
+      return await call.settled
+    } finally {
+      this.outputCalls.delete(call)
+    }
+  }
+
+  private async callToolOnce(
+    name: string,
+    argumentsValue: Record<string, unknown>,
+    signal: AbortSignal,
+    context: ModelToolCallContext
+  ): Promise<ModelToolResult> {
     signal.throwIfAborted()
     if (name.startsWith('story_graph_') && scopedDataToolByName.has(name as ScopedDataToolName)) {
       if (!this.knowledgeGateway || !context.knowledgeCapabilityToken) throw new Error('Story Graph capability is unavailable')
@@ -1410,7 +1448,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         boundedJson(
           {
-            libraries: this.knowledgeGateway.listLibraries(
+            libraries: await this.knowledgeGateway.listLibraries(
               context.knowledgeCapabilityToken,
               argumentsValue
             )
@@ -1449,7 +1487,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         boundedJson(
           {
-            notes: this.knowledgeGateway.searchMagicNotes(
+            notes: await this.knowledgeGateway.searchMagicNotes(
               context.knowledgeCapabilityToken,
               argumentsValue,
               signal
@@ -1469,7 +1507,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         boundedJson(
           {
-            notes: this.knowledgeGateway.listMagicNotes(
+            notes: await this.knowledgeGateway.listMagicNotes(
               context.knowledgeCapabilityToken,
               argumentsValue
             )
@@ -1488,7 +1526,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         boundedJson(
           {
-            note: this.knowledgeGateway.getMagicNote(
+            note: await this.knowledgeGateway.getMagicNote(
               context.knowledgeCapabilityToken,
               argumentsValue
             )
@@ -1507,7 +1545,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         boundedJson(
           {
-            note: this.knowledgeGateway.createMagicNote(
+            note: await this.knowledgeGateway.createMagicNote(
               context.knowledgeCapabilityToken,
               argumentsValue
             )
@@ -1526,7 +1564,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         boundedJson(
           {
-            note: this.knowledgeGateway.updateMagicNote(
+            note: await this.knowledgeGateway.updateMagicNote(
               context.knowledgeCapabilityToken,
               argumentsValue
             )
@@ -1545,7 +1583,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         boundedJson(
           {
-            note: this.knowledgeGateway.createMagicNoteEntry(
+            note: await this.knowledgeGateway.createMagicNoteEntry(
               context.knowledgeCapabilityToken,
               argumentsValue
             )
@@ -1564,7 +1602,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         boundedJson(
           {
-            note: this.knowledgeGateway.updateMagicNoteEntry(
+            note: await this.knowledgeGateway.updateMagicNoteEntry(
               context.knowledgeCapabilityToken,
               argumentsValue
             )
@@ -1583,7 +1621,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         boundedJson(
           {
-            note: this.knowledgeGateway.deleteMagicNoteEntry(
+            note: await this.knowledgeGateway.deleteMagicNoteEntry(
               context.knowledgeCapabilityToken,
               argumentsValue
             )
@@ -1601,7 +1639,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       }
       return createTextToolResult(
         boundedJson(
-          this.knowledgeGateway.deleteMagicNote(
+          await this.knowledgeGateway.deleteMagicNote(
             context.knowledgeCapabilityToken,
             argumentsValue
           ),
@@ -1699,7 +1737,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
             throw new Error('GoodBuddy 内置 ripgrep 不可用')
           }
           const input = ripgrepInputSchema.parse(argumentsValue)
-          return createBoundedJsonObjectToolResult(
+          return await this.createOutputResult(
             await searchWorkspaceWithRipgrep(
               this.programming.ripgrepExecutablePath,
               input,
@@ -1709,7 +1747,8 @@ export class ModelToolProvider implements ModelToolProviderLike {
               context.conversationId
             ),
             ['stdout', 'stderr'],
-            'ripgrep output could not be serialized'
+            'ripgrep output could not be serialized',
+            context
           )
         }
         const input = readInputSchema.parse(argumentsValue)
@@ -1802,7 +1841,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       ) {
         throw new Error('进程执行空间与当前工作区不匹配')
       }
-      return createBoundedJsonObjectToolResult(
+      return this.createOutputResult(
         await this.programming.processService.execute(
           processExecuteInputSchema.parse(argumentsValue),
           {
@@ -1812,7 +1851,8 @@ export class ModelToolProvider implements ModelToolProviderLike {
           }
         ),
         ['stdout', 'stderr'],
-        '进程执行结果无法序列化'
+        '进程执行结果无法序列化',
+        context
       )
     }
     if (name === 'subagent_delegate') {
@@ -1827,6 +1867,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         throw new Error('当前请求不允许编程 Subagent 委派')
       }
       const input = directModelSubagentInputSchema.parse(argumentsValue)
+      let finalEvent: DirectModelSubagentEvent | undefined
       const result = await this.programming.subagentService.run({
         ownerId: context.conversationId,
         task: input.task,
@@ -1835,22 +1876,30 @@ export class ModelToolProvider implements ModelToolProviderLike {
           requestContext: context.subagentBridge.requestContext
         },
         signal,
-        onEvent: (event) =>
+        onEvent: (event) => {
+          if (event.outputReference) {
+            finalEvent = event
+            return
+          }
           emitDirectModelSubagentEvent(
             event,
             context.subagentBridge!.requestContext
-          ),
+          )
+        },
         onModelUsage: (event) =>
           emitDirectModelSubagentUsage(
             event,
             context.subagentBridge!.requestContext
           )
       })
-      return createBoundedJsonObjectToolResult(
+      const toolResult = await this.createOutputResult(
         result,
         ['output', 'error'],
-        '编程 Subagent 结果无法序列化'
+        '编程 Subagent 结果无法序列化',
+        context
       )
+      if (finalEvent) emitDirectModelSubagentEvent(finalEvent, context.subagentBridge.requestContext)
+      return toolResult
     }
 
     // Calls use the discovered catalog; only listTools retries failed servers.
@@ -1906,7 +1955,31 @@ export class ModelToolProvider implements ModelToolProviderLike {
     }
   }
 
+  private async createOutputResult(
+    value: { stdoutReference?: PagedOutputReference; stderrReference?: PagedOutputReference; outputReference?: PagedOutputReference },
+    textKeys: string[],
+    errorMessage: string,
+    context: ModelToolCallContext
+  ): Promise<ModelToolResult> {
+    const outputReferences = [value.stdoutReference, value.stderrReference, value.outputReference]
+      .filter((reference): reference is PagedOutputReference => reference !== undefined)
+    if (context.outputHistory && outputReferences.length) {
+      if (!this.programming.outputAdopt) throw new Error('Output history storage owner is not configured')
+      for (const reference of outputReferences) {
+        await this.programming.outputAdopt(context.conversationId, reference.handle,
+          context.outputHistory.conversationId, 'message', context.outputHistory.messageId)
+      }
+    }
+    return {
+      ...createBoundedJsonObjectToolResult(value, textKeys, errorMessage),
+      ...(outputReferences.length ? { outputReferences } : {})
+    }
+  }
+
   async dispose(): Promise<void> {
+    const calls = [...this.outputCalls]
+    for (const call of calls) call.controller.abort(new Error('Tool provider disposed'))
+    await Promise.allSettled(calls.map(call => call.settled))
     const clients = [...this.clients]
     this.clients.clear()
     this.customMcpClients.clear()
@@ -1924,6 +1997,10 @@ export class ModelToolProvider implements ModelToolProviderLike {
   }
 
   async releaseConversation(conversationId: string): Promise<void> {
+    const calls = [...this.outputCalls].filter(call => call.ownerId === conversationId)
+    for (const call of calls) call.controller.abort(new Error('Conversation released'))
+    // Adoption is part of the producing call; releasing capture first loses history.
+    await Promise.allSettled(calls.map(call => call.settled))
     await Promise.allSettled([
       this.ripgrepService.releaseConversation(conversationId),
       this.browserService?.releaseConversation(conversationId),
@@ -1963,6 +2040,7 @@ function emitDirectModelSubagentEvent(
     state: event.state,
     reason: event.reason,
     ...(output !== undefined ? { output } : {}),
+    ...(event.outputReference ? { outputReference: event.outputReference } : {}),
     ...(error !== undefined
       ? { error: error.slice(0, 1_000) }
       : {})

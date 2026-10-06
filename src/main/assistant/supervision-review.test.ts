@@ -48,7 +48,7 @@ it('reserves before setup, rejects manual and resume overlap, and lets automatic
   expect(f.summarize).toHaveBeenCalledTimes(2)
 })
 
-it('persists cancellation immediately but holds the slot until every in-flight batch settles', async () => {
+it('persists cancellation before model cleanup but holds the slot until every in-flight batch settles', async () => {
   const f = await fixture([['First'], ['Second']])
   const service = f.service()
   const entered = deferred(), finish = deferred()
@@ -64,7 +64,7 @@ it('persists cancellation immediately but holds the slot until every in-flight b
   const runId = service.execution().runId!
   let cancelled = false
   const cancellation = service.cancel(runId).then(() => { cancelled = true })
-  expect(f.db.listSupervisionActivity()[0]).toMatchObject({ status: 'cancelled', supervisionStatus: 'cancelled', resultId: null })
+  await vi.waitFor(() => expect(f.db.listSupervisionActivity()[0]).toMatchObject({ status: 'cancelled', supervisionStatus: 'cancelled', resultId: null }))
   expect(signals.every(signal => signal.aborted)).toBe(true)
   expect(service.execution()).toEqual({ active: true, runId, stopping: 'cancelled' })
   await expect(service.run(request)).rejects.toThrow('SUPERVISION_REVIEW_BUSY')
@@ -138,14 +138,14 @@ it('projects cancellation into heartbeat activity while runtime cleanup is still
     const result = await service.run({ ...request, trigger: 'heartbeat' }, run.id)
     return { status: result.status ?? 'completed', runId: result.runId }
   } })
-  const config = heartbeat.create({ name: 'Review', scope: request.scope, timezone: 'UTC',
+  const config = await heartbeat.create({ name: 'Review', scope: request.scope, timezone: 'UTC',
     recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
   const pending = heartbeat.runNow({ id: config.id, idempotencyKey: randomUUID() })
   await entered.promise
   const runId = service.execution().runId!
   const cancellation = service.cancel(runId)
-  expect(f.db.listSupervisionActivity()).toEqual([expect.objectContaining({ kind: 'heartbeat', status: 'cancelled',
-    heartbeatStatus: 'completed', supervisionStatus: 'cancelled', completedAt: expect.any(String), reviewProgress: expect.objectContaining({ runId }) })])
+  await vi.waitFor(() => expect(f.db.listSupervisionActivity()).toEqual([expect.objectContaining({ kind: 'heartbeat', status: 'cancelled',
+    heartbeatStatus: 'completed', supervisionStatus: 'cancelled', completedAt: expect.any(String), reviewProgress: expect.objectContaining({ runId }) })]))
   finish.resolve()
   await cancellation
   await pending

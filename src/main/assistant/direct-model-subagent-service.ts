@@ -6,7 +6,8 @@ import {
   PagedOutputStore,
   type PagedOutputPage,
   type PagedOutputReference,
-  type PagedOutputWriter
+  type PagedOutputWriter,
+  type PagedOutputStoreOptions
 } from '../agent/paged-output-store'
 import { SubagentScheduler } from './subagent-scheduler'
 
@@ -95,11 +96,12 @@ export type DirectModelSubagentChildRunInput<TRequestContext = unknown> = {
   context: DirectModelSubagentContext
   requestContext: TRequestContext
   signal: AbortSignal
-  onOutput: (delta: string) => void
+  onOutput: (delta: string) => Promise<void>
   onModelUsage: (usage: RuntimeModelUsageEvent) => void
 }
 
 export type DirectModelSubagentServiceDependencies<TRequestContext = unknown> = {
+  outputStore?: PagedOutputStoreOptions
   scheduler: SubagentScheduler
   runChild: (
     input: DirectModelSubagentChildRunInput<TRequestContext>
@@ -172,14 +174,16 @@ function addTokenCount(current: number, value: number): number {
 
 export class DirectModelSubagentService<TRequestContext = unknown> {
   private readonly ownerRuns = new Map<string, Set<OwnerRun>>()
-  private readonly outputs = new PagedOutputStore('subagent')
+  private readonly outputs: PagedOutputStore
   private disposed = false
   private disposePromise?: Promise<void>
 
   constructor(
     private readonly dependencies:
       DirectModelSubagentServiceDependencies<TRequestContext>
-  ) {}
+  ) {
+    this.outputs = new PagedOutputStore('subagent', dependencies.outputStore)
+  }
 
   async run(
     input: DirectModelSubagentRunInput<TRequestContext>
@@ -247,7 +251,10 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
   }
 
   dispose(): Promise<void> {
-    this.disposePromise ??= this.disposeOnce()
+    this.disposePromise ??= this.disposeOnce().catch((error: unknown) => {
+      this.disposePromise = undefined
+      throw error
+    })
     return this.disposePromise
   }
 
@@ -347,7 +354,7 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
                     '编程 Subagent 输出必须是字符串'
                   )
                 }
-                writer!.append(delta)
+                return writer!.append(delta)
               },
               onModelUsage: (usage) => {
                 usageReported = true

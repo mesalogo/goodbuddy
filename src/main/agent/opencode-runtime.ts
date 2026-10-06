@@ -20,6 +20,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createRuntimeTemporaryDirectory, recordRuntimeTemporaryChild, removeRuntimeTemporaryDirectory } from "../runtime-temporary-directory";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -1035,7 +1036,7 @@ export class OpenCodeRuntime implements AgentRuntime {
   }
 
   private async createSkillRegistration(): Promise<OpenCodeSkillRegistration> {
-    const root = await mkdtemp(join(tmpdir(), "goodbuddy-opencode-"));
+    const root = await createRuntimeTemporaryDirectory(this.options.sharedCacheRoot?.trim() || tmpdir(), "goodbuddy-opencode-");
     try {
       const sharedRoot = this.options.sharedCacheRoot?.trim();
       if (sharedRoot) {
@@ -1053,7 +1054,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       await this.normalizeSkillPackages(skillsRoot);
       return { root, configDirectory, skillsRoot };
     } catch (error) {
-      await rm(root, { recursive: true, force: true });
+      await removeRuntimeTemporaryDirectory(root);
       throw error;
     }
   }
@@ -1154,6 +1155,7 @@ export class OpenCodeRuntime implements AgentRuntime {
 
     const skillIds = this.getNativeSkillIds();
     const registration = await this.createSkillRegistration();
+    let launchedChild: SpawnedProcess | undefined;
     try {
       if (signal?.aborted) {
         throw new Error("OpenCode Server 启动已取消");
@@ -1227,6 +1229,8 @@ export class OpenCodeRuntime implements AgentRuntime {
           windowsHide: true,
         });
         this.startingChild = child;
+        launchedChild = child;
+        const ownership = recordRuntimeTemporaryChild(registration.root, child.pid);
         const { stdout, stderr } = child;
         let settled = false;
         let pollTimer: NodeJS.Timeout | undefined;
@@ -1300,10 +1304,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                 this.terminate(child);
                 await exited;
               } finally {
-                await rm(registration.root, {
-                  recursive: true,
-                  force: true,
-                });
+                if (child.exitCode !== null || child.signalCode != null) await removeRuntimeTemporaryDirectory(registration.root);
               }
             },
           });
@@ -1319,6 +1320,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         };
         const probe = async (): Promise<void> => {
           try {
+            await ownership;
             const attemptSignal = AbortSignal.any([
               probeSignal,
               AbortSignal.timeout(STARTUP_PROBE_TIMEOUT_MS),
@@ -1347,6 +1349,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           fail("OpenCode Server 启动超时（30 秒）");
         }, this.dependencies.startupTimeoutMs);
 
+        void ownership.catch(() => fail("OpenCode launch ownership could not be recorded"));
         if (!stdout || !stderr) {
           fail("OpenCode Server 管道初始化失败");
           return;
@@ -1363,10 +1366,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         void probe();
       });
     } catch (error) {
-      await rm(registration.root, {
-        recursive: true,
-        force: true,
-      }).catch(() => undefined);
+      if (!launchedChild || launchedChild.exitCode !== null || launchedChild.signalCode != null || !launchedChild.pid) await removeRuntimeTemporaryDirectory(registration.root).catch(() => undefined);
       throw error;
     }
   }

@@ -114,6 +114,28 @@ function createService(overrides?: {
 }
 
 describe('DocumentParsingService', () => {
+  it('waits for an unnamed diagnostic to settle before closing shared result access', async () => {
+    const { settingsStore, modelManager } = createService()
+    const close = vi.fn(async () => undefined)
+    const service = new DocumentParsingService(settingsStore as never, modelManager as never, {} as never, { close } as never)
+    let finish!: () => void
+    const pending = new Promise<void>(resolve => { finish = resolve })
+    vi.spyOn(service, 'parse').mockImplementation(async (_name, _bytes, _purpose, signal) => {
+      await pending
+      signal?.throwIfAborted()
+      throw new Error('Diagnostic should have been cancelled')
+    })
+    const diagnostic = service.diagnose('source.pdf', Buffer.from('source'))
+    const rejected = expect(diagnostic).rejects.toThrow()
+    const disposing = service.dispose()
+    expect(close).not.toHaveBeenCalled()
+    finish()
+    await rejected
+    await disposing
+    expect(close).toHaveBeenCalledOnce()
+    await expect(service.diagnose('source.pdf', Buffer.from('source'))).rejects.toThrow('closed')
+  })
+
   it.each(['chat-attachment', 'knowledge-index', 'artifact-import', 'diagnostic'] as const)(
     'recognizes embedded PPTX images for %s',
     async (purpose) => {

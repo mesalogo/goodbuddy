@@ -3,16 +3,16 @@ import { z } from 'zod'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { KnowledgeDatabase } from './knowledge/knowledge-database'
 import type { ReadonlyQueryKind, ReadonlyQueryRequest } from './readonly-query-reader'
-import type { ReviewState } from './assistant/supervision-review-store'
+import type { ReviewRevisionRow, ReviewState } from './assistant/supervision-review-store'
 
 // Read-only query worker (PERF-15/16 first slice). One worker per database file.
 // It reuses the production classes on a read-only connection, so results are
 // produced by exactly the same code as the synchronous path.
-// This packaged entry also hosts the WAL checkpointer and the dedicated,
-// separately connected supervision manifest writer.
+// This packaged entry also hosts the WAL checkpointer. Supervision manifests
+// are scanned read-only and transferred in pages to their sole business writer.
 
 const { kind, databasePath, intervalMs } = workerData as {
-  kind: ReadonlyQueryKind | 'checkpoint' | 'supervision'
+  kind: ReadonlyQueryKind | 'checkpoint'
   databasePath: string
   intervalMs?: number
 }
@@ -22,8 +22,7 @@ let handlers: Record<string, Handler>
 let close: () => void
 
 if (kind === 'checkpoint') {
-  // WAL checkpointer for AssistantDatabase.enableWalCheckpointWorker (PERF-15):
-  // PASSIVE checkpoints never wait for, or block, Main's readers and writers.
+  // Storage-owner-managed PASSIVE checkpoints never wait for business writers.
   const database = new AssistantDatabase(databasePath)
   database.openCheckpointer()
   const timer = setInterval(() => {
@@ -39,22 +38,14 @@ if (kind === 'checkpoint') {
   }
   handlers = {}
   parentPort!.postMessage({ ready: true })
-} else if (kind === 'supervision') {
-  // Only manifest initialization and resume validation write here. Publication
-  // and checkpoints remain in Main's existing atomic result transaction.
-  const database = new AssistantDatabase(databasePath)
-  database.openSupervisionWorker()
-  close = () => database.close()
-  handlers = {
-    initialize: ([runId, state], signal) => database.supervisionReviewStore(signal).initializeSources(String(runId), state as ReviewState, signal),
-    resume: ([runId], signal) => database.supervisionReviewStore(signal).resume(String(runId), signal)
-  }
 } else if (kind === 'knowledge') {
   const database = new KnowledgeDatabase(databasePath)
   database.openReadOnly()
   close = () => database.close()
   handlers = {
     search: ([options]) => database.search(options as Parameters<KnowledgeDatabase['search']>[0]),
+    vectorSearch: ([options], signal) => database.vectorSearch({ ...(options as Parameters<KnowledgeDatabase['vectorSearch']>[0]), signal }),
+    graphSearch: args => database.graphSearch(...args as Parameters<KnowledgeDatabase['graphSearch']>),
     hybridSearchWithDiagnostics: ([options], signal) => database.hybridSearchWithDiagnostics({
       ...(options as Parameters<KnowledgeDatabase['hybridSearchWithDiagnostics']>[0]), signal
     })
@@ -63,7 +54,25 @@ if (kind === 'checkpoint') {
   const database = new AssistantDatabase(databasePath)
   database.openReadOnly()
   close = () => database.close()
+  let manifestRunId: string | undefined
   handlers = {
+    reviewManifestScan: ([runId, state], signal) => {
+      if (manifestRunId !== undefined) throw new Error('Review manifest reader is busy')
+      manifestRunId = String(runId)
+      try { database.supervisionReviewStore(signal).createSourceManifest(state as ReviewState, signal) }
+      catch (error) { manifestRunId = undefined; throw error }
+    },
+    reviewManifestPage: ([runId, offset]) => {
+      if (manifestRunId !== runId) throw new Error('Review manifest reader lost its snapshot; resume initialization')
+      return database.supervisionReviewStore().sourceManifestPage(Number(offset))
+    },
+    reviewManifestRelease: ([runId]) => {
+      if (manifestRunId !== runId) return
+      database.supervisionReviewStore().releaseSourceManifest()
+      manifestRunId = undefined
+    },
+    reviewChangedSource: ([rows], signal) => database.readSnapshot(() =>
+      database.supervisionReviewStore(signal).changedSource(rows as ReviewRevisionRow[], signal)),
     readStoryGraph: ([name, input, projectId], signal) => database.readStoryGraph(
       name as Parameters<AssistantDatabase['readStoryGraph']>[0], input, projectId as string | undefined, signal),
     supervisionOverview: ([limit, target, resultId]) => database.readSnapshot(() => database.listSupervisionResults(
@@ -106,7 +115,12 @@ function serializeError(error: unknown): { name: string; message: string; issues
   return { name: 'Error', message: String(error) }
 }
 
-parentPort!.on('message', (message: ReadonlyQueryRequest) => {
+parentPort!.on('message', (message: ReadonlyQueryRequest | { type: 'close' }) => {
+  if (message.type === 'close') {
+    close()
+    parentPort!.close()
+    return
+  }
   try {
     const handler = Object.hasOwn(handlers, message.op) ? handlers[message.op] : undefined
     if (!handler) throw new Error(`Unknown readonly query: ${message.op}`)

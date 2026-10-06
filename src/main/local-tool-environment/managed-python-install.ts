@@ -15,6 +15,7 @@ const OWNER_VALUE = 'GoodBuddy managed Python root\n'
 const versionPattern = /^python-(\d+\.\d+\.\d+)$/u
 const stagingPattern = /^\.managed-python-stage-[0-9a-f-]{36}$/u
 const backupPattern = /^\.managed-python-backup-[0-9a-f-]{36}$/u
+const downloadPattern = /^\.managed-python-download-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
 
 function ensureNotAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -70,9 +71,11 @@ async function ensureOwnedRoot(root: string): Promise<void> {
 export async function cleanupManagedPythonOperations(root: string): Promise<void> {
   await ensureOwnedRoot(root)
   for (const entry of await readdir(root, { withFileTypes: true })) {
+    const operationDirectory =
+      (stagingPattern.test(entry.name) || backupPattern.test(entry.name)) && entry.isDirectory()
+    const partialDownload = downloadPattern.test(entry.name) && entry.isFile()
     if (
-      (stagingPattern.test(entry.name) || backupPattern.test(entry.name)) &&
-      entry.isDirectory() &&
+      (operationDirectory || partialDownload) &&
       !entry.isSymbolicLink()
     ) {
       await rm(child(root, entry.name), { recursive: true, force: true })

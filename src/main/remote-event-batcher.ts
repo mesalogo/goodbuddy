@@ -15,7 +15,7 @@ export type RemoteEventBatcherOptions<TEvent> = {
    * Durably stores every entry in ONE transaction and returns one flag per
    * entry: true when it was newly stored, false for an already stored replay.
    */
-  persist(entries: readonly RemoteEventBatchEntry<TEvent>[]): readonly boolean[]
+  persist(entries: readonly RemoteEventBatchEntry<TEvent>[]): readonly boolean[] | Promise<readonly boolean[]>
   /** Called when a timer-driven flush fails (for example to abort the run). */
   onError?(error: unknown): void
   /**
@@ -63,6 +63,7 @@ export class RemoteEventBatcher<TEvent> {
   private pending: PendingEntry<TEvent>[] = []
   private timer: ReturnType<typeof setTimeout> | undefined
   private failure: { error: unknown } | undefined
+  private inFlight: Promise<void> | undefined
 
   constructor(options: RemoteEventBatcherOptions<TEvent>) {
     this.persist = options.persist
@@ -84,31 +85,44 @@ export class RemoteEventBatcher<TEvent> {
     return this.pending.length
   }
 
-  add(
+  async add(
     provenance: RemoteSemanticEventProvenance,
     event: TEvent,
     onCommitted?: RemoteEventCommitted<TEvent>
-  ): void {
+  ): Promise<void> {
+    // One producer awaits admission; a timer may already be committing its batch.
+    while (this.inFlight) await this.inFlight
     this.throwIfFailed()
     this.pending.push({ provenance, event, onCommitted })
     if (this.pending.length >= this.maximumEvents) {
-      this.flush()
+      await this.flush()
       return
     }
     this.scheduleFlush()
   }
 
-  flush(): void {
+  async flush(): Promise<void> {
     this.clearTimer()
+    while (this.inFlight) await this.inFlight
     this.throwIfFailed()
     if (this.pending.length === 0) {
       return
     }
     const entries = this.pending
     this.pending = []
+    const operation = this.commit(entries)
+    this.inFlight = operation
+    try {
+      await operation
+    } finally {
+      if (this.inFlight === operation) this.inFlight = undefined
+    }
+  }
+
+  private async commit(entries: PendingEntry<TEvent>[]): Promise<void> {
     let inserted: readonly boolean[]
     try {
-      inserted = this.persist(
+      inserted = await this.persist(
         entries.map(({ provenance, event }) => ({ provenance, event }))
       )
       if (inserted.length !== entries.length) {
@@ -142,12 +156,7 @@ export class RemoteEventBatcher<TEvent> {
     }
     this.timer = setTimeout(() => {
       this.timer = undefined
-      try {
-        this.flush()
-        this.onTimerFlushed?.()
-      } catch (error) {
-        this.onError?.(error)
-      }
+      void this.flush().then(() => this.onTimerFlushed?.()).catch(error => this.onError?.(error))
     }, this.flushIntervalMs)
     this.timer.unref?.()
   }

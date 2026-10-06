@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { setImmediate as nextTurn } from 'node:timers/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 import type {
@@ -106,10 +107,11 @@ function target(): SshConnectionTarget {
 }
 
 type HarnessOptions = {
-  getProject?: () => AssistantProject
+   getProject?: () => AssistantProject | Promise<AssistantProject>
   validateWorkspace?: (signal?: AbortSignal) => unknown | Promise<unknown>
-  create?: () => AssistantProject
-  update?: () => AssistantProject
+  create?: () => AssistantProject | Promise<AssistantProject>
+  update?: () => AssistantProject | Promise<AssistantProject>
+  onSaving?: () => void
   resolveRuntimeSelection?: (
     layer: RuntimeSelectionLayer | undefined
   ) => Promise<AgentRuntimeSelection>
@@ -221,22 +223,26 @@ function harness(options: HarnessOptions = {}) {
   ): AssistantProject => {
     calls.push(operation)
     writes.push(write)
-    write.assertCurrent()
+    structuredClone(write)
     return result
   }
-  const createProject = vi.fn((write: (typeof writes)[number]) =>
-    persist('database-create', write, options.create?.() ?? project())
-  )
+  const createProject = vi.fn(async (write: (typeof writes)[number]) => {
+    await nextTurn()
+    return persist('database-create', write, await (options.create?.() ?? project()))
+  })
   const updateProject = vi.fn(
-    (
+    async (
       _id: string,
       _updatedAt: string,
       write: (typeof writes)[number]
-    ) => persist('database-update', write, options.update?.() ?? project())
+    ) => {
+      await nextTurn()
+      return persist('database-update', write, await (options.update?.() ?? project()))
+    }
   )
   const service = new RemoteProjectSaveService({
     database: {
-      getProject: vi.fn(() => options.getProject?.() ?? project()),
+      getProject: vi.fn(async () => { await nextTurn(); return options.getProject?.() ?? project() }),
       createSshProject: createProject,
       updateSshProject: updateProject
     },
@@ -270,7 +276,10 @@ function harness(options: HarnessOptions = {}) {
         return runtimeLease
       })
     },
-    notify: (_owner, value) => progress.push(value.phase)
+    notify: (_owner, value) => {
+      progress.push(value.phase)
+      if (value.phase === 'saving') options.onSaving?.()
+    }
   })
   services.push(service)
   return {
@@ -282,11 +291,52 @@ function harness(options: HarnessOptions = {}) {
     updateProject,
     request,
     connectionRelease,
-    runtimeRelease
+    runtimeRelease,
+    runtimeLease,
+    connection
   }
 }
 
 describe('RemoteProjectSaveService', () => {
+  it('keeps validation resources until a delayed write commits, including cancellation after dispatch', async () => {
+    let commit!: (value: AssistantProject) => void
+    const gate = new Promise<AssistantProject>(resolve => { commit = resolve })
+    const value = harness({ create: () => gate })
+    const owner = new Owner(10)
+    const pending = value.service.save(owner, { intent: 'create', draft })
+    await vi.waitFor(() => expect(value.createProject).toHaveBeenCalledOnce())
+    value.service.cancelCurrent(owner)
+    expect(value.runtimeRelease).not.toHaveBeenCalled()
+    expect(value.connectionRelease).not.toHaveBeenCalled()
+    commit(project())
+    await expect(pending).resolves.toMatchObject({ id: projectId })
+    expect(value.runtimeRelease).toHaveBeenCalledOnce()
+    expect(value.connectionRelease).toHaveBeenCalledOnce()
+  })
+
+  it('rejects invalidation after async preparation and before dispatch without serializing checks', async () => {
+    const value = harness({ onSaving: () => {
+      vi.mocked(value.runtimeLease.assertCurrent).mockImplementation(() => { throw new Error('validation stale') })
+    } })
+    await expect(value.service.save(new Owner(11), { intent: 'create', draft })).rejects.toThrow('validation stale')
+    expect(value.createProject).not.toHaveBeenCalled()
+    expect(value.runtimeRelease).toHaveBeenCalledOnce()
+  })
+
+  it('waits for the update revision read before preparing or writing', async () => {
+    let release!: (value: AssistantProject) => void
+    const revision = new Promise<AssistantProject>(resolve => { release = resolve })
+    const value = harness({ getProject: () => revision })
+    const owner = new Owner(12)
+    const pending = value.service.save(owner, { intent: 'update', draft: { ...draft, projectId } })
+    await nextTurn()
+    expect(value.calls).toEqual([])
+    value.service.cancelCurrent(owner)
+    release(project())
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(value.updateProject).not.toHaveBeenCalled()
+  })
+
   it('prepares the current Host and creates one stable project record', async () => {
     const value = harness()
 
@@ -319,9 +369,9 @@ describe('RemoteProjectSaveService', () => {
       'workspace/validate',
       'runtime',
       'runtime-current',
-      'database-create',
       'host-current',
       'runtime-current',
+      'database-create',
       'runtime-release',
       'workspace/close',
       'connection-release'

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import { AnchoredMenu } from './AnchoredMenu'
 import { InlineHelp } from './InlineHelp'
@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import * as THREE from 'three'
 import type { SupervisionAttentionSlot, SupervisionGraphView } from '../../shared/supervision-contracts'
 import type { SupervisionExperience, SupervisionStory } from '../../shared/supervision-story-contracts'
-import { buildStoryTree, clusterEvents, experienceLinks, findNode, radiusLevels, storyWindow, timelineSegments, visibleLevel, type ExperienceLink, type StoryCluster, type StoryNode } from './story-graph-3d-model'
+import { buildStoryTree, clusterEvents, experienceLinks, findNode, radiusLevels, selectionFocus, storyWindow, timelineSegments, visibleLevel, type ExperienceLink, type StoryCluster, type StoryNode, type StorySelection } from './story-graph-3d-model'
 
 /*
  * 3D story view: one helix of time inside, story staves on the outer cylinder.
@@ -21,6 +21,7 @@ type Props = {
   attention: SupervisionAttentionSlot[]
   timeRange?: { from: string; to: string }
   selectedEventId?: string
+  selectedStoryId?: string
   onSelectEvent: (id: string) => void
   onSelectStory: (id: string) => void
   /** Experiences (W) drawn outside the barrel, linking the staves they formed in and were applied to. */
@@ -63,7 +64,7 @@ function webglAvailable(): boolean {
   catch { return false }
 }
 
-export default function StoryGraph3D({ toolbar, stories, events, projectNames, attention: attentionProp, timeRange, selectedEventId, onSelectEvent, onSelectStory, experiences = noExperiences, selectedExperienceId, onSelectExperience }: Props) {
+export default function StoryGraph3D({ toolbar, stories, events, projectNames, attention: attentionProp, timeRange, selectedEventId, selectedStoryId, onSelectEvent, onSelectStory, experiences = noExperiences, selectedExperienceId, onSelectExperience }: Props) {
   const { t, i18n } = useTranslation('heartbeat')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -82,16 +83,37 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
   }, [])
   const tree = useMemo(() => buildStoryTree(stories, projectNames, { events,
     unassigned: t('supervisor.graph3d.unassigned'), unknownProject: t('supervisor.graph3d.unknownProject') }), [stories, events, projectNames, t])
+  const timelineKey = useMemo(() => JSON.stringify(tree.events), [tree])
   const [focusId, setFocusId] = useState('root')
   const focus = findNode(tree, focusId) ?? tree
+  const selectionKey = JSON.stringify([selectedStoryId, selectedEventId, selectedExperienceId])
+  const [previousSelection, setPreviousSelection] = useState('')
+  const [request, setRequest] = useState<{ selection: StorySelection }>()
+  const [resolvedRequest, setResolvedRequest] = useState<typeof request>()
+  if (previousSelection !== selectionKey) {
+    setPreviousSelection(selectionKey)
+    const selection: StorySelection | undefined = selectedExperienceId ? { kind: 'experience', id: selectedExperienceId }
+      : selectedEventId ? { kind: 'event', id: selectedEventId } : selectedStoryId ? { kind: 'story', id: selectedStoryId } : undefined
+    // A canvas pick is echoed by the parent; it must not start a second flight.
+    if (selection && (selection.kind !== request?.selection.kind || selection.id !== request.selection.id)) setRequest({ selection })
+    else if (!selection) setRequest(undefined)
+  }
+  const target = useMemo(() => request && selectionFocus(tree, focus, request.selection, experiences), [tree, focus, request, experiences])
+  if (target && request !== resolvedRequest) {
+    setResolvedRequest(request)
+    if (target.node.id !== focusId) setFocusId(target.node.id)
+  }
   const [hovered, setHovered] = useState<string>()
   const camera = useRef<{ yaw: number; tilt: number; zoom: number; pan: number }>({ yaw: VIEWS.oblique.yaw, tilt: VIEWS.oblique.tilt, zoom: 1, pan: 0 })
+  const animation = useRef<number | undefined>(undefined)
+  const cancelAnimation = () => { if (animation.current !== undefined) cancelAnimationFrame(animation.current); animation.current = undefined }
   const engine = useRef<{ draw: () => void; update: (next: EngineState) => void; dispose: () => void; hit: (x: number, y: number) => { node?: StoryNode; cluster?: StoryCluster; link?: ExperienceLink } | undefined }>(undefined)
-  const range = useMemo(() => {
+  const computedRange = useMemo(() => {
     if (timeRange) return storyWindow(Date.parse(timeRange.from), Date.parse(timeRange.to))
     const times = tree.events.flatMap(event => [event.t, event.end ?? event.t])
     return times.length ? storyWindow(Math.min(...times) - 1_800_000, Math.max(...times) + 1_800_000) : undefined
   }, [tree, timeRange])
+  const range = useMemo(() => computedRange, [computedRange?.from, computedRange?.to]) // eslint-disable-line react-hooks/exhaustive-deps
   const level = visibleLevel(focus)
   const trail: StoryNode[] = []
   for (let node: StoryNode | undefined = focus; node; node = node.parent) trail.unshift(node)
@@ -220,7 +242,11 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
         }
       }
       // Experiences: a diamond outside the barrel, arcs from the forming stave to it and on to the applying stave.
-      for (const link of experienceLinks(state.experiences, staves)) {
+      const links = experienceLinks(state.experiences, staves)
+      if (state.experience && !links.some(link => link.id === state.experience)) {
+        links.push(...experienceLinks(state.experiences.filter(item => item.id === state.experience), staves))
+      }
+      for (const link of links) {
         const active = link.id === state.experience
         const node = on(link.t, link.angle, W_R)
         const arc = (end: { stave: StoryNode; t: number }) => {
@@ -298,6 +324,7 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
     resize.observe(canvas)
     const zoom = (event: WheelEvent) => {
       event.preventDefault()
+      cancelAnimation()
       camera.current.zoom = Math.max(0.5, Math.min(2.5, camera.current.zoom * Math.exp(-event.deltaY * 0.0012)))
       draw()
     }
@@ -307,7 +334,9 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
       update: next => { Object.assign(state, next); staves = visibleLevel(state.focus).children; rebuild(); draw() },
       hit: (x, yPos) => {
         raycaster.setFromCamera(new THREE.Vector2(x / width * 2 - 1, 1 - yPos / height * 2), view3d)
-        const hit = raycaster.intersectObjects(meshes, false)[0]
+        const hits = raycaster.intersectObjects(meshes, false)
+        // Translucent staves must not swallow clicks on the visible event dots behind them.
+        const hit = hits.find(hit => hit.object.userData.cluster || hit.object.userData.link) ?? hits[0]
         return hit && { node: hit.object.userData.node as StoryNode | undefined, cluster: hit.object.userData.cluster as StoryCluster | undefined,
           link: hit.object.userData.link as ExperienceLink | undefined }
       },
@@ -315,14 +344,16 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
       dispose: () => { canvas.removeEventListener('wheel', zoom); glCanvas.removeEventListener('webglcontextlost', lost); resize.disconnect()
         disposables.forEach(item => item.dispose()); renderer.dispose(); renderer.forceContextLoss(); glCanvas.remove() }
     }
-    return () => { engine.current?.dispose(); engine.current = undefined }
+    return () => { cancelAnimation(); engine.current?.dispose(); engine.current = undefined }
     // Focus, hover and selection use update(); data, locale, theme and retries recreate the scene.
-  }, [supported, range, attention, i18n.resolvedLanguage, attempt, theme]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [supported, range, timelineKey, attention, i18n.resolvedLanguage, attempt, theme]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { engine.current?.update({ focus, hovered, selected: selectedEventId, experiences, experience: selectedExperienceId }) },
-    [focus, hovered, selectedEventId, range, attention, experiences, selectedExperienceId, theme, attempt])
+    [focus, hovered, selectedEventId, range, timelineKey, attention, experiences, selectedExperienceId, theme, attempt])
 
   const animate = (goal: Partial<typeof camera.current>) => {
+    cancelAnimation()
     const from = { ...camera.current }
+    if (goal.yaw !== undefined) goal.yaw = from.yaw + Math.atan2(Math.sin(goal.yaw - from.yaw), Math.cos(goal.yaw - from.yaw))
     let started: number | undefined
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     const step = (now: number) => {
@@ -330,13 +361,28 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
       const k = reduce ? 1 : Math.min(1, (now - started) / 480), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2
       for (const key of ['yaw', 'tilt', 'zoom', 'pan'] as const) if (goal[key] !== undefined) camera.current[key] = from[key] + (goal[key]! - from[key]) * e
       engine.current?.draw()
-      if (k < 1) requestAnimationFrame(step)
+      animation.current = k < 1 ? requestAnimationFrame(step) : undefined
     }
-    requestAnimationFrame(step)
+    if (reduce) step(performance.now())
+    else animation.current = requestAnimationFrame(step)
   }
+  const lastFlight = useRef<typeof request>(undefined)
+  const focusCamera = useEffectEvent(() => {
+    if (request === lastFlight.current) return
+    cancelAnimation()
+    if (!target || !range || !engine.current) return
+    lastFlight.current = request
+    const u = (target.time - range.from) / (range.to - range.from)
+    const angle = target.angle ?? u * range.turns * TAU
+    const radius = target.radius ?? 78 + 74 * radiusLevels(range, attention)(u)
+    const tilt = 0.18
+    animate({ yaw: angle - Math.PI / 2, tilt, pan: (u - 0.5) * HEIGHT - radius * Math.tan(tilt), zoom: Math.max(0.8, Math.min(1.4, camera.current.zoom)) })
+  })
+  useEffect(() => { focusCamera() }, [request, target, range, attempt, theme])
   const choose = (name: keyof typeof VIEWS) => animate({ ...VIEWS[name], zoom: 1, pan: 0 })
   const open = (node: StoryNode) => {
-    if (node.level !== 'project' && node.level !== 'unassigned') onSelectStory(node.id)
+    setRequest({ selection: { kind: 'story', id: node.id } })
+    if (node.level !== 'root' && node.level !== 'project' && node.level !== 'unassigned') onSelectStory(node.id)
     setFocusId(node.id)
     setHovered(undefined)
   }
@@ -360,7 +406,7 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
         {trail.map((node, index) => <span key={node.id}>
           {index > 0 && ' › '}
           {index === trail.length - 1 ? <strong>{node.level === 'root' ? t('supervisor.graph3d.all') : node.name}</strong>
-            : <button type="button" className="link-button" onClick={() => setFocusId(node.id)}>{node.level === 'root' ? t('supervisor.graph3d.all') : node.name}</button>}
+            : <button type="button" className="link-button" onClick={() => open(node)}>{node.level === 'root' ? t('supervisor.graph3d.all') : node.name}</button>}
         </span>)}
       </nav>
       {/* The record list selects details; this menu drills the actual project/feature hierarchy. */}
@@ -383,7 +429,7 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
     </div>
     <div className="story-graph-3d__viewport">
       <canvas ref={canvasRef} tabIndex={0} aria-label={t('supervisor.graph3d.canvas')}
-        onPointerDown={event => { const [x, y] = pointer(event); drag.current = { x, y, sx: x, sy: y, pan: event.button === 2 || event.shiftKey }; event.currentTarget.setPointerCapture(event.pointerId) }}
+        onPointerDown={event => { cancelAnimation(); const [x, y] = pointer(event); drag.current = { x, y, sx: x, sy: y, pan: event.button === 2 || event.shiftKey }; event.currentTarget.setPointerCapture(event.pointerId) }}
         onPointerMove={event => {
           const [x, y] = pointer(event)
           if (!drag.current) {
@@ -404,20 +450,21 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
           drag.current = undefined
           if (!start || Math.hypot(x - start.sx, y - start.sy) >= 5) return
           const hit = engine.current?.hit(x, y)
-          if (hit?.link) onSelectExperience?.(hit.link.id)
-          else if (hit?.cluster) { if (hit.cluster.events.length === 1) onSelectEvent(hit.cluster.events[0]!.id); else open(hit.node!) }
+          if (hit?.link) { setRequest({ selection: { kind: 'experience', id: hit.link.id } }); onSelectExperience?.(hit.link.id) }
+          else if (hit?.cluster) { if (hit.cluster.events.length === 1) { setRequest({ selection: { kind: 'event', id: hit.cluster.events[0]!.id } }); onSelectEvent(hit.cluster.events[0]!.id) } else open(hit.node!) }
           else if (hit?.node) open(hit.node)
         }}
         onPointerLeave={() => { if (!drag.current) setHovered(undefined) }}
+        onLostPointerCapture={() => { drag.current = undefined }}
         onContextMenu={event => event.preventDefault()}
         onKeyDown={event => {
-          if (event.key === 'Escape' && focus.parent) { setFocusId(focus.parent.id); return }
+          if (event.key === 'Escape') { cancelAnimation(); if (focus.parent) open(focus.parent); return }
           const preset = ({ 1: 'oblique', 2: 'side', 3: 'top' } as const)[event.key as '1' | '2' | '3']
           if (preset) { choose(preset); return }
           const move: Record<string, () => void> = { ArrowLeft: () => { camera.current.yaw -= 0.12 }, ArrowRight: () => { camera.current.yaw += 0.12 },
             ArrowUp: () => { camera.current.tilt = Math.min(Math.PI / 2 - 1e-3, camera.current.tilt + 0.06) }, ArrowDown: () => { camera.current.tilt = Math.max(-Math.PI / 2 + 1e-3, camera.current.tilt - 0.06) } }
           if (!move[event.key]) return
-          event.preventDefault(); move[event.key]!(); engine.current?.draw()
+          event.preventDefault(); cancelAnimation(); move[event.key]!(); engine.current?.draw()
         }} />
       <canvas ref={overlayRef} className="story-graph-3d__overlay" aria-hidden="true" />
     </div>

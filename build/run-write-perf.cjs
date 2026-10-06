@@ -1,8 +1,8 @@
-// Main-process database WRITE benchmark on a real data directory (PERF-15).
+// Owner-local database WRITE microbenchmark on a closed data copy (PERF-15).
 // Copies assistant.sqlite (+ -wal/-shm) from GB_WPERF_DATA (for example the
 // portable build's data folder) into a temporary directory - the source is
 // never opened - then measures, with the production AssistantDatabase, the
-// writes Main performs synchronously while a run streams:
+// synchronous repository writes. This is not a production Main IPC latency probe:
 //   task-events:subagent   replay of the largest real subagent progress stream
 //                          (restored events, re-compacted on write, as live)
 //   task-events:tool       replay of real tool events
@@ -10,14 +10,14 @@
 //   conversations:save     the renderer's 500 ms local save (header + the
 //                          streaming assistant message) for a real conversation
 //   activity:update        one incremental activity change
-// For each: per-call time and the longest Main event-loop block.
+// For each: per-call time and the longest owner-local harness event-loop block.
 // Event replays are paced at GB_WPERF_RATE events/s (default 270, the busiest
 // second in real data; 0 = back to back).
 // Env: GB_WPERF_DATA (required), GB_WPERF_EVENTS (default 2000),
 // GB_WPERF_OUTPUT (JSON), GB_WPERF_KEEP=1 (keep the copy).
 const { buildSync } = require('esbuild')
 const { mkdtempSync, rmSync, writeFileSync, mkdirSync, copyFileSync, cpSync, existsSync } = require('node:fs')
-const { tmpdir } = require('node:os')
+const { Worker } = require('node:worker_threads')
 const { join, resolve } = require('node:path')
 const { randomUUID } = require('node:crypto')
 const { performance } = require('node:perf_hooks')
@@ -43,7 +43,10 @@ if (!source || !existsSync(join(source, 'assistant.sqlite'))) {
 }
 const eventLimit = Number(process.env.GB_WPERF_EVENTS || 2000)
 
-const directory = mkdtempSync(join(tmpdir(), 'goodbuddy-write-perf-'))
+const temporaryRoot = join(root, 'temp', 'goodbuddy-storage-foundation')
+mkdirSync(temporaryRoot, { recursive: true })
+const directory = mkdtempSync(join(temporaryRoot, 'write-perf-'))
+let ownedDatabase, checkpoint, checkpointExit
 const bundle = join(directory, 'assistant-database.cjs')
 const progressBundle = join(directory, 'subagent-progress.cjs')
 for (const [entry, outfile] of [
@@ -115,6 +118,7 @@ async function main() {
   const workspace = join(directory, 'workspace')
   mkdirSync(workspace)
   const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
+  ownedDatabase = database
   const openStarted = performance.now()
   database.initialize(workspace)
   const raw = database.database
@@ -124,9 +128,12 @@ async function main() {
   results.synchronous = raw.prepare('PRAGMA synchronous').get().synchronous
   if (process.env.GB_WPERF_AUTOCHECKPOINT) raw.exec(`PRAGMA wal_autocheckpoint = ${process.env.GB_WPERF_AUTOCHECKPOINT}`)
   // As in production: checkpoints run on a worker thread (GB_WPERF_CHECKPOINT_WORKER=0 disables).
-  if (process.env.GB_WPERF_CHECKPOINT_WORKER !== '0' && typeof database.enableWalCheckpointWorker === 'function') {
-    database.enableWalCheckpointWorker(join(directory, 'readonly-query-worker.cjs'))
-    await new Promise(resolve => setTimeout(resolve, 500))
+  if (process.env.GB_WPERF_CHECKPOINT_WORKER !== '0') {
+    checkpoint = new Worker(join(directory, 'readonly-query-worker.cjs'), {
+      workerData: { kind: 'checkpoint', databasePath: join(directory, 'assistant.sqlite'), intervalMs: 250 }
+    })
+    checkpointExit = new Promise(resolve => checkpoint.once('exit', resolve))
+    await new Promise((resolve, reject) => { checkpoint.once('message', resolve); checkpoint.once('error', reject) })
   }
   results.walAutocheckpoint = raw.prepare('PRAGMA wal_autocheckpoint').get().wal_autocheckpoint
   const count = (sql, ...args) => Number(raw.prepare(sql).get(...args).n)
@@ -208,6 +215,7 @@ async function main() {
   }
   results.walBytes = existsSync(join(directory, 'assistant.sqlite-wal'))
     ? require('node:fs').statSync(join(directory, 'assistant.sqlite-wal')).size : 0
+  if (checkpoint) { checkpoint.postMessage({ type: 'close' }); await checkpointExit; checkpoint = undefined }
   database.close()
 
   console.log(`[wperf] ${results.taskEvents} task events, ${results.messages} messages, ${results.activityRecords} activity records; open ${results.openMs} ms`)
@@ -226,10 +234,12 @@ async function main() {
   for (const [name, r] of rows) if (r.slowCalls.length) console.log(`[wperf] slow calls (index, ms) ${name}: ${JSON.stringify(r.slowCalls)}`)
   console.log(`[wperf] synchronous=${results.synchronous} wal_autocheckpoint=${results.walAutocheckpoint} wal=${results.walBytes} B`)
   const output = process.env.GB_WPERF_OUTPUT
-  if (output) writeFileSync(output, JSON.stringify({ kind: 'goodbuddy-main-write-benchmark', node: process.version, results }, null, 2))
+  if (output) writeFileSync(output, JSON.stringify({ kind: 'goodbuddy-main-write-benchmark', executionBoundary: 'owner-local', node: process.version, results }, null, 2))
 }
 
-main().catch(error => { process.exitCode = 1; console.error(error) }).finally(() => {
+main().catch(error => { process.exitCode = 1; console.error(error) }).finally(async () => {
+  if (checkpoint) { checkpoint.postMessage({ type: 'close' }); await checkpointExit }
+  ownedDatabase?.close()
   if (process.env.GB_WPERF_KEEP === '1') console.log(`[wperf] kept ${directory}`)
   else rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })

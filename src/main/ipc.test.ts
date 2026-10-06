@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {} from '@testing-library/jest-dom/vitest'
 import { EventEmitter } from 'node:events'
+import { setImmediate as nextTurn } from 'node:timers/promises'
+import { assistantStorageMethods } from './desktop-storage-contracts'
+import { asyncSupervisionStorage } from '../../tests/support/async-supervision-storage'
+import { TestKnowledgeService } from '../../tests/support/knowledge-test-service'
+import { AgentModelCallLedger } from '../agent-daemon/agent-model-gateway'
 import { createServer } from 'node:http'
 import {
   mkdtemp,
@@ -50,12 +55,12 @@ import type { AgentExecutionRequest } from './agent/runtime'
 import type { SelectedRuntimeResolver } from './agent/selected-runtime-manager'
 import { ExecutionSpaceResolver, type ExecutionSpaceDescriptor } from './execution-space'
 import type { WorkspaceAccess } from './workspace'
-import { KnowledgeService } from './knowledge/knowledge-service'
 import { KnowledgeDatabase } from './knowledge/knowledge-database'
 import { BrowserNavigationStoppedError } from './browser/browser-service'
 import { RemotePromptCancelledError } from './agent/acp-remote-runtime'
 import { CapabilityService } from './capabilities/capability-service'
 import { ObsidianService } from './obsidian'
+import { ReadonlyQueryReader } from './readonly-query-reader'
 import { packageObsidianMcpVault } from './obsidian/package-mcpvault'
 import {
   registerIpcHandlers as registerProductionIpcHandlers,
@@ -64,12 +69,27 @@ import {
 } from './ipc'
 
 // Most IPC tests use partial databases. Real database fixtures retain their timing implementation.
+const beforeStorageCall = new WeakMap<object, (method: string) => Promise<void>>()
+const storageReaders = new WeakMap<object, ReadonlyQueryReader>()
 function registerIpcHandlers(...args: Parameters<typeof registerProductionIpcHandlers>): ReturnType<typeof registerProductionIpcHandlers> {
   const database = args[7]
-  database.onExecutionStatsChanged ??= vi.fn(() => () => {})
   database.startExecutionTiming ??= vi.fn()
   database.endExecutionTiming ??= vi.fn()
-  return registerProductionIpcHandlers(...args)
+  args[45] ??= asyncSupervisionStorage(database as AssistantDatabase, async () => { if (!vi.isFakeTimers()) await nextTurn(); else await Promise.resolve() })
+  args[7] = Object.fromEntries(assistantStorageMethods.map(method => [method, async (...input: unknown[]) => {
+    if (!vi.isFakeTimers()) await nextTurn(); else await Promise.resolve()
+    await beforeStorageCall.get(database)?.(method)
+    const target = database as unknown as Record<string, (...values: unknown[]) => unknown>
+    const reader = storageReaders.get(database)
+    const reads: Record<string, string> = { listSupervisionResults: 'supervisionOverview', getSupervisionGraph: 'supervisionGraph', getSupervisionStories: 'supervisionStories' }
+    if (reader && reads[method]) return reader.call(reads[method]!, input)
+    return await target[method]!.apply(database, input)
+  }])) as typeof database
+  const removeStatsListener = (database as Partial<AssistantDatabase>).onExecutionStatsChanged?.(() => {
+    args[0].webContents.send(ipcChannels.tasksExecutionStatsChanged)
+  })
+  const dispose = registerProductionIpcHandlers(...args)
+  return async () => { try { await dispose() } finally { removeStatsListener?.() } }
 }
 
 describe('embedding IPC boundary', () => {
@@ -248,7 +268,7 @@ describe('terminal IPC boundary', () => {
       sequence: 4
     })
     expect(
-      electronMocks.handlers.get(ipcChannels.terminalSnapshot)?.(
+      await electronMocks.handlers.get(ipcChannels.terminalSnapshot)?.(
         event,
         { sessionId: snapshot.sessionId }
       )
@@ -295,29 +315,26 @@ describe('terminal IPC boundary', () => {
     expect(electronMocks.writeClipboardText).toHaveBeenCalledWith(
       '## Copied response'
     )
-    expect(() =>
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(ipcChannels.clipboardReadText)?.({
         sender: { ...webContents, id: 99 },
         senderFrame: webContents.mainFrame
-      })
-    ).toThrow('拒绝来自未知窗口的 IPC 请求')
-    expect(() =>
+      }))).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(ipcChannels.clipboardWriteText)?.(
         event,
         { text: 'invalid' }
-      )
-    ).toThrow()
-    expect(() =>
+      ))).rejects.toThrow()
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(ipcChannels.clipboardWriteText)?.(
         {
           sender: { ...webContents, id: 99 },
           senderFrame: webContents.mainFrame
         },
         'untrusted'
-      )
-    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+      ))).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
 
-    expect(() =>
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(ipcChannels.terminalWrite)?.(
         {
           sender: { ...webContents, id: 99 },
@@ -327,15 +344,13 @@ describe('terminal IPC boundary', () => {
           sessionId: snapshot.sessionId,
           data: 'untrusted'
         }
-      )
-    ).toThrow('拒绝来自未知窗口的 IPC 请求')
-    expect(() =>
+      ))).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(ipcChannels.terminalResize)?.(event, {
         sessionId: snapshot.sessionId,
         cols: 0,
         rows: 28
-      })
-    ).toThrow()
+      }))).rejects.toThrow()
 
     await dispose()
     expect(terminalSessionManager.closeOwner).toHaveBeenCalledWith(73)
@@ -623,7 +638,7 @@ describe('registerIpcHandlers computer capabilities', () => {
     }
 
     expect(
-      electronMocks.handlers.get(ipcChannels.appInfo)?.(event)
+      await electronMocks.handlers.get(ipcChannels.appInfo)?.(event)
     ).toMatchObject({
       shortcut: 'Ctrl + Alt + K',
       shortcutStatus: 'registered'
@@ -635,13 +650,13 @@ describe('registerIpcHandlers computer capabilities', () => {
         registeredAccelerator: undefined,
         status
       })
-      expect(electronMocks.handlers.get(ipcChannels.appInfo)?.(event)).toMatchObject({
+      expect(await electronMocks.handlers.get(ipcChannels.appInfo)?.(event)).toMatchObject({
         shortcut: '',
         shortcutStatus: status
       })
     }
     expect(
-      electronMocks.handlers.get(ipcChannels.shortcutSettingsGet)?.(
+      await electronMocks.handlers.get(ipcChannels.shortcutSettingsGet)?.(
         event
       )
     ).toEqual(shortcutSnapshot)
@@ -666,8 +681,8 @@ describe('registerIpcHandlers computer capabilities', () => {
     const importFiles = electronMocks.handlers.get(ipcChannels.contextImportFiles)!
     await expect(importFiles(event, { paths: ['C:\\scan.pdf'] })).resolves.toEqual([])
     expect(selectFiles).toHaveBeenCalledWith(['C:\\scan.pdf'], expect.any(Function))
-    expect(() => importFiles(event, { paths: [''] })).toThrow()
-    expect(() => importFiles({ ...event, senderFrame: {} }, { paths: ['C:\\scan.pdf'] })).toThrow()
+    await expect(Promise.resolve().then(() => importFiles(event, { paths: [''] }))).rejects.toThrow()
+    await expect(Promise.resolve().then(() => importFiles({ ...event, senderFrame: {} }, { paths: ['C:\\scan.pdf'] }))).rejects.toThrow()
     expect(webContents.send).toHaveBeenCalledWith(
       ipcChannels.contextFileSelectionProgress,
       {
@@ -923,7 +938,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       7
     )
     expect(
-      electronMocks.handlers.get(ipcChannels.browserSetViewport)?.(event, {
+      await electronMocks.handlers.get(ipcChannels.browserSetViewport)?.(event, {
         conversationId: 'browser-conversation',
         leaseToken: siblingBrowserTabId,
         bounds: { x: 900, y: 120, width: 320, height: 600 }
@@ -937,7 +952,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       7
     )
     expect(
-      electronMocks.handlers.get(ipcChannels.browserSetViewport)?.(event, {
+      await electronMocks.handlers.get(ipcChannels.browserSetViewport)?.(event, {
         leaseToken: siblingBrowserTabId
       })
     ).toBeUndefined()
@@ -1018,14 +1033,13 @@ describe('registerIpcHandlers computer capabilities', () => {
       )
     ).rejects.toThrow()
 
-    expect(() =>
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(
         ipcChannels.capabilitiesCreateBrowserProfile
       )?.(event, {
         name: '工作配置',
         executable: 'C:\\unsafe.exe'
-      })
-    ).toThrow()
+      }))).rejects.toThrow()
     expect(capabilityService.createBrowserProfile).not.toHaveBeenCalled()
 
     await expect(
@@ -1074,7 +1088,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       ipcChannels.contextSelectFiles
     ])
 
-    expect(() =>
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(
         ipcChannels.capabilitiesDiagnoseComputer
       )?.(
@@ -1083,12 +1097,11 @@ describe('registerIpcHandlers computer capabilities', () => {
           senderFrame: webContents.mainFrame
         },
         'host-browser-control'
-      )
-    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+      ))).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
     await dispose()
     for (const channel of capabilityChannels) {
       expect(electronMocks.removeHandler).toHaveBeenCalledWith(channel)
-      expect(electronMocks.handlers.has(channel)).toBe(false)
+      expect(await electronMocks.handlers.has(channel)).toBe(false)
     }
   })
 })
@@ -1351,21 +1364,20 @@ describe('registerIpcHandlers model download source routing', () => {
     )
 
     expect(
-      electronMocks.handlers.get(
+      await electronMocks.handlers.get(
         ipcChannels.documentOcrModelsProgress
       )?.(event)
     ).toEqual({ operations: [] })
     expect(
       documentOcrModelManager.getProgressSnapshot
     ).toHaveBeenCalledOnce()
-    expect(() =>
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers
         .get(ipcChannels.documentOcrModelsProgress)
         ?.({
           sender: {},
           senderFrame: webContents.mainFrame
-        })
-    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+        }))).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
 
     await expect(
       electronMocks.handlers.get(
@@ -1581,14 +1593,13 @@ describe('registerIpcHandlers DSH runtime extensions', () => {
         extensionId: 'Invalid Extension'
       })
     ).rejects.toThrow()
-    expect(() =>
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(
         ipcChannels.runtimeExtensionsSnapshot
       )?.({
         sender: {},
         senderFrame: webContents.mainFrame
-      })
-    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+      }))).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
 
     await dispose()
   })
@@ -3230,7 +3241,7 @@ describe('registerIpcHandlers knowledge snapshot ontology', () => {
     }
 
     expect(
-      electronMocks.handlers.get(ipcChannels.knowledgeSnapshot)?.(
+      await electronMocks.handlers.get(ipcChannels.knowledgeSnapshot)?.(
         event,
         libraryId
       )
@@ -4226,14 +4237,13 @@ describe('registerIpcHandlers window controls', () => {
       true
     )
     expect(window.close).toHaveBeenCalledOnce()
-    expect(() =>
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers
         .get(ipcChannels.windowIsMaximized)
         ?.({
           sender: {},
           senderFrame: webContents.mainFrame
-        })
-    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+        }))).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
 
     await dispose()
     expect(window.removeListener).toHaveBeenCalledWith(
@@ -4457,12 +4467,12 @@ describe('registerIpcHandlers token usage', () => {
       const event = { sender: webContents, senderFrame: webContents.mainFrame }
       const id = '00000000-0000-4000-8000-000000000301'
       for (const scope of [{ conversationId: id }, { projectId: id }]) {
-        expect(handler(event, scope)).toEqual(summary)
+        expect(await handler(event, scope)).toEqual(summary)
         expect(assistantDatabase.getExecutionStats).toHaveBeenLastCalledWith(scope)
       }
-      expect(() => handler(event, {})).toThrow()
-      expect(() => handler(event, { projectId: id, conversationId: id })).toThrow()
-      expect(() => handler({ sender: {}, senderFrame: webContents.mainFrame }, { projectId: id })).toThrow()
+      await expect(Promise.resolve().then(() => handler(event, {}))).rejects.toThrow()
+      await expect(Promise.resolve().then(() => handler(event, { projectId: id, conversationId: id }))).rejects.toThrow()
+      await expect(Promise.resolve().then(() => handler({ sender: {}, senderFrame: webContents.mainFrame }, { projectId: id }))).rejects.toThrow()
       expect(assistantDatabase.getExecutionStats).toHaveBeenCalledTimes(2)
     } finally {
       await dispose()
@@ -4518,7 +4528,7 @@ describe('registerIpcHandlers token usage', () => {
     )
     expect(handler).toBeDefined()
     expect(
-      handler?.({
+      await handler?.({
         sender: webContents,
         senderFrame: webContents.mainFrame
       })
@@ -4655,7 +4665,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
       expect(pin).toBeTypeOf('function')
       webContents.send.mockClear()
       for (const pinned of [true, true, false]) {
-        expect(pin(event, { conversationId, pinned })).toBeUndefined()
+        expect(await pin(event, { conversationId, pinned })).toBeUndefined()
         expect(database.getConversation(conversationId)).toEqual({ ...before, pinned })
       }
       expect(webContents.send.mock.calls).toEqual([
@@ -4675,28 +4685,134 @@ describe('registerIpcHandlers local conversation persistence', () => {
       expect(assets.original(assetId).data).toEqual(Buffer.from('original'))
 
       webContents.send.mockClear()
-      expect(() => pin(event, { conversationId, pinned: 'yes' })).toThrow()
-      expect(() => pin({ ...event, sender: {} }, { conversationId, pinned: true })).toThrow()
-      expect(() => pin(event, {
+      await expect(Promise.resolve().then(() => pin(event, { conversationId, pinned: 'yes' }))).rejects.toThrow()
+      await expect(Promise.resolve().then(() => pin({ ...event, sender: {} }, { conversationId, pinned: true }))).rejects.toThrow()
+      await expect(Promise.resolve().then(() => pin(event, {
         conversationId: '00000000-0000-4000-8000-000000000399', pinned: true
-      })).toThrow()
+      }))).rejects.toThrow()
       expect(webContents.send).not.toHaveBeenCalled()
       expect(database.getConversation(conversationId)).toEqual(before)
 
       const setStoryGraph = electronMocks.handlers.get(ipcChannels.conversationsSetStoryGraph)!
       expect(database.isConversationStoryGraphEnabled(conversationId)).toBe(true)
       for (const enabled of [false, true]) {
-        setStoryGraph(event, { conversationId, enabled })
+        await setStoryGraph(event, { conversationId, enabled })
         expect(database.isConversationStoryGraphEnabled(conversationId)).toBe(enabled)
         expect(database.getConversation(conversationId)).toEqual({ ...before, storyGraphEnabled: enabled })
       }
-      expect(() => setStoryGraph(event, { conversationId, enabled: 'false' })).toThrow()
-      expect(() => setStoryGraph({ ...event, sender: {} }, { conversationId, enabled: false })).toThrow()
+      await expect(Promise.resolve().then(() => setStoryGraph(event, { conversationId, enabled: 'false' }))).rejects.toThrow()
+      await expect(Promise.resolve().then(() => setStoryGraph({ ...event, sender: {} }, { conversationId, enabled: false }))).rejects.toThrow()
 
-      expect(electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, conversationId)).toBe(true)
+      expect(await electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, conversationId)).toBe(true)
       expect(collect).toHaveBeenCalledOnce()
       expect(contextManager.cancelUnavailableImport).toHaveBeenCalledOnce()
       expect(assets.has(assetId)).toBe(false)
+    } finally {
+      await dispose?.()
+      assets.close()
+      await results.close()
+      database.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('validates full handles across child adoption, stale/current saves and branching, and releases deleted history', async () => {
+    const parent = join(process.cwd(), 'temp', 'output-history-ipc')
+    await mkdir(parent, { recursive: true })
+    const root = await mkdtemp(join(parent, 'fixture-'))
+    const database = new AssistantDatabase(join(root, 'assistant.sqlite'))
+    const results = new DocumentResultStorage(join(root, 'temp', 'document-parsing'))
+    const assets = new ConversationAttachmentStorage(root, results)
+    let dispose: ReturnType<typeof registerIpcHandlers> | undefined
+    try {
+      await database.initialize(root)
+      const conversationId = crypto.randomUUID(), messageId = crypto.randomUUID()
+      const childTaskId = crypto.randomUUID()
+      const outputId = crypto.randomUUID(), handle = `process:${outputId}`
+      const text = '\u4e2d\ud83d\ude00'.repeat(20000) + '-complete-tail'
+      const bytes = Buffer.from(text)
+      assets.outputCreate(childTaskId, handle)
+      for (let offset = 0; offset < bytes.length; offset += 65536) await assets.outputAppend(childTaskId, handle, bytes.subarray(offset, offset + 65536))
+      await assets.outputFinish(childTaskId, handle, bytes.length)
+      const reference = { handle, totalBytes: bytes.length, nextCursor: 0 }
+      const childHandle = `subagent:${crypto.randomUUID()}`, progressHandle = `rg:${crypto.randomUUID()}`
+      for (const outputHandle of [childHandle, progressHandle]) {
+        assets.outputCreate(childTaskId, outputHandle)
+        await assets.outputAppend(childTaskId, outputHandle, Buffer.from('child output'))
+        await assets.outputFinish(childTaskId, outputHandle, 12)
+      }
+      const childReference = { handle: childHandle, totalBytes: 12, nextCursor: 0 }
+      const progressReference = { ...childReference, handle: progressHandle }
+      const handles = [handle, childHandle, progressHandle]
+      const tool = { callId: 'call', name: 'Process', state: 'completed' as const, summary: 'Output', output: 'preview', outputReferences: [reference] }
+      const batch = [{ header: { id: conversationId, title: 'Output history', updatedAt: 1 }, messages: [{
+        id: messageId, role: 'assistant' as const, content: '', state: 'complete' as const, createdAt: 1,
+        tools: [tool], blocks: [{ id: crypto.randomUUID(), type: 'tool' as const, tool }],
+        subagents: [{ childTaskId, actor: { kind: 'direct-model' as const, label: '编程 Subagent' as const }, routingMode: 'native' as const,
+          state: 'completed' as const, outputReference: childReference,
+          progress: [{ id: crypto.randomUUID(), type: 'tool' as const, tool: { ...tool, outputReferences: [progressReference] } }] }]
+      }] }]
+      database.saveLocalConversations(batch)
+      for (const outputHandle of handles) assets.outputAdopt(childTaskId, outputHandle, conversationId, 'message', messageId)
+      const referenced = vi.spyOn(assets, 'reference')
+      const contextManager = { assets, clear: vi.fn(), activeContextIds: () => [], cancelUnavailableImport: vi.fn() }
+      const webContents = { on: vi.fn(), removeListener: vi.fn(), mainFrame: { url: 'file:///goodbuddy/index.html' },
+        getURL: () => 'file:///goodbuddy/index.html', send: vi.fn() }
+      const window = { webContents, isDestroyed: () => false, on: vi.fn(), removeListener: vi.fn() }
+      dispose = registerIpcHandlers(window as never, { capability: 'text' } as never,
+        'CommandOrControl+Shift+Space', {} as never, {} as never, contextManager as never,
+        {} as never, database, {} as never, vi.fn(async () => {}))
+      const event = { sender: webContents, senderFrame: webContents.mainFrame }
+      const save = electronMocks.handlers.get(ipcChannels.conversationsSaveLocal)!
+      await save(event, [{ ...batch[0], messages: [{ ...batch[0]!.messages[0], tools: [], blocks: [], subagents: [] }] }])
+      expect(referenced).toHaveBeenLastCalledWith(conversationId, 'message', messageId, [], [])
+      for (const outputHandle of handles) assets.outputRelease(childTaskId, outputHandle)
+      assets.collect()
+      const read = electronMocks.handlers.get(ipcChannels.contextReadOutput)!
+      for (const outputHandle of handles) expect(await read(event, { conversationId, handle: outputHandle })).toHaveProperty('content')
+      await save(event, batch)
+      expect(referenced).toHaveBeenLastCalledWith(conversationId, 'message', messageId,
+        handles.map(outputHandle => outputHandle.split(':')[1]), handles)
+      const saved = database.getConversation(conversationId)
+      const unfinishedHandle = `process:${crypto.randomUUID()}`
+      assets.outputCreate(childTaskId, unfinishedHandle)
+      for (const [invalidHandle, error] of [
+        [`process:${crypto.randomUUID()}`, '附件资源不存在'],
+        [unfinishedHandle, 'Full output is missing or unfinished'],
+        [`rg:${outputId}`, 'Full output is missing or unfinished']
+      ] as const) {
+        await expect(save(event, [{ ...batch[0], messages: [{ ...batch[0]!.messages[0], content: 'must not persist',
+          tools: [{ ...tool, outputReferences: [reference, { ...reference, handle: invalidHandle }] }]
+        }] }])).rejects.toThrow(error)
+        expect(database.getConversation(conversationId)).toEqual(saved)
+      }
+      assets.outputRelease(childTaskId, unfinishedHandle)
+      let restored = '', cursor = 0
+      while (cursor < bytes.length) {
+        const page = await read(event, { conversationId, handle, cursor }) as import('../shared/conversation-output').ConversationOutputPage
+        expect(Buffer.byteLength(page.content)).toBeLessThanOrEqual(32768)
+        expect(page.nextCursor).toBeGreaterThan(cursor)
+        restored += page.content
+        cursor = page.nextCursor
+      }
+      expect(restored).toBe(text)
+      expect(await read(event, { conversationId, handle, limitBytes: 1 })).toMatchObject({ content: '\u4e2d', nextCursor: 3 })
+      await expect(read(event, { conversationId, handle, cursor: 1 })).rejects.toThrow('UTF-8')
+      await expect(read(event, { conversationId, handle, limitBytes: 32769 })).rejects.toThrow()
+      await expect(read(event, { conversationId: crypto.randomUUID(), handle })).rejects.toThrow('owner')
+      await expect(read({ ...event, sender: {} }, { conversationId, handle })).rejects.toThrow()
+      const branch = await electronMocks.handlers.get(ipcChannels.conversationsBranchLocal)!(event, { sourceConversationId: conversationId, title: 'Branch' }) as ConversationSnapshot
+      expect(branch.messages[0]?.tools?.[0]?.outputReferences).toEqual([reference])
+      expect(branch.messages[0]?.subagents).toBeUndefined()
+      expect(referenced).toHaveBeenLastCalledWith(branch.id, 'message', branch.messages[0]!.id,
+        [outputId], [handle])
+      await electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, conversationId)
+      await save(event, [{ header: { id: branch.id, title: 'Header-only update', updatedAt: Date.now() }, messages: [] }])
+      expect(await read(event, { conversationId: branch.id, handle, cursor: bytes.length - 4 })).toMatchObject({ content: 'tail', eof: true })
+      for (const outputHandle of [childHandle, progressHandle]) expect(assets.has(outputHandle.split(':')[1]!)).toBe(false)
+      await electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, branch.id)
+      await expect(read(event, { conversationId: branch.id, handle })).rejects.toThrow()
+      for (const outputHandle of handles) expect(assets.has(outputHandle.split(':')[1]!)).toBe(false)
     } finally {
       await dispose?.()
       assets.close()
@@ -4820,7 +4936,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
     ]
 
     expect(
-      electronMocks.handlers.get(
+      await electronMocks.handlers.get(
         ipcChannels.conversationsSaveLocal
       )?.(event, batch)
     ).toBeUndefined()
@@ -4832,7 +4948,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
       title: '增量会话 · 分支'
     }
     expect(
-      electronMocks.handlers.get(
+      await electronMocks.handlers.get(
         ipcChannels.conversationsBranchLocal
       )?.(event, branchInput)
     ).toMatchObject({
@@ -4843,7 +4959,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
       assistantDatabase.branchLocalConversation
     ).toHaveBeenCalledWith(branchInput)
     expect(
-      electronMocks.handlers.get(
+      await electronMocks.handlers.get(
         ipcChannels.conversationsDeleteLocal
       )?.(event, conversationId)
     ).toBe(true)
@@ -4854,7 +4970,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
       queuedAttachmentId
     )
 
-    expect(() =>
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(
         ipcChannels.conversationsSaveLocal
       )?.(event, [
@@ -4869,21 +4985,18 @@ describe('registerIpcHandlers local conversation persistence', () => {
             }
           }
         }
-      ])
-    ).toThrow()
-    expect(() =>
+      ]))).rejects.toThrow()
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(
         ipcChannels.conversationsBranchLocal
       )?.(event, {
         sourceConversationId: 'not-a-uuid',
         title: '无效分支'
-      })
-    ).toThrow()
-    expect(() =>
+      }))).rejects.toThrow()
+    await expect(Promise.resolve().then(() =>
       electronMocks.handlers.get(
         ipcChannels.conversationsDeleteLocal
-      )?.(event, 'not-a-uuid')
-    ).toThrow()
+      )?.(event, 'not-a-uuid'))).rejects.toThrow()
 
     await dispose()
   })
@@ -4936,7 +5049,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
       )
     )
     expect(
-      electronMocks.handlers.has(ipcChannels.conversationsSaveLocal)
+      await electronMocks.handlers.has(ipcChannels.conversationsSaveLocal)
     ).toBe(true)
     const requestId = webContents.send.mock.calls.find(
       ([channel]) =>
@@ -4949,7 +5062,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
 
     await disposal
     expect(
-      electronMocks.handlers.has(ipcChannels.conversationsSaveLocal)
+      await electronMocks.handlers.has(ipcChannels.conversationsSaveLocal)
     ).toBe(false)
   })
 })
@@ -5409,9 +5522,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       ),
       listConversations: vi.fn<() => ConversationSnapshot[]>(() => []),
       listConversationSummaries: vi.fn<(ids?: string[]) => ConversationSnapshot[]>(() => []),
-      // The readonly-worker variants delegate to the synchronous mocks.
-      listConversationSummariesAsync: vi.fn(async (ids?: string[]) => assistantDatabase.listConversationSummaries(ids)),
-      getConversationAsync: vi.fn(async (conversationId: string) => assistantDatabase.getConversation(conversationId)),
       listRecoverableRemoteTasks: vi.fn<
         () => Array<{
           taskId: string
@@ -5805,16 +5915,17 @@ describe('registerIpcHandlers agent terminal state', () => {
       await ready
       now += 5000
       const read = () => electronMocks.handlers.get(ipcChannels.tasksExecutionStats)!(event, { conversationId })
-      expect(read()).toMatchObject({ durationMs: 5000, runningCount: 1, incomplete: false })
+      expect(await read()).toMatchObject({ durationMs: 5000, runningCount: 1, incomplete: false })
       if (status === 'cancelled') {
         harness.cancelHandler!(event, requestId)
+        await vi.waitFor(async () => expect(await read()).toMatchObject({ runningCount: 0 }))
         now += 60_000
-        expect(read()).toMatchObject({ durationMs: 5000, runningCount: 0 })
+        expect(await read()).toMatchObject({ durationMs: 5000, runningCount: 0 })
       }
       finish()
       await vi.waitFor(() => expect(database.getTask(requestId).status).toBe(status))
       now += 60_000
-      expect(read()).toMatchObject({ durationMs: 5000, runningCount: 0 })
+      expect(await read()).toMatchObject({ durationMs: 5000, runningCount: 0 })
       expect(harness.webContents.send).toHaveBeenCalledWith(ipcChannels.tasksExecutionStatsChanged)
     } finally {
       finish()
@@ -5868,12 +5979,12 @@ describe('registerIpcHandlers agent terminal state', () => {
       await ready.promise
       expect(database.getTask(requestId).status).toBe('waiting_approval')
       now += 60_000
-      expect(read()).toMatchObject({ durationMs: 2000, runningCount: 0 })
+      expect(await read()).toMatchObject({ durationMs: 2000, runningCount: 0 })
       const answer = electronMocks.handlers.get(ipcChannels.agentQuestionRespond)!
       await expect(answer(event, { questionId: questionIds[0], answers: [['Yes']] })).rejects.toThrow('Answer delivery failed')
       now += 60_000
       expect(database.getTask(requestId).status).toBe('waiting_approval')
-      expect(read()).toMatchObject({ durationMs: 2000, runningCount: 0 })
+      expect(await read()).toMatchObject({ durationMs: 2000, runningCount: 0 })
       for (const [index, questionId] of questionIds.entries()) {
         if (resolution === 'answer') await answer(event, { questionId, answers: index === 0 ? [['Yes']] : [] })
         steps[index]!.release.resolve()
@@ -5881,14 +5992,14 @@ describe('registerIpcHandlers agent terminal state', () => {
         if (index === 0) {
           now += 60_000
           expect(database.getTask(requestId).status).toBe('waiting_approval')
-          expect(read()).toMatchObject({ durationMs: 2000, runningCount: 0 })
+          expect(await read()).toMatchObject({ durationMs: 2000, runningCount: 0 })
         }
       }
       expect(database.getTask(requestId).status).toBe('running')
       now += 3000
       finish.resolve()
       await vi.waitFor(() => expect(database.getTask(requestId).status).toBe('completed'))
-      expect(read()).toMatchObject({ durationMs: 5000, runningCount: 0 })
+      expect(await read()).toMatchObject({ durationMs: 5000, runningCount: 0 })
       if (resolution === 'answer') expect(respondToQuestion).toHaveBeenLastCalledWith(questionIds[1], undefined)
     } finally {
       for (const step of steps) step.release.resolve()
@@ -5930,7 +6041,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(database.getArtifact(original.artifactIds[0]!).content).toContain('iVBORw0KGgo=')
       const regenerate = electronMocks.handlers.get(ipcChannels.imageOperationRegenerate)!
       const cancel = electronMocks.handlers.get(ipcChannels.imageOperationCancel)!
-      expect(() => cancel(event, { conversationId, operationId: original.id, prompt: 'injected' })).toThrow()
+      await expect(Promise.resolve().then(() => cancel(event, { conversationId, operationId: original.id, prompt: 'injected' }))).rejects.toThrow()
       const regenerated = await regenerate(event, { conversationId, operationId: original.id }) as typeof original
       expect(regenerated.id).not.toBe(original.id)
       expect(regenerated.messageId).toBe(messageId)
@@ -6355,13 +6466,13 @@ describe('registerIpcHandlers agent terminal state', () => {
       const cancellation = electronMocks.handlers.get(ipcChannels.supervisionCancel)!(event, input)
       await cleanupStarted
       expect(database.listSupervisionActivity()[0]!.status).toBe('cancelled')
-      expect(electronMocks.handlers.get(ipcChannels.supervisionExecution)!(event)).toEqual({ active: true, runId, stopping: 'cancelled' })
+      expect(await electronMocks.handlers.get(ipcChannels.supervisionExecution)!(event)).toEqual({ active: true, runId, stopping: 'cancelled' })
       await expect(electronMocks.handlers.get(ipcChannels.supervisionRun)!(event, request)).rejects.toThrow('SUPERVISION_REVIEW_BUSY')
       await expect(electronMocks.handlers.get(ipcChannels.supervisionResume)!(event, input)).rejects.toThrow('SUPERVISION_REVIEW_BUSY')
       finish()
       await cancellation
       await expect(pending).resolves.toMatchObject({ status: 'cancelled' })
-      expect(electronMocks.handlers.get(ipcChannels.supervisionExecution)!(event)).toMatchObject({ active: false })
+      expect(await electronMocks.handlers.get(ipcChannels.supervisionExecution)!(event)).toMatchObject({ active: false })
       await expect(electronMocks.handlers.get(ipcChannels.supervisionResume)!(event, input)).rejects.toThrow('SUPERVISION_REVIEW_CANCELLED')
       expect(database.listSupervisionResults()).toEqual([])
       expect(run).toHaveBeenCalledTimes(1)
@@ -6453,7 +6564,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(releaseConversation).toHaveBeenCalledTimes(calls)
       expect(database.listSupervisionActivity()).toHaveLength(1)
       await expect(electronMocks.handlers.get(ipcChannels.supervisionResume)!({ sender: {} }, input)).rejects.toThrow()
-      expect(() => electronMocks.handlers.get(ipcChannels.supervisionBatches)!(event, { ...input, limit: 21 })).toThrow()
+      await expect(Promise.resolve().then(() => electronMocks.handlers.get(ipcChannels.supervisionBatches)!(event, { ...input, limit: 21 }))).rejects.toThrow()
     } finally { await harness.dispose(); database.close() }
   })
 
@@ -6480,23 +6591,23 @@ describe('registerIpcHandlers agent terminal state', () => {
       const event = trustedEvent(harness.webContents)
       const requests = [[ipcChannels.supervisionOverview, {}], [ipcChannels.supervisionGraph, { resultId }],
         [ipcChannels.supervisionStories, { scope: { kind: 'global' } }]] as const
-      for (const [channel, input] of requests) await expect(electronMocks.handlers.get(channel)!(event, input)).rejects.toThrow('worker is not configured')
-      database.enableReadonlyWorker(worker)
+      const reader = new ReadonlyQueryReader('assistant', join(directory, 'assistant.sqlite'), worker)
+      storageReaders.set(database, reader)
       const reads = [vi.spyOn(database, 'listSupervisionResults'), vi.spyOn(database, 'getSupervisionGraph'), vi.spyOn(database, 'supervisionStories')]
       await expect(electronMocks.handlers.get(ipcChannels.supervisionOverview)!(event, {})).resolves.toEqual(overview)
       await expect(electronMocks.handlers.get(ipcChannels.supervisionGraph)!(event, { resultId })).resolves.toMatchObject({
         sources: [{ id: sourceId, title: 'Source', occurred_at: at }] })
       await expect(electronMocks.handlers.get(ipcChannels.supervisionStories)!(event, { scope: { kind: 'global' } })).resolves.toEqual({
         stories: [], experiences: [], unassigned: 0, canUndo: false })
-      expect(electronMocks.handlers.get(ipcChannels.supervisionSource)!(event, { sourceId })).toMatchObject({ content: 'Full body' })
-      await database.readonlyWorkerForTest!.terminateWorkerForTest()
+      expect(await electronMocks.handlers.get(ipcChannels.supervisionSource)!(event, { sourceId })).toMatchObject({ content: 'Full body' })
+      await reader.terminateWorkerForTest()
       for (const [channel, input] of requests) await expect(electronMocks.handlers.get(channel)!(event, input)).rejects.toThrow('backing off')
       for (const read of reads) expect(read).not.toHaveBeenCalled()
       harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: false })
       await expect(electronMocks.handlers.get(ipcChannels.supervisionStories)!(event, { scope: { kind: 'global' } })).resolves.toEqual({
         stories: [], experiences: [], unassigned: 0, canUndo: false })
     } finally {
-      await harness.dispose(); database.close()
+      await harness.dispose(); await storageReaders.get(database)?.close(); storageReaders.delete(database); database.close()
       await rm(directory, { recursive: true, force: true, maxRetries: 10 })
     }
   }, 60_000)
@@ -6615,10 +6726,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       const input = { name: 'Directory project', description: '', rootPath: '' }
       const initialCount = database.listProjects().length
       for (const rootPath of ['', '   ']) {
-        expect(() => create(event, { ...input, rootPath })).toThrow()
+        await expect(Promise.resolve().then(() => create(event, { ...input, rootPath }))).rejects.toThrow()
       }
       expect(database.listProjects()).toHaveLength(initialCount)
-      const created = create(event, { ...input, rootPath: ` ${process.cwd()} ` }) as AssistantProject
+      const created = await create(event, { ...input, rootPath: ` ${process.cwd()} ` }) as AssistantProject
       expect(database.getProject(created.id).rootPath).toBe(process.cwd())
       database.updateProject(created.id, input)
       await electronMocks.handlers.get(ipcChannels.projectsUpdate)!(event, {
@@ -6701,7 +6812,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(graph.sources).toHaveLength(evidence.length)
       expect(graph).toHaveProperty('attention', [{ start: from, turns: 2, characters: 14 }])
       await expect(electronMocks.handlers.get(ipcChannels.supervisionGraph)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id, storyLineId: 'wrong-story' })).rejects.toThrow('不匹配')
-      expect(() => electronMocks.handlers.get(ipcChannels.supervisionContinueContext)!(trustedEvent(harness.webContents), { resultId: 'wrong-result', sourceId: overview[0]!.sourceId })).toThrow('不匹配')
+      await expect(Promise.resolve().then(() => electronMocks.handlers.get(ipcChannels.supervisionContinueContext)!(trustedEvent(harness.webContents), { resultId: 'wrong-result', sourceId: overview[0]!.sourceId }))).rejects.toThrow('不匹配')
       const legacy = database.buildHeartbeatInput({ scope, lookbackHours: 1 }, new Date(to))
       expect(legacy.tasks.some(task => task.id === oldTask.id)).toBe(false)
       expect(legacy.tasks.some(task => task.title === 'Future task')).toBe(true)
@@ -6837,22 +6948,22 @@ describe('registerIpcHandlers agent terminal state', () => {
     const commit = electronMocks.handlers.get(ipcChannels.supervisionKnowledgeCommit)!
     const input = { operation: 'update-entity', libraryId: library.id, entityId: entity.id, label: 'Revised', type: 'Concept', description: 'Preview description', aliases: ['Alias'], sourceId: 'source' }
     try {
-      expect(() => preview(event, input)).toThrow('不属于所选知识库')
-      expect(() => preview(event, { ...input, entityId: crypto.randomUUID() })).toThrow('不属于所选知识库')
-      expect(() => preview(event, { ...input, operation: 'create-entity', libraryId: crypto.randomUUID() })).toThrow('知识库不存在')
+      await expect(Promise.resolve().then(() => preview(event, input))).rejects.toThrow('不属于所选知识库')
+      await expect(Promise.resolve().then(() => preview(event, { ...input, entityId: crypto.randomUUID() }))).rejects.toThrow('不属于所选知识库')
+      await expect(Promise.resolve().then(() => preview(event, { ...input, operation: 'create-entity', libraryId: crypto.randomUUID() }))).rejects.toThrow('知识库不存在')
       const binding = vi.spyOn(database.externalStore, 'hasBinding').mockReturnValue(true)
-      expect(() => preview(event, { ...input, operation: 'create-entity' })).toThrow('EXTERNAL_KB_READ_ONLY')
+      await expect(Promise.resolve().then(() => preview(event, { ...input, operation: 'create-entity' }))).rejects.toThrow('EXTERNAL_KB_READ_ONLY')
       binding.mockReturnValue(false)
       const valid = { ...input, libraryId: other.id }
       const first = await preview(event, valid) as { previewId: string }
       expect(first).toMatchObject({ entity: valid, source: { content: 'Evidence' } })
       binding.mockReturnValue(true)
-      expect(() => commit(event, { previewId: first.previewId })).toThrow('EXTERNAL_KB_READ_ONLY')
+      await expect(Promise.resolve().then(() => commit(event, { previewId: first.previewId }))).rejects.toThrow('EXTERNAL_KB_READ_ONLY')
       expect(database.getEntity(entity.id)?.name).toBe('Original')
       binding.mockReturnValue(false)
       const second = await preview(event, valid) as { previewId: string }
       const getEntity = vi.spyOn(database, 'getEntity').mockReturnValue({ ...entity, knowledgeBaseId: library.id })
-      expect(() => commit(event, { previewId: second.previewId })).toThrow('不属于所选知识库')
+      await expect(Promise.resolve().then(() => commit(event, { previewId: second.previewId }))).rejects.toThrow('不属于所选知识库')
       getEntity.mockRestore()
       const third = await preview(event, valid) as { previewId: string }
       await commit(event, { previewId: third.previewId })
@@ -6895,14 +7006,14 @@ describe('registerIpcHandlers agent terminal state', () => {
         conversationId, title: 'Immediate', prompt: 'Run once', recurrence: 'once',
         nextRunAt: '2020-01-01T00:00:00.000Z'
       }
-      expect(() => create(event, input)).toThrow('首次运行时间必须晚于当前时间')
+      await expect(Promise.resolve().then(() => create(event, input))).rejects.toThrow('首次运行时间必须晚于当前时间')
       expect(database.listSchedules()).toEqual([])
       const schedule = await create(event, { ...input, runImmediately: true }) as AssistantSchedule
       expect(schedule.enabled).toBe(false)
       const dispatches = () => harness.webContents.send.mock.calls.filter(
         ([channel]) => channel === ipcChannels.conversationQueueDispatch
       )
-      expect(dispatches()).toHaveLength(1)
+      await vi.waitFor(() => expect(dispatches()).toHaveLength(1))
       const dispatch = dispatches()[0]![1] as ConversationQueueDispatch
       expect(dispatch).toMatchObject({ scheduled: true, item: { taskId: schedule.taskId } })
       expect(database.queueDueSchedules(new Date('2099-01-01T00:00:00Z'))).toEqual([])
@@ -7014,11 +7125,11 @@ describe('registerIpcHandlers agent terminal state', () => {
     )?.(trustedEvent(harness.webContents), scheduleId)
 
     expect(harness.assistantDatabase.createTask).not.toHaveBeenCalled()
-    expect(harness.webContents.send).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(
       ipcChannels.conversationQueueDispatch,
       { item: queueItem, scheduled: true, input: {
         conversationId, projectId: schedule.projectId, prompt: schedule.prompt
-      } })
+      } }))
     await harness.handler?.(trustedEvent(harness.webContents), {
       requestId: runId, conversationId, queueItemId: queueItem.id,
       prompt: schedule.prompt, history: [{ role: 'user', content: 'Earlier conversation' }]
@@ -7122,6 +7233,9 @@ describe('registerIpcHandlers agent terminal state', () => {
       ipcChannels.schedulesRunNow
     )?.(trustedEvent(harness.webContents), scheduleId)
 
+    await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(
+      ipcChannels.conversationQueueDispatch, expect.objectContaining({ item: queueItem })
+    ))
     await harness.handler?.(trustedEvent(harness.webContents), {
       requestId: runId, conversationId, queueItemId: queueItem.id,
       prompt: schedule.prompt
@@ -7647,6 +7761,36 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it('captures project conversations before deletion and waits for attachment reference release', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const project = database.createProject({ name: 'Delete refs', rootPath: process.cwd(), description: '' })
+    const conversationId = crypto.randomUUID()
+    database.saveLocalConversations([{ header: { id: conversationId, projectId: project.id, title: 'Attached', updatedAt: Date.now() }, messages: [] }])
+    const harness = createHarness({}, undefined, undefined, false, undefined, undefined, undefined,
+      false, undefined, undefined, undefined, undefined, database)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const deleteProject = vi.fn(async () => { await gate })
+    Object.assign(harness.contextManager, { assets: { deleteProject }, activeContextIds: () => ['active-draft'], cancelUnavailableImport: vi.fn(async () => {}) })
+    try {
+      let completed = false
+      const pending = Promise.resolve(electronMocks.handlers.get(ipcChannels.projectsDelete)!(trustedEvent(harness.webContents), {
+        projectId: project.id, confirmation: project.name
+      })).then(() => { completed = true })
+      await vi.waitFor(() => expect(deleteProject).toHaveBeenCalledWith([conversationId], ['active-draft']))
+      expect(database.listConversationSummaries().some(conversation => conversation.id === conversationId)).toBe(false)
+      expect(completed).toBe(false)
+      release()
+      await pending
+      expect(completed).toBe(true)
+    } finally {
+      release()
+      await harness.dispose()
+      database.close()
+    }
+  })
+
   it('durably commits remote text at its checkpoint before resume, deduplicates it, and preserves its semantic payload', async () => {
     const requestId = '00000000-0000-4000-8000-000000000763'
     const provenance = {
@@ -7719,6 +7863,15 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const fixture = createManagedSshHarness(selectedRuntime)
     const { harness } = fixture
+    let releaseCommit!: () => void
+    const commitGate = new Promise<void>(resolve => { releaseCommit = resolve })
+    let commitStarted = false
+    beforeStorageCall.set(harness.assistantDatabase, async method => {
+      if (method === 'appendRemoteTaskEventsOnce' && !commitStarted) {
+        commitStarted = true
+        await commitGate
+      }
+    })
     harness.assistantDatabase.appendRemoteTaskEventOnce
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
@@ -7726,7 +7879,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(true)
 
-    await harness.handler?.(
+    const pendingRequest = harness.handler?.(
       trustedEvent(harness.webContents),
       managedSshRequest(
         fixture.projectId,
@@ -7734,6 +7887,12 @@ describe('registerIpcHandlers agent terminal state', () => {
         'managed-ssh-semantic-text'
       )
     )
+    await vi.waitFor(() => expect(commitStarted).toBe(true))
+    expect(resumed).not.toHaveBeenCalled()
+    expect(harness.webContents.send.mock.calls.some(([channel, value]) =>
+      channel === ipcChannels.agentEvent && value.requestId === requestId && value.type === 'text')).toBe(false)
+    releaseCommit()
+    await pendingRequest
     await vi.waitFor(() =>
       expect(
         harness?.assistantDatabase.updateTaskStatus
@@ -8505,13 +8664,13 @@ describe('registerIpcHandlers agent terminal state', () => {
       (...args) => database.recordRemoteTaskQuestionAnswer(...args)
     )
     const event = trustedEvent(harness.webContents)
-    const list = () => electronMocks.handlers.get(ipcChannels.conversationsList)!(event) as ConversationSnapshot[]
+    const list = async () => await electronMocks.handlers.get(ipcChannels.conversationsList)!(event) as ConversationSnapshot[]
     try {
       harness.recoveryGetHandler?.(event)
       await vi.waitFor(() => expect(ready.size).toBe(2))
-      await vi.waitFor(() => expect(list().every(c => c.activeRequest?.questions.length === 1)).toBe(true))
+      await vi.waitFor(async () => expect((await list()).every(c => c.activeRequest?.questions.length === 1)).toBe(true))
       const summaries = await electronMocks.handlers.get(ipcChannels.conversationsListSummaries)!(event, { detailIds: [] }) as ConversationSnapshot[]
-      expect(summaries).toEqual(list())
+      expect(summaries).toEqual(await list())
       for (const snapshot of summaries) {
         expect(await electronMocks.handlers.get(ipcChannels.conversationsGet)!(event, snapshot.id)).toEqual(snapshot)
       }
@@ -8526,7 +8685,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       await electronMocks.handlers.get(update[0])!(event, update[1])
       expect(signals.every(signal => !signal.aborted)).toBe(true)
       for (const [index, task] of [...tasks].reverse().entries()) {
-        const snapshot = list().find(c => c.id === task.conversationId)!
+        const snapshot = (await list()).find(c => c.id === task.conversationId)!
         expect(snapshot.activeRequest).toMatchObject({
           requestId: task.taskId, messageId: task.currentAssistantMessageId
         })
@@ -8534,7 +8693,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           questionId: task.taskId, answers: index === 0 ? [['Yes']] : []
         })
       }
-      await vi.waitFor(() => expect(list().every(c => !c.activeRequest)).toBe(true))
+      await vi.waitFor(async () => expect((await list()).every(c => !c.activeRequest)).toBe(true))
       expect(runtime.respondToQuestion.mock.calls.map(([questionId]) => questionId))
         .toEqual([...tasks].reverse().map(task => task.taskId))
       expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce).toHaveBeenCalledTimes(4)
@@ -8787,6 +8946,165 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it.each(['list', 'claim', 'restore'] as const)('reserves a conversation during delayed queue %s and admits its dispatched request', async phase => {
+    const run = vi.fn(async function* (request: { requestId: string }) {
+      yield { requestId: request.requestId, type: 'done' } as const
+    })
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: false, run })
+    const event = trustedEvent(harness.webContents)
+    const conversationId = crypto.randomUUID(), itemId = crypto.randomUUID()
+    const item = { id: itemId, conversationId, source: 'user' as const, label: 'queued', createdAt: new Date().toISOString() }
+    const input = { conversationId, prompt: 'queued', attachments: [], knowledgeLibraryIds: [] }
+    harness.assistantDatabase.listConversationQueueItems.mockReturnValueOnce([item])
+    harness.assistantDatabase.getConversationQueueItem.mockReturnValue(item)
+    harness.assistantDatabase.claimConversationQueueItem.mockReturnValueOnce({ source: 'user', item, payloadJson: JSON.stringify({ input, serializedContexts: '[]' }) })
+    let release!: () => void, entered = false
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const wait = async () => { entered = true; await gate }
+    if (phase === 'restore') harness.contextManager.restoreFromQueue.mockImplementation(wait)
+    else beforeStorageCall.set(harness.assistantDatabase, async method => {
+      if (method === (phase === 'list' ? 'listConversationQueueItems' : 'claimConversationQueueItem')) await wait()
+    })
+    try {
+      await electronMocks.handlers.get(ipcChannels.conversationQueueReady)!(event, conversationId)
+      await vi.waitFor(() => expect(entered).toBe(true))
+      await expect(harness.handler!(event, { requestId: crypto.randomUUID(), conversationId, prompt: 'overlap', knowledgeLibraryIds: [] })).rejects.toThrow('当前对话已有执行中的请求')
+      expect(run).not.toHaveBeenCalled()
+      release()
+      await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(ipcChannels.conversationQueueDispatch, expect.objectContaining({ item })))
+      await harness.handler!(event, { requestId: crypto.randomUUID(), conversationId, queueItemId: itemId, prompt: 'queued', knowledgeLibraryIds: [] })
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+    } finally { release(); await harness.dispose() }
+  })
+
+  it.each(['lookup', 'claim', 'restore', 'send', 'release'] as const)('releases queue admission after a delayed %s failure', async phase => {
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: false,
+      async *run(request: { requestId: string }) { yield { requestId: request.requestId, type: 'done' } as const }
+    })
+    const event = trustedEvent(harness.webContents), conversationId = crypto.randomUUID(), itemId = crypto.randomUUID()
+    const item = { id: itemId, conversationId, source: 'user' as const, label: 'queued', createdAt: new Date().toISOString() }
+    harness.assistantDatabase.listConversationQueueItems.mockReturnValueOnce([item])
+    harness.assistantDatabase.claimConversationQueueItem.mockReturnValueOnce({ source: 'user', item,
+      payloadJson: JSON.stringify({ input: { conversationId, prompt: 'queued', attachments: [] }, serializedContexts: '[]' }) })
+    const failure = new Error(`${phase} failed`)
+    const reported = vi.spyOn(console, 'error').mockImplementation(() => {})
+    if (phase === 'restore' || phase === 'release') harness.contextManager.restoreFromQueue.mockImplementation(async () => { await nextTurn(); throw failure })
+    else if (phase === 'send') harness.webContents.send.mockImplementation(channel => { if (channel === ipcChannels.conversationQueueDispatch) throw failure })
+    else beforeStorageCall.set(harness.assistantDatabase, async method => {
+      if (method === (phase === 'lookup' ? 'listConversationQueueItems' : 'claimConversationQueueItem')) { await nextTurn(); throw failure }
+    })
+    if (phase === 'release') beforeStorageCall.set(harness.assistantDatabase, async method => {
+      if (method === 'releaseConversationUserQueueItem') { await nextTurn(); throw failure }
+    })
+    try {
+      await electronMocks.handlers.get(ipcChannels.conversationQueueReady)!(event, conversationId)
+      await vi.waitFor(() => {
+        if (phase === 'restore' || phase === 'send') expect(harness.assistantDatabase.releaseConversationUserQueueItem).toHaveBeenCalledWith(itemId)
+        else expect(reported).toHaveBeenCalled()
+      })
+      beforeStorageCall.delete(harness.assistantDatabase)
+      await expect(harness.handler!(event, { requestId: crypto.randomUUID(), conversationId, prompt: 'retry', knowledgeLibraryIds: [] })).resolves.toBeUndefined()
+    } finally { await harness.dispose(); reported.mockRestore() }
+  })
+
+  it('releases a delayed queue claim instead of dispatching after shutdown starts', async () => {
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: false })
+    const conversationId = crypto.randomUUID(), itemId = crypto.randomUUID()
+    const item = { id: itemId, conversationId, source: 'user' as const, label: 'queued', createdAt: new Date().toISOString() }
+    harness.assistantDatabase.listConversationQueueItems.mockReturnValueOnce([item])
+    harness.assistantDatabase.claimConversationQueueItem.mockReturnValueOnce({ source: 'user', item, payloadJson: '{}' })
+    let release!: () => void, entered = false
+    const gate = new Promise<void>(resolve => { release = resolve })
+    beforeStorageCall.set(harness.assistantDatabase, async method => { if (method === 'claimConversationQueueItem') { entered = true; await gate } })
+    let disposal: Promise<void> | undefined
+    try {
+      await electronMocks.handlers.get(ipcChannels.conversationQueueReady)!(trustedEvent(harness.webContents), conversationId)
+      await vi.waitFor(() => expect(entered).toBe(true))
+      disposal = harness.dispose()
+      await nextTurn()
+      release()
+      await disposal
+      expect(harness.assistantDatabase.releaseConversationUserQueueItem).toHaveBeenCalledWith(itemId)
+      expect(harness.webContents.send).not.toHaveBeenCalledWith(ipcChannels.conversationQueueDispatch, expect.anything())
+    } finally { release(); await (disposal ?? harness.dispose()) }
+  })
+
+  it('reserves a dispatched request ID during queue validation and releases failed validation', async () => {
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: false,
+      async *run(request: { requestId: string }) { yield { requestId: request.requestId, type: 'done' } as const }
+    })
+    const event = trustedEvent(harness.webContents), conversationId = crypto.randomUUID(), itemId = crypto.randomUUID(), requestId = crypto.randomUUID()
+    const item = { id: itemId, conversationId, source: 'user' as const, label: 'queued', createdAt: new Date().toISOString() }
+    harness.assistantDatabase.listConversationQueueItems.mockReturnValueOnce([item])
+    harness.assistantDatabase.claimConversationQueueItem.mockReturnValueOnce({ source: 'user', item, payloadJson: JSON.stringify({ conversationId, prompt: 'queued', attachments: [] }) })
+    let release!: () => void, entered = false
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let finishRelease!: () => void, releasing = false
+    const releaseGate = new Promise<void>(resolve => { finishRelease = resolve })
+    try {
+      await electronMocks.handlers.get(ipcChannels.conversationQueueReady)!(event, conversationId)
+      await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(ipcChannels.conversationQueueDispatch, expect.objectContaining({ item })))
+      beforeStorageCall.set(harness.assistantDatabase, async method => {
+        if (method === 'getConversationQueueItem') { entered = true; await gate; throw new Error('validation read failed') }
+        if (method === 'releaseConversationUserQueueItem') { releasing = true; await releaseGate }
+      })
+      const pending = expect(harness.handler!(event, { requestId, conversationId, queueItemId: itemId, prompt: 'queued', knowledgeLibraryIds: [] })).rejects.toThrow('validation read failed')
+      await vi.waitFor(() => expect(entered).toBe(true))
+      await expect(harness.handler!(event, { requestId, conversationId: crypto.randomUUID(), prompt: 'duplicate ID', knowledgeLibraryIds: [] })).rejects.toThrow('请求正在执行')
+      release()
+      await vi.waitFor(() => expect(releasing).toBe(true))
+      await expect(harness.handler!(event, { requestId: crypto.randomUUID(), conversationId, prompt: 'during cleanup', knowledgeLibraryIds: [] })).rejects.toThrow('当前对话已有执行中的请求')
+      finishRelease()
+      await pending
+      expect(harness.assistantDatabase.releaseConversationUserQueueItem).toHaveBeenCalledWith(itemId)
+      beforeStorageCall.delete(harness.assistantDatabase)
+      await expect(harness.handler!(event, { requestId, conversationId, prompt: 'retry', knowledgeLibraryIds: [] })).resolves.toBeUndefined()
+    } finally { release?.(); finishRelease(); await harness.dispose() }
+  })
+
+  it.each([false, true])('holds admission until renderer queue release settles (failure: %s)', async fail => {
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: false,
+      async *run(request: { requestId: string }) { yield { requestId: request.requestId, type: 'done' } as const }
+    })
+    const event = trustedEvent(harness.webContents), conversationId = crypto.randomUUID(), itemId = crypto.randomUUID()
+    harness.assistantDatabase.getConversationQueueItem.mockReturnValue({ id: itemId, conversationId, source: 'user', label: 'queued', createdAt: new Date().toISOString() })
+    let release!: () => void, entered = false
+    const gate = new Promise<void>(resolve => { release = resolve })
+    beforeStorageCall.set(harness.assistantDatabase, async method => {
+      if (method === 'releaseConversationUserQueueItem') { entered = true; await gate; if (fail) throw new Error('release failed') }
+    })
+    const operation = electronMocks.handlers.get(ipcChannels.conversationQueueReleaseUser)!(event, itemId)
+    const pending = fail ? expect(operation).rejects.toThrow('release failed') : expect(operation).resolves.toBeUndefined()
+    try {
+      await vi.waitFor(() => expect(entered).toBe(true))
+      await expect(harness.handler!(event, { requestId: crypto.randomUUID(), conversationId, prompt: 'overlap', knowledgeLibraryIds: [] })).rejects.toThrow('当前对话已有执行中的请求')
+      release()
+      await pending
+      beforeStorageCall.delete(harness.assistantDatabase)
+      await expect(harness.handler!(event, { requestId: crypto.randomUUID(), conversationId, prompt: 'retry', knowledgeLibraryIds: [] })).resolves.toBeUndefined()
+    } finally { release(); await pending; await harness.dispose() }
+  })
+
+  it('reserves manual compaction before its first storage read and releases failed preparation', async () => {
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: false,
+      async *run(request: { requestId: string }) { yield { requestId: request.requestId, type: 'done' } as const }
+    })
+    const event = trustedEvent(harness.webContents), conversationId = crypto.randomUUID(), requestId = crypto.randomUUID()
+    const compact = electronMocks.handlers.get(ipcChannels.agentCompactConversation)!
+    let release!: () => void, entered = false
+    const gate = new Promise<void>(resolve => { release = resolve })
+    beforeStorageCall.set(harness.assistantDatabase, async method => { if (method === 'getConversation') { entered = true; await gate; throw new Error('read failed') } })
+    const pending = expect(compact(event, { requestId, conversationId, runtimeSelection: { provider: 'model' }, history: [], historyMessageIds: [] })).rejects.toThrow('read failed')
+    try {
+      await vi.waitFor(() => expect(entered).toBe(true))
+      await expect(harness.handler!(event, { requestId: crypto.randomUUID(), conversationId, prompt: 'overlap', knowledgeLibraryIds: [] })).rejects.toThrow('当前对话已有执行中的请求')
+      release()
+      await pending
+      beforeStorageCall.delete(harness.assistantDatabase)
+      await expect(harness.handler!(event, { requestId, conversationId, prompt: 'retry', knowledgeLibraryIds: [] })).resolves.toBeUndefined()
+    } finally { release(); await pending; await harness.dispose() }
+  })
+
   it('reserves a Conversation while its Runtime is resolving', async () => {
     const runtime = {
       runtimeId: 'model',
@@ -8841,12 +9159,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       })
     ).rejects.toThrow('当前对话已有执行中的请求')
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledOnce()
-    expect(() =>
+    await expect(Promise.resolve().then(() =>
       harness.branchHandler?.(trustedEvent(harness.webContents), {
         sourceConversationId: conversationId,
         title: '等待 Runtime · 分支'
-      })
-    ).toThrow('当前会话仍有正在执行的请求')
+      }))).rejects.toThrow('当前会话仍有正在执行的请求')
     expect(
       harness.assistantDatabase.branchLocalConversation
     ).not.toHaveBeenCalled()
@@ -8908,10 +9225,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       item,
       payloadJson: JSON.stringify(input)
     })
-    electronMocks.handlers.get(
-      ipcChannels.conversationQueueReady
-    )?.(trustedEvent(harness.webContents), conversationId)
-
     await harness.handler?.(trustedEvent(harness.webContents), {
       requestId: '00000000-0000-4000-8000-000000000727',
       conversationId,
@@ -8919,6 +9232,9 @@ describe('registerIpcHandlers agent terminal state', () => {
       knowledgeLibraryIds: []
     })
     await vi.waitFor(() => expect(runtimeStarted).toHaveBeenCalled())
+    electronMocks.handlers.get(
+      ipcChannels.conversationQueueReady
+    )?.(trustedEvent(harness.webContents), conversationId)
 
     electronMocks.handlers.get(
       ipcChannels.conversationQueueInterruptAndRun
@@ -9020,10 +9336,10 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(
       await enqueueHandler?.(trustedEvent(harness.webContents), input)
     ).toEqual(item)
-    expect(harness.webContents.send).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(
       ipcChannels.conversationQueueDispatch,
       { item, input }
-    )
+    ))
     const queueChangeIndex = harness.webContents.send.mock.calls.findIndex(
       ([channel]) => channel === ipcChannels.conversationQueueChanged
     )
@@ -9531,6 +9847,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           node: { source: 'custom', executablePath: process.env.NATIVE_DSH_TEST_NODE } }
       })
       coordinator = new NativeClientCoordinator({ database, settingsStore,
+        openModelCallLedger: async path => new AgentModelCallLedger(path),
         applicationSettingsStore,
         capabilities, executionSpaceResolver: new ExecutionSpaceResolver(), terminalManager,
         localEnvironment: { launchEnvironmentProvider: () => process.env, whenReady: async () => undefined } as never,
@@ -9724,10 +10041,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       await expect(test(event, { vaultPath: join(root, 'missing') })).rejects.toThrow('missing or inaccessible')
       expect(await capabilities.getObsidianSettings()).toEqual({ vaultPath })
       expect(harness.onRuntimeSettingsChanged).toHaveBeenCalledOnce()
-      expect(() => save(event, { vaultPath: 42 })).toThrow()
+      await expect(Promise.resolve().then(() => save(event, { vaultPath: 42 }))).rejects.toThrow()
       await expect(test(event, { vaultPath: 42 })).rejects.toThrow()
       const untrustedEvent = { ...event, sender: { ...harness.webContents, id: 99 } }
-      expect(() => save(untrustedEvent, { vaultPath })).toThrow('拒绝来自未知窗口的 IPC 请求')
+      await expect(Promise.resolve().then(() => save(untrustedEvent, { vaultPath }))).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
       await expect(test(untrustedEvent, { vaultPath })).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
       await expect(pick(untrustedEvent)).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
     } finally {
@@ -10918,7 +11235,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => Response.json(init?.method === 'POST'
       ? { records: [{ score: 0.75, segment: { id: 'remote-chunk', content: 'Policy evidence', document: { id: 'remote-document', name: 'Policy' } } }] }
       : { data: [{ id: 'dataset', name: 'Policy' }], has_more: false }))
-    const service = new KnowledgeService({
+    const service = new TestKnowledgeService({
       databasePath: join(directory, 'knowledge.sqlite'), managedRoot: join(directory, 'managed'),
       externalFetcher: fetcher,
       credentialCipher: { isAvailable: () => true, encrypt: value => Buffer.from(value), decrypt: value => value.toString() }
@@ -12271,13 +12588,13 @@ describe('registerIpcHandlers agent terminal state', () => {
       })
       await expect(get(event)).resolves.toMatchObject({ telegram: { secretConfigured: false } })
       expect(delivered).toBe(false)
-      expect(() => test(event, {
+      await expect(Promise.resolve().then(() => test(event, {
         channel: 'telegram', settings: { ...settings, allowedSenderIds: ['username'] }
-      })).toThrow()
-      expect(() => apply(event, { telegram: { ...settings, allowGroupMessages: true } })).toThrow()
-      expect(() => test({ sender: {}, senderFrame: harness!.webContents.mainFrame }, {
+      }))).rejects.toThrow()
+      await expect(Promise.resolve().then(() => apply(event, { telegram: { ...settings, allowGroupMessages: true } }))).rejects.toThrow()
+      await expect(Promise.resolve().then(() => test({ sender: {}, senderFrame: harness!.webContents.mainFrame }, {
         channel: 'telegram', settings
-      })).toThrow('拒绝来自未知窗口的 IPC 请求')
+      }))).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
       await expect(apply(event, { telegram: settings })).resolves.toMatchObject({
         telegram: { enabled: false, secretConfigured: true, allowedSenderIds: ['123'] }
       })

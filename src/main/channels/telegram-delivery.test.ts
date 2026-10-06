@@ -89,9 +89,9 @@ describe('Telegram delivery through loopback HTTP and SQLite', () => {
       await vi.waitFor(async () => expect((await f.manager.snapshot()).telegram.status).toMatchObject({
         state: 'error', lastError: expect.stringContaining('polling conflict')
       }))
-      await vi.waitFor(() => expect(f.outbox.listUndelivered().every(entry => entry.state === 'terminal')).toBe(true))
+      await vi.waitFor(async () => expect((await f.outbox.listUndelivered()).every(entry => entry.state === 'terminal')).toBe(true))
       expect(f.state.sends.map(send => send.text)).toEqual(['same-bot'])
-      expect(f.outbox.listUndelivered().map(entry => [entry.message.eventId, entry.state])).toEqual([['other-bot', 'terminal']])
+      expect((await f.outbox.listUndelivered()).map(entry => [entry.message.eventId, entry.state])).toEqual([['other-bot', 'terminal']])
       expect(f.state.polls).toBe(0)
       f.state.webhook = ''
       await f.manager.reload('telegram')
@@ -107,7 +107,7 @@ describe('Telegram delivery through loopback HTTP and SQLite', () => {
       f.state.sendErrors.push({ code: 403 })
       f.inbound(1)
       await f.manager.initialize()
-      await vi.waitFor(() => expect(f.outbox.listUndelivered()[0]).toMatchObject({ state: 'terminal', attempts: 1 }))
+      await vi.waitFor(async () => expect((await f.outbox.listUndelivered())[0]).toMatchObject({ state: 'terminal', attempts: 1 }))
       await vi.waitFor(() => expect(f.state.polls).toBeGreaterThanOrEqual(2))
       expect((await f.manager.snapshot()).telegram.status).toEqual({ state: 'running',
         lastError: expect.stringMatching(/sending failed.*forbidden/i) })
@@ -129,7 +129,7 @@ describe('Telegram delivery through loopback HTTP and SQLite', () => {
       await f.manager.initialize()
       await vi.waitFor(() => expect(f.state.sends).toHaveLength(5), { timeout: 10_000 })
       expect(f.state.sends[4]!.time - f.state.sends[3]!.time).toBeGreaterThanOrEqual(2995)
-      await vi.waitFor(() => expect(f.outbox.listUndelivered()).toEqual([]))
+      await vi.waitFor(async () => expect(await f.outbox.listUndelivered()).toEqual([]))
       expect(f.state.sends.every(send => send.text === 'synthetic result')).toBe(true)
       expect(f.execute).toHaveBeenCalledOnce()
     } finally { await f.close() }
@@ -144,10 +144,10 @@ describe('Telegram delivery through loopback HTTP and SQLite', () => {
       await f.manager.initialize()
       await vi.waitFor(() => expect(f.state.sends).toHaveLength(4), { timeout: 5000 })
       await f.manager.stopAll()
-      expect(f.outbox.listUndelivered()[0]).toMatchObject({ state: 'pending', attempts: 0 })
+      expect((await f.outbox.listUndelivered())[0]).toMatchObject({ state: 'pending', attempts: 0 })
       expect(f.state.sends).toHaveLength(4)
       await f.manager.initialize()
-      await vi.waitFor(() => expect(f.outbox.listUndelivered()).toEqual([]))
+      await vi.waitFor(async () => expect(await f.outbox.listUndelivered()).toEqual([]))
       expect(f.state.sends).toHaveLength(5)
       expect(f.execute).not.toHaveBeenCalled()
     } finally { await f.close() }

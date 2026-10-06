@@ -12,6 +12,8 @@ import { SupervisionModelPool } from '../src/main/assistant/supervision-model-po
 import { ModelAgentRuntime } from '../src/main/agent/model-runtime'
 import type { SupervisionRunRequest } from '../src/shared/supervision-contracts'
 import { supervisionReviewSettingsSchema } from '../src/shared/supervision-review-contracts'
+import { ReadonlyQueryReader } from '../src/main/readonly-query-reader'
+import { asyncSupervisionStorage } from '../tests/support/async-supervision-storage'
 
 async function main() {
   const [mode, parent, envPath] = process.argv.slice(2)
@@ -25,7 +27,8 @@ async function main() {
     bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' })
   const db = new AssistantDatabase(path)
   db.initialize(directory)
-  db.enableReadonlyWorker(worker)
+  const reader = new ReadonlyQueryReader('assistant', path, worker)
+  const storage = asyncSupervisionStorage(db, undefined, reader).supervision
   const sql = (db as unknown as { requireDatabase(): DatabaseSync }).requireDatabase()
   const pool = new SupervisionModelPool()
   const report: Record<string, unknown> = { mode, directory, externalCalls: 0 }
@@ -49,7 +52,7 @@ async function main() {
       const counts = () => ['supervision_entities', 'supervision_events', 'supervision_event_entities', 'supervision_sources'].map(table =>
         [table, Number(sql.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n)])
       const before = counts()
-      await db.supervisionCandidates(request, { projectId: projects[0]!.id, crossProject: false })
+      await storage.supervisionCandidates(request, { projectId: projects[0]!.id, crossProject: false })
       const legacy = sql.prepare(`SELECT e.id FROM supervision_entities e WHERE e.confirmation_state != 'revoked' AND EXISTS (
         SELECT 1 FROM supervision_event_entities ee JOIN supervision_events ev ON ev.id = ee.event_id
         WHERE ee.entity_id = e.id AND ev.superseded_by IS NULL AND COALESCE(ev.project_id, '') = ?)
@@ -61,14 +64,14 @@ async function main() {
         const legacyMs = performance.now() - legacyStart
         const start = performance.now()
         for (const project of projects) {
-          const candidates = await db.supervisionCandidates(request, { projectId: project.id, crossProject: false })
+          const candidates = await storage.supervisionCandidates(request, { projectId: project.id, crossProject: false })
           assert.equal(candidates.length, 100)
           assert(candidates.every(item => item.label.startsWith(project.id + ':')))
           assert.deepEqual(candidates.map(item => item.id), expected.get(project.id))
         }
         const isolatedMs = performance.now() - start
         const crossStart = performance.now()
-        const candidates = await db.supervisionCandidates(request, { projectId: projects[0]!.id, crossProject: true })
+        const candidates = await storage.supervisionCandidates(request, { projectId: projects[0]!.id, crossProject: true })
         assert.equal(candidates.length, 100)
         rounds.push({ legacyMs, isolatedMs, crossProjectMs: performance.now() - crossStart })
       }
@@ -106,7 +109,7 @@ async function main() {
           calls++
           return fetch(input, init)
         } })
-      const service = createProductionSupervisorService(db, async () => ({ supervisorOrganizeTimeoutSeconds: 45,
+      const service = createProductionSupervisorService(storage, async () => ({ supervisorOrganizeTimeoutSeconds: 45,
         supervisionReview: supervisionReviewSettingsSchema.parse({ crossProject: false, experienceMinEvents: 200 }) }), async () => runtime, pool)
       const result = await service.run(request)
       assert.equal(result.status, 'completed')
@@ -133,6 +136,7 @@ async function main() {
   } finally {
     report.externalCalls = calls
     report.elapsedMs = performance.now() - started
+    await reader.close()
     db.close()
     pool.dispose()
     report.databaseBytes = (await stat(path)).size

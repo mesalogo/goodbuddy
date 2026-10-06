@@ -264,6 +264,7 @@ async function measure(id, description, body) {
       }
     },
     processes: {
+      pids: app.getAppMetrics().map(metric => ({ pid: metric.pid, type: metric.type, cpu: metric.cpu.percentCPUUsage, workingSetMB: metric.memory.workingSetSize / 1024 })),
       cpu: Object.fromEntries(Object.entries(processes).map(([type, value]) => [type, value.cpu])),
       workingSetMB: Object.fromEntries(Object.entries(processes).map(([type, value]) => [type, Math.round(value.workingSetMB)]))
     },
@@ -510,6 +511,15 @@ try {
   }
   await applyCpuThrottle()
   await sleep(1_500)
+
+  if (process.env.GB_PERF_MODE?.startsWith('C')) {
+    const { runConcurrentAcceptance } = await import('./app-perf-concurrent.mjs')
+    await runConcurrentAcceptance({ app, win, js, waitFor, settle, clickSelector, typeText, measure, seed, report, writeReport, screenshot, directory, artifacts, composer, sendButton, stopButton, retainedHeapMB })
+    clearTimeout(deadline)
+    writeReport()
+    app.exit(report.status === 'passed' ? 0 : 1)
+    return
+  }
 
   const idle = await measure('idle', 'Fresh profile, no interaction for 3 s', async () => { await sleep(3_000) })
   frameBaseline = idle.renderer.frames.p50 ?? 16.7

@@ -5,10 +5,19 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { Worker } from 'node:worker_threads'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { KnowledgeDatabase } from './knowledge/knowledge-database'
-import { ReadonlyQueryReader, ReadonlyWorkerUnavailableError, readWithFallback } from './readonly-query-reader'
+import { ReadonlyQueryReader, ReadonlyWorkerUnavailableError, type ReadonlyQueryKind } from './readonly-query-reader'
+
+const readers = new Set<ReadonlyQueryReader>()
+function createReader(kind: ReadonlyQueryKind, path: string): ReadonlyQueryReader {
+  const reader = new ReadonlyQueryReader(kind, path, workerPath)
+  readers.add(reader)
+  return reader
+}
+afterEach(async () => { await Promise.all([...readers].map(reader => reader.close())); readers.clear() })
 
 let directory: string
 let workerPath: string
@@ -48,7 +57,9 @@ function seedKnowledge(path: string): { database: KnowledgeDatabase; libraryId: 
 
 describe('knowledge search worker', () => {
   it('returns exactly the synchronous results, order and scores', async () => {
-    const { database, libraryId, query } = seedKnowledge(join(directory, `knowledge-${randomUUID()}.sqlite`))
+    const path = join(directory, `knowledge-${randomUUID()}.sqlite`)
+    const { database, libraryId, query } = seedKnowledge(path)
+    const reader = createReader('knowledge', path)
     try {
       const cases = [
         { knowledgeBaseId: libraryId, query: 'lighthouse budget', limit: 40, provider: 'p', model: 'm', vector: query, graphEnabled: false, candidateMultiplier: 1 },
@@ -58,76 +69,73 @@ describe('knowledge search worker', () => {
       ]
       const expected = cases.map(options => database.hybridSearchWithDiagnostics(options))
       const expectedFts = database.search({ knowledgeBaseId: libraryId, query: '跨平台 vector', limit: 30 })
-      database.enableReadonlyWorker(workerPath)
-      const actual = await Promise.all(cases.map(options => database.hybridSearchWithDiagnosticsAsync(options)))
-      expect(database.readonlyWorkerForTest?.pendingCount).toBe(0)
+      const actual = await Promise.all(cases.map(options => reader.call<ReturnType<KnowledgeDatabase['hybridSearchWithDiagnostics']>>('hybridSearchWithDiagnostics', [options])))
+      expect(reader.pendingCount).toBe(0)
       expect(actual).toEqual(expected)
       expect(actual[0]!.results.length).toBeGreaterThan(10)
       expect(actual[0]!.vectorScannedCount).toBe(180)
-      expect(await database.searchAsync({ knowledgeBaseId: libraryId, query: '跨平台 vector', limit: 30 })).toEqual(expectedFts)
+      expect(await reader.call('search', [{ knowledgeBaseId: libraryId, query: '跨平台 vector', limit: 30 }])).toEqual(expectedFts)
       // Validation errors keep their type and message across the thread boundary.
-      await expect(database.hybridSearchWithDiagnosticsAsync({ ...cases[0]!, limit: 500 })).rejects.toThrow(RangeError)
+      await expect(reader.call('hybridSearchWithDiagnostics', [{ ...cases[0]!, limit: 500 }])).rejects.toThrow(RangeError)
       // A write committed on Main is visible to the next worker read.
       database.updateKnowledgeBase(libraryId, { name: 'Renamed' })
       const source = database.upsertSource({ knowledgeBaseId: libraryId, type: 'file', location: 'C:\\parity\\new.md', displayName: 'new.md', status: 'ready' })
       database.upsertDocument({ knowledgeBaseId: libraryId, sourceId: source.id, externalId: 'new', title: 'new', sourceLocation: source.location },
         [{ id: 'fresh-chunk', ordinal: 0, content: 'zebracorn unique', location: 'l' }])
-      expect((await database.searchAsync({ knowledgeBaseId: libraryId, query: 'zebracorn' })).map(item => item.chunk.id)).toEqual(['fresh-chunk'])
+      expect((await reader.call<ReturnType<KnowledgeDatabase['search']>>('search', [{ knowledgeBaseId: libraryId, query: 'zebracorn' }])).map(item => item.chunk.id)).toEqual(['fresh-chunk'])
     } finally { database.close() }
   }, 60_000)
 
   it('cancels through the AbortSignal and keeps serving later requests', async () => {
-    const { database, libraryId, query } = seedKnowledge(join(directory, `knowledge-${randomUUID()}.sqlite`))
+    const path = join(directory, `knowledge-${randomUUID()}.sqlite`)
+    const { database, libraryId, query } = seedKnowledge(path)
+    const reader = createReader('knowledge', path)
     try {
-      database.enableReadonlyWorker(workerPath)
       const options = { knowledgeBaseId: libraryId, query: 'harbor', provider: 'p', model: 'm', vector: query }
       const preAborted = new AbortController()
       preAborted.abort(new Error('cancelled before'))
-      await expect(database.hybridSearchWithDiagnosticsAsync({ ...options, signal: preAborted.signal })).rejects.toThrow('cancelled before')
+      await expect(reader.call('hybridSearchWithDiagnostics', [options], preAborted.signal)).rejects.toThrow('cancelled before')
       const controller = new AbortController()
-      const pending = database.hybridSearchWithDiagnosticsAsync({ ...options, signal: controller.signal })
+      const pending = reader.call('hybridSearchWithDiagnostics', [options], controller.signal)
       controller.abort(new Error('cancelled during'))
       await expect(pending).rejects.toThrow('cancelled during')
-      expect(database.readonlyWorkerForTest?.pendingCount).toBe(0)
-      expect(await database.hybridSearchWithDiagnosticsAsync(options)).toEqual(database.hybridSearchWithDiagnostics(options))
+      expect(reader.pendingCount).toBe(0)
+      expect(await reader.call('hybridSearchWithDiagnostics', [options])).toEqual(database.hybridSearchWithDiagnostics(options))
     } finally { database.close() }
   }, 60_000)
 
-  it('falls back to the synchronous path when the worker crashes and restarts later', async () => {
-    const { database, libraryId, query } = seedKnowledge(join(directory, `knowledge-${randomUUID()}.sqlite`))
+  it('rejects on worker loss without SQL fallback and restarts for a later explicit read', async () => {
+    const path = join(directory, `knowledge-${randomUUID()}.sqlite`)
+    const { database, libraryId, query } = seedKnowledge(path)
+    const reader = createReader('knowledge', path)
     try {
-      database.enableReadonlyWorker(workerPath)
-      const reader = database.readonlyWorkerForTest!
       const options = { knowledgeBaseId: libraryId, query: 'budget', provider: 'p', model: 'm', vector: query }
       const expected = database.hybridSearchWithDiagnostics(options)
-      expect(await database.hybridSearchWithDiagnosticsAsync(options)).toEqual(expected)
-      // In-flight request when the worker dies: rejected internally, served synchronously.
-      const inFlight = database.hybridSearchWithDiagnosticsAsync(options)
+      expect(await reader.call('hybridSearchWithDiagnostics', [options])).toEqual(expected)
+      const inFlight = reader.call('hybridSearchWithDiagnostics', [options])
+      const failure = expect(inFlight).rejects.toBeInstanceOf(ReadonlyWorkerUnavailableError)
       await reader.terminateWorkerForTest()
-      expect(await inFlight).toEqual(expected)
+      await failure
       expect(reader.available).toBe(false)
-      // During the backoff the synchronous path serves requests.
-      expect(await database.hybridSearchWithDiagnosticsAsync(options)).toEqual(expected)
+      await expect(reader.call('hybridSearchWithDiagnostics', [options])).rejects.toThrow('backing off')
       reader.resetBackoffForTest()
       expect(reader.available).toBe(true)
       expect(await reader.call('hybridSearchWithDiagnostics', [options])).toEqual(expected)
     } finally { database.close() }
   }, 60_000)
 
-  it('keeps the synchronous path for in-memory databases and startup failures', async () => {
+  it('uses owner-local SQL explicitly for memory databases and rejects reader startup failures', async () => {
     const memory = new KnowledgeDatabase(':memory:')
     memory.initialize()
     try {
-      memory.enableReadonlyWorker(workerPath)
-      expect(memory.readonlyWorkerForTest).toBeUndefined()
       const library = memory.createKnowledgeBase({ name: 'Memory', storageMode: 'reference' })
-      expect(await memory.searchAsync({ knowledgeBaseId: library.id, query: 'x' })).toEqual([])
+      expect(memory.search({ knowledgeBaseId: library.id, query: 'x' })).toEqual([])
     } finally { memory.close() }
     const missing = new ReadonlyQueryReader('knowledge', join(directory, 'missing.sqlite'), workerPath)
     try {
       await expect(missing.call('search', [{}])).rejects.toBeInstanceOf(ReadonlyWorkerUnavailableError)
-      expect(await readWithFallback(missing, 'search', [{}], undefined, () => 'sync')).toBe('sync')
-    } finally { missing.close() }
+      await expect(missing.call('search', [{}])).rejects.toThrow('backing off')
+    } finally { await missing.close() }
   }, 60_000)
 })
 
@@ -161,9 +169,9 @@ describe('assistant readonly worker', () => {
       const expected = queries.map(query => referenceSearch(database, query))
       expect(expected.some(ids => ids.length > 1)).toBe(true)
       expect(queries.map(query => database.searchConversations(query))).toEqual(expected)
-      database.enableReadonlyWorker(workerPath)
-      expect(await Promise.all(queries.map(query => database.searchConversationsAsync(query)))).toEqual(expected)
-      expect(database.readonlyWorkerForTest?.pendingCount).toBe(0)
+      const reader = createReader('assistant', join(root, 'assistant.sqlite'))
+      expect(await Promise.all(queries.map(query => reader.call('searchConversations', [query])))).toEqual(expected)
+      expect(reader.pendingCount).toBe(0)
     } finally { database.close() }
   }, 60_000)
 
@@ -222,33 +230,33 @@ describe('assistant readonly worker', () => {
       expect(expected[0]!.find(item => item.id === conversations[5]!.id)?.messageSummary?.count).toBe(5)
       expect(expected[1]!.find(item => item.id === conversations[3]!.id)).toEqual(expectedFull[3])
 
-      database.enableReadonlyWorker(workerPath)
-      expect(await Promise.all(detailSets.map(ids => database.listConversationSummariesAsync(ids)))).toEqual(expected)
-      expect(await Promise.all(conversations.map(item => database.getConversationAsync(item.id)))).toEqual(expectedFull)
-      expect(database.readonlyWorkerForTest?.pendingCount).toBe(0)
+      const reader = createReader('assistant', join(root, 'assistant.sqlite'))
+      expect(await Promise.all(detailSets.map(ids => reader.call('listConversationSummaries', [ids])))).toEqual(expected)
+      expect(await Promise.all(conversations.map(item => reader.call('getConversation', [item.id])))).toEqual(expectedFull)
+      expect(reader.pendingCount).toBe(0)
       // Missing conversations reject with the synchronous error.
-      await expect(database.getConversationAsync(randomUUID())).rejects.toThrow('对话不存在')
+      await expect(reader.call('getConversation', [randomUUID()])).rejects.toThrow('对话不存在')
 
       // Read after write: a synchronous write on Main is visible to the next worker read.
       database.saveLocalConversations([{ header: { id: conversations[1]!.id, title: 'Renamed', updatedAt: 500 },
         messages: [message('fresh', 999)] }])
-      const afterWrite = await database.listConversationSummariesAsync([])
+      const afterWrite = await reader.call<ReturnType<AssistantDatabase['listConversationSummaries']>>('listConversationSummaries', [[]])
       expect(afterWrite).toEqual(database.listConversationSummaries([]))
       expect(afterWrite[0]!.title).toBe('Renamed')
-      expect(await database.getConversationAsync(conversations[1]!.id)).toEqual(database.getConversation(conversations[1]!.id))
+      expect(await reader.call('getConversation', [conversations[1]!.id])).toEqual(database.getConversation(conversations[1]!.id))
 
       // Inside an open transaction the synchronous path keeps read-your-writes.
       const raw = (database as unknown as { database: import('node:sqlite').DatabaseSync }).database
       raw.exec('BEGIN IMMEDIATE')
       try {
         raw.prepare('UPDATE conversations SET title = ? WHERE id = ?').run('Uncommitted', conversations[2]!.id)
-        expect((await database.getConversationAsync(conversations[2]!.id)).title).toBe('Uncommitted')
+        expect(database.getConversation(conversations[2]!.id).title).toBe('Uncommitted')
       } finally { raw.exec('ROLLBACK') }
 
-      // Worker crash: served synchronously, identical.
-      const inFlight = database.listConversationSummariesAsync([conversations[3]!.id])
-      await database.readonlyWorkerForTest!.terminateWorkerForTest()
-      expect(await inFlight).toEqual(database.listConversationSummaries([conversations[3]!.id]))
+      const inFlight = reader.call('listConversationSummaries', [[conversations[3]!.id]])
+      const failure = expect(inFlight).rejects.toBeInstanceOf(ReadonlyWorkerUnavailableError)
+      await reader.terminateWorkerForTest()
+      await failure
     } finally { database.close() }
   }, 60_000)
 
@@ -280,46 +288,50 @@ describe('assistant readonly worker', () => {
       ]
       const expected = inputs.map(input => withoutReadAt(database.readStoryGraph('story_graph_search', input, project.id)))
       expect((expected[0]!.items as unknown[]).length).toBeGreaterThan(2)
-      database.enableReadonlyWorker(workerPath)
-      const actual = await Promise.all(inputs.map(input => database.readStoryGraphAsync('story_graph_search', input, project.id)))
+      const reader = createReader('assistant', join(root, 'assistant.sqlite'))
+      const actual = await Promise.all(inputs.map(input => reader.call<Record<string, unknown>>('readStoryGraph', ['story_graph_search', input, project.id])))
       expect(actual.map(withoutReadAt)).toEqual(expected)
       const entity = (expected[0]!.items as Array<{ object_ref: { type: string; id: string } }>).find(item => item.object_ref.type === 'entity')!
       const contextInput = { object_ref: entity.object_ref, mode: 'timeline', page_size: 5 }
-      expect(withoutReadAt(await database.readStoryGraphAsync('story_graph_get_context', contextInput, project.id)))
+      expect(withoutReadAt(await reader.call('readStoryGraph', ['story_graph_get_context', contextInput, project.id])))
         .toEqual(withoutReadAt(database.readStoryGraph('story_graph_get_context', contextInput, project.id)))
-      await expect(database.readStoryGraphAsync('story_graph_get_context', contextInput, other.id)).rejects.toThrow('scope_mismatch')
-      await expect(database.readStoryGraphAsync('story_graph_search', { query: 'x' })).rejects.toThrow('scope_required')
+      await expect(reader.call('readStoryGraph', ['story_graph_get_context', contextInput, other.id])).rejects.toThrow('scope_mismatch')
+      await expect(reader.call('readStoryGraph', ['story_graph_search', { query: 'x' }])).rejects.toThrow('scope_required')
       // Schema validation errors stay ZodErrors so MCP callers classify them unchanged.
-      await expect(database.readStoryGraphAsync('story_graph_search', { query: 1 }, project.id)).rejects.toMatchObject({ name: 'ZodError' })
+      await expect(reader.call('readStoryGraph', ['story_graph_search', { query: 1 }, project.id])).rejects.toMatchObject({ name: 'ZodError' })
       const aborted = new AbortController(); aborted.abort(new Error('stop'))
-      await expect(database.readStoryGraphAsync('story_graph_search', inputs[0], project.id, aborted.signal)).rejects.toThrow('stop')
-      expect(database.readonlyWorkerForTest?.pendingCount).toBe(0)
+      await expect(reader.call('readStoryGraph', ['story_graph_search', inputs[0], project.id], aborted.signal)).rejects.toThrow('stop')
+      expect(reader.pendingCount).toBe(0)
     } finally { database.close() }
   }, 60_000)
 })
 
 describe('WAL checkpoint worker', () => {
-  it('checkpoints off Main, keeps a raised safety threshold and restores the default when stopped', async () => {
+  it('checkpoints on the owner-managed entry and confirms exit before closing the database', async () => {
     const path = join(directory, `checkpoint-${randomUUID()}.sqlite`)
     const database = new AssistantDatabase(path)
     database.initialize(directory)
     const raw = (database as unknown as { database: import('node:sqlite').DatabaseSync }).database
     const autocheckpoint = (): number =>
       (raw.prepare('PRAGMA wal_autocheckpoint').get() as { wal_autocheckpoint: number }).wal_autocheckpoint
+    const worker = new Worker(workerPath, { workerData: { kind: 'checkpoint', databasePath: path, intervalMs: 20 } })
+    const exited = new Promise<void>(resolve => worker.once('exit', () => resolve()))
     try {
       expect(autocheckpoint()).toBe(1000)
-      database.enableWalCheckpointWorker(workerPath, 20)
-      await expect.poll(autocheckpoint, { timeout: 10_000 }).toBe(4000)
+      await new Promise<void>((resolve, reject) => { worker.once('message', () => resolve()); worker.once('error', reject) })
+      raw.exec('PRAGMA wal_autocheckpoint = 0')
       const task = database.createTask({ id: randomUUID(), title: 't', instructions: 'i' })
       const sizeBefore = statSync(path).size
       for (let index = 0; index < 300; index += 1) {
         database.appendTaskEvent(task.id, 'text', { type: 'text', requestId: task.id, delta: 'x'.repeat(4_000) })
       }
-      // ~300 WAL pages stay below Main's 4,000-page threshold, so only the
-      // worker's checkpoint can copy them into the database file.
+      // With automatic checkpoints disabled in this fixture, only the worker
+      // can copy these committed frames into the database file.
       await expect.poll(() => statSync(path).size, { timeout: 10_000 }).toBeGreaterThan(sizeBefore + 1_000_000)
       expect((raw.prepare("SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'text'").get(task.id) as { n: number }).n).toBe(300)
     } finally {
+      worker.postMessage({ type: 'close' })
+      await exited
       database.close()
     }
     // A reopened database starts with SQLite's default threshold again.

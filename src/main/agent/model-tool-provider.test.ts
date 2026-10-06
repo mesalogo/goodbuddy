@@ -31,6 +31,7 @@ import {
 } from '../assistant/direct-model-subagent-service'
 import { SubagentScheduler } from '../assistant/subagent-scheduler'
 import type { PagedOutputPage } from './paged-output-store'
+import { FileOutputBacking } from '../../../tests/support/paged-output-backing'
 
 const mocks = vi.hoisted(() => {
   const tasks = {
@@ -903,6 +904,71 @@ describe('ModelToolProvider', () => {
     })
   })
 
+  it('awaits asynchronous scoped gateway results before serializing tool output', async () => {
+    const note = { id: 'note', title: 'Stored note' }
+    const gateway = {
+      listLibraries: async () => [{ id: 'library' }],
+      listMagicNotes: async () => [note],
+      searchMagicNotes: async () => [note],
+      getMagicNote: async () => note,
+      createMagicNote: async () => note,
+      updateMagicNote: async () => note,
+      createMagicNoteEntry: async () => note,
+      updateMagicNoteEntry: async () => note,
+      deleteMagicNoteEntry: async () => note,
+      deleteMagicNote: async () => ({ deleted: true })
+    } as unknown as KnowledgeMcpGateway
+    const provider = new ModelToolProvider(await createWorkspace(), [], undefined, gateway)
+    try {
+      for (const [name, expected] of [
+        ['knowledge_list', { libraries: [{ id: 'library' }] }],
+        ['note_list', { notes: [note] }], ['note_search', { notes: [note] }],
+        ...['note_get', 'note_create', 'note_update', 'note_entry_create', 'note_entry_update', 'note_entry_delete']
+          .map(name => [name, { note }] as const),
+        ['note_delete', { deleted: true }]
+      ] as const) {
+        const result = await provider.callTool(name, {}, new AbortController().signal,
+          { ...toolContext, knowledgeCapabilityToken: 'token' })
+        expect(result.parts).toEqual([{ type: 'text', text: JSON.stringify(expected) }])
+      }
+    } finally { await provider.dispose() }
+  })
+
+  it.each(['release', 'dispose'] as const)('waits for output adoption before %s drops the call reference', async (cleanup) => {
+    const workspace = new LocalWorkspaceAccess(await createWorkspace())
+    const service = new LocalDirectModelProcessService()
+    const reference = { handle: 'process:retained', totalBytes: 100000, nextCursor: 100 }
+    vi.spyOn(service, 'execute').mockResolvedValue({
+      shell: { kind: 'powershell', label: 'pwsh' }, cwd: '.', exitCode: 0, durationMs: 1,
+      stdout: 'preview', stderr: '', stdoutTruncated: true, stderrTruncated: false, stdoutReference: reference
+    })
+    const release = vi.spyOn(service, 'releaseConversation')
+    const dispose = vi.spyOn(service, 'dispose')
+    let finishAdoption!: () => void
+    let adoptionStarted!: () => void
+    const started = new Promise<void>(resolve => { adoptionStarted = resolve })
+    const pending = new Promise<void>(resolve => { finishAdoption = resolve })
+    const outputAdopt = vi.fn(async () => { adoptionStarted(); await pending; return 'resource' })
+    const provider = new ModelToolProvider(workspace, [], undefined, undefined, false,
+      { processService: service, outputAdopt })
+    try {
+      const result = provider.callTool('process_execute', { command: 'fixture' }, new AbortController().signal, {
+        conversationId: 'owner', runtimeTarget: 'model',
+        outputHistory: { conversationId: 'parent', messageId: 'message' }
+      })
+      await started
+      const closing = cleanup === 'release' ? provider.releaseConversation('owner') : provider.dispose()
+      await Promise.resolve()
+      expect(release).not.toHaveBeenCalled()
+      expect(dispose).not.toHaveBeenCalled()
+      finishAdoption()
+      expect((await result).outputReferences).toEqual([reference])
+      await closing
+      expect(outputAdopt).toHaveBeenCalledWith('owner', reference.handle, 'parent', 'message', 'message')
+      expect(cleanup === 'release' ? release : dispose).toHaveBeenCalledOnce()
+    } finally { finishAdoption(); await provider.dispose() }
+  })
+
   it('reserves the granted scoped data tool slots for Execute', async () => {
     const workspace = await createWorkspace()
     const gateway = {
@@ -1242,17 +1308,20 @@ describe('ModelToolProvider', () => {
 
   it('preserves complete escaped process and Subagent output through provider pagination and owner cleanup', async () => {
     const workspace = await createWorkspace()
-    const processService = new LocalDirectModelProcessService()
+    const backingStore = new FileOutputBacking()
+    const outputStore = { backingStore }
+    const processService = new LocalDirectModelProcessService({ outputStore })
     const scheduler = new SubagentScheduler({ concurrency: 1, queueLimit: 2, timeoutMs: 10000 })
     const fullStdout = '\0'.repeat(110000) + '\u4f60\ud83d\ude00\ufffdstdout-tail'
     const fullStderr = 'y'.repeat(110000) + 'stderr-tail'
     const fullSubagent = '\u4f60'.repeat(70000) + 'subagent-tail'
     const subagentService = new DirectModelSubagentService<ModelSubagentRequestContext>({
+      outputStore,
       scheduler,
-      runChild: async (input) => { input.onOutput(fullSubagent) },
+      runChild: async (input) => { await input.onOutput(fullSubagent) },
       releaseConversation: async (conversationId) => { await provider.releaseConversation(conversationId) }
     })
-    const provider = new ModelToolProvider(workspace, [], undefined, undefined, false, { processService, subagentService })
+    const provider = new ModelToolProvider(workspace, [], undefined, undefined, false, { processService, subagentService, outputStore })
     const context = {
       ...toolContext, runtimeTarget: 'model' as const, requestId: 'paged-provider-request',
       executionSpaceIdentity: (await new LocalWorkspaceAccess(workspace).getIdentity()).id,
@@ -1274,6 +1343,9 @@ describe('ModelToolProvider', () => {
       expect(processResult.exitCode).toBe(0)
       const subagentResult = parse(await provider.callTool('subagent_delegate', { task: 'Return the fixture output' }, signal, askContext)) as DirectModelSubagentResult
       expect(subagentResult.status).toBe('completed')
+      expect(context.subagentBridge.requestContext.emitEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'subagent', outputReference: subagentResult.outputReference
+      }))
       for (const [preview, reference, expected] of [
         [processResult.stdout, processResult.stdoutReference!, fullStdout],
         [processResult.stderr, processResult.stderrReference!, fullStderr],
@@ -1309,6 +1381,7 @@ describe('ModelToolProvider', () => {
       }
     } finally {
       await provider.dispose()
+      await backingStore.dispose()
       scheduler.dispose()
     }
   })

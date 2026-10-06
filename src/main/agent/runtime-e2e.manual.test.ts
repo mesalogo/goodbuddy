@@ -45,6 +45,7 @@ import { createModelRequestProbe } from '../../../tests/support/model-request-pr
 import { ModelToolProvider } from './model-tool-provider'
 import { LocalDirectModelProcessService, type ProcessExecuteResult } from './direct-model-process-service'
 import type { PagedOutputPage } from './paged-output-store'
+import { FileOutputBacking } from '../../../tests/support/paged-output-backing'
 
 const enabled = process.env.GOODBUDDY_RUN_RUNTIME_E2E === '1'
 const apiKey =
@@ -549,12 +550,19 @@ describe.runIf(enabled)('runtime end-to-end', () => {
           ? createOpenAIResponsesUrl(baseUrl)
           : createOpenAIChatCompletionsUrl(baseUrl)
       const probe = await createModelRequestProbe({ upstreamUrl, headerName: 'x-goodbuddy-output-test' })
+      // Production injects the storage-owned backing (index.ts); output beyond the
+      // preview requires one, otherwise the tool fails before the model can page.
+      const backingStore = new FileOutputBacking()
       const provider = new ModelToolProvider(workspace, [], undefined, undefined, false, {
-        processService: new LocalDirectModelProcessService()
+        processService: new LocalDirectModelProcessService({ outputStore: { backingStore } })
       })
       const listTools = provider.listTools.bind(provider)
-      vi.spyOn(provider, 'listTools').mockImplementation(async (context, signal) =>
-        (await listTools(context, signal)).filter((tool) => ['process_execute', 'output_read'].includes(tool.name)))
+      let offeredTools: string[] = []
+      vi.spyOn(provider, 'listTools').mockImplementation(async (context, signal) => {
+        const tools = (await listTools(context, signal)).filter((tool) => ['process_execute', 'output_read'].includes(tool.name))
+        offeredTools = tools.map(tool => tool.name)
+        return tools
+      })
       const callTool = provider.callTool.bind(provider)
       const observed: Array<{ name: string; result: ProcessExecuteResult | PagedOutputPage }> = []
       vi.spyOn(provider, 'callTool').mockImplementation(async (name, args, signal, context) => {
@@ -614,12 +622,16 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         for (const marker of markers) expect(answer).toContain(marker)
         expect(events.at(-1)).toMatchObject({ type: 'done' })
       } finally {
-        const report = { boundary: 'process-output-pagination', realModelCalls: probe.observations.length,
+        const report = { boundary: 'process-output-pagination', realModelCalls: probe.observations.length, offeredTools,
+          eventTypes: [...new Set(events.map(event => event.type))],
+          toolEvents: events.filter(event => event.type === 'tool').map(event => JSON.stringify(event).slice(0, 400)),
+          errors: events.filter(event => event.type === 'error').map(event => String((event as { message?: string }).message).slice(0, 200)),
           processCalls: observed.filter((item) => item.name === 'process_execute').length,
           outputReadCalls: observed.filter((item) => item.name === 'output_read').length }
         console.info(JSON.stringify(report))
         await runtime.dispose()
         await probe.close()
+        await backingStore.dispose()
         if (process.env.GOODBUDDY_E2E_OUTPUT_REPORT) {
           await writeFile(process.env.GOODBUDDY_E2E_OUTPUT_REPORT, JSON.stringify(report))
         }

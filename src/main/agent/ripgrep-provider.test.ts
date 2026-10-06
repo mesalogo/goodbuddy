@@ -1,13 +1,19 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rgPath } from '@vscode/ripgrep'
 import { expect, it } from 'vitest'
+import { FileOutputBacking, outputFixtureRoot } from '../../../tests/support/paged-output-backing'
 import { ModelToolProvider, type ModelToolResult } from './model-tool-provider'
 
 it('pages native rg output through the production provider and releases it', async () => {
+  await mkdir(outputFixtureRoot, { recursive: true })
   const root = await mkdtemp(join(tmpdir(), 'goodbuddy-rg-provider-'))
-  const provider = new ModelToolProvider(root, [], undefined, undefined, false, { ripgrepExecutablePath: rgPath })
+  const backingStore = new FileOutputBacking()
+  const provider = new ModelToolProvider(root, [], undefined, undefined, false, {
+    ripgrepExecutablePath: rgPath,
+    outputStore: { backingStore }
+  })
   const context = { conversationId: 'rg-pages', runtimeTarget: 'model' as const,  }
   const signal = new AbortController().signal
   const parse = (result: ModelToolResult) => {
@@ -45,6 +51,7 @@ it('pages native rg output through the production provider and releases it', asy
     await expect(provider.callTool('output_read', { handle: reference.handle }, signal, context)).rejects.toThrow('不存在')
   } finally {
     await provider.dispose()
+    await backingStore.dispose()
     await rm(root, { recursive: true, force: true })
   }
 })

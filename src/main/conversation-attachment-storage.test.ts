@@ -1,12 +1,13 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync, StatementSync } from 'node:sqlite'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { ConversationAttachmentStorage } from './conversation-attachment-storage'
 import { DocumentResultStorage } from './document-result-storage'
 import { defaultDocumentParsingSettings } from './document-parsing-settings-store'
+const tmpdir = () => resolve('temp/goodbuddy-files-upgrade')
+beforeAll(async () => { await mkdir(tmpdir(), { recursive: true }) })
 
 describe('conversation attachment files and references', () => {
   it.each([false, true])('measures repeated references with an attachment: %s', async (populated) => {

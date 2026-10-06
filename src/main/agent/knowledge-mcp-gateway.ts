@@ -3,6 +3,7 @@ import type { DesktopDiagnosticFailureObserver, DesktopMcpDiagnosticMetadata } f
 import { isStoryGraphTool, storyGraphToolNames, type StoryGraphToolName } from '../../shared/story-graph-tools'
 import type { RuntimeTarget } from '../../shared/capability-contracts'
 import { builtinModelTools } from '../../shared/builtin-model-tools'
+import type { Awaitable } from '../assistant-storage-port'
 
 export type StoryGraphBinding = { projectId?: string; conversationId?: string; runtimeTarget: RuntimeTarget }
 export type StoryGraphRemoteBinding = {
@@ -143,35 +144,35 @@ const {
 } = magicNoteScopedDataToolCatalog
 
 export type MagicNotesDatabase = {
-  listMagicNotes(input?: { tags?: string[] }): MagicNoteSummary[]
-  getMagicNote(noteId: string): MagicNoteDetail
-  getMagicNoteEntry(entryId: string): MagicNoteEntry
-  searchMagicNotes(query: string, limit: number): MagicNoteSearchResult[]
+  listMagicNotes(input?: { tags?: string[] }): Awaitable<MagicNoteSummary[]>
+  getMagicNote(noteId: string): Awaitable<MagicNoteDetail>
+  getMagicNoteEntry(entryId: string): Awaitable<MagicNoteEntry>
+  searchMagicNotes(query: string, limit: number): Awaitable<MagicNoteSearchResult[]>
   createMagicNote(input: {
     title: string
     content?: MagicNoteContent
     tags?: string[]
-  }): MagicNoteDetail
+  }): Awaitable<MagicNoteDetail>
   updateMagicNote(input: {
     noteId: string
     title?: string
     pinned?: boolean
     tags?: string[]
     expectedRevision: number
-  }): MagicNoteDetail
-  deleteMagicNote(noteId: string): void
+  }): Awaitable<MagicNoteDetail>
+  deleteMagicNote(noteId: string): Awaitable<void>
   createMagicNoteEntry(input: {
     noteId: string
     content: MagicNoteContent
     plainText: string
-  }): MagicNoteDetail
+  }): Awaitable<MagicNoteDetail>
   updateMagicNoteEntry(input: {
     entryId: string
     content: MagicNoteContent
     plainText: string
     expectedRevision: number
-  }): MagicNoteDetail
-  deleteMagicNoteEntry(entryId: string): MagicNoteDetail
+  }): Awaitable<MagicNoteDetail>
+  deleteMagicNoteEntry(entryId: string): Awaitable<MagicNoteDetail>
 }
 
 export type MagicNotesCapabilityAccess = 'none' | 'read' | 'write'
@@ -757,7 +758,7 @@ export class KnowledgeMcpGateway {
     )
     const effectiveSignal = AbortSignal.any([capability.signal, capability.brokerController.signal, ...(signal ? [signal] : [])])
     effectiveSignal.throwIfAborted()
-    const libraries = this.knowledgeService.database.listKnowledgeBases(500)
+    const libraries = await this.knowledgeService.database.listKnowledgeBases(500)
     const libraryNames = new Map(
       libraries.map((library) => [library.id, library.name])
     )
@@ -801,15 +802,15 @@ export class KnowledgeMcpGateway {
     return references
   }
 
-  listLibraries(
+  async listLibraries(
     token: string,
     input: unknown = {}
-  ): KnowledgeLibraryListItem[] {
+  ): Promise<KnowledgeLibraryListItem[]> {
     const capability = this.getCapability(token)
     knowledgeListTool.inputSchema.parse(input)
     const librariesById = new Map(
-      this.knowledgeService.database
-        .listKnowledgeBases(500)
+      (await this.knowledgeService.database
+        .listKnowledgeBases(500))
         .map((library) => [library.id, library])
     )
     const libraries: KnowledgeLibraryListItem[] = []
@@ -1431,15 +1432,15 @@ export class KnowledgeMcpGateway {
     return { capability, database: this.magicNotesDatabase }
   }
 
-  listMagicNotes(
+  async listMagicNotes(
     token: string,
     input: unknown = {}
-  ): MagicNoteToolSummary[] {
+  ): Promise<MagicNoteToolSummary[]> {
     const { database } = this.requireMagicNotes(token, magicNoteListTool.access)
     const { limit, tags } = magicNoteListTool.inputSchema.parse(input)
     const filter = tags ? magicNoteTagListSchema.parse(tags) : undefined
     const notes: MagicNoteToolSummary[] = []
-    const listed = database.listMagicNotes(filter?.length ? { tags: filter } : {})
+    const listed = await database.listMagicNotes(filter?.length ? { tags: filter } : {})
     for (const note of listed.slice(0, limit)) {
       const item = toMagicNoteToolSummary(note)
       if (
@@ -1453,10 +1454,10 @@ export class KnowledgeMcpGateway {
     return notes
   }
 
-  getMagicNote(token: string, input: unknown): MagicNoteToolDetail {
+  async getMagicNote(token: string, input: unknown): Promise<MagicNoteToolDetail> {
     const { database } = this.requireMagicNotes(token, magicNoteGetTool.access)
     const { noteId } = magicNoteGetTool.inputSchema.parse(input)
-    const detail = database.getMagicNote(noteId)
+    const detail = await database.getMagicNote(noteId)
     const result: MagicNoteToolDetail = {
       ...toMagicNoteToolSummary(detail),
       entries: [],
@@ -1491,18 +1492,19 @@ export class KnowledgeMcpGateway {
     return result
   }
 
-  searchMagicNotes(
+  async searchMagicNotes(
     token: string,
     input: unknown,
     signal?: AbortSignal
-  ): MagicNoteSearchResult[] {
+  ): Promise<MagicNoteSearchResult[]> {
     const { capability, database } = this.requireMagicNotes(token, magicNoteSearchTool.access)
     const { query, limit } = magicNoteSearchTool.inputSchema.parse(input)
     const effectiveSignal = signal
       ? AbortSignal.any([signal, capability.signal])
       : capability.signal
     effectiveSignal.throwIfAborted()
-    const notes = database.searchMagicNotes(query, limit)
+    const notes = await database.searchMagicNotes(query, limit)
+    effectiveSignal.throwIfAborted()
     const bounded: MagicNoteSearchResult[] = []
     for (const note of notes) {
       const candidate = [...bounded, note]
@@ -1517,7 +1519,7 @@ export class KnowledgeMcpGateway {
     return bounded
   }
 
-  createMagicNote(token: string, input: unknown): MagicNoteToolDetail {
+  async createMagicNote(token: string, input: unknown): Promise<MagicNoteToolDetail> {
     const { database } = this.requireMagicNotes(token, magicNoteCreateTool.access)
     const parsed = magicNoteCreateTool.inputSchema.parse(input)
     const content =
@@ -1527,33 +1529,33 @@ export class KnowledgeMcpGateway {
     return this.getMagicNote(
       token,
       {
-        noteId: database.createMagicNote({
+        noteId: (await database.createMagicNote({
           title: parsed.title,
           ...(content ? { content } : {}),
           ...(parsed.tags ? { tags: magicNoteTagListSchema.parse(parsed.tags) } : {})
-        }).id
+        })).id
       }
     )
   }
 
-  updateMagicNote(token: string, input: unknown): MagicNoteToolDetail {
+  async updateMagicNote(token: string, input: unknown): Promise<MagicNoteToolDetail> {
     const { database } = this.requireMagicNotes(token, magicNoteUpdateTool.access)
     const parsed = magicNoteUpdateTool.inputSchema.parse(input)
-    database.updateMagicNote({
+    await database.updateMagicNote({
       ...parsed,
       ...(parsed.tags ? { tags: magicNoteTagListSchema.parse(parsed.tags) } : {})
     })
     return this.getMagicNote(token, { noteId: parsed.noteId })
   }
 
-  createMagicNoteEntry(
+  async createMagicNoteEntry(
     token: string,
     input: unknown
-  ): MagicNoteToolDetail {
+  ): Promise<MagicNoteToolDetail> {
     const { database } = this.requireMagicNotes(token, magicNoteEntryCreateTool.access)
     const parsed = magicNoteEntryCreateTool.inputSchema.parse(input)
     const content = textContent(parsed.content)
-    database.createMagicNoteEntry({
+    await database.createMagicNoteEntry({
       noteId: parsed.noteId,
       content,
       plainText: magicNotePlainText(content)
@@ -1561,17 +1563,17 @@ export class KnowledgeMcpGateway {
     return this.getMagicNote(token, { noteId: parsed.noteId })
   }
 
-  updateMagicNoteEntry(
+  async updateMagicNoteEntry(
     token: string,
     input: unknown
-  ): MagicNoteToolDetail {
+  ): Promise<MagicNoteToolDetail> {
     const { database } = this.requireMagicNotes(token, magicNoteEntryUpdateTool.access)
     const parsed = magicNoteEntryUpdateTool.inputSchema.parse(input)
-    if (database.getMagicNoteEntry(parsed.entryId).content.version === 2) {
+    if ((await database.getMagicNoteEntry(parsed.entryId)).content.version === 2) {
       throw new Error('画布记录不能通过纯文本工具覆盖，请在画布编辑器中修改，或追加新的纯文本记录')
     }
     const content = textContent(parsed.content)
-    const detail = database.updateMagicNoteEntry({
+    const detail = await database.updateMagicNoteEntry({
       entryId: parsed.entryId,
       content,
       plainText: magicNotePlainText(content),
@@ -1580,31 +1582,31 @@ export class KnowledgeMcpGateway {
     return this.getMagicNote(token, { noteId: detail.id })
   }
 
-  deleteMagicNoteEntry(
+  async deleteMagicNoteEntry(
     token: string,
     input: unknown
-  ): MagicNoteToolDetail {
+  ): Promise<MagicNoteToolDetail> {
     const { database } = this.requireMagicNotes(token, magicNoteEntryDeleteTool.access)
     const parsed = magicNoteEntryDeleteTool.inputSchema.parse(input)
-    const entry = database.getMagicNoteEntry(parsed.entryId)
+    const entry = await database.getMagicNoteEntry(parsed.entryId)
     if (entry.revision !== parsed.expectedRevision) {
       throw new Error('记录已被更新，请重新读取后重试')
     }
-    const detail = database.deleteMagicNoteEntry(parsed.entryId)
+    const detail = await database.deleteMagicNoteEntry(parsed.entryId)
     return this.getMagicNote(token, { noteId: detail.id })
   }
 
-  deleteMagicNote(
+  async deleteMagicNote(
     token: string,
     input: unknown
-  ): { deleted: true; noteId: string } {
+  ): Promise<{ deleted: true; noteId: string }> {
     const { database } = this.requireMagicNotes(token, magicNoteDeleteTool.access)
     const parsed = magicNoteDeleteTool.inputSchema.parse(input)
-    const note = database.getMagicNote(parsed.noteId)
+    const note = await database.getMagicNote(parsed.noteId)
     if (note.revision !== parsed.expectedRevision) {
       throw new Error('笔记已被更新，请重新读取后重试')
     }
-    database.deleteMagicNote(parsed.noteId)
+    await database.deleteMagicNote(parsed.noteId)
     return { deleted: true, noteId: parsed.noteId }
   }
 
@@ -1643,25 +1645,25 @@ export class KnowledgeMcpGateway {
       case 'story_graph_read_source':
         return this.callStoryGraphTool(token, name, input, signal)
       case 'knowledge_list':
-        return { libraries: this.listLibraries(token, input) }
+        return { libraries: await this.listLibraries(token, input) }
       case 'knowledge_search':
         return { references: await this.search(token, input, signal) }
       case 'note_list':
-        return { notes: this.listMagicNotes(token, input) }
+        return { notes: await this.listMagicNotes(token, input) }
       case 'note_get':
-        return { note: this.getMagicNote(token, input) }
+        return { note: await this.getMagicNote(token, input) }
       case 'note_search':
-        return { notes: this.searchMagicNotes(token, input) }
+        return { notes: await this.searchMagicNotes(token, input, signal) }
       case 'note_create':
-        return { note: this.createMagicNote(token, input) }
+        return { note: await this.createMagicNote(token, input) }
       case 'note_update':
-        return { note: this.updateMagicNote(token, input) }
+        return { note: await this.updateMagicNote(token, input) }
       case 'note_entry_create':
-        return { note: this.createMagicNoteEntry(token, input) }
+        return { note: await this.createMagicNoteEntry(token, input) }
       case 'note_entry_update':
-        return { note: this.updateMagicNoteEntry(token, input) }
+        return { note: await this.updateMagicNoteEntry(token, input) }
       case 'note_entry_delete':
-        return { note: this.deleteMagicNoteEntry(token, input) }
+        return { note: await this.deleteMagicNoteEntry(token, input) }
       case 'note_delete':
         return this.deleteMagicNote(token, input)
       case 'goodbuddy_config_capabilities':

@@ -86,7 +86,7 @@ try {
         'CANDIDATES:', JSON.stringify(request.candidates), 'Return only JSON.'].join('\n\n')),
       { supervisionRunId, heartbeatRunId: run.id })
   })
-  const plan = heartbeat.create({ name: '项目回顾', scope: { kind: 'projects', projectIds: [project.id] }, timezone: 'UTC',
+  const plan = await heartbeat.create({ name: '项目回顾', scope: { kind: 'projects', projectIds: [project.id] }, timezone: 'UTC',
     recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
   let tick = 0
   const due = async () => {

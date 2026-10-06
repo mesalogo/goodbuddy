@@ -241,6 +241,7 @@ export class EmbeddingIndexCoordinator {
   private controller: AbortController | null = null
   private completion: Promise<EmbeddingIndexJob> | null = null
   private persistenceTail: Promise<void> = Promise.resolve()
+  private persistenceError?: unknown
 
   constructor(
     repository: EmbeddingIndexRepository,
@@ -307,6 +308,7 @@ export class EmbeddingIndexCoordinator {
     options: EmbeddingRebuildOptions = {}
   ): EmbeddingIndexJob {
     if (
+      this.controller ||
       this.job?.status === 'queued' ||
       this.job?.status === 'running'
     ) {
@@ -315,6 +317,7 @@ export class EmbeddingIndexCoordinator {
     const providerName = validatedLabel(provider.provider, 'provider')
     const model = validatedLabel(provider.model, 'model')
     const controller = new AbortController()
+    this.persistenceError = undefined
     const createdAt = this.now()
     this.job = {
       id: this.createId(),
@@ -347,6 +350,7 @@ export class EmbeddingIndexCoordinator {
           this.controller = null
         }
       })
+    void this.completion.catch(() => undefined)
     return this.job
   }
 
@@ -502,7 +506,6 @@ export class EmbeddingIndexCoordinator {
         })
       }
 
-      signal.throwIfAborted()
       this.updateJob({
         status: 'completed',
         completedAt: this.now(),
@@ -534,6 +537,7 @@ export class EmbeddingIndexCoordinator {
       )
     }
     await this.persistenceTail
+    if (this.persistenceError) throw this.persistenceError
     if (!this.job) {
       throw new Error('Embedding index job state was lost')
     }
@@ -556,8 +560,8 @@ export class EmbeddingIndexCoordinator {
     this.persistenceTail = this.persistenceTail.then(async () => {
       try {
         await this.repository.saveStatus?.(status)
-      } catch {
-        // Persistence failure must not interrupt an active provider operation.
+      } catch (error) {
+        this.persistenceError ??= error
       }
     })
     for (const listener of this.listeners) {
@@ -570,10 +574,11 @@ export class EmbeddingIndexCoordinator {
     this.persistenceTail = this.persistenceTail.then(async () => {
       try {
         await this.repository.saveStatus?.(status)
-      } catch {
-        // Persistence failure must not interrupt initialization.
+      } catch (error) {
+        this.persistenceError ??= error
       }
     })
     await this.persistenceTail
+    if (this.persistenceError) throw this.persistenceError
   }
 }

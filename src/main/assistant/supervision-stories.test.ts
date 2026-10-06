@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
-import { assignStories } from './supervision-stories'
+import { assignStories } from './story-assignment-service'
 import { SupervisorService } from './supervisor-service'
 import type { ReviewConfiguration } from './supervision-review-store'
 

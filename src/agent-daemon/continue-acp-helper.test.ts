@@ -1,14 +1,19 @@
 import { readFile, rm, mkdtemp, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import fs from 'node:fs/promises'
 import type { Agent } from '@agentclientprotocol/sdk'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ContinueHostAdapter, type ContinueHostRunOptions } from '../main/agent/continue-host-adapter'
 import { runContinueAcpHelper } from './continue-acp-helper'
 
 const transport = vi.hoisted(() => ({
   agent: undefined as Agent | undefined,
   close: () => {}
+}))
+const proxy = vi.hoisted(() => ({
+  listen: vi.fn(async () => 'http://127.0.0.1:12345'),
+  close: vi.fn(async () => {})
 }))
 vi.mock('@agentclientprotocol/sdk', () => ({
   PROTOCOL_VERSION: 1,
@@ -24,23 +29,89 @@ vi.mock('./model-bridge-helper', () => ({
   MODEL_BRIDGE_SDK_AUTH_SENTINEL: 'bridge-test-sentinel',
   openCodeModelBridgeModelId: () => 'bridge-model',
   ModelBridgeLoopbackProxy: class {
-    listen = async () => 'http://127.0.0.1:12345'
-    close = async () => {}
+    listen = proxy.listen
+    close = proxy.close
   }
 }))
 vi.mock('./model-bridge-broker', () => ({
   createUnixModelBridgeExchange: vi.fn()
 }))
 
-afterEach(() => {
+let helperRoot: string
+let socketPath: string
+beforeEach(async () => {
+  helperRoot = await mkdtemp(join(tmpdir(), 'goodbuddy-continue-helper-'))
+  socketPath = join(helperRoot, 'bridge.sock')
+})
+afterEach(async () => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   transport.agent = undefined
+  proxy.listen.mockClear()
+  proxy.close.mockReset()
+  await rm(helperRoot, { recursive: true, force: true })
 })
 
 const server = (name: string) => ({
   name, type: 'http' as const, url: `http://127.0.0.1:12346/${name}`,
   headers: [{ name: 'Authorization', value: 'Bearer session-test-token' }]
+})
+
+it('closes the proxy and removes signal listeners when directory creation fails', async () => {
+  const listeners = ['SIGTERM', 'SIGINT'].map(signal => process.listenerCount(signal))
+  vi.spyOn(fs, 'mkdtemp').mockRejectedValueOnce(new Error('disk full'))
+  await expect(runContinueAcpHelper({ socketPath, protocol: 'openai-chat-completions',
+    model: 'test', supportsImageInput: false, entrypoint: 'unused' })).rejects.toThrow('disk full')
+  expect(proxy.close).toHaveBeenCalledOnce()
+  expect(['SIGTERM', 'SIGINT'].map(signal => process.listenerCount(signal))).toEqual(listeners)
+})
+
+it('does not start ACP after a signal during setup and cleans up even if proxy close fails', async () => {
+  const create = fs.mkdtemp
+  let root = ''
+  const listeners = process.listenerCount('SIGTERM')
+  vi.spyOn(fs, 'mkdtemp').mockImplementationOnce(async (...args) => {
+    root = await create(...args)
+    process.emit('SIGTERM')
+    return root
+  })
+  proxy.close.mockRejectedValueOnce(new Error('proxy close failed'))
+  await expect(runContinueAcpHelper({ socketPath, protocol: 'openai-chat-completions',
+    model: 'test', supportsImageInput: false, entrypoint: 'unused' })).rejects.toThrow('proxy close failed')
+  expect(transport.agent).toBeUndefined()
+  await expect(fs.stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(process.listenerCount('SIGTERM')).toBe(listeners)
+})
+
+it.each(['SIGTERM', 'SIGINT'] as const)('drains active work and removes owned files on %s', async signal => {
+  let root = ''
+  let started!: () => void
+  const active = new Promise<void>(resolve => { started = resolve })
+  const listeners = process.listenerCount(signal)
+  vi.spyOn(ContinueHostAdapter.prototype, 'run').mockImplementation(async function (this: ContinueHostAdapter, _prompt, abort) {
+    root = (this as unknown as { options: { cacheRoot: string } }).options.cacheRoot
+    await writeFile(join(root, 'partial'), 'owned')
+    started()
+    await new Promise<void>(resolve => abort.addEventListener('abort', () => resolve(), { once: true }))
+    throw abort.reason
+  })
+  const running = runContinueAcpHelper({ socketPath, protocol: 'openai-chat-completions',
+    model: 'test', supportsImageInput: false, entrypoint: 'unused' })
+  try {
+    await vi.waitFor(() => expect(transport.agent).toBeDefined())
+    const { sessionId } = await transport.agent!.newSession({ cwd: tmpdir(), mcpServers: [] })
+    const prompt = transport.agent!.prompt({ sessionId, prompt: [{ type: 'text', text: 'test' }] })
+    await active
+    process.emit(signal)
+    await expect(prompt).resolves.toEqual({ stopReason: 'cancelled' })
+    await running
+    await expect(fs.stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(process.listenerCount(signal)).toBe(listeners)
+    await expect(transport.agent!.prompt({ sessionId, prompt: [] })).rejects.toThrow('unavailable')
+  } finally {
+    transport.close()
+    await running
+  }
 })
 
 // Keep the actual helper and adapter config builder together: mocking the
@@ -60,14 +131,15 @@ it('delivers current ACP session MCP capabilities with normal tool authorization
       expect(await authorize!({ toolName } as never)).toBe('once')
     }
     const path = await (this as unknown as {
-      createRunConfig(options: ContinueHostRunOptions): Promise<string>
-    }).createRunConfig(options!)
+      createRunConfig(options: ContinueHostRunOptions, root: string): Promise<string>
+      options: { cacheRoot: string }
+    }).createRunConfig(options!, (this as unknown as { options: { cacheRoot: string } }).options.cacheRoot)
     configs.push(JSON.parse(await readFile(path, 'utf8')))
     await rm(path)
     return { text: 'OK' }
   })
   const running = runContinueAcpHelper({
-    socketPath: 'unused', protocol: 'openai-chat-completions', model: 'test-model',
+    socketPath, protocol: 'openai-chat-completions', model: 'test-model',
     supportsImageInput: false, sharedSessions: true, entrypoint: 'unused'
   })
   try {
@@ -104,7 +176,7 @@ it('keeps one flat transcript and preserves user text beginning with Work mode',
     return { text: `answer ${prompts.length}` }
   })
   const running = runContinueAcpHelper({
-    socketPath: 'unused', protocol: 'openai-chat-completions', model: 'test-model',
+    socketPath, protocol: 'openai-chat-completions', model: 'test-model',
     supportsImageInput: false, sharedSessions: true, entrypoint: 'unused'
   })
   try {
@@ -143,8 +215,8 @@ it('keeps local profile MCP scoping and includes Main-bound session servers', as
         protocol: 'openai-chat-completions', authentication: 'none', baseUrl: 'http://127.0.0.1:12345' }
     })
     const create = (options: ContinueHostRunOptions) => (adapter as unknown as {
-      createRunConfig(options: ContinueHostRunOptions): Promise<string>
-    }).createRunConfig(options)
+      createRunConfig(options: ContinueHostRunOptions, root: string): Promise<string>
+    }).createRunConfig(options, root)
     {
       const path = await create({})
       expect(JSON.parse(await readFile(path, 'utf8')).mcpServers ?? []).toEqual([])

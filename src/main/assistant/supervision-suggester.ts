@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import type { SupervisionSuggestionStore, SuggestionCandidate, SuggestionPhrase } from './supervision-suggestions'
+import type { SuggestionCandidate, SuggestionPhrase } from './supervision-suggestions'
+import type { SuggestionDomainPort } from './supervision-domain-ports'
 
 export type SuggestionPhraser = (request: {
   systemInstruction: string
@@ -37,11 +38,11 @@ function parse(value: unknown): SuggestionPhrase[] {
  * only when candidates exist, and only sees those candidates.
  */
 export async function deriveSuggestions(
-  store: SupervisionSuggestionStore,
+  store: SuggestionDomainPort,
   phrase: SuggestionPhraser,
   input: { supervisionRunId: string; heartbeatRunId: string; stalledDays?: number; now?: string }
 ): Promise<number> {
-  const selected = store.candidates(input.supervisionRunId, { stalledDays: input.stalledDays, now: input.now })
+  const selected = await store.candidates(input.supervisionRunId, { stalledDays: input.stalledDays, now: input.now })
   if (!selected || !selected.candidates.length) return 0
   const phrases = parse(await phrase({
     systemInstruction, outputContract,

@@ -802,7 +802,7 @@ npx eslint scripts/review-algorithm.mjs scripts/review-algorithm.test.mjs script
 
 ### 2026-09-24 模型阶段超时、并发与设计边界
 
-- 本次静态核对当前新代码：报告 `heartbeatReportTimeoutSeconds`、监督 `supervisorOrganizeTimeoutSeconds` 已接入共享校验、设置存储、App/设置表单及 Main 摘要器；整数 30..600 秒、默认 240。报告在等待池前冻结值，监督在摘要器入池前读取值，均在获槽及 Runtime 解析后才计时。完整控制及未覆盖环节见[控制清单](./review-scheduling-design.md#当前超时与调度控制清单已实现)。
+- 本次静态核对当前新代码：报告 `heartbeatReportTimeoutSeconds`、监督 `supervisorOrganizeTimeoutSeconds` 已接入共享校验、设置存储、App/设置表单及 Main 摘要器；整数 30..600 秒、默认 240。报告在等待池前冻结值，监督在摘要器入池前读取值，均在获槽及 Runtime 解析后才计时。该次记录对应的完整控制及未覆盖环节见[初稿控制清单](./review-scheduling-design.md#初稿时超时与调度控制清单历史截面)，不代表当前实现。
 - `supervisorModelConcurrency` 已接入同一设置链路，整数 1..4、默认 1；报告与监督共用 FIFO 池，普通聊天排除，降限不终止在途项。报告获槽后才领取，每次到期领取最多一条；租约为 `max(300, 报告超时 + 60)` 秒，实际请求开始前按运行 ID、owner、attempt、claimed 和未过期条件校验并刷新。报告提交或无变化后先释放槽位，再进入下游监督。尚无提供商全局并发、RPM、TPM 或监督层 Retry-After 控制。
 - 本轮协作提供的新增验证记录：24 项并发相关测试、33 项租约相关测试及 typecheck、lint 通过。本次文档修订仅核对实现，没有重新执行这些测试；记录未附精确过滤命令，不补造命令或与此前批次相加。
 - 实现代理报告：87 项测试、App/IPC 聚焦用例、另 19 项取消测试，以及 typecheck、lint 通过。本次文档修订未复跑这些命令，不将数量相加当作独立用例总数，也不推断全量测试已通过。

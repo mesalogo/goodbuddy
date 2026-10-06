@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import { z } from 'zod'
 import { embeddingStorageProvider } from '../../src/main/knowledge/embedding-provider-key'
-import { KnowledgeService } from '../../src/main/knowledge/knowledge-service'
+import { TestKnowledgeService as KnowledgeService } from './knowledge-test-service'
 import { knowledgeRetrievalTerms } from '../../src/main/knowledge/retrieval-text'
 import { isPathInside } from '../../src/main/workspace-file-access'
 import type { EmbeddingProvider } from '../../src/main/knowledge/types'
@@ -488,22 +488,22 @@ async function createSeededService(
     embeddingProvider: provider
   })
   await service.initialize()
-  const library = service.createLibrary({
+  const library = (await service.createLibrary({
     id: 'library-retrieval-eval',
     name: 'Synthetic retrieval evaluation',
     storageMode: 'reference',
     graphEnabled: false
-  })
-  const source = service.database.upsertSource({
+  }))
+  const source = (await service.database.upsertSource({
     id: 'source-retrieval-eval',
     knowledgeBaseId: library.id,
     type: 'file',
     location: 'fixture://synthetic-bilingual-v1',
     displayName: 'Synthetic fixture',
     status: 'ready'
-  })
+  }))
   for (const document of fixture.documents) {
-    service.database.upsertDocument(
+    await service.database.upsertDocument(
       {
         id: document.id,
         knowledgeBaseId: library.id,
@@ -520,7 +520,7 @@ async function createSeededService(
         role: 'standalone' as const
       }))
     )
-    service.database.replaceDocumentEmbeddings(
+    await service.database.replaceDocumentEmbeddings(
       document.id,
       embeddingStorageProvider(provider),
       provider.model,

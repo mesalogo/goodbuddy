@@ -1,10 +1,10 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { AgentModelCallLedger, AgentModelGateway } from '../../agent-daemon/agent-model-gateway'
+import { AgentModelGateway, type ModelCallLedger, type ModelCallLedgerFactory } from '../../agent-daemon/agent-model-gateway'
 import { MODEL_BRIDGE_SDK_AUTH_SENTINEL, ModelBridgeLoopbackProxy } from '../../agent-daemon/model-bridge-helper'
 import { canonicalJson } from '../../shared/agent-protocol/canonical'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
@@ -12,6 +12,7 @@ import { createManagedModelBridge } from '../remote-agent/managed-model-bridge'
 import { terminateProcessTreeAndWait } from './child-process-termination'
 import { buildCredentialFilteredUserEnvironment, runtimePrivacyEnvironment } from './process-environment'
 import { nativeDshWebPatch, type NativeDshMcpServer } from './native-dsh-web-policy'
+import { createRuntimeTemporaryDirectory, recordRuntimeTemporaryChild, removeRuntimeTemporaryDirectory } from '../runtime-temporary-directory'
 
 export type { NativeDshMcpServer } from './native-dsh-web-policy'
 
@@ -30,7 +31,10 @@ export type NativeDshWebRequest = {
 
 export type NativeDshWebHandle = { id: string; url: string }
 export type NativeDshWebClientOptions = {
+  openModelCallLedger: ModelCallLedgerFactory
   rootDirectory: string
+  /** Application version/run launch root; DSH_HOME remains persistent. */
+  temporaryRoot?: string
   resolveLaunchEnvironment: () => Promise<{
     nodeExecutablePath: string
     environment: Readonly<NodeJS.ProcessEnv>
@@ -49,9 +53,11 @@ type Instance = {
   ready: Promise<NativeDshWebHandle>
   child?: ChildProcess
   proxy?: ModelBridgeLoopbackProxy
-  ledger?: AgentModelCallLedger
+  ledger?: ModelCallLedger
+  ledgerOpening?: boolean
   cleanup?: Promise<void>
   home: string
+  temporary?: string
 }
 
 export function resolveNativeDshCli(resourcesPath?: string): string {
@@ -125,11 +131,16 @@ export class NativeDshWebClientService {
       if (instance.child && instance.child.signalCode === null) {
         await terminateProcessTreeAndWait(instance.child, { processGroup: process.platform !== 'win32' })
       }
+      if (instance.child?.pid && instance.child.exitCode === null && instance.child.signalCode === null) {
+        throw new Error('DS Web child exit is unconfirmed')
+      }
       await instance.proxy?.close()
-      instance.ledger?.close()
+      await instance.ledger?.close()
       // Native history and profile settings are persistent; only launch material is disposable.
-      await Promise.all(['cordis.patch.yml', 'bridge.sqlite', 'bridge.sqlite-wal', 'bridge.sqlite-shm']
-        .map(name => rm(join(instance.home, name), { force: true })))
+      // A lost open reply must not cause deletion beneath the host's connection.
+      if (instance.temporary && (!instance.ledgerOpening || instance.ledger)) {
+        await removeRuntimeTemporaryDirectory(instance.temporary)
+      }
       if (this.instances.get(instance.id) === instance) this.instances.delete(instance.id)
     })()
     return instance.cleanup
@@ -149,8 +160,11 @@ export class NativeDshWebClientService {
     const cli = this.options.cliPath ?? resolveNativeDshCli(this.options.resourcesPath)
     await stat(cli)
     await mkdir(instance.home, { recursive: true, mode: 0o700 })
+    instance.temporary = await createRuntimeTemporaryDirectory(
+      this.options.temporaryRoot ?? join(this.options.rootDirectory, 'goodbuddy-runtime-launch'), 'goodbuddy-native-dsh-')
     const managed = createManagedModelBridge({ profile: request.profile })
-    instance.ledger = new AgentModelCallLedger(join(instance.home, 'bridge.sqlite'))
+    instance.ledgerOpening = true
+    instance.ledger = await this.options.openModelCallLedger(join(instance.temporary, 'bridge.sqlite'))
     const gateway = new AgentModelGateway({ ledger: instance.ledger, fetcher: this.options.fetcher })
     const operationId = randomUUID()
     let roundIndex = 0
@@ -167,17 +181,18 @@ export class NativeDshWebClientService {
       baseURL: `${origin}/v1`,
       skillDirectories: request.skillDirectories ?? [], mcpServers
     })
-    await writeFile(join(instance.home, 'cordis.patch.yml'), JSON.stringify(patch), 'utf8')
+    const patchPath = join(instance.temporary, 'cordis.patch.yml')
+    await writeFile(patchPath, JSON.stringify(patch), { mode: 0o600 })
     signal.throwIfAborted()
     for (const name of Object.keys(environment)) if (name.startsWith('DSH_')) delete environment[name]
-    instance.child = spawn(launch.nodeExecutablePath, [cli, 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'], {
+    instance.child = spawn(launch.nodeExecutablePath, [cli, 'web', '--patch', patchPath, '--no-open', '--host', '127.0.0.1', '--port', '0'], {
       cwd: request.workspace, shell: false, windowsHide: true,
       detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...environment, ...runtimePrivacyEnvironment, DSH_HOME: instance.home, DSH_TELEMETRY_DISABLED: '1',
         DSH_PERMISSION_MODE: 'danger-full-access', GOODBUDDY_DSH_MODEL_KEY: MODEL_BRIDGE_SDK_AUTH_SENTINEL }
     })
     const child = instance.child
-    const url = await new Promise<string>((resolve, reject) => {
+    const ready = new Promise<string>((resolve, reject) => {
       let output = ''
       const finish = (error?: Error, address?: string): void => {
         signal.removeEventListener('abort', onAbort)
@@ -205,10 +220,18 @@ export class NativeDshWebClientService {
       signal.addEventListener('abort', onAbort, { once: true })
       if (signal.aborted) onAbort()
     })
+    // Attach startup listeners before the asynchronous PID write.
+    const [startup, ownership] = await Promise.allSettled([ready, recordRuntimeTemporaryChild(instance.temporary, child.pid)])
+    if (ownership.status === 'rejected') throw ownership.reason
+    if (startup.status === 'rejected') throw startup.reason
+    const url = startup.value
     // Drain subsequent logs without retaining token-bearing output.
     child.stdout?.resume()
     child.stderr?.resume()
-    child.once('exit', () => { void this.cleanup(instance) })
+    child.once('exit', () => {
+      // stop/dispose observes the retained cleanup failure and leaves files intact.
+      void this.cleanup(instance).catch(() => undefined)
+    })
     const auth = await fetch(url, { redirect: 'manual', signal })
     if (auth.status !== 303) throw new Error(`DS Web authentication failed (HTTP ${auth.status})`)
     const cookie = auth.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')

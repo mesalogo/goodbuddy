@@ -97,6 +97,7 @@ export class ManagedRemoteProjectRuntimeValidator
     let released = false
     return {
       assertCurrent: (): void => {
+        input.signal.throwIfAborted()
         if (released) {
           throw new Error(
             'Remote Runtime validation lease is released'
@@ -107,6 +108,7 @@ export class ManagedRemoteProjectRuntimeValidator
             'Remote Runtime validation connection is not ready'
           )
         }
+        assertInputIdentity(input)
         let current: RemoteAgentConnection['capabilities']
         try {
           current = input.connection.capabilities

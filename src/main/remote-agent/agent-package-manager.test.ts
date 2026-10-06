@@ -13,6 +13,7 @@ import {
 } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import fs from 'node:fs/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   agentPackageCatalogSchema,
@@ -345,7 +346,7 @@ describe('AgentPackageManager remote install candidates', () => {
     await expect(lstat(unrelated)).resolves.toMatchObject({})
   })
 
-  it('downloads, verifies, publishes, and leases an exact install archive', async () => {
+  it.each([false, true])('leases the old package until release and retries failed deletion (%s)', async failDeletion => {
     const archiveBytes = Buffer.alloc(3 * 64 * 1024 + 11, 0x5a)
     const fixture = await createFixture(
       'mirror',
@@ -433,8 +434,15 @@ describe('AgentPackageManager remote install candidates', () => {
     cachedLease.release()
     cachedLease.release()
     await expect(readFile(lease.path)).resolves.toEqual(archiveBytes)
+    const remove = vi.spyOn(fs, 'rm')
+    if (failDeletion) remove.mockRejectedValueOnce(new Error('busy'))
     lease.release()
     lease.release()
+    if (failDeletion) {
+      await vi.waitFor(() => expect(remove).toHaveBeenCalled())
+      await expect(readFile(lease.path)).resolves.toEqual(archiveBytes)
+      await manager.getInventory()
+    }
     await vi.waitFor(async () => {
       await expect(readFile(lease.path)).rejects.toBeDefined()
     })

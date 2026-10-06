@@ -107,7 +107,7 @@ export function registerModelSettingsIpcHandlers(
     bundledRuntimePaths: BundledRuntimePaths
     enqueueRuntimeSettingsUpdate: <T>(transaction: () => Promise<T>) => Promise<T>
     onRuntimeSettingsChanged: () => Promise<void>
-    repairRuntimeSelections: (settings: RuntimeSettings) => void
+    repairRuntimeSelections: (settings: RuntimeSettings) => void | Promise<void>
     resolveSnapshotExecutionSpace: (
       projectId?: string
     ) => Promise<ReturnType<ExecutionSpaceResolver['resolveProject']>>
@@ -206,7 +206,7 @@ export function registerModelSettingsIpcHandlers(
           activate: onRuntimeSettingsChanged,
           persistPrevious: () => rollback.restore()
         })
-        repairRuntimeSelections(savedSettings)
+        await repairRuntimeSelections(savedSettings)
         return savedSettings
       })
     }

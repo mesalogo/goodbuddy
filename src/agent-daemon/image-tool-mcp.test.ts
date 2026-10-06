@@ -92,7 +92,7 @@ describe('remote image MCP to Main service', () => {
       return imageOperationSchema.parse(JSON.parse((result.content as { text: string }[])[0]!.text))
     }
     const first = await call({ intent: 'create', prompt: 'A blue square' })
-    const uploaded = h.service.persistUploads(h.context, [{ name: 'source.png', mediaType: 'image/png', data: png }])
+    const uploaded = await h.service.persistUploads(h.context, [{ name: 'source.png', mediaType: 'image/png', data: png }])
     const uploadEdit = await call({ intent: 'edit', prompt: 'Make the uploaded square red', sourceArtifactIds: uploaded })
     const historyEdit = await call({ intent: 'edit', prompt: 'Make the previous result green', sourceArtifactIds: first.artifactIds })
     expect([first, uploadEdit, historyEdit].map(op => op.state)).toEqual(['completed', 'completed', 'completed'])
@@ -139,7 +139,7 @@ describe('remote image MCP to Main service', () => {
     expect((await remote.client.listTools()).tools.map(tool => tool.name)).toContain('save_image')
     // Larger than one 128 KiB chunk so the Agent must reassemble several replies.
     const large = Buffer.concat([Buffer.from(png, 'base64'), randomBytes(300 * 1024)])
-    const [artifactId] = h.service.persistUploads(h.context, [{ name: 'large.png', mediaType: 'image/png', data: large.toString('base64') }])
+    const [artifactId] = await h.service.persistUploads(h.context, [{ name: 'large.png', mediaType: 'image/png', data: large.toString('base64') }])
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-remote-save-'))
     cleanup.push(() => rm(directory, { recursive: true, force: true }))
     const target = join(directory, 'nested', 'out.png')
@@ -159,7 +159,7 @@ describe('remote image MCP to Main service', () => {
 
   it('saves through a mode-free desktop binding', async () => {
     const h = await setup()
-    const [artifactId] = h.service.persistUploads(h.context, [{ name: 'source.png', mediaType: 'image/png', data: png }])
+    const [artifactId] = await h.service.persistUploads(h.context, [{ name: 'source.png', mediaType: 'image/png', data: png }])
     const remote = await h.connect({ save: true })
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-remote-save-'))
     cleanup.push(() => rm(directory, { recursive: true, force: true }))

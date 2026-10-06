@@ -57,7 +57,8 @@ function resolveListOptions(
 }
 
 /**
- * Durable Main-side index for ACP session ownership. Implementations must make
+ * Durable index for ACP session ownership. Desktop storage owns persistence;
+ * Main consumes this asynchronous interface. Implementations must make
  * each put atomic; callers never mutate an object returned by this interface.
  */
 export interface RuntimeSessionBindingStore {
