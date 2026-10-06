@@ -305,6 +305,29 @@ Repository-wide release invariants:
 
 ## Validation
 
+### Local Temporary Files
+
+- Put all agent-created local temporary files under the repository-root `temp/`
+  directory (`D:\my_git\goodbuddy\temp` in this checkout), in a task-specific
+  subdirectory. This includes database copies, scratch scripts, test fixtures,
+  logs, screenshots, and temporary build or validation artifacts. Do not put
+  them in Windows Temp or `AppData/Local/Temp/opencode`.
+- Resolve this directory from the checkout root rather than hard-coding a
+  machine path in scripts. Point test-tool temporary directory options and
+  child-process `TEMP`, `TMP`, or `TMPDIR` here when needed. Leave production
+  application data paths unchanged.
+- `temp/` is Git-ignored and disposable. Never store original user data,
+  required backups, or the only copy of a deliverable there. Keep reusable
+  validation scripts in `scripts/` or `tests/` and concise results in the
+  owning feature documentation.
+- Clean task temporary files after validation, including database copies and
+  their WAL/SHM files, on success and failure. Close owned processes and
+  database connections first. Reuse a baseline copy where possible instead
+  of retaining a full database for each test case. If cleanup is blocked,
+  report the remaining path; do not silently accumulate copies.
+- Apply these rules to parallel agents as well. Remote Host temporary files
+  continue to follow the dedicated remote-testing directory rules below.
+
 Run validators after source changes when function/fix done, not on every source change:
 
 ```text

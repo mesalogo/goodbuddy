@@ -4,6 +4,7 @@ dist/
 # Local build output left by the extracted ShareServer project.
 shareserver/build-server/
 coverage/
+/temp/
 .vite/
 .runtime-resources/
 .remote-runtime-resources/
