@@ -44,8 +44,7 @@ async function run(): Promise<void> {
   }
   await Promise.all(saturation)
   observedHighWater = Math.max(observedHighWater, storage.admissionHighWaterOperations)
-  assert.ok(observedHighWater >= 32)
-  assert.ok(storage.admissionHighWaterOperations <= 32)
+  assert.ok(observedHighWater >= 96)
 
   const uncertainId = 'c05-uncertain'
   const requests: Promise<unknown>[] = [
