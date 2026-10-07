@@ -1060,6 +1060,7 @@ describe('KnowledgeMcpGateway', () => {
     expect(database.getMagicNote(canvas.id)).toEqual(canvas)
 
     // Tags: normalized on write, AND-filtered on list, replaced as a whole on update.
+    // Clearing a note removes its links but keeps the reusable global tag definitions.
     const tagged = await gateway.createMagicNote(writeToken, { title: 'Tagged', tags: ['  Work ', 'work', 'Q4'] })
     expect(tagged.tags).toEqual(['Work', 'Q4'])
     expect(await gateway.listMagicNotes(readToken, { tags: ['WORK', 'q4'] })).toEqual([
@@ -1069,7 +1070,10 @@ describe('KnowledgeMcpGateway', () => {
     await expect(gateway.createMagicNote(writeToken, { title: 'Bad', tags: ['a,b'] })).rejects.toThrow()
     const cleared = await gateway.updateMagicNote(writeToken, { noteId: tagged.id, tags: [], expectedRevision: tagged.revision })
     expect(cleared.tags).toEqual([])
-    expect(database.listMagicNoteTags()).toEqual([])
+    expect(database.listMagicNoteTags()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Work', noteCount: 0 }),
+      expect.objectContaining({ name: 'Q4', noteCount: 0 })
+    ]))
   })
 
   it('searches more than ten notes over MCP and returns recoverable argument errors', async () => {
