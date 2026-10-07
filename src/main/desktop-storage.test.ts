@@ -112,8 +112,8 @@ it('awaits a termination already in progress before close settles or capacity ca
 it('runs real utility-process storage, read workers, transactions, serialization, drain and reopen', async () => {
   const parent = resolve('temp/goodbuddy-storage-foundation')
   await mkdir(parent, { recursive: true })
-    const directory = await mkdtemp(join(parent, 'electron-'))
-    await chmod(directory, 0o700)
+  const directory = await mkdtemp(join(parent, 'electron-'))
+  await chmod(directory, 0o700)
   try {
     const seed = new AssistantDatabase(join(directory, 'assistant.sqlite'))
     seed.initialize(directory)

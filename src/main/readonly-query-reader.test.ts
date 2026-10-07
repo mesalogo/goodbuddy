@@ -257,7 +257,7 @@ describe('assistant readonly worker', () => {
       await reader.terminateWorkerForTest()
       // A fast worker may commit the response before termination; the
       // dedicated crash tests cover rejection when failure wins the race.
-      await expect(inFlight).resolves.toEqual([expected[3]![0]])
+      await expect(inFlight).resolves.toEqual(expected[1])
     } finally { database.close() }
   }, 60_000)
 
