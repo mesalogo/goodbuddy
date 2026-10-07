@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { app } from 'electron'
 import { DesktopStorageClient } from './desktop-storage-client'
 import { DesktopStorageTransport } from './desktop-storage-transport'
