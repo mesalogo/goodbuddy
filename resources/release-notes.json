@@ -2,6 +2,48 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.13",
+      "releasedAt": "2026-10-07",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**把桌面业务 SQLite 交给独立存储进程**：生产路径现在由一个 storage utility process 统一拥有业务数据库，Assistant、Knowledge、附件、运行绑定和账本等域通过类型化异步操作访问。保留原有事务、顺序、提交后确认和数据路径；进程异常、关闭排空和就绪失败会显式反馈，不使用第二个 Main 同步写入者。",
+            "**让长输出和工具失败后的对话继续可用**：直连模型在工具执行失败后可继续请求，分页输出保持有界并保留下一轮所需正文；桌面和远程 Runtime 的工具、图片、知识和历史绑定继续沿用原有权限和会话隔离。Agent 0.15.6 包含配套 Runtime 调整，需与 Desktop 一起升级。"
+          ],
+          "fixes": [
+            "**减少存储迁移中的重复工作与等待**：监督、知识、附件和运行时访问复用同一存储 owner，读取 Worker 仍使用有界快照；监督来源、图谱、摘要和文件操作不再分别创建业务数据库 owner。utility IPC 对请求、取消、容量、进程退出和提交结果有明确边界，未完成的全量并发验收仍不宣称通过。",
+            "**改进 Magic Notes 标签和项目设置入口**：标签管理保留空的全局标签、重复标签错误保留原始原因；直接打开设置路由时预加载对应设置，文件列表元数据更简洁，聊天 Composer 过渡更平滑。",
+            "**放宽监督者可识别的来源别名**：历史来源使用短引用或旧主键时，生产监督流程可通过已知映射解析，不因非 UUID 的历史标识直接拒绝有效来源。删除会话、暂停、重试和项目范围规则继续生效。",
+            "**移除未被产品支持的并发限制假设**：存储和并发代码不再依赖未经支持的队列容量或 Worker 队列上限；明确的资源边界、取消、排空和错误传播仍保留，未将目标架构文档中的性能预算写成已达标结论。"
+          ],
+          "notices": [
+            "本轮不新增数据库 schema 版本，沿用 schema 62；升级前仍建议关闭应用并备份完整数据目录、相邻 `notes/` 和设置文件。存储 owner 迁移不改变数据库路径、表、ID、事务语义或远程 Agent 数据库。",
+            "远程 Runtime 路径有生产代码变化，请先升级 Desktop 0.15.13，再下载 Agent 0.15.6 并更新 Host；已有进程不会热更新。runtime/acp 6、wire 2.0、Electron、Node、OpenCode 和 Continue 固定版本不变。",
+            "并发验收规范要求的 C01–C07 全矩阵、跨平台存储进程安装和低端机性能对照仍是后续验收项。本轮 focused storage/监督测试、类型检查和 lint 证据不替代这些完整验收。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Move desktop business SQLite ownership to a utility process**: Production paths now use one storage utility process as the business-database owner, with typed asynchronous operations for Assistant, Knowledge, attachments, runtime bindings, and ledgers. Existing transactions, ordering, commit-before-confirmation, and data paths remain; process failure, drain-on-close, and readiness errors are explicit, with no second synchronous Main writer.",
+            "**Keep conversations usable after long output and tool failures**: Direct models can continue after tool execution failures, while paged output remains bounded and retains the content needed by the next request. Desktop and remote Runtimes retain existing tool, image, knowledge, history, permission, and session isolation; Agent 0.15.6 contains the matching Runtime changes and should be upgraded with Desktop."
+          ],
+          "fixes": [
+            "**Reduce duplicate work and waits during storage migration**: Supervisor, Knowledge, attachments, and Runtime access reuse one storage owner, while read Workers retain bounded snapshots; review sources, graphs, summaries, and file operations no longer create separate business-database owners. Utility IPC defines request, cancellation, capacity, process-exit, and committed-result boundaries; the full concurrency matrix is not claimed complete.",
+            "**Improve Magic Notes tags and direct settings entry**: Tag management preserves empty global tags and original causes for duplicate-tag errors; direct settings routes preload their target settings, file-list metadata is simpler, and the transition above the chat composer is smoother.",
+            "**Accept more historical Supervisor source aliases**: Production review flows resolve short references and known legacy keys through the existing mapping instead of rejecting valid historical sources solely because they are not UUIDs. Conversation deletion, pause, retry, and project-scope rules remain active.",
+            "**Remove unsupported assumptions about concurrency limits**: Storage and concurrency code no longer relies on unsupported queue-capacity or Worker-queue limits. Explicit resource bounds, cancellation, draining, and error propagation remain, and target-architecture performance budgets are not presented as achieved."
+          ],
+          "notices": [
+            "This release adds no database schema version and remains at schema 62; close the app and back up the complete data directory, adjacent `notes/`, and settings files before upgrading. Storage ownership does not change database paths, tables, IDs, transaction semantics, or remote Agent databases.",
+            "The remote Runtime path changed in production code. Upgrade to Desktop 0.15.13 first, then download Agent 0.15.6 and update the Host; running processes are not hot-updated. runtime/acp 6, wire 2.0, and pinned Electron, Node, OpenCode, and Continue versions remain unchanged.",
+            "The C01–C07 concurrency matrix, cross-platform storage-process installation, and low-end performance comparisons remain follow-up acceptance work. Focused storage/Supervisor tests, type checks, and lint do not replace that complete validation."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.12",
       "releasedAt": "2026-10-05",
       "notes": {

@@ -344,7 +344,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.5`, paired with the current Desktop release candidate `0.15.12`; formal
+  `0.15.6`, paired with the current Desktop release candidate `0.15.13`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -983,9 +983,20 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.12`; Agent candidate `0.15.5` requires Desktop `0.15.12`, with
+- The current Desktop candidate is `0.15.13`; Agent candidate `0.15.6` requires Desktop `0.15.13`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.15.13` / Agent `0.15.6` move desktop business SQLite ownership into
+  one typed storage utility process and keep Remote Runtime changes coordinated.
+  Assistant, Knowledge, attachments, runtime bindings and ledgers retain their
+  paths and transaction semantics. Direct models continue after tool failures,
+  while bounded paged output, Magic Notes tags, Supervisor aliases, settings
+  preload and workspace metadata are corrected. Schema remains 62.
+  Focused storage and Supervisor orchestration passed, but the required C01–C07
+  concurrent acceptance matrix, cross-platform storage-process installation and
+  low-end comparisons remain explicit follow-up gates; no universal performance
+  claim is made. See the
+  [preparation record](./docs/development/release-preparation-0.15.13.md).
 - Desktop `0.15.12` / Agent `0.15.5` add Telegram private-channel configuration
   (complete real-bot-plus-model acceptance remains pending) and custom local-date
   review ranges. Supervisor uses lazy graph/source reads, indexed Worker queries,
