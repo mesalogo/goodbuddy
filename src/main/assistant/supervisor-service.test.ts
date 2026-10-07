@@ -52,13 +52,16 @@ const output = {
 }
 
 describe('SupervisorService', () => {
-  it('rejects a source alias when it identifies more than one input fragment', async () => {
+  it('expands a source alias to all matching bounded input fragments', async () => {
     const fragments = [0, 1].map(index => ({ ...evidence[0]!, id: `fragment-${index}`,
       locator: { source: 'message:shared', start: index, end: index + 1 } }))
+    const save = vi.fn()
     const service = new SupervisorService({ collect: async () => fragments }, { summarize: async () => ({
       ...output, entities: [], events: [{ ...output.events[0], entityIds: [], sourceReferenceIds: ['message:shared'] }]
-    }) }, { save: vi.fn() })
-    await expect(service.run(request)).rejects.toThrow('本次范围之外')
+    }) }, { save })
+    const result = await service.run(request)
+    expect(result.output.events[0]!.sourceReferenceIds).toEqual(['fragment-0', 'fragment-1'])
+    expect(save).toHaveBeenCalledWith(result)
   })
   it('rejects invented persisted identities even when a local model id matches', async () => {
     const id = '00000000-0000-4000-8000-000000000001'

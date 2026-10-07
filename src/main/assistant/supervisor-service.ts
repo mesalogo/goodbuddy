@@ -137,11 +137,11 @@ function validateReferences(
   for (const item of [...output.events, ...output.entities, ...output.entityChanges, ...output.relations]) {
     item.sourceReferenceIds = [...new Set(item.sourceReferenceIds.map(id => {
       if (evidenceIds.has(id)) return id
-      // Providers also copy the supplied locator.source. Resolve it only when this
-      // node contains exactly one fragment of that source, never to an entire message.
+      // Providers may copy the supplied locator.source. Expand it to the matching
+      // bounded fragments so a multi-fragment source never becomes an unbounded citation.
       const matches = evidence.filter(source => source.locator?.source === id)
-      return matches.length === 1 ? matches[0]!.id : id
-    }))]
+      return matches.length ? matches.map(source => source.id) : [id]
+    }).flat())]
   }
   const references = [
     ...output.events.flatMap((item) => item.sourceReferenceIds),
