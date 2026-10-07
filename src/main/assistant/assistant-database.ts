@@ -4186,7 +4186,9 @@ export class AssistantDatabase {
          VALUES (?, ?, ?, ?, ?)`
       ).run(id, input.name, key, now, now)
     } catch (error) {
-      if (error instanceof Error && error.message.includes('UNIQUE')) throw new Error('标签已存在')
+      if (error instanceof Error && error.message.includes('UNIQUE')) {
+        throw new Error('标签已存在', { cause: error })
+      }
       throw error
     }
     this.options.onMagicNotesChanged?.()
