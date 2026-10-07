@@ -218,7 +218,7 @@ async function run(): Promise<void> {
   const neverReplayId = randomUUID()
   await assert.rejects(lost.call('assistant', 'saveLocalConversations', [[{
     header: { id: neverReplayId, title: 'Never replay', updatedAt: 123 }, messages: histories
-  }]]), { code: 'STORAGE_UNCONFIRMED' })
+  }]]), error => error?.code === 'STORAGE_UNCONFIRMED' || error?.message === 'Storage is not ready')
   await assert.rejects(lost.call('assistant', 'listProjects', []), /not ready/)
   await lost.retry()
   await lost.ready

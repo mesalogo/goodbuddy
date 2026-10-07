@@ -56,6 +56,7 @@ async function run(): Promise<void> {
   ]
   requests.push(...Array.from({ length: 40 }, () => storage.call('assistant', 'listConversationSummaries', [])))
   killTransport(storage)
+  while (Reflect.get(storage, 'state') !== 'failed') await new Promise(resolve => setImmediate(resolve))
   requests.push(storage.call('assistant', 'listConversationSummaries', []))
   const settled = await Promise.allSettled(requests)
   assert.ok(settled.some(result => result.status === 'rejected'))
