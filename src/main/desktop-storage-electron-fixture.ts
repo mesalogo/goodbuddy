@@ -220,6 +220,7 @@ async function run(): Promise<void> {
   await assert.rejects(lost.call('assistant', 'saveLocalConversations', [[{
     header: { id: neverReplayId, title: 'Never replay', updatedAt: 123 }, messages: neverReplayMessages
   }]]), error => error?.code === 'STORAGE_UNCONFIRMED' || error?.message === 'Storage is not ready')
+  while (Reflect.get(lost, 'state') !== 'failed') await new Promise(resolve => setImmediate(resolve))
   await assert.rejects(lost.call('assistant', 'listProjects', []), /not ready/)
   await lost.retry()
   await lost.ready
