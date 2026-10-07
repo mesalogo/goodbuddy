@@ -62,6 +62,7 @@ async function run(): Promise<void> {
   assert.ok(settled.every(result => result.status === 'fulfilled' || result.status === 'rejected'))
   assert.equal(storage.pendingCount, 0)
 
+  while (Reflect.get(storage, 'state') !== 'failed') await new Promise(resolve => setImmediate(resolve))
   await storage.retry()
   assert.equal((await storage.call('assistant', 'getConversation', [committedId])).messages[0]!.content, 'committed')
   let uncertain: Awaited<ReturnType<AssistantDatabase['getConversation']>> | undefined

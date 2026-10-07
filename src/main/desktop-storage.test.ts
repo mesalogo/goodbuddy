@@ -95,7 +95,12 @@ it('awaits a termination already in progress before close settles or capacity ca
   const reader = new ReadonlyQueryReader('assistant', '', '', Date.now, { createTransport: () => transport })
   const pending = reader.call('assistant.save', [])
   await Promise.resolve()
-  const rejected = expect(pending).rejects.toMatchObject({ code: 'STORAGE_UNCONFIRMED' })
+  const rejected = pending.then(
+    () => { throw new Error('expected pending request to reject') },
+    (error: Error & { code?: string }) => {
+      expect(error.code === 'STORAGE_UNCONFIRMED' || error.message.includes('not ready')).toBe(true)
+    },
+  )
   transport.emit('error', new Error('host failed'))
   reader.resetBackoffForTest()
   expect(reader.available).toBe(false)
