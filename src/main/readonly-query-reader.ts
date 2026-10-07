@@ -43,7 +43,11 @@ type Waiting = { start: () => void; cancel: () => void; fail: (error: Error) => 
 export type QueryTransport = Pick<EventEmitter, 'on' | 'once'> & Pick<Worker, 'postMessage' | 'ref' | 'unref' | 'terminate'>
 export interface QueryTransportOptions {
   createTransport: () => QueryTransport
-  /** Optional test or caller policy; production storage leaves this unset. */
+  /**
+   * Optional caller policy. Production desktop storage leaves this unset so
+   * requests pass through to the storage host; the waiting queue is only for
+   * explicit bounded readers and tests.
+   */
   maxPending?: number
 }
 
@@ -83,6 +87,9 @@ export class ReadonlyQueryReader {
     private readonly transportOptions?: QueryTransportOptions
   ) {}
 
+  // This class correlates requests for both read workers and storage. The
+  // storage client intentionally uses the unbounded pass-through mode; it does
+  // not create a second storage owner or impose a product capacity limit.
   private get maxPending(): number { return this.transportOptions?.maxPending ?? DEFAULT_MAX_PENDING }
 
   /** False while backing off after a crash or startup failure. */
