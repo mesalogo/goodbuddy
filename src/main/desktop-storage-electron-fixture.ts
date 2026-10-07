@@ -216,8 +216,9 @@ async function run(): Promise<void> {
     }
   }
   const neverReplayId = randomUUID()
+  const neverReplayMessages = histories.map(message => ({ ...message, id: randomUUID() }))
   await assert.rejects(lost.call('assistant', 'saveLocalConversations', [[{
-    header: { id: neverReplayId, title: 'Never replay', updatedAt: 123 }, messages: histories
+    header: { id: neverReplayId, title: 'Never replay', updatedAt: 123 }, messages: neverReplayMessages
   }]]), error => error?.code === 'STORAGE_UNCONFIRMED' || error?.message === 'Storage is not ready')
   await assert.rejects(lost.call('assistant', 'listProjects', []), /not ready/)
   await lost.retry()
