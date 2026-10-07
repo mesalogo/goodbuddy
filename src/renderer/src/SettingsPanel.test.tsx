@@ -1892,7 +1892,7 @@ describe('SettingsPanel runtime files', () => {
     const modelName = kind === 'embedding' ? embeddingCatalogEntry.displayName : speechCatalog[0]!.displayName
     const download = await screen.findByRole('button', { name: `下载 ${modelName}` })
     expect(screen.queryByText('当前来源不可下载')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '模型下载源' })).toHaveFocus()
+    await waitFor(() => expect(screen.getByRole('button', { name: '模型下载源' })).toHaveFocus())
     fireEvent.click(download)
     await waitFor(() => {
       if (kind === 'embedding') expect(installEmbeddingModel).toHaveBeenCalledWith(embeddingCatalogEntry.id, 'hugging-face')

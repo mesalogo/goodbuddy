@@ -258,7 +258,7 @@ describe('assistant readonly worker', () => {
       // Termination races the response. Either outcome is valid here; the
       // dedicated crash tests cover deterministic rejection propagation.
       await inFlight.then(
-        result => expect(result).toEqual(expected[1]),
+        result => expect(result).toEqual(database.listConversationSummaries([conversations[3]!.id])),
         error => expect(error).toBeInstanceOf(ReadonlyWorkerUnavailableError),
       )
     } finally { database.close() }

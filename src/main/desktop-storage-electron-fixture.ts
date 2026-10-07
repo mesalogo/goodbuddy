@@ -17,6 +17,7 @@ app.setPath('userData', join(root, 'electron'))
 
 async function run(): Promise<void> {
   await app.whenReady()
+  await chmod(root, 0o700)
   const options = { assistantPath: join(root, 'assistant.sqlite'), knowledgePath: join(root, 'knowledge.sqlite'),
     defaultRootPath: root, userDataPath: root, entryPath: join(root, 'desktop-storage-entry.mjs'),
     readerWorkerPath: join(root, 'readonly-query-worker.cjs'), upgradeWorkerPath: join(root, 'assistant-storage-worker.cjs') }
