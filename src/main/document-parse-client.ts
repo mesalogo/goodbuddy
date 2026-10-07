@@ -47,7 +47,6 @@ type Task = {
   cleanup: () => void
 }
 
-const MAX_QUEUED = 32
 const RESTART_BACKOFF_MS = 30_000
 
 type PdfExceptionConstructor = new (message: string) => Error
@@ -116,10 +115,9 @@ export class DocumentParseWorkerClient {
     private readonly now: () => number = Date.now
   ) {}
 
-  /** False while closed, backing off after a crash, or when the queue is full. */
+  /** False while closed or backing off after a worker failure. */
   get available(): boolean {
-    return !this.closed && this.now() >= this.disabledUntil &&
-      this.queue.length < MAX_QUEUED
+    return !this.closed && this.now() >= this.disabledUntil
   }
 
   get pendingCount(): number {
@@ -136,9 +134,6 @@ export class DocumentParseWorkerClient {
     if (signal?.aborted) return Promise.reject(signal.reason)
     if (this.now() < this.disabledUntil) {
       return Promise.reject(new DocumentParseWorkerUnavailableError('Document parse worker is backing off'))
-    }
-    if (this.queue.length >= MAX_QUEUED) {
-      return Promise.reject(new DocumentParseWorkerUnavailableError('Document parse worker is busy'))
     }
     return new Promise<T>((resolve, reject) => {
       const task: Task = {
