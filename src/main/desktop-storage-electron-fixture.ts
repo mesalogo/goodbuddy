@@ -12,6 +12,7 @@ import { MAGIC_NOTE_MAX_VIDEO_BYTES, type MagicNoteContent } from '../shared/mag
 import { createHash } from 'node:crypto'
 
 const root = process.env.GB_STORAGE_TEST_ROOT!
+process.umask(0o077)
 app.setPath('userData', join(root, 'electron'))
 
 async function run(): Promise<void> {

@@ -255,9 +255,12 @@ describe('assistant readonly worker', () => {
 
       const inFlight = reader.call('listConversationSummaries', [[conversations[3]!.id]])
       await reader.terminateWorkerForTest()
-      // A fast worker may commit the response before termination; the
-      // dedicated crash tests cover rejection when failure wins the race.
-      await expect(inFlight).resolves.toEqual(expected[1])
+      // Termination races the response. Either outcome is valid here; the
+      // dedicated crash tests cover deterministic rejection propagation.
+      await inFlight.then(
+        result => expect(result).toEqual(expected[1]),
+        error => expect(error).toBeInstanceOf(ReadonlyWorkerUnavailableError),
+      )
     } finally { database.close() }
   }, 60_000)
 

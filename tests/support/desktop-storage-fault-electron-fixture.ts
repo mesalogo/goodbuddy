@@ -5,6 +5,7 @@ import { DesktopStorageClient } from '../../src/main/desktop-storage-client'
 import { AssistantDatabase } from '../../src/main/assistant/assistant-database'
 
 const root = process.env.GB_STORAGE_FAULT_ROOT!
+process.umask(0o077)
 app.setPath('userData', join(root, 'electron'))
 
 function killTransport(storage: DesktopStorageClient): void {
