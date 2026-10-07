@@ -6868,9 +6868,10 @@ function App(): React.JSX.Element {
             title={t('navigation.settings')}
             type="button"
             onFocus={() => preloadWorkspaceRouteOnIntent("settings")}
-            onClick={(event) =>
-              navigateFromSidebar("settings", event.currentTarget)
-            }
+            onClick={(event) => {
+              preloadWorkspaceRouteOnIntent("settings");
+              navigateFromSidebar("settings", event.currentTarget);
+            }}
             onPointerEnter={() => preloadWorkspaceRouteOnIntent("settings")}
           >
             <Settings size={16} aria-hidden="true" />
