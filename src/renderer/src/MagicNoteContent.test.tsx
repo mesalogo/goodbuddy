@@ -33,4 +33,27 @@ describe('MagicNoteContent dispatch', () => {
     expect(ref.current).toBeNull()
     expect(destroy).toHaveBeenCalledOnce()
   })
+
+  it('renders non-empty rich table content as a read-only roundtrip', () => {
+    const view = render(
+      <MagicNoteContent
+        content={{
+          version: 1,
+          ops: [
+            { insert: 'Name' },
+            { insert: '\n', attributes: { table: 'table-1' } },
+            { insert: 'Value' },
+            { insert: '\n', attributes: { table: 'table-1' } }
+          ]
+        }}
+      />
+    )
+
+    expect(view.container.querySelectorAll('table td')).toHaveLength(2)
+    expect(view.container.querySelector('.ql-editor')).toHaveAttribute(
+      'contenteditable',
+      'false'
+    )
+    expect(view.container.querySelector('.ql-editor')).toHaveTextContent('NameValue')
+  })
 })

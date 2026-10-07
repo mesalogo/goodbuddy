@@ -118,6 +118,24 @@ describe('Magic note SQLite and filesystem storage', () => {
     expect(database.getMagicNote(created.id)).toEqual(before)
   })
 
+  it('persists and reopens a rich table whose cells contain no text', () => {
+    const { database, directory } = setup()
+    const note = database.createMagicNote({ title: 'Empty table' })
+    const table: MagicNoteContent = {
+      version: 1,
+      ops: [{ insert: '\n', attributes: { table: 'row-1' } }]
+    }
+
+    const saved = database.createMagicNoteEntry({ noteId: note.id, content: table, plainText: 'ignored' })
+    expect(saved.entries.at(-1)?.content).toEqual(table)
+
+    database.close()
+    const reopened = new AssistantDatabase(join(directory, 'assistant.sqlite'))
+    connections.push(reopened)
+    reopened.initialize(directory)
+    expect(reopened.getMagicNote(note.id).entries.at(-1)?.content).toEqual(table)
+  })
+
   it.each(['missing', 'invalid-json', 'invalid-media'] as const)('retains all assets when a later retained body has %s corruption', (failure) => {
     const { database, directory } = setup()
     const note = database.createMagicNote({ title: 'Retained bodies', content: rich })

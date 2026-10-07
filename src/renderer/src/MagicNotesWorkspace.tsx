@@ -237,9 +237,10 @@ function hasContent(content?: NoteContent): boolean {
   if (content?.version === 2) return canvasHasContent(content)
   return Boolean(
     content?.ops.some((operation) =>
-      typeof operation.insert === 'string'
+      operation.attributes?.table !== undefined ||
+      (typeof operation.insert === 'string'
         ? operation.insert.trim().length > 0
-        : true
+        : true)
     )
   )
 }

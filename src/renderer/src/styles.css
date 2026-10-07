@@ -2885,6 +2885,56 @@
   color: var(--text-secondary);
 }
 
+.magic-note-editor__table-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
+.magic-note-editor__table-toolbar-label {
+  margin-right: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.magic-note-editor__table-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.magic-note-editor__table-toolbar button:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.magic-note-editor__table-toolbar button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.magic-note-editor__toolbar.ql-toolbar .magic-note-editor__table-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.magic-note-editor__toolbar.ql-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
 .magic-note-editor__toolbar.ql-toolbar .ql-stroke {
   stroke: currentColor;
 }
@@ -2945,6 +2995,21 @@
 .magic-note-editor .ql-size-huge,
 .magic-note-content .ql-size-huge {
   font-size: 24px;
+}
+
+.magic-note-editor .ql-editor table,
+.magic-note-content .ql-editor table {
+  width: 100%;
+  margin: var(--space-3) 0;
+  border-collapse: collapse;
+}
+
+.magic-note-editor .ql-editor td,
+.magic-note-content .ql-editor td {
+  min-width: 96px;
+  padding: var(--space-2);
+  border: 1px solid var(--border-control);
+  vertical-align: top;
 }
 
 .magic-note-editor .ql-editor img,

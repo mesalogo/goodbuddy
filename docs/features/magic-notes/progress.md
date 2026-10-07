@@ -1,5 +1,24 @@
 # Magic Notes Progress
 
+## 2026-10-08: Rich Text Table Editor Fix
+
+Replaced the Electron-incompatible native prompt flow for table insertion with the shared form
+Modal. The dialog validates 1-20 rows and 1-12 columns, supports cancellation and Escape, restores
+focus to the toolbar trigger, and preserves the editor selection while it is open. Table row,
+column, and delete controls now use compact localized icon buttons, remain disabled outside a table
+cell, guard against nested insertion, preserve the active cell, and create separate Quill undo
+steps. Non-empty table Delta content remains readable in the read-only record renderer.
+
+Focused validation: `npx vitest run src/renderer/src/MagicNoteEditor.test.tsx
+src/renderer/src/MagicNoteContent.test.tsx` passed 18 tests. `npm run typecheck` and affected-file
+ESLint passed. Full suite and runtime Electron validation were not run.
+
+The table content check now also applies to save validation. An empty-cell table remains an active
+draft after focus leaves the composer, saves through the renderer, IPC and storage layers, and is
+restored after reopening. A rich Delta containing only a terminal newline remains rejected, and a
+failed save leaves the draft available for retry. Focused renderer and storage regression tests
+cover these cases.
+
 ## 2026-10-03: Compact Notes List And Narrow Drawer
 
 The notes list now defaults to 200px with a 160px minimum. At workspace widths

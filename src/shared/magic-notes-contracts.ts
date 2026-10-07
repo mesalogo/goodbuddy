@@ -154,7 +154,8 @@ const magicNoteAttributesSchema = z
     align: z.enum(['center', 'right', 'justify']).optional(),
     indent: z.number().int().min(1).max(8).optional(),
     size: z.enum(['small', 'large', 'huge']).optional(),
-    color: z.enum(MAGIC_NOTE_TEXT_COLORS).optional()
+    color: z.enum(MAGIC_NOTE_TEXT_COLORS).optional(),
+    table: z.string().min(1).max(64).optional()
   })
   .strict()
 

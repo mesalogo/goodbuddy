@@ -1,12 +1,26 @@
 import {
   useEffect,
   useRef,
+  useState,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent
 } from 'react'
+import { createPortal } from 'react-dom'
 import Quill, { type Delta, type EmitterSource } from 'quill'
+import Table from 'quill/modules/table'
 import 'quill/dist/quill.snow.css'
-import { Paperclip } from 'lucide-react'
+import {
+  ArrowDownToLine,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  ArrowUpToLine,
+  Columns3,
+  Paperclip,
+  Rows3,
+  Table2,
+  Trash2,
+  X
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import './magic-note-embeds'
 import {
@@ -23,6 +37,7 @@ import {
   type MagicNoteRichContent
 } from '../../shared/magic-notes-contracts'
 import { readFileAsDataUrl } from './file-data-url'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
 
 const supportedImageTypes = new Set([
   'image/jpeg',
@@ -96,6 +111,148 @@ function richContentFromQuill(quill: Quill): MagicNoteRichContent {
   }
 }
 
+const MAX_TABLE_ROWS = 20
+const MAX_TABLE_COLUMNS = 12
+
+function tableSelection(
+  quill: Quill,
+  range = quill.getSelection()
+): boolean {
+  return range !== null &&
+    (quill.getModule('table') as Table).getTable(range)[2] !== null
+}
+
+function TableInsertDialog({
+  onClose,
+  onInsert,
+  restoreFocus
+}: {
+  onClose: () => void
+  onInsert: (rows: number, columns: number) => void
+  restoreFocus: () => HTMLElement | null
+}): React.JSX.Element {
+  const { t } = useTranslation('magicNotes')
+  const dialogRef = useRef<HTMLElement>(null)
+  const rowsRef = useRef<HTMLInputElement>(null)
+  const restoreFocusRef = useRef(restoreFocus)
+  const [rows, setRows] = useState('3')
+  const [columns, setColumns] = useState('3')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const restoreFocus = restoreFocusRef.current
+    const restoreModalFocus = activateModalFocus(
+      () => rowsRef.current,
+      restoreFocus
+    )
+    return () => {
+      restoreModalFocus()
+      restoreFocus()?.focus()
+    }
+  }, [])
+
+  const submit = (): void => {
+    const rowCount = Number(rows)
+    const columnCount = Number(columns)
+    if (
+      !Number.isInteger(rowCount) ||
+      !Number.isInteger(columnCount) ||
+      rowCount < 1 ||
+      rowCount > MAX_TABLE_ROWS ||
+      columnCount < 1 ||
+      columnCount > MAX_TABLE_COLUMNS
+    ) {
+      setError(t('editor.tableSizeError'))
+      return
+    }
+    onInsert(rowCount, columnCount)
+  }
+
+  return createPortal(
+    <div className="custom-task-dialog" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose()
+    }}>
+      <section
+        ref={dialogRef}
+        aria-describedby="magic-note-table-description"
+        aria-labelledby="magic-note-table-title"
+        aria-modal="true"
+        className="custom-task-dialog__surface"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            onClose()
+          } else {
+            trapTabFocus(event, dialogRef.current)
+          }
+        }}
+        role="dialog"
+        tabIndex={-1}
+      >
+        <header className="custom-task-dialog__header">
+          <div>
+            <h2 id="magic-note-table-title">{t('editor.tableDialogTitle')}</h2>
+            <p id="magic-note-table-description">{t('editor.tableDialogDescription')}</p>
+          </div>
+          <button
+            aria-label={t('editor.closeTableDialog')}
+            className="icon-button"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden="true" size={17} />
+          </button>
+        </header>
+        <div className="custom-task-dialog__content">
+          <div className="custom-task-dialog__two-columns">
+            <label className="custom-task-dialog__field">
+              <span>{t('editor.tableRows')}</span>
+              <input
+                ref={rowsRef}
+                aria-invalid={Boolean(error)}
+                inputMode="numeric"
+                max={MAX_TABLE_ROWS}
+                min="1"
+                onChange={(event) => {
+                  setRows(event.target.value)
+                  setError('')
+                }}
+                type="number"
+                value={rows}
+              />
+            </label>
+            <label className="custom-task-dialog__field">
+              <span>{t('editor.tableColumns')}</span>
+              <input
+                aria-invalid={Boolean(error)}
+                inputMode="numeric"
+                max={MAX_TABLE_COLUMNS}
+                min="1"
+                onChange={(event) => {
+                  setColumns(event.target.value)
+                  setError('')
+                }}
+                type="number"
+                value={columns}
+              />
+            </label>
+          </div>
+          {error && <small className="custom-task-dialog__form-error" role="alert">{error}</small>}
+        </div>
+        <footer className="custom-task-dialog__actions">
+          <button className="secondary-button" onClick={onClose} type="button">
+            {t('editor.cancelTableDialog')}
+          </button>
+          <button className="primary-button" onClick={submit} type="button">
+            {t('editor.insertTable')}
+          </button>
+        </footer>
+      </section>
+    </div>,
+    document.body
+  )
+}
+
 export function MagicNoteEditor({
   initialContent,
   ariaDescribedBy,
@@ -118,6 +275,10 @@ export function MagicNoteEditor({
   const onParagraphCommitRef = useRef(onParagraphCommit)
   const translateRef = useRef(t)
   const initialPlaceholderRef = useRef(t('editor.placeholder'))
+  const tableTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const tableSelectionRef = useRef<{ index: number; length: number } | null>(null)
+  const [tableDialogOpen, setTableDialogOpen] = useState(false)
+  const [hasTableSelection, setHasTableSelection] = useState(false)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -292,6 +453,35 @@ export function MagicNoteEditor({
     event: ReactDragEvent<HTMLDivElement>
   ): File[] => [...event.dataTransfer.files]
 
+  const runTableAction = (action: (table: Table) => void): void => {
+    const quill = quillRef.current
+    if (!quill) return
+    const range = quill.getSelection(true) ?? tableSelectionRef.current
+    if (!range) return
+    if (!tableSelection(quill, range)) return
+    tableSelectionRef.current = range
+    quill.setSelection(range, 'silent')
+    quill.history.cutoff()
+    action(quill.getModule('table') as Table)
+    quill.history.cutoff()
+    tableSelectionRef.current = quill.getSelection() ?? tableSelectionRef.current
+    setHasTableSelection(tableSelection(quill, tableSelectionRef.current))
+  }
+
+  const insertTable = (rows: number, columns: number): void => {
+    const quill = quillRef.current
+    const range = tableSelectionRef.current
+    if (!quill || !range || tableSelection(quill)) return
+    tableSelectionRef.current = range
+    quill.setSelection(range, 'silent')
+    quill.history.cutoff()
+    ;(quill.getModule('table') as Table).insertTable(rows, columns)
+    quill.history.cutoff()
+    setHasTableSelection(true)
+    setTableDialogOpen(false)
+    tableTriggerRef.current?.focus()
+  }
+
   useEffect(() => {
     const toolbar = toolbarRef.current
     const editor = editorRef.current
@@ -312,6 +502,7 @@ export function MagicNoteEditor({
         'blockquote',
         'code-block',
         'code',
+        'table',
         'list',
         'indent',
         'align',
@@ -323,9 +514,28 @@ export function MagicNoteEditor({
         toolbar: {
           container: toolbar,
           handlers: {
-            image: () => imageInputRef.current?.click()
+            image: () => imageInputRef.current?.click(),
+            table: () => {
+              if (tableSelection(quill)) {
+                return
+              }
+              tableTriggerRef.current = toolbar.querySelector<HTMLButtonElement>('.ql-table')
+              tableSelectionRef.current = quill.getSelection(true) ?? {
+                index: quill.getLength() - 1,
+                length: 0
+              }
+              setTableDialogOpen(true)
+            },
+            tableInsertRowAbove: () => runTableAction((table) => table.insertRowAbove()),
+            tableInsertRowBelow: () => runTableAction((table) => table.insertRowBelow()),
+            tableInsertColumnLeft: () => runTableAction((table) => table.insertColumnLeft()),
+            tableInsertColumnRight: () => runTableAction((table) => table.insertColumnRight()),
+            tableDeleteRow: () => runTableAction((table) => table.deleteRow()),
+            tableDeleteColumn: () => runTableAction((table) => table.deleteColumn()),
+            tableDelete: () => runTableAction((table) => table.deleteTable())
           }
         },
+        table: true,
         history: {
           delay: 500,
           maxStack: 100,
@@ -339,6 +549,12 @@ export function MagicNoteEditor({
       select.tabIndex = -1
     })
     quillRef.current = quill
+    const updateTableSelection = (): void => {
+      const range = quill.getSelection() ?? tableSelectionRef.current
+      setHasTableSelection(tableSelection(quill, range))
+    }
+    quill.on('selection-change', updateTableSelection)
+    quill.on('text-change', updateTableSelection)
     if (initialContent) {
       quill.setContents(initialContent.ops, 'silent')
     }
@@ -369,6 +585,8 @@ export function MagicNoteEditor({
     onReadyRef.current?.(initialValue)
     return () => {
       quill.off('text-change', handleChange)
+      quill.off('selection-change', updateTableSelection)
+      quill.off('text-change', updateTableSelection)
       quillRef.current = null
     }
   }, [initialContent])
@@ -511,6 +729,14 @@ export function MagicNoteEditor({
             type="button"
           />
           <button
+            aria-label={t('editor.insertTable')}
+            className="ql-table"
+            ref={tableTriggerRef}
+            type="button"
+          >
+            <Table2 aria-hidden="true" size={15} />
+          </button>
+          <button
             aria-label={t('editor.insertImage')}
             className="ql-image"
             type="button"
@@ -539,9 +765,93 @@ export function MagicNoteEditor({
           >
             ↷
           </button>
-        </span>
-      </div>
-      <div ref={editorRef} className="magic-note-editor__content" />
+          </span>
+        </div>
+        {hasTableSelection && (
+          <div
+            aria-label={t('editor.tableToolbarLabel')}
+            className="magic-note-editor__table-toolbar"
+            role="toolbar"
+          >
+            <span className="magic-note-editor__table-toolbar-label">
+              {t('editor.tableToolbarLabel')}
+            </span>
+            <button
+              aria-label={t('editor.insertTableRowAbove')}
+              className="magic-note-editor__table-action magic-note-editor__table-action--row-above"
+              title={t('editor.insertTableRowAbove')}
+              onClick={() => runTableAction((table) => table.insertRowAbove())}
+              type="button"
+            >
+              <ArrowUpToLine aria-hidden="true" size={15} />
+            </button>
+            <button
+              aria-label={t('editor.insertTableRowBelow')}
+              className="magic-note-editor__table-action magic-note-editor__table-action--row-below"
+              title={t('editor.insertTableRowBelow')}
+              onClick={() => runTableAction((table) => table.insertRowBelow())}
+              type="button"
+            >
+              <ArrowDownToLine aria-hidden="true" size={15} />
+            </button>
+            <button
+              aria-label={t('editor.insertTableColumnLeft')}
+              className="magic-note-editor__table-action magic-note-editor__table-action--column-left"
+              title={t('editor.insertTableColumnLeft')}
+              onClick={() => runTableAction((table) => table.insertColumnLeft())}
+              type="button"
+            >
+              <ArrowLeftToLine aria-hidden="true" size={15} />
+            </button>
+            <button
+              aria-label={t('editor.insertTableColumnRight')}
+              className="magic-note-editor__table-action magic-note-editor__table-action--column-right"
+              title={t('editor.insertTableColumnRight')}
+              onClick={() => runTableAction((table) => table.insertColumnRight())}
+              type="button"
+            >
+              <ArrowRightToLine aria-hidden="true" size={15} />
+            </button>
+            <button
+              aria-label={t('editor.deleteTableRow')}
+              className="magic-note-editor__table-action magic-note-editor__table-action--delete-row"
+              title={t('editor.deleteTableRow')}
+              onClick={() => runTableAction((table) => table.deleteRow())}
+              type="button"
+            >
+              <Rows3 aria-hidden="true" size={15} />
+            </button>
+            <button
+              aria-label={t('editor.deleteTableColumn')}
+              className="magic-note-editor__table-action magic-note-editor__table-action--delete-column"
+              title={t('editor.deleteTableColumn')}
+              onClick={() => runTableAction((table) => table.deleteColumn())}
+              type="button"
+            >
+              <Columns3 aria-hidden="true" size={15} />
+            </button>
+            <button
+              aria-label={t('editor.deleteTable')}
+              className="magic-note-editor__table-action magic-note-editor__table-action--delete-table"
+              title={t('editor.deleteTable')}
+              onClick={() => runTableAction((table) => table.deleteTable())}
+              type="button"
+            >
+              <Trash2 aria-hidden="true" size={15} />
+            </button>
+          </div>
+        )}
+        <div ref={editorRef} className="magic-note-editor__content" />
+      {tableDialogOpen && (
+        <TableInsertDialog
+          onClose={() => {
+            setTableDialogOpen(false)
+            tableTriggerRef.current?.focus()
+          }}
+          onInsert={insertTable}
+          restoreFocus={() => tableTriggerRef.current}
+        />
+      )}
       <input
         ref={imageInputRef}
         hidden

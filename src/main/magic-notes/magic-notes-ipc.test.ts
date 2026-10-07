@@ -16,6 +16,21 @@ function fixture(database: Partial<AssistantStoragePort>) {
 }
 
 describe('async magic notes IPC', () => {
+  it('passes an empty-cell table through schema and content validation', async () => {
+    const createMagicNoteEntry = vi.fn<AssistantStoragePort['createMagicNoteEntry']>()
+    createMagicNoteEntry.mockResolvedValue({
+      id: 'note', title: 'Note', preview: '', entryCount: 1, pinned: false, tags: [],
+      revision: 1, createdAt: '', updatedAt: '', createdEntryId: 'entry', entries: []
+    })
+    const f = fixture({ createMagicNoteEntry })
+    const content = { version: 1 as const, ops: [{ insert: '\n', attributes: { table: 'row-1' } }] }
+
+    await f.invoke(ipcChannels.magicNotesCreateEntry, {
+      noteId: '00000000-0000-4000-8000-000000000001', content
+    })
+    expect(createMagicNoteEntry).toHaveBeenCalledWith(expect.objectContaining({ content, plainText: '' }))
+  })
+
   it('resolves list DTOs and preserves sender/schema checks before storage', async () => {
     const listMagicNotes = vi.fn(async () => [])
     const createMagicNote = vi.fn()

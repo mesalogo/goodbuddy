@@ -71,6 +71,16 @@ save remounts at the returned revision and establishes a new baseline; an unchan
 background revision retains the existing editor and baseline. Aborted canvas
 initialization and file reads for an unmounted text editor cannot write back.
 
+Rich text tables remain native Quill table Delta operations. Insertion stores the active editor
+range while the shared table-size dialog is open, rejects invalid dimensions before changing the
+Delta, and refuses insertion when that range is already a table cell. Row, column, and whole-table
+commands require a cell selection, preserve the selected range, and cut Quill history around each
+command so each toolbar action is independently undoable. The read-only rich renderer loads the
+same Delta with Quill's `readOnly` mode, so table content follows the same persisted schema without
+an editable toolbar. A table row operation is content even when its cell text is empty: the
+workspace keeps the composer open after focus leaves it and submits the Delta through the normal
+IPC and storage path. A genuinely empty rich Delta is still rejected before IPC.
+
 The real saved formatted-text probe reproduced identical values with different
 Delta key order: storage returned `{insert, attributes}` and Quill emitted
 `{attributes, insert}`. The old `JSON.stringify` comparison therefore reported

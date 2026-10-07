@@ -1,10 +1,10 @@
 /// <reference types="node" />
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import Quill from 'quill'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MagicNoteRichContent } from '../../shared/magic-notes-contracts'
 import { MagicNoteEditor } from './MagicNoteEditor'
 
@@ -14,6 +14,8 @@ const stylesheet = readFileSync(
 )
 
 describe('MagicNoteEditor', () => {
+  afterEach(cleanup)
+
   it('establishes the baseline from real Quill normalization and reports later edits separately', () => {
     const onReady = vi.fn()
     const onChange = vi.fn()
@@ -45,6 +47,32 @@ describe('MagicNoteEditor', () => {
     expect(onChange).toHaveBeenCalledWith(normalized)
     unmount()
   })
+
+  it('round-trips non-empty table content through the editor baseline', () => {
+    const initialContent: MagicNoteRichContent = {
+      version: 1,
+      ops: [
+        { insert: 'Name' },
+        { insert: '\n', attributes: { table: 'table-1' } },
+        { insert: 'Value' },
+        { insert: '\n', attributes: { table: 'table-1' } }
+      ]
+    }
+    const onReady = vi.fn()
+    const { container } = render(
+      <MagicNoteEditor
+        ariaLabel="笔记正文"
+        initialContent={initialContent}
+        onChange={vi.fn()}
+        onReady={onReady}
+        onError={vi.fn()}
+      />
+    )
+
+    expect(onReady.mock.calls[0]![0].ops).toEqual(initialContent.ops)
+    expect(container.querySelectorAll('.ql-editor table td')).toHaveLength(2)
+    expect(container.querySelector('.ql-editor')).toHaveTextContent('NameValue')
+  })
   it('uses the themed muted text color for its placeholder', () => {
     expect(stylesheet).toMatch(
       /\.magic-note-editor__content\s+\.ql-editor\.ql-blank::before\s*\{\s*color:\s*var\(--text-muted\);\s*\}/
@@ -75,6 +103,134 @@ describe('MagicNoteEditor', () => {
     expect(
       screen.getByRole('button', { name: '上传视频或附件' })
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '插入表格' })
+    ).toBeInTheDocument()
+  })
+
+  it('opens a validated table dialog, supports cancellation, and restores focus', async () => {
+    const onChange = vi.fn<(content: MagicNoteRichContent) => void>()
+    const { container } = render(
+      <MagicNoteEditor
+        ariaLabel="笔记正文"
+        onChange={onChange}
+        onError={vi.fn()}
+      />
+    )
+
+    const tableButton = container.querySelector<HTMLButtonElement>('.ql-table')!
+    expect(tableButton).toBeEnabled()
+    expect(container.querySelector('.magic-note-editor__table-toolbar')).toBeNull()
+    const prompt = vi.spyOn(window, 'prompt')
+    fireEvent.click(tableButton)
+
+    const dialog = await screen.findByRole('dialog', { name: '插入表格' })
+    expect(prompt).not.toHaveBeenCalled()
+    fireEvent.change(within(dialog).getByLabelText('行数（1-20）'), {
+      target: { value: '21' }
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: '插入表格' }))
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('行数必须为 1-20')
+    expect(onChange).toHaveBeenCalledOnce()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(dialog).not.toBeInTheDocument())
+    expect(document.activeElement).toBe(tableButton)
+    expect(container.querySelector('.ql-editor table')).toBeNull()
+  })
+
+  it('inserts and mutates a native Quill table through separate table actions', async () => {
+    const onChange = vi.fn<(content: MagicNoteRichContent) => void>()
+    const { container } = render(
+      <MagicNoteEditor
+        ariaLabel="笔记正文"
+        onChange={onChange}
+        onError={vi.fn()}
+      />
+    )
+
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ql-table')!)
+    const dialog = await screen.findByRole('dialog', { name: '插入表格' })
+    fireEvent.click(within(dialog).getByRole('button', { name: '插入表格' }))
+
+    await waitFor(() => {
+      const content = onChange.mock.calls.at(-1)?.[0]
+      const tableCells =
+        content?.ops.filter((operation) => operation.attributes?.table)
+      expect(tableCells).toHaveLength(3)
+      expect(container.querySelectorAll('.ql-editor table td')).toHaveLength(9)
+    })
+
+    expect(container.querySelector('.magic-note-editor__table-toolbar')).toBeInTheDocument()
+
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>('.magic-note-editor__table-action--row-below')!
+    )
+    await waitFor(() => {
+      expect(container.querySelectorAll('.ql-editor table tr')).toHaveLength(4)
+    })
+    const quill = Quill.find(container.querySelector('.ql-container')!) as Quill
+    quill.history.undo()
+    await waitFor(() => {
+      expect(container.querySelectorAll('.ql-editor table tr')).toHaveLength(3)
+    })
+
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>('.magic-note-editor__table-action--row-below')!
+    )
+    await waitFor(() => {
+      expect(container.querySelectorAll('.ql-editor table tr')).toHaveLength(4)
+    })
+
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>('.magic-note-editor__table-action--column-right')!
+    )
+    await waitFor(() => {
+      expect(container.querySelectorAll('.ql-editor table td')).toHaveLength(16)
+    })
+
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>('.magic-note-editor__table-action--delete-row')!
+    )
+    await waitFor(() => {
+      expect(container.querySelectorAll('.ql-editor table tr')).toHaveLength(3)
+      expect(container.querySelectorAll('.ql-editor table td')).toHaveLength(12)
+    })
+
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>('.magic-note-editor__table-action--delete-column')!
+    )
+    await waitFor(() => {
+      expect(container.querySelectorAll('.ql-editor table td')).toHaveLength(9)
+    })
+
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>('.magic-note-editor__table-action--delete-table')!
+    )
+    await waitFor(() => {
+      expect(container.querySelector('.ql-editor table')).toBeNull()
+    })
+  })
+
+  it('allows deleting the last row and column without corrupting the document', async () => {
+    const onChange = vi.fn<(content: MagicNoteRichContent) => void>()
+    const { container } = render(
+      <MagicNoteEditor
+        ariaLabel="笔记正文"
+        onChange={onChange}
+        onError={vi.fn()}
+      />
+    )
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ql-table')!)
+    const dialog = await screen.findByRole('dialog', { name: '插入表格' })
+    fireEvent.change(within(dialog).getByLabelText('行数（1-20）'), { target: { value: '1' } })
+    fireEvent.change(within(dialog).getByLabelText('列数（1-12）'), { target: { value: '1' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '插入表格' }))
+
+    await waitFor(() => expect(container.querySelectorAll('.ql-editor table td')).toHaveLength(1))
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.magic-note-editor__table-action--delete-row')!)
+    await waitFor(() => expect(container.querySelectorAll('.ql-editor table td')).toHaveLength(0))
+    expect(container.querySelector('.magic-note-editor__table-toolbar')).toBeNull()
   })
 
   it.each([

@@ -13,11 +13,15 @@ vi.mock('./MagicNoteEditor', () => ({
   MagicNoteEditor: ({ onChange, onParagraphCommit }: {
     onChange: (content: MagicNoteRichContent) => void
     onParagraphCommit?: (content: MagicNoteRichContent) => void
-  }) => <button data-testid="magic-note-editor" type="button" onClick={() => {
+  }) => <div><button data-testid="magic-note-editor" type="button" onClick={() => {
     const content = { version: 1 as const, ops: [{ insert: '新的句子\n' }] }
     onChange(content)
     onParagraphCommit?.(content)
   }}>模拟输入并回车</button>
+    <button data-testid="magic-note-table-editor" type="button" onClick={() => onChange({ version: 1, ops: [
+      { insert: '\n', attributes: { table: 'row-1' } }
+    ] })}>模拟空表格</button>
+  </div>
 }))
 
 vi.mock('./MagicCanvasThumbnail', () => ({ MagicCanvasThumbnail: () => <img alt="画布首页" /> }))
@@ -854,6 +858,32 @@ describe('MagicNotesWorkspace overview navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
     fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
     await waitFor(() => expect(createEntry).toHaveBeenCalledWith({ noteId, content }))
+  })
+
+  it('keeps an empty-cell table draft expanded after focus leaves the editor', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    newEntry()
+    fireEvent.click(screen.getByTestId('magic-note-table-editor'))
+    screen.getByDisplayValue(detail.title).focus()
+    expect(document.querySelector('.magic-note-composer')).toHaveClass('magic-note-composer--active')
+  })
+
+  it('saves an empty-cell table instead of treating it as an empty entry', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    newEntry()
+
+    fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+    expect(screen.getByText('请先输入记录内容')).toBeVisible()
+    expect(createEntry).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('magic-note-table-editor'))
+    fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+    await waitFor(() => expect(createEntry).toHaveBeenCalledWith({
+      noteId,
+      content: { version: 1, ops: [{ insert: '\n', attributes: { table: 'row-1' } }] }
+    }))
   })
 
   it('cancels a new entry only after confirming that its draft will be discarded', async () => {
