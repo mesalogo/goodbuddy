@@ -8,6 +8,7 @@ import {
   magicNoteEntryCreateSchema,
   magicNoteEntryDeleteSchema,
   magicNoteEntryUpdateSchema,
+  magicNoteTagCreateSchema,
   magicNoteTagDeleteSchema,
   magicNoteTagRenameSchema,
   magicNoteUpdateSchema,
@@ -60,6 +61,11 @@ export function registerMagicNotesIpcHandlers(
   registerHandler(ipcChannels.magicNotesRenameTag, (event, input: unknown) => {
     assertTrustedSender(event, window)
     return assistantDatabase.renameMagicNoteTag(magicNoteTagRenameSchema.parse(input))
+  })
+
+  registerHandler(ipcChannels.magicNotesCreateTag, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.createMagicNoteTag(magicNoteTagCreateSchema.parse(input))
   })
 
   registerHandler(ipcChannels.magicNotesDeleteTag, (event, input: unknown) => {

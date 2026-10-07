@@ -1673,6 +1673,46 @@
   padding: var(--space-2) var(--space-5) var(--space-5);
 }
 
+.magic-note-tag-manager__create {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: var(--space-2) var(--space-3);
+}
+
+.magic-note-tag-manager__create > input {
+  box-sizing: border-box;
+  width: auto;
+  min-width: 0;
+  min-height: var(--control-height);
+  flex: 1 1 auto;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.magic-note-tag-manager__create > button {
+  flex: 0 0 auto;
+  min-height: var(--control-height);
+  white-space: nowrap;
+}
+
+.magic-note-tag-manager__create > small {
+  flex-basis: 100%;
+}
+
+@media (max-width: 520px) {
+  .magic-note-tag-manager__create {
+    flex-wrap: wrap;
+  }
+
+  .magic-note-tag-manager__create > input {
+    flex-basis: 100%;
+  }
+}
+
 .magic-note-tag-manager__list {
   display: grid;
   margin: 0;
@@ -2393,7 +2433,7 @@
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
-  opacity: 0;
+  opacity: 1;
 }
 
 .magic-note-row:hover .magic-note-more,

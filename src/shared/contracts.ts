@@ -2363,6 +2363,9 @@ export type DesktopApi = {
     create: (input: MagicNoteCreateInput) => Promise<MagicNoteCreateResult>
     update: (input: MagicNoteUpdateInput) => Promise<MagicNoteDetail>
     remove: (noteId: string) => Promise<void>
+    createTag: (
+      input: import('./magic-notes-contracts').MagicNoteTagCreateInput
+    ) => Promise<import('./magic-notes-contracts').MagicNoteTag>
     renameTag: (
       input: import('./magic-notes-contracts').MagicNoteTagRenameInput
     ) => Promise<import('./magic-notes-contracts').MagicNoteTagRenameResult>

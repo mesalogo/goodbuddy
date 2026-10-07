@@ -369,6 +369,11 @@ export type MagicNoteUpdateInput = z.infer<typeof magicNoteUpdateSchema>
 
 export const magicNoteTagIdSchema = magicNoteIdSchema
 
+export const magicNoteTagCreateSchema = z
+  .object({ name: magicNoteTagNameSchema })
+  .strict()
+export type MagicNoteTagCreateInput = z.infer<typeof magicNoteTagCreateSchema>
+
 export const magicNoteTagRenameSchema = z
   .object({
     tagId: magicNoteTagIdSchema,

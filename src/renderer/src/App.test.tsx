@@ -963,6 +963,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
   magicNotes: {
     search: vi.fn(async () => []),
     list: vi.fn(async () => ({ notes: [], tags: [] })),
+    createTag: vi.fn(async () => ({ id: 'unused-tag', name: 'unused', noteCount: 0 })),
     renameTag: vi.fn(async () => {
       throw new Error("not used");
     }),

@@ -135,12 +135,13 @@ export const magicNotes = {
     inputPlaceholder: 'Type and press Enter',
     suggestionsLabel: 'Existing tags',
     create: 'Create "{{name}}"',
+    createButton: 'New tag',
     remove: 'Remove tag {{name}}',
     limitReached: 'A note can have at most {{count}} tags',
     manage: 'Manage tags',
     managerTitle: 'Manage tags',
     managerDescription: 'Renaming or deleting a tag updates every note. Notes themselves are never deleted.',
-    managerEmpty: 'No tags yet. Open a note and add one below its title.',
+    managerEmpty: 'No tags yet. Create one here or add one below a note title.',
     noteCountOne: '{{count}} note',
     noteCountOther: '{{count}} notes',
     rename: 'Rename',
@@ -154,7 +155,8 @@ export const magicNotes = {
     mergeHint: 'A tag named "{{name}}" already exists. Saving merges the two tags.',
     renamed: 'Tag renamed',
     merged: 'Tag merged into "{{name}}"',
-    deleted: 'Tag deleted'
+    deleted: 'Tag deleted',
+    created: 'Tag created'
   },
   todos: {
     listLabel: 'To-do list',

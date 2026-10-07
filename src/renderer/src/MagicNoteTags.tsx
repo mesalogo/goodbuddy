@@ -317,11 +317,13 @@ export function MagicNoteTagManagerButton({
 export function MagicNoteTagManager({
   tags,
   onClose,
+  onCreate,
   onRename,
   onDelete
 }: {
   tags: MagicNoteTag[]
   onClose: () => void
+  onCreate: (name: string) => Promise<MagicNoteTag | undefined>
   onRename: (tag: MagicNoteTag, name: string) => Promise<MagicNoteTagRenameResult | undefined>
   onDelete: (tag: MagicNoteTag) => Promise<boolean>
 }): React.JSX.Element {
@@ -332,6 +334,8 @@ export function MagicNoteTagManager({
   const descriptionId = useId()
   const [editingId, setEditingId] = useState('')
   const [draft, setDraft] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createDraft, setCreateDraft] = useState('')
   const [deletingId, setDeletingId] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -383,6 +387,21 @@ export function MagicNoteTagManager({
     }
   }
 
+  const submitCreate = async (): Promise<void> => {
+    if (busy) return
+    const problem = tagNameError(createDraft)
+    if (problem) { setError(problem); return }
+    setBusy(true)
+    const created = await onCreate(createDraft.trim())
+    setBusy(false)
+    if (created) {
+      setCreateDraft('')
+      setCreating(false)
+      setError('')
+      requestAnimationFrame(() => document.getElementById(`magic-note-tag-rename-${created.id}`)?.focus())
+    }
+  }
+
   return createPortal(
     <div className="custom-task-dialog">
       <section
@@ -411,6 +430,27 @@ export function MagicNoteTagManager({
           </button>
         </header>
         <div className="magic-note-tag-manager__body" aria-busy={busy}>
+          {creating ? (
+            <form className="magic-note-tag-manager__create" onSubmit={(event) => { event.preventDefault(); void submitCreate() }}>
+              <input
+                autoFocus
+                aria-label={t('tags.inputLabel')}
+                aria-invalid={Boolean(error)}
+                maxLength={MAGIC_NOTE_TAG_MAX_LENGTH}
+                placeholder={t('tags.inputPlaceholder')}
+                value={createDraft}
+                disabled={busy}
+                onChange={(event) => { setCreateDraft(event.target.value); setError('') }}
+              />
+              <button type="submit" className="primary-button" disabled={busy}>{t('tags.createButton')}</button>
+              <button type="button" className="secondary-button" disabled={busy} onClick={() => { setCreating(false); setCreateDraft(''); setError('') }}>{t('tags.cancel')}</button>
+              {error && <small className="magic-notes-field-error" role="alert">{error}</small>}
+            </form>
+          ) : (
+            <button type="button" className="secondary-button magic-note-tag-manager__create-button" disabled={busy} onClick={() => { setCreating(true); setError('') }}>
+              <Plus aria-hidden="true" size={14} />{t('tags.createButton')}
+            </button>
+          )}
           {tags.length === 0 ? (
             <p className="magic-notes-muted">{t('tags.managerEmpty')}</p>
           ) : (

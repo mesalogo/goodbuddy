@@ -7805,8 +7805,8 @@ describe('AssistantDatabase', () => {
       const retagged = database.updateMagicNote({ noteId: work.id, tags: ['Work'], expectedRevision: work.revision })
       expect(retagged.tags).toEqual(['Work'])
       expect(retagged.revision).toBe(work.revision + 1)
-      // "Project A" lost its last note and is removed.
-      expect(database.listMagicNoteTags().map((tag) => tag.name)).not.toContain('Project A')
+       // Tags remain available after their last note link is removed.
+       expect(database.listMagicNoteTags().map((tag) => tag.name)).toContain('Project A')
       expect(() => database.updateMagicNote({ noteId: work.id, tags: [], expectedRevision: work.revision })).toThrow()
       expect(database.getMagicNote(work.id).tags).toEqual(['Work'])
 
@@ -7820,19 +7820,23 @@ describe('AssistantDatabase', () => {
       const merged = database.renameMagicNoteTag({ tagId: workTag.id, name: 'Personal' })
       expect(merged).toMatchObject({ merged: true, tag: { name: 'personal', noteCount: 3 } })
       expect(database.getMagicNote(both.id).tags).toEqual(['personal'])
-      expect(database.listMagicNoteTags()).toHaveLength(1)
+       expect(database.listMagicNoteTags().map((tag) => tag.name)).toEqual(['personal', 'Project A'])
 
       const calls = onMagicNotesChanged.mock.calls.length
       database.deleteMagicNoteTag(merged.tag.id)
       expect(onMagicNotesChanged).toHaveBeenCalledTimes(calls + 1)
-      expect(database.listMagicNoteTags()).toEqual([])
-      expect(database.getMagicNote(personal.id)).toMatchObject({ title: 'Personal', tags: [] })
-      expect(() => database.deleteMagicNoteTag(merged.tag.id)).toThrow('标签不存在')
-      expect(() => database.renameMagicNoteTag({ tagId: merged.tag.id, name: 'x' })).toThrow('标签不存在')
+       expect(database.listMagicNoteTags().map((tag) => tag.name)).toEqual(['Project A'])
+       expect(database.getMagicNote(personal.id)).toMatchObject({ title: 'Personal', tags: [] })
+       expect(() => database.deleteMagicNoteTag(merged.tag.id)).toThrow('标签不存在')
+       expect(() => database.renameMagicNoteTag({ tagId: merged.tag.id, name: 'x' })).toThrow('标签不存在')
 
-      database.updateMagicNote({ noteId: personal.id, tags: ['Solo'], expectedRevision: database.getMagicNote(personal.id).revision })
+       const empty = database.createMagicNoteTag({ name: 'Ideas' })
+       expect(empty).toEqual(expect.objectContaining({ name: 'Ideas', noteCount: 0 }))
+       expect(database.listMagicNoteTags().map((tag) => tag.name)).toContain('Ideas')
+
+       database.updateMagicNote({ noteId: personal.id, tags: ['Solo'], expectedRevision: database.getMagicNote(personal.id).revision })
       database.deleteMagicNote(personal.id)
-      expect(database.listMagicNoteTags()).toEqual([])
+       expect(database.listMagicNoteTags().map((tag) => tag.name)).toEqual(['Ideas', 'Project A', 'Solo'])
     } finally {
       database.close()
     }

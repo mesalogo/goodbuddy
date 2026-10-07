@@ -4169,11 +4169,28 @@ export class AssistantDatabase {
          FROM magic_note_tags t
          LEFT JOIN magic_note_tag_links l ON l.tag_id = t.id
          GROUP BY t.id
-         HAVING note_count > 0
          ORDER BY note_count DESC, t.name_key ASC`
       )
       .all() as MagicNoteTagRow[]
     return rows.map(toMagicNoteTag)
+  }
+
+  createMagicNoteTag(input: { name: string }): MagicNoteTag {
+    const database = this.requireDatabase()
+    const now = new Date().toISOString()
+    const id = randomUUID()
+    const key = magicNoteTagKey(input.name)
+    try {
+      database.prepare(
+        `INSERT INTO magic_note_tags (id, name, name_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(id, input.name, key, now, now)
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('UNIQUE')) throw new Error('标签已存在')
+      throw error
+    }
+    this.options.onMagicNotesChanged?.()
+    return { id, name: input.name, noteCount: 0 }
   }
 
   /**
@@ -4286,14 +4303,6 @@ export class AssistantDatabase {
       }
       insertLink.run(noteId, tag.id, position, now)
     })
-    this.deleteOrphanMagicNoteTags(database)
-  }
-
-  private deleteOrphanMagicNoteTags(database: DatabaseSync): void {
-    database.exec(
-      `DELETE FROM magic_note_tags
-       WHERE NOT EXISTS (SELECT 1 FROM magic_note_tag_links l WHERE l.tag_id = magic_note_tags.id)`
-    )
   }
 
   getMagicNote(noteId: string): MagicNoteDetail {
@@ -4474,7 +4483,6 @@ export class AssistantDatabase {
       if (result.changes !== 1) {
         throw new Error('笔记不存在')
       }
-      this.deleteOrphanMagicNoteTags(database)
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')

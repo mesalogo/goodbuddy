@@ -167,6 +167,7 @@ import type {
   MagicNoteCreateResult,
   MagicNoteSummary,
   MagicNoteEntryCreateResult,
+  MagicNoteTag,
   MagicNoteTagRenameResult,
   MagicNotesSnapshot,
   MagicTodoItem,
@@ -1707,6 +1708,11 @@ const desktopApi: DesktopApi = {
     remove: async (noteId: string) => {
       await ipcRenderer.invoke(ipcChannels.magicNotesDelete, { noteId })
     },
+    createTag: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.magicNotesCreateTag,
+        input
+      ) as Promise<MagicNoteTag>,
     renameTag: (input) =>
       ipcRenderer.invoke(
         ipcChannels.magicNotesRenameTag,

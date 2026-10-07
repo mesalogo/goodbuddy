@@ -1776,6 +1776,22 @@ function MagicNotesWorkspaceView({
     setNarrowNotesOpen(false)
     document.getElementById('magic-notes-list-toggle')?.focus({ preventScroll: true })
   }
+
+  const createNoteTag = async (name: string): Promise<MagicNoteTag | undefined> => {
+    const operation = 'create-tag'
+    if (!beginBusy(operation)) return undefined
+    try {
+      const tag = await window.goodbuddy.magicNotes.createTag({ name })
+      notifySuccess(t('tags.created'))
+      await refreshNotes(requestedNoteIdRef.current, true)
+      return tag
+    } catch (error) {
+      notifyError(error)
+      return undefined
+    } finally {
+      endBusy(operation)
+    }
+  }
   useEffect(() => {
     if (notesDrawerOpen) document.querySelector<HTMLInputElement>('#magic-library-panel-notes input[type="search"]')?.focus({ preventScroll: true })
   }, [notesDrawerOpen])
@@ -3393,6 +3409,7 @@ function MagicNotesWorkspaceView({
         <MagicNoteTagManager
           tags={noteTags}
           onClose={() => setTagManagerOpen(false)}
+          onCreate={createNoteTag}
           onRename={renameNoteTag}
           onDelete={deleteNoteTag}
         />

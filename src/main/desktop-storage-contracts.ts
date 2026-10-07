@@ -20,7 +20,7 @@ export const assistantStorageMethods = [
   'deleteLocalConversation', 'getOrCreateRemoteConversation', 'appendConversationMessage',
   'appendRemoteConversationMessage', 'claimChannelEvent', 'releaseChannelEvent',
   'enqueueChannelResult', 'markChannelResult', 'listUndeliveredChannelResults',
-  'listMagicNotes', 'listMagicNoteTags', 'renameMagicNoteTag', 'deleteMagicNoteTag',
+  'listMagicNotes', 'listMagicNoteTags', 'createMagicNoteTag', 'renameMagicNoteTag', 'deleteMagicNoteTag',
   'getMagicNote', 'getMagicNoteContext', 'createMagicNote', 'updateMagicNote',
   'deleteMagicNote', 'createMagicNoteEntry', 'updateMagicNoteEntry', 'deleteMagicNoteEntry',
   'getMagicNoteEntry', 'saveMagicNoteAnalysis', 'listMagicTodos', 'getMagicTodoStatus',

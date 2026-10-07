@@ -130,12 +130,13 @@ export const magicNotes = {
     inputPlaceholder: '输入后按回车',
     suggestionsLabel: '已有标签',
     create: '新建“{{name}}”',
+    createButton: '新建标签',
     remove: '移除标签 {{name}}',
     limitReached: '每篇笔记最多 {{count}} 个标签',
     manage: '管理标签',
     managerTitle: '管理标签',
     managerDescription: '重命名或删除标签会同步到所有笔记，笔记本身不会被删除。',
-    managerEmpty: '还没有标签。打开一篇笔记，在标题下方添加。',
+    managerEmpty: '还没有标签。可以在这里新建，也可以在笔记标题下方添加。',
     noteCountOne: '{{count}} 篇笔记',
     noteCountOther: '{{count}} 篇笔记',
     rename: '重命名',
@@ -149,7 +150,8 @@ export const magicNotes = {
     mergeHint: '已有同名标签“{{name}}”，保存后两个标签会合并。',
     renamed: '标签已重命名',
     merged: '标签已合并到“{{name}}”',
-    deleted: '标签已删除'
+    deleted: '标签已删除',
+    created: '标签已创建'
   },
   todos: {
     listLabel: '待办列表',
