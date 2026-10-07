@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
 import { expect, it } from 'vitest'
@@ -10,6 +10,7 @@ it('settles C05 storage loss, preserves committed data, and retries after confir
   const parent = resolve('temp/goodbuddy-storage-fault-acceptance')
   await mkdir(parent, { recursive: true })
   const directory = await mkdtemp(join(parent, 'electron-'))
+  await chmod(directory, 0o700)
   try {
     for (const [entry, output, format] of [
       ['src/main/desktop-storage-entry.ts', 'desktop-storage-entry.mjs', 'esm'],

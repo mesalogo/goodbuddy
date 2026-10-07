@@ -2,7 +2,7 @@
 import { EventEmitter } from 'node:events'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
 import { expect, it } from 'vitest'
@@ -112,7 +112,8 @@ it('awaits a termination already in progress before close settles or capacity ca
 it('runs real utility-process storage, read workers, transactions, serialization, drain and reopen', async () => {
   const parent = resolve('temp/goodbuddy-storage-foundation')
   await mkdir(parent, { recursive: true })
-  const directory = await mkdtemp(join(parent, 'electron-'))
+    const directory = await mkdtemp(join(parent, 'electron-'))
+    await chmod(directory, 0o700)
   try {
     const seed = new AssistantDatabase(join(directory, 'assistant.sqlite'))
     seed.initialize(directory)

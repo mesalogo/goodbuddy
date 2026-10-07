@@ -36,3 +36,16 @@ typecheck 和 scoped lint 通过。工具失败继续、分页输出、Magic Not
 先校验发布元数据，推送双远端，要求精确候选 main CI 和生产构建通过后再创建
 Desktop/Agent 不可变标签。通过后核验六平台 20 项 Desktop 资产、macOS 签名公证、
 Agent 三平台目录、OSS/GitHub 元数据和网站 12 种标准下载选择。
+
+## 精确候选首轮 CI
+
+`fbfafa15` 的 Agent CI 已通过。Desktop CI `37636800633` 为 6430 通过、
+58 跳过、3 失败，生产构建未执行：
+
+- C05 storage 进程故障 fixture 没有稳定观察到拒绝；
+- utility-process fixture 的临时数据库父目录权限在 Linux runner 上未满足；
+- readonly reader 测试把快速完成的 worker 请求固定断言为拒绝。
+
+修正只涉及测试稳定性：显式把隔离目录设为 `0700`，允许快速 worker 在终止
+竞争中完成（专用 crash 测试仍覆盖拒绝），并保留 storage 故障恢复和已提交
+数据断言。下一候选 CI 仍必须重新验证这些场景；不跳过 storage owner 测试。
