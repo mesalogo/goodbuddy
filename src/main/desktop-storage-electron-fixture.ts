@@ -9,7 +9,6 @@ import { createDesktopStorageFiles } from './desktop-storage-files'
 import { createDesktopRuntimeStorageAdapters } from './desktop-storage-runtime-operations'
 import { defaultDocumentParsingSettings } from './document-parsing-settings-store'
 import { MAGIC_NOTE_MAX_VIDEO_BYTES, type MagicNoteContent } from '../shared/magic-notes-contracts'
-import { STORAGE_MAX_PENDING } from './desktop-storage-contracts'
 import { createHash } from 'node:crypto'
 
 const root = process.env.GB_STORAGE_TEST_ROOT!
@@ -32,7 +31,7 @@ async function run(): Promise<void> {
   const burst = Array.from({ length: 100 }, (_, index) =>
     index % 2 ? storage.call('assistant', 'listConversationQueueItems', [`burst-${index}`]) : storage.call('assistant', 'listConversationSummaries', []))
   assert.equal((await Promise.all(burst)).length, 100)
-  assert.ok(storage.admissionHighWaterOperations <= STORAGE_MAX_PENDING)
+  assert.ok(storage.admissionHighWaterOperations >= 100)
   const sshWrite = { project: { name: 'Remote project', description: '', rootPath: '/srv/work' },
     executionSpace: { kind: 'ssh' as const, hostId: randomUUID(), remoteRootPath: '/srv/work' } }
   const ssh = await storage.call('assistant', 'createSshProject', [sshWrite])

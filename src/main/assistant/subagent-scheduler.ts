@@ -25,8 +25,8 @@ function abortError(signal?: AbortSignal): Error {
 }
 
 export class SubagentScheduler {
-  private readonly concurrency: number
-  private readonly queueLimit: number
+  private readonly concurrency?: number
+  private readonly queueLimit?: number
   private readonly timeoutMs: number
   private readonly queue: QueueEntry<unknown>[] = []
   private readonly activeControllers = new Set<AbortController>()
@@ -35,14 +35,14 @@ export class SubagentScheduler {
   private readonly idleWaiters = new Set<() => void>()
 
   constructor(options: SubagentSchedulerOptions = {}) {
-    this.concurrency = options.concurrency ?? 3
-    this.queueLimit = options.queueLimit ?? 20
+    this.concurrency = options.concurrency
+    this.queueLimit = options.queueLimit
     this.timeoutMs = options.timeoutMs ?? 120_000
     if (
-      !Number.isSafeInteger(this.concurrency) ||
-      this.concurrency < 1 ||
-      !Number.isSafeInteger(this.queueLimit) ||
-      this.queueLimit < 0 ||
+      (this.concurrency !== undefined &&
+        (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)) ||
+      (this.queueLimit !== undefined &&
+        (!Number.isSafeInteger(this.queueLimit) || this.queueLimit < 0)) ||
       !Number.isSafeInteger(this.timeoutMs) ||
       this.timeoutMs < 1
     ) {
@@ -60,7 +60,12 @@ export class SubagentScheduler {
     if (signal?.aborted) {
       return Promise.reject(abortError(signal))
     }
-    if (this.active >= this.concurrency && this.queue.length >= this.queueLimit) {
+    if (
+      this.concurrency !== undefined &&
+      this.active >= this.concurrency &&
+      this.queueLimit !== undefined &&
+      this.queue.length >= this.queueLimit
+    ) {
       return Promise.reject(new Error('子专家任务队列已满'))
     }
     return new Promise<T>((resolve, reject) => {
@@ -78,7 +83,7 @@ export class SubagentScheduler {
         entry.removeAbortListener = () =>
           signal.removeEventListener('abort', onAbort)
       }
-      if (this.active < this.concurrency) {
+      if (this.concurrency === undefined || this.active < this.concurrency) {
         this.start(entry)
       } else {
         this.queue.push(entry as QueueEntry<unknown>)
@@ -159,7 +164,7 @@ export class SubagentScheduler {
   private drain(): void {
     while (
       !this.disposed &&
-      this.active < this.concurrency &&
+      (this.concurrency === undefined || this.active < this.concurrency) &&
       this.queue.length > 0
     ) {
       const entry = this.queue.shift()!

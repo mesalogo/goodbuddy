@@ -67,7 +67,7 @@ export function redactChannelError(value: string): string {
 export class ChannelService {
   private allowedSenderIds: ReadonlySet<string> = new Set()
   private readonly allowGroupMessages: boolean
-  private readonly maximumConcurrency: number
+  private readonly maximumConcurrency?: number
   private readonly maximumInputLength: number
   private readonly dedupStore: DedupStore
   private readonly outbox: Outbox
@@ -99,12 +99,9 @@ export class ChannelService {
 
     this.updateAllowedSenderIds(options.allowedSenderIds ?? [])
     this.allowGroupMessages = options.allowGroupMessages ?? false
-    this.maximumConcurrency = boundedInteger(
-      options.maximumConcurrency,
-      2,
-      100,
-      '通道并发限制'
-    )
+    this.maximumConcurrency = options.maximumConcurrency === undefined
+      ? undefined
+      : boundedInteger(options.maximumConcurrency, 1, Number.MAX_SAFE_INTEGER, '通道并发限制')
     this.maximumInputLength = boundedInteger(
       options.maximumInputLength,
       8_000,
@@ -340,7 +337,7 @@ export class ChannelService {
         return
       }
 
-      if (this.active.size >= this.maximumConcurrency) {
+      if (this.maximumConcurrency !== undefined && this.active.size >= this.maximumConcurrency) {
         durableResult = await this.tryDeliver(
           this.result(message, {
             status: 'busy',

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { ReadonlyQueryReader, deserializeWorkerError } from './readonly-query-reader'
 import { DesktopStorageTransport } from './desktop-storage-transport'
 import {
-  storageDataBytes, STORAGE_MAX_PENDING, type DesktopStorageOptions, type StorageArgs, type StorageChange, type StorageDomain, type StorageMethod,
+  storageDataBytes, type DesktopStorageOptions, type StorageArgs, type StorageChange, type StorageDomain, type StorageMethod,
   type StorageResponse, type StorageResult
 } from './desktop-storage-contracts'
 import type { AssistantStorageProgress } from '../shared/assistant-storage-contracts'
@@ -37,7 +37,7 @@ export class DesktopStorageClient {
     const transport = new DesktopStorageTransport(options.entryPath ?? join(dirname(fileURLToPath(import.meta.url)), 'desktop-storage-entry.js'))
     this.transport = transport
     this.requests = new ReadonlyQueryReader('assistant', '', '', Date.now, {
-      createTransport: () => transport, maxPending: STORAGE_MAX_PENDING
+      createTransport: () => transport
     })
     transport.on('storageMessage', (message: StorageResponse) => {
       if (this.transport !== transport) return
@@ -47,10 +47,18 @@ export class DesktopStorageClient {
       else if (message.type === 'progress') options.onProgress?.(message.progress)
       else if (message.type === 'changed') options.onChanged?.(message.domain)
     })
-    transport.on('storageFailure', error => { if (this.transport === transport) this.failed(error) })
+    transport.on('storageFailure', error => {
+      if (this.transport !== transport) return
+      this.requests.failTransport(error)
+      this.failed(error)
+    })
     transport.on('exit', () => {
       if (this.transport !== transport) return
-      if (this.state !== 'closing' && this.state !== 'closed') this.failed(new Error('Desktop storage exited; unconfirmed writes require domain reconciliation'))
+      if (this.state !== 'closing' && this.state !== 'closed') {
+        const error = new Error('Desktop storage exited; unconfirmed writes require domain reconciliation')
+        this.requests.failTransport(error)
+        this.failed(error)
+      }
     })
     transport.once('spawn', () => { if (this.transport === transport && this.state === 'opening') this.open() })
   }
@@ -85,7 +93,7 @@ export class DesktopStorageClient {
     this.restarting = (async () => {
       if (transport.needsReplacement) {
         await transport.waitForExit()
-        await this.requests.close()
+        await this.requests.close(false)
         if (this.state !== 'opening') return
         transport.removeAllListeners()
         this.startHost()

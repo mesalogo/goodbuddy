@@ -148,6 +148,8 @@ additional hardening beyond the actual internal-network threat model:
   agent assignments so all agents follow the same rules. For performance or
   hot-path changes, provide the applicable measurements and validation required
   by that document; do not claim improvements without evidence.
+- For new feature work, also follow the repository maintenance rules in
+  [`docs/development/agent-feature-maintenance.md`](./docs/development/agent-feature-maintenance.md).
 - Follow surrounding TypeScript and React patterns.
 - Reuse installed libraries and shared contracts before adding dependencies.
 - Keep changes focused. Do not add unrelated refactors or documentation.

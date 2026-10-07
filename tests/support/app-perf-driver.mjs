@@ -20,10 +20,11 @@ const artifacts = process.env.GB_PERF_ARTIFACTS
 const root = process.env.GB_PERF_ROOT
 if (!directory || !artifacts || !root) throw new Error('Run through build/run-app-perf.cjs')
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+const perfMode = process.env.GB_PERF_MODE
 const config = {
-  seedConversations: Number(process.env.GB_PERF_SEED_CONVERSATIONS || 300),
+  seedConversations: Number(process.env.GB_PERF_SEED_CONVERSATIONS || (perfMode === 'C03' ? 99 : perfMode === 'C07' ? 100 : 300)),
   seedMessagesPerConversation: Number(process.env.GB_PERF_SEED_MESSAGES || 20),
-  longConversationMessages: Number(process.env.GB_PERF_LONG_MESSAGES || 2_000),
+  longConversationMessages: Number(process.env.GB_PERF_LONG_MESSAGES || (perfMode === 'C03' ? 0 : 2_000)),
   typedCharacters: Number(process.env.GB_PERF_TYPED_CHARACTERS || 120),
   keyIntervalMs: Number(process.env.GB_PERF_KEY_INTERVAL_MS || 60),
   switches: Number(process.env.GB_PERF_SWITCHES || 15),

@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
 import { expect, it } from 'vitest'
 import { ReadonlyQueryReader, deserializeWorkerError, type ReadonlyQueryRequest } from './readonly-query-reader'
-import { storageDataBytes, STORAGE_MAX_PENDING } from './desktop-storage-contracts'
+import { storageDataBytes } from './desktop-storage-contracts'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -48,18 +48,18 @@ it('retains cancelled capacity until settlement, returns committed success, and 
   expect(reader.pendingCount).toBe(0)
 })
 
-it('bounds in-flight requests, starts waiting requests in order, and never rejects for capacity', async () => {
+it('passes storage requests through without a product admission limit', async () => {
   const transport = new Transport()
-  const reader = new ReadonlyQueryReader('assistant', '', '', Date.now, { createTransport: () => transport, maxPending: STORAGE_MAX_PENDING })
-  const calls = Array.from({ length: STORAGE_MAX_PENDING * 3 }, (_, index) => reader.call(index % 3 ? 'assistant.listConversationQueueItems' : 'assistant.appendConversationMessage', [index]))
-  expect(reader.pendingCount).toBe(STORAGE_MAX_PENDING)
-  expect(reader.waitingCount).toBe(STORAGE_MAX_PENDING * 2)
+  const reader = new ReadonlyQueryReader('assistant', '', '', Date.now, { createTransport: () => transport })
+  const calls = Array.from({ length: 96 }, (_, index) => reader.call(index % 3 ? 'assistant.listConversationQueueItems' : 'assistant.appendConversationMessage', [index]))
+  expect(reader.pendingCount).toBe(96)
+  expect(reader.waitingCount).toBe(0)
   const settled = new Set<number>()
   while (settled.size < calls.length) { settleAll(transport, settled); await Promise.resolve() }
   const posted = transport.messages.filter(message => message.type === 'query').map(message => message.args[0])
   expect(posted).toEqual(calls.map((_, index) => index))
   await expect(Promise.all(calls)).resolves.toHaveLength(calls.length)
-  expect(reader.admissionHighWaterOperations).toBe(STORAGE_MAX_PENDING)
+  expect(reader.admissionHighWaterOperations).toBe(96)
   await reader.close()
 })
 

@@ -110,8 +110,9 @@ Promise 返回本身不能证明工作已离开 Main。启动顺序是先完成 
 
 创建临时配置、插件、socket 或 launch 目录的函数承担创建失败清理。删除前关闭拥有
 文件或目录的 child、ledger 和句柄，并确认 child 已退出；无法确认时保留材料和 owner
-metadata，等待后续有界回收。应用临时文件使用仓库根目录 `temp/<task>/`，远程 Host
-使用专用 `/root/tmp` 子目录。不要扫描或删除用户 Temp、未知归属目录或仅凭名称和年龄
+metadata，等待后续有界回收。Agent 和测试产生的验证文件使用仓库根目录 `temp/<task>/`；
+产品运行时临时资源继续使用各自 owner 管理的运行时路径，不能因为位于仓库 `temp/` 就获得删除权。
+远程 Host 使用专用 `/root/tmp` 子目录。不要扫描或删除用户 Temp、未知归属目录或仅凭名称和年龄
 判断为过期的资源。
 
 持久化目录可以位于 `temp/` 下，位置本身不能授权删除。删除前先检查 attachment、
@@ -122,14 +123,15 @@ document result、history、branch 或其他 durable reference；释放一个调
 
 数值只引用[性能原则](../architecture/performance-principles.md)，负载和证据只引用
 [并发验收](../quality/concurrent-desktop-acceptance.md)。当前 storage client 的请求、
-读写 pending 和 32 MiB admission budget 是实现约束；paged output 的 8 MiB capture、
+读写 pending 不设置产品侧 admission 上限，负载透传给 storage host；paged output 的 8 MiB capture、
 每 writer 1,024 个 pending chunks、4,096 个 active/retained handles 和 64 KiB backing
 write 也必须服从当前实现与测试。修改前先确认代码中的常量和适用范围，不在本文件复制
 一套新数字。
 
-容量应同时约束操作数和字节数。读 worker、写 owner、输出 backing、模型池和 UI 刷新各自
-使用现有有限机制；队列满时等待或返回可恢复的 busy/capacity 错误。禁止静默丢事件、
-无限重启、按项目预建服务、为每个调用新增 scheduler，或用串行夹具掩盖饱和。
+只有用户明确配置、外部协议要求、数据结构安全，或已有实测证明不限制会导致崩溃、
+数据损坏或不可恢复失败时，才设置上限。读写请求默认透传给所属 Host；不能用内部
+并发数、队列长度或容量数字替用户决定吞吐。仍禁止静默丢事件、无限重启、按项目预建
+服务、为每个调用新增 scheduler，或用串行夹具掩盖真实负载。
 
 ## 测试与真实验证
 

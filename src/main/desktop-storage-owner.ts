@@ -11,7 +11,7 @@ import { openDesktopStorageFiles, type DesktopStorageFilesOwner } from './deskto
 import { DesktopStorageRuntimeOwner, runtimeStorageMethods } from './desktop-storage-runtime-operations'
 import type { ReviewState } from './assistant/supervision-review-store'
 import {
-  assistantStorageMethods, knowledgeStorageMethods, repositoryStorageMethods, STORAGE_MAX_PENDING,
+  assistantStorageMethods, knowledgeStorageMethods, repositoryStorageMethods,
   type DesktopStorageDomains, type DesktopStorageOptions, type StorageError, type StorageRequest, type StorageResponse
 } from './desktop-storage-contracts'
 
@@ -57,7 +57,7 @@ export class DesktopStorageOwner {
     if (message.type === 'cancel') {
       const active = this.active.get(message.id)
       if (active) active.controller.abort()
-      else if (message.id > this.lastCallId && this.cancelled.size < STORAGE_MAX_PENDING) this.cancelled.add(message.id)
+      else if (message.id > this.lastCallId) this.cancelled.add(message.id)
       return
     }
     if (message.type === 'open') {

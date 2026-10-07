@@ -1044,8 +1044,6 @@ if (hasSingleInstanceLock) {
       })
     })
     directModelSubagentScheduler = new SubagentScheduler({
-      concurrency: 3,
-      queueLimit: 20,
       timeoutMs: 10 * 60_000
     })
     const executionSpaceResolver = new ExecutionSpaceResolver(

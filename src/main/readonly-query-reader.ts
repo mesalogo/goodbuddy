@@ -37,17 +37,17 @@ type Pending = {
   cleanup: () => void
 }
 
-type Waiting = { start: () => void; cancel: () => void }
+type Waiting = { start: () => void; cancel: () => void; fail: (error: Error) => void }
 
 /** The utility-process adapter uses the same request correlation as read workers. */
 export type QueryTransport = Pick<EventEmitter, 'on' | 'once'> & Pick<Worker, 'postMessage' | 'ref' | 'unref' | 'terminate'>
 export interface QueryTransportOptions {
   createTransport: () => QueryTransport
-  /** In-flight bound; further requests wait in order instead of failing. */
+  /** Optional test or caller policy; production storage leaves this unset. */
   maxPending?: number
 }
 
-const MAX_PENDING = 32
+const DEFAULT_MAX_PENDING = Number.POSITIVE_INFINITY
 const RESTART_BACKOFF_MS = 30_000
 
 export function deserializeWorkerError(error: { name: string; message: string; issues?: unknown; code?: string; cause?: Parameters<typeof deserializeWorkerError>[0] }): Error {
@@ -83,11 +83,11 @@ export class ReadonlyQueryReader {
     private readonly transportOptions?: QueryTransportOptions
   ) {}
 
-  private get maxPending(): number { return this.transportOptions?.maxPending ?? MAX_PENDING }
+  private get maxPending(): number { return this.transportOptions?.maxPending ?? DEFAULT_MAX_PENDING }
 
   /** False while backing off after a crash or startup failure. */
   get available(): boolean {
-    return !this.closed && !this.stopping && this.now() >= this.disabledUntil && this.pending.size < this.maxPending
+    return !this.closed && !this.stopping && this.now() >= this.disabledUntil
   }
 
   get pendingCount(): number { return this.pending.size }
@@ -111,13 +111,18 @@ export class ReadonlyQueryReader {
     if (!this.transportOptions) return Promise.reject(new ReadonlyWorkerUnavailableError('Readonly query worker is busy'))
     return new Promise<T>((resolve, reject) => {
       const entry: Waiting = {
-        start: () => { signal?.removeEventListener('abort', entry.cancel); this.dispatch<T>(op, args, signal).then(resolve, reject) },
-        cancel: () => {
-          const index = this.waiting.indexOf(entry)
-          if (index >= 0) this.waiting.splice(index, 1)
-          reject(signal?.reason)
+          start: () => { signal?.removeEventListener('abort', entry.cancel); this.dispatch<T>(op, args, signal).then(resolve, reject) },
+          cancel: () => {
+            const index = this.waiting.indexOf(entry)
+            if (index >= 0) this.waiting.splice(index, 1)
+            reject(signal?.reason)
+          },
+          fail: error => {
+            const index = this.waiting.indexOf(entry)
+            if (index >= 0) this.waiting.splice(index, 1)
+            reject(error)
+          }
         }
-      }
       signal?.addEventListener('abort', entry.cancel, { once: true })
       this.waiting.push(entry)
     })
@@ -215,6 +220,20 @@ export class ReadonlyQueryReader {
     return worker
   }
 
+  /** Settle storage requests when its utility transport is lost. */
+  failTransport(error: Error): void {
+    if (this.closed || !this.transportOptions || !this.worker) return
+    this.worker = undefined
+    const pending = [...this.pending.values()]
+    this.pending.clear()
+    for (const request of pending) {
+      request.cleanup()
+      request.reject(Object.assign(new Error('Storage process lost; unconfirmed writes require domain reconciliation', { cause: error }), { code: 'STORAGE_UNCONFIRMED' }))
+    }
+    for (const waiting of this.waiting.splice(0)) waiting.fail(new ReadonlyWorkerUnavailableError('Storage process lost before request dispatch', { cause: error }))
+    this.drained?.()
+  }
+
   /** Test hook: simulate a crash by terminating the worker. */
   async terminateWorkerForTest(): Promise<void> {
     await this.worker?.terminate()
@@ -226,7 +245,7 @@ export class ReadonlyQueryReader {
     this.disabledUntil = 0
   }
 
-  close(): Promise<void> {
+  close(terminateTransport = true): Promise<void> {
     if (this.closePromise) return this.closePromise
     this.closed = true
     for (const waiting of this.waiting.splice(0)) waiting.start()
@@ -236,7 +255,7 @@ export class ReadonlyQueryReader {
         await this.stopping
         const worker = this.worker
         this.worker = undefined
-        await worker?.terminate()
+        if (terminateTransport) await worker?.terminate()
       })()
       return this.closePromise
     }

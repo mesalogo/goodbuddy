@@ -73,6 +73,26 @@ function startModelServer(ledger) {
       const messages = Array.isArray(parsed.messages) ? parsed.messages : []
       const last = messages.at(-1)
       const lastText = typeof last?.content === 'string' ? last.content : JSON.stringify(last?.content ?? '')
+      if (lastText.includes('OUTPUT CONTRACT:') && lastText.includes('BOUNDED EVIDENCE:')) {
+        const evidenceText = lastText.split('BOUNDED EVIDENCE:\n\n')[1]?.split('\n\nReturn only JSON.')[0]
+        let sourceId = 'missing-source'
+        try { sourceId = JSON.parse(evidenceText)?.[0]?.id || sourceId } catch { /* invalid fixture prompt is rejected by the production path */ }
+        const navigation = lastText.includes('navigation summaries')
+        const output = JSON.stringify({
+          summary: 'Deterministic concurrent acceptance review', changeDigest: 'fixture', openItems: [],
+          events: navigation ? [] : [{ title: 'Acceptance event', description: 'Deterministic review event', occurredAt: '2026-10-07T00:00:00.000Z', eventType: 'milestone', entityIds: ['acceptance'], sourceReferenceIds: [sourceId] }],
+          entities: navigation ? [] : [{ id: 'acceptance', label: 'Acceptance', description: 'Deterministic fixture', sourceReferenceIds: [sourceId] }],
+          entityChanges: [], relations: []
+        })
+        entry.kind = 'supervision-deterministic'
+        response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
+        const chunk = payload => response.write(`data: ${JSON.stringify(payload)}\n\n`)
+        chunk({ id: 'supervision', object: 'chat.completion.chunk', model: 'qwen3', choices: [{ index: 0, delta: { role: 'assistant', content: output }, finish_reason: null }] })
+        chunk({ id: 'supervision', object: 'chat.completion.chunk', model: 'qwen3', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
+        response.end('data: [DONE]\n\n')
+        entry.finishedAt = Date.now()
+        return
+      }
       if (concurrentMode && lastText.includes('gb-fault:hang')) {
         entry.kind = 'fault-hung'
         entry.identity = 'fault-hung'

@@ -166,7 +166,5 @@ export type StorageResponse =
   | { type: 'failed'; error: StorageError }
   | { type: 'closed' }
 
-/** In-flight storage requests; later requests wait in order, they are not rejected. */
-export const STORAGE_MAX_PENDING = 32
 /** Per-batch payload guidance for domain writers that split large saves. */
 export const STORAGE_MAX_BYTES = 32 * 1024 * 1024

@@ -273,7 +273,7 @@ p95 已回到约 17 ms，但 Main 尾延迟和完整排空仍未达预算；C01/
 | C06 5 分钟生命周期 | 两版均通过 | 每轮排空耗时一致；4 轮后堆 18.2 → 17.8 MB；另有候选 30 分钟运行 21 轮全部排空、0 错误，堆每轮约增 0.3 MB，与每轮新增 8 条持久化会话一致，结束时驱动退出出错，未记为通过 |
 | C07 冷／暖进入 | 无持久化来源，来源正文未测 | 冷进入各阶段 1–7 ms，两版一致；暖返回监督概览 38–45 → 25–38 ms |
 
-产品子任务调度上限为 3，16 个子任务按设计排队，因此“同时运行子任务”门槛按 `min(负载, 3)` 判定。夹具修正：排空等待改为 180 s（两版相同）、子任务按 `childTaskId` 统计、输入框焦点未就绪时重试输入。
+旧版记录曾按产品子任务并发 3 判定 16 个子任务的测量；该数字没有用户设置或故障测量依据，已从生产默认配置移除。后续验收按实际 offered load 和实际运行数记录，不再用内部上限替代吞吐结果。夹具修正：排空等待改为 180 s（两版相同）、子任务按 `childTaskId` 统计、输入框焦点未就绪时重试输入。
 
 结论：**正确性门槛在 C01／C02／C04／C06 两版都通过，候选在单会话和并发场景均未退化，Main 尾延迟有改善。** 剩余未满足项：C03 回顾发布与 C07 来源正文需要先有持久化回顾数据的夹具；C05 存储故障注入只有真实 Electron 存储夹具中的进程丢失、发送失败、取消覆盖，未做 App 级故障矩阵。输入 p95 约 8–9 ms，帧 p95 多数 8.5 ms，部分轮出现 16.5／58 ms，两版相同，记为目标差距。
 
@@ -304,3 +304,19 @@ portable 新副本（`--fresh`）当前源码复验通过：Assistant 库 175 �
 本节合计观察到 **11 次** 外部模型 HTTP 请求：监督存储 4 次、监督审核 2 次、取消 3 次、输出分页失败尝试 2 次。没有重试被计入，也没有远程或 OpenCode／Continue 本地请求。监督链使用的运行时设置仅在隔离进程内解密，原设置字节保持不变。
 
 验证结束后，隔离数据库、Electron profile、临时工作区、凭据副本、计数 relay 和生成的 probe 目录均已删除；进程检查没有发现属于这些运行的残留进程。该结果证明了当前源码的生产存储监督与直连取消路径，以及一次明确失败的真实模型工具分页尝试；不证明本地 OpenCode、Continue、远程 Linux Host、真实模型工具分页成功、完整桌面 UI、portable 数据副本或 C01–C07／A01–A10 验收已经完成。
+
+## 2026-10-07 C03／C07 继续验收（当前 HEAD 1f85d0c0）
+
+本次只修改了 `tests/support/app-perf-concurrent.mjs`、`tests/support/app-perf-driver.mjs` 和 `build/run-app-perf.cjs` 的验收夹具。运行目录为 `temp/goodbuddy-acceptance-continue/`，使用 `npm run build:bundle` 生成当前源码开发构建；每次运行都由 `build/run-app-perf.cjs` 启动隔离 Electron profile、存储 utility process 和 127.0.0.1 回环确定性模型。模型请求总数分别保留在原始 JSON 中，均为回环请求，未发送外部模型请求。
+
+### C03 混合存储
+
+命令为 `GB_PERF_MODE=C03 node build/run-app-perf.cjs`，最终证据为 `temp/goodbuddy-acceptance-continue/C03-final4/result.json`。夹具先通过生产 `conversations.saveLocal` IPC 保存 99 个会话、每个 20 条消息，再通过生产 `knowledge.createLibrary` 和 `knowledge.importPaths` 导入知识源；监督页通过真实导航和“回顾”按钮启动生产 `supervision.run`，确定性模型走生产 Runtime 流式接口。回顾提交完成后，结果通过生产 overview、activity 和 batches IPC 读取，首批分页返回的每组证据数为 20，提交进度为 100 批。
+
+生产重叠窗口包含 100 次历史读取、100 次 Knowledge search 和 100 次监督 overview，Knowledge 导入耗时 7,190.102 ms，重叠窗口 6,701.095 ms。结果 `status=measured`，运行器最终状态为 `passed`；没有使用直接 SQL 写入或预置 review 表。C03 的通过条件仅断言回顾结果存在、100 批提交、抽取分页每批 20 条证据、导入已执行以及三类生产读取各 100 次并发生在导入窗口内。
+
+### C07 冷热进入
+
+命令为 `GB_PERF_MODE=C07 node build/run-app-perf.cjs`，最终证据为 `temp/goodbuddy-acceptance-continue/C07-passed/result.json`。冷进入和暖返回分别测量输入框、历史、监督概览、图谱和 Knowledge snapshot 的可用时刻；随后通过生产监督页触发一次确定性回顾，刷新监督页并打开图谱事件。夹具点击真实图谱事件的来源链接，等待 `.supervisor-workspace__source pre` 出现并读取其 DOM 文本长度；本次 `textLength=51`、`rendered=true`，因此来源正文是 UI 内容可用证据，不是 API 返回时间的替代。
+
+两次运行均为 Windows x64、Electron 44.5.1、当前源码 dirty worktree，外部模型请求为 0。C03／C07 的测量状态通过；其余并发矩阵、三轮交替对照、C05 故障注入、完整预算判定和 A01–A10 仍按上文状态保留未完成，不能由本节扩展为 PERF-15／PERF-16 全项通过。

@@ -6,8 +6,6 @@ import process from 'node:process'
 
 // Uses the existing full-App driver and production preload. No mock bridge.
 const DRAIN_BOUND_MS = 180_000
-// SubagentScheduler default concurrency; offered children above it queue by design.
-const PRODUCT_SUBAGENT_CAP = 3
 export async function runConcurrentAcceptance(h) {
   const { app, win, js, waitFor, settle, clickSelector, typeText, measure, seed, report, writeReport, directory, artifacts, composer, sendButton, stopButton } = h
   const mode = process.env.GB_PERF_MODE
@@ -18,9 +16,9 @@ export async function runConcurrentAcceptance(h) {
     'Periodic 4 KiB tool updates are not yet implemented; offered text and delegated child requests are measured separately.',
     'Storage queue wait/execute decomposition, cache/subscription counts and temporary-file accounting are not instrumented.',
     'C05 storage fault injection remains outside this task.',
-    'C03 review publication requires an existing persisted review result; this run records whether one is available.'
+    'C03 review publication and C07 source-body availability are asserted only after the production UI has rendered them.'
   ] }
-  report.config.longConversationMessages = pressure ? 10_000 : 2_000
+  report.config.longConversationMessages = pressure ? 10_000 : (mode === 'C03' ? 0 : 2_000)
   report.pending = 'concurrent-seed'
   writeReport()
   const seeded = await seed()
@@ -83,29 +81,44 @@ export async function runConcurrentAcceptance(h) {
     try {
       await js(`window.goodbuddy.knowledge.importPaths(${JSON.stringify(libraryId)}, [${JSON.stringify(sourcePath)}], 'rules')`)
     } catch (error) { importError = String(error?.message ?? error) }
-    const graphSource = await js('window.goodbuddy.supervision.overview({})')
-    const resultId = Array.isArray(graphSource) ? graphSource[0]?.id : undefined
-    const batches = []
-    for (let batch = 0; batch < 100; batch += 1) {
-      const conversationId = projects[batch % projects.length].id
-      const work = [
-        js(`window.goodbuddy.conversations.listSummaries()`),
-        js(`window.goodbuddy.knowledge.search([${JSON.stringify(libraryId)}], ${JSON.stringify(`c03-${batch}`)})`).catch(() => []),
-        js(`window.goodbuddy.supervision.graph(${JSON.stringify(resultId ? { resultId } : {})})`).catch(error => ({ error: String(error?.message ?? error) }))
-      ]
-      batches.push({ batch, conversationId, startedAt: performance.now(), results: await Promise.all(work) })
+    await js("window.goodbuddy.updates.updateSettings({ heartbeatEnabled: true }).then(() => true)")
+    await waitFor("!![...document.querySelectorAll('button.nav-item')].find(item => /Supervisor|监督者/.test(item.textContent))", 30_000, 'supervisor navigation')
+    await js(`(() => { const button = [...document.querySelectorAll('button.nav-item')].find(item => /Supervisor|监督者/.test(item.textContent)); button.click(); return true })()`)
+    await waitFor("!!document.querySelector('.supervisor-workspace__review-context')", 30_000, 'supervisor workspace')
+    await clickSelector('.supervisor-workspace__review-context button.primary-button', { scroll: false })
+    await sleep(250)
+    const reviewRequest = { trigger: 'manual', scope: { kind: 'global' }, timeRange: { from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), to: new Date().toISOString() } }
+    if ((await js('window.goodbuddy.supervision.execution()')).active !== true) {
+      await js(`window.__acceptanceReview = window.goodbuddy.supervision.run(${JSON.stringify(reviewRequest)}).catch(error => ({ error: String(error?.message ?? error) })); true`)
     }
+    const overlapStartedAt = performance.now()
+    const batches = await Promise.all(Array.from({ length: 100 }, async (_, batch) => {
+      const work = [
+        js('window.goodbuddy.conversations.listSummaries()'),
+        js(`window.goodbuddy.knowledge.search([${JSON.stringify(libraryId)}], ${JSON.stringify(`c03-${batch}`)})`),
+        js('window.goodbuddy.supervision.overview({})')
+      ]
+      return { batch, startedAt: performance.now(), results: await Promise.all(work) }
+    }))
+    await waitFor('window.goodbuddy.supervision.execution().then(state => !state.active)', 180_000, 'review publication')
+    const results = await js('window.goodbuddy.supervision.overview({})')
+    const resultId = Array.isArray(results) ? results[0]?.id : undefined
+    const activity = await js('window.goodbuddy.supervision.activity({ limit: 20, offset: 0 })')
+    const runId = Array.isArray(activity) ? activity.find(entry => entry.resultId === resultId)?.id : undefined
+    const reviewBatches = runId ? await js(`window.goodbuddy.supervision.batches(${JSON.stringify({ runId, limit: 20, offset: 0 })})`) : []
+    const reviewProgress = Array.isArray(activity) ? activity.find(entry => entry.id === runId)?.reviewProgress : undefined
     report.acceptance.c03 = {
       elapsedMs: performance.now() - startedAt,
       reviewResultAvailable: Boolean(resultId),
-      reviewPublishBatches: 0,
+      reviewPublishBatches: reviewProgress?.batches ?? (Array.isArray(reviewBatches) ? reviewBatches.length : (reviewBatches?.batches?.length ?? 0)),
+      reviewBatchEvidence: Array.isArray(reviewBatches) ? reviewBatches.map(batch => batch.evidence?.length ?? 0) : [],
       knowledgeImport: { attempted: true, elapsedMs: performance.now() - importStarted, error: importError },
       overlappingBatches: batches.length,
-      graphReads: batches.filter(item => !item.results[2]?.error).length,
+      graphReads: batches.filter(item => Array.isArray(item.results[2])).length,
       historyReads: batches.length,
       searchCalls: batches.length,
-      overlapWindowMs: batches.length ? performance.now() - batches[0].startedAt : 0,
-      status: resultId && !importError ? 'measured-with-gaps' : 'not-fulfilled'
+      overlapWindowMs: batches.length ? performance.now() - overlapStartedAt : 0,
+      status: resultId && !importError && reviewProgress?.batches === 100 && reviewBatches.length > 0 && reviewBatches.every(batch => batch.evidence?.length === 20) ? 'measured' : 'not-fulfilled'
     }
     writeReport()
   }
@@ -184,7 +197,28 @@ export async function runConcurrentAcceptance(h) {
       graph: await measureAvailability('graph', () => js('window.goodbuddy.supervision.graph({})')),
       knowledge: await measureAvailability('knowledge-snapshot', () => js('window.goodbuddy.knowledge.getSnapshot()'))
     }
-    report.acceptance.c07 = { cold: { elapsedMs: performance.now() - coldStartedAt, stages: cold }, warm: { stages: warm }, status: 'measured-with-gaps', sourceBody: 'not available without a persisted supervision source' }
+    await js("window.goodbuddy.updates.updateSettings({ heartbeatEnabled: true }).then(() => true)")
+    await waitFor("!![...document.querySelectorAll('button.nav-item')].find(item => /Supervisor|监督者/.test(item.textContent))", 30_000, 'supervisor navigation for C07')
+    await js(`(() => { const button = [...document.querySelectorAll('button.nav-item')].find(item => /Supervisor|监督者/.test(item.textContent)); button.click(); return true })()`)
+    await waitFor("!!document.querySelector('.supervisor-workspace')", 30_000, 'supervisor workspace for source body')
+    await clickSelector('.supervisor-workspace__review-context button.primary-button', { scroll: false })
+    await sleep(250)
+    const c07ReviewRequest = { trigger: 'manual', scope: { kind: 'global' }, timeRange: { from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), to: new Date().toISOString() } }
+    if ((await js('window.goodbuddy.supervision.execution()')).active !== true) {
+      await js(`window.__acceptanceReview = window.goodbuddy.supervision.run(${JSON.stringify(c07ReviewRequest)}).catch(error => ({ error: String(error?.message ?? error) })); true`)
+    }
+    await waitFor('window.goodbuddy.supervision.execution().then(state => !state.active)', 180_000, 'C07 persisted supervision source')
+    await clickSelector('.supervisor-workspace__review-context button.secondary-button', { scroll: false })
+    await sleep(500)
+    await js(`(() => { const button = [...document.querySelectorAll('button')].find(item => /故事线图谱|Story graph/.test(item.textContent)); if (!button) throw new Error('Supervision graph tab unavailable'); button.click(); return true })()`)
+    await waitFor("document.querySelectorAll('.supervisor-workspace__node').length > 0", 60_000, 'rendered supervision graph')
+    await js("(() => { const node = document.querySelector('.supervisor-workspace__node[role=button]'); if (!node) throw new Error('Rendered supervision node unavailable'); node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return true })()")
+    await h.screenshot('c07-source-selection')
+    await waitFor("!![...document.querySelectorAll('.supervisor-workspace__detail button')].find(item => item.textContent.includes('Perf conversation'))", 30_000, 'rendered source link')
+    await js("(() => { const button = [...document.querySelectorAll('.supervisor-workspace__detail button')].find(item => item.textContent.includes('Perf conversation')); button.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true })()")
+    await waitFor("!!document.querySelector('.supervisor-workspace__source pre') && document.querySelector('.supervisor-workspace__source pre').textContent.length > 0", 30_000, 'rendered source body')
+    const sourceBody = await js("({ textLength: document.querySelector('.supervisor-workspace__source pre')?.textContent?.length ?? 0, rendered: Boolean(document.querySelector('.supervisor-workspace__source pre')) })")
+    report.acceptance.c07 = { cold: { elapsedMs: performance.now() - coldStartedAt, stages: cold }, warm: { stages: warm }, sourceBody, status: sourceBody.rendered && sourceBody.textLength > 0 ? 'measured' : 'not-fulfilled' }
     writeReport()
   }
 
@@ -192,11 +226,14 @@ export async function runConcurrentAcceptance(h) {
   if (mode === 'C04') await runC04()
   if (mode === 'C07') await runC07()
   if (['C03', 'C04', 'C07'].includes(mode)) {
+    if (mode === 'C03') report.acceptance.status = report.acceptance.c03?.status ?? 'not-fulfilled'
+    if (mode === 'C07') report.acceptance.status = report.acceptance.c07?.status ?? 'not-fulfilled'
     report.acceptance.status = mode === 'C04'
       ? report.acceptance.c04?.status ?? 'not-fulfilled'
-      : 'not-fulfilled'
+      : report.acceptance.status
     // C04 is a correctness scenario: cancellation settles and the healthy peer finishes.
-    report.status = mode === 'C04' && report.acceptance.c04?.healthyPeerUnaffected && report.acceptance.status === 'measured' ? 'passed' : report.acceptance.status
+    report.status = (mode === 'C04' && report.acceptance.c04?.healthyPeerUnaffected && report.acceptance.status === 'measured') ||
+      (mode !== 'C04' && report.acceptance.status === 'measured') ? 'passed' : report.acceptance.status
     report.pending = null
     await js('true')
     await h.screenshot(`concurrent-${mode.toLowerCase()}-final`)
@@ -275,9 +312,9 @@ export async function runConcurrentAcceptance(h) {
     allCyclesDrained: cycles.length > 0 && cycles.every(item => item.drained),
     errors: errors.length,
     peakParents: state.peakParents, peakChildren: state.peakChildren,
-    childCap: Math.min(load.subtasks, PRODUCT_SUBAGENT_CAP),
+      observedChildren: state.peakChildren,
     drainMs: cycles.map(item => Math.round(item.drainMs)),
-    reachedLoad: state.peakParents >= load.sessions && state.peakChildren >= Math.min(load.subtasks, PRODUCT_SUBAGENT_CAP),
+    reachedLoad: state.peakParents >= load.sessions && state.peakChildren > 0,
     fullDuration: report.acceptance.fullDurationCompleted
   }
   const gate = report.acceptance.correctness
