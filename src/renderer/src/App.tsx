@@ -131,10 +131,7 @@ import type {
   ImageViewerItem,
   Message,
 } from "./ChatTimeline";
-import {
-  messageRenderBatchSize,
-  type ChatScrollSnapshot,
-} from "./ChatHistoryPane";
+import type { ChatScrollSnapshot } from "./ChatHistoryPane";
 import { usePaneOrder } from "./pane-order";
 import { getConversationDisplayTitle, isUnusedConversation, type Conversation } from "./chat-conversation";
 import {
@@ -1806,9 +1803,6 @@ function App(): React.JSX.Element {
       ),
     [],
   );
-  const [visibleMessageCounts, setVisibleMessageCounts] = useState<
-    Record<string, number>
-  >({});
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const livePrimarySidebarWidthRef = useRef(primarySidebarWidth);
@@ -1859,15 +1853,6 @@ function App(): React.JSX.Element {
       setChatScrollSnapshots((current) => ({
         ...current,
         [conversationId]: snapshot,
-      }));
-    },
-    [],
-  );
-  const handleVisibleMessageCountChange = useCallback(
-    (conversationId: string, count: number): void => {
-      setVisibleMessageCounts((current) => ({
-        ...current,
-        [conversationId]: count,
       }));
     },
     [],
@@ -4580,11 +4565,6 @@ function App(): React.JSX.Element {
       delete next[conversationId];
       return next;
     });
-    setVisibleMessageCounts((current) => {
-      const next = { ...current };
-      delete next[conversationId];
-      return next;
-    });
     setConversationActivity(conversationId, false);
     const remaining = conversationStore.getState().filter(
       (conversation) => conversation.id !== conversationId,
@@ -5941,7 +5921,6 @@ function App(): React.JSX.Element {
         const index = conversation.messages.findIndex(item => item.id === targetId);
         if (index < 0 || !snapshot.messages.some(message => message.id === targetId)) notify({ tone: 'info', message: t('magicNotes:capture.missingMessage') });
         else {
-          setVisibleMessageCounts(current => ({ ...current, [source.conversationId]: Math.max(current[source.conversationId] ?? messageRenderBatchSize, conversation.messages.length - index) }));
           setNoteMessageNavigation({ conversationId: source.conversationId, messageId: targetId, requestId: Date.now() });
         }
       }
@@ -7081,19 +7060,12 @@ function App(): React.JSX.Element {
                         onSelectTask={setSelectedAssistantTaskId}
                         onSetInput={setQuickActionInput}
                         onSetScheduleEnabled={setAssistantScheduleEnabled}
-                        onVisibleMessageCountChange={
-                          handleVisibleMessageCountChange
-                        }
                         quickActions={quickActions}
                         schedules={assistantSchedules}
                         scrollSnapshot={chatScrollSnapshots[conversationId]}
                         selectedAssistantTaskId={selectedAssistantTaskId}
                         store={conversationStore}
                         tasks={tasksByConversation.get(conversationId) ?? emptyConversationTasks}
-                        visibleMessageCount={
-                          visibleMessageCounts[conversationId] ??
-                          messageRenderBatchSize
-                        }
                       />
                     ))}
                     {activeProject?.kind === "channel" &&

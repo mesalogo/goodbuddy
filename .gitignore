@@ -6,6 +6,7 @@ shareserver/build-server/
 coverage/
 /temp/
 .vite/
+sites/docs-dist/
 .runtime-resources/
 .remote-runtime-resources/
 .agent-resources/
