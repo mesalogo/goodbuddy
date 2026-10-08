@@ -232,8 +232,11 @@ async function run(): Promise<void> {
   const cancelled = new DesktopStorageClient(options)
   await cancelled.ready
   const cancelledChange = largeChange('Cancelled write')
-  await cancelled.call('assistant', 'saveLocalConversations', [cancelledChange])
-  assert.ok((await cancelled.call('assistant', 'searchConversations', ['Cancelled write'])).length > 0)
+  const cancellation = new AbortController()
+  const cancelledRequest = cancelled.call('assistant', 'saveLocalConversations', [cancelledChange], { signal: cancellation.signal })
+  cancellation.abort()
+  await assert.rejects(cancelledRequest, { name: 'AbortError' })
+  assert.deepEqual(await cancelled.call('assistant', 'searchConversations', ['Cancelled write']), [])
   await cancelled.close()
 
   const faulted = new DesktopStorageClient(options)
@@ -250,8 +253,9 @@ async function run(): Promise<void> {
   assert.deepEqual(await faulted.call('assistant', 'searchConversations', ['Failed post']), [])
   const complete = largeChange('Drain writes')
   const writing = faulted.call('assistant', 'saveLocalConversations', [complete])
+  const draining = faulted.close()
   await writing
-  await faulted.close()
+  await draining
   const drained = new DesktopStorageClient(options)
   await drained.ready
   assert.equal((await drained.call('assistant', 'getConversation', [complete[0]!.header.id])).messages[0]!.content, complete[0]!.messages[0]!.content)
