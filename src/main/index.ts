@@ -1116,7 +1116,7 @@ if (hasSingleInstanceLock) {
             : Promise.resolve([])
         ])
       return createAgentRuntime(defaultWorkspace, settings, {
-        modelFetcher: net.fetch,
+        modelFetcher: net.fetch as unknown as typeof fetch,
         outputStore: { backingStore: storageFiles.backingStore },
         outputAdopt: storageFiles.attachments.outputAdopt,
         observeFailure: observeDesktopFailure,

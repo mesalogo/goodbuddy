@@ -6319,7 +6319,7 @@ export function registerIpcHandlers(
     if (profile.authentication === 'api-key' && !profile.apiKey) {
       throw new Error(`监督者模型连接“${profile.name}”未配置 API Key`)
     }
-    return createModelProfileRuntime(settings.workspacePath, settings, profile, net.fetch)
+    return createModelProfileRuntime(settings.workspacePath, settings, profile, net.fetch as unknown as typeof fetch)
   }
   const supervisorService = createProductionSupervisorService(supervisionDatabase,
     async () => applicationSettingsStore?.get(), resolveSupervisorRuntime, supervisionModelPool,
