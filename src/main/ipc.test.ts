@@ -12083,16 +12083,26 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('routes eligible requests through the persisted smart expert service and publishes child events', async () => {
+  it.each([
+    { route: 'manual', consumesTrustedInstructions: true },
+    { route: 'smart', consumesTrustedInstructions: true },
+    { route: 'manual', consumesTrustedInstructions: false }
+  ] as const)('applies a $route expert as a role prompt on the conversation runtime (system channel: $consumesTrustedInstructions)', async ({ route, consumesTrustedInstructions }) => {
+    const received: Array<{ requestId: string; prompt: string; trustedInstructions?: string }> = []
     const runtime = {
+      runtimeId: 'opencode',
       capability: 'chat',
       requiresToolApproval: false,
       supportsToolExecution: true,
+      consumesTrustedInstructions,
       getStatus: vi.fn(),
       dispose: vi.fn(),
-      run: vi.fn()
+      async *run(request: { requestId: string; prompt: string; trustedInstructions?: string }) {
+        received.push(request)
+        yield { requestId: request.requestId, type: 'text', delta: '角色回答' }
+        yield { requestId: request.requestId, type: 'done' }
+      }
     }
-    const childTaskId = '00000000-0000-4000-8000-000000000099'
     const expert = {
       id: '00000000-0000-4000-8000-000000000001',
       name: '研究专家',
@@ -12104,69 +12114,49 @@ describe('registerIpcHandlers agent terminal state', () => {
       updatedAt: '2026-01-01T00:00:00.000Z'
     }
     const subagentService = {
-      run: vi.fn(async (input: {
-        parentRequest: { requestId: string }
-        onEvent: (event: Record<string, unknown>) => void
-      }) => {
-        for (const state of ['queued', 'running', 'completed']) {
-          input.onEvent({
-            requestId: input.parentRequest.requestId,
-            type: 'subagent',
-            childTaskId,
-            expertId: expert.id,
-            expertName: expert.name,
-            routingMode: 'smart',
-            state
-          })
-        }
-        return { childTaskId, output: '专家结果' }
-      }),
+      run: vi.fn(),
       cancelAll: vi.fn(),
       dispose: vi.fn(async () => undefined)
     }
-    const harness = createHarness(
-      runtime,
-      undefined,
-      subagentService,
-      true
-    )
-    vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([
-      expert
-    ])
+    const harness = createHarness(runtime, undefined, subagentService, true)
+    vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([expert])
+    vi.mocked(harness.assistantDatabase.getExpert).mockReturnValue(expert)
     const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
 
     harness.handler?.(trustedEvent(harness.webContents), {
       requestId,
-      conversationId: 'conversation-smart',
+      conversationId: 'conversation-role',
       prompt: '请做资料分析',
-      smartRouting: true
+      ...(route === 'manual' ? { expertId: expert.id } : { smartRouting: true })
     })
 
     await vi.waitFor(() =>
-      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
-        requestId,
-        'completed'
-      )
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed')
     )
-    expect(runtime.run).not.toHaveBeenCalled()
-    expect(harness.getPolicySettings).toHaveBeenCalledOnce()
-    expect(harness.getResolvedSettings).not.toHaveBeenCalled()
-    expect(subagentService.run).toHaveBeenCalledWith(
-      expect.objectContaining({ expert, routingMode: 'smart' })
-    )
-    expect(harness.assistantDatabase.appendTaskEvent).toHaveBeenCalledWith(
+    expect(received).toHaveLength(1)
+    const request = received[0]!
+    expect(request.trustedInstructions).toContain('enabled capabilities')
+    expect(request.trustedInstructions).toContain('"研究专家"')
+    expect(request.trustedInstructions).toContain('Analyze evidence.')
+    if (consumesTrustedInstructions) {
+      expect(request.prompt).toBe('请做资料分析')
+    } else {
+      expect(request.prompt).toMatch(/enabled capabilities[\s\S]*Analyze evidence\.\n\n请做资料分析$/u)
+    }
+    expect(subagentService.run).not.toHaveBeenCalled()
+    expect(harness.assistantDatabase.appendTaskEvent).not.toHaveBeenCalledWith(
       requestId,
       'subagent',
-      expect.objectContaining({ childTaskId, state: 'queued' })
+      expect.anything()
     )
     expect(harness.webContents.send).toHaveBeenCalledWith(
       ipcChannels.agentEvent,
-      expect.objectContaining({ type: 'subagent', state: 'completed' })
+      expect.objectContaining({ type: 'text', delta: '角色回答' })
     )
     await harness.dispose()
   })
 
-  it.each(['manual', 'team', 'smart'] as const)('binds %s expert writes to each request project instead of the global workspace', async (route) => {
+  it('binds expert team writes to each request project instead of the global workspace', async () => {
     const actual = await vi.importActual<typeof import('./agent/create-runtime')>('./agent/create-runtime')
     const directory = await mkdtemp(join(tmpdir(), 'expert-projects-'))
     const globalRoot = join(directory, 'global')
@@ -12215,11 +12205,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       for (const [index, projectId] of projectIds.entries()) {
         const requestId = crypto.randomUUID()
         await harness.handler!(trustedEvent(harness.webContents), { requestId, conversationId: `project-${index}`, projectId,
-          prompt: `write ${index === 0 ? 'alpha' : 'beta'}`, expertId: route === 'manual' ? expert.id : undefined,
-          teamMode: route === 'team', smartRouting: route === 'smart' })
+          prompt: `write ${index === 0 ? 'alpha' : 'beta'}`, teamMode: true })
         await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
         const files = await readdir(roots[index]!)
-        expect(files).toHaveLength(route === 'team' ? 2 : 1)
+        expect(files).toHaveLength(2)
         for (const file of files) expect(await readFile(join(roots[index]!, file), 'utf8')).toBe(index === 0 ? 'alpha' : 'beta')
         for (const input of requests.filter(input => input.parentRequest.requestId === requestId)) {
           expect(input.executionSpace).toBe(getRuntime.mock.calls[index]?.[1])
@@ -12236,9 +12225,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   })
 
-  it.each((['manual', 'team', 'smart'] as const).flatMap(route =>
-    (['opencode', 'continue'] as const).map(provider => ({ route, provider }))
-  ))('uses managed $provider for $route SSH experts with their profile and parent bindings', async ({ route, provider }) => {
+  it.each(['opencode', 'continue'] as const)('uses managed %s for SSH expert team members with their profile and parent bindings', async (provider) => {
     const actual = await vi.importActual<typeof import('./agent/create-runtime')>('./agent/create-runtime')
     const globalRoot = await mkdtemp(join(tmpdir(), 'expert-ssh-'))
     const projectId = crypto.randomUUID()
@@ -12297,14 +12284,13 @@ describe('registerIpcHandlers agent terminal state', () => {
     try {
       const requestId = crypto.randomUUID()
       await harness.handler!(trustedEvent(harness.webContents), { requestId, conversationId: 'remote-expert', projectId,
-        prompt: 'write a file', expertId: route === 'manual' ? expert.id : undefined,
-        teamMode: route === 'team', smartRouting: route === 'smart' })
+        prompt: 'write a file', teamMode: true })
       await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
-      expect(factory).toHaveBeenCalledTimes(route === 'team' ? 2 : 1)
+      expect(factory).toHaveBeenCalledTimes(2)
       expect(createRemote).toHaveBeenCalledWith({ provider, profileId: expert.modelProfileId }, executionSpace)
       expect(createLocal).not.toHaveBeenCalled()
       expect(binding.save).not.toHaveBeenCalled()
-      expect(fetcher).toHaveBeenCalledTimes(route === 'team' ? 1 : 0)
+      expect(fetcher).toHaveBeenCalledTimes(1)
       expect(ordinary.run).not.toHaveBeenCalled()
       expect(await readdir(globalRoot)).toEqual([])
     } finally {
@@ -12374,72 +12360,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       await harness.dispose()
     }
   )
-
-  it('does not fall back to the ordinary runtime after smart subagent cancellation', async () => {
-    const runtime = {
-      capability: 'chat',
-      requiresToolApproval: false,
-      supportsToolExecution: true,
-      getStatus: vi.fn(),
-      dispose: vi.fn(),
-      run: vi.fn()
-    }
-    let markStarted!: () => void
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve
-    })
-    const subagentService = {
-      run: vi.fn((input: { signal: AbortSignal }) => {
-        markStarted()
-        return new Promise((_resolve, reject) => {
-          input.signal.addEventListener(
-            'abort',
-            () => reject(input.signal.reason),
-            { once: true }
-          )
-        })
-      }),
-      cancelAll: vi.fn(),
-      dispose: vi.fn(async () => undefined)
-    }
-    const harness = createHarness(
-      runtime,
-      undefined,
-      subagentService,
-      true
-    )
-    vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([
-      {
-        id: '00000000-0000-4000-8000-000000000001',
-        name: '研究专家',
-        description: '',
-        systemInstructions: 'Analyze.',
-        routingKeywords: ['资料分析'],
-        enabled: true,
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-01T00:00:00.000Z'
-      }
-    ])
-    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
-    harness.handler?.(trustedEvent(harness.webContents), {
-      requestId,
-      conversationId: 'conversation-cancel-smart',
-      prompt: '请做资料分析',
-      smartRouting: true
-    })
-    await started
-    harness.cancelHandler?.(trustedEvent(harness.webContents), requestId)
-
-    await vi.waitFor(() =>
-      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
-        requestId,
-        'cancelled',
-        '请求已取消'
-      )
-    )
-    expect(runtime.run).not.toHaveBeenCalled()
-    await harness.dispose()
-  })
 
   it('allows ordinary text requests on runtimes without tool execution', async () => {
     const runtime = {

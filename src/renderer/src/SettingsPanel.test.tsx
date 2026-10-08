@@ -3035,7 +3035,7 @@ describe('SettingsPanel runtime files', () => {
       '自动选择 1 位专家'
     )
     expect(screen.getByText(/未显式选择专家或团队时/)).toHaveTextContent(
-      '子专家使用默认文本模型和已启用工具'
+      '专家提示词作为角色提示词，由当前会话的 Runtime 直接执行'
     )
 
     fireEvent.click(smartRouting)

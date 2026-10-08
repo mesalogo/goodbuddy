@@ -867,7 +867,7 @@ export const settings = {
         'Automatically choose the expert role that best matches the question',
       enabled: 'Enable Smart Subagent routing',
       help:
-        'Off by default. When no expert or team is explicitly selected, GoodBuddy chooses one expert. The Subagent uses the default text model and enabled tools.'
+        'Off by default. When no expert or team is explicitly selected, GoodBuddy chooses one expert. Its prompt is applied as a role prompt on the conversation\'s current Runtime.'
     }
   },
   appearance: {

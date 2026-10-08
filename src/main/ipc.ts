@@ -282,10 +282,7 @@ import {
   supervisionKnowledgeCommitRequestSchema
 } from '../shared/supervision-contracts'
 import { showDesktopNotificationWhenUnfocused } from './desktop-notification'
-import {
-  SubagentRunError,
-  type SubagentService
-} from './assistant/subagent-service'
+import type { SubagentService } from './assistant/subagent-service'
 import { routeSubagent } from './assistant/subagent-router'
 import {
   startEnvironmentChannels
@@ -2699,37 +2696,20 @@ export function registerIpcHandlers(
     yield { requestId: request.requestId, type: 'done' }
   }
 
-  const runSingleExpert = async function* (
-    request: AgentExecutionRequest,
-    expert: Awaited<ReturnType<AssistantStoragePort['getExpert']>>,
-    routingMode: 'manual' | 'smart',
-    signal: AbortSignal,
-    executionSpace: ExecutionSpaceDescriptor | undefined,
-    reason?: string
-  ): AsyncGenerator<RuntimeEvent, void, void> {
-    if (!subagentService) {
-      throw new Error('专家子任务服务不可用')
-    }
-    const result = await subagentService.run({
-      parentRequest: request,
-      executionSpace,
-      expert,
-      routingMode,
-      reason,
-      signal,
-      onEvent: async (event) =>
-        (await publishSubagentEvent(request.requestId, event)),
-      onModelUsage: persistModelUsage
-    })
-    if (result.output) {
-      yield {
-        requestId: request.requestId,
-        type: 'text',
-        delta: result.output
-      }
-    }
-    yield { requestId: request.requestId, type: 'done' }
-  }
+  /**
+   * A selected or smart-routed expert is a role prompt for the conversation's
+   * own runtime, not a delegated child task: it joins the trusted
+   * instructions so streaming, tools and the selected runtime stay unchanged.
+   */
+  const expertRolePrompt = (
+    expert: Awaited<ReturnType<AssistantStoragePort['getExpert']>>
+  ): string =>
+    [
+      `Role: act as the specialist "${expert.name}" for this request.`,
+      expert.systemInstructions
+    ]
+      .filter(Boolean)
+      .join('\n\n')
 
   let scheduleQueueTickRunning = false
   const queueDueSchedules = async (): Promise<void> => {
@@ -4192,6 +4172,15 @@ export function registerIpcHandlers(
             )
           }
         }
+        // A selected or smart-routed expert is a role prompt for the
+        // conversation's own runtime, not a delegated child task.
+        const roleExpert =
+          executionRequest.teamMode || imageGeneration
+            ? undefined
+            : executionRequest.expertId
+              ? await assistantDatabase.getExpert(executionRequest.expertId)
+              : smartRoute?.expert
+        const rolePrompt = roleExpert ? expertRolePrompt(roleExpert) : ''
         const ordinaryStream = (): AsyncGenerator<
           RuntimeEvent,
           void,
@@ -4202,48 +4191,32 @@ export function registerIpcHandlers(
             managedSshOperationAccepted = true
             markManagedSshAccepted()
           }
+          const runtimeRequest: AgentExecutionRequest = rolePrompt
+            ? {
+                ...executionRequest,
+                trustedInstructions: [
+                  executionRequest.trustedInstructions,
+                  rolePrompt
+                ]
+                  .filter(Boolean)
+                  .join('\n\n')
+              }
+            : executionRequest
+          // Runtimes without a system channel get the capability and role
+          // instructions ahead of the prompt.
+          const promptPrefix =
+            selectedRuntime.consumesTrustedInstructions !== true
+              ? [capabilityInstruction, rolePrompt].filter(Boolean).join('\n\n')
+              : ''
           return selectedRuntime.run(
-            capabilityInstruction && selectedRuntime.consumesTrustedInstructions !== true
+            promptPrefix
               ? {
-                  ...executionRequest,
-                  prompt: `${capabilityInstruction}\n\n${executionRequest.prompt}`
+                  ...runtimeRequest,
+                  prompt: `${promptPrefix}\n\n${runtimeRequest.prompt}`
                 }
-              : executionRequest,
+              : runtimeRequest,
             controller.signal
           )
-        }
-        const runSmartRoute = async function* (): AsyncGenerator<
-          RuntimeEvent,
-          void,
-          void
-        > {
-          if (!smartRoute) {
-            yield* ordinaryStream()
-            return
-          }
-          try {
-            yield* runSingleExpert(
-              executionRequest,
-              smartRoute.expert,
-              'smart',
-              controller.signal,
-              requestExecutionSpace,
-              `匹配 ${smartRoute.matches} 个关键词，得分 ${smartRoute.score}`
-            )
-          } catch (error) {
-            if (controller.signal.aborted) {
-              throw error
-            }
-            if (error instanceof SubagentRunError && error.output) {
-              yield {
-                requestId: request.requestId,
-                type: 'text',
-                delta: error.output
-              }
-              throw error
-            }
-            yield* ordinaryStream()
-          }
         }
         const eventStream = executionRequest.teamMode
           ? runExpertTeam(
@@ -4251,17 +4224,7 @@ export function registerIpcHandlers(
               controller.signal,
               requestExecutionSpace
             )
-          : executionRequest.expertId && !imageGeneration
-            ? runSingleExpert(
-                executionRequest,
-                await assistantDatabase.getExpert(
-                  executionRequest.expertId
-                ),
-                'manual',
-                controller.signal,
-                requestExecutionSpace
-              )
-            : runSmartRoute()
+          : ordinaryStream()
         for await (const agentEvent of splitTaggedReasoning(eventStream)) {
           if (agentEvent.type === 'done' || agentEvent.type === 'error') activeRequestLease.settling = true
           const provenance = remoteSemanticProvenance(agentEvent)
