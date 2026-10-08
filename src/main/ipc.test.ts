@@ -6684,6 +6684,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
     const actual = await vi.importActual<typeof import('./agent/create-runtime')>('./agent/create-runtime')
     runtimeFactoryMocks.createModelProfileRuntime.mockImplementation(actual.createModelProfileRuntime)
+    electronMocks.fetch.mockImplementation((input, init) => fetch(input, init))
     const profile = { id: crypto.randomUUID(), name: 'Review connection',
       baseUrl: `http://127.0.0.1:${address.port}/v1`, modelName: 'review-selected', protocol: 'openai-chat-completions', authentication: 'none',
       requestHeaders: {}, requestBody: { temperature: 0.25 } }
@@ -6712,6 +6713,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       server.closeAllConnections()
       await new Promise<void>(resolve => server.close(() => resolve()))
       runtimeFactoryMocks.createModelProfileRuntime.mockReset()
+      electronMocks.fetch.mockReset()
     }
   })
 
