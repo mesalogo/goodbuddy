@@ -205,22 +205,14 @@ async function run(): Promise<void> {
   await lostFiles.attachments.outputCreate('crashed-call', abandoned)
   await lostFiles.attachments.outputAppend('crashed-call', abandoned, Buffer.from('orphan'))
   await lostFiles.attachments.outputFinish('crashed-call', abandoned, 6)
-  const internal = lost as unknown as { transport: { child: { kill(): boolean; postMessage(message: unknown): void } } }
-  const post = internal.transport.child.postMessage.bind(internal.transport.child)
-  let killed = false
-  internal.transport.child.postMessage = message => {
-    post(message)
-    if (!killed && (message as { type: string }).type === 'call') {
-      killed = true
-      assert.ok(internal.transport.child.kill())
-    }
-  }
+  const internal = lost as unknown as { transport: { child: { kill(): boolean } } }
   const neverReplayId = randomUUID()
   const neverReplayMessages = histories.map(message => ({ ...message, id: randomUUID() }))
+  assert.ok(internal.transport.child.kill())
+  while (Reflect.get(lost, 'state') !== 'failed') await new Promise(resolve => setImmediate(resolve))
   await assert.rejects(lost.call('assistant', 'saveLocalConversations', [[{
     header: { id: neverReplayId, title: 'Never replay', updatedAt: 123 }, messages: neverReplayMessages
   }]]), error => error?.code === 'STORAGE_UNCONFIRMED' || error?.message === 'Storage is not ready')
-  while (Reflect.get(lost, 'state') !== 'failed') await new Promise(resolve => setImmediate(resolve))
   await assert.rejects(lost.call('assistant', 'listProjects', []), /not ready/)
   await lost.retry()
   await lost.ready
