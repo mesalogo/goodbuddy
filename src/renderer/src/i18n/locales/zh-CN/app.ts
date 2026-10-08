@@ -528,6 +528,7 @@ export const app = {
     removeAttachment: '移除 {{name}}',
     settings: '对话设置',
     storyGraph: { label: '使用故事图谱' },
+    contextSources: '故事图谱与知识库',
     options: '选项',
     expertLabel: '专家角色',
     runtimeControls: {

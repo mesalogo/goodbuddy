@@ -1,8 +1,8 @@
 import { useCallback, useLayoutEffect, useSyncExternalStore } from "react";
 
 /**
- * Open/closed state of the composer's popups (options dialog, knowledge
- * scope, the pickers and the runtime menu). It lives outside App so opening a
+ * Open/closed state of the composer's popups (context dialog, runtime
+ * controls dialog, knowledge scope, the pickers and the runtime menu). It lives outside App so opening a
  * menu re-renders only the composer.
  *
  * The state belongs to one composer context (conversation, running state and
@@ -17,6 +17,7 @@ export type ComposerMenuId =
 
 export type ComposerMenuState = {
   readonly optionsOpen: boolean;
+  readonly runtimeOptionsOpen: boolean;
   readonly knowledgeScopeOpen: boolean;
   readonly menu: ComposerMenuId | undefined;
   readonly runtimeMenuOpen: boolean;
@@ -24,6 +25,7 @@ export type ComposerMenuState = {
 
 export const closedComposerMenus: ComposerMenuState = Object.freeze({
   optionsOpen: false,
+  runtimeOptionsOpen: false,
   knowledgeScopeOpen: false,
   menu: undefined,
   runtimeMenuOpen: false,
@@ -38,6 +40,7 @@ export type ComposerMenuStore = ReturnType<typeof createComposerMenuStore>;
 function sameMenus(left: ComposerMenuState, right: ComposerMenuState): boolean {
   return (
     left.optionsOpen === right.optionsOpen &&
+    left.runtimeOptionsOpen === right.runtimeOptionsOpen &&
     left.knowledgeScopeOpen === right.knowledgeScopeOpen &&
     left.menu === right.menu &&
     left.runtimeMenuOpen === right.runtimeMenuOpen
@@ -78,7 +81,7 @@ export function createComposerMenuStore() {
     },
     /** Closes the pickers and the runtime menu of whatever context is current. */
     closeMenus(): void {
-      store.update(key, { menu: undefined, runtimeMenuOpen: false });
+      store.update(key, { menu: undefined, runtimeMenuOpen: false, runtimeOptionsOpen: false });
     },
     closeRuntimeMenu(): void {
       store.update(key, { runtimeMenuOpen: false });

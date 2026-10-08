@@ -8511,6 +8511,42 @@ button > svg {
   color: var(--accent);
 }
 
+/* Story graph and knowledge rows share one row style in the context dialog. */
+.composer__options .composer__context-row {
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  font-size: var(--font-body);
+  font-weight: 400;
+  gap: var(--space-2);
+}
+
+.composer__options .composer__context-row:hover:not(:has(input:disabled)) {
+  background: var(--accent-subtle);
+}
+
+.composer__options .composer__story-graph-label,
+.composer__options .knowledge-scope > button > span {
+  gap: var(--space-2);
+  color: inherit;
+  font-size: var(--font-body);
+  font-weight: 400;
+}
+
+.composer__options .knowledge-scope > button {
+  color: var(--text-primary);
+}
+
+.composer__options .knowledge-scope > button > span {
+  flex: 1;
+  justify-content: space-between;
+}
+
+.composer__options .knowledge-scope__chevron {
+  margin-left: 0;
+}
+
 .composer__options .composer__runtime-toolbar-label {
   padding: var(--space-1) var(--space-2);
   font-weight: 500;
@@ -8637,8 +8673,14 @@ button > svg {
 }
 
 .composer__configuration {
+  position: relative;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.composer__options--runtime {
+  right: 0;
+  left: auto;
 }
 
 .composer-picker--expert > .model-button {

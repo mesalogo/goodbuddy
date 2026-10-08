@@ -208,11 +208,16 @@ export const Composer = memo(function Composer({
     `${conversationId}\u0000${isRunning}\u0000${workspaceView}`,
   );
   const composerOptionsOpen = menus.optionsOpen;
+  const runtimeOptionsOpen = menus.runtimeOptionsOpen;
   const knowledgeScopeOpen = menus.knowledgeScopeOpen;
   const composerMenuOpen = menus.menu;
   const runtimeMenuOpen = menus.runtimeMenuOpen;
-  const setComposerOptionsOpen = useCallback(
-    (open: boolean): void => setMenus({ optionsOpen: open }),
+  const closeComposerOptions = useCallback(
+    (): void => setMenus({ optionsOpen: false, knowledgeScopeOpen: false }),
+    [setMenus],
+  );
+  const closeRuntimeOptions = useCallback(
+    (): void => setMenus({ runtimeOptionsOpen: false, menu: undefined }),
     [setMenus],
   );
   const setKnowledgeScopeOpen = useCallback(
@@ -233,7 +238,13 @@ export const Composer = memo(function Composer({
   );
   const setExpertMenuOpen = useCallback((open: boolean): void => {
     setMenus(open
-      ? { menu: "expert", runtimeMenuOpen: false, knowledgeScopeOpen: false }
+      ? {
+          menu: "expert",
+          runtimeMenuOpen: false,
+          knowledgeScopeOpen: false,
+          optionsOpen: false,
+          runtimeOptionsOpen: false,
+        }
       : { menu: undefined });
   }, [setMenus]);
   const setRuntimeAgentMenuOpen = useCallback((open: boolean): void => {
@@ -253,6 +264,8 @@ export const Composer = memo(function Composer({
   }, [setMenus]);
   const composerOptionsRef = useRef<HTMLDivElement>(null);
   const composerOptionsTriggerRef = useRef<HTMLButtonElement>(null);
+  const runtimeOptionsRef = useRef<HTMLDivElement>(null);
+  const runtimeOptionsTriggerRef = useRef<HTMLButtonElement>(null);
   const knowledgeScopeTriggerRef = useRef<HTMLButtonElement>(null);
   const knowledgeScopePopoverRef = useRef<HTMLDivElement>(null);
   const runtimeMenuRef = useRef<HTMLDivElement>(null);
@@ -308,32 +321,18 @@ export const Composer = memo(function Composer({
     };
   }, [knowledgeScopeOpen, setKnowledgeScopeOpen]);
 
-  useEffect(() => {
-    if (!composerOptionsOpen) {
-      return;
-    }
-    const isOptionsTarget = (target: EventTarget | null): boolean =>
-      target instanceof Node &&
-      (composerOptionsRef.current?.contains(target) === true ||
-        composerOptionsTriggerRef.current?.contains(target) === true);
-    const dismissOutside = (event: Event): void => {
-      if (!isOptionsTarget(event.target)) {
-        setMenus({ optionsOpen: false, knowledgeScopeOpen: false });
-      }
-    };
-    const frame = requestAnimationFrame(() => {
-      // Keyboard users land on the same first control as the model picker
-      // and expert menu; optional switches above stay Tab-reachable.
-      composerOptionsRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-    });
-    document.addEventListener("pointerdown", dismissOutside);
-    document.addEventListener("focusin", dismissOutside);
-    return () => {
-      cancelAnimationFrame(frame);
-      document.removeEventListener("pointerdown", dismissOutside);
-      document.removeEventListener("focusin", dismissOutside);
-    };
-  }, [composerOptionsOpen, setMenus]);
+  useDismissibleComposerDialog(
+    composerOptionsOpen,
+    composerOptionsRef,
+    composerOptionsTriggerRef,
+    closeComposerOptions,
+  );
+  useDismissibleComposerDialog(
+    runtimeOptionsOpen,
+    runtimeOptionsRef,
+    runtimeOptionsTriggerRef,
+    closeRuntimeOptions,
+  );
 
   useEffect(() => {
     if (!runtimeMenuOpen) {
@@ -406,10 +405,9 @@ export const Composer = memo(function Composer({
         runtime: runtimeControlsProvider,
       })
     : "";
+  const composerContextAvailable =
+    supervisorEnabled === true || knowledgeLibraries.length > 0;
   const composerOptionSummary = [
-    selectedExpertId && runtime?.capability !== "image-generation"
-      ? assistantExpertOptions.find((option) => option.value === selectedExpertId)?.label
-      : undefined,
     enabledKnowledgeLibraryIds.length > 0
       ? t("composer.knowledge.select", { count: enabledKnowledgeLibraryIds.length })
       : undefined,
@@ -809,207 +807,214 @@ export const Composer = memo(function Composer({
                 <Mic aria-hidden="true" size={18} />
               </button>
             </div>
-            <button
-              aria-controls="composer-options"
-              aria-expanded={composerOptionsOpen}
-              aria-haspopup="dialog"
-              aria-label={t("composer.options")}
-              className="composer__options-trigger"
-              onClick={() => {
-                setComposerOptionsOpen(!composerOptionsOpen);
-                setComposerMenuOpen(undefined);
-                setRuntimeMenuOpen(false);
-                setKnowledgeScopeOpen(false);
-              }}
-              ref={composerOptionsTriggerRef}
-              title={t("composer.settings")}
-              type="button"
-            >
-              <SlidersHorizontal aria-hidden="true" size={18} />
-            </button>
-            <div
-              aria-label={t("composer.settings")}
-              className="composer__options"
-              id="composer-options"
-              hidden={!composerOptionsOpen}
-              ref={composerOptionsRef}
-              role="dialog"
-              onKeyDown={(event) => {
-                if (event.key !== "Escape" || event.defaultPrevented) return;
-                event.preventDefault();
-                event.stopPropagation();
-                if (knowledgeScopeOpen) {
-                  setKnowledgeScopeOpen(false);
-                  knowledgeScopeTriggerRef.current?.focus();
-                } else {
-                  setComposerOptionsOpen(false);
-                  setComposerMenuOpen(undefined);
-                  composerOptionsTriggerRef.current?.focus();
-                }
-              }}
-            >
-              <strong>{t("composer.settings")}</strong>
-              {supervisorEnabled && (
-                <label className="toggle-row">
-                  <span className="composer__story-graph-label">
-                    <Network aria-hidden="true" size={16} />
-                    {t("composer.storyGraph.label")}
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={view?.storyGraphEnabled !== false}
-                    disabled={storyGraphSaving}
-                    onChange={(event) => {
-                      setStoryGraphSaving(true);
-                      void actions.setStoryGraphEnabled(conversationId, event.target.checked)
-                        .catch((error: unknown) => actions.notify({ tone: "error", message: error instanceof Error ? error.message : String(error) }))
-                        .finally(() => setStoryGraphSaving(false));
+            <div className="composer__configuration" role="group" aria-label={t("composer.settings")}>
+              {composerContextAvailable && (
+                <>
+                  <button
+                    aria-controls="composer-options"
+                    aria-expanded={composerOptionsOpen}
+                    aria-haspopup="dialog"
+                    aria-label={t("composer.contextSources")}
+                    className="composer__options-trigger"
+                    onClick={() => {
+                      setMenus({
+                        optionsOpen: !composerOptionsOpen,
+                        runtimeOptionsOpen: false,
+                        menu: undefined,
+                        runtimeMenuOpen: false,
+                        knowledgeScopeOpen: false,
+                      });
                     }}
-                  />
-                </label>
-              )}
-            {knowledgeLibraries.length > 0 && (
-              <div
-                className="knowledge-scope"
-                onBlurCapture={(event) => {
-                  if (
-                    event.relatedTarget instanceof Node &&
-                    !event.currentTarget.contains(
-                      event.relatedTarget,
-                    )
-                  ) {
-                    setKnowledgeScopeOpen(false);
-                  }
-                }}
-              >
-                <button
-                  aria-controls="knowledge-scope-popover"
-                  aria-haspopup="dialog"
-                  aria-label={t("composer.knowledge.select", {
-                    count: enabledKnowledgeLibraryIds.length,
-                  })}
-                  aria-expanded={knowledgeScopeOpen}
-                  onClick={() => {
-                    setComposerMenuOpen(undefined);
-                    setRuntimeMenuOpen(false);
-                    setKnowledgeScopeOpen(
-                      (current) => !current,
-                    );
-                  }}
-                  ref={knowledgeScopeTriggerRef}
-                  title={t("composer.knowledge.title")}
-                  type="button"
-                >
-                  <Library aria-hidden="true" size={16} />
-                  <span>
-                    {t("navigation.knowledge")}
-                    <strong>
-                      {enabledKnowledgeLibraryIds.length}
-                    </strong>
-                  </span>
-                  <ChevronDown
-                    aria-hidden="true"
-                    className="knowledge-scope__chevron"
-                    size={14}
-                  />
-                </button>
-                {knowledgeScopeOpen && (
-                  <div
-                    aria-label={t("composer.knowledge.scope")}
-                    className="knowledge-scope__popover"
-                    id="knowledge-scope-popover"
-                    ref={knowledgeScopePopoverRef}
-                    role="dialog"
+                    ref={composerOptionsTriggerRef}
+                    title={t("composer.contextSources")}
+                    type="button"
                   >
-                    <strong>
-                      {t("composer.knowledge.scope")}
-                    </strong>
-                    {knowledgeLibraries.map(
-                      (library) => {
-                        const instance = externalInstances.find(item => item.id === library.external?.instanceId);
-                        const externalStatus = !instance ? 'temporarily-unavailable' : !instance.enabled ? 'instance-disabled' : instance.credentialStatus !== 'configured' || instance.probeStatus === 'auth-failed' ? 'credential-error' : ['failed', 'unreachable'].includes(instance.probeStatus) ? 'temporarily-unavailable' : 'ready';
-                        return (
-                        <label key={library.id}>
-                          <input
-                            disabled={!!library.external && externalStatus !== 'ready'}
-                            checked={enabledKnowledgeLibraryIds.includes(
-                              library.id,
-                            )}
-                            onChange={(event) =>
-                              actions.setEnabledKnowledgeLibraryIds(
-                                (current) =>
-                                  event.target.checked
-                                    ? [
-                                        ...new Set([
-                                          ...current,
-                                          library.id,
-                                        ]),
-                                      ]
-                                    : current.filter(
-                                        (id) =>
-                                          id !== library.id,
-                                      ),
-                              )
-                            }
-                            type="checkbox"
-                          />
-                          <span>{library.name}</span>
-                          <small>
-                            {library.external ? `${({ dify: 'Dify', fastgpt: 'FastGPT', ragflow: 'RAGFlow' })[library.external.provider]} · ${instance?.name ?? library.external.instanceId} · ${t(`external.states.${externalStatus}`, { ns: 'knowledge' })}` : t(
-                              "composer.knowledge.documents",
-                              {
-                                count: library.documentCount,
-                              },
-                            )}
-                          </small>
-                        </label>
-                      )},
+                    <Library aria-hidden="true" size={18} />
+                  </button>
+                  <div
+                    aria-label={t("composer.contextSources")}
+                    className="composer__options"
+                    id="composer-options"
+                    hidden={!composerOptionsOpen}
+                    ref={composerOptionsRef}
+                    role="dialog"
+                    onKeyDown={(event) => {
+                      if (event.key !== "Escape" || event.defaultPrevented) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (knowledgeScopeOpen) {
+                        setKnowledgeScopeOpen(false);
+                        knowledgeScopeTriggerRef.current?.focus();
+                      } else {
+                        closeComposerOptions();
+                        composerOptionsTriggerRef.current?.focus();
+                      }
+                    }}
+                  >
+                    <strong>{t("composer.contextSources")}</strong>
+                    {supervisorEnabled && (
+                      <label className="toggle-row composer__context-row">
+                        <span className="composer__story-graph-label">
+                          <Network aria-hidden="true" size={16} />
+                          {t("composer.storyGraph.label")}
+                        </span>
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          checked={view?.storyGraphEnabled !== false}
+                          disabled={storyGraphSaving}
+                          onChange={(event) => {
+                            setStoryGraphSaving(true);
+                            void actions.setStoryGraphEnabled(conversationId, event.target.checked)
+                              .catch((error: unknown) => actions.notify({ tone: "error", message: error instanceof Error ? error.message : String(error) }))
+                              .finally(() => setStoryGraphSaving(false));
+                          }}
+                        />
+                      </label>
                     )}
-                    <div className="knowledge-scope__retrieval-mode">
-                      <strong>
-                        {t("composer.knowledge.modeLabel")}
-                      </strong>
-                      <SegmentedControl
-                        ariaLabel={t(
-                          "composer.knowledge.modeLabel",
-                        )}
-                        onChange={actions.setKnowledgeRetrievalMode}
-                        options={[
-                          {
-                            value: "auto",
-                            label: t(
-                              "composer.knowledge.auto",
-                            ),
-                          },
-                          {
-                            value: "always",
-                            label: t(
-                              "composer.knowledge.always",
-                            ),
-                          },
-                        ]}
-                        value={
-                          view?.knowledgeRetrievalMode ??
-                          "auto"
-                        }
-                      />
-                      <small>
-                        {view?.knowledgeRetrievalMode ===
-                        "always"
-                          ? t(
-                              "composer.knowledge.alwaysDescription",
+                    {knowledgeLibraries.length > 0 && (
+                      <div
+                        className="knowledge-scope"
+                        onBlurCapture={(event) => {
+                          if (
+                            event.relatedTarget instanceof Node &&
+                            !event.currentTarget.contains(
+                              event.relatedTarget,
                             )
-                          : t(
-                              "composer.knowledge.autoDescription",
+                          ) {
+                            setKnowledgeScopeOpen(false);
+                          }
+                        }}
+                      >
+                        <button
+                          aria-controls="knowledge-scope-popover"
+                          aria-haspopup="dialog"
+                          aria-label={t("composer.knowledge.select", {
+                            count: enabledKnowledgeLibraryIds.length,
+                          })}
+                          aria-expanded={knowledgeScopeOpen}
+                          onClick={() => {
+                            setComposerMenuOpen(undefined);
+                            setRuntimeMenuOpen(false);
+                            setKnowledgeScopeOpen(
+                              (current) => !current,
+                            );
+                          }}
+                          ref={knowledgeScopeTriggerRef}
+                          title={t("composer.knowledge.title")}
+                          type="button"
+                        >
+                          <Library aria-hidden="true" size={16} />
+                          <span>
+                            {t("navigation.knowledge")}
+                            <strong>
+                              {enabledKnowledgeLibraryIds.length}
+                            </strong>
+                          </span>
+                          <ChevronDown
+                            aria-hidden="true"
+                            className="knowledge-scope__chevron"
+                            size={14}
+                          />
+                        </button>
+                        {knowledgeScopeOpen && (
+                          <div
+                            aria-label={t("composer.knowledge.scope")}
+                            className="knowledge-scope__popover"
+                            id="knowledge-scope-popover"
+                            ref={knowledgeScopePopoverRef}
+                            role="dialog"
+                          >
+                            <strong>
+                              {t("composer.knowledge.scope")}
+                            </strong>
+                            {knowledgeLibraries.map(
+                              (library) => {
+                                const instance = externalInstances.find(item => item.id === library.external?.instanceId);
+                                const externalStatus = !instance ? 'temporarily-unavailable' : !instance.enabled ? 'instance-disabled' : instance.credentialStatus !== 'configured' || instance.probeStatus === 'auth-failed' ? 'credential-error' : ['failed', 'unreachable'].includes(instance.probeStatus) ? 'temporarily-unavailable' : 'ready';
+                                return (
+                                <label key={library.id}>
+                                  <input
+                                    disabled={!!library.external && externalStatus !== 'ready'}
+                                    checked={enabledKnowledgeLibraryIds.includes(
+                                      library.id,
+                                    )}
+                                    onChange={(event) =>
+                                      actions.setEnabledKnowledgeLibraryIds(
+                                        (current) =>
+                                          event.target.checked
+                                            ? [
+                                                ...new Set([
+                                                  ...current,
+                                                  library.id,
+                                                ]),
+                                              ]
+                                            : current.filter(
+                                                (id) =>
+                                                  id !== library.id,
+                                              ),
+                                      )
+                                    }
+                                    type="checkbox"
+                                  />
+                                  <span>{library.name}</span>
+                                  <small>
+                                    {library.external ? `${({ dify: 'Dify', fastgpt: 'FastGPT', ragflow: 'RAGFlow' })[library.external.provider]} · ${instance?.name ?? library.external.instanceId} · ${t(`external.states.${externalStatus}`, { ns: 'knowledge' })}` : t(
+                                      "composer.knowledge.documents",
+                                      {
+                                        count: library.documentCount,
+                                      },
+                                    )}
+                                  </small>
+                                </label>
+                              )},
                             )}
-                      </small>
-                    </div>
+                            <div className="knowledge-scope__retrieval-mode">
+                              <strong>
+                                {t("composer.knowledge.modeLabel")}
+                              </strong>
+                              <SegmentedControl
+                                ariaLabel={t(
+                                  "composer.knowledge.modeLabel",
+                                )}
+                                onChange={actions.setKnowledgeRetrievalMode}
+                                options={[
+                                  {
+                                    value: "auto",
+                                    label: t(
+                                      "composer.knowledge.auto",
+                                    ),
+                                  },
+                                  {
+                                    value: "always",
+                                    label: t(
+                                      "composer.knowledge.always",
+                                    ),
+                                  },
+                                ]}
+                                value={
+                                  view?.knowledgeRetrievalMode ??
+                                  "auto"
+                                }
+                              />
+                              <small>
+                                {view?.knowledgeRetrievalMode ===
+                                "always"
+                                  ? t(
+                                      "composer.knowledge.alwaysDescription",
+                                    )
+                                  : t(
+                                      "composer.knowledge.autoDescription",
+                                    )}
+                              </small>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
-            <div className="composer__configuration">
+                </>
+              )}
               <ComposerMenuSelect
                 ariaLabel={t("composer.expertLabel")}
                 className="composer-picker--expert"
@@ -1024,55 +1029,6 @@ export const Composer = memo(function Composer({
                 options={assistantExpertOptions}
                 value={selectedExpertId}
               />
-            </div>
-            {runtimeControlsProvider && (
-              <div aria-label={runtimeControlsLabel} className="composer__runtime-toolbar" role="group">
-                <strong className="composer__runtime-toolbar-label">{runtimeControlsLabel}</strong>
-                <div className="composer__runtime-controls">
-                  {runtimeAgentControlAvailable && (
-                    <ComposerMenuSelect
-                      ariaLabel={t("composer.runtimeControls.agentLabel")}
-                      className="composer-picker--runtime"
-                      disabled={isRunning}
-                      icon={<TerminalSquare aria-hidden="true" size={15} />}
-                      menuOpen={composerMenuOpen === "runtime-agent"}
-                      onChange={actions.selectRuntimeAgent}
-                      onOpenChange={setRuntimeAgentMenuOpen}
-                      options={runtimeAgentOptions}
-                      value={selectedRuntimeAgent}
-                    />
-                  )}
-                  {runtimePresetControlAvailable && (
-                    <ComposerMenuSelect
-                      ariaLabel={t("composer.runtimeControls.presetLabel")}
-                      className="composer-picker--runtime"
-                      disabled={isRunning}
-                      icon={<TerminalSquare aria-hidden="true" size={15} />}
-                      menuOpen={composerMenuOpen === "runtime-preset"}
-                      onChange={actions.selectContinuePreset}
-                      onOpenChange={setRuntimePresetMenuOpen}
-                      options={runtimePresetOptions}
-                      value={selectedContinuePreset}
-                    />
-                  )}
-                  {runtimeActionControlAvailable && (
-                    <ComposerMenuSelect
-                      ariaLabel={t("composer.runtimeControls.actionLabel")}
-                      className="composer-picker--runtime-action"
-                      disabled={isRunning}
-                      icon={<TerminalSquare aria-hidden="true" size={15} />}
-                      menuOpen={composerMenuOpen === "runtime-action"}
-                      onChange={actions.selectRuntimeAction}
-                      onOpenChange={setRuntimeActionMenuOpen}
-                      options={runtimeActionOptions}
-                      value={runtimeActionOptions.find((option) => option.action?.type === "command" && option.action.id === selectedRuntimeCommand)?.value ?? ""}
-                    />
-                  )}
-                </div>
-              </div>
-            )}
-            </div>
-            <div className="composer__configuration" role="group" aria-label={t("composer.settings")}>
               <div className="runtime-picker">
                 <button
                   aria-expanded={runtimeMenuOpen}
@@ -1080,10 +1036,13 @@ export const Composer = memo(function Composer({
                   className="model-button"
                   disabled={isRunning || runtimeSwitching}
                   onClick={() => {
-                    setComposerOptionsOpen(false);
-                    setKnowledgeScopeOpen(false);
-                    setComposerMenuOpen(undefined);
-                    setRuntimeMenuOpen(!runtimeMenuOpen);
+                    setMenus({
+                      optionsOpen: false,
+                      runtimeOptionsOpen: false,
+                      knowledgeScopeOpen: false,
+                      menu: undefined,
+                      runtimeMenuOpen: !runtimeMenuOpen,
+                    });
                   }}
                   onKeyDown={(event) => {
                     if (
@@ -1093,10 +1052,13 @@ export const Composer = memo(function Composer({
                         event.key === " ")
                     ) {
                       event.preventDefault();
-                      setComposerOptionsOpen(false);
-                      setKnowledgeScopeOpen(false);
-                      setComposerMenuOpen(undefined);
-                      setRuntimeMenuOpen(true);
+                      setMenus({
+                        optionsOpen: false,
+                        runtimeOptionsOpen: false,
+                        knowledgeScopeOpen: false,
+                        menu: undefined,
+                        runtimeMenuOpen: true,
+                      });
                     }
                   }}
                   ref={runtimeMenuButtonRef}
@@ -1143,6 +1105,91 @@ export const Composer = memo(function Composer({
                   />
                 )}
               </div>
+              {runtimeControlsProvider && (
+                <>
+                  <button
+                    aria-controls="composer-runtime-options"
+                    aria-expanded={runtimeOptionsOpen}
+                    aria-haspopup="dialog"
+                    aria-label={runtimeControlsLabel}
+                    className="composer__options-trigger"
+                    onClick={() => {
+                      setMenus({
+                        runtimeOptionsOpen: !runtimeOptionsOpen,
+                        optionsOpen: false,
+                        menu: undefined,
+                        runtimeMenuOpen: false,
+                        knowledgeScopeOpen: false,
+                      });
+                    }}
+                    ref={runtimeOptionsTriggerRef}
+                    title={runtimeControlsLabel}
+                    type="button"
+                  >
+                    <SlidersHorizontal aria-hidden="true" size={18} />
+                  </button>
+                  <div
+                    aria-label={runtimeControlsLabel}
+                    className="composer__options composer__options--runtime"
+                    id="composer-runtime-options"
+                    hidden={!runtimeOptionsOpen}
+                    ref={runtimeOptionsRef}
+                    role="dialog"
+                    onKeyDown={(event) => {
+                      if (event.key !== "Escape" || event.defaultPrevented) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      closeRuntimeOptions();
+                      runtimeOptionsTriggerRef.current?.focus();
+                    }}
+                  >
+                    <div aria-label={runtimeControlsLabel} className="composer__runtime-toolbar" role="group">
+                      <strong className="composer__runtime-toolbar-label">{runtimeControlsLabel}</strong>
+                      <div className="composer__runtime-controls">
+                        {runtimeAgentControlAvailable && (
+                          <ComposerMenuSelect
+                            ariaLabel={t("composer.runtimeControls.agentLabel")}
+                            className="composer-picker--runtime"
+                            disabled={isRunning}
+                            icon={<TerminalSquare aria-hidden="true" size={15} />}
+                            menuOpen={composerMenuOpen === "runtime-agent"}
+                            onChange={actions.selectRuntimeAgent}
+                            onOpenChange={setRuntimeAgentMenuOpen}
+                            options={runtimeAgentOptions}
+                            value={selectedRuntimeAgent}
+                          />
+                        )}
+                        {runtimePresetControlAvailable && (
+                          <ComposerMenuSelect
+                            ariaLabel={t("composer.runtimeControls.presetLabel")}
+                            className="composer-picker--runtime"
+                            disabled={isRunning}
+                            icon={<TerminalSquare aria-hidden="true" size={15} />}
+                            menuOpen={composerMenuOpen === "runtime-preset"}
+                            onChange={actions.selectContinuePreset}
+                            onOpenChange={setRuntimePresetMenuOpen}
+                            options={runtimePresetOptions}
+                            value={selectedContinuePreset}
+                          />
+                        )}
+                        {runtimeActionControlAvailable && (
+                          <ComposerMenuSelect
+                            ariaLabel={t("composer.runtimeControls.actionLabel")}
+                            className="composer-picker--runtime-action"
+                            disabled={isRunning}
+                            icon={<TerminalSquare aria-hidden="true" size={15} />}
+                            menuOpen={composerMenuOpen === "runtime-action"}
+                            onChange={actions.selectRuntimeAction}
+                            onOpenChange={setRuntimeActionMenuOpen}
+                            options={runtimeActionOptions}
+                            value={runtimeActionOptions.find((option) => option.action?.type === "command" && option.action.id === selectedRuntimeCommand)?.value ?? ""}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
           <div className="composer__submit-actions">
@@ -1378,3 +1425,41 @@ export const Composer = memo(function Composer({
 });
 
 const emptyLibraryIds: string[] = [];
+
+/**
+ * Closes a composer toolbar dialog when pointer or focus leaves it and its
+ * trigger, and moves keyboard focus to its first enabled control on open.
+ */
+function useDismissibleComposerDialog(
+  open: boolean,
+  dialogRef: RefObject<HTMLElement | null>,
+  triggerRef: RefObject<HTMLElement | null>,
+  close: () => void,
+): void {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const isDialogTarget = (target: EventTarget | null): boolean =>
+      target instanceof Node &&
+      (dialogRef.current?.contains(target) === true ||
+        triggerRef.current?.contains(target) === true);
+    const dismissOutside = (event: Event): void => {
+      if (!isDialogTarget(event.target)) {
+        close();
+      }
+    };
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current
+        ?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled)")
+        ?.focus();
+    });
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("focusin", dismissOutside);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("focusin", dismissOutside);
+    };
+  }, [close, dialogRef, open, triggerRef]);
+}

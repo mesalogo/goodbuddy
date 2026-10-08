@@ -546,6 +546,7 @@ export const app = {
     removeAttachment: 'Remove {{name}}',
     settings: 'Conversation settings',
     storyGraph: { label: 'Use story graph' },
+    contextSources: 'Story graph and knowledge',
     options: 'Options',
     expertLabel: 'Expert role',
     runtimeControls: {

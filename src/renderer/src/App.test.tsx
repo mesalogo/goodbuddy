@@ -1146,14 +1146,18 @@ const api: DesktopApi & RuntimeNativeClientApi = {
 function composerMenuTrigger(
   label: "专家角色",
 ): HTMLButtonElement {
-  if (label === "专家角色") openComposerOptions();
   return screen.getByRole("button", {
     name: new RegExp(`^${label}：`, "u"),
   });
 }
 
 function openComposerOptions(): void {
-  const trigger = screen.getByRole("button", { name: "选项" });
+  const trigger = screen.getByRole("button", { name: "故事图谱与知识库" });
+  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
+}
+
+async function openRuntimeOptions(runtime = "OpenCode"): Promise<void> {
+  const trigger = await screen.findByRole("button", { name: `${runtime} 专属功能` });
   if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
 }
 
@@ -6873,6 +6877,7 @@ describe("App", () => {
       evidence: [],
     });
     render(<App />);
+    await screen.findByRole("button", { name: "故事图谱与知识库" });
     openComposerOptions();
     const knowledgeScopeTrigger = await screen.findByRole("button", {
       name: "选择知识库，本次已启用 0 个",
@@ -7101,6 +7106,7 @@ describe("App", () => {
       evidence: [],
     });
     render(<App />);
+    await screen.findByRole("button", { name: "故事图谱与知识库" });
     openComposerOptions();
     const knowledgeScope = await screen.findByRole("button", {
       name: "选择知识库，本次已启用 0 个",
@@ -8656,7 +8662,6 @@ describe("App", () => {
 
   it("matches the expert keyboard menu to the model picker", async () => {
     render(<App />);
-    openComposerOptions();
 
     const expertTrigger = await screen.findByRole("button", {
       name: "专家角色：通用助手",
@@ -8683,15 +8688,16 @@ describe("App", () => {
       screen.queryByRole("menu", { name: "专家角色" }),
     ).not.toBeInTheDocument();
 
-    fireEvent.keyDown(expertTrigger, { key: "Escape" });
-    const optionsTrigger = screen.getByRole("button", { name: "选项" });
-    expect(optionsTrigger).toHaveFocus();
-    expect(optionsTrigger).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("dialog", { name: "对话设置" })).not.toBeInTheDocument();
-    fireEvent.click(optionsTrigger);
-    await waitFor(() => expect(screen.getByRole("button", { name: "专家角色：通用助手" })).toHaveFocus());
+    const contextTrigger = screen.getByRole("button", { name: "故事图谱与知识库" });
+    fireEvent.click(contextTrigger);
+    expect(screen.getByRole("dialog", { name: "故事图谱与知识库" })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("switch", { name: "使用故事图谱" })).toHaveFocus());
+    fireEvent.keyDown(screen.getByRole("switch", { name: "使用故事图谱" }), { key: "Escape" });
+    expect(contextTrigger).toHaveFocus();
+    expect(contextTrigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(contextTrigger);
     fireEvent.pointerDown(screen.getByLabelText("向 GoodBuddy 提问"));
-    expect(optionsTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(contextTrigger).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.queryByRole("menu", { name: "工作模式" }),
     ).not.toBeInTheDocument();
@@ -8731,8 +8737,6 @@ describe("App", () => {
       await screen.findByLabelText("向 GoodBuddy 提问")
     ).closest<HTMLElement>(".composer");
     expect(composer).not.toBeNull();
-    expect(screen.queryByRole("button", { name: "专家角色：通用助手" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "选项" })).toHaveAttribute("aria-expanded", "false");
 
     const contentTools = within(composer!).getByRole("group", {
       name: "添加内容",
@@ -8747,12 +8751,13 @@ describe("App", () => {
     const conversationSettings = within(composer!).getByRole("group", {
       name: "对话设置",
     });
-    openComposerOptions();
-    expect(
-      within(screen.getByRole("dialog", { name: "对话设置" })).getByRole("button", {
-        name: "专家角色：通用助手",
-      }),
-    ).toBeInTheDocument();
+    // Order: context sources, expert, Runtime, then Runtime-specific settings.
+    const contextTrigger = within(conversationSettings).getByRole("button", { name: "故事图谱与知识库" });
+    const expertTrigger = within(conversationSettings).getByRole("button", { name: "专家角色：通用助手" });
+    const runtimeTrigger = within(conversationSettings).getByRole("button", { name: /默认模型/u });
+    expect(contextTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(contextTrigger.compareDocumentPosition(expertTrigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(expertTrigger.compareDocumentPosition(runtimeTrigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
       within(conversationSettings).queryByRole("button", {
         name: /工作模式/u,
@@ -10311,14 +10316,14 @@ describe("App", () => {
     ));
     // Let startup selection and its focus effects finish before opening these options.
     await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
-    openComposerOptions();
+    await openRuntimeOptions();
     const agentPicker = await screen.findByRole("button", {
       name: /OpenCode Runtime Agent/u,
     });
     const runtimeToolbar = screen.getByRole("group", {
       name: "OpenCode 专属功能",
     });
-    const options = screen.getByRole("dialog", { name: "对话设置" });
+    const options = screen.getByRole("dialog", { name: "OpenCode 专属功能" });
     expect(runtimeToolbar).toHaveClass("composer__runtime-toolbar");
     expect(runtimeToolbar).toContainElement(agentPicker);
     expect(options).toContainElement(agentPicker);
@@ -10346,7 +10351,7 @@ describe("App", () => {
       target: { value: "src/main" },
     });
     fireEvent.pointerDown(screen.getByLabelText("向 GoodBuddy 提问"));
-    expect(screen.queryByRole("dialog", { name: "对话设置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "OpenCode 专属功能" })).not.toBeInTheDocument();
     expect(document.querySelector(".composer__option-summary")).toHaveTextContent("Planner");
     expect(document.querySelector(".composer__option-summary")).toHaveTextContent("/review");
     fireEvent.click(screen.getByLabelText("发送"));
@@ -10468,7 +10473,7 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText("已就绪");
-    openComposerOptions();
+    await openRuntimeOptions();
     const runtimeToolbar = await screen.findByRole("group", {
       name: "OpenCode 专属功能",
     });
@@ -10536,7 +10541,7 @@ describe("App", () => {
     await waitFor(() =>
       expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(2),
     );
-    openComposerOptions();
+    expect(screen.queryByRole("button", { name: "OpenCode 专属功能" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /OpenCode Runtime Agent/u })).not.toBeInTheDocument();
     await act(async () => {
       retry.resolve({
@@ -10548,6 +10553,7 @@ describe("App", () => {
       });
       await retry.promise;
     });
+    await openRuntimeOptions();
     fireEvent.click(screen.getByRole("button", { name: /OpenCode Runtime Agent/u }));
     expect(screen.getByRole("menuitemradio", { name: /Planner/u })).toBeVisible();
     fireEvent.keyDown(screen.getByRole("menu", { name: "OpenCode Runtime Agent" }), { key: "Escape" });
@@ -10581,7 +10587,7 @@ describe("App", () => {
       .mockResolvedValueOnce(healthy)
       .mockResolvedValueOnce(healthy);
     render(<App />);
-    openComposerOptions();
+    await openRuntimeOptions();
     await screen.findByRole("button", { name: /OpenCode Runtime Agent/u });
     selectProjectOption(secondProject.name);
     await waitFor(() => expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenLastCalledWith(
@@ -10596,7 +10602,7 @@ describe("App", () => {
     selectProjectOption(firstProject.name);
     // Let the project picker restore focus before opening the dismiss-on-blur options.
     await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
-    openComposerOptions();
+    await openRuntimeOptions();
     const toolbar = await screen.findByRole("group", { name: "OpenCode 专属功能" });
     await act(async () => {
       pending.resolve(failed);
@@ -10615,9 +10621,7 @@ describe("App", () => {
     vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockResolvedValueOnce(empty);
     selectProjectOption(firstProject.name);
     await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
-    openComposerOptions();
-    expect(screen.getByRole("button", { name: "选项" })).toHaveAttribute("aria-expanded", "true");
-    await waitFor(() => expect(screen.queryByRole("group", { name: "OpenCode 专属功能" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "OpenCode 专属功能" })).not.toBeInTheDocument());
     expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(callsBefore + 4);
   });
 
@@ -10652,7 +10656,7 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByRole("button", { name: new RegExp(`^${rows[0]!.title}`, "u") });
-    openComposerOptions();
+    await openRuntimeOptions();
     const toolbar = await screen.findByRole("group", { name: "OpenCode 专属功能" });
     fireEvent.click(screen.getByRole("button", { name: /OpenCode Runtime Agent/u }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: /Planner/u }));
@@ -10660,7 +10664,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("menuitemradio", { name: /\/review/u }));
     const inventoryCalls = vi.mocked(api.runtimeCustomization.getNativeSnapshot).mock.calls.length;
     fireEvent.click(screen.getByText(rows[1]!.title).closest("button")!);
-    openComposerOptions();
+    await openRuntimeOptions();
     expect(screen.getByRole("group", { name: "OpenCode 专属功能" })).toBe(toolbar);
     expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(inventoryCalls);
     await waitFor(() => expect(screen.getByRole("button", { name: /OpenCode Runtime Agent/u })).not.toHaveTextContent("Planner"));
@@ -10744,7 +10748,7 @@ describe("App", () => {
 
     render(<App />);
 
-    openComposerOptions();
+    await openRuntimeOptions("Continue");
     const presetPicker = await screen.findByRole("button", {
       name: /Continue 配置预设.*使用设置默认预设/u,
     });
@@ -10754,7 +10758,7 @@ describe("App", () => {
     expect(runtimeToolbar).toHaveClass("composer__runtime-toolbar");
     expect(runtimeToolbar).toContainElement(presetPicker);
     expect(
-      screen.getByRole("dialog", { name: "对话设置" }),
+      screen.getByRole("dialog", { name: "Continue 专属功能" }),
     ).toContainElement(presetPicker);
     fireEvent.click(presetPicker);
     fireEvent.click(
