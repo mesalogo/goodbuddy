@@ -73,6 +73,8 @@ app.whenReady().then(async () => {
   const scenarios: object[] = []
   try {
     await win.loadURL(process.env.GB_MCP_URL!)
+    await js('window.goodbuddy.updates.updateSettings({heartbeatEnabled:true})')
+    await wait('document.body.innerText.includes("Supervisor") || document.body.innerText.includes("监督")')
     await open()
     assert.equal(await binding.available(), true)
     for (const width of [1280, 390]) for (const theme of ['light', 'dark']) {

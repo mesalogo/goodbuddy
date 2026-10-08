@@ -75,6 +75,7 @@ app.whenReady().then(async () => {
   }
   try {
     await win.loadURL(process.env.GB_MCP_URL!)
+    await js('window.goodbuddy.updates.updateSettings({heartbeatEnabled:true})')
     await wait('!!document.querySelector(".composer textarea") && document.body.innerText.includes("Keep until confirmed")')
     await assertNoMode('.composer')
     await click('.composer__options-trigger')

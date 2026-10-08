@@ -414,6 +414,8 @@ export const Composer = memo(function Composer({
         runtime: runtimeControlsProvider,
       })
     : "";
+  const composerContextAvailable =
+    supervisorEnabled === true || knowledgeLibraries.length > 0;
   const composerOptionSummary = [
     enabledKnowledgeLibraryIds.length > 0
       ? t("composer.knowledge.select", { count: enabledKnowledgeLibraryIds.length })
@@ -815,7 +817,8 @@ export const Composer = memo(function Composer({
               </button>
             </div>
             <div className="composer__configuration" role="group" aria-label={t("composer.settings")}>
-              <>
+              {composerContextAvailable && (
+                <>
                   <button
                     aria-controls="composer-options"
                     aria-expanded={composerOptionsOpen}
@@ -878,7 +881,8 @@ export const Composer = memo(function Composer({
                         />
                       </label>
                     )}
-                    <div
+                    {knowledgeLibraries.length > 0 && (
+                      <div
                         className="knowledge-scope"
                         onBlurCapture={(event) => {
                           if (
@@ -1015,9 +1019,11 @@ export const Composer = memo(function Composer({
                             </div>
                           </div>
                         )}
-                    </div>
+                      </div>
+                    )}
                   </div>
-              </>
+                </>
+              )}
               <ComposerMenuSelect
                 ariaLabel={t("composer.expertLabel")}
                 className="composer-picker--expert"
