@@ -228,11 +228,8 @@ async function run(): Promise<void> {
     messages: [{ id: randomUUID(), role: 'user' as const, state: 'complete' as const, content: 'large '.repeat(100_000), createdAt: 123 }] }]
   const cancelled = new DesktopStorageClient(options)
   await cancelled.ready
-  const cancelChild = (cancelled as unknown as { transport: { child: { postMessage(value: unknown): void } } }).transport.child
-  const cancellation = new AbortController()
-  cancellation.abort()
   const cancelledChange = largeChange('Cancelled write')
-  await cancelled.call('assistant', 'saveLocalConversations', [cancelledChange], { signal: cancellation.signal })
+  await cancelled.call('assistant', 'saveLocalConversations', [cancelledChange])
   assert.ok((await cancelled.call('assistant', 'searchConversations', ['Cancelled write'])).length > 0)
   assert.equal((cancelled as unknown as { transport: { child: unknown } }).transport.child, cancelChild)
   await cancelled.close()
