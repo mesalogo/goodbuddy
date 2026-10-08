@@ -19,7 +19,7 @@
 [![Linux](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-FCC624)](https://github.com/mesalogo/goodbuddy/releases)
 </div>
 
-![GoodBuddy 工作空间](./docs/screenshots/workspace-overview.png)
+![GoodBuddy 工作空间](./docs/screenshots/GoodBuddy_zh.png)
 
 GoodBuddy 是用于模型对话、编程 Agent、知识检索、笔记和定时任务的桌面应用。使用 GoodBuddy 无需注册账号，工作数据默认保存在本机。模型服务可以运行在本机、组织内网或用户选择的云端服务。
 
@@ -47,10 +47,6 @@ GoodBuddy 是用于模型对话、编程 Agent、知识检索、笔记和定时�
 
 ### 知识库与知识图谱
 
-![GoodBuddy 知识工作区](./docs/screenshots/knowledge-workspace.png)
-
-![GoodBuddy 知识图谱](./docs/screenshots/knowledge-graph.png)
-
 ### 魔法笔记与智能心跳
 
 魔法笔记连续展示全部记录，左侧窄栏索引与右侧 AI 评论可独立收起，点击缩略图滚动定位并保留草稿。
@@ -58,10 +54,6 @@ GoodBuddy 是用于模型对话、编程 Agent、知识检索、笔记和定时�
 导入 PDF 时提取原生文字，并将批注页面导出为栅格 PDF。画布由用户手动保存；AI 评论按
 默认模型的图像输入能力分析，不支持图像时明确提示仅文字降级。具体行为与最终验证状态见
 [魔法笔记文档](./docs/features/magic-notes/README.md)。
-
-![GoodBuddy 魔法笔记](./docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
-
-![GoodBuddy 智能心跳](./docs/screenshots/smart-heartbeat.png)
 
 ## Agent Runtime
 

@@ -19,7 +19,7 @@
 [![Linux](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-FCC624)](https://github.com/mesalogo/goodbuddy/releases)
 </div>
 
-![GoodBuddy workspace](./docs/screenshots/workspace-overview.png)
+![GoodBuddy workspace](./docs/screenshots/GoodBuddy_en.png)
 
 GoodBuddy is a desktop application for model chat, coding agents, knowledge
 retrieval, notes, and scheduled tasks. No GoodBuddy account is required.
@@ -62,10 +62,6 @@ current limitations.
 
 ### Knowledge bases and graphs
 
-![GoodBuddy knowledge workspace](./docs/screenshots/knowledge-workspace.png)
-
-![GoodBuddy knowledge graph](./docs/screenshots/knowledge-graph.png)
-
 ### Magic Notes and Smart Heartbeat
 
 Magic Notes displays a continuous record stream, with a narrow left index and
@@ -76,10 +72,6 @@ annotated pages as a raster PDF. Canvas saves are manual; AI comments use the
 default model's image-input capability, with an explicit text-only fallback when
 images are unsupported. See the [Magic Notes documentation](./docs/features/magic-notes/README.md)
 for behavior and final validation status.
-
-![GoodBuddy Magic Notes](./docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
-
-![GoodBuddy Smart Heartbeat](./docs/screenshots/smart-heartbeat.png)
 
 ## Agent Runtimes
 
