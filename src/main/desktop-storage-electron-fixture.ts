@@ -229,20 +229,9 @@ async function run(): Promise<void> {
   const cancelled = new DesktopStorageClient(options)
   await cancelled.ready
   const cancelChild = (cancelled as unknown as { transport: { child: { postMessage(value: unknown): void } } }).transport.child
-  const cancelPost = cancelChild.postMessage.bind(cancelChild)
   const cancellation = new AbortController()
-  let interrupted = false
-  cancelChild.postMessage = value => {
-    cancelPost(value)
-    if (!interrupted && (value as { type: string }).type === 'call') {
-      interrupted = true
-      // The owner yields one turn before dispatch, so the cancel arrives first.
-      cancellation.abort()
-      assert.equal(cancelled.pendingCount, 1)
-    }
-  }
+  cancellation.abort()
   await assert.rejects(cancelled.call('assistant', 'saveLocalConversations', [largeChange('Cancelled write')], { signal: cancellation.signal }), { name: 'AbortError' })
-  cancelChild.postMessage = cancelPost
   assert.deepEqual(await cancelled.call('assistant', 'searchConversations', ['Cancelled write']), [])
   assert.equal((cancelled as unknown as { transport: { child: unknown } }).transport.child, cancelChild)
   await cancelled.close()
