@@ -37,9 +37,7 @@ function ConversationHistoryLoader({ conversationId, active, load }: {
   </section>;
 }
 
-type PaneProps = Omit<ComponentProps<typeof ChatHistoryPane>, "conversation" | "taskStrip" | "artifactById" | "onVisibleMessageCountChange" | "visibleMessageCount">;
-
-const ignoreVisibleMessageCountChange = (): void => undefined;
+type PaneProps = Omit<ComponentProps<typeof ChatHistoryPane>, "conversation" | "taskStrip" | "artifactById">;
 
 export type ConversationHistorySlotProps = PaneProps & {
   conversationId: string;
@@ -112,12 +110,5 @@ export const ConversationHistorySlot = memo(function ConversationHistorySlot({
       />
     );
   }
-  return <ChatHistoryPane
-    {...paneProps}
-    artifactById={artifactById}
-    conversation={conversation}
-    onVisibleMessageCountChange={ignoreVisibleMessageCountChange}
-    taskStrip={taskStrip}
-    visibleMessageCount={conversation.messages.length}
-  />;
+  return <ChatHistoryPane {...paneProps} artifactById={artifactById} conversation={conversation} taskStrip={taskStrip} />;
 });
