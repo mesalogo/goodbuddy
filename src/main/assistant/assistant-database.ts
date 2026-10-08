@@ -9168,8 +9168,11 @@ export class AssistantDatabase {
   }
 
   listSupervisionResults(limit = 20, target?: SupervisionTarget, resultId?: string) {
-    const owner = target?.type === 'conversation' ? this.getConversation(target.conversationId)
-      : target?.type === 'task' ? this.getTask(target.taskId) : undefined
+    const owner = target?.type === 'conversation'
+      ? this.requireDatabase().prepare('SELECT project_id AS projectId FROM conversations WHERE id = ?').get(target.conversationId) as { projectId: string | null } | undefined
+      : target?.type === 'task'
+        ? this.requireDatabase().prepare('SELECT project_id AS projectId FROM tasks WHERE id = ?').get(target.taskId) as { projectId: string | null } | undefined
+        : undefined
     const sourceType = target?.type ?? null
     const sourceId = target?.type === 'conversation' ? target.conversationId : target?.taskId ?? null
     return this.requireDatabase().prepare(`SELECT id, run_id AS runId, summary,

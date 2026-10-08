@@ -7090,6 +7090,7 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     const request = supervisionSuggestionListRequestSchema.parse(input ?? {})
     if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return []
+    if (!supervisionPorts) return []
     return await (await supervisionDatabase.supervisionSuggestions()).list(request.status, request.limit, request.offset)
   })
   registerHandler(ipcChannels.supervisionSuggestionAction, async (event, input: unknown) => {
