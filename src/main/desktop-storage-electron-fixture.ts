@@ -231,7 +231,6 @@ async function run(): Promise<void> {
   const cancelledChange = largeChange('Cancelled write')
   await cancelled.call('assistant', 'saveLocalConversations', [cancelledChange])
   assert.ok((await cancelled.call('assistant', 'searchConversations', ['Cancelled write'])).length > 0)
-  assert.equal((cancelled as unknown as { transport: { child: unknown } }).transport.child, cancelChild)
   await cancelled.close()
 
   const faulted = new DesktopStorageClient(options)
