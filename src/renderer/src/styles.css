@@ -8683,6 +8683,16 @@ button > svg {
   left: auto;
 }
 
+.composer__options .model-button__label {
+  text-align: left;
+}
+
+/* The runtime controls are alone in their dialog: no section divider. */
+.composer__options--runtime .composer__runtime-toolbar {
+  padding-top: 0;
+  border-top: 0;
+}
+
 .composer-picker--expert > .model-button {
   width: 148px;
 }
