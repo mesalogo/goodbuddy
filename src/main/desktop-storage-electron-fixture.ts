@@ -232,10 +232,8 @@ async function run(): Promise<void> {
   const cancelled = new DesktopStorageClient(options)
   await cancelled.ready
   const cancelledChange = largeChange('Cancelled write')
-  const cancellation = new AbortController()
-  const cancelledRequest = cancelled.call('assistant', 'saveLocalConversations', [cancelledChange], { signal: cancellation.signal })
-  cancellation.abort()
-  await assert.rejects(cancelledRequest, { name: 'AbortError' })
+  const cancellation = AbortSignal.abort()
+  await assert.rejects(cancelled.call('assistant', 'saveLocalConversations', [cancelledChange], { signal: cancellation }), { name: 'AbortError' })
   assert.deepEqual(await cancelled.call('assistant', 'searchConversations', ['Cancelled write']), [])
   await cancelled.close()
 
