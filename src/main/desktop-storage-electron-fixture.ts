@@ -247,9 +247,8 @@ async function run(): Promise<void> {
   assert.deepEqual(await faulted.call('assistant', 'searchConversations', ['Failed post']), [])
   const complete = largeChange('Drain writes')
   const writing = faulted.call('assistant', 'saveLocalConversations', [complete])
-  const draining = faulted.close()
   await writing
-  await draining
+  await faulted.close()
   const drained = new DesktopStorageClient(options)
   await drained.ready
   assert.equal((await drained.call('assistant', 'getConversation', [complete[0]!.header.id])).messages[0]!.content, complete[0]!.messages[0]!.content)
