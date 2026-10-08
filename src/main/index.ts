@@ -8,6 +8,7 @@ import {
   dialog,
   globalShortcut,
   Menu,
+  net,
   safeStorage,
   session,
   shell,
@@ -1115,6 +1116,7 @@ if (hasSingleInstanceLock) {
             : Promise.resolve([])
         ])
       return createAgentRuntime(defaultWorkspace, settings, {
+        modelFetcher: net.fetch,
         outputStore: { backingStore: storageFiles.backingStore },
         outputAdopt: storageFiles.attachments.outputAdopt,
         observeFailure: observeDesktopFailure,

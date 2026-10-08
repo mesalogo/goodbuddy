@@ -11,6 +11,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  net,
   shell,
   type NotificationConstructorOptions,
   type IpcMainInvokeEvent
@@ -6318,7 +6319,7 @@ export function registerIpcHandlers(
     if (profile.authentication === 'api-key' && !profile.apiKey) {
       throw new Error(`监督者模型连接“${profile.name}”未配置 API Key`)
     }
-    return createModelProfileRuntime(settings.workspacePath, settings, profile)
+    return createModelProfileRuntime(settings.workspacePath, settings, profile, net.fetch)
   }
   const supervisorService = createProductionSupervisorService(supervisionDatabase,
     async () => applicationSettingsStore?.get(), resolveSupervisorRuntime, supervisionModelPool,

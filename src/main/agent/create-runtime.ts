@@ -46,6 +46,7 @@ import {
 import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 import type { DesktopDiagnosticFailureObserver } from '../desktop-diagnostics'
 export type AgentCapabilityContext = {
+  modelFetcher?: ModelRuntimeOptions['fetcher']
   outputStore?: ModelRuntimeOptions['outputStore']
   outputAdopt?: ModelRuntimeOptions['outputAdopt']
   observeFailure?: DesktopDiagnosticFailureObserver
@@ -139,9 +140,11 @@ export function createDefaultModelRuntime(
 export function createModelProfileRuntime(
   defaultWorkspace: string,
   settings: ResolvedRuntimeSettings,
-  profile: ResolvedModelProfile
+  profile: ResolvedModelProfile,
+  fetcher?: ModelRuntimeOptions['fetcher']
 ): ModelAgentRuntime {
   return new ModelAgentRuntime({
+    fetcher,
     apiKey: profile.apiKey,
     baseUrl: profile.baseUrl,
     model: profile.modelName,
@@ -359,6 +362,7 @@ export function createAgentRuntime(
       (modelAuthentication === 'none' || modelApiKey))
   ) {
     return new ModelAgentRuntime({
+      fetcher: capabilities.modelFetcher,
       outputStore: capabilities.outputStore,
       outputAdopt: capabilities.outputAdopt,
       apiKey: modelApiKey ?? '',
