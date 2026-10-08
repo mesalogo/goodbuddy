@@ -20,6 +20,9 @@
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
+    "docs:dev": "vitepress dev sites/docs --config sites/docs/.vitepress/config.mts",
+    "docs:build": "vitepress build sites/docs --outDir sites/docs-dist --config sites/docs/.vitepress/config.mts",
+    "docs:preview": "vitepress preview sites/docs-dist",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.agent.json && tsc --noEmit -p tsconfig.web.json",
     "lint": "eslint .",
@@ -419,6 +422,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
     "vite": "^7.3.6",
+    "vitepress": "^1.6.4",
     "vitest": "^4.1.10"
   },
   "optionalDependencies": {

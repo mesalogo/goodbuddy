@@ -1,6 +1,6 @@
 # GoodBuddy 静态官网
 
-`sites` 是无需构建步骤或额外依赖的中英文静态官网源码，可直接托管整个目录。
+`sites` 包含中英文官网和使用 VitePress 默认主题的用户手册。官网可直接预览；手册正文使用 Markdown 维护，发布前需要构建。
 
 正式站点地址：<https://mesalogo.github.io/goodbuddy/>
 
@@ -16,7 +16,7 @@ x64 / arm64 安装包与独立龙芯 loong64 预览版，并说明兼容性与�
 首屏示意显示所选 Runtime，不展示 Ask / Execute 模式或一般工具审批。工具说明以
 已启用能力和 MCP 服务分配为准；站点校验会检查中英文页面中的旧模式文案与控件。
 FAQ 使用原生 details/summary，说明模型费用、数据流向、组件准备和远端使用条件。
-英文页面位于 `en.html`，用平台与架构覆盖描述同一产品事实，不使用中文信创
+英文页面位于 `en.html`，用户手册由 `docs/content/` 中按功能拆分的 Markdown 内容构建到 `docs-dist/`。英文页面用平台与架构覆盖描述同一产品事实，不使用中文信创
 政策语汇；页面会标明独立的 LoongArch 实验预览，但三个平台的下载按钮仍始终
 前往 GitHub 最新正式 Release。
 首屏产品界面默认正面展示，在精确指针设备上使用克制的 3D 倾斜、
@@ -26,7 +26,7 @@ FAQ 使用原生 details/summary，说明模型费用、数据流向、组件准
 ## 部署
 
 `.github/workflows/pages.yml` 会在 `main` 分支中的官网文件发生变化后，
-校验并部署整个 `sites` 目录。工作流也支持在 GitHub Actions 中手动运行。
+安装依赖、构建手册、校验并部署整个 `sites` 目录。工作流也支持在 GitHub Actions 中手动运行。
 
 首次部署前，需要在 GitHub 仓库的 **Settings > Pages** 中将 **Source**
 设为 **GitHub Actions**。站点使用项目 Pages 地址，不需要 `CNAME` 文件
@@ -42,17 +42,41 @@ FAQ 使用原生 details/summary，说明模型费用、数据流向、组件准
 
 ## 本地预览
 
+使用 Node.js 24，在仓库根目录安装依赖后运行 `npm run docs:dev`。访问终端显示的地址，在手册 base 下打开 `zh/` 或 `en/`，默认路径为 `/docs-dist/zh/` 和 `/docs-dist/en/`。Markdown 修改会触发热更新。
+
+预览构建产物时，先按下方命令使用本地 base 构建，再运行 `npm run docs:preview`；同样以终端显示的地址和端口为准，在 base 下打开 `zh/` 或 `en/`。
+
+### 维护手册
+
+- 章节顺序、双语标题和稳定 slug 维护在 `docs/manifest.ts`；VitePress 配置从该清单生成侧栏。
+- 中文正文放在 `docs/content/zh/`，英文正文放在 `docs/content/en/`。每个语言目录都必须包含 manifest 中的十二个 slug：`start`、`concepts`、`connections`、`runtimes`、`workbar`、`knowledge`、`notes`、`tasks`、`supervision`、`remote`、`privacy`、`troubleshooting`。
+- 每个章节文件以一个 `#` 标题开始，正文使用 `##` 和 `###`。除 `start.md` 的 `##` 章节标题外，其余文件的 `#` 标题应与 manifest 对应语言的标题一致。标题尽量使用普通文字。
+- VitePress 根目录为 `docs/`，`srcDir` 为 `content`。新增章节时添加两份 Markdown 并更新 manifest，同时更新校验脚本中的必需章节清单。
+- `zh/start.md` 和 `en/start.md` 分别重写为 `zh/index.md` 和 `en/index.md`，入口为 base 下的 `zh/` 和 `en/`；其余章节路径为 `zh/<slug>.html` 和 `en/<slug>.html`。
+- 配置维护在 `docs/.vitepress/config.mts`，使用默认主题的本地搜索、双语侧栏和原生语言切换，不维护自定义主题或布局。
+- 生产 base 为 `/goodbuddy/docs-dist/`，开发与预览默认使用 `/docs-dist/`，可用 `DOCS_BASE` 覆盖。构建和预览的 base 必须一致。开始页下载链接使用正式官网绝对地址：`https://mesalogo.github.io/goodbuddy/#download` 和 `https://mesalogo.github.io/goodbuddy/en.html#download`。
+- `docs-dist/` 是构建产物，已忽略，不手工编辑或提交。
+
+整站预览前先构建，以下命令在仓库根目录执行：
+
+```powershell
+$env:DOCS_BASE='/docs-dist/'
+npm run docs:build
+Remove-Item Env:DOCS_BASE
+```
+
 在仓库根目录运行：
 
 ```powershell
 python -m http.server 4173 --bind 127.0.0.1 --directory sites
 ```
 
-然后访问 <http://localhost:4173/>。也可以直接用浏览器打开 `sites/index.html`。
+然后访问官网 <http://127.0.0.1:4173/> 或 <http://127.0.0.1:4173/en.html>，中文手册 <http://127.0.0.1:4173/docs-dist/zh/>，英文手册 <http://127.0.0.1:4173/docs-dist/en/>。手册需要通过 HTTP 服务预览。
 
 ## 校验
 
 ```powershell
+npm run docs:build
 node sites/scripts/validate.mjs
 node --check sites/app.js
 node --check sites/language.js
@@ -68,6 +92,7 @@ node --test sites/scripts/app.test.mjs sites/scripts/release-index.test.mjs
 不可变 URL，并按发布生成器的实际命名绑定版本、平台、架构和格式。移动
 导航行为测试同时覆盖现代 MediaQueryList 监听与旧版 Safari 的 `addListener`
 回退。英文下载入口固定指向 GitHub Release。
+手册校验覆盖全部 24 个构建章节的服务端渲染标题与正文、双语侧栏、语言切换和本地资源，并检查 Markdown 标题与 manifest 一致。上述命令检查生产 base；若检查本地构建，运行校验脚本时也设置 `DOCS_BASE='/docs-dist/'`。
 
 ## 下载入口
 
@@ -173,10 +198,24 @@ SIL OFL 1.1 许可证位于 `assets/fonts/inter-OFL.txt`。
 焦点，切换回桌面宽度也会解除隔离。媒体查询监听兼容现代浏览器和使用
 `MediaQueryList.addListener` 的旧版 Safari。
 
+## 手册开发
+
+手册正文维护在 `docs/content/zh/` 与 `docs/content/en/`，章节清单维护在
+`docs/manifest.ts`，主题、语言、侧栏和本地搜索配置维护在 `docs/.vitepress/config.mts`。本地开发运行：
+
+```powershell
+npm run docs:dev
+```
+
+发布前清除本地 `DOCS_BASE` 覆盖并运行 `npm run docs:build`。VitePress 将中英文各十二个章节及资源生成到 `docs-dist/`，入口为 `docs-dist/zh/index.html` 和 `docs-dist/en/index.html`。Pages 工作流会在校验前自动构建；不要直接编辑构建产物。
+
 ## 文件
 
 - `index.html`：页面结构与简体中文内容
 - `en.html`：不包含信创适配文案的英文页面
+- `docs/content/zh/`、`docs/content/en/`：按功能拆分的中英文手册 Markdown 正文
+- `docs/manifest.ts`：手册章节顺序、标题和中英文映射
+- `docs/.vitepress/config.mts`：VitePress 默认主题、语言、路由、本地搜索和构建配置，输出到 `docs-dist/`
 - `styles.css`：语义令牌、浅深主题、焦点与响应式布局
 - `app.js`：主题、移动导航、当前章节和中文下载索引
 - `language.js`：浏览器语言自动选择与手动语言偏好

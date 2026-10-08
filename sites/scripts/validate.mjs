@@ -4,10 +4,28 @@ import { fileURLToPath } from "node:url";
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const errors = [];
-
+const chapterSlugs = [
+  "start",
+  "concepts",
+  "connections",
+  "runtimes",
+  "workbar",
+  "knowledge",
+  "notes",
+  "tasks",
+  "supervision",
+  "remote",
+  "privacy",
+  "troubleshooting",
+];
 const requiredFiles = [
   "index.html",
   "en.html",
+  "docs/manifest.ts",
+  ...chapterSlugs.flatMap((slug) => [`docs/content/zh/${slug}.md`, `docs/content/en/${slug}.md`]),
+  "docs/.vitepress/config.mts",
+  ...chapterSlugs.flatMap((slug) => ["zh", "en"].map((language) =>
+    `docs-dist/${language}/${slug === "start" ? "index" : slug}.html`)),
   "styles.css",
   "app.js",
   "language.js",
@@ -49,10 +67,12 @@ await Promise.all(
   }),
 );
 
-const [html, englishHtml, css, appJs, languageJs, releaseIndexJs, fontLicense] =
+const [html, englishHtml, docsManifest, docsConfig, css, appJs, languageJs, releaseIndexJs, fontLicense] =
   await Promise.all([
     readSiteFile("index.html"),
     readSiteFile("en.html"),
+    readSiteFile("docs/manifest.ts"),
+    readSiteFile("docs/.vitepress/config.mts"),
     readSiteFile("styles.css"),
     readSiteFile("app.js"),
     readSiteFile("language.js"),
@@ -63,6 +83,8 @@ const [html, englishHtml, css, appJs, languageJs, releaseIndexJs, fontLicense] =
 for (const [relativePath, content] of [
   ["index.html", html],
   ["en.html", englishHtml],
+  ["docs/manifest.ts", docsManifest],
+  ["docs/.vitepress/config.mts", docsConfig],
   ["styles.css", css],
   ["app.js", appJs],
   ["language.js", languageJs],
@@ -112,6 +134,59 @@ report(
   (englishHtml.match(/<h1[\s>]/g) ?? []).length === 1,
   "英文页面必须且只能包含一个 h1",
 );
+report(chapterSlugs.every((slug) => docsManifest.includes(`slug: '${slug}'`)), "手册 manifest 缺少章节或顺序不完整");
+const manifestEntries = [...docsManifest.matchAll(/slug: '([^']+)', title: \{ zh: '([^']+)', en: '([^']+)' \}/g)];
+report(manifestEntries.length === chapterSlugs.length && manifestEntries.every((entry, index) => entry[1] === chapterSlugs[index]), "手册 manifest 章节顺序不完整");
+const docsBase = process.env.DOCS_BASE || "/goodbuddy/docs-dist/";
+const docsOrigin = "https://docs.example";
+const renderedText = (value) => value
+  .replace(/<[^>]*>/g, "")
+  .replace(/&(?:amp|lt|gt|quot|apos|#39|nbsp);/g, (entity) => ({
+    "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"',
+    "&apos;": "'", "&#39;": "'", "&nbsp;": " ",
+  })[entity])
+  .replace(/\s+/g, " ").trim();
+for (const slug of chapterSlugs) {
+  const [zh, en] = await Promise.all([readSiteFile(`docs/content/zh/${slug}.md`), readSiteFile(`docs/content/en/${slug}.md`)]);
+  const manifestEntry = manifestEntries.find((entry) => entry[1] === slug);
+  const titleMatches = slug === "start"
+    ? manifestEntry && zh.includes(`## ${manifestEntry[2]}`) && en.includes(`## ${manifestEntry[3]}`)
+    : manifestEntry && zh.startsWith(`# ${manifestEntry[2]}`) && en.startsWith(`# ${manifestEntry[3]}`);
+  report(titleMatches, `${slug} 章节标题必须与 manifest 保持一致`);
+  report(zh.trim().length > 20 && en.trim().length > 20, `${slug} 章节正文过短`);
+  for (const [content, languageCode] of [[zh, "zh"], [en, "en"]]) {
+    const chapterPath = `${languageCode}/${slug === "start" ? "index" : slug}.html`;
+    const relativePath = `docs-dist/${chapterPath}`;
+    const built = await readSiteFile(relativePath);
+    if (!built) continue;
+    const pageUrl = new URL(`${docsBase}${chapterPath}`, docsOrigin);
+    const main = built.match(/<main\b[^>]*>([\s\S]*?)<\/main>/)?.[1] ?? "";
+    const heading = content.match(/^# (.+)$/m)?.[1];
+    const firstBodyLine = content.split(/\r?\n/).find((line) => line.trim() && !line.startsWith("#")) ?? "";
+    const paragraphText = firstBodyLine.replace(/^\s*(?:[-*+]|\d+\.)\s+/, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*`]/g, "");
+    report((main.match(/<h1\b/g) ?? []).length === 1 && renderedText(main.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/)?.[1] ?? "").includes(heading), `${relativePath} 缺少服务端渲染的 Markdown 主标题`);
+    report(paragraphText.length > 20 && renderedText(main).includes(renderedText(paragraphText)), `${relativePath} 缺少服务端渲染的章节正文`);
+    report(built.includes(`lang="${languageCode === "zh" ? "zh-CN" : "en"}"`), `${relativePath} 页面语言不正确`);
+    for (const entry of manifestEntries) {
+      const route = `${docsBase}${languageCode}/${entry[1] === "start" ? "" : `${entry[1]}.html`}`;
+      report(built.includes(`href="${route}"`) || (entry[1] === "start" && built.includes(`href="${route}index.html"`)), `${relativePath} 侧栏缺少章节：${entry[1]}`);
+      report(renderedText(built).includes(entry[languageCode === "zh" ? 2 : 3]), `${relativePath} 侧栏标题与 manifest 不一致：${entry[1]}`);
+    }
+    const otherLanguage = languageCode === "zh" ? "en" : "zh";
+    report(built.includes("VPNavBarTranslations") && built.includes(`href="${docsBase}${otherLanguage}/`), `${relativePath} 缺少原生语言切换入口`);
+    report(/<script\b[^>]*\bsrc="[^"]+\.js"/.test(built) && /<link\b[^>]*\brel="[^"]*stylesheet/.test(built), `${relativePath} 缺少脚本或样式资源`);
+    for (const [, link] of built.matchAll(/\s(?:href|src)="([^"]+)"/g)) {
+      if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/iu.test(link)) continue;
+      const target = new URL(link, pageUrl);
+      report(target.pathname.startsWith(docsBase), `${relativePath} 本地链接未使用手册 base：${link}`);
+      if (!target.pathname.startsWith(docsBase)) continue;
+      let localPath = decodeURIComponent(target.pathname.slice(docsBase.length));
+      if (localPath.endsWith("/") || !localPath) localPath += "index.html";
+      report((await stat(path.join(siteRoot, "docs-dist", localPath)).catch(() => null))?.isFile(), `${relativePath} 本地链接或资源不存在：${link}`);
+    }
+  }
+}
+report(/provider:\s*['"]local['"]/.test(docsConfig), "手册必须启用 VitePress 本地搜索");
 report(/class="skip-link"\s+href="#main-content"/.test(html), "缺少跳到主要内容链接");
 report(
   /class="skip-link"\s+href="#main-content"/.test(englishHtml),
@@ -618,7 +693,8 @@ for (const [relativePath, content] of [
   );
   totalLocalAssets += localAssets.length;
   for (const asset of localAssets) {
-    const cleanAsset = asset.split(/[?#]/, 1)[0].replace(/^\.\//, "");
+    let cleanAsset = asset.split(/[?#]/, 1)[0].replace(/^\.\//, "");
+    if (cleanAsset.endsWith("/")) cleanAsset += "index.html";
     try {
       const assetStats = await stat(path.join(siteRoot, cleanAsset));
       report(assetStats.isFile(), `${relativePath} 本地资源不是文件：${asset}`);
