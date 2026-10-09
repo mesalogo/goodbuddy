@@ -64,6 +64,7 @@ export const heartbeat = {
     stageUnknown: 'This historical run has no saved stage. Zero remaining sources does not mean the review was published.',
     coverage: '{{batches}} saved batches · {{remaining}} sources remaining',
     omittedSources: '{{count}} sources skipped because their conversations were deleted. Coverage includes only retained sources. If none remain, the review finishes without an empty report.',
+    revisedSources: '{{count}} sources changed during the review and were reviewed again at their latest version; batches of older versions were discarded.',
     navigationSaved: '{{count}} navigation merges saved',
     resumeMerge: 'Continue merging', resumeSave: 'Retry publication', runDetails: 'Run details and configuration',
     treePageHint: 'Expand projects and conversations to browse this page of saved batches. Tasks without a saved result are not listed here.',

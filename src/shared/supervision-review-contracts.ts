@@ -39,6 +39,8 @@ export type SupervisionReviewProgress = {
   remainingSources: number
   /** Sources excluded because their owning conversation was deleted; not reviewed coverage. */
   omittedSources?: number
+  /** Sources that changed during the run and were reviewed again at their newer version. */
+  revisedSources?: number
   complete: boolean
   restartRequired?: boolean
   inFlight?: number

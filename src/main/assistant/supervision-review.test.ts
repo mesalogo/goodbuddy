@@ -322,8 +322,60 @@ it('rejects changed source versions and rolls back offsets when batch persistenc
   expect(f.sql.prepare('SELECT processed_offset FROM supervision_review_sources').get()!.processed_offset).toBe(0)
   f.sql.exec('DROP TRIGGER fail_batch')
   f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('Changed', f.conversations[0]!.messages[0]!.id)
-  await expect(f.service().resume(runId)).rejects.toThrow('source changed')
-  expect(f.db.listSupervisionActivity()[0]!.status).toBe('failed')
+  const resumed = await f.service().resume(runId)
+  expect(resumed).toMatchObject({ status: 'completed', coverage: { revisedSources: 1, characters: 'Changed'.length, complete: true } })
+  expect(f.db.supervisionReviewStore().batches(runId).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['Changed'])
+})
+
+it('re-reviews a source rewritten while its batch is with the model and discards the stale answer', async () => {
+  const f = await fixture([['Original reply'], ['Other conversation']], { concurrency: 1 })
+  const target = f.conversations[0]!.messages[0]!.id
+  const base = f.summarize.getMockImplementation()!
+  let rewritten = false
+  f.summarize.mockImplementation(async input => {
+    if (!rewritten && input.evidence.some(item => item.locator?.messageId === target)) {
+      rewritten = true
+      f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('Original reply, continued after reconnect', target)
+    }
+    return { ...await base(input), summary: input.evidence.map(item => item.content).join(', ') }
+  })
+  const result = await f.service().run(request)
+  expect(result).toMatchObject({ status: 'completed', coverage: { revisedSources: 1, sources: 2, remainingSources: 0, complete: true } })
+  const contents = f.db.supervisionReviewStore().batches(result.runId!).flatMap(batch => batch.evidence).map(item => item.content)
+  expect(contents).toContain('Original reply, continued after reconnect')
+  expect(contents).not.toContain('Original reply')
+})
+
+it('discards a mixed leaf when one of its sources changes and reviews only current versions', async () => {
+  const f = await fixture([['A', 'B']], { concurrency: 1 })
+  const store = f.db.supervisionReviewStore()
+  const runId = f.db.startSupervisionRun(request)
+  store.initialize(runId, { request, config: f.config })
+  const conversation = f.conversations[0]!
+  const evidence = store.chunk(runId, conversation.projectId, conversation.id, f.config)
+  expect(evidence.map(item => item.content)).toEqual(['A', 'B'])
+  store.save(runId, conversation.projectId, conversation.id, evidence, empty)
+  store.saveNavigation(runId, 'dependent', [store.batches(runId)[0]!.id], empty)
+  f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('B2', conversation.messages[1]!.id)
+  f.db.failSupervisionRun(runId, 'Provider failed')
+  await f.service().resume(runId)
+  expect(store.navigation(runId, 'dependent')).toBeUndefined()
+  expect(store.batches(runId).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['A', 'B2'])
+  expect(store.progress(runId)).toMatchObject({ revisedSources: 1, complete: true })
+})
+
+it('omits a source that is no longer visible and resumes old runs failed by the earlier restart rule', async () => {
+  const f = await fixture([['Hidden'], ['Kept']], { concurrency: 1 })
+  const store = f.db.supervisionReviewStore()
+  const runId = f.db.startSupervisionRun(request)
+  store.initialize(runId, { request, config: f.config })
+  f.sql.prepare("UPDATE supervision_review_runs SET state_json = json_set(state_json, '$.restartRequired', json('true')) WHERE run_id = ?").run(runId)
+  f.db.failSupervisionRun(runId, `Review source changed or was removed (message:${f.conversations[0]!.messages[0]!.id}); start a new review`)
+  f.sql.prepare("UPDATE conversations SET status = 'archived' WHERE id = ?").run(f.conversations[0]!.id)
+  expect(store.progress(runId).restartRequired).toBeUndefined()
+  const result = await f.service().resume(runId)
+  expect(result).toMatchObject({ status: 'completed', coverage: { omittedSources: 1, sources: 1, complete: true } })
+  expect(result.output.summary).not.toContain('Hidden')
 })
 
 it('round-robins projects and conversations and keeps semantic chunks independent of database page size', async () => {
@@ -381,20 +433,19 @@ it('continues an existing automatic timeline checkpoint without rereading its su
   expect(f.sql.prepare('SELECT processed_offset FROM review_checkpoints').get()!.processed_offset).toBe(3300)
 })
 
-it('keeps old-version facts but does not permanently block automatic review after a source changes', async () => {
+it('lets the next automatic review continue a failed run whose source changed in the meantime', async () => {
   const f = await fixture([['x'.repeat(2500)]], { concurrency: 1 })
   f.summarize.mockImplementationOnce(async () => empty).mockRejectedValueOnce(new Error('Provider failed'))
   const automatic = { ...request, trigger: 'heartbeat' as const }
   await expect(f.service().run(automatic)).rejects.toThrow('Provider failed')
   const runId = f.db.listSupervisionActivity()[0]!.id
-  const saved = f.db.supervisionReviewStore().batches(runId)
+  expect(f.db.supervisionReviewStore().batches(runId)).toHaveLength(1)
   f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('New version', f.conversations[0]!.messages[0]!.id)
-  await expect(f.service().resume(runId)).rejects.toThrow('source changed')
-  expect(f.db.supervisionReviewStore().progress(runId).restartRequired).toBe(true)
   const result = await f.service().run(automatic)
-  expect(result.runId).not.toBe(runId)
-  expect(result.status).toBe('completed')
-  expect(f.db.supervisionReviewStore().batches(runId)).toEqual(saved)
+  expect(result.runId).toBe(runId)
+  expect(result).toMatchObject({ status: 'completed', coverage: { revisedSources: 1, characters: 'New version'.length } })
+  // The leaf of the old version is discarded; only the current version is published.
+  expect(f.db.supervisionReviewStore().batches(runId).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['New version'])
 })
 
 it('makes a manual review incremental by default and keeps explicit re-analysis out of shared progress', async () => {
@@ -455,7 +506,8 @@ it('omits a deleted conversation, its knowledge and tasks before resume without 
   const store = f.db.supervisionReviewStore()
   const kept = store.batches(runId).filter(batch => batch.conversationId !== deleted.id)
   expect(f.db.deleteLocalConversation(deleted.id)).toBe(true)
-  expect(store.progress(runId)).toMatchObject({ omittedSources: 3, sources: 1, batches: kept.length, restartRequired: undefined })
+  expect(store.progress(runId)).toMatchObject({ omittedSources: 3, sources: 1, batches: kept.length })
+  expect(store.progress(runId).restartRequired).toBeUndefined()
   expect(store.batches(runId)).toEqual(kept)
   f.sql.exec('DROP TRIGGER fail_publication')
   const calls = f.summarize.mock.calls.length
@@ -542,7 +594,7 @@ it('resets mixed-leaf survivors only and invalidates their dependent navigation 
   expect(store.batches(runId)).toContainEqual(kept)
 })
 
-it('recovers the earlier deletion failure but keeps archived and modified existing conversations as explicit failures', async () => {
+it('recovers earlier deletion failures and omits archived conversations instead of failing', async () => {
   const f = await fixture([['Source']])
   const store = f.db.supervisionReviewStore()
   const id = f.db.startSupervisionRun(request)
@@ -550,11 +602,11 @@ it('recovers the earlier deletion failure but keeps archived and modified existi
   f.sql.prepare("UPDATE supervision_review_runs SET state_json = json_set(state_json, '$.restartRequired', json('true')) WHERE run_id = ?").run(id)
   f.db.failSupervisionRun(id, `Review source changed or was removed (message:${f.conversations[0]!.messages[0]!.id}); start a new review`)
   f.sql.prepare('DELETE FROM conversations WHERE id = ?').run(f.conversations[0]!.id)
-  expect(store.progress(id).restartRequired).toBe(false)
+  expect(store.progress(id).restartRequired).toBeUndefined()
   await expect(f.service().resume(id)).resolves.toMatchObject({ status: 'no_change', coverage: { omittedSources: 1 } })
   const g = await fixture([['Archived source']])
   g.summarize.mockRejectedValueOnce(new Error('Pause'))
   await expect(g.service().run(request)).rejects.toThrow('Pause')
   g.sql.prepare("UPDATE conversations SET status = 'archived' WHERE id = ?").run(g.conversations[0]!.id)
-  await expect(g.service().resume(g.db.listSupervisionActivity()[0]!.id)).rejects.toThrow('source changed')
+  await expect(g.service().resume(g.db.listSupervisionActivity()[0]!.id)).resolves.toMatchObject({ status: 'no_change', coverage: { omittedSources: 1 } })
 })

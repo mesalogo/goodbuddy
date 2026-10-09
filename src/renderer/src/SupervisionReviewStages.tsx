@@ -24,6 +24,7 @@ export function SupervisionReviewStages({ row, stopping }: { row: SupervisionAct
     </ol>
     <p className="supervisor-activity__coverage">{t('activity.coverage', { batches: progress.batches, remaining: progress.remainingSources })}</p>
     {!!progress.omittedSources && <p className="supervisor-activity__note">{t('activity.omittedSources', { count: progress.omittedSources })}</p>}
+    {!!progress.revisedSources && <p className="supervisor-activity__note">{t('activity.revisedSources', { count: progress.revisedSources })}</p>}
     {!progress.complete && !progress.phase && <p className="supervisor-activity__note">{t('activity.stageUnknown')}</p>}
     {row.supervisionStatus === 'running' && !stopping && <p className="supervisor-activity__note">{t('reviewSettings.inFlight', { count: progress.inFlight ?? 0 })}</p>}
   </div>

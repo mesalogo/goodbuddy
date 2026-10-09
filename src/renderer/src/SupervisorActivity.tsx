@@ -229,6 +229,7 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
             </dl>
             {row.reviewProgress && <p>{t('reviewSettings.progress', { batches: row.reviewProgress.batches, characters: row.reviewProgress.characters, remaining: row.reviewProgress.remainingSources })}</p>}
             {!!row.reviewProgress?.omittedSources && <p>{t('activity.omittedSources', { count: row.reviewProgress.omittedSources })}</p>}
+            {!!row.reviewProgress?.revisedSources && <p>{t('activity.revisedSources', { count: row.reviewProgress.revisedSources })}</p>}
             {row.reviewProgress?.navigationNodes !== undefined && <p>{t('activity.navigationSaved', { count: row.reviewProgress.navigationNodes })}</p>}
             {row.summary && <p className="supervisor-activity__summary">{row.summary}</p>}
             {row.reviewProgress?.settings && <details><summary>{t('reviewSettings.configuration')}</summary>

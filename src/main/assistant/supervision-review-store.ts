@@ -10,7 +10,14 @@ import { setImmediate as yieldTurn } from 'node:timers/promises'
 export const TIMELINE_CHECKPOINT_SCOPE = 'timeline'
 
 export type ReviewConfiguration = SupervisionReviewSettings & { timeoutSeconds: number; concurrency: number; version: 1 }
-export type ReviewState = { request: SupervisionRunRequest; config: ReviewConfiguration; initializing?: boolean; restartRequired?: boolean; omittedSources?: number; phase?: SupervisionReviewProgress['phase']; stories?: SupervisionReviewProgress['stories'] }
+export type ReviewState = { request: SupervisionRunRequest; config: ReviewConfiguration; initializing?: boolean; restartRequired?: boolean; omittedSources?: number; revisedSources?: number; phase?: SupervisionReviewProgress['phase']; stories?: SupervisionReviewProgress['stories'] }
+
+/**
+ * A source that keeps changing while it is reviewed (for example an assistant reply
+ * that is still being rewritten) is re-frozen at most this many times per run in total;
+ * after that further changed sources are omitted so the run always terminates.
+ */
+export const MAX_REVISED_REVIEW_SOURCES = 200
 
 export class ReviewSourcesOmitted extends Error {}
 
@@ -235,26 +242,19 @@ export class SupervisionReviewStore {
   unfinished(request: SupervisionRunRequest): string | undefined {
     return this.db.prepare(`SELECT s.id FROM supervision_runs s JOIN supervision_review_runs r ON r.run_id = s.id
       WHERE s.trigger = 'heartbeat' AND s.scope_json = ? AND s.status IN ('failed', 'running')
-        AND (COALESCE(json_extract(r.state_json, '$.restartRequired'), 0) = 0 OR EXISTS (
-          SELECT 1 FROM supervision_review_sources source WHERE source.run_id = s.id AND source.conversation_id != ''
-            AND NOT EXISTS (SELECT 1 FROM conversations c WHERE c.id = source.conversation_id)
-            AND instr(s.error, '(' || source.source || ');') > 0))
       ORDER BY s.created_at LIMIT 1`).get(JSON.stringify(request.scope))?.id as string | undefined
   }
 
   resume(runId: string, signal?: AbortSignal): void {
     const state = this.prepareResume(runId)
     if (state.initializing) { this.initializeSources(runId, state, signal); return }
-    // Existing sources must still match their frozen versions.
+    // Sources changed since they were frozen are re-frozen and reprocessed; removed ones are omitted.
     let after = ''
     for (;;) {
       const rows = this.resumePage(runId, after)
       if (!rows.length) break
       const changed = this.changedSource(rows, signal)
-      if (changed) {
-        if (this.omitDeletedConversations(runId)) return this.resume(runId, signal)
-        this.sourceChanged(runId, changed)
-      }
+      if (changed) { this.reconcileSource(runId, changed); after = changed; continue }
       after = rows.at(-1)!.source
     }
   }
@@ -263,7 +263,8 @@ export class SupervisionReviewStore {
     const status = this.db.prepare('SELECT status FROM supervision_runs WHERE id = ?').get(runId)?.status
     if (status === 'cancelled') throw new Error('SUPERVISION_REVIEW_CANCELLED: 此回顾已取消，不能继续。请开始新的回顾。')
     this.omitDeletedConversations(runId)
-    if (this.load(runId).restartRequired) throw new Error('Review source changed or was removed; start a new review')
+    // Runs failed by an earlier release on a changed source are recoverable now.
+    this.db.prepare("UPDATE supervision_review_runs SET state_json = json_remove(state_json, '$.restartRequired') WHERE run_id = ?").run(runId)
     const changed = this.db.prepare(`UPDATE supervision_runs SET status = 'running', error = NULL, completed_at = NULL
       WHERE id = ? AND status IN ('paused', 'failed', 'running')`).run(runId)
     if (!changed.changes) throw new Error('SUPERVISION_REVIEW_NOT_RESUMABLE: 此回顾已完成或不存在，请开始新的回顾。')
@@ -286,10 +287,8 @@ export class SupervisionReviewStore {
       if (!rows.length) break
       const changed = await reader.changedSource(rows, signal)
       this.checkRunning(runId, signal)
-      if (changed) {
-        if (this.omitDeletedConversations(runId)) { after = ''; continue }
-        this.sourceChanged(runId, changed)
-      }
+      // The read snapshot may lag the writer; reconciliation re-reads the source here.
+      if (changed) { this.reconcileSource(runId, changed); after = changed; await yieldTurn(); continue }
       after = rows.at(-1)!.source
       await yieldTurn()
     }
@@ -349,8 +348,9 @@ export class SupervisionReviewStore {
       for (const metadata of rows) {
         const current = this.currentSource(metadata.source, metadata.processed_offset, Math.min(remaining, 8000))
         if (!current || current.current_revision !== metadata.revision) {
-          if (this.omitDeletedConversations(runId)) return this.chunk(runId, projectId, conversationId, config)
-          this.sourceChanged(runId, metadata.source)
+          // Re-freeze (or omit) the changed source, then rebuild the batch from current offsets.
+          this.reconcileSource(runId, metadata.source)
+          return this.chunk(runId, projectId, conversationId, config)
         }
         const row = { ...metadata, ...current }
         const locator = JSON.parse(row.locator) as Record<string, unknown>
@@ -387,17 +387,76 @@ export class SupervisionReviewStore {
     const reference = kind === 'knowledge' ? Number(key.slice(last + 1)) : 0
     // The view predicate pushes record_id into each branch's message/task primary-key lookup.
     return this.db.prepare(`SELECT type, owner, substr(title, 1, 240) AS title, occurred, alternate_time,
-      locator, review_revision(context) AS current_revision, substr(body, ? + 1, ?) AS content
+      locator, review_revision(context) AS current_revision, substr(body, ? + 1, ?) AS content, length(body) AS body_length
       FROM supervision_review_current WHERE record_id = ? AND reference_index = ? AND type = ?`).get(
         offset, characters, id, reference, kind === 'message' ? 'conversation' : kind) as {
           type: SupervisionEvidence['sourceType']; owner: string; title: string; occurred: string;
-          alternate_time: string; locator: string; current_revision: string; content: string
+          alternate_time: string; locator: string; current_revision: string; content: string; body_length: number
         } | undefined
   }
 
-  private sourceChanged(runId: string, source: string): never {
-    this.db.prepare("UPDATE supervision_review_runs SET state_json = json_set(state_json, '$.restartRequired', json('true')) WHERE run_id = ?").run(runId)
-    throw new Error(`Review source changed or was removed (${source}); start a new review`)
+  /**
+   * Brings one frozen source in line with the business database without failing the run.
+   * A changed source is re-frozen at its current revision and reviewed again from the start
+   * (leaves that used it are discarded with their navigation); a removed or no longer visible
+   * source is omitted. Returns false when the source already matches.
+   */
+  reconcileSource(runId: string, source: string): boolean {
+    const frozen = this.db.prepare('SELECT revision FROM supervision_review_sources WHERE run_id = ? AND source = ?').get(runId, source) as { revision: string } | undefined
+    if (!frozen) return false
+    const live = this.currentSource(source, 0, 0)
+    if (live?.current_revision === frozen.revision) return false
+    if (this.omitDeletedConversations(runId)) return true
+    const current = live && { revision: live.current_revision, length: Number(live.body_length) }
+    const state = this.load(runId)
+    const revise = current !== undefined && current.length > 0 && (state.revisedSources ?? 0) < MAX_REVISED_REVIEW_SOURCES
+    this.db.exec('SAVEPOINT reconcile_review_source')
+    try {
+      this.discardLeaves(runId, new Set([source]))
+      if (revise && current) {
+        this.db.prepare(`UPDATE supervision_review_sources SET revision = ?, length = ?, initial_offset = 0, processed_offset = 0
+          WHERE run_id = ? AND source = ?`).run(current.revision, current.length, runId, source)
+      } else this.db.prepare('DELETE FROM supervision_review_sources WHERE run_id = ? AND source = ?').run(runId, source)
+      this.db.prepare(`UPDATE supervision_review_runs SET state_json = json_set(json_remove(state_json, '$.restartRequired'),
+        '${revise ? '$.revisedSources' : '$.omittedSources'}', COALESCE(json_extract(state_json, '${revise ? '$.revisedSources' : '$.omittedSources'}'), 0) + 1,
+        '$.phase', 'extracting') WHERE run_id = ?`).run(runId)
+      this.db.exec('RELEASE reconcile_review_source')
+      return true
+    } catch (error) { this.db.exec('ROLLBACK TO reconcile_review_source; RELEASE reconcile_review_source'); throw error }
+  }
+
+  /**
+   * Discards every leaf containing an affected source, transitively over mixed leaves, and
+   * their dependent navigation. Surviving sources of those leaves restart at their initial offset.
+   */
+  private discardLeaves(runId: string, affected: Set<string>): void {
+    const invalid = new Set<string>()
+    let changed = true
+    while (changed) {
+      changed = false
+      for (let offset = 0;; offset += 10) {
+        const batches = this.db.prepare(`SELECT b.id, json_group_array(json_extract(item.value, '$.locator.source')) AS sources
+          FROM (SELECT id, evidence_json FROM supervision_review_batches WHERE run_id = ? ORDER BY rowid LIMIT 10 OFFSET ?) b,
+            json_each(b.evidence_json) item GROUP BY b.id`).all(runId, offset)
+        if (!batches.length) break
+        for (const batch of batches) {
+          const sources = JSON.parse(String(batch.sources)) as string[]
+          if (invalid.has(String(batch.id)) || !sources.some(source => affected.has(source))) continue
+          invalid.add(String(batch.id))
+          for (const source of sources) affected.add(source)
+          changed = true
+        }
+      }
+    }
+    const invalidIds = JSON.stringify([...invalid])
+    this.db.prepare(`WITH RECURSIVE invalid(id) AS (
+      SELECT value FROM json_each(?) UNION
+      SELECT n.id FROM supervision_review_navigation n, json_each(n.children_json) child
+        JOIN invalid i ON i.id = child.value WHERE n.run_id = ?
+    ) DELETE FROM supervision_review_navigation WHERE run_id = ? AND id IN (SELECT id FROM invalid)`)
+      .run(invalidIds, runId, runId)
+    this.db.prepare('DELETE FROM supervision_review_batches WHERE run_id = ? AND id IN (SELECT value FROM json_each(?))').run(runId, invalidIds)
+    for (const source of affected) this.db.prepare('UPDATE supervision_review_sources SET processed_offset = initial_offset WHERE run_id = ? AND source = ?').run(runId, source)
   }
 
   save(runId: string, projectId: string, conversationId: string, evidence: SupervisionEvidence[], output: SupervisionSummaryOutput): void {
@@ -405,11 +464,13 @@ export class SupervisionReviewStore {
     try {
       this.omitDeletedConversations(runId)
       if (!this.hasSources(runId, evidence)) { this.db.exec('COMMIT'); return }
+      // A source changed while the model was working: drop this answer, keep the run going.
+      const stale = evidence.find(item => this.currentSource(String(item.locator!.source), 0, 0)?.current_revision !== item.locator!.revision)
+      if (stale) { this.reconcileSource(runId, String(stale.locator!.source)); this.db.exec('COMMIT'); return }
       const advance = this.db.prepare(`UPDATE supervision_review_sources SET processed_offset = ?
         WHERE run_id = ? AND source = ? AND revision = ? AND processed_offset = ?`)
       for (const item of evidence) {
         const locator = item.locator!
-        if (this.currentSource(String(locator.source), 0, 0)?.current_revision !== locator.revision) this.sourceChanged(runId, String(locator.source))
         if (advance.run(Number(locator.end), runId, String(locator.source), String(locator.revision), Number(locator.start)).changes !== 1) {
           throw new Error('Review coverage has a gap or duplicate batch')
         }
@@ -438,13 +499,9 @@ export class SupervisionReviewStore {
     const batches = this.db.prepare(`SELECT COUNT(*) AS batches, COALESCE(SUM(characters), 0) AS characters
       FROM supervision_review_batches WHERE run_id = ?`).get(runId)!
     const state = this.load(runId)
-    const error = String(this.db.prepare('SELECT error FROM supervision_runs WHERE id = ?').get(runId)?.error ?? '')
-    const failedSource = /Review source changed or was removed \((.+)\);/.exec(error)?.[1]
-    const deletedFailure = failedSource && this.db.prepare(`SELECT 1 FROM supervision_review_sources s
-      WHERE s.run_id = ? AND s.source = ? AND s.conversation_id != ''
-        AND NOT EXISTS (SELECT 1 FROM conversations c WHERE c.id = s.conversation_id)`).get(runId, failedSource)
     const navigation = this.db.prepare('SELECT COUNT(*) AS count FROM supervision_review_navigation WHERE run_id = ?').get(runId)!
-    return { runId, omittedSources: state.omittedSources, phase: state.phase, stories: state.stories, navigationNodes: Number(navigation.count), settings: state.config, restartRequired: deletedFailure ? false : state.restartRequired, batches: Number(batches.batches), characters: Number(batches.characters), sources: Number(sources.sources),
+    // Changed sources are reconciled on resume, so no saved run requires a restart.
+    return { runId, omittedSources: state.omittedSources, revisedSources: state.revisedSources, phase: state.phase, stories: state.stories, navigationNodes: Number(navigation.count), settings: state.config, batches: Number(batches.batches), characters: Number(batches.characters), sources: Number(sources.sources),
       remainingSources: Number(sources.remaining), complete: this.db.prepare("SELECT id FROM supervision_runs WHERE id = ? AND status IN ('completed', 'no_change')").get(runId) !== undefined }
   }
 
@@ -467,41 +524,11 @@ export class SupervisionReviewStore {
     this.db.exec('SAVEPOINT omit_review_sources')
     try {
       const removed = new Set(deleted.map(row => String(row.source)))
-      const affected = new Set(removed)
-      const invalid = new Set<string>()
       // A mixed leaf cannot be filtered safely: its prose may combine every input.
       // Reset its surviving sources and discard their other leaves to avoid duplicate coverage.
-      let changed = true
-      while (changed) {
-        changed = false
-        for (let offset = 0;; offset += 10) {
-          const batches = this.db.prepare(`SELECT b.id, json_group_array(json_extract(item.value, '$.locator.source')) AS sources
-            FROM (SELECT id, evidence_json FROM supervision_review_batches WHERE run_id = ? ORDER BY rowid LIMIT 10 OFFSET ?) b,
-              json_each(b.evidence_json) item GROUP BY b.id`).all(runId, offset)
-          if (!batches.length) break
-          for (const batch of batches) {
-            const sources = JSON.parse(String(batch.sources)) as string[]
-            if (invalid.has(String(batch.id)) || !sources.some(source => affected.has(source))) continue
-            invalid.add(String(batch.id))
-            for (const source of sources) affected.add(source)
-            changed = true
-          }
-        }
-      }
-      const invalidIds = JSON.stringify([...invalid])
-      this.db.prepare(`WITH RECURSIVE invalid(id) AS (
-        SELECT value FROM json_each(?) UNION
-        SELECT n.id FROM supervision_review_navigation n, json_each(n.children_json) child
-          JOIN invalid i ON i.id = child.value WHERE n.run_id = ?
-      ) DELETE FROM supervision_review_navigation WHERE run_id = ? AND id IN (SELECT id FROM invalid)`)
-        .run(invalidIds, runId, runId)
-      this.db.prepare('DELETE FROM supervision_review_batches WHERE run_id = ? AND id IN (SELECT value FROM json_each(?))').run(runId, invalidIds)
-      for (const source of affected) this.db.prepare('UPDATE supervision_review_sources SET processed_offset = initial_offset WHERE run_id = ? AND source = ?').run(runId, source)
+      this.discardLeaves(runId, new Set(removed))
       for (const source of removed) this.db.prepare('DELETE FROM supervision_review_sources WHERE run_id = ? AND source = ?').run(runId, source)
-      const error = String(this.db.prepare('SELECT error FROM supervision_runs WHERE id = ?').get(runId)?.error ?? '')
-      const failedSource = /Review source changed or was removed \((.+)\);/.exec(error)?.[1]
-      if (failedSource && removed.has(failedSource)) this.db.prepare("UPDATE supervision_review_runs SET state_json = json_remove(state_json, '$.restartRequired') WHERE run_id = ?").run(runId)
-      this.db.prepare(`UPDATE supervision_review_runs SET state_json = json_set(state_json,
+      this.db.prepare(`UPDATE supervision_review_runs SET state_json = json_set(json_remove(state_json, '$.restartRequired'),
         '$.omittedSources', COALESCE(json_extract(state_json, '$.omittedSources'), 0) + ?, '$.phase', 'extracting') WHERE run_id = ?`).run(removed.size, runId)
       this.db.exec('RELEASE omit_review_sources')
       return true

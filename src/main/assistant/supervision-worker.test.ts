@@ -96,10 +96,15 @@ it('rebuilds a partially written manifest after restart and validates completed 
   await f.storage.resumeSupervisionReview(id, new AbortController().signal)
   expect(f.db.supervisionReviewStore().progress(id).sources).toBe(422)
   expect(f.db.supervisionReviewStore().load(id).initializing).toBeUndefined()
-  // Existing saved runs have no initialization flag and retain their frozen versions.
-  f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('Changed', f.conversations[0]!.messages[0]!.id)
-  await expect(f.storage.resumeSupervisionReview(id, new AbortController().signal)).rejects.toThrow('source changed')
-  expect(f.db.supervisionReviewStore().load(id).restartRequired).toBe(true)
+  // A source changed after freezing is re-frozen at its new version instead of failing the run.
+  const changedId = f.conversations[0]!.messages[0]!.id
+  f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('Changed', changedId)
+  await f.storage.resumeSupervisionReview(id, new AbortController().signal)
+  const store = f.db.supervisionReviewStore()
+  expect(store.progress(id)).toMatchObject({ sources: 422, revisedSources: 1 })
+  expect(store.load(id).restartRequired).toBeUndefined()
+  expect(f.sql.prepare('SELECT length, processed_offset FROM supervision_review_sources WHERE run_id = ? AND source = ?')
+    .get(id, `message:${changedId}`)).toMatchObject({ length: 'Changed'.length, processed_offset: 0 })
 })
 
 it.each(['paused', 'cancelled'] as const)('accepts %s during production initialization, holds the slot, and never calls the model', async status => {

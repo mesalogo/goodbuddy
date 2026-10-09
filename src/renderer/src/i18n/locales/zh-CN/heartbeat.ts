@@ -61,6 +61,7 @@ export const heartbeat = {
     stageUnknown: '此历史运行未保存阶段信息。剩余来源为零不代表回顾已发布。',
     coverage: '已保存 {{batches}} 批 · 剩余 {{remaining}} 个来源',
     omittedSources: '会话已删除，已跳过 {{count}} 个来源；覆盖统计仅包含保留的来源。没有剩余来源时结束回顾，不生成空报告。',
+    revisedSources: '回顾期间有 {{count}} 个来源被修改，已按最新内容重新回顾；旧版本的批次已丢弃。',
     navigationSaved: '已保存 {{count}} 次导航合并',
     resumeMerge: '继续合并摘要', resumeSave: '重试发布', runDetails: '运行详情与配置',
     treePageHint: '按项目、会话展开本页已保存批次。这里不包含尚未保存结果的任务。',
