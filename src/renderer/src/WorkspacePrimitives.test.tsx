@@ -364,7 +364,7 @@ describe('WorkspacePrimitives', () => {
 
   it('wraps native client and compaction actions without overlapping composer metadata', () => {
     expect(stylesheet).toMatch(
-      /\.composer-wrap\s*\{[^}]*var\(--space-2\);[^}]*background:\s*var\(--surface-raised\);/u
+      /\.composer-wrap\s*\{[^}]*var\(--space-2\);[^}]*\}/u
     )
     expect(stylesheet).toMatch(
       /\.composer-meta\s*\{[^}]*position:\s*relative;[^}]*min-height:\s*26px;[^}]*margin:\s*var\(--space-1\) 0 0;/u

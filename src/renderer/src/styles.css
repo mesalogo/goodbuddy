@@ -7907,7 +7907,9 @@ button > svg {
 }
 
 .composer-wrap {
+  --composer-fade-color: var(--surface-raised);
   position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -7915,16 +7917,21 @@ button > svg {
     var(--space-3)
     var(--chat-inline-padding)
     var(--space-2);
-  background: var(--surface-raised);
 }
 
 .composer-wrap::before {
   position: absolute;
   right: 0;
-  bottom: 100%;
+  bottom: calc(100% - var(--space-3));
   left: 0;
-  height: var(--space-4);
-  background: linear-gradient(to bottom, transparent, var(--surface-raised));
+  z-index: -1;
+  height: var(--space-6);
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--composer-fade-color) 72%, transparent) 55%,
+    var(--composer-fade-color)
+  );
   content: "";
   pointer-events: none;
 }
@@ -8400,7 +8407,7 @@ button > svg {
 .composer:focus-within {
   border-color: var(--accent);
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent),
     var(--shadow-card);
 }
 
@@ -17770,6 +17777,10 @@ textarea.field-control {
   .workspace-panel-scroll
 ) {
   background: var(--surface-canvas);
+}
+
+:root[data-theme='dark'] .composer-wrap {
+  --composer-fade-color: var(--surface-canvas);
 }
 
 :root[data-theme='dark'] :where(
