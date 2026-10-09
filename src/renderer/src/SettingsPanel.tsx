@@ -2181,6 +2181,7 @@ function SettingsPanelView({
                   tabIndex={activeTab === category.id ? 0 : -1}
                   type="button"
                 >
+                  <category.icon aria-hidden="true" size={16} strokeWidth={1.8} />
                   <strong>
                     {t(`categories.${category.translationKey}.label`)}
                   </strong>

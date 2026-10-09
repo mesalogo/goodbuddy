@@ -1,60 +1,84 @@
 import i18n from './i18n'
+import {
+  Bot,
+  FileText,
+  Gauge,
+  Info,
+  Palette,
+  Radio,
+  Server,
+  SlidersHorizontal,
+  Terminal,
+  Users,
+  Wrench
+} from 'lucide-react'
 
 export const settingsCategoryList = [
   {
     id: 'appearance',
     group: 'general',
-    translationKey: 'appearance'
+    translationKey: 'appearance',
+    icon: Palette
   },
   {
     id: 'platform-features',
     group: 'general',
-    translationKey: 'platformFeatures'
+    translationKey: 'platformFeatures',
+    icon: SlidersHorizontal
   },
   {
     id: 'model',
     group: 'execution',
-    translationKey: 'model'
+    translationKey: 'model',
+    icon: Bot
   },
   {
     id: 'context-control',
     group: 'execution',
-    translationKey: 'contextControl'
+    translationKey: 'contextControl',
+    icon: Gauge
   },
   {
     id: 'runtime',
     group: 'execution',
-    translationKey: 'runtime'
+    translationKey: 'runtime',
+    icon: Terminal
   },
   {
     id: 'ssh-hosts',
     group: 'execution',
-    translationKey: 'sshHosts'
+    translationKey: 'sshHosts',
+    icon: Server
   },
   {
     id: 'document-parsing',
     group: 'extensions',
-    translationKey: 'documentParsing'
+    translationKey: 'documentParsing',
+    icon: FileText
   },
   {
     id: 'channels',
     group: 'extensions',
-    translationKey: 'channels'
+    translationKey: 'channels',
+    icon: Radio
   },
   {
     id: 'roles',
     group: 'extensions',
-    translationKey: 'roles'
+    translationKey: 'roles',
+    icon: Users
   },
   {
     id: 'capabilities',
     group: 'extensions',
-    translationKey: 'capabilities'
+    translationKey: 'capabilities',
+    icon: Wrench
   },
   {
     id: 'about',
     group: 'system',
-    translationKey: 'about'
+    translationKey: 'about',
+    icon: Info
   }
 ] as const
 

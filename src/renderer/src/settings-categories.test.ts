@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { getSettingsCategoryList } from './settings-categories'
 
 describe('getSettingsCategoryList', () => {
+  it('defines an icon for every settings category', () => {
+    expect(
+      getSettingsCategoryList(true).every(({ icon }) => icon != null)
+    ).toBe(true)
+  })
+
   it('hides SSH hosts while Remote Projects is disabled', () => {
     expect(
       getSettingsCategoryList(false).map(({ id }) => id)
