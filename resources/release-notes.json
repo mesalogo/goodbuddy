@@ -2,6 +2,38 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.15.14",
+      "releasedAt": "2026-10-09",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**恢复历史监督回顾的继续操作**：对于旧版本遗留的“来源已变化或已移除”失败回顾，现在可以直接从监督活动中继续，而不必重新开始整个回顾。",
+            "**让变化中的来源能够有界地重新纳入回顾**：来源在回顾期间发生变化时，系统会重新冻结并处理有限次数；持续变化的来源会被省略，避免回顾无法结束。已删除、归档或不再可用的来源会按现有规则安全省略，同时保留其余来源的进度。",
+            "**改进监督活动状态**：监督活动继续保留暂停、失败、取消和已保存批次的状态，继续操作不会绕过项目范围和来源处理规则。",
+            "**让设置分类更易识别**：设置页的分类现在显示对应图标，帮助用户更快找到外观、模型、Runtime、通道和其他设置。"
+          ],
+          "notices": [
+            "本版本不新增数据库 schema，继续使用 schema 62。监督回顾可能产生模型调用费用；持续变化的来源会被有限次数地重新处理，之后自动省略。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Resume historical Supervisor reviews**: Reviews left in the legacy “source changed or was removed” failure state can now be continued directly from Supervisor Activity instead of restarting the entire review.",
+            "**Re-review changing sources within a bound**: When a source changes during a review, GoodBuddy re-freezes and processes it for a limited number of attempts. A source that keeps changing is then omitted so the review can finish. Deleted, archived, or unavailable sources continue to be omitted under the existing rules while surviving progress is retained.",
+            "**Improve Supervisor activity state**: Paused, failed, cancelled, and partially saved review states remain available, and resuming a review continues to follow the project-scope and source-processing rules.",
+            "**Make settings categories easier to scan**: Settings categories now show matching icons, helping users find Appearance, Models, Runtime, Channels, and other settings more quickly."
+          ],
+          "notices": [
+            "This release adds no database schema version and remains on schema 62. Supervisor reviews may use model calls; continuously changing sources are reprocessed a limited number of times and then omitted."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.13",
       "releasedAt": "2026-10-07",
       "notes": {
