@@ -6483,7 +6483,7 @@ button > svg {
 .chat-scroll-to-bottom {
   position: absolute;
   z-index: 2;
-  bottom: var(--space-3);
+  bottom: var(--space-6);
   left: 50%;
   display: grid;
   width: 40px;
@@ -7913,10 +7913,18 @@ button > svg {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  /* Overlap the message region by the top padding so messages run under the
+     fade right up to the composer outline instead of stopping at a solid band. */
+  margin-top: calc(-1 * var(--space-3));
   padding:
     var(--space-3)
     var(--chat-inline-padding)
     var(--space-2);
+  pointer-events: none;
+}
+
+.composer-wrap > * {
+  pointer-events: auto;
 }
 
 .composer-wrap::before {
@@ -7925,13 +7933,28 @@ button > svg {
   bottom: calc(100% - var(--space-3));
   left: 0;
   z-index: -1;
-  height: var(--space-6);
+  height: var(--space-4);
   background: linear-gradient(
     to bottom,
     transparent,
-    color-mix(in srgb, var(--composer-fade-color) 72%, transparent) 55%,
+    color-mix(in srgb, var(--composer-fade-color) 55%, transparent) 35%,
+    color-mix(in srgb, var(--composer-fade-color) 90%, transparent) 70%,
     var(--composer-fade-color)
   );
+  content: "";
+  pointer-events: none;
+}
+
+/* Below the composer the wrap stays opaque so nothing shows through its
+   bottom padding and metadata row. */
+.composer-wrap::after {
+  position: absolute;
+  top: var(--space-3);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: -1;
+  background: var(--composer-fade-color);
   content: "";
   pointer-events: none;
 }
@@ -17773,7 +17796,6 @@ textarea.field-control {
   .settings-page,
   .workspace,
   .chat,
-  .composer-wrap,
   .workspace-panel-scroll
 ) {
   background: var(--surface-canvas);
