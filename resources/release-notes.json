@@ -2,6 +2,34 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.0",
+      "releasedAt": "2026-10-09",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**在输入框中选择专家或团队角色**：发送消息前可以直接在输入框顶部选择专家或团队角色，选择入口更接近实际发送操作。每个会话独立保存自己的选择，切换会话时不会误用其他会话的角色。",
+            "**保留历史消息使用的角色**：已发送的回复会保留请求当时使用的专家或团队角色，即使之后重命名或删除该角色，历史记录仍能准确显示当时的使用情况。"
+          ],
+          "fixes": [],
+          "notices": [
+            "本版本不新增数据库 schema，Agent 0.15.6 无需更新。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Choose an expert or team role from the composer**: Select an expert or team role directly at the top of the composer before sending a message. Each conversation keeps its own selection, so switching conversations does not accidentally carry over another conversation’s role.",
+            "**Preserve the role used by historical messages**: Sent replies retain the expert or team role selected when the request was made. Later renaming or removing that role does not make existing history lose the context of how it was produced."
+          ],
+          "fixes": [],
+          "notices": [
+            "This release adds no database schema version. Agent 0.15.6 does not need to be updated."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.15.14",
       "releasedAt": "2026-10-09",
       "notes": {

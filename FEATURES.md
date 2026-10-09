@@ -983,9 +983,12 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.15.14`; Agent `0.15.6` remains paired with Desktop `0.15.14`, with
+- The current Desktop candidate is `0.16.0`; Agent `0.15.6` remains paired with Desktop `0.16.0`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.16.0` moves expert and team-role selection into the composer and persists the
+  selection per conversation. Historical messages retain the role used for their request,
+  including after a role is renamed or removed; schema remains unchanged.
 - Desktop `0.15.14` restores continuation for legacy Supervisor reviews that failed because a
   source changed or was removed. Sources that keep changing are re-frozen only within a bounded
   number of attempts and then omitted so the review can finish while retaining surviving progress.
