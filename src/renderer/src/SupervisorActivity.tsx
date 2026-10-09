@@ -186,7 +186,7 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
                 <button type="button" className="secondary-button" disabled={!!pending || !!stoppingKind} onClick={() => void control(row, 'pause')}>{t('reviewSettings.pause')}</button>
                 <button type="button" className="danger-ghost" disabled={!!pending || !!stoppingKind} onClick={() => void control(row, 'cancel')}>{t('reviewSettings.cancel')}</button>
               </>}
-              {!stoppingKind && !row.reviewProgress.complete && !row.reviewProgress.restartRequired && (row.supervisionStatus === 'paused' || row.supervisionStatus === 'failed') && <button type="button" className="secondary-button" disabled={!!pending || execution.active} onClick={() => void control(row, 'resume')}>{t(row.reviewProgress.phase === 'summarizing' ? 'activity.resumeMerge' : row.reviewProgress.phase === 'saving' ? 'activity.resumeSave' : 'reviewSettings.resume')}</button>}
+              {!stoppingKind && !row.reviewProgress.complete && (row.supervisionStatus === 'paused' || row.supervisionStatus === 'failed') && <button type="button" className="secondary-button" disabled={!!pending || execution.active} onClick={() => void control(row, 'resume')}>{t(row.reviewProgress.phase === 'summarizing' ? 'activity.resumeMerge' : row.reviewProgress.phase === 'saving' ? 'activity.resumeSave' : 'reviewSettings.resume')}</button>}
               <button type="button" className="secondary-button" aria-expanded={expanded === row.id} aria-controls={`batches-${row.id}`} onClick={() => setExpanded(expanded === row.id ? undefined : row.id)}>{t('reviewSettings.facts')}</button>
             </div>
           </>}

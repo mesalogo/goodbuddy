@@ -50,6 +50,19 @@ it.each(['zh-CN', 'en-US'] as const)('retains operational failure details and re
   expect(screen.getByRole('button', { name: copy.reviewSettings.resume })).toBeEnabled()
 })
 
+it('allows continuing a legacy source-change failure', async () => {
+  const copy = i18nResources['zh-CN'].heartbeat
+  const resume = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('goodbuddy', { supervision: { activity: vi.fn().mockResolvedValue([{
+    ...row, status: 'failed', supervisionStatus: 'failed',
+    error: 'Review source changed or was removed',
+    reviewProgress: { runId: 'saved-run', batches: 1, characters: 1000, sources: 2, remainingSources: 1, restartRequired: true, complete: false }
+  }]), resume } })
+  render(<SupervisorActivity active projects={[]} onOpenResult={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: copy.reviewSettings.resume }))
+  await waitFor(() => expect(resume).toHaveBeenCalledWith({ runId: 'saved-run' }))
+})
+
 it('shows durable progress, pauses and continues the same run, and expands retained facts', async () => {
   const progress = { runId: 'saved-run', batches: 1, characters: 1000, sources: 2, remainingSources: 1, complete: false }
   const activity = vi.fn().mockResolvedValue([{ ...row, reviewProgress: progress }])
