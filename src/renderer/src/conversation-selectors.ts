@@ -151,7 +151,7 @@ export function useConversationActivitySummary(
 export type ActiveConversationView = Pick<
   Conversation,
   | "id" | "title" | "projectId" | "runtimeSelection" | "knowledgeLibraryIds"
-  | "knowledgeRetrievalMode" | "remote" | "branch" | "contextMetrics" | "contextCompressionState"
+  | "knowledgeRetrievalMode" | "selectedExpertId" | "remote" | "branch" | "contextMetrics" | "contextCompressionState"
 > & {
   /** Untouched greeting-only conversation: shown with the default title. */
   unused: boolean;
@@ -188,6 +188,7 @@ export function selectActiveConversationView(
     runtimeSelection: conversation.runtimeSelection,
     knowledgeLibraryIds: conversation.knowledgeLibraryIds,
     knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+    selectedExpertId: conversation.selectedExpertId,
     remote: conversation.remote,
     branch: conversation.branch,
     contextMetrics: conversation.contextMetrics,
@@ -214,6 +215,7 @@ export function sameActiveConversationView(
   return left.id === right.id && left.title === right.title &&
     left.projectId === right.projectId &&
     left.knowledgeRetrievalMode === right.knowledgeRetrievalMode &&
+    left.selectedExpertId === right.selectedExpertId &&
     left.unused === right.unused && left.historyLoaded === right.historyLoaded &&
     left.running === right.running && left.messageCount === right.messageCount &&
     sameArrayItems(left.knowledgeLibraryIds ?? [], right.knowledgeLibraryIds ?? []) &&

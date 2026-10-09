@@ -364,6 +364,7 @@ type MessageMetadata = {
   contextCompressions?: ConversationSnapshot['messages'][number]['contextCompressions']
   tools?: ConversationSnapshot['messages'][number]['tools']
   subagents?: ConversationSnapshot['messages'][number]['subagents']
+  expert?: ConversationMessage['expert']
   sources?: string[]
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
   knowledgeRetrieval?: ConversationSnapshot['messages'][number]['knowledgeRetrieval']
@@ -1238,6 +1239,7 @@ const conversationContextStateSchema = conversationSnapshotSchema.pick({
   knowledgeLibraryIds: true,
   knowledgeRetrievalMode: true,
   storyGraphEnabled: true,
+  selectedExpertId: true,
   contextMetrics: true,
   contextCompressionState: true
 })
@@ -1246,7 +1248,7 @@ function parseConversationContextState(
   value: string | null
 ): Pick<
   ConversationSnapshot,
-  'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'contextMetrics' | 'contextCompressionState'
+  'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'selectedExpertId' | 'contextMetrics' | 'contextCompressionState'
 > {
   if (!value) {
     return {}
@@ -1264,18 +1266,20 @@ function parseConversationContextState(
 function serializeConversationContextState(
   conversation: Pick<
     ConversationSnapshot,
-    'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'contextMetrics' | 'contextCompressionState'
+    'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'selectedExpertId' | 'contextMetrics' | 'contextCompressionState'
   >
 ): string | null {
   return conversation.knowledgeLibraryIds !== undefined ||
     conversation.knowledgeRetrievalMode !== undefined ||
     conversation.storyGraphEnabled !== undefined ||
+    conversation.selectedExpertId !== undefined ||
     conversation.contextMetrics ||
     conversation.contextCompressionState
     ? JSON.stringify({
         knowledgeLibraryIds: conversation.knowledgeLibraryIds,
         knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
         storyGraphEnabled: conversation.storyGraphEnabled,
+        selectedExpertId: conversation.selectedExpertId,
         contextMetrics: conversation.contextMetrics,
         contextCompressionState: conversation.contextCompressionState
       })
@@ -1346,6 +1350,7 @@ function toConversationSnapshot(
         contextCompressions: metadata.contextCompressions,
         tools: metadata.tools,
         subagents: metadata.subagents,
+        expert: metadata.expert,
         sources: metadata.sources,
         sourceReferences: metadata.sourceReferences,
         knowledgeRetrieval: metadata.knowledgeRetrieval,
@@ -1377,6 +1382,7 @@ function serializeConversationMessageMetadata(
     contextCompressions: message.contextCompressions,
     tools: message.tools,
     subagents: message.subagents,
+    expert: message.expert,
     sources: message.sources,
     sourceReferences: message.sourceReferences,
     knowledgeRetrieval: message.knowledgeRetrieval,
@@ -1784,6 +1790,7 @@ function storedRemoteAssistantMessage(
     contextCompressions: metadata.contextCompressions,
     tools: metadata.tools,
     subagents: metadata.subagents,
+    expert: metadata.expert,
     sources: metadata.sources,
     sourceReferences: metadata.sourceReferences,
     knowledgeRetrieval: metadata.knowledgeRetrieval,
@@ -5638,6 +5645,7 @@ export class AssistantDatabase {
         contextCompressions: metadata.contextCompressions,
         tools: metadata.tools,
         subagents: metadata.subagents,
+        expert: metadata.expert,
         sources: metadata.sources,
         sourceReferences: metadata.sourceReferences,
         knowledgeRetrieval: metadata.knowledgeRetrieval,

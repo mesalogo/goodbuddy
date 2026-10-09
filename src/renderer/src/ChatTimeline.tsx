@@ -73,6 +73,7 @@ export type Message = {
   contextCompressions?: ConversationMessage['contextCompressions']
   tools?: ToolActivity[]
   subagents?: SubagentActivity[]
+  expert?: ConversationMessage['expert']
   approval?: {
     id: string
     taskId?: string
@@ -754,6 +755,14 @@ function ChatMessageRowView({
               : t('chat.status.waitingForProgress'))
     : message.status
 
+  const roleCaption = message.role !== 'assistant'
+    ? undefined
+    : message.expert?.kind === 'expert'
+      ? message.expert.name
+      : message.expert?.kind === 'team'
+        ? t('composer.experts.team')
+        : undefined
+
   return (
     <>
     <article
@@ -768,7 +777,7 @@ function ChatMessageRowView({
           <UserRound size={18} />
         )}
       </div>
-      <div className="message__header">
+      <div className={`message__header${roleCaption ? ' message__header--with-role' : ''}`}>
         <div className="message__meta">
           <strong>
             {message.role === 'assistant' ? 'GoodBuddy' : t('chat.user')}
@@ -786,6 +795,11 @@ function ChatMessageRowView({
           )}
           <span>{formatTime(message.createdAt, locale)}</span>
         </div>
+        {roleCaption && (
+          <small className="message__role" title={t('composer.expertLabel')}>
+            {roleCaption}
+          </small>
+        )}
       </div>
       <div className="message__body">
         {message.attachments && message.attachments.length > 0 && (

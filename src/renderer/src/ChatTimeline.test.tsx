@@ -180,6 +180,23 @@ describe('ChatTimeline', () => {
     }
   })
 
+  it('keeps the GoodBuddy name and shows the saved role as a caption below it', () => {
+    const props = { ...callbacks, artifactById: new Map(), conversationId: 'role', hiddenMessageCount: 0,
+      isUnusedConversation: false, locale: 'zh-CN' as const, messageStartIndex: 0, totalMessageCount: 3 }
+    const messages: Message[] = [
+      { id: 'expert', role: 'assistant', content: 'a', createdAt: 1, state: 'complete',
+        expert: { kind: 'expert', id: '00000000-0000-4000-8000-000000000901', name: '代码审查专家' } },
+      { id: 'team', role: 'assistant', content: 'b', createdAt: 2, state: 'complete', expert: { kind: 'team' } },
+      { id: 'plain', role: 'assistant', content: 'c', createdAt: 3, state: 'complete' }
+    ]
+    const view = render(<ChatTimeline {...props} messages={messages} />)
+    const articles = view.container.querySelectorAll('article.message')
+    expect([...articles].map(article => article.querySelector('.message__meta strong')?.textContent))
+      .toEqual(['GoodBuddy', 'GoodBuddy', 'GoodBuddy'])
+    expect([...articles].map(article => article.querySelector('.message__role')?.textContent ?? null))
+      .toEqual(['代码审查专家', '专家团队（并行）', null])
+  })
+
   it('captures only nonempty settled assistant replies, including incomplete replies', () => {
     const onAddToNote = vi.fn()
     const messages: Message[] = [

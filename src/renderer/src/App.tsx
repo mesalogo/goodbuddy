@@ -842,6 +842,7 @@ function toConversationSnapshots(
       knowledgeLibraryIds: conversation.knowledgeLibraryIds,
       knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
       storyGraphEnabled: conversation.storyGraphEnabled,
+      selectedExpertId: conversation.selectedExpertId,
       contextMetrics: conversation.contextMetrics,
       contextCompressionState: conversation.contextCompressionState,
       ...(conversation.branch ? { branch: conversation.branch } : {}),
@@ -1153,7 +1154,6 @@ function App(): React.JSX.Element {
   const [assistantExperts, setAssistantExperts] = useState<AssistantExpert[]>(
     [],
   );
-  const [selectedExpertId, setSelectedExpertId] = useState("");
   const [activeProjectId, setActiveProjectId] = useState("");
   const activeProjectIdRef = useRef(activeProjectId);
   const workspaceChangesRequestRef = useRef(0);
@@ -2280,6 +2280,34 @@ function App(): React.JSX.Element {
   // Header fields of the active conversation, value-compared: message updates
   // (streaming flushes, tool events) do not re-render App.
   const activeConversation = useActiveConversationView(conversationStore, activeId);
+  // The role follows the conversation; a deleted role reads as the general
+  // assistant.
+  const resolveExpertSelection = useCallback(
+    (value: string | undefined): string =>
+      !value || value === "team" ||
+      assistantExperts.some((expert) => expert.id === value)
+        ? value ?? ""
+        : "",
+    [assistantExperts],
+  );
+  const selectedExpertId = resolveExpertSelection(activeConversation?.selectedExpertId);
+  const setSelectedExpertId = useCallback(
+    (value: string): void => {
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === activeId &&
+          (conversation.selectedExpertId ?? "") !== value
+            ? {
+                ...conversation,
+                selectedExpertId: value ? value : undefined,
+                updatedAt: Date.now(),
+              }
+            : conversation,
+        ),
+      );
+    },
+    [activeId, setConversations],
+  );
   const enabledKnowledgeLibraryIds =
     activeConversation?.knowledgeLibraryIds ?? [];
   const setEnabledKnowledgeLibraryIds = useCallback(
@@ -5113,7 +5141,7 @@ function App(): React.JSX.Element {
         : (queuedInput.expertId ?? "")
       : runtime?.capability === "image-generation"
         ? ""
-        : selectedExpertId;
+        : resolveExpertSelection(conversationSnapshot.selectedExpertId);
     const knowledgeLibraryIdsSnapshot =
       queuedInput?.knowledgeLibraryIds ?? enabledKnowledgeLibraryIds;
     const smartRoutingSnapshot =
@@ -5210,6 +5238,14 @@ function App(): React.JSX.Element {
     const executionPrompt = memoryContext
       ? `${prompt}\n\n${memoryContext}`
       : prompt;
+    const selectedExpert = selectedExpertSnapshot && selectedExpertSnapshot !== "team"
+      ? assistantExperts.find((expert) => expert.id === selectedExpertSnapshot)
+      : undefined;
+    const expertSnapshot: Message["expert"] = selectedExpertSnapshot === "team"
+      ? { kind: "team" }
+      : selectedExpert
+        ? { kind: "expert", id: selectedExpert.id, name: selectedExpert.name.trim().slice(0, 80) }
+        : undefined;
     const assistantMessage: Message = {
       id: crypto.randomUUID(),
       role: "assistant",
@@ -5218,6 +5254,7 @@ function App(): React.JSX.Element {
       createdAt: Date.now(),
       state: "streaming",
       status: t("chat.status.preparingRequest"),
+      ...(expertSnapshot ? { expert: expertSnapshot } : {}),
     };
 
     activeRuns.current.set(requestId, {
@@ -6512,16 +6549,10 @@ function App(): React.JSX.Element {
     onClose: () => {
       commitView(viewRef.current);
     },
+    // Each conversation keeps its role; one that no longer resolves reads as
+    // the general assistant (see resolveExpertSelection).
     onExpertsChanged: (experts: AssistantExpert[]) => {
       setAssistantExperts(experts);
-      if (
-        (selectedExpertId === "team" && experts.length < 2) ||
-        (selectedExpertId &&
-          selectedExpertId !== "team" &&
-          !experts.some((expert) => expert.id === selectedExpertId))
-      ) {
-        setSelectedExpertId("");
-      }
     },
     onRemoteProjectsEnabledChange: handleRemoteProjectsEnabledChange,
     onProjectsDeleted: removeProjectsFromUi,

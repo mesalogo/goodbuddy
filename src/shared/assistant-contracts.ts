@@ -519,6 +519,21 @@ export type ConversationAnsweredQuestion = z.infer<
   typeof conversationAnsweredQuestionSchema
 >
 
+export const conversationMessageExpertSchema = z.union([
+  z
+    .object({
+      kind: z.literal('expert'),
+      id: assistantIdSchema,
+      name: z.string().trim().min(1).max(80)
+    })
+    .strict(),
+  z.object({ kind: z.literal('team') }).strict()
+])
+
+export type ConversationMessageExpert = z.infer<
+  typeof conversationMessageExpertSchema
+>
+
 export const conversationMessageSchema = z
   .object({
     id: assistantIdSchema,
@@ -541,6 +556,11 @@ export const conversationMessageSchema = z
       .optional(),
     tools: z.array(conversationToolActivitySchema).optional(),
     subagents: z.array(conversationSubagentActivitySchema).optional(),
+    /**
+     * Snapshot of the role selected when the reply was requested, so later
+     * renames or deletions do not rewrite history.
+     */
+    expert: conversationMessageExpertSchema.optional(),
     sources: z.array(z.string().max(8_192)).max(100).optional(),
     sourceReferences: z
       .array(
@@ -720,6 +740,8 @@ export const conversationSnapshotSchema = z
     knowledgeLibraryIds: z.array(assistantIdSchema).max(20).optional(),
     knowledgeRetrievalMode: z.enum(['auto', 'always']).optional(),
     storyGraphEnabled: z.boolean().optional(),
+    /** Role picked in the composer for this conversation; absent means the general assistant. */
+    selectedExpertId: z.union([assistantIdSchema, z.literal('team')]).optional(),
     contextMetrics: conversationContextMetricsSchema.optional(),
     contextCompressionState:
       conversationContextCompressionStateSchema.optional(),

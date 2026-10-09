@@ -653,6 +653,22 @@ export const Composer = memo(function Composer({
           </div>
         )}
         <div className="composer__input">
+          <div className="composer__input-header">
+            <ComposerMenuSelect
+              ariaLabel={t("composer.expertLabel")}
+              className="composer-picker--expert composer-picker--chip"
+              disabled={
+                isRunning ||
+                runtime?.capability === "image-generation"
+              }
+              icon={<Bot aria-hidden="true" size={13} />}
+              menuOpen={composerMenuOpen === "expert"}
+              onChange={actions.selectExpert}
+              onOpenChange={setExpertMenuOpen}
+              options={assistantExpertOptions}
+              value={selectedExpertId}
+            />
+          </div>
           <ComposerDraftText
             conversationId={conversationId}
             store={composerDrafts}
@@ -1024,20 +1040,6 @@ export const Composer = memo(function Composer({
                   </div>
                 </>
               )}
-              <ComposerMenuSelect
-                ariaLabel={t("composer.expertLabel")}
-                className="composer-picker--expert"
-                disabled={
-                  isRunning ||
-                  runtime?.capability === "image-generation"
-                }
-                icon={<Bot aria-hidden="true" size={15} />}
-                menuOpen={composerMenuOpen === "expert"}
-                onChange={actions.selectExpert}
-                onOpenChange={setExpertMenuOpen}
-                options={assistantExpertOptions}
-                value={selectedExpertId}
-              />
               <div className="runtime-picker">
                 <button
                   aria-expanded={runtimeMenuOpen}

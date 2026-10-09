@@ -134,6 +134,27 @@ it('persists the story graph switch per conversation without schema migration or
   } finally { database.close() }
 })
 
+it('persists the composer role per conversation and the role snapshot on replies', async () => {
+  const database = await createDatabase()
+  const expertId = randomUUID()
+  const header = { id: randomUUID(), title: 'Role preference', updatedAt: 1000, selectedExpertId: expertId }
+  const team = { id: randomUUID(), title: 'Team preference', updatedAt: 1000, selectedExpertId: 'team' as const }
+  const plain = { id: randomUUID(), title: 'No preference', updatedAt: 1000 }
+  const reply = { id: randomUUID(), role: 'assistant' as const, content: 'Reviewed', state: 'complete' as const,
+    createdAt: 900, expert: { kind: 'expert' as const, id: expertId, name: '代码审查专家' } }
+  try {
+    database.saveLocalConversations([{ header, messages: [reply] }, { header: team, messages: [] }, { header: plain, messages: [] }])
+    database.close()
+    database.initialize('C:\\Workspace')
+    expect(database.getConversation(header.id)).toMatchObject({ selectedExpertId: expertId, messages: [{ expert: reply.expert }] })
+    expect(database.getConversation(team.id).selectedExpertId).toBe('team')
+    expect(database.getConversation(plain.id).selectedExpertId).toBeUndefined()
+    database.saveLocalConversations([{ header: { ...header, selectedExpertId: undefined, updatedAt: 1001 }, messages: [] }])
+    expect(database.getConversation(header.id).selectedExpertId).toBeUndefined()
+    expect(localConversationHeaderSchema.safeParse({ ...plain, selectedExpertId: 'not-an-id' }).success).toBe(false)
+  } finally { database.close() }
+})
+
 it('persists conversation pins without changing timestamps or allowing autosaves to overwrite them', async () => {
   const database = await createDatabase()
   const header = { id: randomUUID(), title: 'Pinned conversation', updatedAt: 1000 }

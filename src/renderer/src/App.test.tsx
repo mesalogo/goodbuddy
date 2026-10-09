@@ -8751,13 +8751,16 @@ describe("App", () => {
     const conversationSettings = within(composer!).getByRole("group", {
       name: "对话设置",
     });
-    // Order: context sources, expert, Runtime, then Runtime-specific settings.
+    // The role chip sits in the input's top-left corner, before the textarea.
+    const inputArea = composer!.querySelector<HTMLElement>(".composer__input")!;
+    const expertTrigger = within(inputArea).getByRole("button", { name: "专家角色：通用助手" });
+    expect(expertTrigger.compareDocumentPosition(screen.getByLabelText("向 GoodBuddy 提问")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(conversationSettings).queryByRole("button", { name: "专家角色：通用助手" })).not.toBeInTheDocument();
+    // Toolbar order: context sources, Runtime, then Runtime-specific settings.
     const contextTrigger = within(conversationSettings).getByRole("button", { name: "故事图谱与知识库" });
-    const expertTrigger = within(conversationSettings).getByRole("button", { name: "专家角色：通用助手" });
     const runtimeTrigger = within(conversationSettings).getByRole("button", { name: /默认模型/u });
     expect(contextTrigger).toHaveAttribute("aria-expanded", "false");
-    expect(contextTrigger.compareDocumentPosition(expertTrigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(expertTrigger.compareDocumentPosition(runtimeTrigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(contextTrigger.compareDocumentPosition(runtimeTrigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
       within(conversationSettings).queryByRole("button", {
         name: /工作模式/u,
@@ -12583,7 +12586,8 @@ describe("App", () => {
 
   it("can dispatch a request to the parallel expert team", async () => {
     render(<App />);
-
+    // The role belongs to the loaded conversation.
+    await screen.findByLabelText("发送");
     selectComposerOption("专家角色", "专家团队（并行）");
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "制定发布计划" },
@@ -12669,6 +12673,43 @@ describe("App", () => {
         }),
       ),
     );
+  });
+
+  it("keeps the role per conversation and snapshots it on the reply", async () => {
+    const expertId = "00000000-0000-4000-8000-000000000511";
+    vi.mocked(api.experts.list).mockResolvedValueOnce([
+      {
+        id: expertId,
+        name: "审查专家",
+        description: "代码审查",
+        systemInstructions: "Review code.",
+        routingKeywords: [],
+        enabled: true,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+    const { container } = render(<App />);
+    await waitFor(() => expect(api.experts.list).toHaveBeenCalled());
+    const firstTitle = container.querySelector(".conversation-item--active .conversation-item__title")?.textContent;
+    const expertMenu = openComposerMenu("专家角色");
+    fireEvent.click(
+      (await within(expertMenu).findByText("审查专家", { selector: "span" })).closest<HTMLButtonElement>("button")!,
+    );
+    expect(composerMenuTrigger("专家角色")).toHaveAccessibleName("专家角色：审查专家");
+
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "审查这个改动" } });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({ expertId })));
+    expect(await screen.findByText("审查专家", { selector: ".message__role" })).toBeVisible();
+
+    const create = screen.getAllByRole("button", { name: "新建对话" })[0]!;
+    fireEvent.click(create);
+    await waitFor(() => expect(composerMenuTrigger("专家角色")).toHaveAccessibleName("专家角色：通用助手"));
+
+    fireEvent.click(within(container.querySelector<HTMLElement>(".conversation-list")!)
+      .getByTitle(firstTitle && firstTitle !== "新对话" ? firstTitle : "审查这个改动"));
+    await waitFor(() => expect(composerMenuTrigger("专家角色")).toHaveAccessibleName("专家角色：审查专家"));
   });
 
   it("shows Subagent states and records child expert activity", async () => {
