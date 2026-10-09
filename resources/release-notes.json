@@ -2,6 +2,34 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.1",
+      "releasedAt": "2026-10-10",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**让消息自然延伸到输入框边缘**：修复聊天消息在输入框上方提前被实色区域截断的问题，现在消息会沿着输入框轮廓自然淡出，输入区和消息区的过渡更平滑。",
+            "**改善输入框与消息区的主题适配**：调整浅色和深色主题下的渐变、背景和焦点边界，减少输入框上方出现粗边或明显横线的问题；滚动到底部按钮也会保持合适的可见位置。"
+          ],
+          "notices": [
+            "本版本不新增数据库 schema，Agent 0.15.6 无需更新。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Let messages fade naturally to the composer edge**: Chat messages no longer stop at a solid band above the composer. They now fade along the composer outline for a smoother transition between the message area and input area.",
+            "**Improve composer and message-area theme behavior**: Light and dark theme gradients, backgrounds, and focus boundaries are refined to reduce thick edges and visible horizontal bands above the composer; the scroll-to-bottom control also remains positioned for clear access."
+          ],
+          "notices": [
+            "This release adds no database schema version. Agent 0.15.6 does not need to be updated."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.0",
       "releasedAt": "2026-10-09",
       "notes": {
