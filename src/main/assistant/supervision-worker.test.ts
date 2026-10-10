@@ -45,7 +45,7 @@ async function fixture() {
     { documentId: 'document', documentName: 'Reference', snippet: 'Knowledge \u{1f600}', chunkId: 'chunk' }
   ] }), conversations[0]!.messages[0]!.id)
   db.createTask({ id: randomUUID(), conversationId: conversations[0]!.id, projectId: project.id,
-    title: 'Visible task', instructions: 'Test', origin: 'user', visible: true })
+    title: 'Visible task', instructions: 'Test', origin: 'user', visible: true, status: 'completed' })
   const state: ReviewState = { request: { trigger: 'manual', scope: { kind: 'global' },
     timeRange: { from: '2026-01-01T00:00:00.000Z', to: '2027-01-01T00:00:00.000Z' } },
     config: { ...supervisionReviewSettingsSchema.parse({}), version: 1, timeoutSeconds: 30, concurrency: 1 }, phase: 'collecting' }
@@ -96,15 +96,15 @@ it('rebuilds a partially written manifest after restart and validates completed 
   await f.storage.resumeSupervisionReview(id, new AbortController().signal)
   expect(f.db.supervisionReviewStore().progress(id).sources).toBe(422)
   expect(f.db.supervisionReviewStore().load(id).initializing).toBeUndefined()
-  // A source changed after freezing is re-frozen at its new version instead of failing the run.
+  // A source changed after freezing is skipped for this run instead of failing it.
   const changedId = f.conversations[0]!.messages[0]!.id
   f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('Changed', changedId)
   await f.storage.resumeSupervisionReview(id, new AbortController().signal)
   const store = f.db.supervisionReviewStore()
-  expect(store.progress(id)).toMatchObject({ sources: 422, revisedSources: 1 })
+  expect(store.progress(id)).toMatchObject({ sources: 421, skippedSources: 1 })
   expect(store.load(id).restartRequired).toBeUndefined()
-  expect(f.sql.prepare('SELECT length, processed_offset FROM supervision_review_sources WHERE run_id = ? AND source = ?')
-    .get(id, `message:${changedId}`)).toMatchObject({ length: 'Changed'.length, processed_offset: 0 })
+  expect(f.sql.prepare('SELECT 1 FROM supervision_review_sources WHERE run_id = ? AND source = ?')
+    .get(id, `message:${changedId}`)).toBeUndefined()
 })
 
 it.each(['paused', 'cancelled'] as const)('accepts %s during production initialization, holds the slot, and never calls the model', async status => {

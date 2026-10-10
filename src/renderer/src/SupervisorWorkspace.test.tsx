@@ -225,7 +225,7 @@ describe('SupervisorWorkspace', () => {
     vi.setSystemTime(now)
     fireEvent.click(screen.getByRole('button', { name: copy.newReview }))
     const picker = screen.getByLabelText(copy.period)
-    expect(within(picker).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['1', '7', '30', 'custom', 'range'])
+    expect(within(picker).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['1', '7', '30', 'all', 'custom', 'range'])
     expect(picker).toHaveValue('7')
     fireEvent.change(picker, { target: { value: 'custom' } })
     fireEvent.change(screen.getByRole('spinbutton', { name: copy.dayCount }), { target: { value: '45' } })
@@ -243,6 +243,29 @@ describe('SupervisorWorkspace', () => {
     await act(async () => fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: copy.reanalyzeConfirm })))
     expect(run).toHaveBeenLastCalledWith({ trigger: 'manual', reanalyze: true, scope: { kind: 'global' },
       timeRange: { from: new Date(now.getTime() - 46 * 86400_000).toISOString(), to: now.toISOString() } })
+  })
+
+  it.each(['zh-CN', 'en-US'] as const)('reviews all time from the epoch through now and names it in the reanalysis dialog in %s', async locale => {
+    await changeUiLocale(locale)
+    const copy = i18nResources[locale].heartbeat.supervisor
+    const run = vi.fn().mockResolvedValue(undefined)
+    window.goodbuddy = { supervision: { overview: async () => [], run } } as never
+    render(<SupervisorWorkspace />)
+    await screen.findByText(copy.empty)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const now = new Date(2026, 9, 5, 15, 30)
+    vi.setSystemTime(now)
+    fireEvent.click(screen.getByRole('button', { name: copy.newReview }))
+    fireEvent.change(screen.getByLabelText(copy.period), { target: { value: 'all' } })
+    const timeRange = { from: new Date(0).toISOString(), to: now.toISOString() }
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: copy.run })))
+    expect(run).toHaveBeenLastCalledWith({ trigger: 'manual', scope: { kind: 'global' }, timeRange })
+    fireEvent.click(screen.getByRole('button', { name: copy.more }))
+    fireEvent.click(screen.getByRole('menuitem', { name: copy.reanalyze }))
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog).toHaveTextContent(copy.allTimeLabel)
+    await act(async () => fireEvent.click(within(dialog).getByRole('button', { name: copy.reanalyzeConfirm })))
+    expect(run).toHaveBeenLastCalledWith({ trigger: 'manual', reanalyze: true, scope: { kind: 'global' }, timeRange })
   })
 
   it.each([

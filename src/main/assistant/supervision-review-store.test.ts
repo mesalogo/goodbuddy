@@ -70,9 +70,9 @@ it('scans read-only, transfers at most 200 rows, yields without a transaction, a
   expect(wrote).toBe(true)
   expect(f.store.progress(f.runId).sources).toBe(450)
   expect(f.store.load(f.runId).initializing).toBeUndefined()
-  // A concurrent write is detected on resume and that one source is re-frozen, not the whole run failed.
+  // A concurrent write is detected on resume and that one source is skipped, not the whole run failed.
   await f.store.resumeWithReader(f.runId, f.reader)
-  expect(f.store.progress(f.runId)).toMatchObject({ sources: 450, revisedSources: 1 })
+  expect(f.store.progress(f.runId)).toMatchObject({ sources: 449, skippedSources: 1 })
   expect(f.store.load(f.runId).restartRequired).toBeUndefined()
   await expect(f.worker.call('reviewManifestPage', [f.runId, 0])).rejects.toThrow('lost its snapshot')
 })

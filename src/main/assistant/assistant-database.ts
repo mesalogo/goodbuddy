@@ -134,7 +134,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 62
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 63
 
 function withoutHistoricalWorkMode(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
@@ -11919,6 +11919,7 @@ export class AssistantDatabase {
       database.exec('BEGIN IMMEDIATE')
       try {
         database.exec(supervisionReviewMigration)
+        database.exec(supervisionReviewCurrentView)
         database.exec('PRAGMA user_version = 47; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
@@ -12250,6 +12251,15 @@ export class AssistantDatabase {
         `)
       } catch (error) { database.exec('ROLLBACK'); throw error }
     }
+    if (version.user_version < 63) {
+      // Reviews read only finished messages and tasks, so a frozen manifest never changes.
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec('DROP VIEW IF EXISTS supervision_review_current')
+        database.exec(supervisionReviewCurrentView)
+        database.exec('PRAGMA user_version = 63; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
   }
 
   supervisionExperiences(): SupervisionExperienceStore {
@@ -12314,7 +12324,7 @@ export class AssistantDatabase {
   }
 }
 import type { ImageOperation } from '../../shared/image-generation-contracts'
-import { SupervisionReviewStore, supervisionReviewMigration } from './supervision-review-store'
+import { SupervisionReviewStore, supervisionReviewCurrentView, supervisionReviewMigration } from './supervision-review-store'
 import { SupervisionStoryStore, supervisionStoriesMigration } from './supervision-stories'
 import { SupervisionExperienceStore, supervisionExperiencesMigration } from './supervision-experiences'
 import { migrateSupervisionTimeline, placeTimelineEvents, supersedeReextractedEvents, supervisionAttention, timelineCandidates } from './supervision-timeline'

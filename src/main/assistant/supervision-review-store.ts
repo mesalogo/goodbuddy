@@ -10,14 +10,7 @@ import { setImmediate as yieldTurn } from 'node:timers/promises'
 export const TIMELINE_CHECKPOINT_SCOPE = 'timeline'
 
 export type ReviewConfiguration = SupervisionReviewSettings & { timeoutSeconds: number; concurrency: number; version: 1 }
-export type ReviewState = { request: SupervisionRunRequest; config: ReviewConfiguration; initializing?: boolean; restartRequired?: boolean; omittedSources?: number; revisedSources?: number; phase?: SupervisionReviewProgress['phase']; stories?: SupervisionReviewProgress['stories'] }
-
-/**
- * A source that keeps changing while it is reviewed (for example an assistant reply
- * that is still being rewritten) is re-frozen at most this many times per run in total;
- * after that further changed sources are omitted so the run always terminates.
- */
-export const MAX_REVISED_REVIEW_SOURCES = 200
+export type ReviewState = { request: SupervisionRunRequest; config: ReviewConfiguration; initializing?: boolean; restartRequired?: boolean; omittedSources?: number; skippedSources?: number; phase?: SupervisionReviewProgress['phase']; stories?: SupervisionReviewProgress['stories'] }
 
 export class ReviewSourcesOmitted extends Error {}
 
@@ -59,6 +52,14 @@ export const supervisionReviewMigration = `
     id TEXT NOT NULL, children_json TEXT NOT NULL, output_json TEXT NOT NULL,
     PRIMARY KEY(run_id, id)
   );
+`
+
+/**
+ * Reviewable sources. Only finished messages (complete or error) and finished tasks are
+ * visible: their content no longer changes, so the manifest frozen when a review starts
+ * is a fixed snapshot. Replies still streaming and running tasks wait for the next review.
+ */
+export const supervisionReviewCurrentView = `
   CREATE VIEW supervision_review_current AS
     SELECT 'message:' || m.id AS source, m.id AS record_id, 0 AS reference_index, 'conversation' AS type, c.id AS owner,
       c.project_id AS project_id, c.id AS conversation_id, m.sequence AS sequence,
@@ -67,14 +68,15 @@ export const supervisionReviewMigration = `
       json_array(m.review_revision, c.project_id, c.title, m.role, m.created_at) AS context,
       json_object('messageId', m.id, 'conversationId', c.id, 'projectId', c.project_id, 'role', m.role, 'sequence', m.sequence) AS locator
     FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN projects p ON p.id = c.project_id
-    WHERE c.status = 'active' AND p.status = 'active' AND m.role IN ('user', 'assistant')
+    WHERE c.status = 'active' AND p.status = 'active' AND m.role IN ('user', 'assistant') AND m.state IN ('complete', 'error')
     UNION ALL
     SELECT 'task:' || t.id, t.id, 0, 'task', t.id, COALESCE(t.project_id, ''), '', 0, t.title,
       t.created_at, COALESCE(t.completed_at, t.created_at),
       json_object('title', t.title, 'status', t.status, 'createdAt', t.created_at, 'completedAt', t.completed_at),
       json_array(t.project_id, t.title, t.status, t.created_at, t.completed_at), json_object('projectId', t.project_id)
     FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
-    WHERE t.visible = 1 AND (t.project_id IS NULL OR p.status = 'active')
+    WHERE t.visible = 1 AND t.status IN ('completed', 'failed', 'cancelled', 'interrupted')
+      AND (t.project_id IS NULL OR p.status = 'active')
     UNION ALL
     SELECT 'knowledge:' || m.id || ':' || ref.key, m.id, ref.key, 'knowledge',
       COALESCE(json_extract(ref.value, '$.chunkId'), json_extract(ref.value, '$.documentId'),
@@ -86,7 +88,7 @@ export const supervisionReviewMigration = `
       json_patch(ref.value, json_object('messageId', m.id, 'conversationId', c.id, 'projectId', c.project_id, 'referenceIndex', ref.key))
     FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN projects p ON p.id = c.project_id
       JOIN json_each(m.metadata_json, '$.sourceReferences') ref
-    WHERE c.status = 'active' AND p.status = 'active' AND m.role IN ('user', 'assistant');
+    WHERE c.status = 'active' AND p.status = 'active' AND m.role IN ('user', 'assistant') AND m.state IN ('complete', 'error');
 `
 
 export class SupervisionReviewStore {
@@ -248,13 +250,13 @@ export class SupervisionReviewStore {
   resume(runId: string, signal?: AbortSignal): void {
     const state = this.prepareResume(runId)
     if (state.initializing) { this.initializeSources(runId, state, signal); return }
-    // Sources changed since they were frozen are re-frozen and reprocessed; removed ones are omitted.
+    // A source that no longer matches its frozen version is skipped and left for the next review.
     let after = ''
     for (;;) {
       const rows = this.resumePage(runId, after)
       if (!rows.length) break
       const changed = this.changedSource(rows, signal)
-      if (changed) { this.reconcileSource(runId, changed); after = changed; continue }
+      if (changed) { this.skipSource(runId, changed); after = changed; continue }
       after = rows.at(-1)!.source
     }
   }
@@ -287,8 +289,8 @@ export class SupervisionReviewStore {
       if (!rows.length) break
       const changed = await reader.changedSource(rows, signal)
       this.checkRunning(runId, signal)
-      // The read snapshot may lag the writer; reconciliation re-reads the source here.
-      if (changed) { this.reconcileSource(runId, changed); after = changed; await yieldTurn(); continue }
+      // The read snapshot may lag the writer; skipSource re-reads the source here.
+      if (changed) { this.skipSource(runId, changed); after = changed; await yieldTurn(); continue }
       after = rows.at(-1)!.source
       await yieldTurn()
     }
@@ -348,8 +350,8 @@ export class SupervisionReviewStore {
       for (const metadata of rows) {
         const current = this.currentSource(metadata.source, metadata.processed_offset, Math.min(remaining, 8000))
         if (!current || current.current_revision !== metadata.revision) {
-          // Re-freeze (or omit) the changed source, then rebuild the batch from current offsets.
-          this.reconcileSource(runId, metadata.source)
+          // Skip the changed source, then rebuild the batch from current offsets.
+          this.skipSource(runId, metadata.source)
           return this.chunk(runId, projectId, conversationId, config)
         }
         const row = { ...metadata, ...current }
@@ -396,33 +398,29 @@ export class SupervisionReviewStore {
   }
 
   /**
-   * Brings one frozen source in line with the business database without failing the run.
-   * A changed source is re-frozen at its current revision and reviewed again from the start
-   * (leaves that used it are discarded with their navigation); a removed or no longer visible
-   * source is omitted. Returns false when the source already matches.
+   * The manifest is a snapshot of finished sources, so a frozen source should never change.
+   * If one still does (or disappears), it is dropped from this run without failing it: leaves
+   * that used it are discarded with their navigation, and because no checkpoint is written for
+   * it, the next review picks it up at its current version. Returns false when it still matches.
    */
-  reconcileSource(runId: string, source: string): boolean {
+  skipSource(runId: string, source: string): boolean {
     const frozen = this.db.prepare('SELECT revision FROM supervision_review_sources WHERE run_id = ? AND source = ?').get(runId, source) as { revision: string } | undefined
     if (!frozen) return false
     const live = this.currentSource(source, 0, 0)
     if (live?.current_revision === frozen.revision) return false
     if (this.omitDeletedConversations(runId)) return true
-    const current = live && { revision: live.current_revision, length: Number(live.body_length) }
-    const state = this.load(runId)
-    const revise = current !== undefined && current.length > 0 && (state.revisedSources ?? 0) < MAX_REVISED_REVIEW_SOURCES
-    this.db.exec('SAVEPOINT reconcile_review_source')
+    // No longer visible (archived, emptied): omitted. Still visible but changed: left for the next review.
+    const counter = live && Number(live.body_length) > 0 ? '$.skippedSources' : '$.omittedSources'
+    this.db.exec('SAVEPOINT skip_review_source')
     try {
       this.discardLeaves(runId, new Set([source]))
-      if (revise && current) {
-        this.db.prepare(`UPDATE supervision_review_sources SET revision = ?, length = ?, initial_offset = 0, processed_offset = 0
-          WHERE run_id = ? AND source = ?`).run(current.revision, current.length, runId, source)
-      } else this.db.prepare('DELETE FROM supervision_review_sources WHERE run_id = ? AND source = ?').run(runId, source)
+      this.db.prepare('DELETE FROM supervision_review_sources WHERE run_id = ? AND source = ?').run(runId, source)
       this.db.prepare(`UPDATE supervision_review_runs SET state_json = json_set(json_remove(state_json, '$.restartRequired'),
-        '${revise ? '$.revisedSources' : '$.omittedSources'}', COALESCE(json_extract(state_json, '${revise ? '$.revisedSources' : '$.omittedSources'}'), 0) + 1,
+        '${counter}', COALESCE(json_extract(state_json, '${counter}'), 0) + 1,
         '$.phase', 'extracting') WHERE run_id = ?`).run(runId)
-      this.db.exec('RELEASE reconcile_review_source')
+      this.db.exec('RELEASE skip_review_source')
       return true
-    } catch (error) { this.db.exec('ROLLBACK TO reconcile_review_source; RELEASE reconcile_review_source'); throw error }
+    } catch (error) { this.db.exec('ROLLBACK TO skip_review_source; RELEASE skip_review_source'); throw error }
   }
 
   /**
@@ -464,9 +462,9 @@ export class SupervisionReviewStore {
     try {
       this.omitDeletedConversations(runId)
       if (!this.hasSources(runId, evidence)) { this.db.exec('COMMIT'); return }
-      // A source changed while the model was working: drop this answer, keep the run going.
+      // A source changed while the model was working: drop this answer and that source, keep the run going.
       const stale = evidence.find(item => this.currentSource(String(item.locator!.source), 0, 0)?.current_revision !== item.locator!.revision)
-      if (stale) { this.reconcileSource(runId, String(stale.locator!.source)); this.db.exec('COMMIT'); return }
+      if (stale) { this.skipSource(runId, String(stale.locator!.source)); this.db.exec('COMMIT'); return }
       const advance = this.db.prepare(`UPDATE supervision_review_sources SET processed_offset = ?
         WHERE run_id = ? AND source = ? AND revision = ? AND processed_offset = ?`)
       for (const item of evidence) {
@@ -500,8 +498,8 @@ export class SupervisionReviewStore {
       FROM supervision_review_batches WHERE run_id = ?`).get(runId)!
     const state = this.load(runId)
     const navigation = this.db.prepare('SELECT COUNT(*) AS count FROM supervision_review_navigation WHERE run_id = ?').get(runId)!
-    // Changed sources are reconciled on resume, so no saved run requires a restart.
-    return { runId, omittedSources: state.omittedSources, revisedSources: state.revisedSources, phase: state.phase, stories: state.stories, navigationNodes: Number(navigation.count), settings: state.config, batches: Number(batches.batches), characters: Number(batches.characters), sources: Number(sources.sources),
+    // Changed sources are skipped on resume, so no saved run requires a restart.
+    return { runId, omittedSources: state.omittedSources, skippedSources: state.skippedSources, phase: state.phase, stories: state.stories, navigationNodes: Number(navigation.count), settings: state.config, batches: Number(batches.batches), characters: Number(batches.characters), sources: Number(sources.sources),
       remainingSources: Number(sources.remaining), complete: this.db.prepare("SELECT id FROM supervision_runs WHERE id = ? AND status IN ('completed', 'no_change')").get(runId) !== undefined }
   }
 

@@ -313,21 +313,35 @@ it('still pauses on user request and resumes saved batches without changing batc
   expect(f.db.supervisionReviewStore().batches(result.runId!, 100).flatMap(row => row.evidence).map(row => row.content.length)).toEqual([1000, 1000, 500])
 })
 
-it('rejects changed source versions and rolls back offsets when batch persistence fails', async () => {
-  const f = await fixture([['x'.repeat(2500)]], { concurrency: 1 })
+it('skips changed source versions and rolls back offsets when batch persistence fails', async () => {
+  const f = await fixture([['x'.repeat(2500)], ['Kept']], { concurrency: 1 })
   f.sql.exec("CREATE TRIGGER fail_batch BEFORE INSERT ON supervision_review_batches BEGIN SELECT RAISE(ABORT, 'disk failure'); END")
   await expect(f.service().run(request)).rejects.toThrow('disk failure')
   const runId = f.db.listSupervisionActivity()[0]!.id
   expect(f.db.supervisionReviewStore().progress(runId).characters).toBe(0)
-  expect(f.sql.prepare('SELECT processed_offset FROM supervision_review_sources').get()!.processed_offset).toBe(0)
+  expect(f.sql.prepare('SELECT MAX(processed_offset) AS offset FROM supervision_review_sources').get()!.offset).toBe(0)
   f.sql.exec('DROP TRIGGER fail_batch')
   f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('Changed', f.conversations[0]!.messages[0]!.id)
   const resumed = await f.service().resume(runId)
-  expect(resumed).toMatchObject({ status: 'completed', coverage: { revisedSources: 1, characters: 'Changed'.length, complete: true } })
-  expect(f.db.supervisionReviewStore().batches(runId).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['Changed'])
+  expect(resumed).toMatchObject({ status: 'completed', coverage: { skippedSources: 1, sources: 1, characters: 'Kept'.length, complete: true } })
+  expect(f.db.supervisionReviewStore().batches(runId).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['Kept'])
 })
 
-it('re-reviews a source rewritten while its batch is with the model and discards the stale answer', async () => {
+it('reviews only finished messages: a streaming reply waits for the next review', async () => {
+  const f = await fixture([['Finished question', 'Partial reply']], { concurrency: 1 })
+  const reply = f.conversations[0]!.messages[1]!.id
+  f.sql.prepare("UPDATE messages SET state = 'streaming' WHERE id = ?").run(reply)
+  const manual = { ...request, reanalyze: undefined }
+  const first = await f.service().run(manual)
+  expect(first.coverage).toMatchObject({ sources: 1, complete: true })
+  expect(f.db.supervisionReviewStore().batches(first.runId!).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['Finished question'])
+  f.sql.prepare("UPDATE messages SET content = ?, state = 'complete' WHERE id = ?").run('Partial reply, finished', reply)
+  const next = await f.service().run(manual)
+  expect(next.coverage).toMatchObject({ sources: 1, complete: true })
+  expect(f.db.supervisionReviewStore().batches(next.runId!).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['Partial reply, finished'])
+})
+
+it('skips a source rewritten while its batch is with the model and discards the stale answer', async () => {
   const f = await fixture([['Original reply'], ['Other conversation']], { concurrency: 1 })
   const target = f.conversations[0]!.messages[0]!.id
   const base = f.summarize.getMockImplementation()!
@@ -340,13 +354,12 @@ it('re-reviews a source rewritten while its batch is with the model and discards
     return { ...await base(input), summary: input.evidence.map(item => item.content).join(', ') }
   })
   const result = await f.service().run(request)
-  expect(result).toMatchObject({ status: 'completed', coverage: { revisedSources: 1, sources: 2, remainingSources: 0, complete: true } })
+  expect(result).toMatchObject({ status: 'completed', coverage: { skippedSources: 1, sources: 1, remainingSources: 0, complete: true } })
   const contents = f.db.supervisionReviewStore().batches(result.runId!).flatMap(batch => batch.evidence).map(item => item.content)
-  expect(contents).toContain('Original reply, continued after reconnect')
-  expect(contents).not.toContain('Original reply')
+  expect(contents).toEqual(['Other conversation'])
 })
 
-it('discards a mixed leaf when one of its sources changes and reviews only current versions', async () => {
+it('discards a mixed leaf when one of its sources changes and skips only that source', async () => {
   const f = await fixture([['A', 'B']], { concurrency: 1 })
   const store = f.db.supervisionReviewStore()
   const runId = f.db.startSupervisionRun(request)
@@ -360,8 +373,8 @@ it('discards a mixed leaf when one of its sources changes and reviews only curre
   f.db.failSupervisionRun(runId, 'Provider failed')
   await f.service().resume(runId)
   expect(store.navigation(runId, 'dependent')).toBeUndefined()
-  expect(store.batches(runId).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['A', 'B2'])
-  expect(store.progress(runId)).toMatchObject({ revisedSources: 1, complete: true })
+  expect(store.batches(runId).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['A'])
+  expect(store.progress(runId)).toMatchObject({ skippedSources: 1, sources: 1, complete: true })
 })
 
 it('omits a source that is no longer visible and resumes old runs failed by the earlier restart rule', async () => {
@@ -443,9 +456,13 @@ it('lets the next automatic review continue a failed run whose source changed in
   f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('New version', f.conversations[0]!.messages[0]!.id)
   const result = await f.service().run(automatic)
   expect(result.runId).toBe(runId)
-  expect(result).toMatchObject({ status: 'completed', coverage: { revisedSources: 1, characters: 'New version'.length } })
-  // The leaf of the old version is discarded; only the current version is published.
-  expect(f.db.supervisionReviewStore().batches(runId).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['New version'])
+  expect(result).toMatchObject({ status: 'no_change', coverage: { skippedSources: 1, sources: 0 } })
+  // The leaf of the old version is discarded and no checkpoint is written for the source,
+  // so the next automatic review reads its current version.
+  expect(f.db.supervisionReviewStore().batches(runId)).toEqual([])
+  const next = await f.service().run(automatic)
+  expect(next.runId).not.toBe(runId)
+  expect(f.db.supervisionReviewStore().batches(next.runId!).flatMap(batch => batch.evidence).map(item => item.content)).toEqual(['New version'])
 })
 
 it('makes a manual review incremental by default and keeps explicit re-analysis out of shared progress', async () => {

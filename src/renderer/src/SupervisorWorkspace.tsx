@@ -240,6 +240,8 @@ export function SupervisorWorkspace({
   const loading = overviewLoading || (tab === 'graph' && Boolean(resultId) && graphResultId !== resultId && !loadError)
 
   const resolvePeriod = (now: Date): { range?: SupervisionRunRequest['timeRange']; label?: string; error?: string } => {
+    // All time: from the epoch, which predates any stored source, through now.
+    if (period === 'all') return { range: { from: new Date(0).toISOString(), to: now.toISOString() }, label: t('supervisor.allTimeLabel') }
     if (period === 'range') {
       const from = new Date(`${startDate}T00:00:00`)
       const end = new Date(`${endDate}T00:00:00`)
@@ -651,6 +653,7 @@ export function SupervisorWorkspace({
                         {t('supervisor.days', { count: value })}
                       </option>
                     ))}
+                    <option value="all">{t('supervisor.allTime')}</option>
                     <option value="custom">{t('supervisor.customDays')}</option>
                     <option value="range">{t('supervisor.dateRange')}</option>
                   </select>
