@@ -2433,7 +2433,8 @@
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
-  opacity: 1;
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out;
 }
 
 .magic-note-row:hover .magic-note-more,
@@ -2721,9 +2722,18 @@
   line-height: 1;
 }
 
+.magic-note-entry {
+  position: relative;
+}
+
+/* Floats over the top-right corner so the actions never take their own row. */
 .magic-note-entry__actions {
   display: flex;
-  gap: 2px;
+  position: absolute;
+  z-index: 1;
+  top: var(--space-1);
+  right: var(--space-2);
+  gap: var(--space-1);
 }
 
 .magic-note-entry__actions .icon-button {
@@ -2731,7 +2741,36 @@
   height: 28px;
 }
 
-.magic-note-entry__actions .magic-note-entry__delete-button:hover:not(:disabled) {
+.magic-note-entry__action-button {
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-caption);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.magic-note-entry__action-button:hover:not(:disabled),
+.magic-note-entry__action-button:focus-visible {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+}
+
+.magic-note-entry__action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.magic-note-entry__actions .magic-note-entry__delete-button {
+  color: var(--danger-strong);
+}
+
+.magic-note-entry__actions .magic-note-entry__delete-button:hover:not(:disabled),
+.magic-note-entry__actions .magic-note-entry__delete-button:focus-visible {
   background: var(--danger-subtle);
   color: var(--danger-strong);
 }

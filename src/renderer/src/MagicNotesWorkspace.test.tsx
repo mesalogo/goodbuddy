@@ -1460,7 +1460,7 @@ describe('MagicNotesWorkspace detail behavior', () => {
     const { container } = render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
     expect(container.querySelector('.magic-note-detail-header > :first-child')).toBe(screen.getByLabelText('笔记标题'))
-    expect(screen.getByRole('button', { name: '删除记录' })).toHaveClass('icon-button', 'magic-note-entry__delete-button')
+    expect(screen.getByRole('button', { name: '删除记录' })).toHaveClass('magic-note-entry__action-button', 'magic-note-entry__delete-button')
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
     expect(container.querySelector('.magic-note-entry__editor')).toBeVisible()
     expect(screen.getByRole('button', { name: '删除记录' })).toBeDisabled()

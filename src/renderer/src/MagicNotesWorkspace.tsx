@@ -3091,7 +3091,7 @@ function MagicNotesWorkspaceView({
                             </button>
                           )}
                           <button
-                            className="icon-button"
+                            className="magic-note-entry__action-button"
                             aria-label={t(entry.content.version === 2 ? 'canvas.edit' : 'actions.edit')}
                             title={t(entry.content.version === 2 ? 'canvas.edit' : 'actions.edit')}
                             disabled={Boolean(busy) || editingEntry?.id === entry.id}
@@ -3104,12 +3104,13 @@ function MagicNotesWorkspaceView({
                               })
                             }
                           >
-                            <Pencil aria-hidden="true" size={15} />
+                            <Pencil aria-hidden="true" size={14} />
+                            <span>{t(entry.content.version === 2 ? 'canvas.edit' : 'actions.edit')}</span>
                           </button>
                           <button
                             aria-label={t('actions.deleteEntry')}
                             title={t('actions.deleteEntry')}
-                            className="icon-button magic-note-entry__delete-button"
+                            className="magic-note-entry__action-button magic-note-entry__delete-button"
                             disabled={Boolean(busy) || Boolean(editingEntry)}
                             type="button"
                             onClick={() => {
@@ -3119,7 +3120,8 @@ function MagicNotesWorkspaceView({
                               setDeletingEntryId(entry.id)
                             }}
                           >
-                            <Trash2 aria-hidden="true" size={15} />
+                            <Trash2 aria-hidden="true" size={14} />
+                            <span>{t('actions.deleteEntry')}</span>
                           </button>
                         </div>}
                       </header>
