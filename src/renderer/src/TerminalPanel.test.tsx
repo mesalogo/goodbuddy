@@ -221,6 +221,18 @@ describe('TerminalPanel', () => {
     )
   })
 
+  it('contains IME composition layout inside the terminal', () => {
+    expect(terminalStylesheet).toMatch(
+      /\.terminal-panel__emulator\s*\{[^}]*contain:\s*size layout paint;[^}]*overflow-anchor:\s*none;/u
+    )
+    expect(terminalStylesheet).toMatch(
+      /\.terminal-panel__emulator \.xterm\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*overflow:\s*hidden;/u
+    )
+    expect(terminalStylesheet).toMatch(
+      /\.terminal-panel__emulator \.xterm-helpers\s*\{[^}]*max-width:\s*0;[^}]*overflow:\s*visible;/u
+    )
+  })
+
   it('creates only after the first valid fitted size and forwards input', async () => {
     const backend = adapterHarness()
     const emulator = emulatorHarness()

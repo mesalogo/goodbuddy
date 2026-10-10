@@ -116,11 +116,24 @@
   flex: 1;
   padding: 0;
   overflow: hidden;
+  contain: size layout paint;
+  overflow-anchor: none;
   background: var(--surface-canvas);
 }
 
 .terminal-panel__emulator .xterm {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100%;
+  overflow: hidden;
+}
+
+/* IME composition must stay inside the terminal's own scroll boundary. */
+.terminal-panel__emulator .xterm-helpers {
+  max-width: 0;
+  overflow: visible;
 }
 
 .terminal-panel__status {
