@@ -104,7 +104,7 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
     if (target.node.id !== focusId) setFocusId(target.node.id)
   }
   const [hovered, setHovered] = useState<string>()
-  const camera = useRef<{ yaw: number; tilt: number; zoom: number; pan: number }>({ yaw: VIEWS.oblique.yaw, tilt: VIEWS.oblique.tilt, zoom: 1, pan: 0 })
+  const camera = useRef<{ yaw: number; tilt: number; zoom: number; pan: number; targetX: number; targetZ: number }>({ yaw: VIEWS.oblique.yaw, tilt: VIEWS.oblique.tilt, zoom: 1, pan: 0, targetX: 0, targetZ: 0 })
   const animation = useRef<number | undefined>(undefined)
   const cancelAnimation = () => { if (animation.current !== undefined) cancelAnimationFrame(animation.current); animation.current = undefined }
   const engine = useRef<{ draw: () => void; update: (next: EngineState) => void; dispose: () => void; hit: (x: number, y: number) => { node?: StoryNode; cluster?: StoryCluster; link?: ExperienceLink } | undefined }>(undefined)
@@ -265,7 +265,7 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
     }
     const project = (point: THREE.Vector3) => { const v = point.clone().project(view3d); return { x: (v.x + 1) / 2 * width, y: (1 - v.y) / 2 * height, behind: v.z > 1 } }
     const place = () => {
-      const { yaw, tilt, zoom, pan } = camera.current, ct = Math.cos(tilt), st = Math.sin(tilt), target = new THREE.Vector3(0, pan, 0)
+      const { yaw, tilt, zoom, pan, targetX, targetZ } = camera.current, ct = Math.cos(tilt), st = Math.sin(tilt), target = new THREE.Vector3(targetX, pan, targetZ)
       view3d.position.copy(target).add(new THREE.Vector3(-Math.sin(yaw) * ct, st, Math.cos(yaw) * ct).multiplyScalar(DIST))
       view3d.up.set(Math.sin(yaw) * st, ct, -Math.cos(yaw) * st)
       view3d.lookAt(target)
@@ -325,7 +325,21 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
     const zoom = (event: WheelEvent) => {
       event.preventDefault()
       cancelAnimation()
+      // Move the camera target so the point below the pointer stays fixed while zooming.
+      const target = new THREE.Vector3(camera.current.targetX, camera.current.pan, camera.current.targetZ)
+      const direction = new THREE.Vector3().subVectors(target, view3d.position).normalize()
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(direction, target)
+      const pointer = new THREE.Vector2(event.offsetX / width * 2 - 1, 1 - event.offsetY / height * 2)
+      raycaster.setFromCamera(pointer, view3d)
+      const point = raycaster.ray.intersectPlane(plane, new THREE.Vector3()) ?? target.clone()
       camera.current.zoom = Math.max(0.5, Math.min(2.5, camera.current.zoom * Math.exp(-event.deltaY * 0.0012)))
+      place()
+      raycaster.setFromCamera(pointer, view3d)
+      const nextPoint = raycaster.ray.intersectPlane(plane, new THREE.Vector3()) ?? target.clone()
+      const shift = point.sub(nextPoint)
+      camera.current.targetX += shift.x
+      camera.current.pan += shift.y
+      camera.current.targetZ += shift.z
       draw()
     }
     canvas.addEventListener('wheel', zoom, { passive: false })
@@ -359,7 +373,7 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
     const step = (now: number) => {
       started ??= now
       const k = reduce ? 1 : Math.min(1, (now - started) / 480), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2
-      for (const key of ['yaw', 'tilt', 'zoom', 'pan'] as const) if (goal[key] !== undefined) camera.current[key] = from[key] + (goal[key]! - from[key]) * e
+      for (const key of ['yaw', 'tilt', 'zoom', 'pan', 'targetX', 'targetZ'] as const) if (goal[key] !== undefined) camera.current[key] = from[key] + (goal[key]! - from[key]) * e
       engine.current?.draw()
       animation.current = k < 1 ? requestAnimationFrame(step) : undefined
     }
@@ -379,7 +393,7 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
     animate({ yaw: angle - Math.PI / 2, tilt, pan: (u - 0.5) * HEIGHT - radius * Math.tan(tilt), zoom: Math.max(0.8, Math.min(1.4, camera.current.zoom)) })
   })
   useEffect(() => { focusCamera() }, [request, target, range, attempt, theme])
-  const choose = (name: keyof typeof VIEWS) => animate({ ...VIEWS[name], zoom: 1, pan: 0 })
+  const choose = (name: keyof typeof VIEWS) => animate({ ...VIEWS[name], zoom: 1, pan: 0, targetX: 0, targetZ: 0 })
   const open = (node: StoryNode) => {
     setRequest({ selection: { kind: 'story', id: node.id } })
     if (node.level !== 'root' && node.level !== 'project' && node.level !== 'unassigned') onSelectStory(node.id)
