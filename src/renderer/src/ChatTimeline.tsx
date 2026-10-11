@@ -754,6 +754,10 @@ function ChatMessageRowView({
               ? t('chat.status.waitingForSubagent')
               : t('chat.status.waitingForProgress'))
     : message.status
+  const isWaitingForResponse = message.role === 'assistant' &&
+    message.state === 'streaming' &&
+    !message.content.trim() &&
+    !message.blocks?.some(block => block.type === 'text' && block.content.trim())
 
   const roleCaption = message.role !== 'assistant'
     ? undefined
@@ -1232,9 +1236,11 @@ function ChatMessageRowView({
                   : 'polite'
             }
             className={
-              failed
-                ? 'message__status message__status--error'
-                : 'message__status'
+              [
+                'message__status',
+                failed && 'message__status--error',
+                isWaitingForResponse && 'message__status--active'
+              ].filter(Boolean).join(' ')
             }
             role={
               message.state !== 'error' && (message.knowledgeRetrieval || compressionMarkers.length > 0)
@@ -1248,7 +1254,7 @@ function ChatMessageRowView({
               aria-hidden="true"
               className="message__status-dot"
             />
-            {statusText}
+            <span className="message__status-label">{statusText}</span>
           </div>
         )}
         {canRetry && Boolean(retryContent?.trim()) && (

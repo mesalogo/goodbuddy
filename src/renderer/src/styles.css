@@ -7343,6 +7343,31 @@ button > svg {
   color: var(--danger);
 }
 
+.message__status--active {
+  color: var(--text-muted);
+}
+
+.message__status-label {
+  min-width: 0;
+}
+
+.message__status--active .message__status-label {
+  background: linear-gradient(
+    105deg,
+    var(--text-muted) 0%,
+    var(--text-muted) 38%,
+    var(--text-primary) 50%,
+    var(--text-muted) 62%,
+    var(--text-muted) 100%
+  );
+  background-size: 320% 100%;
+  background-position: 140% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: message-status-shimmer 2.2s linear infinite;
+}
+
 .context-compression-event {
   display: flex;
   width: 100%;
@@ -18206,6 +18231,18 @@ textarea.field-control {
   50% {
     opacity: 1;
     transform: scale(1.1);
+  }
+}
+
+@keyframes message-status-shimmer {
+  0%,
+  12% {
+    background-position: 140% 0;
+  }
+
+  88%,
+  100% {
+    background-position: -40% 0;
   }
 }
 

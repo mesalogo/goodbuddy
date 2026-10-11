@@ -560,17 +560,21 @@ describe('ChatTimeline', () => {
       messageStartIndex: 0, ...callbacks, retryContent: '', totalMessageCount: 1
     }
     const message: Message = {
-      id: 'status-message', role: 'assistant', content: '已有内容',
+      id: 'status-message', role: 'assistant', content: '',
       createdAt: Date.now(), state: 'streaming'
     }
     const { rerender } = render(<ChatTimeline {...props} messages={[message]} />)
     expect(screen.getByRole('status', { name: '等待后续进展' })).toBeVisible()
+    expect(screen.getByRole('status', { name: '等待后续进展' })).toHaveClass('message__status--active')
     expect(document.querySelector('.message__status-dot--active')).toBeNull()
+    rerender(<ChatTimeline {...props} messages={[{ ...message, content: '已有内容' }]} />)
+    expect(screen.getByRole('status', { name: '等待后续进展' })).not.toHaveClass('message__status--active')
     const tool = { callId: 'read-1', name: 'read', summary: 'Read file' }
     rerender(<ChatTimeline {...props} messages={[{
       ...message, tools: [{ ...tool, state: 'pending' }]
     }]} />)
     expect(screen.getByRole('status', { name: '工具待执行：read' })).toBeVisible()
+    expect(screen.getByRole('status', { name: '工具待执行：read' })).toHaveClass('message__status--active')
     rerender(<ChatTimeline {...props} messages={[{
       ...message, tools: [{ ...tool, state: 'running' }]
     }]} />)
