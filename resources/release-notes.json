@@ -2,6 +2,40 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.2",
+      "releasedAt": "2026-10-10",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**支持全部时间的监督回顾**：监督者现在可以选择从最早保存的工作记录到当前时间的全部时间范围，适合查看长期积累的工作进展。",
+            "**只在稳定后纳入监督回顾**：正在生成的消息和运行中的任务会等到完成后再进入回顾，避免回顾内容随着实时输出变化。"
+          ],
+          "fixes": [
+            "**让 Magic Notes 操作更容易理解**：笔记入口和操作按钮增加清晰的文字标签，更多操作在需要时显示，减少误解和界面干扰。",
+            "**修复终端输入法布局**：在终端中输入中文或其他组合文字时，输入候选和组合区域会保持在终端边界内，不再撑开或遮挡周围界面。"
+          ],
+          "notices": [
+            "本版本首次启动会将数据库升级到 schema 63。升级前请关闭应用并备份完整数据目录、相邻 `notes/` 和设置文件；Agent 0.15.6 无需更新。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Review all time in Supervisor**: Supervisor now offers an all-time range from the earliest saved work records through the current time, making it easier to review long-running progress.",
+            "**Review sources only after they settle**: Messages that are still streaming and tasks that are still running wait until completion before entering a review, so review content does not change underneath an active run."
+          ],
+          "fixes": [
+            "**Make Magic Notes actions easier to understand**: Note entry points and actions now use clearer text labels, while secondary actions appear when needed to reduce confusion and visual noise.",
+            "**Contain terminal IME layout**: Chinese and other composition input in the terminal now stays inside the terminal bounds instead of expanding into or obscuring surrounding UI."
+          ],
+          "notices": [
+            "First launch upgrades the database to schema 63. Close the app and back up the complete data directory, adjacent `notes/`, and settings files before upgrading; Agent 0.15.6 does not need to be updated."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.1",
       "releasedAt": "2026-10-10",
       "notes": {

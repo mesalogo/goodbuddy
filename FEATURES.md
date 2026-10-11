@@ -983,9 +983,12 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.1`; Agent `0.15.6` remains paired with Desktop `0.16.1`, with
+- The current Desktop candidate is `0.16.2`; Agent `0.15.6` remains paired with Desktop `0.16.2`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.16.2` adds an all-time Supervisor review range and waits for messages and tasks to
+  settle before including them in a review. It also improves Magic Notes action labels, contains
+  terminal IME composition layout, and upgrades the database to schema 63.
 - Desktop `0.16.1` smooths the message-to-composer transition: messages extend to the composer
   outline before fading, and light/dark theme backgrounds and focus boundaries no longer create
   an abrupt solid band above the input. Schema remains unchanged.
