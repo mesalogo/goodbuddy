@@ -400,7 +400,7 @@ describe('ProjectSwitcher runtime fields', () => {
     expect(trigger.closest('.project-switcher')).not.toContainElement(menu)
     expect(menu.closest('.floating-portal')?.parentElement).toBe(document.body)
     const surface = screen.getByRole('dialog', { name: '项目与活动' })
-    expect(surface.style.width).toBe('920px')
+    expect(surface.style.width).toBe('680px')
     const selected = within(menu).getByRole('menuitemradio', { checked: true })
     await waitFor(() => expect(screen.getByRole('tab', { name: '全部项目' })).toHaveFocus())
     fireEvent.pointerDown(selected)

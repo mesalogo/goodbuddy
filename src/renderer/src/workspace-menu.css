@@ -19,7 +19,7 @@
 
 .workspace-menu__layout {
   display: grid;
-  grid-template-columns: minmax(240px, 360px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 260px) minmax(0, 1fr);
   flex: 1;
   min-height: 0;
 }

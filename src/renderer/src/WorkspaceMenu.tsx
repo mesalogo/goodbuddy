@@ -172,7 +172,7 @@ export function WorkspaceMenu({
     if (!menu || !anchor) return
     const position = (): void => {
       const rect = anchor.getBoundingClientRect()
-      const width = Math.min(920, window.innerWidth - 32)
+      const width = Math.min(680, window.innerWidth - 32)
       menu.style.width = `${width}px`
       menu.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))}px`
       const top = Math.max(16, rect.bottom + 8)
