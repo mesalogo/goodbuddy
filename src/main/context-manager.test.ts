@@ -514,11 +514,7 @@ describe('ContextManager', () => {
     })
     expect(showOpenDialog).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({
-        filters: expect.arrayContaining([
-          expect.objectContaining({ name: '图片' })
-        ])
-      })
+      { properties: ['openFile', 'multiSelections'] }
     )
   })
 
@@ -555,19 +551,7 @@ describe('ContextManager', () => {
     })
     expect(showOpenDialog).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({
-        filters: expect.arrayContaining([
-          expect.objectContaining({
-            name: 'PDF 和 Office 文档',
-            extensions: expect.arrayContaining([
-              'docx',
-              'pdf',
-              'pptx',
-              'xlsx'
-            ])
-          })
-        ])
-      })
+      { properties: ['openFile', 'multiSelections'] }
     )
     expect(onProgress.mock.calls.map(([progress]) => { const { operationId, ...rest } = progress; expect(operationId).toEqual(expect.any(String)); return rest })).toEqual([
       {

@@ -329,27 +329,7 @@ export class ContextManager {
     conversationId?: string
   ): Promise<ContextAttachment[]> {
     const result = await dialog.showOpenDialog(window, {
-      properties: ['openFile', 'multiSelections'],
-      filters: [
-        {
-          name: '文本、代码和配置文件',
-          extensions: [...supportedExtensions].map((extension) =>
-            extension.slice(1)
-          )
-        },
-        {
-          name: '图片',
-          extensions: [...supportedImageExtensions].map((extension) =>
-            extension.slice(1)
-          )
-        },
-        {
-          name: 'PDF 和 Office 文档',
-          extensions: [...supportedDocumentExtensions].map((extension) =>
-            extension.slice(1)
-          )
-        }
-      ]
+      properties: ['openFile', 'multiSelections']
     })
     if (result.canceled) {
       return []

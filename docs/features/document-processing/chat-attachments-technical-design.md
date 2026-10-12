@@ -14,7 +14,7 @@ Main。IPC 先验证可信 sender，再使用共享 `contextImportFilesSchema` �
 没有本地路径的截图沿用 `context.addPastedImage`；无路径的非图片文件和混有无路径项目
 的本地文件批次显示可处理的错误，不静默丢弃项目。
 
-`ContextManager.selectFiles` 只负责文件对话框，再调用与粘贴共用的 `importFiles`。
+`ContextManager.selectFiles` 打开不按文件类型过滤的多选文件对话框，再调用与粘贴共用的 `importFiles`。
 这个方法完成路径规范化、格式及大小检查、文本读取、图片转换、文档解析与上下文暂存。
 任一文件失败时删除本批次已经暂存的项目，保留之前的附件。文件系统错误不向 Renderer
 暴露绝对路径。
