@@ -9681,15 +9681,14 @@ describe("App", () => {
       ).toHaveTextContent(remoteProject.name),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '设置' }));
-    fireEvent.click(await screen.findByRole("tab", { name: "平台功能" }));
+    // The switch now lives in the Hosts application settings.
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "管理应用" }));
     fireEvent.click(
-      await screen.findByRole("tab", {
-        name: "远程项目",
-      }),
+      await screen.findByRole("button", { name: "主机管理 应用设置" }),
     );
     const remoteProjectsSwitch = await screen.findByRole("switch", {
-      name: "远程项目",
+      name: "启用远程能力",
     });
     expect(remoteProjectsSwitch).toBeChecked();
     fireEvent.click(remoteProjectsSwitch);
@@ -15024,7 +15023,7 @@ describe("App", () => {
       );
       await screen.findByRole("heading", { name: "设置中心" });
       fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
-      await screen.findByRole("tab", { name: "通用设置" });
+      await screen.findByLabelText("默认工作区目录");
       expect(screen.queryByRole("tab", { name: "魔法笔记" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "应用设置" })).not.toBeInTheDocument();
       expect(api.updates.updateSettings).not.toHaveBeenCalled();
@@ -15073,24 +15072,24 @@ describe("App", () => {
     await waitFor(() => expect(move).toBeEnabled())
     fireEvent.click(move)
     await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '监督者', '知识库', '魔法笔记', '本机推理监控', '设备共享（技术预览）',
+      '监督者', '知识库', '魔法笔记', '本机推理监控', '设备共享（技术预览）', '主机管理',
     ]))
     await waitFor(() => expect(screen.getByRole('button', { name: '上移 本机推理监控' })).toBeEnabled())
     const cards = within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article')
     fireEvent.dragStart(cards[3]!)
     fireEvent.drop(cards[1]!)
     await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）',
+      '监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）', '主机管理',
     ]))
-    expect((await updates.getSettings()).applicationNavigation.order).toEqual(['heartbeat', 'local-inference', 'knowledge', 'magic-notes', 'device-sharing'])
+    expect((await updates.getSettings()).applicationNavigation.order).toEqual(['heartbeat', 'local-inference', 'knowledge', 'magic-notes', 'device-sharing', 'remote-hosts'])
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
     expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual([
       '对话', '监督者', '知识库', '魔法笔记', '运行记录',
     ])
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
-    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '管理应用'])
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '主机管理', '管理应用'])
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）'])
+    expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）', '主机管理'])
   })
 
   it('leaves device sharing on an external settings event and keeps it closed when re-enabled', async () => {

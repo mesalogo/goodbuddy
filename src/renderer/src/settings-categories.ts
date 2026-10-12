@@ -6,7 +6,7 @@ import {
   Info,
   Palette,
   Radio,
-  Server,
+
   SlidersHorizontal,
   Terminal,
   Users,
@@ -44,12 +44,7 @@ export const settingsCategoryList = [
     translationKey: 'runtime',
     icon: Terminal
   },
-  {
-    id: 'ssh-hosts',
-    group: 'execution',
-    translationKey: 'sshHosts',
-    icon: Server
-  },
+
   {
     id: 'document-parsing',
     group: 'extensions',
@@ -86,12 +81,9 @@ export type SettingsCategoryDefinition =
   (typeof settingsCategoryList)[number]
 export type SettingsCategoryId = SettingsCategoryDefinition['id']
 
-export function getSettingsCategoryList(
-  remoteProjectsEnabled: boolean
-): readonly SettingsCategoryDefinition[] {
-  return remoteProjectsEnabled
-    ? settingsCategoryList
-    : settingsCategoryList.filter(({ id }) => id !== 'ssh-hosts')
+// SSH hosts moved to the Hosts application and are no longer a settings category.
+export function getSettingsCategoryList(): readonly SettingsCategoryDefinition[] {
+  return settingsCategoryList
 }
 
 type LocalizedSettingsCategoryDefinition = SettingsCategoryDefinition & {

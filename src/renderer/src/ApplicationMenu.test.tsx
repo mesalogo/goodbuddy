@@ -35,10 +35,20 @@ it('only shows device sharing when explicitly enabled and removes it on disable'
   expect(screen.queryByRole('menuitem', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()
 })
 
+it('lists Hosts once settings load, even while remote capability is off', () => {
+  const onOpen = vi.fn()
+  const { rerender } = render(<Harness value={null} pending onOpen={onOpen} />)
+  fireEvent.click(screen.getByText('Launcher'))
+  expect(screen.queryByRole('menuitem', { name: '主机管理' })).not.toBeInTheDocument()
+  rerender(<Harness onOpen={onOpen} />)
+  fireEvent.click(screen.getByRole('menuitem', { name: '主机管理' }))
+  expect(onOpen).toHaveBeenCalledWith('remote-hosts')
+})
+
 it('filters the shared order by enablement only, including reordered always-shown apps', () => {
   const value = { ...settings, magicNotesEnabled: true, localInferenceEnabled: true, heartbeatEnabled: true,
     applicationNavigation: { order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'] as ApplicationSettings['applicationNavigation']['order'],
-       pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false } } }
+       pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false, 'remote-hosts': false } } }
   const onOpen = vi.fn()
   const { rerender } = render(<Harness value={value} onOpen={onOpen} />)
   fireEvent.click(screen.getByText('Launcher'))

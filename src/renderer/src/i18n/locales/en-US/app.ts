@@ -35,10 +35,25 @@ export const app = {
     enabled: 'Enabled', disabled: 'Disabled', open: 'Open', moveUp: 'Move {{name}} up', moveDown: 'Move {{name}} down',
     orderUpdated: 'Application order updated', loadFailed: 'Could not load application settings', saveFailed: 'Could not save application settings',
     confirmFailed: 'Could not confirm the save result. Reload settings before editing again.',
+    remoteHosts: 'Hosts',
+    remoteHostsEnable: 'Enable remote capability',
+    remoteHostsHelp: 'Remote capability is off by default. Enable it to add SSH hosts, install execution environments, and create remote projects. Turning it off hides remote projects and stops remote execution; hosts, credentials, remote projects, and Agent packages are kept. Agent packages remain manageable while it is off.',
     descriptions: {
       'device-sharing': 'Test feature, off by default. Register devices, publish and revoke capability or knowledge metadata.',
+      'remote-hosts': 'Connect SSH hosts, install remote execution environments, and manage Agent packages.',
       'magic-notes': 'Write notes, organize to-dos, and receive AI comments.', knowledge: 'Manage knowledge sources and retrieve reference material for conversations.',
       heartbeat: 'Review work evolution, explore the story graph, and configure Smart heartbeat.', 'local-inference': 'Inspect local inference tasks and execution services.'
+    }
+  },
+  remoteHosts: {
+    title: 'Hosts',
+    description: 'Connect SSH hosts, install remote execution environments, and manage Agent packages. Local Skills and MCP servers are not applied to remote hosts.',
+    tabsLabel: 'Hosts',
+    tabs: { hosts: 'Hosts', packages: 'Agent packages' },
+    disabled: {
+      title: 'Remote capability is off',
+      description: 'Enable it to add SSH hosts, install execution environments, and create remote projects. Agent packages can be downloaded or imported ahead of time while it is off.',
+      enable: 'Enable remote capability'
     }
   },
   notifications: {

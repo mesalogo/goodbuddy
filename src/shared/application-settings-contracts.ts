@@ -37,13 +37,13 @@ export const defaultSupervisorModelConcurrency = 1
 export const supervisorModelConcurrencySchema = z.number().int().min(1).max(4)
 export const supervisionTimeoutSecondsSchema = z.number().int().min(30).max(600)
 
-export const builtInApplicationIds = ['magic-notes', 'knowledge', 'heartbeat', 'local-inference', 'device-sharing'] as const
+export const builtInApplicationIds = ['magic-notes', 'knowledge', 'heartbeat', 'local-inference', 'device-sharing', 'remote-hosts'] as const
 export type BuiltInApplicationId = typeof builtInApplicationIds[number]
-export const editableApplicationIds = ['magic-notes', 'heartbeat', 'local-inference', 'device-sharing'] as const
+export const editableApplicationIds = ['magic-notes', 'heartbeat', 'local-inference', 'device-sharing', 'remote-hosts'] as const
 export type EditableApplicationId = typeof editableApplicationIds[number]
 export const defaultApplicationNavigation = {
-  order: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference', 'device-sharing'] as BuiltInApplicationId[],
-  pinned: { 'magic-notes': true, heartbeat: true, 'local-inference': false }
+  order: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference', 'device-sharing', 'remote-hosts'] as BuiltInApplicationId[],
+  pinned: { 'magic-notes': true, heartbeat: true, 'local-inference': false, 'remote-hosts': false }
 }
 export const applicationNavigationSchema = z.object({
   order: z.array(z.enum(builtInApplicationIds)).length(builtInApplicationIds.length)
@@ -51,7 +51,9 @@ export const applicationNavigationSchema = z.object({
   pinned: z.object({
     'magic-notes': z.boolean(),
     heartbeat: z.boolean().default(true),
-    'local-inference': z.boolean()
+    'local-inference': z.boolean(),
+    // Optional on input so callers written before the application existed keep working.
+    'remote-hosts': z.boolean().default(false)
   }).strict()
 }).strict()
 

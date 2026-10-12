@@ -32,10 +32,25 @@ export const app = {
     enabled: '已启用', disabled: '已关闭', open: '打开', moveUp: '上移 {{name}}', moveDown: '下移 {{name}}',
     orderUpdated: '应用顺序已更新', loadFailed: '无法读取应用设置', saveFailed: '应用设置保存失败',
     confirmFailed: '无法确认保存结果，请重新读取后再修改。',
+    remoteHosts: '主机管理',
+    remoteHostsEnable: '启用远程能力',
+    remoteHostsHelp: '远程能力默认关闭。启用后可以添加 SSH 主机、安装执行环境并创建远程项目。关闭后远程项目从项目列表中隐藏，也不能再在远端执行；主机、凭据、远程项目和 Agent 离线包都会保留。Agent 离线包在关闭时仍可管理。',
     descriptions: {
       'device-sharing': '测试功能，默认关闭。注册设备，发布和撤销能力或知识的元数据。',
+      'remote-hosts': '接入 SSH 主机，安装远端执行环境，管理 Agent 离线包。',
       'magic-notes': '记录笔记、整理待办并获取 AI 评论。', knowledge: '管理知识来源，为会话检索资料。',
       heartbeat: '回顾工作演变、查看故事线图谱，并配置智能心跳。', 'local-inference': '查看本机推理任务与执行服务。'
+    }
+  },
+  remoteHosts: {
+    title: '主机管理',
+    description: '接入 SSH 主机，安装远端执行环境，管理 Agent 离线包。本机配置的 Skills 和 MCP 不会应用到远程主机。',
+    tabsLabel: '主机管理',
+    tabs: { hosts: '主机', packages: 'Agent 离线包' },
+    disabled: {
+      title: '远程能力未启用',
+      description: '启用后可以添加 SSH 主机、安装执行环境并创建远程项目。Agent 离线包在未启用时也可以提前下载或导入。',
+      enable: '启用远程能力'
     }
   },
   notifications: {

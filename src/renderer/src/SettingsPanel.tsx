@@ -61,7 +61,6 @@ import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 import { DshMarketplaceSection } from './DshMarketplaceSection'
 import { displayErrorMessage } from './error-message'
-import { SshHostsSettingsSection } from './SshHostsSettingsSection'
 import {
   RuntimeCustomizationSection,
   type RuntimeCustomizationSectionHandle
@@ -227,7 +226,6 @@ type SettingsPanelProps = {
   initialCategory?: SettingsCategoryId
   initialChannel?: ProjectChannel
   onClose: () => void
-  onProjectsDeleted?: (projectIds: string[]) => void
   onSaved: (settings: RuntimeSettings) => void
   onNotify?: (notification: AppNotificationInput) => void
   onUpdateProject: (
@@ -253,11 +251,9 @@ type SettingsPanelProps = {
     preferences: BrandingPreferences
   ) => boolean
   magicNotesEnabled?: boolean
-  remoteProjectsEnabled?: boolean
   onConversationHtmlRenderingEnabledChange?: (
     enabled: boolean
   ) => void
-  onRemoteProjectsEnabledChange?: (enabled: boolean) => void
   onShortcutSettingsChanged?: (
     snapshot: GlobalShortcutSettingsSnapshot
   ) => void
@@ -647,7 +643,6 @@ function SettingsPanelView({
   initialCategory,
   initialChannel,
   onClose,
-  onProjectsDeleted = () => {},
   onSaved,
   onNotify = () => {},
   onUpdateProject,
@@ -668,9 +663,7 @@ function SettingsPanelView({
   brandingFallbackLogo,
   onBrandingPreferencesChange = () => false,
   magicNotesEnabled = false,
-  remoteProjectsEnabled = false,
   onConversationHtmlRenderingEnabledChange = () => {},
-  onRemoteProjectsEnabledChange = () => {},
   onShortcutSettingsChanged = () => {},
   onLeaveRequestReady = () => {}
 }: SettingsPanelProps): React.JSX.Element | null {
@@ -797,15 +790,8 @@ function SettingsPanelView({
   const [detection, setDetection] = useState<AgentRuntimeDetection>()
   const [detecting, setDetecting] = useState(false)
   const [selectedTab, setActiveTab] =
-    useState<SettingsCategoryId>(
-      initialCategory === 'ssh-hosts' && !remoteProjectsEnabled
-        ? 'platform-features'
-        : initialCategory ?? 'runtime'
-    )
-  const activeTab =
-    selectedTab === 'ssh-hosts' && !remoteProjectsEnabled
-      ? 'platform-features'
-      : selectedTab
+    useState<SettingsCategoryId>(initialCategory ?? 'runtime')
+  const activeTab = selectedTab
   const [modelType, setModelType] = useState<ModelType>('llm')
   const [modelDownloadSourceOpen, setModelDownloadSourceOpen] = useState(false)
   const [modelDownloadSource, setModelDownloadSource] = useState<ModelDownloadSource>()
@@ -829,7 +815,6 @@ function SettingsPanelView({
     useState(false)
   const [documentParsingDirty, setDocumentParsingDirty] =
     useState(false)
-  const [sshHostsDirty, setSshHostsDirty] = useState(false)
   const [pendingLeave, setPendingLeave] = useState<
     | { kind: 'close' }
     | { kind: 'navigate'; category: SettingsCategoryId; openModelDownloadSource?: boolean }
@@ -915,7 +900,6 @@ function SettingsPanelView({
   const categoryRendersOwnHeader =
     activeTab === 'platform-features' ||
     activeTab === 'document-parsing' ||
-    activeTab === 'ssh-hosts' ||
     activeTab === 'channels' ||
     activeTab === 'capabilities' ||
     activeTab === 'about'
@@ -1018,22 +1002,19 @@ function SettingsPanelView({
     runtimeCustomizationDirty ||
     brandingDirty ||
     platformFeaturesDirty ||
-    documentParsingDirty ||
-    sshHostsDirty
+    documentParsingDirty
   const navigationWouldLoseDraft =
     runtimeCustomizationDirty ||
     brandingDirty ||
     platformFeaturesDirty ||
-    documentParsingDirty ||
-    sshHostsDirty
+    documentParsingDirty
   const unsavedCloseMessage =
     runtimeCustomizationDirty &&
     !runtimeDraftDirty &&
     !speechModelSelectionDirty &&
     !brandingDirty &&
     !platformFeaturesDirty &&
-    !documentParsingDirty &&
-    !sshHostsDirty
+    !documentParsingDirty
       ? t('runtime.customization.unsavedClose')
       : t('unsaved.close')
 
@@ -1077,9 +1058,7 @@ function SettingsPanelView({
     if (requestTabChange('model', undefined, true)) setModelDownloadSourceOpen(true)
   }
 
-  const visibleSettingsCategories = getSettingsCategoryList(
-    remoteProjectsEnabled
-  )
+  const visibleSettingsCategories = getSettingsCategoryList()
   const settingsTabs = visibleSettingsCategories.map(({ id }) => id)
 
   const handleTabKeyDown = (
@@ -1131,7 +1110,6 @@ function SettingsPanelView({
         setSpeechModelSelectionDirty(false)
         setPlatformFeaturesDirty(false)
         setDocumentParsingDirty(false)
-        setSshHostsDirty(false)
         setPendingLeave(undefined)
         setAgentRuntimeType('opencode')
         hydrateSettings(value)
@@ -1300,7 +1278,6 @@ function SettingsPanelView({
     setBrandingDirty(false)
     setPlatformFeaturesDirty(false)
     setDocumentParsingDirty(false)
-    setSshHostsDirty(false)
     setPendingLeave(undefined)
     setError(undefined)
   }
@@ -1326,7 +1303,6 @@ function SettingsPanelView({
     setBrandingDirty(false)
     setPlatformFeaturesDirty(false)
     setDocumentParsingDirty(false)
-    setSshHostsDirty(false)
     const leave = pendingLeave
     setPendingLeave(undefined)
     setError(undefined)
@@ -2463,9 +2439,6 @@ function SettingsPanelView({
               onDirtyChange={setPlatformFeaturesDirty}
               onConversationHtmlRenderingEnabledChange={
                 onConversationHtmlRenderingEnabledChange
-              }
-              onRemoteProjectsEnabledChange={
-                onRemoteProjectsEnabledChange
               }
               onWorkspacePathChange={setWorkspacePath}
               workspacePath={workspacePath}
@@ -4156,14 +4129,6 @@ function SettingsPanelView({
               onDirtyChange={setDocumentParsingDirty}
               onNotify={onNotify}
               onOpenModelDownloadSourceSettings={openModelDownloadSource}
-            />
-          )}
-
-          {remoteProjectsEnabled && activeTab === 'ssh-hosts' && (
-            <SshHostsSettingsSection
-              onDirtyChange={setSshHostsDirty}
-              onNotify={onNotify}
-              onProjectsDeleted={onProjectsDeleted}
             />
           )}
 

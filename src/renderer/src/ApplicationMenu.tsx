@@ -2,7 +2,7 @@ import { useMemo, type RefObject } from 'react'
 import { LayoutGrid } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { defaultApplicationNavigation, type ApplicationSettings, type BuiltInApplicationId } from '../../shared/application-settings-contracts'
-import { applicationDefinitions, isApplicationEnabled } from './ApplicationCenter'
+import { applicationDefinitions, isApplicationOpenable } from './ApplicationCenter'
 import { AnchoredMenu } from './AnchoredMenu'
 
 export function ApplicationMenu({ anchorRef, settings, pending, error, onClose, onOpen, onManage, onRetry }: {
@@ -19,7 +19,7 @@ export function ApplicationMenu({ anchorRef, settings, pending, error, onClose, 
   const applications = useMemo(() => {
     const order = (settings?.applicationNavigation ?? defaultApplicationNavigation).order
     return order
-      .filter(id => isApplicationEnabled(settings, id))
+      .filter(id => isApplicationOpenable(settings, id))
   }, [settings])
   return <AnchoredMenu anchorRef={anchorRef} id="application-menu" label={t('applications.title')} onClose={onClose}>
     {pending && <p role="status">{t('route.loading')}</p>}

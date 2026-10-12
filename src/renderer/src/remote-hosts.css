@@ -1,0 +1,260 @@
+.remote-hosts-tabs {
+  margin-block: var(--space-4) var(--space-5);
+}
+
+.remote-hosts-panel {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.remote-hosts-panel[hidden] {
+  display: none;
+}
+
+.ssh-hosts-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.ssh-hosts-toolbar__search {
+  display: flex;
+  flex: 1 1 240px;
+  max-width: 360px;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: auto;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control, 6px);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+}
+
+.ssh-hosts-toolbar__search:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-selected);
+  outline-offset: 0;
+}
+
+.ssh-hosts-toolbar__search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+
+.ssh-hosts-list {
+  gap: var(--space-2);
+}
+
+.ssh-host-card {
+  gap: 0;
+  padding: var(--space-2) var(--space-3);
+  transition: border-color 120ms ease;
+}
+
+.ssh-host-card:hover,
+.ssh-host-card--expanded {
+  border-color: var(--border-default);
+}
+
+.ssh-host-card__summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ssh-host-card__toggle {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ssh-host-card__toggle:disabled {
+  cursor: default;
+}
+
+.ssh-host-card__toggle:focus-visible {
+  border-radius: var(--radius-control);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ssh-host-card__chevron {
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.ssh-host-card--expanded .ssh-host-card__chevron {
+  transform: rotate(90deg);
+}
+
+.ssh-host-card__identity {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.ssh-host-card__identity strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssh-host-card__identity small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  font-size: var(--font-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssh-host-card__badges {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.ssh-host-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: var(--font-caption);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.ssh-host-badge--ok {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.ssh-host-badge--warn {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.ssh-host-badge--busy {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.ssh-host-badge--muted {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.ssh-host-card__summary {
+  flex-wrap: wrap;
+}
+
+.ssh-host-card__summary > .secondary-button,
+.ssh-host-card__summary > .danger-button {
+  flex: none;
+}
+
+/* The removal confirmation takes the full width under the summary. */
+.ssh-host-card__summary > .danger-confirm {
+  flex: 1 0 100%;
+  margin-top: var(--space-2);
+}
+
+.ssh-host-environment__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-body);
+}
+
+.ssh-host-environment__table th,
+.ssh-host-environment__table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.ssh-host-environment__table thead th {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 500;
+}
+
+.ssh-host-environment__table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.ssh-host-environment__table tbody th {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.ssh-host-environment__table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.ssh-host-environment__component {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ssh-host-environment__component svg {
+  color: var(--accent);
+}
+
+.ssh-host-environment__missing {
+  color: var(--text-muted);
+}
+
+.ssh-host-card__details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+@container (max-width: 760px) {
+  .ssh-host-card__summary {
+    flex-wrap: wrap;
+  }
+
+  .ssh-host-card__identity {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .ssh-host-card__badges {
+    justify-content: flex-start;
+    padding-left: calc(15px + 16px + var(--space-2) * 2);
+  }
+}
+
+@container (max-width: 640px) {
+  .remote-hosts-panel .ssh-host-card__facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

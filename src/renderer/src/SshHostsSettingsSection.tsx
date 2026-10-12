@@ -2,11 +2,12 @@ import {
   Bot,
   Boxes,
   CheckCircle2,
+  ChevronRight,
   Download,
   LoaderCircle,
-  Pencil,
   Plus,
   RefreshCw,
+  Search,
   Server,
   ShieldCheck,
   X
@@ -28,9 +29,9 @@ import type {
   SshHostValidationResult
 } from '../../shared/ssh-host-contracts'
 import type { AppNotificationInput } from './notifications'
-import { SettingsCategoryHeader } from './SettingsPrimitives'
 import { displayErrorMessage } from './error-message'
 import { SshHostDialog } from './SshHostDialog'
+import './remote-hosts.css'
 import {
   getCachedSshHostRemoteEnvironments,
   removeCachedSshHostRemoteEnvironment,
@@ -43,6 +44,7 @@ import {
 } from './WorkspacePrimitives'
 
 type SshHostsSettingsSectionProps = {
+  onBusyChange?: (busy: boolean) => void
   onDirtyChange?: (dirty: boolean) => void
   onHostUpdated?: (hostId: string) => void
   onNotify?: (notification: AppNotificationInput) => void
@@ -95,6 +97,7 @@ function upsertHost(hosts: SshHost[], host: SshHost): SshHost[] {
 }
 
 export function SshHostsSettingsSection({
+  onBusyChange,
   onDirtyChange,
   onHostUpdated,
   onNotify,
@@ -110,6 +113,14 @@ export function SshHostsSettingsSection({
   const [loadError, setLoadError] = useState<string>()
   const [error, setError] = useState<string>()
   const [editingId, setEditingId] = useState<string | 'new'>()
+  const [query, setQuery] = useState('')
+  // Hosts start collapsed so long lists stay scannable; a single host starts open.
+  const [expandedOverrides, setExpandedOverrides] = useState<
+    ReadonlyMap<string, boolean>
+  >(() => new Map())
+  const setHostExpanded = (hostId: string, expanded: boolean): void => {
+    setExpandedOverrides((current) => new Map(current).set(hostId, expanded))
+  }
   const [busyHostId, setBusyHostId] = useState<string>()
   const [confirmingDeleteId, setConfirmingDeleteId] =
     useState<string>()
@@ -510,6 +521,8 @@ export function SshHostsSettingsSection({
     const edited = hosts.some((host) => host.id === result.host.id)
     removeCachedSshHostRemoteEnvironment(result.host.id)
     setHosts((current) => upsertHost(current, result.host))
+    // Show the validation result and next step for the host just saved.
+    setHostExpanded(result.host.id, true)
     setTestResults((current) => ({
       ...current,
       [result.host.id]: result.connection
@@ -604,27 +617,53 @@ export function SshHostsSettingsSection({
   const hasActiveRemoteEnvironmentUpdate =
     remoteEnvironmentUpdate !== undefined
 
+  useEffect(() => {
+    onBusyChange?.(hasActiveRemoteEnvironmentUpdate)
+  }, [hasActiveRemoteEnvironmentUpdate, onBusyChange])
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange])
+
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const visibleHosts = normalizedQuery
+    ? hosts.filter((host) =>
+        `${host.name} ${host.username}@${host.hostname}:${host.port}`
+          .toLocaleLowerCase()
+          .includes(normalizedQuery)
+      )
+    : hosts
+
   return (
     <div className="ssh-hosts-settings">
-      <SettingsCategoryHeader
-        actions={
-          <button
-            className="primary-button"
-            disabled={loading || Boolean(editingId) || !api}
-            onClick={() => {
-              setEditingId('new')
-              setError(undefined)
-            }}
-            type="button"
-          >
-            <Plus aria-hidden="true" size={14} />
-            {t('sshHosts.actions.add')}
-          </button>
-        }
-        category="ssh-hosts"
-        error={error}
-        headingId="ssh-hosts-heading"
-      />
+      <div className="ssh-hosts-toolbar">
+        {hosts.length > 0 && (
+          <label className="ssh-hosts-toolbar__search">
+            <Search aria-hidden="true" size={14} />
+            <input
+              aria-label={t('sshHosts.search.label')}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('sshHosts.search.placeholder')}
+              type="search"
+              value={query}
+            />
+          </label>
+        )}
+        <button
+          className="primary-button"
+          disabled={loading || Boolean(editingId) || !api}
+          onClick={() => {
+            setEditingId('new')
+            setError(undefined)
+          }}
+          type="button"
+        >
+          <Plus aria-hidden="true" size={14} />
+          {t('sshHosts.actions.add')}
+        </button>
+      </div>
+      {error && (
+        <p className="settings-warning" role="alert">
+          {error}
+        </p>
+      )}
 
       <div className="settings-notice">
         <ShieldCheck aria-hidden="true" size={16} />
@@ -676,12 +715,26 @@ export function SshHostsSettingsSection({
           icon={<Server size={22} />}
           title={t('sshHosts.empty.title')}
         />
+      ) : visibleHosts.length === 0 ? (
+        <EmptyState
+          action={
+            <button
+              className="secondary-button"
+              onClick={() => setQuery('')}
+              type="button"
+            >
+              {t('sshHosts.search.clear')}
+            </button>
+          }
+          description={t('sshHosts.search.noResults')}
+          icon={<Search size={22} />}
+        />
       ) : (
         <div
           aria-label={t('sshHosts.listLabel')}
           className="ssh-hosts-list"
         >
-          {hosts.map((host) => {
+          {visibleHosts.map((host) => {
             const relatedProjects =
               projectReferences?.[host.id] ?? []
             const result = testResults[host.id]
@@ -722,20 +775,98 @@ export function SshHostsSettingsSection({
                 'function' &&
               typeof api.onRemoteEnvironmentUpdateProgress ===
                 'function'
+            const environmentSummary = remoteEnvironment?.value
+              ? environmentComponents.some(
+                  ({ state }) => state === 'not-installed'
+                )
+                ? 'not-installed'
+                : environmentComponents.some(
+                      ({ state }) => state === 'update-available'
+                    )
+                  ? 'update-available'
+                  : 'current'
+              : 'unknown'
+            // Progress, failures, and removal confirmation must stay visible.
+            const forcedOpen =
+              Boolean(hostEnvironmentUpdate) ||
+              Boolean(remoteEnvironmentUpdateError) ||
+              Boolean(remoteEnvironment?.error) ||
+              confirmingDeleteId === host.id
+            const expanded =
+              forcedOpen ||
+              (expandedOverrides.get(host.id) ?? hosts.length === 1)
+            const detailsId = `ssh-host-details-${host.id}`
             return (
               <section
                 aria-label={host.name}
-                className="settings-section ssh-host-card"
+                className={`settings-section ssh-host-card${expanded ? ' ssh-host-card--expanded' : ''}`}
                 key={host.id}
               >
-                <div className="settings-section__title settings-section__title--actions">
-                  <Server aria-hidden="true" size={17} />
-                  <div>
-                    <strong>{host.name}</strong>
-                    <small>
-                      {host.username}@{host.hostname}:{host.port}
-                    </small>
-                  </div>
+                <div className="ssh-host-card__summary">
+                  <button
+                    aria-controls={detailsId}
+                    aria-expanded={expanded}
+                    aria-label={t(
+                      expanded
+                        ? 'sshHosts.list.collapseNamed'
+                        : 'sshHosts.list.expandNamed',
+                      { name: host.name }
+                    )}
+                    className="ssh-host-card__toggle"
+                    disabled={forcedOpen}
+                    onClick={() => setHostExpanded(host.id, !expanded)}
+                    type="button"
+                  >
+                    <ChevronRight
+                      aria-hidden="true"
+                      className="ssh-host-card__chevron"
+                      size={15}
+                    />
+                    <Server aria-hidden="true" size={16} />
+                    <span className="ssh-host-card__identity">
+                      <strong>{host.name}</strong>
+                      <small>
+                        {host.username}@{host.hostname}:{host.port}
+                      </small>
+                    </span>
+                  </button>
+                  <span className="ssh-host-card__badges">
+                    <span
+                      className={`ssh-host-badge ssh-host-badge--${host.lastValidatedAt ? 'ok' : 'warn'}`}
+                    >
+                      {t(
+                        host.lastValidatedAt
+                          ? 'sshHosts.list.validated'
+                          : 'sshHosts.status.needsValidation'
+                      )}
+                    </span>
+                    {host.lastValidatedAt && (
+                      <span
+                        className={`ssh-host-badge ssh-host-badge--${
+                          hostEnvironmentUpdate
+                            ? 'busy'
+                            : environmentSummary === 'current'
+                              ? 'ok'
+                              : environmentSummary === 'unknown'
+                                ? 'muted'
+                                : 'warn'
+                        }`}
+                      >
+                        {t(
+                          hostEnvironmentUpdate
+                            ? 'sshHosts.list.environmentUpdating'
+                            : `sshHosts.list.environment.${environmentSummary}`
+                        )}
+                      </span>
+                    )}
+                    {relatedProjects.length > 0 && (
+                      <span className="ssh-host-badge ssh-host-badge--muted">
+                        {t('sshHosts.list.projects', {
+                          count: relatedProjects.length
+                        })}
+                      </span>
+                    )}
+                  </span>
                   <button
                     aria-label={t(
                       host.lastValidatedAt
@@ -755,13 +886,57 @@ export function SshHostsSettingsSection({
                     }}
                     type="button"
                   >
-                    <Pencil aria-hidden="true" size={13} />
                     {host.lastValidatedAt
                       ? t('sshHosts.actions.edit')
                       : t('sshHosts.actions.validate')}
                   </button>
+                  <DestructiveConfirmActions
+                    confirmLabel={t(
+                      'sshHosts.actions.confirmRemove'
+                    )}
+                    confirming={confirmingDeleteId === host.id}
+                    disabled={
+                      deleting || Boolean(hostEnvironmentUpdate)
+                    }
+                    message={
+                      confirmingDeleteId === host.id ? (
+                        <div className="ssh-host-remove-confirmation">
+                          <p>
+                            {t('sshHosts.removeMessage', {
+                              name: host.name
+                            })}
+                          </p>
+                          {relatedProjects.length > 0 && (
+                            <>
+                              <strong>
+                                {t('sshHosts.removeProjectsHeading')}
+                              </strong>
+                              <ul>
+                                {relatedProjects.map((project) => (
+                                  <li key={project.id}>
+                                    {project.name}
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          )}
+                        </div>
+                      ) : null
+                    }
+                    onCancel={() =>
+                      setConfirmingDeleteId(undefined)
+                    }
+                    onConfirm={() => void remove(host)}
+                    onRequestConfirm={() =>
+                      setConfirmingDeleteId(host.id)
+                    }
+                    triggerAriaLabel={t('sshHosts.actions.removeNamed', { name: host.name })}
+                    triggerLabel={t('sshHosts.actions.remove')}
+                  />
                 </div>
 
+                {expanded && (
+                <div className="ssh-host-card__details" id={detailsId}>
                 <dl className="ssh-host-card__facts">
                   <div>
                     <dt>{t('sshHosts.fields.authentication')}</dt>
@@ -1053,39 +1228,49 @@ export function SshHostsSettingsSection({
                     )}
 
                     {remoteEnvironment?.value ? (
-                      <div className="ssh-host-environment__grid">
-                        <EnvironmentVersionCard
-                          icon={<Bot aria-hidden="true" size={17} />}
-                          installed={
-                            remoteEnvironment.value.agent.installed
-                          }
-                          label="GoodBuddy Agent"
-                          state={remoteEnvironment.value.agent.state}
-                          t={t}
-                          expected={
-                            remoteEnvironment.value.agent.expected
-                          }
-                        />
-                        {remoteEnvironment.value.runtimes.map(
-                          (runtime) => (
-                            <EnvironmentVersionCard
-                              icon={
-                                <Server aria-hidden="true" size={17} />
-                              }
-                              installed={runtime.installed}
-                              key={runtime.runtimeId}
-                              label={
-                                runtime.runtimeId === 'opencode'
-                                  ? 'OpenCode Runtime'
-                                  : runtime.runtimeId
-                              }
-                              state={runtime.state}
-                              t={t}
-                              expected={runtime.expected}
-                            />
-                          )
-                        )}
-                      </div>
+                      <table className="ssh-host-environment__table">
+                        <thead>
+                          <tr>
+                            <th scope="col">{t('sshHosts.environment.component')}</th>
+                            <th scope="col">{t('sshHosts.environment.installed')}</th>
+                            <th scope="col">{t('sshHosts.environment.expected')}</th>
+                            <th scope="col">{t('sshHosts.environment.status')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <EnvironmentVersionRow
+                            icon={<Bot aria-hidden="true" size={15} />}
+                            installed={
+                              remoteEnvironment.value.agent.installed
+                            }
+                            label="GoodBuddy Agent"
+                            state={remoteEnvironment.value.agent.state}
+                            t={t}
+                            expected={
+                              remoteEnvironment.value.agent.expected
+                            }
+                          />
+                          {remoteEnvironment.value.runtimes.map(
+                            (runtime) => (
+                              <EnvironmentVersionRow
+                                icon={
+                                  <Server aria-hidden="true" size={15} />
+                                }
+                                installed={runtime.installed}
+                                key={runtime.runtimeId}
+                                label={
+                                  runtime.runtimeId === 'opencode'
+                                    ? 'OpenCode Runtime'
+                                    : runtime.runtimeId
+                                }
+                                state={runtime.state}
+                                t={t}
+                                expected={runtime.expected}
+                              />
+                            )
+                          )}
+                        </tbody>
+                      </table>
                     ) : remoteEnvironment?.loading ? (
                       <div
                         className="ssh-host-environment__loading"
@@ -1106,50 +1291,8 @@ export function SshHostsSettingsSection({
                   </div>
                 )}
 
-                <div className="ssh-host-card__actions">
-                  <DestructiveConfirmActions
-                    confirmLabel={t(
-                      'sshHosts.actions.confirmRemove'
-                    )}
-                    confirming={confirmingDeleteId === host.id}
-                    disabled={
-                      deleting || Boolean(hostEnvironmentUpdate)
-                    }
-                    message={
-                      confirmingDeleteId === host.id ? (
-                        <div className="ssh-host-remove-confirmation">
-                          <p>
-                            {t('sshHosts.removeMessage', {
-                              name: host.name
-                            })}
-                          </p>
-                          {relatedProjects.length > 0 && (
-                            <>
-                              <strong>
-                                {t('sshHosts.removeProjectsHeading')}
-                              </strong>
-                              <ul>
-                                {relatedProjects.map((project) => (
-                                  <li key={project.id}>
-                                    {project.name}
-                                  </li>
-                                ))}
-                              </ul>
-                            </>
-                          )}
-                        </div>
-                      ) : null
-                    }
-                    onCancel={() =>
-                      setConfirmingDeleteId(undefined)
-                    }
-                    onConfirm={() => void remove(host)}
-                    onRequestConfirm={() =>
-                      setConfirmingDeleteId(host.id)
-                    }
-                    triggerLabel={t('sshHosts.actions.remove')}
-                  />
                 </div>
+                )}
               </section>
             )
           })}
@@ -1198,7 +1341,7 @@ function formatPackageSize(bytes: number): string {
   return `${mebibytes >= 10 ? Math.round(mebibytes) : mebibytes.toFixed(1)} MiB`
 }
 
-function EnvironmentVersionCard({
+function EnvironmentVersionRow({
   expected,
   icon,
   installed,
@@ -1216,48 +1359,44 @@ function EnvironmentVersionCard({
   t: ReturnType<typeof useTranslation<'settingsSections'>>['t']
 }): React.JSX.Element {
   return (
-    <article className="ssh-host-environment__runtime">
-      <div className="ssh-host-environment__runtime-header">
-        <span className="ssh-host-environment__runtime-icon">
+    <tr>
+      <th scope="row">
+        <span className="ssh-host-environment__component">
           {icon}
+          {label}
         </span>
-        <strong>{label}</strong>
+      </th>
+      <td>
+        {installed ? (
+          <span
+            title={t('sshHosts.environment.versionDetail', {
+              architecture: installed.architecture
+            })}
+          >
+            {installed.version}
+          </span>
+        ) : (
+          <span className="ssh-host-environment__missing">
+            {t('sshHosts.environment.notInstalled')}
+          </span>
+        )}
+      </td>
+      <td>
+        <span
+          title={t('sshHosts.environment.versionDetail', {
+            architecture: expected.architecture
+          })}
+        >
+          {expected.version}
+        </span>
+      </td>
+      <td>
         <span
           className={`ssh-host-environment__badge ssh-host-environment__badge--${state}`}
         >
           {t(`sshHosts.environment.states.${state}`)}
         </span>
-      </div>
-      <dl>
-        <div>
-          <dt>{t('sshHosts.environment.installed')}</dt>
-          <dd>
-            {installed ? (
-              <>
-                <strong>{installed.version}</strong>
-                <small>
-                  {t('sshHosts.environment.versionDetail', {
-                    architecture: installed.architecture
-                  })}
-                </small>
-              </>
-            ) : (
-              <span>{t('sshHosts.environment.notInstalled')}</span>
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt>{t('sshHosts.environment.expected')}</dt>
-          <dd>
-            <strong>{expected.version}</strong>
-            <small>
-              {t('sshHosts.environment.versionDetail', {
-                architecture: expected.architecture
-              })}
-            </small>
-          </dd>
-        </div>
-      </dl>
-    </article>
+      </td>
+    </tr>
   )
 }

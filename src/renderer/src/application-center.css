@@ -132,6 +132,16 @@
 .application-settings .toggle-row span {
   font-weight: 500;
 }
+/* A switch with inline help keeps the help next to its text and the switch
+   on the right edge, aligned with the other switches. */
+.application-settings .inline-help-label {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+}
+.application-settings .inline-help-label > .toggle-row {
+  display: contents;
+}
 .application-settings .settings-notice {
   margin: 0 0 var(--space-2);
   font-size: var(--font-body);

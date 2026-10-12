@@ -204,10 +204,18 @@ async function inspectAndConfirmFirstKey(): Promise<void> {
   fireEvent.click(continueButton)
 }
 
+function expandHost(host: HTMLElement, name: string): void {
+  const toggle = within(host).queryByRole('button', {
+    name: `展开 ${name} 的详情`
+  })
+  if (toggle) fireEvent.click(toggle)
+}
+
 async function refreshHostEnvironment(
   name = 'Build host'
 ): Promise<HTMLElement> {
   const host = await screen.findByRole('region', { name })
+  expandHost(host, name)
   fireEvent.click(
     within(host).getByRole('button', {
       name: `刷新 ${name} 的远程运行环境版本`
@@ -695,7 +703,7 @@ describe('SshHostsSettingsSection', () => {
     })
 
     fireEvent.click(
-      within(host).getByRole('button', { name: '删除' })
+      within(host).getByRole('button', { name: '删除 Build host' })
     )
     const confirmation = screen.getByRole('alertdialog')
     expect(
@@ -737,7 +745,8 @@ describe('SshHostsSettingsSection', () => {
         name: '验证 Build host'
       })
     ).toHaveTextContent('验证并保存')
-    expect(screen.getByText('需要重新验证')).toBeInTheDocument()
+    // Shown as a summary badge and in the expanded details.
+    expect(screen.getAllByText('需要重新验证')).toHaveLength(2)
     expect(getRemoteEnvironment).not.toHaveBeenCalled()
   })
 
@@ -773,6 +782,10 @@ describe('SshHostsSettingsSection', () => {
     expect(within(host).getByText('0.10.4')).toBeInTheDocument()
     expect(within(host).getByText('0.11.1')).toBeInTheDocument()
     expect(within(host).getAllByText('1.18.29')).toHaveLength(2)
+    const versions = within(host).getByRole('table')
+    expect(within(versions).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['组件', 'Host 已安装', 'GoodBuddy 所需', '状态'])
+    expect(within(versions).getByRole('rowheader', { name: 'GoodBuddy Agent' })).toBeInTheDocument()
+    expect(within(versions).getByRole('rowheader', { name: 'OpenCode Runtime' })).toBeInTheDocument()
     expect(within(host).getByText('安装方式')).toBeInTheDocument()
     expect(
       within(host)
@@ -822,13 +835,28 @@ describe('SshHostsSettingsSection', () => {
     })
     render(<SshHostsSettingsSection />)
 
-    await screen.findByRole('region', { name: 'Deploy host' })
+    const deployHost = await screen.findByRole('region', { name: 'Deploy host' })
     expect(getRemoteEnvironment).not.toHaveBeenCalled()
+    // Several hosts start as one-line summaries.
+    expect(within(deployHost).getByText('deploy.example.com', { exact: false })).toBeInTheDocument()
+    expect(within(deployHost).getByText('环境未检查')).toBeInTheDocument()
     expect(
-      screen.getAllByText(
+      screen.queryByText(
         '尚未检查版本。本页面不会自动连接主机；点击“刷新版本”可检查版本。'
       )
-    ).toHaveLength(2)
+    ).not.toBeInTheDocument()
+    const toggle = within(deployHost).getByRole('button', { name: '展开 Deploy host 的详情' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    expect(
+      within(deployHost).getByRole('button', { name: '收起 Deploy host 的详情' })
+    ).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      within(deployHost).getByText(
+        '尚未检查版本。本页面不会自动连接主机；点击“刷新版本”可检查版本。'
+      )
+    ).toBeInTheDocument()
+    expect(getRemoteEnvironment).not.toHaveBeenCalled()
 
     await refreshHostEnvironment()
     expect(getRemoteEnvironment).toHaveBeenCalledTimes(1)
@@ -1281,7 +1309,7 @@ describe('SshHostsSettingsSection', () => {
       })
     ).toBeDisabled()
     expect(
-      within(buildHost).getByRole('button', { name: '删除' })
+      within(buildHost).getByRole('button', { name: '删除 Build host' })
     ).toBeDisabled()
     expect(
       within(deployHost).getByRole('button', {

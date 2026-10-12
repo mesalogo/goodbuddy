@@ -14,6 +14,7 @@ import {
   Network,
   HeartPulse,
   Library,
+  Server,
   Settings,
   Sparkles,
   X,
@@ -52,6 +53,12 @@ export const applicationDefinitions = {
     title: 'applications.localInference',
     enabled: 'localInferenceEnabled',
   },
+  // Shares the remote projects switch: the backend gates hosts on it.
+  'remote-hosts': {
+    icon: Server,
+    title: 'applications.remoteHosts',
+    enabled: 'remoteProjectsEnabled',
+  },
 } as const
 
 export function isApplicationEnabled(
@@ -60,11 +67,23 @@ export function isApplicationEnabled(
 ): boolean {
   if (id === 'knowledge') return true
   if (id === 'device-sharing') return settings?.deviceSharingEnabled === true
+  if (id === 'remote-hosts') return settings?.remoteProjectsEnabled === true
   if (id === 'heartbeat') return settings?.heartbeatEnabled === true
   return (
     settings !== undefined &&
     settings[applicationDefinitions[id].enabled] !== false
   )
+}
+
+// Hosts stays openable while remote capability is off: Agent packages can be
+// prepared ahead of time, and the page offers the switch itself.
+export function isApplicationOpenable(
+  settings: ApplicationSettings | undefined,
+  id: BuiltInApplicationId,
+): boolean {
+  return id === 'remote-hosts'
+    ? settings !== undefined
+    : isApplicationEnabled(settings, id)
 }
 
 export function ApplicationAvailability({
@@ -120,7 +139,7 @@ export function ApplicationSettingsView({
               })
             }
           />
-          <span>{t('applications.enable')}</span>
+          <span>{t(id === 'remote-hosts' ? 'applications.remoteHostsEnable' : 'applications.enable')}</span>
         </label>
         {id !== 'device-sharing' && <div className="inline-help-label">
           <label className="toggle-row">
@@ -143,7 +162,7 @@ export function ApplicationSettingsView({
           </label>
           <InlineHelp label={t('applications.pin')} id="application-pin-help">{t('applications.pinHelp')}</InlineHelp>
         </div>}
-        <p className="settings-notice">{t(id === 'device-sharing' ? 'applications.deviceSharingHelp' : 'applications.disableHelp')}</p>
+        <p className="settings-notice">{t(id === 'device-sharing' ? 'applications.deviceSharingHelp' : id === 'remote-hosts' ? 'applications.remoteHostsHelp' : 'applications.disableHelp')}</p>
         {id === 'magic-notes' && (
           <label className="toggle-row">
             <input
@@ -464,7 +483,7 @@ export function ApplicationCenter({
                       <button
                         className="secondary-button"
                         type="button"
-                        disabled={!enabled}
+                        disabled={!isApplicationOpenable(settings, id)}
                         onClick={() => onOpen(id)}
                       >
                         {t('applications.open')}

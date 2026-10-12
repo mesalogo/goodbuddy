@@ -1,16 +1,10 @@
 import {
-  Cpu,
-  Download,
   FolderOpen,
-  RefreshCw,
   RotateCcw,
-  Save,
-  Upload
+  Save
 } from 'lucide-react'
 import {
-  useCallback,
   useEffect,
-  useRef,
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -18,13 +12,6 @@ import { InlineHelp } from './InlineHelp'
 import type {
   ApplicationSettings
 } from '../../shared/application-settings-contracts'
-import type {
-  AgentPackageDownloadProgress,
-  AgentPackageInventory
-} from '../../shared/agent-package-contracts'
-import type {
-  AgentArchitecture
-} from '../../shared/agent-installation-contracts'
 import {
   canonicalizeShortcutAccelerator,
   type GlobalShortcutSettings,
@@ -32,7 +19,6 @@ import {
   type GlobalShortcutUpdateErrorCode
 } from '../../shared/shortcut'
 import type { AppNotificationInput } from './notifications'
-import { PageTabs } from './WorkspacePrimitives'
 import {
   SettingsCategoryHeader,
   SettingsWarningList
@@ -43,7 +29,6 @@ type PlatformFeaturesSettingsSectionProps = {
   onConversationHtmlRenderingEnabledChange: (
     enabled: boolean
   ) => void
-  onRemoteProjectsEnabledChange: (enabled: boolean) => void
   onWorkspacePathChange: (path: string) => void
   workspacePath: string
   onNotify?: (notification: AppNotificationInput) => void
@@ -52,8 +37,6 @@ type PlatformFeaturesSettingsSectionProps = {
     snapshot: GlobalShortcutSettingsSnapshot
   ) => void
 }
-
-type PlatformFeaturesTab = 'general' | 'remote-projects'
 
 const shortcutErrorTranslationKeys: Record<
   GlobalShortcutUpdateErrorCode,
@@ -69,7 +52,6 @@ const shortcutErrorTranslationKeys: Record<
 
 export function PlatformFeaturesSettingsSection({
   onConversationHtmlRenderingEnabledChange,
-  onRemoteProjectsEnabledChange,
   onWorkspacePathChange,
   workspacePath,
   onNotify,
@@ -78,8 +60,6 @@ export function PlatformFeaturesSettingsSection({
 }: PlatformFeaturesSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
   const { t: settingsT } = useTranslation('settings')
-  const [activeSection, setActiveSection] =
-    useState<PlatformFeaturesTab>('general')
   const [settings, setSettings] = useState<ApplicationSettings>()
   const [shortcutSnapshot, setShortcutSnapshot] =
     useState<GlobalShortcutSettingsSnapshot>()
@@ -93,17 +73,6 @@ export function PlatformFeaturesSettingsSection({
         : t('platformFeatures.shortcut.errors.serviceUnavailable')
   )
   const [saving, setSaving] = useState(false)
-  const [agentInventory, setAgentInventory] =
-    useState<AgentPackageInventory>()
-  const [agentInventoryLoading, setAgentInventoryLoading] =
-    useState(false)
-  const [agentInventoryError, setAgentInventoryError] =
-    useState<string>()
-  const [agentPackageBusy, setAgentPackageBusy] =
-    useState<string>()
-  const [agentPackageProgress, setAgentPackageProgress] =
-    useState<AgentPackageDownloadProgress>()
-  const agentInventoryRequested = useRef(false)
   const [error, setError] = useState<string | undefined>(() =>
     window.goodbuddy.updates
       ? undefined
@@ -134,162 +103,6 @@ export function PlatformFeaturesSettingsSection({
       active = false
     }
   }, [t])
-
-  const loadAgentInventory = useCallback(async (
-    refresh = false
-  ): Promise<void> => {
-    const getInventory =
-      window.goodbuddy.sshHosts?.getAgentPackageInventory
-    if (!getInventory) {
-      setAgentInventoryError(
-        t(
-          'platformFeatures.remoteProjects.agentInventory.errors.unavailable'
-        )
-      )
-      return
-    }
-    setAgentInventoryLoading(true)
-    setAgentInventoryError(undefined)
-    try {
-      setAgentInventory(await getInventory(refresh))
-    } catch (reason) {
-      setAgentInventoryError(
-        displayErrorMessage(
-          reason,
-          t(
-            'platformFeatures.remoteProjects.agentInventory.errors.readFailed'
-          )
-        )
-      )
-    } finally {
-      setAgentInventoryLoading(false)
-    }
-  }, [t])
-
-  useEffect(() => {
-    if (
-      activeSection !== 'remote-projects' ||
-      agentInventoryRequested.current
-    ) {
-      return
-    }
-    agentInventoryRequested.current = true
-    void loadAgentInventory()
-  }, [activeSection, loadAgentInventory])
-
-  useEffect(() => {
-    const subscribe =
-      window.goodbuddy.sshHosts?.onAgentPackageProgress
-    return subscribe?.((progress) =>
-      setAgentPackageProgress(progress)
-    )
-  }, [])
-
-  const downloadAgentPackage = async (
-    architecture: AgentArchitecture,
-    platform: 'linux' | 'darwin'
-  ): Promise<void> => {
-    const download =
-      window.goodbuddy.sshHosts?.downloadAgentPackage
-    if (!download) {
-      return
-    }
-    setAgentPackageBusy(`${platform}-${architecture}`)
-    setAgentPackageProgress(undefined)
-    setAgentInventoryError(undefined)
-    try {
-      setAgentInventory(await download(architecture, platform))
-      onNotify?.({
-        dedupeKey: `agent-package-downloaded:${platform}-${architecture}`,
-        message: t(
-          'platformFeatures.remoteProjects.agentInventory.notifications.downloaded',
-          { architecture, platform: platform === 'darwin' ? 'macOS' : 'Linux' }
-        ),
-        tone: 'success'
-      })
-    } catch (reason) {
-      setAgentInventoryError(
-        displayErrorMessage(
-          reason,
-          t(
-            'platformFeatures.remoteProjects.agentInventory.errors.downloadFailed'
-          )
-        )
-      )
-    } finally {
-      setAgentPackageBusy(undefined)
-      setAgentPackageProgress(undefined)
-    }
-  }
-
-  const importAgentPackage = async (): Promise<void> => {
-    const importPackage =
-      window.goodbuddy.sshHosts?.importAgentPackage
-    if (!importPackage) {
-      return
-    }
-    setAgentPackageBusy('import')
-    setAgentInventoryError(undefined)
-    try {
-      const inventory = await importPackage()
-      if (inventory) {
-        setAgentInventory(inventory)
-        onNotify?.({
-          dedupeKey: 'agent-package-imported',
-          message: t(
-            'platformFeatures.remoteProjects.agentInventory.notifications.imported'
-          ),
-          tone: 'success'
-        })
-      }
-    } catch (reason) {
-      setAgentInventoryError(
-        displayErrorMessage(
-          reason,
-          t(
-            'platformFeatures.remoteProjects.agentInventory.errors.importFailed'
-          )
-        )
-      )
-    } finally {
-      setAgentPackageBusy(undefined)
-    }
-  }
-
-  const exportAgentPackage = async (
-    architecture: AgentArchitecture,
-    platform: 'linux' | 'darwin'
-  ): Promise<void> => {
-    const exportPackage =
-      window.goodbuddy.sshHosts?.exportAgentPackage
-    if (!exportPackage) {
-      return
-    }
-    setAgentPackageBusy(`${platform}-${architecture}`)
-    setAgentInventoryError(undefined)
-    try {
-      await exportPackage(architecture, platform)
-      onNotify?.({
-        dedupeKey: `agent-package-exported:${platform}-${architecture}`,
-        message: t(
-          'platformFeatures.remoteProjects.agentInventory.notifications.exported',
-          { architecture, platform: platform === 'darwin' ? 'macOS' : 'Linux' }
-        ),
-        tone: 'success'
-      })
-    } catch (reason) {
-      setAgentInventoryError(
-        displayErrorMessage(
-          reason,
-          t(
-            'platformFeatures.remoteProjects.agentInventory.errors.exportFailed'
-          )
-        )
-      )
-    } finally {
-      setAgentPackageBusy(undefined)
-    }
-  }
 
   useEffect(() => {
     const shortcuts = window.goodbuddy.shortcuts
@@ -475,69 +288,20 @@ export function PlatformFeaturesSettingsSection({
     }
   }
 
-  const changeRemoteProjects = async (
-    enabled: boolean
-  ): Promise<void> => {
-    const updates = window.goodbuddy.updates
-    if (!updates || !settings) {
-      return
-    }
-    setSaving(true)
-    setError(undefined)
-    try {
-      const nextSettings = await updates.updateSettings({
-        remoteProjectsEnabled: enabled
-      })
-      setSettings(nextSettings)
-      onRemoteProjectsEnabledChange(
-        nextSettings.remoteProjectsEnabled
-      )
-    } catch {
-      setError(
-        t('platformFeatures.errors.saveRemoteProjectsFailed')
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
-
   return (
     <>
       <SettingsCategoryHeader
         category="platform-features"
         error={error}
         headingId="platform-features-heading"
-        navigation={
-          <div className="platform-features-tabs">
-            <PageTabs
-              ariaLabel={t('platformFeatures.tabs.ariaLabel')}
-              idPrefix="platform-features"
-              onChange={setActiveSection}
-              tabs={[
-                {
-                  id: 'general',
-                  label: t('platformFeatures.tabs.general')
-                },
-                {
-                  id: 'remote-projects',
-                  label: t('platformFeatures.remoteProjects.title')
-                }
-              ]}
-              value={activeSection}
-              variant="segmented"
-            />
-          </div>
-        }
       />
       <SettingsWarningList warnings={settings?.warnings} />
 
-      {activeSection === 'general' && (
-        <section
-          aria-labelledby="platform-features-tab-general"
-          className="settings-section"
-          id="platform-features-panel-general"
-          role="tabpanel"
-        >
+      <section
+        aria-labelledby="platform-features-heading"
+        className="settings-section"
+        id="platform-features-panel-general"
+      >
         <article className="capability-card">
           <div className="capability-card__header">
             <span className="inline-help-label">
@@ -740,304 +504,7 @@ export function PlatformFeaturesSettingsSection({
             </div>
           </label>
         </article>
-        </section>
-      )}
-
-      {activeSection === 'remote-projects' && (
-        <section
-          aria-labelledby="platform-features-tab-remote-projects"
-          className="settings-section"
-          id="platform-features-panel-remote-projects"
-          role="tabpanel"
-        >
-        {settings ? (
-          <article className="capability-card">
-            <div className="capability-card__header">
-              <span className="inline-help-label">
-                <strong>
-                  {t('platformFeatures.remoteProjects.title')}
-                </strong>
-                <InlineHelp label={t('platformFeatures.remoteProjects.title')}>
-                  {t(
-                    'platformFeatures.remoteProjects.description'
-                  )}
-                </InlineHelp>
-              </span>
-            </div>
-            <label className="toggle-row">
-              <input
-                aria-label={t(
-                  'platformFeatures.remoteProjects.title'
-                )}
-                checked={settings.remoteProjectsEnabled}
-                disabled={saving}
-                onChange={(event) =>
-                  void changeRemoteProjects(event.target.checked)
-                }
-                role="switch"
-                type="checkbox"
-              />
-              <span>
-                {t('platformFeatures.remoteProjects.enabled')}
-              </span>
-            </label>
-          </article>
-        ) : (
-          !error && (
-            <p className="settings-notice" role="status">
-              {t('platformFeatures.loading')}
-            </p>
-          )
-        )}
-        <article className="capability-card">
-          <div className="capability-card__header">
-            <div>
-              <strong>
-                {t(
-                  'platformFeatures.remoteProjects.agentInventory.title'
-                )}
-              </strong>
-              <small>
-                {t(
-                  'platformFeatures.remoteProjects.agentInventory.description'
-                )}
-              </small>
-            </div>
-            <div className="capability-card__actions">
-              <button
-                className="secondary-button"
-                disabled={agentPackageBusy !== undefined}
-                onClick={() => void importAgentPackage()}
-                type="button"
-              >
-                <Upload aria-hidden="true" size={13} />
-                {t(
-                  'platformFeatures.remoteProjects.agentInventory.import'
-                )}
-              </button>
-              <button
-                aria-label={t(
-                  'platformFeatures.remoteProjects.agentInventory.refresh'
-                )}
-                className="secondary-button"
-                disabled={
-                  agentInventoryLoading ||
-                  agentPackageBusy !== undefined
-                }
-                onClick={() => void loadAgentInventory(true)}
-                type="button"
-              >
-                <RefreshCw
-                  aria-hidden="true"
-                  className={
-                    agentInventoryLoading
-                      ? 'bundled-agent-inventory__spinner'
-                      : undefined
-                  }
-                  size={13}
-                />
-                {t(
-                  'platformFeatures.remoteProjects.agentInventory.refresh'
-                )}
-              </button>
-            </div>
-          </div>
-          {agentInventory && (
-            <p className="settings-notice">
-              {t(
-                'platformFeatures.remoteProjects.agentInventory.summary',
-                {
-                  available: agentInventory.entries.filter(
-                    (entry) => entry.state === 'verified'
-                  ).length,
-                  total: agentInventory.entries.length
-                }
-              )}
-            </p>
-          )}
-          {agentInventoryLoading && !agentInventory ? (
-            <p className="settings-notice" role="status">
-              {t(
-                'platformFeatures.remoteProjects.agentInventory.loading'
-              )}
-            </p>
-          ) : agentInventoryError ? (
-            <p className="settings-warning" role="alert">
-              {agentInventoryError}
-            </p>
-          ) : agentInventory ? (
-            <div
-              aria-label={t(
-                'platformFeatures.remoteProjects.agentInventory.listLabel'
-              )}
-              className="bundled-agent-inventory"
-              role="list"
-            >
-              {agentInventory.entries.map((entry) => (
-                <article
-                  className="bundled-agent-inventory__item"
-                  key={`${entry.platform}-${entry.architecture}`}
-                  role="listitem"
-                >
-                  <div className="bundled-agent-inventory__item-header">
-                    <Cpu aria-hidden="true" size={16} />
-                    <strong>
-                      {entry.platform === 'darwin' ? 'macOS' : 'Linux'} {entry.architecture}
-                    </strong>
-                    <span
-                      className={`bundled-agent-inventory__badge bundled-agent-inventory__badge--${
-                        entry.updateAvailable
-                          ? 'update-available'
-                          : agentInventory.catalog.state ===
-                              'available' &&
-                              entry.state === 'verified' &&
-                              entry.latestVersion !== null
-                            ? 'up-to-date'
-                            : entry.state
-                      }`}
-                    >
-                      {t(
-                        entry.updateAvailable
-                          ? 'platformFeatures.remoteProjects.agentInventory.states.updateAvailable'
-                          : agentInventory.catalog.state ===
-                              'available' &&
-                              entry.state === 'verified' &&
-                              entry.latestVersion !== null
-                            ? 'platformFeatures.remoteProjects.agentInventory.states.upToDate'
-                            : `platformFeatures.remoteProjects.agentInventory.states.${entry.state}`
-                      )}
-                    </span>
-                  </div>
-                  <dl>
-                    <div>
-                      <dt>
-                        {t(
-                          'platformFeatures.remoteProjects.agentInventory.fields.agentVersion'
-                        )}
-                      </dt>
-                      <dd>{entry.version ?? '—'}</dd>
-                    </div>
-                    <div>
-                      <dt>
-                        {t(
-                          'platformFeatures.remoteProjects.agentInventory.fields.latestVersion'
-                        )}
-                      </dt>
-                      <dd>{entry.latestVersion ?? '—'}</dd>
-                    </div>
-                    <div>
-                      <dt>
-                        {t(
-                          'platformFeatures.remoteProjects.agentInventory.fields.architecture'
-                        )}
-                      </dt>
-                      <dd>{entry.architecture}</dd>
-                    </div>
-                    <div>
-                      <dt>
-                        {t(
-                          'platformFeatures.remoteProjects.agentInventory.fields.runtimeVersion'
-                        )}
-                      </dt>
-                      <dd>{entry.remoteRuntimeVersion ?? '—'}</dd>
-                    </div>
-                    <div>
-                      <dt>
-                        {t(
-                          'platformFeatures.remoteProjects.agentInventory.fields.protocol'
-                        )}
-                      </dt>
-                      <dd>
-                        {entry.agentProtocol
-                          ? `${entry.agentProtocol.major}.${entry.agentProtocol.minor}`
-                          : '—'}
-                      </dd>
-                    </div>
-                  </dl>
-                  {agentPackageProgress?.architecture ===
-                    entry.architecture &&
-                    agentPackageProgress.platform === entry.platform &&
-                    agentPackageBusy === `${entry.platform}-${entry.architecture}` && (
-                      <p className="settings-notice" role="status">
-                        {t(
-                          `platformFeatures.remoteProjects.agentInventory.progress.${agentPackageProgress.phase}`
-                        )}
-                      </p>
-                    )}
-                  <div className="capability-card__actions">
-                    {(
-                      entry.updateAvailable ||
-                      (
-                        entry.state !== 'verified' &&
-                        entry.latestVersion !== null
-                      ) ||
-                      agentInventory.catalog.state !== 'available'
-                    ) && (
-                      <button
-                        className="secondary-button"
-                        disabled={agentPackageBusy !== undefined}
-                        onClick={() =>
-                          void downloadAgentPackage(
-                            entry.architecture,
-                            entry.platform
-                          )
-                        }
-                        type="button"
-                      >
-                        <Download aria-hidden="true" size={13} />
-                        {t(
-                          entry.updateAvailable
-                            ? 'platformFeatures.remoteProjects.agentInventory.updateTo'
-                            : entry.state !== 'verified' &&
-                                entry.latestVersion !== null
-                              ? 'platformFeatures.remoteProjects.agentInventory.downloadVersion'
-                              : 'platformFeatures.remoteProjects.agentInventory.update',
-                          { version: entry.latestVersion }
-                        )}
-                      </button>
-                    )}
-                    {entry.state === 'verified' && (
-                      <button
-                        className="secondary-button"
-                        disabled={agentPackageBusy !== undefined}
-                        onClick={() =>
-                          void exportAgentPackage(
-                            entry.architecture,
-                            entry.platform
-                          )
-                        }
-                        type="button"
-                      >
-                        <Upload aria-hidden="true" size={13} />
-                        {t(
-                          'platformFeatures.remoteProjects.agentInventory.export'
-                        )}
-                      </button>
-                    )}
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : null}
-          {agentInventory?.catalog.state === 'available' && (
-            <p className="settings-notice" role="status">
-              {t(
-                'platformFeatures.remoteProjects.agentInventory.catalog.available'
-              )}
-            </p>
-          )}
-          {agentInventory?.catalog.state === 'unavailable' && (
-            <p className="settings-warning" role="alert">
-              {t(
-                'platformFeatures.remoteProjects.agentInventory.catalog.unavailable',
-                { error: agentInventory.catalog.error }
-              )}
-            </p>
-          )}
-        </article>
-        </section>
-      )}
-
+      </section>
     </>
   )
 }

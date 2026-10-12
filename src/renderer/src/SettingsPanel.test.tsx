@@ -382,8 +382,7 @@ const heartbeatSettingsProps = {
   onUpdateProject: vi.fn(async () => {
     throw new Error('Project update is not used in this test')
   }),
-  projects: [],
-  remoteProjectsEnabled: true
+  projects: []
 }
 const assistantExpert: AssistantExpert = {
   id: '00000000-0000-4000-8000-000000000101',
@@ -2035,10 +2034,35 @@ describe('SettingsPanel runtime files', () => {
     expect(within(navigation).getAllByRole('tab').map(tab => tab.id)).toEqual([
       'settings-tab-appearance', 'settings-tab-platform-features',
       'settings-tab-model', 'settings-tab-context-control', 'settings-tab-runtime',
-      'settings-tab-ssh-hosts',
       'settings-tab-document-parsing', 'settings-tab-channels', 'settings-tab-roles',
       'settings-tab-capabilities', 'settings-tab-about'
     ])
+  })
+
+  it('keeps hosts, Agent packages, and the remote switch out of settings', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.queryByRole('tab', { name: '主机与远程执行' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    await screen.findByLabelText('默认工作区目录')
+    expect(
+      screen.queryByRole('tab', { name: '远程项目' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('switch', { name: '远程项目' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('GoodBuddy Agent 包')).not.toBeInTheDocument()
+    expect(getAgentPackageInventory).not.toHaveBeenCalled()
   })
 
   it('omits the redundant close-only footer on passive settings pages', () => {
@@ -2356,304 +2380,6 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
   })
 
-  it('persists Remote Projects from its own tab and notifies its parent', async () => {
-    const onRemoteProjectsEnabledChange = vi.fn()
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        onRemoteProjectsEnabledChange={
-          onRemoteProjectsEnabledChange
-        }
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
-
-    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    fireEvent.click(
-      screen.getByRole('tab', { name: '远程项目' })
-    )
-    const remoteProjectsSwitch = await screen.findByRole('switch', {
-      name: '远程项目'
-    })
-    expect(remoteProjectsSwitch).not.toBeChecked()
-    expect(
-      await screen.findByText('GoodBuddy Agent 包')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('当前 1 / 2 个平台与架构目标可用。')
-    ).toBeInTheDocument()
-    expect(screen.getByText('Linux x64')).toBeInTheDocument()
-    expect(screen.getByText('Linux arm64')).toBeInTheDocument()
-    expect(screen.getByText('有更新')).toBeInTheDocument()
-    expect(screen.getByText('未下载')).toBeInTheDocument()
-    expect(getAgentPackageInventory).toHaveBeenCalledOnce()
-    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(1, false)
-
-    fireEvent.click(
-      screen.getByRole('button', { name: '刷新包清单' })
-    )
-    await waitFor(() =>
-      expect(getAgentPackageInventory).toHaveBeenCalledTimes(2)
-    )
-    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(2, true)
-
-    const x64Card = screen
-      .getByText('Linux x64')
-      .closest('[role="listitem"]')
-    const arm64Card = screen
-      .getByText('Linux arm64')
-      .closest('[role="listitem"]')
-    expect(x64Card).not.toBeNull()
-    expect(arm64Card).not.toBeNull()
-    downloadAgentPackage.mockResolvedValueOnce({
-      ...agentPackageInventory,
-      entries: agentPackageInventory.entries.map((entry) =>
-        entry.architecture === 'x64'
-          ? {
-              ...entry,
-              version: '0.11.4',
-              updateAvailable: false
-            }
-          : entry
-      )
-    })
-    fireEvent.click(
-      within(x64Card as HTMLElement).getByRole('button', {
-        name: '更新到 0.11.4'
-      })
-    )
-    await waitFor(() =>
-      expect(downloadAgentPackage).toHaveBeenCalledWith('x64', 'linux')
-    )
-    expect(
-      await within(x64Card as HTMLElement).findByText('已是最新')
-    ).toBeInTheDocument()
-    expect(
-      within(x64Card as HTMLElement).queryByRole('button', {
-        name: /更新到/u
-      })
-    ).not.toBeInTheDocument()
-    fireEvent.click(
-      within(x64Card as HTMLElement).getByRole('button', {
-        name: '导出离线包'
-      })
-    )
-    await waitFor(() =>
-      expect(exportAgentPackage).toHaveBeenCalledWith('x64', 'linux')
-    )
-    fireEvent.click(
-      within(arm64Card as HTMLElement).getByRole('button', {
-        name: '下载 0.11.4'
-      })
-    )
-    await waitFor(() =>
-      expect(downloadAgentPackage).toHaveBeenCalledWith('arm64', 'linux')
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: '导入离线包' })
-    )
-    await waitFor(() =>
-      expect(importAgentPackage).toHaveBeenCalledOnce()
-    )
-
-    fireEvent.click(remoteProjectsSwitch)
-
-    await waitFor(() =>
-      expect(updateApplicationSettings).toHaveBeenCalledWith({
-        remoteProjectsEnabled: true
-      })
-    )
-    expect(onRemoteProjectsEnabledChange).toHaveBeenCalledWith(true)
-    expect(remoteProjectsSwitch).toBeChecked()
-  })
-
-  it('shows Agent package loading and recovers from a refresh error', async () => {
-    let resolveInventory:
-      | ((inventory: AgentPackageInventory) => void)
-      | undefined
-    getAgentPackageInventory.mockReturnValueOnce(
-      new Promise<AgentPackageInventory>((resolve) => {
-        resolveInventory = resolve
-      })
-    )
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
-
-    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    fireEvent.click(
-      screen.getByRole('tab', { name: '远程项目' })
-    )
-    expect(
-      await screen.findByText(
-        '正在校验本地 Agent 包并检查在线版本…'
-      )
-    ).toBeInTheDocument()
-
-    await act(async () => {
-      resolveInventory?.(agentPackageInventory)
-      await Promise.resolve()
-    })
-    expect(
-      await screen.findByText('当前 1 / 2 个平台与架构目标可用。')
-    ).toBeInTheDocument()
-
-    getAgentPackageInventory.mockRejectedValueOnce(
-      new Error('inventory unavailable')
-    )
-
-    fireEvent.click(
-      screen.getByRole('button', { name: '刷新包清单' })
-    )
-    await screen.findByText('inventory unavailable')
-    fireEvent.click(
-      screen.getByRole('button', { name: '刷新包清单' })
-    )
-    await waitFor(() =>
-      expect(
-        screen.queryByText('inventory unavailable')
-      ).not.toBeInTheDocument()
-    )
-    expect(getAgentPackageInventory).toHaveBeenCalledTimes(3)
-  })
-
-  it('keeps local Agent packages usable when the online catalog is unavailable', async () => {
-    getAgentPackageInventory.mockResolvedValueOnce({
-      ...agentPackageInventory,
-      catalog: {
-        state: 'unavailable',
-        checkedAt: '2026-08-24T00:00:00.000Z',
-        error: 'network unavailable'
-      },
-      entries: agentPackageInventory.entries.map((entry) => ({
-        ...entry,
-        latestVersion: null,
-        updateAvailable: false
-      }))
-    })
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
-
-    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    fireEvent.click(
-      screen.getByRole('tab', { name: '远程项目' })
-    )
-
-    expect(
-      await screen.findByText(/network unavailable/u)
-    ).toBeInTheDocument()
-    const x64Card = screen
-      .getByText('Linux x64')
-      .closest('[role="listitem"]')
-    expect(
-      within(x64Card as HTMLElement).getByRole('button', {
-        name: '检查并更新'
-      })
-    ).toBeInTheDocument()
-    expect(
-      within(x64Card as HTMLElement).getByRole('button', {
-        name: '导出离线包'
-      })
-    ).toBeInTheDocument()
-  })
-
-  it('shows the SSH Hosts category and its local capability boundary only while Remote Projects is enabled', () => {
-    const commonProps = {
-      ...heartbeatSettingsProps,
-      open: true,
-      onClearLocalData: vi.fn(async () => {}),
-      onClose: vi.fn(),
-      onSaved: vi.fn()
-    }
-    const { rerender } = render(
-      <SettingsPanel
-        {...commonProps}
-        remoteProjectsEnabled={false}
-      />
-    )
-
-    expect(
-      screen.queryByRole('tab', { name: '主机与远程执行' })
-    ).not.toBeInTheDocument()
-
-    rerender(
-      <SettingsPanel
-        {...commonProps}
-        remoteProjectsEnabled
-      />
-    )
-
-    expect(
-      screen.getByRole('tab', { name: '主机与远程执行' })
-    ).toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole('tab', { name: '主机与远程执行' })
-    )
-    expect(
-      screen.getByText(
-        '管理 SSH 主机、固定主机密钥并验证远端执行环境；本机配置的 Skills 和 MCP 不会应用于远程主机'
-      )
-    ).toBeInTheDocument()
-  })
-
-  it('falls back to Platform features when Remote Projects is disabled from SSH Hosts', async () => {
-    const commonProps = {
-      ...heartbeatSettingsProps,
-      initialCategory: 'ssh-hosts' as const,
-      open: true,
-      onClearLocalData: vi.fn(async () => {}),
-      onClose: vi.fn(),
-      onSaved: vi.fn()
-    }
-    const { rerender } = render(
-      <SettingsPanel
-        {...commonProps}
-        remoteProjectsEnabled
-      />
-    )
-    await screen.findByText('尚未配置 SSH 主机')
-
-    rerender(
-      <SettingsPanel
-        {...commonProps}
-        remoteProjectsEnabled={false}
-      />
-    )
-
-    await waitFor(() =>
-      expect(
-        screen.getByRole('tab', { name: '平台功能' })
-      ).toHaveAttribute('aria-selected', 'true')
-    )
-    expect(
-      screen.queryByRole('tab', { name: '主机与远程执行' })
-    ).not.toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole('tab', { name: '远程项目' })
-    )
-    expect(
-      await screen.findByRole('switch', {
-        name: '远程项目'
-      })
-    ).toBeInTheDocument()
-  })
-
   it('records physical Control separately from Command on macOS', async () => {
     shortcutSettingsSnapshot = {
       ...shortcutSettingsSnapshot,
@@ -2780,59 +2506,6 @@ describe('SettingsPanel runtime files', () => {
     )
     expect(proceed).toHaveBeenCalledOnce()
     expect(onClose).not.toHaveBeenCalled()
-  })
-
-  it('protects unsaved SSH host drafts across settings navigation', async () => {
-    const onClose = vi.fn()
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        initialCategory="ssh-hosts"
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={onClose}
-        onSaved={vi.fn()}
-      />
-    )
-
-    await screen.findByText('尚未配置 SSH 主机')
-    fireEvent.click(
-      screen.getAllByRole('button', { name: '添加主机' })[0]!
-    )
-    fireEvent.change(screen.getByLabelText('主机名称'), {
-      target: { value: '尚未保存的主机' }
-    })
-
-    const appearanceTab = screen.getByRole('tab', { name: '外观' })
-    fireEvent.click(appearanceTab)
-    expect(
-      screen.getByRole('tab', { name: '主机与远程执行' })
-    ).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      '当前设置有未保存更改'
-    )
-    expect(screen.getByLabelText('主机名称')).toHaveValue(
-      '尚未保存的主机'
-    )
-
-    fireEvent.click(
-      screen.getByRole('button', { name: '继续编辑' })
-    )
-    fireEvent.click(appearanceTab)
-    fireEvent.click(
-      screen.getByRole('button', { name: '放弃更改并切换' })
-    )
-    expect(appearanceTab).toHaveAttribute('aria-selected', 'true')
-    await waitFor(() => expect(appearanceTab).toHaveFocus())
-
-    fireEvent.click(
-      screen.getByRole('tab', { name: '主机与远程执行' })
-    )
-    await screen.findByText('尚未配置 SSH 主机')
-    expect(screen.queryByLabelText('主机名称')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
-    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('keeps shortcut input after a registration conflict', async () => {
@@ -2983,15 +2656,15 @@ describe('SettingsPanel runtime files', () => {
     runtimeTab.focus()
     fireEvent.keyDown(runtimeTab, { key: 'ArrowRight' })
 
-    const sshHostsTab = screen.getByRole('tab', {
-      name: '主机与远程执行'
+    const documentParsingTab = screen.getByRole('tab', {
+      name: '文档解析'
     })
-    expect(sshHostsTab).toHaveFocus()
-    expect(sshHostsTab).toHaveAttribute('aria-selected', 'true')
-    expect(sshHostsTab).toHaveAttribute('tabindex', '0')
+    expect(documentParsingTab).toHaveFocus()
+    expect(documentParsingTab).toHaveAttribute('aria-selected', 'true')
+    expect(documentParsingTab).toHaveAttribute('tabindex', '0')
     expect(runtimeTab).toHaveAttribute('tabindex', '-1')
 
-    fireEvent.keyDown(sshHostsTab, { key: 'End' })
+    fireEvent.keyDown(documentParsingTab, { key: 'End' })
     const aboutTab = screen.getByRole('tab', { name: '关于与更新' })
     expect(aboutTab).toHaveFocus()
     expect(aboutTab).toHaveAttribute('aria-selected', 'true')
@@ -4421,9 +4094,6 @@ describe('SettingsPanel runtime files', () => {
       .getByRole('heading', { level: 2, name: '平台功能' })
       .closest('.settings-category-header')
     expect(platformHeader).toHaveClass('settings-category-header--sticky')
-    expect(
-      platformHeader?.querySelector('.platform-features-tabs')
-    ).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: '能力与工具' }))
     const capabilitiesHeader = screen

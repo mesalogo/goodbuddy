@@ -4,19 +4,13 @@ import { getSettingsCategoryList } from './settings-categories'
 describe('getSettingsCategoryList', () => {
   it('defines an icon for every settings category', () => {
     expect(
-      getSettingsCategoryList(true).every(({ icon }) => icon != null)
+      getSettingsCategoryList().every(({ icon }) => icon != null)
     ).toBe(true)
   })
 
-  it('hides SSH hosts while Remote Projects is disabled', () => {
+  it('no longer lists SSH hosts, which moved to the Hosts application', () => {
     expect(
-      getSettingsCategoryList(false).map(({ id }) => id)
+      getSettingsCategoryList().map(({ id }) => id as string)
     ).not.toContain('ssh-hosts')
-  })
-
-  it('includes SSH hosts while Remote Projects is enabled', () => {
-    expect(
-      getSettingsCategoryList(true).map(({ id }) => id)
-    ).toContain('ssh-hosts')
   })
 })

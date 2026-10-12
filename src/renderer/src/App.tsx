@@ -14,6 +14,7 @@ import {
   ApplicationCenter,
   applicationDefinitions,
   isApplicationEnabled,
+  isApplicationOpenable,
 } from "./ApplicationCenter";
 import {
   defaultApplicationNavigation,
@@ -287,6 +288,10 @@ const activityPanelRoute = createPreloadableComponent(
   () => import("./ActivityPanel"),
   (module) => module.ActivityPanel,
 );
+const remoteHostsPageRoute = createPreloadableComponent(
+  () => import("./RemoteHostsPage"),
+  (module) => module.RemoteHostsPage,
+);
 const idleRouteModuleLoaders = [heartbeatCenterRoute.preload] as const;
 
 const KnowledgeWorkspace = knowledgeWorkspaceRoute.Component;
@@ -294,6 +299,7 @@ const HeartbeatCenter = heartbeatCenterRoute.Component;
 const MagicNotesWorkspace = magicNotesWorkspaceRoute.Component;
 const SettingsPanel = settingsPanelRoute.Component;
 const ActivityPanel = activityPanelRoute.Component;
+const RemoteHostsPage = remoteHostsPageRoute.Component;
 
 const conversationPersistenceIntervalMs = 500;
 // How often streaming deltas are absorbed into the conversation store; rows render them live.
@@ -507,14 +513,14 @@ export function AppNotificationViewport({
 }
 
 type WorkspaceView =
-  "chat" | "magic-notes" | "knowledge" | "heartbeat" | "local-inference" | "device-sharing" | "activity" | "settings";
+  "chat" | "magic-notes" | "knowledge" | "heartbeat" | "local-inference" | "device-sharing" | "remote-hosts" | "activity" | "settings";
 
 // Tracks which kept-alive routes currently report unsaved edits. Reads happen
 // only in event handlers and the sweep timer, so this is not React state.
 function createUnsavedWorkspaceTracker(): {
   pinnedViews: () => Set<WorkspaceView>;
   reporters: Record<
-    "knowledge" | "heartbeat" | "magic-notes" | "activity",
+    "knowledge" | "heartbeat" | "magic-notes" | "remote-hosts" | "activity",
     ReportWorkspaceUnsavedChanges
   >;
 } {
@@ -535,6 +541,7 @@ function createUnsavedWorkspaceTracker(): {
       knowledge: reporterFor("knowledge"),
       heartbeat: reporterFor("heartbeat"),
       "magic-notes": reporterFor("magic-notes"),
+      "remote-hosts": reporterFor("remote-hosts"),
       activity: reporterFor("activity"),
     },
   };
@@ -547,6 +554,7 @@ const intentRoutePreloaders: Partial<
   knowledge: knowledgeWorkspaceRoute.preload,
   activity: activityPanelRoute.preload,
   settings: settingsPanelRoute.preload,
+  "remote-hosts": remoteHostsPageRoute.preload,
 };
 
 function preloadWorkspaceRouteOnIntent(view: WorkspaceView): void {
@@ -1515,6 +1523,9 @@ function App(): React.JSX.Element {
     setActiveIdState(next);
   }, [activeConversationViewIds, conversationStore]);
   const [remoteProjectsEnabled, setRemoteProjectsEnabled] = useState(false);
+  const remoteProjectsEnabledRef = useRef(false);
+  // Assigned after the handler is defined below; reads latest projects at call time.
+  const remoteProjectsEnabledChangeRef = useRef<(enabled: boolean) => void>(setRemoteProjectsEnabled);
   const [
     conversationHtmlRenderingEnabled,
     setConversationHtmlRenderingEnabled,
@@ -1527,7 +1538,7 @@ function App(): React.JSX.Element {
   const [incompleteMagicTodoCount, setIncompleteMagicTodoCount] = useState(0);
   const applicationNavigation = applicationSettings?.applicationNavigation ?? defaultApplicationNavigation;
   const visibleApplications = useMemo(() => applicationNavigation.order.filter(id =>
-    id === 'knowledge' || (Boolean((applicationNavigation.pinned as Record<string, boolean | undefined>)[id]) && (id === 'magic-notes' ? magicNotesEnabled : isApplicationEnabled(applicationSettings, id)))
+    id === 'knowledge' || (Boolean((applicationNavigation.pinned as Record<string, boolean | undefined>)[id]) && (id === 'magic-notes' ? magicNotesEnabled : isApplicationOpenable(applicationSettings, id)))
   ), [applicationNavigation, applicationSettings, magicNotesEnabled]);
   const applyApplicationSettings = useCallback((settings: ApplicationSettings): void => {
     setApplicationSettings(settings);
@@ -1549,7 +1560,11 @@ function App(): React.JSX.Element {
     }
     setMagicNotesShowIncompleteTodoCount(settings.magicNotesShowIncompleteTodoCount);
     setConversationHtmlRenderingEnabled(settings.conversationHtmlRenderingEnabled !== false);
-    setRemoteProjectsEnabled(settings.remoteProjectsEnabled);
+    // Whichever surface changed the switch, leave an active SSH project when it turns off.
+    if (remoteProjectsEnabledRef.current !== settings.remoteProjectsEnabled) {
+      remoteProjectsEnabledRef.current = settings.remoteProjectsEnabled;
+      remoteProjectsEnabledChangeRef.current(settings.remoteProjectsEnabled);
+    }
   }, [guardNoteDraft, setNoteDraft, setView]);
   const reloadApplicationSettings = useCallback(async (): Promise<void> => {
     const revision = ++applicationSettingsRevisionRef.current;
@@ -4310,9 +4325,15 @@ function App(): React.JSX.Element {
     }
     const localProject = projects.find(isOrdinaryLocalProject);
     if (localProject) {
+      // Keep the Hosts page open when the switch is turned off there.
+      const currentView = viewRef.current;
       commitProjectSelection(localProject);
+      if (currentView === "remote-hosts") commitView("remote-hosts");
     }
   };
+  useLayoutEffect(() => {
+    remoteProjectsEnabledChangeRef.current = handleRemoteProjectsEnabledChange;
+  });
 
   const archiveProject = async (projectId: string): Promise<void> => {
     await window.goodbuddy.projects.setArchived(projectId, true);
@@ -6535,12 +6556,13 @@ function App(): React.JSX.Element {
     onExpertsChanged: (experts: AssistantExpert[]) => {
       setAssistantExperts(experts);
     },
-    onRemoteProjectsEnabledChange: handleRemoteProjectsEnabledChange,
-    onProjectsDeleted: removeProjectsFromUi,
     onSaved: (settings: RuntimeSettings) => {
       setRuntimeSettings(settings);
     },
     onUpdateProject: updateProject,
+  });
+  const remoteHostsActions = useStableHandlers({
+    onProjectsDeleted: removeProjectsFromUi,
   });
   const rightSidebarActions = useStableHandlers<RightSidebarHandlers>({
     onBeforeCloseNotes: async () => {
@@ -7339,6 +7361,38 @@ function App(): React.JSX.Element {
               </KeepAliveRoute>
             )}
             {view === 'device-sharing' && isApplicationEnabled(applicationSettings, 'device-sharing') && <DeviceSharingPage notify={notify} />}
+            {(view === "remote-hosts" ||
+              cachedWorkspaceViewKeys.has("remote-hosts")) && (
+              <KeepAliveRoute
+                active={view === "remote-hosts"}
+                onUnsavedChanges={workspaceUnsavedChangesReporters["remote-hosts"]}
+                route="remote-hosts"
+              >
+                <RouteErrorBoundary
+                  key="remote-hosts"
+                  fallback={
+                    <RouteLoadError
+                      message={t("route.loadFailed")}
+                      reloadLabel={t("route.reload")}
+                    />
+                  }
+                >
+                  <Suspense
+                    fallback={<RouteLoadingStatus label={t("route.loading")} />}
+                  >
+                    <RemoteHostsPage
+                      active={view === "remote-hosts"}
+                      settings={applicationSettings}
+                      settingsPending={applicationSettingsPending}
+                      settingsLocked={applicationSettingsUnconfirmed}
+                      onUpdateSettings={updateApplicationSettings}
+                      onNotify={notify}
+                      onProjectsDeleted={remoteHostsActions.onProjectsDeleted}
+                    />
+                  </Suspense>
+                </RouteErrorBoundary>
+              </KeepAliveRoute>
+            )}
             {localInferenceOpen && (
               <LocalInferencePage
                 enabled={isApplicationEnabled(applicationSettings, "local-inference")}
@@ -7356,7 +7410,7 @@ function App(): React.JSX.Element {
                 error={applicationSettingsError}
                 onClose={() => setApplicationCenterOpen(false)}
                 onOpen={(id) => {
-                  if (!isApplicationEnabled(applicationSettings, id)) return;
+                  if (!isApplicationOpenable(applicationSettings, id)) return;
                   setApplicationCenterOpen(false);
                   setView(id);
                   if (window.innerWidth < 900) setSidebarOpen(false);
@@ -7410,7 +7464,6 @@ function App(): React.JSX.Element {
                       initialCategory={settingsInitialCategory}
                       initialChannel={settingsInitialChannel}
                       magicNotesEnabled={magicNotesEnabled}
-                      remoteProjectsEnabled={remoteProjectsEnabled}
                       onConversationHtmlRenderingEnabledChange={
                         setConversationHtmlRenderingEnabled
                       }

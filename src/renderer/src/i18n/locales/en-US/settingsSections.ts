@@ -12,6 +12,25 @@ export const settingsSections = {
     loading: 'Loading SSH hosts…',
     loadFailedTitle: 'Could not load SSH hosts',
     listLabel: 'SSH host list',
+    list: {
+      expandNamed: 'Show details for {{name}}',
+      collapseNamed: 'Hide details for {{name}}',
+      validated: 'Validated',
+      environmentUpdating: 'Installing',
+      environment: {
+        current: 'Environment ready',
+        'update-available': 'Update available',
+        'not-installed': 'Not installed',
+        unknown: 'Not checked'
+      },
+      projects: '{{count}} projects'
+    },
+    search: {
+      label: 'Search hosts',
+      placeholder: 'Search by name or address',
+      noResults: 'No matching hosts',
+      clear: 'Clear search'
+    },
     securityNotice:
       'When a host is added or edited, GoodBuddy inspects its host key before sending credentials and running a bounded system probe. The host and encrypted password are saved only after every step succeeds.',
     secureStorageUnavailable:
@@ -137,6 +156,8 @@ export const settingsSections = {
         reinstallFailedSummary:
           'This reinstall did not complete. Checking the current versions again.'
       },
+      component: 'Component',
+      status: 'Status',
       installed: 'Installed on Host',
       expected: 'Required by GoodBuddy',
       notInstalled: 'Not installed',
@@ -200,6 +221,7 @@ export const settingsSections = {
       validateNamed: 'Validate {{name}}',
       inspecting: 'Inspecting…',
       remove: 'Delete',
+      removeNamed: 'Delete {{name}}',
       confirmRemove: 'Confirm delete',
       cancel: 'Cancel',
       closeDialog: 'Close SSH host validation',

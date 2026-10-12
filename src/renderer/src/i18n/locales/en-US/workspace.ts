@@ -147,17 +147,17 @@ export const workspace = {
       loadingHosts: 'Loading saved hosts…',
       noHosts: 'No saved SSH hosts',
       hostHelp:
-        'Host credentials remain centrally managed in Settings and are not copied into the project.',
+        'Host credentials remain centrally managed in Apps > Hosts and are not copied into the project.',
       readiness: {
         loading: 'Reading the Host validation record…',
         ready:
           'This Host is validated. Saving connects and checks the Agent, workspace, and Runtime.',
         unready:
-          'This Host has not completed Host Key and connection validation. Validate it under Settings > SSH Hosts first.',
+          'This Host has not completed Host Key and connection validation. Validate it under Apps > Hosts first.',
         error:
-          'Could not read this Host’s local validation record. Check it under Settings > SSH Hosts.',
+          'Could not read this Host’s local validation record. Check it under Apps > Hosts.',
         saveBlocked:
-          'The selected Host has not been validated. Validate its connection under Settings > SSH Hosts first.',
+          'The selected Host has not been validated. Validate its connection under Apps > Hosts first.',
         options: {
           loading: 'Reading',
           ready: 'Validated',

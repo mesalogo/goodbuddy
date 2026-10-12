@@ -7,6 +7,25 @@ export const settingsSections = {
     loading: '正在读取 SSH 主机…',
     loadFailedTitle: 'SSH 主机加载失败',
     listLabel: 'SSH 主机列表',
+    list: {
+      expandNamed: '展开 {{name}} 的详情',
+      collapseNamed: '收起 {{name}} 的详情',
+      validated: '已验证',
+      environmentUpdating: '安装中',
+      environment: {
+        current: '环境就绪',
+        'update-available': '环境待更新',
+        'not-installed': '环境未安装',
+        unknown: '环境未检查'
+      },
+      projects: '{{count}} 个项目'
+    },
+    search: {
+      label: '搜索主机',
+      placeholder: '搜索名称或地址',
+      noResults: '没有匹配的主机',
+      clear: '清除搜索'
+    },
     securityNotice:
       '添加或编辑主机时，GoodBuddy 会先检查 Host Key，再发送认证凭据并执行有界系统探测。只有全部成功后才会保存主机和加密密码。',
     secureStorageUnavailable:
@@ -129,6 +148,8 @@ export const settingsSections = {
         reinstallFailedSummary:
           '本次重新安装未完成；正在重新检查当前版本。'
       },
+      component: '组件',
+      status: '状态',
       installed: 'Host 已安装',
       expected: 'GoodBuddy 所需',
       notInstalled: '尚未安装',
@@ -192,6 +213,7 @@ export const settingsSections = {
       validateNamed: '验证 {{name}}',
       inspecting: '正在检查…',
       remove: '删除',
+      removeNamed: '删除 {{name}}',
       confirmRemove: '确认删除',
       cancel: '取消',
       closeDialog: '关闭 SSH 主机验证',

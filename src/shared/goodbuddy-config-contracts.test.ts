@@ -23,10 +23,14 @@ describe('GoodBuddy configuration contracts', () => {
       operation: 'application.update',
       updates: { applicationNavigation: {
         ...defaultApplicationNavigation,
-        order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge', 'device-sharing'],
+        order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge', 'device-sharing', 'remote-hosts'],
       } },
     }
     expect(goodbuddyConfigOperationSchema.parse(operation)).toEqual(operation)
+    // The order written before Hosts existed is no longer complete.
+    expect(goodbuddyConfigOperationSchema.safeParse({ ...operation, updates: {
+      applicationNavigation: { ...defaultApplicationNavigation, order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge', 'device-sharing'] },
+    } }).success).toBe(false)
     for (const order of [['magic-notes', 'local-inference'], ['knowledge', 'heartbeat', 'magic-notes', 'magic-notes'], ['knowledge', 'heartbeat', 'magic-notes', 'invalid']]) {
       expect(goodbuddyConfigOperationSchema.safeParse({ ...operation, updates: {
         applicationNavigation: { ...defaultApplicationNavigation, order },
