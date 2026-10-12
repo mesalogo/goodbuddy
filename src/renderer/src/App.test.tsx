@@ -4608,7 +4608,7 @@ describe("App", () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it("windows the latest 80 messages and preserves scroll when revealing earlier messages", async () => {
+  it("exposes the full loaded history while keeping the DOM windowed", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: "00000000-0000-4000-8000-000000000421",
@@ -4627,62 +4627,17 @@ describe("App", () => {
     const { container } = render(<App />);
 
     expect(await screen.findByText("历史消息 160")).toBeInTheDocument();
-    // Only the rows near the bottom are mounted (PERF-14); a spacer stands in
-    // for the rest of the 80-message batch.
+    // Only the rows near the bottom are mounted (PERF-14); spacers stand in
+    // for the rest of the loaded history.
     const mounted = container.querySelectorAll(".message").length;
     expect(mounted).toBeGreaterThan(0);
     expect(mounted).toBeLessThan(80);
-    expect(
-      screen.getByRole("button", { name: "加载更早的消息（还剩 81 条）" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /加载更早的消息/u })).not.toBeInTheDocument();
     expect(screen.queryByText("历史消息 080")).not.toBeInTheDocument();
-    const chat = container.querySelector<HTMLElement>(".chat");
-    if (!chat) {
-      throw new Error("Missing chat scroll container");
-    }
-    const topSpacerHeight = (): number =>
-      Number.parseFloat(
-        container.querySelector<HTMLElement>('[data-window-spacer="top"]')?.style.height ?? "0",
-      ) || 0;
-    Object.defineProperties(chat, {
-      clientHeight: { configurable: true, value: 400 },
-      scrollHeight: {
-        configurable: true,
-        get: () => container.querySelectorAll(".message").length * 10 + topSpacerHeight(),
-      },
-      scrollTop: {
-        configurable: true,
-        writable: true,
-        value: 125,
-      },
-    });
-
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "加载更早的消息（还剩 81 条）",
-      }),
-    );
-
-    expect(
-      screen.getByRole("button", { name: "加载更早的消息（还剩 1 条）" }),
-    ).toBeInTheDocument();
-    expect(container.querySelectorAll(".message")).toHaveLength(mounted);
-    // The 80 earlier messages land above the reader, who keeps their place.
-    expect(chat.scrollTop).toBe(125 + 80 * 160);
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "加载更早的消息（还剩 1 条）",
-      }),
-    );
-    expect(screen.getByText("历史消息 000")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /加载更早的消息/u }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("历史消息 000").closest("article")).toHaveFocus();
-    expect(container.querySelectorAll(".message").length).toBeLessThanOrEqual(mounted + 1);
+    expect(container.querySelector('[data-window-spacer="top"]')).toBeInTheDocument();
   });
 
-  it("opens a long conversation in one bounded commit without catch-up steps", async () => {
+  it("opens a long conversation in one bounded commit without a history gate", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: "00000000-0000-4000-8000-000000000422",
@@ -4720,9 +4675,8 @@ describe("App", () => {
 
     expect(counts).toHaveLength(1);
     expect(counts[0]).toBeLessThan(80);
-    expect(
-      screen.getByRole("button", { name: "加载更早的消息（还剩 81 条）" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /加载更早的消息/u })).not.toBeInTheDocument();
+    expect(container.querySelector('[data-window-spacer="top"]')).toBeInTheDocument();
   });
 
   it("keeps the reader position while a response continues below", async () => {
@@ -5201,17 +5155,9 @@ describe("App", () => {
     const { container } = render(<App />);
 
     expect(await screen.findByText("第一段历史 160")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "加载更早的消息（还剩 81 条）",
-      }),
-    );
     const firstPane = container.querySelector<HTMLElement>(
       `[data-conversation-id="${firstConversationId}"]`,
     );
-    expect(
-      screen.getByRole("button", { name: "加载更早的消息（还剩 1 条）" }),
-    ).toBeInTheDocument();
     // Windowed (PERF-14): the mounted rows stay bounded and keep their nodes.
     const mountedRows = firstPane?.querySelectorAll(".message").length ?? 0;
     expect(mountedRows).toBeGreaterThan(0);

@@ -16,6 +16,7 @@ import type {
   KnowledgeSearchReference,
 } from "../../shared/contracts";
 import type { ImageOperation } from "../../shared/image-generation-contracts";
+import { ChatMinimap } from "./ChatMinimap";
 import { ChatTimeline, type ImageViewerItem, type Message } from "./ChatTimeline";
 import { isUnusedConversation, type Conversation } from "./chat-conversation";
 import { MessageExpansionProvider } from "./message-expansion";
@@ -1141,6 +1142,13 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
           />
         </div>
       </section>
+      {active && (
+        <ChatMinimap
+          messages={messages}
+          rowHeights={heights}
+          scrollContainerRef={scrollRef}
+        />
+      )}
       {active && showScrollToBottom && (
         <button
           aria-controls="chat-message-list"

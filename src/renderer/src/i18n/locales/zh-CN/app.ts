@@ -424,6 +424,7 @@ export const app = {
     copyMessage: '复制此回复',
     loadEarlierMessages: '加载更早的消息（还剩 {{count}} 条）',
     scrollToBottom: '到底部',
+    minimap: '对话缩略图',
     status: {
       preparingRequest: '正在准备请求',
       waitingForProgress: '等待后续进展',

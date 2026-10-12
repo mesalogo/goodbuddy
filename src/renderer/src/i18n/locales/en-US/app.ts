@@ -439,6 +439,7 @@ export const app = {
     copyMessage: 'Copy this response',
     loadEarlierMessages: 'Load earlier messages ({{count}} remaining)',
     scrollToBottom: 'Scroll to bottom',
+    minimap: 'Conversation minimap',
     status: {
       preparingRequest: 'Preparing request',
       waitingForProgress: 'Waiting for further progress',
