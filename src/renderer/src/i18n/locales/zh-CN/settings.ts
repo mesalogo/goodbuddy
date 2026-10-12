@@ -811,6 +811,10 @@ export const settings = {
       description: '应用于顶栏和展开的运行待办卡片，保存后立即生效。',
       retry: '重试'
     },
+    chatMinimap: {
+      label: '滚动条缩略图',
+      description: '在消息区右侧用缩略图代替滚动条，悬停时展开，可点击或拖动定位。保存后立即生效。'
+    },
     theme: {
       title: '界面主题',
       description: '选择后立即应用，并保存在此设备',

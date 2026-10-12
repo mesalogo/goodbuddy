@@ -6511,6 +6511,8 @@ function App(): React.JSX.Element {
   const settingsPanelActions = useStableHandlers({
     onTransparentFrostedEffectEnabledChange: (enabled: boolean) =>
       updateApplicationSettings({ transparentFrostedEffectEnabled: enabled }),
+    onChatMinimapEnabledChange: (enabled: boolean) =>
+      updateApplicationSettings({ chatMinimapEnabled: enabled }),
     onRetryApplicationSettings: () => void reloadApplicationSettings(),
     onBrandingPreferencesChange: (preferences: Parameters<typeof saveBrandingPreferences>[0]) => {
       if (!saveBrandingPreferences(preferences)) {
@@ -7069,6 +7071,7 @@ function App(): React.JSX.Element {
                         conversationHtmlRenderingEnabled={
                           conversationHtmlRenderingEnabled
                         }
+                        chatMinimapEnabled={applicationSettings?.chatMinimapEnabled ?? true}
                         conversationId={conversationId}
                         key={conversationId}
                         loadHistory={ensureConversationHistory}
@@ -7394,6 +7397,7 @@ function App(): React.JSX.Element {
                       {...settingsPanelActions}
                       appearanceTheme={appearanceTheme}
                       transparentFrostedEffectEnabled={applicationSettings?.transparentFrostedEffectEnabled ?? true}
+                      chatMinimapEnabled={applicationSettings?.chatMinimapEnabled ?? true}
                       applicationSettingsPending={applicationSettingsPending}
                       applicationSettingsLocked={applicationSettingsUnconfirmed || !applicationSettings}
                       applicationSettingsError={applicationSettingsError}

@@ -84,6 +84,20 @@ describe('ApplicationSettingsStore', () => {
     expect(applicationSettingsSchema.parse({ ...defaultApplicationSettings, transparentFrostedEffectEnabled: undefined }).transparentFrostedEffectEnabled).toBe(true)
   })
 
+  it('defaults a missing scrollbar minimap setting to on and persists both choices', async () => {
+    const { filePath, store } = await createStore()
+    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version: 12, lastSeenReleaseNotesVersion: null }
+    delete legacy.chatMinimapEnabled
+    await writeFile(filePath, JSON.stringify(legacy))
+    expect((await store.get()).chatMinimapEnabled).toBe(true)
+    for (const chatMinimapEnabled of [false, true]) {
+      expect((await store.update({ chatMinimapEnabled })).chatMinimapEnabled).toBe(chatMinimapEnabled)
+      await store.update({ checkUpdatesOnStartup: false })
+      expect((await createApplicationSettingsStore(filePath).get()).chatMinimapEnabled).toBe(chatMinimapEnabled)
+    }
+    await expect(store.update({ chatMinimapEnabled: 'false' })).rejects.toThrow()
+  })
+
   it('persists and publishes both frosted glass choices across unrelated updates and reloads', async () => {
     const { filePath, store } = await createStore()
     expect((await store.get()).transparentFrostedEffectEnabled).toBe(true)

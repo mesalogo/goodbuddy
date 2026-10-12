@@ -79,6 +79,7 @@ const otherTodo: MagicTodoItem = { ...todo, id: '00000000-0000-4000-8000-0000000
 const settings: ApplicationSettings = {
   desktopNotificationsEnabled: true,
   transparentFrostedEffectEnabled: false,
+  chatMinimapEnabled: true,
   checkUpdatesOnStartup: false, updateSource: 'github', modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings, applicationNavigation: defaultApplicationNavigation,
   localInferenceEnabled: true, deviceSharingEnabled: false, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false,

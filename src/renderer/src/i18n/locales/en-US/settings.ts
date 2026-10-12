@@ -876,6 +876,10 @@ export const settings = {
       description: 'Applies to the top bar and expanded runtime checklist. Takes effect as soon as it is saved.',
       retry: 'Retry'
     },
+    chatMinimap: {
+      label: 'Scrollbar minimap',
+      description: 'Replaces the message scrollbar with an overview of the conversation that expands on hover; click or drag to jump. Takes effect as soon as it is saved.'
+    },
     theme: {
       title: 'Interface theme',
       description: 'Applies immediately and is saved on this device',

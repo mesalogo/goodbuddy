@@ -73,3 +73,10 @@
 - 验证：minimap、历史窗口、时间线定向测试 69/69（新增“行测量不��发重画”和“滑块对齐可见行的概览区段”用例）；web 类型检查与 lint 通过；`npm run build:bundle` 通过。
 - `npm run perf:app` 连续两次通过。第二次结果：长会话打开、长会话滚动、`stream-seeded`、`stream-and-type` 均无长任务，帧 p95 8.5 ms；24 次切换后 DOM 2,449、堆 23.2 MB，后半段增长 0.2 MB。第一次运行中长会话滚动帧 p95 为 16.6 ms，`stream-seeded` 有 1 个 62 ms 长任务，第二次未复现，按单次噪声记录。
 - 未验证：真实桌面端滚动时的视觉稳定性需人工确认。
+
+### 2026-10-12 外观设置开关
+
+- 新增应用设置 `chatMinimapEnabled`（`z.boolean().default(true)`），旧设置文件缺省时读为开启，无需升级设置版本；`application.update` 配置工具复用同一更新 schema，自动接受该字段。
+- 设置 › 外观新增开关“滚动条缩略图”／“Scrollbar minimap”，位于“透明磨砂特效”之后，保存后立即生效。
+- 关闭时 `ChatHistoryPane` 不挂载 `ChatMinimap`，也不再设置 `data-minimap`，原生滚动条随之恢复；历史窗口（完整已加载消息）和约 60 条 DOM 窗口不变。
+- 验证：设置存储（缺省默认、两种取值的持久化与重载、非法值拒绝）、外观开关（中英文）、窗格开关切换用例均通过；相关 8 个测试文件 410 项中修正配置快照夹具后全部通过；`App.test.tsx` 342/350，8 个失败与此前相同；web／node 类型检查（除既有 `desktop-storage-electron-fixture.ts`）与改动文件 lint 通过。

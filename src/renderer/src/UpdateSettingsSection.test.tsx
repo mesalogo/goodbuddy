@@ -25,6 +25,7 @@ describe('UpdateSettingsSection', () => {
       checkUpdatesOnStartup: true,
       desktopNotificationsEnabled: true,
       transparentFrostedEffectEnabled: false,
+      chatMinimapEnabled: true,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,

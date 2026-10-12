@@ -181,6 +181,19 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('ChatHistoryPane scrollbar minimap setting', () => {
+  it('replaces the native scrollbar only while the minimap is enabled', () => {
+    const messages = makeMessages(5)
+    const { container, rerender, props } = setup(messages)
+    const pane = container.querySelector<HTMLElement>('.chat-history-pane')!
+    expect(pane).toHaveAttribute('data-minimap', 'true')
+    expect(container.querySelector('.chat-minimap')).not.toBeNull()
+    rerender(<ChatHistoryPane {...props} chatMinimapEnabled={false} />)
+    expect(pane).not.toHaveAttribute('data-minimap')
+    expect(container.querySelector('.chat-minimap')).toBeNull()
+  })
+})
+
 describe('ChatHistoryPane windowing', () => {
   it('restores disclosures after eviction by more than eight row interactions with bounded DOM', async () => {
     const messages = makeMessages(2_000).map(message => ({ ...message, role: 'assistant' as const, reasoning: 'Reasoning' }))

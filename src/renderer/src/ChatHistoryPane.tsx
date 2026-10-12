@@ -152,6 +152,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   active,
   artifactById,
   conversationHtmlRenderingEnabled,
+  chatMinimapEnabled = true,
   conversation,
   locale,
   onCopyMessage,
@@ -177,6 +178,8 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   active: boolean;
   artifactById: ReadonlyMap<string, AssistantArtifact>;
   conversationHtmlRenderingEnabled: boolean;
+  /** Replaces the native scrollbar with the minimap; off restores the scrollbar. */
+  chatMinimapEnabled?: boolean;
   conversation: Conversation;
   locale: TimeFormatLocale;
   onCopyMessage: (content: string, kind?: 'tool') => Promise<boolean>;
@@ -1071,6 +1074,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       className="chat-history-pane"
       data-active={active ? "true" : "false"}
       data-conversation-id={conversation.id}
+      data-minimap={chatMinimapEnabled ? "true" : undefined}
       hidden={!active}
       inert={!active}
     >
@@ -1142,7 +1146,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
           />
         </div>
       </section>
-      {active && (
+      {active && chatMinimapEnabled && (
         <ChatMinimap
           messages={messages}
           rowHeights={heights}

@@ -243,6 +243,8 @@ type SettingsPanelProps = {
   applicationSettingsLocked?: boolean
   applicationSettingsError?: string
   onTransparentFrostedEffectEnabledChange?: (enabled: boolean) => Promise<boolean>
+  chatMinimapEnabled?: boolean
+  onChatMinimapEnabledChange?: (enabled: boolean) => Promise<boolean>
   onRetryApplicationSettings?: () => void
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
   brandingPreferences?: BrandingPreferences
@@ -658,6 +660,8 @@ function SettingsPanelView({
   applicationSettingsLocked = false,
   applicationSettingsError,
   onTransparentFrostedEffectEnabledChange,
+  chatMinimapEnabled = true,
+  onChatMinimapEnabledChange,
   onRetryApplicationSettings,
   onAppearanceThemeChange = () => {},
   brandingPreferences = defaultBrandingPreferences,
@@ -2379,6 +2383,22 @@ function SettingsPanelView({
                 </label>
                 <p id="frosted-glass-description" className="settings-panel__description">
                   {t('appearance.frostedGlass.description')}
+                </p>
+                <label className="toggle-row">
+                  <span>{t('appearance.chatMinimap.label')}</span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={chatMinimapEnabled}
+                    disabled={applicationSettingsPending || applicationSettingsLocked || !onChatMinimapEnabledChange}
+                    aria-describedby="chat-minimap-description"
+                    onChange={(event) => {
+                      void onChatMinimapEnabledChange?.(event.target.checked)
+                    }}
+                  />
+                </label>
+                <p id="chat-minimap-description" className="settings-panel__description">
+                  {t('appearance.chatMinimap.description')}
                 </p>
                 {applicationSettingsError && (
                   <div role="alert">

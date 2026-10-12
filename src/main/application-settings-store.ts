@@ -252,6 +252,7 @@ export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   desktopNotificationsEnabled: true,
   transparentFrostedEffectEnabled: true,
+  chatMinimapEnabled: true,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -295,6 +296,7 @@ export class ApplicationSettingsStore {
       | 'conversationHtmlRenderingEnabled'
       | 'desktopNotificationsEnabled'
       | 'transparentFrostedEffectEnabled'
+      | 'chatMinimapEnabled'
       | 'localToolEnvironment'
       | 'version'
       | 'applicationNavigation'
@@ -532,6 +534,7 @@ export class ApplicationSettingsStore {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
       desktopNotificationsEnabled: stored.desktopNotificationsEnabled,
       transparentFrostedEffectEnabled: stored.transparentFrostedEffectEnabled,
+      chatMinimapEnabled: stored.chatMinimapEnabled,
       updateSource: stored.updateSource,
       modelDownloadSource: stored.modelDownloadSource,
       localToolEnvironment: stored.localToolEnvironment,
@@ -581,6 +584,7 @@ export class ApplicationSettingsStore {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
         desktopNotificationsEnabled: next.desktopNotificationsEnabled,
         transparentFrostedEffectEnabled: next.transparentFrostedEffectEnabled,
+        chatMinimapEnabled: next.chatMinimapEnabled,
         updateSource: next.updateSource,
         modelDownloadSource: next.modelDownloadSource,
         localToolEnvironment: next.localToolEnvironment,

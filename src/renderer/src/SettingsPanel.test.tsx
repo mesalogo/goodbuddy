@@ -520,6 +520,7 @@ let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   desktopNotificationsEnabled: true,
   transparentFrostedEffectEnabled: false,
+  chatMinimapEnabled: true,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -815,6 +816,7 @@ describe('SettingsPanel runtime files', () => {
       checkUpdatesOnStartup: true,
       desktopNotificationsEnabled: true,
       transparentFrostedEffectEnabled: false,
+      chatMinimapEnabled: true,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
@@ -1590,6 +1592,32 @@ describe('SettingsPanel runtime files', () => {
     expect(toggle).not.toBeChecked()
     expect(toggle).toBeDisabled()
     rerender(<SettingsPanel {...props} transparentFrostedEffectEnabled={false} />)
+    fireEvent.click(toggle)
+    expect(onChange).toHaveBeenLastCalledWith(true)
+  })
+
+  it.each([
+    ['zh-CN', '外观', '滚动条缩略图'],
+    ['en-US', 'Appearance', 'Scrollbar minimap']
+  ] as const)('exposes the scrollbar minimap Switch under Appearance in %s', async (locale, category, label) => {
+    await changeUiLocale(locale)
+    const onChange = vi.fn(async () => true)
+    const props = {
+      ...heartbeatSettingsProps,
+      open: true,
+      onClearLocalData: vi.fn(async () => {}),
+      onClose: vi.fn(),
+      onSaved: vi.fn(),
+      onChatMinimapEnabledChange: onChange
+    }
+    const { rerender } = render(<SettingsPanel {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: category }))
+    const toggle = screen.getByRole('switch', { name: label })
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(false)
+    rerender(<SettingsPanel {...props} chatMinimapEnabled={false} />)
+    expect(toggle).not.toBeChecked()
     fireEvent.click(toggle)
     expect(onChange).toHaveBeenLastCalledWith(true)
   })

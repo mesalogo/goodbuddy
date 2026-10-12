@@ -7343,12 +7343,12 @@ button > svg {
   color: var(--danger);
 }
 
-/* The minimap replaces the native scrollbar of the message scroller. */
-.chat-history-pane > .chat {
+/* When enabled, the minimap replaces the native scrollbar of the message scroller. */
+.chat-history-pane[data-minimap='true'] > .chat {
   scrollbar-width: none;
 }
 
-.chat-history-pane > .chat::-webkit-scrollbar {
+.chat-history-pane[data-minimap='true'] > .chat::-webkit-scrollbar {
   display: none;
 }
 
