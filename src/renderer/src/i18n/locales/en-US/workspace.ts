@@ -39,7 +39,7 @@ export const workspace = {
     importFiles: 'Import files', importing: 'Importing…', importTarget: 'Destination: {{path}}', imported: 'Imported {{count}} files into {{path}}.', created: 'Created',
     gitWorkspace: 'Git Workspace', more: 'More actions for {{name}}', browse: 'Browse directory', parent: 'Parent directory',
     createFile: 'New file', createDirectory: 'New directory', rename: 'Rename', move: 'Move', delete: 'Delete', properties: 'Properties',
-    defaultOpen: 'Open with default application', name: 'Name', nameOnly: 'Name cannot contain path separators', destination: 'Destination directory',
+    defaultOpen: 'Open with system application', name: 'Name', nameOnly: 'Name cannot contain path separators', destination: 'Destination directory',
     chooseDirectory: 'Choose directory', moveHelp: 'Choose a directory inside the current workspace. The file or folder keeps its name.',
     destinationOutside: 'Choose a directory inside the current workspace: {{root}}. Moving outside this workspace is not supported.',
     destinationUnavailable: 'The project directory is unavailable. Reopen the workspace and try again.',
@@ -530,7 +530,7 @@ export const workspace = {
     },
     openFolderAriaLabel: 'Open folder {{name}} in the system file manager',
     openFolder: 'Open folder',
-    openFileAriaLabel: 'Open file {{name}} with the default app',
+    openFileAriaLabel: 'Open file {{name}} with the system app',
     openFile: 'Open file',
     reading: 'Reading…',
     directoryTruncated:

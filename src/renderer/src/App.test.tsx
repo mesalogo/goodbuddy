@@ -8056,9 +8056,9 @@ describe("App", () => {
     fireEvent.click(screen.getByLabelText("切换助手工作栏"));
     fireEvent.click(await screen.findByRole("tab", { name: "工作区" }));
     fireEvent.click(await screen.findByLabelText("docs 的更多操作"));
-    fireEvent.click(within(screen.getByRole("menu", { name: "docs" })).getByRole("menuitem", { name: "使用默认应用打开" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "docs" })).getByRole("menuitem", { name: "使用系统应用打开" }));
     fireEvent.click(screen.getByLabelText("README.md 的更多操作"));
-    fireEvent.click(within(screen.getByRole("menu", { name: "README.md" })).getByRole("menuitem", { name: "使用默认应用打开" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "README.md" })).getByRole("menuitem", { name: "使用系统应用打开" }));
     await waitFor(() =>
       expect(api.workspace.openPath).toHaveBeenCalledWith(
         projectId,
