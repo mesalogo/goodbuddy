@@ -9,6 +9,7 @@
           "highlights": [],
           "features": [
             "**将远程主机管理迁移到应用中心**：现在可以从“应用”菜单进入 Hosts，集中查看和管理远程主机、Agent 版本与可用安装包。主机管理和 Agent 包管理分成独立页签，原有远程项目和连接配置继续保留。",
+            "**更快查看本地 Agent 包**：打开 Hosts 时会先展示已经存在的本地 Agent 包库存，刷新远程信息不会让已有包暂时消失。",
             "**为聊天历史增加缩略图导航**：长对话可以通过右侧缩略图快速定位消息，仍保留连续历史加载和窗口化显示；也可以在外观设置中关闭缩略图，恢复原生滚动条。",
             "**优化应用中心和设置入口**：远程主机不再作为设置中的独立主机管理入口，应用中心、项目菜单和设置入口的布局与文字提示更加清晰。",
             "**改善聊天和监督体验**：等待状态增加更明确的视觉反馈，监督图谱缩放会以指针位置为中心，文件附件选择范围和界面边界处理更加一致。"
@@ -22,6 +23,7 @@
           "highlights": [],
           "features": [
             "**Move remote-host management into the Apps center**: Open Hosts from the Apps menu to view and manage remote hosts, Agent versions, and available packages in one place. Host management and Agent package management use separate tabs, while existing remote projects and connection settings remain available.",
+            "**Show local Agent packages sooner**: Hosts displays the Agent packages already available locally before refreshing remote information, so existing packages do not temporarily disappear during refresh.",
             "**Add a chat-history minimap**: Use the minimap beside long conversations to jump quickly between messages while continuous history loading and windowed rendering remain available. You can disable it in Appearance to restore the native scrollbar.",
             "**Improve the Apps center and settings entry points**: Remote hosts are no longer managed through a separate settings entry, and the Apps center, project menu, and settings labels now provide clearer navigation.",
             "**Improve chat and Supervisor interaction**: Waiting states provide clearer visual feedback, graph zoom centers on the pointer, and attachment selection plus related interface boundaries behave more consistently."

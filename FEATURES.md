@@ -988,7 +988,8 @@ records are listed separately and do not introduce another feature status.
   Desktop and Agent release channels.
 - Desktop `0.16.3` moves remote-host management into the Apps center, adds a chat-history minimap
   with an Appearance switch, and improves navigation, waiting-state feedback, graph zoom, and
-  attachment boundaries. Schema remains unchanged.
+  attachment boundaries. Hosts shows locally available Agent packages before refreshing remote
+  information, and schema remains unchanged.
 - Desktop `0.16.2` adds an all-time Supervisor review range and waits for messages and tasks to
   settle before including them in a review. It also improves Magic Notes action labels, contains
   terminal IME composition layout, and upgrades the database to schema 63.
