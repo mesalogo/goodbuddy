@@ -42,12 +42,12 @@ const canonicalFileName = (version, platform, arch, format) => {
       zip: `GoodBuddy-${version}-mac-arm64.zip`,
     },
     "linux-x64": {
-      AppImage: `GoodBuddy-${version}-linux-x86_64.AppImage`,
+      AppImage: `GoodBuddy-${version}-x86_64.AppImage`,
       deb: `GoodBuddy-${version}-linux-amd64.deb`,
       rpm: `GoodBuddy-${version}-linux-x86_64.rpm`,
     },
     "linux-arm64": {
-      AppImage: `GoodBuddy-${version}-linux-arm64.AppImage`,
+      AppImage: `GoodBuddy-${version}-arm64.AppImage`,
       deb: `GoodBuddy-${version}-linux-arm64.deb`,
       rpm: `GoodBuddy-${version}-linux-aarch64.rpm`,
     },

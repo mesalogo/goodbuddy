@@ -87,6 +87,9 @@
         : format === "rpm"
           ? "aarch64"
           : "arm64";
+    if (format === "AppImage") {
+      return `GoodBuddy-${version}-${artifactArch}.AppImage`;
+    }
     return `GoodBuddy-${version}-linux-${artifactArch}.${format}`;
   };
 

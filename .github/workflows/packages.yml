@@ -206,8 +206,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes rpm
+          sudo apt-get install --no-install-recommends --yes rpm file
           rpmbuild --version
+          file --version
 
       - name: Resolve macOS signing mode
         id: macos-signing
@@ -311,6 +312,15 @@ jobs:
         env:
           ELECTRON_CACHE: ${{ runner.temp }}/electron
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
+
+      - name: Verify AppImage uses SquashFS
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          appimage="$(find "dist/release/${{ matrix.platform }}-${{ matrix.arch }}" -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          file "$appimage" | grep -qi squashfs
 
       - name: Upload release packages
         uses: actions/upload-artifact@v7

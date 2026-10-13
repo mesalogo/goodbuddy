@@ -1419,6 +1419,31 @@ function verifyArtifacts(directory, options) {
   }
 }
 
+function normalizeAppImageArtifact(directory, options) {
+  if (!options.formats.includes('AppImage')) {
+    return
+  }
+  const candidates = readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.AppImage'))
+    .map((entry) => entry.name)
+  if (candidates.length !== 1) {
+    throw new Error(
+      `AppImage 产物数量错误：${candidates.join(', ') || '未生成'}`
+    )
+  }
+  const artifactName =
+    `${productName}-${packageJson.version}-` +
+    `${options.arch === 'x64' ? 'x86_64' : 'arm64'}.AppImage`
+  const source = join(directory, candidates[0])
+  const destination = join(directory, artifactName)
+  if (source !== destination) {
+    if (existsSync(destination)) {
+      throw new Error(`AppImage 目标文件已存在：${artifactName}`)
+    }
+    renameSync(source, destination)
+  }
+}
+
 function verifyArtifactSignature(filePath, format, arch) {
   if (format === 'nsis') {
     if (readChunk(filePath, 2).toString('ascii') !== 'MZ') {
@@ -1656,6 +1681,7 @@ async function main(argv = process.argv.slice(2)) {
       builderArguments,
       electronBuilderEnvironment(options)
     )
+    normalizeAppImageArtifact(stagingDirectory, options)
     const unpackedDirectory = verifyUnpackedOutput(
       stagingDirectory,
       options
@@ -1718,6 +1744,7 @@ module.exports = {
   verifyUnpackedOutput,
   verifyArtifacts,
   verifyArtifactSignature,
+  normalizeAppImageArtifact,
   verifyPortableZip,
   writeManifest
 }
