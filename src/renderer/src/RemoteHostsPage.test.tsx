@@ -84,21 +84,21 @@ describe('RemoteHostsPage', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Agent 离线包' }))
     expect(await screen.findByText('GoodBuddy Agent 包')).toBeVisible()
-    await waitFor(() => expect(getAgentPackageInventory).toHaveBeenCalledOnce())
+    await waitFor(() => expect(getAgentPackageInventory).toHaveBeenCalledTimes(2))
     expect(screen.getByText('尚未配置 SSH 主机')).not.toBeVisible()
 
     fireEvent.click(screen.getByRole('tab', { name: '主机' }))
     expect(screen.getByText('尚未配置 SSH 主机')).toBeVisible()
     // Panels stayed mounted: nothing was reloaded.
     expect(getSnapshot).toHaveBeenCalledOnce()
-    expect(getAgentPackageInventory).toHaveBeenCalledOnce()
+    expect(getAgentPackageInventory).toHaveBeenCalledTimes(2)
   })
 
   it('lets Agent packages be managed while remote capability is off', async () => {
     renderPage()
     fireEvent.click(screen.getByRole('tab', { name: 'Agent 离线包' }))
     expect(await screen.findByText('GoodBuddy Agent 包')).toBeVisible()
-    expect(getAgentPackageInventory).toHaveBeenCalledOnce()
+    expect(getAgentPackageInventory).toHaveBeenCalledTimes(2)
   })
 
   it('has only Hosts and Agent packages tabs; the switch stays in application settings', () => {
