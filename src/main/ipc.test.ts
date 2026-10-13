@@ -1805,6 +1805,7 @@ describe('registerIpcHandlers SSH hosts', () => {
     } as const
     const agentPackageManager = {
       getAllSnapshot: vi.fn(async () => agentPackageInventory),
+      getAllInventory: vi.fn(async () => agentPackageInventory),
       forPlatform: vi.fn(() => agentPackageManager),
       download: vi.fn(
         async (
@@ -1944,7 +1945,16 @@ describe('registerIpcHandlers SSH hosts', () => {
     ).resolves.toEqual(agentPackageInventory)
     expect(
       agentPackageManager.getAllSnapshot
-    ).toHaveBeenCalledWith({ refresh: true })
+    ).toHaveBeenCalledWith({ refresh: true, localOnly: false })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsAgentPackageInventory
+      )?.(event, { localOnly: true })
+    ).resolves.toEqual(agentPackageInventory)
+    expect(agentPackageManager.getAllInventory).toHaveBeenCalledWith({
+      refresh: false,
+      localOnly: true
+    })
     await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsAgentPackageDownload

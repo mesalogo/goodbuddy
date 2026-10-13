@@ -54,6 +54,9 @@ export function AgentPackageInventoryPanel({
     setAgentInventoryLoading(true)
     setAgentInventoryError(undefined)
     try {
+      if (!refresh) {
+        setAgentInventory(await getInventory(false, true))
+      }
       setAgentInventory(await getInventory(refresh))
     } catch (reason) {
       setAgentInventoryError(
@@ -259,15 +262,16 @@ export function AgentPackageInventoryPanel({
               )}
             </p>
           )}
+          {agentInventoryError && (
+            <p className="settings-warning" role="alert">
+              {agentInventoryError}
+            </p>
+          )}
           {agentInventoryLoading && !agentInventory ? (
             <p className="settings-notice" role="status">
               {t(
                 'platformFeatures.remoteProjects.agentInventory.loading'
               )}
-            </p>
-          ) : agentInventoryError ? (
-            <p className="settings-warning" role="alert">
-              {agentInventoryError}
             </p>
           ) : agentInventory ? (
             <div

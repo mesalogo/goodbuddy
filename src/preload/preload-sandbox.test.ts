@@ -292,7 +292,7 @@ describe('sandboxed preload', () => {
       'ipcChannels.sshHostsAgentConnectionStatus'
     )
     expect(source).toContain(
-      'getAgentPackageInventory: (refresh = false)'
+      'getAgentPackageInventory: (refresh = false, localOnly = false)'
     )
     expect(source).toContain('downloadAgentPackage:')
     expect(source).toContain('importAgentPackage:')

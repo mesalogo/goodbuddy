@@ -135,9 +135,10 @@ describe('Agent package contracts', () => {
     ).toThrow()
   })
 
-  it('accepts only a bounded refresh flag for inventory reads', () => {
+  it('accepts only bounded inventory read flags', () => {
     expect(agentPackageInventoryRequestSchema.parse({})).toEqual({
-      refresh: false
+      refresh: false,
+      localOnly: false
     })
     expect(() =>
       agentPackageInventoryRequestSchema.parse({

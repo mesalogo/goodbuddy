@@ -4855,7 +4855,9 @@ export function registerIpcHandlers(
       const request =
         agentPackageInventoryRequestSchema.parse(input ?? {})
       return agentPackageInventorySchema.parse(
-        await agentPackageManager.getAllSnapshot(request)
+        request.localOnly
+          ? await agentPackageManager.getAllInventory(request)
+          : await agentPackageManager.getAllSnapshot(request)
       )
     }
   )

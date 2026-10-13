@@ -1869,7 +1869,8 @@ export type DesktopApi = {
       listener: (status: SshHostAgentConnectionStatus) => void
     ) => () => void
     getAgentPackageInventory: (
-      refresh?: boolean
+      refresh?: boolean,
+      localOnly?: boolean
     ) => Promise<AgentPackageInventory>
     downloadAgentPackage: (
       architecture: AgentArchitecture,

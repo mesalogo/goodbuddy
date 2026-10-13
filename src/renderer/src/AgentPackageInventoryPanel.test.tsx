@@ -42,7 +42,7 @@ const agentPackageInventory: AgentPackageInventory = {
     }
   ]
 }
-const getAgentPackageInventory = vi.fn<(refresh?: boolean) => Promise<AgentPackageInventory>>()
+const getAgentPackageInventory = vi.fn<(refresh?: boolean, localOnly?: boolean) => Promise<AgentPackageInventory>>()
 const downloadAgentPackage = vi.fn<(architecture: string, platform: string) => Promise<AgentPackageInventory>>()
 const importAgentPackage = vi.fn<() => Promise<AgentPackageInventory | undefined>>()
 const exportAgentPackage = vi.fn<(architecture: string, platform: string) => Promise<void>>()
@@ -84,11 +84,12 @@ describe('AgentPackageInventoryPanel', () => {
     expect(await screen.findByText('当前 1 / 2 个平台与架构目标可用。')).toBeInTheDocument()
     expect(screen.getByText('有更新')).toBeInTheDocument()
     expect(screen.getByText('未下载')).toBeInTheDocument()
-    expect(getAgentPackageInventory).toHaveBeenCalledExactlyOnceWith(false)
+    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(1, false, true)
+    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(2, false)
 
     fireEvent.click(screen.getByRole('button', { name: '刷新包清单' }))
-    await waitFor(() => expect(getAgentPackageInventory).toHaveBeenCalledTimes(2))
-    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(2, true)
+    await waitFor(() => expect(getAgentPackageInventory).toHaveBeenCalledTimes(3))
+    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(3, true)
 
     const x64Card = screen.getByText('Linux x64').closest('[role="listitem"]') as HTMLElement
     const arm64Card = screen.getByText('Linux arm64').closest('[role="listitem"]') as HTMLElement
@@ -115,6 +116,37 @@ describe('AgentPackageInventoryPanel', () => {
     await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'agent-package-imported' })))
   })
 
+  it('shows the local inventory before the online catalog returns', async () => {
+    const localInventory: AgentPackageInventory = {
+      ...agentPackageInventory,
+      catalog: { state: 'not-checked', checkedAt: null, error: null },
+      entries: agentPackageInventory.entries.map((entry) => ({
+        ...entry,
+        latestVersion: null,
+        updateAvailable: false
+      }))
+    }
+    let resolveOnline: ((inventory: AgentPackageInventory) => void) | undefined
+    getAgentPackageInventory
+      .mockResolvedValueOnce(localInventory)
+      .mockReturnValueOnce(
+        new Promise<AgentPackageInventory>((resolve) => {
+          resolveOnline = resolve
+        })
+      )
+
+    render(<AgentPackageInventoryPanel />)
+    expect(await screen.findByText('当前 1 / 2 个平台与架构目标可用。')).toBeInTheDocument()
+    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(1, false, true)
+    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(2, false)
+
+    await act(async () => {
+      resolveOnline?.(agentPackageInventory)
+      await Promise.resolve()
+    })
+    expect(await screen.findByText('有更新')).toBeInTheDocument()
+  })
+
   it('shows loading and recovers from a refresh error', async () => {
     let resolveInventory: ((inventory: AgentPackageInventory) => void) | undefined
     getAgentPackageInventory.mockReturnValueOnce(
@@ -133,15 +165,18 @@ describe('AgentPackageInventoryPanel', () => {
     await screen.findByText('inventory unavailable')
     fireEvent.click(screen.getByRole('button', { name: '刷新包清单' }))
     await waitFor(() => expect(screen.queryByText('inventory unavailable')).not.toBeInTheDocument())
-    expect(getAgentPackageInventory).toHaveBeenCalledTimes(3)
+    expect(getAgentPackageInventory).toHaveBeenCalledTimes(4)
   })
 
   it('keeps local Agent packages usable when the online catalog is unavailable', async () => {
-    getAgentPackageInventory.mockResolvedValueOnce({
+    const unavailableInventory: AgentPackageInventory = {
       ...agentPackageInventory,
       catalog: { state: 'unavailable', checkedAt: '2026-08-24T00:00:00.000Z', error: 'network unavailable' },
       entries: agentPackageInventory.entries.map((entry) => ({ ...entry, latestVersion: null, updateAvailable: false }))
-    })
+    }
+    getAgentPackageInventory
+      .mockResolvedValueOnce(unavailableInventory)
+      .mockResolvedValueOnce(unavailableInventory)
     render(<AgentPackageInventoryPanel />)
     expect(await screen.findByText(/network unavailable/u)).toBeInTheDocument()
     const x64Card = screen.getByText('Linux x64').closest('[role="listitem"]') as HTMLElement

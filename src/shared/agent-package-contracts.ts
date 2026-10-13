@@ -281,7 +281,8 @@ export type AgentPackageInventory = z.infer<
 
 export const agentPackageInventoryRequestSchema = z
   .object({
-    refresh: z.boolean().default(false)
+    refresh: z.boolean().default(false),
+    localOnly: z.boolean().default(false)
   })
   .strict()
 

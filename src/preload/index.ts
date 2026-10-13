@@ -528,10 +528,10 @@ const desktopApi: DesktopApi = {
           handler
         )
     },
-    getAgentPackageInventory: (refresh = false) =>
+    getAgentPackageInventory: (refresh = false, localOnly = false) =>
       ipcRenderer.invoke(
         ipcChannels.sshHostsAgentPackageInventory,
-        { refresh }
+        { refresh, localOnly }
       ) as Promise<AgentPackageInventory>,
     downloadAgentPackage: (architecture: AgentArchitecture, platform: 'linux' | 'darwin' = 'linux') =>
       ipcRenderer.invoke(

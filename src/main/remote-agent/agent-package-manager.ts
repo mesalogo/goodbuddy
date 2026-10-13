@@ -300,6 +300,17 @@ export class AgentPackageManager {
     })
   }
 
+  async getAllInventory(options: { refresh?: boolean } = {}): Promise<AgentPackageInventory> {
+    const linux = await this.forPlatform('linux').getInventory(options)
+    const darwin = this.forPlatform('darwin')
+    darwin.#catalogState = this.forPlatform('linux').#catalogState
+    const mac = await darwin.getInventory(options)
+    return agentPackageInventorySchema.parse({
+      ...linux,
+      entries: [...linux.entries, ...mac.entries]
+    })
+  }
+
   #select(catalog: AgentPackageCatalog, architecture: AgentArchitecture, desktopVersion: string) {
     return selectLatestCompatibleEntry(catalog, architecture, desktopVersion, this.#platform)
   }
