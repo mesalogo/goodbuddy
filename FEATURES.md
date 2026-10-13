@@ -291,8 +291,8 @@ records are listed separately and do not introduce another feature status.
   Runtime activation reuses the registry and manifest verified during setup
   instead of rehashing or rechecking the complete OpenCode binary.
 - [x] **Managed SSH OpenCode and Continue**: Controlled by the
-  separate Remote Projects tab under Settings / Platform
-  Features and disabled by default. Disabling it does not affect local
+  Enable remote capability switch in the Hosts application settings
+  and disabled by default. Disabling it does not affect local
   projects, ordinary desktop capabilities, or desktop releases. When enabled,
   users can manage SSH Hosts with pinned Host Keys, browse bounded remote
   directories, and create remote projects. Requests start the signed Runtime
@@ -1223,8 +1223,10 @@ records are listed separately and do not introduce another feature status.
   offline GoodBuddy transfer release acceptance. Until these gates pass, this
   path must not be described as published or as having passed formal release
   acceptance.
-- [ ] **Host and cloud environment management** (planned): Move host management
-  into App Center with a list/detail workspace. A sibling cloud application
+- [ ] **Host and cloud environment management** (partly done): On 2026-10-13 host
+  management moved into App Center as the Hosts application, with the host list
+  and Agent packages; see [progress](./docs/features/remote-host/progress.md).
+  The list/detail workspace is still planned. A sibling cloud application
   reuses host connections and remote execution. The first-version adapter plan
   covers AWS, Azure, Alibaba Cloud, Tencent Cloud, VMware vCenter / vSphere,
   and ZStack, delivered in batches with real instance discovery, import, and

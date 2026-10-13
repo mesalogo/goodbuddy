@@ -64,11 +64,12 @@ Agent `0.11.23` 提供，显式请求期限与取消仍有效。当前问答源�
 ## 产品语义
 
 本节记录现有实现。2026-09-28 确认的应用中心迁移与云环境管理目标见
-[PRD](./prd.md)、[功能逻辑](./logic-design.md)及[UI 设计](./ui-design.md)，尚未接入源码。
+[PRD](./prd.md)、[功能逻辑](./logic-design.md)及[UI 设计](./ui-design.md)；其中主机管理
+入口迁移已于 2026-10-13 接入源码，云环境管理尚未实现。
 
-远程 Host 与项目能力默认关闭。用户在“设置 > 平台功能”的独立
-“远程项目”页签启用开关后，Renderer 才显示 SSH Host 管理、托管 SSH 项目创建和已保存
-远程项目；Main 在 IPC 边界执行同一开关校验，避免隐藏界面被绕过。关闭开关不删除 Host、
+远程 Host 与项目能力默认关闭。用户在应用中心“主机管理 > 应用设置”的“启用远程能力”开关，
+或主机管理页面“主机”页签的就地启用按钮开启后，Renderer 才显示 SSH Host 管理、托管 SSH
+项目创建和已保存远程项目；Main 在 IPC 边界执行同一开关校验，避免隐藏界面被绕过。关闭开关不删除 Host、
 项目或凭据；当前远程项目切回第一个普通本地项目。应用启动仍固定
 选择普通本地项目，不会因为保存了远程项目而自动连接 Host。
 
@@ -84,21 +85,35 @@ profile 和凭据作为有界、逐 Prompt 的控制消息交给 Agent；该凭�
 
 ## 组件
 
-### 应用迁移与云平台接入计划（待实现）
+### 主机管理应用（2026-10-13 已实现）
 
-实现顺序对应 FR-RH-1 至 FR-RH-6：
+- 应用标识 `remote-hosts` 加入 `builtInApplicationIds` 和 `editableApplicationIds`，
+  常驻键 `pinned['remote-hosts']` 默认 `false`。公开导航 schema 中该键在输入侧默认
+  `false`，旧调用方不传也能通过；顺序数组仍须包含全部六个应用。
+- 不新增设置字段，也不提升设置文件版本：启用状态直接使用 `remoteProjectsEnabled`。
+  已保存的导航由现有 `storedApplicationSettingsSchema` 归一化，把缺失的 `remote-hosts`
+  追加到末尾并补齐常驻默认值，原有相对顺序不变。Main 的 `requireRemoteProjectsEnabled`、
+  IPC 通道名（`settings:ssh-hosts:*`）和 `ssh-hosts.json` 均未改动；配置工具 schema
+  由 zod 派生，自动包含新应用。
+- Renderer 新增 `RemoteHostsPage`（懒加载，由 `KeepAliveRoute` 缓存），包含复用的
+  `SshHostsSettingsSection` 和从平台功能抽出的 `AgentPackageInventoryPanel`。两个面板
+  切换时保持挂载；主机草稿、环境安装或离线包传输进行中时，通过
+  `useWorkspaceUnsavedChanges` 固定该路由，避免页面缓存淘汰。
+- `isApplicationOpenable` 与 `isApplicationEnabled` 分开：主机管理在设置读取成功后即可
+  打开，应用菜单、应用中心和常驻入口都按此判断。
+- 远程开关的副作用（当前 SSH 项目切回本地项目）由 `applyApplicationSettings` 在开关值
+  变化时统一触发，覆盖应用中心、主机页面和外部设置变更三种来源。
+- 设置中心删除 `ssh-hosts` 分类、平台功能的“远程项目”页签及相关 props；平台功能只剩
+  通用设置，不再显示页签条。
 
-1. 从 `SshHostsSettingsSection` 提取独立主机工作页面，接入 `ApplicationCenter` 和 `App`
-   页面导航；复用现有 SSH 服务、验证弹窗、安装操作及通知，完成列表与详情改版。
-2. 扩展应用标识、排序、常驻和配置读取。读取已发布四应用配置时保留原相对顺序及偏好，
-   新入口追加且默认不常驻；云管理初始关闭，共享远程能力继承 `remoteProjectsEnabled`。
-   配置工具公开契约、默认值、持久化、Preload 和 Main 校验同步修改，不能仅扩展 Renderer。
-3. 按功能逻辑整理能力依赖，将共享远程开关的设置入口迁入应用中心。保留旧值、Host ID、
-   加密凭据、Host Key 与项目引用；不为页面迁移重建主机或修改 Agent 协议。
-4. 云平台适配器在 Main 中查询真实 API，凭据复用加密存储；Renderer 仅接收脱敏配置、
+列表与详情两栏、来源和连接状态筛选、关联项目页签尚未实现。
+
+### 云平台接入计划（待实现）
+
+1. 云平台适配器在 Main 中查询真实 API，凭据复用加密存储；Renderer 仅接收脱敏配置、
    实例快照与操作结果。采用满足首批平台发现和导入的最小接口，不预建资源编排框架。
    平台连接和实例关联采用独立记录，SSH 主机仍为执行目标，项目继续使用 `local / ssh`。
-5. 确认首批平台版本及测试环境，补齐需要的私钥和私网连接路径，逐个验收发现、导入、
+2. 确认首批平台版本及测试环境，补齐需要的私钥和私网连接路径，逐个验收发现、导入、
    SSH 验证、环境安装和真实任务执行。具体存储字段、迁移及适配 API 在实施时细化；
    变更已发布存储前遵守[数据库迁移规范](../../development/database-migrations.md)。
 
@@ -187,7 +202,8 @@ Detached GoodBuddy Agent
   GoodBuddy 所需版本比较。进入或切回该设置页只读取本地 Host 列表，不连接任何 Host；
   用户点击“刷新版本”后才探测对应 Host，探测不安装或切换远端组件。项目切换与此按钮
   解耦且不建立连接；实际远程操作才建立或复用 SSH/Agent 连接。
-- “平台功能 > 远程项目”中的本地 Agent 包清单与 Host 状态分离。Main 对用户数据目录中
+- “主机管理 > Agent 离线包”中的本地 Agent 包清单与 Host 状态分离（2026-10-13 前位于
+  “平台功能 > 远程项目”）。包清单 IPC 不受远程能力开关限制。Main 对用户数据目录中
   Linux x64/arm64 `.gbagent` 分别执行外层可信签名、桌面/协议兼容性、内部 Agent/Runtime
   签名、架构与完整 payload 校验；首次打开和手动刷新还会读取“关于与更新”所选来源的
   小型签名目录。Renderer 只得到本地/在线版本、是否有更新、架构、远端 Runtime 版本、
