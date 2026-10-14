@@ -7392,8 +7392,9 @@ button > svg {
   opacity: 0.55;
 }
 
+/* Translucent strokes so the expanded overview stays light over the text. */
 .chat-minimap[data-expanded='true'] .chat-minimap__canvas {
-  opacity: 0.85;
+  opacity: 0.6;
 }
 
 .chat-minimap__viewport {

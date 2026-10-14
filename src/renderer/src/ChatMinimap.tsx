@@ -2,16 +2,13 @@ import { useCallback, useLayoutEffect, useRef, type KeyboardEvent, type PointerE
 import { useTranslation } from "react-i18next";
 import type { Message } from "./ChatTimeline";
 import type { MessageRowHeights } from "./chat-message-window";
-import { isCancelledMessage } from "./message-terminal-status";
 
 /** Rail width when idle and when hovered (expanded overview), in CSS pixels. */
 export const minimapCollapsedWidth = 14;
 export const minimapExpandedWidth = 80;
 
+/** Only two colors: user turns are blue, every agent turn is gray. */
 export function minimapMessageColor(message: Message): string {
-  // Cancelled replies are muted like their status line; only failures are red.
-  if (message.state === "error") return isCancelledMessage(message) ? "#8f98a8" : "#e06b75";
-  if (message.tools?.length || message.pendingQuestions?.length) return "#d9a441";
   return message.role === "user" ? "#6d9ee8" : "#8f98a8";
 }
 

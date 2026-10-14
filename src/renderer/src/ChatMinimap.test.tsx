@@ -48,12 +48,11 @@ describe("ChatMinimap", () => {
     vi.restoreAllMocks();
   });
 
-  it("maps message roles and states to stable overview colors", () => {
+  it("colors only by role: user blue, agent gray", () => {
     expect(minimapMessageColor(message("user", "user"))).toBe("#6d9ee8");
     expect(minimapMessageColor(message("assistant", "assistant"))).toBe("#8f98a8");
-    expect(minimapMessageColor(message("assistant", "tool", { tools: [{ callId: "1" }] as never }))).toBe("#d9a441");
-    expect(minimapMessageColor(message("assistant", "error", { state: "error" }))).toBe("#e06b75");
-    expect(minimapMessageColor(message("assistant", "failed", { state: "error", terminalStatus: "failed" }))).toBe("#e06b75");
+    expect(minimapMessageColor(message("assistant", "tool", { tools: [{ callId: "1" }] as never }))).toBe("#8f98a8");
+    expect(minimapMessageColor(message("assistant", "failed", { state: "error", terminalStatus: "failed" }))).toBe("#8f98a8");
     expect(minimapMessageColor(message("assistant", "cancelled", { state: "error", terminalStatus: "cancelled" }))).toBe("#8f98a8");
   });
 
