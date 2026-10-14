@@ -6766,7 +6766,7 @@ export function registerIpcHandlers(
         throw new Error(
           value.type === 'directory'
             ? '无法在系统资源管理器中打开文件夹'
-            : '无法使用系统默认应用打开文件'
+            : '无法使用系统应用打开文件'
         )
       }
     }

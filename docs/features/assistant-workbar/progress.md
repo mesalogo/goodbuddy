@@ -1745,7 +1745,7 @@ src/agent-daemon/runtime-composition.test.ts src/main/ipc.test.ts` 为 179 项�
   通过 35 项，覆盖目录展开、返回位置与焦点、视图选择、刷新失败保留内容、Markdown
   源码切换，以及切换项目后丢弃未完成的文件预览。
 - `npm test -- src/renderer/src/App.test.tsx -t "workspace|stale Git"` 通过 11 项，
-  覆盖应用中的文件预览、路径复制、默认应用打开、返回和任务结束刷新。
+  覆盖应用中的文件预览、路径复制、系统应用打开、返回和任务结束刷新。
 - 本轮 `npm test` 完整运行结果为 3629 通过、61 跳过、5 失败。失败位于 Agent 离线
   依赖打包超时、DeepSeek Harness MCP 加载、Runtime 版本探测，以及两个打包产物检查，
   不将该结果记为整库回归通过。

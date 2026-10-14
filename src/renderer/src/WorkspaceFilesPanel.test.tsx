@@ -611,7 +611,7 @@ describe('WorkspaceFilesPanel', () => {
     await waitFor(() => expect(onListDirectory).toHaveBeenCalledTimes(5))
     fireEvent.click(screen.getByRole('button', { name: 'docs' }))
     await screen.findByText('file-2.txt')
-    expect(screen.queryByRole('button', { name: /默认应用|资源管理器/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /系统应用|资源管理器/ })).not.toBeInTheDocument()
   })
 
   it('opens a deleted file diff rather than reading the missing file', async () => {

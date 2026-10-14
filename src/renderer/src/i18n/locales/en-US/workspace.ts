@@ -388,7 +388,7 @@ export const workspace = {
     },
     workspace: {
       copyPath: 'Copy relative path',
-      openFile: 'Open with default app',
+      openFile: 'Open with system app',
       refreshing: 'Refreshing…',
       preview: 'Preview',
       source: 'Source',

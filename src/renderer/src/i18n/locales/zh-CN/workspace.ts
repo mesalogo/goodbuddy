@@ -378,7 +378,7 @@ export const workspace = {
     },
     workspace: {
       copyPath: '复制相对路径',
-      openFile: '用默认应用打开',
+      openFile: '使用系统应用打开',
       refreshing: '正在刷新…',
       preview: '预览',
       source: '源码',

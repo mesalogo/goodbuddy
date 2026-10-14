@@ -8005,7 +8005,7 @@ describe("App", () => {
     await waitFor(() =>
       expect(api.clipboard.writeText).toHaveBeenCalledWith("README.md"),
     );
-    fireEvent.click(screen.getByRole("button", { name: "用默认应用打开" }));
+    fireEvent.click(screen.getByRole("button", { name: "使用系统应用打开" }));
     await waitFor(() =>
       expect(api.workspace.openPath).toHaveBeenCalledWith(projectId, "README.md", "file"),
     );
