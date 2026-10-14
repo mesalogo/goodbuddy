@@ -140,7 +140,9 @@
   min-height: 36px;
 }
 .application-settings .inline-help-label > .toggle-row {
-  display: contents;
+  display: flex;
+  flex: 0 0 auto;
+  width: auto;
 }
 .application-settings .settings-notice {
   margin: 0 0 var(--space-2);

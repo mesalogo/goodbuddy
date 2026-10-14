@@ -5405,7 +5405,7 @@ describe("App", () => {
     });
     expect(
       screen
-        .getByText("正在准备请求")
+        .getByRole("status", { name: "正在准备请求" })
         .querySelector(".message__status-dot"),
     ).not.toHaveClass("message__status-dot--active");
     const userMessage = screen
@@ -9222,7 +9222,7 @@ describe("App", () => {
       }
       expect(
         screen
-          .getByText("正在准备请求")
+          .getByRole("status", { name: "正在准备请求" })
           .querySelector(".message__status-dot"),
       ).not.toHaveClass("message__status-dot--active");
       expect(screen.getByLabelText("加入待发送队列")).toBeInTheDocument();
@@ -11212,7 +11212,9 @@ describe("App", () => {
 
     render(<App />);
 
-    const completedStatus = await screen.findByText("任务已完成");
+    const completedStatus = await screen.findByRole("status", {
+      name: "任务已完成",
+    });
     expect(completedStatus.querySelector(".message__status-dot")).toHaveClass(
       "message__status-dot",
     );

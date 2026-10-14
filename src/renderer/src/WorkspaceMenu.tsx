@@ -174,7 +174,7 @@ export function WorkspaceMenu({
       const rect = anchor.getBoundingClientRect()
       const width = Math.min(680, window.innerWidth - 32)
       menu.style.width = `${width}px`
-      menu.style.left = `${Math.max(14, Math.min(rect.left - 2, window.innerWidth - width - 16))}px`
+      menu.style.left = `${Math.max(16, Math.min(rect.left - 2, window.innerWidth - width - 16))}px`
       const top = Math.max(16, rect.bottom + 8)
       menu.style.top = `${top}px`
       menu.style.maxHeight = `${Math.max(0, window.innerHeight - top - 16)}px`
