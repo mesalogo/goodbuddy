@@ -376,9 +376,9 @@ export class ModelBridgeLoopbackProxy {
         )) {
           outgoing.setHeader(name, value)
         }
-        const body = Buffer.from(
-          parsedResponse.bodyBase64,
-          'base64'
+        const body = addPayloadTooLargeSuggestion(
+          parsedResponse.status,
+          Buffer.from(parsedResponse.bodyBase64, 'base64')
         )
         outgoing.setHeader('content-length', body.byteLength)
         await endResponseFlushed(outgoing, body, () => {
@@ -832,11 +832,43 @@ function sendError(
   status: number,
   code: string
 ): void {
-  const body = Buffer.from(JSON.stringify({ error: { code } }), 'utf8')
+  const body = addPayloadTooLargeSuggestion(
+    status,
+    Buffer.from(JSON.stringify({ error: { code } }), 'utf8')
+  )
   response.statusCode = status
   response.setHeader('content-type', 'application/json')
   response.setHeader('content-length', body.byteLength)
   response.end(body)
+}
+
+function addPayloadTooLargeSuggestion(status: number, body: Buffer): Buffer {
+  if (status !== 413) {
+    return body
+  }
+  const suggestion = '建议：请尝试压缩上下文后重试'
+  try {
+    const payload = JSON.parse(body.toString('utf8')) as {
+      error?: unknown
+    }
+    if (typeof payload.error === 'string') {
+      payload.error = `${payload.error}\n${suggestion}`
+    } else if (
+      payload.error !== null &&
+      typeof payload.error === 'object'
+    ) {
+      const error = payload.error as Record<string, unknown>
+      const message = typeof error.message === 'string'
+        ? error.message
+        : '请求体过大'
+      error.message = `${message}\n${suggestion}`
+    } else {
+      payload.error = { message: `请求体过大\n${suggestion}` }
+    }
+    return Buffer.from(JSON.stringify(payload), 'utf8')
+  } catch {
+    return Buffer.concat([body, Buffer.from(`\n${suggestion}`, 'utf8')])
+  }
 }
 
 function httpFailure(

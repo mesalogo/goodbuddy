@@ -2774,7 +2774,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       throw new Error(
         `${publicMessage}（HTTP ${response.status}${
           requestId ? `，请求 ID ${requestId}` : ''
-        }）`
+        }）${response.status === 413 ? '\n建议：请尝试压缩上下文后重试' : ''}`
       )
     }
     let payload: unknown
@@ -3181,8 +3181,17 @@ export class ModelAgentRuntime implements AgentRuntime {
         } catch {
           detail = undefined
         }
+        const message = detail ?? `模型接口请求失败（HTTP ${response.status}）`
+        const statusSuffix =
+          response.status === 413 && !/HTTP 413/u.test(message)
+            ? '（HTTP 413）'
+            : ''
         throw Object.assign(new Error(
-          detail ?? `模型接口请求失败（HTTP ${response.status}）`
+          `${message}${statusSuffix}${
+            response.status === 413
+              ? '\n建议：请尝试压缩上下文后重试'
+              : ''
+          }`
         ), { status: response.status })
       }
 

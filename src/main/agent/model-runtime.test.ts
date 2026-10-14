@@ -1518,6 +1518,40 @@ describe('ModelAgentRuntime', () => {
     await expect(stream.next()).rejects.toThrow('upstream unavailable')
   })
 
+  it('suggests compressing context after a 413 model response', async () => {
+    const runtime = new ModelAgentRuntime({
+      toolProvider: noModelTools,
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher: vi.fn<typeof fetch>(async () =>
+        Response.json(
+          { error: { message: '请求体过大' } },
+          { status: 413 }
+        )
+      )
+    })
+
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: '触发请求体过大'
+        },
+        new AbortController().signal
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow(
+      '请求体过大（HTTP 413）\n建议：请尝试压缩上下文后重试'
+    )
+  })
+
   it('retries a nested ECONNRESET before streaming output', async () => {
     vi.useFakeTimers()
     try {
@@ -6228,10 +6262,18 @@ describe('ModelAgentRuntime', () => {
       headers: { 'content-type': 'application/json' },
       expected:
         '上游图像服务暂时不可用，请稍后重试或联系服务商（HTTP 502）'
+    },
+    {
+      body: JSON.stringify({
+        error: { message: '请求体过大' }
+      }),
+      headers: { 'content-type': 'application/json' },
+      status: 413,
+      expected: '请求体过大（HTTP 413）\n建议：请尝试压缩上下文后重试'
     }
   ])(
     'retains HTTP status for image gateway failures',
-    async ({ body, headers, expected }) => {
+    async ({ body, headers, expected, status = 502 }) => {
       const runtime = new ModelAgentRuntime({
         apiKey: 'test-key',
         baseUrl: 'https://bigtoken.ai/v1',
@@ -6239,7 +6281,7 @@ describe('ModelAgentRuntime', () => {
         protocol: 'openai-images-generations',
         authentication: 'api-key',
         fetcher: vi.fn<typeof fetch>(async () =>
-          new Response(body, { status: 502, headers })
+          new Response(body, { status, headers })
         )
       })
       const consume = async (): Promise<void> => {

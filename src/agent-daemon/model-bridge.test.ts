@@ -356,6 +356,7 @@ describe('model bridge loopback helper', () => {
         body: ''
       })
       expect(response.status).toBe(413)
+      expect(response.body).toContain('建议：请尝试压缩上下文后重试')
       expect(exchange).not.toHaveBeenCalled()
     } finally {
       await proxy.close()
