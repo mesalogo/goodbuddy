@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "releases": [
     {
-      "version": "0.16.3",
+      "version": "0.16.4",
       "releasedAt": "2026-10-14",
       "notes": {
         "zh-CN": {
@@ -16,7 +16,7 @@
           ],
           "fixes": [],
           "notices": [
-            "本版本不新增数据库 schema。首次使用 Hosts 应用前，请确认远程主机连接信息和 Agent 包来源；Agent 0.15.6 不需要更新。"
+            "本版本不新增数据库 schema。首次使用 Hosts 应用前，请确认远程主机连接信息和 Agent 包来源；Agent 0.15.6 不需要更新。Linux AppImage 使用规范的架构文件名，并验证内嵌的 SquashFS 载荷。"
           ]
         },
         "en-US": {
@@ -30,7 +30,7 @@
           ],
           "fixes": [],
           "notices": [
-            "This release adds no database schema version. Before using Hosts, confirm your remote-host connection details and Agent package source; Agent 0.15.6 does not need to be updated."
+            "This release adds no database schema version. Before using Hosts, confirm your remote-host connection details and Agent package source; Agent 0.15.6 does not need to be updated. Linux AppImages use canonical architecture filenames and verify their embedded SquashFS payload."
           ]
         }
       }

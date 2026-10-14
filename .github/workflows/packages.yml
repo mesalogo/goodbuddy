@@ -320,7 +320,10 @@ jobs:
           set -euo pipefail
           appimage="$(find "dist/release/${{ matrix.platform }}-${{ matrix.arch }}" -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
           test -n "$appimage"
-          file "$appimage" | grep -qi squashfs
+          # AppImage is an ELF launcher with an embedded SquashFS payload.
+          # `file` commonly reports only the outer ELF, so check the SquashFS
+          # magic directly instead of relying on the outer file description.
+          grep -a -q 'hsqs' "$appimage"
 
       - name: Upload release packages
         uses: actions/upload-artifact@v7

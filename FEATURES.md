@@ -983,13 +983,14 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.3`; Agent `0.15.6` remains paired with Desktop `0.16.3`, with
+- The current Desktop candidate is `0.16.4`; Agent `0.15.6` remains paired with Desktop `0.16.4`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
-- Desktop `0.16.3` moves remote-host management into the Apps center, adds a chat-history minimap
+- Desktop `0.16.4` moves remote-host management into the Apps center, adds a chat-history minimap
   with an Appearance switch, and improves navigation, waiting-state feedback, graph zoom, and
   attachment boundaries. Hosts shows locally available Agent packages before refreshing remote
-  information, and schema remains unchanged.
+  information, and schema remains unchanged. Linux AppImages use canonical
+  architecture names and are checked for their embedded SquashFS payload.
 - Desktop `0.16.2` adds an all-time Supervisor review range and waits for messages and tasks to
   settle before including them in a review. It also improves Magic Notes action labels, contains
   terminal IME composition layout, and upgrades the database to schema 63.
