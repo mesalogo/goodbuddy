@@ -9060,10 +9060,10 @@ export class AssistantDatabase {
       const entityIds = new Map<string, string>()
       for (const entity of result.output.entities) {
         const storedId = entity.persistedId ? candidates.get(entity.persistedId) : undefined
-        if (entityIds.has(entity.id) || (entity.persistedId &&
-            (!storedId || !currentCandidate.get(storedId) || [...entityIds.values()].includes(storedId)))) {
-          throw new Error('监督者实体身份不属于本次范围或重复')
-        }
+        if (entityIds.has(entity.id)) throw new Error('监督者结果中包含重复的实体引用')
+        if (entity.persistedId && !storedId) throw new Error('监督者结果引用了当前回顾范围外的实体')
+        if (storedId && !currentCandidate.get(storedId)) throw new Error('监督者结果引用了已不存在或已撤销的实体')
+        if (storedId && [...entityIds.values()].includes(storedId)) throw new Error('监督者结果重复引用同一实体')
         entityIds.set(entity.id, storedId ?? randomUUID())
       }
       const persistentId = (ids: Map<string, string>, id: string): string => {
