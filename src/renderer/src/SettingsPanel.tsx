@@ -22,12 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
 import { createPortal } from 'react-dom'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
-import type {
-  AssistantExpert,
-  AssistantProject,
-  ProjectCreateInput,
-  ProjectChannel
-} from '../../shared/assistant-contracts'
+import type { AssistantExpert } from '../../shared/assistant-contracts'
 import type {
   AgentRuntimeDetection,
   ContextCompressionSettings,
@@ -52,7 +47,6 @@ import {
 } from '../../shared/contracts'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
 import { CapabilitiesAndToolsSettingsSection } from './CapabilitiesAndToolsSettingsSection'
-import { ChannelSettingsSection } from './ChannelSettingsSection'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
 import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSection'
 import { ModelDownloadSourceSettings } from './ModelDownloadSourceSettings'
@@ -224,15 +218,9 @@ type SettingsPanelProps = {
   open: boolean
   presentation?: 'modal' | 'page'
   initialCategory?: SettingsCategoryId
-  initialChannel?: ProjectChannel
   onClose: () => void
   onSaved: (settings: RuntimeSettings) => void
   onNotify?: (notification: AppNotificationInput) => void
-  onUpdateProject: (
-    projectId: string,
-    input: ProjectCreateInput
-  ) => Promise<AssistantProject>
-  projects: AssistantProject[]
   onExpertsChanged?: (experts: AssistantExpert[]) => void
   onClearLocalData: () => Promise<void>
   appearanceTheme?: AppearanceTheme
@@ -641,12 +629,9 @@ function SettingsPanelView({
   open,
   presentation = 'modal',
   initialCategory,
-  initialChannel,
   onClose,
   onSaved,
   onNotify = () => {},
-  onUpdateProject,
-  projects,
   onClearLocalData,
   onExpertsChanged = () => {},
   appearanceTheme = 'system',
@@ -900,7 +885,6 @@ function SettingsPanelView({
   const categoryRendersOwnHeader =
     activeTab === 'platform-features' ||
     activeTab === 'document-parsing' ||
-    activeTab === 'channels' ||
     activeTab === 'capabilities' ||
     activeTab === 'about'
 
@@ -4189,14 +4173,6 @@ function SettingsPanelView({
             )}
           </div>
             </>
-          )}
-          {activeTab === 'channels' && (
-            <ChannelSettingsSection
-              initialChannel={initialChannel}
-              onNotify={onNotify}
-              onUpdateProject={onUpdateProject}
-              projectList={projects}
-            />
           )}
           {activeTab === 'roles' && (
             <>

@@ -25,7 +25,7 @@ export const app = {
     menuLabel: 'Apps',
     alwaysShown: 'Always shown', optional: 'Optional',
     manage: 'Manage Apps',
-    title: 'Application Center', description: 'Open and reorder built-in applications, and manage optional apps and pins. Knowledge is always shown; Supervisor can be enabled or disabled.',
+    title: 'Application Center', description: 'Open and reorder built-in applications, manage optional apps and pins, and configure platform apps such as Feishu, WeCom, DingTalk, WeChat, and Telegram.',
     localInference: 'Local Inference Monitor', settings: 'Application settings', enable: 'Enable application', pin: 'Pin to sidebar',
     pinHelp: 'Pinning only controls the sidebar shortcut.',
     disableHelp: 'Disabling preserves data and pins without stopping existing requests or background services.',
@@ -36,13 +36,21 @@ export const app = {
     orderUpdated: 'Application order updated', loadFailed: 'Could not load application settings', saveFailed: 'Could not save application settings',
     confirmFailed: 'Could not confirm the save result. Reload settings before editing again.',
     remoteHosts: 'Hosts',
+    platform: 'Platform app', platformGroup: 'Platform apps', workGroup: 'Workspace apps',
+    settingsTitle: 'Application settings', settingsTabs: 'Applications',
+    openChannelHelp: "Open this platform's channel project to view received conversations.",
     remoteHostsEnable: 'Enable remote capability',
     remoteHostsHelp: 'Remote capability is off by default. Enable it to add SSH hosts, install execution environments, and create remote projects. Turning it off hides remote projects and stops remote execution; hosts, credentials, remote projects, and Agent packages are kept. Agent packages remain manageable while it is off.',
     descriptions: {
       'device-sharing': 'Test feature, off by default. Register devices, publish and revoke capability or knowledge metadata.',
       'remote-hosts': 'Connect SSH hosts, install remote execution environments, and manage Agent packages.',
       'magic-notes': 'Write notes, organize to-dos, and receive AI comments.', knowledge: 'Manage knowledge sources and retrieve reference material for conversations.',
-      heartbeat: 'Review work evolution, explore the story graph, and configure Smart heartbeat.', 'local-inference': 'Inspect local inference tasks and execution services.'
+      heartbeat: 'Review work evolution, explore the story graph, and configure Smart heartbeat.', 'local-inference': 'Inspect local inference tasks and execution services.',
+      weixin: 'Send and receive messages through personal WeChat ClawBot, handled by its channel project.',
+      wecom: 'Send and receive messages through a WeCom smart bot, handled by its channel project.',
+      dingtalk: 'Send and receive messages through a DingTalk app bot, handled by its channel project.',
+      telegram: 'Send and receive private messages through a Telegram bot, handled by its channel project.',
+      feishu: 'Send and receive messages through a Feishu app bot, and read and write Feishu docs, wikis, drive, and Bitable in conversations.'
     }
   },
   remoteHosts: {

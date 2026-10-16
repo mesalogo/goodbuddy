@@ -26,6 +26,12 @@ describe('workbar contracts', () => {
     expect(workbarTabInstanceSchema.safeParse({ ...instance, targetRef: { type: 'conversation', conversationId: 'A' } }).success).toBe(false)
     expect(workbarTabInstanceSchema.safeParse({ ...instance, targetRef: { type: 'project', projectId } }).success).toBe(false)
   })
+  it('keeps the WeCom panel a single application-scoped instance', () => {
+    const instance = { id: taskId, appId: 'wecom', title: '企业微信' } as const
+    const layout = { instances: [instance, { ...instance, id: terminalId }], activeInstanceId: taskId, expanded: true, dock: 'right', widthRatio: 0.3 }
+    expect(normalizeWorkbarLayoutPreferences(layout, [])?.instances).toEqual([instance])
+    expect(workbarTabInstanceSchema.safeParse({ ...instance, targetRef: { type: 'local' } }).success).toBe(false)
+  })
   it('persists supervision conversation and task targets without allowing task terminal bindings', () => {
     for (const targetRef of [{ type: 'conversation', conversationId: 'A' }, { type: 'task', taskId: 'task-A' }]) {
       const instance = { id: taskId, appId: 'tasks', title: 'Tasks', targetRef }
@@ -57,7 +63,9 @@ describe('workbar contracts', () => {
         required: false,
         closable: true,
         reorderable: true
-      }
+      },
+      { id: 'wecom', instancePolicy: 'single', defaultContext: 'application', defaultOpen: false, required: false, closable: true, reorderable: true },
+      { id: 'feishu', instancePolicy: 'single', defaultContext: 'application', defaultOpen: false, required: false, closable: true, reorderable: true }
     ])
     for (const definition of WORKBAR_APP_DEFINITIONS) {
       expect(workbarAppDefinitionSchema.parse(definition)).toEqual(

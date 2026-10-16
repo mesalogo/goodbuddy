@@ -2872,7 +2872,8 @@ describe('AssistantDatabase', () => {
         rootPath: 'C:\\Users\\test',
         executionSpace: { kind: 'local', rootPath: 'C:\\Users\\test' },
         runtimeSelection: { provider: 'model' }
-      })
+      }),
+      expect.objectContaining({ name: '飞书', kind: 'channel', channel: 'feishu' })
     ])
     expect(second.map((project) => project.id)).toEqual(
       first.map((project) => project.id)
@@ -2929,7 +2930,7 @@ describe('AssistantDatabase', () => {
     const original = new AssistantDatabase(path)
     original.initialize('C:\\Workspace')
     const projects = original.ensureChannelProjects('C:\\Channels')
-    for (const project of projects.filter(project => project.channel !== 'telegram')) {
+    for (const project of projects.filter(project => project.channel !== 'telegram' && project.channel !== 'feishu')) {
       const conversation = original.getOrCreateRemoteConversation({
         projectId: project.id, channel: project.channel!, accountId: 'legacy-account',
         externalConversationId: 'legacy-chat', conversationType: 'direct',
@@ -2941,10 +2942,10 @@ describe('AssistantDatabase', () => {
     original.close()
     const legacy = new DatabaseSync(path)
     legacy.enableDefensive(false)
-    legacy.exec(`PRAGMA foreign_keys = ON; DELETE FROM projects WHERE channel = 'telegram';
+    legacy.exec(`PRAGMA foreign_keys = ON; DELETE FROM projects WHERE channel IN ('telegram', 'feishu');
       PRAGMA writable_schema = ON;
       UPDATE sqlite_schema SET sql = replace(sql,
-        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'')',
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'', ''feishu'')',
         'channel IN (''weixin'', ''wecom'', ''dingtalk'')')
       WHERE type = 'table' AND name IN ('projects', 'conversations');
       PRAGMA writable_schema = RESET; PRAGMA user_version = 60;`)
@@ -2963,7 +2964,7 @@ describe('AssistantDatabase', () => {
     expect(tables.map(table => check.prepare(`SELECT rowid, * FROM ${table} ORDER BY rowid`).all())).toEqual(rows)
     expect(check.prepare('SELECT type, name, tbl_name, rootpage, sql FROM sqlite_schema ORDER BY name').all()).toEqual(
       schema.map(row => ['projects', 'conversations'].includes(row.name as string) && row.type === 'table'
-        ? { ...row, sql: (row.sql as string).replace("channel IN ('weixin', 'wecom', 'dingtalk')", "channel IN ('weixin', 'wecom', 'dingtalk', 'telegram')") }
+        ? { ...row, sql: (row.sql as string).replace("channel IN ('weixin', 'wecom', 'dingtalk')", "channel IN ('weixin', 'wecom', 'dingtalk', 'telegram', 'feishu')") }
         : row)
     )
     expect(check.prepare('PRAGMA integrity_check').get()!.integrity_check).toBe('ok')
@@ -2989,6 +2990,38 @@ describe('AssistantDatabase', () => {
     reopened.close()
   })
 
+  it('relaxes schema 63 channel checks to accept Feishu', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-feishu-migration-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'assistant.sqlite')
+    const original = new AssistantDatabase(path)
+    original.initialize('C:\\Workspace')
+    original.close()
+    const legacy = new DatabaseSync(path)
+    legacy.enableDefensive(false)
+    legacy.exec(`DELETE FROM projects WHERE channel = 'feishu';
+      PRAGMA writable_schema = ON;
+      UPDATE sqlite_schema SET sql = replace(sql,
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'', ''feishu'')',
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'')')
+      WHERE type = 'table' AND name IN ('projects', 'conversations');
+      PRAGMA writable_schema = RESET; PRAGMA user_version = 63;`)
+    legacy.close()
+    const migrated = new AssistantDatabase(path)
+    migrated.initialize('C:\\Workspace')
+    const feishu = migrated.ensureChannelProjects('C:\\Feishu').find(project => project.channel === 'feishu')!
+    const conversation = migrated.getOrCreateRemoteConversation({
+      projectId: feishu.id, channel: 'feishu', accountId: 'cli_app', externalConversationId: 'oc_chat',
+      conversationType: 'group', title: '飞书群', accountDisplay: '飞书', runtimeSelection: { provider: 'model' }
+    })
+    expect(migrated.getConversation(conversation.id).remote?.channel).toBe('feishu')
+    migrated.close()
+    const check = new DatabaseSync(path)
+    expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(64)
+    expect(() => check.prepare("UPDATE projects SET channel = 'invalid' WHERE channel = 'feishu'").run()).toThrow(/CHECK/)
+    check.close()
+  })
+
   it('rolls back the channel CHECK migration if a schema definition is unexpected', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-telegram-rollback-'))
     temporaryDirectories.push(directory)
@@ -3000,10 +3033,10 @@ describe('AssistantDatabase', () => {
     legacy.enableDefensive(false)
     legacy.exec(`PRAGMA writable_schema = ON;
       UPDATE sqlite_schema SET sql = replace(sql,
-        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'')',
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'', ''feishu'')',
         'channel IN (''weixin'', ''wecom'', ''dingtalk'')') WHERE name = 'projects';
       UPDATE sqlite_schema SET sql = replace(sql,
-        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'')',
+        'channel IN (''weixin'', ''wecom'', ''dingtalk'', ''telegram'', ''feishu'')',
         'channel IN (''weixin'')') WHERE name = 'conversations';
       PRAGMA writable_schema = RESET; PRAGMA user_version = 60;`)
     const before = legacy.prepare('SELECT * FROM sqlite_schema ORDER BY name').all()

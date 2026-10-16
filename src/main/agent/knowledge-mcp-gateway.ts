@@ -57,6 +57,12 @@ import {
 import type { KnowledgeService } from '../knowledge/knowledge-service'
 import type { ObsidianService, ObsidianSettings } from '../obsidian/obsidian-service'
 import { obsidianReadToolNames, obsidianWriteToolNames } from '../../shared/obsidian-tools'
+import { wecomCliInputSchema, wecomGuideInputSchema, wecomScriptInputSchema, wecomToolNames, type WecomToolName } from '../../shared/wecom-tools'
+import type { WecomToolCategory } from '../../shared/wecom-contracts'
+import type { WecomCliService } from '../wecom/wecom-cli-service'
+import { feishuTools, type FeishuToolName } from '../../shared/feishu-tools'
+import type { FeishuToolCategory } from '../../shared/feishu-contracts'
+import type { FeishuToolService } from '../feishu/feishu-tool-service'
 import type {
   MagicNoteDetail,
   MagicNoteEntry,
@@ -223,6 +229,8 @@ type Capability = {
   browserTabId?: BrowserTabId
   browserUsageLease?: BrowserTabUsageLease
   obsidian?: { settings: ObsidianSettings; access: 'read' | 'write' }
+  wecom?: WecomCapability
+  feishu?: FeishuCapability
   signal: AbortSignal
   brokerController: AbortController
   customMcpServers: readonly ResolvedMcpServer[]
@@ -261,8 +269,20 @@ type DownstreamMcpSession = {
   closing?: Promise<void>
 }
 
+/** Categories granted to one request; live settings can only narrow them. */
+export type WecomCapability = { categories: readonly WecomToolCategory[] }
+
+export type WecomToolService = Pick<WecomCliService, 'getEnabledCategories' | 'runModelCommand' | 'readGuide' | 'runSkillScript' | 'downloadsDirectory'>
+
+/** Feishu categories granted to one request; live settings can only narrow them. */
+export type FeishuCapability = { categories: readonly FeishuToolCategory[] }
+
+export type FeishuToolGateway = Pick<FeishuToolService, 'getEnabledCategories' | 'callTool'>
+
 export type KnowledgeMcpGatewayOptions = {
   observeFailure?: DesktopDiagnosticFailureObserver
+  wecomService?: WecomToolService
+  feishuService?: FeishuToolGateway
   storyGraphService?: StoryGraphService
   maximumBodyBytes?: number
   magicNotesDatabase?: MagicNotesDatabase
@@ -400,6 +420,8 @@ export class KnowledgeMcpGateway {
   private readonly magicNotesDatabase?: MagicNotesDatabase
   private readonly configService?: GoodBuddyConfigService
   private readonly obsidianService?: ObsidianService
+  private readonly wecomService?: WecomToolService
+  private readonly feishuService?: FeishuToolGateway
   private readonly browserService?: BrowserToolService & {
     createTab: BrowserService['createTab']
     listTabs(conversationId: string): BrowserTabSummary[]
@@ -426,6 +448,8 @@ export class KnowledgeMcpGateway {
     this.magicNotesDatabase = options.magicNotesDatabase
     this.configService = options.configService
     this.obsidianService = options.obsidianService
+    this.wecomService = options.wecomService
+    this.feishuService = options.feishuService
     this.browserService = options.browserService
     this.launchEnvironmentProvider = options.launchEnvironmentProvider
     this.launchEnvironmentReady = options.launchEnvironmentReady
@@ -512,8 +536,16 @@ export class KnowledgeMcpGateway {
     browserTabId?: BrowserTabId,
     browserUsageLease?: BrowserTabUsageLease,
     obsidian?: { settings: ObsidianSettings; access: 'read' | 'write' },
-    storyGraph?: StoryGraphBinding
+    storyGraph?: StoryGraphBinding,
+    wecom?: WecomCapability,
+    feishu?: FeishuCapability
   ): string | undefined {
+    const effectiveFeishu = this.feishuService && feishu?.categories.length
+      ? { categories: Object.freeze([...feishu.categories]) }
+      : undefined
+    const effectiveWecom = this.wecomService && wecom?.categories.length
+      ? { categories: Object.freeze([...wecom.categories]) }
+      : undefined
     const effectiveMagicNotesAccess = this.magicNotesDatabase
       ? magicNotesAccess
       : 'none'
@@ -563,6 +595,8 @@ export class KnowledgeMcpGateway {
       effectiveConfigAccess === 'none' &&
       !effectiveBrowserConversationId &&
       !effectiveObsidian &&
+      !effectiveWecom &&
+      !effectiveFeishu &&
       !(storyGraph && this.storyGraphService)
     ) {
       return undefined
@@ -576,6 +610,8 @@ export class KnowledgeMcpGateway {
         magicNotesAccess: effectiveMagicNotesAccess,
         configAccess: effectiveConfigAccess,
         obsidian: effectiveObsidian,
+        wecom: effectiveWecom,
+        feishu: effectiveFeishu,
         storyGraph: this.storyGraphService ? storyGraph : undefined,
         browserConversationId: effectiveBrowserConversationId,
         browserTabId: effectiveBrowserTabId,
@@ -861,6 +897,10 @@ export class KnowledgeMcpGateway {
         : []),
       ...(capability.obsidian ? obsidianReadToolNames : []),
       ...(capability.obsidian?.access === 'write' ? obsidianWriteToolNames : []),
+      ...(capability.wecom ? wecomToolNames : []),
+      ...(capability.feishu
+        ? feishuTools.filter(tool => capability.feishu!.categories.includes(tool.category)).map(tool => tool.name)
+        : []),
       ...(capability.browserConversationId && capability.browserTabId
         ? browserToolNames
         : [])
@@ -1354,6 +1394,90 @@ export class KnowledgeMcpGateway {
     }
   }
 
+  /**
+   * Calls a WeCom tool. Categories are the intersection of the request grant
+   * and the live settings, so turning a category or the application off takes
+   * effect on the next call.
+   */
+  async callWecomTool(
+    token: string,
+    name: WecomToolName,
+    input: unknown,
+    signal?: AbortSignal
+  ): Promise<Record<string, unknown>> {
+    const capability = this.getCapability(token)
+    if (!this.wecomService || !capability.wecom) {
+      throw new Error('WeCom capability is unavailable')
+    }
+    const live = new Set(await this.wecomService.getEnabledCategories())
+    const categories = capability.wecom.categories.filter(category => live.has(category))
+    if (categories.length === 0) {
+      throw new Error('企业微信应用已关闭、未授权或没有开启任何工具类别')
+    }
+    const effectiveSignal = AbortSignal.any([
+      capability.signal,
+      capability.brokerController.signal,
+      ...(signal ? [signal] : [])
+    ])
+    effectiveSignal.throwIfAborted()
+    if (name === 'wecom_guide') {
+      const { skill, file, offset } = wecomGuideInputSchema.parse(input)
+      return await this.wecomService.readGuide(skill, categories, file, offset)
+    }
+    if (name === 'wecom_script') {
+      const parsed = wecomScriptInputSchema.parse(input)
+      const result = await this.wecomService.runSkillScript(parsed, categories, { signal: effectiveSignal })
+      effectiveSignal.throwIfAborted()
+      return {
+        exitCode: result.exitCode,
+        stdout: result.stdout.slice(-32_000),
+        ...(result.stderr.trim() ? { stderr: result.stderr.slice(-8_000) } : {}),
+        ...(result.truncated ? { truncated: true } : {}),
+        workDirectory: result.workDirectory
+      }
+    }
+    const { args } = wecomCliInputSchema.parse(input)
+    const result = await this.wecomService.runModelCommand(args, categories, { signal: effectiveSignal })
+    effectiveSignal.throwIfAborted()
+    let output: unknown = result.stdout
+    try {
+      output = JSON.parse(result.stdout)
+    } catch {
+      // Plain text or NDJSON output stays as text.
+    }
+    return {
+      exitCode: result.exitCode,
+      output,
+      ...(result.stderr.trim() ? { stderr: result.stderr.slice(-8_000) } : {}),
+      ...(result.truncated ? { truncated: true } : {}),
+      downloadsDirectory: this.wecomService.downloadsDirectory
+    }
+  }
+
+  /** Calls a Feishu tool with the intersection of granted and live categories. */
+  async callFeishuTool(
+    token: string,
+    name: FeishuToolName,
+    input: unknown,
+    signal?: AbortSignal
+  ): Promise<Record<string, unknown>> {
+    const capability = this.getCapability(token)
+    if (!this.feishuService || !capability.feishu) {
+      throw new Error('Feishu capability is unavailable')
+    }
+    const live = new Set(await this.feishuService.getEnabledCategories())
+    const categories = capability.feishu.categories.filter(category => live.has(category))
+    const effectiveSignal = AbortSignal.any([
+      capability.signal,
+      capability.brokerController.signal,
+      ...(signal ? [signal] : [])
+    ])
+    effectiveSignal.throwIfAborted()
+    const result = await this.feishuService.callTool(name, input, categories, effectiveSignal)
+    effectiveSignal.throwIfAborted()
+    return result
+  }
+
   private requireConfig(
     token: string,
     requiredAccess: Exclude<MagicNotesCapabilityAccess, 'none'>
@@ -1691,6 +1815,17 @@ export class KnowledgeMcpGateway {
       case 'obsidian_get_note_outline':
       case 'obsidian_read_note_lines':
         return this.callObsidianTool(token, name, input, signal)
+      case 'wecom_guide':
+      case 'wecom_cli':
+      case 'wecom_script':
+        return this.callWecomTool(token, name, input, signal)
+      case 'feishu_doc':
+      case 'feishu_wiki':
+      case 'feishu_drive':
+      case 'feishu_bitable':
+      case 'feishu_perm':
+      case 'feishu_app_scopes':
+        return this.callFeishuTool(token, name, input, signal)
     }
   }
 
@@ -1770,6 +1905,8 @@ export class KnowledgeMcpGateway {
                     readOnlyHint: definition.access === 'read',
                     destructiveHint:
                       name === 'goodbuddy_config_apply' ||
+                      name === 'wecom_cli' ||
+                      name === 'feishu_perm' ||
                       name === 'note_delete' ||
                       name === 'note_entry_delete'
                   }

@@ -29,6 +29,10 @@ export const warnings = {
     '企业微信 Secret 无法读取。请重新输入或清除该凭据。',
   'channel-dingtalk-credential-unreadable':
     '钉钉 Client Secret 无法读取。请重新输入或清除该凭据。',
+  'channel-feishu-environment-invalid':
+    '飞书环境变量配置无效或不完整，通道保持关闭。',
+  'channel-feishu-credential-unreadable':
+    '飞书 App Secret 无法读取。请重新输入或清除该凭据。',
   'channel-telegram-environment-invalid':
     'Telegram 环境变量配置无效或不完整，通道保持关闭。',
   'channel-telegram-credential-unreadable':

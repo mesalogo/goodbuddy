@@ -1,4 +1,7 @@
 import {
+  Fragment,
+  lazy,
+  Suspense,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -28,9 +31,33 @@ import {
   type BuiltInApplicationId,
   type EditableApplicationId,
 } from '../../shared/application-settings-contracts'
+import {
+  projectChannels,
+  type AssistantProject,
+  type ProjectChannel,
+  type ProjectCreateInput,
+} from '../../shared/assistant-contracts'
+import type { AppNotificationInput } from './notifications'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
+import { ChannelIcon } from './ChannelIcon'
 import './application-center.css'
+
+// Message channel settings pull in QR rendering, so load them on demand.
+const PlatformApplicationRows = lazy(() =>
+  import('./ChannelApplicationSettings').then((module) => ({ default: module.PlatformApplicationRows })),
+)
+const ChannelApplicationSettings = lazy(() =>
+  import('./ChannelApplicationSettings').then((module) => ({ default: module.ChannelApplicationSettings })),
+)
+
+export type PlatformApplicationsProps = {
+  projects: AssistantProject[]
+  initialChannel?: ProjectChannel
+  onNotify?: (notification: AppNotificationInput) => void
+  onOpenChannel: (channel: ProjectChannel) => void
+  onUpdateProject: (projectId: string, input: ProjectCreateInput) => Promise<AssistantProject>
+}
 
 export const applicationDefinitions = {
   'device-sharing': { icon: Network, title: 'sharing.title', enabled: 'deviceSharingEnabled' },
@@ -292,6 +319,7 @@ export function ApplicationCenter({
   onOpen,
   onUpdate,
   onRetry,
+  platform,
 }: {
   settings?: ApplicationSettings
   pending: boolean
@@ -301,10 +329,17 @@ export function ApplicationCenter({
   onOpen: (id: BuiltInApplicationId) => void
   onUpdate: (patch: ApplicationSettingsUpdate) => Promise<boolean>
   onRetry: () => void
+  platform?: PlatformApplicationsProps
 }): React.JSX.Element {
-  const { t } = useTranslation('app')
+  const { t } = useTranslation(['app', 'integrations'])
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<EditableApplicationId>()
+  const [selected, setSelected] = useState<EditableApplicationId | ProjectChannel | undefined>(
+    platform?.initialChannel,
+  )
+  const selectedChannel = selected && (projectChannels as readonly string[]).includes(selected)
+    ? selected as ProjectChannel
+    : undefined
+  const selectedApplication = selectedChannel ? undefined : selected as EditableApplicationId | undefined
   const [dragged, setDragged] = useState<BuiltInApplicationId>()
   const [announcement, setAnnouncement] = useState('')
   const dialog = useRef<HTMLElement>(null)
@@ -315,10 +350,13 @@ export function ApplicationCenter({
     () => activateModalFocus(() => search.current ?? close.current),
     [],
   )
+  const inDetail = selected !== undefined
   useLayoutEffect(() => {
     if (body.current) body.current.scrollTop = 0
-    ;(selected ? close.current : search.current)?.focus()
   }, [selected])
+  useLayoutEffect(() => {
+    ;(inDetail ? close.current : search.current)?.focus()
+  }, [inDetail])
   const navigation =
     settings?.applicationNavigation ?? defaultApplicationNavigation
   const editingDisabled = pending || locked
@@ -331,6 +369,22 @@ export function ApplicationCenter({
       ),
     [navigation.order, query, t],
   )
+  const platformResults = useMemo(
+    () =>
+      platform
+        ? projectChannels.filter((channel) =>
+            `${t(`channels.tabs.${channel}`, { ns: 'integrations' })} ${t(`applications.descriptions.${channel}`)}`
+              .toLocaleLowerCase()
+              .includes(query.trim().toLocaleLowerCase()),
+          )
+        : [],
+    [platform, query, t],
+  )
+  const channelProjectIds = useMemo(
+    () => new Set(platform?.projects.flatMap((project) =>
+      project.kind === 'channel' && project.channel ? [project.channel] : []) ?? []),
+    [platform?.projects],
+  )
   const move = async (
     from: BuiltInApplicationId,
     to: BuiltInApplicationId,
@@ -342,13 +396,32 @@ export function ApplicationCenter({
     if (await onUpdate({ applicationNavigation: { ...navigation, order } }))
       setAnnouncement(t('applications.orderUpdated'))
   }
+  // Settings detail mirrors the system settings dialog: every configurable
+  // app in a vertical tab list, the selected app's settings on the right.
+  const detailTabs: { id: EditableApplicationId | ProjectChannel; label: string; group: 'work' | 'platform' }[] = [
+    ...navigation.order
+      .filter((id): id is EditableApplicationId => id !== 'knowledge')
+      .map((id) => ({ id, label: t(applicationDefinitions[id].title), group: 'work' as const })),
+    ...(platform
+      ? projectChannels.map((channel) => ({
+          id: channel,
+          label: t(`channels.tabs.${channel}`, { ns: 'integrations' }),
+          group: 'platform' as const,
+        }))
+      : []),
+  ]
+  const selectedTitle = selectedChannel
+    ? t(`channels.tabs.${selectedChannel}`, { ns: 'integrations' })
+    : selectedApplication
+      ? t(applicationDefinitions[selectedApplication].title)
+      : ''
   return createPortal(
     <div className="settings-backdrop" role="presentation">
       <section
         className={`settings-panel application-center${selected ? ' application-center--detail' : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="application-center-title"
+        aria-labelledby={selected ? 'application-settings-title' : 'application-center-title'}
         id="application-center"
         ref={dialog}
         onKeyDown={(event) => {
@@ -374,16 +447,8 @@ export function ApplicationCenter({
           )}
           <PageHeader
             headingId="application-center-title"
-            title={
-              selected
-                ? t(applicationDefinitions[selected].title)
-                : t('applications.title')
-            }
-            description={t(
-              selected
-                ? `applications.descriptions.${selected}`
-                : 'applications.description',
-            )}
+            title={t(selected ? 'applications.settingsTitle' : 'applications.title')}
+            description={selected ? undefined : t('applications.description')}
             actions={
               <button
                 ref={close}
@@ -398,6 +463,98 @@ export function ApplicationCenter({
             }
           />
         </div>
+        {selected ? (
+          <div className="settings-panel__body application-center__detail" aria-busy={pending}>
+            <nav
+              aria-label={t('applications.settingsTabs')}
+              aria-orientation="vertical"
+              className="settings-tabs"
+              role="tablist"
+            >
+              {detailTabs.map((tab, index) => {
+                const Icon = tab.group === 'work'
+                  ? applicationDefinitions[tab.id as EditableApplicationId].icon
+                  : undefined
+                return (
+                  <Fragment key={tab.id}>
+                    {detailTabs[index - 1]?.group !== tab.group && (
+                      <span className="settings-tabs__group-label" aria-hidden="true">
+                        {t(tab.group === 'work' ? 'applications.workGroup' : 'applications.platformGroup')}
+                      </span>
+                    )}
+                    <button
+                      aria-controls="application-settings-panel"
+                      aria-selected={selected === tab.id}
+                      id={`application-settings-tab-${tab.id}`}
+                      onClick={() => setSelected(tab.id)}
+                      onKeyDown={(event) => {
+                        const next = event.key === 'ArrowDown' ? index + 1
+                          : event.key === 'ArrowUp' ? index - 1
+                          : event.key === 'Home' ? 0
+                          : event.key === 'End' ? detailTabs.length - 1 : undefined
+                        if (next === undefined) return
+                        event.preventDefault()
+                        const target = detailTabs[(next + detailTabs.length) % detailTabs.length]!
+                        setSelected(target.id)
+                        document.getElementById(`application-settings-tab-${target.id}`)?.focus()
+                      }}
+                      role="tab"
+                      tabIndex={selected === tab.id ? 0 : -1}
+                      type="button"
+                    >
+                      {Icon
+                        ? <Icon aria-hidden="true" size={16} strokeWidth={1.8} />
+                        : <ChannelIcon channel={tab.id as ProjectChannel} size={16} />}
+                      <strong>{tab.label}</strong>
+                    </button>
+                  </Fragment>
+                )
+              })}
+            </nav>
+            <div
+              ref={body}
+              aria-labelledby={`application-settings-tab-${selected}`}
+              className="settings-panel__content application-center__detail-content"
+              id="application-settings-panel"
+              role="tabpanel"
+            >
+              <header className="settings-category-header">
+                <div className="settings-category-header__content">
+                  <h2 id="application-settings-title">{selectedTitle}</h2>
+                  <p>{t(`applications.descriptions.${selected}`)}</p>
+                </div>
+              </header>
+              {error && (
+                <div role="alert" className="settings-warning">
+                  {error}{' '}
+                  <button type="button" className="secondary-button" disabled={pending} onClick={onRetry}>
+                    {t('applications.retry')}
+                  </button>
+                </div>
+              )}
+              {selectedChannel && platform ? (
+                <Suspense fallback={<p role="status">{t('route.loading')}</p>}>
+                  <ChannelApplicationSettings
+                    key={selectedChannel}
+                    channel={selectedChannel}
+                    onNotify={platform.onNotify}
+                    onUpdateProject={platform.onUpdateProject}
+                    projectList={platform.projects}
+                  />
+                </Suspense>
+              ) : !settings ? (
+                <p role="status">{t('route.loading')}</p>
+              ) : selectedApplication ? (
+                <ApplicationSettingsView
+                  id={selectedApplication}
+                  settings={settings}
+                  pending={editingDisabled}
+                  onUpdate={onUpdate}
+                />
+              ) : null}
+            </div>
+          </div>
+        ) : (
         <div ref={body} className="application-center__body" aria-busy={pending}>
           {error && (
             <div role="alert" className="settings-warning">
@@ -414,13 +571,6 @@ export function ApplicationCenter({
           )}
           {!settings ? (
             <p role="status">{t('route.loading')}</p>
-          ) : selected ? (
-            <ApplicationSettingsView
-              id={selected}
-              settings={settings}
-              pending={editingDisabled}
-              onUpdate={onUpdate}
-            />
           ) : (
             <>
               <label className="application-center__search">
@@ -432,7 +582,7 @@ export function ApplicationCenter({
                   onChange={(event) => setQuery(event.target.value)}
                 />
               </label>
-              {results.length === 0 && (
+              {results.length === 0 && platformResults.length === 0 && (
                 <div>
                   <p>{t('applications.noResults')}</p>
                   <button
@@ -526,10 +676,29 @@ export function ApplicationCenter({
                   </article>
                 )
               })}</div>
+              {platform && platformResults.length > 0 && (
+                <section
+                  className="application-center__group"
+                  aria-labelledby="application-center-platform-heading"
+                >
+                  <h2 id="application-center-platform-heading">{t('applications.platformGroup')}</h2>
+                  <div className="application-center__grid">
+                    <Suspense fallback={<p role="status">{t('route.loading')}</p>}>
+                      <PlatformApplicationRows
+                        channels={platformResults}
+                        canOpen={(channel) => channelProjectIds.has(channel)}
+                        onOpen={platform.onOpenChannel}
+                        onSettings={setSelected}
+                      />
+                    </Suspense>
+                  </div>
+                </section>
+              )}
             </>
           )}
           <span className="sr-only" role="status">{announcement}</span>
         </div>
+        )}
       </section>
     </div>,
     document.body,

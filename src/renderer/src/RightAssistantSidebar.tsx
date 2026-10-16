@@ -81,6 +81,8 @@ export type AssistantSidebarTab =
   | 'workspace'
   | 'browser'
   | 'notes'
+  | 'wecom'
+  | 'feishu'
 
 export type SidebarArtifact = {
   id: string
@@ -122,6 +124,12 @@ export type RightAssistantSidebarProps = {
   notesSettingsReady?: boolean
   notesOpenRequest?: number
   notesPanel?: React.ReactNode
+  /** Rendered inside the WeCom workbar tab; the tab is unavailable without it. */
+  wecomPanel?: React.ReactNode
+  wecomOpenRequest?: number
+  /** Rendered inside the Feishu workbar tab; the tab is unavailable without it. */
+  feishuPanel?: React.ReactNode
+  feishuOpenRequest?: number
   onBeforeCloseNotes?: () => Promise<boolean>
   nativeTerminals?: readonly { terminal: TerminalSnapshot; focus: boolean }[]
   open: boolean
@@ -177,7 +185,9 @@ const tabIds: AssistantSidebarTab[] = [
   'tasks',
   'workspace',
   'browser',
-  'notes'
+  'notes',
+  'wecom',
+  'feishu'
 ]
 const emptyChangedFiles: WorkspaceChanges['files'] = []
 const defaultSidebarRatio = 0.3
@@ -793,6 +803,10 @@ function RightAssistantSidebarView({
   notesSettingsReady = true,
   notesOpenRequest = 0,
   notesPanel,
+  wecomPanel,
+  wecomOpenRequest = 0,
+  feishuPanel,
+  feishuOpenRequest = 0,
   onBeforeCloseNotes,
   nativeTerminals,
   open,
@@ -858,7 +872,10 @@ function RightAssistantSidebarView({
   )
   const localizedAppDefinitions = useMemo(
     () =>
-      WORKBAR_APP_DEFINITIONS.filter(definition => definition.id !== 'notes' || notesEnabled).map((definition) => {
+      WORKBAR_APP_DEFINITIONS.filter(definition =>
+        (definition.id !== 'notes' || notesEnabled) && (definition.id !== 'wecom' || Boolean(wecomPanel)) &&
+        (definition.id !== 'feishu' || Boolean(feishuPanel))
+      ).map((definition) => {
         const tabDefinition = tabs.find(
           (item) => item.id === definition.id
         )
@@ -872,7 +889,7 @@ function RightAssistantSidebarView({
             t('sidebar.tabs.terminal.description')
         } satisfies WorkbarAppDefinition
       }),
-    [t, tabs, notesEnabled]
+    [t, tabs, notesEnabled, wecomPanel, feishuPanel]
   )
   const [workbarInstances, setWorkbarInstances] = useState<
     WorkbarTabInstance[]
@@ -1352,6 +1369,38 @@ function RightAssistantSidebarView({
       if (existing) setActiveWorkbarInstanceId(existing.id)
       else if (workbarInstances.length < WORKBAR_LIMITS.maximumOpenInstances) {
         const instance: WorkbarTabInstance = { id: crypto.randomUUID(), appId: 'notes', title: t('sidebar.tabs.notes.label') }
+        setWorkbarInstances([...workbarInstances, instance])
+        setActiveWorkbarInstanceId(instance.id)
+      } else {
+        setActionErrorState({ scope: { instanceId: activeWorkbarInstanceId, open }, message: t('sidebar.workbar.limit', { count: WORKBAR_LIMITS.maximumOpenInstances }) })
+      }
+      setBrowserFullscreenInstanceId(undefined)
+    }
+  }
+  const [handledFeishuRequest, setHandledFeishuRequest] = useState(0)
+  if (handledFeishuRequest !== feishuOpenRequest) {
+    setHandledFeishuRequest(feishuOpenRequest)
+    if (feishuPanel && feishuOpenRequest) {
+      const existing = workbarInstances.find(instance => instance.appId === 'feishu')
+      if (existing) setActiveWorkbarInstanceId(existing.id)
+      else if (workbarInstances.length < WORKBAR_LIMITS.maximumOpenInstances) {
+        const instance: WorkbarTabInstance = { id: crypto.randomUUID(), appId: 'feishu', title: t('sidebar.tabs.feishu.label') }
+        setWorkbarInstances([...workbarInstances, instance])
+        setActiveWorkbarInstanceId(instance.id)
+      } else {
+        setActionErrorState({ scope: { instanceId: activeWorkbarInstanceId, open }, message: t('sidebar.workbar.limit', { count: WORKBAR_LIMITS.maximumOpenInstances }) })
+      }
+      setBrowserFullscreenInstanceId(undefined)
+    }
+  }
+  const [handledWecomRequest, setHandledWecomRequest] = useState(0)
+  if (handledWecomRequest !== wecomOpenRequest) {
+    setHandledWecomRequest(wecomOpenRequest)
+    if (wecomPanel && wecomOpenRequest) {
+      const existing = workbarInstances.find(instance => instance.appId === 'wecom')
+      if (existing) setActiveWorkbarInstanceId(existing.id)
+      else if (workbarInstances.length < WORKBAR_LIMITS.maximumOpenInstances) {
+        const instance: WorkbarTabInstance = { id: crypto.randomUUID(), appId: 'wecom', title: t('sidebar.tabs.wecom.label') }
         setWorkbarInstances([...workbarInstances, instance])
         setActiveWorkbarInstanceId(instance.id)
       } else {
@@ -2050,6 +2099,8 @@ function RightAssistantSidebarView({
           </p>
         ) : null}
         {instance.appId === 'notes' && notesPanel}
+        {instance.appId === 'wecom' && wecomPanel}
+        {instance.appId === 'feishu' && feishuPanel}
         {instance.appId === 'terminal' &&
          instance.targetRef &&
          (instance.targetRef.type === 'local' || instance.targetRef.type === 'project') ? (

@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>外部应用示例页面 - GoodBuddy</title>
+<style>
+:root {
+  --surface-canvas: #e8f0f5; --surface-raised: #fff; --surface-subtle: #f4f8fb; --surface-muted: #e5edf3;
+  --text-primary: #17263a; --text-secondary: #4f6278; --text-muted: #60748a;
+  --border-default: #cedce7; --border-control: #748a9f; --border-subtle: #e2eaf1;
+  --accent: #086fc7; --accent-solid: #0875cf; --accent-subtle: #e8f4ff; --accent-selected: #a7cfea;
+  --danger: #c53640; --danger-subtle: #fff1f2; --danger-border: #efbcc2;
+  --success: #077466; --success-subtle: #e4f7f2;
+  --warning: #a86608; --warning-subtle: #fff7e8; --warning-border: #e8c589;
+  --overlay-backdrop: rgb(0 0 0 / 45%); --shadow-dialog: 0 14px 38px rgb(29 78 116 / 14%); --shadow-card: 0 4px 14px rgb(29 78 116 / 7%);
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px;
+  --radius-control: 10px; --radius-card: 14px;
+  --font-page-title: 24px; --font-section-title: 14px; --font-body: 13px; --font-caption: 11px;
+  font-family: "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  font-size: var(--font-body); color: var(--text-primary); background: var(--surface-canvas);
+}
+* { box-sizing: border-box; }
+body { margin: 0; height: 100vh; display: flex; flex-direction: column; }
+button { font: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+input, select { font: inherit; color: inherit; }
+h1, h2, h3, p { margin: 0; }
+
+/* demo toolbar */
+.demo-bar { position: relative; z-index: 100; display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-4); background: #17263a; color: #f2f7fb; flex-wrap: wrap; }
+.demo-bar strong { margin-right: var(--space-3); }
+.demo-bar button { background: transparent; color: inherit; border: 1px solid #4f6278; border-radius: 8px; padding: 3px 10px; }
+.demo-bar button.active { background: #0875cf; border-color: #0875cf; }
+
+.shell { flex: 1; display: flex; min-height: 0; position: relative; }
+
+/* sidebar */
+.sidebar { width: 240px; display: flex; flex-direction: column; background: rgb(255 255 255 / 65%); border-right: 1px solid var(--border-subtle); padding: var(--space-3); gap: var(--space-1); position: relative; }
+.nav-item { display: flex; align-items: center; gap: var(--space-2); background: transparent; border: 0; border-radius: var(--radius-control); padding: 7px var(--space-3); text-align: left; color: var(--text-primary); width: 100%; }
+.nav-item:hover { background: var(--surface-muted); }
+.nav-item.active { background: var(--accent-subtle); color: var(--accent); font-weight: 600; }
+.nav-section { margin: var(--space-3) var(--space-3) var(--space-1); color: var(--text-muted); font-size: var(--font-caption); }
+.conversation { padding: 6px var(--space-3); color: var(--text-secondary); border-radius: 8px; }
+.sidebar-spacer { flex: 1; }
+.sidebar-footer { display: flex; align-items: center; gap: var(--space-2); border-top: 1px solid var(--border-subtle); padding-top: var(--space-2); }
+.sidebar-footer .nav-item { justify-content: center; }
+.divider-v { width: 1px; height: 24px; background: var(--border-default); }
+
+.menu { position: absolute; left: var(--space-3); bottom: 56px; width: 216px; background: var(--surface-raised); border: 1px solid var(--border-default); border-radius: var(--radius-card); box-shadow: var(--shadow-dialog); padding: var(--space-2); z-index: 20; }
+.menu .nav-item { justify-content: flex-start; }
+.menu hr { border: 0; border-top: 1px solid var(--border-subtle); margin: var(--space-1) 0; }
+.menu-label { font-size: var(--font-caption); color: var(--text-muted); padding: var(--space-1) var(--space-3); }
+
+/* app logos */
+.logo { width: 22px; height: 22px; border-radius: 6px; display: inline-grid; place-items: center; color: #fff; font-weight: 700; font-size: 11px; flex: 0 0 auto; }
+.logo.lg { width: 36px; height: 36px; border-radius: 9px; font-size: 15px; }
+.logo.feishu { background: linear-gradient(135deg, #00d6b9, #3370ff); }
+.logo.dingtalk { background: #1677ff; }
+.logo.wecom { background: #07c160; }
+.logo.weixin { background: #2aae67; }
+.logo.telegram { background: #2aabee; }
+.logo.builtin { background: var(--surface-muted); color: var(--text-secondary); }
+
+/* main */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.page-header { padding: var(--space-6) 32px var(--space-4); display: flex; align-items: flex-start; gap: var(--space-4); }
+.page-header h1 { font-size: var(--font-page-title); }
+.page-header p { color: var(--text-secondary); margin-top: var(--space-1); }
+.page-header .actions { margin-left: auto; display: flex; gap: var(--space-2); }
+
+.btn { border: 1px solid var(--border-default); background: var(--surface-raised); color: var(--text-primary); border-radius: var(--radius-control); padding: 0 var(--space-3); min-height: 32px; display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.btn:hover:not(:disabled) { border-color: var(--border-control); }
+.btn.primary { background: var(--accent-solid); border-color: var(--accent-solid); color: #fff; }
+.btn.danger { color: var(--danger); border-color: var(--danger-border); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.icon-btn { border: 0; background: transparent; width: 32px; height: 32px; border-radius: 8px; font-size: 18px; color: var(--text-secondary); }
+.icon-btn:hover { background: var(--surface-muted); }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; font-size: var(--font-caption); padding: 1px 8px; border-radius: 999px; background: var(--surface-muted); color: var(--text-secondary); white-space: nowrap; }
+.badge.ok { background: var(--success-subtle); color: var(--success); }
+.badge.warn { background: var(--warning-subtle); color: var(--warning); }
+.badge.err { background: var(--danger-subtle); color: var(--danger); }
+.badge.info { background: var(--accent-subtle); color: var(--accent); }
+.muted { color: var(--text-secondary); }
+.caption { font-size: var(--font-caption); color: var(--text-muted); }
+
+/* modal */
+.backdrop { position: absolute; inset: 0; background: var(--overlay-backdrop); display: grid; place-items: center; z-index: 50; }
+.modal { background: var(--surface-raised); border-radius: var(--radius-card); box-shadow: var(--shadow-dialog); width: min(640px, calc(100vw - 32px)); max-height: calc(100% - 32px); display: flex; flex-direction: column; overflow: hidden; }
+.modal.wide { width: min(880px, calc(100vw - 32px)); height: min(680px, calc(100% - 32px)); }
+.modal-header { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-5) var(--space-6); border-bottom: 1px solid var(--border-subtle); }
+.modal-header h2 { font-size: var(--font-section-title); font-size: 16px; }
+.modal-header p { color: var(--text-secondary); margin-top: 2px; }
+.modal-header .grow { flex: 1; min-width: 0; }
+.modal-body { padding: var(--space-5) var(--space-6); overflow: auto; flex: 1; min-height: 0; }
+.modal-footer { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-3) var(--space-6); border-top: 1px solid var(--border-subtle); }
+
+.search { width: 100%; min-height: 36px; border: 1px solid var(--border-control); border-radius: var(--radius-control); padding: 0 var(--space-3); background: var(--surface-raised); }
+.group-title { display: flex; align-items: baseline; gap: var(--space-2); margin: var(--space-5) 0 var(--space-1); font-weight: 600; }
+.group-title .caption { font-weight: 400; }
+.app-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; flex-wrap: wrap; }
+.app-row + .app-row { border-top: 1px solid var(--border-subtle); }
+.app-row .summary { display: flex; gap: var(--space-3); flex: 1 1 260px; min-width: 0; align-items: flex-start; }
+.app-row .title { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.app-row .title strong { font-size: var(--font-section-title); }
+.app-row .summary p { color: var(--text-secondary); margin-top: 2px; line-height: 1.6; }
+.app-row .row-actions { display: flex; gap: var(--space-2); margin-left: auto; }
+/* chat + right workbar */
+.chat-layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 380px; min-height: 0; }
+.chat-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.workbar { border-left: 1px solid var(--border-subtle); background: rgb(255 255 255 / 70%); display: flex; flex-direction: column; min-height: 0; position: relative; }
+.wb-tabs { display: flex; align-items: center; gap: 2px; padding: var(--space-2); border-bottom: 1px solid var(--border-subtle); overflow-x: auto; }
+.wb-tab { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; border-radius: 8px; padding: 5px 8px; white-space: nowrap; color: var(--text-secondary); }
+.wb-tab.active { background: var(--accent-subtle); color: var(--accent); font-weight: 600; }
+.wb-tab .x { opacity: .6; margin-left: 2px; }
+.wb-add { margin-left: auto; }
+.wb-menu { position: absolute; right: var(--space-2); top: 44px; width: 220px; background: var(--surface-raised); border: 1px solid var(--border-default); border-radius: var(--radius-card); box-shadow: var(--shadow-dialog); padding: var(--space-2); z-index: 10; }
+.wb-menu .nav-item:disabled { opacity: .5; }
+.wb-body { flex: 1; overflow: auto; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+.wb-body .doc-card { padding: var(--space-3); }
+.wb-body .toolbar { flex-wrap: wrap; }
+.wb-head { display: flex; align-items: center; gap: var(--space-2); }
+.wb-head .grow { flex: 1; min-width: 0; }
+.wb-head small { display: block; color: var(--text-muted); font-size: var(--font-caption); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.placeholder { color: var(--text-muted); padding: var(--space-6) var(--space-3); text-align: center; line-height: 1.7; }
+@media (max-width: 1000px) { .chat-layout { grid-template-columns: minmax(0, 1fr) 320px; } }
+@media (max-width: 760px) { .chat-layout { grid-template-columns: minmax(0, 1fr); } .chat-col { display: none; } }
+.order { display: inline-flex; gap: 2px; }
+.icon-btn.sm { width: 28px; height: 28px; font-size: 14px; border: 1px solid transparent; }
+.icon-btn.sm:disabled { opacity: .35; }
+.add-more { margin-top: var(--space-3); padding: var(--space-3); border: 1px dashed var(--border-default); border-radius: var(--radius-control); color: var(--text-secondary); display: flex; align-items: center; gap: var(--space-2); }
+
+/* settings detail */
+.detail { display: grid; grid-template-columns: 180px minmax(0, 1fr); height: 100%; min-height: 0; }
+.detail nav { border-right: 1px solid var(--border-subtle); padding: var(--space-3); display: flex; flex-direction: column; gap: 2px; background: var(--surface-subtle); }
+.detail nav .nav-item { white-space: nowrap; }
+.detail nav .nav-item .badge { margin-left: auto; padding: 0 6px; }
+.detail section { padding: var(--space-5) var(--space-6); overflow: auto; }
+.detail h3 { font-size: var(--font-section-title); margin-bottom: var(--space-1); }
+.block { display: grid; gap: var(--space-3); padding-bottom: var(--space-5); }
+.block + .block { border-top: 1px solid var(--border-subtle); padding-top: var(--space-5); }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: var(--space-2) var(--space-4); }
+.kv dt { color: var(--text-secondary); }
+.kv dd { margin: 0; }
+.toggle-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; }
+.toggle-row .text { flex: 1; min-width: 0; }
+.toggle-row .text p { color: var(--text-secondary); margin-top: 2px; }
+.switch { appearance: none; width: 34px; height: 20px; border-radius: 999px; background: var(--border-default); position: relative; flex: 0 0 auto; margin: 0; cursor: pointer; transition: background .15s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch:checked { background: var(--accent-solid); }
+.switch:checked::after { left: 16px; }
+.switch:disabled { opacity: .5; cursor: not-allowed; }
+.select { min-height: 30px; border: 1px solid var(--border-default); border-radius: 8px; padding: 0 var(--space-2); background: var(--surface-raised); }
+.notice { padding: var(--space-3); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); line-height: 1.6; }
+.notice.warn { background: var(--warning-subtle); border: 1px solid var(--warning-border); color: #6e4305; }
+.notice.info { background: var(--accent-subtle); color: #0b4f8a; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+th { color: var(--text-secondary); font-weight: 500; font-size: var(--font-caption); }
+
+/* connect */
+.choice { display: flex; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-card); cursor: pointer; align-items: flex-start; }
+.choice + .choice { margin-top: var(--space-3); }
+.choice.selected { border-color: var(--accent); background: var(--accent-subtle); }
+.choice input { margin-top: 3px; }
+.choice p { color: var(--text-secondary); margin-top: 4px; line-height: 1.6; }
+.steps { display: flex; gap: var(--space-2); margin-bottom: var(--space-5); }
+.steps span { flex: 1; height: 4px; border-radius: 4px; background: var(--border-subtle); }
+.steps span.done { background: var(--accent-solid); }
+.field { display: grid; gap: var(--space-1); margin-bottom: var(--space-3); }
+.field label { color: var(--text-secondary); }
+.field input { min-height: 34px; border: 1px solid var(--border-control); border-radius: 8px; padding: 0 var(--space-3); }
+.spinner { width: 36px; height: 36px; border: 3px solid var(--border-subtle); border-top-color: var(--accent-solid); border-radius: 50%; animation: spin 1s linear infinite; margin: var(--space-4) auto; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.scope-item { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; }
+.scope-item + .scope-item { border-top: 1px solid var(--border-subtle); }
+.scope-item .grow { flex: 1; }
+
+/* app page */
+.app-page { flex: 1; display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 0; border-top: 1px solid var(--border-subtle); }
+.tree { padding: var(--space-3); border-right: 1px solid var(--border-subtle); overflow: auto; background: rgb(255 255 255 / 40%); }
+.tree .node { padding: 6px var(--space-2); border-radius: 8px; display: flex; gap: var(--space-2); align-items: center; cursor: pointer; }
+.tree .node:hover { background: var(--surface-muted); }
+.tree .node.active { background: var(--accent-subtle); color: var(--accent); }
+.tree .node.locked { color: var(--text-muted); }
+.tree .child { padding-left: var(--space-5); }
+.results { padding: var(--space-4) 32px; overflow: auto; display: flex; flex-direction: column; gap: var(--space-3); }
+.toolbar { display: flex; gap: var(--space-2); align-items: center; }
+.toolbar .search { flex: 1; }
+.chip { border: 1px solid var(--border-default); background: var(--surface-raised); border-radius: 999px; padding: 2px 10px; }
+.chip.active { background: var(--accent-subtle); border-color: var(--accent-selected); color: var(--accent); }
+.card { background: var(--surface-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-card); padding: var(--space-4); box-shadow: var(--shadow-card); }
+.doc-card { display: grid; gap: var(--space-2); }
+.doc-card .head { display: flex; gap: var(--space-2); align-items: center; }
+.doc-card .head strong { font-size: var(--font-section-title); }
+.doc-card .path { color: var(--text-muted); font-size: var(--font-caption); }
+.doc-card .snippet { color: var(--text-secondary); line-height: 1.6; }
+.doc-card .snippet mark { background: #fff2b3; color: inherit; }
+.doc-card .foot { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.doc-card .foot .grow { flex: 1; }
+
+/* chat */
+.chat { flex: 1; overflow: auto; padding: var(--space-6) 0; }
+.chat-inner { max-width: 820px; margin: 0 auto; padding: 0 32px; display: flex; flex-direction: column; gap: var(--space-4); }
+.msg-user { align-self: flex-end; background: var(--accent-subtle); padding: var(--space-3) var(--space-4); border-radius: var(--radius-card); max-width: 80%; line-height: 1.7; }
+.msg-user .mention { color: var(--accent); font-weight: 600; }
+.msg-ai { line-height: 1.7; }
+.tool-card { border: 1px solid var(--border-default); border-radius: var(--radius-card); background: var(--surface-raised); overflow: hidden; }
+.tool-card .tc-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); background: var(--surface-subtle); border-bottom: 1px solid var(--border-subtle); }
+.tool-card .tc-body { padding: var(--space-4); display: grid; gap: var(--space-3); }
+.tool-card .preview { border: 1px solid var(--border-subtle); border-left: 3px solid var(--success); background: #f6fbf9; border-radius: 8px; padding: var(--space-3); white-space: pre-wrap; line-height: 1.7; }
+.tool-card .tc-foot { display: flex; gap: var(--space-2); justify-content: flex-end; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-subtle); align-items: center; }
+.tool-card .tc-foot .grow { flex: 1; }
+.cite { display: inline-flex; gap: 4px; align-items: center; border: 1px solid var(--border-default); border-radius: 999px; padding: 1px 8px 1px 3px; font-size: var(--font-caption); background: var(--surface-raised); }
+.composer { border-top: 1px solid var(--border-subtle); padding: var(--space-3) 0 var(--space-5); }
+.composer-inner { max-width: 820px; margin: 0 auto; padding: 0 32px; position: relative; }
+.composer-box { background: var(--surface-raised); border: 1px solid var(--border-default); border-radius: var(--radius-card); padding: var(--space-3); }
+.composer-box .input { min-height: 40px; line-height: 1.6; }
+.composer-box .bar { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
+.mention-pop { position: absolute; bottom: 100%; left: 32px; width: 360px; background: var(--surface-raised); border: 1px solid var(--border-default); border-radius: var(--radius-card); box-shadow: var(--shadow-dialog); padding: var(--space-2); margin-bottom: var(--space-2); }
+.mention-pop .item { display: flex; gap: var(--space-2); align-items: center; padding: 6px var(--space-2); border-radius: 8px; }
+.mention-pop .item.active { background: var(--accent-subtle); }
+.mention-pop .item .grow { flex: 1; }
+.hidden { display: none !important; }
+.caps { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-top: var(--space-1); }
+.cap { display: inline-flex; align-items: center; gap: 4px; font-size: var(--font-caption); padding: 1px 8px; border-radius: 6px; border: 1px solid var(--border-subtle); color: var(--text-secondary); background: var(--surface-subtle); }
+.cap::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--border-control); }
+.cap.on::before { background: var(--success); }
+.cap.err::before { background: var(--danger); }
+.cap.na { opacity: .55; }
+.cap.na::before { display: none; }
+.cred { border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: var(--space-3) var(--space-4); display: grid; gap: var(--space-2); }
+.cred .head { display: flex; align-items: center; gap: var(--space-2); }
+.cred .head strong { flex: 1; }
+.cred .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+textarea.input { width: 100%; min-height: 72px; border: 1px solid var(--border-control); border-radius: 8px; padding: var(--space-2) var(--space-3); font: inherit; resize: vertical; }
+.form-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: var(--space-3); align-items: center; }
+.form-row > label { color: var(--text-secondary); }
+.form-row input[type=text], .form-row input[type=password] { min-height: 32px; border: 1px solid var(--border-control); border-radius: 8px; padding: 0 var(--space-3); width: 100%; }
+.inline { display: flex; gap: var(--space-2); align-items: center; }
+.inline > input { flex: 1; }
+.qr { width: 168px; height: 168px; display: grid; grid-template-columns: repeat(21, 1fr); gap: 0; padding: 8px; background: #fff; border: 1px solid var(--border-default); border-radius: 8px; margin: 0 auto; }
+.qr i { background: #fff; }
+.qr i.b { background: #17263a; }
+.settings-shell { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); height: 100%; min-height: 0; }
+.settings-shell nav { border-right: 1px solid var(--border-subtle); padding: var(--space-3); overflow: auto; background: var(--surface-subtle); }
+.settings-shell nav .cat-group { font-size: var(--font-caption); color: var(--text-muted); margin: var(--space-3) var(--space-3) var(--space-1); }
+.settings-shell nav .nav-item small { display: block; color: var(--text-muted); font-size: var(--font-caption); font-weight: 400; }
+.settings-shell nav .nav-item { flex-direction: column; align-items: flex-start; gap: 0; }
+.settings-shell section { padding: var(--space-5) var(--space-6); overflow: auto; }
+.src-badge { display: inline-flex; gap: 6px; align-items: center; font-size: var(--font-caption); color: var(--text-secondary); }
+.msg-channel { align-self: flex-start; background: var(--surface-raised); border: 1px solid var(--border-subtle); padding: var(--space-3) var(--space-4); border-radius: var(--radius-card); max-width: 80%; line-height: 1.7; }
+.msg-channel .who { display: flex; gap: var(--space-2); align-items: center; margin-bottom: var(--space-1); font-size: var(--font-caption); color: var(--text-secondary); }
+.chat-title { padding: var(--space-3) 32px; border-bottom: 1px solid var(--border-subtle); display: flex; gap: var(--space-2); align-items: center; background: rgb(255 255 255 / 50%); }
+.chat-title .grow { flex: 1; }
+th.col-c, td.col-c { background: #fbf8f1; }
+@media (max-width: 900px) {
+  .sidebar { width: 180px; }
+  .app-page { grid-template-columns: minmax(0, 1fr); }
+  .tree { display: none; }
+  .detail { grid-template-columns: 150px minmax(0, 1fr); }
+}
+@media (max-width: 700px) {
+  .sidebar { display: none; }
+  .results, .page-header { padding-left: var(--space-4); padding-right: var(--space-4); }
+  .chat-inner, .composer-inner { padding: 0 var(--space-4); }
+  .mention-pop { left: var(--space-4); width: calc(100% - 32px); }
+  .kv { grid-template-columns: 90px 1fr; }
+  .form-row { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="demo-bar">
+  <strong>外部应用示例页面</strong>
+  <button data-scene="center" class="active">应用中心</button>
+  <button data-scene="settings-center">设置中心</button>
+  <span class="caption" style="color:#b5c6d5;margin-left:6px">连接：</span>
+  <button data-scene="connect" data-app="feishu">飞书</button>
+  <button data-scene="connect" data-app="wecom">企业微信</button>
+  <span class="caption" style="color:#b5c6d5;margin-left:6px">设置：</span>
+  <button data-scene="settings" data-app="feishu" data-tab="tools">飞书</button>
+  <button data-scene="settings" data-app="wecom" data-tab="tools">企业微信</button>
+  <button data-scene="settings" data-app="dingtalk" data-tab="message">钉钉</button>
+  <button data-scene="settings" data-app="weixin" data-tab="message">微信</button>
+  <button data-scene="settings" data-app="telegram" data-tab="connect">Telegram</button>
+  <span class="caption" style="color:#b5c6d5;margin-left:6px">使用：</span>
+  <button data-scene="chat" data-panel="feishu">对话 + 飞书面板</button>
+  <button data-scene="chat" data-panel="wecom">对话 + 企业微信面板</button>
+  <button data-scene="channel-chat" data-channel="feishu">消息请求</button>
+  <button data-scene="channel-chat" data-channel="weixin">打开微信</button>
+</div>
+
+<div class="shell">
+  <aside class="sidebar">
+    <button class="nav-item" data-nav="chat">💬 新对话</button>
+    <div class="nav-section">常驻应用</div>
+    <div id="pinned"></div>
+    <div class="nav-section">最近对话</div>
+    <div class="conversation">本周发布风险清单</div>
+    <div class="conversation">Q4 销售复盘整理</div>
+    <div class="sidebar-spacer"></div>
+    <div class="menu hidden" id="app-menu">
+      <div class="menu-label">应用</div>
+      <div id="menu-apps"></div>
+      <hr>
+      <button class="nav-item" data-scene="center">▦ 管理应用</button>
+    </div>
+    <div class="sidebar-footer">
+      <button class="nav-item" id="app-menu-trigger">▦ 应用 ▴</button>
+      <div class="divider-v"></div>
+      <button class="nav-item" data-scene="settings-center">⚙ 设置</button>
+    </div>
+  </aside>
+  <main class="main" id="main"></main>
+  <div id="overlay"></div>
+</div>
+
+<script>
+/* =================================================================
+   简化模型（参考 OpenClaw）：
+   每个平台 = 一个账号 = 一套凭据（扫码创建或手动填写）。
+   同一套凭据同时提供「消息」和「工具」，工具按类别开关。
+   没有单独的用户 OAuth、访问范围、操作权限矩阵。
+   ================================================================= */
+const apps = {
+  feishu: {
+    name: '飞书', short: '飞', enabled: true, pinned: true, sub: 'Acme 科技 · GoodBuddy 助手',
+    cred: { title: '飞书应用', lines: [['应用', 'GoodBuddy 助手（扫码创建）'], ['App ID', 'cli_a7f3••••9c2e'], ['App Secret', '已加密保存'], ['版本', '飞书（feishu.cn）'], ['接收方式', '长连接（无需公网地址）']], actions: ['测试连接', '重新扫码', '改为手动填写'] },
+    identity: '工具以应用“GoodBuddy 助手”的身份调用，只能访问共享给该应用的文档、知识库和文件夹。',
+    toolSource: '工具由 GoodBuddy 提供',
+    tools: [['doc', '文档', '读取、创建、写入文档', true], ['wiki', '知识库', '搜索和读取知识空间（需要开启文档）', true], ['drive', '云空间', '浏览、上传、下载文件', true], ['bitable', '多维表格', '查询和写入记录', true], ['chat', '群信息', '查询群信息和成员', true], ['perm', '权限管理', '修改协作者和分享设置', false, true]],
+    dm: 'self', dmIds: 'ou_19ab••••（张三，扫码时自动填入）', group: 'allowlist', groupIds: 'oc_8f2a••••（产品组）',
+  },
+  wecom: {
+    name: '企业微信', short: '企', enabled: true, pinned: false, sub: 'Acme 科技 · 张三的智能机器人',
+    cred: { title: '智能机器人', lines: [['Bot ID', 'aibot••••3f'], ['Secret', '已加密保存'], ['授权人', '张三'], ['接收方式', '长连接（无需公网地址）']], actions: ['测试连接', '重新扫码', '改为手动填写'] },
+    identity: '工具以授权人“张三”的身份调用，能访问张三本人有权限的文档、表格、微盘、日程和待办。',
+    toolSource: '工具由企业微信官方命令行工具 wecom-cli 和官方技能提供，随官方版本更新。wecom-cli 1.4.2 · 已是最新',
+    toolNote: '关闭某一类后，GoodBuddy 不再向对话提供对应技能，但无法完全阻止模型直接执行该类命令。需要完全禁止时，请关闭“启用”。',
+    tools: [['doc-manage', '文档管理', '搜索文档、查看最近浏览和我创建的；也包含重命名、修改成员权限和加入规则', true], ['doc', '在线文档', '新建、导入、读取、追加和覆盖写入', true], ['sheet', '在线表格', '新建、导入、读改数据、管理子表', true], ['smartsheet', '智能表格', '管理子表、字段、记录、视图和图表', true], ['smartpage', '智能文档', '创建、读取和编辑智能文档', true], ['pptx', '在线 PPT', '生成、编辑在线演示文稿', true], ['disk', '微盘', '列出、搜索、上传、下载、重命名文件', true], ['media', '媒体文件', '本地文件与企业微信媒体之间上传下载', true], ['calendar', '日程', '查看、创建、更新日程，查询忙闲', true], ['meeting', '会议', '预约会议、读取纪要和转写', true], ['todo', '待办', '创建、跟进和完成待办', true], ['contact', '通讯录', '按姓名搜索成员', true], ['email', '邮件', '搜索和读取邮件（只读）', false], ['message', '消息', '向最近对话过的单聊或群聊主动发消息', false, true]],
+    dm: 'self', dmIds: 'zhangsan（扫码时自动填入）', group: 'allowlist', groupIds: 'wr8Kq••••（研发周会）',
+  },
+  dingtalk: {
+    name: '钉钉', short: '钉', enabled: true, pinned: false, sub: 'Acme 科技',
+    cred: { title: '钉钉应用', lines: [['Client ID', 'dingk3x••••a91'], ['Client Secret', '已加密保存'], ['接收方式', 'Stream 长连接']], actions: ['测试连接', '替换凭据'] },
+    identity: null, tools: [],
+    dm: 'allowlist', dmIds: 'user_01\nuser_02', group: 'mention', groupIds: '',
+  },
+  weixin: {
+    name: '微信 ClawBot', short: '微', enabled: true, pinned: false, sub: '张三的微信',
+    cred: { title: '微信账号', lines: [['账号', '张三的微信'], ['凭据', '已加密保存']], actions: ['重新绑定', '断开本机绑定'], note: '断开会删除本机保存的绑定，不保证解除微信服务端授权。' },
+    identity: null, tools: [], dm: 'self', dmIds: '', group: 'none', groupIds: '',
+  },
+  telegram: {
+    name: 'Telegram', short: 'T', enabled: false, configured: false, pinned: false, sub: '未配置',
+    cred: null, identity: null, tools: [], dm: 'allowlist', dmIds: '', group: 'none', groupIds: '',
+  },
+}
+/* 现有工作区应用（示意，行为不变） */
+const workApps = {
+  knowledge: { icon: '📚', name: '知识库', desc: '管理知识来源，为会话检索资料。', state: '始终显示', pinned: true },
+  'magic-notes': { icon: '✨', name: '魔法笔记', desc: '记录笔记、整理待办并获取 AI 评论。', state: '可选 · 已启用', pinned: true },
+  heartbeat: { icon: '💓', name: '监督者', desc: '回顾工作演变、查看故事线图谱，并配置智能心跳。', state: '可选 · 已启用', pinned: false },
+  'local-inference': { icon: '🖥', name: '本机推理监控', desc: '查看本机推理任务与执行服务。', state: '可选 · 已启用', pinned: false },
+  'remote-hosts': { icon: '🗄', name: '主机管理', desc: '接入 SSH 主机，安装远端执行环境，管理 Agent 离线包。', state: '可选 · 已关闭', pinned: false },
+}
+/* 都是内置应用。工作区应用参与排序和常驻；平台应用不进左侧，因此不参与排序 */
+const workOrder = ['knowledge', 'magic-notes', 'heartbeat', 'local-inference', 'remote-hosts']
+const order = ['feishu', 'wecom', 'dingtalk', 'weixin', 'telegram']
+const allOrder = [...workOrder, ...order]
+const isPlatform = id => Boolean(apps[id])
+/* 打开：有页面的进入应用页面；只有消息的进入通道项目 */
+const openTarget = id => apps[id].tools.length ? `data-scene="chat" data-panel="${id}"` : `data-scene="channel-chat" data-channel="${id}"`
+let channelApp = 'feishu'
+/* 右侧工作区：任务、工作区、浏览器为默认面板；飞书、企业微信按需打开，单实例、可关闭 */
+let wbTab = 'feishu', wbOpen = ['feishu', 'wecom'], wbMenu = false, wbSpace = 'all'
+const dmLabel = { self: '仅我自己', allowlist: '白名单', pairing: '配对审批', off: '关闭' }
+const groupLabel = { allowlist: '仅指定群，需要 @', mention: '所有群，需要 @', off: '关闭', none: '不支持群聊' }
+
+let scene = 'center', settingsApp = 'feishu', settingsTab = 'connect', connectStep = 0, connectApp = 'feishu', connectMode = 'scan', pageFilter = 'all', pageApp = 'feishu'
+
+/* ================= 工具函数 ================= */
+const $ = s => document.querySelector(s)
+const logo = (id, lg) => `<span class="logo ${id}${lg ? ' lg' : ''}">${apps[id].short}</span>`
+const sw = (on, dis) => `<input class="switch" type="checkbox" ${on ? 'checked' : ''} ${dis ? 'disabled' : ''}>`
+const sel = (opts, i = 0) => `<select class="select">${opts.map((o, k) => `<option ${k === i ? 'selected' : ''}>${o}</option>`).join('')}</select>`
+const state = a => a.configured === false ? 'unset' : a.enabled ? 'ok' : 'off'
+const stateBadge = a => ({ ok: '<span class="badge ok">● 已连接</span>', off: '<span class="badge">已关闭</span>', unset: '<span class="badge">未配置</span>' })[state(a)]
+function chips(id) {
+  const a = apps[id]
+  if (a.configured === false) return ''
+  const t = a.tools.length ? a.tools.filter(x => x[3]).map(x => `<span class="cap on">${x[1]}</span>`).join('') : '<span class="cap na">只有消息</span>'
+  return `<div class="caps"><span class="cap on">消息 · ${dmLabel[a.dm]}</span>${t}</div>`
+}
+function qr() {
+  let s = ''
+  for (let y = 0; y < 21; y++) for (let x = 0; x < 21; x++) {
+    const f = (x < 7 && y < 7) || (x >= 14 && y < 7) || (x < 7 && y >= 14)
+    let b
+    if (f) { const cx = x >= 14 ? x - 14 : x, cy = y >= 14 ? y - 14 : y; b = cx === 0 || cx === 6 || cy === 0 || cy === 6 || (cx >= 2 && cx <= 4 && cy >= 2 && cy <= 4) }
+    else b = ((x * 7 + y * 13 + x * y) % 5) < 2
+    s += `<i class="${b ? 'b' : ''}"></i>`
+  }
+  return `<div class="qr">${s}</div>`
+}
+function setScene(next) {
+  scene = next
+  document.querySelectorAll('.demo-bar [data-scene]').forEach(b => b.classList.toggle('active', b.dataset.scene === next && (next !== 'settings' || b.dataset.app === settingsApp) && (next !== 'connect' || b.dataset.app === connectApp) && (next !== 'chat' || b.dataset.panel === wbTab) && (next !== 'channel-chat' || b.dataset.channel === channelApp)))
+  $('#app-menu').classList.add('hidden')
+  render()
+}
+function sideItem(id) {
+  if (!isPlatform(id)) return `<button class="nav-item">${workApps[id].icon} ${workApps[id].name}</button>`
+  const a = apps[id]
+  const active = scene === 'channel-chat' && channelApp === id
+  return `<button class="nav-item ${active ? 'active' : ''}" ${openTarget(id)}>${logo(id).replace('class="logo', 'style="width:18px;height:18px;font-size:10px" class="logo')} ${a.name}</button>`
+}
+/* 平台应用不进入左侧常驻和左下角应用菜单 */
+function renderSidebar() {
+  $('#pinned').innerHTML = allOrder.filter(id => !isPlatform(id) && workApps[id].pinned).map(sideItem).join('')
+  $('#menu-apps').innerHTML = allOrder.filter(id => !isPlatform(id) && !workApps[id].state.includes('已关闭')).map(sideItem).join('')
+}
+function render() {
+  renderSidebar()
+  $('#main').innerHTML = scene === 'channel-chat' ? renderChannelChat() : renderChat()
+  const ov = { center: renderCenter, 'settings-center': renderSettingsCenter, connect: renderConnect, settings: renderSettings }[scene]
+  $('#overlay').innerHTML = ov ? ov() : ''
+  document.querySelectorAll('.sidebar [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === 'chat' && scene !== 'channel-chat'))
+}
+
+/* ================= 应用中心 ================= */
+function renderCenter() {
+  const sorter = (id, i) => isPlatform(id) ? '' : `<span class="order"><button class="icon-btn sm" ${i === 0 ? 'disabled' : ''} aria-label="上移">↑</button><button class="icon-btn sm" ${i === workOrder.length - 1 ? 'disabled' : ''} aria-label="下移">↓</button></span>`
+  const row = (id, i) => {
+    if (!isPlatform(id)) {
+      const w = workApps[id]
+      return `<article class="app-row" draggable="true"><div class="summary"><span class="logo lg builtin">${w.icon}</span><div>
+        <div class="title"><strong>${w.name}</strong><span class="caption">${w.state}</span>${w.pinned ? '<span class="badge info">常驻左侧</span>' : ''}</div><p>${w.desc}</p></div></div>
+        <div class="row-actions"><button class="btn">打开</button>${id !== 'knowledge' ? '<button class="btn">⚙ 应用设置</button>' : ''}${sorter(id, i)}</div></article>`
+    }
+    const a = apps[id], unset = a.configured === false
+    const actions = unset
+      ? `<button class="btn primary" ${id === 'feishu' || id === 'wecom' ? `data-scene="connect" data-app="${id}"` : `data-scene="settings" data-app="${id}" data-tab="connect"`}>连接</button>`
+      : `<button class="btn" ${openTarget(id)} ${a.enabled ? '' : 'disabled'}>打开</button><button class="btn" data-scene="settings" data-app="${id}" data-tab="connect">⚙ 应用设置</button>`
+    return `<article class="app-row"><div class="summary">${logo(id, true)}<div>
+      <div class="title"><strong>${a.name}</strong>${stateBadge(a)}${a.configured === false ? '' : `<span class="caption">${a.tools.length ? '在右侧工作区打开' : '打开进入通道项目'}</span>`}</div>
+      <p>${a.sub}</p>${chips(id)}</div></div><div class="row-actions">${actions}${sorter(id, i)}</div></article>`
+  }
+  return `<div class="backdrop"><section class="modal" role="dialog" aria-label="应用中心">
+    <div class="modal-header"><div class="grow"><h2>应用中心</h2><p>打开和排列应用，管理应用的启用与常驻。连接飞书、企业微信等平台后，可以收发消息、在右侧工作区使用平台内容。</p></div><button class="icon-btn" data-close aria-label="关闭">×</button></div>
+    <div class="modal-body">
+      <input class="search" type="search" placeholder="搜索应用">
+      <div class="group-title">工作区应用 <span class="caption">可排序，可常驻左侧</span></div>
+      ${workOrder.map(row).join('')}
+      <div class="group-title">平台应用 <span class="caption">飞书、企业微信在对话右侧工作区打开；其余进入通道项目</span></div>
+      ${order.map(row).join('')}
+      <p class="caption" style="margin-top:var(--space-3)">每个平台连接一个账号；要更换账号，先在应用设置里断开。</p>
+    </div></section></div>`
+}
+
+/* ================= 设置中心（不再有“消息通道”） ================= */
+function renderSettingsCenter() {
+  const groups = [['常规', [['外观', '主题、语言与品牌'], ['平台功能', '功能入口与工作区能力']]],
+    ['模型与执行', [['模型连接', 'LLM、向量、重排模型与凭据'], ['上下文控制', '历史压缩与原文保留'], ['文档解析', '附件、知识库与本地 OCR'], ['Agent Runtime', 'Runtime、默认工作区与原生能力'], ['主机与远程执行', 'SSH 主机与连接探测']]],
+    ['功能与扩展', [['角色与提示词', '角色、说明与系统提示词'], ['能力与工具', 'Skills、MCP 与本机工具环境']]],
+    ['系统', [['关于与更新', '版本检查与下载页']]]]
+  return `<div class="backdrop"><section class="modal wide" role="dialog">
+    <div class="modal-header"><div class="grow"><h2>设置中心</h2><p>管理模型、Runtime、平台能力与本地数据。</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="settings-shell" style="flex:1;min-height:0">
+      <nav>${groups.map(([g, items]) => `<div class="cat-group">${g}</div>${items.map(([n, d]) => `<button class="nav-item ${n === '能力与工具' ? 'active' : ''}">${n}<small>${d}</small></button>`).join('')}`).join('')}</nav>
+      <section><div class="block"><h3>能力与工具</h3><p class="muted">Skills、MCP 与本机工具执行环境（原有内容，此处省略）。</p></div></section>
+    </div></section></div>`
+}
+
+/* ================= 连接（飞书 / 企业微信） ================= */
+function renderConnect() {
+  const a = apps[connectApp], fs = connectApp === 'feishu'
+  const steps = `<div class="steps">${[0, 1, 2].map(i => `<span class="${i <= connectStep ? 'done' : ''}"></span>`).join('')}</div>`
+  let body, foot
+  if (connectStep === 0) {
+    body = `${steps}<h3 style="margin-bottom:var(--space-3)">选择连接方式</h3>
+      <label class="choice ${connectMode === 'scan' ? 'selected' : ''}"><input type="radio" name="mode" value="scan" ${connectMode === 'scan' ? 'checked' : ''}>
+        <div><strong>扫码创建</strong><span class="badge info" style="margin-left:6px">推荐</span>
+        <p>${fs ? '用飞书手机端扫码，自动创建自建应用“GoodBuddy 助手”。' : '用企业微信扫码，自动创建一个属于你的智能机器人。'}扫码后只有你自己可以给它发消息。</p></div></label>
+      <label class="choice ${connectMode === 'manual' ? 'selected' : ''}"><input type="radio" name="mode" value="manual" ${connectMode === 'manual' ? 'checked' : ''}>
+        <div><strong>手动填写</strong><p>${fs ? '填写开放平台中已有应用的 App ID 和 App Secret。' : '填写企业微信“工作台 › 智能机器人 › API 模式”生成的 Bot ID 和 Secret。'}</p></div></label>
+      ${fs ? `<div class="toggle-row" style="margin-top:var(--space-3)"><div class="text">版本</div>${sel(['飞书（feishu.cn）', 'Lark 国际版（larksuite.com）'])}</div>` : ''}`
+    foot = `<button class="btn" data-scene="center">取消</button><button class="btn primary" data-step="1">下一步</button>`
+  } else if (connectStep === 1) {
+    body = connectMode === 'scan'
+      ? `${steps}<div style="text-align:center"><h3>使用${fs ? '飞书' : '企业微信'}扫码</h3><p class="muted" style="margin:4px 0 var(--space-4)">打开手机端扫一扫并确认。</p>${qr()}
+        <p style="margin-top:var(--space-3)"><span class="badge info">等待扫码</span>　<span class="caption">二维码 ${fs ? '9:32' : '4:32'} 后过期</span></p>
+        <p style="margin-top:var(--space-3)"><button class="btn ghost">重新生成</button><button class="btn ghost" data-mode="manual">改为手动填写</button></p>
+        ${fs ? '<p class="caption">手机端扫码没有反应时，请改为手动填写。</p>' : '<p class="caption">如果提示无权创建，请联系企业管理员开放“智能机器人”创建权限。</p>'}</div>`
+      : `${steps}<h3 style="margin-bottom:var(--space-3)">填写凭据</h3>
+        ${fs ? '<div class="field"><label>App ID</label><input value="cli_a7f3••••9c2e"></div><div class="field"><label>App Secret</label><input type="password" value="secretsecret"></div>'
+             : '<div class="field"><label>Bot ID</label><input value="aibot••••3f"></div><div class="field"><label>Secret</label><input type="password" value="secretsecret"></div>'}
+        <div class="notice">凭据由本机加密保存，保存后不再显示。手动填写时，默认只接受白名单中的发送者，需要在“消息”页填写。</div>`
+    foot = `<button class="btn" data-step="0">上一步</button><button class="btn primary" data-step="2">${connectMode === 'scan' ? '模拟扫码完成' : '验证并保存'}</button>`
+  } else {
+    body = `${steps}<div style="text-align:center;padding:var(--space-3) 0"><div style="font-size:36px;color:var(--success)">✓</div><h3>${a.name}已连接</h3>
+      <p class="muted" style="margin-top:var(--space-2)">${a.sub}</p></div>
+      <dl class="kv"><dt>谁能发消息</dt><dd>${connectMode === 'scan' ? '仅我自己（扫码时自动设置）' : '白名单（暂未填写，不会处理任何消息）'}</dd>
+        <dt>已开启工具</dt><dd>${a.tools.filter(t => t[3]).map(t => t[1]).join('、')}</dd>
+        <dt>工具身份</dt><dd class="muted">${a.identity}</dd></dl>
+      <p class="caption" style="margin-top:var(--space-3)">在对话右侧工作区点“＋”，或在应用中心点“打开”，即可打开${a.name}面板。</p>`
+    foot = `<button class="btn" data-scene="center">完成</button><button class="btn primary" data-scene="settings" data-app="${connectApp}" data-tab="tools">调整工具</button>`
+  }
+  return `<div class="backdrop"><section class="modal" role="dialog">
+    <div class="modal-header"><button class="icon-btn" data-scene="center" aria-label="返回">←</button>${logo(connectApp, true)}<div class="grow"><h2>连接${a.name}</h2><p>消息和${fs ? '文档、知识库、云空间、多维表格' : '文档、微盘、日程、待办'}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="modal-body">${body}</div><div class="modal-footer">${foot}</div></section></div>`
+}
+
+/* ================= 应用设置 ================= */
+const tabsFor = a => a.configured === false ? [['connect', '连接']] : [['connect', '连接'], ['message', '消息'], ...(a.tools.length ? [['tools', '工具']] : []), ['log', '使用记录']]
+function tabConnect(id) {
+  const a = apps[id]
+  if (a.configured === false) return `<div class="block"><h3>连接 Telegram</h3>
+    <div class="notice">向 BotFather 发送 /newbot，把获得的 Token 填入下方。保存后私聊你的 Bot 发送 /whoami，获取自己的用户 ID 填到“消息”页。</div>
+    <div class="form-row"><label>Bot Token</label><div class="inline"><input type="password" placeholder="BotFather 提供的 Token"><button class="btn">测试连接</button></div></div>
+    <div><button class="btn primary">保存并启用</button></div></div>`
+  return `<div class="block"><h3>账号</h3>
+      <div class="toggle-row">${sw(a.enabled)}<div class="text">启用应用<p>关闭后不再接收消息${a.tools.length ? `，对话中也不再提供${a.name}工具` : ''}；凭据和通道项目保留。</p></div></div>
+
+      <div class="cred"><div class="head"><strong>${a.cred.title}</strong><span class="badge ok">正常</span></div>
+        ${a.cred.note ? `<p class="muted">${a.cred.note}</p>` : ''}
+        <dl class="kv">${a.cred.lines.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+        <div class="actions">${a.cred.actions.map(t => `<button class="btn">${t}</button>`).join('')}</div></div></div>
+    <div class="block"><h3>通道项目</h3><p class="caption">收到的消息在这个项目里处理。</p>
+      <div class="form-row"><label>工作目录</label><div class="inline"><input type="text" value="D:\\work\\${id}-channel"><button class="btn">选择</button></div></div>
+      <div class="form-row"><label>处理后端</label>${sel(['直连 · 跟随全局默认模型', '直连 · Claude Sonnet', 'OpenCode Agent Runtime', 'DeepSeek Harness（预览）'])}</div></div>
+    ${id === 'weixin' ? '' : '<div><button class="btn danger">断开并删除本机凭据</button></div>'}`
+}
+function tabMessage(id) {
+  const a = apps[id]
+  const dmOpts = id === 'weixin' ? ['self'] : ['self', 'allowlist', 'pairing', 'off']
+  const grOpts = a.group === 'none' ? null : ['allowlist', 'mention', 'off']
+  return `<div class="block"><h3>私聊</h3>
+      <div class="form-row"><label>谁能发消息</label>${sel(dmOpts.map(k => dmLabel[k]), dmOpts.indexOf(a.dm))}</div>
+      ${id === 'weixin' ? '<p class="caption">只处理已绑定账号发给 ClawBot 的私聊。</p>' : `<div class="form-row"><label>${a.dm === 'self' ? '我的 ID' : '允许的用户 ID'}</label><textarea class="input" placeholder="每行一个">${a.dmIds}</textarea></div>
+      <p class="caption">“仅我自己”只接受上面这一个 ID；“配对审批”时，陌生人发来的消息会在桌面端等待你批准。</p>`}</div>
+    <div class="block"><h3>群聊</h3>
+      ${grOpts ? `<div class="form-row"><label>响应哪些群</label>${sel(grOpts.map(k => groupLabel[k]), grOpts.indexOf(a.group))}</div>
+      ${a.group === 'allowlist' ? `<div class="form-row"><label>允许的群 ID</label><textarea class="input">${a.groupIds}</textarea></div>` : ''}` : '<p class="muted">此应用不支持群聊。</p>'}</div>
+    <div><button class="btn primary">保存</button></div>`
+}
+function tabTools(id) {
+  const a = apps[id]
+  return `<div class="block"><h3>工具</h3><p class="muted">${a.identity}</p>
+      <div class="inline caption"><span style="flex:1">${a.toolSource}</span>${a.toolNote ? '<button class="btn ghost">检查更新</button>' : ''}</div>
+      ${a.toolNote ? `<div class="notice">${a.toolNote}</div>` : ''}
+      ${a.tools.map(([k, n, d, on, sens]) => `<div class="toggle-row">${sw(on)}<div class="text"><strong>${n}</strong><p>${d}</p></div>${sens ? '<span class="badge warn">敏感 · 默认关闭</span>' : ''}</div>`).join('')}
+      ${id === 'feishu' ? '<p class="caption">需要访问某个知识库或文件夹时，在飞书里把“GoodBuddy 助手”添加为协作者。</p>' : ''}</div>
+    <div class="block"><h3>谁能使用工具</h3>
+      <div class="toggle-row">${sw(true, true)}<div class="text"><strong>桌面对话</strong></div></div>
+      <div class="toggle-row">${sw(a.dm === 'self')}<div class="text"><strong>${a.name}消息</strong><p>${id === 'wecom' ? '工具代表你本人。' : ''}私聊为“仅我自己”时默认开启；有其他人能发消息时默认关闭，避免别人借机器人操作你的${id === 'wecom' ? '文档' : '内容'}。${id === 'wecom' ? '关闭后，消息会话中既没有企业微信技能，也拿不到凭据。' : ''}</p></div></div></div>`
+}
+function tabLog(id) {
+  const rows = id === 'feishu'
+    ? [['10:52', '飞书群「产品组」· 王五', '写入文档', '工具未对群聊开放', 'deny'], ['10:45', '桌面 · 本周发布风险清单', '追加到《版本发布流程》', '完成', 'ok'], ['10:41', '桌面 · 本周发布风险清单', '搜索“发布 风险”', '完成', 'ok'], ['昨天 16:20', '飞书私聊 · 张三', '读取《人事制度 / 年假规则》', '应用无权访问', 'err']]
+    : id === 'wecom'
+    ? [['11:05', '桌面 · 本周发布风险清单', '创建待办 3 项', '完成', 'ok'], ['11:04', '桌面 · 本周发布风险清单', '读取《周报汇总》', '完成', 'ok'], ['10:20', '企业微信群「研发周会」· 李四', '查询日程', '工具未对群聊开放', 'deny'], ['昨天 18:02', '企业微信私聊 · 张三', '搜索文档“周报”', '完成', 'ok']]
+    : [['10:42', '私聊 · 张三', '收到消息', '完成', 'ok'], ['昨天 22:10', '私聊 · user_88', '收到消息', '不在白名单，已忽略', 'warn']]
+  const b = { ok: 'ok', deny: 'err', err: 'err', warn: '' }
+  return `<div class="block"><h3>使用记录</h3><table><thead><tr><th>时间</th><th>来源</th><th>操作</th><th>结果</th></tr></thead><tbody>
+    ${rows.map(([t, s, o, r, k]) => `<tr><td class="muted">${t}</td><td class="muted">${s}</td><td>${o}</td><td><span class="badge ${b[k]}">${r}</span></td></tr>`).join('')}</tbody></table></div>`
+}
+function renderSettings() {
+  const a = apps[settingsApp], tabs = tabsFor(a)
+  if (!tabs.some(([k]) => k === settingsTab)) settingsTab = tabs[0][0]
+  const fn = { connect: tabConnect, message: tabMessage, tools: tabTools, log: tabLog }[settingsTab]
+  return `<div class="backdrop"><section class="modal wide" role="dialog">
+    <div class="modal-header"><button class="icon-btn" data-scene="center" aria-label="返回应用中心">←</button>${logo(settingsApp, true)}
+      <div class="grow"><h2>${a.name}</h2><p>${a.sub}</p></div>${stateBadge(a)}<button class="icon-btn" data-close>×</button></div>
+    <div class="detail" style="flex:1;min-height:0">
+      <nav>${tabs.map(([k, n]) => `<button class="nav-item ${settingsTab === k ? 'active' : ''}" data-tab="${k}">${n}</button>`).join('')}</nav>
+      <section>${fn(settingsApp)}</section></div></section></div>`
+}
+
+/* ================= 应用页面（飞书 / 企业微信） ================= */
+const pages = {
+  feishu: {
+    sub: 'Acme 科技 · 以“GoodBuddy 助手”身份访问共享给它的内容',
+    query: '发布 风险',
+    tree: [['知识库', ['📘 公司知识库', '📘 产品中心']], ['云空间', ['📁 项目管理']]],
+    filters: [['all', '全部'], ['doc', '文档'], ['wiki', '知识库'], ['bitable', '多维表格'], ['drive', '文件']],
+    docs: [
+      ['📄', '版本发布流程', '产品中心 / 发布管理', '2 小时前 · 王五', '…<mark>发布</mark>前需完成回归测试、变更评审和版本登记，高<mark>风险</mark>变更需额外审批…', 'doc'],
+      ['📘', '2026 Q4 发布计划', '公司知识库 / 规划', '昨天 · 张三', '…10 月共计划 3 次<mark>发布</mark>，客户验收窗口集中在第 43 周…', 'wiki'],
+      ['📊', '缺陷跟踪', '项目管理 / 质量', '30 分钟前 · 赵六', '多维表格「待修复」共 18 条记录，其中 P0 2 条、P1 5 条。', 'bitable'],
+      ['📎', '发布检查单 v3.pdf', '项目管理 / 模板', '9 月 28 日 · 张三', 'PDF · 1.2 MB', 'drive'],
+    ],
+    tip: '看不到某个空间？在飞书里把“GoodBuddy 助手”添加为该空间的协作者。',
+  },
+  wecom: {
+    sub: 'Acme 科技 · 以张三本人身份访问',
+    query: '周报',
+    tree: [['文档', ['🕘 最近浏览', '✏️ 我创建的']], ['微盘', ['📁 研发部空间', '📁 我的文件']], ['日程与待办', ['📅 本周日程', '✅ 我的待办']]],
+    filters: [['all', '全部'], ['doc', '文档'], ['sheet', '表格'], ['drive', '微盘']],
+    docs: [
+      ['📰', '研发周报 第 41 周', '智能文档 · 最近浏览', '1 小时前 · 李四', '…本<mark>周报</mark>汇总了三个项目的进度，接口联调延期 2 天…', 'doc'],
+      ['🧮', '周报汇总', '智能表格 · 我创建的', '昨天 · 张三', '子表「第 41 周」共 12 条记录，3 人未提交。', 'sheet'],
+      ['📊', '人力排期', '在线表格 · 研发部空间', '3 天前 · 王五', '工作表「Q4」第 2–40 行为排期数据。', 'sheet'],
+      ['📎', '周报模板.docx', '微盘 · 研发部空间 / 模板', '9 月 20 日 · 张三', 'Word · 86 KB', 'drive'],
+    ],
+    tip: '只显示张三本人有权限的内容。日程、待办和会议在对话中使用。',
+  },
+}
+/* 右侧工作区面板（飞书 / 企业微信）：一栏布局，空间用下拉选择 */
+function renderPlatformPanel(id) {
+  const p = pages[id], a = apps[id]
+  const spaces = ['all', ...p.tree.flatMap(([g, items]) => items.map(n => `${g} · ${n.replace(/^\S+\s/, '')}`))]
+  const shown = p.docs.filter(d => pageFilter === 'all' || d[5] === pageFilter)
+  return `<div class="wb-head">${logo(id)}<div class="grow"><strong>${a.name}</strong><small>${p.sub}</small></div>
+      <button class="icon-btn" title="应用设置" data-scene="settings" data-app="${id}" data-tab="tools">⚙</button></div>
+    <div class="toolbar"><input class="search" value="${p.query}" aria-label="搜索${a.name}"></div>
+    <div class="toolbar"><select class="select" style="flex:1;min-width:0" aria-label="空间">${spaces.map(s => `<option ${s === wbSpace ? 'selected' : ''}>${s === 'all' ? '全部空间' : s}</option>`).join('')}</select>
+      <button class="btn" title="新建文档">＋</button><button class="btn" title="上传">⬆</button></div>
+    <div class="toolbar">${p.filters.map(([k, n]) => `<button class="chip ${pageFilter === k ? 'active' : ''}" data-filter="${k}">${n}</button>`).join('')}</div>
+    <span class="caption">${shown.length} 条结果</span>
+    ${shown.map(([i, t, path, u, s]) => `<article class="card doc-card"><div class="head"><span>${i}</span><strong>${t}</strong></div>
+      <div class="path">${path} · ${u}</div><div class="snippet">${s}</div>
+      <div class="foot"><button class="btn ghost">打开原文 ↗</button><span class="grow"></span><button class="btn">用于当前对话</button></div></article>`).join('')}
+    <p class="caption">${p.tip}</p>`
+}
+function renderWorkbar() {
+  const builtin = [['tasks', '📋', '任务'], ['workspace', '🗂', '工作区'], ['browser', '🌐', '浏览器']]
+  const tab = (k, icon, name, closable) => `<button class="wb-tab ${wbTab === k ? 'active' : ''}" data-wb="${k}">${icon} ${name}${closable ? `<span class="x" data-wb-close="${k}" aria-label="关闭${name}">×</span>` : ''}</button>`
+  const platformTabs = wbOpen.map(id => tab(id, logo(id).replace('class="logo', 'style="width:16px;height:16px;font-size:9px" class="logo'), apps[id].name, true))
+  const addable = order.filter(id => apps[id].tools.length)
+  const menu = wbMenu ? `<div class="wb-menu"><div class="menu-label">打开面板</div>
+      <button class="nav-item">📝 笔记</button><button class="nav-item">⌨ 终端</button><hr><div class="menu-label">平台应用</div>
+      ${addable.map(id => `<button class="nav-item" data-wb-open="${id}" ${apps[id].enabled ? '' : 'disabled'}>${logo(id).replace('class="logo', 'style="width:16px;height:16px;font-size:9px" class="logo')} ${apps[id].name}${wbOpen.includes(id) ? ' <span class="caption" style="margin-left:auto">已打开</span>' : ''}</button>`).join('')}
+      <p class="caption" style="padding:4px 12px">钉钉、微信、Telegram 只有消息，不提供面板。</p></div>` : ''
+  const body = isPlatform(wbTab) ? renderPlatformPanel(wbTab)
+    : `<div class="placeholder">${{ tasks: '任务面板（原有内容）', workspace: '工作区文件（原有内容）', browser: '内置浏览器（原有内容）' }[wbTab]}</div>`
+  return `<aside class="workbar" aria-label="右侧工作区"><div class="wb-tabs">${builtin.map(([k, i, n]) => tab(k, i, n, false)).join('')}${platformTabs.join('')}
+      <button class="icon-btn wb-add" data-wb-menu aria-label="打开面板">＋</button></div>${menu}<div class="wb-body">${body}</div></aside>`
+}
+
+/* ================= 桌面对话 ================= */
+function renderChat() {
+  return `<div class="chat-layout"><div class="chat-col">${renderChatBody()}</div>${renderWorkbar()}</div>`
+}
+function renderChatBody() {
+  return `<div class="chat"><div class="chat-inner">
+    <div class="msg-user">请根据 <span class="mention">@飞书/产品中心</span> 和 <span class="mention">@飞书/项目管理/缺陷跟踪</span>，整理本周发布风险，并追加到《版本发布流程》末尾。</div>
+    <div class="msg-ai">已读取 <span class="cite">${logo('feishu')} 版本发布流程</span> <span class="cite">${logo('feishu')} 缺陷跟踪</span>
+      <p style="margin-top:var(--space-2)">本周主要风险有三项：P0 缺陷未关闭 2 条、回归测试完成率 76%、客户验收窗口与第 43 周发布重叠。已追加到文档末尾。</p></div>
+    <div class="tool-card">
+      <div class="tc-head">${logo('feishu')}<strong>飞书文档 · 写入</strong><span class="badge ok">完成</span></div>
+      <div class="tc-body"><dl class="kv"><dt>文档</dt><dd>产品中心 / 发布管理 / <strong>版本发布流程</strong></dd><dt>位置</dt><dd>文档末尾</dd></dl>
+        <div class="preview">## 第 41 周发布风险
+- P0 缺陷 2 条未关闭
+- 回归测试完成率 76%，低于 90% 发布门槛
+- 客户验收窗口与第 43 周发布时间重叠</div></div>
+      <div class="tc-foot"><span class="caption grow">可在飞书文档的版本历史中恢复。</span><button class="btn">打开原文 ↗</button></div>
+    </div>
+    <div class="msg-user">再看一下 <span class="mention">@企业微信/周报汇总</span> 里谁还没交第 41 周周报，给他们各建一个今天下班前的待办。</div>
+    <div class="msg-ai">已读取 <span class="cite">${logo('wecom')} 周报汇总</span>：李四、赵六、钱七尚未提交。</div>
+    <div class="tool-card">
+      <div class="tc-head">${logo('wecom')}<strong>企业微信待办 · 创建 3 项</strong><span class="badge ok">完成</span></div>
+      <div class="tc-body"><dl class="kv"><dt>标题</dt><dd>提交第 41 周周报</dd><dt>负责人</dt><dd>李四、赵六、钱七</dd><dt>截止</dt><dd>今天 18:00</dd></dl></div>
+      <div class="tc-foot"><span class="caption grow">以张三的身份创建。</span><button class="btn">在企业微信中查看 ↗</button></div>
+    </div>
+  </div></div>
+  <div class="composer"><div class="composer-inner">
+    <div class="mention-pop">
+      <div class="caption" style="padding:4px 8px">引用外部应用内容</div>
+      <div class="item active">${logo('feishu')}<span class="grow">飞书 / 产品中心</span><span class="caption">知识库</span></div>
+      <div class="item">${logo('feishu')}<span class="grow">飞书 / 项目管理 / 缺陷跟踪</span><span class="caption">多维表格</span></div>
+      <div class="item">${logo('wecom')}<span class="grow">企业微信 / 周报汇总</span><span class="caption">智能表格</span></div>
+    </div>
+    <div class="composer-box"><div class="input">@飞书/产|</div>
+      <div class="bar"><button class="chip">📎</button><button class="chip active">${logo('feishu')} 飞书</button><button class="chip active">${logo('wecom')} 企业微信</button><span style="flex:1"></span><span class="caption">直连模型 · claude</span><button class="btn primary">发送</button></div></div>
+  </div></div>`
+}
+
+/* ================= 消息请求 ================= */
+function renderChannelChat() {
+  if (channelApp !== 'feishu') {
+    const a = apps[channelApp]
+    return `<div class="chat-title">${logo(channelApp)}<div class="grow"><strong>${a.name}通道项目</strong> <span class="caption">工作目录 D:\\work\\${channelApp}-channel · 直连 · 跟随全局默认模型</span></div>
+      <button class="btn" data-scene="settings" data-app="${channelApp}" data-tab="connect">⚙ 应用设置</button></div>
+    <div class="chat"><div class="chat-inner">
+      <p class="caption">${a.name}没有自己的页面。从应用中心或左侧常驻入口“打开”时，进入这里查看它收到的会话。</p>
+      <div class="msg-channel"><div class="who">${logo(channelApp)} 张三 · ${a.name}私聊 · 09:12</div>帮我把今天要做的三件事列一下。</div>
+      <div class="msg-ai">好的：1. 评审第 43 周发布计划；2. 跟进 P0 缺陷；3. 回复客户验收邮件。</div>
+    </div></div>`
+  }
+  return `<div class="chat-title">${logo('feishu')}<div class="grow"><strong>飞书通道项目</strong> <span class="caption">工作目录 D:\\work\\feishu-channel · 直连 · Claude Sonnet</span></div>
+      <button class="btn" data-scene="settings" data-app="feishu" data-tab="message">消息设置</button></div>
+    <div class="chat"><div class="chat-inner">
+    <div class="msg-channel"><div class="who">${logo('feishu')} 张三 · 飞书私聊 · 10:40</div>把今天站会结论追加到《版本发布流程》末尾：第 43 周发布推迟到周四。</div>
+    <div class="tool-card"><div class="tc-head">${logo('feishu')}<strong>飞书文档 · 写入</strong><span class="badge ok">完成</span></div>
+      <div class="tc-body"><p>已追加到《版本发布流程》，并在飞书私聊中回复。</p></div></div>
+    <div class="msg-channel"><div class="who">${logo('feishu')} 王五 · 飞书群「产品组」· 10:52</div>@GoodBuddy 把这个文档分享给客户 lisi@customer.com</div>
+    <div class="tool-card"><div class="tc-head">${logo('feishu')}<strong>只回复，不调用工具</strong><span class="badge">工具未对群聊开放</span></div>
+      <div class="tc-body"><p>有其他人能发消息的会话里不提供飞书工具。已在群中回复：“这个操作需要张三在 GoodBuddy 里完成。”</p></div>
+      <div class="tc-foot"><button class="btn" data-scene="settings" data-app="feishu" data-tab="tools">查看工具设置</button></div></div>
+  </div></div>`
+}
+
+/* ================= 事件 ================= */
+document.addEventListener('click', e => {
+  const close = e.target.closest('[data-wb-close]')
+  if (close) { const k = close.dataset.wbClose; wbOpen = wbOpen.filter(x => x !== k); if (wbTab === k) wbTab = wbOpen[0] ?? 'tasks'; return render() }
+  const t = e.target.closest('button, [data-filter], [data-scene], input[name=mode]')
+  if (!t) return
+  if (t.hasAttribute('data-wb-menu')) { wbMenu = !wbMenu; return render() }
+  if (t.dataset.wbOpen) { const k = t.dataset.wbOpen; if (!wbOpen.includes(k)) wbOpen.push(k); wbTab = k; wbMenu = false; pageFilter = 'all'; return render() }
+  if (t.dataset.wb) { wbTab = t.dataset.wb; wbMenu = false; pageFilter = 'all'; return render() }
+  if (t.id === 'app-menu-trigger') return $('#app-menu').classList.toggle('hidden')
+  if (t.hasAttribute('data-close')) return setScene('chat')
+  if (t.dataset.mode) { connectMode = t.dataset.mode; return render() }
+  if (t.name === 'mode') { connectMode = t.value; return render() }
+  if (t.dataset.scene) {
+    if (t.dataset.channel) channelApp = t.dataset.channel
+    if (t.dataset.panel) { const k = t.dataset.panel; if (!wbOpen.includes(k)) wbOpen.push(k); wbTab = k; pageFilter = 'all' }
+    if (t.dataset.scene === 'connect') { if (t.dataset.app) connectApp = t.dataset.app; connectStep = 0 }
+    else if (t.dataset.app) settingsApp = t.dataset.app
+    if (t.dataset.tab) settingsTab = t.dataset.tab
+    return setScene(t.dataset.scene)
+  }
+  if (t.dataset.nav) return setScene(t.dataset.nav)
+  if (t.dataset.tab) { settingsTab = t.dataset.tab; return render() }
+  if (t.dataset.step) { connectStep = Number(t.dataset.step); return render() }
+  if (t.dataset.filter) { pageFilter = t.dataset.filter; return render() }
+})
+// 深链接：?s=settings&a=wecom&t=tools 或 #settings/wecom/tools
+const q = new URLSearchParams(location.search)
+const [hs, ha, ht] = q.get('s') ? [q.get('s'), q.get('a'), q.get('t')] : location.hash.slice(1).split('/')
+if (hs === 'connect' && ha) connectApp = ha; else if (hs === 'chat' && ha) { wbTab = ha; if (isPlatform(ha) && !wbOpen.includes(ha)) wbOpen.push(ha) } else if (hs === 'channel-chat' && ha) channelApp = ha; else if (ha) settingsApp = ha
+if (ht) settingsTab = ht
+if (hs) setScene(hs); else render()
+</script>
+</body>
+</html>

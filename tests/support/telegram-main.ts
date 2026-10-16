@@ -144,6 +144,10 @@ void app.whenReady().then(async () => {
   async function fill(selector: string, value: string): Promise<void> {
     await run(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(e, ${JSON.stringify(value)}); e.dispatchEvent(new Event('input', { bubbles: true })); })()`)
   }
+  async function tab(name: string): Promise<void> {
+    await run(`[...document.querySelectorAll('[role="tab"]')].find(e => e.textContent === ${JSON.stringify(name)}).click()`)
+    await wait(() => run(`[...document.querySelectorAll('[role="tab"]')].find(e => e.textContent === ${JSON.stringify(name)})?.getAttribute('aria-selected') === 'true'`), `tab ${name}`)
+  }
   function inbound(id: number, text: string, sender = 700001) {
     return { update_id: id, message: { message_id: id, date: Math.floor(Date.now() / 1000),
       from: { id: sender, is_bot: false }, chat: { id: sender, type: 'private' }, text } }
@@ -152,12 +156,14 @@ void app.whenReady().then(async () => {
     await win.loadURL(process.env.GB_TELEGRAM_RENDERER!)
     await wait(() => run(`Boolean(document.querySelector('input[aria-label="Telegram Bot Token"]'))`), 'Telegram settings loaded')
     await fill('input[aria-label="Telegram Bot Token"]', token)
+    await tab('Messages')
     await fill('textarea[aria-label="Telegram allowed sender IDs"]', '700001')
-    await click('#channel-settings-panel-telegram button.secondary-button')
+    await tab('Connection')
+    await click('.channel-settings__panel button.secondary-button')
     await wait(() => run(`document.body.innerText.includes('@goodbuddy_smoke_bot')`), 'connection test identity shown')
     assert.deepEqual(calls.map(call => call.method), ['getMe', 'getWebhookInfo'])
     assert.equal((await channels.resolve('telegram')).enabled, false, 'Test must not enable receiving')
-    await click('#channel-settings-panel-telegram input[role="switch"]')
+    await click('.channel-settings__panel input[role="switch"]')
     await click('button.primary-button')
     await wait(async () => (await channels.resolve('telegram')).enabled && calls.some(call => call.method === 'getUpdates'), 'saved channel polling')
     const saved = await new ChannelSettingsStore(channelsPath, cipher, {}).resolve('telegram')
@@ -193,17 +199,21 @@ void app.whenReady().then(async () => {
     await wait(() => run(`!document.querySelector('button.primary-button').disabled`), 'healthy unchanged Save completed')
     assert.equal(calls.filter(call => call.method === 'getMe').length, validationsBeforeRecovery + 1, 'Healthy Save must not restart polling')
     await fill('input[aria-label="Telegram Bot Token"]', 'unsaved-token-placeholder')
+    await tab('Messages')
     await fill('textarea[aria-label="Telegram allowed sender IDs"]', '700001\n700003')
+    await tab('Connection')
     pollingUnavailable = true
     await wait(() => run(`document.querySelector('.channel-settings-card .capability-card__header > span')?.textContent === 'Connecting' && document.querySelector('.channel-settings-card [role="alert"]')?.textContent.includes('503')`), 'poll failure pushed through production IPC')
     pollingUnavailable = false
     await wait(() => run(`document.querySelector('.channel-settings-card .capability-card__header > span')?.textContent === 'Connected' && !document.querySelector('.channel-settings-card [role="alert"]')`), 'reconnect pushed through production IPC')
     assert.equal(await run(`document.querySelector('input[aria-label="Telegram Bot Token"]').value`), 'unsaved-token-placeholder')
+    await tab('Messages')
     assert.equal(await run(`document.querySelector('textarea[aria-label="Telegram allowed sender IDs"]').value`), '700001\n700003')
+    await tab('Connection')
 
     await win.reload()
     await wait(() => run(`document.querySelector('input[aria-label="Telegram Bot Token"]')?.placeholder === 'Leave blank to keep the saved Token'`), 'settings restored after renderer reload')
-    assert.equal(await run(`document.querySelector('#channel-settings-panel-telegram input[role="switch"]').checked`), true)
+    assert.equal(await run(`document.querySelector('.channel-settings__panel input[role="switch"]').checked`), true)
     const restored = await run<ConversationSnapshot>(`window.goodbuddy.conversations.get(${JSON.stringify(conversation.id)})`)
     assert.deepEqual(restored.messages, conversation.messages)
     const disk = new AssistantDatabase(databasePath)
@@ -215,7 +225,7 @@ void app.whenReady().then(async () => {
 
     updates.push(inbound(12, 'Wait for cancellation'))
     await wait(() => payloads.length === 2, 'second model request running')
-    await click('#channel-settings-panel-telegram input[role="switch"]')
+    await click('.channel-settings__panel input[role="switch"]')
     await click('button.primary-button')
     await wait(() => cancelledModel, 'disable channel aborts model HTTP stream')
     await wait(async () => !(await channels.resolve('telegram')).enabled, 'disabled settings persisted')
@@ -224,7 +234,7 @@ void app.whenReady().then(async () => {
     assert.equal(stopped.telegram.status.state, 'disabled')
     assert.equal(calls.filter(call => call.method === 'sendMessage').length, 1, 'No reply after disabling')
 
-    await click('#channel-settings-panel-telegram input[role="switch"]')
+    await click('.channel-settings__panel input[role="switch"]')
     await click('button.primary-button')
     await wait(() => run(`!document.querySelector('button.primary-button').disabled && document.querySelector('.channel-settings-card .capability-card__header > span')?.textContent === 'Connected'`), 're-enabled before clearing credentials')
     sendingForbidden = true
@@ -240,20 +250,24 @@ void app.whenReady().then(async () => {
     assert(visibleFailure.includes('forbidden'))
     assert(!visibleFailure.includes(token) && !visibleFailure.includes('api.telegram.org'))
     await fill('input[aria-label="Telegram Bot Token"]', 'unsaved-delivery-token')
+    await tab('Messages')
     await fill('textarea[aria-label="Telegram allowed sender IDs"]', '700001\n700004')
+    await tab('Connection')
     const pollsBefore = calls.filter(call => call.method === 'getUpdates').length
     await wait(() => calls.filter(call => call.method === 'getUpdates').length >= pollsBefore + 2, 'healthy polls after delivery failure')
     assert.equal(await run(`document.querySelector('.channel-settings-card [role="alert"]').textContent`), visibleFailure)
     assert.equal(await run(`document.querySelector('input[aria-label="Telegram Bot Token"]').value`), 'unsaved-delivery-token')
+    await tab('Messages')
     assert.equal(await run(`document.querySelector('textarea[aria-label="Telegram allowed sender IDs"]').value`), '700001\n700004')
+    await tab('Connection')
     await win.reload()
     await wait(() => run(`document.querySelector('.channel-settings-card [role="alert"]')?.textContent.includes('Telegram sending failed:')`), 'delivery error restored from snapshot')
     sendingForbidden = false
     const projectBeforeClear = database.getProject(conversation.projectId!)
     const historyBeforeClear = database.getConversation(conversation.id)
-    await click('#channel-settings-panel-telegram input[type="checkbox"]:not([role="switch"])')
+    await click('.channel-settings__panel input[type="checkbox"]:not([role="switch"])')
     await click('button.primary-button')
-    await wait(() => run(`!document.querySelector('button.primary-button').disabled && !document.querySelector('#channel-settings-panel-telegram input[role="switch"]').checked && !document.querySelector('#channel-settings-panel-telegram input[type="checkbox"]:not([role="switch"])') && document.querySelector('.channel-settings-card .capability-card__header > span')?.textContent === 'Not configured'`), 'cleared Token disables the enabled channel')
+    await wait(() => run(`!document.querySelector('button.primary-button').disabled && !document.querySelector('.channel-settings__panel input[role="switch"]').checked && !document.querySelector('.channel-settings__panel input[type="checkbox"]:not([role="switch"])') && document.querySelector('.channel-settings-card .capability-card__header > span')?.textContent === 'Not configured'`), 'cleared Token disables the enabled channel')
     const cleared = await new ChannelSettingsStore(channelsPath, cipher, {}).resolve('telegram')
     assert.equal(cleared.enabled, false)
     assert.equal(cleared.secret, undefined)

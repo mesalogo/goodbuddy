@@ -9902,10 +9902,10 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
 
-    const channelSettingsTab = await screen.findByRole("tab", {
-      name: "消息通道",
-    });
-    expect(channelSettingsTab).toHaveAttribute("aria-selected", "true");
+    expect(
+      await screen.findByRole("dialog", { name: "微信 ClawBot" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "消息通道" })).not.toBeInTheDocument();
   });
 
   it("keeps channel project settings synchronized between both entry points", async () => {
@@ -9991,6 +9991,17 @@ describe("App", () => {
           allowGroupMessages: false,
           status: { state: "disabled" as const },
         },
+        feishu: {
+          enabled: false,
+          appId: "",
+          domain: "feishu" as const,
+          secretConfigured: false,
+          source: "none" as const,
+          readOnly: false,
+          allowedSenderIds: [],
+          allowGroupMessages: false,
+          status: { state: "disabled" as const },
+        },
       })),
       apply: vi.fn(async () => {
         throw new Error("No channel connection settings changed");
@@ -10020,6 +10031,7 @@ describe("App", () => {
     await screen.findByRole("button", { name: "当前项目" });
     selectProjectOption(weixinProject.name);
     fireEvent.click(await screen.findByRole("button", { name: "打开设置" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "消息" }));
 
     expect(await screen.findByLabelText("微信 ClawBot 项目说明")).toHaveValue(
       "微信 ClawBot通道项目",
@@ -15073,14 +15085,14 @@ describe("App", () => {
     const move = screen.getByRole('button', { name: '下移 知识库' })
     await waitFor(() => expect(move).toBeEnabled())
     fireEvent.click(move)
-    await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
+    await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' }).querySelector<HTMLElement>('.application-center__grid')!).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
       '监督者', '知识库', '魔法笔记', '本机推理监控', '设备共享（技术预览）', '主机管理',
     ]))
     await waitFor(() => expect(screen.getByRole('button', { name: '上移 本机推理监控' })).toBeEnabled())
-    const cards = within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article')
+    const cards = within(screen.getByRole('dialog', { name: '应用中心' }).querySelector<HTMLElement>('.application-center__grid')!).getAllByRole('article')
     fireEvent.dragStart(cards[3]!)
     fireEvent.drop(cards[1]!)
-    await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
+    await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' }).querySelector<HTMLElement>('.application-center__grid')!).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
       '监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）', '主机管理',
     ]))
     expect((await updates.getSettings()).applicationNavigation.order).toEqual(['heartbeat', 'local-inference', 'knowledge', 'magic-notes', 'device-sharing', 'remote-hosts'])
@@ -15091,7 +15103,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '主机管理', '管理应用'])
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）', '主机管理'])
+    expect(within(screen.getByRole('dialog', { name: '应用中心' }).querySelector<HTMLElement>('.application-center__grid')!).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）', '主机管理'])
   })
 
   it('leaves device sharing on an external settings event and keeps it closed when re-enabled', async () => {

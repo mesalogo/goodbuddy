@@ -1305,6 +1305,36 @@ export class ModelToolProvider implements ModelToolProviderLike {
         allowPermanent: false
       }
     }
+    if (tool.name === 'feishu_perm') {
+      return {
+        scopeKey: 'model:feishu:perm',
+        title: '允许修改飞书文件权限？',
+        description: '该操作会改变谁能查看或编辑飞书文件，GoodBuddy 无法撤销。',
+        toolName: tool.displayName,
+        argumentSummary,
+        allowPermanent: false
+      }
+    }
+    if (tool.name === 'wecom_script') {
+      return {
+        scopeKey: 'model:wecom:script',
+        title: '允许运行企业微信技能脚本？',
+        description: '会在 GoodBuddy 企业微信工作目录中运行官方技能附带的 Python 脚本，脚本可以用授权人身份调用企业微信。',
+        toolName: tool.displayName,
+        argumentSummary,
+        allowPermanent: false
+      }
+    }
+    if (tool.name === 'wecom_cli') {
+      return {
+        scopeKey: 'model:wecom:cli',
+        title: '允许执行企业微信命令？',
+        description: '该命令会以授权人身份访问或修改企业微信中的文档、日程、待办等数据，写入后无法由 GoodBuddy 撤销。',
+        toolName: tool.displayName,
+        argumentSummary,
+        allowPermanent: false
+      }
+    }
     if (tool.name === 'web_search' || tool.name === 'web_fetch') {
       return {
         scopeKey: `model:web:${tool.name}`,
@@ -1429,6 +1459,18 @@ export class ModelToolProvider implements ModelToolProviderLike {
         argumentsValue,
         signal
       ))
+    }
+    if (isFeishuTool(name)) {
+      if (!this.knowledgeGateway || !context.knowledgeCapabilityToken) throw new Error('飞书工具授权不可用')
+      return createTextToolResult(boundedJson(await this.knowledgeGateway.callFeishuTool(
+        context.knowledgeCapabilityToken, name, argumentsValue, signal
+      ), '飞书工具结果无法序列化'))
+    }
+    if (isWecomTool(name)) {
+      if (!this.knowledgeGateway || !context.knowledgeCapabilityToken) throw new Error('企业微信工具授权不可用')
+      return createTextToolResult(boundedJson(await this.knowledgeGateway.callWecomTool(
+        context.knowledgeCapabilityToken, name, argumentsValue, signal
+      ), '企业微信工具结果无法序列化'))
     }
     if (name === 'generate_image') {
       if (!context.imageToolBinding || !context.toolCallId) throw new Error('Image tool request binding is unavailable')
@@ -2061,3 +2103,5 @@ function emitDirectModelSubagentUsage(
   })
 }
 import { imageSaveToolDefinition, imageToolDefinition, type ImageToolBinding } from './image-tool-binding'
+import { isWecomTool } from '../../shared/wecom-tools'
+import { isFeishuTool } from '../../shared/feishu-tools'

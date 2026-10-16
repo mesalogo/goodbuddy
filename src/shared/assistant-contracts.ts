@@ -30,14 +30,16 @@ export const projectChannels = [
   'weixin',
   'wecom',
   'dingtalk',
-  'telegram'
+  'telegram',
+  'feishu'
 ] as const
 export const projectChannelSchema = z.enum(projectChannels)
 export const projectChannelLabels: Record<ProjectChannel, string> = {
   weixin: '微信 ClawBot',
   wecom: '企业微信',
   dingtalk: '钉钉',
-  telegram: 'Telegram'
+  telegram: 'Telegram',
+  feishu: '飞书'
 }
 
 export type ProjectKind = z.infer<typeof projectKindSchema>

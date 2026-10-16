@@ -71,12 +71,7 @@ export const settings = {
       description:
         'Manage SSH hosts, pin host keys, and verify remote execution environments. Locally configured Skills and MCP servers do not apply to remote hosts.'
     },
-    channels: {
-      label: 'Message channels',
-      navigationDescription: 'WeChat, WeCom, and DingTalk',
-      description:
-        'Configure connections, workspaces, and message backends'
-    },
+
     roles: {
       label: 'Roles and prompts',
       navigationDescription: 'Roles, descriptions, and system prompts',

@@ -95,6 +95,10 @@ import {
 import { FeedbackService } from './feedback/feedback-service'
 import { registerFeedbackIpcHandler } from './feedback/feedback-ipc'
 import { registerDeviceSharingIpc } from './device-sharing-ipc'
+import { WecomCliService } from './wecom/wecom-cli-service'
+import { registerWecomIpc } from './wecom/wecom-ipc'
+import { FeishuToolService } from './feishu/feishu-tool-service'
+import { registerFeishuIpc } from './feishu/feishu-ipc'
 import { DeviceSharingService } from './device-sharing-service'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 import type { SystemModelUsageInput } from '../shared/assistant-contracts'
@@ -221,6 +225,10 @@ let isQuitting = false
 let removeIpcHandlers: (() => Promise<void>) | undefined
 let removeFeedbackIpcHandler: (() => void) | undefined
 let removeDeviceSharingIpc: (() => void) | undefined
+let removeWecomIpc: (() => void) | undefined
+let wecomService: WecomCliService | undefined
+let removeFeishuIpc: (() => void) | undefined
+let feishuService: FeishuToolService | undefined
 let runtime: AgentRuntimeController | undefined
 let selectedRuntimeManager: SelectedRuntimeManager | undefined
 const localRuntimeRegistry = new LocalRuntimeRegistry()
@@ -865,6 +873,42 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'channel-settings.json'),
       secureCipher
     )
+    const startupWecomService = new WecomCliService({
+      rootDirectory: join(app.getPath('userData'), 'wecom'),
+      skillsDirectory: app.isPackaged
+        ? join(process.resourcesPath, 'wecom-skills')
+        : join(app.getAppPath(), 'resources', 'wecom-skills'),
+      // Built by build/wecom-resources.cjs; run it once in development.
+      bundleDirectory: app.isPackaged
+        ? join(process.resourcesPath, 'runtimes', 'wecom')
+        : join(app.getAppPath(), '.runtime-resources', `wecom-${process.arch}`),
+      resolvePython: async () => {
+        await localToolEnvironmentReady
+        const snapshot = await startupLocalToolEnvironmentService.diagnose('python')
+        const python = snapshot.diagnostics.python
+        return python?.available ? python.executablePath : undefined
+      },
+      resolveChannelCredentials: async () => {
+        const wecom = await channelSettingsStore.resolve('wecom')
+        return wecom.botId && wecom.secret ? { botId: wecom.botId, secret: wecom.secret } : undefined
+      }
+    })
+    wecomService = startupWecomService
+    const startupFeishuService = new FeishuToolService({
+      settingsPath: join(app.getPath('userData'), 'feishu-tools.json'),
+      credentials: {
+        resolve: async () => {
+          const feishu = await channelSettingsStore.resolve('feishu')
+          return feishu.appId && feishu.secret
+            ? { appId: feishu.appId, appSecret: feishu.secret, domain: feishu.domain }
+            : undefined
+        },
+        saveRegisteredApp: async (result) => {
+          await channelSettingsStore.saveFeishuRegisteredApp(result)
+        }
+      }
+    })
+    feishuService = startupFeishuService
     const startupFeedbackService = new FeedbackService({
       appVersion: app.getVersion(),
       platform: process.platform,
@@ -1073,6 +1117,8 @@ if (hasSingleInstanceLock) {
         magicNotesDatabase: startupAssistantDatabase,
         configService: goodbuddyConfigService,
         obsidianService,
+        wecomService: startupWecomService,
+        feishuService: startupFeishuService,
         browserService,
         launchEnvironmentProvider:
           startupLocalToolEnvironmentService.launchEnvironmentProvider,
@@ -1556,7 +1602,9 @@ if (hasSingleInstanceLock) {
       imageGenerationService,
       obsidianService,
       nativeClientCoordinator,
-      supervisionPorts
+      supervisionPorts,
+      startupWecomService,
+      startupFeishuService
     )
     if (storageUpgradeController.signal.aborted) return
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
@@ -1566,6 +1614,8 @@ if (hasSingleInstanceLock) {
     startupMark('main:ipc-register:end')
     loadMainWindow(mainWindow)
     startupMark('main:load-main-window')
+    removeWecomIpc = registerWecomIpc(mainWindow, startupWecomService)
+    removeFeishuIpc = registerFeishuIpc(mainWindow, startupFeishuService)
     removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow,
       new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion()))
     // Reclaim confirmed inactive runs, including their shared immutable caches.
@@ -1675,6 +1725,10 @@ app.on('before-quit', (event) => {
           () => feedbackService?.dispose(),
           () => removeFeedbackIpcHandler?.(),
           () => removeDeviceSharingIpc?.(),
+          () => removeWecomIpc?.(),
+          () => wecomService?.dispose(),
+          () => removeFeishuIpc?.(),
+          () => feishuService?.dispose(),
           () => dshExtensionInstaller?.dispose(),
           () => knowledgeService?.beginShutdown(),
           () => removeIpcHandlers?.()

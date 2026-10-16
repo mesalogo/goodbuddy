@@ -3,6 +3,7 @@ import {
   channelConnectionTestResultSchema,
   channelSettingsApplySchema,
   dingTalkChannelSettingsInputSchema,
+  feiShuChannelSettingsInputSchema,
   telegramChannelSettingsInputSchema,
   weComChannelSettingsInputSchema,
   type ChannelConnectionTestResult,
@@ -12,6 +13,7 @@ import {
   type ChannelSettingsSnapshot,
   type CredentialChannel,
   type DingTalkChannelSettingsInput,
+  type FeiShuChannelSettingsInput,
   type ManagedChannel,
   type TelegramChannelSettingsInput,
   type WeComChannelSettingsInput
@@ -84,6 +86,10 @@ type TestSettingsInput =
       channel: 'dingtalk'
       settings?: DingTalkChannelSettingsInput
     }
+  | {
+      channel: 'feishu'
+      settings?: FeiShuChannelSettingsInput
+    }
 
 async function defaultDriverFactory(
   settings: ResolvedChannelSettings,
@@ -108,6 +114,16 @@ async function defaultDriverFactory(
       secret: settings.secret,
       allowedSenderIds: settings.allowedSenderIds,
       fetch: (input, init) => net.fetch(input instanceof URL ? input.href : input, init),
+      onStatus
+    })
+  }
+  if (settings.channel === 'feishu') {
+    const { FeishuChannelDriver } = await import('./feishu-channel-driver')
+    return new FeishuChannelDriver({
+      appId: settings.appId,
+      appSecret: settings.secret,
+      domain: settings.domain,
+      allowedSenderIds: settings.allowedSenderIds,
       onStatus
     })
   }
@@ -180,7 +196,8 @@ function validateResolved(settings: ResolvedChannelSettings): void {
     return
   }
   const identifier =
-    settings.channel === 'wecom' ? settings.botId : settings.clientId
+    settings.channel === 'wecom' ? settings.botId
+      : settings.channel === 'feishu' ? settings.appId : settings.clientId
   if (
     identifier.length === 0 ||
     settings.secret === undefined ||
@@ -189,7 +206,9 @@ function validateResolved(settings: ResolvedChannelSettings): void {
     throw new Error(
       settings.channel === 'wecom'
         ? '企业微信需要机器人 ID、Secret 和允许的发送者'
-        : '钉钉需要 Client ID、Secret 和允许的发送者'
+        : settings.channel === 'feishu'
+          ? '飞书需要 App ID、App Secret 和允许的发送者'
+          : '钉钉需要 Client ID、Secret 和允许的发送者'
     )
   }
 }
@@ -270,7 +289,8 @@ export class ChannelManager {
         ...(input.weixin === undefined ? [] : (['weixin'] as const)),
         ...(input.wecom === undefined ? [] : (['wecom'] as const)),
         ...(input.dingtalk === undefined ? [] : (['dingtalk'] as const)),
-        ...(input.telegram === undefined ? [] : (['telegram'] as const))
+        ...(input.telegram === undefined ? [] : (['telegram'] as const)),
+        ...(input.feishu === undefined ? [] : (['feishu'] as const))
       ]
       for (const channel of channels) {
         const settings = await this.store.resolve(channel)
@@ -307,9 +327,13 @@ export class ChannelManager {
     channel: 'dingtalk',
     settings?: DingTalkChannelSettingsInput
   ): Promise<ChannelConnectionTestResult>
+  test(
+    channel: 'feishu',
+    settings?: FeiShuChannelSettingsInput
+  ): Promise<ChannelConnectionTestResult>
   async test(
     channel: CredentialChannel,
-    settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
+    settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput | FeiShuChannelSettingsInput
   ): Promise<ChannelConnectionTestResult> {
     let resolved: ResolvedChannelSettings | undefined
     try {
@@ -318,6 +342,16 @@ export class ChannelManager {
         ...(settings === undefined ? {} : { settings })
       } as TestSettingsInput)
       validateResolved(resolved)
+      if (channel === 'feishu') {
+        const driver = await this.createDriver(resolved)
+        try {
+          if (!driver.testConnection) throw new Error('飞书连接测试不可用')
+          await driver.testConnection()
+          return channelConnectionTestResultSchema.parse({ channel, ok: true })
+        } finally {
+          await Promise.resolve(driver.stop()).catch(() => undefined)
+        }
+      }
       if (channel === 'telegram') {
         const driver = await this.createDriver(resolved)
         try {
@@ -371,11 +405,18 @@ export class ChannelManager {
     settings?: DingTalkChannelSettingsInput
   ): Promise<ChannelConnectionTestResult>
   testConnection(
+    channel: 'feishu',
+    settings?: FeiShuChannelSettingsInput
+  ): Promise<ChannelConnectionTestResult>
+  testConnection(
     channel: CredentialChannel,
-    settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
+    settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput | FeiShuChannelSettingsInput
   ): Promise<ChannelConnectionTestResult> {
     if (channel === 'telegram') {
       return this.test(channel, settings as TelegramChannelSettingsInput | undefined)
+    }
+    if (channel === 'feishu') {
+      return this.test(channel, settings as FeiShuChannelSettingsInput | undefined)
     }
     return channel === 'wecom'
       ? this.test(
@@ -551,6 +592,19 @@ export class ChannelManager {
         allowGroupMessages: false
       }
     }
+    if (input.channel === 'feishu') {
+      const current = await this.store.resolve('feishu')
+      if (input.settings === undefined) return current
+      if (current.readOnly) throw new Error('环境变量通道配置为只读，不能使用临时设置')
+      const parsed = feiShuChannelSettingsInputSchema.parse(input.settings)
+      return {
+        channel: 'feishu',
+        enabled: parsed.enabled,
+        appId: parsed.appId,
+        domain: parsed.domain,
+        ...this.testCommonSettings(current.secret, parsed)
+      }
+    }
     if (input.channel === 'wecom') {
       const current = await this.store.resolve('wecom')
       if (input.settings === undefined) {
@@ -585,7 +639,7 @@ export class ChannelManager {
 
   private testCommonSettings(
     currentSecret: string | undefined,
-    input: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
+    input: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput | FeiShuChannelSettingsInput
   ): {
     secret?: string
     allowedSenderIds: readonly string[]

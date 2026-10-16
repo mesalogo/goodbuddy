@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   CHANNEL_SETTINGS_LIMITS,
   allowedSenderIdsSchema,
+  feishuDomainSchema,
   telegramAllowedSenderIdsSchema,
   channelSettingsApplySchema,
   type ChannelRuntimeStatus,
@@ -10,6 +11,8 @@ import {
   type ChannelSettingsSnapshot,
   type CredentialChannel,
   type DingTalkChannelSettingsInput,
+  type FeiShuChannelSettingsInput,
+  type FeishuDomain,
   type ManagedChannel,
   type TelegramChannelSettingsInput,
   type WeComChannelSettingsInput
@@ -114,6 +117,17 @@ const storedSettingsSchema = z
       enabled: false,
       allowedSenderIds: [],
       allowGroupMessages: false
+    }),
+    feishu: z.object({
+      ...storedChannelFields,
+      appId: z.string().trim().max(CHANNEL_SETTINGS_LIMITS.maximumIdentifierLength),
+      domain: feishuDomainSchema
+    }).strict().default({
+      enabled: false,
+      appId: '',
+      domain: 'feishu',
+      allowedSenderIds: [],
+      allowGroupMessages: false
     })
   })
   .strict()
@@ -123,6 +137,7 @@ type StoredCredentialChannel =
   | StoredSettings['wecom']
   | StoredSettings['dingtalk']
   | StoredSettings['telegram']
+  | StoredSettings['feishu']
 type StoredEncryptedCredential = z.infer<
   typeof encryptedCredentialSchema
 >
@@ -132,7 +147,7 @@ class DeferredWeixinMigrationError extends Error {}
 const credentialPayloadSchema = z
   .object({
     version: z.literal(1),
-    channel: z.enum(['weixin', 'wecom', 'dingtalk', 'telegram']),
+    channel: z.enum(['weixin', 'wecom', 'dingtalk', 'telegram', 'feishu']),
     secret: z
       .string()
       .min(1)
@@ -224,6 +239,17 @@ export type ResolvedChannelSettings =
       source: 'none' | 'encrypted' | 'environment' | 'unreadable'
       readOnly: boolean
     }
+  | {
+      channel: 'feishu'
+      enabled: boolean
+      appId: string
+      domain: FeishuDomain
+      secret?: string
+      allowedSenderIds: readonly string[]
+      allowGroupMessages: boolean
+      source: 'none' | 'encrypted' | 'environment' | 'unreadable'
+      readOnly: boolean
+    }
 
 const defaultStoredSettings: StoredSettings = {
   version: 3,
@@ -246,7 +272,31 @@ const defaultStoredSettings: StoredSettings = {
     clientId: '',
     allowedSenderIds: [],
     allowGroupMessages: false
+  },
+  feishu: {
+    enabled: false,
+    appId: '',
+    domain: 'feishu',
+    allowedSenderIds: [],
+    allowGroupMessages: false
   }
+}
+
+/** Per-channel identifier field, environment names, labels and warning codes. */
+const credentialChannelMeta = {
+  wecom: { idField: 'botId', prefix: 'GOODBUDDY_WECOM', idEnv: 'BOT_ID', secretEnv: 'SECRET', label: '企业微信', idLabel: '机器人 ID',
+    environmentWarning: 'channel-wecom-environment-invalid', credentialWarning: 'channel-wecom-credential-unreadable' },
+  dingtalk: { idField: 'clientId', prefix: 'GOODBUDDY_DINGTALK', idEnv: 'CLIENT_ID', secretEnv: 'CLIENT_SECRET', label: '钉钉', idLabel: 'Client ID',
+    environmentWarning: 'channel-dingtalk-environment-invalid', credentialWarning: 'channel-dingtalk-credential-unreadable' },
+  feishu: { idField: 'appId', prefix: 'GOODBUDDY_FEISHU', idEnv: 'APP_ID', secretEnv: 'APP_SECRET', label: '飞书', idLabel: 'App ID',
+    environmentWarning: 'channel-feishu-environment-invalid', credentialWarning: 'channel-feishu-credential-unreadable' }
+} as const satisfies Record<Exclude<CredentialChannel, 'telegram'>, {
+  idField: string; prefix: string; idEnv: string; secretEnv: string; label: string; idLabel: string
+  environmentWarning: SettingsWarning['code']; credentialWarning: SettingsWarning['code']
+}>
+
+function storedIdentifier(channel: Exclude<CredentialChannel, 'telegram'>, stored: StoredCredentialChannel): string {
+  return (stored as unknown as Record<string, string>)[credentialChannelMeta[channel].idField] ?? ''
 }
 
 const defaultStatus = (enabled: boolean): ChannelRuntimeStatus => ({
@@ -365,19 +415,22 @@ export class ChannelSettingsStore {
     this.environmentChannels = {
       wecom: this.readEnvironmentChannel('wecom'),
       dingtalk: this.readEnvironmentChannel('dingtalk'),
-      telegram: this.readEnvironmentChannel('telegram')
+      telegram: this.readEnvironmentChannel('telegram'),
+      feishu: this.readEnvironmentChannel('feishu')
     }
   }
 
   async snapshot(
     statuses: Partial<Record<ManagedChannel, ChannelRuntimeStatus>> = {}
   ): Promise<ChannelSettingsSnapshot> {
-    const [weixin, wecom, dingtalk, telegram] = await Promise.all([
+    const [weixin, wecom, dingtalk, telegram, feishu] = await Promise.all([
       this.resolve('weixin'),
       this.resolve('wecom'),
       this.resolve('dingtalk'),
-      this.resolve('telegram')
+      this.resolve('telegram'),
+      this.resolve('feishu')
     ])
+    const feishuEnvironment = this.environmentChannel('feishu')
     const weComEnvironment = this.environmentChannel('wecom')
     const dingTalkEnvironment = this.environmentChannel('dingtalk')
     const telegramEnvironment = this.environmentChannel('telegram')
@@ -385,7 +438,8 @@ export class ChannelSettingsStore {
       ...this.warnings,
       ...(this.runtimeRepairWarning ? [this.runtimeRepairWarning] : []),
       ...(weComEnvironment.warning ? [weComEnvironment.warning] : []),
-      ...(dingTalkEnvironment.warning ? [dingTalkEnvironment.warning] : [])
+      ...(dingTalkEnvironment.warning ? [dingTalkEnvironment.warning] : []),
+      ...(feishuEnvironment.warning ? [feishuEnvironment.warning] : [])
     ].filter(
       (warning, index, values) =>
         values.findIndex(
@@ -439,6 +493,21 @@ export class ChannelSettingsStore {
             ? defaultStatus(dingtalk.enabled)
             : { state: 'error' })
       },
+      feishu: {
+        enabled: feishu.enabled,
+        appId: feishu.appId,
+        domain: feishu.domain,
+        secretConfigured: feishu.secret !== undefined,
+        source: feishu.source,
+        readOnly: feishu.readOnly,
+        allowedSenderIds: [...feishu.allowedSenderIds],
+        allowGroupMessages: feishu.allowGroupMessages,
+        status:
+          statuses.feishu ??
+          (feishuEnvironment.warning === undefined
+            ? defaultStatus(feishu.enabled)
+            : { state: 'error' })
+      },
       ...(warnings.length > 0 ? { warnings } : {})
     }
   }
@@ -470,6 +539,9 @@ export class ChannelSettingsStore {
   }>>
   resolve(channel: 'weixin'): Promise<Extract<ResolvedChannelSettings, {
     channel: 'weixin'
+  }>>
+  resolve(channel: 'feishu'): Promise<Extract<ResolvedChannelSettings, {
+    channel: 'feishu'
   }>>
   resolve(channel: ManagedChannel): Promise<ResolvedChannelSettings>
   async resolve(channel: ManagedChannel): Promise<ResolvedChannelSettings> {
@@ -510,6 +582,10 @@ export class ChannelSettingsStore {
       if (channel === 'telegram') {
         return { channel, ...common, allowGroupMessages: false }
       }
+      if (channel === 'feishu') {
+        const domain = this.environment.GOODBUDDY_FEISHU_DOMAIN === 'lark' ? 'lark' : 'feishu'
+        return { channel, appId: environment.id, domain, ...common }
+      }
       return channel === 'wecom'
         ? {
             channel,
@@ -543,6 +619,9 @@ export class ChannelSettingsStore {
     if (channel === 'telegram') {
       return { channel, ...common, allowGroupMessages: false }
     }
+    if (channel === 'feishu') {
+      return { channel, appId: settings.feishu.appId, domain: settings.feishu.domain, ...common }
+    }
     return channel === 'wecom'
       ? { channel, botId: settings.wecom.botId, ...common }
       : { channel, clientId: settings.dingtalk.clientId, ...common }
@@ -552,13 +631,15 @@ export class ChannelSettingsStore {
     Extract<ResolvedChannelSettings, { channel: 'weixin' }>,
     Extract<ResolvedChannelSettings, { channel: 'wecom' }>,
     Extract<ResolvedChannelSettings, { channel: 'dingtalk' }>,
-    Extract<ResolvedChannelSettings, { channel: 'telegram' }>
+    Extract<ResolvedChannelSettings, { channel: 'telegram' }>,
+    Extract<ResolvedChannelSettings, { channel: 'feishu' }>
   ]> {
     return Promise.all([
       this.resolve('weixin'),
       this.resolve('wecom'),
       this.resolve('dingtalk'),
-      this.resolve('telegram')
+      this.resolve('telegram'),
+      this.resolve('feishu')
     ])
   }
 
@@ -586,6 +667,35 @@ export class ChannelSettingsStore {
       () => undefined,
       () => undefined
     )
+    return operation.then(() => snapshot)
+  }
+
+  /**
+   * Saves an app created by Feishu scan registration. The person who scanned
+   * becomes the only allowed sender (OpenClaw behavior); the channel stays off
+   * until the user enables and saves it.
+   */
+  async saveFeishuRegisteredApp(input: { appId: string; appSecret: string; domain: FeishuDomain; openId?: string }): Promise<ChannelSettingsSnapshot> {
+    if (this.environmentChannel('feishu').owned) {
+      throw new Error('飞书由环境变量配置，不能在设置中修改')
+    }
+    let snapshot!: ChannelSettingsSnapshot
+    const update = async (): Promise<void> => {
+      const current = cloneStored(await this.load())
+      current.feishu = {
+        ...current.feishu,
+        appId: input.appId.trim(),
+        domain: input.domain,
+        credential: this.encryptCredential('feishu', input.appSecret),
+        allowedSenderIds: input.openId ? [input.openId] : current.feishu.allowedSenderIds
+      }
+      await this.persist(current)
+      this.settings = current
+      this.removeWarnings(['channel-feishu-credential-unreadable'])
+      snapshot = await this.snapshot()
+    }
+    const operation = this.updateQueue.then(update, update)
+    this.updateQueue = operation.then(() => undefined, () => undefined)
     return operation.then(() => snapshot)
   }
 
@@ -661,6 +771,12 @@ export class ChannelSettingsStore {
         input.dingtalk
       )
     }
+    if (input.feishu !== undefined) {
+      if (this.environmentChannel('feishu').owned) {
+        throw new Error('飞书由环境变量配置，不能在设置中修改')
+      }
+      current.feishu = this.updateStoredChannel('feishu', current.feishu, input.feishu)
+    }
 
     if (!this.temporarilyDisabledWeixin || input.weixin !== undefined) {
       this.validateEnabledWeixin(current.weixin)
@@ -668,6 +784,7 @@ export class ChannelSettingsStore {
     this.validateEnabledCredentialChannel('wecom', current.wecom)
     this.validateEnabledCredentialChannel('dingtalk', current.dingtalk)
     this.validateEnabledCredentialChannel('telegram', current.telegram)
+    this.validateEnabledCredentialChannel('feishu', current.feishu)
     await this.persist(current)
     this.settings = current
     if (!this.temporarilyDisabledWeixin) {
@@ -685,6 +802,9 @@ export class ChannelSettingsStore {
     }
     if (input.dingtalk !== undefined) {
       resolvedWarningCodes.push('channel-dingtalk-credential-unreadable')
+    }
+    if (input.feishu !== undefined) {
+      resolvedWarningCodes.push('channel-feishu-credential-unreadable')
     }
     this.removeWarnings(resolvedWarningCodes)
     return this.snapshot()
@@ -706,9 +826,14 @@ export class ChannelSettingsStore {
     input: DingTalkChannelSettingsInput
   ): StoredSettings['dingtalk']
   private updateStoredChannel(
+    channel: 'feishu',
+    current: StoredSettings['feishu'],
+    input: FeiShuChannelSettingsInput
+  ): StoredSettings['feishu']
+  private updateStoredChannel(
     channel: CredentialChannel,
     current: StoredCredentialChannel,
-    input: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
+    input: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput | FeiShuChannelSettingsInput
   ): StoredCredentialChannel {
     const credential =
       input.secret.action === 'keep'
@@ -728,6 +853,10 @@ export class ChannelSettingsStore {
     }
     if (channel === 'telegram') {
       return { ...common, allowGroupMessages: false }
+    }
+    if (channel === 'feishu') {
+      const feishu = input as FeiShuChannelSettingsInput
+      return { ...common, appId: feishu.appId, domain: feishu.domain }
     }
     return channel === 'wecom'
       ? {
@@ -766,20 +895,14 @@ export class ChannelSettingsStore {
       }
       return
     }
-    const identifier =
-      channel === 'wecom'
-        ? (stored as StoredSettings['wecom']).botId
-        : (stored as StoredSettings['dingtalk']).clientId
+    const identifier = storedIdentifier(channel, stored)
     if (
       identifier.length === 0 ||
       stored.allowedSenderIds.length === 0 ||
       this.decryptCredential(channel, stored) === undefined
     ) {
-      throw new Error(
-        channel === 'wecom'
-          ? '启用企业微信前需要配置机器人 ID、Secret 和允许的发送者'
-          : '启用钉钉前需要配置 Client ID、Secret 和允许的发送者'
-      )
+      const meta = credentialChannelMeta[channel]
+      throw new Error(`启用${meta.label}前需要配置${meta.idLabel}、Secret 和允许的发送者`)
     }
   }
 
@@ -806,12 +929,7 @@ export class ChannelSettingsStore {
     }
     const warn = (): undefined => {
       if (channel === 'telegram') return undefined
-      this.addWarning({
-        code:
-          channel === 'wecom'
-            ? 'channel-wecom-credential-unreadable'
-            : 'channel-dingtalk-credential-unreadable'
-      })
+      this.addWarning({ code: credentialChannelMeta[channel].credentialWarning })
       return undefined
     }
     if (!this.cipher.isAvailable()) {
@@ -824,11 +942,7 @@ export class ChannelSettingsStore {
       if (payload.channel !== channel) {
         return warn()
       }
-      if (channel !== 'telegram') this.removeWarnings([
-        channel === 'wecom'
-          ? 'channel-wecom-credential-unreadable'
-          : 'channel-dingtalk-credential-unreadable'
-      ])
+      if (channel !== 'telegram') this.removeWarnings([credentialChannelMeta[channel].credentialWarning])
       return payload.secret
     } catch {
       return warn()
@@ -900,7 +1014,8 @@ export class ChannelSettingsStore {
             },
             wecom: legacy.wecom,
             dingtalk: legacy.dingtalk,
-            telegram: structuredClone(defaultStoredSettings.telegram)
+            telegram: structuredClone(defaultStoredSettings.telegram),
+            feishu: structuredClone(defaultStoredSettings.feishu)
           }
         }
         await this.persist(this.settings)
@@ -1000,7 +1115,8 @@ export class ChannelSettingsStore {
       },
       wecom: settings.wecom,
       dingtalk: settings.dingtalk,
-      telegram: structuredClone(defaultStoredSettings.telegram)
+      telegram: structuredClone(defaultStoredSettings.telegram),
+      feishu: structuredClone(defaultStoredSettings.feishu)
     }
   }
 
@@ -1039,16 +1155,10 @@ export class ChannelSettingsStore {
         ...(owned && invalid ? { configurationError: 'Telegram 环境变量配置无效，请检查 Token、数字用户 ID 和私聊设置' } : {})
       }
     }
-    const prefix =
-      channel === 'wecom' ? 'GOODBUDDY_WECOM' : 'GOODBUDDY_DINGTALK'
-    const idName =
-      channel === 'wecom'
-        ? `${prefix}_BOT_ID`
-        : `${prefix}_CLIENT_ID`
-    const secretName =
-      channel === 'wecom'
-        ? `${prefix}_SECRET`
-        : `${prefix}_CLIENT_SECRET`
+    const meta = credentialChannelMeta[channel]
+    const prefix = meta.prefix
+    const idName = `${prefix}_${meta.idEnv}`
+    const secretName = `${prefix}_${meta.secretEnv}`
     const id = boundedEnvironmentValue(
       this.environment,
       idName,
@@ -1107,12 +1217,7 @@ export class ChannelSettingsStore {
       senders.value.length > 0
         ? {}
         : {
-            warning: {
-              code:
-                channel === 'wecom'
-                  ? 'channel-wecom-environment-invalid'
-                  : 'channel-dingtalk-environment-invalid'
-            }
+            warning: { code: meta.environmentWarning }
           })
     }
   }

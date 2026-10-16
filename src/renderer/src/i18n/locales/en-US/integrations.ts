@@ -18,7 +18,8 @@ export const integrations = {
       weixin: 'WeChat ClawBot',
       wecom: 'WeCom',
       dingtalk: 'DingTalk',
-      telegram: 'Telegram'
+      telegram: 'Telegram',
+      feishu: 'Feishu'
     },
     status: {
       disabled: 'Not enabled',
@@ -26,6 +27,14 @@ export const integrations = {
       starting: 'Connecting',
       running: 'Connected',
       error: 'Connection failed'
+    },
+    sections: {
+      ariaLabel: '{{channel}} settings sections',
+      connection: 'Connection',
+      messages: 'Messages',
+      tools: 'Tools',
+      messagesHelp: 'Who can send messages and whether group chats get replies.',
+      saveHelp: 'Changes on the Connection and Messages tabs are saved together. Tool switches apply immediately.'
     },
     project: {
       sectionAriaLabel: '{{name}} channel project settings',
@@ -69,12 +78,14 @@ export const integrations = {
     credential: {
       identifiers: {
         wecom: 'Bot ID',
-        dingtalk: 'Client ID'
+        dingtalk: 'Client ID',
+        feishu: 'App ID'
       },
       secrets: {
         wecom: 'Secret',
         dingtalk: 'Client Secret',
-        telegram: 'Bot Token'
+        telegram: 'Bot Token',
+        feishu: 'App Secret'
       },
       environmentSource: 'Provided by environment variables',
       secretSaved: 'Secret saved with encryption',
@@ -95,6 +106,19 @@ export const integrations = {
       groupMessages: 'Respond when mentioned in group chats',
       testing: 'Testing…',
       testConnection: 'Test {{channel}} connection'
+    },
+    feishu: {
+      domain: 'Edition',
+      domains: { feishu: 'Feishu (feishu.cn)', lark: 'Lark (larksuite.com)' },
+      setup: 'Create a custom app on the Feishu open platform, enable the Bot capability, subscribe to the im.message.receive_v1 event using the long connection, grant message sending permissions, and publish a version. Enter user open_ids (starting with ou_) as allowed senders.',
+      createApp: 'Create a Feishu app by scanning',
+      creating: 'Creating…',
+      qrInstructions: 'Scan the QR code with the Feishu mobile app and confirm creating the app. The App ID and App Secret are filled in automatically and the person who scanned is added as an allowed sender.',
+      qrExpires: 'The QR code expires at {{time}}',
+      cancel: 'Cancel',
+      created: 'Feishu app created.',
+      createdEnabled: 'Feishu app created and the message channel enabled. The person who scanned was added as an allowed sender.',
+      createFailed: 'Creating the app by scanning failed: {{message}}. Enter the credentials manually instead.'
     },
     telegram: {
       unconfigured: 'Not configured',
@@ -135,6 +159,7 @@ export const integrations = {
       accountFallback: 'WeChat account',
       bindingSaved: '{{account}} · Credentials saved with encryption',
       unbound: 'No personal WeChat account connected',
+      messagesHelp: 'Only messages from the connected personal WeChat account are processed.',
       enable: 'Enable the WeChat ClawBot channel',
       rebind: 'Reconnect',
       bind: 'Connect with QR code',
@@ -163,6 +188,107 @@ export const integrations = {
     loading: 'Loading message channel settings…',
     saving: 'Saving…',
     save: 'Save channel settings'
+  },
+  feishu: {
+    title: 'Feishu tools',
+    description: 'Read and write docs, wikis, drive, and Bitable as the Feishu app, matching the OpenClaw Feishu plugin tools.',
+    unavailable: 'This version does not provide the Feishu tool service',
+    loadError: 'Failed to load the Feishu tool status',
+    actionError: 'Failed to save Feishu tool settings',
+    loading: 'Loading Feishu tool status…',
+    ready: 'Credentials configured',
+    notConfigured: 'No credentials',
+    needsCredentials: 'Enter or create the App ID and App Secret above, then save.',
+    enable: 'Provide Feishu tools in conversations',
+    categoriesTitle: 'Tool categories',
+    identityHelp: 'Tools run as the Feishu app and only see knowledge spaces, folders, and documents shared with it. Wiki member search does not list apps: add the bot of this app to a Feishu group, then add that group as a wiki space member. For a single document, use "… › More › Add document app" in its top-right corner. Writes take effect immediately and cannot be undone by GoodBuddy.',
+    allowInMessageSessions: 'Allow message sessions to use Feishu tools',
+    allowInMessageSessionsHelp: 'Off by default. When on, requests arriving through message channels can also read and write the Feishu content the app can access.',
+    categories: {
+      doc: { label: 'Docs', description: 'Read, create, write, and append Feishu documents' },
+      wiki: { label: 'Wiki', description: 'Browse knowledge spaces; create, move, and rename nodes' },
+      drive: { label: 'Drive', description: 'List, move, and delete files; read and add comments' },
+      bitable: { label: 'Bitable', description: 'Read and write tables and records' },
+      perm: { label: 'Permissions', description: 'Add or remove file collaborators (sensitive, off by default)' },
+      scopes: { label: 'App scope check', description: 'List granted and pending API permissions of the app' }
+    },
+    panel: {
+      title: 'Feishu',
+      identity: 'Accessed as the Feishu app',
+      root: 'All spaces',
+      back: 'Back',
+      empty: 'Nothing here',
+      open: 'Open original',
+      use: 'Use in conversation',
+      useText: 'Please refer to the Feishu document “{{name}}” ({{url}})',
+      notReady: 'Feishu tools are not configured or are turned off.',
+      openSettings: 'Open application settings',
+      kinds: { space: 'Knowledge space', node: 'Wiki page', folder: 'Folder', file: 'File' }
+    }
+  },
+  wecom: {
+    title: 'WeCom tools',
+    description: 'Read and write WeCom documents, sheets, drive, calendar, meetings, and to-dos as the authorizing person, powered by the official wecom-cli.',
+    unavailable: 'This version does not provide the WeCom tool service',
+    loadError: 'Failed to load the WeCom tool status',
+    actionError: 'WeCom operation failed',
+    loading: 'Loading WeCom tool status…',
+    authorized: 'Authorized',
+    unauthorized: 'Not authorized',
+    unsupportedPlatform: 'This installation does not include the WeCom CLI (unsupported operating system or processor architecture).',
+    connectHelp: 'Scan with WeCom to create a personal smart bot. GoodBuddy can then access the documents and data you can access, as you. Credentials stay in a dedicated GoodBuddy folder.',
+    adminHelp: 'If scanning does nothing or reports missing permission, ask your administrator to allow creating smart bots, or enter the Bot ID and Secret of an existing bot.',
+    scan: 'Authorize by scanning',
+    preparing: 'Preparing…',
+    useChannelBot: 'Use the message channel bot',
+    manual: 'Enter Bot ID and Secret',
+    botId: 'Bot ID',
+    secret: 'Secret',
+    verify: 'Verify and save',
+    qrAlt: 'WeCom authorization QR code',
+    qrInstructions: 'Scan the QR code with WeCom and confirm creating the bot on your phone.',
+    qrExpires: 'The QR code expires at {{time}}',
+    cancelQr: 'Cancel scanning',
+    authorizedAs: 'Authorized with bot {{botId}}. Tools run as the person who scanned.',
+    authorizedHelp: 'Authorized. Tools run as the authorizing person.',
+    enable: 'Provide WeCom tools in conversations',
+    categoriesTitle: 'Tool categories',
+    categoriesHelp: 'GoodBuddy only runs commands in enabled categories. Writes take effect immediately and cannot be undone by GoodBuddy; use WeCom version history to restore.',
+    allowInMessageSessions: 'Allow message sessions to use WeCom tools',
+    allowInMessageSessionsHelp: 'Off by default. When on, requests arriving through message channels can also act on WeCom data as you. Enable only when the allowlist contains just you.',
+    disconnect: 'Disconnect and delete local credentials',
+    disconnectHelp: 'Deletes only the credentials in the dedicated GoodBuddy folder. Your own wecom-cli installation and the bot in WeCom are not affected.',
+    categories: {
+      doc: { label: 'Documents', description: 'Create, import, read, append to, or overwrite online documents' },
+      'doc-manage': { label: 'Document management', description: 'Search, rename, and manage members and join rules' },
+      sheet: { label: 'Sheets', description: 'Create, import, read, and write sheets; append rows; manage subsheets' },
+      smartsheet: { label: 'Smart sheets', description: 'Subsheets, fields, records, views, and charts' },
+      smartpage: { label: 'Smart pages', description: 'Create, read, and edit smart pages' },
+      pptx: { label: 'Online slides', description: 'Create and edit online slides; needs Python from the local tool environment' },
+      disk: { label: 'Drive', description: 'Search, upload, download, and manage drive files' },
+      media: { label: 'Media files', description: 'Upload and download media files' },
+      calendar: { label: 'Calendar', description: 'Manage events, free/busy, and meeting rooms' },
+      meeting: { label: 'Meetings', description: 'Book, cancel, and query meetings; read minutes' },
+      todo: { label: 'To-dos', description: 'Create, query, update, and complete to-dos' },
+      contact: { label: 'Contacts', description: 'Search members by name' },
+      email: { label: 'Mail', description: 'Search, read, send, reply to, and forward mail' },
+      message: { label: 'Messages', description: 'Send messages to recent chats as the bot' }
+    },
+    panel: {
+      title: 'WeCom',
+      identity: 'Accessed as the authorizing person',
+      search: 'Search WeCom documents',
+      searchPlaceholder: 'Type keywords and press Enter',
+      searching: 'Searching…',
+      empty: 'No matching documents',
+      initial: 'Search the WeCom documents you can access.',
+      open: 'Open original',
+      use: 'Use in conversation',
+      useText: 'Please refer to the WeCom document “{{name}}” ({{url}})',
+      notReady: 'WeCom tools are not authorized or are turned off.',
+      openSettings: 'Open application settings',
+      types: { doc: 'Document', sheet: 'Sheet', smartsheet: 'Smart sheet', smartpage: 'Smart page', other: 'Other' }
+    }
   },
   mcp: {
     obsidian: {

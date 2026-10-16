@@ -235,6 +235,14 @@ export const workspace = {
         label: 'Results',
         description: 'View generated or imported standalone results'
       },
+      wecom: {
+        label: 'WeCom',
+        description: 'Search WeCom documents and use them in the conversation'
+      },
+      feishu: {
+        label: 'Feishu',
+        description: 'Browse Feishu wikis and drive and use them in the conversation'
+      },
       terminal: {
         label: 'Terminal',
         description: 'Open a user terminal for the current project'

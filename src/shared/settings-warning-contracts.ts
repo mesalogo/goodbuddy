@@ -16,6 +16,8 @@ export const settingsWarningCodeSchema = z.enum([
   'channel-dingtalk-environment-invalid',
   'channel-wecom-credential-unreadable',
   'channel-dingtalk-credential-unreadable',
+  'channel-feishu-environment-invalid',
+  'channel-feishu-credential-unreadable',
   'channel-runtime-selections-repaired'
 ])
 

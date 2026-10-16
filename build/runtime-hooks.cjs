@@ -19,6 +19,7 @@ const {
 } = require("./opencode-config.cjs");
 const { npmInvocation } = require("./npm-invocation.cjs");
 const { prepareNativeDshResources } = require("./native-dsh-resources.cjs");
+const { prepareWecomResources } = require("./wecom-resources.cjs");
 
 const architectureNames = {
   1: "x64",
@@ -186,6 +187,7 @@ module.exports = async function prepareBundledRuntimes(context) {
   const packageName = `opencode-${packagePlatform}-${suffix}`;
   const projectDir = context.packager.projectDir;
   await prepareNativeDshResources(projectDir, platform, architecture, downloadPackage, lockedIntegrity);
+  await prepareWecomResources(projectDir, platform, architecture, downloadPackage);
   await prepareBundledOpenCodeConfig(projectDir);
   const projectPackage = JSON.parse(
     await readFile(join(projectDir, "package.json"), "utf8"),
@@ -282,3 +284,6 @@ module.exports = async function prepareBundledRuntimes(context) {
     ripgrepVersion,
   );
 };
+
+module.exports.downloadPackage = downloadPackage;
+module.exports.lockedIntegrity = lockedIntegrity;

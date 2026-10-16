@@ -4,7 +4,9 @@ import {
   ClipboardCheck,
   FolderTree,
   Globe2,
+  MessagesSquare,
   NotebookPen,
+  Send,
   SquareTerminal,
   X,
   type LucideIcon
@@ -35,7 +37,9 @@ const WORKBAR_APP_ICONS: Record<WorkbarAppId, LucideIcon> = {
   workspace: FolderTree,
   browser: Globe2,
   notes: NotebookPen,
-  terminal: SquareTerminal
+  terminal: SquareTerminal,
+  wecom: MessagesSquare,
+  feishu: Send
 }
 
 const DEFAULT_INSTANCE_IDS = {

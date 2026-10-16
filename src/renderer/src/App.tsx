@@ -1,4 +1,8 @@
 import { MagicNotesPanel } from './MagicNotesPanel';
+import { WecomWorkbarPanel } from './WecomWorkbarPanel';
+import { useWecomSnapshot } from './wecom-snapshot';
+import { FeishuWorkbarPanel } from './FeishuWorkbarPanel';
+import { useFeishuSnapshot } from './feishu-snapshot';
 import { AnchoredMenu } from './AnchoredMenu';
 import { useMagicNoteDraft } from './use-magic-note-draft';
 import type { MagicNoteSource } from '../../shared/magic-notes-contracts';
@@ -768,7 +772,7 @@ function isConversation(value: unknown): value is Conversation {
     (item.remote === undefined ||
       (typeof item.remote === "object" &&
         item.remote !== null &&
-        ["weixin", "wecom", "dingtalk", "telegram"].includes(
+        ["weixin", "wecom", "dingtalk", "telegram", "feishu"].includes(
           String((item.remote as Record<string, unknown>).channel),
         ))) &&
     typeof item.title === "string" &&
@@ -1340,7 +1344,7 @@ function App(): React.JSX.Element {
   const settingsOpenRef = useRef(false);
   const [settingsInitialCategory, setSettingsInitialCategory] =
     useState<SettingsCategoryId>();
-  const [settingsInitialChannel, setSettingsInitialChannel] =
+  const [applicationCenterChannel, setApplicationCenterChannel] =
     useState<ProjectChannel>();
   const settingsEntryFocusRef = useRef<HTMLElement | undefined>(undefined);
   const settingsExitFocusRef = useRef<HTMLElement | undefined>(undefined);
@@ -1351,6 +1355,10 @@ function App(): React.JSX.Element {
   const noteDraft = useMagicNoteDraft();
   const { guard: guardNoteDraft, setDraft: setNoteDraft } = noteDraft;
   const [notesOpenRequest, setNotesOpenRequest] = useState(0);
+  const [wecomOpenRequest, setWecomOpenRequest] = useState(0);
+  const [feishuOpenRequest, setFeishuOpenRequest] = useState(0);
+  const { snapshot: feishuSnapshot } = useFeishuSnapshot();
+  const { snapshot: wecomSnapshot } = useWecomSnapshot();
   const [notesNavigation, setNotesNavigation] = useState<{ noteId: string; entryId?: string; requestId: number }>();
   const [noteMessageNavigation, setNoteMessageNavigation] = useState<{ conversationId: string; messageId: string; requestId: number }>();
   const [noteCaptureLoading, setNoteCaptureLoading] = useState(false);
@@ -1380,7 +1388,6 @@ function App(): React.JSX.Element {
     settingsOpenRef.current = false;
     setSettingsOpen(false);
     setSettingsInitialCategory(undefined);
-    setSettingsInitialChannel(undefined);
     const now = Date.now();
     const runningConversationIds = new Set(
       [...activeRuns.current.values()].map((run) => run.conversationId),
@@ -6559,7 +6566,6 @@ function App(): React.JSX.Element {
     onSaved: (settings: RuntimeSettings) => {
       setRuntimeSettings(settings);
     },
-    onUpdateProject: updateProject,
   });
   const remoteHostsActions = useStableHandlers({
     onProjectsDeleted: removeProjectsFromUi,
@@ -6623,6 +6629,44 @@ function App(): React.JSX.Element {
       noteDraft,
       notesPanelActive,
     ],
+  );
+  const wecomAvailable = wecomSnapshot?.settings.enabled === true &&
+    wecomSnapshot.authorization.state === "authorized";
+  const openWecomSettings = useCallback((): void => {
+    setApplicationCenterChannel("wecom");
+    setApplicationCenterOpen(true);
+  }, []);
+  const wecomPanel = useMemo(
+    () => wecomAvailable ? (
+      <WecomWorkbarPanel
+        onOpenSettings={openWecomSettings}
+        onUseInConversation={(text) => {
+          setConversationInput(activeConversationIdRef.current, (current) =>
+            current.trim() ? `${current.trimEnd()}\n${text}` : text);
+          requestAnimationFrame(() => inputRef.current?.focus());
+        }}
+      />
+    ) : undefined,
+    [openWecomSettings, setConversationInput, wecomAvailable],
+  );
+  const feishuAvailable = feishuSnapshot?.settings.enabled === true &&
+    feishuSnapshot.credentialsConfigured;
+  const openFeishuSettings = useCallback((): void => {
+    setApplicationCenterChannel("feishu");
+    setApplicationCenterOpen(true);
+  }, []);
+  const feishuPanel = useMemo(
+    () => feishuAvailable ? (
+      <FeishuWorkbarPanel
+        onOpenSettings={openFeishuSettings}
+        onUseInConversation={(text) => {
+          setConversationInput(activeConversationIdRef.current, (current) =>
+            current.trim() ? `${current.trimEnd()}\n${text}` : text);
+          requestAnimationFrame(() => inputRef.current?.focus());
+        }}
+      />
+    ) : undefined,
+    [feishuAvailable, openFeishuSettings, setConversationInput],
   );
   const statsConversationId = statsConversation?.id;
   const statsDurationMs = executionStats.conversation?.durationMs;
@@ -7132,11 +7176,10 @@ function App(): React.JSX.Element {
                               <button
                                 className="secondary-button"
                                 onClick={() => {
-                                  setSettingsInitialCategory("channels");
-                                  setSettingsInitialChannel(
+                                  setApplicationCenterChannel(
                                     activeProject.channel,
                                   );
-                                  setView("settings");
+                                  setApplicationCenterOpen(true);
                                 }}
                                 type="button"
                               >
@@ -7408,15 +7451,55 @@ function App(): React.JSX.Element {
                 pending={applicationSettingsPending}
                 locked={applicationSettingsUnconfirmed}
                 error={applicationSettingsError}
-                onClose={() => setApplicationCenterOpen(false)}
+                onClose={() => {
+                  setApplicationCenterOpen(false);
+                  setApplicationCenterChannel(undefined);
+                }}
                 onOpen={(id) => {
                   if (!isApplicationOpenable(applicationSettings, id)) return;
                   setApplicationCenterOpen(false);
+                  setApplicationCenterChannel(undefined);
                   setView(id);
                   if (window.innerWidth < 900) setSidebarOpen(false);
                 }}
                 onUpdate={updateApplicationSettings}
                 onRetry={() => void reloadApplicationSettings()}
+                platform={{
+                  projects,
+                  initialChannel: applicationCenterChannel,
+                  onNotify: notify,
+                  onUpdateProject: updateProject,
+                  onOpenChannel: (channel) => {
+                    if (channel === "feishu" && feishuAvailable) {
+                      setApplicationCenterOpen(false);
+                      setApplicationCenterChannel(undefined);
+                      requestWorkspaceLeave("chat", () => {
+                        commitView("chat");
+                        setAssistantSidebarOpen(true);
+                        setFeishuOpenRequest((value) => value + 1);
+                      });
+                      return;
+                    }
+                    if (channel === "wecom" && wecomAvailable) {
+                      setApplicationCenterOpen(false);
+                      setApplicationCenterChannel(undefined);
+                      requestWorkspaceLeave("chat", () => {
+                        commitView("chat");
+                        setAssistantSidebarOpen(true);
+                        setWecomOpenRequest((value) => value + 1);
+                      });
+                      return;
+                    }
+                    const channelProject = projects.find(
+                      (candidate) => candidate.kind === "channel" && candidate.channel === channel,
+                    );
+                    if (!channelProject) return;
+                    setApplicationCenterOpen(false);
+                    setApplicationCenterChannel(undefined);
+                    requestWorkspaceLeave("chat", () => selectProject(channelProject.id));
+                    if (window.innerWidth < 900) setSidebarOpen(false);
+                  },
+                }}
               />
             )}
             {applicationMenuOpen && (
@@ -7462,7 +7545,6 @@ function App(): React.JSX.Element {
                       }
                       brandingPreferences={brandingPreferences}
                       initialCategory={settingsInitialCategory}
-                      initialChannel={settingsInitialChannel}
                       magicNotesEnabled={magicNotesEnabled}
                       onConversationHtmlRenderingEnabledChange={
                         setConversationHtmlRenderingEnabled
@@ -7472,7 +7554,6 @@ function App(): React.JSX.Element {
                       onLeaveRequestReady={registerSettingsLeaveRequester}
                       onShortcutSettingsChanged={handleShortcutSettingsChanged}
                       open={settingsOpen}
-                      projects={projects}
                     />
                   </Suspense>
                 </RouteErrorBoundary>
@@ -7640,6 +7721,10 @@ function App(): React.JSX.Element {
             notesSettingsReady={Boolean(applicationSettings)}
             notesOpenRequest={notesOpenRequest}
             notesPanel={notesPanel}
+            wecomPanel={wecomPanel}
+            wecomOpenRequest={wecomOpenRequest}
+            feishuPanel={feishuPanel}
+            feishuOpenRequest={feishuOpenRequest}
             nativeTerminals={nativeTerminals}
             activeConversationId={activeId}
             conversationStats={conversationStats}

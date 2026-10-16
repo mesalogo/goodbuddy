@@ -24,7 +24,9 @@ export const workbarAppIdSchema = z.enum([
   'workspace',
   'browser',
   'notes',
-  'terminal'
+  'terminal',
+  'wecom',
+  'feishu'
 ])
 export type WorkbarAppId = z.infer<typeof workbarAppIdSchema>
 
@@ -165,6 +167,34 @@ export const WORKBAR_APP_DEFINITIONS = [
     closable: true,
     reorderable: true,
     availability: { state: 'available' }
+  },
+  {
+    id: 'wecom',
+    visibleAcrossContextSwitches: true,
+    label: '企业微信',
+    icon: 'wecom',
+    description: '搜索企业微信文档并用于当前对话。',
+    instancePolicy: 'single',
+    defaultContext: 'application',
+    defaultOpen: false,
+    required: false,
+    closable: true,
+    reorderable: true,
+    availability: { state: 'available' }
+  },
+  {
+    id: 'feishu',
+    visibleAcrossContextSwitches: true,
+    label: '飞书',
+    icon: 'feishu',
+    description: '浏览飞书知识库和云空间并用于当前对话。',
+    instancePolicy: 'single',
+    defaultContext: 'application',
+    defaultOpen: false,
+    required: false,
+    closable: true,
+    reorderable: true,
+    availability: { state: 'available' }
   }
 ] as const satisfies readonly WorkbarAppDefinition[]
 
@@ -205,8 +235,8 @@ export const workbarTabInstanceSchema = z
   })
   .strict()
   .superRefine((instance, context) => {
-    if (instance.appId === 'notes' && instance.targetRef) {
-      context.addIssue({ code: 'custom', path: ['targetRef'], message: 'Notes are application scoped and do not accept target bindings' })
+    if ((instance.appId === 'notes' || instance.appId === 'wecom' || instance.appId === 'feishu') && instance.targetRef) {
+      context.addIssue({ code: 'custom', path: ['targetRef'], message: 'Application scoped panels do not accept target bindings' })
     }
     if (
       instance.appId === 'terminal' &&

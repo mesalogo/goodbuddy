@@ -56,7 +56,8 @@ describe('parseRemoteChannelPrompt', () => {
       weixin: '微信 ClawBot',
       wecom: '企业微信',
       dingtalk: '钉钉',
-      telegram: 'Telegram'
+      telegram: 'Telegram',
+      feishu: '飞书'
     })
   })
 })

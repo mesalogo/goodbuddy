@@ -5,8 +5,6 @@ import {
   Gauge,
   Info,
   Palette,
-  Radio,
-
   SlidersHorizontal,
   Terminal,
   Users,
@@ -51,12 +49,7 @@ export const settingsCategoryList = [
     translationKey: 'documentParsing',
     icon: FileText
   },
-  {
-    id: 'channels',
-    group: 'extensions',
-    translationKey: 'channels',
-    icon: Radio
-  },
+
   {
     id: 'roles',
     group: 'extensions',

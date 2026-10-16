@@ -44,6 +44,8 @@ import {
   type WindowCaptureOption
 } from '../shared/contracts'
 import { ipcChannels } from '../shared/ipc-channels'
+import type { WecomSnapshot } from '../shared/wecom-contracts'
+import type { FeishuSnapshot } from '../shared/feishu-contracts'
 import type {
   BrowserProfileCreateInput,
   BrowserProfileRenameInput,
@@ -648,7 +650,7 @@ const desktopApi: DesktopApi = {
       ) as Promise<ChannelSettingsSnapshot>,
     testConnection: (
       channel: CredentialChannel,
-      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
+      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput | import('../shared/channel-settings-contracts').FeiShuChannelSettingsInput
     ) =>
       ipcRenderer.invoke(ipcChannels.channelSettingsTest, {
         channel,
@@ -823,6 +825,33 @@ const desktopApi: DesktopApi = {
     getCatalog: () => ipcRenderer.invoke(ipcChannels.sharingCatalog),
     publish: input => ipcRenderer.invoke(ipcChannels.sharingPublish, input),
     revoke: id => ipcRenderer.invoke(ipcChannels.sharingRevoke, id)
+  },
+  wecom: {
+    getSnapshot: () => ipcRenderer.invoke(ipcChannels.wecomSnapshot),
+    updateSettings: input => ipcRenderer.invoke(ipcChannels.wecomUpdateSettings, input),
+    startQrAuthorization: () => ipcRenderer.invoke(ipcChannels.wecomStartQr),
+    cancelQrAuthorization: () => ipcRenderer.invoke(ipcChannels.wecomCancelQr),
+    authorizeManually: input => ipcRenderer.invoke(ipcChannels.wecomAuthorizeManual, input),
+    authorizeWithChannelBot: () => ipcRenderer.invoke(ipcChannels.wecomAuthorizeChannelBot),
+    disconnect: () => ipcRenderer.invoke(ipcChannels.wecomDisconnect),
+    searchDocuments: input => ipcRenderer.invoke(ipcChannels.wecomSearchDocuments, input),
+    onChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: WecomSnapshot): void => listener(snapshot)
+      ipcRenderer.on(ipcChannels.wecomChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.wecomChanged, handler)
+    }
+  },
+  feishu: {
+    getSnapshot: () => ipcRenderer.invoke(ipcChannels.feishuSnapshot),
+    updateSettings: input => ipcRenderer.invoke(ipcChannels.feishuUpdateSettings, input),
+    startRegistration: domain => ipcRenderer.invoke(ipcChannels.feishuStartRegistration, domain),
+    cancelRegistration: () => ipcRenderer.invoke(ipcChannels.feishuCancelRegistration),
+    browse: input => ipcRenderer.invoke(ipcChannels.feishuBrowse, input),
+    onChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: FeishuSnapshot): void => listener(snapshot)
+      ipcRenderer.on(ipcChannels.feishuChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.feishuChanged, handler)
+    }
   },
   speechModels: {
     getSnapshot: () =>

@@ -16,7 +16,8 @@ const snapshot: ChannelSettingsSnapshot = {
   weixin: { enabled: false, bindingConfigured: false, source: 'none', status: { state: 'disabled' } },
   wecom: { ...credential, botId: 'test-bot' },
   dingtalk: { ...credential, clientId: 'test-client' },
-  telegram: credential
+  telegram: credential,
+  feishu: { ...credential, appId: 'cli_app', domain: 'feishu' }
 }
 
 describe('channel status store', () => {

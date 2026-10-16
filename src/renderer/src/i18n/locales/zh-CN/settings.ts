@@ -61,11 +61,7 @@ export const settings = {
       description:
         '管理 SSH 主机、固定主机密钥并验证远端执行环境；本机配置的 Skills 和 MCP 不会应用于远程主机'
     },
-    channels: {
-      label: '消息通道',
-      navigationDescription: '微信、企业微信与钉钉',
-      description: '配置连接、工作目录与消息处理后端'
-    },
+
     roles: {
       label: '角色与提示词',
       navigationDescription: '角色、说明与系统提示词',

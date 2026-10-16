@@ -229,6 +229,14 @@ export const workspace = {
         label: '成果',
         description: '查看生成或手动导入的独立成果'
       },
+      wecom: {
+        label: '企业微信',
+        description: '搜索企业微信文档并用于当前对话'
+      },
+      feishu: {
+        label: '飞书',
+        description: '浏览飞书知识库和云空间并用于当前对话'
+      },
       terminal: {
         label: '终端',
         description: '打开当前项目的用户终端'

@@ -158,6 +158,17 @@ describe('channel settings contracts', () => {
           state: 'error',
           lastError: '连接失败'
         }
+      },
+      feishu: {
+        enabled: false,
+        appId: '',
+        domain: 'feishu',
+        secretConfigured: false,
+        source: 'none',
+        readOnly: false,
+        allowedSenderIds: [],
+        allowGroupMessages: false,
+        status: { state: 'disabled' }
       }
     })
     expect(JSON.stringify(snapshot)).not.toContain('secret":')

@@ -1765,6 +1765,8 @@ export type KnowledgeSearchReference = {
 
 export type DesktopApi = {
   sharing: import('./device-sharing-contracts').DeviceSharingApi
+  wecom?: import('./wecom-contracts').WecomApi
+  feishu?: import('./feishu-contracts').FeishuApiBridge
   openRuntimeNativeClient: (input: import('./runtime-native-client-contracts').RuntimeNativeClientInput) => Promise<import('./runtime-native-client-contracts').RuntimeNativeClientResult>
   getRuntimeNativeClient: (input: import('./runtime-native-client-contracts').RuntimeNativeClientInput) => Promise<import('./runtime-native-client-contracts').RuntimeNativeClientService | null>
   stopRuntimeNativeClient: (input: import('./runtime-native-client-contracts').RuntimeNativeClientService) => Promise<void>
@@ -1916,7 +1918,7 @@ export type DesktopApi = {
     apply: (input: ChannelSettingsApply) => Promise<ChannelSettingsSnapshot>
     testConnection: (
       channel: CredentialChannel,
-      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput
+      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput | import('./channel-settings-contracts').FeiShuChannelSettingsInput
     ) => Promise<ChannelConnectionTestResult>
     getWeixinBinding: () => Promise<WeixinBindingSnapshot>
     startWeixinBinding: () => Promise<WeixinBindingSnapshot>

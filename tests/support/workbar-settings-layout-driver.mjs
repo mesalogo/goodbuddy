@@ -189,7 +189,7 @@ app.whenReady().then(async () => {
             font: getComputedStyle(nav.querySelector('strong')).fontSize };
         })()`)
         assert.deepEqual(navigation.ids, ['appearance', 'platform-features', 'model', 'context-control', 'runtime',
-          'document-parsing', 'channels', 'roles', 'capabilities', 'about'].map(id => `settings-tab-${id}`))
+          'document-parsing', 'roles', 'capabilities', 'about'].map(id => `settings-tab-${id}`))
         assert.equal(navigation.groups, 4)
         assert.equal(navigation.descriptions, 0)
         assert.equal(navigation.font, '13px')

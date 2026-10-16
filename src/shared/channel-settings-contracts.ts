@@ -15,7 +15,7 @@ export const CHANNEL_SETTINGS_LIMITS = {
 
 export const managedChannelSchema = projectChannelSchema
 export type ManagedChannel = ProjectChannel
-export const credentialChannelSchema = z.enum(['wecom', 'dingtalk', 'telegram'])
+export const credentialChannelSchema = z.enum(['wecom', 'dingtalk', 'telegram', 'feishu'])
 export type CredentialChannel = z.infer<
   typeof credentialChannelSchema
 >
@@ -82,6 +82,20 @@ export type DingTalkChannelSettingsInput = z.infer<
   typeof dingTalkChannelSettingsInputSchema
 >
 
+export const feishuDomainSchema = z.enum(['feishu', 'lark'])
+export type FeishuDomain = z.infer<typeof feishuDomainSchema>
+
+export const feiShuChannelSettingsInputSchema = z
+  .object({
+    ...editableChannelFields,
+    appId: identifierSchema,
+    domain: feishuDomainSchema
+  })
+  .strict()
+export type FeiShuChannelSettingsInput = z.infer<
+  typeof feiShuChannelSettingsInputSchema
+>
+
 export const telegramChannelSettingsInputSchema = z.object({
   ...editableChannelFields,
   allowedSenderIds: telegramAllowedSenderIdsSchema,
@@ -105,7 +119,8 @@ export const channelSettingsApplySchema = z
     weixin: weixinChannelSettingsInputSchema.optional(),
     wecom: weComChannelSettingsInputSchema.optional(),
     dingtalk: dingTalkChannelSettingsInputSchema.optional(),
-    telegram: telegramChannelSettingsInputSchema.optional()
+    telegram: telegramChannelSettingsInputSchema.optional(),
+    feishu: feiShuChannelSettingsInputSchema.optional()
   })
   .strict()
   .refine(
@@ -113,7 +128,8 @@ export const channelSettingsApplySchema = z
       input.weixin !== undefined ||
       input.wecom !== undefined ||
       input.dingtalk !== undefined ||
-      input.telegram !== undefined,
+      input.telegram !== undefined ||
+      input.feishu !== undefined,
     '至少需要提供一个通道设置'
   )
 export type ChannelSettingsApply = z.infer<
@@ -194,6 +210,15 @@ export type DingTalkChannelSettings = z.infer<
   typeof dingTalkChannelSettingsSchema
 >
 
+export const feiShuChannelSettingsSchema = z
+  .object({
+    ...publicChannelFields,
+    appId: identifierSchema,
+    domain: feishuDomainSchema
+  })
+  .strict()
+export type FeiShuChannelSettings = z.infer<typeof feiShuChannelSettingsSchema>
+
 export const telegramChannelSettingsSchema = z.object({
   ...publicChannelFields,
   allowedSenderIds: telegramAllowedSenderIdsSchema,
@@ -220,6 +245,7 @@ export const channelSettingsSnapshotSchema = z
     wecom: weComChannelSettingsSchema,
     dingtalk: dingTalkChannelSettingsSchema,
     telegram: telegramChannelSettingsSchema,
+    feishu: feiShuChannelSettingsSchema,
     warnings: settingsWarningsSchema.optional()
   })
   .strict()

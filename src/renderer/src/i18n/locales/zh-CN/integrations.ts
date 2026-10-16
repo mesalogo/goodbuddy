@@ -15,7 +15,8 @@ export const integrations = {
       weixin: '微信 ClawBot',
       wecom: '企业微信',
       dingtalk: '钉钉',
-      telegram: 'Telegram'
+      telegram: 'Telegram',
+      feishu: '飞书'
     },
     status: {
       disabled: '未启用',
@@ -23,6 +24,14 @@ export const integrations = {
       starting: '正在连接',
       running: '已连接',
       error: '连接失败'
+    },
+    sections: {
+      ariaLabel: '{{channel}} 设置分类',
+      connection: '连接',
+      messages: '消息',
+      tools: '工具',
+      messagesHelp: '谁能发消息、群聊是否响应。',
+      saveHelp: '“连接”和“消息”两页的修改一起保存。工具开关即时生效。'
     },
     project: {
       sectionAriaLabel: '{{name}} 通道项目设置',
@@ -60,12 +69,14 @@ export const integrations = {
     credential: {
       identifiers: {
         wecom: '机器人 ID',
-        dingtalk: 'Client ID'
+        dingtalk: 'Client ID',
+        feishu: 'App ID'
       },
       secrets: {
         wecom: 'Secret',
         dingtalk: 'Client Secret',
-        telegram: 'Bot Token'
+        telegram: 'Bot Token',
+        feishu: 'App Secret'
       },
       environmentSource: '由环境变量提供',
       secretSaved: 'Secret 已加密保存',
@@ -86,6 +97,19 @@ export const integrations = {
       groupMessages: '允许群聊中被提及时响应',
       testing: '正在测试…',
       testConnection: '测试{{channel}}连接'
+    },
+    feishu: {
+      domain: '版本',
+      domains: { feishu: '飞书（feishu.cn）', lark: 'Lark 国际版（larksuite.com）' },
+      setup: '在飞书开放平台创建企业自建应用，开启“机器人”能力，订阅“接收消息 im.message.receive_v1”事件并选择“使用长连接接收事件”，开通发消息权限后发布版本。允许的发送者填写用户的 open_id（ou_ 开头）。',
+      createApp: '扫码创建飞书应用',
+      creating: '正在创建…',
+      qrInstructions: '请用飞书手机端扫描二维码并确认创建应用。创建完成后 App ID 和 App Secret 会自动填入，扫码人会加入允许的发送者。',
+      qrExpires: '二维码将在 {{time}} 过期',
+      cancel: '取消',
+      created: '已创建飞书应用',
+      createdEnabled: '已创建飞书应用并启用消息通道，扫码人已加入允许的发送者',
+      createFailed: '扫码创建应用失败：{{message}}，请改为手动填写'
     },
     telegram: {
       unconfigured: '未配置',
@@ -126,6 +150,7 @@ export const integrations = {
       accountFallback: '微信账号',
       bindingSaved: '{{account}} · 凭据已加密保存',
       unbound: '尚未绑定个人微信',
+      messagesHelp: '只处理已绑定的本人微信发来的消息。',
       enable: '启用微信 ClawBot 通道',
       rebind: '重新绑定',
       bind: '扫码绑定',
@@ -152,6 +177,107 @@ export const integrations = {
     loading: '正在读取消息通道设置…',
     saving: '保存中…',
     save: '保存通道设置'
+  },
+  feishu: {
+    title: '飞书工具',
+    description: '以飞书应用身份读写文档、知识库、云空间和多维表格，与 OpenClaw 飞书插件的工具一致。',
+    unavailable: '当前版本未提供飞书工具服务',
+    loadError: '读取飞书工具状态失败',
+    actionError: '飞书工具设置保存失败',
+    loading: '正在读取飞书工具状态…',
+    ready: '凭据已配置',
+    notConfigured: '未配置凭据',
+    needsCredentials: '先在上方填写或扫码创建 App ID 和 App Secret 并保存。',
+    enable: '在对话中提供飞书工具',
+    categoriesTitle: '工具类别',
+    identityHelp: '工具以飞书应用身份运行，只能访问共享给该应用的知识空间、文件夹和文档。知识空间成员里搜不到应用：先把本应用的机器人拉进一个飞书群，再把这个群添加为知识空间成员；单个文档可在右上角“… › 更多 › 添加文档应用”中添加。写入立即生效，GoodBuddy 无法撤销。',
+    allowInMessageSessions: '允许消息会话使用飞书工具',
+    allowInMessageSessionsHelp: '默认关闭。开启后，通过消息通道发来的请求也能读写该应用可访问的飞书内容。',
+    categories: {
+      doc: { label: '文档', description: '读取、创建、写入和追加飞书文档' },
+      wiki: { label: '知识库', description: '浏览知识空间，创建、移动和重命名节点' },
+      drive: { label: '云空间', description: '列出、移动、删除文件，读写评论' },
+      bitable: { label: '多维表格', description: '读写数据表和记录' },
+      perm: { label: '权限管理', description: '添加或移除文件协作者（敏感，默认关闭）' },
+      scopes: { label: '应用权限自检', description: '列出应用已开通和待开通的接口权限' }
+    },
+    panel: {
+      title: '飞书',
+      identity: '以飞书应用身份访问',
+      root: '全部空间',
+      back: '返回上一级',
+      empty: '这里没有内容',
+      open: '打开原文',
+      use: '用于当前对话',
+      useText: '请参考飞书文档「{{name}}」（{{url}}）',
+      notReady: '飞书工具尚未配置或已关闭。',
+      openSettings: '打开应用设置',
+      kinds: { space: '知识空间', node: '知识库页面', folder: '文件夹', file: '文件' }
+    }
+  },
+  wecom: {
+    title: '企业微信工具',
+    description: '以授权人本人身份读写企业微信文档、表格、微盘、日程、会议和待办，由官方 wecom-cli 提供。',
+    unavailable: '当前版本未提供企业微信工具服务',
+    loadError: '读取企业微信工具状态失败',
+    actionError: '企业微信操作失败',
+    loading: '正在读取企业微信工具状态…',
+    authorized: '已授权',
+    unauthorized: '未授权',
+    unsupportedPlatform: '当前安装包没有内置企业微信 CLI（不支持此操作系统或处理器架构）。',
+    connectHelp: '用企业微信扫码创建个人智能机器人后，GoodBuddy 即可以你本人的身份访问你有权限的文档和数据。凭据只保存在 GoodBuddy 的专用目录中。',
+    adminHelp: '扫码没有反应或提示无权限时，请联系企业管理员开放“智能机器人”创建权限，或改为填写已有机器人的 Bot ID 和 Secret。',
+    scan: '扫码授权',
+    preparing: '正在准备…',
+    useChannelBot: '使用消息通道的机器人',
+    manual: '填写 Bot ID 和 Secret',
+    botId: 'Bot ID',
+    secret: 'Secret',
+    verify: '验证并保存',
+    qrAlt: '企业微信授权二维码',
+    qrInstructions: '请用企业微信扫描二维码，并在手机上确认创建机器人。',
+    qrExpires: '二维码将在 {{time}} 过期',
+    cancelQr: '取消扫码',
+    authorizedAs: '已授权，机器人 {{botId}}。工具以扫码授权人本人的身份运行。',
+    authorizedHelp: '已授权。工具以授权人本人的身份运行。',
+    enable: '在对话中提供企业微信工具',
+    categoriesTitle: '工具类别',
+    categoriesHelp: 'GoodBuddy 只执行已开启类别的命令。写入会立即生效，无法由 GoodBuddy 撤销，可在企业微信的版本历史中恢复。',
+    allowInMessageSessions: '允许消息会话使用企业微信工具',
+    allowInMessageSessionsHelp: '默认关闭。开启后，通过消息通道发来的请求也能以你的身份操作企业微信数据，请只在白名单仅包含你本人时开启。',
+    disconnect: '断开并删除本机凭据',
+    disconnectHelp: '只删除 GoodBuddy 专用目录中的凭据，不影响你自己安装的 wecom-cli，也不会删除企业微信中的机器人。',
+    categories: {
+      doc: { label: '文档', description: '新建、导入、读取、追加或覆盖在线文档' },
+      'doc-manage': { label: '文档管理', description: '搜索文档，重命名，管理成员权限和加入规则' },
+      sheet: { label: '在线表格', description: '新建、导入、读写表格，追加行，管理子表' },
+      smartsheet: { label: '智能表格', description: '子表、字段、记录、视图和图表' },
+      smartpage: { label: '智能文档', description: '新建、读取和编辑智能文档' },
+      pptx: { label: '在线 PPT', description: '生成和编辑在线幻灯片，需要本机工具环境中的 Python' },
+      disk: { label: '微盘', description: '搜索、上传、下载和管理微盘文件' },
+      media: { label: '媒体文件', description: '上传和下载媒体文件' },
+      calendar: { label: '日程', description: '日程增删改查、闲忙和会议室' },
+      meeting: { label: '会议', description: '预约、取消、查询会议和读取纪要' },
+      todo: { label: '待办', description: '创建、查询、更新和完成待办' },
+      contact: { label: '通讯录', description: '按姓名搜索成员' },
+      email: { label: '邮件', description: '搜索、读取、发送、回复和转发邮件' },
+      message: { label: '消息', description: '以机器人身份向最近会话主动发消息' }
+    },
+    panel: {
+      title: '企业微信',
+      identity: '以授权人本人身份访问',
+      search: '搜索企业微信文档',
+      searchPlaceholder: '输入关键词后回车',
+      searching: '正在搜索…',
+      empty: '没有找到匹配的文档',
+      initial: '搜索你有权限访问的企业微信文档。',
+      open: '打开原文',
+      use: '用于当前对话',
+      useText: '请参考企业微信文档「{{name}}」（{{url}}）',
+      notReady: '企业微信工具尚未授权或已关闭。',
+      openSettings: '打开应用设置',
+      types: { doc: '文档', sheet: '表格', smartsheet: '智能表格', smartpage: '智能文档', other: '其他' }
+    }
   },
   mcp: {
     obsidian: {

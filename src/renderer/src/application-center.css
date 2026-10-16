@@ -1,7 +1,18 @@
-.settings-backdrop .settings-panel.application-center {
+.settings-backdrop .settings-panel.application-center:not(.application-center--detail) {
   width: min(640px, calc(100vw - 2 * var(--space-4)));
   height: auto;
   max-height: calc(100vh - 2 * var(--space-4));
+}
+/* Application settings use the same frame as the system settings dialog. */
+.application-center__detail-content {
+  gap: var(--space-4);
+}
+.application-center__detail-content > .settings-category-header {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.application-center__detail .settings-tabs button > svg {
+  margin-top: 2px;
 }
 
 .application-center .settings-panel__header {
@@ -231,4 +242,42 @@
   flex: 0 0 1px;
   height: var(--space-6);
   background: var(--border-default);
+}
+.application-center__group {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-default);
+}
+.application-center__group > h2 {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  font-weight: 600;
+}
+.channel-application-settings {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.channel-application-settings__panel {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.channel-application-settings__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+.channel-application-settings__actions > small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+.channel-application-settings__actions > .primary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }

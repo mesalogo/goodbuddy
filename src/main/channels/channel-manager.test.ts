@@ -137,7 +137,8 @@ describe('ChannelManager', () => {
       { channel: 'weixin', status: { state: 'disabled' } },
       { channel: 'wecom', status: { state: 'disabled' } },
       { channel: 'dingtalk', status: { state: 'disabled' } },
-      { channel: 'telegram', status: { state: 'starting' } }
+      { channel: 'telegram', status: { state: 'starting' } },
+      { channel: 'feishu', status: { state: 'disabled' } }
     ])
     changes.length = 0
     callbacks[0]!({ state: 'running' })

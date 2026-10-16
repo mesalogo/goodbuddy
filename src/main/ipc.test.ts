@@ -5505,7 +5505,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     nativeClientCoordinator?: Parameters<typeof registerIpcHandlers>[44],
     nativeTerminalManager?: Parameters<typeof registerIpcHandlers>[40],
     applicationSettingsStore?: ApplicationSettingsStore,
-    channelSettingsStore?: ChannelSettingsStore
+    channelSettingsStore?: ChannelSettingsStore,
+    wecomService?: Parameters<typeof registerIpcHandlers>[46]
   ) {
     runtime.getStatus ??= vi.fn(async () => ({
       id: runtime.runtimeId ?? 'model', available: true,
@@ -5754,6 +5755,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     args[40] = nativeTerminalManager
     if (applicationSettingsStore) args[14] = applicationSettingsStore
     args[13] = channelSettingsStore
+    args[46] = wecomService
     runtimeFactoryMocks.createModelProfileRuntime.mockReturnValue(runtime)
     const dispose = registerIpcHandlers(...args)
     return {
@@ -10770,6 +10772,46 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   )
 
+  it('grants enabled WeCom categories to desktop requests and instructs the model', async () => {
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'wecom-capability'),
+      getAvailableToolNames: vi.fn(() => ['wecom_guide', 'wecom_cli']),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    let receivedRequest: { trustedInstructions?: string; knowledgeCapabilityToken?: string } | undefined
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string; trustedInstructions?: string; knowledgeCapabilityToken?: string }) {
+        receivedRequest = request
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const wecomService = {
+      getEnabledCategories: vi.fn(async () => ['doc-manage', 'todo'] as const),
+      getSettings: vi.fn(async () => ({ allowInMessageSessions: false }))
+    }
+    const harness = createHarness(runtime, undefined, undefined, false, undefined, undefined, knowledgeGateway,
+      false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, wecomService as never)
+    const requestId = '00000000-0000-4000-8000-000000000124'
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId, conversationId: 'wecom-desktop', prompt: '搜索周报', knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
+    expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+      requestId, [], expect.any(AbortSignal), 'none', undefined,
+      undefined, undefined, undefined, undefined, undefined, { categories: ['doc-manage', 'todo'] }
+    )
+    expect(receivedRequest?.knowledgeCapabilityToken).toBe('wecom-capability')
+    expect(receivedRequest?.trustedInstructions).toContain('wecom_guide')
+    expect(wecomService.getSettings).not.toHaveBeenCalled()
+    await harness.dispose()
+  })
+
   it('accepts an authorized knowledge library after the first 100 entries', async () => {
     const libraries = Array.from({ length: 101 }, (_, index) => ({
       id: `00000000-0000-4000-8000-${index
@@ -12781,6 +12823,55 @@ describe('registerIpcHandlers agent terminal state', () => {
       await harness.dispose()
     }
   )
+
+  it.each([false, true])('grants WeCom tools to channel requests only when allowed (allowed=%s)', async (allowInMessageSessions) => {
+    const runtime = {
+      capability: 'chat',
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn<KnowledgeGrantMock>(() => 'channel-wecom-capability'),
+      getAvailableToolNames: vi.fn(() => ['wecom_guide', 'wecom_cli']),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const wecomService = {
+      getEnabledCategories: vi.fn(async () => ['doc'] as const),
+      getSettings: vi.fn(async () => ({ allowInMessageSessions }))
+    }
+    const harness = createHarness(runtime, undefined, undefined, false, undefined, undefined, knowledgeGateway,
+      false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, wecomService as never)
+    vi.mocked(harness.assistantDatabase.listProjects).mockReturnValue([{
+      id: '00000000-0000-4000-8000-000000000402',
+      name: '企业微信',
+      description: '企业微信远程消息与受控任务',
+      rootPath: 'C:\\ProjectWorkspace',
+      executionSpace: { kind: 'local', rootPath: 'C:\\ProjectWorkspace' },
+      runtimeSelection: { provider: 'model', model: { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000001' } },
+      kind: 'channel',
+      channel: 'wecom',
+      status: 'active',
+      createdAt: '2026-08-04T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:00.000Z'
+    }])
+    await expect(channelMocks.executor!({
+      channel: 'wecom', eventId: `event-wecom-tools-${allowInMessageSessions}`, senderId: 'user-1',
+      conversationId: `conversation-wecom-tools-${allowInMessageSessions}`, conversationType: 'direct',
+      text: '搜索周报', mentioned: false
+    }, new AbortController().signal)).resolves.toMatchObject({ status: 'completed' })
+    if (allowInMessageSessions) {
+      expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+        expect.any(String), [], expect.any(AbortSignal), 'none', undefined,
+        undefined, undefined, undefined, undefined, undefined, { categories: ['doc'] })
+    } else {
+      expect(knowledgeGateway.grant).not.toHaveBeenCalled()
+      expect(wecomService.getEnabledCategories).not.toHaveBeenCalled()
+    }
+    await harness.dispose()
+  })
 
   it('persists remote media and passes it through the existing context path', async () => {
     let receivedRequest:

@@ -32,6 +32,10 @@ export const warnings = {
     'The WeCom Secret cannot be read. Re-enter or clear this credential.',
   'channel-dingtalk-credential-unreadable':
     'The DingTalk Client Secret cannot be read. Re-enter or clear this credential.',
+  'channel-feishu-environment-invalid':
+    'The Feishu environment configuration is invalid or incomplete, so the channel remains off.',
+  'channel-feishu-credential-unreadable':
+    'The Feishu App Secret cannot be read. Re-enter or clear this credential.',
   'channel-telegram-environment-invalid':
     'The Telegram environment configuration is invalid or incomplete, so the channel remains off.',
   'channel-telegram-credential-unreadable':

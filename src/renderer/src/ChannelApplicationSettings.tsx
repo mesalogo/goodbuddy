@@ -1,6 +1,7 @@
 import {
   FlaskConical,
   Save,
+  Settings,
   Smartphone,
   Unplug
 } from 'lucide-react'
@@ -17,12 +18,13 @@ import type {
   ChannelSettingsSnapshot,
   CredentialChannel,
   DingTalkChannelSettingsInput,
+  FeiShuChannelSettingsInput,
+  FeishuDomain,
   TelegramChannelSettingsInput,
   WeComChannelSettingsInput
 } from '../../shared/channel-settings-contracts'
 import type { RuntimeSettings } from '../../shared/contracts'
 import {
-  projectChannels,
   type AssistantProject,
   type ProjectCreateInput,
   type ProjectChannel
@@ -32,12 +34,11 @@ import type { AppNotificationInput } from './notifications'
 import { createChannelStatusStore, type ChannelStatusStore } from './channel-status-store'
 import { useChannelStatus } from './channel-status-selectors'
 import { trapTabFocus } from './dialog-focus'
-import { PageTabs } from './WorkspacePrimitives'
 import { ChannelIcon } from './ChannelIcon'
-import {
-  SettingsCategoryHeader,
-  SettingsWarningList
-} from './SettingsPrimitives'
+import { SettingsWarningList } from './SettingsPrimitives'
+import { PageTabs } from './WorkspacePrimitives'
+import { WecomToolSettings } from './WecomToolSettings'
+import { FeishuAppRegistration, FeishuToolSettings } from './FeishuToolSettings'
 import {
   channelProjectDraft,
   ChannelProjectSettingsFields
@@ -46,11 +47,15 @@ import {
 type ChannelDraft = {
   enabled: boolean
   identifier: string
+  /** Feishu only: feishu.cn or larksuite.com. */
+  domain: FeishuDomain
   secret: string
   clearSecret: boolean
   allowedSenderIdsText: string
   allowGroupMessages: boolean
 }
+
+type ChannelSettingsTab = 'connection' | 'messages' | 'tools'
 
 type ChannelProjectDraft = ProjectCreateInput & {
   id: string
@@ -61,11 +66,10 @@ type ChannelProjectOverride = {
   value: ChannelProjectDraft
 }
 
-const channelOrder: readonly ProjectChannel[] = projectChannels
-
 const emptyDraft: ChannelDraft = {
   enabled: false,
   identifier: '',
+  domain: 'feishu',
   secret: '',
   clearSecret: false,
   allowedSenderIdsText: '',
@@ -91,6 +95,13 @@ function secretUpdate(draft: ChannelDraft) {
       : ({ action: 'keep' } as const)
 }
 
+function currentIdentifier(channel: CredentialChannel, snapshot: ChannelSettingsSnapshot): string {
+  return channel === 'wecom'
+    ? snapshot.wecom.botId
+    : channel === 'dingtalk' ? snapshot.dingtalk.clientId
+      : channel === 'feishu' ? snapshot.feishu.appId : ''
+}
+
 function draftFromSnapshot(
   channel: CredentialChannel,
   snapshot: ChannelSettingsSnapshot
@@ -98,10 +109,8 @@ function draftFromSnapshot(
   const settings = snapshot[channel]
   return {
     enabled: settings.enabled,
-    identifier:
-      channel === 'wecom'
-        ? snapshot.wecom.botId
-        : channel === 'dingtalk' ? snapshot.dingtalk.clientId : '',
+    identifier: currentIdentifier(channel, snapshot),
+    domain: snapshot.feishu.domain,
     secret: '',
     clearSecret: false,
     allowedSenderIdsText: settings.allowedSenderIds.join('\n'),
@@ -122,9 +131,13 @@ function inputFor(
   draft: ChannelDraft
 ): TelegramChannelSettingsInput
 function inputFor(
+  channel: 'feishu',
+  draft: ChannelDraft
+): FeiShuChannelSettingsInput
+function inputFor(
   channel: CredentialChannel,
   draft: ChannelDraft
-): WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput {
+): WeComChannelSettingsInput | DingTalkChannelSettingsInput | TelegramChannelSettingsInput | FeiShuChannelSettingsInput {
   const common = {
     enabled: draft.enabled,
     secret: secretUpdate(draft),
@@ -135,6 +148,8 @@ function inputFor(
     ? { ...common, enabled: draft.enabled && !draft.clearSecret, allowGroupMessages: false }
     : channel === 'wecom'
     ? { ...common, botId: draft.identifier.trim() }
+    : channel === 'feishu'
+    ? { ...common, appId: draft.identifier.trim(), domain: draft.domain }
     : { ...common, clientId: draft.identifier.trim() }
 }
 
@@ -147,13 +162,10 @@ function channelDraftChanged(
   const nextAllowedSenders = allowedSenderIds(
     draft.allowedSenderIdsText
   )
-  const currentIdentifier =
-    channel === 'wecom'
-      ? snapshot.wecom.botId
-      : channel === 'dingtalk' ? snapshot.dingtalk.clientId : ''
   return (
     draft.enabled !== current.enabled ||
-    draft.identifier.trim() !== currentIdentifier ||
+    draft.identifier.trim() !== currentIdentifier(channel, snapshot) ||
+    (channel === 'feishu' && draft.domain !== snapshot.feishu.domain) ||
     draft.secret.trim().length > 0 ||
     draft.clearSecret ||
     draft.allowGroupMessages !== current.allowGroupMessages ||
@@ -271,8 +283,11 @@ function ChannelEditor({
   settings,
   statusStore,
   testing,
-  botUsername
+  botUsername,
+  onReload,
+  section
 }: {
+  section: 'connection' | 'messages'
   busy: boolean
   channel: CredentialChannel
   draft: ChannelDraft
@@ -286,6 +301,8 @@ function ChannelEditor({
   statusStore: ChannelStatusStore
   testing: boolean
   botUsername?: string
+  /** Reloads saved settings after credentials were written outside this form. */
+  onReload?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
   const title = t(`channels.tabs.${channel}`)
@@ -293,6 +310,57 @@ function ChannelEditor({
   const secretLabel = t(`channels.credential.secrets.${channel}`)
   const prefix = `channel-${channel}`
   const invalidSenders = channel === 'telegram' && !telegramAllowedSenderIdsSchema.safeParse(allowedSenderIds(draft.allowedSenderIdsText)).success
+
+  if (section === 'messages') {
+    return (
+      <>
+        <article className="capability-card channel-settings-card">
+          <div className="capability-card__header">
+            <div>
+              <strong>{t('channels.sections.messages')}</strong>
+              <small>{t('channels.sections.messagesHelp')}</small>
+            </div>
+          </div>
+          {channel === 'telegram' && allowedSenderIds(draft.allowedSenderIdsText).length === 0 && (
+            <p className="settings-notice">{t('channels.telegram.noUsers')}</p>
+          )}
+          <label className="field">
+            <span>{t('channels.credential.allowedSenders')}</span>
+            <textarea
+              aria-invalid={invalidSenders || undefined}
+              aria-describedby={invalidSenders ? `${prefix}-senders-error` : undefined}
+              aria-label={t('channels.credential.allowedSendersAriaLabel', { channel: title })}
+              disabled={settings.readOnly || busy}
+              onChange={(event) => onChange({ ...draft, allowedSenderIdsText: event.target.value })}
+              placeholder={t('channels.credential.allowedSendersPlaceholder')}
+              rows={4}
+              value={draft.allowedSenderIdsText}
+            />
+            <small>
+              {t(channel === 'telegram' ? 'channels.telegram.sendersHelp' : 'channels.credential.allowedSendersHelp')}
+            </small>
+            {invalidSenders && <small className="field-error" id={`${prefix}-senders-error`} role="alert">{t('channels.telegram.invalidSenders')}</small>}
+          </label>
+          {channel !== 'telegram' && <label className="toggle-row">
+            <input
+              checked={draft.allowGroupMessages}
+              disabled={settings.readOnly || busy}
+              onChange={(event) => onChange({ ...draft, allowGroupMessages: event.target.checked })}
+              role="switch"
+              type="checkbox"
+            />
+            <span>{t('channels.credential.groupMessages')}</span>
+          </label>}
+        </article>
+        <ChannelProjectCard
+          onChange={onProjectChange}
+          onSelectRoot={onSelectRoot}
+          project={project}
+          runtimeSettings={runtimeSettings}
+        />
+      </>
+    )
+  }
 
   return (
     <>
@@ -346,9 +414,6 @@ function ChannelEditor({
               {t('channels.telegram.network')} {t('channels.telegram.offline')}
             </InlineHelp>
           </span>
-          {allowedSenderIds(draft.allowedSenderIdsText).length === 0 && (
-            <p className="settings-notice">{t('channels.telegram.noUsers')}</p>
-          )}
           {botUsername && <p>{t('channels.telegram.bot')} <a href={`https://t.me/${botUsername}`} target="_blank" rel="noreferrer">@{botUsername}</a></p>}
         </>
       )}
@@ -368,6 +433,22 @@ function ChannelEditor({
           value={draft.identifier}
         />
       </label>}
+
+      {channel === 'feishu' && <label className="field">
+        <span>{t('channels.feishu.domain')}</span>
+        <select
+          disabled={settings.readOnly || busy}
+          onChange={(event) => onChange({ ...draft, domain: event.target.value === 'lark' ? 'lark' : 'feishu' })}
+          value={draft.domain}
+        >
+          <option value="feishu">{t('channels.feishu.domains.feishu')}</option>
+          <option value="lark">{t('channels.feishu.domains.lark')}</option>
+        </select>
+      </label>}
+      {channel === 'feishu' && <p className="settings-notice">{t('channels.feishu.setup')}</p>}
+      {channel === 'feishu' && !settings.readOnly && onReload && (
+        <FeishuAppRegistration domain={draft.domain} onCreated={onReload} />
+      )}
 
       <label className="field">
         <span>{secretLabel}</span>
@@ -410,50 +491,6 @@ function ChannelEditor({
         </label>
       )}
 
-      <label className="field">
-        <span>{t('channels.credential.allowedSenders')}</span>
-        <textarea
-          aria-invalid={invalidSenders || undefined}
-          aria-describedby={invalidSenders ? `${prefix}-senders-error` : undefined}
-          aria-label={t(
-            'channels.credential.allowedSendersAriaLabel',
-            { channel: title }
-          )}
-          disabled={settings.readOnly || busy}
-          onChange={(event) =>
-            onChange({
-              ...draft,
-              allowedSenderIdsText: event.target.value
-            })
-          }
-          placeholder={t(
-            'channels.credential.allowedSendersPlaceholder'
-          )}
-          rows={4}
-          value={draft.allowedSenderIdsText}
-        />
-        <small>
-          {t(channel === 'telegram' ? 'channels.telegram.sendersHelp' : 'channels.credential.allowedSendersHelp')}
-        </small>
-        {invalidSenders && <small className="field-error" id={`${prefix}-senders-error`} role="alert">{t('channels.telegram.invalidSenders')}</small>}
-      </label>
-
-      {channel !== 'telegram' && <label className="toggle-row">
-        <input
-          checked={draft.allowGroupMessages}
-          disabled={settings.readOnly || busy}
-          onChange={(event) =>
-            onChange({
-              ...draft,
-              allowGroupMessages: event.target.checked
-            })
-          }
-          role="switch"
-          type="checkbox"
-        />
-        <span>{t('channels.credential.groupMessages')}</span>
-      </label>}
-
       <button
         className="secondary-button"
         disabled={busy || draft.clearSecret || invalidSenders}
@@ -468,12 +505,6 @@ function ChannelEditor({
             })}
       </button>
     </article>
-    <ChannelProjectCard
-      onChange={onProjectChange}
-      onSelectRoot={onSelectRoot}
-      project={project}
-      runtimeSettings={runtimeSettings}
-    />
     </>
   )
 }
@@ -712,12 +743,8 @@ function WeixinChannelEditor({
   onBindingClose,
   onDisconnect,
   onEnabledChange,
-  onProjectChange,
-  onSelectRoot,
   onStartBinding,
   onVerify,
-  project,
-  runtimeSettings,
   settings,
   statusStore
 }: {
@@ -730,12 +757,8 @@ function WeixinChannelEditor({
   onBindingClose: () => void
   onDisconnect: () => void
   onEnabledChange: (enabled: boolean) => void
-  onProjectChange: (next: ChannelProjectDraft) => void
-  onSelectRoot: () => void
   onStartBinding: () => void
   onVerify: (code: string) => void
-  project: ChannelProjectDraft
-  runtimeSettings: RuntimeSettings
   settings: ChannelSettingsSnapshot['weixin']
   statusStore: ChannelStatusStore
 }): React.JSX.Element {
@@ -815,12 +838,6 @@ function WeixinChannelEditor({
         )}
 
       </article>
-      <ChannelProjectCard
-        onChange={onProjectChange}
-        onSelectRoot={onSelectRoot}
-        project={project}
-        runtimeSettings={runtimeSettings}
-      />
       {bindingOpen && (
         <WeixinQrDialog
           binding={binding}
@@ -835,13 +852,155 @@ function WeixinChannelEditor({
   )
 }
 
-export function ChannelSettingsSection({
-  initialChannel = 'weixin',
+
+function useChannelSettingsData(
+  onError: (message: string) => void,
+  /** Runs in the same update as the first snapshot, so drafts never render stale. */
+  onLoaded?: (snapshot: ChannelSettingsSnapshot) => void
+) {
+  const { t } = useTranslation('integrations')
+  const tRef = useRef(t)
+  const onErrorRef = useRef(onError)
+  const onLoadedRef = useRef(onLoaded)
+  useEffect(() => {
+    tRef.current = t
+    onErrorRef.current = onError
+    onLoadedRef.current = onLoaded
+  }, [onError, onLoaded, t])
+  const [snapshot, setSnapshot] = useState<ChannelSettingsSnapshot>()
+  const [statusStore] = useState(createChannelStatusStore)
+  const applySnapshot = useCallback((next: ChannelSettingsSnapshot): void => {
+    statusStore.seed(next)
+    setSnapshot(next)
+  }, [statusStore])
+  useEffect(() => {
+    const api = window.goodbuddy?.channels
+    const disconnect = statusStore.connect(api)
+    let active = true
+    if (!api) {
+      onErrorRef.current(tRef.current('channels.unavailableService'))
+    } else {
+      void api.getSnapshot().then((next) => {
+        if (!active) return
+        applySnapshot(next)
+        onLoadedRef.current?.(next)
+      }, (reason: unknown) => {
+        if (active) {
+          onErrorRef.current(reason instanceof Error ? reason.message : tRef.current('channels.loadError'))
+        }
+      })
+    }
+    return () => {
+      active = false
+      disconnect()
+    }
+  }, [applySnapshot, statusStore])
+  return { snapshot, statusStore, applySnapshot }
+}
+
+export function isChannelConfigured(
+  channel: ProjectChannel,
+  snapshot: ChannelSettingsSnapshot
+): boolean {
+  return channel === 'weixin'
+    ? snapshot.weixin.bindingConfigured
+    : snapshot[channel].secretConfigured
+}
+
+const PlatformApplicationStatus = memo(function PlatformApplicationStatus({
+  channel,
+  snapshot,
+  store
+}: {
+  channel: ProjectChannel
+  snapshot: ChannelSettingsSnapshot
+  store: ChannelStatusStore
+}): React.JSX.Element {
+  const { t } = useTranslation('integrations')
+  const status = useChannelStatus(store, channel, snapshot[channel].status)
+  return (
+    <>
+      {isChannelConfigured(channel, snapshot)
+        ? t(`channels.status.${status.state}`)
+        : t('channels.telegram.unconfigured')}
+    </>
+  )
+})
+
+/** Platform application rows shown in the application center. */
+export function PlatformApplicationRows({
+  channels,
+  canOpen,
+  onOpen,
+  onSettings
+}: {
+  channels: readonly ProjectChannel[]
+  canOpen: (channel: ProjectChannel) => boolean
+  onOpen: (channel: ProjectChannel) => void
+  onSettings: (channel: ProjectChannel) => void
+}): React.JSX.Element {
+  const { t } = useTranslation(['integrations', 'app'])
+  const [error, setError] = useState<string>()
+  const { snapshot, statusStore } = useChannelSettingsData(setError)
+  return (
+    <>
+      {error && <p className="settings-warning" role="alert">{error}</p>}
+      {channels.map((channel) => {
+        const title = t(`channels.tabs.${channel}`)
+        return (
+          <article className="application-center__item" key={channel}>
+            <div className="application-center__summary">
+              <ChannelIcon channel={channel} size={22} />
+              <div>
+                <div className="application-center__title">
+                  <strong>{title}</strong>
+                  <small>
+                    {t('applications.platform', { ns: 'app' })}
+                    {snapshot && <>
+                      {' · '}
+                      <PlatformApplicationStatus channel={channel} snapshot={snapshot} store={statusStore} />
+                    </>}
+                  </small>
+                </div>
+                <p>{t(`applications.descriptions.${channel}`, { ns: 'app' })}</p>
+              </div>
+            </div>
+            <div className="application-center__actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={!canOpen(channel)}
+                title={t('applications.openChannelHelp', { ns: 'app' })}
+                onClick={() => onOpen(channel)}
+              >
+                {t('applications.open', { ns: 'app' })}
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                title={t('applications.settings', { ns: 'app' })}
+                aria-label={`${title} ${t('applications.settings', { ns: 'app' })}`}
+                onClick={() => onSettings(channel)}
+              >
+                <Settings size={16} aria-hidden="true" />
+                {t('applications.settings', { ns: 'app' })}
+              </button>
+            </div>
+          </article>
+        )
+      })}
+    </>
+  )
+}
+
+/** Settings for one message channel, shown as that platform application's settings. */
+export function ChannelApplicationSettings({
+  channel,
   onNotify = () => undefined,
   onUpdateProject,
   projectList
 }: {
-  initialChannel?: ProjectChannel
+  channel: ProjectChannel
   onNotify?: (notification: AppNotificationInput) => void
   onUpdateProject: (
     projectId: string,
@@ -850,192 +1009,137 @@ export function ChannelSettingsSection({
   projectList: AssistantProject[]
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
-  const tRef = useRef(t)
-  useEffect(() => {
-    tRef.current = t
-  }, [t])
-  const channelTabs = [
-    { id: 'weixin', label: t('channels.tabs.weixin'), icon: <ChannelIcon channel="weixin" /> },
-    { id: 'wecom', label: t('channels.tabs.wecom'), icon: <ChannelIcon channel="wecom" /> },
-    { id: 'dingtalk', label: t('channels.tabs.dingtalk'), icon: <ChannelIcon channel="dingtalk" /> },
-    { id: 'telegram', label: t('channels.tabs.telegram'), icon: <ChannelIcon channel="telegram" /> }
-  ] as const
-  const [snapshot, setSnapshot] = useState<ChannelSettingsSnapshot>()
-  const [statusStore] = useState(createChannelStatusStore)
-  const [runtimeSettings, setRuntimeSettings] =
-    useState<RuntimeSettings>()
-  const [projectOverrides, setProjectOverrides] = useState<
-    Partial<Record<ProjectChannel, ChannelProjectOverride>>
-  >({})
+  const [error, setError] = useState<string>()
   const [weixinEnabled, setWeixinEnabled] = useState(false)
+  const [draft, setDraft] = useState<ChannelDraft>({ ...emptyDraft })
+  const seedDrafts = useCallback((next: ChannelSettingsSnapshot): void => {
+    setWeixinEnabled(next.weixin.enabled)
+    if (channel !== 'weixin') setDraft(draftFromSnapshot(channel, next))
+  }, [channel])
+  const { snapshot, statusStore, applySnapshot: seedSnapshot } =
+    useChannelSettingsData(setError, seedDrafts)
+  const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
+  const [projectOverride, setProjectOverride] = useState<ChannelProjectOverride>()
   const [binding, setBinding] = useState<WeixinBindingSnapshot>({
     status: 'stopped'
   })
   const [bindingOpen, setBindingOpen] = useState(false)
   const [bindingError, setBindingError] = useState<string>()
-  const [activeChannel, setActiveChannel] =
-    useState<ProjectChannel>(initialChannel)
-  const [drafts, setDrafts] = useState<
-    Record<CredentialChannel, ChannelDraft>
-  >({
-    wecom: { ...emptyDraft },
-    dingtalk: { ...emptyDraft },
-    telegram: { ...emptyDraft }
-  })
   const [busy, setBusy] = useState(false)
-  const [testing, setTesting] = useState<CredentialChannel>()
+  const [testing, setTesting] = useState(false)
   const [telegramBotUsername, setTelegramBotUsername] = useState<string>()
-  const [error, setError] = useState<string>()
+  const [tab_, setTab] = useState<ChannelSettingsTab>('connection')
   const bindingButtonRef = useRef<HTMLButtonElement>(null)
+  const title = t(`channels.tabs.${channel}`)
+
+  // Drafts follow the first snapshot and every later save.
+  const applySnapshot = useCallback((next: ChannelSettingsSnapshot): void => {
+    seedSnapshot(next)
+    seedDrafts(next)
+  }, [seedDrafts, seedSnapshot])
 
   const closeBinding = useCallback((): void => {
     bindingButtonRef.current?.focus()
     setBindingOpen(false)
   }, [])
 
-  const applySnapshot = useCallback((next: ChannelSettingsSnapshot): void => {
-    statusStore.seed(next)
-    setSnapshot(next)
-    setWeixinEnabled(next.weixin.enabled)
-    setDrafts({
-      wecom: draftFromSnapshot('wecom', next),
-      dingtalk: draftFromSnapshot('dingtalk', next),
-      telegram: draftFromSnapshot('telegram', next)
-    })
-  }, [statusStore])
-
   useEffect(() => {
-    const api = window.goodbuddy.channels
-    const disconnectStatus = statusStore.connect(api)
+    const api = window.goodbuddy?.channels
     let active = true
-    void (async () => {
-      if (!api) {
-        throw new Error(tRef.current('channels.unavailableService'))
+    void window.goodbuddy.settings.getRuntime().then((next) => {
+      if (active) setRuntimeSettings(next)
+    }, (reason: unknown) => {
+      if (active) setError(reason instanceof Error ? reason.message : t('channels.loadError'))
+    })
+    if (channel !== 'weixin' || !api) {
+      return () => { active = false }
+    }
+    void api.getWeixinBinding().then((next) => {
+      if (active) setBinding(next)
+    }, () => undefined)
+    const removeBindingListener = api.onWeixinBindingChanged((next) => {
+      if (!active) return
+      setBinding(next)
+      if (next.status === 'connected') {
+        closeBinding()
+        void api.getSnapshot().then(applySnapshot)
       }
-      return Promise.all([
-        api.getSnapshot(),
-        api.getWeixinBinding(),
-        window.goodbuddy.settings.getRuntime()
-      ])
-    })()
-      .then(([next, bindingSnapshot, nextRuntimeSettings]) => {
-        if (active) {
-          applySnapshot(next)
-          setRuntimeSettings(nextRuntimeSettings)
-          setBinding(bindingSnapshot)
-        }
-      })
-      .catch((reason: unknown) => {
-        if (active) {
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : tRef.current('channels.loadError')
-          )
-        }
-      })
-    const removeBindingListener = api?.onWeixinBindingChanged(
-      (next) => {
-        if (active) {
-          setBinding(next)
-          if (next.status === 'connected') {
-            closeBinding()
-            void api.getSnapshot().then(applySnapshot)
-          }
-        }
-      }
-    )
+    })
     return () => {
       active = false
-      disconnectStatus()
       removeBindingListener?.()
     }
-  }, [applySnapshot, closeBinding, statusStore])
+  }, [applySnapshot, channel, closeBinding, t])
 
-  const persistedProjects = useMemo(() => runtimeSettings
-    ? projectDraftsFrom(projectList, runtimeSettings)
-    : {}, [projectList, runtimeSettings])
-  const projects = useMemo(() => Object.fromEntries(
-    channelOrder.flatMap((channel) => {
-      const persisted = persistedProjects[channel]
-      if (!persisted) {
-        return []
-      }
-      const override = projectOverrides[channel]
-      return [
-        [
-          channel,
-          override?.sourceKey === projectDraftKey(persisted)
-            ? override.value
-            : persisted
-        ]
-      ]
-    })
-  ) as Partial<Record<ProjectChannel, ChannelProjectDraft>>, [persistedProjects, projectOverrides])
+  const persistedProject = useMemo(() => runtimeSettings
+    ? projectDraftsFrom(projectList, runtimeSettings)[channel]
+    : undefined, [channel, projectList, runtimeSettings])
+  const project = persistedProject && projectOverride?.sourceKey === projectDraftKey(persistedProject)
+    ? projectOverride.value
+    : persistedProject
+
+  const updateProject = (next: ChannelProjectDraft): void => {
+    if (!persistedProject) return
+    setProjectOverride({ sourceKey: projectDraftKey(persistedProject), value: next })
+  }
+
+  const selectRoot = async (): Promise<void> => {
+    if (!project) return
+    try {
+      const rootPath = await window.goodbuddy.settings.selectWorkspace()
+      if (rootPath) updateProject({ ...project, rootPath })
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('channels.selectRootError'))
+    }
+  }
+
+  const channelInput = (): ChannelSettingsApply => {
+    if (!snapshot) return {}
+    if (channel === 'weixin') {
+      return weixinEnabled === snapshot.weixin.enabled ? {} : { weixin: { enabled: weixinEnabled } }
+    }
+    if (snapshot[channel].readOnly) return {}
+    if (channel === 'telegram') {
+      const state = (statusStore.getState().telegram ?? snapshot.telegram.status).state
+      const restart = draft.enabled && (state === 'error' || state === 'stopped')
+      return channelDraftChanged('telegram', draft, snapshot) || restart
+        ? { telegram: inputFor('telegram', draft) }
+        : {}
+    }
+    if (!channelDraftChanged(channel, draft, snapshot)) return {}
+    return channel === 'wecom'
+      ? { wecom: inputFor('wecom', draft) }
+      : channel === 'feishu'
+        ? { feishu: inputFor('feishu', draft) }
+        : { dingtalk: inputFor('dingtalk', draft) }
+  }
 
   const save = async (): Promise<void> => {
-    const api = window.goodbuddy.channels
-    if (!api || !snapshot || !runtimeSettings) {
+    const api = window.goodbuddy?.channels
+    if (!api || !snapshot || !runtimeSettings) return
+    if (channel === 'telegram' && !snapshot.telegram.readOnly &&
+      !telegramAllowedSenderIdsSchema.safeParse(allowedSenderIds(draft.allowedSenderIdsText)).success) {
       return
     }
-    if (!snapshot.telegram.readOnly && !telegramAllowedSenderIdsSchema.safeParse(allowedSenderIds(drafts.telegram.allowedSenderIdsText)).success) {
-      setActiveChannel('telegram')
-      return
-    }
-    const channelProjects = channelOrder.map(
-      (channel) => projects[channel]
-    )
-    if (channelProjects.some((project) => !project)) {
+    if (!project) {
       setError(t('channels.projectsLoadingError'))
       return
     }
-    const invalidRootIndex = channelProjects.findIndex(
-      (project) => project!.rootPath.trim().length === 0
-    )
-    if (invalidRootIndex >= 0) {
-      const invalidChannel = channelOrder[invalidRootIndex]!
-      setActiveChannel(invalidChannel)
-      setError(
-        t('channels.rootRequired', {
-          channel: channelTabs[invalidRootIndex]!.label
-        })
-      )
+    if (project.rootPath.trim().length === 0) {
+      setError(t('channels.rootRequired', { channel: title }))
       return
     }
-    const telegramState = (statusStore.getState().telegram ?? snapshot.telegram.status).state
-    const restartTelegram = drafts.telegram.enabled &&
-      (telegramState === 'error' || telegramState === 'stopped')
-    const input: ChannelSettingsApply = {
-      ...(weixinEnabled === snapshot.weixin.enabled
-        ? {}
-        : { weixin: { enabled: weixinEnabled } }),
-      ...(!snapshot.wecom.readOnly &&
-      channelDraftChanged('wecom', drafts.wecom, snapshot)
-        ? { wecom: inputFor('wecom', drafts.wecom) }
-        : {}),
-      ...(!snapshot.dingtalk.readOnly &&
-      channelDraftChanged('dingtalk', drafts.dingtalk, snapshot)
-        ? { dingtalk: inputFor('dingtalk', drafts.dingtalk) }
-        : {}),
-      ...(!snapshot.telegram.readOnly &&
-      (channelDraftChanged('telegram', drafts.telegram, snapshot) || restartTelegram)
-        ? { telegram: inputFor('telegram', drafts.telegram) }
-        : {})
-    }
+    const input = channelInput()
     setBusy(true)
     setError(undefined)
     setBindingError(undefined)
     try {
-      await Promise.all(
-        channelProjects.map((project) =>
-          onUpdateProject(project!.id, {
-            name: project!.name,
-            description: project!.description,
-            rootPath: project!.rootPath,
-            runtimeSelection: project!.runtimeSelection
-          })
-        )
-      )
+      await onUpdateProject(project.id, {
+        name: project.name,
+        description: project.description,
+        rootPath: project.rootPath,
+        runtimeSelection: project.runtimeSelection
+      })
       if (Object.keys(input).length > 0) {
         applySnapshot(await api.apply(input))
       }
@@ -1045,57 +1149,47 @@ export function ChannelSettingsSection({
         dedupeKey: 'channel-settings-saved'
       })
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : t('channels.saveError')
-      )
+      setError(reason instanceof Error ? reason.message : t('channels.saveError'))
     } finally {
       setBusy(false)
     }
   }
 
-  const updateProject = (
-    channel: ProjectChannel,
-    next: ChannelProjectDraft
-  ): void => {
-    const persisted = persistedProjects[channel]
-    if (!persisted) {
-      return
-    }
-    setProjectOverrides((current) => ({
-      ...current,
-      [channel]: {
-        sourceKey: projectDraftKey(persisted),
-        value: next
-      }
-    }))
-  }
-
-  const selectRoot = async (
-    channel: ProjectChannel
-  ): Promise<void> => {
-    const project = projects[channel]
-    if (!project) {
-      return
-    }
+  /**
+   * Scan registration stores the new app's credentials and the scanner as the
+   * only sender. Enable the channel right away, like OpenClaw, instead of
+   * leaving a disabled channel that still needs a separate save.
+   */
+  const completeFeishuRegistration = async (): Promise<void> => {
+    const api = window.goodbuddy?.channels
+    if (!api) return
+    setBusy(true)
+    setError(undefined)
     try {
-      const rootPath = await window.goodbuddy.settings.selectWorkspace()
-      if (rootPath) {
-        updateProject(channel, { ...project, rootPath })
+      let next = await api.getSnapshot()
+      const saved = next.feishu
+      if (!saved.readOnly && !saved.enabled && saved.secretConfigured && saved.appId && saved.allowedSenderIds.length > 0) {
+        next = await api.apply({ feishu: {
+          enabled: true,
+          appId: saved.appId,
+          domain: saved.domain,
+          secret: { action: 'keep' },
+          allowedSenderIds: [...saved.allowedSenderIds],
+          allowGroupMessages: saved.allowGroupMessages
+        } })
       }
+      applySnapshot(next)
+      onNotify({ tone: 'success', message: t('channels.feishu.createdEnabled'), dedupeKey: 'feishu-app-created' })
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : t('channels.selectRootError')
-      )
+      setError(reason instanceof Error ? reason.message : t('channels.saveError'))
+    } finally {
+      setBusy(false)
     }
   }
 
   const startBinding = async (): Promise<void> => {
-    const api = window.goodbuddy.channels
-    if (!api) {
-      return
-    }
+    const api = window.goodbuddy?.channels
+    if (!api) return
     setBusy(true)
     setError(undefined)
     setBindingError(undefined)
@@ -1103,49 +1197,32 @@ export function ChannelSettingsSection({
     try {
       setBinding(await api.startWeixinBinding())
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : t('channels.startBindingError')
-      )
-      setBinding({
-        status: 'failed',
-        detail:
-          reason instanceof Error
-            ? reason.message
-            : t('channels.startBindingError')
-      })
+      const message = reason instanceof Error ? reason.message : t('channels.startBindingError')
+      setError(message)
+      setBinding({ status: 'failed', detail: message })
     } finally {
       setBusy(false)
     }
   }
 
   const verifyBinding = async (code: string): Promise<void> => {
-    const api = window.goodbuddy.channels
-    if (!api) {
-      return
-    }
+    const api = window.goodbuddy?.channels
+    if (!api) return
     setBusy(true)
     setError(undefined)
     setBindingError(undefined)
     try {
       setBinding(await api.submitWeixinVerification(code))
     } catch (reason) {
-      setBindingError(
-        reason instanceof Error
-          ? reason.message
-          : t('channels.verifyBindingError')
-      )
+      setBindingError(reason instanceof Error ? reason.message : t('channels.verifyBindingError'))
     } finally {
       setBusy(false)
     }
   }
 
   const disconnectWeixin = async (): Promise<void> => {
-    const api = window.goodbuddy.channels
-    if (!api) {
-      return
-    }
+    const api = window.goodbuddy?.channels
+    if (!api) return
     setBusy(true)
     setError(undefined)
     try {
@@ -1157,204 +1234,153 @@ export function ChannelSettingsSection({
         dedupeKey: 'weixin-binding-disconnected'
       })
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : t('channels.disconnectError')
-      )
+      setError(reason instanceof Error ? reason.message : t('channels.disconnectError'))
     } finally {
       setBusy(false)
     }
   }
 
-  const test = async (channel: CredentialChannel): Promise<void> => {
-    const api = window.goodbuddy.channels
-    if (!api || !snapshot) {
-      return
-    }
-    setTesting(channel)
+  const test = async (): Promise<void> => {
+    const api = window.goodbuddy?.channels
+    if (!api || !snapshot || channel === 'weixin') return
+    setTesting(true)
     if (channel === 'telegram') setTelegramBotUsername(undefined)
     setError(undefined)
     try {
       const settings = snapshot[channel].readOnly
         ? undefined
         : channel === 'wecom'
-          ? inputFor('wecom', drafts.wecom)
+          ? inputFor('wecom', draft)
           : channel === 'dingtalk'
-            ? inputFor('dingtalk', drafts.dingtalk)
-            : inputFor('telegram', drafts.telegram)
-      const result: ChannelConnectionTestResult =
-        await api.testConnection(channel, settings)
-      if (!result.ok) {
-        throw new Error(result.error)
-      }
+            ? inputFor('dingtalk', draft)
+            : channel === 'feishu'
+              ? inputFor('feishu', draft)
+              : inputFor('telegram', draft)
+      const result: ChannelConnectionTestResult = await api.testConnection(channel, settings)
+      if (!result.ok) throw new Error(result.error)
       if (channel === 'telegram') setTelegramBotUsername(result.botUsername)
       onNotify({
         tone: 'success',
         message: t(channel === 'telegram' ? 'channels.telegram.verified' : 'channels.connectionSuccess', {
-          channel: t(`channels.tabs.${channel}`)
+          channel: title
         }),
         dedupeKey: `channel-test-${channel}`
       })
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : t('channels.testError')
-      )
+      setError(reason instanceof Error ? reason.message : t('channels.testError'))
     } finally {
-      setTesting(undefined)
+      setTesting(false)
     }
   }
 
-  const weixinProject = projects.weixin
-  const wecomProject = projects.wecom
-  const dingtalkProject = projects.dingtalk
-  const telegramProject = projects.telegram
-  if (
-    !snapshot ||
-    !runtimeSettings ||
-    !weixinProject ||
-    !wecomProject ||
-    !dingtalkProject ||
-    !telegramProject
-  ) {
+  if (!snapshot || !runtimeSettings || !project) {
     return (
-      <>
-        <SettingsCategoryHeader
-          category="channels"
-          error={error}
-          headingId="channel-settings-heading"
-        />
-        {!error && (
-          <div className="settings-section">
-            <p className="settings-empty">{t('channels.loading')}</p>
-          </div>
-        )}
-      </>
+      <section aria-label={title} className="channel-settings">
+        {error
+          ? <p className="settings-warning" role="alert">{error}</p>
+          : <p className="settings-empty" role="status">{t('channels.loading')}</p>}
+      </section>
     )
   }
-
+  const hasTools = channel === 'wecom' || channel === 'feishu'
+  const tabs: { id: ChannelSettingsTab; label: string }[] = [
+    { id: 'connection', label: t('channels.sections.connection') },
+    { id: 'messages', label: t('channels.sections.messages') },
+    ...(hasTools ? [{ id: 'tools' as const, label: t('channels.sections.tools') }] : [])
+  ]
+  const activeTab = tabs.some((tab) => tab.id === tab_) ? tab_ : 'connection'
   return (
-    <>
-      <SettingsCategoryHeader
-        actions={
-          <button
-            className="primary-button"
-            disabled={busy || Boolean(testing)}
-            onClick={() => void save()}
-            type="button"
-          >
-            <Save aria-hidden="true" size={13} />
-            {busy ? t('channels.saving') : t('channels.save')}
-          </button>
-        }
-        category="channels"
-        error={error}
-        headingId="channel-settings-heading"
-        navigation={
-          <div className="channel-settings__tabs">
-            <PageTabs
-              ariaLabel={t('channels.sectionAriaLabel')}
-              idPrefix="channel-settings"
-              onChange={setActiveChannel}
-              tabs={channelTabs}
-              value={activeChannel}
-              variant="segmented"
-            />
-          </div>
-        }
+    <section aria-label={title} className="channel-settings channel-application-settings">
+      <PageTabs
+        ariaLabel={t('channels.sections.ariaLabel', { channel: title })}
+        idPrefix={`channel-${channel}`}
+        onChange={setTab}
+        tabs={tabs}
+        value={activeTab}
       />
-      <section
-        aria-label={t('channels.sectionAriaLabel')}
-        className="settings-section channel-settings"
-      >
-      <SettingsWarningList warnings={snapshot.warnings} />
-
       <div
-        aria-labelledby={`channel-settings-tab-${activeChannel}`}
-        className="channel-settings__panel"
-        id={`channel-settings-panel-${activeChannel}`}
+        aria-labelledby={`channel-${channel}-tab-${activeTab}`}
+        className="channel-application-settings__panel"
+        id={`channel-${channel}-panel-${activeTab}`}
         role="tabpanel"
       >
-        {activeChannel === 'weixin' ? (
-          <WeixinChannelEditor
-            binding={binding}
-            bindingButtonRef={bindingButtonRef}
-            bindingError={bindingError}
-            bindingOpen={bindingOpen}
-            busy={busy}
-            enabled={weixinEnabled}
-            onBindingClose={closeBinding}
-            onDisconnect={() => void disconnectWeixin()}
-            onEnabledChange={setWeixinEnabled}
-            onProjectChange={(next) =>
-              updateProject('weixin', next)
-            }
-            onSelectRoot={() => void selectRoot('weixin')}
-            onStartBinding={() => void startBinding()}
-            onVerify={(code) => void verifyBinding(code)}
-            project={weixinProject}
-            runtimeSettings={runtimeSettings}
-            settings={snapshot.weixin}
-            statusStore={statusStore}
-          />
-        ) : activeChannel === 'wecom' ? (
-          <ChannelEditor
-            busy={busy || Boolean(testing)}
-            channel="wecom"
-            draft={drafts.wecom}
-            onChange={(next) =>
-              setDrafts((current) => ({ ...current, wecom: next }))
-            }
-            onProjectChange={(next) => updateProject('wecom', next)}
-            onSelectRoot={() => void selectRoot('wecom')}
-            onTest={() => void test('wecom')}
-            project={wecomProject}
-            runtimeSettings={runtimeSettings}
-            settings={snapshot.wecom}
-            statusStore={statusStore}
-            testing={testing === 'wecom'}
-          />
-        ) : activeChannel === 'telegram' ? (
-          <ChannelEditor
-            busy={busy || Boolean(testing)}
-            channel="telegram"
-            draft={drafts.telegram}
-            botUsername={telegramBotUsername}
-            onChange={(next) => {
-              if (next.secret !== drafts.telegram.secret || next.clearSecret !== drafts.telegram.clearSecret) setTelegramBotUsername(undefined)
-              setDrafts((current) => ({ ...current, telegram: next }))
-            }}
-            onProjectChange={(next) => updateProject('telegram', next)}
-            onSelectRoot={() => void selectRoot('telegram')}
-            onTest={() => void test('telegram')}
-            project={telegramProject}
-            runtimeSettings={runtimeSettings}
-            settings={snapshot.telegram}
-            statusStore={statusStore}
-            testing={testing === 'telegram'}
-          />
+        {error && <p className="settings-warning" role="alert">{error}</p>}
+        <SettingsWarningList warnings={snapshot.warnings} />
+        {activeTab === 'tools' ? (
+          channel === 'wecom' ? (
+            <WecomToolSettings
+              channelBotConfigured={Boolean(snapshot.wecom.botId) && snapshot.wecom.secretConfigured}
+            />
+          ) : <FeishuToolSettings />
         ) : (
-          <ChannelEditor
-            busy={busy || Boolean(testing)}
-            channel="dingtalk"
-            draft={drafts.dingtalk}
-            onChange={(next) =>
-              setDrafts((current) => ({ ...current, dingtalk: next }))
-            }
-            onProjectChange={(next) =>
-              updateProject('dingtalk', next)
-            }
-            onSelectRoot={() => void selectRoot('dingtalk')}
-            onTest={() => void test('dingtalk')}
-            project={dingtalkProject}
-            runtimeSettings={runtimeSettings}
-            settings={snapshot.dingtalk}
-            statusStore={statusStore}
-            testing={testing === 'dingtalk'}
-          />
+          <>
+            <div className="channel-settings__panel">
+              {channel === 'weixin' ? (
+                activeTab === 'connection' ? (
+                  <WeixinChannelEditor
+                    binding={binding}
+                    bindingButtonRef={bindingButtonRef}
+                    bindingError={bindingError}
+                    bindingOpen={bindingOpen}
+                    busy={busy}
+                    enabled={weixinEnabled}
+                    onBindingClose={closeBinding}
+                    onDisconnect={() => void disconnectWeixin()}
+                    onEnabledChange={setWeixinEnabled}
+                    onStartBinding={() => void startBinding()}
+                    onVerify={(code) => void verifyBinding(code)}
+                    settings={snapshot.weixin}
+                    statusStore={statusStore}
+                  />
+                ) : (
+                  <>
+                    <p className="settings-notice">{t('channels.weixin.messagesHelp')}</p>
+                    <ChannelProjectCard
+                      onChange={updateProject}
+                      onSelectRoot={() => void selectRoot()}
+                      project={project}
+                      runtimeSettings={runtimeSettings}
+                    />
+                  </>
+                )
+              ) : (
+                <ChannelEditor
+                  busy={busy || testing}
+                  channel={channel}
+                  draft={draft}
+                  section={activeTab}
+                  botUsername={channel === 'telegram' ? telegramBotUsername : undefined}
+                  onReload={channel === 'feishu' ? () => void completeFeishuRegistration() : undefined}
+                  onChange={(next) => {
+                    if (next.secret !== draft.secret || next.clearSecret !== draft.clearSecret) setTelegramBotUsername(undefined)
+                    setDraft(next)
+                  }}
+                  onProjectChange={updateProject}
+                  onSelectRoot={() => void selectRoot()}
+                  onTest={() => void test()}
+                  project={project}
+                  runtimeSettings={runtimeSettings}
+                  settings={snapshot[channel]}
+                  statusStore={statusStore}
+                  testing={testing}
+                />
+              )}
+            </div>
+            <div className="channel-application-settings__actions">
+              <small>{t('channels.sections.saveHelp')}</small>
+              <button
+                className="primary-button"
+                disabled={busy || testing}
+                onClick={() => void save()}
+                type="button"
+              >
+                <Save aria-hidden="true" size={13} />
+                {busy ? t('channels.saving') : t('channels.save')}
+              </button>
+            </div>
+          </>
         )}
       </div>
-      </section>
-    </>
+    </section>
   )
 }

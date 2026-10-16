@@ -2034,7 +2034,7 @@ describe('SettingsPanel runtime files', () => {
     expect(within(navigation).getAllByRole('tab').map(tab => tab.id)).toEqual([
       'settings-tab-appearance', 'settings-tab-platform-features',
       'settings-tab-model', 'settings-tab-context-control', 'settings-tab-runtime',
-      'settings-tab-document-parsing', 'settings-tab-channels', 'settings-tab-roles',
+      'settings-tab-document-parsing', 'settings-tab-roles',
       'settings-tab-capabilities', 'settings-tab-about'
     ])
   })

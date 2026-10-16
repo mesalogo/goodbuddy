@@ -22,7 +22,7 @@ export const app = {
     menuLabel: '应用',
     alwaysShown: '始终显示', optional: '可选',
     manage: '管理应用',
-    title: '应用中心', description: '打开和排列内置应用，管理可选应用的启用与常驻。知识库始终显示，监督者可启用或关闭。',
+    title: '应用中心', description: '打开和排列内置应用，管理可选应用的启用与常驻，配置飞书、企业微信、钉钉、微信和 Telegram 等平台应用。',
     localInference: '本机推理监控', settings: '应用设置', enable: '启用应用', pin: '常驻左侧菜单',
     pinHelp: '常驻只控制左侧捷径。',
     disableHelp: '关闭应用保留数据和常驻偏好，不停止已有请求或后台服务。',
@@ -33,13 +33,21 @@ export const app = {
     orderUpdated: '应用顺序已更新', loadFailed: '无法读取应用设置', saveFailed: '应用设置保存失败',
     confirmFailed: '无法确认保存结果，请重新读取后再修改。',
     remoteHosts: '主机管理',
+    platform: '平台应用', platformGroup: '平台应用', workGroup: '工作区应用',
+    settingsTitle: '应用设置', settingsTabs: '应用',
+    openChannelHelp: '进入该平台的通道项目，查看收到的会话。',
     remoteHostsEnable: '启用远程能力',
     remoteHostsHelp: '远程能力默认关闭。启用后可以添加 SSH 主机、安装执行环境并创建远程项目。关闭后远程项目从项目列表中隐藏，也不能再在远端执行；主机、凭据、远程项目和 Agent 离线包都会保留。Agent 离线包在关闭时仍可管理。',
     descriptions: {
       'device-sharing': '测试功能，默认关闭。注册设备，发布和撤销能力或知识的元数据。',
       'remote-hosts': '接入 SSH 主机，安装远端执行环境，管理 Agent 离线包。',
       'magic-notes': '记录笔记、整理待办并获取 AI 评论。', knowledge: '管理知识来源，为会话检索资料。',
-      heartbeat: '回顾工作演变、查看故事线图谱，并配置智能心跳。', 'local-inference': '查看本机推理任务与执行服务。'
+      heartbeat: '回顾工作演变、查看故事线图谱，并配置智能心跳。', 'local-inference': '查看本机推理任务与执行服务。',
+      weixin: '通过个人微信 ClawBot 收发消息，交给通道项目处理。',
+      wecom: '通过企业微信智能机器人收发消息，交给通道项目处理。',
+      dingtalk: '通过钉钉应用机器人收发消息，交给通道项目处理。',
+      telegram: '通过 Telegram Bot 收发私聊消息，交给通道项目处理。',
+      feishu: '通过飞书应用机器人收发消息，并在对话中读写飞书文档、知识库、云空间和多维表格。'
     }
   },
   remoteHosts: {

@@ -134,7 +134,8 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 63
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 64
+const feishuChannelConstraint = "channel IN ('weixin', 'wecom', 'dingtalk', 'telegram', 'feishu')"
 
 function withoutHistoricalWorkMode(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
@@ -2624,6 +2625,11 @@ export class AssistantDatabase {
         channel: 'telegram',
         name: 'Telegram',
         description: 'Telegram 远程消息与受控任务'
+      },
+      {
+        channel: 'feishu',
+        name: '飞书',
+        description: '飞书远程消息与受控任务'
       }
     ]
     const find = database.prepare(
@@ -12221,7 +12227,8 @@ export class AssistantDatabase {
         database.enableDefensive(false)
         for (const table of ['projects', 'conversations']) {
           const definition = database.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) as { sql: string }
-          if (definition.sql.includes(expanded)) continue
+          // Later versions widen the list further; those definitions already include telegram.
+          if (definition.sql.includes(expanded) || definition.sql.includes(feishuChannelConstraint)) continue
           if (!definition.sql.includes(previous)) throw new Error(`Unrecognized channel constraint: ${table}`)
           database.exec('PRAGMA writable_schema = ON')
           database.prepare("UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = ?")
@@ -12259,6 +12266,34 @@ export class AssistantDatabase {
         database.exec(supervisionReviewCurrentView)
         database.exec('PRAGMA user_version = 63; COMMIT;')
       } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+    if (version.user_version < 64) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // Same metadata-only CHECK relaxation as version 61, adding Feishu.
+        const previous = "channel IN ('weixin', 'wecom', 'dingtalk', 'telegram')"
+        const expanded = feishuChannelConstraint
+        const schemaVersion = database.prepare('PRAGMA schema_version').get() as { schema_version: number }
+        database.enableDefensive(false)
+        for (const table of ['projects', 'conversations']) {
+          const definition = database.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) as { sql: string }
+          if (definition.sql.includes(expanded)) continue
+          if (!definition.sql.includes(previous)) throw new Error(`Unrecognized channel constraint: ${table}`)
+          database.exec('PRAGMA writable_schema = ON')
+          database.prepare("UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = ?")
+            .run(definition.sql.replace(previous, expanded), table)
+        }
+        database.exec(`PRAGMA schema_version = ${schemaVersion.schema_version + 1}; PRAGMA writable_schema = RESET;`)
+        database.prepare('SELECT channel FROM projects LIMIT 0').all()
+        database.prepare('SELECT channel FROM conversations LIMIT 0').all()
+        database.exec('PRAGMA user_version = 64; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      } finally {
+        database.exec('PRAGMA writable_schema = RESET')
+        database.enableDefensive(true)
+      }
     }
   }
 

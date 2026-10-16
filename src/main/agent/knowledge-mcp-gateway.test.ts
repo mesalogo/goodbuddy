@@ -699,6 +699,48 @@ describe('KnowledgeMcpGateway', () => {
     expect(configService.revokeRequest).toHaveBeenCalledWith('config-write')
   })
 
+  it('serves WeCom tools over MCP and narrows categories to the live settings', async () => {
+    let live: ('doc-manage' | 'todo')[] = ['doc-manage', 'todo']
+    const wecomService = {
+      downloadsDirectory: 'C:\\wecom\\downloads',
+      runSkillScript: vi.fn(),
+      getEnabledCategories: vi.fn(async () => live),
+      readGuide: vi.fn(async (skill: string) => ({ skill, file: 'SKILL.md', content: '# guide', offset: 0 })),
+      runModelCommand: vi.fn(async (args: readonly string[], categories: readonly string[]) => ({
+        exitCode: 0, stdout: JSON.stringify({ args, categories }), stderr: '', truncated: false, category: 'doc-manage'
+      }))
+    }
+    const gateway = new KnowledgeMcpGateway(createService().service, { wecomService })
+    gateways.push(gateway)
+    expect(gateway.grant('wecom-empty', [], new AbortController().signal, 'none', undefined,
+      undefined, undefined, undefined, undefined, undefined, { categories: [] })).toBeUndefined()
+    const token = gateway.grant('wecom', [], new AbortController().signal, 'none', undefined,
+      undefined, undefined, undefined, undefined, undefined, { categories: ['doc-manage', 'todo'] })!
+    expect(gateway.getAvailableToolNames(token)).toEqual(['wecom_guide', 'wecom_cli', 'wecom_script'])
+    await gateway.start()
+    const client = new Client({ name: 'wecom-test', version: '1.0.0' })
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } }
+      }))
+      const tools = (await client.listTools()).tools
+      expect(tools.map(tool => tool.name)).toEqual(['wecom_guide', 'wecom_cli', 'wecom_script'])
+      expect(tools.find(tool => tool.name === 'wecom_cli')!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true })
+      const ran = await client.callTool({ name: 'wecom_cli', arguments: { args: ['doc', 'search', '--json', '{}'] } })
+      const output = JSON.parse((ran.content as Array<{ text: string }>)[0]!.text)
+      expect(output).toMatchObject({ exitCode: 0, output: { categories: ['doc-manage', 'todo'] }, downloadsDirectory: 'C:\\wecom\\downloads' })
+      live = ['todo']
+      await client.callTool({ name: 'wecom_cli', arguments: { args: ['todo', 'list'] } })
+      expect(wecomService.runModelCommand).toHaveBeenLastCalledWith(['todo', 'list'], ['todo'], expect.anything())
+      live = []
+      await expect(client.callTool({ name: 'wecom_guide', arguments: { skill: 'wecomcli-todo' } })).rejects.toThrow('企业微信应用已关闭')
+      const invalid = await client.callTool({ name: 'wecom_cli', arguments: { args: [] } })
+      expect(invalid.isError).toBe(true)
+    } finally {
+      await client.close()
+    }
+  })
+
   it('applies a real configuration plan over MCP without an authorizer', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'config-gateway-'))
     temporaryDirectories.push(directory)

@@ -1,6 +1,9 @@
 import { z } from 'zod'
 import { storyGraphTools } from './story-graph-tools'
 import { obsidianScopedDataTools } from './obsidian-tools'
+import { wecomTools } from './wecom-tools'
+import { feishuTools } from './feishu-tools'
+
 import {
   goodbuddyConfigTools,
   type GoodBuddyConfigToolName
@@ -254,7 +257,9 @@ export const scopedDataTools = [
   ...knowledgeScopedDataTools,
   ...magicNoteScopedDataTools,
   ...obsidianScopedDataTools,
-  ...goodbuddyConfigTools
+  ...goodbuddyConfigTools,
+  ...wecomTools,
+  ...feishuTools
 ] as const
 
 export type ScopedDataToolName = (typeof scopedDataTools)[number]['name']

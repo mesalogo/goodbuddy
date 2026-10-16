@@ -131,9 +131,14 @@ describe('Application Center', () => {
     const body = screen.getByRole('searchbox').closest('.application-center__body')!
     body.scrollTop = 200
     fireEvent.click(screen.getByRole('button', { name: '魔法笔记 应用设置' }))
-    expect(body.scrollTop).toBe(0)
     const dialog = screen.getByRole('dialog', { name: '魔法笔记' })
     expect(dialog).toHaveClass('application-center--detail')
+    // Same layout as system settings: app tabs on the left, settings on the right.
+    const tabs = within(dialog).getByRole('tablist', { name: '应用' })
+    expect(within(tabs).getByRole('tab', { name: '魔法笔记' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(within(tabs).getByRole('tab', { name: '监督者' }))
+    expect(screen.getByRole('dialog', { name: '监督者' })).toBe(dialog)
+    expect(within(dialog).getByRole('switch', { name: '启用应用' })).toBeInTheDocument()
     const back = within(dialog).getByRole('button', { name: '返回应用中心' })
     expect(back.closest('.settings-panel__header')).not.toBeNull()
     fireEvent.click(back)
@@ -440,6 +445,67 @@ describe('Application Center', () => {
     expect(onUpdate).toHaveBeenLastCalledWith({
       magicNoteCommentFormat: 'structured',
     })
+  })
+
+  it('lists platform applications with channel status, opens their project, and edits one channel', async () => {
+    const snapshot = {
+      telegram: { enabled: false, secretConfigured: false, source: 'none', readOnly: false, allowedSenderIds: [], allowGroupMessages: false, status: { state: 'disabled' } },
+      weixin: { enabled: true, bindingConfigured: true, source: 'encrypted', status: { state: 'running' } },
+      wecom: { enabled: false, botId: '', secretConfigured: false, source: 'none', readOnly: false, allowedSenderIds: [], allowGroupMessages: false, status: { state: 'disabled' } },
+      dingtalk: { enabled: true, clientId: 'c', secretConfigured: true, source: 'encrypted', readOnly: false, allowedSenderIds: [], allowGroupMessages: false, status: { state: 'error', lastError: 'x' } },
+      feishu: { enabled: false, appId: '', domain: 'feishu', secretConfigured: false, source: 'none', readOnly: false, allowedSenderIds: [], allowGroupMessages: false, status: { state: 'disabled' } },
+    }
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          getSnapshot: vi.fn(async () => snapshot),
+          onStatusChanged: vi.fn(() => () => undefined),
+          getWeixinBinding: vi.fn(async () => ({ status: 'stopped' })),
+          onWeixinBindingChanged: vi.fn(() => () => undefined),
+        },
+        settings: { getRuntime: vi.fn(() => new Promise(() => undefined)) },
+      },
+    })
+    const handlers = props()
+    const onOpenChannel = vi.fn()
+    const channelProject = { id: 'p1', kind: 'channel', channel: 'weixin' } as never
+    render(<ApplicationCenter {...handlers} platform={{ projects: [channelProject], onOpenChannel, onUpdateProject: vi.fn() }} />)
+    const group = await screen.findByRole('region', { name: '平台应用' })
+    const weixin = (await within(group).findByText('微信 ClawBot', { exact: true })).closest('article')!
+    expect(await within(weixin).findByText(/已连接/u)).toBeInTheDocument()
+    const telegram = within(group).getByText('Telegram', { exact: true }).closest('article')!
+    expect(within(telegram).getByText(/未配置/u)).toBeInTheDocument()
+    expect(within(telegram).getByRole('button', { name: '打开' })).toBeDisabled()
+    expect(within(group).getByText('钉钉', { exact: true }).closest('article')!).toHaveTextContent('连接失败')
+    expect(within(group).queryByRole('button', { name: /上移|下移/u })).not.toBeInTheDocument()
+    fireEvent.click(within(weixin).getByRole('button', { name: '打开' }))
+    expect(onOpenChannel).toHaveBeenCalledWith('weixin')
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Telegram' } })
+    expect(screen.queryByText('微信 ClawBot', { exact: true })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Telegram 应用设置' }))
+    expect(screen.getByRole('dialog', { name: 'Telegram' })).toHaveClass('application-center--detail')
+    expect(await screen.findByText('正在读取消息通道设置…')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '返回应用中心' }))
+    expect(screen.getByRole('searchbox')).toHaveValue('Telegram')
+  })
+
+  it('opens directly on a requested platform application', async () => {
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          getSnapshot: vi.fn(() => new Promise(() => undefined)),
+          onStatusChanged: vi.fn(() => () => undefined),
+          getWeixinBinding: vi.fn(async () => ({ status: 'stopped' })),
+          onWeixinBindingChanged: vi.fn(() => () => undefined),
+        },
+        settings: { getRuntime: vi.fn(() => new Promise(() => undefined)) },
+      },
+    })
+    render(<ApplicationCenter {...props()} platform={{ projects: [], initialChannel: 'wecom', onOpenChannel: vi.fn(), onUpdateProject: vi.fn() }} />)
+    expect(screen.getByRole('dialog', { name: '企业微信' })).toBeInTheDocument()
+    expect(await screen.findByText('正在读取消息通道设置…')).toBeInTheDocument()
   })
 
   it('keeps disabled page drafts mounted without a generic settings shortcut', () => {

@@ -1000,6 +1000,21 @@ describe('release build arguments', () => {
         })
       )
 
+      // A WeCom bundle already prepared for this lock is reused without downloads.
+      const wecomLock = { pythonVersion: '3.13', targets: { 'win32-x64': {
+        cli: { package: '@wecom/cli-win32-x64', version: '1.3.4', integrity: 'sha512-wecom' },
+        wheels: [{ filename: 'a-1-py3-none-any.whl', url: 'https://example.invalid/a.whl', size: 1, sha256: 'aa' }]
+      } } }
+      mkdirSync(join(projectRoot, 'resources'), { recursive: true })
+      writeFileSync(join(projectRoot, 'resources', 'wecom-artifacts.lock.json'), JSON.stringify(wecomLock))
+      const wecomBinary = Buffer.from('wecom cli')
+      mkdirSync(join(projectRoot, '.runtime-resources', 'wecom-x64', 'bin'), { recursive: true })
+      writeFileSync(join(projectRoot, '.runtime-resources', 'wecom-x64', 'bin', 'wecom-cli.exe'), wecomBinary)
+      writeFileSync(join(projectRoot, '.runtime-resources', 'wecom-x64', 'ready.json'), JSON.stringify({
+        identity: JSON.stringify({ key: 'win32-x64', cli: wecomLock.targets['win32-x64'].cli, wheels: ['aa'] }),
+        executableSha256: createHash('sha256').update(wecomBinary).digest('hex')
+      }))
+
       await expect(
         prepareBundledRuntimes({
           electronPlatformName: 'win32',
@@ -1007,6 +1022,7 @@ describe('release build arguments', () => {
           packager: { projectDir: projectRoot }
         })
       ).resolves.toBeUndefined()
+      expect(existsSync(join(projectRoot, '.runtime-resources', 'wecom-x64', 'bin', 'wecom-cli.exe'))).toBe(true)
       expect(existsSync(join(projectRoot, '.runtime-resources', 'dsh-x64', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))).toBe(true)
       expect(
         existsSync(join(projectRoot, '.agent-resources'))
