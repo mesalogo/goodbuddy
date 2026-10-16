@@ -361,8 +361,7 @@ function defaultSkillState(
 
 async function readSkill(
   directoryPath: string,
-  source: SkillSummary['source'],
-  expectedId: string | null = basename(directoryPath)
+  source: SkillSummary['source']
 ): Promise<Omit<SkillSummary, 'enabled' | 'assignments'>> {
   const filePath = join(directoryPath, 'SKILL.md')
   const file = await stat(filePath)
@@ -373,16 +372,14 @@ async function readSkill(
   return parseSkillContent(
     content,
     basename(directoryPath),
-    source,
-    expectedId
+    source
   )
 }
 
 function parseSkillContent(
   content: string,
   displayName: string,
-  source: SkillSummary['source'],
-  expectedId: string | null
+  source: SkillSummary['source']
 ): Omit<SkillSummary, 'enabled' | 'assignments'> {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]+)$/u.exec(content)
   if (!match?.[1] || !match[2]?.trim()) {
@@ -396,9 +393,6 @@ function parseSkillContent(
     throw new Error(
       `${displayName} 的 SKILL.md 缺少可用的 Skill ID，请提供小写连字符格式的 id 或 name`
     )
-  }
-  if (expectedId !== null && identifier.data !== expectedId) {
-    throw new Error(`Skill ID 必须与目录名一致：${identifier.data}`)
   }
   return skillSummarySchema
     .omit({ enabled: true, assignments: true })
@@ -1393,7 +1387,6 @@ export class CapabilityService {
 
   private async stageSkillDirectory(
     sourceDirectory: string,
-    expectedId: string | null | undefined,
     expectedPackageDigest?: string
   ): Promise<{
     skill: Omit<SkillSummary, 'enabled' | 'assignments'>
@@ -1407,8 +1400,7 @@ export class CapabilityService {
     try {
       const skill = await readSkill(
         sourceDirectory,
-        'imported',
-        expectedId
+        'imported'
       )
       const builtins = await listSkills(this.builtinSkillsRoot, 'builtin')
       if (builtins.some((item) => item.id === skill.id)) {
@@ -1430,7 +1422,7 @@ export class CapabilityService {
           'Skill 内容在确认后已发生变化，请重新生成导入计划'
         )
       }
-      await readSkill(temporaryPath, 'imported', skill.id)
+      await readSkill(temporaryPath, 'imported')
       return { skill, temporaryPath, targetPath }
     } catch (error) {
       await rm(temporaryPath, { recursive: true, force: true })
@@ -1440,13 +1432,11 @@ export class CapabilityService {
 
   private async importSkillDirectory(
     sourceDirectory: string,
-    expectedId: string | null | undefined,
     initialState: z.infer<typeof skillStateSchema> = defaultSkillState(),
     expectedPackageDigest?: string
   ): Promise<string> {
     const staged = await this.stageSkillDirectory(
       sourceDirectory,
-      expectedId,
       expectedPackageDigest
     )
     try {
@@ -1479,13 +1469,11 @@ export class CapabilityService {
       throw new Error('所选 Skill 路径必须是目录或 .zip 文件')
     }
     let directories: string[]
-    let expectedId: string | null | undefined
     let zipFiles: SkillPackageFile[] | undefined
     if (isZip) {
       const parsedZip = await parseSkillZip(canonicalSource)
       zipFiles = parsedZip.files
       directories = []
-      expectedId = parsedZip.directoryName ?? null
     } else {
       directories = await discoverSkillDirectories(canonicalSource)
       if (directories.length === 0) {
@@ -1501,17 +1489,15 @@ export class CapabilityService {
             zipFiles
               ?.find((file) => file.relativePath === 'SKILL.md')
               ?.contents.toString('utf8') ?? '',
-            expectedId ?? 'Skill ZIP',
-            'imported',
-            expectedId ?? null
+            'Skill ZIP',
+            'imported'
           )
         ]
       : await Promise.all(
           directories.map((directory) =>
             readSkill(
               directory,
-              'imported',
-              directories.length === 1 ? undefined : null
+              'imported'
             )
           )
         )
@@ -1611,8 +1597,7 @@ export class CapabilityService {
             const skill = parseSkillContent(
               skillContent,
               parsedZip.directoryName ?? 'Skill ZIP',
-              'imported',
-              parsedZip.directoryName ?? null
+              'imported'
             )
             const currentDigest = createHash('sha256')
               .update(
@@ -1628,7 +1613,6 @@ export class CapabilityService {
           await writeSkillPackageFiles(parsedZip.files, extractPath)
           await this.importSkillDirectory(
             extractPath,
-            parsedZip.directoryName ?? null,
             initialState,
             digestSkillFiles(parsedZip.files)
           )
@@ -1663,7 +1647,6 @@ export class CapabilityService {
           // directory name is only authoritative for a single-skill import.
           const staged = await this.stageSkillDirectory(
             directory,
-            directories.length === 1 ? undefined : null,
             expectedDigest !== undefined
               ? inspectedPackageDigests?.[index]
               : undefined

@@ -578,6 +578,33 @@ describe('CapabilityService', () => {
     )
   })
 
+  it('accepts a Skill directory whose name differs from its ID', async () => {
+    const { directory, service } = await createService()
+    const source = join(directory, '3d-print-skill')
+    await mkdir(source, { recursive: true })
+    await writeFile(
+      join(source, 'SKILL.md'),
+      [
+        '---',
+        'id: 3d-print',
+        'name: 3D Print',
+        'description: 3D 打印测试技能',
+        '---',
+        '',
+        '# 3D Print',
+        '',
+        '仅用于离线测试。'
+      ].join('\n'),
+      'utf8'
+    )
+
+    const imported = await service.importSkill(source)
+
+    expect(imported.skills).toContainEqual(
+      expect.objectContaining({ id: '3d-print', source: 'imported' })
+    )
+  })
+
   it('imports every Skill found under a suite directory', async () => {
     const { directory, service } = await createService()
     const suite = join(directory, 'suite', 'skills')
