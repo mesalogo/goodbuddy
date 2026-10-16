@@ -42,6 +42,7 @@
 - 飞书扫码创建应用后直接启用消息通道（扫码人为唯一允许的发送者）；修正扫码完成后每次状态推送都重新读取设置、冲掉未保存表单的问题。
 - 飞书知识空间提示按飞书 Wiki FAQ 改为“把机器人拉进群，再把群加为知识空间成员”或“添加文档应用”；根目录浏览失败时显示飞书返回的错误和缺少的权限。
 - 企业微信二维码：`wecom-cli` 1.3.4 打印的 `/ai/qc/gen?scode=` 是展示二维码的网页，手机端要扫的是 `/ai/qc/c?s=` 地址。现在从输出中取 `scode` 生成扫码地址，并保留“在浏览器中打开二维码”的备用链接。用真实 CLI 输出解码终端二维码，与生成地址逐字一致。
+- 企业微信扫码改由 GoodBuddy 直接调用扫码接口（`wecom-bot-registration.ts`），不再启动 `auth init --noninteractive`：拿到 Bot ID 和 Secret 后签发工具凭据，并把同一机器人存入消息通道（扫码人为唯一允许的发送者，通道启用并自动重启）。原因是 CLI 把 Secret 加密存在自己的目录里，GoodBuddy 读不到，无法填入消息通道。
 - 右侧工作区“＋”菜单：工具已启用但不可用的平台也会列出，显示原因和“前往处理”。
 - FR-7 `@` 引用：见 PRD。新增 `feishu:search-documents`（应用可见范围内按标题过滤，最多 30 次请求、30 条结果）；企业微信面板搜索和 `@` 搜索都受“文档管理”类别约束。
 
@@ -82,3 +83,10 @@
 - `npx vitest run tests/telegram`：通过（Telegram 生产 IPC 冒烟测试已按新标签页更新）。
 - 真实环境（Windows x64）：用内置 `wecom-cli` 1.3.4 运行 `auth init`，解码其终端二维码，内容与新生成的扫码地址一致。
 - **未用手机实际扫码；`@` 搜索未连真实飞书、企业微信账号验证。**
+
+企业微信扫码同时填入消息通道（2026-10-16）：
+
+- 类型检查（node、web）和改动文件的 eslint：通过。
+- `npx vitest run src/main/wecom src/main/channels src/main/ipc.test.ts src/renderer/src/WecomToolSettings.test.tsx src/renderer/src/ChannelApplicationSettings.test.tsx`：通过。
+- 真实接口（Windows x64）：`/ai/qc/generate` 返回 `scode` 和 `auth_url`，`/ai/qc/query_result` 在未扫码时返回 `{"status":"init"}`，取消后停止轮询。
+- **扫码成功后的 `bot_info` 字段（`botid`/`bot_id`、`secret`）和 `identity whoami` 的 userid 字段来自二进制字符串和推断，未用真实扫码确认；消息通道用扫码机器人建立长连接也未验证。**
