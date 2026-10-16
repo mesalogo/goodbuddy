@@ -3190,6 +3190,12 @@ export function registerIpcHandlers(
   if (channelManager) {
     void trackExecution(channelManager.initialize()).catch(() => undefined)
   }
+  // Scan-to-create writes credentials directly; restart that channel with them.
+  const removeExternalChannelChange = channelSettingsStore && channelManager
+    ? channelSettingsStore.onExternalChange?.((channel) => {
+        void trackExecution(channelManager.reload(channel)).catch(() => undefined)
+      })
+    : undefined
 
   registerHandler(ipcChannels.appInfo, (event): AppInfo => {
     assertTrustedSender(event, window)
@@ -7487,6 +7493,7 @@ export function registerIpcHandlers(
     if (contextImports > 0) contextManager.cancelImport(true)
     for (const controller of attachmentParsing.values()) controller.abort(new Error('应用正在退出'))
     removeApplicationSettingsListener?.()
+    removeExternalChannelChange?.()
     removeLocalToolEnvironmentProgressListener?.()
     await localToolEnvironmentService?.dispose()
     removeBrowserStateListener?.()

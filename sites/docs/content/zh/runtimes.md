@@ -2,7 +2,7 @@
 
 Runtime 决定请求由哪条执行路径处理。它与模型连接不同：连接回答“调用哪个模型服务”，Runtime 回答“由谁组织请求、工具和执行空间”。每次请求都会保留可查看的状态、工具活动、取消或失败结果。
 
-## 四种选择
+## 五种选择
 
 | Runtime | 适合场景 | 模型配置 |
 | --- | --- | --- |
@@ -10,8 +10,9 @@ Runtime 决定请求由哪条执行路径处理。它与模型连接不同：连
 | OpenCode | 编程 Agent、文件和命令工具、Skills | GoodBuddy 连接或 OpenCode 自有配置 |
 | Continue | 使用 Rules、Prompt 预设和编程工作 | GoodBuddy 连接或 Continue 自有配置 |
 | DeepSeek Harness | 固定 Host 和兼容插件能力 | GoodBuddy 管理的兼容连接 |
+| Factory Droid（规划中） | Factory Droid ACP、本地或内网模型、Airgap 编程工作 | Droid `settings.json` 中的 BYOK custom model |
 
-先用直连模型完成普通问答或知识检索；需要持续操作项目文件、命令和 Skills 时选择 OpenCode 或 Continue；需要其固定 Host 能力时再选择 DeepSeek Harness。不同 Runtime 的工具、问答和原生客户端能力可能不同，选择器会显示当前可用项。
+先用直连模型完成普通问答或知识检索；需要持续操作项目文件、命令和 Skills 时选择 OpenCode 或 Continue；需要其固定 Host 能力时再选择 DeepSeek Harness。Factory Droid 目前处于设计阶段，计划通过本地 ACP 子进程支持 BYOK 和 Airgap。不同 Runtime 的工具、问答和原生客户端能力可能不同，选择器会显示当前可用项。详见 [Factory Droid Airgap Runtime 设计](https://github.com/mesalogo/goodbuddy/blob/main/docs/features/factory-droid-airgap/README.md)。
 
 ## 选择范围和能力
 

@@ -75,7 +75,14 @@ export const feishuBrowseInputSchema = z.object({
 }).strict()
 export type FeishuBrowseInput = z.infer<typeof feishuBrowseInputSchema>
 
+export const feishuSearchInputSchema = z.object({
+  query: z.string().trim().min(1).max(200)
+}).strict()
+export type FeishuSearchInput = z.infer<typeof feishuSearchInputSchema>
+
 export type FeishuApiBridge = {
+  /** Title search over documents shared with the app; used by `@` references. */
+  searchDocuments(input: FeishuSearchInput): Promise<FeishuBrowseItem[]>
   getSnapshot(): Promise<FeishuSnapshot>
   updateSettings(input: FeishuToolSettingsUpdate): Promise<FeishuSnapshot>
   startRegistration(domain: FeishuDomain): Promise<FeishuSnapshot>

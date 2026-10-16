@@ -162,8 +162,10 @@ function sidebarElement({
   onStopLoadingBrowser,
   onOpenTask = vi.fn(),
   onCreateCustomTask = vi.fn(),
-  onTabChange = vi.fn()
+  onTabChange = vi.fn(),
+  platform
 }: {
+  platform?: Pick<React.ComponentProps<typeof RightAssistantSidebar>, 'feishuPanel' | 'wecomPanel' | 'platformAppBlockers' | 'onResolvePlatformApp'>
   open?: boolean
   tab?: AssistantSidebarTab
   approvals?: PendingSidebarApproval[]
@@ -242,6 +244,7 @@ function sidebarElement({
         restoreFocusRef={restoreFocusRef}
         tab={tab}
         workspaceProjectId={workspaceProjectId}
+        {...platform}
       />
     </div>
   )
@@ -1236,6 +1239,26 @@ describe('RightAssistantSidebar resizing', () => {
       'large.txt',
       11
     )
+  })
+
+  it('lists enabled platform apps in the "+" menu and leads unready ones to their settings', async () => {
+    const onResolvePlatformApp = vi.fn()
+    render(sidebarElement({
+      platform: {
+        feishuPanel: <p>feishu panel content</p>,
+        platformAppBlockers: { wecom: '企业微信工具尚未授权或已关闭。' },
+        onResolvePlatformApp
+      }
+    }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    const catalog = screen.getByRole('list', { name: /工作栏应用/u })
+    const feishu = within(catalog).getByText('飞书').closest('li')!
+    const wecom = within(catalog).getByText('企业微信').closest('li')!
+    expect(within(wecom).getByText('企业微信工具尚未授权或已关闭。')).toBeInTheDocument()
+    fireEvent.click(within(wecom).getByRole('button', { name: '前往处理' }))
+    expect(onResolvePlatformApp).toHaveBeenCalledWith('wecom')
+    fireEvent.click(within(feishu).getByRole('button', { name: /飞书/u }))
+    expect(await screen.findByText('feishu panel content')).toBeInTheDocument()
   })
 
   it('removes results from both the tabs and application catalog', () => {

@@ -111,6 +111,9 @@ export const integrations = {
       createdEnabled: '已创建飞书应用并启用消息通道，扫码人已加入允许的发送者',
       createFailed: '扫码创建应用失败：{{message}}，请改为手动填写'
     },
+    wecom: {
+      scanSaved: '已扫码创建企业微信机器人，已同时填入消息通道'
+    },
     telegram: {
       unconfigured: '未配置',
       botFather: '打开官方 BotFather',
@@ -225,7 +228,7 @@ export const integrations = {
     authorized: '已授权',
     unauthorized: '未授权',
     unsupportedPlatform: '当前安装包没有内置企业微信 CLI（不支持此操作系统或处理器架构）。',
-    connectHelp: '用企业微信扫码创建个人智能机器人后，GoodBuddy 即可以你本人的身份访问你有权限的文档和数据。凭据只保存在 GoodBuddy 的专用目录中。',
+    connectHelp: '用企业微信扫码创建个人智能机器人后，GoodBuddy 即可以你本人的身份访问你有权限的文档和数据，同一个机器人也会自动填入消息通道。凭据由 GoodBuddy 加密保存。',
     adminHelp: '扫码没有反应或提示无权限时，请联系企业管理员开放“智能机器人”创建权限，或改为填写已有机器人的 Bot ID 和 Secret。',
     scan: '扫码授权',
     preparing: '正在准备…',
@@ -235,8 +238,13 @@ export const integrations = {
     secret: 'Secret',
     verify: '验证并保存',
     qrAlt: '企业微信授权二维码',
-    qrInstructions: '请用企业微信扫描二维码，并在手机上确认创建机器人。',
+    qrInstructions: '请用企业微信扫描二维码，并在手机上确认创建机器人。完成后工具和消息通道使用同一个机器人。',
+    scanChannelSaved: '已授权工具，并把这个机器人填入了消息通道：通道已启用，扫码人是唯一允许的发送者。',
+    scanChannelSavedNoSender: '已授权工具，并把这个机器人填入了消息通道。没有读到扫码人的 ID，请在“消息”页填写允许的发送者后保存，通道才会开始接收消息。',
+    scanChannelFailed: '已授权工具，但没能填入消息通道：{{message}}',
+    scanToolsOnly: '已授权工具。',
     qrExpires: '二维码将在 {{time}} 过期',
+    qrOpenWeb: '扫不出来？在浏览器中打开二维码',
     cancelQr: '取消扫码',
     authorizedAs: '已授权，机器人 {{botId}}。工具以扫码授权人本人的身份运行。',
     authorizedHelp: '已授权。工具以授权人本人的身份运行。',

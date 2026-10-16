@@ -891,6 +891,10 @@ if (hasSingleInstanceLock) {
       resolveChannelCredentials: async () => {
         const wecom = await channelSettingsStore.resolve('wecom')
         return wecom.botId && wecom.secret ? { botId: wecom.botId, secret: wecom.secret } : undefined
+      },
+      // One scan sets up both the tools and the message channel bot.
+      saveRegisteredBot: async (bot) => {
+        await channelSettingsStore.saveWecomRegisteredBot(bot)
       }
     })
     wecomService = startupWecomService

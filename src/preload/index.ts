@@ -847,6 +847,7 @@ const desktopApi: DesktopApi = {
     startRegistration: domain => ipcRenderer.invoke(ipcChannels.feishuStartRegistration, domain),
     cancelRegistration: () => ipcRenderer.invoke(ipcChannels.feishuCancelRegistration),
     browse: input => ipcRenderer.invoke(ipcChannels.feishuBrowse, input),
+    searchDocuments: input => ipcRenderer.invoke(ipcChannels.feishuSearchDocuments, input),
     onChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, snapshot: FeishuSnapshot): void => listener(snapshot)
       ipcRenderer.on(ipcChannels.feishuChanged, handler)

@@ -196,6 +196,22 @@ report(/<main\s+id="main-content">/.test(html), "缺少 main-content 主区域")
 report(/<main\s+id="main-content">/.test(englishHtml), "英文页面缺少 main-content 主区域");
 report(/aria-label="主导航"/.test(html), "主导航缺少可访问名称");
 report(/aria-label="Main navigation"/.test(englishHtml), "英文主导航缺少可访问名称");
+report(
+  /<div class="header-actions">[\s\S]*class="button button--quiet header-docs" href="\.\/docs-dist\/zh\/"/.test(html),
+  "中文页面文档入口必须位于右侧操作区",
+);
+report(
+  /<div class="header-actions">[\s\S]*class="button button--quiet header-docs" href="\.\/docs-dist\/en\/"/.test(englishHtml),
+  "英文页面文档入口必须位于右侧操作区",
+);
+report(
+  !/<nav class="site-navigation">[\s\S]*?href="\.\/docs-dist\/[\s\S]*?<\/nav>/.test(html),
+  "中文文档入口不应重复出现在主导航",
+);
+report(
+  !/<nav class="site-navigation">[\s\S]*?href="\.\/docs-dist\/[\s\S]*?<\/nav>/.test(englishHtml),
+  "英文文档入口不应重复出现在主导航",
+);
 report(/data-theme-toggle/.test(html), "缺少主题切换控件");
 report(/data-theme-toggle/.test(englishHtml), "英文页面缺少主题切换控件");
 report(

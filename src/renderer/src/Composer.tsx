@@ -69,6 +69,18 @@ import {
   type RuntimeActionChoice,
 } from "./ComposerMenuSelect";
 import { formatAttachmentSize, resizeComposerTextarea } from "./composer-textarea";
+import { ChannelIcon } from "./ChannelIcon";
+import { ExternalReferenceMenu } from "./ExternalReferenceMenu";
+import {
+  activeMention,
+  createExternalReferenceStore,
+  referenceKey,
+  useExternalReferences,
+  type ExternalDocumentReference,
+  type ExternalReferenceProvider,
+  type ExternalReferenceSources,
+  type ExternalReferenceStore,
+} from "./external-references";
 import { useComposerConversationView } from "./conversation-selectors";
 import type { ConversationStore } from "./conversation-store";
 import { ConversationInputQueue } from "./ConversationInputQueue";
@@ -131,7 +143,13 @@ export type ComposerProps = {
   voiceRecording: boolean;
   /** The workspace view; switching views closes the composer popups. */
   workspaceView: string;
+  /** Documents picked with `@`; empty sources disable the `@` menu. */
+  referenceStore?: ExternalReferenceStore;
+  referenceSources?: ExternalReferenceSources;
+  onResolveReferenceSource?: (provider: ExternalReferenceProvider) => void;
 };
+
+const noReferenceSources: ExternalReferenceSources = {};
 
 const composerContextErrorId = "composer-context-error";
 const runtimeDetailId = "composer-runtime-detail";
@@ -196,8 +214,51 @@ export const Composer = memo(function Composer({
   voiceListening,
   voiceRecording,
   workspaceView,
+  referenceStore,
+  referenceSources = noReferenceSources,
+  onResolveReferenceSource,
 }: ComposerProps): React.JSX.Element {
   const { t } = useTranslation("app");
+  const [fallbackReferenceStore] = useState(createExternalReferenceStore);
+  const references = useExternalReferences(referenceStore ?? fallbackReferenceStore, conversationId);
+  const referencesEnabled = referenceStore !== undefined && Object.keys(referenceSources).length > 0;
+  const [mention, setMention] = useState<{ conversationId: string; start: number; query: string }>();
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionItemList, setMentionItemList] = useState<readonly ExternalDocumentReference[]>([]);
+  const activeMentionState = mention?.conversationId === conversationId ? mention : undefined;
+  const updateMention = useCallback((element: HTMLTextAreaElement): void => {
+    if (!referencesEnabled) return;
+    const next = activeMention(element.value, element.selectionStart ?? element.value.length);
+    setMention((current) => {
+      if (!next) return undefined;
+      if (current?.conversationId === conversationId && current.start === next.start && current.query === next.query) return current;
+      return { conversationId, ...next };
+    });
+    setMentionIndex(0);
+  }, [conversationId, referencesEnabled]);
+  const setMentionItems = useCallback((items: readonly ExternalDocumentReference[]): void => {
+    setMentionItemList(items);
+    setMentionIndex((current) => Math.min(current, Math.max(0, items.length - 1)));
+  }, []);
+  const pickReference = useCallback((reference: ExternalDocumentReference): void => {
+    const current = activeMentionState;
+    if (!referenceStore || !current) return;
+    if (!referenceStore.add(conversationId, reference)) {
+      actions.setContextError(t("composer.references.limit"));
+    }
+    // Drop the typed "@query"; the chip replaces it.
+    const token = `@${current.query}`;
+    composerDrafts.set(conversationId, (draft) =>
+      draft.slice(current.start, current.start + token.length) === token
+        ? `${draft.slice(0, current.start)}${draft.slice(current.start + token.length)}`
+        : draft);
+    setMention(undefined);
+    const caret = current.start;
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(caret, caret);
+    });
+  }, [actions, activeMentionState, composerDrafts, conversationId, inputRef, referenceStore, t]);
   const view = useComposerConversationView(conversationStore, conversationId);
   const [storyGraphSaving, setStoryGraphSaving] = useState(false);
   const isRunning = view?.running ?? false;
@@ -534,7 +595,7 @@ export const Composer = memo(function Composer({
         )}
         <PendingDocumentImports key={conversationId} conversationId={conversationId} refreshing={selectingContextFiles} onBusyChange={updateAttachmentBusy} />
         {attachments.some((attachment) => attachment.kind === 'image') && <AttachmentCapabilityNotice key={`${conversationId}:${activeRuntimeSelectionKey}`} conversationId={conversationId} selection={activeRuntimeSelection} revision={`${attachments.map((item) => item.id).join(',')}:${runtimeSettings?.defaultModelProfileId}:${runtimeStatusKey}`} />}
-        {(attachments.length > 0 || imageReferences.length > 0 ||
+        {(attachments.length > 0 || imageReferences.length > 0 || references.length > 0 ||
           selectingContextFiles) && (
           <div
             aria-busy={selectingContextFiles}
@@ -546,6 +607,24 @@ export const Composer = memo(function Composer({
             aria-invalid={contextError ? true : undefined}
             className="context-list"
           >
+            {references.map((reference) => {
+              const platform = t(`composer.references.providers.${reference.provider}`);
+              return (
+                <div className="context-chip context-chip--reference" key={referenceKey(reference)} title={reference.url ?? reference.title}>
+                  <ChannelIcon channel={reference.provider} size={14} />
+                  <span><strong>{reference.title}</strong><small>{platform}</small></span>
+                  <button
+                    className="icon-button attachment-action"
+                    type="button"
+                    aria-label={t("composer.references.remove", { name: reference.title })}
+                    title={t("composer.references.remove", { name: reference.title })}
+                    onClick={() => referenceStore?.remove(conversationId, referenceKey(reference))}
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </div>
+              );
+            })}
             {imageReferences.map(artifact => <div className="context-chip" key={artifact.id}>
               {artifact.content && <img alt="" className="context-chip__thumbnail" src={artifact.content} />}
               <span><strong>{artifact.title}</strong><small>{t('chat.images.edit')}</small></span>
@@ -675,7 +754,28 @@ export const Composer = memo(function Composer({
           >
           {(draft) => (
           <>
+          {activeMentionState && (
+            <ExternalReferenceMenu
+              activeIndex={mentionIndex}
+              onActiveIndexChange={setMentionIndex}
+              onItemsChange={setMentionItems}
+              onPick={pickReference}
+              onResolve={(provider) => {
+                setMention(undefined);
+                onResolveReferenceSource?.(provider);
+              }}
+              query={activeMentionState.query}
+              selected={references}
+              sources={referenceSources}
+            />
+          )}
           <textarea
+            aria-activedescendant={activeMentionState && mentionItemList.length > 0
+              ? `external-reference-option-${mentionIndex}`
+              : undefined}
+            aria-autocomplete={referencesEnabled ? "list" : undefined}
+            aria-controls={activeMentionState ? "external-reference-menu" : undefined}
+            aria-expanded={referencesEnabled ? activeMentionState !== undefined : undefined}
             aria-describedby={
               contextError
                 ? composerContextErrorId
@@ -683,6 +783,8 @@ export const Composer = memo(function Composer({
             }
             aria-invalid={contextError ? true : undefined}
             aria-label={t("composer.inputLabel")}
+            onSelect={(event) => updateMention(event.currentTarget)}
+            onBlur={() => setMention(undefined)}
             placeholder={`${
               runtime?.capability === "image-generation"
                 ? `${t("composer.imagePlaceholder")}\n`
@@ -692,7 +794,10 @@ export const Composer = memo(function Composer({
             rows={3}
             title={`${keyboardHint}\n${conversationHint}`}
             value={draft}
-            onChange={(event) => composerDrafts.set(conversationId, event.target.value)}
+            onChange={(event) => {
+              composerDrafts.set(conversationId, event.target.value);
+              updateMention(event.target);
+            }}
             onPaste={(event) => {
               const files = Array.from(event.clipboardData.files);
               if (files.length > 0) {
@@ -758,6 +863,25 @@ export const Composer = memo(function Composer({
               });
             }}
             onKeyDown={(event) => {
+              if (activeMentionState) {
+                const items = mentionItemList;
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setMention(undefined);
+                  return;
+                }
+                if ((event.key === "ArrowDown" || event.key === "ArrowUp") && items.length > 0) {
+                  event.preventDefault();
+                  setMentionIndex((current) => (current + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length);
+                  return;
+                }
+                if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey && items[mentionIndex]) {
+                  event.preventDefault();
+                  pickReference(items[mentionIndex]!);
+                  return;
+                }
+              }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 actions.submit();
@@ -1241,7 +1365,7 @@ export const Composer = memo(function Composer({
                   : t("composer.send")
               }
               disabled={
-                (!draftHasText &&
+                (!draftHasText && references.length === 0 &&
                   !(
                     activeRuntimeSelection?.provider ===
                       "opencode" &&

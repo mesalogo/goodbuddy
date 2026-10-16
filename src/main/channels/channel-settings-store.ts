@@ -401,6 +401,7 @@ export class ChannelSettingsStore {
   private warnings: SettingsWarning[] = []
   private runtimeRepairWarning?: SettingsWarning
   private updateQueue: Promise<void> = Promise.resolve()
+  private readonly externalChangeListeners = new Set<(channel: CredentialChannel) => void>()
   private readonly environmentChannels: Record<
     CredentialChannel,
     EnvironmentChannel
@@ -697,6 +698,49 @@ export class ChannelSettingsStore {
     const operation = this.updateQueue.then(update, update)
     this.updateQueue = operation.then(() => undefined, () => undefined)
     return operation.then(() => snapshot)
+  }
+
+  /**
+   * Notifies when a channel is changed outside `apply` (scan-to-create), so
+   * the channel manager can restart it with the new credentials.
+   */
+  onExternalChange(listener: (channel: CredentialChannel) => void): () => void {
+    this.externalChangeListeners.add(listener)
+    return () => { this.externalChangeListeners.delete(listener) }
+  }
+
+  /**
+   * Saves a smart bot created by WeCom scan-to-create as the channel bot.
+   * The authorizer, when known, becomes the only allowed sender and the
+   * channel is enabled; without a sender the channel cannot start, so it is
+   * left as it was and the user adds senders on the Messages tab.
+   */
+  async saveWecomRegisteredBot(input: { botId: string; secret: string; userId?: string }): Promise<ChannelSettingsSnapshot> {
+    if (this.environmentChannel('wecom').owned) {
+      throw new Error('企业微信由环境变量配置，不能在设置中修改')
+    }
+    let snapshot!: ChannelSettingsSnapshot
+    const update = async (): Promise<void> => {
+      const current = cloneStored(await this.load())
+      const allowedSenderIds = input.userId ? [input.userId] : current.wecom.allowedSenderIds
+      current.wecom = {
+        ...current.wecom,
+        botId: input.botId.trim(),
+        credential: this.encryptCredential('wecom', input.secret),
+        allowedSenderIds,
+        enabled: allowedSenderIds.length > 0 ? true : current.wecom.enabled
+      }
+      this.validateEnabledCredentialChannel('wecom', current.wecom)
+      await this.persist(current)
+      this.settings = current
+      this.removeWarnings(['channel-wecom-credential-unreadable'])
+      snapshot = await this.snapshot()
+    }
+    const operation = this.updateQueue.then(update, update)
+    this.updateQueue = operation.then(() => undefined, () => undefined)
+    await operation
+    for (const listener of this.externalChangeListeners) listener('wecom')
+    return snapshot
   }
 
   async clearWeixinBinding(): Promise<ChannelSettingsSnapshot> {

@@ -133,22 +133,94 @@ describe('WecomCliService', () => {
     expect(calls.find(call => call.args[1] === 'init')!.args).toEqual(['auth', 'init', '--bot-id', 'channel-bot', '--secret', 'channel-secret'])
   })
 
-  it('publishes the QR link and refreshes authorization after a successful scan', async () => {
+  function scanFetch(results: Record<string, unknown>[]) {
+    const urls: string[] = []
+    let poll = 0
+    const fetch = vi.fn(async (url: string) => {
+      urls.push(url)
+      if (url.includes('/ai/qc/generate')) {
+        return new Response(JSON.stringify({ data: {
+          scode: 'abc_D-1',
+          auth_url: 'https://work.weixin.qq.com/ai/qc/c?s=abc_D-1&hide_more_btn=true&for_native=true'
+        } }))
+      }
+      const body = results[Math.min(poll, results.length - 1)]
+      poll += 1
+      return new Response(JSON.stringify(body))
+    })
+    return { fetch, urls }
+  }
+
+  it('scans through GoodBuddy, signs the CLI in and saves the same bot for the message channel', async () => {
     let authorized = false
-    const { instance, children, calls } = service((args) => args[1] === 'init'
-      ? { stdout: '正在获取二维码...\nhttps://work.weixin.qq.com/ai/qc/gen?source=wecom_cli_external&scode=abc\n', hold: true }
-      : { stdout: authorized ? 'Status: authorized' : 'Status: unauthorized' })
-    const events: string[] = []
-    instance.onChanged(snapshot => events.push(snapshot.qr.state))
+    const saved: unknown[] = []
+    const saveBot = async (bot: unknown): Promise<void> => { saved.push(bot) }
+    const { instance, calls } = service((args) => args[0] === 'auth' && args[1] === 'init'
+      ? (authorized = true, { stdout: '' })
+      : args[0] === 'identity'
+        ? { stdout: '{"errcode":0,"bot":{"botid":"bot-new"},"user":{"userid":"zhangsan"}}' }
+        : { stdout: authorized ? 'Status: authorized\nBot ID: bot-new' : 'Status: unauthorized' }, {
+      fetch: scanFetch([
+        { data: { status: 'init' } },
+        { data: { status: 'success', bot_info: { botid: 'bot-new', secret: 'sec-new' } } }
+      ]).fetch,
+      qrPollIntervalMs: 1,
+      saveRegisteredBot: saveBot
+    })
+    const waiting = await instance.startQrAuthorization()
+    expect(waiting.qr).toMatchObject({
+      state: 'waiting',
+      url: 'https://work.weixin.qq.com/ai/qc/c?s=abc_D-1&hide_more_btn=true&for_native=true',
+      webUrl: 'https://work.weixin.qq.com/ai/qc/gen?source=wecom_cli_external&scode=abc_D-1'
+    })
+    await vi.waitFor(async () => expect((await instance.getSnapshot()).qr.state).toBe('completed'))
+    expect((await instance.getSnapshot()).qr).toEqual({ state: 'completed', channelSaved: true, userId: 'zhangsan' })
+    expect((await instance.getSnapshot()).authorization).toEqual({ state: 'authorized', botId: 'bot-new' })
+    expect(calls.find(call => call.args[1] === 'init')!.args).toEqual(['auth', 'init', '--bot-id', 'bot-new', '--secret', 'sec-new'])
+    expect(saved).toEqual([{ botId: 'bot-new', secret: 'sec-new', userId: 'zhangsan' }])
+  })
+
+  it('reports an expired code and does not save anything', async () => {
+    const saveRegisteredBot = vi.fn(async () => undefined)
+    const { instance, calls } = service(() => ({ stdout: 'Status: unauthorized' }), {
+      fetch: scanFetch([{ data: { status: 'expired' } }]).fetch,
+      qrPollIntervalMs: 1,
+      saveRegisteredBot
+    })
     await instance.startQrAuthorization()
-    await vi.waitFor(async () => expect((await instance.getSnapshot()).qr).toMatchObject({
-      state: 'waiting', url: 'https://work.weixin.qq.com/ai/qc/gen?source=wecom_cli_external&scode=abc'
+    await vi.waitFor(async () => expect((await instance.getSnapshot()).qr).toEqual({ state: 'failed', message: '二维码已过期，请重新扫码' }))
+    expect(saveRegisteredBot).not.toHaveBeenCalled()
+    expect(calls.some(call => call.args[1] === 'init')).toBe(false)
+  })
+
+  it('keeps the tools authorized when saving the channel bot fails, and hides the secret in CLI errors', async () => {
+    const { instance } = service((args) => args[1] === 'init'
+      ? { stdout: '' }
+      : args[0] === 'identity' ? { exitCode: 1 } : { stdout: 'Status: authorized' }, {
+      fetch: scanFetch([{ data: { bot_info: { bot_id: 'b', secret: 's3cret' } } }]).fetch,
+      qrPollIntervalMs: 1,
+      saveRegisteredBot: async () => { throw new Error('企业微信由环境变量配置') }
+    })
+    await instance.startQrAuthorization()
+    await vi.waitFor(async () => expect((await instance.getSnapshot()).qr).toEqual({
+      state: 'completed', channelSaved: false, message: '企业微信由环境变量配置'
     }))
-    authorized = true
-    children[calls.findIndex(call => call.args[1] === 'init')]!.emit('close', 0)
-    await vi.waitFor(async () => expect((await instance.getSnapshot()).authorization.state).toBe('authorized'))
+    const failing = service((args) => args[1] === 'init'
+      ? { exitCode: 1, stdout: '{"errmsg":"bad secret s3cret"}' }
+      : { stdout: 'Status: unauthorized' })
+    await expect(failing.instance.authorizeManually({ botId: 'b', secret: 's3cret' })).rejects.toThrow('bad secret ***')
+  })
+
+  it('stops polling when the scan is cancelled', async () => {
+    const scan = scanFetch([{ data: { status: 'init' } }])
+    const { instance } = service(() => ({ stdout: 'Status: unauthorized' }), { fetch: scan.fetch, qrPollIntervalMs: 5 })
+    await instance.startQrAuthorization()
+    await vi.waitFor(() => expect(scan.urls.some(url => url.includes('query_result'))).toBe(true))
+    await instance.cancelQrAuthorization()
+    const count = scan.urls.length
+    await new Promise(resolve => setTimeout(resolve, 40))
+    expect(scan.urls.length).toBeLessThanOrEqual(count + 1)
     expect((await instance.getSnapshot()).qr.state).toBe('idle')
-    expect(events).toContain('waiting')
   })
 
   it('rejects model commands outside enabled categories and administrative commands', async () => {
@@ -163,11 +235,18 @@ describe('WecomCliService', () => {
   })
 
   it('maps document search results and drops IDs without names', async () => {
-    const { instance } = service(() => ({ stdout: JSON.stringify({ docs: [
+    const { instance, calls } = service((args) => args[0] === 'auth' ? { stdout: 'Status: authorized' } : { stdout: JSON.stringify({ docs: [
       { docid: 'd1', doc_name: '周报', doc_type: 'doc', url: 'https://doc.weixin.qq.com/doc/1', modify_time: '2026-10-01 10:00:00' },
       { docid: 'd2' },
       { docid: 'd3', doc_name: 'x', url: 'javascript:alert(1)' }
-    ] }) }))
+    ] }) })
+    // Search uses the same gate as the doc-manage tools.
+    await expect(instance.searchDocuments('周报')).rejects.toThrow('文档管理')
+    expect(calls.some(call => call.args[0] === 'doc')).toBe(false)
+    await instance.updateSettings({ enabled: true })
+    await instance.updateSettings({ categories: { 'doc-manage': false } })
+    await expect(instance.searchDocuments('周报')).rejects.toThrow('文档管理')
+    await instance.updateSettings({ categories: { 'doc-manage': true } })
     expect(await instance.searchDocuments('周报')).toEqual([
       { id: 'd1', name: '周报', type: 'doc', url: 'https://doc.weixin.qq.com/doc/1', modifiedAt: '2026-10-01 10:00:00' },
       { id: 'd3', name: 'x', type: 'doc' }

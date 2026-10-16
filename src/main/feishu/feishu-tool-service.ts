@@ -5,6 +5,7 @@ import {
   feishuToolCategories,
   feishuToolSettingsSchema,
   type FeishuBrowseInput,
+  type FeishuSearchInput,
   type FeishuBrowseItem,
   type FeishuRegistration,
   type FeishuSnapshot,
@@ -26,6 +27,8 @@ import { FeishuApi, type FeishuCredentials, type FeishuFetch } from './feishu-ap
 import { beginAppRegistration, pollAppRegistration, type AppRegistrationResult } from './feishu-app-registration'
 
 const MAX_READ_CHARACTERS = 100_000
+const FEISHU_SEARCH_MAX_REQUESTS = 30
+const FEISHU_SEARCH_MAX_RESULTS = 30
 // Per the Feishu Wiki FAQ: the space member search does not list apps, so an
 // app joins a space through a group that contains its bot.
 const WIKI_ACCESS_HINT = '应用看不到知识空间时：知识空间成员里搜不到应用，需要先建一个飞书群并把本应用的机器人拉进群，再由知识空间管理员在“知识空间设置 › 成员”中添加这个群（成员或管理员）。只需要单个页面时，也可以在该页面右上角“… › 更多 › 添加文档应用”中添加本应用。'
@@ -235,6 +238,42 @@ export class FeishuToolService {
         ...(node.has_child ? { child: { kind: 'node', spaceId, token: node.node_token } } : {})
       }] : [])
     }
+  }
+
+  /**
+   * Title search over what the app can see, for `@` references. Feishu's
+   * document search needs a user token, so this walks shared wiki spaces and
+   * drive folders breadth-first and filters titles. Bounded by request count.
+   */
+  async searchDocuments(input: FeishuSearchInput, signal?: AbortSignal): Promise<FeishuBrowseItem[]> {
+    const enabled = await this.getEnabledCategories()
+    const wiki = enabled.includes('wiki')
+    const drive = enabled.includes('drive') || enabled.includes('doc')
+    if (!wiki && !drive) throw new Error('飞书工具未启用，或已关闭“知识库”“云空间”和“文档”类别')
+    const query = input.query.trim().toLocaleLowerCase()
+    const matches: FeishuBrowseItem[] = []
+    const queue: FeishuBrowseInput['location'][] = []
+    const root = await this.browse({ location: { kind: 'root' } }, signal)
+    const visit = (items: FeishuBrowseItem[]): void => {
+      for (const item of items) {
+        const document = item.kind === 'node' || item.kind === 'file'
+        if (document && (item.kind === 'node' ? wiki : drive) && item.name.toLocaleLowerCase().includes(query)) matches.push(item)
+        if (item.child && (item.child.kind === 'folder' ? drive : wiki)) {
+          queue.push(item.child.kind === 'node'
+            ? { kind: 'node', spaceId: item.child.spaceId!, token: item.child.token }
+            : { kind: item.child.kind, token: item.child.token })
+        }
+      }
+    }
+    visit(root.items)
+    let requests = 0
+    while (queue.length > 0 && requests < FEISHU_SEARCH_MAX_REQUESTS && matches.length < FEISHU_SEARCH_MAX_RESULTS) {
+      signal?.throwIfAborted()
+      requests += 1
+      const result = await this.browse({ location: queue.shift()! }, signal).catch(() => ({ items: [] }))
+      visit(result.items)
+    }
+    return matches.slice(0, FEISHU_SEARCH_MAX_RESULTS)
   }
 
   private driveItems(api: FeishuApi, files: { token?: string; name?: string; type?: string; url?: string }[]): FeishuBrowseItem[] {

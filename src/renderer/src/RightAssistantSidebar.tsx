@@ -130,6 +130,9 @@ export type RightAssistantSidebarProps = {
   /** Rendered inside the Feishu workbar tab; the tab is unavailable without it. */
   feishuPanel?: React.ReactNode
   feishuOpenRequest?: number
+  /** Why a configured platform app has no panel yet; lists it as unavailable in the "+" menu. */
+  platformAppBlockers?: Partial<Record<'wecom' | 'feishu', string>>
+  onResolvePlatformApp?: (app: 'wecom' | 'feishu') => void
   onBeforeCloseNotes?: () => Promise<boolean>
   nativeTerminals?: readonly { terminal: TerminalSnapshot; focus: boolean }[]
   open: boolean
@@ -807,6 +810,8 @@ function RightAssistantSidebarView({
   wecomOpenRequest = 0,
   feishuPanel,
   feishuOpenRequest = 0,
+  platformAppBlockers,
+  onResolvePlatformApp,
   onBeforeCloseNotes,
   nativeTerminals,
   open,
@@ -873,14 +878,21 @@ function RightAssistantSidebarView({
   const localizedAppDefinitions = useMemo(
     () =>
       WORKBAR_APP_DEFINITIONS.filter(definition =>
-        (definition.id !== 'notes' || notesEnabled) && (definition.id !== 'wecom' || Boolean(wecomPanel)) &&
-        (definition.id !== 'feishu' || Boolean(feishuPanel))
+        (definition.id !== 'notes' || notesEnabled) &&
+        (definition.id !== 'wecom' || Boolean(wecomPanel) || Boolean(platformAppBlockers?.wecom)) &&
+        (definition.id !== 'feishu' || Boolean(feishuPanel) || Boolean(platformAppBlockers?.feishu))
       ).map((definition) => {
         const tabDefinition = tabs.find(
           (item) => item.id === definition.id
         )
+        // A connected platform app whose tools are not ready stays listed
+        // with the reason, so the "+" menu can lead to its settings.
+        const blocker = (definition.id === 'wecom' && !wecomPanel) || (definition.id === 'feishu' && !feishuPanel)
+          ? platformAppBlockers?.[definition.id as 'wecom' | 'feishu']
+          : undefined
         return {
           ...definition,
+          ...(blocker ? { availability: { state: 'unavailable' as const, reason: blocker, remedy: 'open-application-settings' as const } } : {}),
           label:
             tabDefinition?.label ??
             t('sidebar.tabs.terminal.label'),
@@ -889,7 +901,7 @@ function RightAssistantSidebarView({
             t('sidebar.tabs.terminal.description')
         } satisfies WorkbarAppDefinition
       }),
-    [t, tabs, notesEnabled, wecomPanel, feishuPanel]
+    [t, tabs, notesEnabled, wecomPanel, feishuPanel, platformAppBlockers]
   )
   const [workbarInstances, setWorkbarInstances] = useState<
     WorkbarTabInstance[]
@@ -2073,6 +2085,9 @@ function RightAssistantSidebarView({
         onCloseInstance={requestCloseWorkbarInstance}
         onCreateInstance={createWorkbarInstance}
         onResolveTerminalTarget={resolveTerminalTarget}
+        onResolveUnavailableApp={onResolvePlatformApp ? (definition) => {
+          if (definition.id === 'wecom' || definition.id === 'feishu') onResolvePlatformApp(definition.id)
+        } : undefined}
         renderTabAdornment={(instance) =>
           instance.appId === 'tasks' && scopedApprovals.length > 0 ? (
             <span

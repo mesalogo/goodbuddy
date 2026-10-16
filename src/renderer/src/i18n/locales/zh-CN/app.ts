@@ -531,6 +531,21 @@ export const app = {
     }
   },
   composer: {
+    references: {
+      providers: { feishu: '飞书', wecom: '企业微信' },
+      listLabel: '可引用的外部文档',
+      typeToSearch: '输入文档标题搜索，选择后作为引用发送',
+      searching: '搜索“{{query}}”',
+      loading: '正在搜索…',
+      empty: '没有找到匹配的文档',
+      emptyFeishu: '没有找到匹配的文档。只能搜到共享给飞书应用的知识空间和文件夹中的文档。',
+      resolve: '前往处理',
+      remove: '移除引用 {{name}}',
+      limit: '每条消息最多引用 5 篇文档，重复的文档不会再次添加',
+      feishuCategoriesOff: '已关闭“文档”“知识库”和“云空间”类别',
+      wecomCategoryOff: '已关闭“文档管理”类别，无法搜索文档',
+      defaultPrompt: '请阅读以下文档。'
+    },
     menuSelection: '{{label}}：{{selection}}',
     inputLabel: '向 GoodBuddy 提问',
     imagePlaceholder: '描述你想生成的图片…',

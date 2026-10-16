@@ -19,6 +19,7 @@ function installApi(initial: FeishuSnapshot, overrides: Partial<FeishuApiBridge>
     startRegistration: vi.fn(async () => initial),
     cancelRegistration: vi.fn(async () => initial),
     browse: vi.fn(async () => ({ items: [] })),
+    searchDocuments: vi.fn(async () => []),
     onChanged: vi.fn((next: (s: FeishuSnapshot) => void) => { listener = next; return () => { listener = undefined } }),
     ...overrides
   } satisfies FeishuApiBridge

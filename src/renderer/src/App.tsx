@@ -159,6 +159,11 @@ import {
 } from "./ConversationSidebar";
 import { createComposerDraftStore } from "./composer-draft-store";
 import { createComposerMenuStore } from "./composer-menu-store";
+import {
+  createExternalReferenceStore,
+  promptWithReferences,
+  type ExternalReferenceSources,
+} from "./external-references";
 import type { ComposerMenuOption, RuntimeActionChoice } from "./ComposerMenuSelect";
 import { formatAttachmentSize, resizeComposerTextarea } from "./composer-textarea";
 import { Composer } from "./Composer";
@@ -1185,6 +1190,8 @@ function App(): React.JSX.Element {
       composerDrafts.set(conversationId, update),
     [composerDrafts],
   );
+  // Documents picked with "@", per conversation.
+  const [externalReferences] = useState(createExternalReferenceStore);
   // Composer popups (options, pickers, runtime menu) open and close without re-rendering App.
   const [composerMenus] = useState(createComposerMenuStore);
   // Async composer operations retain the conversation that started them.
@@ -5036,14 +5043,19 @@ function App(): React.JSX.Element {
             (candidate) => candidate.id === selectedRuntimeCommand,
           )
         : undefined;
-    const commandArguments = queuedInput
+    const typedText = queuedInput
       ? ""
       : (promptOverride ?? composerDrafts.get(activeId)).trim();
+    // "@" references are sent as explicit reading instructions after the text.
+    const referenceSnapshot = queuedInput || command || promptOverride !== undefined
+      ? []
+      : externalReferences.get(activeId);
+    const commandArguments = typedText;
     const prompt =
       queuedInput?.prompt ??
       (command
         ? `/${command.name}${commandArguments ? ` ${commandArguments}` : ""}`
-        : commandArguments);
+        : promptWithReferences(typedText, referenceSnapshot, t("composer.references.defaultPrompt")));
     if (!prompt || !conversationSnapshot) {
       await releaseQueuedItem();
       return;
@@ -5193,6 +5205,7 @@ function App(): React.JSX.Element {
         await window.goodbuddy.conversationQueue.enqueueUser(queueInput);
         composerMenus.closeMenus();
         setInput("");
+        if (referenceSnapshot.length > 0) externalReferences.clear(conversationId);
         updateAttachments([]);
         setImageReferencesByConversation(current => ({ ...current, [conversationId]: [] }));
         if (command) {
@@ -6668,6 +6681,41 @@ function App(): React.JSX.Element {
     ) : undefined,
     [feishuAvailable, openFeishuSettings, setConversationInput],
   );
+  // Tools switched on but not usable yet: keep the app in the workbar "+"
+  // menu with the reason, and let "Go resolve" open its settings.
+  const platformAppBlockers = useMemo(() => {
+    const blockers: Partial<Record<"wecom" | "feishu", string>> = {};
+    if (wecomSnapshot?.settings.enabled && !wecomAvailable)
+      blockers.wecom = t("integrations:wecom.panel.notReady");
+    if (feishuSnapshot?.settings.enabled && !feishuAvailable)
+      blockers.feishu = t("integrations:feishu.panel.notReady");
+    return blockers;
+  }, [feishuAvailable, feishuSnapshot?.settings.enabled, t, wecomAvailable, wecomSnapshot?.settings.enabled]);
+  const resolvePlatformApp = useCallback((app: "wecom" | "feishu"): void => {
+    if (app === "wecom") openWecomSettings();
+    else openFeishuSettings();
+  }, [openFeishuSettings, openWecomSettings]);
+  // "@" lists only platforms whose tools are switched on, with the same
+  // category gates as the tools that will read the documents.
+  const referenceSources = useMemo((): ExternalReferenceSources => {
+    const sources: ExternalReferenceSources = {};
+    if (feishuSnapshot?.settings.enabled) {
+      const categories = feishuSnapshot.settings.categories;
+      sources.feishu = !feishuAvailable
+        ? { state: "unavailable", reason: t("integrations:feishu.panel.notReady") }
+        : categories.wiki || categories.doc || categories.drive
+          ? { state: "ready" }
+          : { state: "unavailable", reason: t("composer.references.feishuCategoriesOff") };
+    }
+    if (wecomSnapshot?.settings.enabled) {
+      sources.wecom = !wecomAvailable
+        ? { state: "unavailable", reason: t("integrations:wecom.panel.notReady") }
+        : wecomSnapshot.settings.categories["doc-manage"]
+          ? { state: "ready" }
+          : { state: "unavailable", reason: t("composer.references.wecomCategoryOff") };
+    }
+    return sources;
+  }, [feishuAvailable, feishuSnapshot, t, wecomAvailable, wecomSnapshot]);
   const statsConversationId = statsConversation?.id;
   const statsDurationMs = executionStats.conversation?.durationMs;
   const statsIncomplete = executionStats.conversation?.incomplete ?? false;
@@ -7267,6 +7315,9 @@ function App(): React.JSX.Element {
                           voiceListening={voiceListening}
                           voiceRecording={voiceRecording}
                           workspaceView={view}
+                          referenceStore={externalReferences}
+                          referenceSources={referenceSources}
+                          onResolveReferenceSource={resolvePlatformApp}
                         />
                       </>
                     )}
@@ -7725,6 +7776,8 @@ function App(): React.JSX.Element {
             wecomOpenRequest={wecomOpenRequest}
             feishuPanel={feishuPanel}
             feishuOpenRequest={feishuOpenRequest}
+            platformAppBlockers={platformAppBlockers}
+            onResolvePlatformApp={resolvePlatformApp}
             nativeTerminals={nativeTerminals}
             activeConversationId={activeId}
             conversationStats={conversationStats}

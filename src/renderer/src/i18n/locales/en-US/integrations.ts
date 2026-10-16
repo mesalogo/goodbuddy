@@ -120,6 +120,9 @@ export const integrations = {
       createdEnabled: 'Feishu app created and the message channel enabled. The person who scanned was added as an allowed sender.',
       createFailed: 'Creating the app by scanning failed: {{message}}. Enter the credentials manually instead.'
     },
+    wecom: {
+      scanSaved: 'WeCom bot created by scanning and filled into the message channel.'
+    },
     telegram: {
       unconfigured: 'Not configured',
       botFather: 'Open official BotFather',
@@ -236,7 +239,7 @@ export const integrations = {
     authorized: 'Authorized',
     unauthorized: 'Not authorized',
     unsupportedPlatform: 'This installation does not include the WeCom CLI (unsupported operating system or processor architecture).',
-    connectHelp: 'Scan with WeCom to create a personal smart bot. GoodBuddy can then access the documents and data you can access, as you. Credentials stay in a dedicated GoodBuddy folder.',
+    connectHelp: 'Scan with WeCom to create a personal smart bot. GoodBuddy can then access the documents and data you can access, as you, and the same bot is filled into the message channel. GoodBuddy stores the credentials encrypted.',
     adminHelp: 'If scanning does nothing or reports missing permission, ask your administrator to allow creating smart bots, or enter the Bot ID and Secret of an existing bot.',
     scan: 'Authorize by scanning',
     preparing: 'Preparing…',
@@ -246,8 +249,13 @@ export const integrations = {
     secret: 'Secret',
     verify: 'Verify and save',
     qrAlt: 'WeCom authorization QR code',
-    qrInstructions: 'Scan the QR code with WeCom and confirm creating the bot on your phone.',
+    qrInstructions: 'Scan the QR code with WeCom and confirm creating the bot on your phone. The tools and the message channel then use the same bot.',
+    scanChannelSaved: 'Tools authorized and this bot filled into the message channel. The channel is enabled and the person who scanned is the only allowed sender.',
+    scanChannelSavedNoSender: 'Tools authorized and this bot filled into the message channel. The scanner\'s ID could not be read; add allowed senders on the Messages tab and save to start receiving messages.',
+    scanChannelFailed: 'Tools authorized, but the message channel could not be filled in: {{message}}',
+    scanToolsOnly: 'Tools authorized.',
     qrExpires: 'The QR code expires at {{time}}',
+    qrOpenWeb: 'Cannot scan? Open the QR code in a browser',
     cancelQr: 'Cancel scanning',
     authorizedAs: 'Authorized with bot {{botId}}. Tools run as the person who scanned.',
     authorizedHelp: 'Authorized. Tools run as the authorizing person.',

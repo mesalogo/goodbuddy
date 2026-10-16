@@ -548,6 +548,21 @@ export const app = {
     }
   },
   composer: {
+    references: {
+      providers: { feishu: 'Feishu', wecom: 'WeCom' },
+      listLabel: 'External documents to reference',
+      typeToSearch: 'Type a document title to search. Picked documents are sent as references.',
+      searching: 'Searching "{{query}}"',
+      loading: 'Searching…',
+      empty: 'No matching documents',
+      emptyFeishu: 'No matching documents. Only documents in wiki spaces and folders shared with the Feishu app can be found.',
+      resolve: 'Go resolve',
+      remove: 'Remove reference {{name}}',
+      limit: 'A message can reference up to 5 documents, and the same document is added only once',
+      feishuCategoriesOff: 'The Docs, Wiki and Drive categories are turned off',
+      wecomCategoryOff: 'The Document management category is turned off, so documents cannot be searched',
+      defaultPrompt: 'Please read the following documents.'
+    },
     menuSelection: '{{label}}: {{selection}}',
     inputLabel: 'Message GoodBuddy',
     imagePlaceholder: 'Describe the image you want to generate…',

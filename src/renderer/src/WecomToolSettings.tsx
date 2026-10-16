@@ -1,6 +1,6 @@
 import { KeyRound, QrCode, Unplug, Wrench } from 'lucide-react'
 import QRCode from 'qrcode'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   wecomToolCategories,
@@ -28,12 +28,26 @@ function QrImage({ url }: { url: string }): React.JSX.Element {
 
 /** WeCom work tools: authorization of the personal smart bot and category switches. */
 export function WecomToolSettings({
-  channelBotConfigured
+  channelBotConfigured,
+  onChannelBotSaved
 }: {
   channelBotConfigured: boolean
+  /** Called once when a scan also saved the bot as the message channel bot. */
+  onChannelBotSaved?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
   const { snapshot, error: loadError, setSnapshot } = useWecomSnapshot()
+  const savedRef = useRef(onChannelBotSaved)
+  useEffect(() => { savedRef.current = onChannelBotSaved }, [onChannelBotSaved])
+  const qrState = snapshot?.qr.state
+  const channelSaved = snapshot?.qr.state === 'completed' && snapshot.qr.channelSaved
+  const previousQrState = useRef(qrState)
+  // Only on the transition into "completed", so later edits are not reset.
+  useEffect(() => {
+    const previous = previousQrState.current
+    previousQrState.current = qrState
+    if (channelSaved && previous !== undefined && previous !== 'completed') savedRef.current?.()
+  }, [qrState, channelSaved])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const [manualOpen, setManualOpen] = useState(false)
@@ -85,6 +99,15 @@ export function WecomToolSettings({
         <p className="settings-warning" role="alert">{error ?? (qr.state === 'failed' ? qr.message : '')}</p>
       )}
 
+      {qr.state === 'completed' && (
+        <p className={qr.channelSaved ? 'settings-notice' : 'settings-warning'} role="status">
+          {qr.channelSaved
+            ? t(qr.userId ? 'wecom.scanChannelSaved' : 'wecom.scanChannelSavedNoSender')
+            : qr.message
+              ? t('wecom.scanChannelFailed', { message: qr.message })
+              : t('wecom.scanToolsOnly')}
+        </p>
+      )}
       {authorized ? (
         <>
           <p>{snapshot.authorization.state === 'authorized' && snapshot.authorization.botId
@@ -148,6 +171,7 @@ export function WecomToolSettings({
           <QrImage url={qr.url} />
           <p>{t('wecom.qrInstructions')}</p>
           <small>{t('wecom.qrExpires', { time: new Date(qr.expiresAt).toLocaleTimeString() })}</small>
+          <a href={qr.webUrl} rel="noreferrer" target="_blank">{t('wecom.qrOpenWeb')}</a>
           <button className="secondary-button" disabled={busy} onClick={() => void act(() => api.cancelQrAuthorization())} type="button">
             {t('wecom.cancelQr')}
           </button>

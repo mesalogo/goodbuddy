@@ -19,6 +19,7 @@ export const ipcChannels = {
   feishuStartRegistration: 'feishu:start-registration',
   feishuCancelRegistration: 'feishu:cancel-registration',
   feishuBrowse: 'feishu:browse',
+  feishuSearchDocuments: 'feishu:search-documents',
   feishuChanged: 'feishu:changed',
   localInferenceGet: 'local-inference:get',
   localInferenceAct: 'local-inference:act',

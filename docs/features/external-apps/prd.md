@@ -121,7 +121,17 @@ GoodBuddy 暂不支持第三方插件，飞书、企业微信、钉钉、微信 
 
 ### FR-7 对话引用
 
-在输入框输入 `@` 可以引用外部应用的内容，例如 `@飞书/产品中心`。输入区显示已启用的外部应用。
+在桌面对话的输入框输入 `@` 可以引用飞书、企业微信中的单篇文档。
+
+- 触发：`@` 位于开头或空白之后（邮箱地址中的 `@` 不触发）。继续输入的文字作为标题搜索词。
+- 范围：只列出工具已启用的平台，结果只包含当前连接身份有权访问的内容：
+  - 飞书按应用身份，在共享给应用的知识空间和云空间文件夹中按标题过滤（飞书文档搜索接口需要用户身份，一期不做用户 OAuth）。需要“文档”“知识库”或“云空间”类别之一开启。
+  - 企业微信按授权人本人身份调用官方文档搜索。需要“文档管理”类别开启。
+  - 工具已启用但不可用（未授权、凭据缺失、相关类别关闭）的平台显示原因和“前往处理”。
+- 选择：方向键和 Enter/Tab 选择，Esc 关闭；选中后输入的 `@搜索词` 被替换为引用标签，标签可删除。每条消息最多 5 篇，同一篇不重复添加。
+- 发送：引用转成一段说明附在消息后，写明平台、标题、链接、文档 ID 和读取方式，要求模型用对应工具读取，读取失败时说明原因。只有引用没有文字时也可以发送。
+- 发送后由工具按当时的开关和平台权限重新检查；一期不预读文档内容，不支持引用整个空间。
+- 消息通道发起的会话不提供 `@`。
 
 ### FR-8 迁移
 
@@ -159,7 +169,7 @@ GoodBuddy 暂不支持第三方插件，飞书、企业微信、钉钉、微信 
 使用官方 [`wecom-cli`](https://github.com/WecomTeam/wecom-cli)（`@wecom/cli`，MIT）和官方 Skill 说明，与 OpenClaw 一致；区别是命令不交给模型的 shell，而由 GoodBuddy 执行：
 
 - **三个内置工具**：`wecom_guide` 按需读取已开启类别的官方 Skill 说明（随应用打包在 `resources/wecom-skills`）；`wecom_cli` 执行一条 `wecom-cli` 命令；`wecom_script` 运行文档和在线 PPT 技能附带的官方 Python 脚本（`build_docx.py`、`build_page.py` 等）。GoodBuddy 校验命令属于已开启类别，拒绝 `auth`、`cache`、`schema`。每次调用都按当前设置重新校验，关闭类别或应用立即生效。
-- **凭据**：专用目录 `<userData>/wecom/config`，通过 `WECOM_CLI_CONFIG_DIR` 指定，不读取用户自己的 `~/.config/wecom`，也不继承环境中的 `WECOM_CLI_*`。扫码由 GoodBuddy 运行 `auth init --noninteractive` 并在界面显示二维码；手动填写和“使用消息通道的机器人”调用 `auth init --bot-id/--secret` 验证。断开时删除该目录。凭据目录对模型不可见。
+- **凭据**：专用目录 `<userData>/wecom/config`，通过 `WECOM_CLI_CONFIG_DIR` 指定，不读取用户自己的 `~/.config/wecom`，也不继承环境中的 `WECOM_CLI_*`。扫码由 GoodBuddy 直接调用 wecom-cli 1.3.4 使用的扫码接口（`work.weixin.qq.com/ai/qc/generate` 和 `/ai/qc/query_result`，无公开文档），拿到新机器人的 Bot ID 和 Secret 后：调用 `auth init --bot-id/--secret` 为工具签发凭据；同一个机器人加密存入企业微信消息通道，`identity whoami` 读到的扫码人作为唯一允许的发送者并启用通道（读不到时不启用，需在“消息”页填写发送者）。这样一次扫码同时配置工具和消息通道，与飞书扫码一致。手动填写和“使用消息通道的机器人”同样调用 `auth init --bot-id/--secret`。断开时删除该目录。凭据目录对模型不可见。
 - **内置，不联网安装**：面向私有化部署，`wecom-cli` 平台二进制（固定 1.3.4）在打包时放进安装包的 `resources/runtimes/wecom/bin`，运行时不访问 npm。打包脚本 `build/wecom-resources.cjs` 按 `resources/wecom-artifacts.lock.json` 校验 npm 包的 sha512 后解出。目前提供 Windows x64、macOS x64/arm64、Linux x64/arm64；其他架构（如 Windows arm64、Linux loongarch）的安装包不含企业微信工具，界面会提示。
 - **执行方式**：通过现有内置工具网关提供给直连模型、OpenCode、Continue。DeepSeek Harness 目前不接收内置数据工具，暂不可用。
 - **技能脚本**：脚本在 `<userData>/wecom/downloads` 中运行，使用 GoodBuddy 自建的 Python 虚拟环境 `<userData>/wecom/python`（基于本机工具环境的托管 Python 3.13）。依赖 python-docx、python-pptx、openpyxl、Pillow、pypdfium2 及其传递依赖的 wheel 也内置在安装包 `resources/runtimes/wecom/wheels` 中，用 `pip install --no-index --find-links` 离线安装，每个 wheel 的地址、大小和 SHA-256 都记录在锁文件里。只能运行已开启类别（文档、在线 PPT）的脚本，输入文件只能写入工作目录；脚本中的 `wecom-cli` 使用 GoodBuddy 的凭据。

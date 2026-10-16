@@ -113,7 +113,13 @@ export type WecomAuthorization =
 export type WecomQrAuthorization =
   | { state: 'idle' }
   | { state: 'starting' }
-  | { state: 'waiting'; url: string; expiresAt: string }
+  /** url is what the WeCom app scans; webUrl is the CLI's browser page that shows the same code. */
+  | { state: 'waiting'; url: string; webUrl: string; expiresAt: string }
+  /**
+   * Scan finished and the tools are authorized. channelSaved tells whether the
+   * same bot was also saved as the message channel bot (message explains why not).
+   */
+  | { state: 'completed'; channelSaved: boolean; userId?: string; message?: string }
   | { state: 'failed'; message: string }
 
 export type WecomSnapshot = {

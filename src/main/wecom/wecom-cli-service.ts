@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, normalize, relative, resolve, sep } from 'node:path'
 import {
@@ -24,11 +24,32 @@ import {
 } from '../../shared/wecom-contracts'
 import { buildCredentialFilteredUserEnvironment } from '../agent/process-environment'
 import { isMissingFileError, writeJsonFileAtomically } from '../settings-file-utils'
+import {
+  WECOM_BOT_REGISTRATION_TIMEOUT_MS,
+  beginWecomBotRegistration,
+  pollWecomBotRegistration,
+  type WecomFetch
+} from './wecom-bot-registration'
 
 const MAX_OUTPUT_BYTES = 256 * 1024
 const COMMAND_TIMEOUT_MS = 120_000
-const QR_TIMEOUT_MS = 5 * 60_000
 const MAX_GUIDE_CHARACTERS = 24_000
+
+/** Finds the authorizer's userid in `identity whoami` JSON, whatever its nesting. */
+export function wecomWhoamiUserId(output: string): string | undefined {
+  let parsed: unknown
+  try { parsed = JSON.parse(output) } catch { return undefined }
+  const queue: unknown[] = [parsed]
+  for (let index = 0; index < queue.length && index < 200; index += 1) {
+    const value = queue[index]
+    if (!value || typeof value !== 'object') continue
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (/^(userid|user_id)$/iu.test(key) && typeof item === 'string' && /^[\w.@-]{1,128}$/u.test(item.trim())) return item.trim()
+      if (item && typeof item === 'object') queue.push(item)
+    }
+  }
+  return undefined
+}
 
 /** Python variables that must not leak into the isolated script environment. */
 function scriptEnvironment(): NodeJS.ProcessEnv {
@@ -59,6 +80,15 @@ export type WecomCliServiceOptions = {
    */
   bundleDirectory: string
   resolveChannelCredentials?: () => Promise<WecomChannelCredentials | undefined>
+  /**
+   * Stores a bot created by scanning as the message channel bot. `userId` is
+   * the authorizer, when known, and becomes the allowed sender.
+   */
+  saveRegisteredBot?: (bot: WecomChannelCredentials & { userId?: string }) => Promise<void>
+  /** Test seam for the scan endpoints. */
+  fetch?: WecomFetch
+  /** Test seam: poll interval for the scan result. */
+  qrPollIntervalMs?: number
   platform?: NodeJS.Platform
   /** Resolves the local tool environment Python (managed or custom) for skill scripts. */
   resolvePython?: () => Promise<string | undefined>
@@ -78,7 +108,7 @@ export class WecomCliService {
   private cli: WecomCliState = { state: 'missing' }
   private authorization: WecomAuthorization = { state: 'unknown' }
   private qr: WecomQrAuthorization = { state: 'idle' }
-  private qrProcess?: ChildProcess
+  private qrController?: AbortController
   private settings?: WecomToolSettings
   private serial: Promise<unknown> = Promise.resolve()
   private revision = 0
@@ -281,17 +311,32 @@ export class WecomCliService {
     return new Error(fallback)
   }
 
+  /**
+   * Signs CLI credentials for a bot. Hidden non-interactive flags of
+   * `auth init`; they require a non-terminal stderr, which pipes provide.
+   * The endpoint is rate limited (45009), so callers only use it when the
+   * bot changes.
+   */
+  private async signIn(credentials: WecomManualCredentials): Promise<void> {
+    const result = await this.run(['auth', 'init', '--bot-id', credentials.botId, '--secret', credentials.secret], { timeoutMs: 60_000 })
+    if (result.exitCode !== 0) {
+      await this.refreshAuthorization().catch(() => undefined)
+      const error = WecomCliService.failure(result, '企业微信机器人凭据验证失败')
+      error.message = error.message.split(credentials.secret).join('***')
+      throw error
+    }
+    await this.refreshAuthorization()
+  }
+
   authorizeManually(credentials: WecomManualCredentials): Promise<WecomSnapshot> {
     return this.exclusive(async () => {
       this.cancelQr()
-      // Hidden non-interactive flags of `auth init`; they require a non-terminal stderr, which pipes provide.
-      const result = await this.run(['auth', 'init', '--bot-id', credentials.botId, '--secret', credentials.secret], { timeoutMs: 60_000 })
-      if (result.exitCode !== 0) {
-        await this.refreshAuthorization().catch(() => undefined)
+      try {
+        await this.signIn(credentials)
+      } catch (error) {
         void this.emit()
-        throw WecomCliService.failure(result, '企业微信机器人凭据验证失败')
+        throw error
       }
-      await this.refreshAuthorization()
       return this.emit()
     })
   }
@@ -302,72 +347,96 @@ export class WecomCliService {
     return this.authorizeManually(credentials)
   }
 
+  /**
+   * Scan-to-create: GoodBuddy runs the scan itself so it receives the new
+   * bot's ID and Secret. They sign the CLI credentials for the tools and are
+   * saved as the message channel bot, so one scan sets up both.
+   */
   startQrAuthorization(): Promise<WecomSnapshot> {
     return this.exclusive(async () => {
       this.cancelQr()
       this.qr = { state: 'starting' }
       void this.emit()
+      const controller = new AbortController()
+      this.qrController = controller
+      const fetchImpl: WecomFetch = this.options.fetch ?? ((input, init) => fetch(input, init))
       try {
-        const binary = await this.ensureInstalled()
-        await mkdir(this.configDirectory, { recursive: true })
-        await mkdir(this.downloadsDirectory, { recursive: true })
-        const child = (this.options.spawnProcess ?? spawn)(binary, ['auth', 'init', '--noninteractive', '--no-browser'], {
-          cwd: this.downloadsDirectory,
-          env: this.processEnvironment(),
-          shell: false,
-          windowsHide: true,
-          stdio: ['ignore', 'pipe', 'pipe']
+        await this.ensureInstalled()
+        const session = await beginWecomBotRegistration(fetchImpl, this.options.platform ?? process.platform, controller.signal)
+        if (this.qrController !== controller) return this.emit()
+        this.qr = {
+          state: 'waiting',
+          url: session.url,
+          webUrl: session.webUrl,
+          expiresAt: new Date(Date.now() + WECOM_BOT_REGISTRATION_TIMEOUT_MS).toISOString()
+        }
+        void pollWecomBotRegistration({
+          fetch: fetchImpl,
+          scode: session.scode,
+          signal: controller.signal,
+          ...(this.options.qrPollIntervalMs === undefined ? {} : { intervalMs: this.options.qrPollIntervalMs })
         })
-        this.qrProcess = child
-        let output = ''
-        const expiresAt = new Date(Date.now() + QR_TIMEOUT_MS).toISOString()
-        const timer = setTimeout(() => child.kill(), QR_TIMEOUT_MS)
-        child.stdout?.on('data', (chunk: Buffer) => {
-          if (output.length > MAX_OUTPUT_BYTES) return
-          output += chunk.toString('utf8')
-          const url = /https:\/\/work\.weixin\.qq\.com\/\S+/u.exec(output)?.[0]
-          if (url && this.qrProcess === child && this.qr.state !== 'waiting') {
-            this.qr = { state: 'waiting', url, expiresAt }
-            void this.emit()
-          }
-        })
-        child.stderr?.on('data', (chunk: Buffer) => {
-          if (output.length <= MAX_OUTPUT_BYTES) output += chunk.toString('utf8')
-        })
-        child.once('error', (error) => {
-          clearTimeout(timer)
-          if (this.qrProcess !== child) return
-          this.qrProcess = undefined
-          this.qr = { state: 'failed', message: error.message }
-          void this.emit()
-        })
-        child.once('close', (exitCode) => {
-          clearTimeout(timer)
-          if (this.qrProcess !== child) return
-          this.qrProcess = undefined
-          void (async () => {
-            if (exitCode === 0) {
-              this.qr = { state: 'idle' }
-              await this.refreshAuthorization().catch(() => undefined)
-            } else {
-              const failure = WecomCliService.failure({ exitCode, stdout: output.slice(output.indexOf('{')), stderr: '', truncated: false },
-                '扫码未完成或二维码已过期，请重新扫码')
-              this.qr = { state: 'failed', message: failure.message }
-            }
+          .then(outcome => this.finishQr(controller, outcome))
+          .catch(async (error: unknown) => {
+            if (this.qrController !== controller) return
+            this.qrController = undefined
+            this.qr = { state: 'failed', message: error instanceof Error ? error.message : String(error) }
             await this.emit()
-          })()
-        })
+          })
       } catch (error) {
+        if (this.qrController === controller) this.qrController = undefined
         this.qr = { state: 'failed', message: error instanceof Error ? error.message : String(error) }
       }
       return this.emit()
     })
   }
 
+  private async finishQr(
+    controller: AbortController,
+    outcome: Awaited<ReturnType<typeof pollWecomBotRegistration>>
+  ): Promise<void> {
+    if (this.qrController !== controller) return
+    if (outcome.status !== 'success') {
+      this.qrController = undefined
+      this.qr = { state: 'failed', message: outcome.status === 'expired' ? '二维码已过期，请重新扫码' : outcome.message }
+      await this.emit()
+      return
+    }
+    await this.exclusive(async () => {
+      if (this.qrController !== controller) return
+      this.qrController = undefined
+      const { bot } = outcome
+      try {
+        await this.signIn(bot)
+      } catch (error) {
+        this.qr = { state: 'failed', message: error instanceof Error ? error.message : String(error) }
+        return
+      }
+      // The authorizer becomes the only allowed sender, like the Feishu scan.
+      const userId = await this.run(['identity', 'whoami'], { timeoutMs: 15_000 })
+        .then(result => result.exitCode === 0 ? wecomWhoamiUserId(result.stdout) : undefined)
+        .catch(() => undefined)
+      if (!this.options.saveRegisteredBot) {
+        this.qr = { state: 'completed', channelSaved: false }
+        return
+      }
+      try {
+        await this.options.saveRegisteredBot({ ...bot, ...(userId ? { userId } : {}) })
+        this.qr = { state: 'completed', channelSaved: true, ...(userId ? { userId } : {}) }
+      } catch (error) {
+        this.qr = {
+          state: 'completed',
+          channelSaved: false,
+          message: error instanceof Error ? error.message : String(error)
+        }
+      }
+    })
+    await this.emit()
+  }
+
   private cancelQr(): void {
-    const child = this.qrProcess
-    this.qrProcess = undefined
-    child?.kill()
+    this.qrController?.abort()
+    this.qrController = undefined
     this.qr = { state: 'idle' }
   }
 
@@ -388,6 +457,10 @@ export class WecomCliService {
 
   /** Searches documents the authorized person may access; used by the workbar panel. */
   async searchDocuments(query: string, signal?: AbortSignal): Promise<WecomDocument[]> {
+    // Same gate as the model tools: `doc search` belongs to the doc-manage skill.
+    if (!(await this.getEnabledCategories()).includes('doc-manage')) {
+      throw new Error('企业微信工具未启用，或已关闭“文档管理”类别')
+    }
     const result = await this.run(['doc', 'search', '--json', JSON.stringify({
       keywords: [query], search_scope: 'title_content', sort_by: 'best_match', limit: 30
     })], { signal, timeoutMs: 30_000 })

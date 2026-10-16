@@ -1310,6 +1310,12 @@ export function ChannelApplicationSettings({
           channel === 'wecom' ? (
             <WecomToolSettings
               channelBotConfigured={Boolean(snapshot.wecom.botId) && snapshot.wecom.secretConfigured}
+              onChannelBotSaved={() => {
+                const api = window.goodbuddy?.channels
+                if (!api) return
+                void api.getSnapshot().then(applySnapshot, () => undefined)
+                onNotify({ tone: 'success', message: t('channels.wecom.scanSaved'), dedupeKey: 'wecom-bot-created' })
+              }}
             />
           ) : <FeishuToolSettings />
         ) : (

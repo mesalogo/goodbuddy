@@ -137,6 +137,25 @@ describe('FeishuToolService', () => {
     expect(nodes.items[0]).toMatchObject({ kind: 'node', name: '发布流程', url: 'https://www.feishu.cn/wiki/n1', child: { kind: 'node', spaceId: '7', token: 'n1' } })
   })
 
+  it('searches titles across shared spaces and folders, respecting categories', async () => {
+    const { instance } = service({
+      'GET /open-apis/wiki/v2/spaces': () => ({ items: [{ space_id: '7', name: '产品知识库' }] }),
+      'GET /open-apis/drive/v1/files': (url) => url.searchParams.get('folder_token') === 'fold'
+        ? { files: [{ token: 'd2', name: '发布清单', type: 'sheet' }] }
+        : { files: [{ token: 'fold', name: '项目', type: 'folder' }, { token: 'd', name: '方案', type: 'docx' }] },
+      'GET /open-apis/wiki/v2/spaces/7/nodes': (url) => url.searchParams.get('parent_node_token') === 'n1'
+        ? { items: [{ node_token: 'n2', title: '发布回滚', obj_type: 'docx' }] }
+        : { items: [{ node_token: 'n1', title: '发布流程', obj_type: 'docx', has_child: true }] }
+    })
+    await expect(instance.searchDocuments({ query: '发布' })).rejects.toThrow('未启用')
+    await instance.updateSettings({ enabled: true })
+    expect((await instance.searchDocuments({ query: '发布' })).map(item => [item.kind, item.name])).toEqual([
+      ['node', '发布流程'], ['file', '发布清单'], ['node', '发布回滚']
+    ])
+    await instance.updateSettings({ categories: { wiki: false } })
+    expect((await instance.searchDocuments({ query: '发布' })).map(item => item.name)).toEqual(['发布清单'])
+  })
+
   it('registers an app by QR code and saves the credentials and owner', async () => {
     const saveRegisteredApp = vi.fn(async () => undefined)
     const fetch = vi.fn(async (_input: string, init: RequestInit = {}) => {

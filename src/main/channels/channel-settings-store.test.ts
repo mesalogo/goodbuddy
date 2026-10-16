@@ -66,6 +66,24 @@ describe('ChannelSettingsStore', () => {
     await expect(reloaded.apply({ telegram: { ...input, secret: { action: 'keep' } } })).rejects.toThrow('Bot Token')
   })
 
+  it('saves a WeCom bot created by scanning, enables it with the scanner as sender, and notifies', async () => {
+    const filePath = await settingsPath()
+    const store = new ChannelSettingsStore(filePath, createCipher(), {})
+    const changed: string[] = []
+    store.onExternalChange((channel) => changed.push(channel))
+    const snapshot = await store.saveWecomRegisteredBot({ botId: 'bot-new', secret: 'sec-new', userId: 'zhangsan' })
+    expect(snapshot.wecom).toMatchObject({ enabled: true, botId: 'bot-new', secretConfigured: true, allowedSenderIds: ['zhangsan'] })
+    expect(await readFile(filePath, 'utf8')).not.toContain('sec-new')
+    expect((await store.resolve('wecom')).secret).toBe('sec-new')
+    expect(changed).toEqual(['wecom'])
+
+    // Without a known sender the channel cannot start, so it is not enabled.
+    const other = new ChannelSettingsStore(await settingsPath(), createCipher(), {})
+    expect((await other.saveWecomRegisteredBot({ botId: 'b2', secret: 's2' })).wecom).toMatchObject({
+      enabled: false, botId: 'b2', secretConfigured: true, allowedSenderIds: []
+    })
+  })
+
   it('loads existing version 3 settings with Telegram defaults without rewriting', async () => {
     const filePath = await settingsPath()
     const original = JSON.stringify({
