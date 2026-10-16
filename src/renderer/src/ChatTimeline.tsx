@@ -854,7 +854,18 @@ function ChatMessageRowView({
                     </span>
                   )}
                   <span className="message-attachment__details">
-                    <strong title={attachment.name}>{attachment.name}</strong>
+                    {attachment.resourceId ? (
+                      <button
+                        className="message-attachment__name"
+                        onClick={() => void window.goodbuddy.context.openOriginal(attachment.resourceId!)}
+                        title={`打开原文件：${attachment.originalName ?? attachment.name}`}
+                        type="button"
+                      >
+                        {attachment.name}
+                      </button>
+                    ) : (
+                      <strong title={attachment.name}>{attachment.name}</strong>
+                    )}
                     <span className="attachment-metadata">
                       <AttachmentStatus attachment={attachment} />
                       <small>{formatAttachmentSize(attachment.size)}</small>
