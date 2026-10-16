@@ -112,7 +112,9 @@ export const integrations = {
       createFailed: '扫码创建应用失败：{{message}}，请改为手动填写'
     },
     wecom: {
-      scanSaved: '已扫码创建企业微信机器人，已同时填入消息通道'
+      setup: '用企业微信扫码创建 API 模式智能机器人，机器人 ID 和 Secret 会自动填入，扫码人加入允许的发送者，企业微信工具也同时授权。也可以填写企业微信“工作台 › 智能机器人”中已有机器人的 ID 和 Secret。',
+      scanSaved: '已扫码创建企业微信机器人，已同时填入消息通道',
+      toolsSignInFailed: '消息通道已保存，但企业微信工具没能用这个机器人授权：{{message}}'
     },
     telegram: {
       unconfigured: '未配置',
@@ -230,7 +232,9 @@ export const integrations = {
     unsupportedPlatform: '当前安装包没有内置企业微信 CLI（不支持此操作系统或处理器架构）。',
     connectHelp: '用企业微信扫码创建个人智能机器人后，GoodBuddy 即可以你本人的身份访问你有权限的文档和数据，同一个机器人也会自动填入消息通道。凭据由 GoodBuddy 加密保存。',
     adminHelp: '扫码没有反应或提示无权限时，请联系企业管理员开放“智能机器人”创建权限，或改为填写已有机器人的 Bot ID 和 Secret。',
-    scan: '扫码授权',
+    scan: '扫码创建企业微信机器人',
+    connectFirst: '先在“连接”页扫码创建机器人，或填写机器人 ID 和 Secret 并保存。工具和消息通道使用同一个机器人。',
+    connectFromChannel: '“连接”页已保存机器人，但工具还没授权（例如在旧版本中保存）。点击下方按钮用这个机器人授权。',
     preparing: '正在准备…',
     useChannelBot: '使用消息通道的机器人',
     manual: '填写 Bot ID 和 Secret',

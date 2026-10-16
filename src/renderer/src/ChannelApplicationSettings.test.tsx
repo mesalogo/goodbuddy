@@ -857,9 +857,11 @@ describe('ChannelApplicationSettings', () => {
       } as unknown as DesktopApi
     })
     const { unmount } = renderChannelSettings({ initialChannel: 'wecom' })
+    // Scanning creates the bot on the Connection tab, next to its credentials.
+    expect(await screen.findByRole('button', { name: '扫码创建企业微信机器人' })).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('tab', { name: '工具' }))
-    expect(await screen.findByRole('button', { name: '扫码授权' })).toBeInTheDocument()
-    expect(screen.getByText('企业微信工具')).toBeInTheDocument()
+    expect(await screen.findByText('企业微信工具')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '扫码创建企业微信机器人' })).not.toBeInTheDocument()
     unmount()
     renderChannelSettings({ initialChannel: 'dingtalk' })
     await screen.findByRole('button', { name: '测试钉钉连接' })
@@ -901,6 +903,37 @@ describe('ChannelApplicationSettings', () => {
     expect(Object.keys((apply.mock.calls[0] as unknown[])[0] as object)).toEqual(['wecom'])
     expect(updateProject).toHaveBeenCalledOnce()
     expect(updateProject).toHaveBeenCalledWith(projects[1]!.id, expect.anything())
+  })
+
+  it('authorizes the WeCom tools with a bot entered on the Connection tab, but not on other edits', async () => {
+    const apply = vi.fn(async () => snapshot)
+    const authorizeWithChannelBot = vi.fn(async () => ({}))
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: { ...bindingApi(), getSnapshot: vi.fn(async () => snapshot), apply, testConnection: vi.fn() },
+        projects: { list: vi.fn(async () => projects), update: vi.fn(async (id: string) => projects.find((p) => p.id === id)!) },
+        settings: settingsApi(),
+        wecom: {
+          authorizeWithChannelBot,
+          getSnapshot: vi.fn(async () => ({
+            revision: 1, platformSupported: true, cli: { state: 'ready', version: '1.3.4' }, authorization: { state: 'unauthorized' },
+            qr: { state: 'idle' }, settings: { enabled: false, categories: {}, allowInMessageSessions: false }
+          })),
+          onChanged: vi.fn(() => () => undefined)
+        }
+      } as unknown as DesktopApi
+    })
+    renderChannelSettings({ initialChannel: 'wecom' })
+    await screen.findByRole('switch', { name: '启用企业微信通道' })
+    fireEvent.click(screen.getByRole('switch', { name: '启用企业微信通道' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存通道设置' }))
+    await waitFor(() => expect(apply).toHaveBeenCalledOnce())
+    expect(authorizeWithChannelBot).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('企业微信机器人 ID'), { target: { value: 'bot-typed' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存通道设置' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '保存通道设置' }))
+    await waitFor(() => expect(authorizeWithChannelBot).toHaveBeenCalledOnce())
   })
 
   it('enables the Feishu channel as soon as scan registration saves the app', async () => {

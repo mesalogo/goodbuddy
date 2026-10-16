@@ -38,6 +38,7 @@ import { ChannelIcon } from './ChannelIcon'
 import { SettingsWarningList } from './SettingsPrimitives'
 import { PageTabs } from './WorkspacePrimitives'
 import { WecomToolSettings } from './WecomToolSettings'
+import { WecomBotScan } from './WecomBotScan'
 import { FeishuAppRegistration, FeishuToolSettings } from './FeishuToolSettings'
 import {
   channelProjectDraft,
@@ -448,6 +449,12 @@ function ChannelEditor({
       {channel === 'feishu' && <p className="settings-notice">{t('channels.feishu.setup')}</p>}
       {channel === 'feishu' && !settings.readOnly && onReload && (
         <FeishuAppRegistration domain={draft.domain} onCreated={onReload} />
+      )}
+      {channel === 'wecom' && !settings.readOnly && onReload && (
+        <>
+          <p className="settings-notice">{t('channels.wecom.setup')}</p>
+          <WecomBotScan onCreated={onReload} />
+        </>
       )}
 
       <label className="field">
@@ -1143,6 +1150,15 @@ export function ChannelApplicationSettings({
       if (Object.keys(input).length > 0) {
         applySnapshot(await api.apply(input))
       }
+      // A new bot typed on the Connection tab also signs the tools in, so
+      // one set of credentials serves both, as with the scan.
+      const wecomCredentialsChanged = channel === 'wecom' && input.wecom !== undefined &&
+        (input.wecom.secret.action === 'replace' || input.wecom.botId !== snapshot.wecom.botId)
+      if (wecomCredentialsChanged && input.wecom?.botId && window.goodbuddy?.wecom) {
+        await window.goodbuddy.wecom.authorizeWithChannelBot().catch((reason: unknown) => {
+          setError(t('channels.wecom.toolsSignInFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+        })
+      }
       onNotify({
         tone: 'success',
         message: t('channels.saved'),
@@ -1185,6 +1201,14 @@ export function ChannelApplicationSettings({
     } finally {
       setBusy(false)
     }
+  }
+
+  /** A WeCom scan saved the bot for the channel; show it in the form. */
+  const completeWecomScan = (): void => {
+    const api = window.goodbuddy?.channels
+    if (!api) return
+    void api.getSnapshot().then(applySnapshot, () => undefined)
+    onNotify({ tone: 'success', message: t('channels.wecom.scanSaved'), dedupeKey: 'wecom-bot-created' })
   }
 
   const startBinding = async (): Promise<void> => {
@@ -1310,12 +1334,6 @@ export function ChannelApplicationSettings({
           channel === 'wecom' ? (
             <WecomToolSettings
               channelBotConfigured={Boolean(snapshot.wecom.botId) && snapshot.wecom.secretConfigured}
-              onChannelBotSaved={() => {
-                const api = window.goodbuddy?.channels
-                if (!api) return
-                void api.getSnapshot().then(applySnapshot, () => undefined)
-                onNotify({ tone: 'success', message: t('channels.wecom.scanSaved'), dedupeKey: 'wecom-bot-created' })
-              }}
             />
           ) : <FeishuToolSettings />
         ) : (
@@ -1356,7 +1374,9 @@ export function ChannelApplicationSettings({
                   draft={draft}
                   section={activeTab}
                   botUsername={channel === 'telegram' ? telegramBotUsername : undefined}
-                  onReload={channel === 'feishu' ? () => void completeFeishuRegistration() : undefined}
+                  onReload={channel === 'feishu'
+                    ? () => void completeFeishuRegistration()
+                    : channel === 'wecom' ? completeWecomScan : undefined}
                   onChange={(next) => {
                     if (next.secret !== draft.secret || next.clearSecret !== draft.clearSecret) setTelegramBotUsername(undefined)
                     setDraft(next)

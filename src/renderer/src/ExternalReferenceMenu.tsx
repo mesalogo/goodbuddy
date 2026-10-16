@@ -37,7 +37,11 @@ async function search(provider: ExternalReferenceProvider, query: string): Promi
  * typed text and lists unready ones with a way to fix them. Keyboard input
  * stays in the textarea; the parent forwards arrow keys through `activeIndex`.
  */
+const MENU_WIDTH = 440
+const MENU_GAP = 6
+
 export function ExternalReferenceMenu({
+  anchor,
   query,
   sources,
   selected,
@@ -47,6 +51,8 @@ export function ExternalReferenceMenu({
   onPick,
   onResolve
 }: {
+  /** The "@" position inside the input box; without it the menu sits at the input's top-left. */
+  anchor?: { top: number; left: number; height: number; containerWidth: number }
   query: string
   sources: ExternalReferenceSources
   selected: readonly ExternalDocumentReference[]
@@ -97,8 +103,15 @@ export function ExternalReferenceMenu({
   }, [byProvider, ready, selectedKeys, term])
   useEffect(() => { onItemsChange(items) }, [items, onItemsChange])
 
+  // Open just above the line holding the "@", starting at the "@" and kept inside the input box.
+  const position = anchor
+    ? {
+        bottom: `calc(100% - ${Math.round(anchor.top)}px + ${MENU_GAP}px)`,
+        left: `${Math.round(Math.max(0, Math.min(anchor.left, anchor.containerWidth - Math.min(MENU_WIDTH, anchor.containerWidth))))}px`
+      }
+    : undefined
   return (
-    <div className="external-reference-menu" role="presentation" onMouseDown={(event) => event.preventDefault()}>
+    <div className="external-reference-menu" role="presentation" style={position} onMouseDown={(event) => event.preventDefault()}>
       <p className="external-reference-menu__hint">
         {term ? t('composer.references.searching', { query: term }) : t('composer.references.typeToSearch')}
       </p>

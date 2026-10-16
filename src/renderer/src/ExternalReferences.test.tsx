@@ -3,6 +3,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "./chat-conversation";
 import { Composer, type ComposerProps } from "./Composer";
+import { ExternalReferenceMenu } from "./ExternalReferenceMenu";
 import { createComposerDraftStore } from "./composer-draft-store";
 import { createComposerMenuStore } from "./composer-menu-store";
 import { createConversationStores } from "./conversation-store";
@@ -119,7 +120,8 @@ describe("@ references in the composer", () => {
     await waitFor(() => expect(within(menu).getAllByRole("option")).toHaveLength(3));
     expect(searchFeishu).toHaveBeenCalledWith({ query: "发布" });
     expect(searchWecom).toHaveBeenCalledWith({ query: "发布" });
-    expect(input).toHaveAttribute("aria-activedescendant", "external-reference-option-0");
+    // The highlight is set in the render after the options arrive.
+    await waitFor(() => expect(input).toHaveAttribute("aria-activedescendant", "external-reference-option-0"));
     fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(input).toHaveAttribute("aria-activedescendant", "external-reference-option-1");
     fireEvent.keyDown(input, { key: "Enter" });
@@ -177,5 +179,24 @@ describe("@ references in the composer", () => {
     expect(references.add("a", { provider: "wecom", id: "d9", title: "9" })).toBe(false);
     expect(references.add("b", { provider: "wecom", id: "d0", title: "0" })).toBe(true);
     expect(references.add("b", { provider: "wecom", id: "d0", title: "0" })).toBe(false);
+  });
+});
+
+describe("@ menu position", () => {
+  it("opens above the line holding the @, starting at it and clamped inside the input", () => {
+    const props = {
+      activeIndex: 0, onActiveIndexChange: noop, onItemsChange: noop, onPick: noop, onResolve: noop,
+      query: "", selected: [], sources: { wecom: { state: "ready" as const } },
+    };
+    const { container, rerender } = render(
+      <ExternalReferenceMenu {...props} anchor={{ top: 40, left: 120, height: 20, containerWidth: 800 }} />,
+    );
+    const menu = container.querySelector<HTMLElement>(".external-reference-menu")!;
+    expect(menu.style.left).toBe("120px");
+    // 6px above the top of the @ line (the engine simplifies the calc).
+    expect(menu.style.bottom).toBe("calc(100% - 34px)");
+    // Near the right edge the menu shifts left so it stays fully visible.
+    rerender(<ExternalReferenceMenu {...props} anchor={{ top: 40, left: 700, height: 20, containerWidth: 800 }} />);
+    expect(menu.style.left).toBe("360px");
   });
 });

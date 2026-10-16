@@ -121,7 +121,9 @@ export const integrations = {
       createFailed: 'Creating the app by scanning failed: {{message}}. Enter the credentials manually instead.'
     },
     wecom: {
-      scanSaved: 'WeCom bot created by scanning and filled into the message channel.'
+      setup: 'Scan with WeCom to create an API-mode smart bot. The bot ID and Secret are filled in, the person who scanned becomes the allowed sender, and the WeCom tools are authorized at the same time. You can also enter the ID and Secret of an existing bot from Workbench › Smart Bots.',
+      scanSaved: 'WeCom bot created by scanning and filled into the message channel.',
+      toolsSignInFailed: 'The message channel was saved, but the WeCom tools could not be authorized with this bot: {{message}}'
     },
     telegram: {
       unconfigured: 'Not configured',
@@ -241,7 +243,9 @@ export const integrations = {
     unsupportedPlatform: 'This installation does not include the WeCom CLI (unsupported operating system or processor architecture).',
     connectHelp: 'Scan with WeCom to create a personal smart bot. GoodBuddy can then access the documents and data you can access, as you, and the same bot is filled into the message channel. GoodBuddy stores the credentials encrypted.',
     adminHelp: 'If scanning does nothing or reports missing permission, ask your administrator to allow creating smart bots, or enter the Bot ID and Secret of an existing bot.',
-    scan: 'Authorize by scanning',
+    scan: 'Create a WeCom bot by scanning',
+    connectFirst: 'Scan to create a bot on the Connection tab, or enter a bot ID and Secret there and save. The tools and the message channel use the same bot.',
+    connectFromChannel: 'A bot is saved on the Connection tab but the tools are not authorized yet (for example, saved by an earlier version). Authorize with this bot below.',
     preparing: 'Preparing…',
     useChannelBot: 'Use the message channel bot',
     manual: 'Enter Bot ID and Secret',

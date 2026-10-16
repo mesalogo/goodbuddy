@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultWecomToolSettings, type WecomApi, type WecomSnapshot } from '../../shared/wecom-contracts'
+import { WecomBotScan } from './WecomBotScan'
 import { WecomToolSettings } from './WecomToolSettings'
 import { WecomWorkbarPanel } from './WecomWorkbarPanel'
 import i18n from './i18n'
@@ -42,41 +43,59 @@ afterEach(async () => {
   await i18n.changeLanguage('zh-CN')
 })
 
-describe('WecomToolSettings', () => {
-  it('offers scanning, the channel bot, and manual credentials before authorization', async () => {
+describe('WecomBotScan (Connection tab)', () => {
+  it('scans, offers the browser fallback, and can be cancelled', async () => {
     const { api, push } = installApi(snapshot())
-    render(<WecomToolSettings channelBotConfigured />)
-    fireEvent.click(await screen.findByRole('button', { name: '扫码授权' }))
+    render(<WecomBotScan onCreated={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: '扫码创建企业微信机器人' }))
     expect(api.startQrAuthorization).toHaveBeenCalledOnce()
     push(snapshot({ qr: { state: 'waiting', url: 'https://work.weixin.qq.com/ai/qc/c?s=x&hide_more_btn=true&for_native=true',
       webUrl: 'https://work.weixin.qq.com/ai/qc/gen?scode=x', expiresAt: new Date(Date.now() + 300_000).toISOString() } }))
     expect(await screen.findByRole('link', { name: '扫不出来？在浏览器中打开二维码' })).toHaveAttribute('href', 'https://work.weixin.qq.com/ai/qc/gen?scode=x')
-    expect(await screen.findByText(/请用企业微信扫描二维码，并在手机上确认创建机器人。/u)).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('button', { name: '取消扫码' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '取消扫码' }))
     expect(api.cancelQrAuthorization).toHaveBeenCalledOnce()
-    push(snapshot())
-    await waitFor(() => expect(screen.getByRole('button', { name: '使用消息通道的机器人' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '使用消息通道的机器人' }))
-    expect(api.authorizeWithChannelBot).toHaveBeenCalledOnce()
-    await waitFor(() => expect(screen.getByRole('button', { name: '填写 Bot ID 和 Secret' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '填写 Bot ID 和 Secret' }))
-    fireEvent.change(screen.getByLabelText('Bot ID'), { target: { value: 'bot-1' } })
-    fireEvent.change(screen.getByLabelText('Secret'), { target: { value: 'secret-1' } })
-    fireEvent.click(screen.getByRole('button', { name: '验证并保存' }))
-    await waitFor(() => expect(api.authorizeManually).toHaveBeenCalledWith({ botId: 'bot-1', secret: 'secret-1' }))
   })
 
-  it('shows CLI errors and keeps the manual form open after rejected credentials', async () => {
-    installApi(snapshot(), { authorizeManually: vi.fn(async () => { throw new Error('invalid bot_id or secret') }) })
-    render(<WecomToolSettings channelBotConfigured={false} />)
+  it('reloads the channel form once when the scan also saved the channel bot', async () => {
+    const { push } = installApi(snapshot({ qr: { state: 'waiting', url: 'https://work.weixin.qq.com/ai/qc/c?s=x',
+      webUrl: 'https://work.weixin.qq.com/ai/qc/gen?scode=x', expiresAt: new Date(Date.now() + 300_000).toISOString() } }))
+    const onCreated = vi.fn()
+    render(<WecomBotScan onCreated={onCreated} />)
+    await screen.findByRole('button', { name: '取消扫码' })
+    const done = { state: 'completed' as const, channelSaved: true, userId: 'zhangsan' }
+    push(snapshot({ authorization: { state: 'authorized', botId: 'bot-new' }, qr: done }))
+    expect(await screen.findByText(/扫码人是唯一允许的发送者/u)).toBeInTheDocument()
+    push(snapshot({ authorization: { state: 'authorized', botId: 'bot-new' }, qr: done, settings: { ...defaultWecomToolSettings(), enabled: true } }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce())
+  })
+
+  it('reports an unsupported platform and a failed scan', async () => {
+    installApi(snapshot({ platformSupported: false, qr: { state: 'failed', message: '二维码已过期，请重新扫码' } }))
+    render(<WecomBotScan onCreated={vi.fn()} />)
+    expect(await screen.findByText('当前安装包没有内置企业微信 CLI（不支持此操作系统或处理器架构）。')).toBeInTheDocument()
+    expect(screen.getByText('二维码已过期，请重新扫码')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '扫码创建企业微信机器人' })).toBeDisabled()
+  })
+})
+
+describe('WecomToolSettings', () => {
+  it('points to the Connection tab before authorization, and offers the saved channel bot', async () => {
+    const { api } = installApi(snapshot())
+    const { rerender } = render(<WecomToolSettings channelBotConfigured={false} />)
+    expect(await screen.findByText(/先在“连接”页扫码创建机器人/u)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /扫码/u })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '使用消息通道的机器人' })).not.toBeInTheDocument()
-    fireEvent.click(await screen.findByRole('button', { name: '填写 Bot ID 和 Secret' }))
-    fireEvent.change(screen.getByLabelText('Bot ID'), { target: { value: 'bot' } })
-    fireEvent.change(screen.getByLabelText('Secret'), { target: { value: 'bad' } })
-    fireEvent.click(screen.getByRole('button', { name: '验证并保存' }))
+    rerender(<WecomToolSettings channelBotConfigured />)
+    fireEvent.click(screen.getByRole('button', { name: '使用消息通道的机器人' }))
+    await waitFor(() => expect(api.authorizeWithChannelBot).toHaveBeenCalledOnce())
+  })
+
+  it('shows authorization errors', async () => {
+    installApi(snapshot(), { authorizeWithChannelBot: vi.fn(async () => { throw new Error('invalid bot_id or secret') }) })
+    render(<WecomToolSettings channelBotConfigured />)
+    fireEvent.click(await screen.findByRole('button', { name: '使用消息通道的机器人' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('invalid bot_id or secret')
-    expect(screen.getByLabelText('Secret')).toHaveValue('bad')
   })
 
   it('edits the enable switch, categories, and message-session permission once authorized', async () => {
@@ -92,26 +111,6 @@ describe('WecomToolSettings', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '断开并删除本机凭据' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '断开并删除本机凭据' }))
     await waitFor(() => expect(api.disconnect).toHaveBeenCalledOnce())
-  })
-
-  it('reloads the channel once when a scan also saved the message channel bot', async () => {
-    const { push } = installApi(snapshot({ qr: { state: 'waiting', url: 'https://work.weixin.qq.com/ai/qc/c?s=x',
-      webUrl: 'https://work.weixin.qq.com/ai/qc/gen?scode=x', expiresAt: new Date(Date.now() + 300_000).toISOString() } }))
-    const onSaved = vi.fn()
-    render(<WecomToolSettings channelBotConfigured={false} onChannelBotSaved={onSaved} />)
-    await screen.findByRole('button', { name: '取消扫码' })
-    const done = { state: 'completed' as const, channelSaved: true, userId: 'zhangsan' }
-    push(snapshot({ authorization: { state: 'authorized', botId: 'bot-new' }, qr: done }))
-    expect(await screen.findByText(/扫码人是唯一允许的发送者/u)).toBeInTheDocument()
-    push(snapshot({ authorization: { state: 'authorized', botId: 'bot-new' }, qr: done, settings: { ...defaultWecomToolSettings(), enabled: true } }))
-    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce())
-  })
-
-  it('reports an unsupported platform', async () => {
-    installApi(snapshot({ platformSupported: false }))
-    render(<WecomToolSettings channelBotConfigured={false} />)
-    expect(await screen.findByText('当前安装包没有内置企业微信 CLI（不支持此操作系统或处理器架构）。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '扫码授权' })).toBeDisabled()
   })
 })
 

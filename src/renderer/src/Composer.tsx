@@ -71,6 +71,7 @@ import {
 import { formatAttachmentSize, resizeComposerTextarea } from "./composer-textarea";
 import { ChannelIcon } from "./ChannelIcon";
 import { ExternalReferenceMenu } from "./ExternalReferenceMenu";
+import { textareaCaretPosition } from "./textarea-caret";
 import {
   activeMention,
   createExternalReferenceStore,
@@ -151,6 +152,23 @@ export type ComposerProps = {
 
 const noReferenceSources: ExternalReferenceSources = {};
 
+/** Where the "@" sits, relative to the `.composer__input` box. */
+type MentionAnchor = { top: number; left: number; height: number; containerWidth: number };
+
+function mentionAnchor(textarea: HTMLTextAreaElement, position: number): MentionAnchor | undefined {
+  const container = textarea.closest<HTMLElement>(".composer__input");
+  if (!container) return undefined;
+  const caret = textareaCaretPosition(textarea, position);
+  const box = textarea.getBoundingClientRect();
+  const frame = container.getBoundingClientRect();
+  return {
+    top: box.top - frame.top + caret.top,
+    left: box.left - frame.left + caret.left,
+    height: caret.height,
+    containerWidth: frame.width
+  };
+}
+
 const composerContextErrorId = "composer-context-error";
 const runtimeDetailId = "composer-runtime-detail";
 
@@ -222,7 +240,7 @@ export const Composer = memo(function Composer({
   const [fallbackReferenceStore] = useState(createExternalReferenceStore);
   const references = useExternalReferences(referenceStore ?? fallbackReferenceStore, conversationId);
   const referencesEnabled = referenceStore !== undefined && Object.keys(referenceSources).length > 0;
-  const [mention, setMention] = useState<{ conversationId: string; start: number; query: string }>();
+  const [mention, setMention] = useState<{ conversationId: string; start: number; query: string; anchor?: MentionAnchor }>();
   const [mentionIndex, setMentionIndex] = useState(0);
   const [mentionItemList, setMentionItemList] = useState<readonly ExternalDocumentReference[]>([]);
   const activeMentionState = mention?.conversationId === conversationId ? mention : undefined;
@@ -232,7 +250,11 @@ export const Composer = memo(function Composer({
     setMention((current) => {
       if (!next) return undefined;
       if (current?.conversationId === conversationId && current.start === next.start && current.query === next.query) return current;
-      return { conversationId, ...next };
+      // Anchor at the "@" itself so the popup stays put while the query grows.
+      const anchor = current?.conversationId === conversationId && current.start === next.start && current.anchor
+        ? current.anchor
+        : mentionAnchor(element, next.start);
+      return { conversationId, ...next, ...(anchor ? { anchor } : {}) };
     });
     setMentionIndex(0);
   }, [conversationId, referencesEnabled]);
@@ -756,6 +778,7 @@ export const Composer = memo(function Composer({
           <>
           {activeMentionState && (
             <ExternalReferenceMenu
+              anchor={activeMentionState.anchor}
               activeIndex={mentionIndex}
               onActiveIndexChange={setMentionIndex}
               onItemsChange={setMentionItems}
