@@ -46,13 +46,24 @@
 - 右侧工作区“＋”菜单：工具已启用但不可用的平台也会列出，显示原因和“前往处理”。
 - FR-7 `@` 引用：见 PRD。新增 `feishu:search-documents`（应用可见范围内按标题过滤，最多 30 次请求、30 条结果）；企业微信面板搜索和 `@` 搜索都受“文档管理”类别约束。
 
+## 阶段 5：应用开关统一、断开、面板筛选和工具结果卡片（2026-10-17）
+
+- **一个应用开关**：飞书、企业微信工具不再有单独的总开关，可用性跟随通道的启用状态（`resolveAppEnabled` / `isEnabled`，快照新增 `appEnabled`）。通道设置变化后主进程推送新的工具快照。旧设置文件里的 `enabled` 保留但不再使用。
+- **扫码即可用**：飞书、企业微信扫码保存凭据后由主进程直接启用应用（不再由界面另行保存）。启用不再要求至少一个允许的发送者：没有发送者时连接成功但不处理消息。
+- **断开**：飞书、企业微信、钉钉、Telegram 的“连接”页都有“断开并删除本机凭据”（确认后关闭应用，删除凭据和发送者；企业微信同时删除工具授权）。新增 IPC `settings:channels:disconnect`。Telegram 仍保留“保存时清除 Token”。
+- **知识库依赖文档**：`feishuCategoryUsable`，关闭“文档”时知识库不出现在工具、面板新建和 `@` 中，设置页显示为不可用。
+- **应用中心平台行**：未配置只显示“连接”；显示账号、能力标签、打开去向；应用关闭时“打开”不可用；顺序为飞书、企业微信、钉钉、微信、Telegram；底部提示一个平台一个账号。
+- **右侧面板**：两个平台都有搜索框、空间下拉、类型筛选、数量、更新时间和路径，以及新建和上传。企业微信新增“最近浏览”“我创建的”（`doc search` 按 visitor / creator 过滤，近 30 天）和“微盘”（`disk files list`）；新建用 `doc create`，上传用 `disk files upload`。飞书新建文档或知识库页面，上传用 `drive/v1/files/upload_all`（≤ 20MB，按官方文档的 multipart 字段）。上传文件由主进程文件对话框选择，界面不传路径。
+- **工具结果卡片**：对话中飞书、企业微信工具调用下方显示读取或写入的内容类型、标题、数量和“打开原文”，写入时提示可在平台历史版本中恢复（`platform-tool-card.ts`）。
+
 ### 与 PRD 的差距
 
-- 企业微信面板只有搜索，飞书面板只有浏览；尚无空间下拉、类型筛选（FR-6）。
+- 私聊和群策略仍只有白名单和“群聊被提及时响应”；没有配对审批（FR-4）。
+- 没有“使用记录”标签页（FR-3）。
+- 没有连接向导和完成页，连接在“连接”页完成（FR-2）。
 - DeepSeek Harness 不接收企业微信和飞书工具。
 - Windows arm64、Linux loongarch 等架构没有官方 `wecom-cli` 二进制，这些安装包不含企业微信工具。
 - 安装包体积增加约 25MB（每个架构一份 CLI 和 wheel）。
-- 应用设置没有“使用记录”标签页；私聊策略仍是原白名单（FR-3、FR-4）。
 - 飞书通道不收发图片和附件；钉钉文档工具未开始。
 - 飞书图标是 GoodBuddy 自绘的通用图形，不是飞书商标。
 
@@ -90,3 +101,11 @@
 - `npx vitest run src/main/wecom src/main/channels src/main/ipc.test.ts src/renderer/src/WecomToolSettings.test.tsx src/renderer/src/ChannelApplicationSettings.test.tsx`：通过。
 - 真实接口（Windows x64）：`/ai/qc/generate` 返回 `scode` 和 `auth_url`，`/ai/qc/query_result` 在未扫码时返回 `{"status":"init"}`，取消后停止轮询。
 - **扫码成功后的 `bot_info` 字段（`botid`/`bot_id`、`secret`）和 `identity whoami` 的 userid 字段来自二进制字符串和推断，未用真实扫码确认；消息通道用扫码机器人建立长连接也未验证。**
+
+阶段 5（2026-10-17）：
+
+- `tsc -p tsconfig.node.json`、`tsc -p tsconfig.web.json`、改动文件的 eslint：通过。
+- `npx vitest run src`：493 个文件通过、8 个跳过；6 个失败用例在 `App.test.tsx`（任务条“空闲/运行中”重复）和 `AppSidebarLayout.test.ts`，来自工作区中他人未提交的 `ConversationTaskStrip.tsx`、`styles.css` 改动，暂存这两个文件后这些用例通过。
+- `npx vitest run tests/telegram-channel.electron.test.ts`、`npm run build:bundle`：通过。
+- 新增测试：应用开关与工具可用性、断开、空发送者可启用、知识库依赖文档、企业微信列表/新建、飞书新建/上传（multipart 字段）、应用中心平台行、两个面板的筛选与新建、工具结果卡片。
+- **未用真实账号验证**：企业微信 `doc search` 的 visitor / creator 过滤和 `disk files list`、`doc create`、`disk files upload` 的返回结构按官方 Skill 和 CLI schema 实现；飞书上传、新建知识库页面未连真实应用试过。

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,8 +7,10 @@ import { FeishuToolService } from './feishu-tool-service'
 type Route = (url: URL, init: RequestInit) => unknown
 
 let root: string
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'goodbuddy-feishu-')) })
+beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'goodbuddy-feishu-')); app.enabled = true })
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
+
+const app = { enabled: true }
 
 function service(routes: Record<string, Route>, credentials = true, saveRegisteredApp = vi.fn(async () => undefined)) {
   const calls: { method: string; path: string; query: Record<string, string>; body?: unknown }[] = []
@@ -29,6 +31,7 @@ function service(routes: Record<string, Route>, credentials = true, saveRegister
     settingsPath: join(root, 'feishu-tools.json'),
     credentials: {
       resolve: async () => credentials ? { appId: 'cli_app', appSecret: 's', domain: 'feishu' } : undefined,
+      isEnabled: async () => app.enabled,
       saveRegisteredApp
     },
     fetch
@@ -37,15 +40,28 @@ function service(routes: Record<string, Route>, credentials = true, saveRegister
 }
 
 describe('FeishuToolService', () => {
-  it('defaults tools off with permission management disabled and persists updates', async () => {
+  it('follows the application switch, defaults permission management off and persists updates', async () => {
     const { instance } = service({})
     const snapshot = await instance.getSnapshot()
-    expect(snapshot).toMatchObject({ credentialsConfigured: true, appId: 'cli_app', settings: { enabled: false, allowInMessageSessions: false } })
+    expect(snapshot).toMatchObject({ credentialsConfigured: true, appEnabled: true, appId: 'cli_app', settings: { allowInMessageSessions: false } })
     expect(snapshot.settings.categories).toEqual({ doc: true, wiki: true, drive: true, bitable: true, perm: false, scopes: true })
+    expect(await instance.getEnabledCategories()).toEqual(['doc', 'wiki', 'drive', 'bitable', 'scopes'])
+    app.enabled = false
     expect(await instance.getEnabledCategories()).toEqual([])
-    await instance.updateSettings({ enabled: true, categories: { perm: true } })
+    expect((await instance.getSnapshot()).appEnabled).toBe(false)
+    app.enabled = true
+    await instance.updateSettings({ categories: { perm: true } })
     expect(await instance.getEnabledCategories()).toContain('perm')
-    expect(JSON.parse(await readFile(join(root, 'feishu-tools.json'), 'utf8'))).toMatchObject({ enabled: true, categories: { perm: true } })
+    expect(JSON.parse(await readFile(join(root, 'feishu-tools.json'), 'utf8'))).toMatchObject({ categories: { perm: true } })
+  })
+
+  it('makes the knowledge base unusable while 文档 is off', async () => {
+    const { instance } = service({})
+    await instance.updateSettings({ categories: { doc: false } })
+    const categories = await instance.getEnabledCategories()
+    expect(categories).not.toContain('wiki')
+    expect(categories).not.toContain('doc')
+    expect(categories).toContain('drive')
   })
 
   it('returns no categories without credentials', async () => {
@@ -147,13 +163,48 @@ describe('FeishuToolService', () => {
         ? { items: [{ node_token: 'n2', title: '发布回滚', obj_type: 'docx' }] }
         : { items: [{ node_token: 'n1', title: '发布流程', obj_type: 'docx', has_child: true }] }
     })
+    app.enabled = false
     await expect(instance.searchDocuments({ query: '发布' })).rejects.toThrow('未启用')
-    await instance.updateSettings({ enabled: true })
+    app.enabled = true
     expect((await instance.searchDocuments({ query: '发布' })).map(item => [item.kind, item.name])).toEqual([
       ['node', '发布流程'], ['file', '发布清单'], ['node', '发布回滚']
     ])
     await instance.updateSettings({ categories: { wiki: false } })
     expect((await instance.searchDocuments({ query: '发布' })).map(item => item.name)).toEqual(['发布清单'])
+  })
+
+  it('creates documents in folders and pages in spaces, gated by category', async () => {
+    const { instance, calls } = service({
+      'POST /open-apis/docx/v1/documents': () => ({ document: { document_id: 'doc1', title: '周会' } }),
+      'POST /open-apis/wiki/v2/spaces/7/nodes': () => ({ node: { node_token: 'n9', obj_type: 'docx', title: '页面' } })
+    })
+    expect(await instance.createDocument({ title: '周会', location: { kind: 'folder', token: 'fold' } }))
+      .toMatchObject({ kind: 'file', token: 'doc1', name: '周会', type: 'docx' })
+    expect(calls.find(call => call.path === '/open-apis/docx/v1/documents')!.body).toEqual({ title: '周会', folder_token: 'fold' })
+    expect(await instance.createDocument({ title: '页面', location: { kind: 'node', spaceId: '7', token: 'n1' } }))
+      .toMatchObject({ kind: 'node', token: 'n9', url: 'https://www.feishu.cn/wiki/n9' })
+    expect(calls.find(call => call.path.endsWith('/nodes'))!.body).toMatchObject({ parent_node_token: 'n1', obj_type: 'docx' })
+    await instance.updateSettings({ categories: { doc: false } })
+    // 知识库 depends on 文档, so pages are blocked too.
+    await expect(instance.createDocument({ title: 'x', location: { kind: 'space', token: '7' } })).rejects.toThrow('知识库')
+    await expect(instance.createDocument({ title: 'x', location: { kind: 'root' } })).rejects.toThrow('文档')
+  })
+
+  it('uploads a local file into the app root folder and refuses large files', async () => {
+    const file = join(root, '方案.txt')
+    await writeFile(file, 'hello')
+    const { instance, calls, fetch } = service({
+      'GET /open-apis/drive/explorer/v2/root_folder/meta': () => ({ token: 'rootF' }),
+      'POST /open-apis/drive/v1/files/upload_all': () => ({ file_token: 'ft1' })
+    })
+    expect(await instance.uploadFile(file, undefined)).toMatchObject({ kind: 'file', token: 'ft1', name: '方案.txt' })
+    const upload = fetch.mock.calls.find(([url]) => String(url).includes('upload_all'))!
+    const form = upload[1]!.body as FormData
+    expect(form.get('parent_node')).toBe('rootF')
+    expect(form.get('size')).toBe('5')
+    expect(calls.some(call => call.path.includes('root_folder'))).toBe(true)
+    await instance.updateSettings({ categories: { drive: false } })
+    await expect(instance.uploadFile(file, 'fold')).rejects.toThrow('云空间')
   })
 
   it('registers an app by QR code and saves the credentials and owner', async () => {

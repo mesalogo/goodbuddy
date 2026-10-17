@@ -484,6 +484,22 @@ export const app = {
       answerSubmitted: 'Answer submitted; OpenCode is continuing',
       questionSkipped: 'Question skipped'
     },
+    platformTools: {
+      providers: { feishu: 'Feishu', wecom: 'WeCom' },
+      objects: {
+        doc: ' document', wiki: ' knowledge base', drive: ' drive', bitable: ' base', perm: ' permissions', sheet: ' sheet', smartsheet: ' smart sheet',
+        smartpage: ' smart page', slide: ' slides', disk: ' drive', media: ' media', calendar: ' calendar', meeting: ' meeting', todo: ' to-do',
+        contact: ' contacts', mail: ' mail', message: ' message', chat: ' group chat', file: ' file', other: ' data'
+      },
+      read: 'Read {{platform}}{{object}}',
+      wrote: 'Wrote {{platform}}{{object}} · {{action}}',
+      count: '{{count}} items',
+      open: 'Open original',
+      undo: {
+        feishu: 'The change is live and GoodBuddy cannot undo it; restore from the document history in Feishu.',
+        wecom: 'The change is live and GoodBuddy cannot undo it; restore from the document history in WeCom.'
+      }
+    },
     tools: {
       region: 'Tool execution, {{count}} items',
       title: 'Tool execution',

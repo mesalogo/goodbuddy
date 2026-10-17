@@ -40,6 +40,10 @@ import { PageTabs } from './WorkspacePrimitives'
 import { WecomToolSettings } from './WecomToolSettings'
 import { WecomBotScan } from './WecomBotScan'
 import { FeishuAppRegistration, FeishuToolSettings } from './FeishuToolSettings'
+import { useFeishuSnapshot } from './feishu-snapshot'
+import { useWecomSnapshot } from './wecom-snapshot'
+import { feishuCategoryUsable, feishuToolCategories } from '../../shared/feishu-contracts'
+import { wecomToolCategories } from '../../shared/wecom-contracts'
 import {
   channelProjectDraft,
   ChannelProjectSettingsFields
@@ -286,6 +290,7 @@ function ChannelEditor({
   testing,
   botUsername,
   onReload,
+  onDisconnect,
   section
 }: {
   section: 'connection' | 'messages'
@@ -304,6 +309,8 @@ function ChannelEditor({
   botUsername?: string
   /** Reloads saved settings after credentials were written outside this form. */
   onReload?: () => void
+  /** Turns the platform off and deletes its local credentials. */
+  onDisconnect?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
   const title = t(`channels.tabs.${channel}`)
@@ -480,7 +487,7 @@ function ChannelEditor({
         />
       </label>
 
-      {settings.secretConfigured && !settings.readOnly && (
+      {channel === 'telegram' && settings.secretConfigured && !settings.readOnly && (
         <label className="check-field">
           <input
             checked={draft.clearSecret}
@@ -511,6 +518,17 @@ function ChannelEditor({
               channel: title
             })}
       </button>
+      {channel !== 'telegram' && settings.secretConfigured && !settings.readOnly && onDisconnect && (
+        <>
+          <div className="channel-binding-actions">
+            <button className="danger-button danger-button--quiet" disabled={busy} onClick={onDisconnect} type="button">
+              <Unplug aria-hidden="true" size={14} />
+              {t('channels.credential.disconnect')}
+            </button>
+          </div>
+          <small>{t(channel === 'wecom' ? 'channels.credential.disconnectHelpWecom' : 'channels.credential.disconnectHelp')}</small>
+        </>
+      )}
     </article>
     </>
   )
@@ -934,6 +952,49 @@ const PlatformApplicationStatus = memo(function PlatformApplicationStatus({
   )
 })
 
+/** Account line under a platform row: the connected identity, never secrets. */
+function platformAccount(channel: ProjectChannel, snapshot: ChannelSettingsSnapshot): string | undefined {
+  if (channel === 'weixin') return snapshot.weixin.accountDisplay
+  if (channel === 'telegram') return undefined
+  const settings = snapshot[channel]
+  return channel === 'wecom' ? (settings as ChannelSettingsSnapshot['wecom']).botId
+    : channel === 'feishu' ? (settings as ChannelSettingsSnapshot['feishu']).appId
+      : (settings as ChannelSettingsSnapshot['dingtalk']).clientId
+}
+
+/** Capability tags: who may send messages, and the tool categories that are on. */
+function PlatformCapabilityTags({ channel, snapshot }: { channel: ProjectChannel; snapshot: ChannelSettingsSnapshot }): React.JSX.Element {
+  const { t } = useTranslation('integrations')
+  const { snapshot: feishu } = useFeishuSnapshot()
+  const { snapshot: wecom } = useWecomSnapshot()
+  const tags: string[] = []
+  if (channel === 'weixin') {
+    tags.push(t('channels.platformTags.messagesSelf'))
+  } else {
+    const senders = snapshot[channel].allowedSenderIds.length
+    tags.push(senders === 0 ? t('channels.platformTags.noSenders') : t('channels.platformTags.senders', { count: senders }))
+    if (channel !== 'telegram' && snapshot[channel].allowGroupMessages) tags.push(t('channels.platformTags.groups'))
+  }
+  if (channel === 'feishu' && feishu?.credentialsConfigured) {
+    const on = feishuToolCategories.filter(category => feishu.settings.categories[category] && feishuCategoryUsable(category, feishu.settings.categories))
+    tags.push(...on.map(category => t(`feishu.categories.${category}.label`)))
+  } else if (channel === 'wecom' && wecom) {
+    if (wecom.authorization.state === 'authorized') {
+      const on = wecomToolCategories.filter(category => wecom.settings.categories[category])
+      tags.push(t('channels.platformTags.tools', { count: on.length }))
+    } else {
+      tags.push(t('channels.platformTags.toolsUnauthorized'))
+    }
+  } else if (channel !== 'feishu' && channel !== 'wecom') {
+    tags.push(t('channels.platformTags.messagesOnly'))
+  }
+  return (
+    <span className="application-center__tags">
+      {tags.map(tag => <span className="application-center__tag" key={tag}>{tag}</span>)}
+    </span>
+  )
+}
+
 /** Platform application rows shown in the application center. */
 export function PlatformApplicationRows({
   channels,
@@ -954,6 +1015,10 @@ export function PlatformApplicationRows({
       {error && <p className="settings-warning" role="alert">{error}</p>}
       {channels.map((channel) => {
         const title = t(`channels.tabs.${channel}`)
+        const configured = snapshot ? isChannelConfigured(channel, snapshot) : false
+        const enabled = snapshot ? snapshot[channel].enabled : false
+        const account = snapshot && configured ? platformAccount(channel, snapshot) : undefined
+        const opensPanel = channel === 'feishu' || channel === 'wecom'
         return (
           <article className="application-center__item" key={channel}>
             <div className="application-center__summary">
@@ -965,37 +1030,53 @@ export function PlatformApplicationRows({
                     {t('applications.platform', { ns: 'app' })}
                     {snapshot && <>
                       {' · '}
-                      <PlatformApplicationStatus channel={channel} snapshot={snapshot} store={statusStore} />
+                      {configured && !enabled
+                        ? t('applications.disabled', { ns: 'app' })
+                        : <PlatformApplicationStatus channel={channel} snapshot={snapshot} store={statusStore} />}
                     </>}
                   </small>
                 </div>
-                <p>{t(`applications.descriptions.${channel}`, { ns: 'app' })}</p>
+                <p>{account ? t('channels.platformTags.account', { account }) : t(`applications.descriptions.${channel}`, { ns: 'app' })}</p>
+                {snapshot && configured && <PlatformCapabilityTags channel={channel} snapshot={snapshot} />}
+                {configured && <small className="application-center__hint">
+                  {t(opensPanel ? 'channels.platformTags.opensPanel' : 'channels.platformTags.opensProject')}
+                </small>}
               </div>
             </div>
             <div className="application-center__actions">
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={!canOpen(channel)}
-                title={t('applications.openChannelHelp', { ns: 'app' })}
-                onClick={() => onOpen(channel)}
-              >
-                {t('applications.open', { ns: 'app' })}
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                title={t('applications.settings', { ns: 'app' })}
-                aria-label={`${title} ${t('applications.settings', { ns: 'app' })}`}
-                onClick={() => onSettings(channel)}
-              >
-                <Settings size={16} aria-hidden="true" />
-                {t('applications.settings', { ns: 'app' })}
-              </button>
+              {snapshot && !configured ? (
+                <button className="primary-button" type="button" onClick={() => onSettings(channel)}
+                  aria-label={`${t('channels.platformTags.connect')} ${title}`}>
+                  {t('channels.platformTags.connect')}
+                </button>
+              ) : (
+                <>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={!enabled || !canOpen(channel)}
+                    title={!enabled ? t('channels.platformTags.offHelp') : t(opensPanel ? 'channels.platformTags.opensPanel' : 'applications.openChannelHelp', { ns: opensPanel ? 'integrations' : 'app' })}
+                    onClick={() => onOpen(channel)}
+                  >
+                    {t('applications.open', { ns: 'app' })}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    title={t('applications.settings', { ns: 'app' })}
+                    aria-label={`${title} ${t('applications.settings', { ns: 'app' })}`}
+                    onClick={() => onSettings(channel)}
+                  >
+                    <Settings size={16} aria-hidden="true" />
+                    {t('applications.settings', { ns: 'app' })}
+                  </button>
+                </>
+              )}
             </div>
           </article>
         )
       })}
+      <p className="application-center__footnote">{t('channels.platformTags.oneAccount')}</p>
     </>
   )
 }
@@ -1171,33 +1252,29 @@ export function ChannelApplicationSettings({
     }
   }
 
-  /**
-   * Scan registration stores the new app's credentials and the scanner as the
-   * only sender. Enable the channel right away, like OpenClaw, instead of
-   * leaving a disabled channel that still needs a separate save.
-   */
+  /** Feishu scan registration saved and enabled the app; show it in the form. */
   const completeFeishuRegistration = async (): Promise<void> => {
     const api = window.goodbuddy?.channels
     if (!api) return
+    try {
+      applySnapshot(await api.getSnapshot())
+      onNotify({ tone: 'success', message: t('channels.feishu.createdEnabled'), dedupeKey: 'feishu-app-created' })
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('channels.loadError'))
+    }
+  }
+
+  const disconnect = async (): Promise<void> => {
+    const api = window.goodbuddy?.channels
+    if (!api || channel === 'weixin') return
+    if (!window.confirm(t('channels.credential.disconnectConfirm', { channel: title }))) return
     setBusy(true)
     setError(undefined)
     try {
-      let next = await api.getSnapshot()
-      const saved = next.feishu
-      if (!saved.readOnly && !saved.enabled && saved.secretConfigured && saved.appId && saved.allowedSenderIds.length > 0) {
-        next = await api.apply({ feishu: {
-          enabled: true,
-          appId: saved.appId,
-          domain: saved.domain,
-          secret: { action: 'keep' },
-          allowedSenderIds: [...saved.allowedSenderIds],
-          allowGroupMessages: saved.allowGroupMessages
-        } })
-      }
-      applySnapshot(next)
-      onNotify({ tone: 'success', message: t('channels.feishu.createdEnabled'), dedupeKey: 'feishu-app-created' })
+      applySnapshot(await api.disconnect(channel))
+      onNotify({ tone: 'success', message: t('channels.credential.disconnected', { channel: title }), dedupeKey: `channel-disconnected-${channel}` })
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t('channels.saveError'))
+      setError(reason instanceof Error ? reason.message : t('channels.disconnectError'))
     } finally {
       setBusy(false)
     }
@@ -1377,6 +1454,7 @@ export function ChannelApplicationSettings({
                   onReload={channel === 'feishu'
                     ? () => void completeFeishuRegistration()
                     : channel === 'wecom' ? completeWecomScan : undefined}
+                  onDisconnect={() => void disconnect()}
                   onChange={(next) => {
                     if (next.secret !== draft.secret || next.clearSecret !== draft.clearSecret) setTelegramBotUsername(undefined)
                     setDraft(next)

@@ -1125,7 +1125,7 @@ export function registerIpcHandlers(
   obsidianService?: ObsidianService,
   nativeClientCoordinator?: Pick<NativeClientCoordinator, 'open' | 'get' | 'stop' | 'closeOwner'>,
   supervisionPorts?: ReturnType<typeof createSupervisionDomainPorts>,
-  wecomService?: Pick<WecomCliService, 'getEnabledCategories' | 'getSettings'>,
+  wecomService?: Pick<WecomCliService, 'getEnabledCategories' | 'getSettings'> & Partial<Pick<WecomCliService, 'disconnect'>>,
   feishuService?: Pick<FeishuToolService, 'getEnabledCategories' | 'getSettings'>
 ): () => Promise<void> {
   /** Feishu tools for one request, with the same message-session rule as WeCom. */
@@ -5192,6 +5192,21 @@ export function registerIpcHandlers(
         throw new Error('消息通道设置服务不可用')
       }
       return channelManager.apply(channelSettingsApplySchema.parse(input))
+    }
+  )
+
+  registerHandler(
+    ipcChannels.channelSettingsDisconnect,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!channelSettingsStore || !channelManager) {
+        throw new Error('消息通道设置服务不可用')
+      }
+      const { channel } = z.object({ channel: z.enum(['wecom', 'dingtalk', 'telegram', 'feishu']) }).strict().parse(input)
+      // WeCom tools are signed in with the same bot; drop that sign-in too.
+      if (channel === 'wecom') await wecomService?.disconnect?.()
+      await channelSettingsStore.disconnect(channel)
+      return channelManager.reload(channel)
     }
   )
 

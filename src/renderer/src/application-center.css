@@ -110,6 +110,31 @@
   color: var(--text-secondary);
   font-size: var(--font-caption);
 }
+.application-center__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+.application-center__tag {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  line-height: 1.6;
+}
+.application-center__summary .application-center__hint {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+}
+.application-center__footnote {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
 .application-center__actions {
   display: flex;
   flex-wrap: wrap;

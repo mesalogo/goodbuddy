@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FeishuDomain } from '../../shared/channel-settings-contracts'
 import {
+  feishuCategoryUsable,
   feishuToolCategories,
   type FeishuSnapshot,
   type FeishuToolSettingsUpdate
@@ -87,7 +88,10 @@ export function FeishuAppRegistration({
   )
 }
 
-/** Feishu work tools: enable switch, categories, and message-session permission. */
+/**
+ * Feishu work tools: categories and message-session permission. Availability
+ * follows the application switch on the Connection tab.
+ */
 export function FeishuToolSettings(): React.JSX.Element {
   const { t } = useTranslation('integrations')
   const { snapshot, error: loadError, setSnapshot } = useFeishuSnapshot()
@@ -126,38 +130,32 @@ export function FeishuToolSettings(): React.JSX.Element {
       </div>
       {error && <p className="settings-warning" role="alert">{error}</p>}
       {!snapshot.credentialsConfigured && <p className="settings-notice">{t('feishu.needsCredentials')}</p>}
-      <label className="toggle-row" htmlFor="feishu-tools-enabled">
-        <input
-          checked={snapshot.settings.enabled}
-          disabled={busy || !snapshot.credentialsConfigured}
-          id="feishu-tools-enabled"
-          onChange={(event) => void update({ enabled: event.target.checked })}
-          role="switch"
-          type="checkbox"
-        />
-        <span>{t('feishu.enable')}</span>
-      </label>
-      <fieldset className="wecom-tools__categories" disabled={busy || !snapshot.settings.enabled}>
+      {snapshot.credentialsConfigured && !snapshot.appEnabled && <p className="settings-notice">{t('feishu.appOff')}</p>}
+      <fieldset className="wecom-tools__categories" disabled={busy || !snapshot.credentialsConfigured}>
         <legend>{t('feishu.categoriesTitle')}</legend>
-        {feishuToolCategories.map(category => (
-          <label className="check-field" key={category}>
-            <input
-              checked={snapshot.settings.categories[category]}
-              onChange={(event) => void update({ categories: { [category]: event.target.checked } })}
-              type="checkbox"
-            />
-            <span>
-              {t(`feishu.categories.${category}.label`)}
-              <small>{t(`feishu.categories.${category}.description`)}</small>
-            </span>
-          </label>
-        ))}
+        {feishuToolCategories.map(category => {
+          const blocked = !feishuCategoryUsable(category, snapshot.settings.categories)
+          return (
+            <label className="check-field" key={category}>
+              <input
+                checked={snapshot.settings.categories[category] && !blocked}
+                disabled={blocked}
+                onChange={(event) => void update({ categories: { [category]: event.target.checked } })}
+                type="checkbox"
+              />
+              <span>
+                {t(`feishu.categories.${category}.label`)}
+                <small>{blocked ? t('feishu.requiresDoc') : t(`feishu.categories.${category}.description`)}</small>
+              </span>
+            </label>
+          )
+        })}
       </fieldset>
       <p className="settings-notice">{t('feishu.identityHelp')}</p>
       <label className="toggle-row" htmlFor="feishu-tools-message-sessions">
         <input
           checked={snapshot.settings.allowInMessageSessions}
-          disabled={busy || !snapshot.settings.enabled}
+          disabled={busy || !snapshot.credentialsConfigured}
           id="feishu-tools-message-sessions"
           onChange={(event) => void update({ allowInMessageSessions: event.target.checked })}
           role="switch"

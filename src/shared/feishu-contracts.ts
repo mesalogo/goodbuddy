@@ -9,7 +9,18 @@ export type FeishuToolCategory = z.infer<typeof feishuToolCategorySchema>
 /** Permission management changes who can see documents; it stays off until enabled (OpenClaw default). */
 export const feishuDefaultDisabledCategories: readonly FeishuToolCategory[] = ['perm']
 
+/**
+ * The knowledge base reads and writes pages through document blocks
+ * (OpenClaw: wiki requires doc), so it is unusable while 文档 is off.
+ */
+export const feishuCategoryDependencies: Partial<Record<FeishuToolCategory, FeishuToolCategory>> = { wiki: 'doc' }
+export function feishuCategoryUsable(category: FeishuToolCategory, categories: Record<FeishuToolCategory, boolean>): boolean {
+  const required = feishuCategoryDependencies[category]
+  return required === undefined || categories[required]
+}
+
 export const feishuToolSettingsSchema = z.object({
+  /** Legacy: availability now follows the application (channel) switch; kept so old files parse. */
   enabled: z.boolean(),
   categories: z.object(
     Object.fromEntries(feishuToolCategories.map(category => [category, z.boolean()])) as
@@ -49,6 +60,8 @@ export type FeishuSnapshot = {
   revision: number
   /** App ID and secret are saved in the Feishu message channel settings. */
   credentialsConfigured: boolean
+  /** The application switch (the Feishu channel's enabled state); tools follow it. */
+  appEnabled: boolean
   appId?: string
   domain?: FeishuDomain
   settings: FeishuToolSettings
@@ -61,6 +74,10 @@ export type FeishuBrowseItem = {
   name: string
   type?: string
   url?: string
+  /** Where it lives, e.g. "产品知识库 / 发布" (search results). */
+  path?: string
+  /** Last edit time, ISO 8601, when Feishu returns it. */
+  modifiedAt?: string
   /** Opaque location for drilling into children. */
   child?: { kind: 'space' | 'node' | 'folder'; spaceId?: string; token: string }
 }
@@ -80,6 +97,19 @@ export const feishuSearchInputSchema = z.object({
 }).strict()
 export type FeishuSearchInput = z.infer<typeof feishuSearchInputSchema>
 
+/** Creates a document in a drive folder (or the app's root) or a page in a knowledge space. */
+export const feishuCreateDocumentInputSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  location: feishuBrowseInputSchema.shape.location
+}).strict()
+export type FeishuCreateDocumentInput = z.infer<typeof feishuCreateDocumentInputSchema>
+
+/** Uploads a file picked in a main-process dialog (up to 20 MB) into a drive folder or the app's root. */
+export const feishuUploadFileInputSchema = z.object({
+  folderToken: z.string().min(1).max(256).optional()
+}).strict()
+export type FeishuUploadFileInput = z.infer<typeof feishuUploadFileInputSchema>
+
 export type FeishuApiBridge = {
   /** Title search over documents shared with the app; used by `@` references. */
   searchDocuments(input: FeishuSearchInput): Promise<FeishuBrowseItem[]>
@@ -88,5 +118,8 @@ export type FeishuApiBridge = {
   startRegistration(domain: FeishuDomain): Promise<FeishuSnapshot>
   cancelRegistration(): Promise<FeishuSnapshot>
   browse(input: FeishuBrowseInput): Promise<{ items: FeishuBrowseItem[]; hint?: string }>
+  createDocument(input: FeishuCreateDocumentInput): Promise<FeishuBrowseItem>
+  /** Opens a file dialog in the main process; undefined when cancelled. */
+  uploadFile(input: FeishuUploadFileInput): Promise<FeishuBrowseItem | undefined>
   onChanged(listener: (snapshot: FeishuSnapshot) => void): () => void
 }

@@ -476,14 +476,24 @@ describe('Application Center', () => {
     expect(await within(weixin).findByText(/已连接/u)).toBeInTheDocument()
     const telegram = within(group).getByText('Telegram', { exact: true }).closest('article')!
     expect(within(telegram).getByText(/未配置/u)).toBeInTheDocument()
-    expect(within(telegram).getByRole('button', { name: '打开' })).toBeDisabled()
-    expect(within(group).getByText('钉钉', { exact: true }).closest('article')!).toHaveTextContent('连接失败')
+    // Unconfigured platforms offer "连接" instead of open/settings.
+    expect(within(telegram).queryByRole('button', { name: '打开' })).not.toBeInTheDocument()
+    expect(within(telegram).getByRole('button', { name: '连接 Telegram' })).toBeInTheDocument()
+    const dingtalk = within(group).getByText('钉钉', { exact: true }).closest('article')!
+    expect(dingtalk).toHaveTextContent('连接失败')
+    expect(dingtalk).toHaveTextContent('账号：c')
+    expect(dingtalk).toHaveTextContent('消息 · 未设置发送者')
+    expect(dingtalk).toHaveTextContent('只有消息')
+    // Platforms with tools come first.
+    expect(within(group).getAllByRole('article').map((row) => row.querySelector('strong')?.textContent))
+      .toEqual(['飞书', '企业微信', '钉钉', '微信 ClawBot', 'Telegram'])
+    expect(within(group).getByText(/每个平台连接一个账号/u)).toBeInTheDocument()
     expect(within(group).queryByRole('button', { name: /上移|下移/u })).not.toBeInTheDocument()
     fireEvent.click(within(weixin).getByRole('button', { name: '打开' }))
     expect(onOpenChannel).toHaveBeenCalledWith('weixin')
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Telegram' } })
     expect(screen.queryByText('微信 ClawBot', { exact: true })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Telegram 应用设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '连接 Telegram' }))
     expect(screen.getByRole('dialog', { name: 'Telegram' })).toHaveClass('application-center--detail')
     expect(await screen.findByText('正在读取消息通道设置…')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '返回应用中心' }))

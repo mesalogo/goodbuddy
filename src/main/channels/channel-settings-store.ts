@@ -402,6 +402,7 @@ export class ChannelSettingsStore {
   private runtimeRepairWarning?: SettingsWarning
   private updateQueue: Promise<void> = Promise.resolve()
   private readonly externalChangeListeners = new Set<(channel: CredentialChannel) => void>()
+  private readonly changeListeners = new Set<() => void>()
   private readonly environmentChannels: Record<
     CredentialChannel,
     EnvironmentChannel
@@ -688,7 +689,9 @@ export class ChannelSettingsStore {
         appId: input.appId.trim(),
         domain: input.domain,
         credential: this.encryptCredential('feishu', input.appSecret),
-        allowedSenderIds: input.openId ? [input.openId] : current.feishu.allowedSenderIds
+        allowedSenderIds: input.openId ? [input.openId] : current.feishu.allowedSenderIds,
+        // Scanning connects the app: channel and tools are on right away.
+        enabled: true
       }
       await this.persist(current)
       this.settings = current
@@ -697,7 +700,9 @@ export class ChannelSettingsStore {
     }
     const operation = this.updateQueue.then(update, update)
     this.updateQueue = operation.then(() => undefined, () => undefined)
-    return operation.then(() => snapshot)
+    await operation
+    for (const listener of this.externalChangeListeners) listener('feishu')
+    return snapshot
   }
 
   /**
@@ -722,13 +727,12 @@ export class ChannelSettingsStore {
     let snapshot!: ChannelSettingsSnapshot
     const update = async (): Promise<void> => {
       const current = cloneStored(await this.load())
-      const allowedSenderIds = input.userId ? [input.userId] : current.wecom.allowedSenderIds
       current.wecom = {
         ...current.wecom,
         botId: input.botId.trim(),
         credential: this.encryptCredential('wecom', input.secret),
-        allowedSenderIds,
-        enabled: allowedSenderIds.length > 0 ? true : current.wecom.enabled
+        allowedSenderIds: input.userId ? [input.userId] : current.wecom.allowedSenderIds,
+        enabled: true
       }
       this.validateEnabledCredentialChannel('wecom', current.wecom)
       await this.persist(current)
@@ -939,14 +943,12 @@ export class ChannelSettingsStore {
       }
       return
     }
+    // An empty sender list is allowed: the channel connects but processes no
+    // messages until senders are added (same as Telegram).
     const identifier = storedIdentifier(channel, stored)
-    if (
-      identifier.length === 0 ||
-      stored.allowedSenderIds.length === 0 ||
-      this.decryptCredential(channel, stored) === undefined
-    ) {
+    if (identifier.length === 0 || this.decryptCredential(channel, stored) === undefined) {
       const meta = credentialChannelMeta[channel]
-      throw new Error(`启用${meta.label}前需要配置${meta.idLabel}、Secret 和允许的发送者`)
+      throw new Error(`启用${meta.label}前需要配置${meta.idLabel}和 Secret`)
     }
   }
 
@@ -1166,6 +1168,45 @@ export class ChannelSettingsStore {
 
   private async persist(settings: StoredSettings): Promise<void> {
     await writeJsonFileAtomically(this.filePath, settings)
+    // After the write; listeners re-read through resolve(), never re-entering this queue.
+    setTimeout(() => { for (const listener of this.changeListeners) listener() }, 0)
+  }
+
+  /** Any persisted change; platform tool services refresh their availability from it. */
+  onChanged(listener: () => void): () => void {
+    this.changeListeners.add(listener)
+    return () => { this.changeListeners.delete(listener) }
+  }
+
+  /**
+   * "断开并删除本机凭据": turns the platform off and removes its credentials
+   * and allowed senders, so another account can be connected. Channel
+   * projects and their conversations are kept.
+   */
+  async disconnect(channel: CredentialChannel): Promise<ChannelSettingsSnapshot> {
+    if (this.environmentChannel(channel).owned) {
+      throw new Error(`${channel === 'telegram' ? 'Telegram' : credentialChannelMeta[channel].label}由环境变量配置，不能在设置中修改`)
+    }
+    let snapshot!: ChannelSettingsSnapshot
+    const update = async (): Promise<void> => {
+      const current = cloneStored(await this.load())
+      const { credential: _removed, ...rest } = current[channel]
+      void _removed
+      const cleared = { ...rest, enabled: false, allowedSenderIds: [] }
+      if (channel === 'wecom') current.wecom = { ...(cleared as StoredSettings['wecom']), botId: '' }
+      else if (channel === 'dingtalk') current.dingtalk = { ...(cleared as StoredSettings['dingtalk']), clientId: '' }
+      else if (channel === 'feishu') current.feishu = { ...(cleared as StoredSettings['feishu']), appId: '' }
+      else current.telegram = { ...(cleared as StoredSettings['telegram']), allowGroupMessages: false }
+      await this.persist(current)
+      this.settings = current
+      this.removeWarnings([`channel-${channel}-credential-unreadable` as SettingsWarning['code']])
+      snapshot = await this.snapshot()
+    }
+    const operation = this.updateQueue.then(update, update)
+    this.updateQueue = operation.then(() => undefined, () => undefined)
+    await operation
+    for (const listener of this.externalChangeListeners) listener(channel)
+    return snapshot
   }
 
   private environmentChannel(channel: CredentialChannel): EnvironmentChannel {

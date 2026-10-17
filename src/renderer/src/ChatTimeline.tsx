@@ -11,6 +11,7 @@ import {
   Clock3,
   Copy,
   Download,
+  ExternalLink,
   FileText,
   Library,
   ClockFading,
@@ -39,6 +40,9 @@ import type {
   ConversationToolActivity
 } from '../../shared/assistant-contracts'
 import { AgentQuestionCard } from './AgentQuestionCard'
+import { ChannelIcon } from './ChannelIcon'
+import { platformToolCard } from './platform-tool-card'
+import './platform-tool-card.css'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { useLiveMessage } from './live-message-store'
 import { formatTime, type TimeFormatLocale } from './time-format'
@@ -314,9 +318,43 @@ const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, expansionId, c
       {tool.error && (
         <p className="tool-execution__error-preview" title={tool.error}>{tool.error}</p>
       )}
+      <PlatformToolResult tool={tool} />
     </li>
   )
 })
+
+/** Feishu and WeCom calls: what was read or changed, a link, and the undo hint for writes. */
+function PlatformToolResult({ tool }: { tool: Pick<ToolActivity, 'name' | 'state' | 'input' | 'output'> }): React.JSX.Element | null {
+  const { t } = useTranslation('app')
+  const card = useMemo(() => platformToolCard(tool), [tool])
+  if (!card) return null
+  const platform = t(`chat.platformTools.providers.${card.provider}`)
+  const object = t(`chat.platformTools.objects.${card.object}`, { defaultValue: card.object })
+  const heading = card.write
+    ? t('chat.platformTools.wrote', { platform, object, action: card.action ?? '' })
+    : t('chat.platformTools.read', { platform, object })
+  return (
+    <div className={`platform-tool-card platform-tool-card--${card.write ? 'write' : 'read'}`}>
+      <span className="platform-tool-card__heading">
+        <ChannelIcon channel={card.provider} size={14} />
+        <strong>{heading}</strong>
+        {card.count !== undefined && <small>{t('chat.platformTools.count', { count: card.count })}</small>}
+      </span>
+      {(card.title || card.url) && (
+        <span className="platform-tool-card__target">
+          {card.title && <span title={card.title}>{card.title}</span>}
+          {card.url && (
+            <a href={card.url} rel="noreferrer" target="_blank">
+              <ExternalLink aria-hidden="true" size={12} />
+              {t('chat.platformTools.open')}
+            </a>
+          )}
+        </span>
+      )}
+      {card.write && <small className="platform-tool-card__hint">{t(`chat.platformTools.undo.${card.provider}`)}</small>}
+    </div>
+  )
+}
 
 function ToolExecutionList({
   conversationId,

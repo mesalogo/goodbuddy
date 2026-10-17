@@ -1926,6 +1926,8 @@ export type DesktopApi = {
       code: string
     ) => Promise<WeixinBindingSnapshot>
     disconnectWeixin: () => Promise<WeixinBindingSnapshot>
+    /** Turns the platform off and deletes its local credentials (WeCom: also the tool sign-in). */
+    disconnect: (channel: CredentialChannel) => Promise<ChannelSettingsSnapshot>
     onWeixinBindingChanged: (
       listener: (snapshot: WeixinBindingSnapshot) => void
     ) => () => void

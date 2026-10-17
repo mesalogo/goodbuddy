@@ -468,6 +468,22 @@ export const app = {
       answerSubmitted: '回答已提交，OpenCode 正在继续执行',
       questionSkipped: '已跳过问题'
     },
+    platformTools: {
+      providers: { feishu: '飞书', wecom: '企业微信' },
+      objects: {
+        doc: '文档', wiki: '知识库', drive: '云空间', bitable: '多维表格', perm: '权限', sheet: '表格', smartsheet: '智能表格',
+        smartpage: '智能文档', slide: '在线 PPT', disk: '微盘', media: '媒体文件', calendar: '日程', meeting: '会议', todo: '待办',
+        contact: '通讯录', mail: '邮件', message: '消息', chat: '群聊', file: '文件', other: '数据'
+      },
+      read: '已读取{{platform}}{{object}}',
+      wrote: '已写入{{platform}}{{object}} · {{action}}',
+      count: '{{count}} 项',
+      open: '打开原文',
+      undo: {
+        feishu: '写入已生效，GoodBuddy 无法撤销；可在飞书文档的历史版本中恢复。',
+        wecom: '写入已生效，GoodBuddy 无法撤销；可在企业微信文档的历史版本中恢复。'
+      }
+    },
     tools: {
       region: '工具执行，共 {{count}} 项',
       title: '工具执行',

@@ -6643,7 +6643,7 @@ function App(): React.JSX.Element {
       notesPanelActive,
     ],
   );
-  const wecomAvailable = wecomSnapshot?.settings.enabled === true &&
+  const wecomAvailable = wecomSnapshot?.appEnabled === true &&
     wecomSnapshot.authorization.state === "authorized";
   const openWecomSettings = useCallback((): void => {
     setApplicationCenterChannel("wecom");
@@ -6662,7 +6662,7 @@ function App(): React.JSX.Element {
     ) : undefined,
     [openWecomSettings, setConversationInput, wecomAvailable],
   );
-  const feishuAvailable = feishuSnapshot?.settings.enabled === true &&
+  const feishuAvailable = feishuSnapshot?.appEnabled === true &&
     feishuSnapshot.credentialsConfigured;
   const openFeishuSettings = useCallback((): void => {
     setApplicationCenterChannel("feishu");
@@ -6681,33 +6681,34 @@ function App(): React.JSX.Element {
     ) : undefined,
     [feishuAvailable, openFeishuSettings, setConversationInput],
   );
-  // Tools switched on but not usable yet: keep the app in the workbar "+"
+  // Application on but tools not usable yet: keep the app in the workbar "+"
   // menu with the reason, and let "Go resolve" open its settings.
   const platformAppBlockers = useMemo(() => {
     const blockers: Partial<Record<"wecom" | "feishu", string>> = {};
-    if (wecomSnapshot?.settings.enabled && !wecomAvailable)
+    if (wecomSnapshot?.appEnabled && !wecomAvailable)
       blockers.wecom = t("integrations:wecom.panel.notReady");
-    if (feishuSnapshot?.settings.enabled && !feishuAvailable)
+    if (feishuSnapshot?.appEnabled && !feishuAvailable)
       blockers.feishu = t("integrations:feishu.panel.notReady");
     return blockers;
-  }, [feishuAvailable, feishuSnapshot?.settings.enabled, t, wecomAvailable, wecomSnapshot?.settings.enabled]);
+  }, [feishuAvailable, feishuSnapshot?.appEnabled, t, wecomAvailable, wecomSnapshot?.appEnabled]);
   const resolvePlatformApp = useCallback((app: "wecom" | "feishu"): void => {
     if (app === "wecom") openWecomSettings();
     else openFeishuSettings();
   }, [openFeishuSettings, openWecomSettings]);
-  // "@" lists only platforms whose tools are switched on, with the same
+  // "@" lists only platforms whose application is on, with the same
   // category gates as the tools that will read the documents.
   const referenceSources = useMemo((): ExternalReferenceSources => {
     const sources: ExternalReferenceSources = {};
-    if (feishuSnapshot?.settings.enabled) {
+    if (feishuSnapshot?.appEnabled) {
       const categories = feishuSnapshot.settings.categories;
       sources.feishu = !feishuAvailable
         ? { state: "unavailable", reason: t("integrations:feishu.panel.notReady") }
-        : categories.wiki || categories.doc || categories.drive
+        // The knowledge base needs 文档 too, so 文档 or 云空间 is enough to search.
+        : categories.doc || categories.drive
           ? { state: "ready" }
           : { state: "unavailable", reason: t("composer.references.feishuCategoriesOff") };
     }
-    if (wecomSnapshot?.settings.enabled) {
+    if (wecomSnapshot?.appEnabled) {
       sources.wecom = !wecomAvailable
         ? { state: "unavailable", reason: t("integrations:wecom.panel.notReady") }
         : wecomSnapshot.settings.categories["doc-manage"]

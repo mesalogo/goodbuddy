@@ -936,14 +936,14 @@ describe('ChannelApplicationSettings', () => {
     await waitFor(() => expect(authorizeWithChannelBot).toHaveBeenCalledOnce())
   })
 
-  it('enables the Feishu channel as soon as scan registration saves the app', async () => {
+  it('shows the Feishu app enabled as soon as scan registration saves it', async () => {
+    // The main process saves and enables the app; the form only reloads.
     const registered: ChannelSettingsSnapshot = {
       ...snapshot,
-      feishu: { ...snapshot.feishu, appId: 'cli_new', secretConfigured: true, source: 'encrypted', allowedSenderIds: ['ou_me'] }
+      feishu: { ...snapshot.feishu, enabled: true, appId: 'cli_new', secretConfigured: true, source: 'encrypted', allowedSenderIds: ['ou_me'] }
     }
-    const enabled = { ...registered, feishu: { ...registered.feishu, enabled: true, status: { state: 'running' as const } } }
     const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot).mockResolvedValue(registered)
-    const apply = vi.fn(async () => enabled)
+    const apply = vi.fn()
     let pushFeishu: ((next: unknown) => void) | undefined
     const feishuSnapshot = (state: 'idle' | 'completed') => ({
       revision: state === 'idle' ? 1 : 2, credentialsConfigured: state === 'completed', settings: { enabled: false, categories: {}, allowInMessageSessions: false },
@@ -965,12 +965,30 @@ describe('ChannelApplicationSettings', () => {
     expect(await screen.findByRole('switch', { name: '启用飞书通道' })).not.toBeChecked()
     await screen.findByRole('button', { name: '扫码创建飞书应用' })
     act(() => pushFeishu?.(feishuSnapshot('completed')))
-    await waitFor(() => expect(apply).toHaveBeenCalledWith({ feishu: {
-      enabled: true, appId: 'cli_new', domain: 'feishu', secret: { action: 'keep' }, allowedSenderIds: ['ou_me'], allowGroupMessages: false
-    } }))
     await waitFor(() => expect(screen.getByRole('switch', { name: '启用飞书通道' })).toBeChecked())
+    expect(apply).not.toHaveBeenCalled()
     expect(screen.getByLabelText('飞书App ID')).toHaveValue('cli_new')
     expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'feishu-app-created' }))
+  })
+
+  it('disconnects from the Connection tab after confirmation', async () => {
+    const saved: ChannelSettingsSnapshot = { ...snapshot, dingtalk: { ...snapshot.dingtalk, clientId: 'c', secretConfigured: true, source: 'encrypted', readOnly: false } }
+    const disconnect = vi.fn(async () => snapshot)
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: { ...bindingApi(), getSnapshot: vi.fn(async () => saved), apply: vi.fn(), testConnection: vi.fn(), disconnect },
+        projects: { update: vi.fn() }, settings: settingsApi()
+      } as unknown as DesktopApi
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    renderChannelSettings({ initialChannel: 'dingtalk' })
+    fireEvent.click(await screen.findByRole('button', { name: '断开并删除本机凭据' }))
+    expect(disconnect).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '断开并删除本机凭据' }))
+    await waitFor(() => expect(disconnect).toHaveBeenCalledWith('dingtalk'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '断开并删除本机凭据' })).not.toBeInTheDocument())
+    confirm.mockRestore()
   })
 
   it('renders English channel copy while preserving project data', async () => {

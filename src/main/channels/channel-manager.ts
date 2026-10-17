@@ -198,17 +198,14 @@ function validateResolved(settings: ResolvedChannelSettings): void {
   const identifier =
     settings.channel === 'wecom' ? settings.botId
       : settings.channel === 'feishu' ? settings.appId : settings.clientId
-  if (
-    identifier.length === 0 ||
-    settings.secret === undefined ||
-    settings.allowedSenderIds.length === 0
-  ) {
+  // No allowed senders is valid: every message is ignored until senders are added.
+  if (identifier.length === 0 || settings.secret === undefined) {
     throw new Error(
       settings.channel === 'wecom'
-        ? '企业微信需要机器人 ID、Secret 和允许的发送者'
+        ? '企业微信需要机器人 ID 和 Secret'
         : settings.channel === 'feishu'
-          ? '飞书需要 App ID、App Secret 和允许的发送者'
-          : '钉钉需要 Client ID、Secret 和允许的发送者'
+          ? '飞书需要 App ID 和 App Secret'
+          : '钉钉需要 Client ID 和 Secret'
     )
   }
 }

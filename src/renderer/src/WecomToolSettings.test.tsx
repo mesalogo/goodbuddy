@@ -16,6 +16,7 @@ function snapshot(overrides: Partial<WecomSnapshot> = {}): WecomSnapshot {
     authorization: { state: 'unauthorized' },
     qr: { state: 'idle' },
     settings: defaultWecomToolSettings(),
+    appEnabled: true,
     ...overrides
   }
 }
@@ -31,9 +32,12 @@ function installApi(initial: WecomSnapshot, overrides: Partial<WecomApi> = {}) {
     authorizeWithChannelBot: vi.fn(async () => initial),
     disconnect: vi.fn(async () => initial),
     searchDocuments: vi.fn(async () => []),
+    listView: vi.fn(async () => []),
+    createDocument: vi.fn(async (input: { title: string }) => ({ id: 'new', name: input.title, type: 'doc' })),
+    uploadFile: vi.fn(async () => undefined),
     onChanged: vi.fn((next: (snapshot: WecomSnapshot) => void) => { listener = next; return () => { listener = undefined } }),
     ...overrides
-  } satisfies WecomApi
+  } as WecomApi
   Object.defineProperty(window, 'goodbuddy', { configurable: true, value: { wecom: api } })
   return { api, push: (next: WecomSnapshot) => act(() => listener?.(next)) }
 }
@@ -105,12 +109,11 @@ describe('WecomToolSettings', () => {
     expect(await screen.findByText(/机器人 bot-9/u)).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: /邮件/u })).not.toBeChecked()
     expect(screen.getByRole('checkbox', { name: /待办/u })).toBeChecked()
-    expect(screen.getByRole('checkbox', { name: /待办/u })).toBeDisabled()
-    fireEvent.click(screen.getByRole('switch', { name: '在对话中提供企业微信工具' }))
-    expect(api.updateSettings).toHaveBeenLastCalledWith({ enabled: true })
-    await waitFor(() => expect(screen.getByRole('button', { name: '断开并删除本机凭据' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '断开并删除本机凭据' }))
-    await waitFor(() => expect(api.disconnect).toHaveBeenCalledOnce())
+    expect(screen.getByRole('checkbox', { name: /待办/u })).toBeEnabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: /邮件/u }))
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ categories: { email: true } })
+    // Disconnect lives on the Connection tab now.
+    expect(screen.queryByRole('button', { name: '断开并删除本机凭据' })).not.toBeInTheDocument()
   })
 })
 
@@ -124,22 +127,55 @@ describe('WecomWorkbarPanel', () => {
     expect(onOpenSettings).toHaveBeenCalledOnce()
   })
 
-  it('searches documents and inserts a reference into the conversation', async () => {
-    const ready = snapshot({ authorization: { state: 'authorized' }, settings: { ...defaultWecomToolSettings(), enabled: true } })
+  it('lists recent documents, switches lists and filters by type', async () => {
+    const listView = vi.fn(async ({ view }: { view: 'recent' | 'created' | 'disk' }) => view === 'disk'
+      ? [{ id: 'f1', name: '合同.pdf', type: 'file', source: 'disk' as const, path: '法务空间/合同', modifiedAt: '2026-10-11 10:00:00' }]
+      : [
+          { id: 'd1', name: '周报汇总', type: 'smartsheet', url: 'https://doc.weixin.qq.com/smartsheet/1', modifiedAt: '2026-10-10 09:00:00' },
+          { id: 'd2', name: '发布说明', type: 'doc' }
+        ])
+    installApi(snapshot({ authorization: { state: 'authorized', botId: 'bot-1' } }), { listView })
+    const onUse = vi.fn()
+    render(<WecomWorkbarPanel onUseInConversation={onUse} />)
+    expect(await screen.findByText('周报汇总')).toBeInTheDocument()
+    expect(listView).toHaveBeenCalledWith({ view: 'recent' })
+    expect(screen.getByText('2 项')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '表格' }))
+    expect(screen.queryByText('发布说明')).not.toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: '用于当前对话' })[0]!)
+    expect(onUse).toHaveBeenCalledWith('请参考企业微信文档「周报汇总」（https://doc.weixin.qq.com/smartsheet/1）')
+    fireEvent.click(screen.getByRole('button', { name: '全部' }))
+    fireEvent.change(screen.getByRole('combobox', { name: '选择列表' }), { target: { value: 'disk' } })
+    expect(await screen.findByText('合同.pdf')).toBeInTheDocument()
+    expect(screen.getByText(/法务空间\/合同/u)).toBeInTheDocument()
+  })
+
+  it('searches documents and replaces the list until the search is cleared', async () => {
+    const ready = snapshot({ authorization: { state: 'authorized' } })
     const { api } = installApi(ready, {
       searchDocuments: vi.fn(async () => [
         { id: 'd1', name: '周报汇总', type: 'smartsheet', url: 'https://doc.weixin.qq.com/smartsheet/1', modifiedAt: '2026-10-10 09:00:00' }
       ])
     })
-    const onUse = vi.fn()
-    render(<WecomWorkbarPanel onUseInConversation={onUse} />)
+    render(<WecomWorkbarPanel />)
     fireEvent.change(await screen.findByRole('searchbox', { name: '搜索企业微信文档' }), { target: { value: '周报' } })
     fireEvent.submit(screen.getByRole('search'))
     expect(await screen.findByText('周报汇总')).toBeInTheDocument()
     expect(api.searchDocuments).toHaveBeenCalledWith({ query: '周报' })
-    expect(screen.getByText(/智能表格 · 2026-10-10/u)).toBeInTheDocument()
+    expect(screen.getByText(/智能表格 · 更新于 2026-10-10/u)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '打开原文' })).toHaveAttribute('href', 'https://doc.weixin.qq.com/smartsheet/1')
-    fireEvent.click(screen.getByRole('button', { name: '用于当前对话' }))
-    expect(onUse).toHaveBeenCalledWith('请参考企业微信文档「周报汇总」（https://doc.weixin.qq.com/smartsheet/1）')
+    expect(screen.getByRole('combobox', { name: '选择列表' })).toBeDisabled()
+  })
+
+  it('creates a document and gates create and upload by category', async () => {
+    const settings = { ...defaultWecomToolSettings(), categories: { ...defaultWecomToolSettings().categories, disk: false } }
+    const { api } = installApi(snapshot({ authorization: { state: 'authorized' }, settings }))
+    render(<WecomWorkbarPanel />)
+    expect(await screen.findByRole('button', { name: '上传文件到微盘' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '新建在线文档' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '新文档标题' }), { target: { value: '周会纪要' } })
+    fireEvent.click(screen.getByRole('button', { name: '新建' }))
+    await waitFor(() => expect(api.createDocument).toHaveBeenCalledWith({ title: '周会纪要' }))
+    expect(await screen.findByText('已新建「周会纪要」')).toBeInTheDocument()
   })
 })

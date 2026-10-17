@@ -104,17 +104,19 @@ describe('WecomCliService', () => {
 
   it('reports enabled categories only when the application is on and authorized', async () => {
     let authorized = false
+    let appEnabled = true
     const { instance } = service((args) => args[0] === 'auth'
       ? { stdout: authorized ? 'Status: authorized' : 'Status: unauthorized' }
-      : { stdout: '{}' })
-    await instance.updateSettings({ enabled: true })
+      : { stdout: '{}' }, { resolveAppEnabled: async () => appEnabled })
     expect(await instance.getEnabledCategories()).toEqual([])
     authorized = true
     await instance.authorizeManually({ botId: 'bot', secret: 'secret' })
     expect(await instance.getEnabledCategories()).toContain('doc-manage')
     expect(await instance.getEnabledCategories()).not.toContain('email')
-    await instance.updateSettings({ enabled: false })
+    // One application switch: turning the channel off removes the tools.
+    appEnabled = false
     expect(await instance.getEnabledCategories()).toEqual([])
+    expect((await instance.getSnapshot()).appEnabled).toBe(false)
   })
 
   it('verifies manual credentials through the CLI and surfaces its error message', async () => {
@@ -235,15 +237,16 @@ describe('WecomCliService', () => {
   })
 
   it('maps document search results and drops IDs without names', async () => {
+    let appEnabled = false
     const { instance, calls } = service((args) => args[0] === 'auth' ? { stdout: 'Status: authorized' } : { stdout: JSON.stringify({ docs: [
       { docid: 'd1', doc_name: '周报', doc_type: 'doc', url: 'https://doc.weixin.qq.com/doc/1', modify_time: '2026-10-01 10:00:00' },
       { docid: 'd2' },
       { docid: 'd3', doc_name: 'x', url: 'javascript:alert(1)' }
-    ] }) })
+    ] }) }, { resolveAppEnabled: async () => appEnabled })
     // Search uses the same gate as the doc-manage tools.
     await expect(instance.searchDocuments('周报')).rejects.toThrow('文档管理')
     expect(calls.some(call => call.args[0] === 'doc')).toBe(false)
-    await instance.updateSettings({ enabled: true })
+    appEnabled = true
     await instance.updateSettings({ categories: { 'doc-manage': false } })
     await expect(instance.searchDocuments('周报')).rejects.toThrow('文档管理')
     await instance.updateSettings({ categories: { 'doc-manage': true } })
@@ -251,6 +254,33 @@ describe('WecomCliService', () => {
       { id: 'd1', name: '周报', type: 'doc', url: 'https://doc.weixin.qq.com/doc/1', modifiedAt: '2026-10-01 10:00:00' },
       { id: 'd3', name: 'x', type: 'doc' }
     ])
+  })
+
+  it('lists recent, created and drive views as the authorized person, gated by category', async () => {
+    const { instance, calls } = service((args) => args[0] === 'auth' ? { stdout: 'Status: authorized' }
+      : args[0] === 'identity' ? { stdout: '{"user":{"userid":"zhangsan"}}' }
+      : args[0] === 'disk' ? { stdout: JSON.stringify({ files: [{ id: 'f1', file_name: '合同.pdf', type: 'file', path: '法务/合同', update_time: '2026-10-11 10:00:00' }, { id: 'x' }] }) }
+      : { stdout: JSON.stringify({ docs: [{ docid: 'd1', doc_name: '周报', doc_type: 'doc' }] }) })
+    expect(await instance.listView('recent')).toEqual([{ id: 'd1', name: '周报', type: 'doc' }])
+    const recent = JSON.parse(calls.find(call => call.args[1] === 'search')!.args[3]!) as Record<string, unknown>
+    expect(recent).toMatchObject({ keywords: [], visitor_userids: ['zhangsan'], sort_by: 'best_match' })
+    await instance.listView('created')
+    const created = JSON.parse(calls.filter(call => call.args[1] === 'search').at(-1)!.args[3]!) as Record<string, unknown>
+    expect(created).toMatchObject({ creator_userids: ['zhangsan'], sort_by: 'create_time' })
+    expect(await instance.listView('disk')).toEqual([
+      { id: 'f1', name: '合同.pdf', type: 'file', source: 'disk', path: '法务/合同', modifiedAt: '2026-10-11 10:00:00' }
+    ])
+    await instance.updateSettings({ categories: { disk: false } })
+    await expect(instance.listView('disk')).rejects.toThrow('微盘')
+  })
+
+  it('creates online documents through doc create and requires the 在线文档 category', async () => {
+    const { instance, calls } = service((args) => args[0] === 'auth' ? { stdout: 'Status: authorized' }
+      : { stdout: JSON.stringify({ docid: 'new1', doc_name: '周会', url: 'https://doc.weixin.qq.com/doc/new1' }) })
+    expect(await instance.createDocument('周会')).toEqual({ id: 'new1', name: '周会', type: 'doc', source: 'doc', url: 'https://doc.weixin.qq.com/doc/new1' })
+    expect(JSON.parse(calls.find(call => call.args[1] === 'create')!.args[3]!)).toEqual({ doc_type: 'doc', doc_name: '周会' })
+    await instance.updateSettings({ categories: { doc: false } })
+    await expect(instance.createDocument('x')).rejects.toThrow('在线文档')
   })
 
   it('serves guides only for enabled categories and stays inside the skill directory', async () => {

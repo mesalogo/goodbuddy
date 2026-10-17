@@ -1,0 +1,39 @@
+/* Result card under a Feishu or WeCom tool row in the chat timeline. */
+.platform-tool-card {
+  display: grid;
+  gap: 2px;
+  margin: var(--space-1) 0 0 var(--space-5);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  font-size: var(--font-caption);
+  min-width: 0;
+}
+.platform-tool-card--write {
+  border-left: 3px solid var(--accent);
+}
+.platform-tool-card__heading,
+.platform-tool-card__target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.platform-tool-card__heading small,
+.platform-tool-card__hint {
+  color: var(--text-muted);
+}
+.platform-tool-card__target > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.platform-tool-card__target a {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}

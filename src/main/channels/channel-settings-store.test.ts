@@ -77,10 +77,10 @@ describe('ChannelSettingsStore', () => {
     expect((await store.resolve('wecom')).secret).toBe('sec-new')
     expect(changed).toEqual(['wecom'])
 
-    // Without a known sender the channel cannot start, so it is not enabled.
+    // Without a known sender it is still enabled: it connects and ignores messages until senders are added.
     const other = new ChannelSettingsStore(await settingsPath(), createCipher(), {})
     expect((await other.saveWecomRegisteredBot({ botId: 'b2', secret: 's2' })).wecom).toMatchObject({
-      enabled: false, botId: 'b2', secretConfigured: true, allowedSenderIds: []
+      enabled: true, botId: 'b2', secretConfigured: true, allowedSenderIds: []
     })
   })
 
@@ -209,6 +209,7 @@ describe('ChannelSettingsStore', () => {
       createCipher(),
       {}
     )
+    // No allowed senders is valid: the channel connects and ignores messages until senders are added.
     await expect(
       store.apply({
         dingtalk: {
@@ -219,7 +220,32 @@ describe('ChannelSettingsStore', () => {
           allowGroupMessages: false
         }
       })
-    ).rejects.toThrow('允许的发送者')
+    ).resolves.toMatchObject({ dingtalk: { enabled: true, allowedSenderIds: [] } })
+    await expect(
+      store.apply({
+        dingtalk: {
+          enabled: true,
+          clientId: '',
+          secret: { action: 'keep' },
+          allowedSenderIds: [],
+          allowGroupMessages: false
+        }
+      })
+    ).rejects.toThrow('Client ID')
+  })
+
+  it('disconnects a platform: off, credentials and senders removed, others untouched', async () => {
+    const filePath = await settingsPath()
+    const store = new ChannelSettingsStore(filePath, createCipher(), {})
+    await store.apply({ dingtalk: { enabled: true, clientId: 'client', secret: { action: 'replace', value: 'dt-secret' }, allowedSenderIds: ['u1'], allowGroupMessages: true } })
+    await store.saveWecomRegisteredBot({ botId: 'bot', secret: 'wc-secret', userId: 'me' })
+    const external: string[] = []
+    store.onExternalChange((channel) => external.push(channel))
+    const snapshot = await store.disconnect('dingtalk')
+    expect(snapshot.dingtalk).toMatchObject({ enabled: false, clientId: '', secretConfigured: false, allowedSenderIds: [] })
+    expect(snapshot.wecom).toMatchObject({ enabled: true, botId: 'bot', secretConfigured: true })
+    expect(await readFile(filePath, 'utf8')).not.toContain('dt-secret')
+    expect(external).toEqual(['dingtalk'])
   })
 
   it('gives complete environment configuration read-only priority', async () => {

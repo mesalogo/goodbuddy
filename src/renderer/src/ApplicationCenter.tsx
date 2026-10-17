@@ -44,6 +44,9 @@ import { ChannelIcon } from './ChannelIcon'
 import './application-center.css'
 
 // Message channel settings pull in QR rendering, so load them on demand.
+/** Platforms with work tools first, then message-only platforms. */
+const platformApplicationOrder: readonly ProjectChannel[] = ['feishu', 'wecom', 'dingtalk', 'weixin', 'telegram']
+
 const PlatformApplicationRows = lazy(() =>
   import('./ChannelApplicationSettings').then((module) => ({ default: module.PlatformApplicationRows })),
 )
@@ -372,7 +375,7 @@ export function ApplicationCenter({
   const platformResults = useMemo(
     () =>
       platform
-        ? projectChannels.filter((channel) =>
+        ? platformApplicationOrder.filter((channel) =>
             `${t(`channels.tabs.${channel}`, { ns: 'integrations' })} ${t(`applications.descriptions.${channel}`)}`
               .toLocaleLowerCase()
               .includes(query.trim().toLocaleLowerCase()),
@@ -403,7 +406,7 @@ export function ApplicationCenter({
       .filter((id): id is EditableApplicationId => id !== 'knowledge')
       .map((id) => ({ id, label: t(applicationDefinitions[id].title), group: 'work' as const })),
     ...(platform
-      ? projectChannels.map((channel) => ({
+      ? platformApplicationOrder.map((channel) => ({
           id: channel,
           label: t(`channels.tabs.${channel}`, { ns: 'integrations' }),
           group: 'platform' as const,

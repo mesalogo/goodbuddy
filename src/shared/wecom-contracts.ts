@@ -130,6 +130,8 @@ export type WecomSnapshot = {
   authorization: WecomAuthorization
   qr: WecomQrAuthorization
   settings: WecomToolSettings
+  /** The application switch (the WeCom channel's enabled state); tools follow it. */
+  appEnabled: boolean
 }
 
 export const wecomManualCredentialsSchema = z.object({
@@ -166,7 +168,23 @@ export type WecomDocument = {
   type: string
   url?: string
   modifiedAt?: string
+  /** Drive files only: location such as "团队空间/项目/周报". */
+  path?: string
+  /** 'doc' for online documents (doc search), 'disk' for drive entries. */
+  source?: 'doc' | 'disk'
 }
+
+/** Panel views: what the space dropdown selects. */
+export const wecomPanelViews = ['recent', 'created', 'disk'] as const
+export const wecomPanelViewSchema = z.object({ view: z.enum(wecomPanelViews) }).strict()
+export type WecomPanelView = (typeof wecomPanelViews)[number]
+
+/** Creates an empty online document with this title. */
+export const wecomCreateDocumentInputSchema = z.object({
+  title: z.string().trim().min(1).max(120)
+}).strict()
+
+
 
 export type WecomApi = {
   getSnapshot(): Promise<WecomSnapshot>
@@ -177,6 +195,10 @@ export type WecomApi = {
   authorizeWithChannelBot(): Promise<WecomSnapshot>
   disconnect(): Promise<WecomSnapshot>
   searchDocuments(input: z.infer<typeof wecomDocSearchInputSchema>): Promise<WecomDocument[]>
+  listView(input: z.infer<typeof wecomPanelViewSchema>): Promise<WecomDocument[]>
+  createDocument(input: z.infer<typeof wecomCreateDocumentInputSchema>): Promise<WecomDocument>
+  /** Opens a file dialog in the main process; undefined when cancelled. */
+  uploadFile(): Promise<WecomDocument | undefined>
   onChanged(listener: (snapshot: WecomSnapshot) => void): () => void
 }
 

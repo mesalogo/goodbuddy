@@ -1,7 +1,9 @@
-import { ipcMain, type BrowserWindow } from 'electron'
+import { dialog, ipcMain, type BrowserWindow } from 'electron'
 import { ipcChannels } from '../../shared/ipc-channels'
 import {
+  wecomCreateDocumentInputSchema,
   wecomDocSearchInputSchema,
+  wecomPanelViewSchema,
   wecomManualCredentialsSchema,
   wecomToolSettingsUpdateSchema
 } from '../../shared/wecom-contracts'
@@ -17,7 +19,14 @@ export function registerWecomIpc(window: BrowserWindow, service: WecomCliService
     [ipcChannels.wecomAuthorizeManual]: (input) => service.authorizeManually(wecomManualCredentialsSchema.parse(input)),
     [ipcChannels.wecomAuthorizeChannelBot]: () => service.authorizeWithChannelBot(),
     [ipcChannels.wecomDisconnect]: () => service.disconnect(),
-    [ipcChannels.wecomSearchDocuments]: (input) => service.searchDocuments(wecomDocSearchInputSchema.parse(input).query)
+    [ipcChannels.wecomSearchDocuments]: (input) => service.searchDocuments(wecomDocSearchInputSchema.parse(input).query),
+    [ipcChannels.wecomListView]: (input) => service.listView(wecomPanelViewSchema.parse(input).view),
+    [ipcChannels.wecomCreateDocument]: (input) => service.createDocument(wecomCreateDocumentInputSchema.parse(input).title),
+    // The file is picked in a main-process dialog, never a renderer-supplied path.
+    [ipcChannels.wecomUploadFile]: async () => {
+      const picked = await dialog.showOpenDialog(window, { properties: ['openFile'] })
+      return picked.canceled || !picked.filePaths[0] ? undefined : service.uploadFile(picked.filePaths[0])
+    }
   }
   for (const [channel, handler] of Object.entries(handlers)) {
     ipcMain.removeHandler(channel)

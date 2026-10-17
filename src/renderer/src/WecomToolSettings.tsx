@@ -1,4 +1,4 @@
-import { KeyRound, Unplug, Wrench } from 'lucide-react'
+import { KeyRound, Wrench } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -69,18 +69,8 @@ export function WecomToolSettings({
           <p>{snapshot.authorization.state === 'authorized' && snapshot.authorization.botId
             ? t('wecom.authorizedAs', { botId: snapshot.authorization.botId })
             : t('wecom.authorizedHelp')}</p>
-          <label className="toggle-row" htmlFor="wecom-tools-enabled">
-            <input
-              checked={snapshot.settings.enabled}
-              disabled={busy}
-              id="wecom-tools-enabled"
-              onChange={(event) => update({ enabled: event.target.checked })}
-              role="switch"
-              type="checkbox"
-            />
-            <span>{t('wecom.enable')}</span>
-          </label>
-          <fieldset className="wecom-tools__categories" disabled={busy || !snapshot.settings.enabled}>
+          {!snapshot.appEnabled && <p className="settings-notice">{t('wecom.appOff')}</p>}
+          <fieldset className="wecom-tools__categories" disabled={busy}>
             <legend>{t('wecom.categoriesTitle')}</legend>
             {wecomToolCategories.map((category: WecomToolCategory) => (
               <label className="check-field" key={category}>
@@ -100,7 +90,7 @@ export function WecomToolSettings({
           <label className="toggle-row" htmlFor="wecom-tools-message-sessions">
             <input
               checked={snapshot.settings.allowInMessageSessions}
-              disabled={busy || !snapshot.settings.enabled}
+              disabled={busy}
               id="wecom-tools-message-sessions"
               onChange={(event) => update({ allowInMessageSessions: event.target.checked })}
               role="switch"
@@ -109,18 +99,6 @@ export function WecomToolSettings({
             <span>{t('wecom.allowInMessageSessions')}</span>
           </label>
           <small>{t('wecom.allowInMessageSessionsHelp')}</small>
-          <div className="channel-binding-actions">
-            <button
-              className="danger-button danger-button--quiet"
-              disabled={busy}
-              onClick={() => void act(() => api.disconnect())}
-              type="button"
-            >
-              <Unplug aria-hidden="true" size={14} />
-              {t('wecom.disconnect')}
-            </button>
-          </div>
-          <small>{t('wecom.disconnectHelp')}</small>
         </>
       ) : (
         <>

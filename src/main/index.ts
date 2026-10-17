@@ -895,7 +895,9 @@ if (hasSingleInstanceLock) {
       // One scan sets up both the tools and the message channel bot.
       saveRegisteredBot: async (bot) => {
         await channelSettingsStore.saveWecomRegisteredBot(bot)
-      }
+      },
+      // One application switch: the tools follow the channel's enabled state.
+      resolveAppEnabled: async () => (await channelSettingsStore.resolve('wecom')).enabled
     })
     wecomService = startupWecomService
     const startupFeishuService = new FeishuToolService({
@@ -909,10 +911,16 @@ if (hasSingleInstanceLock) {
         },
         saveRegisteredApp: async (result) => {
           await channelSettingsStore.saveFeishuRegisteredApp(result)
-        }
+        },
+        isEnabled: async () => (await channelSettingsStore.resolve('feishu')).enabled
       }
     })
     feishuService = startupFeishuService
+    // Channel switches and credentials change tool availability: push fresh snapshots.
+    channelSettingsStore.onChanged(() => {
+      void startupWecomService.refresh().catch(() => undefined)
+      void startupFeishuService.emit().catch(() => undefined)
+    })
     const startupFeedbackService = new FeedbackService({
       appVersion: app.getVersion(),
       platform: process.platform,

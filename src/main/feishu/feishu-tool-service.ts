@@ -1,10 +1,13 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
+import { basename } from 'node:path'
 import type { FeishuDomain } from '../../shared/channel-settings-contracts'
 import {
   defaultFeishuToolSettings,
+  feishuCategoryUsable,
   feishuToolCategories,
   feishuToolSettingsSchema,
   type FeishuBrowseInput,
+  type FeishuCreateDocumentInput,
   type FeishuSearchInput,
   type FeishuBrowseItem,
   type FeishuRegistration,
@@ -27,6 +30,9 @@ import { FeishuApi, type FeishuCredentials, type FeishuFetch } from './feishu-ap
 import { beginAppRegistration, pollAppRegistration, type AppRegistrationResult } from './feishu-app-registration'
 
 const MAX_READ_CHARACTERS = 100_000
+const FEISHU_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+
+type DriveFile = { token?: string; name?: string; type?: string; url?: string; modified_time?: string }
 const FEISHU_SEARCH_MAX_REQUESTS = 30
 const FEISHU_SEARCH_MAX_RESULTS = 30
 // Per the Feishu Wiki FAQ: the space member search does not list apps, so an
@@ -42,6 +48,8 @@ type Block = { block_id?: string; parent_id?: string; block_type?: number; child
 
 export type FeishuCredentialSource = {
   resolve(): Promise<FeishuCredentials | undefined>
+  /** The application switch: the Feishu channel's enabled state. Defaults to on when absent. */
+  isEnabled?(): Promise<boolean>
   /** Persists scanned credentials into the Feishu message channel settings. */
   saveRegisteredApp(result: AppRegistrationResult): Promise<void>
 }
@@ -102,10 +110,11 @@ export class FeishuToolService {
   }
 
   async getSnapshot(): Promise<FeishuSnapshot> {
-    const [settings, credentials] = await Promise.all([this.getSettings(), this.options.credentials.resolve()])
+    const [settings, credentials, appEnabled] = await Promise.all([this.getSettings(), this.options.credentials.resolve(), this.appEnabled()])
     return {
       revision: this.revision,
       credentialsConfigured: Boolean(credentials),
+      appEnabled,
       ...(credentials ? { appId: credentials.appId, domain: credentials.domain } : {}),
       settings,
       registration: this.registration
@@ -125,11 +134,15 @@ export class FeishuToolService {
     return this.emit()
   }
 
-  /** Categories usable now: empty when the tools are off or credentials are missing. */
+  private async appEnabled(): Promise<boolean> {
+    return this.options.credentials.isEnabled ? this.options.credentials.isEnabled() : true
+  }
+
+  /** Categories usable now: empty when the application is off or credentials are missing. */
   async getEnabledCategories(): Promise<FeishuToolCategory[]> {
-    const [settings, credentials] = await Promise.all([this.getSettings(), this.options.credentials.resolve()])
-    if (!settings.enabled || !credentials) return []
-    return feishuToolCategories.filter(category => settings.categories[category])
+    const [settings, credentials, appEnabled] = await Promise.all([this.getSettings(), this.options.credentials.resolve(), this.appEnabled()])
+    if (!appEnabled || !credentials) return []
+    return feishuToolCategories.filter(category => settings.categories[category] && feishuCategoryUsable(category, settings.categories))
   }
 
   async startRegistration(domain: FeishuDomain): Promise<FeishuSnapshot> {
@@ -205,7 +218,7 @@ export class FeishuToolService {
             failures.push(/scope|99991672|99991679|权限/iu.test(message) ? `${WIKI_SCOPE_HINT}（${message}）` : `知识空间：${message}`)
             return { items: [] }
           }),
-        api.request<{ files?: { token?: string; name?: string; type?: string; url?: string }[] }>('GET', '/open-apis/drive/v1/files', { query: { page_size: 100 }, signal })
+        api.request<{ files?: DriveFile[] }>('GET', '/open-apis/drive/v1/files', { query: { page_size: 100 }, signal })
           .catch((error: unknown) => {
             failures.push(`云空间：${error instanceof Error ? error.message : String(error)}`)
             return { files: [] }
@@ -220,7 +233,7 @@ export class FeishuToolService {
       return { items, ...(hints.length > 0 ? { hint: hints.join('\n') } : {}) }
     }
     if (location.kind === 'folder') {
-      const result = await api.request<{ files?: { token?: string; name?: string; type?: string; url?: string }[] }>(
+      const result = await api.request<{ files?: DriveFile[] }>(
         'GET', '/open-apis/drive/v1/files', { query: { folder_token: location.token, page_size: 200 }, signal })
       return { items: this.driveItems(api, result.files ?? []) }
     }
@@ -252,39 +265,95 @@ export class FeishuToolService {
     if (!wiki && !drive) throw new Error('飞书工具未启用，或已关闭“知识库”“云空间”和“文档”类别')
     const query = input.query.trim().toLocaleLowerCase()
     const matches: FeishuBrowseItem[] = []
-    const queue: FeishuBrowseInput['location'][] = []
+    const queue: { location: FeishuBrowseInput['location']; path: string }[] = []
     const root = await this.browse({ location: { kind: 'root' } }, signal)
-    const visit = (items: FeishuBrowseItem[]): void => {
+    const visit = (items: FeishuBrowseItem[], path: string): void => {
       for (const item of items) {
         const document = item.kind === 'node' || item.kind === 'file'
-        if (document && (item.kind === 'node' ? wiki : drive) && item.name.toLocaleLowerCase().includes(query)) matches.push(item)
+        if (document && (item.kind === 'node' ? wiki : drive) && item.name.toLocaleLowerCase().includes(query)) {
+          matches.push(path ? { ...item, path } : item)
+        }
         if (item.child && (item.child.kind === 'folder' ? drive : wiki)) {
-          queue.push(item.child.kind === 'node'
-            ? { kind: 'node', spaceId: item.child.spaceId!, token: item.child.token }
-            : { kind: item.child.kind, token: item.child.token })
+          queue.push({
+            location: item.child.kind === 'node'
+              ? { kind: 'node', spaceId: item.child.spaceId!, token: item.child.token }
+              : { kind: item.child.kind, token: item.child.token },
+            path: path ? `${path} / ${item.name}` : item.name
+          })
         }
       }
     }
-    visit(root.items)
+    visit(root.items, '')
     let requests = 0
     while (queue.length > 0 && requests < FEISHU_SEARCH_MAX_REQUESTS && matches.length < FEISHU_SEARCH_MAX_RESULTS) {
       signal?.throwIfAborted()
       requests += 1
-      const result = await this.browse({ location: queue.shift()! }, signal).catch(() => ({ items: [] }))
-      visit(result.items)
+      const next = queue.shift()!
+      const result = await this.browse({ location: next.location }, signal).catch(() => ({ items: [] }))
+      visit(result.items, next.path)
     }
     return matches.slice(0, FEISHU_SEARCH_MAX_RESULTS)
   }
 
-  private driveItems(api: FeishuApi, files: { token?: string; name?: string; type?: string; url?: string }[]): FeishuBrowseItem[] {
+  private async requireCategory(category: FeishuToolCategory, label: string): Promise<void> {
+    if (!(await this.getEnabledCategories()).includes(category)) {
+      throw new Error(`飞书应用未启用，或已关闭“${label}”类别`)
+    }
+  }
+
+  /**
+   * Panel "新建": a docx in a drive folder (or the app's root folder), or a
+   * page in a knowledge space. The scanner gets full access, like tool-created docs.
+   */
+  async createDocument(input: FeishuCreateDocumentInput, signal?: AbortSignal): Promise<FeishuBrowseItem> {
+    const api = await this.client()
+    const { location, title } = input
+    if (location.kind === 'space' || location.kind === 'node') {
+      await this.requireCategory('wiki', '知识库')
+      const spaceId = location.kind === 'space' ? location.token : location.spaceId
+      const result = await api.request<{ node?: { node_token?: string; obj_type?: string; title?: string } }>(
+        'POST', `/open-apis/wiki/v2/spaces/${encodeURIComponent(spaceId)}/nodes`, {
+          body: { obj_type: 'docx', node_type: 'origin', title, ...(location.kind === 'node' ? { parent_node_token: location.token } : {}) },
+          signal
+        })
+      const token = result.node?.node_token
+      if (!token) throw new Error('飞书创建知识库页面成功但没有返回 node_token')
+      return { kind: 'node', token, name: result.node?.title ?? title, type: 'docx', url: this.documentUrl(api, 'wiki', token) }
+    }
+    await this.requireCategory('doc', '文档')
+    const result = await this.doc(api, { action: 'create', title, ...(location.kind === 'folder' ? { folder_token: location.token } : {}) }, signal)
+    const token = typeof result.document_id === 'string' ? result.document_id : undefined
+    if (!token) throw new Error('飞书创建文档成功但没有返回 document_id')
+    return { kind: 'file', token, name: title, type: 'docx', url: typeof result.url === 'string' ? result.url : this.documentUrl(api, 'docx', token) }
+  }
+
+  /** Panel "上传": one local file (≤ 20 MB) into a drive folder or the app's root folder. */
+  async uploadFile(path: string, folderToken: string | undefined, signal?: AbortSignal): Promise<FeishuBrowseItem> {
+    await this.requireCategory('drive', '云空间')
+    const info = await stat(path).catch(() => undefined)
+    if (!info?.isFile()) throw new Error('请选择一个本地文件')
+    if (info.size > FEISHU_UPLOAD_MAX_BYTES) throw new Error('飞书单次上传最大 20MB，更大的文件请在飞书客户端上传')
+    const api = await this.client()
+    const parent = folderToken ?? (await api.request<{ token?: string }>('GET', '/open-apis/drive/explorer/v2/root_folder/meta', { signal })).token
+    if (!parent) throw new Error('无法读取飞书应用的云空间根目录')
+    const name = basename(path)
+    const token = await api.upload('/open-apis/drive/v1/files/upload_all', {
+      file_name: name, parent_type: 'explorer', parent_node: parent, size: String(info.size)
+    }, name, new Uint8Array(await readFile(path)), signal)
+    return { kind: 'file', token, name, url: this.documentUrl(api, 'file', token) }
+  }
+
+  private driveItems(api: FeishuApi, files: DriveFile[]): FeishuBrowseItem[] {
     return files.flatMap((file): FeishuBrowseItem[] => {
       if (!file.token) return []
       const folder = file.type === 'folder'
+      const seconds = Number(file.modified_time)
       return [{
         kind: folder ? 'folder' : 'file',
         token: file.token,
         name: file.name || file.token,
         ...(file.type ? { type: file.type } : {}),
+        ...(Number.isFinite(seconds) && seconds > 0 ? { modifiedAt: new Date(seconds * 1000).toISOString() } : {}),
         ...(file.url?.startsWith('https://') ? { url: file.url } : folder ? {} : { url: this.documentUrl(api, file.type ?? 'file', file.token) }),
         ...(folder ? { child: { kind: 'folder', token: file.token } } : {})
       }]

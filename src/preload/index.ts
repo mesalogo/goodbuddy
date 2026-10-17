@@ -669,6 +669,8 @@ const desktopApi: DesktopApi = {
         ipcChannels.weixinBindingVerify,
         { code }
       ) as Promise<WeixinBindingSnapshot>,
+    disconnect: (channel: CredentialChannel) =>
+      ipcRenderer.invoke(ipcChannels.channelSettingsDisconnect, { channel }) as Promise<ChannelSettingsSnapshot>,
     disconnectWeixin: () =>
       ipcRenderer.invoke(
         ipcChannels.weixinBindingDisconnect
@@ -835,6 +837,9 @@ const desktopApi: DesktopApi = {
     authorizeWithChannelBot: () => ipcRenderer.invoke(ipcChannels.wecomAuthorizeChannelBot),
     disconnect: () => ipcRenderer.invoke(ipcChannels.wecomDisconnect),
     searchDocuments: input => ipcRenderer.invoke(ipcChannels.wecomSearchDocuments, input),
+    listView: input => ipcRenderer.invoke(ipcChannels.wecomListView, input),
+    createDocument: input => ipcRenderer.invoke(ipcChannels.wecomCreateDocument, input),
+    uploadFile: () => ipcRenderer.invoke(ipcChannels.wecomUploadFile),
     onChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, snapshot: WecomSnapshot): void => listener(snapshot)
       ipcRenderer.on(ipcChannels.wecomChanged, handler)
@@ -848,6 +853,8 @@ const desktopApi: DesktopApi = {
     cancelRegistration: () => ipcRenderer.invoke(ipcChannels.feishuCancelRegistration),
     browse: input => ipcRenderer.invoke(ipcChannels.feishuBrowse, input),
     searchDocuments: input => ipcRenderer.invoke(ipcChannels.feishuSearchDocuments, input),
+    createDocument: input => ipcRenderer.invoke(ipcChannels.feishuCreateDocument, input),
+    uploadFile: input => ipcRenderer.invoke(ipcChannels.feishuUploadFile, input),
     onChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, snapshot: FeishuSnapshot): void => listener(snapshot)
       ipcRenderer.on(ipcChannels.feishuChanged, handler)

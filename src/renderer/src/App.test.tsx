@@ -9955,6 +9955,7 @@ describe("App", () => {
     );
     api.channels = {
       onStatusChanged: vi.fn(() => () => undefined),
+      disconnect: vi.fn(),
       getSnapshot: vi.fn(async () => ({
         telegram: {
           enabled: false,

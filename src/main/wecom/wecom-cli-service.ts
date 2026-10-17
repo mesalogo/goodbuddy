@@ -15,6 +15,7 @@ import {
   type WecomAuthorization,
   type WecomCliState,
   type WecomDocument,
+  type WecomPanelView,
   type WecomManualCredentials,
   type WecomQrAuthorization,
   type WecomSnapshot,
@@ -80,6 +81,8 @@ export type WecomCliServiceOptions = {
    */
   bundleDirectory: string
   resolveChannelCredentials?: () => Promise<WecomChannelCredentials | undefined>
+  /** The application switch: the WeCom channel's enabled state. Defaults to on when absent. */
+  resolveAppEnabled?: () => Promise<boolean>
   /**
    * Stores a bot created by scanning as the message channel bot. `userId` is
    * the authorizer, when known, and becomes the allowed sender.
@@ -169,8 +172,10 @@ export class WecomCliService {
     if (this.cli.state === 'ready' && this.authorization.state === 'unknown') {
       await this.refreshAuthorization().catch(() => undefined)
     }
+    const appEnabled = this.options.resolveAppEnabled ? await this.options.resolveAppEnabled() : true
     return {
       revision: this.revision,
+      appEnabled,
       platformSupported: this.cli.state === 'ready',
       cli: this.cli,
       authorization: this.authorization,
@@ -182,7 +187,7 @@ export class WecomCliService {
   /** Categories the model may use right now; empty when the application is off or unauthorized. */
   async getEnabledCategories(): Promise<WecomToolCategory[]> {
     const snapshot = await this.getSnapshot()
-    if (!snapshot.settings.enabled || snapshot.authorization.state !== 'authorized') return []
+    if (!snapshot.appEnabled || snapshot.authorization.state !== 'authorized') return []
     return wecomToolCategories.filter(category => snapshot.settings.categories[category])
   }
 
@@ -440,6 +445,11 @@ export class WecomCliService {
     this.qr = { state: 'idle' }
   }
 
+  /** Re-publishes the snapshot after outside changes (application switch, channel bot). */
+  refresh(): Promise<WecomSnapshot> {
+    return this.emit()
+  }
+
   async cancelQrAuthorization(): Promise<WecomSnapshot> {
     this.cancelQr()
     return this.emit()
@@ -452,6 +462,118 @@ export class WecomCliService {
       await rm(this.configDirectory, { recursive: true, force: true })
       this.authorization = { state: 'unauthorized' }
       return this.emit()
+    })
+  }
+
+  private async requireCategory(category: WecomToolCategory, label: string): Promise<void> {
+    if (!(await this.getEnabledCategories()).includes(category)) {
+      throw new Error(`企业微信应用未启用、未授权，或已关闭“${label}”类别`)
+    }
+  }
+
+  private async runJson(args: readonly string[], failure: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const result = await this.run(args, { signal, timeoutMs: 30_000 })
+    if (result.exitCode !== 0) throw WecomCliService.failure(result, failure)
+    let parsed: unknown
+    try { parsed = JSON.parse(result.stdout) } catch { throw new Error(`${failure}：返回了无法识别的结果`) }
+    const payload = (parsed ?? {}) as Record<string, unknown>
+    if (typeof payload.errcode === 'number' && payload.errcode !== 0) {
+      throw new Error(typeof payload.errmsg === 'string' ? payload.errmsg.slice(0, 500) : failure)
+    }
+    return payload
+  }
+
+  /** The authorized person's userid, needed for "最近浏览" and "我创建的". */
+  private async userId(signal?: AbortSignal): Promise<string> {
+    const result = await this.run(['identity', 'whoami'], { signal, timeoutMs: 15_000 })
+    const id = result.exitCode === 0 ? wecomWhoamiUserId(result.stdout) : undefined
+    if (!id) throw new Error('读取企业微信授权人身份失败')
+    return id
+  }
+
+  /**
+   * Panel views: recently opened and self-created online documents (doc
+   * search, "文档管理"), or recently viewed drive files ("微盘").
+   */
+  async listView(view: WecomPanelView, signal?: AbortSignal): Promise<WecomDocument[]> {
+    if (view === 'disk') {
+      await this.requireCategory('disk', '微盘')
+      const payload = await this.runJson(['disk', 'files', 'list', '--json', JSON.stringify({ limit: 50 })], '读取企业微信微盘失败', signal)
+      const files = Array.isArray(payload.files) ? payload.files : []
+      return files.flatMap((item): WecomDocument[] => {
+        if (!item || typeof item !== 'object') return []
+        const file = item as Record<string, unknown>
+        const id = typeof file.docid === 'string' && file.docid ? file.docid : file.id
+        if (typeof id !== 'string' || typeof file.file_name !== 'string') return []
+        const url = typeof file.doc_url === 'string' && file.doc_url.startsWith('https://') ? file.doc_url : undefined
+        return [{
+          id,
+          name: file.file_name.slice(0, 300),
+          type: typeof file.type === 'string' ? file.type : 'file',
+          source: 'disk',
+          ...(url ? { url } : {}),
+          ...(typeof file.update_time === 'string' ? { modifiedAt: file.update_time } : {}),
+          ...(typeof file.path === 'string' && file.path ? { path: file.path.slice(0, 300) } : {})
+        }]
+      })
+    }
+    await this.requireCategory('doc-manage', '文档管理')
+    const me = await this.userId(signal)
+    const since = new Date(Date.now() - 30 * 24 * 3600_000)
+    const stamp = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, '0')}-${String(since.getDate()).padStart(2, '0')} 00:00:00`
+    // Patterns (b) and (d) of the official doc-manage skill.
+    const query = view === 'recent'
+      ? { keywords: [], visitor_userids: [me], opened_after: stamp, sort_by: 'best_match', limit: 50 }
+      : { keywords: [], creator_userids: [me], created_after: stamp, sort_by: 'create_time', limit: 50 }
+    return this.mapDocs(await this.runJson(['doc', 'search', '--json', JSON.stringify(query)], '读取企业微信文档失败', signal))
+  }
+
+  /** Creates an empty online document as the authorized person ("在线文档"). */
+  async createDocument(title: string, signal?: AbortSignal): Promise<WecomDocument> {
+    await this.requireCategory('doc', '在线文档')
+    const payload = await this.runJson(['doc', 'create', '--json', JSON.stringify({ doc_type: 'doc', doc_name: title })], '新建企业微信文档失败', signal)
+    const data = (payload.data && typeof payload.data === 'object' ? payload.data : payload) as Record<string, unknown>
+    if (typeof data.docid !== 'string') throw new Error('企业微信新建文档成功，但没有返回 docid')
+    return {
+      id: data.docid,
+      name: typeof data.doc_name === 'string' ? data.doc_name : title,
+      type: 'doc',
+      source: 'doc',
+      ...(typeof data.url === 'string' && data.url.startsWith('https://') ? { url: data.url } : {})
+    }
+  }
+
+  /** Uploads a local file to the default drive space ("微盘"). */
+  async uploadFile(path: string, signal?: AbortSignal): Promise<WecomDocument> {
+    await this.requireCategory('disk', '微盘')
+    const info = await stat(path).catch(() => undefined)
+    if (!info?.isFile()) throw new Error('请选择一个本地文件')
+    if (info.size > 200 * 1024 * 1024) throw new Error('文件超过 200MB，请在企业微信客户端上传')
+    const payload = await this.runJson(['disk', 'files', 'upload', '--json', JSON.stringify({ file_path: path })], '上传到企业微信微盘失败', signal)
+    const file = ((payload.file && typeof payload.file === 'object') ? payload.file : payload) as Record<string, unknown>
+    const name = typeof file.file_name === 'string' ? file.file_name : path.split(/[\\/]/u).at(-1) ?? path
+    return {
+      id: typeof file.id === 'string' ? file.id : name,
+      name,
+      type: typeof file.type === 'string' ? file.type : 'file',
+      source: 'disk',
+      ...(typeof file.path === 'string' ? { path: file.path } : {})
+    }
+  }
+
+  private mapDocs(payload: Record<string, unknown>): WecomDocument[] {
+    const docs = Array.isArray(payload.docs) ? payload.docs : []
+    return docs.flatMap((item): WecomDocument[] => {
+      if (!item || typeof item !== 'object') return []
+      const doc = item as Record<string, unknown>
+      if (typeof doc.docid !== 'string' || typeof doc.doc_name !== 'string') return []
+      return [{
+        id: doc.docid,
+        name: doc.doc_name.slice(0, 300),
+        type: typeof doc.doc_type === 'string' ? doc.doc_type : 'doc',
+        ...(typeof doc.url === 'string' && doc.url.startsWith('https://') ? { url: doc.url } : {}),
+        ...(typeof doc.modify_time === 'string' ? { modifiedAt: doc.modify_time } : {})
+      }]
     })
   }
 

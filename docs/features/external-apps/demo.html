@@ -337,8 +337,8 @@ const apps = {
     name: '企业微信', short: '企', enabled: true, pinned: false, sub: 'Acme 科技 · 张三的智能机器人',
     cred: { title: '智能机器人', lines: [['Bot ID', 'aibot••••3f'], ['Secret', '已加密保存'], ['授权人', '张三'], ['接收方式', '长连接（无需公网地址）']], actions: ['测试连接', '重新扫码', '改为手动填写'] },
     identity: '工具以授权人“张三”的身份调用，能访问张三本人有权限的文档、表格、微盘、日程和待办。',
-    toolSource: '工具由企业微信官方命令行工具 wecom-cli 和官方技能提供，随官方版本更新。wecom-cli 1.4.2 · 已是最新',
-    toolNote: '关闭某一类后，GoodBuddy 不再向对话提供对应技能，但无法完全阻止模型直接执行该类命令。需要完全禁止时，请关闭“启用”。',
+    toolSource: '工具由内置的企业微信官方命令行工具 wecom-cli 1.3.4 和官方技能提供，随 GoodBuddy 版本更新。',
+    toolNote: '关闭某一类后，GoodBuddy 会拒绝该类命令。',
     tools: [['doc-manage', '文档管理', '搜索文档、查看最近浏览和我创建的；也包含重命名、修改成员权限和加入规则', true], ['doc', '在线文档', '新建、导入、读取、追加和覆盖写入', true], ['sheet', '在线表格', '新建、导入、读改数据、管理子表', true], ['smartsheet', '智能表格', '管理子表、字段、记录、视图和图表', true], ['smartpage', '智能文档', '创建、读取和编辑智能文档', true], ['pptx', '在线 PPT', '生成、编辑在线演示文稿', true], ['disk', '微盘', '列出、搜索、上传、下载、重命名文件', true], ['media', '媒体文件', '本地文件与企业微信媒体之间上传下载', true], ['calendar', '日程', '查看、创建、更新日程，查询忙闲', true], ['meeting', '会议', '预约会议、读取纪要和转写', true], ['todo', '待办', '创建、跟进和完成待办', true], ['contact', '通讯录', '按姓名搜索成员', true], ['email', '邮件', '搜索和读取邮件（只读）', false], ['message', '消息', '向最近对话过的单聊或群聊主动发消息', false, true]],
     dm: 'self', dmIds: 'zhangsan（扫码时自动填入）', group: 'allowlist', groupIds: 'wr8Kq••••（研发周会）',
   },
@@ -549,7 +549,7 @@ function tabMessage(id) {
 function tabTools(id) {
   const a = apps[id]
   return `<div class="block"><h3>工具</h3><p class="muted">${a.identity}</p>
-      <div class="inline caption"><span style="flex:1">${a.toolSource}</span>${a.toolNote ? '<button class="btn ghost">检查更新</button>' : ''}</div>
+      <div class="inline caption"><span style="flex:1">${a.toolSource}</span></div>
       ${a.toolNote ? `<div class="notice">${a.toolNote}</div>` : ''}
       ${a.tools.map(([k, n, d, on, sens]) => `<div class="toggle-row">${sw(on)}<div class="text"><strong>${n}</strong><p>${d}</p></div>${sens ? '<span class="badge warn">敏感 · 默认关闭</span>' : ''}</div>`).join('')}
       ${id === 'feishu' ? '<p class="caption">需要访问某个知识库或文件夹时，在飞书里把“GoodBuddy 助手”添加为协作者。</p>' : ''}</div>

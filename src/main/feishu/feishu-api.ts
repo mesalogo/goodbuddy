@@ -106,6 +106,26 @@ export class FeishuApi {
     return (body.data ?? {}) as T
   }
 
+  /** Multipart upload (drive `upload_all`); returns the new `file_token`. */
+  async upload(
+    path: string,
+    fields: Record<string, string>,
+    fileName: string,
+    content: Uint8Array<ArrayBuffer>,
+    signal?: AbortSignal
+  ): Promise<string> {
+    const token = await this.tenantAccessToken(signal)
+    const form = new FormData()
+    for (const [key, value] of Object.entries(fields)) form.append(key, value)
+    form.append('file', new Blob([content]), fileName)
+    const body = await this.rawJson(path, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: form }, signal)
+    const code = typeof body.code === 'number' ? body.code : -1
+    if (code !== 0) throw new FeishuApiError(`飞书上传失败 ${code}：${typeof body.msg === 'string' ? body.msg.slice(0, 300) : '未知错误'}`, code)
+    const fileToken = ((body.data ?? {}) as { file_token?: unknown }).file_token
+    if (typeof fileToken !== 'string' || !fileToken) throw new FeishuApiError('飞书上传成功但没有返回 file_token')
+    return fileToken
+  }
+
   /** Bot identity; verifies credentials and that the bot capability is enabled. */
   async botInfo(signal?: AbortSignal): Promise<{ openId?: string; name?: string }> {
     const token = await this.tenantAccessToken(signal)
