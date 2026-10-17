@@ -1261,6 +1261,35 @@ describe('RightAssistantSidebar resizing', () => {
     expect(await screen.findByText('feishu panel content')).toBeInTheDocument()
   })
 
+  it('closes an open WeCom panel tab and keeps it closed', async () => {
+    const view = render(sidebarElement({ platform: { wecomPanel: <p>wecom panel content</p> } }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    const catalog = screen.getByRole('list', { name: /工作栏应用/u })
+    fireEvent.click(within(within(catalog).getByText('企业微信').closest('li')!).getByRole('button', { name: /企业微信/u }))
+    expect(await screen.findByText('wecom panel content')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '关闭企业微信' }))
+    await waitFor(() => expect(screen.queryByRole('tab', { name: /企业微信/u })).not.toBeInTheDocument())
+    // A re-render with a new panel element (App rebuilds it) must not reopen the tab.
+    view.rerender(sidebarElement({ platform: { wecomPanel: <p>wecom panel content</p> } }))
+    expect(screen.queryByRole('tab', { name: /企业微信/u })).not.toBeInTheDocument()
+  })
+
+  it('keeps an open WeCom tab closable after the application is turned off', async () => {
+    const onResolvePlatformApp = vi.fn()
+    const view = render(sidebarElement({ platform: { wecomPanel: <p>wecom panel content</p>, onResolvePlatformApp } }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    const catalog = screen.getByRole('list', { name: /工作栏应用/u })
+    fireEvent.click(within(within(catalog).getByText('企业微信').closest('li')!).getByRole('button', { name: /企业微信/u }))
+    expect(await screen.findByText('wecom panel content')).toBeInTheDocument()
+    // Turning the app off removes the panel and the blocker.
+    view.rerender(sidebarElement({ platform: { onResolvePlatformApp } }))
+    expect(screen.getByText(/应用已关闭或尚未就绪/u)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '打开应用设置' }))
+    expect(onResolvePlatformApp).toHaveBeenCalledWith('wecom')
+    fireEvent.click(screen.getByRole('button', { name: '关闭企业微信' }))
+    await waitFor(() => expect(screen.queryByRole('tab', { name: /企业微信/u })).not.toBeInTheDocument())
+  })
+
   it('removes results from both the tabs and application catalog', () => {
     renderSidebar()
     expect(screen.queryByRole('tab', { name: '成果' })).not.toBeInTheDocument()

@@ -254,6 +254,8 @@ export const workspace = {
       cancel: '取消',
       targetError: '无法确定当前项目的终端目标，请重试。',
       catalog: '工作栏应用目录',
+      platformUnavailable: '应用已关闭或尚未就绪，可以关闭这个标签，或到应用设置中处理。',
+      platformResolve: '打开应用设置',
       existing: '已打开，选择后切换到现有实例',
       multiple: '可打开多个实例',
       single: '单实例应用',

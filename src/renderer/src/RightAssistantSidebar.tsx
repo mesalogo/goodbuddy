@@ -875,34 +875,20 @@ function RightAssistantSidebarView({
     () => loadPersistedWorkbarLayout(),
     []
   )
-  const localizedAppDefinitions = useMemo(
+  // Every definition, localized; used before the open tabs are known.
+  const allAppDefinitions = useMemo(
     () =>
-      WORKBAR_APP_DEFINITIONS.filter(definition =>
-        (definition.id !== 'notes' || notesEnabled) &&
-        (definition.id !== 'wecom' || Boolean(wecomPanel) || Boolean(platformAppBlockers?.wecom)) &&
-        (definition.id !== 'feishu' || Boolean(feishuPanel) || Boolean(platformAppBlockers?.feishu))
-      ).map((definition) => {
-        const tabDefinition = tabs.find(
-          (item) => item.id === definition.id
-        )
-        // A connected platform app whose tools are not ready stays listed
-        // with the reason, so the "+" menu can lead to its settings.
-        const blocker = (definition.id === 'wecom' && !wecomPanel) || (definition.id === 'feishu' && !feishuPanel)
-          ? platformAppBlockers?.[definition.id as 'wecom' | 'feishu']
-          : undefined
+      WORKBAR_APP_DEFINITIONS.map((definition) => {
+        const tabDefinition = tabs.find((item) => item.id === definition.id)
         return {
           ...definition,
-          ...(blocker ? { availability: { state: 'unavailable' as const, reason: blocker, remedy: 'open-application-settings' as const } } : {}),
-          label:
-            tabDefinition?.label ??
-            t('sidebar.tabs.terminal.label'),
-          description:
-            tabDefinition?.description ??
-            t('sidebar.tabs.terminal.description')
+          label: tabDefinition?.label ?? t('sidebar.tabs.terminal.label'),
+          description: tabDefinition?.description ?? t('sidebar.tabs.terminal.description')
         } satisfies WorkbarAppDefinition
       }),
-    [t, tabs, notesEnabled, wecomPanel, feishuPanel, platformAppBlockers]
+    [t, tabs]
   )
+
   const [workbarInstances, setWorkbarInstances] = useState<
     WorkbarTabInstance[]
   >(() => {
@@ -912,7 +898,7 @@ function RightAssistantSidebarView({
           return instance
         }
         const label =
-          localizedAppDefinitions.find(
+          allAppDefinitions.find(
             (definition) => definition.id === instance.appId
           )?.label ?? instance.title
         const conversationId =
@@ -939,6 +925,31 @@ function RightAssistantSidebarView({
     )
     return instances
   })
+  const openPlatformApps = useMemo(
+    () => new Set(workbarInstances.map((instance) => instance.appId).filter((id) => id === 'wecom' || id === 'feishu')),
+    [workbarInstances]
+  )
+  const localizedAppDefinitions = useMemo(
+    () =>
+      allAppDefinitions.filter(definition =>
+        (definition.id !== 'notes' || notesEnabled) &&
+        // An open platform tab keeps its definition so it stays closable,
+        // even after the application was turned off or lost authorization.
+        (definition.id !== 'wecom' || Boolean(wecomPanel) || Boolean(platformAppBlockers?.wecom) || openPlatformApps.has('wecom')) &&
+        (definition.id !== 'feishu' || Boolean(feishuPanel) || Boolean(platformAppBlockers?.feishu) || openPlatformApps.has('feishu'))
+      ).map((definition) => {
+        // A platform app whose tools are not ready stays listed with the
+        // reason, so the "+" menu can lead to its settings.
+        const blocker = (definition.id === 'wecom' && !wecomPanel) || (definition.id === 'feishu' && !feishuPanel)
+          ? platformAppBlockers?.[definition.id as 'wecom' | 'feishu'] ?? t('sidebar.workbar.platformUnavailable')
+          : undefined
+        return {
+          ...definition,
+          ...(blocker ? { availability: { state: 'unavailable' as const, reason: blocker, remedy: 'open-application-settings' as const } } : {})
+        } satisfies WorkbarAppDefinition
+      }),
+    [allAppDefinitions, notesEnabled, openPlatformApps, platformAppBlockers, t, wecomPanel, feishuPanel]
+  )
   const localizedWorkbarInstances = useMemo(
     () => workbarInstances.map((instance) => {
       if (
@@ -2114,8 +2125,12 @@ function RightAssistantSidebarView({
           </p>
         ) : null}
         {instance.appId === 'notes' && notesPanel}
-        {instance.appId === 'wecom' && wecomPanel}
-        {instance.appId === 'feishu' && feishuPanel}
+        {instance.appId === 'wecom' && (wecomPanel ?? (
+          <PlatformPanelUnavailable reason={platformAppBlockers?.wecom} onResolve={onResolvePlatformApp ? () => onResolvePlatformApp('wecom') : undefined} />
+        ))}
+        {instance.appId === 'feishu' && (feishuPanel ?? (
+          <PlatformPanelUnavailable reason={platformAppBlockers?.feishu} onResolve={onResolvePlatformApp ? () => onResolvePlatformApp('feishu') : undefined} />
+        ))}
         {instance.appId === 'terminal' &&
          instance.targetRef &&
          (instance.targetRef.type === 'local' || instance.targetRef.type === 'project') ? (
@@ -2672,4 +2687,15 @@ function RightAssistantSidebarView({
 }
 
 /** Memoized: App re-renders on chat updates; this view re-renders only when its props change. */
+/** Body of an open Feishu or WeCom tab while the application is off or not ready; the tab stays closable. */
+function PlatformPanelUnavailable({ reason, onResolve }: { reason?: string; onResolve?: () => void }): React.JSX.Element {
+  const { t } = useTranslation('workspace')
+  return (
+    <div className="wecom-panel__empty" style={{ padding: 'var(--space-3)' }}>
+      <p>{reason ?? t('sidebar.workbar.platformUnavailable')}</p>
+      {onResolve && <button className="secondary-button" onClick={onResolve} type="button">{t('sidebar.workbar.platformResolve')}</button>}
+    </div>
+  )
+}
+
 export const RightAssistantSidebar = memo(RightAssistantSidebarView)

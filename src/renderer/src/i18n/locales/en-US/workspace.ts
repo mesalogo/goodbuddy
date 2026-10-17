@@ -261,6 +261,8 @@ export const workspace = {
       targetError:
         'Could not resolve the current project terminal target. Try again.',
       catalog: 'Workbar application catalog',
+      platformUnavailable: 'The application is off or not ready. Close this tab, or fix it in the application settings.',
+      platformResolve: 'Open application settings',
       existing: 'Already open. Selecting switches to the existing instance.',
       multiple: 'Multiple instances supported',
       single: 'Single-instance application',
