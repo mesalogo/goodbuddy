@@ -397,6 +397,7 @@ export class SupervisorService {
           throw new SupervisionOutputError(error instanceof Error ? error.message : String(error), { cause: error })
         }
       }
+      const failedGroups = new Map<string, unknown>()
       for (;;) {
         const omittedBefore = (await db.progress(runId)).omittedSources ?? 0
         try {
@@ -404,8 +405,14 @@ export class SupervisorService {
           if ((await db.progress(runId)).remainingSources) await db.setPhase(runId, 'extracting')
           for (;;) {
             if (controller.signal.aborted) return await stopped()
-            const groups = await db.groups(runId, config.concurrency)
-            if (!groups.length) break
+            const groups = await db.groups(runId, config.concurrency, [...failedGroups.keys()])
+            if (!groups.length) {
+              if (failedGroups.size) {
+                const firstFailure = failedGroups.values().next().value
+                throw firstFailure instanceof Error ? firstFailure : new Error(String(firstFailure))
+              }
+              break
+            }
             const results = await Promise.allSettled(groups.map(async group => {
               controller.signal.throwIfAborted()
               const candidates = await candidatesFor(group.projectId)
@@ -430,8 +437,12 @@ export class SupervisorService {
               }
             }))
             if (controller.signal.aborted) return await stopped()
-            const failure = results.find(result => result.status === 'rejected')
-            if (failure?.status === 'rejected') throw failure.reason
+            results.forEach((result, index) => {
+              if (result.status === 'rejected') {
+                const group = groups[index]!
+                failedGroups.set(`${group.projectId}:${group.conversationId}`, result.reason)
+              }
+            })
           }
           if (await db.omitDeletedConversations(runId)) continue
           const progress = await db.progress(runId)

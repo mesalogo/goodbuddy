@@ -317,17 +317,19 @@ export class SupervisionReviewStore {
     this.db.prepare("UPDATE supervision_review_runs SET state_json = json_set(state_json, '$.stories', json(?)) WHERE run_id = ?").run(JSON.stringify(stories), runId)
   }
 
-  groups(runId: string, limit: number): Array<{ projectId: string; conversationId: string }> {
+  groups(runId: string, limit: number, excluded: string[] = []): Array<{ projectId: string; conversationId: string }> {
     // One group per project per round before a second conversation from that project.
+    const excludedKeys = excluded
+    const exclusion = excludedKeys.length ? `AND (s.project_id || ':' || s.conversation_id) NOT IN (${excludedKeys.map(() => '?').join(',')})` : ''
     return this.db.prepare(`WITH groups AS (
       SELECT s.project_id, s.conversation_id,
         (SELECT COUNT(*) FROM supervision_review_batches b WHERE b.run_id = s.run_id AND b.project_id = s.project_id AND b.conversation_id = s.conversation_id) AS turns,
         (SELECT COUNT(*) FROM supervision_review_batches b WHERE b.run_id = s.run_id AND b.project_id = s.project_id) AS project_turns
-      FROM supervision_review_sources s WHERE s.run_id = ? AND s.processed_offset < s.length
+      FROM supervision_review_sources s WHERE s.run_id = ? AND s.processed_offset < s.length ${exclusion}
       GROUP BY s.project_id, s.conversation_id
     ), ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY turns, conversation_id) AS rank FROM groups)
       SELECT project_id AS projectId, conversation_id AS conversationId FROM ranked
-      ORDER BY rank, project_turns, project_id, turns, conversation_id LIMIT ?`).all(runId, limit) as Array<{ projectId: string; conversationId: string }>
+      ORDER BY rank, project_turns, project_id, turns, conversation_id LIMIT ?`).all(runId, ...excludedKeys, limit) as Array<{ projectId: string; conversationId: string }>
   }
 
   chunk(runId: string, projectId: string, conversationId: string, config: ReviewConfiguration): SupervisionEvidence[] {

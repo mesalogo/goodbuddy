@@ -138,6 +138,28 @@ it.each(['missing arrays', 'unknown source', 'unknown entity'])('production leaf
   expect(f.respond).toHaveBeenCalledTimes(3)
 })
 
+it('keeps valid batches when one conversation has an invalid entity reference and resumes only the failed batch', async () => {
+  const f = fixture('Invalid entity reference')
+  const now = Date.parse(f.request.timeRange.from) + 1
+  f.db.saveLocalConversations([{ header: { id: randomUUID(), projectId: f.db.listProjects()[0]!.id, title: 'Valid conversation', updatedAt: now },
+    messages: [{ id: randomUUID(), role: 'user', state: 'complete', content: 'Valid evidence', createdAt: now }] }])
+  let invalidCalls = 0
+  f.respond.mockImplementation(() => ++invalidCalls <= 3
+    ? { ...empty, entities: [{ id: 'bad', label: 'Bad identity', description: 'Bad identity', candidateRef: 'known_999', sourceReferenceIds: [] }] }
+    : empty)
+
+  await expect(f.service().run(f.request)).rejects.toThrow('candidateRef is outside KNOWN ENTITIES')
+  const failed = f.db.listSupervisionActivity().find(item => item.status === 'failed')!
+  expect(f.db.supervisionReviewStore().batches(failed.id)).toHaveLength(1)
+  expect(f.db.supervisionReviewStore().progress(failed.id)).toMatchObject({ batches: 1, remainingSources: 1, complete: false })
+  expect(f.db.listSupervisionResults()).toHaveLength(0)
+
+  f.respond.mockImplementation(() => empty)
+  await expect(f.service().resume(failed.id)).resolves.toMatchObject({ status: 'completed' })
+  expect(f.db.supervisionReviewStore().batches(failed.id)).toHaveLength(2)
+  expect(f.db.listSupervisionResults()).toHaveLength(1)
+})
+
 it('persists publication failure and resumes with saved navigation without model calls', async () => {
   const f = fixture('A'.repeat(1500))
   const summary = 'Retained navigation detail. '.repeat(500)
