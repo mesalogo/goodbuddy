@@ -4,10 +4,16 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { OverflowMarquee } from './OverflowMarquee'
 
-const stylesheet = readFileSync(
-  join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
-  'utf8'
-).replaceAll('\r\n', '\n')
+const stylesheet = [
+  readFileSync(
+    join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
+    'utf8'
+  ),
+  readFileSync(
+    join(process.cwd(), 'src', 'renderer', 'src', 'styles-conversations.css'),
+    'utf8'
+  )
+].join('\n').replaceAll('\r\n', '\n')
 
 function setMeasuredWidth(
   element: HTMLElement,

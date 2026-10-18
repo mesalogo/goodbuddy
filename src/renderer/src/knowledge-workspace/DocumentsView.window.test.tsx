@@ -132,7 +132,7 @@ describe('DocumentsView windowing', () => {
   })
 
   it('turns native scroll anchoring off on the page only while the table is windowed', () => {
-    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles-knowledge-documents.css'), 'utf8')
     expect(css).toMatch(/\.workspace-panel-scroll:has\(\.knowledge-documents__table-scroll--windowed\),\s*\.knowledge-documents__table-scroll--windowed\s*\{\s*overflow-anchor:\s*none;/)
     setup()
     expect(document.querySelector('.knowledge-documents__table-scroll')).toHaveClass('knowledge-documents__table-scroll--windowed')

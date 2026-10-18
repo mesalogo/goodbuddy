@@ -1,0 +1,42 @@
+.knowledge-documents__section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.knowledge-documents { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.knowledge-documents__section-heading h3 { margin: 0; }
+.knowledge-documents__import-strategy { max-width: 320px; margin-top: 14px; }
+.knowledge-documents__import-actions,
+.knowledge-source-row__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.knowledge-documents__url-form { display: grid; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-control); margin-top: var(--space-3); background: var(--surface-raised); grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
+.knowledge-documents__drop-zone { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px dashed var(--border-default); border-radius: var(--radius-control); margin-top: var(--space-3); background: var(--surface-subtle); color: var(--text-muted); }
+.knowledge-documents__drop-zone--dragging { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
+.knowledge-documents__empty { padding: 18px; border: 1px solid var(--border-default); border-radius: var(--radius-control); margin-top: var(--space-3); background: var(--surface-raised); }
+.knowledge-source-row { display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr) auto; }
+.knowledge-source-group { background: var(--surface-subtle); }
+.knowledge-document-row--grouped > td:first-child { padding-left: var(--space-6); }
+.knowledge-documents__toolbar { margin-top: var(--space-3); }
+.knowledge-source-row__main,
+.knowledge-source-row__identity { min-width: 0; }
+.knowledge-source-row__identity { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.knowledge-source-row__identity > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-source-row__status { width: fit-content; padding: 2px 7px; border-radius: 999px; background: var(--accent-subtle); color: var(--accent); font-size: 12px; white-space: nowrap; }
+.knowledge-source-row__status--failed { background: var(--danger-subtle); color: var(--danger); }
+.knowledge-source-row__status--ready { background: var(--success-subtle); color: var(--success); }
+.knowledge-source-row__meta { margin-top: 5px; color: var(--text-muted); font-size: var(--font-body); line-height: 1.55; }
+.knowledge-source-row__error,
+.knowledge-document-error { margin-top: 5px; color: var(--danger); font-size: 12px; }
+.knowledge-documents__search { position: relative; display: flex; width: min(300px, 50%); align-items: center; }
+.knowledge-documents__search > svg { position: absolute; z-index: 1; left: 11px; color: var(--text-muted); pointer-events: none; }
+.knowledge-page .knowledge-documents__search input { padding-left: 34px; }
+.knowledge-documents__table-scroll { margin-top: 12px; overflow-x: auto; }
+.knowledge-documents__table-scroll table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: var(--font-body); }
+.knowledge-documents__table-scroll thead { background: var(--surface-subtle); color: var(--text-secondary); text-align: left; }
+.knowledge-documents__table-scroll th { padding: var(--space-2) var(--space-3); }
+.knowledge-documents__table-scroll tbody tr { border-top: 1px solid var(--border-subtle); }
+.knowledge-documents__table-scroll td { padding: var(--space-3); vertical-align: top; overflow-wrap: anywhere; }
+.workspace-panel-scroll:has(.knowledge-documents__table-scroll--windowed),
+.knowledge-documents__table-scroll--windowed { overflow-anchor: none; }
+.knowledge-documents__table-scroll tbody tr.knowledge-documents__spacer { border: 0; }
+.knowledge-documents__table-scroll tr.knowledge-documents__spacer > td { padding: 0; }
+.knowledge-documents__table-scroll .knowledge-document-metric { text-align: right; white-space: nowrap; }
+.knowledge-documents__table-scroll td:last-child:not([colspan]) { width: 1%; }
+.knowledge-document-actions { flex-wrap: nowrap; }
+.knowledge-documents__table-scroll button { white-space: nowrap; }
+.knowledge-document-path { max-width: 280px; color: var(--text-muted); font-size: var(--font-body); line-height: 1.55; overflow-wrap: anywhere; }

@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const stylesheet = readFileSync(
-  join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
-  'utf8'
-).replaceAll('\r\n', '\n')
+const stylesheet = [
+  readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'styles-app-shell.css'), 'utf8'),
+  readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'styles-conversations.css'), 'utf8'),
+  readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'), 'utf8')
+].join('\n').replaceAll('\r\n', '\n')
 
 describe('primary sidebar layout', () => {
   it('keeps the original new conversation typography and left alignment, centering only its compact icon', () => {

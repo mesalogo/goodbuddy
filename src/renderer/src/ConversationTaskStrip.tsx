@@ -101,6 +101,7 @@ export const ConversationTaskStrip = memo(function ConversationTaskStrip({
           >
             {tasks.map((task) => (
               <button
+                aria-label={task.title}
                 aria-pressed={selectedTask?.id === task.id}
                 className={
                   selectedTask?.id === task.id
@@ -116,6 +117,9 @@ export const ConversationTaskStrip = memo(function ConversationTaskStrip({
                   className={`task-status-dot task-status-dot--${task.status}`}
                 />
                 <span>{task.title}</span>
+                <small className="conversation-task-strip__task-status">
+                  {t(`task.status.${task.status}`)}
+                </small>
               </button>
             ))}
           </div>

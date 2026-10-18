@@ -10,10 +10,20 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CustomTaskDialog } from './CustomTaskDialog'
 
-const stylesheet = readFileSync(
-  join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
-  'utf8'
-)
+const stylesheet = [
+  readFileSync(
+    join(process.cwd(), 'src', 'renderer', 'src', 'styles-foundations.css'),
+    'utf8'
+  ),
+  readFileSync(
+    join(process.cwd(), 'src', 'renderer', 'src', 'styles-controls.css'),
+    'utf8'
+  ),
+  readFileSync(
+    join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
+    'utf8'
+  )
+].join('\n')
 
 afterEach(cleanup)
 

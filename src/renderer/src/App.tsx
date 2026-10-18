@@ -7089,33 +7089,51 @@ function App(): React.JSX.Element {
           </button>
           {view === "chat" && (
             <>
-              <div
-                className="conversation-title"
-                title={activeConversation?.title}
-              >
-                <span className="conversation-title__text">
-                  {activeConversation
-                    ? activeConversation.unused
-                      ? t("conversation.defaultTitle")
-                      : activeConversation.title
-                    : activeProject?.kind === "channel"
-                      ? t("conversation.remoteTitle")
-                      : t("conversation.defaultTitle")}
-                </span>
-                {activeConversation?.branch && (
-                  <ConversationBranchBadge
-                    sourceTitle={
-                      conversationTitles.get(
-                        activeConversation.branch.sourceConversationId,
-                      ) ?? activeConversation.branch.sourceTitle
+              <div className="conversation-title-group">
+                <div
+                  className="conversation-title"
+                  title={activeConversation?.title}
+                >
+                  <span className="conversation-title__text">
+                    {activeConversation
+                      ? activeConversation.unused
+                        ? t("conversation.defaultTitle")
+                        : activeConversation.title
+                      : activeProject?.kind === "channel"
+                        ? t("conversation.remoteTitle")
+                        : t("conversation.defaultTitle")}
+                  </span>
+                  {activeConversation?.branch && (
+                    <ConversationBranchBadge
+                      sourceTitle={
+                        conversationTitles.get(
+                          activeConversation.branch.sourceConversationId,
+                        ) ?? activeConversation.branch.sourceTitle
+                      }
+                    />
+                  )}
+                  {activeConversation?.remote && (
+                    <b className="conversation-source-badge">
+                      {projectChannelLabels[activeConversation.remote.channel]}
+                    </b>
+                  )}
+                </div>
+                <div className="conversation-title-group__scope">
+                  <ScopeBadge
+                    scope={
+                      activeProject
+                        ? {
+                            kind: "project",
+                            projectName:
+                              activeProjectDisplayName ?? activeProject.name,
+                          }
+                        : {
+                            kind: "unavailable",
+                            explanation: t("notices.projectNotLoaded"),
+                          }
                     }
                   />
-                )}
-                {activeConversation?.remote && (
-                  <b className="conversation-source-badge">
-                    {projectChannelLabels[activeConversation.remote.channel]}
-                  </b>
-                )}
+                </div>
               </div>
               {magicNotesEnabled && activeConversation && <>
                 <button type="button" className="icon-button" ref={noteTitleMenuRef} aria-label={t('magicNotes:capture.menu')} title={t('magicNotes:capture.menu')} aria-haspopup="menu" aria-expanded={noteTitleMenuOpen} onClick={() => setNoteTitleMenuOpen(value => !value)}><MoreHorizontal size={16} /></button>
@@ -7123,20 +7141,6 @@ function App(): React.JSX.Element {
                   <button role="menuitem" tabIndex={-1} type="button" disabled={isRunning || noteCaptureLoading || noteDraft.saving} title={isRunning ? t('magicNotes:capture.wait') : undefined} onClick={() => { setNoteTitleMenuOpen(false); void captureToNote(activeConversation.id); }}>{t(noteCaptureLoading ? 'magicNotes:capture.loading' : 'magicNotes:capture.conversation')}</button>
                 </AnchoredMenu>}
               </>}
-              <ScopeBadge
-                scope={
-                  activeProject
-                    ? {
-                        kind: "project",
-                        projectName:
-                          activeProjectDisplayName ?? activeProject.name,
-                      }
-                    : {
-                        kind: "unavailable",
-                        explanation: t("notices.projectNotLoaded"),
-                      }
-                }
-              />
             </>
           )}
           <div className="topbar__actions">

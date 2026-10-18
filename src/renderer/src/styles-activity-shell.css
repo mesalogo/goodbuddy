@@ -1,0 +1,15 @@
+.activity-panel {
+  display: flex;
+  width: 100%;
+  min-height: 100%;
+  flex-direction: column;
+  container: activity-panel / inline-size;
+}
+
+.activity-panel > .page-tabs { padding: var(--space-4) 0; }
+.activity-panel__load-more { align-self: center; margin-top: var(--space-3); }
+.activity-panel__tab-panel { min-width: 0; padding-bottom: var(--space-6); }
+.activity-list { padding: 0; margin: 0; list-style: none; }
+.activity-panel > .page-header { flex-wrap: wrap; row-gap: var(--space-3); }
+.activity-panel > .page-header > .page-header__content { flex: 1 0 auto; max-width: 100%; }
+.activity-panel__refresh { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }

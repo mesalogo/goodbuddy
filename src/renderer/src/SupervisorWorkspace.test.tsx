@@ -659,7 +659,10 @@ describe('SupervisorWorkspace', () => {
   })
   it('uses existing theme tokens for the supervisor workspace', () => {
     const css = readFileSync('src/renderer/src/supervisor-workspace.css', 'utf8')
-    const tokens = readFileSync('src/renderer/src/styles.css', 'utf8')
+    const tokens = [
+      readFileSync('src/renderer/src/styles-foundations.css', 'utf8'),
+      readFileSync('src/renderer/src/styles.css', 'utf8')
+    ].join('\n')
     for (const [, token] of css.matchAll(/var\((--[\w-]+)\)/g)) {
       expect(tokens, token).toContain(`${token}:`)
     }
