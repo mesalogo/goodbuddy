@@ -1,0 +1,30 @@
+/*
+ * "Not available" row of a workbar catalog card: aligned with the text
+ * column (past the 32px icon), reason on the left, a compact one-line
+ * action on the right.
+ */
+.workbar-shell__catalog-item .workbar-shell__unavailable {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) var(--space-3) calc(var(--space-3) + 32px + var(--space-3));
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--warning-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+}
+
+.workbar-shell__unavailable-reason {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.workbar-shell__catalog-item .workbar-shell__unavailable-action {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 2px var(--space-3);
+  font-size: var(--font-caption);
+  white-space: nowrap;
+}

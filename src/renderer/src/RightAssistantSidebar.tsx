@@ -943,7 +943,7 @@ function RightAssistantSidebarView({
         // A platform app whose tools are not ready stays listed with the
         // reason, so the "+" menu can lead to its settings.
         const blocker = (definition.id === 'wecom' && !wecomPanel) || (definition.id === 'feishu' && !feishuPanel)
-          ? platformAppBlockers?.[definition.id as 'wecom' | 'feishu'] ?? t('sidebar.workbar.platformUnavailable')
+          ? platformAppBlockers?.[definition.id as 'wecom' | 'feishu'] ?? t('sidebar.workbar.platformOff')
           : undefined
         return {
           ...definition,

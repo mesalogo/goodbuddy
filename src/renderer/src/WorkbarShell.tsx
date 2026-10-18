@@ -4,9 +4,7 @@ import {
   ClipboardCheck,
   FolderTree,
   Globe2,
-  MessagesSquare,
   NotebookPen,
-  Send,
   SquareTerminal,
   X,
   type LucideIcon
@@ -22,6 +20,8 @@ import {
   type ReactNode
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ChannelIcon } from './ChannelIcon'
+import './workbar-catalog.css'
 import {
   WORKBAR_APP_DEFINITIONS,
   WORKBAR_LIMITS,
@@ -32,14 +32,18 @@ import {
   type WorkbarTargetRef
 } from '../../shared/workbar-contracts'
 
-const WORKBAR_APP_ICONS: Record<WorkbarAppId, LucideIcon> = {
+// Platform tabs use the same marks as the application center.
+const WecomIcon = (): React.JSX.Element => <ChannelIcon channel="wecom" />
+const FeishuIcon = (): React.JSX.Element => <ChannelIcon channel="feishu" />
+
+const WORKBAR_APP_ICONS: Record<WorkbarAppId, LucideIcon | (() => React.JSX.Element)> = {
   tasks: ClipboardCheck,
   workspace: FolderTree,
   browser: Globe2,
   notes: NotebookPen,
   terminal: SquareTerminal,
-  wecom: MessagesSquare,
-  feishu: Send
+  wecom: WecomIcon,
+  feishu: FeishuIcon
 }
 
 const DEFAULT_INSTANCE_IDS = {
@@ -286,7 +290,9 @@ export function WorkbarShell({
   const chooseApp = async (
     definition: WorkbarAppDefinition
   ): Promise<void> => {
-    if (definition.availability.state === 'unavailable') {
+    const openExisting = definition.instancePolicy === 'single' &&
+      instances.some((instance) => instance.appId === definition.id)
+    if (definition.availability.state === 'unavailable' && !openExisting) {
       return
     }
 
@@ -596,8 +602,9 @@ export function WorkbarShell({
                   !existing &&
                   instances.length >=
                     WORKBAR_LIMITS.maximumOpenInstances
+                // An open tab stays reachable even when the app is unavailable.
                 const disabled =
-                  unavailable ||
+                  (unavailable && !existing) ||
                   atLimit ||
                   creatingAppId !== null
                 return (
@@ -631,11 +638,11 @@ export function WorkbarShell({
                       </span>
                     </button>
                     {availability.state === 'unavailable' ? (
-                      <div className="workbar-shell__unavailable">
-                        <span>{availability.reason}</span>
+                      <div className="workbar-shell__unavailable" role="note">
+                        <span className="workbar-shell__unavailable-reason">{availability.reason}</span>
                         {onResolveUnavailableApp ? (
                           <button
-                            className="secondary-button"
+                            className="secondary-button workbar-shell__unavailable-action"
                             onClick={() =>
                               onResolveUnavailableApp(definition)
                             }

@@ -263,6 +263,7 @@ export const workspace = {
       catalog: 'Workbar application catalog',
       platformUnavailable: 'The application is off or not ready. Close this tab, or fix it in the application settings.',
       platformResolve: 'Open application settings',
+      platformOff: 'Not connected or turned off',
       existing: 'Already open. Selecting switches to the existing instance.',
       multiple: 'Multiple instances supported',
       single: 'Single-instance application',

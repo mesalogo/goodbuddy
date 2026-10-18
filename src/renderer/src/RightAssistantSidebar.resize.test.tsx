@@ -1314,6 +1314,13 @@ describe('RightAssistantSidebar resizing', () => {
     expect(screen.getByText(/应用已关闭或尚未就绪/u)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '打开应用设置' }))
     expect(onResolvePlatformApp).toHaveBeenCalledWith('wecom')
+    // The "+" catalog still offers the open tab while the app is off, with a compact resolve action.
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    const reopened = screen.getByRole('list', { name: /工作栏应用/u })
+    const row = within(reopened).getByText('企业微信').closest('li')!
+    expect(within(row).getByRole('note')).toHaveTextContent('应用未连接或已关闭')
+    expect(within(row).getByRole('button', { name: /企业微信/u })).toBeEnabled()
+    fireEvent.click(within(row).getByRole('button', { name: /企业微信/u }))
     fireEvent.click(screen.getByRole('button', { name: '关闭企业微信' }))
     await waitFor(() => expect(screen.queryByRole('tab', { name: /企业微信/u })).not.toBeInTheDocument())
   })
