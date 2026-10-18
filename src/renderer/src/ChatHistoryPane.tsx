@@ -147,6 +147,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   onAddToNote,
   noteMessageNavigation,
   onOpenImageModelSettings,
+  onOpenWorkspaceFile,
   onReselectImageSources,
   onEditImage,
   active,
@@ -173,6 +174,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   onAddToNote?: (conversationId: string, message: Message, trigger: HTMLElement) => void;
   noteMessageNavigation?: { conversationId: string; messageId: string; requestId: number };
   onOpenImageModelSettings: () => void;
+  onOpenWorkspaceFile?: (href: string) => boolean;
   onReselectImageSources: (operation: ImageOperation) => void;
   onEditImage: (artifact: AssistantArtifact) => void;
   active: boolean;
@@ -1114,6 +1116,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
             </div>
           )}
           <ChatTimeline
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
             onOpenImageModelSettings={onOpenImageModelSettings}
             onReselectImageSources={onReselectImageSources}
             onEditImage={onEditImage}

@@ -11,6 +11,10 @@ import {
 
 const MAX_DIRECTORY_ENTRIES = 500
 const PREVIEW_PAGE_BYTES = 256 * 1024
+const imageMimeTypes: Record<string, WorkspaceFilePreview['mimeType']> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.svg': 'image/svg+xml'
+}
 const previewExtensions = new Set([
   '.c',
   '.cpp',
@@ -105,6 +109,45 @@ export class WorkspaceChangesService {
       throw new Error('目标不是普通文件')
     }
     const extension = extname(entry.name).toLowerCase()
+    const imageMimeType = imageMimeTypes[extension]
+    if (imageMimeType) {
+      if (offsetBytes !== 0) throw new Error('Image previews do not support text pagination')
+      const chunks: Buffer[] = []
+      let offset = 0
+      do {
+        signal?.throwIfAborted()
+        const page = await this.workspace.readText({
+          path: inputPath,
+          encoding: 'base64',
+          offsetBytes: offset,
+          maximumBytes: PREVIEW_PAGE_BYTES,
+          allowTruncated: true,
+          signal
+        })
+        signal?.throwIfAborted()
+        const chunk = Buffer.from(page.content, 'base64')
+        if (
+          page.size !== entry.size || page.offsetBytes !== offset ||
+          chunk.length !== page.bytesRead ||
+          page.bytesRead > PREVIEW_PAGE_BYTES || (page.truncated && page.bytesRead === 0)
+        ) throw new Error('Image changed while reading; refresh the preview')
+        chunks.push(chunk)
+        offset += page.bytesRead
+        if (!page.truncated) break
+      } while (offset < entry.size)
+      if (offset !== entry.size) throw new Error('Incomplete image preview')
+      return {
+        path: entry.path,
+        name: entry.name,
+        content: '',
+        imageDataUrl: `data:${imageMimeType};base64,${Buffer.concat(chunks).toString('base64')}`,
+        mimeType: imageMimeType,
+        size: entry.size,
+        offsetBytes: 0,
+        nextOffsetBytes: entry.size,
+        truncated: false
+      }
+    }
     if (
       !previewExtensions.has(extension) &&
       !previewFileNames.has(entry.name.toLowerCase())

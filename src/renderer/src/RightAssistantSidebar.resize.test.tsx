@@ -146,6 +146,7 @@ function sidebarElement({
   tasks = [],
   activeProject = currentProject,
   workspaceProjectId,
+  workspacePreviewOpenRequest,
   restoreFocusRef,
   activeConversationId,
   conversationTitles = new Map(),
@@ -189,6 +190,7 @@ function sidebarElement({
   tasks?: AssistantTask[]
   activeProject?: AssistantProject | null
   workspaceProjectId?: string
+  workspacePreviewOpenRequest?: { id: number; path: string }
   restoreFocusRef?: { current: HTMLElement | null }
   activeConversationId?: string
   conversationTitles?: ReadonlyMap<string, string>
@@ -244,6 +246,7 @@ function sidebarElement({
         restoreFocusRef={restoreFocusRef}
         tab={tab}
         workspaceProjectId={workspaceProjectId}
+        workspacePreviewOpenRequest={workspacePreviewOpenRequest}
         {...platform}
       />
     </div>
@@ -1001,6 +1004,31 @@ describe('RightAssistantSidebar resizing', () => {
       'README.md',
       0
     )
+  })
+
+  it.each(['list', 'chat'])('renders image previews from the %s entry point', async (entryPoint) => {
+    const imageDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF1sAAAAASUVORK5CYII='
+    const onLoadWorkspaceFile = vi.fn().mockResolvedValue({ path: 'image.png', name: 'image.png', content: '', mimeType: 'image/png', imageDataUrl, size: 68, offsetBytes: 0, nextOffsetBytes: 68, truncated: false })
+    renderSidebar({ tab: 'workspace', workspaceProjectId: 'project-1', onLoadWorkspaceFile,
+      workspacePreviewOpenRequest: entryPoint === 'chat' ? { id: 1, path: 'image.png' } : undefined,
+      onListWorkspaceDirectory: vi.fn(async () => ({ path: '', entries: [{ name: 'image.png', path: 'image.png', type: 'file' as const }], truncated: false })) })
+    if (entryPoint === 'list') fireEvent.click(await screen.findByRole('button', { name: 'image.png' }))
+    const image = await screen.findByRole('img', { name: 'image.png' })
+    expect(image).toHaveAttribute('src', imageDataUrl)
+    expect(onLoadWorkspaceFile).toHaveBeenCalledWith('image.png', 0)
+    fireEvent.error(image)
+    expect(await screen.findByRole('alert')).toBeVisible()
+  })
+
+  it('uses the current project loader for a chat request after project initialization', async () => {
+    const initialLoader = vi.fn().mockRejectedValue(new Error('Select a project first'))
+    const { rerender } = render(sidebarElement({ tab: 'workspace', onLoadWorkspaceFile: initialLoader }))
+    const onLoadWorkspaceFile = vi.fn().mockResolvedValue({ path: 'image.png', name: 'image.png', content: '', mimeType: 'image/png', imageDataUrl: 'data:image/png;base64,AA==', size: 1, offsetBytes: 0, nextOffsetBytes: 1, truncated: false })
+    rerender(sidebarElement({ tab: 'workspace', workspaceProjectId: 'project-1', onLoadWorkspaceFile }))
+    rerender(sidebarElement({ tab: 'workspace', workspaceProjectId: 'project-1', onLoadWorkspaceFile, workspacePreviewOpenRequest: { id: 1, path: 'image.png' } }))
+    expect(await screen.findByRole('img', { name: 'image.png' })).toBeVisible()
+    expect(initialLoader).not.toHaveBeenCalled()
+    expect(onLoadWorkspaceFile).toHaveBeenCalledOnce()
   })
 
   it('returns to the expanded directory, selected file and scroll position without reloading', async () => {

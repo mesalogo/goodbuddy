@@ -32,6 +32,29 @@ US-WF3：升级前会话图片在聊天和重新打开应用后仍可读取；�
 
 ## 存储与实现
 
+### Image Preview (FR-WF4)
+
+The file list and chat links to files inside the current project open the same right-hand
+preview. PNG, JPEG, WebP, GIF, BMP and SVG files display as images, scaled to
+the panel width, without a fixed total file-size cap on local or remote previews.
+SVG is loaded as an image, never inserted as HTML. Unsupported
+or undecodable files show an error; refresh and the existing local system-open action remain
+available. Text and Markdown retain their existing UTF-8 pagination.
+
+Chat links accept project-relative paths and absolute paths within the project. Line suffixes
+such as `:12:3` and `#L12` are removed before reading. POSIX roots are case-sensitive;
+Windows drive paths are compared case-insensitively. HTTP(S), protocol-relative URLs and
+paths outside the project are not handled as workspace files.
+
+`WorkspaceChangesService.readFile` uses the existing `WorkspaceAccess.readText` operation
+with optional Base64 encoding, reading at most 256 KiB per request. The preview response
+contains an inline image data URL; no artifact record, file copy or new IPC endpoint is created.
+Assembly verifies each decoded page length against its reported byte count and checks
+cancellation before and after each read, so cancelled reads cannot return a partial image.
+Remote reads use the same optional encoding on `workspace/readText`, with response encoding
+and byte-count validation. Remote image preview requires an Agent built with this change;
+older Agents reject the new request field. Existing text requests omit the field.
+
 `WorkspaceFilesPanel` → preload `workspace.importFiles(projectId, path)` → Main
 `workspace:import-files` 验证发送方与共享路径契约，固定项目执行空间并打开原生文件选择器。
 `importWorkspaceFiles` 使用已有 `WorkspaceAccess.manage`，先独占创建目标，再以 256 KiB

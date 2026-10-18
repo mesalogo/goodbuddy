@@ -575,6 +575,20 @@ export class LocalWorkspaceAccess implements WorkspaceAccess {
     )
     const file = await this.resolveExisting(input.path, 'file')
     const offsetBytes = input.offsetBytes ?? 0
+    if (input.encoding === 'base64') {
+      if (!Number.isSafeInteger(offsetBytes) || offsetBytes < 0) throw new Error('Invalid file offset')
+      const handle = await open(file.canonicalPath, 'r')
+      try {
+        const metadata = await handle.stat()
+        if (!metadata.isFile() || offsetBytes > metadata.size) throw new Error('Invalid file range')
+        const buffer = Buffer.alloc(Math.min(maximumBytes, metadata.size - offsetBytes))
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, offsetBytes)
+        const truncated = offsetBytes + bytesRead < metadata.size
+        if (truncated && !input.allowTruncated) throw new Error(input.tooLargeMessage ?? 'File exceeds preview limit')
+        input.signal?.throwIfAborted()
+        return { path: file.path, name: basename(file.canonicalPath), content: buffer.subarray(0, bytesRead).toString('base64'), size: metadata.size, offsetBytes, bytesRead, truncated }
+      } finally { await handle.close() }
+    }
     if (input.allowTruncated || offsetBytes > 0) {
       const preview = await readUtf8FileRange(
         file.canonicalPath,

@@ -450,7 +450,7 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
     const offsetBytes = input.offsetBytes ?? 0
     let rawResult: RemoteWorkspaceReadTextResult | undefined
     let boundaryError: unknown
-    const maximumTrailingBytes = input.allowTruncated
+    const maximumTrailingBytes = input.allowTruncated && !input.encoding
       ? Math.min(3, maximumBytes - 1)
       : 0
     for (
@@ -461,6 +461,7 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
       const request = remoteWorkspaceReadTextRequestSchema.parse({
         ...this.reference(opened),
         relativePath: input.path,
+        ...(input.encoding ? { encoding: input.encoding } : {}),
         offsetBytes,
         maximumBytes: maximumBytes - trailingBytes
       })
@@ -498,6 +499,7 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
       )
     }
     if (
+      result.encoding !== input.encoding ||
       result.relativePath !== input.path ||
       result.offsetBytes !== offsetBytes ||
       result.offsetBytes + result.bytesRead > result.totalBytes ||

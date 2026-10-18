@@ -711,6 +711,7 @@ export const remoteWorkspaceStatResultSchema =
 
 export const remoteWorkspaceReadTextRequestSchema = z
   .object({
+    encoding: z.literal('base64').optional(),
     ...remoteWorkspacePathFields,
     offsetBytes: z.number().int().min(0).safe(),
     maximumBytes: z
@@ -721,9 +722,13 @@ export const remoteWorkspaceReadTextRequestSchema = z
     expectedDigest: sha256DigestSchema.optional()
   })
   .strict()
+  .refine(request => request.encoding !== 'base64' || request.maximumBytes <= 256 * 1024, {
+    message: 'Binary read pages must fit the Agent control frame'
+  })
 
 export const remoteWorkspaceReadTextResultSchema = z
   .object({
+    encoding: z.literal('base64').optional(),
     relativePath: remoteRelativePathSchema,
     content: utf8StringSchema(REMOTE_WORKSPACE_LIMITS.maximumReadBytes, {
       label: 'File preview'
@@ -740,7 +745,12 @@ export const remoteWorkspaceReadTextResultSchema = z
   })
   .strict()
   .superRefine((result, context) => {
-    if (utf8ByteLength(result.content) !== result.bytesRead) {
+    const contentBytes = result.encoding === 'base64'
+      ? /^[A-Za-z0-9+/]*={0,2}$/.test(result.content) && result.content.length % 4 === 0
+        ? result.content.length / 4 * 3 - (result.content.endsWith('==') ? 2 : result.content.endsWith('=') ? 1 : 0)
+        : -1
+      : utf8ByteLength(result.content)
+    if (contentBytes !== result.bytesRead) {
       context.addIssue({
         code: 'custom',
         path: ['bytesRead'],

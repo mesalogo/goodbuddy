@@ -24,7 +24,7 @@ app.whenReady().then(async () => {
   await writeFile(join(source, 'import.bin'), bytes)
   const image = database.createImageArtifact({ projectId: project.id, title: 'Existing conversation image', mimeType: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=' })
   database.saveLocalConversations([{ header: { id: randomUUID(), projectId: project.id, title: 'Workspace import', updatedAt: Date.now() },
-    messages: [{ id: randomUUID(), role: 'assistant', state: 'complete', content: 'Existing conversation image', createdAt: Date.now(), artifactIds: [image.id] }] }])
+    messages: [{ id: randomUUID(), role: 'assistant', state: 'complete', content: 'Existing conversation image [Workspace image](selected/preview.png:1)', createdAt: Date.now(), artifactIds: [image.id] }] }])
   const applicationSettings = new ApplicationSettingsStore(join(directory, 'application.json'))
   await applicationSettings.update({ checkUpdatesOnStartup: false })
   const settings = { ...defaultRuntimeSettings, workspacePath: project.rootPath, modelProfiles: [], embeddingConnections: [] }
@@ -43,7 +43,7 @@ app.whenReady().then(async () => {
   }
   const wait = async (code: string): Promise<void> => {
     for (let i = 0; i < 300; i++) { if (await run(code)) return; await new Promise(resolve => setTimeout(resolve, 50)) }
-    throw new Error(`Timed out: ${code}`)
+    throw new Error(`Timed out: ${code}; ${await run('document.body.innerText')}`)
   }
   const button = (label: string): string => `[...document.querySelectorAll('button')].find(e=>(e.getAttribute('aria-label')||e.textContent.trim())===${JSON.stringify(label)}&&e.getClientRects().length)`
   const ready = (label: string): string => `(() => { const target = ${button(label)}; return Boolean(target && !target.disabled) })()`
@@ -64,6 +64,16 @@ app.whenReady().then(async () => {
     assert.deepEqual(await readdir(project.rootPath), ['selected'])
     assert.equal(database.listArtifacts().length, 1)
     assert.equal(database.getArtifact(image.id).content, image.content)
+    await writeFile(join(project.rootPath, 'selected/preview.png'), Buffer.concat([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'), Buffer.alloc(4 * 1024 * 1024)]))
+    assert.equal(await run('[...document.querySelectorAll("a")].find(e=>e.textContent==="Workspace image").getAttribute("href")'), 'selected/preview.png:1')
+    assert.equal(await run('[...document.querySelectorAll("a")].find(e=>e.textContent==="Workspace image").dispatchEvent(new MouseEvent("click", {bubbles:true,cancelable:true}))'), false)
+    const decodedPreview = 'Boolean(document.querySelector(".assistant-sidebar__body img[alt=\\"preview.png\\"]")?.naturalWidth===1)'
+    await wait(decodedPreview)
+    await click('Back to workspace')
+    await click('Refresh workspace files')
+    await click('preview.png')
+    await wait(decodedPreview)
+    await click('Back to workspace')
     await click('Import files')
     await wait('document.body.innerText.includes("EEXIST")')
     assert.deepEqual(await readFile(join(project.rootPath, 'selected/import.bin')), bytes)
@@ -71,7 +81,7 @@ app.whenReady().then(async () => {
     await wait(ready('Import files'))
     await win.reload()
     await wait('Boolean(document.querySelector(".message-generated-image img")) && document.querySelector(".message-generated-image img").naturalWidth===1')
-    await writeFile(join(directory, 'result.json'), JSON.stringify({ passed: true, picks, bytes: bytes.length, imageAfterReload: true, artifactCount: database.listArtifacts().length, modelCalls: 0 }))
+    await writeFile(join(directory, 'result.json'), JSON.stringify({ passed: true, picks, bytes: bytes.length, workspaceImageFromChatAndList: true, imageAfterReload: true, artifactCount: database.listArtifacts().length, modelCalls: 0 }))
     await dispose(); database.close(); win.destroy(); app.exit(0)
   } catch (error) {
     await writeFile(join(directory, 'result.json'), JSON.stringify({ error: String(error) }))

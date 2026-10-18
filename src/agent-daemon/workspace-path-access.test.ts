@@ -8,6 +8,8 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { truncate } from 'node:fs/promises'
+import { remoteWorkspaceReadTextRequestSchema, remoteWorkspaceReadTextResultSchema } from '../shared/remote-agent-contracts'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -24,6 +26,21 @@ afterEach(() => {
 })
 
 describe('WorkspacePathAccess', () => {
+  it('reads binary pages beyond 64 MiB with valid remote contracts', async () => {
+    const root = temporaryDirectory()
+    const size = 64 * 1024 * 1024 + 1
+    writeFileSync(join(root, 'large.png'), '')
+    await truncate(join(root, 'large.png'), size)
+    const request = remoteWorkspaceReadTextRequestSchema.parse({ workspaceId: 'workspace-a', generation: 1, relativePath: 'large.png', offsetBytes: size - 1, maximumBytes: 256 * 1024, encoding: 'base64' })
+    const result = remoteWorkspaceReadTextResultSchema.parse(await accessFor(root).readText(request))
+    expect(result).toMatchObject({ content: 'AA==', bytesRead: 1, totalBytes: size, offsetBytes: size - 1, truncated: false })
+  })
+  it('reads binary image pages without UTF-8 conversion', async () => {
+    const root = temporaryDirectory()
+    writeFileSync(join(root, 'image.png'), Buffer.from([0, 255, 128, 42]))
+    const result = await accessFor(root).readText({ workspaceId: 'workspace-a', generation: 1, relativePath: 'image.png', offsetBytes: 1, maximumBytes: 2, encoding: 'base64' })
+    expect(result).toMatchObject({ encoding: 'base64', content: '/4A=', bytesRead: 2, totalBytes: 4, truncated: true })
+  })
   it('lists deterministically and reads bounded UTF-8 with a digest', async () => {
     const root = temporaryDirectory()
     mkdirSync(join(root, 'directory'))

@@ -142,6 +142,19 @@ const ready = true
     expect(container.querySelector('script')).not.toBeInTheDocument()
   })
 
+  it('lets the host handle workspace links without opening a new window', () => {
+    const onOpenLink = vi.fn(() => true)
+    render(
+      <MarkdownRenderer onOpenLink={onOpenLink}>
+        {'[Review](docs/review.md)'}
+      </MarkdownRenderer>
+    )
+
+    const link = screen.getByRole('link', { name: 'Review' })
+    fireEvent.click(link)
+    expect(onOpenLink).toHaveBeenCalledWith('docs/review.md')
+  })
+
   it('renders fenced HTML as an isolated static preview when enabled', () => {
     render(
       <MarkdownRenderer renderHtml>{`\`\`\`html

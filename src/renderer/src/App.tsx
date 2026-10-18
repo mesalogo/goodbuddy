@@ -1,3 +1,4 @@
+import { resolveWorkspaceLink } from './workspace-link';
 import { MagicNotesPanel } from './MagicNotesPanel';
 import { WecomWorkbarPanel } from './WecomWorkbarPanel';
 import { useWecomSnapshot } from './wecom-snapshot';
@@ -1325,6 +1326,9 @@ function App(): React.JSX.Element {
   );
   const [assistantSidebarTab, setAssistantSidebarTab] =
     useState<AssistantSidebarTab>("tasks");
+  const [workspacePreviewRequest, setWorkspacePreviewRequest] = useState<
+    { id: number; path: string } | undefined
+  >();
   const [browserStates, setBrowserStates] = useState<
     Record<string, Record<string, BrowserLiveState>>
   >({});
@@ -2353,6 +2357,15 @@ function App(): React.JSX.Element {
     () => projects.find((project) => project.id === activeProjectId),
     [activeProjectId, projects],
   );
+  const openWorkspaceLink = useCallback((href: string): boolean => {
+    if (!activeProjectId || !activeProject) return false;
+    const path = resolveWorkspaceLink(href, activeProject.rootPath);
+    if (!path) return false;
+    setAssistantSidebarOpen(true);
+    setAssistantSidebarTab("workspace");
+    setWorkspacePreviewRequest((current) => ({ id: (current?.id ?? 0) + 1, path }));
+    return true;
+  }, [activeProject, activeProjectId]);
   const activeProjectUsesManagedSsh = isManagedSshProject(activeProject);
   const activeProjectRecovery =
     activeProjectUsesManagedSsh && activeProject
@@ -7197,6 +7210,7 @@ function App(): React.JSX.Element {
                         onDownloadImage={downloadImage}
                         onEditImage={editImage}
                         onOpenImageModelSettings={openImageModelSettings}
+                        onOpenWorkspaceFile={openWorkspaceLink}
                         onReselectImageSources={reselectImageSources}
                         onOpenCitationContext={openCitationContext}
                         onOpenCitationSource={openCitationSource}
@@ -7808,6 +7822,7 @@ function App(): React.JSX.Element {
             tab={assistantSidebarTab}
             workspaceChanges={activeWorkspaceChanges}
             workspaceProjectId={activeProjectId || undefined}
+            workspacePreviewOpenRequest={workspacePreviewRequest}
           />
         </div>
       </div>

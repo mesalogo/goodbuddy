@@ -145,6 +145,7 @@ export type RightAssistantSidebarProps = {
   selectedTaskId?: string
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
+  workspacePreviewOpenRequest?: { id: number; path: string }
   activeConversationId?: string
   conversationStats?: SidebarConversationStats
   taskDurations?: ReadonlyMap<string, SidebarTaskDuration>
@@ -824,6 +825,7 @@ function RightAssistantSidebarView({
   selectedTaskId,
   workspaceChanges,
   workspaceProjectId,
+  workspacePreviewOpenRequest,
   activeConversationId,
   conversationStats,
   taskDurations,
@@ -1871,7 +1873,7 @@ function RightAssistantSidebarView({
     )
   }
 
-  const openWorkspaceFile = (path: string, refresh = false): void => {
+  const openWorkspaceFile = useCallback((path: string, refresh = false): void => {
     if (!currentWorkspacePreview) {
       workspaceReturnPosition.current = {
         scrollTop: workspaceListRef.current?.closest('.assistant-sidebar__body')?.scrollTop ?? 0,
@@ -1918,7 +1920,20 @@ function RightAssistantSidebarView({
           })
         }
       })
-  }
+  }, [currentWorkspacePreview, onLoadWorkspaceFile, setActionError, t, workspaceProjectId])
+
+  const handledWorkspacePreviewRequest = useRef<typeof workspacePreviewOpenRequest>(undefined)
+  useEffect(() => {
+    if (!workspacePreviewOpenRequest || handledWorkspacePreviewRequest.current === workspacePreviewOpenRequest) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      handledWorkspacePreviewRequest.current = workspacePreviewOpenRequest
+      onTabChange('workspace')
+      openWorkspaceFile(workspacePreviewOpenRequest.path)
+    })
+    return () => { cancelled = true }
+  }, [workspacePreviewOpenRequest, onTabChange, openWorkspaceFile])
 
   const loadMoreWorkspaceFile = (): void => {
     const preview = currentWorkspacePreview
@@ -2473,7 +2488,15 @@ function RightAssistantSidebarView({
               ) : (
                 <>
                   <div className="markdown-body markdown-content">
-                    {currentWorkspacePreview.file.mimeType ===
+                    {currentWorkspacePreview.file.imageDataUrl ? (
+                      <img
+                        key={currentWorkspacePreview.file.imageDataUrl}
+                        src={currentWorkspacePreview.file.imageDataUrl}
+                        alt={currentWorkspacePreview.file.name}
+                        style={{ maxWidth: '100%', height: 'auto' }}
+                        onError={() => setWorkspacePreviewLoadMoreError(t('sidebar.errors.workspacePreview'))}
+                      />
+                    ) : currentWorkspacePreview.file.mimeType ===
                     'text/markdown' && !workspaceSource ? (
                       <MarkdownRenderer>
                         {currentWorkspacePreview.file.content}

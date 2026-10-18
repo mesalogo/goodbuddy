@@ -333,7 +333,7 @@ export class WorkspacePathAccess {
           'invalid-path'
         )
       }
-      if (before.size > MAXIMUM_READABLE_FILE_BYTES) {
+      if (request.encoding !== 'base64' && before.size > MAXIMUM_READABLE_FILE_BYTES) {
         throw new WorkspaceServiceError(
           'Workspace file exceeds the bounded read limit',
           'capacity-exceeded'
@@ -387,7 +387,7 @@ export class WorkspacePathAccess {
         )
       }
       const contentBuffer = Buffer.concat(chunks, selectedBytes)
-      const content = decodeUtf8(contentBuffer)
+      const content = request.encoding === 'base64' ? contentBuffer.toString('base64') : decodeUtf8(contentBuffer)
       const contentDigest = `sha256:${digest.digest('hex')}`
       if (
         request.expectedDigest !== undefined &&
@@ -399,6 +399,7 @@ export class WorkspacePathAccess {
         )
       }
       return {
+        ...(request.encoding ? { encoding: request.encoding } : {}),
         relativePath,
         content,
         offsetBytes: request.offsetBytes,

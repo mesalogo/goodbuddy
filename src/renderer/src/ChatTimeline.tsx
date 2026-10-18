@@ -592,6 +592,7 @@ function SubagentStatusList({
 }
 
 type ChatMessageRowProps = {
+  onOpenWorkspaceFile?: (href: string) => boolean
   onAddToNote?: (conversationId: string, message: Message, trigger: HTMLElement) => void
   onOpenImageModelSettings?: () => void
   onReselectImageSources?: (operation: ImageOperation) => void
@@ -624,6 +625,7 @@ type ChatMessageRowProps = {
 }
 
 function ChatMessageRowView({
+  onOpenWorkspaceFile,
   onAddToNote,
   onOpenImageModelSettings,
   onReselectImageSources,
@@ -974,6 +976,7 @@ function ChatMessageRowView({
                   key={item.block.id}
                 >
                   <MarkdownRenderer
+                    onOpenLink={onOpenWorkspaceFile}
                     renderHtml={
                       renderAssistantHtml &&
                       message.role === 'assistant' &&
@@ -998,6 +1001,7 @@ function ChatMessageRowView({
             {message.content && (
               <div className="markdown-content message__content">
                 <MarkdownRenderer
+                  onOpenLink={onOpenWorkspaceFile}
                   renderHtml={
                     renderAssistantHtml &&
                     message.role === 'assistant' &&
@@ -1409,6 +1413,7 @@ const ChatMessageWindowRow = memo(function ChatMessageWindowRow({
 })
 
 type ChatTimelineProps = {
+  onOpenWorkspaceFile?: (href: string) => boolean
   onAddToNote?: ChatMessageRowProps['onAddToNote']
   onOpenImageModelSettings?: () => void
   onReselectImageSources?: (operation: ImageOperation) => void
@@ -1452,6 +1457,7 @@ type ChatTimelineProps = {
 }
 
 export const ChatTimeline = memo(function ChatTimeline({
+  onOpenWorkspaceFile,
   onAddToNote,
   onOpenImageModelSettings,
   onReselectImageSources,
@@ -1482,6 +1488,7 @@ export const ChatTimeline = memo(function ChatTimeline({
 
   if (segments) {
     const rowProps = {
+      onOpenWorkspaceFile,
       onAddToNote,
       onOpenImageModelSettings,
       onReselectImageSources,
@@ -1568,6 +1575,7 @@ export const ChatTimeline = memo(function ChatTimeline({
         const messageIndex = messageStartIndex + visibleMessageIndex
         return (
           <ChatMessageRow
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
             onAddToNote={onAddToNote}
             onOpenImageModelSettings={onOpenImageModelSettings}
             onReselectImageSources={onReselectImageSources}

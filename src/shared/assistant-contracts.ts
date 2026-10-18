@@ -899,7 +899,8 @@ export type WorkspaceFilePreview = {
   path: string
   name: string
   content: string
-  mimeType: 'text/markdown' | 'text/plain' | 'application/json'
+  mimeType: 'text/markdown' | 'text/plain' | 'application/json' | 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'image/bmp' | 'image/svg+xml'
+  imageDataUrl?: string
   size: number
   offsetBytes: number
   nextOffsetBytes: number

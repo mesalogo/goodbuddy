@@ -1,5 +1,59 @@
 # 工作栏实现与验证进度
 
+## 2026-10-19: Remove Image Preview Size Cap
+
+Removed the 4 MiB total-size rejection from the shared preview service. Agent Base64
+reads also bypass the text reader's 64 MiB whole-file limit. The 256 KiB transfer pages,
+byte-count and range checks, Agent digest/snapshot checks, and cancellation remain.
+Shared schemas already permit larger total sizes; no schema or renderer change was needed.
+
+Validation: 118 tests passed across `workspace-changes-service.test.ts`,
+`remote-workspace-access.test.ts`, `workspace-path-access.test.ts`,
+`remote-agent-contracts.test.ts`, and `RightAssistantSidebar.resize.test.tsx` using
+`npm test --` with those paths. Coverage includes a complete SVG above 4 MiB and an Agent
+page beyond 64 MiB validated by the remote schemas. `tests/workspace-import.electron.test.ts`
+also passed with a decodable PNG above 4 MiB through the real App, preload, IPC and filesystem.
+The current-source `workspace-import-host-probe.ts` passed on the shared Linux x64 Host,
+returning 4,194,305 image bytes intact. It uses the SSH stdio bridge, not installed-daemon
+binary framing; no installed Agent was replaced and model calls were zero.
+
+`npm run typecheck`, focused ESLint and `git diff --check` passed. Full `npm run lint`
+encountered unrelated generated VitePress files; `npm run lint -- --ignore-pattern
+"sites/docs/.vitepress/cache/**" --ignore-pattern "sites/docs-dist/**"` passed.
+The initial large-SVG test exceeded its timeout while deep-comparing buffers; using
+`Buffer.equals` preserved byte-for-byte verification and the rerun passed.
+The preview still assembles a complete data URL in memory and remains subject to available
+memory and browser decoding limits. Full-suite and macOS/Linux desktop rendering were not run.
+
+## 2026-10-18: Workspace Image Preview
+
+Follow-up validation of the existing worktree: added decoded-page byte-count checks and
+cancellation checks around image reads, with regression tests. The Electron test now also
+asserts the recorded chat-and-list image result. Eight focused test files passed (162 tests),
+including real App image decoding from both entry points. `npm run typecheck` and focused
+ESLint passed. The current-source SSH Host probe passed again with 300,001 image bytes;
+no model calls were made. Full lint encounters generated VitePress cache and `sites/docs-dist`
+output. Those unrelated generated files were preserved. Full-suite and cross-platform
+desktop rendering coverage remain outside this follow-up run.
+
+[FR-WF4](./workspace-files.md#image-preview-fr-wf4) is implemented through the existing
+workspace read operation for local and remote files. The chat request effect now uses the
+current project loader; the previous deferred Effect Event used the initial project-less
+loader in the real Electron workflow.
+
+Validation: ten focused test files, 172 tests passed and two platform-gated tests skipped,
+including the real App, preload,
+IPC and filesystem Electron workflow. Both chat-link and file-list entry points decoded a
+PNG (`naturalWidth === 1`). Tests also cover binary paging, image-size handling, decode-error
+feedback, text pagination, project initialization and path resolution. The shared Linux x64
+Host ran current source workspace handlers through the existing SSH stdio probe and returned
+300,001 image bytes intact over multiple pages. This probe does not exercise production
+Agent binary framing. No model calls were made.
+
+Typecheck and focused ESLint passed. Repository-wide lint is blocked by generated files in
+`sites/docs/.vitepress/cache/deps`; those unrelated files were not changed. The full test suite
+and macOS/Linux desktop image rendering have not been run for this change.
+
 ## 2026-10-05：文件列表只保留修改时间
 
 按 [FR-WF3、US-WF2](./workspace-files.md) 移除创建时间列及排序入口，修改时间采用紧凑格式，

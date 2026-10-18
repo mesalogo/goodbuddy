@@ -29,26 +29,33 @@ const MermaidDiagram = lazy(() =>
   }))
 )
 
-const linkComponent: Components['a'] = ({
-  children,
-  node,
-  ...properties
-}) => {
-  void node
-  return (
-    <a {...properties} rel="noopener noreferrer" target="_blank">
-      {children}
-    </a>
-  )
+function linkComponent(onOpenLink?: (href: string) => boolean): Components['a'] {
+  return ({ children, node, href, ...properties }) => {
+    void node
+    return (
+      <a
+        {...properties}
+        href={href}
+        onClick={(event) => {
+          if (href && onOpenLink?.(href)) event.preventDefault()
+        }}
+        rel="noopener noreferrer"
+        target="_blank"
+      >
+        {children}
+      </a>
+    )
+  }
 }
 
 function markdownComponents(
   tableAriaLabel: string,
   mermaidLoadingLabel: string,
-  renderHtml: boolean
+  renderHtml: boolean,
+  onOpenLink?: (href: string) => boolean
 ): Components {
   return {
-    a: linkComponent,
+    a: linkComponent(onOpenLink),
     pre: ({ children, node, ...properties }) => {
       void node
       const child = Children.count(children) === 1
@@ -117,6 +124,7 @@ function markdownComponents(
 
 type MarkdownRendererProps = {
   children: string
+  onOpenLink?: (href: string) => boolean
   renderHtml?: boolean
 }
 
@@ -465,6 +473,7 @@ export const UnsegmentedMarkdownRenderer = memo(
 
 function MarkdownDocument({
   children,
+  onOpenLink,
   renderHtml = false,
   segmented
 }: MarkdownRendererProps & { segmented: boolean }): React.JSX.Element {
@@ -477,9 +486,10 @@ function MarkdownDocument({
       markdownComponents(
         t('markdown.scrollableTable'),
         t('markdown.mermaidLoading'),
-        renderHtml
+        renderHtml,
+        onOpenLink
       ),
-    [renderHtml, t]
+    [onOpenLink, renderHtml, t]
   )
   const standaloneHtml = standaloneHtmlSource(normalizedContent)
 

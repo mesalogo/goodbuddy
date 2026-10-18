@@ -13,6 +13,7 @@ import {
   remoteWorkspaceApplyChangeSetRequestSchema,
   remoteWorkspaceHandleSchema,
   remoteWorkspaceReadTextResultSchema,
+  remoteWorkspaceReadTextRequestSchema,
   remoteWorkspaceValidateRequestSchema,
   remoteWorkspaceWriteResultSchema,
   runtimeSessionBindingSchema
@@ -46,6 +47,16 @@ const binding = {
 }
 
 describe('remote Agent contracts', () => {
+  it('bounds binary pages and validates decoded byte counts without changing text reads', () => {
+    const request = { workspaceId: 'workspace-1', generation: 1, relativePath: 'image.png', offsetBytes: 0, maximumBytes: 256 * 1024, encoding: 'base64' }
+    expect(remoteWorkspaceReadTextRequestSchema.safeParse(request).success).toBe(true)
+    expect(remoteWorkspaceReadTextRequestSchema.safeParse({ ...request, maximumBytes: 256 * 1024 + 1 }).success).toBe(false)
+    const result = { relativePath: 'image.png', content: '/4A=', encoding: 'base64', offsetBytes: 0, bytesRead: 2, totalBytes: 2, digest, truncated: false }
+    expect(remoteWorkspaceReadTextResultSchema.safeParse(result).success).toBe(true)
+    expect(remoteWorkspaceReadTextResultSchema.safeParse({ ...result, bytesRead: 1 }).success).toBe(false)
+    expect(remoteWorkspaceReadTextResultSchema.safeParse({ ...result, content: '!@#$' }).success).toBe(false)
+    expect(remoteWorkspaceReadTextResultSchema.safeParse({ ...result, encoding: undefined }).success).toBe(false)
+  })
   it('accepts a consistent durable Runtime binding', () => {
     expect(runtimeSessionBindingSchema.parse(binding)).toEqual(binding)
   })

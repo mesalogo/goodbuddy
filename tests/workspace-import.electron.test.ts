@@ -50,7 +50,7 @@ it('imports from App through production preload and IPC without copying conversa
     try { expect(await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) }), output).toBe(0) }
     finally { clearTimeout(timeout) }
     const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))
-    expect(result).toMatchObject({ passed: true, picks: 3, bytes: 700001, imageAfterReload: true, artifactCount: 1, modelCalls: 0 })
+    expect(result).toMatchObject({ passed: true, picks: 3, bytes: 700001, workspaceImageFromChatAndList: true, imageAfterReload: true, artifactCount: 1, modelCalls: 0 })
     process.stdout.write(`Workspace import App evidence: ${JSON.stringify(result)}\n`)
   } finally { await server.close(); await rm(directory, { recursive: true, force: true }) }
 }, 120000)

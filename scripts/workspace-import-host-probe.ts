@@ -10,6 +10,7 @@ import { WorkspaceGitService } from '../src/agent-daemon/workspace-git-service'
 import { createWorkspaceProtocolMethods } from '../src/agent-daemon/workspace-protocol-methods'
 import { RemoteWorkspaceAccess, type RemoteWorkspaceTransportLease } from '../src/main/workspace/remote-workspace-access'
 import { importWorkspaceFiles } from '../src/main/workspace/workspace-import'
+import { readWorkspaceFile } from '../src/main/assistant/workspace-changes-service'
 
 // Source-level Host probe: real workspace handlers over an SSH stdio test bridge.
 // The bridge does not replace the separate production binary-framing tests.
@@ -82,8 +83,14 @@ if (process.argv[2] === '--host') {
     const image = listing.entries.find(entry => entry.name === 'image.bin')!
     assert.equal(image.modifiedAt, verified.modifiedAt); assert.equal(image.createdAt, verified.createdAt)
     assert.equal((await access.listDirectory({ path: '' })).entries.length, 1)
+    const imageBytes = Buffer.alloc(4 * 1024 * 1024 + 1).map((_, index) => index % 256)
+    await writeFile(join(source, 'preview.png'), imageBytes)
+    assert.deepEqual((await importWorkspaceFiles(access, 'selected', [join(source, 'preview.png')])).failed, [])
+    const preview = await readWorkspaceFile(access, 'selected/preview.png')
+    assert.equal(preview.mimeType, 'image/png')
+    assert.deepEqual(Buffer.from(preview.imageDataUrl!.split(',')[1]!, 'base64'), imageBytes)
     await access.dispose()
-    process.stdout.write(`${JSON.stringify({ passed: true, ...verified, imported: imported.imported, collisionPreserved: true, modelCalls: 0 })}\n`)
+    process.stdout.write(`${JSON.stringify({ passed: true, ...verified, imagePreviewBytes: imageBytes.length, imported: imported.imported, collisionPreserved: true, modelCalls: 0 })}\n`)
   } finally {
     child.stdin.end()
     await exited

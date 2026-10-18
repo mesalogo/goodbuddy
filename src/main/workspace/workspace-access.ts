@@ -41,6 +41,7 @@ export type WorkspaceEntry = WorkspaceDirectoryEntry & {
 }
 
 export type WorkspaceReadInput = WorkspacePathInput & {
+  encoding?: 'base64'
   offsetBytes?: number
   maximumBytes?: number
   allowTruncated?: boolean

@@ -8,7 +8,8 @@ import type { WorkspaceAccess } from '../workspace'
 import {
   getWorkspaceChanges,
   listWorkspaceDirectory,
-  readWorkspaceFile
+  readWorkspaceFile,
+  WorkspaceChangesService
 } from './workspace-changes-service'
 
 const execute = promisify(execFile)
@@ -260,5 +261,49 @@ describe('workspace file browsing', () => {
       truncated: false
     })
     expect(`${first.content}${second.content}`).toBe(content)
+  })
+
+  it.each(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg'])('reads complete %s image bytes without UTF-8 decoding', async (extension) => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-images-'))
+    temporaryDirectories.push(directory)
+    const bytes = Buffer.alloc(300001).map((_, index) => index % 256)
+    const name = `image.${extension}`
+    await writeFile(join(directory, name), bytes)
+    const preview = await readWorkspaceFile(directory, name)
+    expect(Buffer.from(preview.imageDataUrl!.split(',')[1]!, 'base64')).toEqual(bytes)
+    expect(preview).toMatchObject({ content: '', truncated: false, nextOffsetBytes: bytes.length })
+    await expect(readWorkspaceFile(directory, name, 1)).rejects.toThrow('pagination')
+  })
+
+  it('previews a valid SVG larger than 4 MiB completely', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-images-'))
+    temporaryDirectories.push(directory)
+    const bytes = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><!--${'x'.repeat(4 * 1024 * 1024)}--><rect width="1" height="1"/></svg>`)
+    await writeFile(join(directory, 'large.svg'), bytes)
+    const preview = await readWorkspaceFile(directory, 'large.svg')
+    expect(Buffer.from(preview.imageDataUrl!.split(',')[1]!, 'base64').equals(bytes)).toBe(true)
+    expect(preview).toMatchObject({ mimeType: 'image/svg+xml', size: bytes.length, nextOffsetBytes: bytes.length, truncated: false })
+  })
+
+  it('rejects image pages whose decoded bytes do not match the reported length', async () => {
+    const workspace = {
+      stat: vi.fn().mockResolvedValue({ type: 'file', name: 'image.png', path: 'image.png', size: 3 }),
+      readText: vi.fn().mockResolvedValue({ content: 'AA==', size: 3, offsetBytes: 0, bytesRead: 3, truncated: false })
+    } as unknown as WorkspaceAccess
+    await expect(readWorkspaceFile(workspace, 'image.png')).rejects.toThrow('Image changed')
+  })
+
+  it('stops assembling image pages when cancelled during a read', async () => {
+    const controller = new AbortController()
+    const readText = vi.fn(async () => {
+      controller.abort(new Error('Preview cancelled'))
+      return { content: 'AA==', size: 2, offsetBytes: 0, bytesRead: 1, truncated: true }
+    })
+    const workspace = {
+      stat: vi.fn().mockResolvedValue({ type: 'file', name: 'image.png', path: 'image.png', size: 2 }),
+      readText
+    } as unknown as WorkspaceAccess
+    await expect(new WorkspaceChangesService(workspace).readFile('image.png', 0, controller.signal)).rejects.toThrow('Preview cancelled')
+    expect(readText).toHaveBeenCalledOnce()
   })
 })
