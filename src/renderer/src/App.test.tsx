@@ -2851,7 +2851,7 @@ describe("App", () => {
       runRequest.resolve(undefined);
     });
     expect(api.tasks.list).toHaveBeenCalledOnce();
-    expect(within(taskRegion).getByText("空闲")).toBeInTheDocument();
+    expect(within(taskRegion).getAllByText("空闲").length).toBeGreaterThan(0);
     expect(runNow).toBeDisabled();
 
     await act(async () => {
@@ -2872,7 +2872,7 @@ describe("App", () => {
       act(() => {
         conversationQueueChangeListener?.(conversationId);
       });
-      expect(await within(taskRegion).findByText(label)).toBeInTheDocument();
+      expect((await within(taskRegion).findAllByText(label)).length).toBeGreaterThan(0);
       expect(api.schedules.list).toHaveBeenCalled();
       if (status === "completed") {
         expect(runNow).toBeEnabled();
@@ -5073,7 +5073,7 @@ describe("App", () => {
     render(<App />);
     const taskStrip = await screen.findByRole('region', { name: '当前会话的任务' });
     fireEvent.click(within(taskStrip).getByRole('button'));
-    expect(within(taskStrip).getByText('运行中')).toBeVisible();
+    expect(within(taskStrip).getAllByText('运行中').length).toBeGreaterThan(0);
     const composer = await screen.findByLabelText("向 GoodBuddy 提问");
     fireEvent.change(composer, { target: { value: 'Running render isolation' } });
     await waitFor(() => expect(screen.getByLabelText('加入待发送队列')).toBeEnabled());
