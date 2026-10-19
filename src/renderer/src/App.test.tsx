@@ -7636,27 +7636,25 @@ describe("App", () => {
     });
   });
 
-  it("associates attachment errors with the Composer controls", async () => {
+  it("shows attachment selection failures in application notifications and preserves the draft", async () => {
     vi.mocked(api.context.selectFiles).mockRejectedValueOnce(
-      new Error("文件解析失败，请重新选择"),
+      new Error("Error invoking remote method 'context:select-files': Error: 不支持的文件类型：.mp3"),
     );
     render(<App />);
 
     const addButton = await screen.findByLabelText("添加附件");
     const input = screen.getByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(input, { target: { value: "Keep this draft" } });
     fireEvent.click(addButton);
 
-    const error = await screen.findByRole("alert", {
-      name: "文件解析失败，请重新选择",
-    });
-    expect(error).toHaveAttribute("id", "composer-context-error");
-    expect(input).toHaveAttribute("aria-invalid", "true");
-    expect(input).toHaveAttribute("aria-describedby", "composer-context-error");
-    expect(addButton).toHaveAttribute("aria-invalid", "true");
-    expect(addButton).toHaveAttribute(
-      "aria-describedby",
-      "composer-context-error",
-    );
+    const notifications = await screen.findByRole("region", { name: "应用通知" });
+    expect(within(notifications).getByRole("alert")).toHaveTextContent("不支持的文件类型：.mp3");
+    expect(screen.queryByText(/Error invoking remote method/u)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(input).not.toHaveAttribute("aria-invalid", "true");
+    expect(addButton).not.toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveValue("Keep this draft");
+    await waitFor(() => expect(addButton).toBeEnabled());
   });
 
   it("sends and renders five selected images together", async () => {
@@ -7751,9 +7749,13 @@ describe("App", () => {
     fireEvent.change(input, { target: { value: "Keep this draft" } });
     const file = new File(["archive"], "archive.zip");
     vi.mocked(api.context.getFilePath).mockReturnValueOnce("C:\\archive.zip");
-    vi.mocked(api.context.importFiles).mockRejectedValueOnce(new Error("不支持的文件类型：.zip"));
+    vi.mocked(api.context.importFiles).mockRejectedValueOnce(new Error("Error invoking remote method 'context:import-files': Error: 不支持的文件类型：.zip"));
     fireEvent.paste(input, { clipboardData: { files: [file] } });
-    expect(await screen.findByRole("alert", { name: "不支持的文件类型：.zip" })).toBeInTheDocument();
+    const notifications = await screen.findByRole("region", { name: "应用通知" });
+    expect(within(notifications).getByRole("alert")).toHaveTextContent("不支持的文件类型：.zip");
+    expect(screen.queryByText(/Error invoking remote method/u)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(input).not.toHaveAttribute("aria-invalid", "true");
     expect(input).toHaveValue("Keep this draft");
     await waitFor(() => expect(screen.getByLabelText("添加附件")).toBeEnabled());
     fireEvent.paste(input, { clipboardData: { files: Array(9).fill(file) } });

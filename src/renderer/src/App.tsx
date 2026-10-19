@@ -5627,11 +5627,10 @@ function App(): React.JSX.Element {
         setContextError(t("composer.errors.attachmentLimit"));
       }
     } catch (reason) {
-      setContextError(
-        reason instanceof Error
-          ? reason.message
-          : t("composer.errors.addContext"),
-      );
+      notify({
+        tone: "error",
+        message: displayErrorMessage(reason, t("composer.errors.addContext")),
+      });
     }
   };
 

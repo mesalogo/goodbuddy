@@ -22,6 +22,9 @@ Main。IPC 先验证可信 sender，再使用共享 `contextImportFilesSchema` �
 两种文件入口均发送 `context:file-selection-progress`。Renderer 共用正在导入状态、
 附件上限处理和附件清理逻辑，解析期间禁用附件按钮并阻止发送。成功结果加入发起操作的
 会话草稿；发送时通过已有 `contextIds` 和 `ContextManager.enrichRequest` 生成请求上下文。
+附件添加的异步失败通过右上角应用错误通知显示，使用共享 `displayErrorMessage` 去除
+Electron IPC 错误前缀，保留文字草稿和已有附件，不重复显示为输入框错误。
+附件数量限制等就地校验仍在输入区提示。
 本次变更不修改 Agent、远端协议或 Runtime 的附件消费实现。
 
 ## 2026-09-19 生产更新
