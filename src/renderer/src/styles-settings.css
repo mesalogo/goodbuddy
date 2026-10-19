@@ -485,58 +485,12 @@
   box-shadow: var(--shadow-card);
 }
 
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
-  background: var(--surface-raised);
-  gap: var(--space-4);
-}
-
 .settings-panel .settings-section .settings-section {
   padding: var(--space-4) 0 0;
   border: 0;
   border-top: 1px solid var(--border-subtle);
   border-radius: 0;
   background: transparent;
-}
-
-.settings-section__title {
-  display: flex;
-  align-items: center;
-  color: var(--text-secondary);
-  gap: var(--space-2);
-}
-
-.settings-section__title > div {
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-section__title--actions > div {
-  flex: 1;
-}
-
-.settings-section__title--actions .secondary-button {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  color: var(--accent);
-  gap: 5px;
-}
-
-.settings-section__title strong {
-  color: var(--text-primary);
-  font-size: var(--font-section-title);
-}
-
-.settings-section__title small {
-  margin-top: var(--space-1);
-  color: var(--text-secondary);
-  font-size: var(--font-caption);
-  line-height: 1.5;
 }
 
 .ssh-hosts-settings {
@@ -1888,38 +1842,6 @@
   }
 }
 
-details.settings-section {
-  padding: 0;
-  gap: 0;
-}
-
-details.settings-section > summary {
-  padding: var(--space-4);
-  color: var(--text-primary);
-  cursor: pointer;
-  font-size: var(--font-body);
-  font-weight: 650;
-  line-height: 1.4;
-}
-
-details.settings-section[open] {
-  padding-bottom: var(--space-4);
-}
-
-details.settings-section[open] > summary {
-  margin-bottom: var(--space-4);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-details.settings-section > :not(summary) {
-  margin-right: var(--space-4);
-  margin-left: var(--space-4);
-}
-
-details.settings-section > :not(summary) + :not(summary) {
-  margin-top: var(--space-3);
-}
-
 .model-connection-manager {
   display: grid;
   container: model-connections / inline-size;
@@ -2090,10 +2012,6 @@ details.settings-section > :not(summary) + :not(summary) {
   min-height: 240px;
   font-family: inherit;
   line-height: 1.6;
-}
-
-.field-error {
-  color: var(--danger) !important;
 }
 
 .role-prompt-detail__actions {
@@ -3113,6 +3031,10 @@ details.settings-section > :not(summary) + :not(summary) {
   gap: var(--space-1);
 }
 
+.document-ocr-model__actions .danger-ghost:disabled {
+  color: var(--text-muted);
+}
+
 .document-ocr-model__actions .danger-ghost:hover {
   border-color: var(--danger-border);
   background: var(--danger-subtle);
@@ -3284,55 +3206,6 @@ details.settings-section > :not(summary) + :not(summary) {
   background: var(--surface-raised);
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  color: var(--text-primary);
-  gap: 7px;
-}
-
-.field > span {
-  font-size: var(--font-caption);
-  font-weight: 650;
-}
-
-.field input:not(:where([type='checkbox'], [type='radio'])),
-.field textarea,
-.field select,
-.field-control {
-  width: 100%;
-  min-height: 38px;
-  padding: 0 11px;
-  border: 1px solid var(--border-control);
-  border-radius: 9px;
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  font-size: var(--font-body);
-}
-
-.field input:not(:where([type='checkbox'], [type='radio'])):focus,
-.field textarea:focus,
-.field select:focus,
-.field-control:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
-}
-
-.field input:not(:where([type='checkbox'], [type='radio'])):disabled,
-.field textarea:disabled,
-.field select:disabled,
-.field-control:disabled {
-  background: var(--surface-muted);
-  color: var(--text-muted);
-}
-
-.field textarea,
-textarea.field-control {
-  padding-top: 9px;
-  padding-bottom: 9px;
-  resize: vertical;
-}
-
 .supervision-discussion-editor {
   display: grid;
   gap: var(--space-4);
@@ -3365,12 +3238,6 @@ textarea.field-control {
   border-top: 0;
 }
 
-.field small {
-  color: var(--text-muted);
-  font-size: var(--font-caption);
-  line-height: 1.45;
-}
-
 .credential-state {
   display: flex;
   align-items: center;
@@ -3397,25 +3264,6 @@ textarea.field-control {
 
 .credential-state button:hover {
   background: var(--danger-subtle);
-}
-
-.settings-warning {
-  padding: 9px 10px;
-  border: 1px solid var(--warning-border);
-  border-radius: 8px;
-  margin: 0;
-  background: var(--warning-subtle);
-  color: var(--text-secondary);
-  font-size: 10px;
-  line-height: 1.55;
-}
-
-.settings-notice,
-.settings-empty {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 10px;
-  line-height: 1.55;
 }
 
 .capability-list {
@@ -4210,72 +4058,6 @@ textarea.field-control {
   color: var(--text-secondary);
   font-size: var(--font-caption);
   gap: var(--space-1);
-}
-
-.toggle-row {
-  display: flex;
-  min-height: 36px;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: var(--font-body);
-  gap: var(--space-3);
-}
-
-.toggle-row > input[role='switch'] {
-  order: 1;
-  margin-inline-start: auto;
-}
-
-.toggle-row input {
-  position: relative;
-  min-width: 38px;
-  width: 38px;
-  min-height: 22px;
-  height: 22px;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--border-control);
-  border-radius: 999px;
-  appearance: none;
-  background: var(--surface-muted);
-  cursor: pointer;
-  flex: 0 0 auto;
-  transition:
-    border-color var(--motion-fast) ease-out,
-    background-color var(--motion-fast) ease-out;
-}
-
-.toggle-row input::after {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--surface-raised);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 24%);
-  content: '';
-  left: 2px;
-  top: 2px;
-  transition: transform var(--motion-fast) ease-out;
-}
-
-.toggle-row input:checked {
-  border-color: var(--accent-solid);
-  background: var(--accent-solid);
-}
-
-.toggle-row input:checked::after {
-  transform: translateX(16px);
-}
-
-.toggle-row input:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.toggle-row:has(input:disabled) {
-  cursor: not-allowed;
 }
 
 .runtime-assignments {

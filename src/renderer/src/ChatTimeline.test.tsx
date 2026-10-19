@@ -330,7 +330,7 @@ describe('ChatTimeline', () => {
       '.tool-execution__details', '.tool-execution__details section',
       '.subagent-status-list', '.subagent-status-card__details',
       '.subagent-status-card__progress', '.subagent-status-card__details section']) {
-      const rule = stylesheet.slice(stylesheet.indexOf(`${selector} {`)).split('}')[0]
+      const rule = stylesheet.slice(stylesheet.indexOf(`\n${selector} {`)).split('}')[0]
       expect(rule).toContain('grid-template-columns: minmax(0, 1fr)')
       if (selector.startsWith('.subagent-')) {
         expect(rule).toContain('min-width: 0')

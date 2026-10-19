@@ -1316,8 +1316,9 @@
   background: var(--surface-raised);
 }
 
-.assistant-sidebar__preview pre,
-.assistant-sidebar__result pre {
+/* Rendered markdown keeps the shared code block style. */
+.assistant-sidebar__preview pre:where(:not(.markdown-content pre)),
+.assistant-sidebar__result pre:where(:not(.markdown-content pre)) {
   padding: 10px;
   overflow: auto;
   border-radius: 8px;

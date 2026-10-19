@@ -1938,7 +1938,8 @@
   font-size: var(--font-caption);
 }
 
-.magic-note-comment p {
+/* Markdown paragraphs in AI comments keep the shared markdown spacing. */
+.magic-note-comment p:where(:not(.markdown-content p)) {
   margin: var(--space-1) 0 0;
   color: var(--text-secondary);
   font-size: var(--font-body);

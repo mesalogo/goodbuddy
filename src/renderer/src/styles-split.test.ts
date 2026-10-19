@@ -121,9 +121,9 @@ describe('split stylesheet declarations and import order', () => {
     entry.walkAtRules('import', (rule) => { imports.push(rule.params.replace(/^['"]\.\/|['"]$/g, '')) })
     expect(imports).toEqual([
       'styles-foundations.css',
+      'styles-workspace-common.css',
       'styles-app-shell.css',
       'styles-chat.css',
-      'styles-workspace-common.css',
       'styles-knowledge.css',
       'styles-magic-notes.css',
       'styles-workbar.css',
@@ -132,6 +132,22 @@ describe('split stylesheet declarations and import order', () => {
     ])
     const first = entry.first
     expect(first?.type === 'atrule' && first.name === 'import').toBe(true)
+  })
+
+  it('loads shared controls before domain rules so domain overrides win', () => {
+    const shared = rules.find((rule) => rule.selectors.includes('.secondary-button') && rule.parent?.type === 'root')
+    const mobileBack = rules.find((rule) => rule.selector === '.knowledge-workspace__mobile-back' && rule.parent?.type === 'root')
+    if (!shared || !mobileBack) throw new Error('Missing shared button or knowledge mobile back rule')
+    expect(rules.indexOf(shared)).toBeLessThan(rules.indexOf(mobileBack))
+    expect(declarations('.knowledge-workspace__mobile-back').display).toBeDefined()
+    const pairs: Array<[string, string]> = [['.settings-section', '.settings-section--danger'], ['.toggle-row', '.knowledge-settings__toggle'],
+      ['.knowledge-source-row__status', '.knowledge-source-row__status--ready']]
+    for (const [base, state] of pairs) {
+      const baseIndex = rules.findIndex((rule) => rule.selectors.includes(base) && rule.parent?.type === 'root')
+      const stateIndex = rules.findIndex((rule) => rule.selectors.includes(state) && rule.parent?.type === 'root')
+      expect(baseIndex, base).toBeGreaterThanOrEqual(0)
+      expect(baseIndex, `${base} before ${state}`).toBeLessThan(stateIndex)
+    }
   })
 
   it('keeps the global focus ring after the domain files without overriding the composer input', () => {

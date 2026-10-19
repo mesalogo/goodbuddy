@@ -1,7 +1,7 @@
 @import './styles-foundations.css';
+@import './styles-workspace-common.css';
 @import './styles-app-shell.css';
 @import './styles-chat.css';
-@import './styles-workspace-common.css';
 @import './styles-knowledge.css';
 @import './styles-magic-notes.css';
 @import './styles-workbar.css';
@@ -57,121 +57,6 @@ textarea:focus-visible {
   .mcp-editor
 ) {
   scrollbar-gutter: stable;
-}
-
-.settings-error {
-  color: var(--danger);
-}
-
-.settings-success {
-  display: flex;
-  align-items: center;
-  color: var(--success);
-  gap: 5px;
-}
-
-.primary-button,
-.secondary-button,
-.danger-solid,
-.danger-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--control-height);
-  padding: 0 13px;
-  border-radius: var(--radius-control);
-  cursor: pointer;
-  font-size: var(--font-caption);
-  font-weight: 650;
-  gap: var(--space-2);
-}
-
-.primary-button {
-  background: var(--accent-solid);
-  color: var(--text-on-accent);
-}
-
-.primary-button:hover:not(:disabled) {
-  background: var(--accent-solid-hover);
-}
-
-.primary-button:disabled,
-.secondary-button:disabled,
-.danger-solid:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.secondary-button {
-  border: 1px solid var(--border-control);
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-}
-
-.danger-solid {
-  border: 1px solid var(--danger-solid);
-  background: var(--danger-solid);
-  color: var(--text-on-accent);
-}
-
-.danger-solid:hover:not(:disabled) {
-  border-color: var(--danger-solid-hover);
-  background: var(--danger-solid-hover);
-}
-
-.danger-ghost {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--control-height);
-  padding: 0 var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--danger);
-  cursor: pointer;
-  font-size: var(--font-caption);
-  font-weight: 650;
-  gap: var(--space-2);
-}
-
-.danger-ghost:hover {
-  border-color: var(--danger-border);
-  background: var(--danger-subtle);
-}
-
-.danger-ghost:disabled {
-  border-color: transparent;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: not-allowed;
-  opacity: 0.65;
-}
-
-.danger-ghost.icon-button {
-  padding: 0;
-}
-
-.danger-button {
-  align-self: flex-end;
-  border: 1px solid var(--danger-solid);
-  background: var(--danger-solid);
-  color: var(--text-on-accent);
-}
-
-.danger-button:hover:not(:disabled) {
-  filter: brightness(1.06);
-}
-
-.danger-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.danger-button--quiet {
-  border-color: var(--danger-border);
-  background: var(--danger-subtle);
-  color: var(--danger);
 }
 
 :root[data-theme='dark'] :where(.app-frame, .app-shell, .app-content) {
