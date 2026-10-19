@@ -10,13 +10,12 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  ArrowDown,
   ArrowLeft,
-  ArrowUp,
   Cpu,
   Network,
   HeartPulse,
   Library,
+  Search,
   Server,
   Settings,
   Sparkles,
@@ -25,7 +24,9 @@ import {
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
 import {
+  applicationDisplayOrder,
   defaultApplicationNavigation,
+  isApplicationPinned,
   type ApplicationSettings,
   type ApplicationSettingsUpdate,
   type BuiltInApplicationId,
@@ -171,12 +172,12 @@ export function ApplicationSettingsView({
           />
           <span>{t(id === 'remote-hosts' ? 'applications.remoteHostsEnable' : 'applications.enable')}</span>
         </label>
-        {id !== 'device-sharing' && <div className="inline-help-label">
+        <div className="inline-help-label">
           <label className="toggle-row">
             <input
               role="switch"
               type="checkbox"
-              checked={navigation.pinned[id]}
+              checked={isApplicationPinned(navigation, id)}
               aria-describedby="application-pin-help"
               disabled={pending}
               onChange={(event) =>
@@ -191,7 +192,7 @@ export function ApplicationSettingsView({
             <span>{t('applications.pin')}</span>
           </label>
           <InlineHelp label={t('applications.pin')} id="application-pin-help">{t('applications.pinHelp')}</InlineHelp>
-        </div>}
+        </div>
         <p className="settings-notice">{t(id === 'device-sharing' ? 'applications.deviceSharingHelp' : id === 'remote-hosts' ? 'applications.remoteHostsHelp' : 'applications.disableHelp')}</p>
         {id === 'magic-notes' && (
           <label className="toggle-row">
@@ -343,8 +344,6 @@ export function ApplicationCenter({
     ? selected as ProjectChannel
     : undefined
   const selectedApplication = selectedChannel ? undefined : selected as EditableApplicationId | undefined
-  const [dragged, setDragged] = useState<BuiltInApplicationId>()
-  const [announcement, setAnnouncement] = useState('')
   const dialog = useRef<HTMLElement>(null)
   const body = useRef<HTMLDivElement>(null)
   const search = useRef<HTMLInputElement>(null)
@@ -365,12 +364,12 @@ export function ApplicationCenter({
   const editingDisabled = pending || locked
   const results = useMemo(
     () =>
-      navigation.order.filter((id) =>
+      applicationDisplayOrder.filter((id) =>
         `${t(applicationDefinitions[id].title)} ${t(`applications.descriptions.${id}`)}`
           .toLocaleLowerCase()
           .includes(query.trim().toLocaleLowerCase()),
       ),
-    [navigation.order, query, t],
+    [query, t],
   )
   const platformResults = useMemo(
     () =>
@@ -388,21 +387,16 @@ export function ApplicationCenter({
       project.kind === 'channel' && project.channel ? [project.channel] : []) ?? []),
     [platform?.projects],
   )
-  const move = async (
-    from: BuiltInApplicationId,
-    to: BuiltInApplicationId,
-  ): Promise<void> => {
-    if (editingDisabled || from === to) return
-    const order = [...navigation.order]
-    order.splice(order.indexOf(from), 1)
-    order.splice(navigation.order.indexOf(to), 0, from)
-    if (await onUpdate({ applicationNavigation: { ...navigation, order } }))
-      setAnnouncement(t('applications.orderUpdated'))
+  const setPinned = (id: BuiltInApplicationId, pinned: boolean): void => {
+    void onUpdate({ applicationNavigation: { ...navigation, pinned: { ...navigation.pinned, [id]: pinned } } })
+  }
+  const setEnabled = (id: EditableApplicationId, enabled: boolean): void => {
+    void onUpdate({ [applicationDefinitions[id].enabled]: enabled })
   }
   // Settings detail mirrors the system settings dialog: every configurable
   // app in a vertical tab list, the selected app's settings on the right.
   const detailTabs: { id: EditableApplicationId | ProjectChannel; label: string; group: 'work' | 'platform' }[] = [
-    ...navigation.order
+    ...applicationDisplayOrder
       .filter((id): id is EditableApplicationId => id !== 'knowledge')
       .map((id) => ({ id, label: t(applicationDefinitions[id].title), group: 'work' as const })),
     ...(platform
@@ -577,11 +571,13 @@ export function ApplicationCenter({
           ) : (
             <>
               <label className="application-center__search">
-                <span>{t('applications.search')}</span>
+                <Search size={16} aria-hidden="true" />
                 <input
                   ref={search}
                   type="search"
                   value={query}
+                  placeholder={t('applications.search')}
+                  aria-label={t('applications.search')}
                   onChange={(event) => setQuery(event.target.value)}
                 />
               </label>
@@ -597,95 +593,82 @@ export function ApplicationCenter({
                   </button>
                 </div>
               )}
-              <div className="application-center__grid">{results.map((id) => {
+              {results.length > 0 && (
+              <section className="application-center__group" aria-labelledby="application-center-builtin-heading">
+              <h2 id="application-center-builtin-heading">{t('applications.builtinGroup')}</h2>
+              <div className="application-center__cards">{results.map((id) => {
                 const definition = applicationDefinitions[id]
                 const Icon = definition.icon
                 const enabled = isApplicationEnabled(settings, id)
-                const alwaysShown = id === 'knowledge'
+                const title = t(definition.title)
                 return (
-                  <article
-                    className="application-center__item"
-                    key={id}
-                    draggable={!editingDisabled && !query}
-                    onDragStart={() => { if (!editingDisabled && !query) setDragged(id) }}
-                    onDragEnd={() => setDragged(undefined)}
-                    onDragOver={(event) => {
-                      if (dragged && !editingDisabled && !query) event.preventDefault()
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault()
-                      if (dragged && !query) void move(dragged, id)
-                      setDragged(undefined)
-                    }}
-                  >
-                    <div className="application-center__summary">
-                      <Icon size={22} aria-hidden="true" />
-                      <div>
-                        <div className="application-center__title">
-                          <strong>{t(definition.title)}</strong>
-                          <small>
-                            {alwaysShown
-                              ? t('applications.alwaysShown')
-                              : `${t('applications.optional')} · ${t(enabled ? 'applications.enabled' : 'applications.disabled')}`}
-                          </small>
-                        </div>
+                  <article className={`application-card${enabled ? '' : ' application-card--off'}`} key={id}>
+                    <div className="application-card__body">
+                      <span className="application-card__icon"><Icon size={20} aria-hidden="true" /></span>
+                      <div className="application-card__copy">
+                        <strong>{title}</strong>
                         <p>{t(`applications.descriptions.${id}`)}</p>
                       </div>
                     </div>
-                    <div className="application-center__actions">
+                    <footer className="application-card__footer">
+                      {id !== 'knowledge' && (
+                        <label className="toggle-row application-card__switch">
+                          <input
+                            role="switch"
+                            type="checkbox"
+                            checked={enabled}
+                            disabled={editingDisabled}
+                            aria-label={t('applications.enableNamed', { name: title })}
+                            onChange={(event) => setEnabled(id, event.target.checked)}
+                          />
+                          <span>{t('applications.enableShort')}</span>
+                        </label>
+                      )}
+                      <label className="toggle-row application-card__switch" title={t('applications.pinHelp')}>
+                        <input
+                          role="switch"
+                          type="checkbox"
+                          checked={isApplicationPinned(navigation, id)}
+                          disabled={editingDisabled}
+                          aria-label={t('applications.pinNamed', { name: title })}
+                          onChange={(event) => setPinned(id, event.target.checked)}
+                        />
+                        <span>{t('applications.pinShort')}</span>
+                      </label>
+                      <span className="application-card__spacer" />
                       <button
-                        className="secondary-button"
+                        className="secondary-button application-card__open"
                         type="button"
                         disabled={!isApplicationOpenable(settings, id)}
+                        aria-label={t('applications.openNamed', { name: title })}
                         onClick={() => onOpen(id)}
                       >
                         {t('applications.open')}
                       </button>
                       {id !== 'knowledge' && (
                         <button
-                          className="secondary-button"
+                          className="icon-button"
                           type="button"
                           title={t('applications.settings')}
-                          aria-label={`${t(definition.title)} ${t('applications.settings')}`}
+                          aria-label={`${title} ${t('applications.settings')}`}
                           onClick={() => setSelected(id)}
                         >
                           <Settings size={16} aria-hidden="true" />
-                          {t('applications.settings')}
                         </button>
                       )}
-                      <div className="application-center__order">
-                        {([-1, 1] as const).map((offset) => {
-                          const target = navigation.order[navigation.order.indexOf(id) + offset]
-                          const MoveIcon = offset === -1 ? ArrowUp : ArrowDown
-                          const label = t(offset === -1 ? 'applications.moveUp' : 'applications.moveDown', {
-                            name: t(definition.title),
-                          })
-                          return (
-                            <button
-                              key={offset}
-                              className="icon-button"
-                              type="button"
-                              aria-label={label}
-                              title={label}
-                              disabled={editingDisabled || !target}
-                              onClick={() => { if (target) void move(id, target) }}
-                            >
-                              <MoveIcon size={16} aria-hidden="true" />
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
+                    </footer>
                   </article>
                 )
               })}</div>
+              </section>
+              )}
               {platform && platformResults.length > 0 && (
                 <section
                   className="application-center__group"
                   aria-labelledby="application-center-platform-heading"
                 >
                   <h2 id="application-center-platform-heading">{t('applications.platformGroup')}</h2>
-                  <div className="application-center__grid">
+                  <div className="application-center__cards">
                     <Suspense fallback={<p role="status">{t('route.loading')}</p>}>
                       <PlatformApplicationRows
                         channels={platformResults}
@@ -699,7 +682,6 @@ export function ApplicationCenter({
               )}
             </>
           )}
-          <span className="sr-only" role="status">{announcement}</span>
         </div>
         )}
       </section>

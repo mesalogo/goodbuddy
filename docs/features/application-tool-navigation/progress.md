@@ -1,5 +1,11 @@
 # 应用导航实施进度
 
+## 2026-10-19：应用中心卡片化，取消排序
+
+对应 FR-3、FR-11、FR-12。应用中心改为卡片网格（弹窗最大宽 `1040px`），分为“内置应用”和“平台应用”两组。取消上下移动和拖动排序：内置应用固定按 `applicationDisplayOrder` 排列，侧栏和应用菜单使用同一顺序。`isApplicationPinned` 统一判断是否常驻；`pinned` 新增 `knowledge`（默认 true）和 `device-sharing`（默认 false）。旧的 `order` 仍写在设置文件里，但不再读取。卡片底部提供启用和常驻开关、“打开”和设置按钮；知识库只有“常驻菜单”和“打开”。已关闭的应用卡片图标和标题变灰。本条替代下方各记录中的排序规则。
+
+验证：`npx vitest run src/renderer/src/ApplicationCenter.test.tsx src/renderer/src/ApplicationMenu.test.tsx` 共 28 项通过；`src/main/application-settings-store.test.ts` 和 `App.test.tsx` 中侧栏常驻与顺序相关的用例通过。Web 类型检查中本次改动的文件没有错误。用临时 esbuild 加 Electron fixture 渲染应用中心并截图检查，数据为模拟数据，不调用真实 IPC：1180px 宽度下三列，卡片底部一行放得下。未运行全量测试，也未验收安装包。
+
 ## 2026-10-05：展开状态缓存复查
 
 独立复查发现，首次 A10 修复在每个折叠项挂载时保存默认值；无引用的消息也会因引用 Hook 留下一条记录。下节首次验收只检查了 DOM 上限，没有覆盖这部分缓存。新增回归在该实现上失败：分批挂载 10,000 个未操作的消息作用域后，预期缓存为 0，实际为 10,000；恢复默认状态后也没有释放条目。

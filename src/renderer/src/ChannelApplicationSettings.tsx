@@ -943,12 +943,20 @@ const PlatformApplicationStatus = memo(function PlatformApplicationStatus({
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
   const status = useChannelStatus(store, channel, snapshot[channel].status)
+  const configured = isChannelConfigured(channel, snapshot)
+  const tone = !configured ? 'idle'
+    : !snapshot[channel].enabled ? 'off'
+      : status.state === 'running' ? 'ok'
+        : status.state === 'error' ? 'error'
+          : status.state === 'starting' ? 'busy' : 'off'
   return (
-    <>
-      {isChannelConfigured(channel, snapshot)
-        ? t(`channels.status.${status.state}`)
+    <span className="application-card__status" data-tone={tone}>
+      {configured
+        ? snapshot[channel].enabled
+          ? t(`channels.status.${status.state}`)
+          : t('applications.disabled', { ns: 'app' })
         : t('channels.telegram.unconfigured')}
-    </>
+    </span>
   )
 })
 
@@ -977,7 +985,7 @@ function PlatformCapabilityTags({ channel, snapshot }: { channel: ProjectChannel
   }
   if (channel === 'feishu' && feishu?.credentialsConfigured) {
     const on = feishuToolCategories.filter(category => feishu.settings.categories[category] && feishuCategoryUsable(category, feishu.settings.categories))
-    tags.push(...on.map(category => t(`feishu.categories.${category}.label`)))
+    tags.push(t('channels.platformTags.tools', { count: on.length }))
   } else if (channel === 'wecom' && wecom) {
     if (wecom.authorization.state === 'authorized') {
       const on = wecomToolCategories.filter(category => wecom.settings.categories[category])
@@ -995,7 +1003,17 @@ function PlatformCapabilityTags({ channel, snapshot }: { channel: ProjectChannel
   )
 }
 
-/** Platform application rows shown in the application center. */
+/** The application switch for one platform: the channel's enabled state, all other settings unchanged. */
+function enableInput(channel: ProjectChannel, snapshot: ChannelSettingsSnapshot, enabled: boolean): ChannelSettingsApply {
+  if (channel === 'weixin') return { weixin: { enabled } }
+  const draft = { ...draftFromSnapshot(channel, snapshot), enabled }
+  return channel === 'wecom' ? { wecom: inputFor('wecom', draft) }
+    : channel === 'dingtalk' ? { dingtalk: inputFor('dingtalk', draft) }
+      : channel === 'feishu' ? { feishu: inputFor('feishu', draft) }
+        : { telegram: inputFor('telegram', draft) }
+}
+
+/** Platform application cards shown in the application center. */
 export function PlatformApplicationRows({
   channels,
   canOpen,
@@ -1009,74 +1027,96 @@ export function PlatformApplicationRows({
 }): React.JSX.Element {
   const { t } = useTranslation(['integrations', 'app'])
   const [error, setError] = useState<string>()
-  const { snapshot, statusStore } = useChannelSettingsData(setError)
+  const [switching, setSwitching] = useState<ProjectChannel>()
+  const { snapshot, statusStore, applySnapshot } = useChannelSettingsData(setError)
+  const toggle = async (channel: ProjectChannel, enabled: boolean): Promise<void> => {
+    const api = window.goodbuddy?.channels
+    if (!api || !snapshot) return
+    setSwitching(channel)
+    setError(undefined)
+    try {
+      applySnapshot(await api.apply(enableInput(channel, snapshot, enabled)))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('channels.saveError'))
+    } finally {
+      setSwitching(undefined)
+    }
+  }
   return (
     <>
-      {error && <p className="settings-warning" role="alert">{error}</p>}
+      {error && <p className="settings-warning application-center__wide" role="alert">{error}</p>}
       {channels.map((channel) => {
         const title = t(`channels.tabs.${channel}`)
         const configured = snapshot ? isChannelConfigured(channel, snapshot) : false
         const enabled = snapshot ? snapshot[channel].enabled : false
+        const readOnly = snapshot && channel !== 'weixin' ? snapshot[channel].readOnly : false
         const account = snapshot && configured ? platformAccount(channel, snapshot) : undefined
         const opensPanel = channel === 'feishu' || channel === 'wecom'
         return (
-          <article className="application-center__item" key={channel}>
-            <div className="application-center__summary">
-              <ChannelIcon channel={channel} size={22} />
-              <div>
-                <div className="application-center__title">
-                  <strong>{title}</strong>
-                  <small>
-                    {t('applications.platform', { ns: 'app' })}
-                    {snapshot && <>
-                      {' · '}
-                      {configured && !enabled
-                        ? t('applications.disabled', { ns: 'app' })
-                        : <PlatformApplicationStatus channel={channel} snapshot={snapshot} store={statusStore} />}
-                    </>}
-                  </small>
-                </div>
-                <p>{account ? t('channels.platformTags.account', { account }) : t(`applications.descriptions.${channel}`, { ns: 'app' })}</p>
+          <article className={`application-card${configured && enabled ? '' : ' application-card--off'}`} key={channel}>
+            <div className="application-card__body">
+              <span className="application-card__icon"><ChannelIcon channel={channel} size={20} /></span>
+              <div className="application-card__copy">
+                <strong>{title}</strong>
+                <small className="application-card__meta">
+                  {snapshot
+                    ? <PlatformApplicationStatus channel={channel} snapshot={snapshot} store={statusStore} />
+                    : t('channels.loading')}
+                  {account && <span className="application-card__account" title={account}>{account}</span>}
+                </small>
+                <p title={t(`applications.descriptions.${channel}`, { ns: 'app' })}>{t(`applications.descriptions.${channel}`, { ns: 'app' })}</p>
                 {snapshot && configured && <PlatformCapabilityTags channel={channel} snapshot={snapshot} />}
-                {configured && <small className="application-center__hint">
-                  {t(opensPanel ? 'channels.platformTags.opensPanel' : 'channels.platformTags.opensProject')}
-                </small>}
               </div>
             </div>
-            <div className="application-center__actions">
+            <footer className="application-card__footer">
               {snapshot && !configured ? (
-                <button className="primary-button" type="button" onClick={() => onSettings(channel)}
-                  aria-label={`${t('channels.platformTags.connect')} ${title}`}>
-                  {t('channels.platformTags.connect')}
-                </button>
+                <>
+                  <span className="application-card__spacer" />
+                  <button className="primary-button application-card__open" type="button" onClick={() => onSettings(channel)}
+                    aria-label={`${t('channels.platformTags.connect')} ${title}`}>
+                    {t('channels.platformTags.connect')}
+                  </button>
+                </>
               ) : (
                 <>
+                  <label className="toggle-row application-card__switch">
+                    <input
+                      role="switch"
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={!snapshot || readOnly || switching !== undefined}
+                      aria-label={t('applications.enableNamed', { ns: 'app', name: title })}
+                      onChange={(event) => void toggle(channel, event.target.checked)}
+                    />
+                    <span>{t('applications.enableShort', { ns: 'app' })}</span>
+                  </label>
+                  <span className="application-card__spacer" />
                   <button
-                    className="secondary-button"
+                    className="secondary-button application-card__open"
                     type="button"
                     disabled={!enabled || !canOpen(channel)}
-                    title={!enabled ? t('channels.platformTags.offHelp') : t(opensPanel ? 'channels.platformTags.opensPanel' : 'applications.openChannelHelp', { ns: opensPanel ? 'integrations' : 'app' })}
+                    title={!enabled ? t('channels.platformTags.offHelp') : t(opensPanel ? 'channels.platformTags.opensPanel' : 'channels.platformTags.opensProject')}
+                    aria-label={t('applications.openNamed', { ns: 'app', name: title })}
                     onClick={() => onOpen(channel)}
                   >
                     {t('applications.open', { ns: 'app' })}
                   </button>
                   <button
-                    className="secondary-button"
+                    className="icon-button"
                     type="button"
                     title={t('applications.settings', { ns: 'app' })}
                     aria-label={`${title} ${t('applications.settings', { ns: 'app' })}`}
                     onClick={() => onSettings(channel)}
                   >
                     <Settings size={16} aria-hidden="true" />
-                    {t('applications.settings', { ns: 'app' })}
                   </button>
                 </>
               )}
-            </div>
+            </footer>
           </article>
         )
       })}
-      <p className="application-center__footnote">{t('channels.platformTags.oneAccount')}</p>
+      <p className="application-center__footnote application-center__wide">{t('channels.platformTags.oneAccount')}</p>
     </>
   )
 }

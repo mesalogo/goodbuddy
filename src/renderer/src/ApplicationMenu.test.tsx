@@ -45,16 +45,15 @@ it('lists Hosts once settings load, even while remote capability is off', () => 
   expect(onOpen).toHaveBeenCalledWith('remote-hosts')
 })
 
-it('filters the shared order by enablement only, including reordered always-shown apps', () => {
+it('lists apps in the fixed order, filtered by enablement only and ignoring a saved custom order', () => {
   const value = { ...settings, magicNotesEnabled: true, localInferenceEnabled: true, heartbeatEnabled: true,
-    applicationNavigation: { order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'] as ApplicationSettings['applicationNavigation']['order'],
-       pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false, 'remote-hosts': false } } }
+    applicationNavigation: { ...settings.applicationNavigation, order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge', 'device-sharing', 'remote-hosts'] as ApplicationSettings['applicationNavigation']['order'] } }
   const onOpen = vi.fn()
   const { rerender } = render(<Harness value={value} onOpen={onOpen} />)
   fireEvent.click(screen.getByText('Launcher'))
-  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['本机推理监控', '监督者', '魔法笔记', '知识库', '管理应用'])
+  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['魔法笔记', '知识库', '监督者', '主机管理', '本机推理监控', '管理应用'])
   rerender(<Harness value={{ ...value, magicNotesEnabled: false }} onOpen={onOpen} />)
-  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['本机推理监控', '监督者', '知识库', '管理应用'])
+  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['知识库', '监督者', '主机管理', '本机推理监控', '管理应用'])
   fireEvent.click(screen.getByRole('menuitem', { name: '本机推理监控' }))
   expect(onOpen).toHaveBeenCalledWith('local-inference')
   expect(screen.queryByRole('menu')).not.toBeInTheDocument()

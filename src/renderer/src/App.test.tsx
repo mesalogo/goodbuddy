@@ -7030,7 +7030,8 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('button', { name: '应用' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }));
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '知识库' } });
-    expect(within(screen.getByRole('dialog')).queryByRole('switch')).not.toBeInTheDocument();
+    // 知识库 is always enabled: its card only has a pin switch.
+    expect(within(screen.getByRole('dialog')).getAllByRole('switch').map(item => item.getAttribute('aria-label'))).toEqual(['知识库常驻左侧菜单']);
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }));
     openComposerOptions();
     expect(screen.getByRole('button', { name: '选择知识库，本次已启用 1 个' })).toBeInTheDocument();
@@ -15079,35 +15080,27 @@ describe("App", () => {
     }
   });
 
-  it('shares card reorder saves with the launcher and filtered sidebar across reopening', async () => {
+  it('keeps the fixed sidebar and launcher order and toggles pins from the cards', async () => {
     const updates = api.updates!
-    await updates.updateSettings({ magicNotesEnabled: true })
+    await updates.updateSettings({ magicNotesEnabled: true, heartbeatEnabled: true })
     render(<App />)
     await screen.findByRole('button', { name: '魔法笔记' })
+    const nav = () => within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)
+    expect(nav()).toEqual(['对话', '魔法笔记', '知识库', '监督者', '运行记录'])
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    const move = screen.getByRole('button', { name: '下移 知识库' })
-    await waitFor(() => expect(move).toBeEnabled())
-    fireEvent.click(move)
-    await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' }).querySelector<HTMLElement>('.application-center__grid')!).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '监督者', '知识库', '魔法笔记', '本机推理监控', '设备共享（技术预览）', '主机管理',
-    ]))
-    await waitFor(() => expect(screen.getByRole('button', { name: '上移 本机推理监控' })).toBeEnabled())
-    const cards = within(screen.getByRole('dialog', { name: '应用中心' }).querySelector<HTMLElement>('.application-center__grid')!).getAllByRole('article')
-    fireEvent.dragStart(cards[3]!)
-    fireEvent.drop(cards[1]!)
-    await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' }).querySelector<HTMLElement>('.application-center__grid')!).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）', '主机管理',
-    ]))
-    expect((await updates.getSettings()).applicationNavigation.order).toEqual(['heartbeat', 'local-inference', 'knowledge', 'magic-notes', 'device-sharing', 'remote-hosts'])
+    const dialog = screen.getByRole('dialog', { name: '应用中心' })
+    expect(within(dialog).queryByRole('button', { name: /上移|下移/u })).not.toBeInTheDocument()
+    const pin = within(dialog).getByRole('switch', { name: '本机推理监控常驻左侧菜单' })
+    await waitFor(() => expect(pin).toBeEnabled())
+    fireEvent.click(pin)
+    await waitFor(() => expect(within(dialog).getByRole('switch', { name: '本机推理监控常驻左侧菜单' })).toBeChecked())
+    fireEvent.click(within(dialog).getByRole('switch', { name: '知识库常驻左侧菜单' }))
+    await waitFor(() => expect(within(dialog).getByRole('switch', { name: '知识库常驻左侧菜单' })).not.toBeChecked())
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
-    expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual([
-      '对话', '监督者', '知识库', '魔法笔记', '运行记录',
-    ])
+    expect(nav()).toEqual(['对话', '魔法笔记', '监督者', '本机推理监控', '运行记录'])
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
-    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '主机管理', '管理应用'])
-    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    expect(within(screen.getByRole('dialog', { name: '应用中心' }).querySelector<HTMLElement>('.application-center__grid')!).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '设备共享（技术预览）', '主机管理'])
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['魔法笔记', '知识库', '监督者', '主机管理', '本机推理监控', '管理应用'])
   })
 
   it('leaves device sharing on an external settings event and keeps it closed when re-enabled', async () => {
@@ -15136,12 +15129,10 @@ describe("App", () => {
     expect(screen.queryByRole('menuitem', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     const row = screen.getByText('设备共享（技术预览）', { exact: true }).closest('article')!
-    expect(within(row).getByRole('button', { name: '打开' })).toBeDisabled()
-    fireEvent.click(within(row).getByRole('button', { name: '设备共享（技术预览） 应用设置' }))
-    const enable = screen.getByRole('switch', { name: '启用应用' })
+    expect(within(row).getByRole('button', { name: '打开设备共享（技术预览）' })).toBeDisabled()
+    const enable = within(row).getByRole('switch', { name: '启用设备共享（技术预览）' })
     await waitFor(() => expect(enable).toBeEnabled())
     expect(enable).not.toBeChecked()
-    expect(screen.queryByRole('switch', { name: '常驻左侧菜单' })).not.toBeInTheDocument()
     fireEvent.click(enable)
     await waitFor(() => expect(enable).toBeChecked())
     expect(api.updates!.updateSettings).toHaveBeenCalledWith({ deviceSharingEnabled: true })

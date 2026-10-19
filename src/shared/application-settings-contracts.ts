@@ -41,19 +41,37 @@ export const builtInApplicationIds = ['magic-notes', 'knowledge', 'heartbeat', '
 export type BuiltInApplicationId = typeof builtInApplicationIds[number]
 export const editableApplicationIds = ['magic-notes', 'heartbeat', 'local-inference', 'device-sharing', 'remote-hosts'] as const
 export type EditableApplicationId = typeof editableApplicationIds[number]
+/**
+ * Fixed sidebar and menu order (after 对话, before 运行记录). The saved
+ * `order` field is kept for compatibility with older settings files but no
+ * longer decides anything.
+ */
+export const applicationDisplayOrder: readonly BuiltInApplicationId[] =
+  ['magic-notes', 'knowledge', 'heartbeat', 'remote-hosts', 'local-inference', 'device-sharing']
 export const defaultApplicationNavigation = {
   order: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference', 'device-sharing', 'remote-hosts'] as BuiltInApplicationId[],
-  pinned: { 'magic-notes': true, heartbeat: true, 'local-inference': false, 'remote-hosts': false }
+  pinned: { 'magic-notes': true, knowledge: true, heartbeat: true, 'local-inference': false, 'device-sharing': false, 'remote-hosts': false }
 }
+/** Shown in the sidebar? Knowledge is pinned unless explicitly turned off. */
+export function isApplicationPinned(
+  navigation: { pinned: Partial<Record<BuiltInApplicationId, boolean>> },
+  id: BuiltInApplicationId
+): boolean {
+  return navigation.pinned[id] ?? defaultApplicationNavigation.pinned[id]
+}
+
 export const applicationNavigationSchema = z.object({
   order: z.array(z.enum(builtInApplicationIds)).length(builtInApplicationIds.length)
     .refine(ids => new Set(ids).size === builtInApplicationIds.length, 'Each application must occur exactly once'),
   pinned: z.object({
     'magic-notes': z.boolean(),
+    // Optional on input so callers written before these pins existed keep working.
+    knowledge: z.boolean().default(true),
     heartbeat: z.boolean().default(true),
     'local-inference': z.boolean(),
     // Optional on input so callers written before the application existed keep working.
-    'remote-hosts': z.boolean().default(false)
+    'remote-hosts': z.boolean().default(false),
+    'device-sharing': z.boolean().default(false)
   }).strict()
 }).strict()
 

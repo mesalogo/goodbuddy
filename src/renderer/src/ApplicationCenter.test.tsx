@@ -36,71 +36,133 @@ const props = () => ({
   onUpdate: vi.fn(async () => true),
   onRetry: vi.fn(),
 })
-const pinnedSettings = {
-  ...settings,
-  applicationNavigation: {
-    ...defaultApplicationNavigation,
-    pinned: { 'magic-notes': true, heartbeat: true, 'local-inference': true, 'remote-hosts': false },
-  },
-}
 afterEach(async () => {
   cleanup()
   await changeUiLocale('zh-CN')
 })
 
 describe('Application Center', () => {
-  it('offers device sharing enablement without pinning and waits for confirmed settings', () => {
+  const card = (name: string): HTMLElement => screen.getByText(name, { exact: true, selector: 'strong' }).closest('article')!
+
+  it('shows cards in the fixed order with enable and pin switches and a settings button in the footer', () => {
+    const handlers = props()
+    render(<ApplicationCenter {...handlers} />)
+    const work = document.querySelector<HTMLElement>('.application-center__cards')!
+    expect(within(work).getAllByRole('article').map((item) => item.querySelector('strong')?.textContent))
+      .toEqual(['魔法笔记', '知识库', '监督者', '主机管理', '本机推理监控', '设备共享（技术预览）'])
+    expect(screen.queryByRole('button', { name: /上移|下移/u })).not.toBeInTheDocument()
+    for (const item of within(work).getAllByRole('article')) expect(item).not.toHaveAttribute('draggable')
+    const notes = card('魔法笔记')
+    const footer = notes.querySelector('footer')!
+    expect(within(footer).getByRole('switch', { name: '启用魔法笔记' })).toBeChecked()
+    expect(within(footer).getByRole('switch', { name: '魔法笔记常驻左侧菜单' })).toBeChecked()
+    expect(within(footer).getByRole('button', { name: '魔法笔记 应用设置' })).toBeInTheDocument()
+  })
+
+  it('switches enablement and pinning straight from the card, waiting for confirmed settings', () => {
+    const handlers = props()
+    const { rerender } = render(<ApplicationCenter {...handlers} settings={{ ...settings, localInferenceEnabled: false }} />)
+    const inference = card('本机推理监控')
+    const enable = within(inference).getByRole('switch', { name: '启用本机推理监控' })
+    expect(enable).not.toBeChecked()
+    expect(within(inference).getByRole('button', { name: '打开本机推理监控' })).toBeDisabled()
+    fireEvent.click(enable)
+    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ localInferenceEnabled: true })
+    expect(enable).not.toBeChecked()
+    const pin = within(inference).getByRole('switch', { name: '本机推理监控常驻左侧菜单' })
+    fireEvent.click(pin)
+    expect(handlers.onUpdate).toHaveBeenLastCalledWith({
+      applicationNavigation: { ...defaultApplicationNavigation, pinned: { ...defaultApplicationNavigation.pinned, 'local-inference': true } },
+    })
+    rerender(<ApplicationCenter {...handlers} pending />)
+    for (const toggle of screen.getAllByRole('switch')) expect(toggle).toBeDisabled()
+    rerender(<ApplicationCenter {...handlers} locked error="无法确认保存结果" />)
+    expect(screen.getByRole('alert')).toHaveTextContent('无法确认保存结果')
+    for (const toggle of screen.getAllByRole('switch')) expect(toggle).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '重新读取' }))
+    expect(handlers.onRetry).toHaveBeenCalledOnce()
+  })
+
+  it('keeps 知识库 always enabled: only a pin switch, no enable switch or settings', () => {
+    const handlers = props()
+    render(<ApplicationCenter {...handlers} />)
+    const knowledge = card('知识库')
+    expect(within(knowledge).queryByRole('switch', { name: /^启用/u })).not.toBeInTheDocument()
+    const pin = within(knowledge).getByRole('switch', { name: '知识库常驻左侧菜单' })
+    expect(pin).toBeChecked()
+    expect(within(knowledge).queryByRole('button', { name: /应用设置/u })).not.toBeInTheDocument()
+    fireEvent.click(pin)
+    expect(handlers.onUpdate).toHaveBeenLastCalledWith({
+      applicationNavigation: { ...defaultApplicationNavigation, pinned: { ...defaultApplicationNavigation.pinned, knowledge: false } },
+    })
+    fireEvent.click(within(knowledge).getByRole('button', { name: '打开知识库' }))
+    expect(handlers.onOpen).toHaveBeenCalledWith('knowledge')
+  })
+
+  it('offers device sharing a pin switch and its settings, and opens it once enabled', () => {
     const handlers = props()
     const { rerender } = render(<ApplicationCenter {...handlers} />)
     expect(isApplicationEnabled(undefined, 'device-sharing')).toBe(false)
-    const card = screen.getByText('设备共享（技术预览）', { exact: true }).closest('article')!
-    expect(within(card).getByText('可选 · 已关闭')).toBeVisible()
-    expect(within(card).getByRole('button', { name: '打开' })).toBeDisabled()
-    fireEvent.click(within(card).getByRole('button', { name: '设备共享（技术预览） 应用设置' }))
-    const enable = screen.getByRole('switch', { name: '启用应用' })
-    expect(enable).not.toBeChecked()
-    expect(screen.queryByRole('switch', { name: '常驻左侧菜单' })).not.toBeInTheDocument()
-    fireEvent.click(enable)
+    const sharing = card('设备共享（技术预览）')
+    expect(within(sharing).getByRole('switch', { name: '设备共享（技术预览）常驻左侧菜单' })).not.toBeChecked()
+    expect(within(sharing).getByRole('button', { name: '打开设备共享（技术预览）' })).toBeDisabled()
+    fireEvent.click(within(sharing).getByRole('switch', { name: '启用设备共享（技术预览）' }))
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({ deviceSharingEnabled: true })
-    expect(enable).not.toBeChecked()
-    rerender(<ApplicationCenter {...handlers} pending />)
-    expect(enable).toBeDisabled()
     rerender(<ApplicationCenter {...handlers} settings={{ ...settings, deviceSharingEnabled: true }} />)
-    expect(enable).toBeChecked()
-    fireEvent.click(enable)
-    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ deviceSharingEnabled: false })
-    fireEvent.click(screen.getByRole('button', { name: '返回应用中心' }))
-    fireEvent.click(within(screen.getByText('设备共享（技术预览）', { exact: true }).closest('article')!).getByRole('button', { name: '打开' }))
+    fireEvent.click(within(card('设备共享（技术预览）')).getByRole('button', { name: '打开设备共享（技术预览）' }))
     expect(handlers.onOpen).toHaveBeenCalledWith('device-sharing')
+    fireEvent.click(within(card('设备共享（技术预览）')).getByRole('button', { name: '设备共享（技术预览） 应用设置' }))
+    expect(screen.getByRole('switch', { name: '常驻左侧菜单' })).toBeInTheDocument()
   })
 
   it('opens Hosts while remote capability is off and switches it through the shared remote projects setting', () => {
     const handlers = props()
-    const { rerender } = render(<ApplicationCenter {...handlers} />)
+    render(<ApplicationCenter {...handlers} />)
     expect(isApplicationEnabled(settings, 'remote-hosts')).toBe(false)
     expect(isApplicationOpenable(settings, 'remote-hosts')).toBe(true)
     expect(isApplicationOpenable(undefined, 'remote-hosts')).toBe(false)
-    const card = screen.getByText('主机管理', { exact: true }).closest('article')!
-    expect(within(card).getByText('可选 · 已关闭')).toBeVisible()
-    fireEvent.click(within(card).getByRole('button', { name: '打开' }))
+    const hosts = card('主机管理')
+    fireEvent.click(within(hosts).getByRole('button', { name: '打开主机管理' }))
     expect(handlers.onOpen).toHaveBeenCalledWith('remote-hosts')
-    fireEvent.click(within(card).getByRole('button', { name: '主机管理 应用设置' }))
-    const enable = screen.getByRole('switch', { name: '启用远程能力' })
-    expect(enable).not.toBeChecked()
-    expect(screen.getByText(/主机、凭据、远程项目和 Agent 离线包都会保留/)).toBeVisible()
-    fireEvent.click(enable)
+    fireEvent.click(within(hosts).getByRole('switch', { name: '启用主机管理' }))
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({ remoteProjectsEnabled: true })
-    rerender(<ApplicationCenter {...handlers} settings={{ ...settings, remoteProjectsEnabled: true }} />)
-    expect(enable).toBeChecked()
-    const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
-    expect(pin).not.toBeChecked()
-    fireEvent.click(pin)
-    expect(handlers.onUpdate).toHaveBeenLastCalledWith({
-      applicationNavigation: {
-        ...defaultApplicationNavigation,
-        pinned: { ...defaultApplicationNavigation.pinned, 'remote-hosts': true },
-      },
-    })
+    fireEvent.click(within(hosts).getByRole('button', { name: '主机管理 应用设置' }))
+    expect(screen.getByRole('switch', { name: '启用远程能力' })).not.toBeChecked()
+    expect(screen.getByText(/主机、凭据、远程项目和 Agent 离线包都会保留/u)).toBeVisible()
+  })
+
+  it.each([undefined, false])('keeps the supervisor disabled with preference %s until explicitly enabled', (heartbeatEnabled) => {
+    const handlers = props()
+    render(<ApplicationCenter {...handlers} settings={{ ...settings, heartbeatEnabled }} />)
+    const supervisor = card('监督者')
+    const open = within(supervisor).getByRole('button', { name: '打开监督者' })
+    expect(open).toBeDisabled()
+    fireEvent.click(open)
+    expect(handlers.onOpen).not.toHaveBeenCalled()
+    fireEvent.click(within(supervisor).getByRole('switch', { name: '启用监督者' }))
+    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ heartbeatEnabled: true })
+  })
+
+  it('searches cards, opens without pinning, and restores focus', () => {
+    const handlers = props()
+    const trigger = document.createElement('button')
+    document.body.append(trigger)
+    trigger.focus()
+    const { unmount } = render(<ApplicationCenter {...handlers} settings={{
+      ...settings,
+      applicationNavigation: { ...defaultApplicationNavigation, pinned: { ...defaultApplicationNavigation.pinned, 'magic-notes': false } },
+    }} />)
+    const search = screen.getByRole('searchbox', { name: '搜索内置应用' })
+    expect(search).toHaveFocus()
+    fireEvent.change(search, { target: { value: '笔记' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开魔法笔记' }))
+    expect(handlers.onOpen).toHaveBeenCalledWith('magic-notes')
+    expect(handlers.onUpdate).not.toHaveBeenCalled()
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(handlers.onClose).toHaveBeenCalledOnce()
+    unmount()
+    expect(trigger).toHaveFocus()
+    trigger.remove()
   })
 
   it.each(['zh-CN', 'en-US'] as const)('keeps disable consequences visible and pin help separate in %s', async (locale) => {
@@ -147,55 +209,6 @@ describe('Application Center', () => {
     expect(dialog).not.toHaveClass('application-center--detail')
   })
 
-  it('keeps 知识库 always shown with sorting but no settings or toggles', () => {
-    const handlers = props()
-    render(<ApplicationCenter {...handlers} />)
-    const card = screen.getByText('知识库', { exact: true }).closest('article')!
-    expect(card).toHaveAttribute('draggable', 'true')
-    expect(within(card).getByText('始终显示')).toBeInTheDocument()
-    expect(within(card).queryByRole('switch')).not.toBeInTheDocument()
-    expect(within(card).getAllByRole('button')).toHaveLength(3)
-    fireEvent.click(within(card).getByRole('button', { name: '打开' }))
-    expect(handlers.onOpen).toHaveBeenCalledWith('knowledge')
-    const notes = screen.getByText('魔法笔记', { exact: true }).closest('article')!
-    fireEvent.dragStart(notes)
-    fireEvent.drop(card)
-      expect(handlers.onUpdate).toHaveBeenCalledWith({ applicationNavigation: {
-      ...defaultApplicationNavigation,
-        order: ['magic-notes', 'knowledge', 'heartbeat', 'local-inference', 'device-sharing', 'remote-hosts'],
-      } })
-  })
-
-  it('provides a supervisor enable switch while preserving the heartbeat route id', () => {
-    const handlers = props()
-    render(<ApplicationCenter {...handlers} settings={{ ...settings, heartbeatEnabled: true }} />)
-    const card = screen.getByText('监督者', { exact: true }).closest('article')!
-    expect(within(card).getByText('可选 · 已启用')).toBeInTheDocument()
-    fireEvent.click(within(card).getByRole('button', { name: '打开' }))
-    expect(handlers.onOpen).toHaveBeenCalledWith('heartbeat')
-    fireEvent.click(within(card).getByRole('button', { name: '监督者 应用设置' }))
-    const enable = screen.getByRole('switch', { name: '启用应用' })
-    expect(enable).toBeChecked()
-    fireEvent.click(enable)
-    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ heartbeatEnabled: false })
-  })
-
-  it.each([undefined, false])('keeps the supervisor disabled with preference %s until explicitly enabled', (heartbeatEnabled) => {
-    const handlers = props()
-    render(<ApplicationCenter {...handlers} settings={{ ...settings, heartbeatEnabled }} />)
-    const card = screen.getByText('监督者', { exact: true }).closest('article')!
-    expect(within(card).getByText('可选 · 已关闭')).toBeInTheDocument()
-    const open = within(card).getByRole('button', { name: '打开' })
-    expect(open).toBeDisabled()
-    fireEvent.click(open)
-    expect(handlers.onOpen).not.toHaveBeenCalled()
-    fireEvent.click(within(card).getByRole('button', { name: '监督者 应用设置' }))
-    const enable = screen.getByRole('switch', { name: '启用应用' })
-    expect(enable).not.toBeChecked()
-    fireEvent.click(enable)
-    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ heartbeatEnabled: true })
-  })
-
   it.each([
     { state: 'loading', settings: undefined },
     { state: 'missing preference', settings },
@@ -218,180 +231,6 @@ describe('Application Center', () => {
     )
     expect(screen.getByRole('button', { name: 'Supervisor content' })).toBeVisible()
   })
-  it('searches disabled and unpinned applications, opens without pinning, and restores focus', () => {
-    const handlers = props()
-    const trigger = document.createElement('button')
-    document.body.append(trigger)
-    trigger.focus()
-    const { unmount } = render(
-      <ApplicationCenter
-        {...handlers}
-        settings={{
-          ...settings,
-          localInferenceEnabled: false,
-          applicationNavigation: {
-            ...defaultApplicationNavigation,
-            pinned: {
-              ...defaultApplicationNavigation.pinned,
-              'magic-notes': false,
-            },
-          },
-        }}
-      />,
-    )
-    const search = screen.getByRole('searchbox', { name: '搜索内置应用' })
-    expect(search).toHaveFocus()
-    fireEvent.change(search, { target: { value: '笔记' } })
-    fireEvent.click(screen.getByRole('button', { name: '打开' }))
-    expect(handlers.onOpen).toHaveBeenCalledWith('magic-notes')
-    expect(handlers.onUpdate).not.toHaveBeenCalled()
-    fireEvent.change(search, { target: { value: '推理' } })
-    expect(screen.getByText('已关闭', { exact: false })).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: '打开' }),
-    ).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
-    expect(screen.getByRole('switch', { name: '启用应用' })).not.toBeChecked()
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
-    expect(handlers.onClose).toHaveBeenCalledOnce()
-    unmount()
-    expect(trigger).toHaveFocus()
-    trigger.remove()
-  })
-
-  it('sorts disabled and unpinned apps and saves pin preferences without optimistic changes', () => {
-    const handlers = props()
-    render(<ApplicationCenter {...handlers} settings={{ ...settings, localInferenceEnabled: false }} />)
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
-    const inference = screen.getByText('本机推理监控', { exact: true }).closest('article')!
-    expect(inference).toHaveAttribute('draggable', 'true')
-    expect(within(inference).getAllByRole('button', { name: /上移|下移/ })).toHaveLength(2)
-    expect(screen.getByRole('button', { name: '上移 魔法笔记' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '下移 魔法笔记' })).toBeEnabled()
-    const notes = screen.getByText('魔法笔记', { exact: true }).closest('article')!
-    fireEvent.dragStart(inference)
-    fireEvent.drop(notes)
-    fireEvent.dragStart(notes)
-    fireEvent.drop(inference)
-    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ applicationNavigation: {
-      ...defaultApplicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing', 'remote-hosts'],
-    } })
-    fireEvent.click(within(inference).getByRole('button', { name: '打开' }))
-    expect(handlers.onOpen).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
-    expect(screen.getByRole('switch', { name: '启用应用' })).not.toBeChecked()
-    expect(screen.getByRole('switch', { name: '常驻左侧菜单' })).not.toBeChecked()
-    fireEvent.click(screen.getByRole('switch', { name: '常驻左侧菜单' }))
-    expect(handlers.onUpdate).toHaveBeenLastCalledWith({
-      applicationNavigation: {
-        ...defaultApplicationNavigation,
-        pinned: { ...defaultApplicationNavigation.pinned, 'local-inference': true },
-      },
-    })
-    expect(
-      screen.getByRole('switch', { name: '常驻左侧菜单' }),
-    ).not.toBeChecked()
-    expect(screen.queryByRole('button', { name: /上移|下移/ })).not.toBeInTheDocument()
-  })
-
-  it('orders all app rows, disables full-order boundaries, and waits for confirmed settings', async () => {
-    const handlers = props()
-    const { rerender } = render(<ApplicationCenter {...handlers} settings={pinnedSettings} />)
-    const displayedOrder = () => screen.getAllByRole('article').map((row) => row.querySelector('strong')?.textContent)
-    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控', '设备共享（技术预览）', '主机管理'])
-    expect(screen.getByRole('button', { name: '上移 知识库' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '下移 主机管理' })).toBeDisabled()
-    const moveUp = screen.getByRole('button', { name: '上移 本机推理监控' })
-    expect(moveUp.closest('article')).not.toBeNull()
-    expect(moveUp).toHaveAttribute('title', '上移 本机推理监控')
-    fireEvent.click(moveUp)
-    expect(handlers.onUpdate).toHaveBeenLastCalledWith({
-      applicationNavigation: {
-        ...pinnedSettings.applicationNavigation,
-        order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing', 'remote-hosts'],
-      },
-    })
-    expect(screen.getByRole('button', { name: '下移 主机管理' })).toBeDisabled()
-    expect(await screen.findByRole('status')).not.toBeEmptyDOMElement()
-    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控', '设备共享（技术预览）', '主机管理'])
-    rerender(<ApplicationCenter {...handlers} settings={{
-      ...pinnedSettings,
-      applicationNavigation: { ...pinnedSettings.applicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing', 'remote-hosts'] },
-    }} />)
-    expect(displayedOrder()).toEqual(['知识库', '监督者', '本机推理监控', '魔法笔记', '设备共享（技术预览）', '主机管理'])
-    expect(screen.getByRole('button', { name: '下移 主机管理' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: '下移 本机推理监控' }))
-    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ applicationNavigation: pinnedSettings.applicationNavigation })
-    fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
-    expect(screen.queryByRole('button', { name: /上移|下移/ })).not.toBeInTheDocument()
-  })
-
-  it('uses the same order patch for drag and keyboard controls', () => {
-    const handlers = props()
-    render(<ApplicationCenter {...handlers} settings={pinnedSettings} />)
-    const notes = screen
-      .getByText('魔法笔记', { exact: true })
-      .closest('article')!
-    const inference = screen
-      .getByText('本机推理监控', { exact: true })
-      .closest('article')!
-    fireEvent.dragStart(inference)
-    fireEvent.dragOver(notes)
-    fireEvent.drop(notes)
-    expect(handlers.onUpdate).toHaveBeenCalledWith({
-      applicationNavigation: {
-        ...pinnedSettings.applicationNavigation,
-        order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing', 'remote-hosts'],
-      },
-    })
-  })
-
-  it('locks all preference controls while saving or awaiting a confirmed read', () => {
-    const handlers = props()
-    const { rerender } = render(<ApplicationCenter {...handlers} />)
-    fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
-    rerender(<ApplicationCenter {...handlers} pending />)
-    for (const toggle of screen.getAllByRole('switch'))
-      expect(toggle).toBeDisabled()
-    expect(screen.queryByRole('button', { name: /上移|下移/ })).not.toBeInTheDocument()
-    rerender(
-      <ApplicationCenter {...handlers} locked error="无法确认保存结果" />,
-    )
-    expect(screen.getByRole('alert')).toHaveTextContent('无法确认保存结果')
-    for (const toggle of screen.getAllByRole('switch'))
-      expect(toggle).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: '重新读取' }))
-    expect(handlers.onRetry).toHaveBeenCalledOnce()
-  })
-
-  it.each(['pending', 'locked'] as const)('disables row sorting when %s', (state) => {
-    const handlers = props()
-    render(<ApplicationCenter {...handlers} settings={pinnedSettings} {...{ [state]: true }} />)
-    for (const button of screen.getAllByRole('button', { name: /上移|下移/ }))
-      expect(button).toBeDisabled()
-    const cards = screen.getAllByRole('article')
-    for (const card of cards) expect(card).toHaveAttribute('draggable', 'false')
-    fireEvent.dragStart(cards[3]!)
-    fireEvent.drop(cards[2]!)
-    expect(handlers.onUpdate).not.toHaveBeenCalled()
-  })
-
-  it('keeps hidden entries in the full order during search while disabling drag', () => {
-    const handlers = props()
-    render(<ApplicationCenter {...handlers} settings={pinnedSettings} />)
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '推理' } })
-    const card = screen.getByRole('article')
-    expect(card).toHaveAttribute('draggable', 'false')
-    expect(within(card).getByRole('button', { name: '下移 本机推理监控' })).toBeEnabled()
-    fireEvent.click(within(card).getByRole('button', { name: '上移 本机推理监控' }))
-    expect(handlers.onUpdate).toHaveBeenCalledWith({
-      applicationNavigation: {
-        ...pinnedSettings.applicationNavigation,
-        order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing', 'remote-hosts'],
-      },
-    })
-  })
-
   it('provides a recoverable search empty state and no market or system tools', () => {
     render(<ApplicationCenter {...props()} />)
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
@@ -477,11 +316,15 @@ describe('Application Center', () => {
     const telegram = within(group).getByText('Telegram', { exact: true }).closest('article')!
     expect(within(telegram).getByText(/未配置/u)).toBeInTheDocument()
     // Unconfigured platforms offer "连接" instead of open/settings.
-    expect(within(telegram).queryByRole('button', { name: '打开' })).not.toBeInTheDocument()
+    expect(within(telegram).queryByRole('button', { name: '打开Telegram' })).not.toBeInTheDocument()
+    expect(within(telegram).queryByRole('switch')).not.toBeInTheDocument()
     expect(within(telegram).getByRole('button', { name: '连接 Telegram' })).toBeInTheDocument()
     const dingtalk = within(group).getByText('钉钉', { exact: true }).closest('article')!
     expect(dingtalk).toHaveTextContent('连接失败')
-    expect(dingtalk).toHaveTextContent('账号：c')
+    expect(dingtalk.querySelector('.application-card__status')).toHaveAttribute('data-tone', 'error')
+    expect(dingtalk.querySelector('.application-card__account')).toHaveTextContent('c')
+    expect(within(dingtalk).getByRole('switch', { name: '启用钉钉' })).toBeChecked()
+    expect(within(dingtalk).getByRole('button', { name: '钉钉 应用设置' })).toBeInTheDocument()
     expect(dingtalk).toHaveTextContent('消息 · 未设置发送者')
     expect(dingtalk).toHaveTextContent('只有消息')
     // Platforms with tools come first.
@@ -489,7 +332,7 @@ describe('Application Center', () => {
       .toEqual(['飞书', '企业微信', '钉钉', '微信 ClawBot', 'Telegram'])
     expect(within(group).getByText(/每个平台连接一个账号/u)).toBeInTheDocument()
     expect(within(group).queryByRole('button', { name: /上移|下移/u })).not.toBeInTheDocument()
-    fireEvent.click(within(weixin).getByRole('button', { name: '打开' }))
+    fireEvent.click(within(weixin).getByRole('button', { name: '打开微信 ClawBot' }))
     expect(onOpenChannel).toHaveBeenCalledWith('weixin')
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Telegram' } })
     expect(screen.queryByText('微信 ClawBot', { exact: true })).not.toBeInTheDocument()
@@ -498,6 +341,39 @@ describe('Application Center', () => {
     expect(await screen.findByText('正在读取消息通道设置…')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '返回应用中心' }))
     expect(screen.getByRole('searchbox')).toHaveValue('Telegram')
+  })
+
+  it('turns a platform application off from its card without touching its other settings', async () => {
+    const dingtalk = { enabled: true, clientId: 'c', secretConfigured: true, source: 'encrypted', readOnly: false, allowedSenderIds: ['u1'], allowGroupMessages: true, status: { state: 'running' } }
+    const off = { state: 'disabled' }
+    const snapshot = {
+      telegram: { enabled: false, secretConfigured: false, source: 'none', readOnly: false, allowedSenderIds: [], allowGroupMessages: false, status: off },
+      weixin: { enabled: false, bindingConfigured: false, source: 'none', status: off },
+      wecom: { enabled: false, botId: '', secretConfigured: false, source: 'none', readOnly: false, allowedSenderIds: [], allowGroupMessages: false, status: off },
+      dingtalk,
+      feishu: { enabled: false, appId: '', domain: 'feishu', secretConfigured: false, source: 'none', readOnly: false, allowedSenderIds: [], allowGroupMessages: false, status: off },
+    }
+    const apply = vi.fn(async () => ({ ...snapshot, dingtalk: { ...dingtalk, enabled: false, status: off } }))
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          getSnapshot: vi.fn(async () => snapshot), apply,
+          onStatusChanged: vi.fn(() => () => undefined),
+          getWeixinBinding: vi.fn(async () => ({ status: 'stopped' })),
+          onWeixinBindingChanged: vi.fn(() => () => undefined),
+        },
+        settings: { getRuntime: vi.fn(() => new Promise(() => undefined)) },
+      },
+    })
+    render(<ApplicationCenter {...props()} platform={{ projects: [], onOpenChannel: vi.fn(), onUpdateProject: vi.fn() }} />)
+    const toggle = await screen.findByRole('switch', { name: '启用钉钉' })
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledWith({ dingtalk: {
+      enabled: false, clientId: 'c', secret: { action: 'keep' }, allowedSenderIds: ['u1'], allowGroupMessages: true
+    } }))
+    await vi.waitFor(() => expect(screen.getByRole('switch', { name: '启用钉钉' })).not.toBeChecked())
   })
 
   it('opens directly on a requested platform application', async () => {

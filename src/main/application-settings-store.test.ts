@@ -282,7 +282,7 @@ describe('ApplicationSettingsStore', () => {
     const settings = await store.get()
     expect(settings.warnings).toBeUndefined()
     expect(settings.magicNotesEnabled).toBe(false)
-    expect(settings.applicationNavigation).toEqual({ order: [...expected, 'device-sharing', 'remote-hosts'], pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false, 'remote-hosts': false } })
+    expect(settings.applicationNavigation).toEqual({ order: [...expected, 'device-sharing', 'remote-hosts'], pinned: { 'magic-notes': false, knowledge: true, heartbeat: true, 'local-inference': false, 'remote-hosts': false, 'device-sharing': false } })
     expect(applicationSettingsSchema.parse(settings)).toEqual(settings)
     await store.update({ checkUpdatesOnStartup: false })
     expect(JSON.parse(await readFile(filePath, 'utf8')).applicationNavigation).toEqual(settings.applicationNavigation)
@@ -293,7 +293,7 @@ describe('ApplicationSettingsStore', () => {
     const { store, filePath } = await createStore()
     const applicationNavigation = {
       order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge', 'remote-hosts', 'device-sharing'],
-      pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false, 'remote-hosts': true },
+      pinned: { 'magic-notes': false, knowledge: true, heartbeat: true, 'local-inference': false, 'remote-hosts': true, 'device-sharing': false },
     }
     const changed = vi.fn()
     store.onChanged(changed)
@@ -337,7 +337,7 @@ describe('ApplicationSettingsStore', () => {
       pinned: { 'magic-notes': false, 'local-inference': pinned }
     }
     await writeFile(filePath, JSON.stringify({ ...defaultApplicationSettings, applicationNavigation, version: 11, lastSeenReleaseNotesVersion: null }), 'utf8')
-    const normalized = { ...applicationNavigation, pinned: { ...applicationNavigation.pinned, heartbeat: true, 'remote-hosts': false }, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing', 'remote-hosts'] }
+    const normalized = { ...applicationNavigation, pinned: { ...applicationNavigation.pinned, knowledge: true, heartbeat: true, 'remote-hosts': false, 'device-sharing': false }, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes', 'device-sharing', 'remote-hosts'] }
     expect((await store.get()).applicationNavigation).toEqual(normalized)
     await store.update({ checkUpdatesOnStartup: false })
     expect((await createApplicationSettingsStore(filePath).get()).applicationNavigation).toEqual(normalized)
@@ -349,7 +349,7 @@ describe('ApplicationSettingsStore', () => {
       pinned: { 'magic-notes': false, heartbeat: false, 'local-inference': true }
     }
     await writeFile(filePath, JSON.stringify({ ...defaultApplicationSettings, remoteProjectsEnabled, applicationNavigation, version: 12, lastSeenReleaseNotesVersion: null }), 'utf8')
-    const expected = { order: [...applicationNavigation.order, 'remote-hosts'], pinned: { ...applicationNavigation.pinned, 'remote-hosts': false } }
+    const expected = { order: [...applicationNavigation.order, 'remote-hosts'], pinned: { ...applicationNavigation.pinned, knowledge: true, 'remote-hosts': false, 'device-sharing': false } }
     const migrated = await store.get()
     expect(migrated.warnings).toBeUndefined()
     expect(migrated.remoteProjectsEnabled).toBe(remoteProjectsEnabled)

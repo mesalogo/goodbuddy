@@ -22,7 +22,9 @@ import {
   isApplicationOpenable,
 } from "./ApplicationCenter";
 import {
+  applicationDisplayOrder,
   defaultApplicationNavigation,
+  isApplicationPinned,
   type ApplicationSettings,
   type ApplicationSettingsUpdate,
 } from "../../shared/application-settings-contracts";
@@ -1555,8 +1557,10 @@ function App(): React.JSX.Element {
   ] = useState(true);
   const [incompleteMagicTodoCount, setIncompleteMagicTodoCount] = useState(0);
   const applicationNavigation = applicationSettings?.applicationNavigation ?? defaultApplicationNavigation;
-  const visibleApplications = useMemo(() => applicationNavigation.order.filter(id =>
-    id === 'knowledge' || (Boolean((applicationNavigation.pinned as Record<string, boolean | undefined>)[id]) && (id === 'magic-notes' ? magicNotesEnabled : isApplicationOpenable(applicationSettings, id)))
+  // Fixed order; the pin switch only decides whether an app is shown.
+  const visibleApplications = useMemo(() => applicationDisplayOrder.filter(id =>
+    isApplicationPinned(applicationNavigation, id) &&
+    (id === 'magic-notes' ? magicNotesEnabled : isApplicationOpenable(applicationSettings, id))
   ), [applicationNavigation, applicationSettings, magicNotesEnabled]);
   const applyApplicationSettings = useCallback((settings: ApplicationSettings): void => {
     setApplicationSettings(settings);
