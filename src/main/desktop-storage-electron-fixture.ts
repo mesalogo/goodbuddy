@@ -293,14 +293,21 @@ async function run(): Promise<void> {
   // Exercise actual Electron serialization without adding a test-only owner endpoint.
   const transport = new DesktopStorageTransport(join(root, 'desktop-storage-echo.cjs'))
   await new Promise<void>(resolve => transport.once('spawn', resolve))
-  const result = new Promise<unknown>(resolve => transport.once('message', message => resolve(message.result)))
-  transport.postMessage({ type: 'query', id: 1, op: 'test.echo', args: [Buffer.from([0, 128, 255]), new Map([['key', 3]])], cancel: new SharedArrayBuffer(4) })
-  const values = await result as [Uint8Array, Map<string, number>]
-  assert.ok(values[0] instanceof Uint8Array)
-  assert.deepEqual([...values[0]], [0, 128, 255])
-  assert.ok(values[1] instanceof Map)
-  assert.equal(values[1].get('key'), 3)
-  await transport.terminate()
+  try {
+    const result = new Promise<unknown>(resolve => transport.once('message', message => resolve(message.result)))
+    transport.postMessage({ type: 'query', id: 1, op: 'test.echo', args: [Buffer.from([0, 128, 255]), new Map([['key', 3]])], cancel: new SharedArrayBuffer(4) })
+    const values = await result as [Uint8Array, Map<string, number>]
+    assert.ok(values[0] instanceof Uint8Array)
+    assert.deepEqual([...values[0]], [0, 128, 255])
+    assert.ok(values[1] instanceof Map)
+    assert.equal(values[1].get('key'), 3)
+  } finally {
+    // This echo host has no storage owner to drain. Real storage close/reopen is
+    // verified above; stop this serialization-only child and confirm its exit.
+    const child = (transport as unknown as { child: { kill(): boolean } }).child
+    assert.ok(child.kill())
+    await transport.waitForExit()
+  }
   console.log('desktop-storage-electron: passed')
 }
 

@@ -1,15 +1,16 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
 
 it('keeps real conversation attachment actions compact at narrow widths and keyboard accessible', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-attachment-layout-'))
+  const parent = resolve('temp/goodbuddy-attachment-layout')
+  await mkdir(parent, { recursive: true })
+  const directory = await mkdtemp(join(parent, 'electron-'))
   const server = await createServer({ configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
     plugins: [react(), { name: 'attachment-layout', configureServer(server) {
       server.middlewares.use('/attachment.html', async (_request, response) => {
@@ -29,8 +30,11 @@ it('keeps real conversation attachment actions compact at narrow widths and keyb
       app.whenReady().then(async () => {
         const win = new BrowserWindow({ show: false, width: 1000, height: 720, useContentSize: true,
           webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
-        win.webContents.on('console-message', (_event, details) => console.log(details.message));
-        const js = code => win.webContents.executeJavaScript(code);
+        win.webContents.on('console-message', details => console.log(details.message));
+        const js = async code => {
+          try { return await win.webContents.executeJavaScript(code); }
+          catch (error) { throw new Error('Renderer script failed: ' + code, { cause: error }); }
+        };
         const settle = () => js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
         const wait = async code => { for (let i = 0; i < 800; i++) {
           if (await js(code)) return; await new Promise(resolve => setTimeout(resolve, 25));
