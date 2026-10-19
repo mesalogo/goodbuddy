@@ -74,6 +74,15 @@ it('shows loading and actionable errors while keeping Supervisor unavailable unt
   expect(onRetry).toHaveBeenCalledOnce()
 })
 
+it('keeps its height during a background refresh once settings are loaded', () => {
+  const { rerender } = render(<Harness />)
+  fireEvent.click(screen.getByText('Launcher'))
+  const items = screen.getAllByRole('menuitem').map(item => item.textContent)
+  rerender(<Harness pending />)
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(items)
+})
+
 it('supports arrow, Home, End, Escape, outside focus and pointer dismissal and management focus handoff', () => {
   const onManage = vi.fn()
   render(<Harness onManage={onManage} />)

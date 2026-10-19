@@ -7,8 +7,6 @@ import {
   waitFor,
   within
 } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import {
   useEffect,
   useState,
@@ -24,6 +22,7 @@ import {
   WorkbarShell,
   type WorkbarInstanceCreateRequest
 } from './WorkbarShell'
+import { readStylesheetBundle } from './stylesheet-bundle'
 
 afterEach(() => {
   cleanup()
@@ -36,10 +35,7 @@ const terminalOne: WorkbarTabInstance = {
   title: '终端 · 本机 1',
   targetRef: { type: 'local' }
 }
-const stylesheet = readFileSync(
-  join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
-  'utf8'
-)
+const stylesheet = readStylesheetBundle()
 
 function ControlledShell({
   initialInstances = DEFAULT_WORKBAR_INSTANCES,

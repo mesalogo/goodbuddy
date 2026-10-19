@@ -1,19 +1,9 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { OverflowMarquee } from './OverflowMarquee'
+import { readStylesheetBundle } from './stylesheet-bundle'
 
-const stylesheet = [
-  readFileSync(
-    join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
-    'utf8'
-  ),
-  readFileSync(
-    join(process.cwd(), 'src', 'renderer', 'src', 'styles-conversations.css'),
-    'utf8'
-  )
-].join('\n').replaceAll('\r\n', '\n')
+const stylesheet = readStylesheetBundle()
 
 function setMeasuredWidth(
   element: HTMLElement,

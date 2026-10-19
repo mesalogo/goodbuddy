@@ -41,10 +41,10 @@ describe('split stylesheet declarations and import order', () => {
   )
 
   it.each([
-    ['.tool-execution__details pre', '.tool-execution__error pre', 'styles-execution-feedback.css'],
-    ['.subagent-status-card', '.subagent-status-card--failed', 'styles-execution-feedback.css'],
-    ['.subagent-status-card', '.subagent-status-card--cancelled', 'styles-execution-feedback.css'],
-    ['.knowledge-settings__toggle', '.knowledge-settings__toggle--pending', 'styles-knowledge-tasks.css']
+    ['.tool-execution__details pre', '.tool-execution__error pre', 'styles-chat.css'],
+    ['.subagent-status-card', '.subagent-status-card--failed', 'styles-chat.css'],
+    ['.subagent-status-card', '.subagent-status-card--cancelled', 'styles-chat.css'],
+    ['.knowledge-settings__toggle', '.knowledge-settings__toggle--pending', 'styles-knowledge.css']
   ])('loads the complete %s base before %s', (base, state, file) => {
     const bases = matching(base)
     const states = matching(state)
@@ -113,5 +113,33 @@ describe('split stylesheet declarations and import order', () => {
       })
     })
     expect(frames).toEqual({ '0%': '140% 0', '12%': '140% 0', '88%': '-40% 0', '100%': '-40% 0' })
+  })
+
+  it('loads the domain files in a fixed order from the styles.css entry', () => {
+    const entry = postcss.parse(readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8'))
+    const imports: string[] = []
+    entry.walkAtRules('import', (rule) => { imports.push(rule.params.replace(/^['"]\.\/|['"]$/g, '')) })
+    expect(imports).toEqual([
+      'styles-foundations.css',
+      'styles-app-shell.css',
+      'styles-chat.css',
+      'styles-workspace-common.css',
+      'styles-knowledge.css',
+      'styles-magic-notes.css',
+      'styles-workbar.css',
+      'styles-settings.css',
+      'styles-operations.css'
+    ])
+    const first = entry.first
+    expect(first?.type === 'atrule' && first.name === 'import').toBe(true)
+  })
+
+  it('keeps the global focus ring after the domain files without overriding the composer input', () => {
+    const ring = rules.find((rule) => rule.selectors.includes('textarea:focus-visible'))
+    const composer = rules.find((rule) => rule.selectors.includes('.composer__input textarea'))
+    if (!ring || !composer) throw new Error('Missing focus ring or composer input rule')
+    expect(ring.source?.input.file).toBe(resolve('src/renderer/src/styles.css'))
+    expect(rules.indexOf(ring)).toBeGreaterThan(rules.indexOf(composer))
+    expect(declarations('.composer__input textarea:focus-visible')).toEqual({ outline: '0' })
   })
 })

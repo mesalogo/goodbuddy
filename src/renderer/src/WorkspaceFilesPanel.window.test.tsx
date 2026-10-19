@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { changeUiLocale } from './i18n'
@@ -7,6 +5,7 @@ import { installFakeListLayout, type FakeListLayout } from './list-window-test-l
 import { defaultMaxRenderedRows } from './use-list-window'
 import { flattenFileTree, WorkspaceFilesPanel } from './WorkspaceFilesPanel'
 import type { WorkspaceDirectoryListing } from '../../shared/assistant-contracts'
+import { readStylesheetBundle } from './stylesheet-bundle'
 
 // 4 directories x 500 files (the per-directory listing cap) = 2,004 rows when all are expanded.
 const directories = ['a', 'b', 'c', 'd']
@@ -112,7 +111,7 @@ describe('WorkspaceFilesPanel tree windowing', () => {
   }, 20_000)
 
   it('turns native scroll anchoring off on the files view only while the tree is windowed', async () => {
-    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+    const css = readStylesheetBundle()
     expect(css).toMatch(/\.workspace-files__files-view--windowed\s*\{\s*overflow-anchor:\s*none;/)
     await setup()
     expect(body()).toHaveClass('workspace-files__files-view--windowed')

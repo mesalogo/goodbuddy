@@ -5,25 +5,11 @@ import {
   screen,
   waitFor
 } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CustomTaskDialog } from './CustomTaskDialog'
+import { readStylesheetBundle } from './stylesheet-bundle'
 
-const stylesheet = [
-  readFileSync(
-    join(process.cwd(), 'src', 'renderer', 'src', 'styles-foundations.css'),
-    'utf8'
-  ),
-  readFileSync(
-    join(process.cwd(), 'src', 'renderer', 'src', 'styles-controls.css'),
-    'utf8'
-  ),
-  readFileSync(
-    join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
-    'utf8'
-  )
-].join('\n')
+const stylesheet = readStylesheetBundle()
 
 afterEach(cleanup)
 

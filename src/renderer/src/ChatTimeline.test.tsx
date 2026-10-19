@@ -6,14 +6,13 @@ import {
   screen,
   within
 } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ChatTimeline,
   type Message
 } from './ChatTimeline'
+import { readStylesheetBundle } from './stylesheet-bundle'
 
 const markdownRenderProbe = vi.hoisted(() => vi.fn())
 const htmlRenderProbe = vi.hoisted(() => vi.fn())
@@ -34,10 +33,7 @@ vi.mock('lucide-react', async (importOriginal) => {
     }
   }
 })
-const stylesheet = ['styles-execution-feedback.css', 'styles.css']
-  .map((file) => readFileSync(join(process.cwd(), 'src', 'renderer', 'src', file), 'utf8'))
-  .join('\n')
-  .replaceAll('\r\n', '\n')
+const stylesheet = readStylesheetBundle()
 
 vi.mock('./MarkdownRenderer', () => ({
   MarkdownRenderer: ({

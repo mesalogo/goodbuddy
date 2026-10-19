@@ -21,8 +21,11 @@ export function ApplicationMenu({ anchorRef, settings, pending, error, onClose, 
     return order
       .filter(id => isApplicationOpenable(settings, id))
   }, [settings])
+  // Opening the menu also refreshes settings in the background. Only show the loading row when
+  // nothing has loaded yet: an extra row during a refresh grows the upward-anchored menu for a
+  // frame and then shrinks it back, which reads as the menu flashing taller.
   return <AnchoredMenu anchorRef={anchorRef} id="application-menu" label={t('applications.title')} onClose={onClose}>
-    {pending && <p role="status">{t('route.loading')}</p>}
+    {pending && !settings && !error && <p role="status">{t('route.loading')}</p>}
     {error && <>
       <p role="alert">{error}</p>
       <button type="button" role="menuitem" tabIndex={-1} disabled={pending} onClick={onRetry}>{t('applications.retry')}</button>

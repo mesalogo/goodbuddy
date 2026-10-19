@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { SupervisorWorkspace } from './SupervisorWorkspace'
 import { changeUiLocale, i18nResources } from './i18n'
 import * as digestModule from './supervision-story-digest'
+import { readStylesheetBundle } from './stylesheet-bundle'
 
 const result = { id: 'result-1', storyLineId: 'story', sourceId: null, summary: 'Recap', changeDigest: '', createdAt: '2026-09-22T00:00:00.000Z', scope: { kind: 'global' }, timeRange: { from: '2026-09-20T00:00:00.000Z', to: '2026-09-22T00:00:00.000Z' }, openItems: [] }
 const render = (ui: React.ReactNode) => {
@@ -659,10 +660,7 @@ describe('SupervisorWorkspace', () => {
   })
   it('uses existing theme tokens for the supervisor workspace', () => {
     const css = readFileSync('src/renderer/src/supervisor-workspace.css', 'utf8')
-    const tokens = [
-      readFileSync('src/renderer/src/styles-foundations.css', 'utf8'),
-      readFileSync('src/renderer/src/styles.css', 'utf8')
-    ].join('\n')
+    const tokens = readStylesheetBundle()
     for (const [, token] of css.matchAll(/var\((--[\w-]+)\)/g)) {
       expect(tokens, token).toContain(`${token}:`)
     }

@@ -1,3 +1,5 @@
+/* Workspace common: PageShell, PageHeader, PageTabs, SegmentedControl, ScopeBadge, EmptyState, StatusBadge. */
+
 .workspace-panel-scroll {
   min-height: 0;
   padding: var(--page-gutter) max(var(--page-gutter), calc((100% - var(--content-standard)) / 2));

@@ -18,26 +18,9 @@ import {
   SegmentedControl,
   ScopeBadge
 } from './WorkspacePrimitives'
+import { readStylesheetBundle } from './stylesheet-bundle'
 
-const stylesheet = [
-  'styles-foundations.css',
-  'styles-controls.css',
-  'styles-app-shell.css',
-  'styles-conversations.css',
-  'styles-task-strip.css',
-  'styles-execution-feedback.css',
-  'styles-workspace-primitives.css',
-  'styles-knowledge-workspace.css',
-  'styles-knowledge-documents.css',
-  'styles-knowledge-graph.css',
-  'styles-knowledge-tasks.css',
-  'styles-activity-shell.css',
-  'styles.css'
-]
-  .map((file) =>
-    readFileSync(join(process.cwd(), 'src', 'renderer', 'src', file), 'utf8')
-  )
-  .join('\n')
+const stylesheet = readStylesheetBundle()
 const taskCenterStylesheet = readFileSync(
   join(process.cwd(), 'src', 'renderer', 'src', 'task-center.css'),
   'utf8'

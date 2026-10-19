@@ -9,7 +9,7 @@ import type { MagicNoteRichContent } from '../../shared/magic-notes-contracts'
 import { MagicNoteEditor } from './MagicNoteEditor'
 
 const stylesheet = readFileSync(
-  join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
+  join(process.cwd(), 'src', 'renderer', 'src', 'styles-magic-notes.css'),
   'utf8'
 )
 

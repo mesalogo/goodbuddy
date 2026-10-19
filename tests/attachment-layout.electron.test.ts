@@ -47,7 +47,8 @@ it('keeps real conversation attachment actions compact at narrow widths and keyb
               'return { overflow: document.documentElement.scrollWidth > innerWidth,' +
               'card: card.getBoundingClientRect().toJSON(),' +
               'buttons: buttons.map(b => b.getBoundingClientRect().toJSON()),' +
-              'nameClipped: card.querySelector("strong").scrollWidth > card.querySelector("strong").clientWidth }; })()');
+              'nameClipped: (name => name.scrollWidth > name.clientWidth)(' +
+              'card.querySelector(".message-attachment__name, .message-attachment__details > strong")) }; })()');
             assert.equal(geometry.overflow, false, JSON.stringify(geometry));
             assert(geometry.card.height < 110, JSON.stringify(geometry));
             assert.equal(geometry.buttons[0].y, geometry.buttons[1].y);

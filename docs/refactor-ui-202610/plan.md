@@ -448,6 +448,20 @@ GoodBuddy 的能力范围比参考站点的演示应用更复杂，直接复制�
 - 全量 `npm test` 中 Electron 集成测试 4 项失败：`shared-controls` 已修复；`message-expansion` 与 `workspace-import` 单独重跑通过，判断为并发运行波动；`attachment-layout` 在干净 HEAD 上同样失败，与本次改动无关。
 - 尚未完成：真实 Electron 截图基线、魔法笔记与智能心跳的最终样式归并、响应式覆盖整理。
 
+## 9.2 领域文件归并结果（2026-10-19）
+
+- 剩余 35 条重复规则已全部处理，`styles.css` 与领域文件之间不再有重复规则。其中 3 条的主文件版本在原级联中生效，因此保留主文件版本，删除领域文件中的副本。
+- 细分文件已合并为 9 个领域文件，`styles.css` 按以下顺序导入：
+  `styles-foundations`、`styles-app-shell`、`styles-chat`、`styles-workspace-common`、`styles-knowledge`、`styles-magic-notes`、`styles-workbar`、`styles-settings`、`styles-operations`。
+- 原 `*-entry.css` 聚合入口、`styles-controls`、`styles-conversations`、`styles-task-strip`、`styles-execution-feedback`、`styles-workspace-primitives`、4 个 `styles-knowledge-*` 和 `styles-activity-shell` 已删除。
+- `styles.css` 从约 17,416 行降到 999 行，只保留需要在所有领域规则之后加载的全局层：全局焦点环、浮层层级、共享按钮、深色主题覆盖、跨领域响应式与无障碍覆盖、动画关键帧。这些规则跨多个领域且依赖加载顺序，因此留在主文件。
+- 迁移前后比较展开后的完整样式：规则数一致（2,900 条），关键帧一致。剩余 20 处相对顺序变化已逐项核对：选择器不会同时命中同一元素，或后加载的规则本来就生效。唯一的真实影响是全局焦点环开始覆盖 `.composer__input textarea` 的 `outline: 0`；已在 `styles-chat.css` 中补充 `.composer__input textarea:focus-visible { outline: 0 }`，保持原行为。
+- 新增 `src/renderer/src/stylesheet-bundle.ts`，测试改为读取展开后的完整样式，不再依赖规则位于哪个文件。`styles-split.test.ts` 新增导入顺序断言，并检查焦点环与输入框规则的先后关系。
+- `attachment-layout` 失败的原因已查明：`db8309e0` 把附件名改成 `button.message-attachment__name`，测试仍查找 `strong`。已更新测试选择器，现在通过。
+- 修复左下角“应用”菜单打开时先变高再缩回：打开菜单会在后台刷新设置，期间多显示一行“加载中”，使向上展开的菜单短暂变高。现在只在尚未读到设置时显示加载行；已补回归测试。
+- 验证：`npm run typecheck`、`npm run build:bundle` 通过；读取样式的 13 个单测文件共 407 个用例通过；`App.test.tsx` 350 个用例通过；21 个 Electron 布局测试中，单独重跑后 20 个通过。`message-expansion` 在干净 HEAD 上同样在 10,000 条历史阶段超时，与本次改动无关。
+- 未完成：真实窗口截图基线。截图脚本启动后，生产构建窗口没有出现，判断是本机已有 GoodBuddy 实例占用了单实例锁；需要关闭现有实例后再执行。
+
 ## 10. 调研来源
 
 - [Penguin UI Gallery](https://penguin.ooo/gallery/?theme=modern&mode=light&size=m&latin=theme&cjk=theme&lang=zh&accent=neutral)，访问日期：2026-10-17。

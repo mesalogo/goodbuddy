@@ -1,10 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { changeUiLocale } from './i18n'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { gitStatusLetter, WorkspaceFilesPanel } from './WorkspaceFilesPanel'
 import type { WorkspaceManagementAction, WorkspaceManagementResult } from '../../shared/workspace-management-contracts'
+import { readStylesheetBundle } from './stylesheet-bundle'
 
 beforeEach(() => vi.stubGlobal('goodbuddy', { workspace: { manage: vi.fn(async () => ({ kind: 'branches', current: 'main', branches: [] })) } }))
 
@@ -232,7 +231,7 @@ describe('WorkspaceFilesPanel', () => {
   })
 
   it('keeps directory navigation and compact actions bounded independently', () => {
-    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+    const css = readStylesheetBundle()
     expect(css.match(/\.workspace-files__actions\s*\{([^}]*)\}/)?.[1]).toContain('flex-wrap: nowrap')
     expect(css.match(/\.workspace-files__breadcrumb-parts\s*\{([^}]*)\}/)?.[1]).toContain('overflow-x: auto')
     expect(css.match(/\.workspace-files__breadcrumb-parts button\s*\{([^}]*)\}/)?.[1]).toContain('text-overflow: ellipsis')
@@ -260,7 +259,7 @@ describe('WorkspaceFilesPanel', () => {
   })
 
   it('docks history in both states with independently scrolling changes and commits', () => {
-    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+    const css = readStylesheetBundle()
     const navigation = css.match(/\.workspace-files__navigation:has\(\.workspace-files__list:not\(\[hidden\]\) .*?\)\s*\{([^}]*)\}/)?.[1]
     expect(navigation).toContain('height: 100%')
     expect(navigation).toContain('padding-bottom: 0')
