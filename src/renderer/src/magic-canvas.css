@@ -88,6 +88,10 @@
 .magic-canvas-content .canvas-note-tool-group, .magic-canvas-content .canvas-note-add-page, .magic-canvas-content .canvas-note-delete-page { display: none; }
 .magic-note-entry > .magic-canvas-content .canvas-note-root { border: 0; }
 .magic-note-entry > .magic-canvas-content .canvas-note-toolbar { background: transparent; border-bottom: 0; }
+.magic-canvas-region { position: absolute; inset: 0; z-index: 5; cursor: crosshair; touch-action: none; background: rgb(0 0 0 / 12%); outline: 2px solid var(--accent); outline-offset: -2px; }
+.magic-canvas-region:focus-visible { outline-width: 3px; }
+.magic-canvas-region__hint { position: absolute; top: var(--space-2); left: 50%; transform: translateX(-50%); padding: var(--space-1) var(--space-3); border-radius: var(--radius-control); background: var(--surface-raised); box-shadow: var(--shadow-card); color: var(--text-primary); font-size: var(--font-caption); white-space: nowrap; pointer-events: none; }
+.magic-canvas-region__box { position: absolute; border: 2px solid var(--accent); background: rgb(255 255 255 / 25%); box-shadow: 0 0 0 9999px rgb(0 0 0 / 18%); pointer-events: none; }
 .magic-canvas-open { align-self: flex-end; margin-bottom: var(--space-2); padding-inline: var(--space-3); }
 @media (max-width: 720px) {
   .magic-canvas-editor .canvas-note-page-controls { flex-basis: 100%; justify-content: flex-end; }

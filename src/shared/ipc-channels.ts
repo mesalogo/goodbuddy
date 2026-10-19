@@ -380,6 +380,7 @@ export const ipcChannels = {
   magicNotesDeleteEntry: 'magic-notes:delete-entry',
   magicNotesAnalyze: 'magic-notes:analyze',
   magicNotesAnalyzeDraft: 'magic-notes:analyze-draft',
+  magicNotesAsk: 'magic-notes:ask',
   magicNotesAnalysisEvent: 'magic-notes:analysis-event',
   magicTodosList: 'magic-todos:list',
   magicTodosStatus: 'magic-todos:status',

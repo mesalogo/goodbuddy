@@ -11,7 +11,9 @@ export type { MagicNoteCanvasContent } from './magic-canvas/model'
 export type MagicCanvasEditorHandle = {
   flush(): Promise<MagicNoteCanvasContent>
   focus(): void
-  capturePages(pageLimit?: number, includeImages?: boolean): Promise<{ pageId: string; dataUrl: string; text?: string }[]>
+  activePage(): Promise<number>
+  pageElement(): Promise<HTMLElement>
+  capturePages(pageLimit?: number, includeImages?: boolean, pageStart?: number): Promise<{ pageId: string; dataUrl: string; text?: string }[]>
 }
 
 export type MagicCanvasEditorProps = {
@@ -41,9 +43,20 @@ export const MagicCanvasEditor = forwardRef<MagicCanvasEditorHandle, MagicCanvas
       return serialize.current(await controller.current.flush())
     },
     focus() { controller.current?.focus() },
-    async capturePages(pageLimit, includeImages) {
+    async activePage() {
+      await ready.current
       if (!controller.current) throw new Error('画布尚未加载')
-      return controller.current.capturePages({ pageLimit, includeImages })
+      return controller.current.activePage()
+    },
+    async pageElement() {
+      await ready.current
+      if (!controller.current) throw new Error('画布尚未加载')
+      return controller.current.pageElement()
+    },
+    async capturePages(pageLimit, includeImages, pageStart) {
+      await ready.current
+      if (!controller.current) throw new Error('画布尚未加载')
+      return controller.current.capturePages({ pageLimit, includeImages, pageStart })
     }
   }), [])
 

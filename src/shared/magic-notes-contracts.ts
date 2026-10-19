@@ -531,6 +531,39 @@ export type MagicNoteDraftAnalysis = {
   inputMode?: MagicNoteAnalysisInputMode
 }
 
+// Model request budgets only: never applied to note imports or storage.
+export const magicNoteQuestionLimits = { images: 50, imageBytes: 24 * 1024 * 1024, textCharacters: 200_000 } as const
+export const magicNoteQuestionScopeSchema = z.enum(['page', 'pages', 'document', 'region'])
+export type MagicNoteQuestionScope = z.infer<typeof magicNoteQuestionScopeSchema>
+
+export const magicNoteQuestionSchema = z.object({
+  noteId: magicNoteIdSchema,
+  question: z.string().trim().min(1).max(4_000),
+  scope: magicNoteQuestionScopeSchema,
+  entryId: magicNoteIdSchema.optional(),
+  pageStart: z.number().int().positive().optional(),
+  pageEnd: z.number().int().positive().optional(),
+  contexts: z.array(z.object({
+    entryId: magicNoteIdSchema,
+    revision: z.number().int().nonnegative(),
+    pages: z.array(z.object({
+      pageId: z.string().min(1), text: z.string(),
+      dataUrl: z.string().regex(/^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/).optional()
+    }).strict())
+  }).strict()),
+  history: z.array(z.object({ question: z.string(), answer: z.string(), context: z.string() }).strict()).default([])
+}).strict().refine((input) => input.scope === 'document' || (input.entryId !== undefined && input.pageStart !== undefined && input.pageEnd !== undefined && input.pageStart <= input.pageEnd
+  && (input.scope === 'pages' || input.pageStart === input.pageEnd)), {
+  message: '分页范围无效', path: ['pageStart']
+})
+export type MagicNoteQuestionInput = z.infer<typeof magicNoteQuestionSchema>
+
+export type MagicNoteQuestionResult = {
+  requestId: string
+  answer: string
+  inputMode?: 'text' | 'vision'
+}
+
 export type MagicNoteSearchResult = {
   noteId: string
   noteTitle: string

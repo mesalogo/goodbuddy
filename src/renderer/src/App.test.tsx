@@ -993,6 +993,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     analyzeDraft: vi.fn(async () => {
       throw new Error("not used");
     }),
+    ask: vi.fn(async () => ({ requestId: 'unused-request', answer: '' })),
     listTodos: vi.fn(async () => ({ todos: [] })),
     getTodoStatus: vi.fn(async () => ({ incompleteCount: 0 })),
     updateTodo: vi.fn(async () => {

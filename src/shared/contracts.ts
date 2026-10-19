@@ -2390,6 +2390,7 @@ export type DesktopApi = {
       content: MagicNoteContent,
       options: MagicNoteAnalysisOptions
     ) => Promise<MagicNoteDraftAnalysis>
+    ask: (input: import('./magic-notes-contracts').MagicNoteQuestionInput) => Promise<import('./magic-notes-contracts').MagicNoteQuestionResult>
     listTodos: () => Promise<MagicTodosSnapshot>
     getTodoStatus: () => Promise<MagicTodoStatus>
     updateTodo: (

@@ -327,8 +327,11 @@ it('resizes record columns with native Electron input and preserves desktop widt
             assert.equal(box.y, workspace.y, selector + ' top');
             assert.equal(box.height, workspace.height, selector + ' height');
           }
+          const ai = await rect('.magic-notes-ai-pane'), question = await rect('.magic-notes-question');
+          const padding = await js('parseFloat(getComputedStyle(document.querySelector(".magic-notes-ai-pane")).paddingBottom)');
+          assert(Math.abs(question.y + question.height - (ai.y + ai.height - padding)) <= 1, 'Question stays at panel bottom: ' + JSON.stringify({ai, question, padding}));
           assert(await js('document.querySelector(".page-shell").scrollHeight <= document.querySelector(".page-shell").clientHeight'), 'Only panels scroll, not PageShell');
-          shellGeometry.push({ top: workspace.y, height: workspace.height, bottom: workspace.y + workspace.height });
+          shellGeometry.push({ top: workspace.y, height: workspace.height, bottom: workspace.y + workspace.height, composerBottom: question.y + question.height });
           return workspace.height;
         };
         await assertShellPanels();
@@ -361,7 +364,7 @@ it('resizes record columns with native Electron input and preserves desktop widt
           assert(await js('(() => { const el = document.querySelector(' + JSON.stringify(selector) + '); el.scrollTop = el.scrollHeight; return el.scrollTop > 0; })()'), selector + ' scrolls internally');
         }
         await settle();
-        assert.equal(await assertShellPanels(), shellLongHeight, 'Scrolling keeps panel geometry fixed');
+        assert.equal(await assertShellPanels(), shellLongHeight, 'Scrolling keeps composer at panel bottom');
         win.setContentSize(1280, 720); await settle(); await settle();
         await assertShellPanels();
         fs.writeFileSync(${JSON.stringify(join(directory, 'result.json'))}, JSON.stringify({ emptyHeight, grownHeight, dragged, withoutAi, constrained, narrowStream, desktopSaveWidth, narrowSave, narrowFooter, footerPaddingRight, shellGeometry, persisted: true }));

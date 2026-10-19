@@ -228,6 +228,19 @@ export const magicNotes = {
     manualHint:
       'Choose “Analyze with AI” on an entry to show comments here.'
   },
+  questions: {
+    contextLabel: 'Context', currentPage: 'Current page', pageRange: 'Specific pages', document: 'Entire document',
+    pageStart: 'Start page', pageEnd: 'End page', inputLabel: 'Free question', placeholder: 'Ask about this note or follow up…', ask: 'Ask', asking: 'Answering…',
+    record: 'Record {{number}}', region: 'Selected region', captureRegion: 'Select page region', cancelRegion: 'Cancel selection',
+    cropHelp: 'Drag on the page to select; Enter selects the whole page, Escape cancels',
+    removeRegion: 'Remove image', clearHistory: 'Clear question history',
+    saveFirst: 'Save or cancel the record being edited before capturing context.', canvasRequired: 'Region capture requires a loaded paged canvas.',
+    invalidRange: 'Invalid page range or pages outside this record.', recapture: 'The record or pages changed. Capture the context again.',
+    regionNeedsImages: 'Region questions need an image-capable model. Switch models or ask using page text.',
+    textPage: 'A text record is treated as one page; current page means the selected record.',
+    textOnly: 'This request uses extracted text only, without images, handwriting or layout. Regions require an image-capable model.',
+    requestLimit: 'This question exceeds the image limit (50 images or 24 MiB per question). Select fewer pages or a region. Content is never truncated, and note imports and saves are unaffected.'
+  },
   accessibility: {
     resizeNotesPane: 'Resize notes list',
     notesPaneWidth: 'Notes list width: {{width}} pixels',

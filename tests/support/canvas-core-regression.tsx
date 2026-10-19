@@ -34,6 +34,7 @@ async function canvasRegression() {
   host.querySelector<HTMLButtonElement>('[data-tool="flow-text"]')!.click()
   host.querySelector<HTMLButtonElement>('.canvas-note-next-page')!.click()
   await editor.flush()
+  const activePage = await editor.activePage()
   const beforeShrink = host.querySelector('.canvas-note-page-counter')!.textContent
   const quill = Quill.find(host.querySelector('.canvas-flow-quill')!) as Quill
   quill.setText('Short flow\n', 'user')
@@ -108,6 +109,10 @@ async function canvasRegression() {
   await editor.destroy()
   editor = mountCanvasNote(host, extendedPdf, { readPdf: async () => pdfBytes.slice(0), onError: error => errors.push(error) })
   const restoredPdf = await editor.flush()
+  const tenPages = await editor.capturePages({ pageLimit: 10, includeImages: false })
+  const ninthPage = await editor.capturePages({ pageStart: 9, pageLimit: 1, includeImages: false })
+  let invalidRangeRejected = false
+  try { await editor.capturePages({ pageStart: 999, pageLimit: 1 }) } catch { invalidRangeRejected = true }
   await editor.destroy()
   host.remove()
   const layer = document.createElement('div')
@@ -141,7 +146,8 @@ async function canvasRegression() {
   flow.destroy()
   layer.remove()
   toolbar.remove()
-  return { errors, initialPages: initial.pages.length, initialObjects: initial.pages[0].objects,
+  return { errors, activePage, tenPageCount: tenPages.length, ninthPageId: ninthPage[0].pageId, expectedNinthPageId: restoredPdf.pages[8].id, invalidRangeRejected,
+    initialPages: initial.pages.length, initialObjects: initial.pages[0].objects,
     beforeShrink, afterShrink, savedPages: saved.pages.length, savedObjects: saved.pages[0].objects,
     reopenedObjects: reopened.pages[0].objects, visibleInkBefore, visibleInkAfter, reopenedInk, flowTransform,
     editorStyles, thumbnailStyles, thumbnailMatchesEditor, imageImports,

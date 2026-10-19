@@ -5,7 +5,7 @@ import i18n from './i18n'
 import type { DesktopApi } from '../../shared/contracts'
 import { defaultLocalToolEnvironmentSettings, defaultApplicationNavigation, type ApplicationSettings } from '../../shared/application-settings-contracts'
 import type { MagicNoteContent as NoteContent, MagicNoteCanvasContent, MagicNoteDetail, MagicNoteRichContent, MagicNotesSnapshot, MagicTodoItem } from '../../shared/magic-notes-contracts'
-import { magicNoteAnalyzeSchema, magicNoteDraftAnalyzeSchema, magicTodoIdSchema } from '../../shared/magic-notes-contracts'
+import { magicNoteAnalyzeSchema, magicNoteDraftAnalyzeSchema, magicNoteQuestionSchema, magicTodoIdSchema } from '../../shared/magic-notes-contracts'
 import type { MagicCanvasEditorProps, MagicCanvasEditorHandle } from './MagicCanvasEditor'
 import { MagicNotesWorkspace } from './MagicNotesWorkspace'
 
@@ -33,7 +33,7 @@ vi.mock('./MagicCanvasEditor', async () => {
   const model = await import('./magic-canvas/model')
   return { ...model, MagicCanvasEditor: forwardRef<MagicCanvasEditorHandle, MagicCanvasEditorProps>(function Editor({ onChange, onReady, disabled }, ref) {
     useLayoutEffect(() => { canvas.ready = onReady }, [onReady])
-    useImperativeHandle(ref, () => ({ flush: canvas.flush, capturePages: canvas.capture, focus: canvas.focus }))
+    useImperativeHandle(ref, () => ({ flush: canvas.flush, capturePages: canvas.capture, focus: canvas.focus, activePage: async () => 1, pageElement: async () => document.body }))
     return <button data-testid="canvas-editor" disabled={disabled} onClick={() => onChange(canvasContent)}>Draw</button>
   }) }
 })
@@ -41,7 +41,7 @@ vi.mock('./MagicCanvasEditor', async () => {
 vi.mock('./MagicNoteContent', async () => {
   const { useImperativeHandle } = await import('react')
   return { MagicNoteContent: function Content({ content, canvasRef }: { content: NoteContent; canvasRef?: React.Ref<{ capturePages: typeof canvas.viewCapture }> }) {
-    useImperativeHandle(canvasRef, () => ({ capturePages: canvas.viewCapture }))
+    useImperativeHandle(canvasRef, () => ({ capturePages: canvas.viewCapture, activePage: async () => 1 }))
     if (content.version === 2) return <div data-testid="canvas-content">画布正文</div>
     return <div>
     <span>记录正文</span>
@@ -99,6 +99,7 @@ const analyze = vi.fn<DesktopApi['magicNotes']['analyze']>()
 const updateTodo = vi.fn<DesktopApi['magicNotes']['updateTodo']>()
 const analyzeTodo = vi.fn<DesktopApi['magicNotes']['analyzeTodo']>()
 const analyzeDraft = vi.fn<DesktopApi['magicNotes']['analyzeDraft']>()
+const ask = vi.fn<DesktopApi['magicNotes']['ask']>()
 const getSettings = vi.fn<() => Promise<ApplicationSettings>>()
 const getRuntime = vi.fn(async () => ({
   supportsImageInput: true,
@@ -142,10 +143,12 @@ beforeEach(async () => {
       version: 1, ops: [{ insert: todo.title }, { insert: '\n', attributes: { list: input.completed ? 'checked' : 'unchecked' } }]
     } }] }
   }))
+  ask.mockResolvedValue({ requestId: 'ask-request', answer: '这是回答。' })
   getSettings.mockResolvedValue(settings)
   getRuntime.mockResolvedValue({ supportsImageInput: true, defaultModelProfileId: 'default', modelProfiles: [{ id: 'default', supportsImageInput: true }] })
   Object.defineProperty(window, 'goodbuddy', { configurable: true, value: {
     magicNotes: { list, get, listTodos, create, remove, update, createEntry, updateEntry, removeEntry, updateTodo,
+      ask: (...[input]: Parameters<typeof ask>) => { magicNoteQuestionSchema.parse(input); return ask(input) },
       analyze: (...[entryId, options]: Parameters<typeof analyze>) => { magicNoteAnalyzeSchema.parse({ entryId, ...options }); return analyze(entryId, options) },
       analyzeTodo: (...[todoId, options]: Parameters<typeof analyzeTodo>) => { magicTodoIdSchema.parse({ todoId, ...options }); return analyzeTodo(todoId, options) },
       analyzeDraft: (...[content, options]: Parameters<typeof analyzeDraft>) => { magicNoteDraftAnalyzeSchema.parse({ content, ...options }); return analyzeDraft(content, options) },
@@ -1812,6 +1815,93 @@ describe('MagicNotesWorkspace canvas integration', () => {
     expect(getRuntime).toHaveBeenCalledOnce()
     expect(action === 'entry' || action === 'todo' ? canvas.viewCapture : canvas.capture).toHaveBeenCalledWith(1, false)
     expect(analyzeCall.mock.calls[0]![1]).toHaveProperty('canvasPageText', [{ pageId: 'page-1', text: 'First page' }])
+  })
+
+  describe('free-form question', () => {
+    const pane = (): HTMLElement => screen.getByRole('complementary', { name: 'AI 评论' })
+    const ask$ = async (text: string): Promise<void> => {
+      fireEvent.change(within(pane()).getByRole('textbox', { name: '自由问答' }), { target: { value: text } })
+      fireEvent.click(within(pane()).getByRole('button', { name: '提问' }))
+    }
+
+    it('offers the three context scopes with the product wording', async () => {
+      render(<MagicNotesWorkspace onNotify={onNotify} />)
+      await openNote()
+      showAi()
+      const select = within(pane()).getByRole('combobox', { name: '上下文' })
+      expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(['当前页', '指定页码', '全部文档'])
+      expect(within(pane()).queryByRole('spinbutton')).not.toBeInTheDocument()
+      fireEvent.change(select, { target: { value: 'pages' } })
+      expect(within(pane()).getByRole('spinbutton', { name: '起始页' })).toBeVisible()
+      expect(within(pane()).getByRole('spinbutton', { name: '结束页' })).toBeVisible()
+    })
+
+    it('disables asking until text is entered, then shows the answer and clears the draft', async () => {
+      render(<MagicNotesWorkspace onNotify={onNotify} />)
+      await openNote()
+      showAi()
+      expect(within(pane()).getByRole('button', { name: '提问' })).toBeDisabled()
+      await ask$('发布前要检查什么？')
+      await within(pane()).findByText('这是回答。')
+      expect(ask).toHaveBeenCalledWith({ noteId, question: '发布前要检查什么？', scope: 'page', entryId: detail.entries[0]!.id, pageStart: 1, pageEnd: 1, contexts: [{ entryId, revision: 1, pages: [] }], history: [] })
+      expect(within(pane()).getByText('发布前要检查什么？')).toBeVisible()
+      expect(within(pane()).getByRole('textbox', { name: '自由问答' })).toHaveValue('')
+    })
+
+    it('sends no entry for the whole document scope', async () => {
+      render(<MagicNotesWorkspace onNotify={onNotify} />)
+      await openNote()
+      showAi()
+      fireEvent.change(within(pane()).getByRole('combobox', { name: '上下文' }), { target: { value: 'document' } })
+      await ask$('总结全文')
+      await waitFor(() => expect(ask).toHaveBeenCalledOnce())
+      expect(ask).toHaveBeenCalledWith({ noteId, question: '总结全文', scope: 'document', contexts: [{ entryId, revision: 1, pages: [] }], history: [] })
+    })
+
+    it('uses the record receiving pointer or keyboard focus for current-page questions', async () => {
+      get.mockResolvedValue({ ...detail, entries: [detail.entries[0]!, { ...detail.entries[0]!, id: createdEntryId }] })
+      render(<MagicNotesWorkspace onNotify={onNotify} />)
+      await openNote()
+      showAi()
+      fireEvent.pointerDown(document.getElementById(`magic-note-entry-${entryId}`)!)
+      await ask$('读这一条')
+      await within(pane()).findByText('这是回答。')
+      expect(ask.mock.calls[0]![0].entryId).toBe(entryId)
+      fireEvent.focus(document.getElementById(`magic-note-entry-${createdEntryId}`)!)
+      await ask$('再读另一条')
+      await waitFor(() => expect(ask).toHaveBeenCalledTimes(2))
+      expect(ask.mock.calls[1]![0].entryId).toBe(createdEntryId)
+    })
+
+    it('sends the page range and the matching page text and images for a canvas entry', async () => {
+      get.mockResolvedValue({ ...detail, entries: [{ ...detail.entries[0]!, content: { ...canvasContent, pages: [1, 2, 3].map(i => ({ ...canvasContent.pages[0]!, id: `page-${i}` })) } }] })
+      canvas.viewCapture.mockImplementation(async (_count, _images, page) => [{ pageId: `page-${page}`, text: page === 2 ? 'Second' : 'Third', dataUrl: 'data:image/png;base64,YQ==' }])
+      render(<MagicNotesWorkspace onNotify={onNotify} />)
+      await openNote()
+      showAi()
+      fireEvent.change(within(pane()).getByRole('combobox', { name: '上下文' }), { target: { value: 'pages' } })
+      fireEvent.change(within(pane()).getByRole('spinbutton', { name: '起始页' }), { target: { value: '2' } })
+      fireEvent.change(within(pane()).getByRole('spinbutton', { name: '结束页' }), { target: { value: '3' } })
+      await ask$('这两页讲了什么？')
+      await waitFor(() => expect(ask).toHaveBeenCalledOnce())
+      expect(canvas.viewCapture).toHaveBeenCalledWith(1, true, 2)
+      expect(canvas.viewCapture).toHaveBeenCalledWith(1, true, 3)
+      expect(ask).toHaveBeenCalledWith(expect.objectContaining({
+        scope: 'pages', pageStart: 2, pageEnd: 3,
+        contexts: [{ entryId, revision: 1, pages: [{ pageId: 'page-2', text: 'Second', dataUrl: 'data:image/png;base64,YQ==' }, { pageId: 'page-3', text: 'Third', dataUrl: 'data:image/png;base64,YQ==' }] }]
+      }))
+    })
+
+    it('reports a failed answer and keeps the draft for retry', async () => {
+      ask.mockRejectedValueOnce(new Error('AI 问答超时'))
+      render(<MagicNotesWorkspace onNotify={onNotify} />)
+      await openNote()
+      showAi()
+      await ask$('再问一次')
+      await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ tone: 'error' })))
+      expect(within(pane()).getByRole('textbox', { name: '自由问答' })).toHaveValue('再问一次')
+      expect(within(pane()).getByRole('button', { name: '提问' })).toBeEnabled()
+    })
   })
 
   it('reads fresh capability for every analysis rather than caching the previous model', async () => {

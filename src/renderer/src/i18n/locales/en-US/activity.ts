@@ -100,7 +100,7 @@ export const activity = {
     sources: {
       heartbeat: 'Smart heartbeat',
       supervision: 'Supervisor',
-      magicNotes: 'Magic notes',
+      magicNotes: 'Magic Notes',
       knowledge: 'Knowledge base',
       delegation: 'Background delegation',
       unknown: 'Other system tasks'

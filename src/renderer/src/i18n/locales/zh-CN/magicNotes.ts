@@ -217,6 +217,19 @@ export const magicNotes = {
     autoHint: '保存记录后，AI 会自动评论。',
     manualHint: '在记录上点击“AI 分析”，评论会显示在这里。'
   },
+  questions: {
+    contextLabel: '上下文', currentPage: '当前页', pageRange: '指定页码', document: '全部文档',
+    pageStart: '起始页', pageEnd: '结束页', inputLabel: '自由问答', placeholder: '询问这篇笔记，可继续追问…', ask: '提问', asking: '回答中…',
+    record: '记录 {{number}}', region: '所选区域', captureRegion: '框选当前页', cancelRegion: '取消框选',
+    cropHelp: '在页面上拖动框选；Enter 选整页，Esc 取消',
+    removeRegion: '移除截图', clearHistory: '清空问答历史',
+    saveFirst: '请先保存或取消正在编辑的记录，再捕获上下文。', canvasRequired: '区域截图需要已加载的分页画布。',
+    invalidRange: '页码范围无效或超出当前记录，请检查起止页。', recapture: '记录或页面已变化，请重新捕获上下文。',
+    regionNeedsImages: '区域截图需要支持图像输入的模型，请切换模型或改用页面文字问答。',
+    textPage: '普通文本记录视为单页；当前页指当前选中的记录。',
+    textOnly: '当前请求仅使用提取文字，未查看图片、手写和布局；区域截图需图像模型。',
+    requestLimit: '本次问答超出图片上限（单次最多 50 张、24 MiB），请缩小页码范围或框选区域。内容不会被截断，笔记导入和保存不受影响。'
+  },
   accessibility: {
     resizeNotesPane: '调整笔记列表宽度',
     notesPaneWidth: '笔记列表宽度：{{width}} 像素',

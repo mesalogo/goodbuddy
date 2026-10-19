@@ -133,7 +133,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 64
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 65
 const feishuChannelConstraint = "channel IN ('weixin', 'wecom', 'dingtalk', 'telegram', 'feishu')"
 
 function withoutHistoricalWorkMode(value: unknown): unknown {
@@ -5816,12 +5816,11 @@ export class AssistantDatabase {
       ELSE 0
     END`
     const systemSourceSql = `CASE
+             WHEN tasks.origin = 'magic-notes' THEN 'magic-notes'
              WHEN tasks.conversation_id LIKE 'heartbeat:%' THEN 'heartbeat'
              WHEN tasks.conversation_id LIKE 'supervision:%' THEN 'supervision'
              WHEN tasks.conversation_id LIKE 'knowledge:%' THEN 'knowledge'
              WHEN tasks.conversation_id LIKE 'delegation:%' THEN 'delegation'
-             WHEN tasks.origin = 'assistant' AND tasks.conversation_id IS NULL
-               THEN 'magic-notes'
            END`
     const database = this.requireDatabase()
     // Conversation and system rows are limited separately so frequent chat
@@ -12253,6 +12252,32 @@ export class AssistantDatabase {
         database.prepare('SELECT channel FROM projects LIMIT 0').all()
         database.prepare('SELECT channel FROM conversations LIMIT 0').all()
         database.exec('PRAGMA user_version = 64; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      } finally {
+        database.exec('PRAGMA writable_schema = RESET')
+        database.enableDefensive(true)
+      }
+    }
+    if (version.user_version < 65) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // Relax only the CHECK, preserving task rows, indexes and foreign keys.
+        const previous = "origin IN ('user', 'assistant', 'schedule', 'delegation', 'subagent')"
+        const expanded = "origin IN ('user', 'assistant', 'schedule', 'delegation', 'subagent', 'magic-notes')"
+        const definition = database.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get() as { sql: string }
+        if (!definition.sql.includes(expanded)) {
+          if (!definition.sql.includes(previous)) throw new Error('Unrecognized task origin constraint')
+          const schemaVersion = database.prepare('PRAGMA schema_version').get() as { schema_version: number }
+          database.enableDefensive(false)
+          database.exec('PRAGMA writable_schema = ON')
+          database.prepare("UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = 'tasks'")
+            .run(definition.sql.replace(previous, expanded))
+          database.exec(`PRAGMA schema_version = ${schemaVersion.schema_version + 1}; PRAGMA writable_schema = RESET;`)
+          database.prepare('SELECT origin FROM tasks LIMIT 0').all()
+        }
+        database.exec('PRAGMA user_version = 65; COMMIT;')
       } catch (error) {
         database.exec('ROLLBACK')
         throw error

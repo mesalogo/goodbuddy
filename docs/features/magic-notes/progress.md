@@ -1,5 +1,151 @@
 # Magic Notes Progress
 
+## 2026-10-19: On-Canvas Region Selection
+
+FR-13 region capture moved from a side-pane copy of the page to an overlay on the
+visible canvas page. Releasing the drag produces the thumbnail directly; Enter
+selects the whole page, arrows move and Shift+arrows resize, Escape or the toggle
+cancels. The trigger is a borderless icon button beside Ask; the thumbnail has a
+borderless × remove button. Percentage fields and the confirm step were removed.
+A page change during selection rejects the region. Behavior is defined in
+[UI design](./ui-design.md) and [technical design](./technical-design.md#note-questions).
+
+Validation: `npm run typecheck`, ESLint on the changed files, and 10 suites (196
+tests) passed, including `MagicNoteQuestions.test.tsx`, `MagicNotesWorkspace.test.tsx`,
+canvas core tests and real Electron runs of `magic-note-questions`, `magic-notes-layout`
+and `canvas-core`. The Electron test drags on the real page overlay, asserts the
+cropped pixels, Escape focus return, Enter whole-page capture and the trigger's
+0px border. External model calls: 0. Not committed.
+
+Follow-up: "Clear question history" is now a borderless trash icon at the top
+right of the history list, which reserves padding so it never covers the first
+question. The always-visible request-limit line was removed; the over-budget error
+now states the 50-image / 24 MiB limit. Unit tests and the Electron run assert
+the icon class, 0px border, no overlap with question text, no visible limit line
+and the limit in the error. The same 10 suites passed again (197 tests).
+
+## 2026-10-19: Unified Task Classification
+
+The four production handlers now persist the single `magic-notes` task origin
+while retaining hidden tasks and existing usage/status settlement. Schema 65
+widens the origin CHECK without rewriting task or usage rows. Statistics use
+the explicit classification instead of guessing from an assistant task with no
+conversation. Historical compatibility and counting rules are recorded in
+[Task Classification and Usage](./technical-design.md#task-classification-and-usage).
+The existing Chinese label is retained; the English statistics label is `Magic Notes`.
+
+Validation completed with no external model calls:
+
+- Five focused suites passed (178 tests): `magic-notes-task-usage`,
+  `magic-notes-analysis-ipc`, `assistant-database`, `ActivityPanel`, `token-usage`.
+- Four follow-up suites passed (38 tests): `magic-notes-task-usage`,
+  `magic-note-analyzer`, `tests/magic-note-questions-storage.test.ts`,
+  `tests/magic-note-questions.electron.test.ts`. This includes four entry points,
+  database reopen, schema 64 migration with unchanged rows/indexes/references,
+  CHECK enforcement, integrity/foreign-key checks, bilingual usage grouping,
+  and real Electron IPC/storage-host classification after success and failure.
+- `npm test -- src/main/assistant/assistant-storage-upgrade.test.ts`: 20 passed.
+- `npm test -- src/main/ipc.test.ts -t Magic`: 8 passed, 196 unrelated tests skipped.
+- `npm run typecheck` and `git diff --check` passed.
+- Plain `npm run lint` encounters generated VitePress cache/build errors.
+  `npm run lint -- --ignore-pattern "sites/docs/.vitepress/cache/**" --ignore-pattern "sites/docs-dist/**"`
+  passed without changing lint configuration or generated files.
+
+The full test suite and a real user database upgrade were not run. Migration
+evidence uses an isolated synthetic schema 64 database; test profiles are removed
+after storage closes. No Agent implementation changes are involved.
+
+## 2026-10-19: Question Usage Foreign-Key Fix
+
+An actual question failed with `FOREIGN KEY constraint failed` (`ERR_SQLITE_ERROR`,
+SQLite extended code 787). The production usage callback writes the runtime
+event's request ID into `model_usage_calls.request_id`, which references
+`tasks.id`. The question handler had not created a task, and the analyzer generated
+a second ID unrelated to the ID returned by IPC. Earlier fixtures used mock
+storage and did not persist usage events, so they missed this failure.
+
+Added a real `AssistantDatabase` regression before changing production code. Its
+success case reproduced the same foreign-key error at `upsertModelUsageCall`.
+The handler now awaits a hidden task before model execution and passes its ID
+to the analyzer. Usage, result and task status use that same ID. Success completes
+the task; model failure preserves reported usage and marks the task failed. If
+task creation fails, the original error is retained without updating a nonexistent
+task. Conversation release and runtime disposal still run in every case. No schema
+change, foreign-key relaxation or persisted fake chat conversation was added.
+
+Upgraded the question Electron fixture to use `DesktopStorageClient`, the real
+assistant storage port and utility-process SQLite. Each deterministic model call
+checks that its task is already running and emits a usage event. Three successful
+turns and one failure after usage leave four hidden terminal tasks and four usage
+rows, with 68 input tokens in total and an empty `PRAGMA foreign_key_check`.
+The failed question remains in the input box for retry.
+
+Validation: 59 tests across six files passed using `npx vitest run
+tests/magic-note-questions.electron.test.ts tests/magic-note-questions-storage.test.ts
+src/main/magic-notes/magic-note-analyzer.test.ts
+src/main/magic-notes/magic-notes-analysis-ipc.test.ts
+src/main/desktop-storage.test.ts src/renderer/src/MagicNoteQuestions.test.tsx`.
+This includes the real storage-host drain/reopen suite. `npm run typecheck` and
+ESLint on all six changed TypeScript files passed. Test databases and profiles are
+isolated below `temp/` and removed after closing storage. External model calls: 0.
+No commit or deployment was made; the remote Agent path is unchanged.
+
+## 2026-10-19: Scoped Questions and Region Capture
+
+FR-12 through FR-14: the AI pane now provides current-page, page-range and
+whole-document questions, plus rectangular capture with preview, removal and
+keyboard percentage controls. Current page comes from queued canvas navigation;
+record pointer/focus selection also updates the question target. Crops contain
+only the selected image region. Editing a selected record requires save/cancel
+before capture so derived images carry a stored revision.
+
+Main validates every selected entry revision and ordered page ID. Invalid ranges,
+missing captures and changed document membership fail without full-text fallback.
+Whole-document vision requests contain all canvas pages and rich-text inline
+images. Text-only models receive scoped text with a visible omission notice;
+region questions require image input. Request budgets reject oversize requests
+with a recovery hint and do not change imports or saves.
+
+Completed turns are sent as runtime history. Drafts, history and pending UI state
+belong to the mounted note; switching notes clears that temporary session and
+late results cannot update the new note. Tool access remains disabled.
+
+Validation used Windows Electron with isolated profiles and deterministic model
+and storage fixtures. The question probe exercises the production question UI,
+canvas, explicit test preload bridge, production IPC handler and analyzer: page 2
+matches its full-capture pixels, pointer cropping produces the expected image
+dimensions, three turns contain the prior exchanges, and removal/Escape cancel
+work. The canvas regression covers 10-page text capture, page 9, invalid offsets,
+51-page PDF imports and the existing large-image/save checks. The workspace layout
+regression still passes with the bottom composer. All three Electron suites passed.
+
+The five focused unit/component suites passed 199 tests, including the final
+record pointer/focus assertion. Together with the three Electron suites this is
+202 passing tests across eight files. `npm run typecheck` and `git diff --check`
+passed. `npm run lint` encounters pre-existing generated VitePress cache and
+`sites/docs-dist` files; `npx eslint . --ignore-pattern "sites/docs/.vitepress/cache/**"
+--ignore-pattern "sites/docs-dist/**"` passed without changing lint configuration.
+The Chinese documentation scan had no findings in the new text; historical
+English comparison wording and the existing scope exclusion were left intact.
+
+No external provider calls, packaged-app builds or cross-platform runs were made.
+Each successful question Electron run uses three deterministic runtime calls.
+This is the desktop tool-free direct-model path; the remote Agent is unaffected.
+Question sessions are intentionally temporary, and provider limits may be lower
+than the request budgets documented in the technical design.
+
+Focused command: `npx vitest run src/main/magic-notes/magic-note-analyzer.test.ts
+src/main/magic-notes/magic-notes-analysis-ipc.test.ts
+src/renderer/src/MagicNoteQuestions.test.tsx src/renderer/src/MagicNotesWorkspace.test.tsx
+src/renderer/src/MagicCanvasEditor.test.tsx`. Electron suites:
+`tests/magic-note-questions.electron.test.ts`, `tests/canvas-core.electron.test.ts`
+and `tests/magic-notes-layout.electron.test.ts`. The final crop assertion also
+checks a blue annotation pixel from page 2, distinct from page 1's red annotation.
+Offset image comparison runs in the focused question fixture; the large-file core
+fixture retains its original timeout and assertions. Its in-repository Vite cache
+is excluded from React source transforms. Profiles and generated test files are
+removed after validation, including a directory left by an interrupted test run.
+
 ## 2026-10-19: Stable Workspace Height
 
 Reproduced in Windows Electron using the production `KeepAliveRoute`,
@@ -15,15 +161,16 @@ confines scrolling to the existing panels. No viewport pixel height was added.
 After the fix, both dividers, the note stream and AI pane stay at top 159px,
 bottom 868px and height 709px through short/long switches, canvas initialization,
 80 lines of native editor input, saved comments and three streamed AI chunks.
-Resizing to 1280x720 produces a 529px workspace. Both panels scroll internally;
-PageShell does not overflow.
+The question composer stays at the padded bottom (852px, within 0.063px after
+scrolling). Resizing to 1280x720 produces a 529px workspace and composer bottom
+672px. Both panels scroll internally; PageShell does not overflow.
 
-The regression failed before the new shell rule and passed afterward. The commit
-is isolated from the concurrent questions feature and CSS extraction; its tests
-use the existing HEAD styles and do not require a question composer.
-Validation on that isolated snapshot: 162 tests passed across the Electron layout,
-workspace, rich-text editor and canvas editor suites. `npm run typecheck` and
-focused ESLint on the workspace and two regression files passed.
+Validation: the targeted Electron regression and workspace/rich-editor/canvas
+component suites passed 167 tests. The final Electron run including the added
+canvas check passed separately. `npm run typecheck` and ESLint on the four
+affected TypeScript test files passed. CSS assertions in workspace and editor
+tests now read `styles-magic-notes.css`, preserving the concurrent CSS extraction.
+The regression failed before the new shell rule and passed afterward.
 Test profiles and Vite artifacts are created under repository `temp/` and cleaned.
 
 Scope: real Electron layout and production renderer components with deterministic

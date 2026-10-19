@@ -3,7 +3,10 @@ import type { CoreContent } from './model'
 export interface CanvasController {
   content(): CoreContent
   flush(): Promise<CoreContent>
-  capturePages(options?: { firstPageOnly?: boolean; thumbnailWidth?: number; pageLimit?: number; includeImages?: boolean }): Promise<{ pageId: string; dataUrl: string; text?: string }[]>
+  activePage(): Promise<number>
+  /** The element sized to the visible current page, used to overlay page-relative UI. */
+  pageElement(): HTMLElement
+  capturePages(options?: { firstPageOnly?: boolean; thumbnailWidth?: number; pageLimit?: number; pageStart?: number; includeImages?: boolean }): Promise<{ pageId: string; dataUrl: string; text?: string }[]>
   focus(): void
   setDisabled(value: boolean): void
   destroy(): Promise<void>

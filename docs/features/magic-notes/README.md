@@ -41,6 +41,11 @@ Real Electron acceptance passed through the App UI, production preload, IPC and
 SQLite. Repository validation is not all green; the [progress record](./progress.md)
 separates focused passes, repaired schema fixtures and execution-time failures.
 
+The AI pane also supports scoped questions and follow-ups using the current page,
+a page range, the whole note or a rectangular page crop. The question session is
+temporary and clears when leaving the note. See [question scope rules](./logic-design.md#自由问答范围)
+and [request budgets](./technical-design.md#note-questions).
+
 ## Documents
 
 - [Conversation integration PRD](./prd.md): scope and acceptance for

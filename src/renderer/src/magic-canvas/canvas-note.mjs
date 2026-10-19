@@ -10,7 +10,6 @@ import {
 } from 'fabric';
 import { jsPDF as JsPdf } from 'jspdf';
 import { mountFlowText, normalizeFlowContent } from './canvas-flow.mjs';
-import { selectMagicNotePages } from '../../../shared/magic-note-pages.mjs';
 
 const VERSION = 2;
 const HISTORY_LIMIT = 50;
@@ -1590,7 +1589,14 @@ export function mountCanvasNote(host, initialContent, options = {}) {
       fabricCanvas.discardActiveObject();
       applyMode();
     },
-    async capturePages({ firstPageOnly = false, thumbnailWidth, pageLimit, includeImages = true } = {}) {
+    async activePage() {
+      await operationQueue;
+      return currentIndex + 1;
+    },
+    pageElement() {
+      return pageShell;
+    },
+    async capturePages({ firstPageOnly = false, thumbnailWidth, pageLimit, pageStart = 1, includeImages = true } = {}) {
       await operationQueue;
       flushPendingText();
       captureCurrentObjects();
@@ -1601,11 +1607,17 @@ export function mountCanvasNote(host, initialContent, options = {}) {
         setBusy(true);
         try {
           const result = [];
-          const selected = pageLimit === undefined ? pages : selectMagicNotePages(pages, pageLimit);
+          if (!Number.isInteger(pageStart) || pageStart < 1 || pageStart > pages.length
+            || (pageLimit !== undefined && (!Number.isInteger(pageLimit) || pageLimit < 1))) {
+            throw new RangeError('Invalid canvas page range');
+          }
+          const offset = pageStart - 1;
+          const selected = pages.slice(offset, pageLimit === undefined ? undefined : offset + pageLimit);
           for (let index = 0; index < (firstPageOnly ? Math.min(1, selected.length) : selected.length); index += 1) {
             if (destroyed || options.signal?.aborted) throw new DOMException('Destroyed', 'AbortError');
-            const page = pages[index];
-            const text = pageLimit === undefined ? undefined : flowEditor.pageText(index);
+            const pageIndex = offset + index;
+            const page = pages[pageIndex];
+            const text = pageLimit === undefined ? undefined : flowEditor.pageText(pageIndex);
             if (!includeImages) {
               result.push({ pageId: page.id, dataUrl: '', text });
               continue;
@@ -1613,7 +1625,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
             const composite = document.createElement('canvas');
             await paintPageBackground(composite, page);
             const context = composite.getContext('2d');
-            context.drawImage(await flowEditor.renderPage(index, page.width, page.height), 0, 0);
+            context.drawImage(await flowEditor.renderPage(pageIndex, page.width, page.height), 0, 0);
             const objectCanvas = new StaticCanvas(document.createElement('canvas'), {
               width: page.width, height: page.height, enableRetinaScaling: false, renderOnAddRemove: false
             });

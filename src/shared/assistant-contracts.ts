@@ -928,7 +928,7 @@ export type AssistantTask = {
   routingMode?: 'manual' | 'smart'
   title: string
   instructions: string
-  origin: 'user' | 'assistant' | 'schedule' | 'delegation' | 'subagent'
+  origin: 'user' | 'assistant' | 'schedule' | 'delegation' | 'subagent' | 'magic-notes'
   status: AssistantTaskStatus
   progress?: number
   createdAt: string

@@ -8,7 +8,8 @@ import type {
 import {
   analyzeMagicNoteEntry,
   analyzeMagicNoteDraft,
-  analyzeMagicTodo
+  analyzeMagicTodo,
+  askMagicNoteQuestion
 } from './magic-note-analyzer'
 
 const entry: MagicNoteEntry = {
@@ -82,6 +83,76 @@ describe('magic note analyzer', () => {
     }
     return { runtime, requests }
   }
+
+  describe('askMagicNoteQuestion', () => {
+    const question = { requestId: '00000000-0000-4000-8000-000000000777', noteId: entry.noteId, question: '这一页讲了什么？', scope: 'pages' as const, entryId: entry.id, pageStart: 2, pageEnd: 2, contexts: [], history: [] }
+
+    function answeringRuntime(events: (requestId: string) => unknown[]) {
+      const requests: AgentExecutionRequest[] = []
+      const runtime = {
+        async *run(input: AgentExecutionRequest) {
+          requests.push(input)
+          for (const event of events(input.requestId)) yield event
+        }
+      } as unknown as AgentRuntime
+      return { runtime, requests }
+    }
+
+    it('answers from the supplied context with page text and images, without tools', async () => {
+      const { runtime, requests } = answeringRuntime((requestId) => [
+        { requestId, type: 'text', delta: '验收' }, { requestId, type: 'text', delta: '条件。' },
+        { requestId, type: 'model-usage', callId: 'c', runtime: 'model', provider: 'p', model: 'm', inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        { requestId, type: 'done' }
+      ])
+      const usage = vi.fn()
+      const answer = await askMagicNoteQuestion(runtime, {
+        ...question,
+        contexts: [{ entryId: entry.id, revision: 1, pages: [{ pageId: 'second', text: '验收', dataUrl: `data:image/png;base64,${png}` }] }]
+      }, '页面 second：\n验收', usage)
+      expect(answer).toBe('验收条件。')
+      expect(usage).toHaveBeenCalledOnce()
+      expect(requests).toHaveLength(1)
+      expect(requests[0]!.requestId).toBe(question.requestId)
+      expect(requests[0]!.conversationId).toBe(`magic-note-questions:${entry.noteId}`)
+      expect(requests[0]!.images).toEqual([{ name: 'context-1.png', mediaType: 'image/png', data: png }])
+      expect(requests[0]!.prompt).toContain('这一页讲了什么？')
+      expect(requests[0]!.prompt).toContain('页面 second：\n验收')
+      expect(requests[0]!.trustedInstructions).toContain('禁止调用工具')
+    })
+
+    it('rejects when there is nothing to answer from', async () => {
+      const { runtime, requests } = answeringRuntime(() => [])
+      await expect(askMagicNoteQuestion(runtime, question, '   ')).rejects.toThrow('所选范围没有可供问答的内容')
+      expect(requests).toHaveLength(0)
+    })
+
+    it('rejects a malformed context image before calling the model', async () => {
+      const { runtime, requests } = answeringRuntime(() => [])
+      await expect(askMagicNoteQuestion(runtime, { ...question, contexts: [{ entryId: entry.id, revision: 1, pages: [{ pageId: 'second', text: '', dataUrl: 'invalid' }] }] }, '正文'))
+        .rejects.toThrow('第 1 张上下文图片格式无效')
+      expect(requests).toHaveLength(0)
+    })
+
+    it('sends all prior turns as model history and rejects over-budget input without truncating', async () => {
+      const { runtime, requests } = answeringRuntime(requestId => [{ requestId, type: 'text', delta: '细节' }, { requestId, type: 'done' }])
+      await askMagicNoteQuestion(runtime, { ...question, history: [{ question: '要检查什么？', answer: '检查验收标准', context: '第 2 页' }] }, '正文')
+      expect(requests[0]!.history).toEqual([{ role: 'user', content: '上下文：第 2 页\n要检查什么？' }, { role: 'assistant', content: '检查验收标准' }])
+      await expect(askMagicNoteQuestion(runtime, question, 'a'.repeat(200_001))).rejects.toThrow('模型请求预算')
+      await expect(askMagicNoteQuestion(runtime, { ...question, contexts: [{ entryId: entry.id, revision: 1,
+        pages: Array.from({ length: 51 }, (_, i) => ({ pageId: String(i), text: '', dataUrl: `data:image/png;base64,${png}` })) }] }, '正文')).rejects.toThrow('模型请求预算')
+      expect(requests).toHaveLength(1)
+    })
+
+    it.each([
+      ['a tool call', (requestId: string) => [{ requestId, type: 'tool', status: 'started', name: 'bash' }]],
+      ['a model error', (requestId: string) => [{ requestId, type: 'error', status: 'failed', message: '模型不可用' }]],
+      ['a stream that never completes', (requestId: string) => [{ requestId, type: 'text', delta: '半截' }]],
+      ['an empty answer', (requestId: string) => [{ requestId, type: 'done' }]]
+    ])('fails on %s', async (_name, events) => {
+      const { runtime } = answeringRuntime(events)
+      await expect(askMagicNoteQuestion(runtime, question, '正文')).rejects.toThrow()
+    })
+  })
 
   const canvasTodo: MagicTodoItem = {
     id: '00000000-0000-4000-8000-000000000601',

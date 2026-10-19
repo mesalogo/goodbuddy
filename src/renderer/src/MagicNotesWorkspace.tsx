@@ -75,6 +75,7 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { useGridListWindow } from './use-grid-columns'
 import type { AppNotificationInput } from './notifications'
+import { MagicNoteQuestions } from './MagicNoteQuestions'
 import {
   EmptyState,
   DestructiveConfirmActions,
@@ -620,7 +621,7 @@ function MagicNotesWorkspaceView({
   >(async () => undefined)
 
   const createAnalysisOptions = useCallback(
-    async (canvas?: MagicCanvasContentHandle | null): Promise<MagicNoteAnalysisOptions> => {
+    async (canvas?: Pick<MagicCanvasContentHandle, 'capturePages'> | null): Promise<MagicNoteAnalysisOptions> => {
       let format = commentFormat
       let pageCount = applicationSettings?.magicNoteCanvasPageCount ?? 1
       // Read capability for this request, never reuse a previous profile's flag.
@@ -3065,6 +3066,8 @@ function MagicNotesWorkspaceView({
                       key={entry.id}
                       id={`magic-note-entry-${entry.id}`}
                       tabIndex={-1}
+                      onFocusCapture={() => setSelectedEntryId(entry.id)}
+                      onPointerDownCapture={() => setSelectedEntryId(entry.id)}
                       className={`magic-note-entry${editingEntry?.id === entry.id && entry.content.version === 2 ? ' magic-note-entry--canvas-editing' : ''}`}
                     >
                       {entry.source && <MagicNoteSource source={entry.source} onOpen={onOpenSource} />}
@@ -3399,6 +3402,8 @@ function MagicNotesWorkspaceView({
               ))}
             </div>
           )}
+          {detail && <MagicNoteQuestions key={detail.id} note={detail} selectedEntryId={selectedEntryId}
+            editingEntryId={editingEntry?.id} getCanvas={entryId => canvasViewRefs.current.get(entryId)} onError={notifyError} />}
         </aside>
         </>
         )}

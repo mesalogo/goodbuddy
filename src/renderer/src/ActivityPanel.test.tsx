@@ -957,6 +957,25 @@ describe('ActivityPanel', () => {
     expect(screen.getByRole('row', { name: '直连模型 · gpt-sys 16 2 0 0 0% 18' })).toBeInTheDocument()
   })
 
+  it.each([
+    ['zh-CN', '系统任务', '魔法笔记', '用量统计'],
+    ['en-US', 'System tasks', 'Magic Notes', 'Usage analytics']
+  ])('renders the unified note usage group in %s', async (language, tab, label, usageTab) => {
+    await i18n.changeLanguage(language)
+    const usage = makeTokenUsage()
+    usage.conversationTotals = usage.totals
+    usage.systemTotals = { callCount: 4, input: 40, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 60 }
+    usage.records.push({ requestId: 'note-task', systemSource: 'magic-notes', runtime: 'model', provider: 'test',
+      model: 'note-model', callCount: 4, input: 40, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 60 })
+    render(<ActivityPanel onClear={vi.fn()} onOpenConversation={vi.fn()} records={[]} tokenUsage={usage} />)
+    fireEvent.click(screen.getByRole('tab', { name: usageTab }))
+    expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: tab }))
+    expect(screen.getByRole('row', { name: `${label} 40 20 0 0 0% 60` })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: label }))
+    expect(screen.getByText(/note-model/)).toBeInTheDocument()
+  })
+
   it('shows an empty system tab and refreshes from the header on demand', async () => {
     let resolveRefresh!: () => void
     const onRefresh = vi.fn(() => new Promise<void>((resolve) => { resolveRefresh = resolve }))

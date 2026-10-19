@@ -9,7 +9,7 @@ content mapping. Its two registration functions receive the existing tracked
 `registerHandler`, window and database from [ipc.ts](../../../src/main/ipc.ts),
 preserving registration order: note CRUD, entry/draft analysis, todo CRUD, then
 todo analysis. [magic-notes-analysis-ipc.ts](../../../src/main/magic-notes/magic-notes-analysis-ipc.ts)
-owns the three analysis handlers through two registration functions. It receives
+owns the three analysis handlers and the question handler through two registration functions. It receives
 the window, database, settings readers, usage persistence callback and existing
 error formatter; it imports `createDefaultModelRuntime` directly. `ipc.ts` retains
 tracked registration/removal and shared usage persistence.
@@ -17,6 +17,76 @@ Sender checks and shared input schemas stay at each handler boundary.
 [rich-content.ts](../../../src/main/magic-notes/rich-content.ts) remains shared
 by CRUD and draft analysis. Analysis retains revision checks, hidden task status,
 stream events, error causes and nested release/dispose cleanup.
+
+### Task Classification and Usage
+
+Questions, entry comments, draft analysis and todo analysis all create hidden tasks
+with the single `origin: 'magic-notes'` classification. There are no separate purpose
+fields. Usage continues to join `model_usage_calls.request_id` to `tasks.id`;
+the existing system usage view groups these calls under `魔法笔记 / Magic Notes`
+and supports the existing Runtime/model breakdown. Both summary totals and detail
+rows use the explicit origin, including failed calls that reported usage.
+
+Assistant schema 65 widens the task origin CHECK using the same metadata-only
+migration pattern as schemas 61 and 64. It preserves existing task rows, indexes,
+usage records and foreign keys. Legacy `assistant` tasks remain readable and are
+not relabeled: a missing conversation alone is not evidence of note work. Such
+unidentified historical calls remain in the existing non-system usage bucket;
+the Magic Notes group counts explicitly classified tasks going forward.
+
+## Note Questions
+
+FR-12 through FR-14 use `magicNotes.ask` across the existing explicit preload and
+trusted IPC boundary. `MagicNoteQuestions` is keyed by note ID; local draft,
+history, capture preview and busy state end with that view. Mounted checks after
+capture and IPC waits suppress late responses. No question history is persisted.
+The request includes every selected entry ID/revision and ordered page captures.
+Main reads the note once and validates membership, revision and exact page coverage
+before invoking the tool-free default model runtime. There is no full-entry fallback
+for missing pages. Full-document requests include every canvas page and inline
+rich-text image. Text-only requests omit images and return an explicit input mode;
+regions require image support and omit all full-page text.
+
+`activePage()` waits for initialization and queued navigation, returning a one-based
+page number for editors and read-only viewers. `capturePages` accepts a typed
+`pageStart` separately from `pageLimit`. Background, text and annotations use the
+same absolute page index. The 1-8 page analysis preference remains at analysis
+callers and does not constrain question captures. Region selection crops the
+composited page into a PNG in Renderer; no desktop or unrelated window capture is used.
+The read-only viewer handle adds `selectRegion(hint)` and `cancelRegion()`. The core
+controller exposes `pageElement()`, the element sized to the visible page, and the
+viewer portals a page-relative overlay into it. `selectRegion` resolves with
+percentages of the page, or `null` on cancel, viewer remount or unmount. The
+question panel records the active page before selection, rejects the region if
+the page changed, then captures that page and crops it.
+
+Question request budgets are 50 images, 24 MiB decoded image data and 200,000 text
+characters including history and the question. They are defined in
+`magicNoteQuestionLimits`; exceeding them rejects the request with a recovery hint.
+The renderer captures pages sequentially and checks image budgets as it goes.
+Provider context/image limits may be lower and surface as model errors without
+retrying a smaller scope. Imports and saves do not use these request budgets.
+Completed turns are sent through the existing runtime `history` field, with their
+context labels. Each request has its own runtime, a 120-second deadline and
+release/dispose cleanup. Before running the model, the handler awaits creation of
+a hidden `magic-notes` task. That task ID is also the runtime request ID, the usage
+event request ID and the returned question request ID: `model_usage_calls.request_id`
+references `tasks.id`. Success marks the task completed; failure marks an existing
+task failed and retains any usage already reported. Task creation failures do not
+attempt to update a nonexistent task. Runtime conversation keys remain local to
+the runtime and do not require a persisted chat conversation.
+This uses the desktop direct-model path, not the remote
+Agent transport; no Agent deployment or remote runtime implementation changes.
+
+Validation uses question component and IPC tests plus
+`magic-note-questions.electron.test.ts` (real renderer, isolated preload/IPC,
+production analyzer and utility-process SQLite, with a deterministic runtime), including pixel
+equality between an offset screenshot and that page in a full capture. The
+canvas-core Electron regression covers 10-page capture, page 9 and invalid offsets.
+`magic-note-questions-storage.test.ts` exercises the real database usage foreign
+key, separate task IDs for successive questions, failure after usage and task
+creation failure. The Electron fixture emits usage on every model call and checks
+persisted usage and terminal task states after the storage host has closed.
 
 ## Continuous Record Workspace
 
@@ -26,7 +96,8 @@ PageShell grow inside `.application-page-content`, with overflow confined to the
 panels. Without that flex constraint, the shell sizes to content and the existing
 100% page height and bounded detail-grid row cannot keep short and long notes at
 the same height. The workspace fills the space below the page header; desktop
-dividers, note stream and AI pane share top and bottom edges. The Electron layout
+dividers, note stream and AI pane share top and bottom edges. The question composer
+stays at the AI pane's padded bottom while its content scrolls. The Electron layout
 regression uses the production wrapper components and a short notes list, since
 a long list can mask the missing flex growth.
 

@@ -3017,7 +3017,7 @@ describe('AssistantDatabase', () => {
     expect(migrated.getConversation(conversation.id).remote?.channel).toBe('feishu')
     migrated.close()
     const check = new DatabaseSync(path)
-    expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(64)
+    expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
     expect(() => check.prepare("UPDATE projects SET channel = 'invalid' WHERE channel = 'feishu'").run()).toThrow(/CHECK/)
     check.close()
   })
@@ -8068,7 +8068,7 @@ describe('AssistantDatabase', () => {
       ['00000000-0000-4000-8000-000000000404', undefined, 'magic-notes']
     ] as const
     for (const [id, conversationId] of systemTasks) {
-      database.createTask({ id, conversationId, title: 'System', instructions: 'Run', origin: 'assistant', visible: false })
+      database.createTask({ id, conversationId, title: 'System', instructions: 'Run', origin: conversationId ? 'assistant' : 'magic-notes', visible: false })
       database.upsertModelUsageCall({ ...usage, requestId: id, callId: 'system' })
     }
     database.recordSystemModelUsage({ ...usage, runtime: 'embedding', source: 'knowledge', bucket: 'embedding', output: 0 })

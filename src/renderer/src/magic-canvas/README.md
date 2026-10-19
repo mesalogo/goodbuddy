@@ -21,7 +21,8 @@ type MagicCanvasEditorProps = {
 type MagicCanvasEditorHandle = {
   flush(): Promise<MagicNoteCanvasContent>
   focus(): void
-  capturePages(pageLimit?: number, includeImages?: boolean): Promise<{ pageId: string; dataUrl: string; text?: string }[]>
+  activePage(): Promise<number>
+  capturePages(pageLimit?: number, includeImages?: boolean, pageStart?: number): Promise<{ pageId: string; dataUrl: string; text?: string }[]>
 }
 ```
 
@@ -53,6 +54,13 @@ equivalent is `capturePages({ pageLimit, includeImages })`; it returns only the
 current first N pages and their measured Quill flow text. `includeImages: false`
 skips PNG compositing and returns empty data URLs for text-only analysis. Omitting
 `pageLimit` retains the all-page API for existing export and core callers.
+
+Questions use the same capture API with a one-based `pageStart`, defaulting to 1.
+`activePage()` waits for queued navigation and returns the current one-based page
+for both editors and read-only viewers. Offset capture uses that absolute page for
+the background, Quill text layer and annotations. The core has no 8-page cap;
+that preference belongs only to analysis callers. Question budgets and crop
+behavior are defined in the [question contract](../../../../docs/features/magic-notes/technical-design.md#note-questions).
 
 The same module exports `createEmptyCanvasContent()` and
 `canvasHasContent(content?)`.

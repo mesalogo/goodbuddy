@@ -1782,6 +1782,8 @@ const desktopApi: DesktopApi = {
         ipcChannels.magicNotesAnalyzeDraft,
         { content, ...options }
       ) as Promise<MagicNoteDraftAnalysis>,
+    ask: (input) =>
+      ipcRenderer.invoke(ipcChannels.magicNotesAsk, input) as Promise<import('../shared/magic-notes-contracts').MagicNoteQuestionResult>,
     listTodos: () =>
       ipcRenderer.invoke(
         ipcChannels.magicTodosList

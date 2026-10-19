@@ -1,8 +1,7 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -11,10 +10,11 @@ import { AssistantDatabase } from '../src/main/assistant/assistant-database'
 import type { MagicNoteCanvasContent } from '../src/shared/magic-notes-contracts'
 
 it('preserves annotations when flow removes the active page and renders scoped thumbnails', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-canvas-core-'))
+  await mkdir(resolve('temp'), { recursive: true })
+  const directory = await mkdtemp(join(resolve('temp'), 'goodbuddy-canvas-core-'))
   const server = await createServer({
     configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
-    plugins: [react(), { name: 'canvas-regression', configureServer(server) {
+    plugins: [react({ exclude: [/node_modules/, /[\\/]temp[\\/]/] }), { name: 'canvas-regression', configureServer(server) {
       server.middlewares.use('/canvas-regression.html', async (_request, response) => {
         response.setHeader('Content-Type', 'text/html')
         response.end(await server.transformIndexHtml('/canvas-regression.html',
@@ -34,12 +34,14 @@ it('preserves annotations when flow removes the active page and renders scoped t
       app.whenReady().then(async () => {
         const win = new BrowserWindow({ show: false, width: 1200, height: 950,
           webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+        win.webContents.on('console-message', details => { if (details.level === 'error') console.error(details.message); });
         await win.loadURL(${JSON.stringify(server.resolvedUrls!.local[0] + 'canvas-regression.html')});
         for (let i = 0; i < 400; i++) {
           if (await win.webContents.executeJavaScript('typeof window.canvasRegression === "function"')) break;
           await new Promise(resolve => setTimeout(resolve, 50));
         }
-        const result = await win.webContents.executeJavaScript('window.canvasRegression()');
+        const result = await win.webContents.executeJavaScript('(async () => { try { return await window.canvasRegression(); } catch (error) { return {failure: error.stack || String(error)}; } })()');
+        if (result.failure) throw new Error(result.failure);
         fs.writeFileSync(${JSON.stringify(join(directory, 'result.json'))}, JSON.stringify(result));
         app.exit(0);
       }).catch(error => { console.error(error); app.exit(1); });
@@ -56,6 +58,10 @@ it('preserves annotations when flow removes the active page and renders scoped t
       expect(code, output).toBe(0)
     } finally { clearTimeout(timeout) }
     const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))
+    expect(result.activePage).toBe(2)
+    expect(result.tenPageCount).toBe(10)
+    expect(result.invalidRangeRejected).toBe(true)
+    expect(result.ninthPageId).toEqual(result.expectedNinthPageId)
     expect(result.checklistAfter).toEqual(result.checklistBefore)
     expect(result.overflowErrors).toHaveLength(0)
     expect(result.acceptedLength).toBe(20001)
