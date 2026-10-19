@@ -2467,7 +2467,6 @@ function MagicNotesWorkspaceView({
                   }
                   aria-invalid={validation?.target === 'create-note'}
                   autoFocus
-                  maxLength={100}
                   value={newTitle}
                   onChange={(event) => {
                     setNewTitle(event.target.value)
@@ -2879,7 +2878,6 @@ function MagicNotesWorkspaceView({
                   }
                   aria-invalid={validation?.target === 'note-title'}
                   aria-label={t('notes.titleLabel')}
-                  maxLength={100}
                   value={titleDraft}
                   onBlur={(event) => {
                     if (event.relatedTarget instanceof Element && event.relatedTarget.closest('.magic-note-more, .magic-note-actions')) return

@@ -24,16 +24,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import './magic-note-embeds'
 import {
-  MAGIC_NOTE_MAX_ATTACHMENTS,
-  MAGIC_NOTE_MAX_ATTACHMENT_BYTES,
-  MAGIC_NOTE_MAX_IMAGES,
-  MAGIC_NOTE_MAX_IMAGE_BYTES,
-  MAGIC_NOTE_MAX_TOTAL_EMBED_BYTES,
-  MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES,
-  MAGIC_NOTE_MAX_VIDEOS,
-  MAGIC_NOTE_MAX_VIDEO_BYTES,
   MAGIC_NOTE_VIDEO_TYPES,
-  magicNoteDataBytes,
   type MagicNoteRichContent
 } from '../../shared/magic-notes-contracts'
 import { readFileAsDataUrl } from './file-data-url'
@@ -87,21 +78,6 @@ function embeddedMimeType(file: File): string {
   )
     ? normalized
     : 'application/octet-stream'
-}
-
-function embeddedData(content: MagicNoteRichContent): string[] {
-  return content.ops.flatMap((operation) => {
-    if (typeof operation.insert === 'string') {
-      return []
-    }
-    if ('image' in operation.insert) {
-      return [operation.insert.image]
-    }
-    if ('localVideo' in operation.insert) {
-      return [operation.insert.localVideo.dataUrl]
-    }
-    return [operation.insert.attachment.dataUrl]
-  })
 }
 
 function richContentFromQuill(quill: Quill): MagicNoteRichContent {
@@ -296,22 +272,6 @@ export function MagicNoteEditor({
     if (!quill || files.length === 0) {
       return
     }
-    const content = richContentFromQuill(quill)
-    const imageCount = content.ops.filter(
-      (operation) =>
-        typeof operation.insert === 'object' &&
-        'image' in operation.insert
-    ).length
-    const videoCount = content.ops.filter(
-      (operation) =>
-        typeof operation.insert === 'object' &&
-        'localVideo' in operation.insert
-    ).length
-    const attachmentCount = content.ops.filter(
-      (operation) =>
-        typeof operation.insert === 'object' &&
-        'attachment' in operation.insert
-    ).length
     const classified = files.map((file) => {
       const mimeType = embeddedMimeType(file)
       const kind =
@@ -329,87 +289,14 @@ export function MagicNoteEditor({
       onErrorRef.current(translateRef.current('editor.unsupportedImage'))
       return
     }
-    const addedImageCount = classified.filter(
-      ({ kind }) => kind === 'image'
-    ).length
-    const addedVideoCount = classified.filter(
-      ({ kind }) => kind === 'localVideo'
-    ).length
-    const addedAttachmentCount = classified.filter(
-      ({ kind }) => kind === 'attachment'
-    ).length
-    if (imageCount + addedImageCount > MAGIC_NOTE_MAX_IMAGES) {
-      onErrorRef.current(
-        translateRef.current('editor.maxImages', {
-          count: MAGIC_NOTE_MAX_IMAGES
-        })
-      )
-      return
-    }
-    if (videoCount + addedVideoCount > MAGIC_NOTE_MAX_VIDEOS) {
-      onErrorRef.current(
-        translateRef.current('editor.maxVideos', {
-          count: MAGIC_NOTE_MAX_VIDEOS
-        })
-      )
-      return
-    }
-    if (
-      attachmentCount + addedAttachmentCount >
-      MAGIC_NOTE_MAX_ATTACHMENTS
-    ) {
-      onErrorRef.current(
-        translateRef.current('editor.maxAttachments', {
-          count: MAGIC_NOTE_MAX_ATTACHMENTS
-        })
-      )
-      return
-    }
     if (
       classified.some(
-        ({ file, kind }) =>
-          file.size <= 0 ||
-          (kind === 'image' && file.size > MAGIC_NOTE_MAX_IMAGE_BYTES) ||
-          (kind === 'localVideo' &&
-            file.size > MAGIC_NOTE_MAX_VIDEO_BYTES) ||
-          (kind === 'attachment' &&
-            file.size > MAGIC_NOTE_MAX_ATTACHMENT_BYTES)
+        ({ file }) => !Number.isFinite(file.size) || file.size <= 0
       )
     ) {
       onErrorRef.current(
         translateRef.current('editor.unsupportedFile')
       )
-      return
-    }
-    const currentData = embeddedData(content)
-    const currentImageBytes = content.ops.reduce((total, operation) => {
-      if (
-        typeof operation.insert !== 'object' ||
-        !('image' in operation.insert)
-      ) {
-        return total
-      }
-      return total + magicNoteDataBytes(operation.insert.image)
-    }, 0)
-    if (
-      currentImageBytes +
-        classified
-          .filter(({ kind }) => kind === 'image')
-          .reduce((total, { file }) => total + file.size, 0) >
-      MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES
-    ) {
-      onErrorRef.current(translateRef.current('editor.totalImageSize'))
-      return
-    }
-    if (
-      currentData.reduce(
-        (total, dataUrl) => total + magicNoteDataBytes(dataUrl),
-        0
-      ) +
-        files.reduce((total, file) => total + file.size, 0) >
-      MAGIC_NOTE_MAX_TOTAL_EMBED_BYTES
-    ) {
-      onErrorRef.current(translateRef.current('editor.totalEmbedSize'))
       return
     }
     try {

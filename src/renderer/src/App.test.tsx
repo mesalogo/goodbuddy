@@ -15245,7 +15245,7 @@ describe("App", () => {
   it('captures all conversation history, freezes the source, and preserves the preview across hidden workbar and new conversations', async () => {
     await api.updates!.updateSettings({ magicNotesEnabled: true })
     const messages = Array.from({ length: 502 }, (_, index) => ({ id: crypto.randomUUID(), role: index % 2 ? 'assistant' as const : 'user' as const, content: `Capture history ${index}`, createdAt: 1_775_000_000_000 + index, state: 'complete' as const }))
-    const conversation = { id: crypto.randomUUID(), projectId, title: 'Captured discussion', updatedAt: 1_775_000_000_502, messages }
+    const conversation = { id: crypto.randomUUID(), projectId, title: 'Captured discussion'.repeat(10), updatedAt: 1_775_000_000_502, messages }
     vi.mocked(api.conversations.list).mockResolvedValueOnce([conversation])
     render(<App />)
     await screen.findByText('Capture history 501')
@@ -15266,7 +15266,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('button', { name: /新建对话/ }))
     expect(await screen.findByLabelText('待加入内容')).toHaveValue('Frozen edited capture')
     fireEvent.click(screen.getByRole('button', { name: '新建笔记' }))
-    expect(screen.getByLabelText('笔记标题')).toHaveValue('Captured discussion')
+    expect(screen.getByLabelText('笔记标题')).toHaveValue(conversation.title)
     fireEvent.click(within(screen.getByRole('region', { name: '快速笔记' })).getByRole('button', { name: '加入笔记' }))
     await waitFor(() => expect(api.magicNotes.create).toHaveBeenCalledWith(expect.objectContaining({ source: expect.objectContaining({ kind: 'conversation', conversationId: conversation.id, messageIds: messages.map(message => message.id) }), content: { version: 1, ops: [{ insert: 'Frozen edited capture\n' }] } })))
   }, 15_000)

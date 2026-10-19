@@ -53,7 +53,7 @@ function mount(initial) {
   return { editor, quill, onError, onChange };
 }
 
-describe('canvas flow limits', () => {
+describe('canvas flow content', () => {
   it('keeps normal accepted undo/redo and does not replace other Quill editors history modules', () => {
     const History = Quill.import('modules/history');
     const { editor, quill, onError } = mount({ version: 1, ops: [{ insert: 'x'.repeat(19995) + '\n' }] });
@@ -67,41 +67,35 @@ describe('canvas flow limits', () => {
     expect(quill.history.constructor).not.toBe(History);
   });
 
-  it.each([false, true])('retains accepted undo and redo after overflow (cutoff: %s)', (cutoff) => {
+  it.each([false, true])('retains undo and redo beyond the former text cap (cutoff: %s)', (cutoff) => {
     const { editor, quill, onError, onChange } = mount({ version: 1, ops: [{ insert: 'x'.repeat(19995) + '\n' }] });
     quill.setSelection(19995, 0, 'api');
     quill.insertText(19995, 'HELLO', 'user');
     quill.setSelection(20000, 0, 'api');
     if (cutoff) quill.history.cutoff();
     quill.insertText(20000, '!', 'user');
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(quill.getSelection()).toEqual({ index: 20000, length: 0 });
-    expect(quill.history.stack.undo).toHaveLength(1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(editor.text()).toBe('x'.repeat(19995) + 'HELLO!');
     editor.undo();
-    expect(editor.text()).toBe('x'.repeat(19995));
-    expect(editor.canRedo()).toBe(true);
-    quill.setSelection(3, 4, 'api');
-    quill.insertText(3, 'REJECTED', 'user');
-    expect(quill.getSelection()).toEqual({ index: 3, length: 4 });
-    expect(editor.text()).toBe('x'.repeat(19995));
-    expect(editor.canUndo()).toBe(false);
+    expect(editor.text()).toBe('x'.repeat(19995) + (cutoff ? 'HELLO' : ''));
     expect(editor.canRedo()).toBe(true);
     editor.redo();
-    expect(editor.text()).toBe('x'.repeat(19995) + 'HELLO');
+    expect(editor.text()).toBe('x'.repeat(19995) + 'HELLO!');
   });
 
-  it('preserves replacement selections and accepted formatting when rejecting an oversized paste', () => {
+  it('accepts a replacement paste beyond the former cap and preserves formatting', () => {
     const { editor, quill } = mount({ version: 1, ops: [{ insert: 'x'.repeat(20000) + '\n' }] });
     quill.formatText(0, 5, 'bold', true, 'user');
     const accepted = editor.content();
+    quill.history.cutoff();
     quill.setSelection(10, 3, 'api');
     const Delta = Quill.import('delta');
     quill.updateContents(new Delta().retain(10).delete(3).insert('TOO LONG'), 'user');
-    expect(editor.content()).toEqual(accepted);
-    expect(quill.getSelection()).toEqual({ index: 10, length: 3 });
+    expect(editor.text()).toBe('x'.repeat(10) + 'TOO LONG' + 'x'.repeat(19987));
+    expect(editor.content().ops[0].attributes).toEqual({ bold: true });
     editor.undo();
-    expect(editor.content()).toEqual({ version: 1, ops: [{ insert: 'x'.repeat(20000) + '\n' }] });
+    expect(editor.content()).toEqual(accepted);
   });
 
   it.each([0.25, 0.5, 2, 3])('measures logical columns and selection at %sx display scale', (scale) => {
@@ -124,26 +118,27 @@ describe('canvas flow limits', () => {
   it('counts internal newlines but not page-break embeds or the single terminal newline', () => {
     const content = { version: 1, ops: [{ insert: 'x'.repeat(19999) + '\n' }, { insert: { canvasPageBreak: 'page-2' } }, { insert: '\n' }] };
     expect(normalizeFlowContent(content)).toEqual(content);
-    expect(() => normalizeFlowContent({ version: 1, ops: [{ insert: 'x'.repeat(20000) + '\n\n' }] })).toThrow(/20,000/);
+    expect(flowPlainText({ version: 1, ops: [{ insert: 'x'.repeat(20000) + '\n\n' }] })).toHaveLength(20001);
     expect(normalizeFlowContent({ version: 1, ops: [{ insert: '  \n' }] })).not.toBeNull();
   });
 
-  it('rejects oversized initial documents and operation arrays instead of returning null', () => {
+  it('retains initial documents and operation arrays beyond the former caps', () => {
     const content = { version: 1, ops: [{ insert: 'x'.repeat(20001) + '\n' }] };
-    expect(() => normalizeFlowContent(content)).toThrow(/20,000/);
-    expect(() => mount(content)).toThrow(/20,000/);
-    expect(() => normalizeFlowContent({ version: 1, ops: Array.from({ length: 5001 }, () => ({ insert: 'x' })) })).toThrow(/5,000/);
+    expect(normalizeFlowContent(content)).toEqual(content);
+    expect(mount(content).editor.content()).toEqual(content);
+    const fragmented = { version: 1, ops: Array.from({ length: 5001 }, () => ({ insert: 'x' })) };
+    expect(normalizeFlowContent(fragmented)).toEqual(fragmented);
   });
 
-  it('flush preserves the boundary, rolls back excess user input, and rejects oversized API edits', async () => {
+  it('flush retains user and API edits beyond the former text cap', async () => {
     const { editor, quill, onError } = mount();
     quill.setText('中'.repeat(20000), 'user');
     expect(flowPlainText(await editor.flush())).toHaveLength(20000);
     quill.insertText(20000, 'x', 'user');
-    expect(onError).toHaveBeenCalledWith(expect.stringContaining('20,000'));
-    expect(flowPlainText(await editor.flush())).toHaveLength(20000);
+    expect(onError).not.toHaveBeenCalled();
+    expect(flowPlainText(await editor.flush())).toHaveLength(20001);
     quill.setText('x'.repeat(20001), 'api');
-    await expect(editor.flush()).rejects.toThrow(/20,000/);
+    expect(flowPlainText(await editor.flush())).toBe('x'.repeat(20001));
     expect(quill.getText()).toHaveLength(20002);
   });
 });

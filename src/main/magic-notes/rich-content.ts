@@ -1,7 +1,4 @@
 import {
-  MAGIC_NOTE_MAX_ATTACHMENT_BYTES,
-  MAGIC_NOTE_MAX_IMAGE_BYTES,
-  MAGIC_NOTE_MAX_VIDEO_BYTES,
   MAGIC_NOTE_VIDEO_TYPES,
   magicNoteDataBytes,
   magicNoteRichContentSchema,
@@ -33,7 +30,7 @@ const signatures = {
 
 type SupportedImageType = keyof typeof signatures
 
-function validateImage(dataUrl: string, maxBytes = MAGIC_NOTE_MAX_IMAGE_BYTES): void {
+function validateImage(dataUrl: string): void {
   const match = /^data:image\/(jpeg|png|gif|webp);base64,(.+)$/.exec(
     dataUrl
   )
@@ -43,11 +40,8 @@ function validateImage(dataUrl: string, maxBytes = MAGIC_NOTE_MAX_IMAGE_BYTES): 
   const type = match[1]! as SupportedImageType
   const payload = match[2]!
   const bytes = Buffer.from(payload, 'base64')
-  if (
-    bytes.length === 0 ||
-    bytes.length > maxBytes
-  ) {
-    throw new Error('每张图片必须小于 2 MB')
+  if (bytes.length === 0) {
+    throw new Error('图片数据为空')
   }
   if (bytes.toString('base64') !== payload) {
     throw new Error('图片数据格式无效')
@@ -65,8 +59,7 @@ type EmbeddedFile = {
 }
 
 function decodeEmbeddedFile(
-  file: EmbeddedFile,
-  maxBytes: number
+  file: EmbeddedFile
 ): Buffer {
   const separatorIndex = file.dataUrl.indexOf(',')
   const prefix = file.dataUrl.slice(0, separatorIndex)
@@ -77,7 +70,6 @@ function decodeEmbeddedFile(
   const bytes = Buffer.from(payload, 'base64')
   if (
     bytes.length === 0 ||
-    bytes.length > maxBytes ||
     bytes.length !== file.size
   ) {
     throw new Error('附件内容与声明的大小不一致')
@@ -89,7 +81,7 @@ function decodeEmbeddedFile(
 }
 
 function validateVideo(file: EmbeddedFile): void {
-  const bytes = decodeEmbeddedFile(file, MAGIC_NOTE_MAX_VIDEO_BYTES)
+  const bytes = decodeEmbeddedFile(file)
   const hasIsoBaseMediaSignature =
     bytes.length >= 12 &&
     bytes.subarray(4, 8).toString('ascii') === 'ftyp'
@@ -115,7 +107,7 @@ function validateVideo(file: EmbeddedFile): void {
 }
 
 function validateAttachment(file: EmbeddedFile): void {
-  decodeEmbeddedFile(file, MAGIC_NOTE_MAX_ATTACHMENT_BYTES)
+  decodeEmbeddedFile(file)
 }
 
 export function validateMagicNoteRichContent(
@@ -331,12 +323,12 @@ export function validateMagicNoteContent(input: unknown): MagicNoteContent {
   if (assets.size !== content.assets.length) throw new Error('画布资源 ID 重复')
   if (new Set(content.pages.map((page) => page.id)).size !== content.pages.length) throw new Error('画布页面 ID 重复')
   for (const asset of content.assets) {
-    const bytes = decodeEmbeddedFile({ ...asset, size: magicNoteDataBytes(asset.dataUrl) }, Number.MAX_SAFE_INTEGER)
-    if (asset.mimeType.startsWith('image/')) validateImage(asset.dataUrl, Number.MAX_SAFE_INTEGER)
+    const bytes = decodeEmbeddedFile({ ...asset, size: magicNoteDataBytes(asset.dataUrl) })
+    if (asset.mimeType.startsWith('image/')) validateImage(asset.dataUrl)
     if (asset.mimeType === 'application/pdf' && bytes.subarray(0, 5).toString('ascii') !== '%PDF-') throw new Error('PDF 内容与声明的格式不一致')
   }
   const visit = (value: unknown): void => {
-    if (typeof value === 'string' && value.startsWith('data:image/')) validateImage(value, Number.MAX_SAFE_INTEGER)
+    if (typeof value === 'string' && value.startsWith('data:image/')) validateImage(value)
     else if (Array.isArray(value)) value.forEach(visit)
     else if (value && typeof value === 'object') {
       const record = value as Record<string, unknown>
@@ -345,7 +337,7 @@ export function validateMagicNoteContent(input: unknown): MagicNoteContent {
         if (record.assetId !== undefined) {
           if (!assets.get(record.assetId as string)?.mimeType.startsWith('image/')) throw new Error('图片资源类型错误')
         } else if (typeof record.src !== 'string') throw new Error('图片需要内嵌数据或资源 ID')
-        if (record.src !== undefined) validateImage(String(record.src), Number.MAX_SAFE_INTEGER)
+        if (record.src !== undefined) validateImage(String(record.src))
       }
       Object.values(record).forEach(visit)
     }

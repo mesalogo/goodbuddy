@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopApi } from '../../shared/contracts'
-import type { MagicNoteCanvasContent, MagicNoteDetail } from '../../shared/magic-notes-contracts'
+import type { MagicNoteCanvasContent, MagicNoteDetail, MagicNoteRichContent } from '../../shared/magic-notes-contracts'
 import { AssistantDatabase } from '../assistant/assistant-database'
 import { registerIpcHandlers } from '../ipc'
 import type { AgentExecutionRequest } from '../agent/runtime'
@@ -369,6 +369,63 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     await reopen()
     expect((await api.get(note.id)).entries.find(item => item.id === entry.id)!.content).toEqual(content)
   })
+
+  it('saves and reopens a canvas with more than 50 pages through create and update IPC', async () => {
+    const content = canvas()
+    content.flow = { version: 1, ops: [{ insert: 'x'.repeat(20_001) }, ...Array.from({ length: 5001 }, () => ({ insert: 'y' }))] }
+    content.pages = Array.from({ length: 120 }, (_, index) => ({ id: `page-${index + 1}`, width: 794, height: 1123,
+      background: { type: 'template' as const, template: 'blank' as const }, objects: [] }))
+    const note = await api.create({ title: 'Long canvas' })
+    const created = await api.createEntry({ noteId: note.id, content })
+    await reopen()
+    const entry = (await api.get(note.id)).entries.find(item => item.id === created.createdEntryId)!
+    expect((entry.content as MagicNoteCanvasContent).pages).toHaveLength(120)
+    content.pages.push({ id: 'page-121', width: 794, height: 1123, background: { type: 'template', template: 'blank' }, objects: [] })
+    await api.updateEntry({ entryId: entry.id, expectedRevision: entry.revision, content })
+    await reopen()
+    const updated = (await api.get(note.id)).entries.find(item => item.id === entry.id)!.content as MagicNoteCanvasContent
+    expect(updated.pages.map(page => page.id)).toEqual(content.pages.map(page => page.id))
+    expect(updated.flow).toEqual(content.flow)
+  })
+
+  it('creates, appends, updates and reopens rich content beyond entry and note byte budgets', async () => {
+    const dataUrl = `data:application/octet-stream;base64,${Buffer.alloc(33 * 1024 * 1024).toString('base64')}`
+    const content: MagicNoteRichContent = { version: 1, ops: [
+      { insert: 'x'.repeat(512_001) },
+      { insert: { attachment: { name: 'large.bin', mimeType: 'application/octet-stream', size: 33 * 1024 * 1024, dataUrl } } }
+    ] }
+    const note = await api.create({ title: 'Title'.repeat(101), content })
+    const title = 'Updated title'.repeat(101)
+    await api.update({ noteId: note.id, expectedRevision: note.revision, title })
+    const appended = await api.createEntry({ noteId: note.id, content })
+    const entry = appended.entries.find(item => item.id === appended.createdEntryId)!
+    await api.updateEntry({ entryId: entry.id, expectedRevision: entry.revision, content })
+    await reopen()
+    const saved = await api.get(note.id)
+    expect(saved.title).toBe(title)
+    expect(saved.entries).toHaveLength(2)
+    for (const entry of saved.entries) expect(entry.content).toEqual(content)
+    expect(fs.readdirSync(join(directory, 'notes', note.id, 'assets'))).toHaveLength(1)
+  }, 60_000)
+
+  it('saves and reopens images and PDFs larger than the former 20 MiB and 32 MiB import limits', async () => {
+    const image = Buffer.alloc(21 * 1024 * 1024)
+    Buffer.from(png.split(',')[1]!, 'base64').copy(image)
+    const { jsPDF } = await import('jspdf')
+    const pdf = new jsPDF()
+    pdf.text('Large PDF', 20, 20)
+    const pdfBytes = Buffer.concat([Buffer.from(pdf.output('arraybuffer')), Buffer.alloc(33 * 1024 * 1024)])
+    const content = canvas()
+    content.assets[0]!.dataUrl = `data:image/png;base64,${image.toString('base64')}`
+    content.assets.push({ id: 'pdf-large', name: 'large.pdf', mimeType: 'application/pdf', dataUrl: `data:application/pdf;base64,${pdfBytes.toString('base64')}` })
+    content.pages = [{ id: 'pdf-page-1', width: 794, height: 1123,
+      background: { type: 'pdf', assetId: 'pdf-large', pageNumber: 1, text: 'Large PDF' }, objects: [] }]
+    const note = await api.create({ title: 'Large imports' })
+    const created = await api.createEntry({ noteId: note.id, content })
+    await reopen()
+    const entry = (await api.get(note.id)).entries.find(item => item.id === created.createdEntryId)!
+    expect(entry.content).toEqual(content)
+  }, 60_000)
 
   it('preserves a real generated PDF and all page references through three reopen/save cycles', async () => {
     const { jsPDF } = await import('jspdf')

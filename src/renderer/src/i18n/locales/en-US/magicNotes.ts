@@ -12,8 +12,7 @@ export const magicNotes = {
     messageScope: 'Saves this reply as text, excluding reasoning, tool logs, images, and attachment files.',
     conversationScope: 'Saves all user and assistant text at capture time, including earlier history, excluding reasoning, tool logs, images, and attachment files.',
     incomplete: 'This reply is incomplete. The preview includes its available text.', wait: 'Wait for the reply to finish or stop generation before saving.',
-    tooLong: 'Each entry supports up to 500 KB of text. Shorten the content before saving.',
-    scopeHelp: 'What gets saved', titleTooLong: 'Use a title of up to 100 characters.',
+    scopeHelp: 'What gets saved',
     saving: 'Saving...', deletedTarget: 'The target note was deleted. Choose another note; your draft is preserved.',
     user: 'User', assistant: 'Assistant', loading: 'Loading the full conversation...'
   },
@@ -243,16 +242,10 @@ export const magicNotes = {
     toolbarLabel: 'Note formatting toolbar',
     imageReadFailed: 'Could not read the image',
     fileReadFailed: 'Could not read the file',
-    maxImages: 'Each entry can contain up to {{count}} images',
-    maxVideos: 'Each entry can contain up to {{count}} videos',
-    maxAttachments: 'Each entry can contain up to {{count}} attachments',
     unsupportedImage:
-      'Only JPEG, PNG, GIF, or WebP images smaller than 2 MB are supported',
+      'Only JPEG, PNG, GIF, or WebP images are supported',
     unsupportedFile:
-      'Images must be under 2 MB, MP4, WebM, Ogg, or MOV videos under 16 MB, and other attachments under 8 MB',
-    totalImageSize: 'The images added at once cannot exceed 8 MB in total',
-    totalEmbedSize:
-      'Images, videos, and attachments in one entry cannot exceed 32 MB in total',
+      'Choose a non-empty file',
     placeholder: 'Capture ideas, meeting notes, or to-do leads…',
     paragraphStyle: 'Paragraph style',
     heading1: 'Heading 1',

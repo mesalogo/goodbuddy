@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react'
+import { act, fireEvent, render } from '@testing-library/react'
 import { createRef, StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MagicCanvasEditor, type MagicCanvasEditorHandle, createEmptyCanvasContent } from './MagicCanvasEditor'
@@ -91,6 +91,23 @@ describe('MagicCanvasEditor lifecycle', () => {
     expect(onReady).toHaveBeenCalledWith(await flushed)
     expect(onChange).not.toHaveBeenCalled()
     expect(controllers[1]!.setDisabled).toHaveBeenLastCalledWith(false)
+    view.unmount()
+  })
+
+  it('passes PDFs above the former file-size cap from the picker to the asset reader', async () => {
+    mock.mount.mockImplementation((_host, core) => ({ destroy: vi.fn(async () => {}), content: () => core,
+      flush: async () => core, setDisabled: vi.fn(), focus: vi.fn() }))
+    const view = render(<MagicCanvasEditor onChange={vi.fn()} onError={vi.fn()} />)
+    await act(async () => {})
+    const options = mock.mount.mock.calls[0]![2]
+    const picked = options.pickPdf()
+    const file = new File(['%PDF-1.7'], 'large.pdf', { type: 'application/pdf' })
+    // The IPC regression covers actual large bytes; this isolates picker admission.
+    Object.defineProperty(file, 'size', { value: 32 * 1024 * 1024 + 1 })
+    fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [file] } })
+    const asset = await picked
+    expect(asset).toEqual({ assetId: expect.any(String), name: 'large.pdf' })
+    expect(Array.from(await options.readPdf(asset))).toEqual(Array.from(new TextEncoder().encode('%PDF-1.7')))
     view.unmount()
   })
 })

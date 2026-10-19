@@ -69,7 +69,6 @@ export const MagicCanvasEditor = forwardRef<MagicCanvasEditorHandle, MagicCanvas
         const file = input.files?.[0]
         if (!file) { finish(null); return }
         void (async () => {
-          if (file.size > 32 * 1024 * 1024) throw new Error('PDF 文件不能超过 32 MB')
           const dataUrl = await readFileAsDataUrl(file, 'application/pdf', abort.signal)
           if (abort.signal.aborted) { finish(null); return }
           let asset = assets.find((candidate) => candidate.dataUrl === dataUrl)

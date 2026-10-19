@@ -100,33 +100,28 @@ reference refreshes the viewer. It does not own a modal or persistence.
 
 ### Editor Limits
 
-The current core limits are narrower than the shared schema. Shared acceptance
-alone does not guarantee that a document fits the editor; the core applies the
-following limits on input and serialization.
+Import and save have no product quotas for content size or count. Rendering and
+format validation still apply as described below.
 
 | Item | Core limit and behavior |
 | --- | --- |
-| Flow text | 20,000 UTF-16 code units (`string.length`), excluding exactly one terminal newline. Internal newlines count; page-break embeds do not. |
-| Flow operations | 5,000 input Delta operations, including newline and page-break operations. |
-| Pages | 50, including automatic flow pages and PDF pages. Initial page normalization currently keeps the first 50. Flow beyond 50 pages reports an error. |
-| Images | 20 MiB (`20 * 1024 * 1024` bytes) per JPEG/PNG/GIF/WebP file, inclusive. The same derived Data URL length bound applies when restoring image objects. |
-| PDF file input | 32 MiB per input file; imported pages also count toward the 50-page limit. |
+| Flow text | No character or byte cap. |
+| Flow operations | No operation count cap. |
+| Pages | No limit. Automatic flow pages, added pages and imported PDF pages are all kept. |
+| Images | No size or count limit. Only the file type (JPEG/PNG/GIF/WebP) and a non-empty file are required. |
+| PDF file input | No file size or page count limit. |
 | Page dimensions | Positive dimensions at most 3,000 per side, rounded to integers; invalid dimensions fall back to 794 by 1123 defaults per axis. |
 | List indent | Integer levels 1 through 8, or omitted for level zero. |
 
-Input validation and serialization use the same flow text/operation checks.
-Canvas assets do not use the rich-text image or aggregate attachment budgets.
-The shared canvas schema and Main validation accept this image size; persistence
-stores decoded assets in files and hydrates them on read without a smaller byte cap.
-Exactly 20,000 body code units plus Quill's terminal newline round-trip intact.
-Oversized user edits apply only the rejected edit's inverse Delta and call
-`onError`, preserving the previous selection and accepted undo/redo history.
-The canvas-local History module validates before recording, so rejection cannot
-merge into accepted typing or clear redo; other Quill editors keep their normal
-History module. Rejection does not emit an accepted content change.
-Oversized initial/API content throws a `RangeError`; `flush()` rejects rather
-than returning a document with missing flow text. Callers must not save a
-replacement empty document after that rejection.
+Shared schemas, Main validation and storage apply no content quotas to either
+canvas or rich-text notes. Persistence stores decoded assets in files and
+hydrates them on read. MIME types, signatures, canonical Base64, declared sizes,
+unique IDs and asset references remain validated. Available memory, JavaScript
+string/array capacity, Electron serialization, disk space and PDF/rendering
+library capacity remain practical limits. Loading and saving still materialize
+content and Base64 assets in memory; removing quotas does not make these paths
+streaming. The 24 Mi-pixel rendering safeguard, page dimensions, undo history
+depth and separate AI request context bounds remain in place.
 
 Vite imports Fabric, jsPDF and Quill as modules. PDF.js, its worker URL and
 binary asset map load asynchronously only when a PDF is imported or displayed;

@@ -5982,7 +5982,7 @@ function App(): React.JSX.Element {
       persistLocalConversationChanges();
       await conversationPersistence.idle();
       if (!await guardNoteDraft()) return;
-      const title = conversation.title.slice(0, 100);
+      const title = conversation.title;
       setNoteDraft({ text, initialText: text, title, initialTitle: title, targetId: '', newNote: false,
         incomplete: message ? message.state !== 'complete' : undefined,
         source: { kind: message ? 'message' : 'conversation', conversationId, messageIds: messages.map(item => item.id), capturedAt,

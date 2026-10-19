@@ -379,4 +379,24 @@ describe('MagicNoteEditor', () => {
       expect(videos).toHaveLength(1)
     })
   })
+
+  it('imports a mixed batch beyond former count, file and aggregate caps', async () => {
+    const onChange = vi.fn<(content: MagicNoteRichContent) => void>()
+    const onError = vi.fn()
+    const { container } = render(<MagicNoteEditor ariaLabel="Body" onChange={onChange} onError={onError} />)
+    // Exercise admission using large file metadata without allocating large DOM data URLs.
+    // Main/IPC tests separately validate actual bytes and persisted content.
+    const files = [
+      ...Array.from({ length: 13 }, () => new File(['image'], 'image.png', { type: 'image/png' })),
+      ...Array.from({ length: 5 }, () => new File(['video'], 'video.mp4', { type: 'video/mp4' })),
+      ...Array.from({ length: 9 }, () => new File(['file'], 'file.txt', { type: 'text/plain' }))
+    ]
+    for (const file of files) Object.defineProperty(file, 'size', { value: 33 * 1024 * 1024 })
+    fireEvent.change(container.querySelectorAll('input[type="file"]')[1]!, { target: { files } })
+    await waitFor(() => {
+      const embeds = onChange.mock.calls.at(-1)![0].ops.filter(op => typeof op.insert === 'object')
+      expect(embeds).toHaveLength(27)
+    })
+    expect(onError).not.toHaveBeenCalled()
+  })
 })

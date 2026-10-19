@@ -331,7 +331,7 @@ defaulting to 1 when absent in historical settings. The application center and
 change event. It counts pages within the canvas being analyzed, never entries.
 The first N pages follow the current `content.pages` array order, independent of
 the viewed page, page IDs or PDF source page numbers. Fewer than N pages selects
-the whole canvas. Saving and PDF export retain the 50-page canvas limit.
+the whole canvas. Import, saving and PDF export have no product page-count cap.
 
 Renderer and Main share `selectMagicNotePages`. The core selects the prefix before
 compositing, so it never captures 50 pages just to discard 49. Analysis capture
@@ -618,12 +618,12 @@ explicit cancellation compares text/title with their initial preview values.
 Application disablement and tab closing call the same guard. Workspace navigation
 also passes through the full workspace's existing leave check.
 
-`capturedNoteContent` converts text into v1 Quill string inserts, preserving
-newlines and adding the terminal newline when needed. It splits inserts at the
-200,000-code-unit operation limit without splitting surrogate pairs; the complete
-record still passes the shared rich-content schema. Markdown stays literal text.
-No summarization or attachment copying runs during capture. New-note titles are
-limited to 100 characters. A synchronous submission ref prevents duplicate writes.
+`capturedNoteContent` converts text into a v1 Quill string insert, preserving
+newlines and adding the terminal newline when needed. Capture, editing and saving
+have no body text, Delta operation, page, file-size, aggregate-byte or media-count
+quotas. The complete record still passes type and integrity validation. Markdown stays literal text.
+No summarization or attachment copying runs during capture. Titles must be non-empty
+but have no length cap. A synchronous submission ref prevents duplicate writes.
 
 `magicNotes.create({ title, content?, source? })` returns `MagicNoteCreateResult`,
 with `createdEntryId` when initial content exists. `createMagicNote` inserts the

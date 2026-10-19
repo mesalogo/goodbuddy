@@ -57,13 +57,14 @@ it('preserves annotations when flow removes the active page and renders scoped t
     } finally { clearTimeout(timeout) }
     const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))
     expect(result.checklistAfter).toEqual(result.checklistBefore)
-    expect(result.overflowErrors).toHaveLength(2)
-    expect(result.selectionAfterRejection).toEqual({ index: 20000, length: 0 })
-    expect(result.selectionWithRedo).toEqual({ index: 3, length: 4 })
-    expect(result.acceptedLength).toBe(20000)
-    expect(result.undoneLength).toBe(19995)
+    expect(result.overflowErrors).toHaveLength(0)
+    expect(result.acceptedLength).toBe(20001)
+    expect(result.undoneLength).toBe(20000)
     expect(result.retainedRedo).toBe(true)
-    expect(result.redoneLength).toBe(20000)
+    expect(result.redoneLength).toBe(20001)
+    expect(result.importedPdfPages).toBe(51)
+    expect(result.extendedPdfPages).toBe(52)
+    expect(result.restoredPdfPages).toBe(52)
     const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
     try {
       database.initialize(directory)
@@ -100,7 +101,7 @@ it('preserves annotations when flow removes the active page and renders scoped t
     expect(result.imageImports).toEqual([
       { size: 2 * 1024 * 1024 + 1, imported: 1, restored: 1, errors: [] },
       { size: 20 * 1024 * 1024, imported: 1, restored: 1, errors: [] },
-      { size: 20 * 1024 * 1024 + 1, imported: 0, restored: 0, errors: ['单张图片不能超过 20 MB'] }
+      { size: 20 * 1024 * 1024 + 1, imported: 1, restored: 1, errors: [] }
     ])
   } finally {
     await server.close()

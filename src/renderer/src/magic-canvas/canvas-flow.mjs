@@ -3,8 +3,6 @@
 import Quill from 'quill';
 let pageBreakRegistered = false;
 const FLOW_VERSION = 1;
-const MAX_OPS = 5000;
-const MAX_TEXT = 20000;
 const PAGE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
 const INLINE_FORMATS = ['bold', 'italic', 'underline', 'strike', 'code'];
 const BLOCK_FORMATS = ['header', 'blockquote', 'code-block', 'list', 'indent'];
@@ -50,7 +48,6 @@ function normalizedAttributes(value) {
 
 export function normalizeFlowContent(value) {
   if (!value || value.version !== FLOW_VERSION || !Array.isArray(value.ops)) return null;
-  if (value.ops.length > MAX_OPS) throw new RangeError(`全局文本最多支持 ${MAX_OPS.toLocaleString()} 个格式片段`);
   const ops = [];
   const pageIds = new Set();
   let textLength = 0;
@@ -76,7 +73,6 @@ export function normalizeFlowContent(value) {
   // Quill 的最后一个换行是文档终止符，不计入正文；内部换行仍计数。
   const lastInsert = ops.at(-1)?.insert;
   if (typeof lastInsert === 'string' && lastInsert.endsWith('\n')) textLength -= 1;
-  if (textLength > MAX_TEXT) throw new RangeError(`全局文本最多支持 ${MAX_TEXT.toLocaleString()} 个字符（不含末尾换行）`);
   return textLength > 0 || ops.some((op) => typeof op.insert === 'object')
     ? { version: FLOW_VERSION, ops } : null;
 }

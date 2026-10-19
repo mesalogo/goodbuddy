@@ -159,7 +159,7 @@ describe('compact notes', () => {
     expect(screen.getByLabelText('Text to add')).toHaveValue('')
   })
 
-  it('shows an oversized preview unchanged and allows correction before saving', async () => {
+  it('saves a captured preview beyond the former text cap unchanged', async () => {
     render(<Harness />)
     fireEvent.click(screen.getByText('Capture'))
     const preview = await screen.findByLabelText('Text to add')
@@ -167,27 +167,20 @@ describe('compact notes', () => {
     fireEvent.change(preview, { target: { value: oversized } })
     fireEvent.click(screen.getByRole('button', { name: 'New note' }))
     expect(preview).toHaveValue(oversized)
-    expect(screen.getByRole('button', { name: 'Add to note' })).toBeDisabled()
-    expect(screen.getByText(/Each entry supports up to 500 KB/)).toBeVisible()
-    expect(preview).toHaveAccessibleDescription(/Each entry supports up to 500 KB/)
-    expect(document.querySelector('.magic-note-panel__footer p')).toBeNull()
-    fireEvent.change(preview, { target: { value: 'Within capacity' } })
     expect(screen.getByRole('button', { name: 'Add to note' })).toBeEnabled()
-    expect(create).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Add to note' }))
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ content: capturedNoteContent(oversized) })))
   })
 
-  it('keeps new-note validation beside the title without initial footer instructions', async () => {
+  it('requires a non-empty title but accepts titles beyond the former length cap', async () => {
     render(<Harness />)
     fireEvent.click(await screen.findByRole('button', { name: 'New note' }))
     const title = screen.getByRole('textbox', { name: 'Note title' })
     expect(document.querySelector('.magic-note-panel__footer p')).toBeNull()
     expect(screen.getByRole('button', { name: 'Create note' })).toBeDisabled()
     fireEvent.change(title, { target: { value: 'x'.repeat(101) } })
-    expect(title).toHaveAccessibleDescription('Use a title of up to 100 characters.')
-    expect(title).toHaveAttribute('aria-invalid', 'true')
+    expect(title).not.toHaveAttribute('aria-invalid', 'true')
     expect(document.querySelector('.magic-note-panel__footer p')).toBeNull()
-    fireEvent.change(title, { target: { value: 'Valid title' } })
-    expect(screen.queryByText('Use a title of up to 100 characters.')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Create note' })).toBeEnabled()
   })
 
@@ -221,7 +214,7 @@ describe('compact notes', () => {
     const content = capturedNoteContent(text)
     expect(magicNoteRichContentSchema.safeParse(content).success).toBe(true)
     expect(content.ops.map(op => op.insert).join('')).toBe(text + '\n')
-    expect(magicNoteRichContentSchema.safeParse(capturedNoteContent('中'.repeat(180_000))).success).toBe(false)
+    expect(magicNoteRichContentSchema.safeParse(capturedNoteContent('中'.repeat(180_000))).success).toBe(true)
   })
 })
 

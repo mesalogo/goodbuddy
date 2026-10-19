@@ -13,10 +13,7 @@ import { mountFlowText, normalizeFlowContent } from './canvas-flow.mjs';
 import { selectMagicNotePages } from '../../../shared/magic-note-pages.mjs';
 
 const VERSION = 2;
-const MAX_PAGES = 50;
 const HISTORY_LIMIT = 50;
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
-const MAX_IMAGE_DATA_LENGTH = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 128;
 const DEFAULT_WIDTH = 794;
 const DEFAULT_HEIGHT = 1123;
 const MAX_DIMENSION = 3000;
@@ -110,9 +107,7 @@ function fitDimensions(width, height) {
 }
 
 function isSafeImageDataUrl(value) {
-  return typeof value === 'string'
-    && value.length <= MAX_IMAGE_DATA_LENGTH
-    && IMAGE_DATA_RE.test(value);
+  return typeof value === 'string' && IMAGE_DATA_RE.test(value);
 }
 
 function hasUnsafeObjectValue(value, rootImage = false, depth = 0) {
@@ -192,7 +187,7 @@ function normalizeContent(value) {
   const usedIds = new Set();
   const sourcePages = (value?.version === 1 || value?.version === VERSION)
     && Array.isArray(value.pages)
-    ? value.pages.slice(0, MAX_PAGES)
+    ? value.pages
     : [];
   const pages = sourcePages.map((page) => normalizePage(page, usedIds));
   if (!pages.length) {
@@ -583,7 +578,6 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     fabricCanvas.upperCanvasEl.classList.add('canvas-note-interaction-canvas');
   }
 
-  let flowOverflowReported = false;
   const flowEditor = mountFlowText(flowLayer, flowToolbarHost, normalized.flow, {
     onError(message) {
       reportError(message);
@@ -679,7 +673,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     pageCounter.textContent = `${currentIndex + 1} / ${pages.length}`;
     previousButton.disabled = busy || currentIndex <= 0;
     nextButton.disabled = busy || currentIndex >= pages.length - 1;
-    addPageButton.disabled = busy || pages.length >= MAX_PAGES;
+    addPageButton.disabled = busy;
     deletePageButton.disabled = busy || pages.length <= 1;
     undoButton.disabled = busy || (flowMode
       ? !flowEditor.canUndo()
@@ -1136,8 +1130,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     if (!IMAGE_MIME_TYPES.has(file.type)) {
       throw new Error('请选择 JPEG、PNG、GIF 或 WebP 图片');
     }
-    if (!Number.isFinite(file.size) || file.size <= 0 || file.size > MAX_IMAGE_BYTES) {
-      throw new Error('单张图片不能超过 20 MB');
+    if (!Number.isFinite(file.size) || file.size <= 0) {
+      throw new Error('选择的图片文件为空');
     }
     const dataUrl = await readFileDataUrl(file);
     if (!isSafeImageDataUrl(dataUrl)) {
@@ -1188,7 +1182,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     flushPendingText();
     captureCurrentObjects();
     const requested = Math.max(1, Math.round(Number(requiredCount) || 1));
-    const target = Math.min(MAX_PAGES, requested);
+    const target = requested;
     let changed = false;
     while (pages.length < target) {
       const previous = pages[pages.length - 1];
@@ -1206,12 +1200,6 @@ export function mountCanvasNote(host, initialContent, options = {}) {
       else if (currentIndex === index) currentIndex = Math.max(0, index - 1);
       changed = true;
     }
-    if (requested > MAX_PAGES && !flowOverflowReported) {
-      flowOverflowReported = true;
-      reportError(`全局文本最多支持 ${MAX_PAGES} 页，请删减正文`);
-    } else if (requested <= MAX_PAGES) {
-      flowOverflowReported = false;
-    }
     if (!changed) return;
     currentIndex = Math.min(currentIndex, pages.length - 1);
     // Pagination can remove the loaded page; finish restoration in the same queue as flush.
@@ -1222,7 +1210,6 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   }
 
   async function addPage() {
-    if (pages.length >= MAX_PAGES) return;
     flushPendingText();
     captureCurrentObjects();
     clearDeleteConfirmation();
@@ -1313,13 +1300,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     const bytes = await options.readPdf({ assetId: picked.assetId });
     const documentProxy = await getPdfDocument(background, bytes);
     if (destroyed) throw new DOMException('Destroyed', 'AbortError');
-    if (documentProxy.numPages > MAX_PAGES) {
-      throw new Error(`PDF 最多支持 ${MAX_PAGES} 页`);
-    }
     const replacePlaceholder = isPristinePlaceholder();
-    if (!replacePlaceholder && pages.length + documentProxy.numPages > MAX_PAGES) {
-      throw new Error(`每条画布笔记最多支持 ${MAX_PAGES} 页`);
-    }
 
     const imported = [];
     for (let pageNumber = 1; pageNumber <= documentProxy.numPages; pageNumber += 1) {

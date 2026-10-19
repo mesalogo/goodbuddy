@@ -1,16 +1,5 @@
 import { z } from 'zod'
 
-export const MAGIC_NOTE_MAX_IMAGES = 12
-export const MAGIC_NOTE_MAX_IMAGE_BYTES = 2 * 1024 * 1024
-export const MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES = 8 * 1024 * 1024
-export const MAGIC_NOTE_MAX_VIDEOS = 4
-export const MAGIC_NOTE_MAX_VIDEO_BYTES = 16 * 1024 * 1024
-export const MAGIC_NOTE_MAX_ATTACHMENTS = 8
-export const MAGIC_NOTE_MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
-export const MAGIC_NOTE_MAX_TOTAL_EMBED_BYTES = 32 * 1024 * 1024
-export const MAGIC_NOTE_MAX_NOTE_EMBED_BYTES = 64 * 1024 * 1024
-export const MAGIC_NOTE_MAX_TEXT_BYTES = 500 * 1024
-
 export const MAGIC_NOTE_VIDEO_TYPES = [
   'video/mp4',
   'video/webm',
@@ -71,7 +60,6 @@ export const magicNoteImageDataBytes = magicNoteDataBytes
 const magicNoteIdSchema = z.string().uuid()
 const imageDataUrlSchema = z
   .string()
-  .max(Math.ceil((MAGIC_NOTE_MAX_IMAGE_BYTES * 4) / 3) + 128)
   .regex(
     /^data:image\/(?:jpeg|png|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/,
     '只支持本地 JPEG、PNG、GIF 或 WebP 图片'
@@ -105,10 +93,9 @@ const embeddedMimeTypeSchema = z
     '附件类型无效'
   )
 
-function embeddedDataUrlSchema(maxBytes: number): z.ZodString {
+function embeddedDataUrlSchema(): z.ZodString {
   return z
     .string()
-    .max(Math.ceil((maxBytes * 4) / 3) + 256)
     .regex(
       /^data:[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*;base64,[A-Za-z0-9+/]+={0,2}$/u,
       '只支持本地附件数据'
@@ -125,16 +112,14 @@ const localVideoSchema = z
   .object({
     ...embeddedFileFields,
     mimeType: z.enum(MAGIC_NOTE_VIDEO_TYPES),
-    size: z.number().int().positive().max(MAGIC_NOTE_MAX_VIDEO_BYTES),
-    dataUrl: embeddedDataUrlSchema(MAGIC_NOTE_MAX_VIDEO_BYTES)
+    dataUrl: embeddedDataUrlSchema()
   })
   .strict()
 
 const attachmentSchema = z
   .object({
     ...embeddedFileFields,
-    size: z.number().int().positive().max(MAGIC_NOTE_MAX_ATTACHMENT_BYTES),
-    dataUrl: embeddedDataUrlSchema(MAGIC_NOTE_MAX_ATTACHMENT_BYTES)
+    dataUrl: embeddedDataUrlSchema()
   })
   .strict()
 
@@ -167,7 +152,7 @@ export const magicNoteRichContentSchema = z
         z
           .object({
             insert: z.union([
-              z.string().max(200_000),
+              z.string(),
               z.object({ image: imageDataUrlSchema }).strict(),
               z.object({ localVideo: localVideoSchema }).strict(),
               z.object({ attachment: attachmentSchema }).strict()
@@ -177,77 +162,14 @@ export const magicNoteRichContentSchema = z
           .strict()
       )
       .min(1)
-      .max(10_000)
   })
   .strict()
-  .superRefine((content, context) => {
-    const encoder = new TextEncoder()
-    let textBytes = 0
-    const imageData: string[] = []
-    const videoData: string[] = []
-    const attachmentData: string[] = []
-    for (const operation of content.ops) {
-      if (typeof operation.insert === 'string') {
-        textBytes += encoder.encode(operation.insert).byteLength
-      } else if ('image' in operation.insert) {
-        imageData.push(operation.insert.image)
-      } else if ('localVideo' in operation.insert) {
-        videoData.push(operation.insert.localVideo.dataUrl)
-      } else {
-        attachmentData.push(operation.insert.attachment.dataUrl)
-      }
-    }
-    if (textBytes > MAGIC_NOTE_MAX_TEXT_BYTES) {
-      context.addIssue({
-        code: 'custom',
-        message: '每条记录的文字内容不能超过 500 KB'
-      })
-    }
-    if (imageData.length > MAGIC_NOTE_MAX_IMAGES) {
-      context.addIssue({
-        code: 'custom',
-        message: `每条记录最多包含 ${MAGIC_NOTE_MAX_IMAGES} 张图片`
-      })
-    }
-    const estimatedBytes = imageData.reduce(
-      (total, dataUrl) => total + magicNoteImageDataBytes(dataUrl),
-      0
-    )
-    if (estimatedBytes > MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES) {
-      context.addIssue({
-        code: 'custom',
-        message: '一篇笔记中的图片总大小不能超过 8 MB'
-      })
-    }
-    if (videoData.length > MAGIC_NOTE_MAX_VIDEOS) {
-      context.addIssue({
-        code: 'custom',
-        message: `每条记录最多包含 ${MAGIC_NOTE_MAX_VIDEOS} 个视频`
-      })
-    }
-    if (attachmentData.length > MAGIC_NOTE_MAX_ATTACHMENTS) {
-      context.addIssue({
-        code: 'custom',
-        message: `每条记录最多包含 ${MAGIC_NOTE_MAX_ATTACHMENTS} 个附件`
-      })
-    }
-    const embeddedBytes = [...imageData, ...videoData, ...attachmentData].reduce(
-      (total, dataUrl) => total + magicNoteDataBytes(dataUrl),
-      0
-    )
-    if (embeddedBytes > MAGIC_NOTE_MAX_TOTAL_EMBED_BYTES) {
-      context.addIssue({
-        code: 'custom',
-        message: '每条记录中的图片、视频和附件总大小不能超过 32 MB'
-      })
-    }
-  })
 
 export type MagicNoteRichContent = z.infer<
   typeof magicNoteRichContentSchema
 >
 
-const canvasDataUrlSchema = embeddedDataUrlSchema(Number.MAX_SAFE_INTEGER)
+const canvasDataUrlSchema = embeddedDataUrlSchema()
 export const magicNoteCanvasContentSchema = z.object({
   version: z.literal(2),
   kind: z.literal('paged-canvas'),
@@ -261,16 +183,11 @@ export const magicNoteCanvasContentSchema = z.object({
     ]),
     objects: z.array(z.record(z.string(), z.unknown())),
     flowAuto: z.boolean().optional()
-  }).strict()).min(1).max(50),
+  }).strict()).min(1),
   flow: z.object({ version: z.literal(1).optional(), ops: z.array(z.object({
     insert: z.union([z.string(), z.record(z.string(), z.unknown())]),
     attributes: z.record(z.string(), z.unknown()).optional()
-  }).strict()).max(5000) }).strict().superRefine((flow, context) => {
-    const length = flow.ops.reduce((total, op) => total + (typeof op.insert === 'string' ? op.insert.length : 0), 0)
-    const last = flow.ops.at(-1)?.insert
-    const terminalNewline = typeof last === 'string' && last.endsWith('\n') ? 1 : 0
-    if (length - terminalNewline > 20_000) context.addIssue({ code: 'custom', message: '画布正文不能超过 20,000 字符（不含末尾换行）', path: ['ops'] })
-  }).optional(),
+  }).strict()) }).strict().optional(),
   assets: z.array(z.object({
     id: z.string().min(1), name: embeddedFileNameSchema,
     mimeType: embeddedMimeTypeSchema, dataUrl: canvasDataUrlSchema
@@ -342,7 +259,7 @@ export const magicNoteTagListSchema = z
 
 export const magicNoteCreateSchema = z
   .object({
-    title: z.string().trim().min(1).max(100),
+    title: z.string().trim().min(1),
     content: magicNoteContentSchema.optional(),
     source: magicNoteSourceSchema.optional(),
     tags: magicNoteTagListSchema.optional()
@@ -356,7 +273,7 @@ export type MagicNoteCreateInput = z.infer<typeof magicNoteCreateSchema>
 export const magicNoteUpdateSchema = z
   .object({
     noteId: magicNoteIdSchema,
-    title: z.string().trim().min(1).max(100).optional(),
+    title: z.string().trim().min(1).optional(),
     pinned: z.boolean().optional(),
     tags: magicNoteTagListSchema.optional(),
     expectedRevision: z.number().int().nonnegative()

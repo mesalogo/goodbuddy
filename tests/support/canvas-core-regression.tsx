@@ -1,4 +1,5 @@
 import Quill from 'quill'
+import { jsPDF } from 'jspdf'
 import { mountFlowText } from '../../src/renderer/src/magic-canvas/canvas-flow.mjs'
 import { createRoot } from 'react-dom/client'
 import { mountCanvasNote } from '../../src/renderer/src/magic-canvas/canvas-note.mjs'
@@ -88,6 +89,26 @@ async function canvasRegression() {
       restored: restored.pages[0].objects.length, errors: importErrors })
     await editor.destroy()
   }
+  const pdf = new jsPDF()
+  for (let page = 1; page <= 51; page++) {
+    if (page > 1) pdf.addPage()
+    pdf.text(`Page ${page}`, 20, 20)
+  }
+  const pdfBytes = pdf.output('arraybuffer')
+  editor = mountCanvasNote(host, undefined, {
+    onError: error => errors.push(error),
+    pickPdf: async () => ({ assetId: 'long-pdf', name: 'long.pdf' }),
+    readPdf: async () => pdfBytes.slice(0)
+  })
+  await editor.flush()
+  host.querySelector<HTMLButtonElement>('.canvas-note-import-pdf')!.click()
+  const importedPdf = await editor.flush()
+  host.querySelector<HTMLButtonElement>('.canvas-note-add-page')!.click()
+  const extendedPdf = await editor.flush()
+  await editor.destroy()
+  editor = mountCanvasNote(host, extendedPdf, { readPdf: async () => pdfBytes.slice(0), onError: error => errors.push(error) })
+  const restoredPdf = await editor.flush()
+  await editor.destroy()
   host.remove()
   const layer = document.createElement('div')
   const toolbar = document.createElement('div')
@@ -111,13 +132,9 @@ async function canvasRegression() {
   flowQuill.setSelection(20000, 0, 'api')
   flowQuill.history.cutoff()
   flowQuill.insertText(20000, '!', 'user')
-  const selectionAfterRejection = flowQuill.getSelection()
   const acceptedLength = flow.text().length
   flow.undo()
   const undoneLength = flow.text().length
-  flowQuill.setSelection(3, 4, 'api')
-  flowQuill.insertText(3, 'REJECTED', 'user')
-  const selectionWithRedo = flowQuill.getSelection()
   const retainedRedo = flow.canRedo()
   flow.redo()
   const redoneLength = flow.text().length
@@ -128,7 +145,8 @@ async function canvasRegression() {
     beforeShrink, afterShrink, savedPages: saved.pages.length, savedObjects: saved.pages[0].objects,
     reopenedObjects: reopened.pages[0].objects, visibleInkBefore, visibleInkAfter, reopenedInk, flowTransform,
     editorStyles, thumbnailStyles, thumbnailMatchesEditor, imageImports,
-    checklistBefore, checklistAfter, overflowErrors, selectionAfterRejection, selectionWithRedo,
+    checklistBefore, checklistAfter, overflowErrors,
+    importedPdfPages: importedPdf.pages.length, extendedPdfPages: extendedPdf.pages.length, restoredPdfPages: restoredPdf.pages.length,
     acceptedLength, undoneLength, retainedRedo, redoneLength }
 }
 

@@ -8,7 +8,7 @@ import { DesktopStorageTransport } from './desktop-storage-transport'
 import { createDesktopStorageFiles } from './desktop-storage-files'
 import { createDesktopRuntimeStorageAdapters } from './desktop-storage-runtime-operations'
 import { defaultDocumentParsingSettings } from './document-parsing-settings-store'
-import { MAGIC_NOTE_MAX_VIDEO_BYTES, type MagicNoteContent } from '../shared/magic-notes-contracts'
+import { type MagicNoteContent } from '../shared/magic-notes-contracts'
 import { createHash } from 'node:crypto'
 
 const root = process.env.GB_STORAGE_TEST_ROOT!
@@ -117,7 +117,7 @@ async function run(): Promise<void> {
   await assert.rejects(storage.call('assistant', 'saveLocalConversations', [(() => undefined) as never]), /callbacks/)
   let peakRss = process.memoryUsage().rss
   const sample = setInterval(() => { peakRss = Math.max(peakRss, process.memoryUsage().rss) }, 10)
-  const videoBytes = Buffer.alloc(MAGIC_NOTE_MAX_VIDEO_BYTES)
+  const videoBytes = Buffer.alloc(16 * 1024 * 1024)
   videoBytes.writeUInt32BE(24, 0)
   videoBytes.write('ftypisom', 4, 'ascii')
   videoBytes.write('isomiso2', 16, 'ascii')
@@ -125,7 +125,7 @@ async function run(): Promise<void> {
   videoBytes.write('mdat', 28, 'ascii')
   const video = `data:video/mp4;base64,${videoBytes.toString('base64')}`
   const content: MagicNoteContent = { version: 1, ops: [{ insert: { localVideo: {
-    name: 'supported.mp4', mimeType: 'video/mp4', size: MAGIC_NOTE_MAX_VIDEO_BYTES, dataUrl: video
+    name: 'supported.mp4', mimeType: 'video/mp4', size: videoBytes.length, dataUrl: video
   } } }, { insert: '\n' }] }
   const savingVideo = storage.call('assistant', 'createMagicNote', [{ title: 'Full video', content }])
   // A large write retains its write budget without blocking an unrelated read.
@@ -141,7 +141,7 @@ async function run(): Promise<void> {
       assert.ok(entry.content.version === 1)
       const insert = entry.content.ops[0]!.insert
       assert.ok(typeof insert === 'object' && 'localVideo' in insert)
-      assert.equal(insert.localVideo.size, MAGIC_NOTE_MAX_VIDEO_BYTES)
+      assert.equal(insert.localVideo.size, videoBytes.length)
       assert.equal(digest(insert.localVideo.dataUrl), expectedVideo)
     }
   }
@@ -164,7 +164,7 @@ async function run(): Promise<void> {
   const temporary = await temporarySave
   await closing
   console.log('storage-memory:' + JSON.stringify({ peakMainRss: peakRss,
-    videoBytes: MAGIC_NOTE_MAX_VIDEO_BYTES, historyCharacters: histories.reduce((n, row) => n + row.content.length, 0) }))
+    videoBytes: videoBytes.length, historyCharacters: histories.reduce((n, row) => n + row.content.length, 0) }))
   await assert.rejects(stat(join(root, 'temp', 'document-parsing', temporary.id)), { code: 'ENOENT' })
   assert.equal(storage.pendingCount, 0)
   const reopened = new DesktopStorageClient(options)

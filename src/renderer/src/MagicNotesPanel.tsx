@@ -1,7 +1,7 @@
 import { ArrowLeft, ExternalLink, Pin, Plus } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { magicNoteRichContentSchema, type MagicNoteCommentFormat, type MagicNoteDetail, type MagicNoteRichContent, type MagicNoteSummary } from '../../shared/magic-notes-contracts'
+import { type MagicNoteCommentFormat, type MagicNoteDetail, type MagicNoteRichContent, type MagicNoteSummary } from '../../shared/magic-notes-contracts'
 import type { MagicNoteCommentMode } from '../../shared/application-settings-contracts'
 import { MagicNoteSource, type OpenMagicNoteSource } from './MagicNoteSource'
 import type { useMagicNoteDraft } from './use-magic-note-draft'
@@ -12,17 +12,9 @@ import './magic-notes-panel.css'
 
 const MagicCanvasThumbnail = lazy(async () => ({ default: (await import('./MagicCanvasThumbnail')).MagicCanvasThumbnail }))
 
-// Split operations at the existing rich-text operation limit, without truncating text.
 export function capturedNoteContent(text: string): MagicNoteRichContent {
   const value = text.endsWith('\n') ? text : `${text}\n`
-  const ops: MagicNoteRichContent['ops'] = []
-  for (let start = 0; start < value.length;) {
-    let end = Math.min(start + 200_000, value.length)
-    if (end < value.length && /[\uD800-\uDBFF]/u.test(value[end - 1]!)) end--
-    ops.push({ insert: value.slice(start, end) })
-    start = end
-  }
-  return { version: 1, ops }
+  return { version: 1, ops: [{ insert: value }] }
 }
 
 export type MagicNotesPanelProps = {
@@ -58,8 +50,7 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
   const currentDetail = detail?.id === selectedNoteId ? detail : undefined
   const quickDraft = Boolean(draft && !draft.source && !draft.newNote && draft.targetId === selectedNoteId)
   const content = useMemo(() => draft ? capturedNoteContent(draft.text) : undefined, [draft])
-  const tooLong = useMemo(() => Boolean(content && !magicNoteRichContentSchema.safeParse(content).success), [content])
-  const valid = Boolean(draft && !tooLong && (draft.newNote ? draft.title.trim().length > 0 && draft.title.trim().length <= 100 : draft.targetId) && (draft.text.trim() || (draft.newNote && !draft.source)))
+  const valid = Boolean(draft && (draft.newNote ? draft.title.trim().length > 0 : draft.targetId) && (draft.text.trim() || (draft.newNote && !draft.source)))
 
   useEffect(() => window.goodbuddy.magicNotes.onChanged(() => setRefresh(value => value + 1)), [])
   useEffect(() => {
@@ -150,8 +141,6 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
     setSelectedNoteId('')
     requestAnimationFrame(() => document.getElementById('compact-note-search')?.focus())
   }
-  const validationId = tooLong ? 'compact-note-validation' : undefined
-  const titleTooLong = Boolean(draft?.newNote && draft.title.trim().length > 100)
   const list = (
     <>
       <label htmlFor="compact-note-search">{t('capture.search')}</label>
@@ -212,9 +201,7 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
               {draft.incomplete && <p>{t('capture.incomplete')}</p>}
             </div>}
             <textarea ref={preview} id="compact-note-text" aria-label={t('capture.content')} value={draft.text} disabled={saving}
-              aria-describedby={validationId} aria-invalid={tooLong || undefined}
               onChange={event => setDraft({ ...draft, text: event.target.value })} />
-            {tooLong && <p id="compact-note-validation">{t('capture.tooLong')}</p>}
             <h3>{t('capture.target')}</h3>
             <SegmentedControl ariaLabel={t('capture.target')} disabled={saving}
               value={draft.newNote ? 'new' : 'existing'}
@@ -224,9 +211,7 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
               <>
                 <label htmlFor="compact-note-title">{t('capture.title')}</label>
                 <input ref={title} id="compact-note-title" value={draft.title} disabled={saving}
-                  aria-describedby={titleTooLong ? 'compact-note-title-error' : undefined} aria-invalid={titleTooLong || undefined}
                   onChange={event => setDraft({ ...draft, title: event.target.value })} />
-                {titleTooLong && <p id="compact-note-title-error">{t('capture.titleTooLong')}</p>}
               </>
             ) : (
               <>
@@ -266,12 +251,10 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
         <footer className="magic-note-panel__footer">
           {(!draft || quickDraft) && currentDetail && <>
             <textarea id="compact-note-append" aria-label={t('capture.content')} value={draft?.text ?? ''} disabled={saving}
-              aria-describedby={validationId} aria-invalid={tooLong || undefined}
               onChange={event => setDraft(draft ? { ...draft, text: event.target.value } : {
                 text: event.target.value, initialText: '', title: '', initialTitle: '', targetId: currentDetail.id, newNote: false
               })} />
           </>}
-          {quickDraft && tooLong && <p id="compact-note-validation">{t('capture.tooLong')}</p>}
           <div className="magic-note-panel__submit">
             {saveError && <p role="alert" id="compact-note-save-error">{saveError}</p>}
             <div className="magic-note-panel__actions">

@@ -174,26 +174,42 @@ describe('magic note rich content', () => {
     ).toThrow('附件内容与声明的大小不一致')
   })
 
-  it('rejects more than twelve images in one record', () => {
-    expect(() =>
-      validateMagicNoteRichContent({
+  it('retains more than twelve images in one record', () => {
+    expect(validateMagicNoteRichContent({
         version: 1,
         ops: Array.from({ length: 13 }, () => ({
           insert: { image: pngDataUrl }
         }))
-      })
-    ).toThrow('每条记录最多包含 12 张图片')
+      }).ops).toHaveLength(13)
   })
 
-  it('rejects oversized aggregate text content', () => {
-    expect(() =>
-      validateMagicNoteRichContent({
+  it('retains text beyond the former byte, per-operation and operation-count caps', () => {
+    const content = validateMagicNoteRichContent({
         version: 1,
-        ops: Array.from({ length: 3 }, () => ({
-          insert: '字'.repeat(60_000)
-        }))
+        ops: [{ insert: '字'.repeat(200_001) }, ...Array.from({ length: 10_001 }, () => ({ insert: 'x' }))]
       })
-    ).toThrow('每条记录的文字内容不能超过 500 KB')
+    expect(content.ops).toHaveLength(10_002)
+    expect(magicNotePlainText(content)).toBe('字'.repeat(200_001) + 'x'.repeat(10_001))
+  })
+
+  it('accepts large images and videos while retaining signature checks', () => {
+    const image = Buffer.alloc(9 * 1024 * 1024)
+    Buffer.from(pngDataUrl.split(',')[1]!, 'base64').copy(image)
+    const video = Buffer.alloc(16 * 1024 * 1024 + 1)
+    mp4Bytes.copy(video)
+    const content = validateMagicNoteRichContent({ version: 1, ops: [
+      { insert: { image: `data:image/png;base64,${image.toString('base64')}` } },
+      { insert: { localVideo: { name: 'large.mp4', mimeType: 'video/mp4', size: video.length, dataUrl: `data:video/mp4;base64,${video.toString('base64')}` } } }
+    ] })
+    expect(magicNoteEmbeddedBytes(content)).toBe(image.length + video.length)
+  })
+
+  it('retains video and attachment counts beyond the former caps', () => {
+    const content = validateMagicNoteRichContent({ version: 1, ops: [
+      ...Array.from({ length: 5 }, () => ({ insert: { localVideo: { name: 'clip.mp4', mimeType: 'video/mp4', size: mp4Bytes.length, dataUrl: mp4DataUrl } } })),
+      ...Array.from({ length: 9 }, () => ({ insert: { attachment: { name: 'notes.txt', mimeType: 'text/plain', size: attachmentBytes.length, dataUrl: attachmentDataUrl } } }))
+    ] })
+    expect(content.ops).toHaveLength(14)
   })
 
   it('extracts Quill checklists and updates completion by source index', () => {

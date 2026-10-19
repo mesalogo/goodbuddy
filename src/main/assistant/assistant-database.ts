@@ -94,7 +94,6 @@ import {
   type RuntimeSelectionLayer
 } from '../../shared/runtime-selection-contracts'
 import {
-  MAGIC_NOTE_MAX_NOTE_EMBED_BYTES,
   magicNoteSourceSchema,
   type MagicNoteSource,
   type MagicNoteCreateResult,
@@ -4385,12 +4384,6 @@ export class AssistantDatabase {
     const embeddedBytes = input.content
       ? magicNoteEmbeddedBytes(input.content)
       : 0
-    if (
-      input.content?.version !== 2 &&
-      embeddedBytes > MAGIC_NOTE_MAX_NOTE_EMBED_BYTES
-    ) {
-      throw new Error('一篇笔记中的图片、视频和附件总大小不能超过 64 MB')
-    }
     database.exec('BEGIN IMMEDIATE')
     try {
       database
@@ -4522,7 +4515,6 @@ export class AssistantDatabase {
     const now = new Date().toISOString()
     database.exec('BEGIN IMMEDIATE')
     try {
-      this.assertMagicNoteEmbedBudget(input.noteId, input.content)
       const noteResult = database
         .prepare(
           `UPDATE magic_notes
@@ -4597,11 +4589,6 @@ export class AssistantDatabase {
     try {
       const current = database.prepare('SELECT revision FROM magic_note_entries WHERE id = ?').get(input.entryId) as { revision: number } | undefined
       if (current?.revision !== input.expectedRevision) throw new Error('记录已被更新，请刷新后重试')
-      this.assertMagicNoteEmbedBudget(
-        existing.note_id,
-        input.content,
-        input.entryId
-      )
       const pointer = this.writeMagicNoteBody(existing.note_id, input.entryId, input.content, input.expectedRevision + 1, now)
       const result = database
         .prepare(
@@ -9932,27 +9919,6 @@ export class AssistantDatabase {
         now,
         matched.id
       )
-    }
-  }
-
-  private assertMagicNoteEmbedBudget(
-    noteId: string,
-    content: MagicNoteContent,
-    excludedEntryId?: string
-  ): void {
-    if (content.version === 2) return
-    const existing = this.requireDatabase()
-      .prepare(
-        `SELECT COALESCE(SUM(image_bytes), 0) AS image_bytes
-         FROM magic_note_entries
-         WHERE note_id = ? AND id <> ? AND json_extract(content_json, '$.version') = 1`
-      )
-      .get(noteId, excludedEntryId ?? '') as { image_bytes: number }
-    if (
-      existing.image_bytes + magicNoteEmbeddedBytes(content) >
-      MAGIC_NOTE_MAX_NOTE_EMBED_BYTES
-    ) {
-      throw new Error('一篇笔记中的图片、视频和附件总大小不能超过 64 MB')
     }
   }
 

@@ -1,5 +1,40 @@
 # Magic Notes Progress
 
+## 2026-10-19: Import and Save Quotas Removed
+
+FR-11: removed the rich-text 200,000-code-unit insert, 500 KiB text and 10,000-op
+caps; canvas 20,000-character, 5,000-op and 50-page caps; image/video/attachment
+count caps of 12/4/8; single rich-text file caps of 2/16/8 MiB; aggregate image,
+entry and note caps of 8/32/64 MiB; canvas image/PDF import caps of 20/32 MiB;
+and the 100-character note-title cap, including capture title truncation.
+Editor, shared IPC schemas, Main validation and storage now agree. Asset bytes
+remain external files, with no storage-format migration. Type/signature,
+canonical Base64, declared-size, reference, revision and transactional checks
+remain. Practical memory/serialization/disk limits and rendering safeguards are
+documented in the [canvas reference](../../../src/renderer/src/magic-canvas/README.md#editor-limits).
+Model-facing request/context bounds, search/preview bounds, tag rules and table
+insertion controls remain separate from user import/save content capacity.
+
+Validation: the initial focused run passed 110 unit/integration tests; its new
+Electron PDF case failed on a test selector, corrected before rerunning. The
+second run passed 201 tests across canvas-core Electron, production preload/IPC
+and SQLite/file persistence, rich editor, capture panel, workspace and note IPC.
+The Electron case imported 51 PDF pages, added page 52 and restored all pages;
+images over 20 MiB and text over 20,000 characters survived edit/restore. Storage
+tests covered 120/121 pages, large flow operation arrays, 33 MiB attachments,
+66 MiB across entries, larger image/PDF assets and reopen after create/update.
+The additional App capture regression passed with a title over 100 characters.
+The final content/storage/flow/editor/analyzer/page-selection run passed 97 tests,
+including unchanged model-context page bounds.
+
+`npm run typecheck` and changed-file ESLint passed. `npm run lint` encountered
+unrelated generated VitePress cache/output errors; `npx eslint . --ignore-pattern
+"sites/docs/.vitepress/cache/**" --ignore-pattern "sites/docs-dist/**"` passed.
+No generated files were modified to resolve lint. Full repository tests and
+performance benchmarks were not run; no performance improvement is claimed.
+No model calls were made. This change concerns desktop note import/persistence;
+deployed Agent code and the remote execution protocol are unchanged.
+
 ## 2026-10-08: Rich Text Table Editor Fix
 
 Replaced the Electron-incompatible native prompt flow for table insertion with the shared form
