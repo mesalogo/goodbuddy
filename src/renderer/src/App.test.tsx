@@ -15161,7 +15161,7 @@ describe("App", () => {
     expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument()
   })
 
-  it('refreshes externally changed all-app order before editing and filters sidebar pins', async () => {
+  it('refreshes externally changed app settings before editing and filters sidebar pins in the fixed order', async () => {
     const updates = api.updates!
     const original = await updates.getSettings()
     render(<App />)
@@ -15181,9 +15181,10 @@ describe("App", () => {
     const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
     expect(pin).toBeDisabled()
     await waitFor(() => expect(pin).not.toBeDisabled())
+    // The saved order is ignored: pinned apps follow applicationDisplayOrder.
     const nav = screen.getByRole('navigation', { name: '主导航' })
     expect(within(nav).getAllByRole('button').map(button => button.textContent)).toEqual([
-      '对话', '本机推理监控', '监督者', '知识库', '运行记录',
+      '对话', '知识库', '监督者', '本机推理监控', '运行记录',
     ])
     fireEvent.click(pin)
     await waitFor(() => expect(updates.updateSettings).toHaveBeenCalledWith({
@@ -15518,7 +15519,7 @@ describe("App", () => {
       else {
         fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
         const item = screen.getByRole('button', { name: '本机推理监控 应用设置' }).closest('article')!
-        fireEvent.click(within(item).getByRole('button', { name: '打开' }))
+        fireEvent.click(within(item).getByRole('button', { name: '打开本机推理监控' }))
       }
     }
     const dialog = screen.getByRole('dialog', { name: '本机推理监控' })
