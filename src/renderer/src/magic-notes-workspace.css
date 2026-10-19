@@ -1,0 +1,12 @@
+.application-page-content > .page-shell:has(> .magic-notes-page) {
+  /* The application wrapper is a column flexbox; fill it before sizing the 100% page. */
+  flex: 1;
+  overflow: hidden;
+}
+
+@container magic-notes-detail (width > 600px) {
+  .magic-notes-layout {
+    /* Bound the row so content scrolls without stretching the dividers. */
+    grid-template-rows: minmax(0, 1fr);
+  }
+}

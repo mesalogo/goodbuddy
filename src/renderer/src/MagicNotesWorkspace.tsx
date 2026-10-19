@@ -65,6 +65,7 @@ import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text
 import { MagicNoteContent } from './MagicNoteContent'
 import { MagicNoteSource, type OpenMagicNoteSource } from './MagicNoteSource'
 import './magic-notes-panel.css'
+import './magic-notes-workspace.css'
 import { MagicTodoDirectory } from './MagicTodoDirectory'
 import { MagicNoteEditor } from './MagicNoteEditor'
 import { MagicCanvasEditor, canvasHasContent, type MagicCanvasEditorHandle } from './MagicCanvasEditor'

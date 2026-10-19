@@ -1,15 +1,15 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
 
 it('resizes record columns with native Electron input and preserves desktop widths across narrow layouts', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-notes-layout-'))
+  await mkdir(resolve('temp'), { recursive: true })
+  const directory = await mkdtemp(join(resolve('temp'), 'goodbuddy-notes-layout-'))
   const server = await createServer({
     configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
     plugins: [react(), { name: 'notes-layout', configureServer(server) {
@@ -88,6 +88,18 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await key('.magic-note-tag-manager', 'Escape');
         await wait('!document.querySelector(".magic-note-tag-manager")');
         await open(); await js('document.fonts.ready'); win.focus(); win.webContents.focus();
+        const assertViewportHeight = async () => {
+          const workspace = await rect('.magic-notes-workspace');
+          const viewportHeight = await js('innerHeight');
+          const selectors = await js('Array.from(document.querySelectorAll(".magic-notes-pane-resize-handle")).filter(el => el.checkVisibility()).map(el => "." + Array.from(el.classList).find(name => name !== "magic-notes-pane-resize-handle"))');
+          for (const selector of ['.magic-notes-detail-container', '.magic-notes-layout', ...selectors]) {
+            const box = await rect(selector);
+            assert(Math.abs(box.height - workspace.height) <= 1, selector + ' fills workspace: ' + JSON.stringify({ box, workspace }));
+            assert(box.y + box.height <= viewportHeight, selector + ' stays within viewport: ' + JSON.stringify(box));
+          }
+          return (await rect('.magic-notes-layout')).height;
+        };
+        const longNoteHeight = await assertViewportHeight();
         assert.equal(await js('document.querySelectorAll(".magic-note-tag-editor .magic-note-tag-chip--removable").length'), 4);
         assert.equal(await js('getComputedStyle(document.querySelector("#magic-note-tag-manager")).width'), '28px', 'Split list uses the compact icon');
         // The sticky toolbar spans the full stream width even though content is capped at 880px.
@@ -101,6 +113,8 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await settle();
         await click('#magic-note-select-other-note-3');
         await wait('document.querySelector(".magic-note-detail-title").value === "Other note 3"');
+        await settle();
+        assert.equal(await assertViewportHeight(), longNoteHeight, 'Short and long notes keep the same divider height');
         assert.equal(await js('document.querySelector(".magic-notes-card-grid").scrollTop'), 300);
         assert.equal(await js('document.querySelector(".magic-notes-stream-pane").scrollTop'), 0);
         await click('#magic-note-select-layout-note');
@@ -157,6 +171,7 @@ it('resizes record columns with native Electron input and preserves desktop widt
         const index = '.magic-notes-index-pane', handle = '.magic-notes-index-resize-handle', stream = '.magic-notes-stream-pane';
         await click('#magic-notes-index-toggle');
         await click('button[aria-controls="magic-notes-ai-pane"]');
+        assert.equal(await assertViewportHeight(), longNoteHeight, 'Open panels and dividers fill the viewport');
         const listHeading = await rect('#magic-library-panel-notes > .magic-notes-pane-heading');
         const detailToolbar = await rect('.magic-note-detail-toolbar');
         const aiHeading = await rect('.magic-notes-ai-pane .inline-help-label');
@@ -256,6 +271,7 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await js('document.querySelector(' + JSON.stringify(editor) + ').focus()');
         await win.webContents.insertText('Composer growth check\\n'.repeat(30)); await settle();
         const grownHeight = (await rect(editor)).height;
+        assert.equal(await assertViewportHeight(), longNoteHeight, 'Growing drafts keep the same divider height');
         assert(grownHeight > emptyHeight + 400, 'Composer must grow with content');
         assert(await js('(() => { const el = document.querySelector(' + JSON.stringify(editor) + '); return el.scrollHeight <= el.clientHeight + 1; })()'), 'Quill content must not be clipped');
         assert(await js('(() => { const el = document.querySelector(".magic-notes-stream-pane"); el.scrollTop = el.scrollHeight; return el.scrollTop > 0; })()'), 'Long draft must remain reachable through the note stream');
@@ -294,7 +310,61 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await wait('!!document.querySelector("#magic-library-switch")');
         await click('#magic-library-switch');
         assert.equal((await rect('#magic-todo-list')).width, todoWidth);
-        fs.writeFileSync(${JSON.stringify(join(directory, 'result.json'))}, JSON.stringify({ emptyHeight, grownHeight, dragged, withoutAi, constrained, narrowStream, desktopSaveWidth, narrowSave, narrowFooter, footerPaddingRight, persisted: true }));
+        win.setContentSize(1600, 900);
+        await win.loadURL(${JSON.stringify(server.resolvedUrls!.local[0] + 'layout.html?shell')});
+        await open(); await js('document.fonts.ready'); await settle();
+        const shellGeometry = [];
+        const shellLongHeight = await assertViewportHeight();
+        const assertShellPanels = async () => {
+          const workspace = await rect('.magic-notes-workspace');
+          const page = await rect('.magic-notes-page');
+          const shell = await rect('.page-shell');
+          const route = await rect('.application-page-content');
+          assert.equal(shell.height, route.height, 'PageShell fills application content: ' + JSON.stringify({shell, route}));
+          assert.equal(workspace.y + workspace.height, page.y + page.height, 'Workspace fills remaining page height');
+          for (const selector of ['.magic-notes-notes-resize-handle', '.magic-notes-stream-pane', '.magic-notes-ai-resize-handle', '.magic-notes-ai-pane']) {
+            const box = await rect(selector);
+            assert.equal(box.y, workspace.y, selector + ' top');
+            assert.equal(box.height, workspace.height, selector + ' height');
+          }
+          assert(await js('document.querySelector(".page-shell").scrollHeight <= document.querySelector(".page-shell").clientHeight'), 'Only panels scroll, not PageShell');
+          shellGeometry.push({ top: workspace.y, height: workspace.height, bottom: workspace.y + workspace.height });
+          return workspace.height;
+        };
+        await assertShellPanels();
+        await click('#magic-note-select-other-note-3');
+        await wait('document.querySelector(".magic-note-detail-title").value === "Other note 3"');
+        await settle();
+        assert.equal(await assertViewportHeight(), shellLongHeight, 'Production page shell keeps divider height independent of note content');
+        await assertShellPanels();
+        await click('#magic-note-select-layout-note'); await settle();
+        assert.equal(await assertShellPanels(), shellLongHeight, 'Switching back to the long note keeps panel height');
+        await click('#magic-note-select-other-note-3'); await settle();
+        await click('.magic-note-entry-type button:nth-child(2)');
+        await wait('document.querySelector(".magic-note-composer [data-tool=flow-text]")?.disabled === false');
+        assert.equal(await assertShellPanels(), shellLongHeight, 'Canvas minimum height stays inside the note stream');
+        await click('.magic-note-entry-type button:first-child');
+        await wait('!!document.querySelector(' + JSON.stringify(editor) + ')');
+        await js('window.dispatchEvent(new Event("layout-comments"))');
+        await wait('!!document.querySelector(".magic-notes-ai-feed")'); await settle();
+        assert.equal(await assertShellPanels(), shellLongHeight, 'Growing AI comments keep panel height');
+        await js('document.querySelector(' + JSON.stringify(editor) + ').focus()');
+        await win.webContents.insertText('Shell draft growth\\n'.repeat(80)); await settle();
+        assert.equal(await assertShellPanels(), shellLongHeight, 'Typing keeps shell panel height');
+        await click('.magic-note-entry button[aria-label="Analyze with AI"]');
+        await wait('!!document.querySelector(".magic-notes-ai-live")');
+        for (let chunk = 0; chunk < 3; chunk++) {
+          await js('window.dispatchEvent(new Event("layout-stream"))'); await settle();
+          assert.equal(await assertShellPanels(), shellLongHeight, 'Streaming keeps shell panel height');
+        }
+        for (const selector of ['.magic-notes-stream-pane', '.magic-notes-ai-pane']) {
+          assert(await js('(() => { const el = document.querySelector(' + JSON.stringify(selector) + '); el.scrollTop = el.scrollHeight; return el.scrollTop > 0; })()'), selector + ' scrolls internally');
+        }
+        await settle();
+        assert.equal(await assertShellPanels(), shellLongHeight, 'Scrolling keeps panel geometry fixed');
+        win.setContentSize(1280, 720); await settle(); await settle();
+        await assertShellPanels();
+        fs.writeFileSync(${JSON.stringify(join(directory, 'result.json'))}, JSON.stringify({ emptyHeight, grownHeight, dragged, withoutAi, constrained, narrowStream, desktopSaveWidth, narrowSave, narrowFooter, footerPaddingRight, shellGeometry, persisted: true }));
         clearTimeout(watchdog);
         app.exit(0);
       }).catch(error => { console.error(error); app.exit(1); });

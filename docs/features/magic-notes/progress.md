@@ -1,5 +1,35 @@
 # Magic Notes Progress
 
+## 2026-10-19: Stable Workspace Height
+
+Reproduced in Windows Electron using the production `KeepAliveRoute`,
+`ApplicationAvailability` and `PageShell` components inside the app frame,
+topbar and sidebar layout. With five notes at 1600x900, switching from a long
+note to a short note reduced workspace/divider height from 709px to 485px even
+with the previous `minmax(0, 1fr)` detail-row rule present. The 25-note fixture
+masked the failure. `PageShell` was a content-sized flex child of
+`.application-page-content`; its child's 100% height did not make it grow.
+
+The scoped rule in `magic-notes-workspace.css` gives that shell `flex: 1` and
+confines scrolling to the existing panels. No viewport pixel height was added.
+After the fix, both dividers, the note stream and AI pane stay at top 159px,
+bottom 868px and height 709px through short/long switches, canvas initialization,
+80 lines of native editor input, saved comments and three streamed AI chunks.
+Resizing to 1280x720 produces a 529px workspace. Both panels scroll internally;
+PageShell does not overflow.
+
+The regression failed before the new shell rule and passed afterward. The commit
+is isolated from the concurrent questions feature and CSS extraction; its tests
+use the existing HEAD styles and do not require a question composer.
+Validation on that isolated snapshot: 162 tests passed across the Electron layout,
+workspace, rich-text editor and canvas editor suites. `npm run typecheck` and
+focused ESLint on the workspace and two regression files passed.
+Test profiles and Vite artifacts are created under repository `temp/` and cleaned.
+
+Scope: real Electron layout and production renderer components with deterministic
+note/AI bridge fixtures, not a packaged-app or live-provider test. No model calls
+were made. Full repository tests and cross-platform runs were not performed.
+
 ## 2026-10-19: Import and Save Quotas Removed
 
 FR-11: removed the rich-text 200,000-code-unit insert, 500 KiB text and 10,000-op

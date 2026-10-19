@@ -20,6 +20,16 @@ stream events, error causes and nested release/dispose cleanup.
 
 ## Continuous Record Workspace
 
+The production height chain includes `KeepAliveRoute`, `ApplicationAvailability`
+and `PageShell`. The Magic Notes rule in `magic-notes-workspace.css` makes its
+PageShell grow inside `.application-page-content`, with overflow confined to the
+panels. Without that flex constraint, the shell sizes to content and the existing
+100% page height and bounded detail-grid row cannot keep short and long notes at
+the same height. The workspace fills the space below the page header; desktop
+dividers, note stream and AI pane share top and bottom edges. The Electron layout
+regression uses the production wrapper components and a short notes list, since
+a long list can mask the missing flex growth.
+
 The outer workspace separates the persistent notes list from the detail container.
 The list defaults to 200px, resizes within 160-420px and stores `notesPaneWidth`
 and `notesPaneOpen` in `goodbuddy.magic-notes-layout.v1`. Existing saved widths are
@@ -127,6 +137,12 @@ an item or pressing Escape closes it. AI remains a resizable right column until 
 detail container is 600px or less, then moves below the stream, limited to 40%
 of layout height and 280px. Overview search, scroll, task selection and return
 focus stay mounted.
+
+Above the stacked-layout breakpoint, `magic-notes-workspace.css` explicitly
+bounds the detail grid's single row with `minmax(0, 1fr)`. Pane contents scroll
+inside that row; vertical resize handles follow the container height. The
+Electron layout regression checks short/long note switches, growing drafts,
+and the production master-detail page shell.
 
 `MagicCanvasThumbnail` lazily queues visible records through a temporary core
 renderer and caches results by content identity in a WeakMap. Core `capturePages`
