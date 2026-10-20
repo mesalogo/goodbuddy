@@ -99,14 +99,14 @@ describe('local tool environment', () => {
         packagedNpmCliPath: paths.managedNpm,
         packagedNpxCliPath: paths.managedNpx,
         managedPythonExecutablePath: paths.managedPython,
-        baseEnvironment: { PATH: '/usr/bin', OPENAI_API_KEY: 'secret' }
+        baseEnvironment: { PATH: join(root, 'empty-path'), OPENAI_API_KEY: 'secret' }
       },
       { platform, electronExecutablePath: paths.electron, spawnProcess }
     )
 
     expect(spawnProcess).not.toHaveBeenCalled()
     expect(result.environment).toEqual({
-      PATH: [join(bin, 'front'), '/usr/bin', join(bin, 'fallback')].join(separator)
+      PATH: [join(bin, 'front'), join(root, 'empty-path'), join(bin, 'fallback')].join(separator)
     })
     expect(Object.isFrozen(result.environment)).toBe(true)
     expect((await readdir(join(bin, 'front'))).sort()).toEqual([])
@@ -194,7 +194,8 @@ describe('local tool environment', () => {
         nodeSelection: { source: 'auto' },
         pythonSelection: { source: 'auto' },
         packagedNpmCliPath: paths.managedNpm,
-        packagedNpxCliPath: paths.managedNpx
+        packagedNpxCliPath: paths.managedNpx,
+        baseEnvironment: { PATH: join(root, 'empty-path') }
       },
       { platform, electronExecutablePath: paths.electron }
     )
@@ -213,7 +214,7 @@ describe('local tool environment', () => {
       packagedNpmCliPath: paths.managedNpm,
       packagedNpxCliPath: paths.managedNpx,
       managedPythonExecutablePath: paths.managedPython,
-      baseEnvironment: { PATH: '/usr/bin' }
+      baseEnvironment: { PATH: join(root, 'empty-path') }
     }
     const dependencies = { platform, electronExecutablePath: paths.electron }
     const first = await createLocalToolEnvironment(options, dependencies)

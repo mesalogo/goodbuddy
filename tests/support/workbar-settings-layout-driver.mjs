@@ -188,7 +188,7 @@ app.whenReady().then(async () => {
             descriptions: nav.querySelectorAll('small').length,
             font: getComputedStyle(nav.querySelector('strong')).fontSize };
         })()`)
-        assert.deepEqual(navigation.ids, ['appearance', 'platform-features', 'model', 'context-control', 'runtime',
+        assert.deepEqual(navigation.ids, ['appearance', 'platform-features', 'model', 'context-control', 'runtime', 'tool-environment',
           'document-parsing', 'roles', 'capabilities', 'about'].map(id => `settings-tab-${id}`))
         assert.equal(navigation.groups, 4)
         assert.equal(navigation.descriptions, 0)

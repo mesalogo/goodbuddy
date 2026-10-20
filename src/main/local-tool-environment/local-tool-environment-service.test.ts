@@ -55,7 +55,8 @@ async function fixture() {
     packagedNpmCliPath: join(root, 'npm-cli.js'),
     packagedNpxCliPath: join(root, 'npx-cli.js'),
     selectExecutable: vi.fn(async () => python),
-    baseEnvironment: { PATH: root },
+    // Match fixture casing on case-sensitive hosts while simulating Windows.
+    baseEnvironment: { PATH: root, PATHEXT: '.exe;.cmd' },
     platform: 'win32',
     arch: 'x64'
   }
