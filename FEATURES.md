@@ -344,7 +344,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.6`, paired with the current Desktop release candidate `0.15.13`; formal
+  `0.15.7`, paired with the current Desktop release candidate `0.16.5`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -931,8 +931,8 @@ records are listed separately and do not introduce another feature status.
   action errors.
 - [x] **Client-computer control tools**: Managed separately from the built-in
   browser with scope, cancellation, timeout, output, and activity boundaries.
-- [x] **Remote messaging-channel projects**: WeChat ClawBot, WeCom,
-  DingTalk, and Telegram each have a system-managed project, independent remote
+- [x] **Remote messaging-channel projects**: WeChat ClawBot, WeCom (Preview),
+  Feishu (Preview), DingTalk, and Telegram each have a system-managed project, independent remote
   conversations, working directory, processing backend, and
   task/activity ownership. Each channel controls complete-response
   length and segmentation according to platform capabilities rather than
@@ -946,7 +946,7 @@ records are listed separately and do not introduce another feature status.
   task, or generate a Markdown attachment from the current final text after an
   explicit user request. It never automatically reads or sends existing
   workspace files.
-- [x] **WeCom and DingTalk connections**: Main-only encrypted settings,
+- [x] **WeCom (Preview) and DingTalk connections**: Main-only encrypted settings,
   read-only environment-variable overrides, connection tests, dynamic
   enable/disable, sender scope, and status diagnostics.
 - [x] **Managed local-model download source**: The Model Connections header shows
@@ -983,9 +983,23 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.4`; Agent `0.15.6` remains paired with Desktop `0.16.4`, with
+- The current Desktop candidate is `0.16.5`, paired with Agent `0.15.7`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.16.5` moves message channels into the card-based Apps center.
+  Feishu and WeCom integrations are **Preview**, including platform tools and
+  document references; permissions, Runtime and platform availability apply.
+  Real platform business acceptance remains incomplete; see
+  [validation boundaries](./docs/features/external-apps/progress.md).
+  Magic Notes adds scoped questions and canvas-region capture and removes fixed
+  import/save quotas. Chat file/image previews remain bounded by memory and
+  decoding support; remote binary previews require the accompanying Agent update.
+  Local tool settings offer automatic, built-in and custom selection; existing
+  managed selections migrate to automatic mode while custom paths are preserved.
+  Database schema advances from 63 to 65. Back up data, adjacent notes and settings
+  before upgrading. Candidate CI, native packaging, Agent production-path Host
+  validation and publication verification remain release gates; no LoongArch
+  build is included.
 - Desktop `0.16.4` moves remote-host management into the Apps center, adds a chat-history minimap
   with an Appearance switch, and improves navigation, waiting-state feedback, graph zoom, and
   attachment boundaries. Hosts shows locally available Agent packages before refreshing remote

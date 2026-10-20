@@ -2,6 +2,52 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.5",
+      "releasedAt": "2026-10-21",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**集中管理消息渠道与应用**：消息渠道配置迁移到应用中心，应用按固定顺序以卡片展示。你可以从同一入口查看状态、管理配置和打开对应工作面板。",
+            "**试用飞书与企业微信集成（预览版）**：在应用中心配置平台连接后，可试用已接入的消息与办公工具，并在支持的对话中通过 `@` 搜索和引用平台文档。功能仍处于预览阶段，可用范围取决于平台授权、工具类别、操作系统和所选 Runtime，不代表全部平台业务已经完成验收。",
+            "**围绕笔记内容提问**：魔法笔记支持选择提问范围，也可以在画布上框选区域作为问题上下文。图片理解能力取决于所选模型，提问不会自动覆盖原笔记。",
+            "**从聊天查看项目文件与图片**：点击项目内文件链接可在工作区查看，文档附件名称也可用于打开原文件。图片预览移除固定总大小限制，但仍受可用内存和浏览器解码能力约束；远程图片预览需配套更新 Agent。",
+            "**更清晰地选择本地工具环境**：设置中新增独立的工具环境分类，可选择自动检测、内置环境或指定路径。自动模式优先寻找系统工具，缺少时使用可用的内置环境；显式选择的环境不可用时会报告错误，不再悄悄切换。",
+            "**减少笔记导入与保存限制**：移除笔记文本、资源和画布等固定导入与保存配额，便于处理内容较多的笔记。格式校验、修订冲突检查以及模型上下文限制仍然保留。"
+          ],
+          "fixes": [
+            "**保留监督回顾的已完成进度**：某个分组失败时，其他分组仍可继续，已成功批次供后续恢复使用。实体身份相关错误也提供更明确的提示。",
+            "**改善聊天与附件反馈**：聊天缩略导航的消息行分布更均匀，附件导入失败通过应用通知反馈。模型返回 413 错误时会提示尝试压缩上下文后重试，不会自动压缩或重发请求。",
+            "**修复工具启动及界面一致性问题**：本地工具启动保留经过凭据过滤的用户环境变量，技能导入不再要求来源目录名与技能 ID 相同。同步修复笔记切换高度、共享控件样式加载顺序和平台面板关闭行为。"
+          ],
+          "notices": [
+            "首次启动将数据库升级至 schema 65。升级前请关闭应用，并备份完整数据目录、相邻 `notes/` 和设置文件；旧版工具环境的 `managed` 选项会迁移为自动检测，显式自定义路径保留。",
+            "远程主机请配套更新至 Agent `0.15.7`，以使用本次远程图片读取与错误提示改进。飞书与企业微信为预览版，建议先在测试账号和测试资料上验证所需操作。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Manage messaging channels and apps in one place**: Channel configuration moves into the Apps center, where apps appear as cards in a fixed order. Use the same entry point to check status, manage configuration, and open the corresponding workspace panel.",
+            "**Try Feishu and WeCom integrations (Preview)**: Configure platform connections in the Apps center to try the integrated messaging and office tools, and use `@` to search for and reference platform documents in supported conversations. These integrations remain in preview; availability depends on platform permissions, tool categories, operating system, and Runtime, and does not imply that every platform workflow has completed acceptance testing.",
+            "**Ask questions about selected note content**: Magic Notes supports scoped questions and capturing a selected canvas region as context. Image understanding depends on the selected model, and asking a question does not automatically overwrite the original note.",
+            "**Open project files and images from chat**: Project file links open in the workspace, and document attachment names can open their original files. Image previews no longer have a fixed total-size limit, but remain subject to available memory and browser decoding limits; remote image previews require the accompanying Agent update.",
+            "**Choose local tool environments more clearly**: A dedicated settings category offers automatic detection, built-in environments, and custom paths. Automatic mode looks for system tools first and uses available built-in tools as a fallback; an unavailable explicit selection reports an error instead of silently switching.",
+            "**Remove fixed note import and save quotas**: Fixed quotas for note text, resources, and canvases are removed to accommodate larger notes. Format validation, revision conflict checks, and model context limits still apply."
+          ],
+          "fixes": [
+            "**Preserve completed Supervisor review progress**: Other groups can continue when one group fails, and successful batches remain available for recovery. Entity identity errors also provide clearer guidance.",
+            "**Improve chat and attachment feedback**: Chat minimap rows are spaced more evenly, and attachment import failures appear in application notifications. HTTP 413 errors suggest compressing context before retrying, without automatically compressing or resending requests.",
+            "**Fix tool launches and UI inconsistencies**: Local tool launches retain the credential-filtered user environment, and skill imports no longer require the source directory name to match the skill ID. Fixes also cover note workspace height, shared-control stylesheet ordering, and closing platform panels."
+          ],
+          "notices": [
+            "First launch upgrades the database to schema 65. Close the app and back up the complete data directory, adjacent `notes/`, and settings files before upgrading; previous `managed` tool selections migrate to automatic detection, while explicit custom paths are preserved.",
+            "Update remote hosts to Agent `0.15.7` for the remote image-reading and error-message improvements. Feishu and WeCom remain in preview; validate the operations you need using test accounts and test data first."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.4",
       "releasedAt": "2026-10-14",
       "notes": {
