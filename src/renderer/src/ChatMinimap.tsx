@@ -21,14 +21,36 @@ export function minimapScrollTop(
   return Math.min(1, Math.max(0, pointerRatio)) * maxScrollTop;
 }
 
+/** Blank overview rows before every message, separating turns. */
+const minimapMessageGap = 1;
+
 /**
- * Stable overview weight of a message, in text-line units: its wrapped lines
- * plus fixed room for the header/padding and each tool row. It depends only on
- * the message content, never on measured DOM heights, so the overview keeps
- * its density while the timeline measures rows during scrolling.
+ * Stable overview weight of a message, in overview rows: one blank separator
+ * row plus exactly the rows that are drawn. Every row has the same height on
+ * the rail, so strokes are evenly spaced across the whole conversation. It
+ * depends only on the message content, never on measured DOM heights, so the
+ * overview keeps its density while the timeline measures rows.
  */
 export function minimapMessageWeight(message: Message): number {
-  return minimapLines(message).length + 3 + 2 * (message.tools?.length ?? 0);
+  return minimapMessageGap + minimapRows(message).length;
+}
+
+const toolRow: MinimapLine = { indent: 0.04, width: 0.3, code: false };
+const rowCache = new WeakMap<Message, MinimapLine[]>();
+
+/** Drawn rows of a message: its text lines followed by one short stroke per tool call. */
+export function minimapRows(message: Message): MinimapLine[] {
+  const cached = rowCache.get(message);
+  if (cached) return cached;
+  const toolCount = message.tools?.length ?? 0;
+  const text = minimapLines(message);
+  // A message with only tool calls needs no placeholder text stroke.
+  const lines = toolCount > 0 && !(message.content ?? "").trim() ? [] : text;
+  const rows = toolCount > 0
+    ? [...lines, ...Array.from({ length: Math.min(toolCount, minimapMaxLines) }, () => toolRow)]
+    : lines;
+  rowCache.set(message, rows);
+  return rows;
 }
 
 /** Largest index i in [0, prefix.length - 2] with prefix[i] <= value. */
@@ -174,36 +196,47 @@ export function ChatMinimap({ messages, rowHeights, scrollContainerRef }: ChatMi
     const expanded = expandedRef.current;
     const inset = expanded ? 6 : 2;
     const lineSpan = width - inset * 2;
-    // Expanded rows: thin strokes on a device-pixel-friendly pitch.
-    const pitch = ratio >= 2 ? 2 : 3;
-    const stroke = ratio >= 2 ? 1.5 : 2;
-    for (let index = 0; index < current.length; index += 1) {
-      const message = current[index]!;
-      const top = (weights[index]! / totalWeight) * height;
-      const blockHeight = Math.max(1, ((weights[index + 1]! - weights[index]!) / totalWeight) * height);
-      context.fillStyle = minimapMessageColor(message);
-      if (!expanded) {
-        context.fillRect(inset, top, lineSpan, blockHeight);
-        continue;
+    // Every overview row gets the same height, so density is uniform.
+    const unit = height / totalWeight;
+    if (!expanded) {
+      for (let index = 0; index < current.length; index += 1) {
+        const top = (weights[index]! + minimapMessageGap) * unit;
+        const bottom = weights[index + 1]! * unit;
+        context.fillStyle = minimapMessageColor(current[index]!);
+        context.fillRect(inset, top, lineSpan, Math.max(1, bottom - top));
       }
-      // Expanded: one stroke per wrapped text line, like an editor minimap.
+      return;
+    }
+    // Expanded: one stroke per row on one global grid, like an editor
+    // minimap. When rows are thinner than the pitch, the grid samples rows at
+    // a fixed pitch instead, which keeps the spacing even everywhere.
+    const pitch = ratio >= 2 ? 2 : 3;
+    const stroke = Math.min(ratio >= 2 ? 1.5 : 2, Math.max(1, unit));
+    const sampled = unit < pitch;
+    const steps = sampled ? Math.floor(height / pitch) : totalWeight;
+    let lastIndex = -1;
+    for (let step = 0; step < steps; step += 1) {
+      const y = sampled ? step * pitch : step * unit;
+      const row = sampled ? Math.floor(y / unit) : step;
+      const index = locate(weights, row);
+      const message = current[index]!;
+      const lines = minimapRows(message);
+      const line = lines[row - weights[index]! - minimapMessageGap];
+      if (!line || line.width <= 0) continue;
+      if (index !== lastIndex) {
+        context.fillStyle = minimapMessageColor(message);
+        lastIndex = index;
+      }
       // User turns are right-aligned and narrower, echoing the chat layout.
       const user = message.role === "user";
       const span = user ? lineSpan * 0.7 : lineSpan;
       const base = user ? width - inset - span : inset;
-      const lines = minimapLines(message);
-      const rows = Math.max(1, Math.min(lines.length, Math.floor(blockHeight / pitch)));
-      const rowStep = rows > 1 ? Math.min(pitch * 1.6, blockHeight / rows) : 0;
-      for (let row = 0; row < rows; row += 1) {
-        const line = lines[Math.floor((row * lines.length) / rows)];
-        if (!line || line.width <= 0) continue;
-        const lineWidth = Math.max(2, Math.min(1, line.width) * span);
-        const left = user ? base + span - lineWidth : base + line.indent * span;
-        context.globalAlpha = line.code ? 0.6 : 1;
-        context.fillRect(left, top + row * rowStep, Math.min(lineWidth, base + span - left), Math.min(stroke, blockHeight));
-      }
-      context.globalAlpha = 1;
+      const lineWidth = Math.max(2, Math.min(1, line.width) * span);
+      const left = user ? base + span - lineWidth : base + line.indent * span;
+      context.globalAlpha = line.code ? 0.6 : 1;
+      context.fillRect(left, y, Math.min(lineWidth, base + span - left), stroke);
     }
+    context.globalAlpha = 1;
   }, [refreshAxes, scrollContainerRef]);
 
   /** Overview position (0..railHeight) of a scroll-content offset. */

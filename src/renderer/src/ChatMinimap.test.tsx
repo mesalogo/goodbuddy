@@ -88,6 +88,24 @@ describe("ChatMinimap", () => {
     expect(fillRect).toHaveBeenCalledTimes(31);
   });
 
+  it("spaces expanded strokes evenly across messages of different lengths", () => {
+    const mixed = [
+      message("assistant", "a", { content: Array.from({ length: 40 }, () => "line").join("\n") }),
+      message("user", "b"),
+      message("assistant", "c", { content: Array.from({ length: 3 }, () => "line").join("\n") }),
+      message("assistant", "d", { content: Array.from({ length: 200 }, () => "line").join("\n") }),
+    ];
+    render(<ChatMinimap messages={mixed} rowHeights={new MessageRowHeights()} scrollContainerRef={{ current: scroller() }} />);
+    fillRect.mockClear();
+    fireEvent.pointerEnter(document.querySelector(".chat-minimap")!);
+    const ys = fillRect.mock.calls.map((call) => call[1] as number);
+    expect(ys.length).toBeGreaterThan(10);
+    const gaps = ys.slice(1).map((y, index) => y - ys[index]!);
+    // Every gap is a multiple of the same pitch (message separators skip rows).
+    const pitch = Math.min(...gaps);
+    for (const gap of gaps) expect(gap / pitch).toBeCloseTo(Math.round(gap / pitch), 5);
+  });
+
   it("spans the scroller height and moves the slider synchronously on scroll", () => {
     const scroll = scroller();
     const view = render(<ChatMinimap messages={messages} rowHeights={new MessageRowHeights()} scrollContainerRef={{ current: scroll }} />);
