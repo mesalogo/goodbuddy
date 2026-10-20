@@ -372,14 +372,16 @@ describe('RightAssistantSidebar tab titles', () => {
       fireEvent.click(screen.getByText('终端', { selector: 'strong' }).closest('button')!)
       expect(await screen.findByRole('tab', { name: `终端 ${number}` })).toBeInTheDocument()
     }
-    const savedLayout = workbarLayoutPreferencesSchema.parse(
-      JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)
-    )
-    expect(savedLayout.instances.filter((instance) => instance.appId === 'terminal'))
-      .toEqual([1, 2].map((number) => expect.objectContaining({
-        title: `终端 ${number}`, defaultTitleNumber: number,
-        targetRef: { type: 'project', projectId: currentProject.id }
-      })))
+    await waitFor(() => {
+      const savedLayout = workbarLayoutPreferencesSchema.parse(
+        JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)
+      )
+      expect(savedLayout.instances.filter((instance) => instance.appId === 'terminal'))
+        .toEqual([1, 2].map((number) => expect.objectContaining({
+          title: `终端 ${number}`, defaultTitleNumber: number,
+          targetRef: { type: 'project', projectId: currentProject.id }
+        })))
+    })
     view.unmount()
     await i18n.changeLanguage('en-US')
     render(sidebarElement())
