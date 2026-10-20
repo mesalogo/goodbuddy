@@ -1,12 +1,17 @@
 import { EventEmitter } from 'node:events'
-import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  buildLaunchPath,
   createLocalToolEnvironment,
+  detectLocalTools,
   inspectLocalToolExecutable,
+  resolveCommandOnPath,
+  resolveLocalTool,
   resolveNpmCliPaths,
+  withoutGoodBuddyWrappers,
   type LocalToolProbeProcess,
   type LocalToolProbeSpawn
 } from './local-tool-environment'
@@ -20,12 +25,11 @@ async function temporaryDirectory(name: string): Promise<string> {
   )
   await mkdir(path, { recursive: true })
   temporaryDirectories.push(path)
-  return path
+  return realpath(path)
 }
 
 afterEach(async () => {
   for (const directory of temporaryDirectories.splice(0)) {
-    const { rm } = await import('node:fs/promises')
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -38,7 +42,6 @@ type FakeProbe = LocalToolProbeProcess & EventEmitter & {
 function probeSpawn(
   outputFor: (command: string, args: string[]) => {
     code?: number
-    stderr?: string
     stdout?: string
   }
 ): LocalToolProbeSpawn {
@@ -49,18 +52,10 @@ function probeSpawn(
     child.pid = 1234
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
-    child.kill = vi.fn(() => {
-      child.killed = true
-      return true
-    })
+    child.kill = vi.fn(() => true)
     queueMicrotask(() => {
       const result = outputFor(command, args)
-      if (result.stdout) {
-        child.stdout.emit('data', Buffer.from(result.stdout))
-      }
-      if (result.stderr) {
-        child.stderr.emit('data', Buffer.from(result.stderr))
-      }
+      if (result.stdout) child.stdout.emit('data', Buffer.from(result.stdout))
       child.exitCode = result.code ?? 0
       child.emit('close', child.exitCode)
     })
@@ -68,398 +63,441 @@ function probeSpawn(
   }
 }
 
-async function fixtureFiles(root: string): Promise<{
-  electron: string
-  managedNpm: string
-  managedNpx: string
-  managedPython: string
-}> {
+const platform: NodeJS.Platform = process.platform === 'win32' ? 'win32' : 'linux'
+const separator = platform === 'win32' ? ';' : ':'
+const shim = (name: string): string => (platform === 'win32' ? `${name}.cmd` : name)
+const executable = (name: string): string => (platform === 'win32' ? `${name}.exe` : name)
+
+async function writeExecutable(path: string): Promise<void> {
+  await writeFile(path, 'fixture')
+  await chmod(path, 0o755)
+}
+
+async function fixtureFiles(root: string) {
   const electron = join(root, 'Electron Runtime')
   const managedNpm = join(root, 'packaged npm-cli.js')
   const managedNpx = join(root, 'packaged npx-cli.js')
   const managedPython = join(root, 'Managed Python')
   await Promise.all(
-    [electron, managedNpm, managedNpx, managedPython].map((path) =>
-      writeFile(path, 'fixture')
-    )
-  )
-  await Promise.all(
-    [electron, managedPython].map((path) => chmod(path, 0o700))
+    [electron, managedNpm, managedNpx, managedPython].map(writeExecutable)
   )
   return { electron, managedNpm, managedNpx, managedPython }
 }
 
 describe('local tool environment', () => {
-  it('creates managed shims and an immutable PATH snapshot', async () => {
-    const root = await temporaryDirectory("local-tools'posix")
+  it('builds the environment without running any executable', async () => {
+    const root = await temporaryDirectory('local-tools-no-probe')
     const paths = await fixtureFiles(root)
-    const source = {
-      PATH: '/original/bin',
-      CUSTOM: 'kept',
-      ELECTRON_RUN_AS_NODE: 'inherited'
-    }
-    const spawnProcess = vi.fn(
-      probeSpawn((command, args) => {
-        if (args[0] === '-e') {
-          return {
-            stdout: '{"version":"22.14.0","architecture":"x64"}\n'
-          }
-        }
-        if (args[0] === '-I') {
-          return {
-            stdout: '{"version":"3.13.2","architecture":"x86_64"}\n'
-          }
-        }
-        if (args[0] === paths.managedNpm || args[0] === paths.managedNpx) {
-          return { stdout: '11.19.0\n' }
-        }
-        if (args.join(' ') === '-m pip --version') {
-          return { stdout: 'pip 25.0 from anywhere (python 3.13)\n' }
-        }
-        return {
-          stderr:
-            command === paths.managedPython
-              ? 'Python 3.13.2\n'
-              : 'v22.14.0\n'
-        }
-      })
+    const spawnProcess = vi.fn<LocalToolProbeSpawn>()
+    const bin = join(root, 'bin')
+
+    const result = await createLocalToolEnvironment(
+      {
+        binDirectory: bin,
+        nodeSelection: { source: 'auto' },
+        pythonSelection: { source: 'auto' },
+        packagedNpmCliPath: paths.managedNpm,
+        packagedNpxCliPath: paths.managedNpx,
+        managedPythonExecutablePath: paths.managedPython,
+        baseEnvironment: { PATH: '/usr/bin', OPENAI_API_KEY: 'secret' }
+      },
+      { platform, electronExecutablePath: paths.electron, spawnProcess }
     )
-    const bin = join(root, 'private bin')
+
+    expect(spawnProcess).not.toHaveBeenCalled()
+    expect(result.environment).toEqual({
+      PATH: [join(bin, 'front'), '/usr/bin', join(bin, 'fallback')].join(separator)
+    })
+    expect(Object.isFrozen(result.environment)).toBe(true)
+    expect((await readdir(join(bin, 'front'))).sort()).toEqual([])
+    expect((await readdir(join(bin, 'fallback'))).sort()).toEqual(
+      ['node', 'npm', 'npx', 'pip', 'python', 'python3'].map(shim).sort()
+    )
+  })
+
+  it('puts explicit choices in front of the user PATH', async () => {
+    const root = await temporaryDirectory('local-tools-front')
+    const paths = await fixtureFiles(root)
+    const bin = join(root, 'bin')
 
     const result = await createLocalToolEnvironment(
       {
         binDirectory: bin,
         nodeSelection: { source: 'managed' },
-        pythonSelection: { source: 'managed' },
+        pythonSelection: { source: 'custom', executablePath: paths.managedPython },
+        packagedNpmCliPath: paths.managedNpm,
+        packagedNpxCliPath: paths.managedNpx,
+        baseEnvironment: { PATH: '/usr/bin' }
+      },
+      { platform, electronExecutablePath: paths.electron }
+    )
+
+    expect(result.shims.node).toMatchObject({ placement: 'front', origin: 'managed' })
+    expect(result.shims.python).toMatchObject({
+      placement: 'front',
+      origin: 'custom',
+      target: paths.managedPython
+    })
+    expect(await readdir(join(bin, 'fallback'))).toEqual([])
+    const nodeShim = await readFile(result.shims.node!.shimPath, 'utf8')
+    expect(nodeShim).toContain('ELECTRON_RUN_AS_NODE')
+    expect(nodeShim).toContain(paths.electron.replaceAll('%', '%%'))
+  })
+
+  it('makes pip run the same interpreter as python', async () => {
+    const root = await temporaryDirectory('local-tools-pip')
+    const paths = await fixtureFiles(root)
+    const result = await createLocalToolEnvironment(
+      {
+        binDirectory: join(root, 'bin'),
+        nodeSelection: { source: 'auto' },
+        pythonSelection: { source: 'auto' },
         packagedNpmCliPath: paths.managedNpm,
         packagedNpxCliPath: paths.managedNpx,
         managedPythonExecutablePath: paths.managedPython,
-        baseEnvironment: source
+        baseEnvironment: { PATH: join(root, 'nowhere') }
       },
-      {
-        platform: 'linux',
-        electronExecutablePath: paths.electron,
-        spawnProcess
-      }
+      { platform, electronExecutablePath: paths.electron }
     )
-
-    expect(result.environment.PATH).toBe(`${bin}:${source.PATH}`)
-    expect(result.environment.Path).toBeUndefined()
-    expect(result.environment.ELECTRON_RUN_AS_NODE).toBeUndefined()
-    expect(result.environment.OPENAI_API_KEY).toBeUndefined()
-    expect(Object.isFrozen(result.environment)).toBe(true)
-    expect(source.ELECTRON_RUN_AS_NODE).toBe('inherited')
-    for (const name of ['node', 'npm', 'npx'] as const) {
-      expect(result.diagnostics.tools[name]).toMatchObject({
-        available: true,
-        source: 'managed'
-      })
-    }
-    for (const name of ['python', 'python3', 'pip'] as const) {
-      expect(result.diagnostics.tools[name]).toMatchObject({
-        available: true,
-        source: 'managed'
-      })
-    }
-
-    const nodeShim = await readFile(join(bin, 'node'), 'utf8')
-    const npmShim = await readFile(join(bin, 'npm'), 'utf8')
-    const pipShim = await readFile(join(bin, 'pip'), 'utf8')
-    expect(nodeShim).toContain(
-      `ELECTRON_RUN_AS_NODE=1 exec '${paths.electron.replaceAll("'", "'\\''")}' "$@"`
-    )
-    expect(npmShim).toContain(
-      `npm_execpath='${paths.managedNpm.replaceAll("'", "'\\''")}'`
-    )
-    expect(pipShim).toContain(" '-m' 'pip' \"$@\"")
-    if (process.platform !== 'win32') {
-      expect((await stat(join(bin, 'node'))).mode & 0o700).toBe(0o700)
-    }
-    expect(
-      spawnProcess.mock.calls.find(([command]) => command === paths.electron)?.[2]
-        .env.ELECTRON_RUN_AS_NODE
-    ).toBe('1')
+    expect(result.shims.python).toMatchObject({ origin: 'managed', placement: 'fallback' })
+    const pip = await readFile(result.shims.pip!.shimPath, 'utf8')
+    expect(pip).toContain(result.shims.python!.target!.replaceAll('%', '%%'))
+    expect(pip).toMatch(/-m.*pip/u)
   })
 
-  it('keeps invalid custom selections unavailable without managed or PATH fallback', async () => {
-    const root = await temporaryDirectory('local-tools-no-fallback')
+  it('makes a missing explicit choice fail instead of falling through to PATH', async () => {
+    const root = await temporaryDirectory('local-tools-missing')
     const paths = await fixtureFiles(root)
-    const spawnProcess = vi.fn(probeSpawn(() => ({ stdout: 'unexpected' })))
-    const missingNode = join(root, 'missing-node')
-    const missingPython = join(root, 'missing-python')
-
     const result = await createLocalToolEnvironment(
       {
         binDirectory: join(root, 'bin'),
-        nodeSelection: {
-          source: 'custom',
-          executablePath: missingNode
-        },
-        pythonSelection: {
-          source: 'custom',
-          executablePath: missingPython
-        },
-        packagedNpmCliPath: paths.managedNpm,
-        packagedNpxCliPath: paths.managedNpx,
-        managedPythonExecutablePath: paths.managedPython,
-        baseEnvironment: { PATH: dirnameForPath(paths.electron) }
-      },
-      {
-        platform: 'linux',
-        electronExecutablePath: paths.electron,
-        spawnProcess
-      }
-    )
-
-    expect(spawnProcess).not.toHaveBeenCalled()
-    for (const diagnostic of Object.values(result.diagnostics.tools)) {
-      expect(diagnostic).toMatchObject({
-        available: false,
-        source: 'custom'
-      })
-    }
-    expect(result.diagnostics.tools.node.executablePath).toBe(missingNode)
-    expect(result.diagnostics.tools.python.executablePath).toBe(missingPython)
-  })
-
-  it('does not replace custom runtimes that fail their probes', async () => {
-    const root = await temporaryDirectory('local-tools-probe-failure')
-    const paths = await fixtureFiles(root)
-    const customNode = join(root, 'custom-node')
-    const customPython = join(root, 'custom-python')
-    await Promise.all(
-      [customNode, customPython].map((path) => writeFile(path, 'fixture'))
-    )
-    const spawnProcess = vi.fn(
-      probeSpawn(() => ({ code: 1, stderr: 'probe failed' }))
-    )
-
-    const result = await createLocalToolEnvironment(
-      {
-        binDirectory: join(root, 'bin'),
-        nodeSelection: {
-          source: 'custom',
-          executablePath: customNode
-        },
-        pythonSelection: {
-          source: 'custom',
-          executablePath: customPython
-        },
-        packagedNpmCliPath: paths.managedNpm,
-        packagedNpxCliPath: paths.managedNpx,
-        managedPythonExecutablePath: paths.managedPython
-      },
-      {
-        platform: 'linux',
-        electronExecutablePath: paths.electron,
-        spawnProcess
-      }
-    )
-
-    expect(spawnProcess).toHaveBeenCalledTimes(2)
-    expect(spawnProcess.mock.calls.map(([command]) => command).sort()).toEqual(
-      [customNode, customPython].sort()
-    )
-    expect(result.diagnostics.tools.node).toMatchObject({
-      available: false,
-      source: 'custom',
-      executablePath: customNode
-    })
-    expect(result.diagnostics.tools.python).toMatchObject({
-      available: false,
-      source: 'custom',
-      executablePath: customPython
-    })
-  })
-
-  it('does not mix packaged npm or npx into a custom Node selection', async () => {
-    const root = await temporaryDirectory('local-tools-no-mixing')
-    const paths = await fixtureFiles(root)
-    const customDirectory = join(root, 'custom-node')
-    await mkdir(customDirectory)
-    const customNode = join(customDirectory, 'node')
-    await writeFile(customNode, 'fixture')
-    const spawnProcess = vi.fn(
-      probeSpawn((command) => ({
-        stdout:
-          command === customNode
-            ? '{"version":"20.18.1","architecture":"x64"}\n'
-            : 'unexpected\n'
-      }))
-    )
-
-    const result = await createLocalToolEnvironment(
-      {
-        binDirectory: join(root, 'bin'),
-        nodeSelection: {
-          source: 'custom',
-          executablePath: customNode
-        },
-        pythonSelection: { source: 'managed' },
-        packagedNpmCliPath: paths.managedNpm,
-        packagedNpxCliPath: paths.managedNpx,
-        baseEnvironment: { PATH: root }
-      },
-      {
-        platform: 'linux',
-        electronExecutablePath: paths.electron,
-        spawnProcess
-      }
-    )
-
-    expect(result.diagnostics.tools.node).toMatchObject({
-      available: true,
-      source: 'custom',
-      executablePath: customNode
-    })
-    expect(result.diagnostics.tools.npm).toMatchObject({
-      available: false,
-      source: 'custom'
-    })
-    expect(result.diagnostics.tools.npx).toMatchObject({
-      available: false,
-      source: 'custom'
-    })
-    expect(spawnProcess).toHaveBeenCalledTimes(1)
-    expect(spawnProcess).not.toHaveBeenCalledWith(
-      expect.anything(),
-      expect.arrayContaining([paths.managedNpm]),
-      expect.anything()
-    )
-  })
-
-  it('uses only verified adjacent package managers with custom Node', async () => {
-    const root = await temporaryDirectory('local-tools-custom-adjacent')
-    const paths = await fixtureFiles(root)
-    const customDirectory = join(root, 'custom-node')
-    await mkdir(customDirectory)
-    const customNode = join(customDirectory, 'node')
-    const adjacentNpm = join(customDirectory, 'npm-cli.js')
-    const adjacentNpx = join(customDirectory, 'npx-cli.js')
-    await Promise.all(
-      [customNode, adjacentNpm, adjacentNpx].map((path) =>
-        writeFile(path, 'fixture')
-      )
-    )
-    const result = await createLocalToolEnvironment(
-      {
-        binDirectory: join(root, 'bin'),
-        nodeSelection: {
-          source: 'custom',
-          executablePath: customNode
-        },
+        nodeSelection: { source: 'custom', executablePath: join(root, 'missing-node') },
         pythonSelection: { source: 'managed' },
         packagedNpmCliPath: paths.managedNpm,
         packagedNpxCliPath: paths.managedNpx
       },
-      {
-        platform: 'linux',
-        electronExecutablePath: paths.electron,
-        spawnProcess: probeSpawn((_command, args) => ({
-          stdout:
-            args[0] === adjacentNpm || args[0] === adjacentNpx
-              ? '10.8.0\n'
-              : '{"version":"20.18.1","architecture":"x64"}\n'
-        }))
-      }
+      { platform, electronExecutablePath: paths.electron }
     )
-
-    expect(result.diagnostics.tools.npm).toMatchObject({
-      available: true,
-      source: 'custom',
-      executablePath: adjacentNpm
-    })
-    expect(result.diagnostics.tools.npx).toMatchObject({
-      available: true,
-      source: 'custom',
-      executablePath: adjacentNpx
-    })
-    expect(await readFile(join(root, 'bin', 'npm'), 'utf8')).toContain(
-      `'${adjacentNpm}'`
-    )
+    for (const name of ['node', 'npm', 'npx', 'python', 'python3', 'pip'] as const) {
+      expect(result.shims[name]).toMatchObject({ placement: 'front' })
+      expect(result.shims[name]?.target).toBeUndefined()
+      expect(await readFile(result.shims[name]!.shimPath, 'utf8')).toContain('127')
+    }
   })
 
-  it('leaves an uninstalled managed Python unavailable without PATH probing', async () => {
-    const root = await temporaryDirectory('local-tools-python-uninstalled')
+  it('writes no Python wrapper in automatic mode when the built-in is not installed', async () => {
+    const root = await temporaryDirectory('local-tools-auto-no-python')
     const paths = await fixtureFiles(root)
-    const spawnProcess = vi.fn(
-      probeSpawn((command, args) => ({
-        stdout:
-          command === paths.electron && args[0] === '-e'
-            ? '{"version":"22.14.0","architecture":"x64"}\n'
-            : '11.19.0\n'
-      }))
-    )
     const result = await createLocalToolEnvironment(
       {
         binDirectory: join(root, 'bin'),
-        nodeSelection: { source: 'managed' },
-        pythonSelection: { source: 'managed' },
+        nodeSelection: { source: 'auto' },
+        pythonSelection: { source: 'auto' },
+        packagedNpmCliPath: paths.managedNpm,
+        packagedNpxCliPath: paths.managedNpx
+      },
+      { platform, electronExecutablePath: paths.electron }
+    )
+    expect(result.shims.python).toBeUndefined()
+    expect(result.shims.pip).toBeUndefined()
+    expect(result.shims.node).toMatchObject({ placement: 'fallback' })
+  })
+
+  it('keeps PATH identical across rebuilds and removes stale wrappers', async () => {
+    const root = await temporaryDirectory('local-tools-stable')
+    const paths = await fixtureFiles(root)
+    const options = {
+      binDirectory: join(root, 'bin'),
+      nodeSelection: { source: 'managed' } as const,
+      pythonSelection: { source: 'auto' } as const,
+      packagedNpmCliPath: paths.managedNpm,
+      packagedNpxCliPath: paths.managedNpx,
+      managedPythonExecutablePath: paths.managedPython,
+      baseEnvironment: { PATH: '/usr/bin' }
+    }
+    const dependencies = { platform, electronExecutablePath: paths.electron }
+    const first = await createLocalToolEnvironment(options, dependencies)
+    const second = await createLocalToolEnvironment(
+      { ...options, nodeSelection: { source: 'auto' } },
+      dependencies
+    )
+    expect(second.environment.PATH).toBe(first.environment.PATH)
+    expect(await readdir(join(root, 'bin', 'front'))).toEqual([])
+  })
+
+  it('uses only adjacent package managers with a custom Node', async () => {
+    const root = await temporaryDirectory('local-tools-adjacent')
+    const paths = await fixtureFiles(root)
+    const customDirectory = join(root, 'custom-node')
+    await mkdir(customDirectory)
+    const customNode = join(customDirectory, executable('node'))
+    const adjacentNpm = join(customDirectory, 'npm-cli.js')
+    await Promise.all([writeExecutable(customNode), writeExecutable(adjacentNpm)])
+
+    const result = await createLocalToolEnvironment(
+      {
+        binDirectory: join(root, 'bin'),
+        nodeSelection: { source: 'custom', executablePath: customNode },
+        pythonSelection: { source: 'auto' },
+        packagedNpmCliPath: paths.managedNpm,
+        packagedNpxCliPath: paths.managedNpx
+      },
+      { platform, electronExecutablePath: paths.electron }
+    )
+    expect(result.shims.npm).toMatchObject({ target: adjacentNpm, origin: 'custom' })
+    expect(result.shims.npx).toBeUndefined()
+    expect(await readFile(result.shims.npm!.shimPath, 'utf8')).not.toContain(paths.managedNpm)
+  })
+})
+
+describe('automatic Python', () => {
+  it('skips the Windows Store stub and finds Python in a common install location', async () => {
+    const root = await temporaryDirectory('local-tools-store-stub')
+    const paths = await fixtureFiles(root)
+    const windowsApps = join(root, 'Microsoft', 'WindowsApps')
+    const miniconda = join(root, 'miniconda3')
+    await Promise.all([mkdir(windowsApps, { recursive: true }), mkdir(miniconda)])
+    await writeExecutable(join(windowsApps, 'python.exe'))
+    const condaPython = join(miniconda, 'python.exe')
+    await writeExecutable(condaPython)
+
+    const result = await createLocalToolEnvironment(
+      {
+        binDirectory: join(root, 'bin'),
+        nodeSelection: { source: 'auto' },
+        pythonSelection: { source: 'auto' },
         packagedNpmCliPath: paths.managedNpm,
         packagedNpxCliPath: paths.managedNpx,
-        baseEnvironment: { PATH: dirnameForPath(paths.managedPython) }
+        managedPythonExecutablePath: paths.managedPython,
+        baseEnvironment: { Path: windowsApps },
+        pythonSearchDirectories: [miniconda]
       },
-      {
-        platform: 'linux',
-        electronExecutablePath: paths.electron,
-        spawnProcess
-      }
+      { platform: 'win32', electronExecutablePath: paths.electron }
     )
 
     for (const name of ['python', 'python3', 'pip'] as const) {
-      expect(result.diagnostics.tools[name]).toMatchObject({
-        available: false,
-        source: 'managed'
+      expect(result.shims[name]).toMatchObject({
+        origin: 'system',
+        placement: 'front',
+        target: condaPython
       })
     }
-    expect(spawnProcess.mock.calls.every(([command]) => command !== paths.managedPython)).toBe(true)
   })
 
-  it('writes Windows wrappers with wrapper-local Electron variables', async () => {
-    const root = await temporaryDirectory('local-tools-%-win')
+  it('prefers Python on PATH over install locations and the built-in', async () => {
+    const root = await temporaryDirectory('local-tools-path-python')
     const paths = await fixtureFiles(root)
+    const onPath = join(root, 'on-path')
+    const elsewhere = join(root, 'elsewhere')
+    await Promise.all([mkdir(onPath), mkdir(elsewhere)])
+    const name = platform === 'win32' ? 'python.exe' : 'python3'
+    await writeExecutable(join(onPath, name))
+    await writeExecutable(join(elsewhere, name))
+
     const result = await createLocalToolEnvironment(
       {
         binDirectory: join(root, 'bin'),
-        nodeSelection: { source: 'managed' },
-        pythonSelection: {
-          source: 'custom',
-          executablePath: paths.managedPython
-        },
+        nodeSelection: { source: 'auto' },
+        pythonSelection: { source: 'auto' },
         packagedNpmCliPath: paths.managedNpm,
         packagedNpxCliPath: paths.managedNpx,
-        baseEnvironment: { Path: 'C:\\Windows\\System32' }
+        managedPythonExecutablePath: paths.managedPython,
+        baseEnvironment: { PATH: onPath },
+        pythonSearchDirectories: [elsewhere]
       },
+      { platform, electronExecutablePath: paths.electron }
+    )
+    expect(result.shims.python).toMatchObject({
+      origin: 'system',
+      target: join(onPath, name)
+    })
+  })
+
+  it('treats a Store stub resolved on PATH as not found', async () => {
+    const root = await temporaryDirectory('local-tools-store-resolve')
+    const paths = await fixtureFiles(root)
+    const windowsApps = join(root, 'Microsoft', 'WindowsApps')
+    await mkdir(windowsApps, { recursive: true })
+    await writeExecutable(join(windowsApps, 'python.exe'))
+    const base = { Path: windowsApps, PATHEXT: '.EXE;.CMD' }
+    const environment = await createLocalToolEnvironment(
       {
-        platform: 'win32',
-        electronExecutablePath: paths.electron,
-        spawnProcess: probeSpawn((command, args) => ({
-          stdout:
-            command === paths.managedPython
-              ? args.includes('pip')
-                ? 'pip 25.0\n'
-                : '{"version":"3.13.2","architecture":"amd64"}\n'
-              : args[0] === '-e'
-                ? '{"version":"22.14.0","architecture":"x64"}\n'
-                : '11.19.0\n'
-        }))
-      }
+        binDirectory: join(root, 'bin'),
+        nodeSelection: { source: 'auto' },
+        pythonSelection: { source: 'auto' },
+        packagedNpmCliPath: paths.managedNpm,
+        packagedNpxCliPath: paths.managedNpx,
+        baseEnvironment: base
+      },
+      { platform: 'win32', electronExecutablePath: paths.electron }
+    )
+    await expect(resolveLocalTool('python', environment, base, 'win32')).resolves.toBeUndefined()
+  })
+})
+
+it('drops inherited GoodBuddy wrapper directories from the user PATH', () => {
+  expect(
+    withoutGoodBuddyWrappers(
+      'C:\\Users\\me\\AppData\\Roaming\\goodbuddy\\tool-environment\\bin\\generation-1;C:\\Tools;D:\\gb\\bin\\front',
+      'D:\\gb\\bin',
+      'win32'
+    )
+  ).toBe('C:\\Tools')
+})
+
+describe('buildLaunchPath', () => {
+  it('appends the fallback directory after the user PATH', () => {
+    expect(buildLaunchPath('/gb/front', '/gb/fallback', '/usr/bin:/bin', 'linux')).toBe(
+      '/gb/front:/usr/bin:/bin:/gb/fallback'
+    )
+  })
+
+  it('places the fallback before Windows Store aliases', () => {
+    expect(
+      buildLaunchPath(
+        'C:\\gb\\front',
+        'C:\\gb\\fallback',
+        'C:\\Windows;C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Tools',
+        'win32'
+      )
+    ).toBe(
+      'C:\\gb\\front;C:\\Windows;C:\\gb\\fallback;C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Tools'
+    )
+  })
+})
+
+describe('resolution and detection', () => {
+  it('reports the system program when it precedes the fallback wrapper', async () => {
+    const root = await temporaryDirectory('local-tools-resolve-system')
+    const paths = await fixtureFiles(root)
+    const systemBin = join(root, 'system')
+    await mkdir(systemBin)
+    const systemPython = join(systemBin, executable(platform === 'win32' ? 'python' : 'python3'))
+    await writeExecutable(systemPython)
+    const base = { PATH: systemBin, PATHEXT: '.EXE;.CMD' }
+    const environment = await createLocalToolEnvironment(
+      {
+        binDirectory: join(root, 'bin'),
+        nodeSelection: { source: 'auto' },
+        pythonSelection: { source: 'auto' },
+        packagedNpmCliPath: paths.managedNpm,
+        packagedNpxCliPath: paths.managedNpx,
+        managedPythonExecutablePath: paths.managedPython,
+        baseEnvironment: base
+      },
+      { platform, electronExecutablePath: paths.electron }
     )
 
-    const nodeShim = await readFile(join(root, 'bin', 'node.cmd'), 'utf8')
-    const npmShim = await readFile(join(root, 'bin', 'npm.cmd'), 'utf8')
-    expect(nodeShim).toContain('set "ELECTRON_RUN_AS_NODE=1"')
-    expect(npmShim).toContain(
-      `set "npm_node_execpath=${paths.electron.replaceAll('%', '%%')}"`
+    const pythonName = platform === 'win32' ? 'python' : 'python3'
+    await expect(resolveLocalTool(pythonName, environment, base, platform)).resolves.toMatchObject({
+      executablePath: systemPython,
+      origin: 'system'
+    })
+    await expect(resolveLocalTool('node', environment, base, platform)).resolves.toMatchObject({
+      origin: 'managed',
+      executablePath: paths.electron
+    })
+  })
+
+  it('detects versions only when asked and reports the effective origin', async () => {
+    const root = await temporaryDirectory('local-tools-detect')
+    const paths = await fixtureFiles(root)
+    const base = { PATH: join(root, 'nowhere'), PATHEXT: '.EXE;.CMD' }
+    const environment = await createLocalToolEnvironment(
+      {
+        binDirectory: join(root, 'bin'),
+        nodeSelection: { source: 'auto' },
+        pythonSelection: { source: 'auto' },
+        packagedNpmCliPath: paths.managedNpm,
+        packagedNpxCliPath: paths.managedNpx,
+        baseEnvironment: base
+      },
+      { platform, electronExecutablePath: paths.electron }
     )
-    expect(result.environment.PATH).toBe(
-      `${join(root, 'bin')};C:\\Windows\\System32`
+    const spawnProcess = vi.fn(probeSpawn(() => ({ stdout: 'v22.14.0\n' })))
+
+    const detected = await detectLocalTools(
+      environment,
+      { node: { source: 'auto' }, python: { source: 'auto' } },
+      base,
+      {},
+      { platform, spawnProcess }
     )
+
+    expect(detected.node).toMatchObject({
+      available: true,
+      source: 'auto',
+      origin: 'managed',
+      version: '22.14.0',
+      executablePath: paths.electron
+    })
+    expect(detected.python).toMatchObject({ available: false, source: 'auto' })
+    expect(detected.python.origin).toBeUndefined()
+    expect(spawnProcess.mock.calls.every(([, args]) => args[0] === '--version')).toBe(true)
+  })
+
+  it('resolves commands with stat only, honoring PATHEXT on Windows', async () => {
+    const root = await temporaryDirectory('local-tools-which')
+    const first = join(root, 'first')
+    const second = join(root, 'second')
+    await Promise.all([mkdir(first), mkdir(second)])
+    const target = join(second, platform === 'win32' ? 'tool.CMD' : 'tool')
+    await writeExecutable(target)
+    await expect(
+      resolveCommandOnPath('tool', [first, second].join(separator), platform, '.EXE;.CMD')
+    ).resolves.toBe(target)
+    await expect(
+      resolveCommandOnPath('missing', [first, second].join(separator), platform)
+    ).resolves.toBeUndefined()
+  })
+})
+
+describe('inspectLocalToolExecutable', () => {
+  it('inspects executed runtime metadata and rejects Python 2', async () => {
+    const root = await temporaryDirectory('local-tools-inspection')
+    const target = join(root, 'runtime')
+    await writeFile(target, 'fixture')
+
+    await expect(
+      inspectLocalToolExecutable(
+        'node',
+        target,
+        { baseEnvironment: { PATH: root, NODE_OPTIONS: '--inspect' } },
+        {
+          platform: 'linux',
+          spawnProcess: probeSpawn((_command, args) => ({
+            stdout: args.includes('-e')
+              ? '{"version":"22.14.0","architecture":"arm64"}\n'
+              : ''
+          }))
+        }
+      )
+    ).resolves.toEqual({
+      kind: 'node',
+      executablePath: target,
+      version: '22.14.0',
+      architecture: 'arm64'
+    })
+
+    await expect(
+      inspectLocalToolExecutable(
+        'python',
+        target,
+        { baseEnvironment: { PATH: root } },
+        {
+          platform: 'linux',
+          spawnProcess: probeSpawn(() => ({
+            stdout: '{"version":"2.7.18","architecture":"x86_64"}\n'
+          }))
+        }
+      )
+    ).resolves.toBeUndefined()
   })
 
   it('cancels probes through process-tree cleanup', async () => {
     const root = await temporaryDirectory('local-tools-cancel')
-    const paths = await fixtureFiles(root)
+    const target = join(root, 'runtime')
+    await writeFile(target, 'fixture')
     const terminate = vi.fn(async (child: LocalToolProbeProcess) => {
       child.exitCode = 1
     })
@@ -474,98 +512,31 @@ describe('local tool environment', () => {
       return child
     })
     const controller = new AbortController()
-    const operation = createLocalToolEnvironment(
-      {
-        binDirectory: join(root, 'bin'),
-        nodeSelection: { source: 'managed' },
-        pythonSelection: { source: 'managed' },
-        packagedNpmCliPath: paths.managedNpm,
-        packagedNpxCliPath: paths.managedNpx,
-        managedPythonExecutablePath: paths.managedPython,
-        signal: controller.signal,
-        probeTimeoutMs: 60_000
-      },
-      {
-        platform: 'linux',
-        electronExecutablePath: paths.electron,
-        spawnProcess: hangingSpawn,
-        terminateProcessTree: terminate
-      }
+    const operation = inspectLocalToolExecutable(
+      'node',
+      target,
+      { baseEnvironment: {}, signal: controller.signal, probeTimeoutMs: 60_000 },
+      { platform: 'linux', spawnProcess: hangingSpawn, terminateProcessTree: terminate }
     )
-    await vi.waitFor(() => expect(hangingSpawn).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(hangingSpawn).toHaveBeenCalledOnce())
     controller.abort(new Error('cancelled by test'))
 
     await expect(operation).rejects.toThrow('cancelled by test')
-    expect(terminate).toHaveBeenCalledTimes(2)
-  })
-
-  it('inspects executed runtime metadata and rejects Python 2', async () => {
-    const root = await temporaryDirectory('local-tools-inspection')
-    const executable = join(root, 'runtime')
-    await writeFile(executable, 'fixture')
-
-    await expect(
-      inspectLocalToolExecutable(
-        'node',
-        executable,
-        { baseEnvironment: { PATH: root, NODE_OPTIONS: '--inspect' } },
-        {
-          platform: 'linux',
-          spawnProcess: probeSpawn((_command, args) => ({
-            stdout: args.includes('-e')
-              ? '{"version":"22.14.0","architecture":"arm64"}\n'
-              : ''
-          }))
-        }
-      )
-    ).resolves.toEqual({
-      kind: 'node',
-      executablePath: await import('node:fs/promises').then(({ realpath }) =>
-        realpath(executable)
-      ),
-      version: '22.14.0',
-      architecture: 'arm64'
-    })
-
-    await expect(
-      inspectLocalToolExecutable(
-        'python',
-        executable,
-        { baseEnvironment: { PATH: root } },
-        {
-          platform: 'linux',
-          spawnProcess: probeSpawn(() => ({
-            stdout: '{"version":"2.7.18","architecture":"x86_64"}\n'
-          }))
-        }
-      )
-    ).resolves.toBeUndefined()
-  })
-
-  it('resolves development and packaged npm CLI locations', () => {
-    expect(
-      resolveNpmCliPaths({
-        appPath: '/app',
-        resourcesPath: '/resources',
-        packaged: false
-      })
-    ).toEqual({
-      npmCliPath: join('/app', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-      npxCliPath: join('/app', 'node_modules', 'npm', 'bin', 'npx-cli.js')
-    })
-    expect(
-      resolveNpmCliPaths({
-        appPath: '/app',
-        resourcesPath: '/resources',
-        packaged: true
-      })
-    ).toEqual({
-      npmCliPath: join('/resources', 'runtimes', 'npm', 'bin', 'npm-cli.js'),
-      npxCliPath: join('/resources', 'runtimes', 'npm', 'bin', 'npx-cli.js')
-    })
+    expect(terminate).toHaveBeenCalledOnce()
   })
 })
 
-function dirnameForPath(path: string): string {
-  return path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')))
-}
+it('resolves development and packaged npm CLI locations', () => {
+  expect(
+    resolveNpmCliPaths({ appPath: '/app', resourcesPath: '/resources', packaged: false })
+  ).toEqual({
+    npmCliPath: join('/app', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    npxCliPath: join('/app', 'node_modules', 'npm', 'bin', 'npx-cli.js')
+  })
+  expect(
+    resolveNpmCliPaths({ appPath: '/app', resourcesPath: '/resources', packaged: true })
+  ).toEqual({
+    npmCliPath: join('/resources', 'runtimes', 'npm', 'bin', 'npm-cli.js'),
+    npxCliPath: join('/resources', 'runtimes', 'npm', 'bin', 'npx-cli.js')
+  })
+})

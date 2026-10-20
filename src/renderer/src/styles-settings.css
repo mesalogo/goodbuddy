@@ -3304,7 +3304,6 @@
   gap: var(--space-4);
 }
 
-.tool-environment__scope,
 .tool-environment__error,
 .tool-environment__load-error {
   padding: var(--space-3);
@@ -3409,6 +3408,40 @@
 
 .tool-environment-option input {
   margin-top: var(--space-1);
+}
+
+/* Runtime source: one row of plain radio buttons, description below. */
+.tool-environment-options--inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-5);
+  row-gap: var(--space-2);
+}
+
+.tool-environment-options--inline legend {
+  flex-basis: 100%;
+}
+
+.tool-environment-options--inline .tool-environment-option,
+.tool-environment-options--inline .tool-environment-option:has(input:checked) {
+  align-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.tool-environment-options--inline .tool-environment-option input {
+  margin: 0;
+}
+
+.tool-environment-options--inline .tool-environment-option strong {
+  font-weight: 400;
+}
+
+.tool-environment-options__description {
+  margin: calc(var(--space-1) * -1) 0 0;
 }
 
 .tool-environment-option span,

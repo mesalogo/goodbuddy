@@ -64,6 +64,12 @@ export const settings = {
       description:
         'Configure Agent Runtimes, model sources, and native capabilities'
     },
+    toolEnvironment: {
+      label: 'Tool execution environment',
+      navigationDescription: 'Node.js, Python, and pip',
+      description:
+        'Chooses which node, npm, python, and pip local Runtimes, tool commands, and stdio MCP servers use. Terminals and remote Hosts are unaffected.'
+    },
     sshHosts: {
       label: 'Hosts and remote execution',
       navigationDescription:
@@ -79,8 +85,8 @@ export const settings = {
     },
     capabilities: {
       label: 'Capabilities and tools',
-      navigationDescription: 'Skills, MCP, and local tool environment',
-      description: 'Manage Skills, MCP, and the local tool environment'
+      navigationDescription: 'Skills and MCP',
+      description: 'Manage Skills and MCP'
     },
     about: {
       label: 'About and updates',
@@ -93,8 +99,7 @@ export const settings = {
     tabs: {
       ariaLabel: 'Capabilities and tools settings',
       skills: 'Skills',
-      mcp: 'MCP',
-      tools: 'Tool execution environment'
+      mcp: 'MCP'
     }
   },
   actions: {

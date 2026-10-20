@@ -6,7 +6,6 @@ export type {
   LocalToolDiagnostic,
   LocalToolEnvironment,
   LocalToolEnvironmentDependencies,
-  LocalToolEnvironmentDiagnostics,
   LocalToolEnvironmentOptions,
   LocalToolName,
   LocalToolProbeProcess,

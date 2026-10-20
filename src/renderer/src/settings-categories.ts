@@ -1,6 +1,7 @@
 import i18n from './i18n'
 import {
   Bot,
+  Cpu,
   FileText,
   Gauge,
   Info,
@@ -42,6 +43,13 @@ export const settingsCategoryList = [
     translationKey: 'runtime',
     icon: Terminal
   },
+  {
+    id: 'tool-environment',
+    group: 'execution',
+    translationKey: 'toolEnvironment',
+    icon: Cpu
+  },
+
 
   {
     id: 'document-parsing',

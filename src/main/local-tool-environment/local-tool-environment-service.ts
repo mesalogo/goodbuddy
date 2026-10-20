@@ -15,9 +15,13 @@ import {
 } from '../../shared/local-tool-environment-contracts'
 import {
   createLocalToolEnvironment,
+  detectLocalTools,
   inspectLocalToolExecutable,
+  resolveLocalTool,
   type LocalToolEnvironment,
-  type LocalToolEnvironmentDependencies
+  type LocalToolEnvironmentDependencies,
+  type LocalToolName,
+  type ResolvedLocalTool
 } from './local-tool-environment'
 import {
   cleanupManagedPythonOperations,
@@ -102,7 +106,8 @@ async function childDirectories(
 
 async function candidateDirectories(
   environment: NodeJS.ProcessEnv,
-  platform: PythonArtifactPlatform
+  platform: PythonArtifactPlatform,
+  includePath = true
 ): Promise<string[]> {
   const directories: string[] = []
   const seen = new Set<string>()
@@ -204,7 +209,7 @@ async function candidateDirectories(
       addMany(await childDirectories(root, ['bin']))
     }
   }
-  inheritedPath.split(delimiter).forEach(add)
+  if (includePath) inheritedPath.split(delimiter).forEach(add)
   return directories
 }
 
@@ -452,6 +457,8 @@ export class LocalToolEnvironmentService {
   private operationController?: AbortController
   private installOperation?: Promise<LocalToolEnvironmentSnapshot>
   private launchEnvironment: Readonly<NodeJS.ProcessEnv> = Object.freeze({})
+  private toolEnvironment?: LocalToolEnvironment
+  private rebuildQueue: Promise<void> = Promise.resolve()
   private listeners = new Set<ProgressListener>()
   private initialization?: Promise<void>
   readonly launchEnvironmentProvider: LaunchEnvironmentProvider = () =>
@@ -488,21 +495,30 @@ export class LocalToolEnvironmentService {
     return (await this.options.settingsStore.get()).localToolEnvironment
   }
 
-  private async rebuildLaunchEnvironment(
-    signal?: AbortSignal
-  ): Promise<LocalToolEnvironment> {
-    const settings = await this.settings()
-    const catalog = await loadPythonArtifactCatalog(
-      this.options.pythonArtifactCatalogPath
-    )
-    const generationDirectory = join(
-      this.options.binDirectory,
-      `generation-${randomUUID()}`
-    )
-    try {
+  private get toolDependencies(): LocalToolEnvironmentDependencies {
+    return {
+      ...this.dependencies.toolEnvironment,
+      ...(this.options.electronExecutablePath
+        ? { electronExecutablePath: this.options.electronExecutablePath }
+        : {})
+    }
+  }
+
+  /**
+   * Rewrites the wrapper scripts. No executable is run, so this is cheap
+   * enough to do on every start. Rebuilds are serialized because they share
+   * one stable wrapper directory, which keeps PATH identical across rebuilds
+   * and avoids restarting reused runtimes.
+   */
+  private rebuildLaunchEnvironment(): Promise<LocalToolEnvironment> {
+    const rebuild = this.rebuildQueue.then(async () => {
+      const settings = await this.settings()
+      const catalog = await loadPythonArtifactCatalog(
+        this.options.pythonArtifactCatalogPath
+      )
       const environment = await createLocalToolEnvironment(
         {
-          binDirectory: generationDirectory,
+          binDirectory: this.options.binDirectory,
           nodeSelection: settings.node,
           pythonSelection: settings.python,
           packagedNpmCliPath: this.options.packagedNpmCliPath,
@@ -510,25 +526,56 @@ export class LocalToolEnvironmentService {
           managedPythonExecutablePath: await this.installedPython(
             catalog.pythonVersion
           ),
-          baseEnvironment: this.options.baseEnvironment,
-          ...(signal ? { signal } : {})
+          baseEnvironment: this.baseEnvironment,
+          pythonSearchDirectories: await this.automaticPythonDirectories()
         },
-        {
-          ...this.dependencies.toolEnvironment,
-          ...(this.options.electronExecutablePath
-            ? { electronExecutablePath: this.options.electronExecutablePath }
-            : {})
-        }
+        this.toolDependencies
       )
-      this.launchEnvironment = Object.freeze({ ...environment.environment })
+      this.toolEnvironment = environment
+      if (this.launchEnvironment.PATH !== environment.environment.PATH) {
+        this.launchEnvironment = Object.freeze({ ...environment.environment })
+      }
+      this.diagnostics = {}
       return environment
-    } catch (error) {
-      await rm(generationDirectory, {
-        recursive: true,
-        force: true
-      }).catch(() => undefined)
-      throw error
-    }
+    })
+    this.rebuildQueue = rebuild.then(
+      () => undefined,
+      () => undefined
+    )
+    return rebuild
+  }
+
+  /**
+   * Install locations searched after PATH in automatic mode. Named Conda
+   * environments are left out: picking one of several arbitrarily would be
+   * surprising, so they stay available through "Specific path".
+   */
+  private async automaticPythonDirectories(): Promise<string[]> {
+    const activeEnvironments = [
+      this.baseEnvironment.VIRTUAL_ENV,
+      this.baseEnvironment.CONDA_PREFIX
+    ].filter((value): value is string => Boolean(value))
+    return (
+      await candidateDirectories(this.baseEnvironment, this.platform, false)
+    ).filter(
+      (directory) =>
+        !/[\\/]envs[\\/][^\\/]+(?:[\\/]bin)?$/iu.test(directory) ||
+        activeEnvironments.some((active) => directory.startsWith(active))
+    )
+  }
+
+  private get baseEnvironment(): NodeJS.ProcessEnv {
+    return this.options.baseEnvironment ?? process.env
+  }
+
+  /**
+   * Resolves which program a command runs, using only file lookups. Cheap
+   * enough for callers that need an interpreter path (for example WeCom).
+   */
+  async resolveTool(name: LocalToolName): Promise<ResolvedLocalTool | undefined> {
+    await this.initialized()
+    const environment = this.toolEnvironment ?? (await this.rebuildLaunchEnvironment())
+    return resolveLocalTool(name, environment, this.baseEnvironment, this.platform)
   }
 
   /**
@@ -617,7 +664,6 @@ export class LocalToolEnvironmentService {
     await this.options.settingsStore.update({
       localToolEnvironment: settings
     })
-    this.diagnostics = {}
     try {
       await this.rebuildLaunchEnvironment()
     } catch (error) {
@@ -627,7 +673,8 @@ export class LocalToolEnvironmentService {
       await this.rebuildLaunchEnvironment().catch(() => undefined)
       throw error
     }
-    return this.getSnapshot()
+    // The change was made from the settings page, which shows the result.
+    return this.diagnose('all')
   }
 
   async refreshCandidates(): Promise<LocalToolEnvironmentSnapshot> {
@@ -650,17 +697,31 @@ export class LocalToolEnvironmentService {
     })
   }
 
+  /**
+   * Reports which program each command resolves to, with its version. This
+   * is the only place that runs the tools, and only on explicit request
+   * (opening the settings page or "Detect again"). Both runtimes are always
+   * detected together; the target exists for IPC compatibility.
+   */
   async diagnose(target: LocalToolDiagnoseTarget): Promise<LocalToolEnvironmentSnapshot> {
+    void target
     await this.initialized()
-    const environment = await this.rebuildLaunchEnvironment(
-      this.operationController?.signal
+    const environment = await this.rebuildLaunchEnvironment()
+    const settings = await this.settings()
+    const detected = await detectLocalTools(
+      environment,
+      { node: settings.node, python: settings.python },
+      this.baseEnvironment,
+      {},
+      this.toolDependencies
     )
-    const resolved = Object.fromEntries(
-      Object.entries(environment.diagnostics.tools).map(([name, diagnostic]) => [
+    this.diagnostics = Object.fromEntries(
+      Object.entries(detected).map(([name, diagnostic]) => [
         name,
         {
           available: diagnostic.available,
           source: diagnostic.source,
+          ...(diagnostic.origin ? { origin: diagnostic.origin } : {}),
           ...(diagnostic.version ? { version: diagnostic.version } : {}),
           ...(diagnostic.executablePath
             ? { executablePath: diagnostic.executablePath }
@@ -669,16 +730,6 @@ export class LocalToolEnvironmentService {
         }
       ])
     )
-    const names =
-      target === 'node'
-        ? ['node', 'npm', 'npx']
-        : target === 'python'
-          ? ['python', 'python3', 'pip']
-          : ['node', 'npm', 'npx', 'python', 'python3', 'pip']
-    this.diagnostics = {
-      ...this.diagnostics,
-      ...Object.fromEntries(names.map((name) => [name, resolved[name]]))
-    }
     return this.getSnapshot()
   }
 
@@ -777,7 +828,7 @@ export class LocalToolEnvironmentService {
       this.operationController = undefined
       await this.emit()
     }
-    return this.diagnose('python')
+    return this.diagnose('all')
   }
 
   cancelPython(): boolean {
@@ -796,10 +847,9 @@ export class LocalToolEnvironmentService {
       rootDirectory: this.options.managedPythonRoot,
       version: catalog.pythonVersion
     })
-    this.diagnostics = {}
-    await this.rebuildLaunchEnvironment()
+    const snapshot = await this.diagnose('all')
     await this.emit()
-    return this.getSnapshot()
+    return snapshot
   }
 
   async dispose(): Promise<void> {

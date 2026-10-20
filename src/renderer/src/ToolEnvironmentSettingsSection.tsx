@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
+import { SettingsCategoryHeader } from './SettingsPrimitives'
 import type {
   LocalToolEnvironmentSettings,
   LocalToolEnvironmentSnapshot,
   LocalToolKind,
   LocalToolRuntimeSelection
 } from '../../shared/local-tool-environment-contracts'
+
+type LocalToolSource = LocalToolRuntimeSelection['source']
 import type { AppNotificationInput } from './notifications'
 import { displayErrorMessage } from './error-message'
 
@@ -85,6 +88,14 @@ export function ToolEnvironmentSettingsSection({
           setSnapshot(next)
           setLoadError(undefined)
         }
+        // Detection runs the tools once, so it happens only while this page
+        // is open rather than on every application start.
+        return api.diagnose('all').then(
+          (detected) => {
+            if (active) setSnapshot(detected)
+          },
+          () => undefined
+        )
       },
       (reason: unknown) => {
         if (active) {
@@ -269,33 +280,43 @@ export function ToolEnvironmentSettingsSection({
     }
   }
 
+  const header = (actions?: React.ReactNode): React.JSX.Element => (
+    <SettingsCategoryHeader actions={actions} category="tool-environment" />
+  )
+
   if ((!toolApi || loadError) && !snapshot) {
     return (
-      <div className="tool-environment__load-error" role="alert">
-        <p>
-          {loadError ?? t('toolEnvironment.errors.unavailable')}
-        </p>
-        {toolApi && (
-          <button
-            className="secondary-button"
-            onClick={() => {
-              setLoadError(undefined)
-              setLoadAttempt((current) => current + 1)
-            }}
-            type="button"
-          >
-            {t('toolEnvironment.actions.retry')}
-          </button>
-        )}
-      </div>
+      <>
+        {header()}
+        <div className="tool-environment__load-error" role="alert">
+          <p>
+            {loadError ?? t('toolEnvironment.errors.unavailable')}
+          </p>
+          {toolApi && (
+            <button
+              className="secondary-button"
+              onClick={() => {
+                setLoadError(undefined)
+                setLoadAttempt((current) => current + 1)
+              }}
+              type="button"
+            >
+              {t('toolEnvironment.actions.retry')}
+            </button>
+          )}
+        </div>
+      </>
     )
   }
 
   if (!snapshot) {
     return (
-      <p aria-busy="true" aria-live="polite" role="status">
-        {t('toolEnvironment.loading')}
-      </p>
+      <>
+        {header()}
+        <p aria-busy="true" aria-live="polite" role="status">
+          {t('toolEnvironment.loading')}
+        </p>
+      </>
     )
   }
 
@@ -312,128 +333,271 @@ export function ToolEnvironmentSettingsSection({
         )
       : undefined
 
+  const renderManagedPython = (): React.JSX.Element => (
+    <div className="tool-environment-python">
+      <p>
+        {snapshot.managedPython.installed
+          ? t('toolEnvironment.python.installed', {
+              version: snapshot.managedPython.version
+            })
+          : t('toolEnvironment.python.notInstalled', {
+              version: snapshot.managedPython.version
+            })}
+      </p>
+      {operation && (
+        <div className="tool-environment-progress">
+          <div
+            aria-label={t('toolEnvironment.python.progressLabel')}
+            aria-valuemax={progress === undefined ? undefined : 100}
+            aria-valuemin={progress === undefined ? undefined : 0}
+            aria-valuenow={progress}
+            className="tool-environment-progress__track"
+            role="progressbar"
+          >
+            {progress !== undefined && (
+              <span style={{ width: `${progress}%` }} />
+            )}
+          </div>
+          <span>
+            {t(`toolEnvironment.python.phases.${operation.phase}`)}
+            {operation.receivedBytes !== undefined &&
+              ` · ${formatBytes(operation.receivedBytes)}`}
+            {operation.totalBytes !== undefined &&
+              ` / ${formatBytes(operation.totalBytes)}`}
+          </span>
+          <span>
+            {t('toolEnvironment.python.progressSource', {
+              source: t(
+                `toolEnvironment.downloadSource.options.${operation.source}.label`
+              )
+            })}
+          </span>
+        </div>
+      )}
+      <div className="tool-environment-card__actions">
+        {operation ? (
+          <button
+            className="secondary-button"
+            disabled={busy !== undefined && busy !== 'install-python'}
+            onClick={() => {
+              pythonCancellationRequested.current = true
+              setBusy('cancel-python')
+              setActionError(undefined)
+              void api.cancelPython().then(
+                () => setBusy(undefined),
+                (reason: unknown) => {
+                  setBusy(undefined)
+                  setActionError(
+                    errorMessage(
+                      reason,
+                      t('toolEnvironment.errors.cancelPythonFailed')
+                    )
+                  )
+                }
+              )
+            }}
+            type="button"
+          >
+            {t('toolEnvironment.actions.cancel')}
+          </button>
+        ) : !snapshot.managedPython.installed ? (
+          <button
+            className="primary-button"
+            disabled={busy !== undefined}
+            onClick={() =>
+              void runSnapshotAction(
+                'install-python',
+                () => api.installPython(),
+                t('toolEnvironment.errors.installPythonFailed'),
+                t('toolEnvironment.notifications.pythonInstalled')
+              )
+            }
+            type="button"
+          >
+            {t('toolEnvironment.actions.installPython')}
+          </button>
+        ) : confirmingRemove ? (
+          <>
+            <span role="alert">
+              {t('toolEnvironment.python.removeConfirmation')}
+            </span>
+            <button
+              className="danger-solid"
+              disabled={busy !== undefined}
+              onClick={() =>
+                void runSnapshotAction(
+                  'remove-python',
+                  () => api.removePython(),
+                  t('toolEnvironment.errors.removePythonFailed'),
+                  t('toolEnvironment.notifications.pythonRemoved')
+                ).then((removed) => {
+                  if (removed) {
+                    setConfirmingRemove(false)
+                  }
+                })
+              }
+              type="button"
+            >
+              {t('toolEnvironment.actions.confirmRemovePython')}
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => setConfirmingRemove(false)}
+              type="button"
+            >
+              {t('toolEnvironment.actions.cancel')}
+            </button>
+          </>
+        ) : (
+          <button
+            className="danger-ghost"
+            disabled={busy !== undefined}
+            onClick={() => setConfirmingRemove(true)}
+            type="button"
+          >
+            {t('toolEnvironment.actions.removePython')}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+
   const renderRuntimeCard = (kind: LocalToolKind): React.JSX.Element => {
     const selection = snapshot.settings[kind]
+    const runtimeName = t(`toolEnvironment.runtimes.${kind}.title`)
     const primaryDiagnostic =
       kind === 'node'
         ? snapshot.diagnostics.node
-        : snapshot.diagnostics.python ??
-          snapshot.diagnostics.python3
+        : snapshot.diagnostics.python ?? snapshot.diagnostics.python3
     const dependencyDiagnostics =
       kind === 'node'
-        ? [
+        ? ([
             ['npm', snapshot.diagnostics.npm],
             ['npx', snapshot.diagnostics.npx]
-          ] as const
-        : [['pip', snapshot.diagnostics.pip]] as const
+          ] as const)
+        : ([['pip', snapshot.diagnostics.pip]] as const)
     const candidates = snapshot.candidates.filter(
       (candidate) => candidate.kind === kind
     )
     const selectedCustomPath =
-      selection.source === 'custom'
-        ? selection.executablePath
-        : undefined
-    const showCustom =
-      selection.source === 'custom' || customOpen[kind]
+      selection.source === 'custom' ? selection.executablePath : undefined
+    const pendingCustom = customOpen[kind] && selection.source !== 'custom'
+    const activeSource: LocalToolSource = pendingCustom
+      ? 'custom'
+      : selection.source
     const customError = runtimeErrors[kind]
     const customRegionId = `tool-environment-${kind}-custom-options`
+    const sources: readonly LocalToolSource[] = ['auto', 'managed', 'custom']
+    // The built-in Python matters whenever it may be used: always in
+    // "built-in" mode, and in "auto" mode as the fallback.
+    const showManagedPython =
+      kind === 'python' && !pendingCustom && selection.source !== 'custom'
+
+    const statusText = primaryDiagnostic
+      ? primaryDiagnostic.available && primaryDiagnostic.origin
+        ? t(`toolEnvironment.effective.${primaryDiagnostic.origin}`, {
+            runtime: runtimeName,
+            version: primaryDiagnostic.version ?? ''
+          })
+        : primaryDiagnostic.origin === 'system'
+          ? t('toolEnvironment.brokenSystem', { runtime: runtimeName })
+          : t(`toolEnvironment.missing.${kind}.${selection.source}`)
+      : t('toolEnvironment.notDiagnosed')
 
     return (
       <article className="tool-environment-card">
         <div className="tool-environment-card__header">
           <div className="inline-help-label">
-            <h3>{t(`toolEnvironment.runtimes.${kind}.title`)}</h3>
-            <InlineHelp label={t(`toolEnvironment.runtimes.${kind}.title`)}>{t(`toolEnvironment.runtimes.${kind}.description`)}</InlineHelp>
+            <h3>{runtimeName}</h3>
+            <InlineHelp label={runtimeName}>
+              {t(`toolEnvironment.runtimes.${kind}.description`)}
+            </InlineHelp>
           </div>
-          <button
-            className="secondary-button"
-            disabled={busy !== undefined}
-            onClick={() =>
-              void runSnapshotAction(
-                `diagnose-${kind}`,
-                () => api.diagnose(kind),
-                t('toolEnvironment.errors.diagnoseFailed', {
-                  runtime: t(
-                    `toolEnvironment.runtimes.${kind}.title`
-                  )
-                })
-              )
-            }
-            type="button"
-          >
-            {busy === `diagnose-${kind}`
-              ? t('toolEnvironment.actions.diagnosing')
-              : t('toolEnvironment.actions.diagnose')}
-          </button>
         </div>
 
-        <fieldset className="tool-environment-options">
-          <legend>
-            {t('toolEnvironment.runtimeSourceLegend', {
-              runtime: t(`toolEnvironment.runtimes.${kind}.title`)
-            })}
-          </legend>
-          <label className="tool-environment-option">
-            <input
-              checked={
-                selection.source === 'managed' && !customOpen[kind]
-              }
-              disabled={busy !== undefined}
-              name={`${kind}-runtime-source`}
-              onChange={() => {
-                setCustomOpen((current) => ({
-                  ...current,
-                  [kind]: false
-                }))
-                setRuntimeErrors((current) => ({
-                  ...current,
-                  [kind]: undefined
-                }))
-                if (selection.source !== 'managed') {
-                  void updateRuntime(kind, { source: 'managed' })
-                }
-              }}
-              type="radio"
-            />
-            <span>
-              <strong>{t('toolEnvironment.sources.managed')}</strong>
-              <small>
-                {t(
-                  `toolEnvironment.runtimes.${kind}.managedDescription`
-                )}
-              </small>
-            </span>
-          </label>
-          <label className="tool-environment-option">
-            <input
-              aria-controls={customRegionId}
-              checked={showCustom}
-              disabled={busy !== undefined}
-              name={`${kind}-runtime-source`}
-              onChange={() => {
-                setCustomOpen((current) => ({
-                  ...current,
-                  [kind]: true
-                }))
-              }}
-              type="radio"
-            />
-            <span>
-              <strong>{t('toolEnvironment.sources.custom')}</strong>
-              <small>{t('toolEnvironment.sources.customDescription')}</small>
-            </span>
-          </label>
-        </fieldset>
+        <div
+          aria-live="polite"
+          className={`tool-environment-status tool-environment-status--${
+            primaryDiagnostic?.available ? 'ready' : 'missing'
+          }`}
+          role="status"
+        >
+          <p>
+            <strong>{statusText}</strong>
+          </p>
+          {primaryDiagnostic?.executablePath && (
+            <code>{primaryDiagnostic.executablePath}</code>
+          )}
+          {primaryDiagnostic?.available && (
+            <ul className="tool-environment-companions">
+              {dependencyDiagnostics.map(
+                ([name, diagnostic]) =>
+                  diagnostic && (
+                    <li key={name}>
+                      <strong>{name}</strong>{' '}
+                      <span>
+                        {diagnostic.available
+                          ? diagnostic.version ?? t('toolEnvironment.available')
+                          : t('toolEnvironment.unavailable')}
+                      </span>
+                    </li>
+                  )
+              )}
+            </ul>
+          )}
+        </div>
 
-        {showCustom && (
-          <div
-            className="tool-environment-card__custom"
-            id={customRegionId}
-          >
-            {selection.source !== 'custom' && (
+        <fieldset
+          aria-describedby={`tool-environment-${kind}-source-description`}
+          className="tool-environment-options tool-environment-options--inline"
+        >
+          <legend>
+            {t('toolEnvironment.runtimeSourceLegend', { runtime: runtimeName })}
+          </legend>
+          {sources.map((source) => (
+            <label
+              className="tool-environment-option"
+              key={source}
+              title={t(`toolEnvironment.runtimes.${kind}.sources.${source}`)}
+            >
+              <input
+                aria-controls={source === 'custom' ? customRegionId : undefined}
+                checked={activeSource === source}
+                disabled={busy !== undefined}
+                name={`${kind}-runtime-source`}
+                onChange={() => {
+                  setRuntimeErrors((current) => ({
+                    ...current,
+                    [kind]: undefined
+                  }))
+                  if (source === 'custom') {
+                    setCustomOpen((current) => ({ ...current, [kind]: true }))
+                    return
+                  }
+                  setCustomOpen((current) => ({ ...current, [kind]: false }))
+                  if (selection.source !== source) {
+                    void updateRuntime(kind, { source })
+                  }
+                }}
+                type="radio"
+              />
+              <strong>{t(`toolEnvironment.sources.${source}`)}</strong>
+            </label>
+          ))}
+        </fieldset>
+        <p
+          className="tool-environment-muted tool-environment-options__description"
+          id={`tool-environment-${kind}-source-description`}
+        >
+          {t(`toolEnvironment.runtimes.${kind}.sources.${activeSource}`)}
+        </p>
+
+        {activeSource === 'custom' && (
+          <div className="tool-environment-card__custom" id={customRegionId}>
+            {pendingCustom && (
               <p className="tool-environment-muted">
                 {t('toolEnvironment.chooseCustomPrompt', {
-                  runtime: t(`toolEnvironment.runtimes.${kind}.title`)
+                  runtime: runtimeName
                 })}
               </p>
             )}
@@ -469,34 +633,32 @@ export function ToolEnvironmentSettingsSection({
             {candidates.length > 0 ? (
               <ul
                 aria-label={t('toolEnvironment.candidateList', {
-                  runtime: t(`toolEnvironment.runtimes.${kind}.title`)
+                  runtime: runtimeName
                 })}
                 className="tool-environment-candidates"
               >
-                {candidates.map((candidate) => {
-                  return (
-                    <li key={candidate.executablePath}>
-                      <button
-                        aria-pressed={
-                          selectedCustomPath === candidate.executablePath
-                        }
-                        disabled={busy !== undefined}
-                        onClick={() =>
-                          void updateRuntime(kind, {
-                            source: 'custom',
-                            executablePath: candidate.executablePath
-                          })
-                        }
-                        type="button"
-                      >
-                        <code>{candidate.executablePath}</code>
-                        <small>
-                          {candidate.version} · {candidate.architecture}
-                        </small>
-                      </button>
-                    </li>
-                  )
-                })}
+                {candidates.map((candidate) => (
+                  <li key={candidate.executablePath}>
+                    <button
+                      aria-pressed={
+                        selectedCustomPath === candidate.executablePath
+                      }
+                      disabled={busy !== undefined}
+                      onClick={() =>
+                        void updateRuntime(kind, {
+                          source: 'custom',
+                          executablePath: candidate.executablePath
+                        })
+                      }
+                      type="button"
+                    >
+                      <code>{candidate.executablePath}</code>
+                      <small>
+                        {candidate.version} · {candidate.architecture}
+                      </small>
+                    </button>
+                  </li>
+                ))}
               </ul>
             ) : (
               <p className="tool-environment-muted">
@@ -506,252 +668,51 @@ export function ToolEnvironmentSettingsSection({
           </div>
         )}
 
-        <div className="tool-environment-status">
-          <h4>{t('toolEnvironment.toolStatus')}</h4>
-          {primaryDiagnostic ? (
-            <dl>
-              <dt>{t('toolEnvironment.status')}</dt>
-              <dd>
-                {primaryDiagnostic.available
-                  ? t('toolEnvironment.available')
-                  : t('toolEnvironment.unavailable')}
-              </dd>
-              {primaryDiagnostic.version && (
-                <>
-                  <dt>{t('toolEnvironment.version')}</dt>
-                  <dd>{primaryDiagnostic.version}</dd>
-                </>
-              )}
-              {primaryDiagnostic.executablePath && (
-                <>
-                  <dt>{t('toolEnvironment.path')}</dt>
-                  <dd>
-                    <code>{primaryDiagnostic.executablePath}</code>
-                  </dd>
-                </>
-              )}
-              <dt>{t('toolEnvironment.detail')}</dt>
-              <dd>{primaryDiagnostic.detail}</dd>
-            </dl>
-          ) : (
-            <p>{t('toolEnvironment.notDiagnosed')}</p>
-          )}
-        </div>
-
-        <div className="tool-environment-status">
-          <h4>{t('toolEnvironment.companionStatus')}</h4>
-          {dependencyDiagnostics.some(([, value]) => value) ? (
-            <ul>
-              {dependencyDiagnostics.map(
-                ([name, diagnostic]) =>
-                  diagnostic && (
-                    <li key={name}>
-                      <strong>{name}</strong>
-                      <span>
-                        {diagnostic.available
-                          ? t('toolEnvironment.available')
-                          : t('toolEnvironment.unavailable')}
-                        {diagnostic.version
-                          ? ` · ${diagnostic.version}`
-                          : ''}
-                      </span>
-                      <small>{diagnostic.detail}</small>
-                    </li>
-                  )
-              )}
-            </ul>
-          ) : (
-            <p>{t('toolEnvironment.notDiagnosed')}</p>
-          )}
-        </div>
-
-        {kind === 'python' && selection.source === 'managed' && (
-          <div className="tool-environment-python">
-            <p>
-              {snapshot.managedPython.installed
-                ? t('toolEnvironment.python.installed', {
-                    version: snapshot.managedPython.version
-                  })
-                : t('toolEnvironment.python.notInstalled', {
-                    version: snapshot.managedPython.version
-                  })}
-            </p>
-            {snapshot.managedPython.executablePath && (
-              <code>{snapshot.managedPython.executablePath}</code>
-            )}
-            {operation && (
-              <div className="tool-environment-progress">
-                <div
-                  aria-label={t(
-                    'toolEnvironment.python.progressLabel'
-                  )}
-                  aria-valuemax={progress === undefined ? undefined : 100}
-                  aria-valuemin={progress === undefined ? undefined : 0}
-                  aria-valuenow={progress}
-                  className="tool-environment-progress__track"
-                  role="progressbar"
-                >
-                  {progress !== undefined && (
-                    <span style={{ width: `${progress}%` }} />
-                  )}
-                </div>
-                <span>
-                  {t(
-                    `toolEnvironment.python.phases.${operation.phase}`
-                  )}
-                  {operation.receivedBytes !== undefined &&
-                    ` · ${formatBytes(operation.receivedBytes)}`}
-                  {operation.totalBytes !== undefined &&
-                    ` / ${formatBytes(operation.totalBytes)}`}
-                </span>
-                <span>
-                  {t('toolEnvironment.python.progressSource', {
-                    source: t(
-                      `toolEnvironment.downloadSource.options.${operation.source}.label`
-                    )
-                  })}
-                </span>
-              </div>
-            )}
-            <div className="tool-environment-card__actions">
-              {operation ? (
-                <button
-                  className="secondary-button"
-                  disabled={
-                    busy !== undefined && busy !== 'install-python'
-                  }
-                  onClick={() => {
-                    pythonCancellationRequested.current = true
-                    setBusy('cancel-python')
-                    setActionError(undefined)
-                    void api.cancelPython().then(
-                      () => setBusy(undefined),
-                      (reason: unknown) => {
-                        setBusy(undefined)
-                        setActionError(
-                          errorMessage(
-                            reason,
-                            t(
-                              'toolEnvironment.errors.cancelPythonFailed'
-                            )
-                          )
-                        )
-                      }
-                    )
-                  }}
-                  type="button"
-                >
-                  {t('toolEnvironment.actions.cancel')}
-                </button>
-              ) : (
-                <button
-                  className="primary-button"
-                  disabled={busy !== undefined}
-                  onClick={() =>
-                    void runSnapshotAction(
-                      'install-python',
-                      () => api.installPython(),
-                      t(
-                        'toolEnvironment.errors.installPythonFailed'
-                      ),
-                      t(
-                        'toolEnvironment.notifications.pythonInstalled'
-                      )
-                    )
-                  }
-                  type="button"
-                >
-                  {snapshot.managedPython.installed
-                    ? t('toolEnvironment.actions.updatePython')
-                    : t('toolEnvironment.actions.installPython')}
-                </button>
-              )}
-              {snapshot.managedPython.installed &&
-                !operation &&
-                (confirmingRemove ? (
-                  <>
-                    <span role="alert">
-                      {t('toolEnvironment.python.removeConfirmation')}
-                    </span>
-                    <button
-                      className="danger-solid"
-                      disabled={busy !== undefined}
-                      onClick={() =>
-                        void runSnapshotAction(
-                          'remove-python',
-                          () => api.removePython(),
-                          t(
-                            'toolEnvironment.errors.removePythonFailed'
-                          ),
-                          t(
-                            'toolEnvironment.notifications.pythonRemoved'
-                          )
-                        ).then((removed) => {
-                          if (removed) {
-                            setConfirmingRemove(false)
-                          }
-                        })
-                      }
-                      type="button"
-                    >
-                      {t('toolEnvironment.actions.confirmRemovePython')}
-                    </button>
-                    <button
-                      className="secondary-button"
-                      onClick={() => setConfirmingRemove(false)}
-                      type="button"
-                    >
-                      {t('toolEnvironment.actions.cancel')}
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="danger-ghost"
-                    onClick={() => setConfirmingRemove(true)}
-                    type="button"
-                  >
-                    {t('toolEnvironment.actions.removePython')}
-                  </button>
-                ))}
-            </div>
-          </div>
+        {customError && activeSource !== 'custom' && (
+          <p className="tool-environment__error" role="alert">
+            {customError}
+          </p>
         )}
+
+        {showManagedPython && renderManagedPython()}
       </article>
     )
   }
 
   return (
+    <>
+    {header(
+      <button
+        className="secondary-button"
+        disabled={busy !== undefined}
+        onClick={() =>
+          void runSnapshotAction(
+            'diagnose-all',
+            () => api.diagnose('all'),
+            t('toolEnvironment.errors.diagnoseAllFailed')
+          )
+        }
+        type="button"
+      >
+        {busy === 'diagnose-all'
+          ? t('toolEnvironment.actions.diagnosing')
+          : t('toolEnvironment.actions.diagnoseAll')}
+      </button>
+    )}
     <div className="tool-environment">
-      <p className="tool-environment__scope">
-        {t('toolEnvironment.scope')}
-      </p>
       {actionError && (
         <p className="tool-environment__error" role="alert">
           {actionError}
         </p>
       )}
+      {renderRuntimeCard('node')}
+      {renderRuntimeCard('python')}
       <section className="tool-environment-card">
         <div className="tool-environment-card__header">
           <div className="inline-help-label">
             <h3>{t('toolEnvironment.downloadSource.title')}</h3>
             <InlineHelp label={t('toolEnvironment.downloadSource.title')}>{t('toolEnvironment.downloadSource.description')}</InlineHelp>
           </div>
-          <button
-            className="secondary-button"
-            disabled={busy !== undefined}
-            onClick={() =>
-              void runSnapshotAction(
-                'diagnose-all',
-                () => api.diagnose('all'),
-                t('toolEnvironment.errors.diagnoseAllFailed')
-              )
-            }
-            type="button"
-          >
-            {busy === 'diagnose-all'
-              ? t('toolEnvironment.actions.diagnosing')
-              : t('toolEnvironment.actions.diagnoseAll')}
-          </button>
         </div>
         <fieldset className="tool-environment-options">
           <legend>{t('toolEnvironment.downloadSource.legend')}</legend>
@@ -795,8 +756,7 @@ export function ToolEnvironmentSettingsSection({
           {t('toolEnvironment.downloadSource.noFallback')}
         </p>
       </section>
-      {renderRuntimeCard('node')}
-      {renderRuntimeCard('python')}
     </div>
+    </>
   )
 }

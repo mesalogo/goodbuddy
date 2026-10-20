@@ -55,6 +55,12 @@ export const settings = {
       navigationDescription: '配置 Agent Runtime、默认工作区与原生能力',
       description: '配置 Agent Runtime、模型来源与原生能力'
     },
+    toolEnvironment: {
+      label: '工具执行环境',
+      navigationDescription: 'Node.js、Python 与 pip',
+      description:
+        '决定本机 Runtime、工具命令和 stdio MCP 使用哪个 node、npm、python、pip；不影响终端和远程 Host'
+    },
     sshHosts: {
       label: '主机与远程执行',
       navigationDescription: 'SSH 主机、身份验证与连接探测',
@@ -69,8 +75,8 @@ export const settings = {
     },
     capabilities: {
       label: '能力与工具',
-      navigationDescription: 'Skills、MCP 与本机工具环境',
-      description: '管理 Skills、MCP 和本机工具执行环境'
+      navigationDescription: 'Skills 与 MCP',
+      description: '管理 Skills 和 MCP'
     },
     about: {
       label: '关于与更新',
@@ -82,8 +88,7 @@ export const settings = {
     tabs: {
       ariaLabel: '能力与工具设置',
       skills: 'Skills',
-      mcp: 'MCP',
-      tools: '工具执行环境'
+      mcp: 'MCP'
     }
   },
   actions: {

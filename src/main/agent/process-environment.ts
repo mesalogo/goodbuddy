@@ -84,6 +84,22 @@ export function applyLaunchEnvironmentPath(
   return result
 }
 
+/**
+ * Full environment for a local child process that should behave like the
+ * user's own shell: the credential-filtered user environment plus the tool
+ * environment PATH. The launch environment provider only contributes PATH, so
+ * it must never be used as a complete process environment on its own.
+ */
+export function buildLaunchUserEnvironment(
+  provider?: LaunchEnvironmentProvider,
+  source: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  return applyLaunchEnvironmentPath(
+    buildCredentialFilteredUserEnvironment(source),
+    provider
+  )
+}
+
 const runtimeEnvironmentAllowlist = [
   'PATH',
   'Path',

@@ -59,13 +59,15 @@ const baseSnapshot: LocalToolEnvironmentSnapshot = {
     python: {
       available: true,
       source: 'managed',
-      version: 'Python 3.12.8',
+      origin: 'managed',
+      version: '3.12.8',
       executablePath: 'C:\\GoodBuddy\\python.exe',
       detail: 'Ready'
     },
     pip: {
       available: true,
       source: 'managed',
+      origin: 'managed',
       version: 'pip 24.3',
       executablePath: 'C:\\GoodBuddy\\pip.exe',
       detail: 'Ready'
@@ -76,6 +78,21 @@ const baseSnapshot: LocalToolEnvironmentSnapshot = {
     installed: true,
     executablePath: 'C:\\GoodBuddy\\python.exe'
   }
+}
+
+const notInstalledSnapshot: LocalToolEnvironmentSnapshot = {
+  ...baseSnapshot,
+  settings: { ...baseSnapshot.settings, python: { source: 'auto' } },
+  diagnostics: {
+    ...baseSnapshot.diagnostics,
+    python: {
+      available: false,
+      source: 'auto',
+      detail: 'No Python was found on PATH.'
+    },
+    pip: undefined
+  },
+  managedPython: { version: '3.12.8', installed: false }
 }
 
 describe('ToolEnvironmentSettingsSection', () => {
@@ -137,18 +154,17 @@ describe('ToolEnvironmentSettingsSection', () => {
     expect(
       (await screen.findAllByText('C:\\Broken\\node.exe'))[0]
     ).toBeVisible()
-    expect(screen.getAllByText('工具状态')).toHaveLength(2)
-    expect(screen.getAllByText('工具链/配套工具状态')).toHaveLength(2)
-    expect(screen.queryByText('能力依赖状态')).not.toBeInTheDocument()
+    expect(screen.getByText('指定的 Node.js 不存在或无法运行')).toBeVisible()
+    expect(
+      screen.getByText('正在使用 GoodBuddy 内置 Python 3.12.8')
+    ).toBeVisible()
     expect(
       screen.getByRole('button', {
         name: /C:\\Tools\\node\.exe/u
       })
     ).toHaveTextContent('22.14.0 · x64')
     expect(
-      screen.getByText(
-        /仅用于本机项目的新建本地 Runtime 进程和 stdio MCP Server/u
-      )
+      screen.getByText(/不影响终端和远程 Host/u)
     ).toBeVisible()
 
     view.unmount()
@@ -196,7 +212,7 @@ describe('ToolEnvironmentSettingsSection', () => {
       await screen.findByRole('heading', { name: 'Python' })
     ).closest('article')!
     const custom = within(pythonCard).getByRole('radio', {
-      name: /自定义环境/u
+      name: /指定路径/u
     })
     expect(custom).toBeEnabled()
     expect(
@@ -242,7 +258,7 @@ describe('ToolEnvironmentSettingsSection', () => {
     ).closest('article')!
     fireEvent.click(
       within(pythonCard).getByRole('radio', {
-        name: /自定义环境/u
+        name: /指定路径/u
       })
     )
     const choose = within(pythonCard).getByRole('button', {
@@ -265,13 +281,17 @@ describe('ToolEnvironmentSettingsSection', () => {
 
   it('uses real diagnose, file selection, managed Python, and progress APIs', async () => {
     const onNotify = vi.fn()
+    getSnapshot.mockResolvedValueOnce(notInstalledSnapshot)
+    diagnose.mockResolvedValueOnce(notInstalledSnapshot)
+    diagnose.mockResolvedValueOnce(notInstalledSnapshot)
+    selectExecutable.mockResolvedValueOnce(notInstalledSnapshot)
     render(
       <ToolEnvironmentSettingsSection onNotify={onNotify} />
     )
 
     await screen.findByText('工具下载源')
     fireEvent.click(
-      screen.getByRole('button', { name: '诊断全部' })
+      screen.getByRole('button', { name: '重新检测' })
     )
     await waitFor(() => expect(diagnose).toHaveBeenCalledWith('all'))
 
@@ -290,9 +310,14 @@ describe('ToolEnvironmentSettingsSection', () => {
     const pythonCard = (
       await screen.findByRole('heading', { name: 'Python' })
     ).closest('article')!
+    expect(
+      within(pythonCard).getByText(
+        '未找到 Python：系统 PATH 中没有，内置 Python 也未安装'
+      )
+    ).toBeVisible()
     fireEvent.click(
       within(pythonCard).getByRole('button', {
-        name: '更新 Python'
+        name: '安装内置 Python'
       })
     )
     await waitFor(() => expect(installPython).toHaveBeenCalledOnce())
@@ -300,9 +325,9 @@ describe('ToolEnvironmentSettingsSection', () => {
     act(() => {
       progressListener?.({
         snapshot: {
-          ...baseSnapshot,
+          ...notInstalledSnapshot,
           managedPython: {
-            ...baseSnapshot.managedPython,
+            ...notInstalledSnapshot.managedPython,
             operation: {
               source: 'native',
               phase: 'downloading',
@@ -314,7 +339,7 @@ describe('ToolEnvironmentSettingsSection', () => {
       })
     })
     const progress = await screen.findByRole('progressbar', {
-      name: 'Python 安装或更新进度'
+      name: 'Python 安装进度'
     })
     expect(progress).toHaveAttribute('aria-valuenow', '50')
     expect(screen.getByText('下载源：原生地址')).toBeVisible()
@@ -329,7 +354,7 @@ describe('ToolEnvironmentSettingsSection', () => {
     await waitFor(() =>
       expect(
         screen.queryByRole('progressbar', {
-          name: 'Python 安装或更新进度'
+          name: 'Python 安装进度'
         })
       ).not.toBeInTheDocument()
     )
@@ -338,24 +363,87 @@ describe('ToolEnvironmentSettingsSection', () => {
       .closest('article')!
     fireEvent.click(
       within(updatedPythonCard).getByRole('button', {
-        name: '移除 Python'
+        name: '移除内置 Python'
       })
     )
     expect(
       within(updatedPythonCard).getByText(
-        /本机 Runtime 和 stdio MCP 将无法使用/u
+        /自动模式会改用系统 PATH 中的 Python/u
       )
     ).toBeVisible()
     fireEvent.click(
       within(updatedPythonCard).getByRole('button', {
-        name: '确认移除 Python'
+        name: '确认移除'
       })
     )
     await waitFor(() => expect(removePython).toHaveBeenCalledOnce())
   })
 
+  it('hides the built-in Python controls when a specific path is selected', async () => {
+    const customPython: LocalToolEnvironmentSnapshot = {
+      ...baseSnapshot,
+      settings: {
+        ...baseSnapshot.settings,
+        python: { source: 'custom', executablePath: 'C:\\Python\\python.exe' }
+      }
+    }
+    getSnapshot.mockResolvedValueOnce(customPython)
+    diagnose.mockResolvedValueOnce(customPython)
+    render(<ToolEnvironmentSettingsSection />)
+    const pythonCard = (
+      await screen.findByRole('heading', { name: 'Python' })
+    ).closest('article')!
+    expect(
+      within(pythonCard).queryByRole('button', { name: /内置 Python/u })
+    ).not.toBeInTheDocument()
+  })
+
+  it('detects the tools once when the page opens', async () => {
+    render(<ToolEnvironmentSettingsSection />)
+    await waitFor(() => expect(diagnose).toHaveBeenCalledWith('all'))
+    expect(diagnose).toHaveBeenCalledOnce()
+  })
+
+  it('explains a broken system program instead of reporting it missing', async () => {
+    const broken: LocalToolEnvironmentSnapshot = {
+      ...notInstalledSnapshot,
+      diagnostics: {
+        ...notInstalledSnapshot.diagnostics,
+        python: {
+          available: false,
+          source: 'auto',
+          origin: 'system',
+          executablePath: 'C:\\Python39\\python.exe',
+          detail: 'python was found but could not run (exit).'
+        }
+      }
+    }
+    diagnose.mockResolvedValueOnce(broken)
+    render(<ToolEnvironmentSettingsSection />)
+    expect(
+      await screen.findByText(/系统 PATH 中的 Python 无法运行/u)
+    ).toBeVisible()
+    expect(screen.getByText('C:\\Python39\\python.exe')).toBeVisible()
+  })
+
+  it('switches to automatic detection with one click', async () => {
+    render(<ToolEnvironmentSettingsSection />)
+    const nodeCard = (
+      await screen.findByRole('heading', { name: 'Node.js' })
+    ).closest('article')!
+    fireEvent.click(within(nodeCard).getByRole('radio', { name: /自动/u }))
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        ...baseSnapshot.settings,
+        node: { source: 'auto' }
+      })
+    )
+  })
+
   it('does not report a cancelled Python install as a failure', async () => {
     const onNotify = vi.fn()
+    getSnapshot.mockResolvedValueOnce(notInstalledSnapshot)
+    diagnose.mockResolvedValueOnce(notInstalledSnapshot)
     let rejectInstall!: (reason: unknown) => void
     installPython.mockImplementationOnce(
       () =>
@@ -369,15 +457,15 @@ describe('ToolEnvironmentSettingsSection', () => {
       await screen.findByRole('heading', { name: 'Python' })
     ).closest('article')!
     fireEvent.click(
-      within(pythonCard).getByRole('button', { name: '更新 Python' })
+      within(pythonCard).getByRole('button', { name: '安装内置 Python' })
     )
     await waitFor(() => expect(installPython).toHaveBeenCalledOnce())
     act(() => {
       progressListener?.({
         snapshot: {
-          ...baseSnapshot,
+          ...notInstalledSnapshot,
           managedPython: {
-            ...baseSnapshot.managedPython,
+            ...notInstalledSnapshot.managedPython,
             operation: {
               source: 'oss',
               phase: 'validating'
@@ -403,7 +491,7 @@ describe('ToolEnvironmentSettingsSection', () => {
 
     await waitFor(() =>
       expect(
-        screen.queryByText('安装或更新 Python 失败')
+        screen.queryByText('安装内置 Python 失败')
       ).not.toBeInTheDocument()
     )
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()

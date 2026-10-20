@@ -47,6 +47,7 @@ import {
 } from '../../shared/contracts'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
 import { CapabilitiesAndToolsSettingsSection } from './CapabilitiesAndToolsSettingsSection'
+import { ToolEnvironmentSettingsSection } from './ToolEnvironmentSettingsSection'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
 import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSection'
 import { ModelDownloadSourceSettings } from './ModelDownloadSourceSettings'
@@ -886,6 +887,7 @@ function SettingsPanelView({
     activeTab === 'platform-features' ||
     activeTab === 'document-parsing' ||
     activeTab === 'capabilities' ||
+    activeTab === 'tool-environment' ||
     activeTab === 'about'
 
   const savedConfiguredSettings = settings
@@ -4206,6 +4208,9 @@ function SettingsPanelView({
               />
             </>
           )}
+          {activeTab === 'tool-environment' && (
+            <ToolEnvironmentSettingsSection onNotify={onNotify} />
+          )}
           {activeTab === 'capabilities' && (
             <CapabilitiesAndToolsSettingsSection
               onOpenImageModelSettings={() => {
@@ -4220,7 +4225,6 @@ function SettingsPanelView({
                 }
               }}
               magicNotesEnabled={magicNotesEnabled}
-              onNotify={onNotify}
             />
           )}
           {activeTab === 'about' && (

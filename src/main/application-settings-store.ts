@@ -1,5 +1,4 @@
-import { readFile, realpath, stat } from 'node:fs/promises'
-import { delimiter, extname, isAbsolute, join } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 import {
   applicationSettingsSchema,
@@ -13,10 +12,8 @@ import {
 } from '../shared/application-settings-contracts'
 import {
   defaultLocalToolEnvironmentSettings,
-  localToolExecutablePathSchema,
   type LocalToolEnvironmentSettings
 } from '../shared/local-tool-environment-contracts'
-import { inspectLocalToolExecutable } from './local-tool-environment/local-tool-environment'
 import { releaseVersionSchema } from '../shared/release-notes-contracts'
 import type { SettingsWarning } from '../shared/settings-warning-contracts'
 import {
@@ -32,7 +29,7 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 12
+const CURRENT_SETTINGS_VERSION = 13
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -168,85 +165,28 @@ const storedApplicationSettingsSchema = applicationSettingsSchema
   .strict()
 
 const versionElevenStoredApplicationSettingsSchema = storedApplicationSettingsSchema.extend({ version: z.literal(11) })
+const versionTwelveStoredApplicationSettingsSchema = storedApplicationSettingsSchema.extend({ version: z.literal(12) })
 
 type StoredApplicationSettings = z.infer<typeof storedApplicationSettingsSchema>
 
-export type LegacyLocalToolEnvironmentPaths = {
-  nodeExecutablePath?: string
-  pythonExecutablePath?: string
-}
-
-export type LegacyLocalToolEnvironmentResolver =
-  () => Promise<LegacyLocalToolEnvironmentPaths>
-
-async function resolveExecutable(
-  kind: 'node' | 'python',
-  binaryNames: readonly string[]
-): Promise<string | undefined> {
-  const extensions =
-    process.platform === 'win32'
-      ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
-          .split(';')
-          .filter((extension) => /^\.[A-Za-z0-9]+$/u.test(extension))
-      : ['']
-  const directories = (
-    process.env.PATH ??
-    process.env.Path ??
-    process.env.path ??
-    ''
-  )
-    .split(delimiter)
-    .map((directory) => directory.trim())
-    .filter(isAbsolute)
-
-  for (const directory of directories) {
-    for (const binaryName of binaryNames) {
-      const names =
-        process.platform === 'win32' && !extname(binaryName)
-          ? extensions.map((extension) => `${binaryName}${extension}`)
-          : [binaryName]
-      for (const name of names) {
-        try {
-          const executablePath = await realpath(join(directory, name))
-          const metadata = await stat(executablePath)
-          if (
-            metadata.isFile() &&
-            localToolExecutablePathSchema.safeParse(executablePath).success
-          ) {
-            const candidate = await inspectLocalToolExecutable(
-              kind,
-              executablePath,
-              { baseEnvironment: process.env }
-            )
-            if (candidate) {
-              return candidate.executablePath
-            }
-          }
-        } catch {
-          // Continue through PATH candidates.
-        }
-      }
-    }
+/**
+ * Version 13 introduced automatic detection. `managed` used to be the default
+ * and silently fell back to PATH when the built-in Python was missing, so it
+ * is upgraded to the explicit `auto` mode. Explicit custom paths are kept.
+ */
+function upgradeLocalToolEnvironment(
+  settings: LocalToolEnvironmentSettings
+): LocalToolEnvironmentSettings {
+  const upgrade = (
+    selection: LocalToolEnvironmentSettings['node']
+  ): LocalToolEnvironmentSettings['node'] =>
+    selection.source === 'managed' ? { source: 'auto' } : selection
+  return {
+    ...settings,
+    node: upgrade(settings.node),
+    python: upgrade(settings.python)
   }
-  return undefined
 }
-
-export const resolveLegacyLocalToolEnvironmentPaths: LegacyLocalToolEnvironmentResolver =
-  async () => {
-    const [nodeExecutablePath, pythonExecutablePath] = await Promise.all([
-      resolveExecutable('node', ['node']),
-      resolveExecutable(
-        'python',
-        process.platform === 'win32'
-          ? ['python', 'python3']
-          : ['python3', 'python']
-      )
-    ])
-    return {
-      ...(nodeExecutablePath ? { nodeExecutablePath } : {}),
-      ...(pythonExecutablePath ? { pythonExecutablePath } : {})
-    }
-  }
 
 export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
@@ -280,10 +220,7 @@ export class ApplicationSettingsStore {
   private updateQueue: Promise<void> = Promise.resolve()
   private readonly listeners = new Set<(settings: ApplicationSettings) => void>()
 
-  constructor(
-    private readonly filePath: string,
-    private readonly legacyLocalToolEnvironmentResolver: LegacyLocalToolEnvironmentResolver = resolveLegacyLocalToolEnvironmentPaths
-  ) {}
+  constructor(private readonly filePath: string) {}
 
   onChanged(listener: (settings: ApplicationSettings) => void): () => void {
     this.listeners.add(listener)
@@ -311,25 +248,13 @@ export class ApplicationSettingsStore {
       version: number
     }
   ): Promise<StoredApplicationSettings> {
-    const resolved = await this.legacyLocalToolEnvironmentResolver()
-    const selection = (
-      executablePath: string | undefined
-    ): LocalToolEnvironmentSettings['node'] =>
-      executablePath &&
-      localToolExecutablePathSchema.safeParse(executablePath).success
-        ? { source: 'custom', executablePath }
-        : { source: 'managed' }
     const next: StoredApplicationSettings = {
       ...defaultApplicationSettings,
       ...settings,
       conversationHtmlRenderingEnabled:
         settings.conversationHtmlRenderingEnabled ?? true,
       version: CURRENT_SETTINGS_VERSION,
-      localToolEnvironment: {
-        node: selection(resolved.nodeExecutablePath),
-        python: selection(resolved.pythonExecutablePath),
-        artifactDownloadSource: 'native'
-      }
+      localToolEnvironment: defaultLocalToolEnvironmentSettings
     }
     await this.persist(next)
     return next
@@ -378,9 +303,19 @@ export class ApplicationSettingsStore {
       )
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
-        const versionElevenResult = versionElevenStoredApplicationSettingsSchema.safeParse(parsed)
-        if (versionElevenResult.success) {
-          const next: StoredApplicationSettings = { ...versionElevenResult.data, version: CURRENT_SETTINGS_VERSION }
+        const versionTwelveResult =
+          versionTwelveStoredApplicationSettingsSchema.safeParse(parsed)
+        const versionTwelveOrElevenResult = versionTwelveResult.success
+          ? versionTwelveResult
+          : versionElevenStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionTwelveOrElevenResult.success) {
+          const next: StoredApplicationSettings = {
+            ...versionTwelveOrElevenResult.data,
+            version: CURRENT_SETTINGS_VERSION,
+            localToolEnvironment: upgradeLocalToolEnvironment(
+              versionTwelveOrElevenResult.data.localToolEnvironment
+            )
+          }
           await this.persist(next)
           return next
         }
@@ -390,7 +325,10 @@ export class ApplicationSettingsStore {
           const next: StoredApplicationSettings = {
             ...versionTenResult.data,
             version: CURRENT_SETTINGS_VERSION,
-            conversationHtmlRenderingEnabled: true
+            conversationHtmlRenderingEnabled: true,
+            localToolEnvironment: upgradeLocalToolEnvironment(
+              versionTenResult.data.localToolEnvironment
+            )
           }
           await this.persist(next)
           return next

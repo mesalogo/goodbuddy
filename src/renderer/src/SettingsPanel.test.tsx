@@ -2034,6 +2034,7 @@ describe('SettingsPanel runtime files', () => {
     expect(within(navigation).getAllByRole('tab').map(tab => tab.id)).toEqual([
       'settings-tab-appearance', 'settings-tab-platform-features',
       'settings-tab-model', 'settings-tab-context-control', 'settings-tab-runtime',
+      'settings-tab-tool-environment',
       'settings-tab-document-parsing', 'settings-tab-roles',
       'settings-tab-capabilities', 'settings-tab-about'
     ])
@@ -2656,15 +2657,15 @@ describe('SettingsPanel runtime files', () => {
     runtimeTab.focus()
     fireEvent.keyDown(runtimeTab, { key: 'ArrowRight' })
 
-    const documentParsingTab = screen.getByRole('tab', {
-      name: '文档解析'
+    const toolEnvironmentTab = screen.getByRole('tab', {
+      name: '工具执行环境'
     })
-    expect(documentParsingTab).toHaveFocus()
-    expect(documentParsingTab).toHaveAttribute('aria-selected', 'true')
-    expect(documentParsingTab).toHaveAttribute('tabindex', '0')
+    expect(toolEnvironmentTab).toHaveFocus()
+    expect(toolEnvironmentTab).toHaveAttribute('aria-selected', 'true')
+    expect(toolEnvironmentTab).toHaveAttribute('tabindex', '0')
     expect(runtimeTab).toHaveAttribute('tabindex', '-1')
 
-    fireEvent.keyDown(documentParsingTab, { key: 'End' })
+    fireEvent.keyDown(toolEnvironmentTab, { key: 'End' })
     const aboutTab = screen.getByRole('tab', { name: '关于与更新' })
     expect(aboutTab).toHaveFocus()
     expect(aboutTab).toHaveAttribute('aria-selected', 'true')
@@ -5439,7 +5440,7 @@ describe('SettingsPanel runtime files', () => {
       within(capabilityTabs)
         .getAllByRole('tab')
         .map((tab) => tab.textContent)
-    ).toEqual(['Skills', 'MCP', '工具执行环境'])
+    ).toEqual(['Skills', 'MCP'])
     expect(
       within(capabilityTabs).getByRole('tab', { name: 'Skills' })
     ).toHaveAttribute('aria-selected', 'true')
@@ -5813,7 +5814,7 @@ describe('SettingsPanel runtime files', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('lazy mounts and retains the real tool environment tab independently from MCP', async () => {
+  it('opens the tool execution environment as its own settings category', async () => {
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -5828,41 +5829,29 @@ describe('SettingsPanel runtime files', () => {
       screen.getByRole('tab', { name: '能力与工具' })
     )
     expect(getLocalToolEnvironmentSnapshot).not.toHaveBeenCalled()
-
-    fireEvent.click(
+    expect(
       within(
         screen.getByRole('tablist', { name: '能力与工具设置' })
-      ).getByRole('tab', { name: '工具执行环境' })
+      ).queryByRole('tab', { name: '工具执行环境' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: '工具执行环境' })
     )
     expect(
       await screen.findByRole('heading', { name: 'Node.js' })
     ).toBeVisible()
+    expect(
+      screen.getByRole('heading', { level: 2, name: '工具执行环境' })
+    ).toBeVisible()
     expect(getLocalToolEnvironmentSnapshot).toHaveBeenCalledOnce()
 
     fireEvent.click(
-      screen.getByRole('button', { name: '诊断全部' })
+      screen.getByRole('button', { name: '重新检测' })
     )
     await waitFor(() =>
       expect(diagnoseLocalToolEnvironment).toHaveBeenCalledWith('all')
     )
-
-    fireEvent.click(
-      within(
-        screen.getByRole('tablist', { name: '能力与工具设置' })
-      ).getByRole('tab', { name: 'MCP' })
-    )
-    expect(
-      await screen.findByRole('tablist', { name: 'MCP 设置分类' })
-    ).toBeVisible()
-    fireEvent.click(
-      within(
-        screen.getByRole('tablist', { name: '能力与工具设置' })
-      ).getByRole('tab', { name: '工具执行环境' })
-    )
-    expect(
-      screen.getByRole('heading', { name: 'Node.js' })
-    ).toBeVisible()
-    expect(getLocalToolEnvironmentSnapshot).toHaveBeenCalledOnce()
   })
 
   it('traps MCP editor focus and restores it after saving or backdrop dismissal', async () => {

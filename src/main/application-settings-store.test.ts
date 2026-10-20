@@ -10,12 +10,11 @@ import {
 } from './application-settings-store'
 
 const temporaryDirectories: string[] = []
-const managedMigrationResolver = async () => ({})
 
 function createApplicationSettingsStore(
   filePath: string
 ): ApplicationSettingsStore {
-  return new ApplicationSettingsStore(filePath, managedMigrationResolver)
+  return new ApplicationSettingsStore(filePath)
 }
 
 async function createStore(): Promise<{
@@ -248,7 +247,7 @@ describe('ApplicationSettingsStore', () => {
 
   it('defaults missing historical canvas page counts and persists updates without resetting other preferences', async () => {
     const { filePath, store } = await createStore()
-    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version: 12,
+    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version: 13,
       lastSeenReleaseNotesVersion: null, magicNoteCommentMode: 'after-save-manual' }
     delete legacy.magicNoteCanvasPageCount
     await writeFile(filePath, JSON.stringify(legacy))
@@ -433,7 +432,7 @@ describe('ApplicationSettingsStore', () => {
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...defaultApplicationSettings,
-      version: 12,
+      version: 13,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -467,7 +466,7 @@ describe('ApplicationSettingsStore', () => {
       remoteProjectsEnabled: true
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 12,
+      version: 13,
       lastSeenReleaseNotesVersion: null,
       ...defaultApplicationSettings,
       remoteProjectsEnabled: true
@@ -605,7 +604,7 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toBe('0.8.18')
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...defaultApplicationSettings,
-      version: 12,
+      version: 13,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -680,7 +679,7 @@ describe('ApplicationSettingsStore', () => {
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...defaultApplicationSettings,
       ...versionSix,
-      version: 12,
+      version: 13,
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
@@ -692,7 +691,7 @@ describe('ApplicationSettingsStore', () => {
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...defaultApplicationSettings,
       ...versionSix,
-      version: 12,
+      version: 13,
       modelDownloadSource: 'hugging-face',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
@@ -731,7 +730,7 @@ describe('ApplicationSettingsStore', () => {
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...defaultApplicationSettings,
       ...versionSeven,
-      version: 12,
+      version: 13,
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
@@ -773,7 +772,7 @@ describe('ApplicationSettingsStore', () => {
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...defaultApplicationSettings,
       ...versionEight,
-      version: 12,
+      version: 13,
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false
@@ -783,7 +782,7 @@ describe('ApplicationSettingsStore', () => {
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...defaultApplicationSettings,
       ...versionEight,
-      version: 12,
+      version: 13,
       checkUpdatesOnStartup: true,
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
@@ -791,7 +790,7 @@ describe('ApplicationSettingsStore', () => {
     })
   })
 
-  it('persists independently resolved version 9 runtime selections exactly once', async () => {
+  it('migrates version 9 settings to automatic tool detection', async () => {
     const { filePath } = await createStore()
     const versionNine = {
       version: 9,
@@ -806,14 +805,7 @@ describe('ApplicationSettingsStore', () => {
       lastSeenReleaseNotesVersion: '0.8.18'
     }
     await writeFile(filePath, JSON.stringify(versionNine), 'utf8')
-    let resolverCalls = 0
-    const store = new ApplicationSettingsStore(filePath, async () => {
-      resolverCalls += 1
-      return {
-        nodeExecutablePath: 'C:\\Tools\\node.exe',
-        pythonExecutablePath: 'relative/python'
-      }
-    })
+    const store = new ApplicationSettingsStore(filePath)
 
     await expect(store.get()).resolves.toEqual({
       ...defaultApplicationSettings,
@@ -827,35 +819,47 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'narrative',
       conversationHtmlRenderingEnabled: true,
       localToolEnvironment: {
-        node: {
-          source: 'custom',
-          executablePath: 'C:\\Tools\\node.exe'
-        },
-        python: { source: 'managed' },
+        node: { source: 'auto' },
+        python: { source: 'auto' },
         artifactDownloadSource: 'native'
       }
     })
-    expect(resolverCalls).toBe(1)
 
     const persisted = JSON.parse(await readFile(filePath, 'utf8'))
     expect(persisted).toEqual({
       ...defaultApplicationSettings,
       ...versionNine,
-      version: 12,
-      conversationHtmlRenderingEnabled: true,
-      localToolEnvironment: {
-        node: {
-          source: 'custom',
-          executablePath: 'C:\\Tools\\node.exe'
-        },
-        python: { source: 'managed' },
-        artifactDownloadSource: 'native'
-      }
+      version: 13,
+      conversationHtmlRenderingEnabled: true
     })
-    const reloaded = new ApplicationSettingsStore(filePath, async () => {
-      throw new Error('A persisted migration must not resolve PATH again')
-    })
+    const reloaded = new ApplicationSettingsStore(filePath)
     await expect(reloaded.get()).resolves.toEqual(await store.get())
+  })
+
+  it('upgrades version 12 managed tool selections to automatic and keeps custom paths', async () => {
+    const { filePath } = await createStore()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        ...defaultApplicationSettings,
+        version: 12,
+        lastSeenReleaseNotesVersion: null,
+        localToolEnvironment: {
+          node: { source: 'managed' },
+          python: { source: 'custom', executablePath: 'C:\\Python312\\python.exe' },
+          artifactDownloadSource: 'oss'
+        }
+      }),
+      'utf8'
+    )
+    const store = new ApplicationSettingsStore(filePath)
+
+    expect((await store.get()).localToolEnvironment).toEqual({
+      node: { source: 'auto' },
+      python: { source: 'custom', executablePath: 'C:\\Python312\\python.exe' },
+      artifactDownloadSource: 'oss'
+    })
+    expect(JSON.parse(await readFile(filePath, 'utf8')).version).toBe(13)
   })
 
   it('strictly rejects incomplete full settings', () => {
@@ -961,7 +965,7 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.get()).resolves.toEqual(defaultApplicationSettings)
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...versionTenSettings,
-      version: 12,
+      version: 13,
       conversationHtmlRenderingEnabled: true
     })
   })
@@ -1064,7 +1068,7 @@ describe('ApplicationSettingsStore', () => {
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...defaultApplicationSettings,
-      version: 12,
+      version: 13,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',

@@ -15,6 +15,7 @@ import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { NativeDshWebClientService, type NativeDshWebClientOptions } from './native-dsh-web-client'
 import { NativeTerminalClient } from './native-terminal-client'
+import { buildLaunchUserEnvironment } from './process-environment'
 import { applyRuntimeSelection, resolveLayeredRuntimeSelection } from './runtime-selection'
 
 type Options = {
@@ -52,7 +53,7 @@ export class NativeClientCoordinator {
       openModelCallLedger: options.openModelCallLedger,
       resolveLaunchEnvironment: async () => ({
         nodeExecutablePath: await this.prepareNode(),
-        environment: options.localEnvironment.launchEnvironmentProvider()
+        environment: buildLaunchUserEnvironment(options.localEnvironment.launchEnvironmentProvider)
       })
     })
   }
@@ -68,12 +69,12 @@ export class NativeClientCoordinator {
         await mkdir(directory, { recursive: true })
         await promisify(execFile)(process.execPath, [this.options.npmCliPath, 'install', '--prefix', directory,
           '--no-save', '--no-package-lock', '--ignore-scripts', '--no-audit', '--no-fund', '--prefer-offline', `${packageName}@22.22.0`], {
-          env: { ...this.options.localEnvironment.launchEnvironmentProvider(), ELECTRON_RUN_AS_NODE: '1' },
+          env: { ...buildLaunchUserEnvironment(this.options.localEnvironment.launchEnvironmentProvider), ELECTRON_RUN_AS_NODE: '1' },
           cwd: directory, windowsHide: true, timeout: 180_000, signal: this.controller.signal, maxBuffer: 1024 * 1024
         })
       }
       const { stdout } = await promisify(execFile)(executable, ['-p', 'JSON.stringify({node:process.versions.node,electron:process.versions.electron})'], {
-        env: { ...this.options.localEnvironment.launchEnvironmentProvider() },
+        env: buildLaunchUserEnvironment(this.options.localEnvironment.launchEnvironmentProvider),
         windowsHide: true, timeout: 5_000, signal: this.controller.signal
       })
       const runtime = JSON.parse(stdout.trim()) as { node?: string; electron?: string }

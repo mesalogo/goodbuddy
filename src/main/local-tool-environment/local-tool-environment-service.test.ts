@@ -195,11 +195,10 @@ describe('LocalToolEnvironmentService', () => {
     ).rejects.toThrow()
   })
 
-  it('publishes immutable snapshots and replaces them only after rebuilding', async () => {
+  it('keeps the same immutable PATH snapshot when settings change', async () => {
     const { service, node } = await fixture()
     await service.initialize()
     const initial = service.launchEnvironmentProvider()
-    const initialPath = initial.PATH
 
     expect(Object.isFrozen(initial)).toBe(true)
     expect(initial.PATH).toContain('bin')
@@ -208,13 +207,20 @@ describe('LocalToolEnvironmentService', () => {
       ...defaultLocalToolEnvironmentSettings,
       node: { source: 'custom', executablePath: node }
     })
-    const updated = service.launchEnvironmentProvider()
 
-    expect(updated).not.toBe(initial)
-    expect(service.launchEnvironmentProvider()).toBe(updated)
-    expect(updated.PATH).not.toBe(initial.PATH)
-    expect(initial.PATH).toBe(initialPath)
-    expect(Object.isFrozen(updated)).toBe(true)
+    // Only the wrapper files change; PATH (and therefore runtime reuse keys)
+    // stays identical, so reused runtimes are not restarted.
+    expect(service.launchEnvironmentProvider()).toBe(initial)
+  })
+
+  it('does not run any executable while starting up', async () => {
+    const { options } = await fixture()
+    const spawnProcess = vi.fn(fakeInspectionSpawn())
+    const service = new LocalToolEnvironmentService(options, {
+      toolEnvironment: { platform: 'win32', spawnProcess }
+    })
+    await service.initialize()
+    expect(spawnProcess).not.toHaveBeenCalled()
   })
 
   it('starts initialization once and lets consumers wait for the built environment', async () => {
@@ -299,7 +305,26 @@ describe('LocalToolEnvironmentService', () => {
     )
     expect(settingsStore.update).not.toHaveBeenCalled()
     expect((await customService.getSnapshot()).settings.node).toEqual({
-      source: 'managed'
+      source: 'auto'
+    })
+  })
+
+  it('reports the system programs found before the fallback wrappers', async () => {
+    const { service, node, python } = await fixture()
+    await service.initialize()
+    const snapshot = await service.diagnose('all')
+
+    expect(snapshot.diagnostics.node).toMatchObject({
+      available: true,
+      source: 'auto',
+      origin: 'system',
+      executablePath: node
+    })
+    expect(snapshot.diagnostics.python).toMatchObject({
+      available: true,
+      source: 'auto',
+      origin: 'system',
+      executablePath: python
     })
   })
 

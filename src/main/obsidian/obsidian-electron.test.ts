@@ -49,21 +49,25 @@ it('runs copied MCPVault over stdio using real managed Electron without npm or n
     const prepared = await createLocalToolEnvironment({
       binDirectory,
       nodeSelection: { source: 'managed' },
-      pythonSelection: { source: 'managed' },
+      pythonSelection: { source: 'auto' },
       packagedNpmCliPath: join(root, 'absent-npm-cli.js'),
       packagedNpxCliPath: join(root, 'absent-npx-cli.js'),
-      baseEnvironment,
-      probeTimeoutMs: 10_000
+      baseEnvironment
     }, { electronExecutablePath })
-    expect(prepared.diagnostics.tools.node).toMatchObject({
-      available: true, source: 'managed', executablePath: electronExecutablePath,
-      shimPath: join(binDirectory, process.platform === 'win32' ? 'node.cmd' : 'node')
+    expect(prepared.shims.node).toMatchObject({
+      origin: 'managed', target: electronExecutablePath, placement: 'front',
+      shimPath: join(binDirectory, 'front', process.platform === 'win32' ? 'node.cmd' : 'node')
     })
     expect(prepared.environment.PATH?.split(delimiter)).toEqual([
-      binDirectory, ...(baseEnvironment.PATH ? [baseEnvironment.PATH] : [])
+      join(binDirectory, 'front'),
+      ...(baseEnvironment.PATH ? [baseEnvironment.PATH] : []),
+      join(binDirectory, 'fallback')
     ])
+    const electronNodeVersion = spawn.sync(electronExecutablePath, ['-p', 'process.versions.node'], {
+      env: { ...baseEnvironment, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 10_000, windowsHide: true
+    }).stdout.trim()
     for (const name of ['npm', 'npx'] as const) {
-      expect(prepared.diagnostics.tools[name].available).toBe(false)
+      expect(prepared.shims[name]).toBeUndefined()
       const probe = spawn.sync(name, ['--version'], {
         cwd: vaultPath, env: { ...baseEnvironment, ...prepared.environment },
         encoding: 'utf8', timeout: 5_000, windowsHide: true
@@ -138,7 +142,7 @@ fs.appendFileSync(${JSON.stringify(auditPath)}, JSON.stringify({
       expect(child).toMatchObject({
         executable: electronExecutablePath,
         electron: expect.stringMatching(/^\d+\.\d+\.\d+/u),
-        node: prepared.diagnostics.tools.node.version,
+        node: electronNodeVersion,
         runAsNode: '1',
         path: prepared.environment.PATH,
         cwd: vaultPath,

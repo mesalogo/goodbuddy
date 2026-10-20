@@ -4,8 +4,33 @@ import {
   buildCredentialFilteredUserEnvironment,
   buildExplicitProfileRuntimeEnvironment,
   buildControlledHarnessEnvironment,
+  buildLaunchUserEnvironment,
   buildRuntimeEnvironment
 } from './process-environment'
+
+describe('buildLaunchUserEnvironment', () => {
+  it('keeps the full user environment and only takes PATH from the provider', () => {
+    const environment = buildLaunchUserEnvironment(
+      () => Object.freeze({ PATH: 'C:\\gb\\bin;C:\\Windows' }),
+      {
+        Path: 'C:\\Windows',
+        USERPROFILE: 'C:\\Users\\me',
+        TEMP: 'C:\\Temp',
+        SystemRoot: 'C:\\Windows',
+        JAVA_HOME: 'C:\\jdk',
+        OPENAI_API_KEY: 'secret',
+        GOODBUDDY_INTERNAL: 'x'
+      }
+    )
+    expect(environment).toEqual({
+      Path: 'C:\\gb\\bin;C:\\Windows',
+      USERPROFILE: 'C:\\Users\\me',
+      TEMP: 'C:\\Temp',
+      SystemRoot: 'C:\\Windows',
+      JAVA_HOME: 'C:\\jdk'
+    })
+  })
+})
 
 describe('buildRuntimeEnvironment', () => {
   it('uses a fresh tool PATH snapshot without importing credentials', () => {

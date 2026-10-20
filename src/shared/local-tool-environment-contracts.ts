@@ -15,7 +15,14 @@ export const localToolExecutablePathSchema = z
   })
   .regex(absoluteExecutablePathPattern, 'Executable path must be absolute')
 
+/**
+ * - `auto`: use the executable found on the user's PATH; fall back to the
+ *   GoodBuddy built-in runtime when the PATH has none.
+ * - `managed`: only the GoodBuddy built-in runtime, never a fallback.
+ * - `custom`: only the selected executable, never a fallback.
+ */
 export const localToolRuntimeSelectionSchema = z.discriminatedUnion('source', [
+  z.object({ source: z.literal('auto') }).strict(),
   z.object({ source: z.literal('managed') }).strict(),
   z
     .object({
@@ -37,8 +44,8 @@ export const localToolEnvironmentSettingsSchema = z
 
 export const defaultLocalToolEnvironmentSettings: LocalToolEnvironmentSettings =
   {
-    node: { source: 'managed' },
-    python: { source: 'managed' },
+    node: { source: 'auto' },
+    python: { source: 'auto' },
     artifactDownloadSource: 'native'
   }
 
@@ -54,6 +61,10 @@ export type LocalToolEnvironmentSettings = z.infer<
 
 export const localToolKindSchema = z.enum(['node', 'python'])
 export type LocalToolKind = z.infer<typeof localToolKindSchema>
+
+/** Where the effective executable actually comes from. */
+export const localToolOriginSchema = z.enum(['system', 'managed', 'custom'])
+export type LocalToolOrigin = z.infer<typeof localToolOriginSchema>
 
 export const localToolDiagnoseTargetSchema = z.enum([
   'node',
@@ -90,7 +101,8 @@ export type LocalToolCandidate = z.infer<typeof localToolCandidateSchema>
 export const localToolDiagnosticSchema = z
   .object({
     available: z.boolean(),
-    source: z.enum(['managed', 'custom']),
+    source: z.enum(['auto', 'managed', 'custom']),
+    origin: localToolOriginSchema.optional(),
     version: z.string().max(160).optional(),
     executablePath: localToolExecutablePathSchema.optional(),
     detail: z.string().max(512)

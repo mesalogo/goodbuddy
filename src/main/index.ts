@@ -884,9 +884,8 @@ if (hasSingleInstanceLock) {
         : join(app.getAppPath(), '.runtime-resources', `wecom-${process.arch}`),
       resolvePython: async () => {
         await localToolEnvironmentReady
-        const snapshot = await startupLocalToolEnvironmentService.diagnose('python')
-        const python = snapshot.diagnostics.python
-        return python?.available ? python.executablePath : undefined
+        const python = await startupLocalToolEnvironmentService.resolveTool('python')
+        return python?.executablePath
       },
       resolveChannelCredentials: async () => {
         const wecom = await channelSettingsStore.resolve('wecom')

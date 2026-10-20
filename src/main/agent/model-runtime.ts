@@ -24,6 +24,7 @@ import {
   type WorkspaceAccess
 } from '../workspace'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import { buildLaunchUserEnvironment } from './process-environment'
 import { createAnthropicMessagesUrl } from './anthropic-endpoint'
 import {
   ModelToolProvider,
@@ -1691,7 +1692,9 @@ export class ModelAgentRuntime implements AgentRuntime {
           outputAdopt: options.outputAdopt,
           processService: new LocalDirectModelProcessService({
             outputStore: options.outputStore,
-            environment: options.launchEnvironmentProvider?.(),
+            environment: options.launchEnvironmentProvider
+              ? buildLaunchUserEnvironment(options.launchEnvironmentProvider)
+              : undefined,
             ...(options.ripgrepExecutablePath
               ? { toolBinDirectory: dirname(options.ripgrepExecutablePath) }
               : {})

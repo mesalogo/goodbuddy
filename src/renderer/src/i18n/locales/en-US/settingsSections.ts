@@ -781,33 +781,56 @@ export const settingsSections = {
   },
   toolEnvironment: {
     loading: 'Loading the local tool environment…',
-    scope:
-      'Applies only to newly started local Runtime processes and stdio MCP servers for local projects. It does not change terminals or remote Hosts.',
-    runtimeSourceLegend: '{{runtime}} execution source',
+    runtimeSourceLegend: '{{runtime}} source',
     sources: {
-      managed: 'GoodBuddy managed',
-      custom: 'Custom environment',
-      customDescription: 'Use a local executable that you select.'
+      auto: 'Automatic',
+      managed: 'GoodBuddy built-in',
+      custom: 'Specific path'
+    },
+    effective: {
+      system: 'Using system {{runtime}} {{version}}',
+      managed: 'Using GoodBuddy built-in {{runtime}} {{version}}',
+      custom: 'Using the selected {{runtime}} {{version}}'
+    },
+    brokenSystem:
+      'The {{runtime}} on the system PATH cannot run. Automatic mode uses it as is; fix it or switch to "GoodBuddy built-in".',
+    missing: {
+      node: {
+        auto: 'No usable Node.js was found',
+        managed: 'The GoodBuddy built-in Node.js cannot run',
+        custom: 'The selected Node.js is missing or cannot run'
+      },
+      python: {
+        auto: 'No Python found: none on PATH and the built-in Python is not installed',
+        managed: 'The GoodBuddy built-in Python is not installed',
+        custom: 'The selected Python is missing or cannot run'
+      }
     },
     runtimes: {
       node: {
         title: 'Node.js',
         description:
           'Used by local tools that require Node.js, npm, or npx.',
-        managedDescription:
-          'Use the Node.js managed with GoodBuddy. There are no separate install or remove actions.'
+        sources: {
+          auto: 'Prefer Node.js on the system PATH; otherwise use the built-in version.',
+          managed: 'Always use the Node.js shipped with GoodBuddy. No installation needed.',
+          custom: 'Always use the executable you select. No fallback if it stops working.'
+        }
       },
       python: {
         title: 'Python',
         description: 'Used by local tools that require Python or pip.',
-        managedDescription:
-          'Use GoodBuddy-managed Python, which can be installed, updated, or removed as needed.'
+        sources: {
+          auto: 'Prefer Python on the system PATH; otherwise use the installed built-in Python.',
+          managed: 'Always use the GoodBuddy built-in Python. It must be installed first.',
+          custom: 'Always use the executable you select. No fallback if it stops working.'
+        }
       }
     },
     downloadSource: {
       title: 'Tool download source',
       description:
-        'Controls only downloads for GoodBuddy-managed local tool artifacts. Models, app updates, terminals, and remote Hosts are unaffected.',
+        'Controls only the download of the GoodBuddy built-in Python. Models, app updates, terminals, and remote Hosts are unaffected.',
       legend: 'Choose the tool artifact download source',
       noFallback:
         'GoodBuddy accesses only the selected source and does not automatically fall back to the other source.',
@@ -830,23 +853,16 @@ export const settingsSections = {
       'Choose a validated {{runtime}} candidate or select another executable. The active environment will not change until validation succeeds.',
     noCandidates:
       'No valid candidates were found. Scan user/system PATH, Conda, virtual environments, and common install locations, or choose another executable.',
-    toolStatus: 'Tool status',
-    companionStatus: 'Toolchain/companion status',
-    status: 'Status',
     available: 'Available',
     unavailable: 'Unavailable',
-    version: 'Version',
-    path: 'Path',
-    detail: 'Details',
-    notDiagnosed: 'Not diagnosed',
+    notDiagnosed: 'Detecting…',
     python: {
-      installed: 'GoodBuddy-managed Python {{version}} is installed',
-      notInstalled:
-        'GoodBuddy-managed Python {{version}} is not installed',
-      progressLabel: 'Python installation or update progress',
+      installed: 'Built-in Python {{version}} is installed',
+      notInstalled: 'Built-in Python {{version}} is not installed',
+      progressLabel: 'Python installation progress',
       progressSource: 'Download source: {{source}}',
       removeConfirmation:
-        'After removal, local Runtimes and stdio MCP servers cannot use this managed Python until it is installed again. Custom Python is unaffected.',
+        'After removal the built-in Python is no longer available. Automatic mode will use Python from the system PATH, if any.',
       phases: {
         downloading: 'Downloading',
         extracting: 'Extracting',
@@ -856,16 +872,14 @@ export const settingsSections = {
     },
     actions: {
       retry: 'Retry',
-      diagnose: 'Diagnose',
-      diagnosing: 'Diagnosing…',
-      diagnoseAll: 'Diagnose all',
-      refreshCandidates: 'Refresh candidates',
+      diagnosing: 'Detecting…',
+      diagnoseAll: 'Detect again',
+      refreshCandidates: 'Scan candidates',
       chooseFile: 'Choose executable',
-      installPython: 'Install Python',
-      updatePython: 'Update Python',
+      installPython: 'Install built-in Python',
       cancel: 'Cancel',
-      removePython: 'Remove Python',
-      confirmRemovePython: 'Confirm removal of Python'
+      removePython: 'Remove built-in Python',
+      confirmRemovePython: 'Confirm removal'
     },
     errors: {
       unavailable:
@@ -875,17 +889,16 @@ export const settingsSections = {
         'Could not save the tool environment settings. The last confirmed settings were restored.',
       refreshFailed: 'Could not refresh executable candidates',
       selectFailed: 'Could not select the {{runtime}} executable',
-      diagnoseFailed: 'Could not diagnose {{runtime}}',
-      diagnoseAllFailed: 'Could not diagnose the local tool environment',
-      installPythonFailed: 'Could not install or update Python',
+      diagnoseAllFailed: 'Could not detect the local tool environment',
+      installPythonFailed: 'Could not install the built-in Python',
       cancelPythonFailed: 'Could not cancel the Python operation',
-      removePythonFailed: 'Could not remove Python'
+      removePythonFailed: 'Could not remove the built-in Python'
     },
     notifications: {
-      runtimeChanged: '{{runtime}} execution source updated',
+      runtimeChanged: '{{runtime}} source updated',
       downloadSourceChanged: 'Tool download source updated',
-      pythonInstalled: 'GoodBuddy-managed Python installed or updated',
-      pythonRemoved: 'GoodBuddy-managed Python removed'
+      pythonInstalled: 'Built-in Python installed',
+      pythonRemoved: 'Built-in Python removed'
     }
   },
   feedback: {
