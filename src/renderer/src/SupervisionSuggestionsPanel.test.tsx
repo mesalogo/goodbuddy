@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import i18n, { changeUiLocale } from './i18n'
 import { SupervisionSuggestionsPanel } from './SupervisionSuggestionsPanel'
@@ -18,7 +18,11 @@ beforeEach(async () => {
     source: vi.fn(async () => null)
   } } })
 })
-afterEach(async () => { await changeUiLocale('zh-CN') })
+afterEach(async () => {
+  // Unsubscribe React roots before the locale change can schedule another render.
+  cleanup()
+  await changeUiLocale('zh-CN')
+})
 
 it('labels story suggestions and opens the story or experience they are about', async () => {
   const onOpenResult = vi.fn()
@@ -33,4 +37,19 @@ it('labels story suggestions and opens the story or experience they are about', 
   expect(onOpenResult).toHaveBeenLastCalledWith('result-1', { kind: 'experience', id: 'experience-1' })
   expect(within(panel).getByRole('button', { name: 'Create task' })).toBeVisible()
   expect(within(panel).getByRole('button', { name: 'Noted' })).toBeVisible()
+})
+
+it('starts without a previous panel and reloads suggestions on page refresh', async () => {
+  const title = i18n.t('suggestions.title', { ns: 'heartbeat' })
+  expect(screen.queryByRole('region', { name: title })).not.toBeInTheDocument()
+  const onUseFollowUpTask = vi.fn()
+  const { rerender } = render(
+    <SupervisionSuggestionsPanel tasks={[]} onUseFollowUpTask={onUseFollowUpTask} />
+  )
+  await screen.findByRole('region', { name: title })
+  expect(window.goodbuddy.supervision.suggestions).toHaveBeenCalledTimes(1)
+
+  rerender(<SupervisionSuggestionsPanel tasks={[]} onUseFollowUpTask={onUseFollowUpTask} reloadKey={1} />)
+  await waitFor(() => expect(window.goodbuddy.supervision.suggestions).toHaveBeenCalledTimes(2))
+  expect(screen.getAllByRole('region', { name: title })).toHaveLength(1)
 })
