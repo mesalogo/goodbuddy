@@ -2071,6 +2071,12 @@ class ExecutionTiming {
   }
 }
 
+/** Released databases contain text entity keys; reviews address them by a stable UUID. */
+function legacySupervisionEntityId(scope: unknown, storageId: string): string {
+  const hash = createHash('sha256').update(JSON.stringify(['supervision-entity', scope, storageId])).digest('hex')
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`
+}
+
 export class AssistantDatabase {
   private database?: DatabaseSync
   private activityHistoryRepository?: { database: DatabaseSync; repository: ActivityHistoryRepository }
@@ -8943,9 +8949,7 @@ export class AssistantDatabase {
       if (supervisionEntitySchema.shape.persistedId.safeParse(candidate.id).success) return candidate
       // Released databases contain text primary keys. Keep those keys and their
       // graph references intact; use a stable UUID only inside the review contract.
-      const hash = createHash('sha256').update(JSON.stringify(['supervision-entity', request.scope, candidate.id])).digest('hex')
-      return { ...candidate, storageId: candidate.id,
-        id: `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}` }
+      return { ...candidate, storageId: candidate.id, id: legacySupervisionEntityId(request.scope, candidate.id) }
     })
   }
 
@@ -9043,18 +9047,37 @@ export class AssistantDatabase {
         JSON.stringify(result.output.openItems), JSON.stringify(result.coverage ?? { evidence: result.evidence.length }), timestamp
       )
       const graph: { entities: Record<string, unknown>[]; relations: Record<string, unknown>[] } = { entities: [], relations: [] }
-      const saveFacts = (result: StoredSupervisionResult) => {
+      let legacy: Map<string, string> | undefined
+      const legacyIdentity = (reviewId: string): string | undefined => {
+        legacy ??= new Map((database.prepare("SELECT id FROM supervision_entities WHERE confirmation_state != 'revoked'").all() as Array<{ id: string }>)
+          .filter(row => !supervisionEntitySchema.shape.persistedId.safeParse(row.id).success)
+          .map(row => [legacySupervisionEntityId(result.request.scope, row.id), row.id]))
+        return legacy.get(reviewId)
+      }
+      // Saved leaves were validated against the candidates offered when they ran.
+      const saveFacts = (result: StoredSupervisionResult, savedLeaf = false) => {
       // Model IDs are local to one batch, never persistent cross-run identities.
       const sourceIds = new Map(result.evidence.map((source) => [source.id, randomUUID()]))
       const candidates = new Map((result.candidates ?? []).map(entity => [entity.id, entity.storageId ?? entity.id]))
       // Candidates come from the shared timeline, so a reused entity may first have appeared under another scope.
       const currentCandidate = database.prepare("SELECT id FROM supervision_entities WHERE id = ? AND confirmation_state != 'revoked'")
+      // A saved leaf keeps the identity chosen when it ran. Candidate lists are
+      // re-read at publication and are bounded, so a long or resumed review may no
+      // longer list that entity; resolve it from storage instead of failing.
+      const resolveIdentity = (persistedId: string): string | undefined => {
+        const listed = candidates.get(persistedId)
+        if (listed) return currentCandidate.get(listed) ? listed : undefined
+        if (!savedLeaf) throw new Error('监督者结果引用了当前回顾范围外的实体')
+        if (currentCandidate.get(persistedId)) return persistedId
+        return legacyIdentity(persistedId)
+      }
       const entityIds = new Map<string, string>()
       for (const entity of result.output.entities) {
-        const storedId = entity.persistedId ? candidates.get(entity.persistedId) : undefined
         if (entityIds.has(entity.id)) throw new Error('监督者结果中包含重复的实体引用')
-        if (entity.persistedId && !storedId) throw new Error('监督者结果引用了当前回顾范围外的实体')
-        if (storedId && !currentCandidate.get(storedId)) throw new Error('监督者结果引用了已不存在或已撤销的实体')
+        // An entity removed or revoked since the leaf ran becomes a new fact rather
+        // than discarding the whole review.
+        const storedId = entity.persistedId ? resolveIdentity(entity.persistedId) : undefined
+        if (entity.persistedId && !storedId && !savedLeaf) throw new Error('监督者结果引用了已不存在或已撤销的实体')
         if (storedId && [...entityIds.values()].includes(storedId)) throw new Error('监督者结果重复引用同一实体')
         entityIds.set(entity.id, storedId ?? randomUUID())
       }
@@ -9128,7 +9151,7 @@ export class AssistantDatabase {
         for (let offset = 0;; offset += 10) {
           const batches = this.supervisionReviewStore().batches(result.runId, 10, offset)
           if (!batches.length) break
-          for (const batch of batches) saveFacts({ ...result, evidence: batch.evidence, output: batch.output })
+          for (const batch of batches) saveFacts({ ...result, evidence: batch.evidence, output: batch.output }, true)
         }
         // Explicit persisted identities may appear in several leaves. Keep one graph identity;
         // each leaf's full description and references remain independently readable.

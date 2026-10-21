@@ -319,6 +319,35 @@ it.each([false, true])('retains candidate mappings across leaf batches, failed m
   expect(f.db.listSupervisionCandidates(f.request).map(candidate => candidate.id).sort()).toEqual(candidates.map(candidate => candidate.id).sort())
 })
 
+it('publishes saved leaves whose entities are no longer offered as candidates at publication', async () => {
+  const f = fixture('Atlas and Beacon. '.repeat(100))
+  f.db.saveSupervisionResult({ request: f.request, evidence: [], output: { ...empty,
+    entities: ['Atlas', 'Beacon'].map(label => ({ id: label, label, description: label, sourceReferenceIds: [] })) } })
+  f.associateCandidates()
+  const candidates = f.db.listSupervisionCandidates(f.request)
+  const original = f.respond.getMockImplementation()!
+  let failMerge = true
+  f.respond.mockImplementation(prompt => {
+    if (prompt.includes('These inputs are navigation summaries')) {
+      if (failMerge) throw new Error('Merge interrupted')
+      return empty
+    }
+    const output = original(prompt) as { entities: Array<{ label: string }> }
+    return { ...output, entities: output.entities.map(entity => ({ ...entity, persistedId: candidates.find(candidate => candidate.label === entity.label)!.id })) }
+  })
+  await expect(f.service().run(f.request)).rejects.toThrow('Merge interrupted')
+  const runId = f.db.listSupervisionActivity().find(item => item.status === 'failed')!.id
+  // The candidate list changes between the leaves and publication (bounded, ownership moved).
+  const sql = (f.db as unknown as { requireDatabase(): DatabaseSync }).requireDatabase()
+  sql.prepare('DELETE FROM supervision_event_entities').run()
+  // One entity was also revoked meanwhile; that leaf entity becomes a new fact.
+  sql.prepare("UPDATE supervision_entities SET confirmation_state = 'revoked' WHERE id = ?").run(candidates[1]!.id)
+  failMerge = false
+  await expect(f.service().resume(runId)).resolves.toMatchObject({ status: 'completed' })
+  const ids = (sql.prepare("SELECT id FROM supervision_entities WHERE confirmation_state != 'revoked'").all() as Array<{ id: string }>).map(row => row.id)
+  expect(ids).toContain(candidates[0]!.id)
+})
+
 it.each(['Atlas', 'optional UUID from KNOWN ENTITIES only', ' ', '', null])('preserves malformed legacy identity %s as a distinct new fact without merging', async persistedId => {
   const f = fixture()
   await f.service().run(f.request)
