@@ -2,6 +2,32 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.8",
+      "releasedAt": "2026-10-21",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**恢复中断的监督回顾时保留已完成结果**：长时间运行或恢复回顾时，实体候选列表可能已变化，导致保存过的批次无法完成最终发布。现在会从存储中解析这些批次原先引用的实体；若实体已删除或撤销，该批次中的实体会作为新事实保存，不再因此丢弃整次回顾。"
+          ],
+          "notices": [
+            "本版本不新增数据库 schema，Agent `0.15.7` 无需更新。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Preserve completed results when resuming Supervisor reviews**: During a long-running or resumed review, changes to the entity candidate list could prevent saved batches from being published. Saved batches now resolve their original entity references from storage; if an entity has been deleted or revoked, the batch's entity is saved as a new fact instead of causing the entire review to be discarded."
+          ],
+          "notices": [
+            "This release adds no database schema version. Agent `0.15.7` does not need to be updated."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.7",
       "releasedAt": "2026-10-21",
       "notes": {
