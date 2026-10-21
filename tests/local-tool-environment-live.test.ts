@@ -24,6 +24,7 @@ describeLive('live local tool environment', () => {
     root = await mkdtemp(join(tmpdir(), 'goodbuddy-live-tools-'))
     let settings: LocalToolEnvironmentSettings = {
       ...defaultLocalToolEnvironmentSettings,
+      python: { source: 'managed' },
       artifactDownloadSource: 'native'
     }
     const service = new LocalToolEnvironmentService({
