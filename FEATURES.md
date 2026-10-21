@@ -344,7 +344,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.7`, paired with the current Desktop release candidate `0.16.6`; formal
+  `0.15.7`, paired with the current Desktop release candidate `0.16.7`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -983,10 +983,10 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.6`, paired with Agent `0.15.7`, with
+- The current Desktop candidate is `0.16.7`, paired with Agent `0.15.7`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
-- Desktop `0.16.6` carries forward unpublished `0.16.5` content and moves message channels into the card-based Apps center.
+- Desktop `0.16.7` carries forward unpublished `0.16.5`/`0.16.6` content and moves message channels into the card-based Apps center.
   Feishu and WeCom integrations are **Preview**, including platform tools and
   document references; permissions, Runtime and platform availability apply.
   Real platform business acceptance remains incomplete; see
