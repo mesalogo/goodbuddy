@@ -39,11 +39,13 @@ it('signs nested Mach-O files and refreshes every wheel RECORD hash', async () =
   expect(await signWheel(path, sign)).toBe(true)
   expect(sign).toHaveBeenCalledTimes(1)
   const result = unzipSync(await readFile(path))
-  expect(Buffer.from(result['example/native.so'])).toEqual(Buffer.concat([binary, Buffer.from('signed')]))
+  expect(Buffer.from(result['example/native.so']!)).toEqual(Buffer.concat([binary, Buffer.from('signed')]))
   expect(result['example/__init__.py']).toEqual(unzipSync(original)['example/__init__.py'])
   const manifest = new TextDecoder().decode(result[record])
   for (const name of ['example/native.so', 'example/__init__.py']) {
-    expect(manifest).toContain(`${name},sha256=${createHash('sha256').update(result[name]).digest('base64url')},${result[name].length}`)
+    const bytes = result[name]
+    if (!bytes) throw new Error(`Missing wheel entry: ${name}`)
+    expect(manifest).toContain(`${name},sha256=${createHash('sha256').update(bytes).digest('base64url')},${bytes.length}`)
   }
   expect(manifest).toContain(`${record},,`)
 })
