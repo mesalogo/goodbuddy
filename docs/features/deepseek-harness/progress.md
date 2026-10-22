@@ -1,5 +1,194 @@
 # DeepSeek Harness 实现进度
 
+## 2026-10-22 Root Adoption of 0.2.1-rc.2
+
+After the isolated evaluation below, the authorized migration was applied to the
+actual root install. The original 23 DSH production dependencies and CLI are now
+`0.2.1-rc.2`, Cordis is `4.0.5`, and the new direct production dependency
+`dsh-working-directory@0.2.1-rc.2` is mounted after LocalFileSystem. Vite bundles
+that service into the Host. The Host Skill test uses a real in-memory Session;
+current Runtime, smoke, discovery, packaging and settings-panel version fixtures
+were updated. Historical validation records retain their original versions.
+
+Root OpenCode packages remain `1.19.3`, ACP SDK remains `0.25.1`, and pi-ai resolves
+to `1.4.0`. The lockfile was compared with a snapshot taken after the OpenCode
+agent's work and before DSH adoption: 567 package entries changed, all reachable
+from the old or new DeepSeek dependency graph. No unrelated direct dependency,
+devDependency or optional dependency changed its declared or installed version.
+The DSH graph updates include provider SDKs, Sharp and nested Koffi dependencies;
+this is not merely 24 top-level version substitutions.
+
+Installation completed with
+`npm.cmd install --prefer-offline --fetch-retries=0 --no-audit --no-fund`.
+Two preceding attempts timed out while npm retried registry `ECONNREFUSED`.
+Using cached metadata completed the install without changing registry settings.
+Npm reported unapproved install scripts, including nested Koffi 3.1.1 and the
+new Google SDK's no-op preinstall; no unrelated script approvals were added.
+The Windows tests below exercised the installed native packages successfully.
+
+### Actual Root Validation
+
+Windows x64, Node 24.20.0. `TEMP` and `TMP` pointed to the task directory.
+
+| Command or scenario | Result |
+| --- | --- |
+| `node node_modules/vitest/vitest.mjs run deepseek-harness goodbuddy-harness native-dsh-web-client runtime-discovery bundled-runtimes tests/build-release.test.ts tests/desktop-runtime-packaging.test.ts` | 14 files passed, 1 skipped; **181 passed, 4 skipped**, 27.94 s. The skips are 3 opt-in live-model tests and 1 marketplace-plugin test. |
+| `npm.cmd run typecheck` | All node, Agent and web TypeScript projects passed. |
+| `npm.cmd run build` | Typecheck, full Main/Preload/Renderer build and control-plane installer check passed. |
+| `node build/run-deepseek-harness-utility-smoke.cjs` | Rebuilt Electron UtilityProcess returned `ready`. |
+| Root `prepareNativeDshResources` with a task-local staging project | Copied the installed CLI graph, frontend assets and nested dependencies. Missing cached Koffi 3.1.4 archive was fetched from its lockfile URL and SHA-512 verified. Root `.runtime-resources` was not used for this probe. |
+| Native Web suite with `NATIVE_DSH_TEST_CLI` pointing at that copied CLI | **7 passed, 0 skipped**, 15.93 s; actual official Web process, workspace/history, write/Skill/MCP model-bridge calls, failed-launch retry, cancellation and cleanup. This repeats the 7 Web tests in the 181-test run. |
+| `node node_modules/vitest/vitest.mjs run src/renderer/src/SettingsPanel.test.tsx -t 'DeepSeek Harness'` | **1 passed**, 115 unrelated tests excluded by the name filter. |
+| Built Main import inspection and `git diff --check` | No external DeepSeek package imports found; diff whitespace check passed. |
+| ESLint on the 14 changed source, test and build JavaScript/TypeScript files | Passed. |
+
+### Stored-Profile Live Request
+
+Exactly **1 external model request**, to the stored compatible `deepseek-flash`
+profile, returned HTTP 200 and exactly `DSH_UPGRADE_OK`. The current root Runtime
+and utility launcher started the rebuilt Host. A task-local loopback probe
+forwarded the request with the selected profile's credential in memory, removed
+tools for this text-only check, limited output to 512 tokens, and rejected any
+second dispatch. Settings were resolved from an isolated encrypted snapshot using
+Electron safeStorage; the original settings file was byte-for-byte unchanged.
+No credential or provider endpoint was written to reports or console output.
+
+The first temporary Electron driver stalled before app readiness and made zero
+provider requests; moving readiness out of top-level ESM evaluation fixed it.
+The successful retry is the single request counted above. Registry fetches
+inherited this environment's `NODE_TLS_REJECT_UNAUTHORIZED=0`; no strict-TLS
+validation claim is made for those artifact downloads.
+
+Whole-repository results and the OpenCode fixture fixes are recorded in
+[the combined regression follow-up](../assistant-workbar/progress.md#combined-worktree-regression-follow-up).
+Source lint passed after excluding generated VitePress output; the full run retains
+an unrelated Obsidian temporary-directory assertion failure. This validation does
+not cover installer/ASAR execution, browser-page interaction, Linux/macOS native
+execution or upstream subagent flows. DSH is still local-only and no remote Agent
+change or remote model call was made. Dirty supervisor, Droid and OpenCode changes
+were preserved. The settings-panel file had no pre-existing edits and only its
+three DSH version fixture strings changed.
+
+Cleanup completed: no task-owned processes remained, and `temp/dsh-root-upgrade`
+was removed, including encrypted settings snapshot, Electron profile, staged
+native resources, archives, test spill files and scratch drivers. Root installed
+dependencies and normal `out/` build output remain available for the parent task.
+No commit, push or release was made.
+
+## 2026-10-22 Candidate 0.2.1-rc.2 Evaluation
+
+Verdict: **PASS as a viable migration with the patch below; FAIL as a version-only
+upgrade.** Production DSH pins were not changed. Evaluation used an isolated
+current-source snapshot and npm install under `temp/dsh-021-eval`, Windows x64,
+Node 24.20.0. Root dependency files and node_modules are owned by the parallel
+OpenCode upgrade task and were not edited by this evaluation.
+
+Registry checks found `0.2.1-rc.2` for all 23 currently direct `dsh-*` dependencies
+and the `dsh` CLI. None of those direct dependencies needs removal. Cordis was
+pinned to `4.0.5`. The published candidate actually declares
+`@earendil-works/pi-ai: ^1.1.0`, resolved here to `1.4.0`; the proposed `1.0.2`
+description does not match this registry artifact. Keep the adopted lockfile's
+resolved graph explicit. The evaluation retained the production ACP SDK pin
+`0.25.1`; unconstrained peer installation initially selected a newer ACP SDK
+and caused unrelated `plan_removed.id` type errors.
+
+The current internal contracts remain usable: `AgentRegistry.create`, scoped
+tools/Skills, Session events, assistant stream chunks, attachments, the
+GoodBuddy credential provider, ACP transport, cancellation and session release.
+No current integration imports the removed invariant exports. The controlled
+graph does not mount subagent packages; upstream subagent session/wait changes
+were not independently exercised. Native Web uses the official CLI graph and
+the existing patch IDs (`llm-pi-ai`, `agent-default-model`, `sandbox-policy`,
+`approval`, `ui-permission`) still work in the tested flows.
+
+### Reachable Break and Minimal Migration
+
+With unchanged source, the candidate produced 6 failures, 111 passes and 4 skips.
+File writes did not create their output, the native tool snapshot was empty, and
+Skill calls returned `Error: unknown tool "skill"`. Candidate file, shell and
+Skill plugins now require `workingDirectory`; Cordis leaves these plugins
+unactivated when the fixed Host graph lacks that service, despite Host readiness.
+
+The tested production-source migration is:
+
+```diff
+--- a/src/main/deepseek-harness-host.ts
++++ b/src/main/deepseek-harness-host.ts
+@@
+ import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
++import WorkingDirectory from '@deepseek-ai/dsh-working-directory'
+@@
+     { plugin: LocalFileSystem, config: { cwd: config.workspace } },
++    { plugin: WorkingDirectory, config: { defaultDirectory: config.workspace } },
+```
+
+Add `@deepseek-ai/dsh-working-directory: 0.2.1-rc.2` as a direct production
+dependency and add it to `externalizeDepsPlugin.exclude` in
+`electron.vite.config.ts`. Set the existing 23 DSH dependencies and CLI dev
+dependency to `0.2.1-rc.2`, Cordis to `4.0.5`, and regenerate the root lockfile
+without changing the ACP SDK pin. Update the subprocess-local `allowScripts`
+version key, `bundledDeepSeekHarnessVersion`, and hard-coded smoke/fixture
+versions. No removal of sandbox/approval packages was needed to obtain this
+result. No change to native Web policy was needed.
+
+The Host Skill unit test's hand-written session mock is insufficient for the
+new working-directory projection (`snapshotEvents` and sequence state). Replace
+its mock `session` object with the real store, as tested:
+
+```ts
+session: host.context.sessions.create(options.sessionId, {
+  meta: { cwd: options.meta?.cwd ?? root }
+}),
+```
+
+### Validation Evidence
+
+All commands below ran in the isolated directory. Test environment `TEMP` and
+`TMP` were redirected there after the initial run; initial tests cleaned their
+own OS-temp fixtures through their existing teardown.
+
+| Check | Result |
+| --- | --- |
+| `node ../../node_modules/vitest/vitest.mjs run --config vitest.config.mts` after migration | 10 files passed, 1 skipped; 117 tests passed, 4 skipped; 32.69 s |
+| ACP production composition | 11 deterministic E2E tests passed, including 2/10-project shared Host file and shell execution, Skills, MCP, images, consecutive requests and error propagation |
+| Candidate native Web CLI explicitly selected with `NATIVE_DSH_TEST_CLI` | 7/7 passed: workspace/history, coalesced starts, write/Skill/MCP calls through model bridge, failed-launch retry, cancellation and cleanup |
+| Same Web suite pointed at `.runtime-resources/dsh-x64/node_modules/@deepseek-ai/dsh/lib/bin.js` | Passed as part of the final 117-test run |
+| Additional temporary deterministic ACP/pi-ai credential test | 1 passed; exactly 1 local HTTP request used the Main-supplied key despite a conflicting environment key, retained the custom header, and returned `CANDIDATE_OK` |
+| Focused current-source TypeScript | Passed for Host, Host test, Runtime, native Web client and their imported contracts |
+| Focused Vite/Rollup Host bundle | Passed, 1,257 modules; existing main plugins/chunk rules, production external dependencies and isolated output; no external `@deepseek-ai` imports found |
+| `node build/run-deepseek-harness-utility-smoke.cjs` | Actual Electron UtilityProcess returned `ready` with the migrated bundle |
+| Existing `prepareNativeDshResources` | Copied candidate CLI graph successfully; target Sharp/Koffi artifacts used lock integrity checks |
+
+The test config used Node environment, one worker, and selected
+`src/main/**/*deepseek*.test.ts`, `src/main/**/*goodbuddy-harness*.test.ts`,
+`src/main/agent/native-dsh-web-client.test.ts`, and
+`src/shared/deepseek-harness-compatibility.test.ts`. The isolated install used
+`npm.cmd install --ignore-scripts --no-audit --no-fund`; Windows shell execution
+passed with the installed native packages. No Linux/macOS install-script or
+cross-architecture execution claim is made.
+
+The full copied node TypeScript project was not green: isolation mixed the root
+MCP SDK with candidate Zod declarations in an unrelated knowledge MCP test, and
+the copied perf test expected `vitest.config.ts` while the isolated config used
+`.mts`. These are excluded from the focused pass, not hidden as upgrade success.
+The first focused bundling driver externalized all dependencies and was rejected
+as insufficient; its corrected fully bundled driver retained production native
+externals before the successful utility smoke. No full application build,
+installer/ASAR execution, renderer/browser interaction, marketplace live test,
+or paid provider test was performed. Four opt-in tests remained skipped.
+
+External model calls: **0**. The added credential probe used one loopback request;
+existing native Web fixtures also used deterministic local responses. DSH remains
+local-only: `create-runtime.ts` rejects its remote execution-space branch, and
+`build/agent-bundle.cjs` has no DSH dependency. No remote code, resources, Host or
+model was changed. Root adoption and final whole-application validation remain
+with the parent task; the migration above is the concrete candidate handoff.
+
+Cleanup completed: process inspection found no evaluation-owned processes, and
+`temp/dsh-021-eval` was removed with its install, copied sources, native resources,
+archives, fixtures and build output. Only this evidence document was changed in
+the tracked worktree by this evaluation; no commit, push or release was made.
+
 ## 2026-09-26 真实模型与官方 Web 验证
 
 本轮验证 `0.1.7-rc.2` 后台对话/工具路径与同版本官方 Web 的本地接入可行性，关联

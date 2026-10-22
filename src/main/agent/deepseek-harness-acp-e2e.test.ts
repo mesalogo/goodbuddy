@@ -430,7 +430,7 @@ function createInProcessLaunch(
         model: options.model,
         supportsImageInput: options.supportsImageInput,
         requestHeaders: options.requestHeaders,
-        harnessVersion: '0.1.7-rc.2',
+        harnessVersion: '0.2.1-rc.2',
         credentialRefs: options.credentialRefs,
         skillPackages: options.skillPackages,
         extensionPackages: options.extensionPackages,

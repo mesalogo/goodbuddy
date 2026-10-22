@@ -984,7 +984,7 @@ records are listed separately and do not introduce another feature status.
 ### Open source, builds, and releases
 
 - The current Desktop candidate is `0.16.8`, paired with Agent `0.15.7`, with
-  OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
+  source pins of OpenCode `1.19.3` and Continue `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
 - Desktop `0.16.8` publishes saved Supervisor batches even when the current
   candidate list no longer contains their original entities. Existing identities

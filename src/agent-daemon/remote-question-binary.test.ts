@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,6 +20,9 @@ it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as c
   'round trips native ACP %s questions through the production plugin and Agent owner', async (scenario) => {
   const root = await mkdtemp(join(tmpdir(), 'goodbuddy-remote-question-'))
   await mkdir(join(root, 'state'))
+  // OpenCode installs dependencies in both config locations before loading plugins.
+  const configDirectory = join(root, 'config', 'opencode')
+  await cp(join(process.cwd(), '.runtime-resources', 'opencode-config'), configDirectory, { recursive: true })
   const pluginPath = join(root, 'plugin.mjs')
   await writeFile(pluginPath, openCodeSubagentPluginSource())
   let calls = 0
@@ -61,7 +64,7 @@ it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as c
     model: 'fixture', loopbackOrigin: `http://127.0.0.1:${address.port}/${'a'.repeat(43)}` })
   const child = spawn(binary, ['acp'], { cwd: root, stdio: 'pipe', env: {
     ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, plugin: [pathToFileURL(pluginPath).href] }),
-    OPENCODE_CONFIG_DIR: join(process.cwd(), '.runtime-resources', 'opencode-config'),
+    OPENCODE_CONFIG_DIR: configDirectory,
     OPENCODE_DISABLE_PROJECT_CONFIG: 'true', OPENCODE_DISABLE_MODELS_FETCH: 'true',
     OPENCODE_ENABLE_QUESTION_TOOL: 'true',
     OPENCODE_DISABLE_AUTOUPDATE: 'true', XDG_DATA_HOME: join(root, 'data'),

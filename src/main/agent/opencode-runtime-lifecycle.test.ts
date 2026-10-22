@@ -11,7 +11,7 @@ import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { OpenCodeRuntime } from './opencode-runtime'
 import type { DesktopDiagnosticFailure } from '../desktop-diagnostics'
 
-const binaryPath = join(
+const binaryPath = process.env.GOODBUDDY_TEST_OPENCODE_BINARY ?? join(
   process.cwd(), '.runtime-resources', process.arch,
   process.platform === 'win32' ? 'opencode.exe' : 'opencode'
 )

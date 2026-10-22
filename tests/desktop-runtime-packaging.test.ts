@@ -51,7 +51,7 @@ describe('desktop Runtime packaging', () => {
     const files = {
       'package.json': '{"private":true}',
       '.gitignore': 'node_modules\n',
-      'node_modules/@opencode-ai/plugin/package.json': '{"name":"@opencode-ai/plugin","version":"1.18.29"}',
+      'node_modules/@opencode-ai/plugin/package.json': '{"name":"@opencode-ai/plugin","version":"1.19.3"}',
       'node_modules/@opencode-ai/plugin/dist/index.js': 'export const tool = true\n',
       'node_modules/zod/package.json': '{"name":"zod","version":"4.1.8"}',
       'node_modules/zod/index.js': 'export const z = {}\n'

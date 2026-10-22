@@ -17,7 +17,7 @@
 统一维护；本 Runtime 的生命周期见[技术设计 §9](./technical-design.md#9-runtime-生命周期)，
 未发布实现的验收状态见[工作栏进度](../assistant-workbar/progress.md#2026-09-14-runtime-进程复用实施中)。
 
-The separate official Web client is pinned to `@deepseek-ai/dsh@0.1.7-rc.2`.
+The separate official Web client is pinned to `@deepseek-ai/dsh@0.2.1-rc.2`.
 Its Main service API, unified execution rules, capability adapters, packaged resource
 layout, and Windows validation are documented in
 [Native Client Proposal, section 9.1](../assistant-workbar/runtime-native-client-proposal.md#91-ds-web-backend-2026-09-26).

@@ -587,6 +587,11 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 
 ## Agent 开发期间的真实 Host 验证
 
+2026-10-22 OpenCode `1.19.3` current-source Runtime validation, exact provider-call
+counts, and SSH test-transport boundaries are recorded in the
+[workbar upgrade evidence](../assistant-workbar/progress.md#2026-10-22-opencode-1193-upgrade).
+This changes source Runtime pins, not already published Agent packages.
+
 2026-09-10 Desktop `0.12.11` / Agent `0.11.23` 候选复测：共享 Linux x64 Host 的当前
 源码通过工作区协议重命名保护、字面路径/重命名/合并提交差异、Unix 桥接 256 KiB 往返及取消，
 以及继承 Runtime 指标的数据库重开与去重。隔离 Agent 报告版本 `0.11.23`，桌面 managed ACP

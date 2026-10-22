@@ -33,7 +33,7 @@ describe('controlled DeepSeek Harness host', () => {
         api: 'openai-completions',
         provider: 'goodbuddy',
         model: 'deepseek-test',
-        harnessVersion: '0.1.7-rc.2',
+        harnessVersion: '0.2.1-rc.2',
         credentialRefs: ['GOODBUDDY_API_KEY'],
         dshHome: 'C:\\controlled-dsh-home',
         skillPackages: []
@@ -82,7 +82,7 @@ describe('controlled DeepSeek Harness host', () => {
       provider: 'goodbuddy',
       model: 'qwen-plus',
       supportsImageInput: true,
-      harnessVersion: '0.1.7-rc.2',
+      harnessVersion: '0.2.1-rc.2',
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [],
       stream: {
@@ -144,7 +144,7 @@ describe('controlled DeepSeek Harness host', () => {
       api: 'openai-completions',
       provider: 'goodbuddy',
       model: 'deepseek-test',
-      harnessVersion: '0.1.7-rc.2',
+      harnessVersion: '0.2.1-rc.2',
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [],
       stream: {
@@ -182,7 +182,7 @@ describe('controlled DeepSeek Harness host', () => {
       api: 'openai-completions',
       provider: 'goodbuddy',
       model: 'deepseek-test',
-      harnessVersion: '0.1.7-rc.2',
+      harnessVersion: '0.2.1-rc.2',
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [],
       extensionPackages: [
@@ -238,7 +238,7 @@ describe('controlled DeepSeek Harness host', () => {
       api: 'openai-completions',
       provider: 'goodbuddy',
       model: 'deepseek-test',
-      harnessVersion: '0.1.7-rc.2',
+      harnessVersion: '0.2.1-rc.2',
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [
         { id: 'web-3d-game', directory: skillDirectory }
@@ -259,12 +259,9 @@ describe('controlled DeepSeek Harness host', () => {
         createdContext = agentContext
         const agent = {
           options: options.agentOptions ?? {},
-          session: {
-            id: options.sessionId,
-            header: { cwd: options.meta?.cwd ?? root },
-            events: [],
-            append: vi.fn()
-          },
+          session: host.context.sessions.create(options.sessionId, {
+            meta: { cwd: options.meta?.cwd ?? root }
+          }),
           ctx: agentContext,
           cancel: vi.fn()
         }

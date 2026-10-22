@@ -350,7 +350,7 @@ Skill directories and stdio/streamable-HTTP MCP configurations use official plug
 Knowledge, built-in MCP, and GoodBuddy confirmation/configuration tools require a
 caller-owned MCP adapter and are not automatically exposed by this service.
 
-`@deepseek-ai/dsh@0.1.7-rc.2` is a pinned build dependency. The existing packaging
+`@deepseek-ai/dsh@0.2.1-rc.2` is a pinned build dependency. The existing packaging
 hook copies its installed dependency tree, including frontend assets and nested
 dependency versions, to `resources/runtimes/dsh` outside ASAR. Target Sharp and
 Koffi packages come from exact lockfile entries through the existing artifact

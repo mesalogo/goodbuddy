@@ -88,7 +88,7 @@ function readRemoteRuntimeLock(projectRoot = root) {
   const runtime = lock?.runtimes?.opencode;
   if (
     lock?.formatVersion !== 1 ||
-    runtime?.version !== "1.18.29" ||
+    runtime?.version !== "1.19.3" ||
     runtime.provider !== "opencode" ||
     runtime.entrypoint !== "bin/opencode" ||
     runtime.entrypointIdentity !== "opencode-acp" ||
@@ -377,7 +377,7 @@ function validateManifestShape(manifest) {
     manifest?.formatVersion !== 2 ||
     manifest.product !== "GoodBuddy" ||
     !['opencode', 'continue'].includes(manifest.runtimeId) ||
-    manifest.runtimeVersion !== (manifest.runtimeId === 'continue' ? '1.5.47' : '1.18.29') ||
+    manifest.runtimeVersion !== (manifest.runtimeId === 'continue' ? '1.5.47' : '1.19.3') ||
     manifest.provider !== manifest.runtimeId ||
     !(
       manifest.platform === "linux" ||

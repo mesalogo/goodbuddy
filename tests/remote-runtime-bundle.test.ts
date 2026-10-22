@@ -142,7 +142,7 @@ beforeEach(() => {
     formatVersion: 1,
     runtimes: {
       opencode: {
-        version: '1.18.29',
+        version: '1.19.3',
         provider: 'opencode',
         entrypoint: 'bin/opencode',
         entrypointIdentity: 'opencode-acp',
@@ -180,7 +180,7 @@ afterEach(() => {
 })
 
 describe('Remote Runtime bundle tooling', () => {
-  it('pins the actual OpenCode 1.18.29 ACP capabilities', () => {
+  it('pins the actual OpenCode 1.19.3 ACP capabilities', () => {
     const capabilities = {
       loadSession: true,
       mcpCapabilities: {
@@ -226,7 +226,7 @@ describe('Remote Runtime bundle tooling', () => {
     )
     expect(first.manifest).toMatchObject({
       runtimeId: 'opencode',
-      runtimeVersion: '1.18.29',
+      runtimeVersion: '1.19.3',
       architecture: 'x64',
       sourcePackage: {
         name: 'opencode-linux-x64-baseline',
@@ -247,7 +247,7 @@ describe('Remote Runtime bundle tooling', () => {
     })
     expect(first.manifest).not.toHaveProperty('quotas')
     expect(first.manifest.files.some((file) => file.path.includes('/.bin/'))).toBe(false)
-    const pluginPath = 'config/opencode/node_modules/@opencode-ai/plugin/index.js'
+    const pluginPath = 'config/opencode/node_modules/@opencode-ai/plugin/dist/index.js'
     expect(first.manifest.files).toContainEqual(expect.objectContaining({
       path: pluginPath, mode: '0644'
     }))
@@ -386,7 +386,7 @@ function createRuntimeInput(): string {
     join(packageRoot, 'package.json'),
     `${JSON.stringify({
       name: 'opencode-linux-x64-baseline',
-      version: '1.18.29'
+      version: '1.19.3'
     })}\n`
   )
   writeFileSync(
@@ -396,7 +396,7 @@ function createRuntimeInput(): string {
   chmodSync(join(packageRoot, 'bin', 'opencode'), 0o755)
   const archive = join(
     temporaryRoot,
-    'opencode-linux-x64-baseline-1.18.29.tgz'
+    'opencode-linux-x64-baseline-1.19.3.tgz'
   )
   createTar(
     {

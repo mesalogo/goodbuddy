@@ -20,6 +20,7 @@ import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
 import * as ToolPwsh from '@deepseek-ai/dsh-tool-pwsh'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
+import WorkingDirectory from '@deepseek-ai/dsh-working-directory'
 import {
   GoodBuddyHarnessAttachmentStore
 } from './agent/goodbuddy-harness-attachment-store'
@@ -268,6 +269,7 @@ export async function startControlledDeepSeekHarnessHost(
     },
     { plugin: LocalSubprocess },
     { plugin: LocalFileSystem, config: { cwd: config.workspace } },
+    { plugin: WorkingDirectory, config: { defaultDirectory: config.workspace } },
     { plugin: ShellEnv, config: { dshHome: config.dshHome } },
     {
       plugin:

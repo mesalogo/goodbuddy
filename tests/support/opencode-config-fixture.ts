@@ -5,9 +5,9 @@ export function createOpenCodeConfigFixture(projectRoot: string): string {
   const config = join(projectRoot, '.runtime-resources', 'opencode-config')
   const files = {
     'node_modules/@opencode-ai/plugin/package.json': JSON.stringify({
-      name: '@opencode-ai/plugin', version: '1.18.29'
+      name: '@opencode-ai/plugin', version: '1.19.3'
     }),
-    'node_modules/@opencode-ai/plugin/index.js': 'export default {}\n',
+    'node_modules/@opencode-ai/plugin/dist/index.js': 'export default {}\n',
     'node_modules/.bin/unused': 'unused CLI shim\n'
   }
   for (const [name, content] of Object.entries(files)) {

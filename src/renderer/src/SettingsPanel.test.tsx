@@ -208,7 +208,7 @@ const detectAgentRuntimes = vi.fn<
   deepseekHarness: {
     available: true,
     path: 'bundled://deepseek-harness',
-    version: '0.1.7-rc.2',
+    version: '0.2.1-rc.2',
     source: 'bundled',
     detail: '内置 Harness Adapter 已就绪'
   }
@@ -2939,11 +2939,11 @@ describe('SettingsPanel runtime files', () => {
       )
     ).toHaveClass('runtime-overview__path')
     expect(
-      within(harnessOverview).getByText('0.1.7-rc.2')
+      within(harnessOverview).getByText('0.2.1-rc.2')
     ).toBeInTheDocument()
     expect(
       within(harnessOverview).getByText(
-        '内置 DeepSeek Harness 0.1.7-rc.2 已就绪'
+        '内置 DeepSeek Harness 0.2.1-rc.2 已就绪'
       )
     ).toBeInTheDocument()
     expect(

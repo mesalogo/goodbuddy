@@ -1,7 +1,6 @@
 // @vitest-environment node
 import { createServer } from 'node:http'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import spawn from 'cross-spawn'
@@ -25,10 +24,8 @@ describe('OpenCode isolated configuration paths', () => {
   let bundledConfigPath: string
   beforeAll(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-config-isolation-'))
-    const { prepareBundledOpenCodeConfig } = createRequire(import.meta.url)(
-      '../../../build/opencode-config.cjs'
-    )
-    bundledConfigPath = prepareBundledOpenCodeConfig(fixtureRoot)
+    bundledConfigPath = join(fixtureRoot, 'opencode-config')
+    await cp(join(process.cwd(), '.runtime-resources', 'opencode-config'), bundledConfigPath, { recursive: true })
   }, 60_000)
   afterAll(async () => {
     if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true })

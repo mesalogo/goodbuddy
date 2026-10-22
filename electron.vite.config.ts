@@ -112,6 +112,7 @@ export default defineConfig({
           '@deepseek-ai/dsh-tool-skill',
           '@deepseek-ai/dsh-tools',
           '@deepseek-ai/dsh-user-approval',
+          '@deepseek-ai/dsh-working-directory',
           'yaml',
           'zod'
         ]

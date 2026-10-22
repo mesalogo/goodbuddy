@@ -2150,7 +2150,7 @@ function createRuntimeInput(
         architecture === 'x64'
           ? 'opencode-linux-x64-baseline'
           : 'opencode-linux-arm64',
-      version: '1.18.29'
+      version: '1.19.3'
     })}\n`
   )
   writeFileSync(
@@ -2165,8 +2165,8 @@ function createRuntimeInput(
   const archive = join(
     temporaryRoot,
     architecture === 'x64'
-      ? 'opencode-linux-x64-baseline-1.18.29.tgz'
-      : 'opencode-linux-arm64-1.18.29.tgz'
+      ? 'opencode-linux-x64-baseline-1.19.3.tgz'
+      : 'opencode-linux-arm64-1.19.3.tgz'
   )
   createTar(
     {
@@ -2191,7 +2191,7 @@ function createRemoteRuntimeLock(
     formatVersion: 1,
     runtimes: {
       opencode: {
-        version: '1.18.29',
+        version: '1.19.3',
         provider: 'opencode',
         entrypoint: 'bin/opencode',
         entrypointIdentity: 'opencode-acp',

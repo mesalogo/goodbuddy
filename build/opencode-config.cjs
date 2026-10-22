@@ -10,7 +10,7 @@ const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { npmInvocation } = require("./npm-invocation.cjs");
 
-const opencodeVersion = "1.18.29";
+const opencodeVersion = "1.19.3";
 const opencodePluginPackage = "@opencode-ai/plugin";
 
 function prepareBundledOpenCodeConfig(projectDir) {

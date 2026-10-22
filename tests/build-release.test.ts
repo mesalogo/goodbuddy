@@ -247,7 +247,7 @@ function portableDirectory(parent: string): string {
   const directory = join(parent, 'portable')
   const plugin = join(directory, 'resources', 'runtimes', 'opencode-config', 'node_modules', '@opencode-ai', 'plugin')
   mkdirSync(join(plugin, 'dist'), { recursive: true })
-  writeFileSync(join(plugin, 'package.json'), '{"name":"@opencode-ai/plugin","version":"1.18.29"}')
+  writeFileSync(join(plugin, 'package.json'), '{"name":"@opencode-ai/plugin","version":"1.19.3"}')
   writeFileSync(join(plugin, 'dist', 'index.js'), 'export const tool = true')
   mkdirSync(
     join(directory, 'resources', 'runtimes', 'opencode'),
@@ -915,9 +915,9 @@ describe('release build arguments', () => {
         'node_modules', '@opencode-ai', 'plugin'
       )
       mkdirSync(configPlugin, { recursive: true })
-      writeFileSync(join(configPlugin, 'package.json'), JSON.stringify({ version: '1.18.29' }))
+      writeFileSync(join(configPlugin, 'package.json'), JSON.stringify({ version: '1.19.3' }))
       const webPackages = {
-        '@deepseek-ai/dsh': { version: '0.1.7-rc.2', dependencies: { sharp: '0.35.4', koffi: '3.1.4' } },
+        '@deepseek-ai/dsh': { version: '0.2.1-rc.2', dependencies: { sharp: '0.35.4', koffi: '3.1.4' } },
         sharp: { version: '0.35.4', optionalDependencies: { '@img/sharp-win32-x64': '0.35.4' } },
         'sharp/node_modules/@img/sharp-win32-x64': { version: '0.35.4' },
         koffi: { version: '3.1.4', optionalDependencies: { '@koromix/koffi-win32-x64': '3.1.4' } },
@@ -939,7 +939,7 @@ describe('release build arguments', () => {
         join(projectRoot, 'package.json'),
         JSON.stringify({
           dependencies: {
-            '@deepseek-ai/dsh-llm': '0.1.7-rc.2',
+            '@deepseek-ai/dsh-llm': '0.2.1-rc.2',
             '@vscode/ripgrep': '1.18.0'
           }
         })
@@ -949,7 +949,7 @@ describe('release build arguments', () => {
         JSON.stringify({
           packages: {
             [`node_modules/${packageName}`]: {
-              version: '1.18.29',
+              version: '1.19.3',
               integrity
             },
             [`node_modules/${ripgrepPackageName}`]: {
@@ -977,7 +977,7 @@ describe('release build arguments', () => {
         ),
         JSON.stringify({
           packageName,
-          version: '1.18.29',
+          version: '1.19.3',
           integrity,
           executableSha256: createHash('sha256')
             .update(executable)
@@ -1036,7 +1036,7 @@ describe('release build arguments', () => {
         )
       ).toMatchObject({
         name: '@deepseek-ai/dsh-llm',
-        version: '0.1.7-rc.2'
+        version: '0.2.1-rc.2'
       })
     } finally {
       rmSync(projectRoot, { recursive: true, force: true })

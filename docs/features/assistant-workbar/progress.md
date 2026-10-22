@@ -1,5 +1,108 @@
 # 工作栏实现与验证进度
 
+## 2026-10-22: OpenCode 1.19.3 Upgrade
+
+Source pins now coordinate `opencode-ai`, `@opencode-ai/sdk`, and
+`@opencode-ai/plugin` at `1.19.3`. Desktop offline configuration, remote build
+version checks, and Linux x64/arm64 plus macOS arm64 integrity locks match.
+The OpenCode upgrade step changed only its packages in the root dependency lock.
+The subsequent DSH migration is recorded in the DeepSeek feature progress. Desktop
+and Agent application versions and published assets did not change.
+
+Final focused results, counting each test once:
+
+| Scope | Files | Passed | Skipped | Failed |
+| --- | ---: | ---: | ---: | ---: |
+| OpenCode Runtime, lifecycle, selection, permission, subagent, native ACP questions, config and desktop/remote Runtime packaging | 12 | 210 | 0 | 0 |
+| Protocol channel, managed ACP Runtime, Agent-owned prompt, model gateway, ACP backend and release-build tooling | 6 | 190 | 0 | 0 |
+| Compound Agent packages | 1 | 24 | 1 | 0 |
+| Darwin build fixtures | 1 | 3 | 0 | 0 |
+| Total | 20 | 427 | 1 | 0 |
+
+The skip is the compound-package symbolic-link-ancestor test gated off on Windows.
+Runs used `npx.cmd vitest run <focused paths> --testTimeout=30000 --reporter=dot`,
+with `TEMP`/`TMP` under `temp/opencode-upgrade` and final fixture installs using
+`npm_config_offline=true`. Real Windows lifecycle and question tests used
+`GOODBUDDY_TEST_OPENCODE_BINARY=node_modules/opencode-windows-x64/bin/opencode.exe`;
+the CLI reported `1.19.3`. The four lifecycle cases also passed separately with
+the verbose reporter. After refreshing the integrity-checked Windows x64 baseline
+resource cache to `1.19.3`, the four lifecycle and four native-question tests also
+passed separately without a binary override. Coverage includes peer-preserving stream shutdown,
+compaction, native parent/child questions, rejection/cancellation, model routing,
+permissions, and mocked remote recovery. The native ACP initialization response
+retained the existing capability digest.
+
+On the shared Linux x64 Host, an Electron Main probe used existing encrypted
+credentials and the pinned Host key. A current-source build exercised
+`AcpRemoteRuntime` and `createProtocolRemoteRuntimeChannel` over a test SSH
+JSON transport to `RuntimeAcpBackend`, `AgentOwnedAcpPrompt`, the production model
+gateway/broker/helper, and the direct Linux process owner. The candidate Runtime
+was built with a temporary test signing key; the Host checked its npm SHA-512 and
+the production bundle verifier checked its signature and payload. Node `24.19.0`
+and the locked Koffi native dependency came from the existing Host installation.
+
+The text request returned `OC_UPGRADE_OK`; the next request on the same
+conversation ran native `bash` (`printf OC_TOOL_OK`) and returned `OC_TOOL_OK`.
+Exactly **3 real provider HTTP requests** were dispatched: one text request and
+two tool-turn requests. Earlier failed Host setup attempts dispatched zero.
+Disposal completed, the probe found zero owned remote processes, and all probe
+directories were removed. The shared Host installation and registry were not updated.
+
+This is current-source Runtime-path evidence, not a UI click, installed-daemon
+attach/bootstrap, production wire-framing, installation/update, or live SSH
+disconnect/restart/cancel acceptance. Those surfaces were not changed by the pin
+update; remote lifecycle/recovery have focused test coverage, not new live Host
+coverage in this run. Linux arm64 and macOS were not executed on hardware.
+
+Initial failures were resolved without changing product Runtime logic: the CLI
+needed its install script rebuilt after an `--ignore-scripts` install; shared
+packaging fixtures needed the candidate version and `dist/index.js` path; old
+fixtures otherwise triggered full plugin installation and setup timeouts.
+Three combined test attempts hit command deadlines and do not provide complete
+counts. Host setup also required corrected archive modes, digest-addressed layout,
+the current Koffi JavaScript payload, a copied rather than symlinked Node executable,
+and a transfer timeout consistent with measured download throughput. One ACP
+startup attempt cancelled before dispatch; the final unchanged product source
+completed both requests.
+
+The desktop baseline cache refresh encountered refused npm registry connections
+and stale metadata. Downloading the exact registry tarball directly and verifying
+the lock's SHA-512 succeeded; no downloader policy or dependency pin was relaxed.
+
+`npm.cmd run build` passed, including all three TypeScript projects, desktop
+production bundles, and the control-plane installer check. Focused ESLint and
+`git diff --check` passed. Full repository tests and global lint remain the parent
+validation step for the combined dirty worktree. No commit, push, release, or app
+version bump was performed.
+
+### Combined Worktree Regression Follow-up
+
+After both Runtime upgrades, `npm.cmd test` completed with 6,641 passes, 5 failures,
+and 91 skips (557 files passed, 3 failed, 15 skipped). Seven skipped cases were
+OpenCode selection tests whose setup attempted an online fixture install and
+stalled. Reusing the prepared config cache fixed setup; all seven then passed.
+
+The four remote native-question cases timed out because XDG_CONFIG_HOME/opencode
+was empty while OPENCODE_CONFIG_DIR pointed at another prepared directory.
+OpenCode waited for installs in both locations. The test now copies the prepared
+cache to its isolated XDG config location and uses it for both paths. Parent,
+child, reject and cancel all passed without changing the 60-second timeout.
+A combined rerun of native questions, selection, lifecycle, permissions, Runtime,
+subagents/plugin and Agent prompt tests passed **192 tests, 0 skipped**.
+
+The remaining full-run failure is unrelated:
+`src/main/obsidian/obsidian-electron.test.ts:29` requires a temporary directory
+outside the checkout, conflicting with the repository rule to place test artifacts
+under root temp/. It was not modified. The whole suite was not rerun after fixture
+fixes, so the aggregate above must not be presented as an all-green full run.
+
+Plain `npm.cmd run lint` reported 1,536 errors and 4 warnings exclusively in
+generated VitePress cache/dist files. The source check passed with:
+`npm.cmd run lint -- --ignore-pattern sites/docs/.vitepress/cache/** --ignore-pattern sites/docs-dist/**`.
+Agent typecheck and focused lint passed after the last native-question fixture fix.
+This follow-up made zero external model calls and cleaned its owned processes and
+temporary directories.
+
 ## 2026-10-19: Remove Image Preview Size Cap
 
 Removed the 4 MiB total-size rejection from the shared preview service. Agent Base64
