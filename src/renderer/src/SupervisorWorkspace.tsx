@@ -547,6 +547,13 @@ export function SupervisorWorkspace({
   const digest = useMemo(() => latest && storyState.available ? storyDigest(storyState.view, latest.timeRange) : undefined,
     [latest, storyState.available, storyState.view])
   const hasDigest = digest && [digest.advanced, digest.started, digest.concluded, digest.experiences, digest.quiet].some(items => items.length > 0)
+  // The graph shows one review; its story list keeps only stories with events in that review (and their parents).
+  const reviewStories = useMemo(() => {
+    const ids = new Set(graph.events.map(event => event.id))
+    const own = new Set(storyState.view.stories.filter(story => story.events.some(event => ids.has(event.id))).map(story => story.id))
+    for (const story of storyState.view.stories) if (own.has(story.id) && story.parentId) own.add(story.parentId)
+    return storyState.view.stories.filter(story => own.has(story.id))
+  }, [graph.events, storyState.view.stories])
   const selectedStory = selection?.kind === 'story' ? storyState.view.stories.find((story) => story.id === selection.id) : undefined
   const selectedExperience = selection?.kind === 'experience' ? storyState.view.experiences.find((item) => item.id === selection.id) : undefined
   useEffect(() => {
@@ -781,7 +788,7 @@ export function SupervisorWorkspace({
                     <select className="field-control supervisor-workspace__category" aria-label={t('supervisor.selection')}
                       value={listTab} onChange={event => setListTab(event.target.value as Selection['kind'])}>
                       {(['event', 'entity', 'relation', ...(storyState.available ? ['story', 'experience'] as const : [])] as const).map(kind =>
-                        <option key={kind} value={kind}>{t(`supervisor.listTabs.${kind}`)} {kind === 'event' ? layout.events.length : kind === 'entity' ? layout.entities.length : kind === 'relation' ? graph.relations.length : kind === 'story' ? storyState.view.stories.length : storyState.view.experiences.length}</option>)}
+                        <option key={kind} value={kind}>{t(`supervisor.listTabs.${kind}`)} {kind === 'event' ? layout.events.length : kind === 'entity' ? layout.entities.length : kind === 'relation' ? graph.relations.length : kind === 'story' ? reviewStories.length : storyState.view.experiences.length}</option>)}
                     </select>
                     <PageTabs
                       ariaLabel={t('supervisor.selection')}
@@ -792,7 +799,7 @@ export function SupervisorWorkspace({
                         { id: 'event', label: `${t('supervisor.listTabs.event')} ${layout.events.length}` },
                         { id: 'entity', label: `${t('supervisor.listTabs.entity')} ${layout.entities.length}` },
                         { id: 'relation', label: `${t('supervisor.listTabs.relation')} ${graph.relations.length}` },
-                        ...(storyState.available ? [{ id: 'story' as const, label: `${t('supervisor.listTabs.story')} ${storyState.view.stories.length}` },
+                        ...(storyState.available ? [{ id: 'story' as const, label: `${t('supervisor.listTabs.story')} ${reviewStories.length}` },
                           { id: 'experience' as const, label: `${t('supervisor.listTabs.experience')} ${storyState.view.experiences.length}` }] : [])
                       ]}
                     />
@@ -810,8 +817,8 @@ export function SupervisorWorkspace({
                     >
                     {listTab === 'story' && <>
                       {storyState.error && <p role="alert">{storyState.error}</p>}
-                      {!storyState.view.stories.length && <p className="supervisor-workspace__muted">{t('supervisor.stories.empty')}</p>}
-                      <SupervisionStoryList stories={storyState.view.stories} selectedId={selectedStory?.id} date={shortDate}
+                      {!reviewStories.length && <p className="supervisor-workspace__muted">{t('supervisor.stories.empty')}</p>}
+                      <SupervisionStoryList stories={reviewStories} selectedId={selectedStory?.id} date={shortDate}
                         onSelect={(id) => select({ kind: 'story', id })} />
                       {storyState.view.unassigned > 0 && <p className="supervisor-workspace__muted">
                         {t('supervisor.stories.unassigned', { count: storyState.view.unassigned })}</p>}
@@ -823,9 +830,6 @@ export function SupervisorWorkspace({
                         onSelect={(id) => select({ kind: 'experience', id })} />
                     </>}
                     </div>}
-                    <p className="supervisor-workspace__muted">
-                      {t('supervisor.legend')}
-                    </p>
                   </aside>
                   <section
                     className="supervisor-workspace__graph-canvas"
@@ -844,6 +848,7 @@ export function SupervisorWorkspace({
                             <li><i className="supervisor-workspace__legend-link" aria-hidden="true" />{t('supervisor.eventImpact')}</li>
                             <li><i className="supervisor-workspace__legend-relation" aria-hidden="true" />{t('supervisor.relations')}</li>
                           </ul>
+                          <p>{t('supervisor.legend')}</p>
                           <p>{t('supervisor.canvasNote')}</p>
                           <p>{t('supervisor.canvasCaption')}</p>
                         </InlineHelp>

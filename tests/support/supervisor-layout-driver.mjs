@@ -177,6 +177,49 @@ app
       await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
       await js('document.querySelector("#supervisor-tab-graph").click()')
       await selectHistory(resultId)
+      if (process.env.GOODBUDDY_SUPERVISOR_MEASURE) {
+        // Real-data layout check of the selected review: bottom margin, clipping, and spiral geometry.
+        const expectedEvents = await js(`fetch('/portable-review.json').then(r=>r.json()).then(data=>data.graphs[${JSON.stringify(resultId)}].events.length)`)
+        await wait(`document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false" && document.querySelectorAll(".supervisor-workspace__list-panel button").length > 0`)
+        await js('[...document.querySelectorAll("button")].find(b => b.textContent === "时间螺旋").click()')
+        await wait(`JSON.parse(document.documentElement.dataset.helix || "null")?.dots.length === ${expectedEvents}`)
+        const out = []
+        // Opening and closing the new-review form inserts and removes content above the graph; the row must follow both.
+        const toggleForm = () => js('document.querySelector("button[aria-controls$=\\"-new-review\\"]").click()')
+        await toggleForm(); await settle(); await settle()
+        const formOpen = await js('(() => { const s = document.querySelector(".page-shell"), r = document.querySelector(".supervisor-workspace__graph-layout").getBoundingClientRect(); return Math.round(s.getBoundingClientRect().bottom - r.bottom + s.scrollHeight - s.clientHeight) })()')
+        await toggleForm(); await settle(); await settle()
+        out.push({ formOpenGap: formOpen })
+        for (const [width, height] of [[1440, 1000], [1440, 800], [1180, 900]]) {
+          win.setContentSize(width, height)
+          await wait(`innerWidth === ${width} && innerHeight === ${height}`)
+          await settle(); await settle()
+          out.push(await js(`(() => {
+            const box = e => { const r = e.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), height: Math.round(r.height) } }
+            const shell = document.querySelector('.page-shell'), layout = document.querySelector('.supervisor-workspace__graph-layout')
+            const shellBox = shell.getBoundingClientRect(), row = layout.getBoundingClientRect()
+            const columns = [...layout.children].filter(c => c.getClientRects().length)
+            const lastOf = scroller => { const kids = [...scroller.querySelectorAll('button, li, p, h3, h4, a, label, section')].filter(e => e.getClientRects().length)
+              if (!kids.length) return null; scroller.scrollTop = scroller.scrollHeight; const last = kids.at(-1).getBoundingClientRect(); const r = scroller.getBoundingClientRect()
+              const gap = Math.round(r.bottom - last.bottom); scroller.scrollTop = 0; return gap }
+            const bounds = JSON.parse(document.documentElement.dataset.sceneBounds || '{}')
+            const helix = JSON.parse(document.documentElement.dataset.helix)
+            const staveSpans = helix.staves.length
+            return { width: innerWidth, height: innerHeight, bottomGap: Math.round(shellBox.bottom - row.bottom), pageScroll: shell.scrollHeight - shell.clientHeight,
+              row: box(layout), below: [...shell.querySelectorAll('*')].filter(e => e.getClientRects().length && e.getBoundingClientRect().top >= row.bottom - 1).map(e => e.className).slice(0, 5),
+              listLastGap: lastOf(document.querySelector('.supervisor-workspace__list-panel')),
+              detailLastGap: document.querySelector('.supervisor-workspace__detail')?.getClientRects().length ? lastOf(document.querySelector('.supervisor-workspace__detail')) : null,
+              tabsWrap: (() => { const t = document.querySelector('.supervisor-workspace__graph-list > .page-tabs'); return t && t.getClientRects().length ? { scroll: t.scrollWidth - t.clientWidth } : null })(),
+              bounds, staves: staveSpans, camera: JSON.parse(document.documentElement.dataset.camera || 'null'),
+              selected: document.querySelector('.supervisor-workspace__detail h3')?.textContent ?? null,
+              staveWidths: helix.staves.map(s => s.id), sidebarLegend: !!document.querySelector('.supervisor-workspace__graph-list > p.supervisor-workspace__muted') }
+          })()`))
+        }
+        console.log(JSON.stringify({ resultId, expectedEvents, out, errors }, null, 1))
+        await writeFile(join(artifacts, 'measure.json'), JSON.stringify(out, null, 1))
+        if (!process.env.GOODBUDDY_SUPERVISOR_NO_SCREENSHOT) { win.setContentSize(1440, 1000); await settle(); await writeFile(join(artifacts, 'measure-1440.png'), (await win.webContents.capturePage()).toPNG()) }
+        win.destroy(); app.quit(); return
+      }
       await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false" && document.querySelectorAll(".supervisor-workspace__list-panel button").length === 21')
       await js('[...document.querySelectorAll("button")].find(b => b.textContent === "时间螺旋").click()')
       await wait('JSON.parse(document.documentElement.dataset.helix || "null")?.dots.length === 21')

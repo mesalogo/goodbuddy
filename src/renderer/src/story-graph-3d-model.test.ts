@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SupervisionStory } from '../../shared/supervision-story-contracts'
-import { buildStoryTree, clusterEvents, experienceLinks, radiusLevels, selectionFocus, storyWindow, timelineSegments, visibleLevel } from './story-graph-3d-model'
+import { buildStoryTree, clusterEvents, dominantStory, experienceLinks, radiusLevels, selectionFocus, storyShares, storyWindow, timelineSegments, visibleLevel } from './story-graph-3d-model'
 
 const day = 86_400_000
 const at = (d: number) => new Date(Date.parse('2026-09-01T00:00:00Z') + d * day).toISOString()
@@ -76,6 +76,14 @@ describe('story graph 3d model', () => {
     expect(kids[0]!.a0).toBe(0)
     expect(kids.at(-1)!.a1).toBeCloseTo(Math.PI * 2)
     expect(visibleLevel(feature.children[0]!)).toBe(feature)
+  })
+
+  it('splits one band per moment by story share, keeping every concurrent story', () => {
+    const event = (id: string, storyId?: string) => ({ id, title: id, t: 0, storyId })
+    const cluster = { t0: 0, t1: 0, t: 0, events: [event('a', 's1'), event('b', 's2'), event('c', 's2'), event('d')] }
+    expect(storyShares(cluster)).toEqual([{ storyId: 's2', share: 0.5 }, { storyId: 's1', share: 0.25 }, { storyId: undefined, share: 0.25 }])
+    expect(storyShares(cluster).reduce((sum, item) => sum + item.share, 0)).toBe(1)
+    expect(dominantStory(cluster)).toBe('s2')
   })
 
   it('chooses a turn length that keeps about eight and at most fourteen turns', () => {

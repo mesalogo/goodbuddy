@@ -874,7 +874,8 @@ describe('SupervisorWorkspace', () => {
         entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
     } } as never
     render(<SupervisorWorkspace tab="graph" />)
-    fireEvent.click(await screen.findByRole('tab', { name: '故事 4' }))
+    // Only stories with events in this review are listed: 笔记 and the empty thread are not.
+    fireEvent.click(await screen.findByRole('tab', { name: '故事 2' }))
     expect(stories).toHaveBeenCalledWith({ scope: { kind: 'global' } })
     const list = screen.getByRole('complementary', { name: '图谱选择' })
     expect(within(list).getByRole('region', { name: 'goodbuddy' })).toBeInTheDocument()
@@ -891,7 +892,7 @@ describe('SupervisorWorkspace', () => {
     // Event detail: the story picker offers only the event's own project stories, not cross stories.
     fireEvent.click(within(inspector).getByRole('button', { name: /决定/ }))
     const picker = await within(inspector).findByRole('combobox', { name: '所属故事' })
-    expect(within(picker).getAllByRole('option').map(option => option.textContent)).toEqual(['暂不归类', '监督者', '· 回顾算法', '笔记'])
+    expect(within(picker).getAllByRole('option').map(option => option.textContent)).toEqual(['暂不归类', '监督者', '\u2003回顾算法', '笔记'])
     fireEvent.change(picker, { target: { value: '' } })
     await waitFor(() => expect(storyAction).toHaveBeenCalledWith({ action: 'move', eventId: 'event-1', storyId: null }))
   })

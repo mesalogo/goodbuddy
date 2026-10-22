@@ -108,6 +108,17 @@ export function layout(node: StoryNode, from: number, to: number): void {
   let at = from
   kids.forEach((kid, index) => { const width = (to - from) * weights[index]! / total; layout(kid, at, at + width); at += width })
 }
+/**
+ * Story shares of one moment, in a stable order (most events first, then first appearance): one band per moment
+ * is split along the board by these shares, so concurrent stories stay visible without stacking bands.
+ */
+export function storyShares(cluster: StoryCluster): Array<{ storyId?: string; share: number }> {
+  const counts = new Map<string | undefined, number>()
+  for (const event of cluster.events) counts.set(event.storyId, (counts.get(event.storyId) ?? 0) + 1)
+  const order = [...counts.keys()]
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || order.indexOf(a[0]) - order.indexOf(b[0]))
+    .map(([storyId, count]) => ({ storyId, share: count / cluster.events.length }))
+}
 
 /** Turn length keeps about 8 turns, at most 14, for any span from hours to years. */
 export function storyWindow(from: number, to: number, turnHours?: number): StoryWindow {
@@ -160,6 +171,14 @@ export function timelineSegments(events: StoryEventPoint[], window: StoryWindow)
     .sort((a, b) => b.t - a.t || a.id.localeCompare(b.id))
   const boundaries = [...new Set([window.from, window.to, ...intervals.flatMap(event => [Math.max(window.from, event.t), Math.min(window.to, event.end!)])])].sort((a, b) => a - b)
   return boundaries.slice(0, -1).map((from, index) => ({ from, to: boundaries[index + 1]!, event: intervals.find(event => event.t <= from && event.end! > from) }))
+}
+/** The story most events in a cluster belong to (ties: earliest event's story); undefined when none is assigned. */
+export function dominantStory(cluster: StoryCluster): string | undefined {
+  const counts = new Map<string, number>()
+  for (const event of cluster.events) if (event.storyId) counts.set(event.storyId, (counts.get(event.storyId) ?? 0) + 1)
+  let best: string | undefined, top = 0
+  for (const event of cluster.events) { const n = event.storyId ? counts.get(event.storyId)! : 0; if (n > top) { top = n; best = event.storyId } }
+  return best
 }
 /** Events closer than `span` (ms) along time merge into one band; zooming in re-splits them. */
 export function clusterEvents(events: StoryEventPoint[], span: number): StoryCluster[] {

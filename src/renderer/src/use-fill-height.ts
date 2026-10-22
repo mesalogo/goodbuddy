@@ -23,14 +23,25 @@ export function useFillHeight(ref: RefObject<HTMLElement | null>, enabled: boole
       element.style.setProperty('--fill-height', `${height}px`)
     }
     measure()
-    const observer = new ResizeObserver(measure)
+    // Content above the element (notices, toolbars, headers) moves its top. Elements that appear or disappear
+    // there do not resize anything we observe, so layout changes are re-measured once per frame instead.
+    let frame: number | undefined
+    const schedule = () => { if (frame === undefined) frame = requestAnimationFrame(() => { frame = undefined; measure() }) }
+    const observer = new ResizeObserver(schedule)
     observer.observe(scroller)
-    // Content above the element (notices, toolbars, headers) moves its top: observe earlier siblings up the tree.
-    // Parents are not observed, since the element's own height changes theirs.
-    for (let node: HTMLElement | null = element; node && node !== scroller; node = node.parentElement) {
-      for (let sibling = node.previousElementSibling; sibling; sibling = sibling.previousElementSibling) observer.observe(sibling)
+    const observeSiblings = () => {
+      // Parents are not observed, since the element's own height changes theirs.
+      for (let node: HTMLElement | null = element; node && node !== scroller; node = node.parentElement) {
+        for (let sibling = node.previousElementSibling; sibling; sibling = sibling.previousElementSibling) observer.observe(sibling)
+      }
     }
-    window.addEventListener('resize', measure)
-    return () => { observer.disconnect(); window.removeEventListener('resize', measure); element.style.removeProperty('--fill-height') }
+    observeSiblings()
+    const mutations = new MutationObserver(() => { observeSiblings(); schedule() })
+    mutations.observe(scroller, { childList: true, subtree: true })
+    window.addEventListener('resize', schedule)
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      observer.disconnect(); mutations.disconnect(); window.removeEventListener('resize', schedule); element.style.removeProperty('--fill-height')
+    }
   }, [ref, enabled, bottomGap, minimum])
 }

@@ -133,7 +133,7 @@ export function SupervisionStoryDetail({ story, stories, pending, canUndo, onAct
     </form>}
     {targets.length > 0 && <div className="supervisor-workspace__story-merge">
       <label>{t('supervisor.stories.mergeInto')}
-        <select value={mergeInto} disabled={pending} onChange={event => setMergeInto(event.target.value)}>
+        <select className="field-control" value={mergeInto} disabled={pending} onChange={event => setMergeInto(event.target.value)}>
           <option value="">{t('supervisor.stories.chooseStory')}</option>
           {targets.map(other => <option key={other.id} value={other.id}>{other.name}</option>)}
         </select>
@@ -173,10 +173,10 @@ export function SupervisionEventStory({ eventId, projectId, stories, pending, on
   if (!options.length && !current) return null
   return <label className="supervisor-workspace__event-story">
     {t('supervisor.stories.primary')}
-    <select value={current?.id ?? ''} disabled={pending}
+    <select className="field-control" value={current?.id ?? ''} disabled={pending}
       onChange={event => void onAct({ action: 'move', eventId, storyId: event.target.value || null })}>
       <option value="">{t('supervisor.stories.none')}</option>
-      {options.map(story => <option key={story.id} value={story.id}>{story.parentId ? `· ${story.name}` : story.name}</option>)}
+      {options.map(story => <option key={story.id} value={story.id}>{story.parentId ? `\u2003${story.name}` : story.name}</option>)}
     </select>
   </label>
 }
@@ -249,7 +249,7 @@ export function SupervisionExperienceDetail({ experience, experiences, pending, 
     </form>}
     {targets.length > 0 && <div className="supervisor-workspace__story-merge">
       <label>{t('supervisor.experiences.mergeInto')}
-        <select value={mergeInto} disabled={pending} onChange={event => setMergeInto(event.target.value)}>
+        <select className="field-control" value={mergeInto} disabled={pending} onChange={event => setMergeInto(event.target.value)}>
           <option value="">{t('supervisor.experiences.choose')}</option>
           {targets.map(other => <option key={other.id} value={other.id}>{other.statement}</option>)}
         </select>

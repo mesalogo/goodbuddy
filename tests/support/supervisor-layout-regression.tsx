@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { HeartbeatCenter } from '../../src/renderer/src/HeartbeatCenter'
 import { SupervisionCard } from '../../src/renderer/src/RightAssistantSidebar'
 import { PageShell } from '../../src/renderer/src/WorkspacePrimitives'
+import { dominantStory } from '../../src/renderer/src/story-graph-3d-model'
 import { UiLocaleProvider } from '../../src/renderer/src/i18n/UiLocaleProvider'
 import type { SupervisionGraphView } from '../../src/shared/supervision-contracts'
 import type { AssistantProject } from '../../src/shared/assistant-contracts'
@@ -47,7 +48,7 @@ if (params.has('spiral')) {
       if (object.userData.cluster) {
         clusters++
         for (const event of object.userData.cluster.events) dots.add(event.id)
-        marks.push({ ids: object.userData.cluster.events.map((event: { id: string }) => event.id), storyId: object.userData.cluster.events[0]?.storyId,
+        marks.push({ ids: object.userData.cluster.events.map((event: { id: string }) => event.id), storyId: dominantStory(object.userData.cluster),
           color: ((object as import('three').Mesh).material as import('three').MeshStandardMaterial).color.getHexString() })
       }
       if (object.userData.timeline) {

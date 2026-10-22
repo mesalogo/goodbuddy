@@ -768,9 +768,21 @@
   overflow: auto;
   scrollbar-width: thin;
 }
+/* Five categories do not fit one row of a narrow column: wrap instead of a horizontal scrollbar. */
+.supervisor-workspace__graph-list > .page-tabs {
+  flex-wrap: wrap;
+  overflow: visible;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: var(--space-1);
+}
 .supervisor-workspace__graph-list .page-tabs__tab {
   gap: var(--space-1);
-  padding-inline: var(--space-1);
+  padding-inline: var(--space-2);
+}
+/* Scrolling columns end with breathing room, so their last item is never cut by the panel edge. */
+.supervisor-workspace__graph-list > .supervisor-workspace__list-panel {
+  padding-bottom: var(--space-2);
 }
 .supervisor-workspace__list-panel > button,
 .supervisor-workspace__list-row > button,

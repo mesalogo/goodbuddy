@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import * as THREE from 'three'
 import type { SupervisionAttentionSlot, SupervisionGraphView } from '../../shared/supervision-contracts'
 import type { SupervisionExperience, SupervisionStory } from '../../shared/supervision-story-contracts'
-import { buildStoryTree, clusterEvents, experienceLinks, findNode, radiusLevels, selectionFocus, storyWindow, timelineSegments, visibleLevel, type ExperienceLink, type StoryCluster, type StoryNode, type StorySelection } from './story-graph-3d-model'
+import { buildStoryTree, clusterEvents, dominantStory, experienceLinks, storyShares, findNode, radiusLevels, selectionFocus, storyWindow, timelineSegments, visibleLevel, type ExperienceLink, type StoryCluster, type StoryNode, type StorySelection } from './story-graph-3d-model'
 
 /*
  * 3D story view: one helix of time inside, story staves on the outer cylinder.
@@ -87,7 +87,9 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
   const [focusId, setFocusId] = useState('root')
   const focus = findNode(tree, focusId) ?? tree
   const selectionKey = JSON.stringify([selectedStoryId, selectedEventId, selectedExperienceId])
-  const [previousSelection, setPreviousSelection] = useState('')
+  // A selection that already exists when the view opens (e.g. the default event in the details) is highlighted
+  // but does not move the camera: the view opens on the whole spiral. Later selections focus as usual.
+  const [previousSelection, setPreviousSelection] = useState(selectionKey)
   const [request, setRequest] = useState<{ selection: StorySelection }>()
   const [resolvedRequest, setResolvedRequest] = useState<typeof request>()
   if (previousSelection !== selectionKey) {
@@ -222,18 +224,25 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
         const mesh = new THREE.Mesh(geometry, flat(color, emphasis === 'focus' ? 0.3 : emphasis === 'dim' ? 0.05 : 0.15))
         mesh.userData.node = stave
         world.add(mesh); meshes.push(mesh)
-        const owners = [...new Set(stave.events.map(event => event.storyId))]
-        const clusters = owners.flatMap(id => clusterEvents(stave.events.filter(event => event.storyId === id), span))
+        const clusters = clusterEvents(stave.events, span)
         groups.set(stave.id, clusters)
         for (const cluster of clusters) {
-          const color = storyColor(cluster.events[0]?.storyId)
-          const arc = Array.from({ length: 11 }, (_, i) => on(cluster.t, a0 + (a1 - a0) * i / 10, STAVE_R + 0.6))
           const active = cluster.events.some(event => event.id === state.selected)
-          world.add(tube(arc, (Math.min(6, 1.3 + Math.log2(cluster.events.length) * 1.1) + (active ? 2 : 0)) * 0.45, solid(color, emphasis === 'dim' ? 0.3 : 0.9), 20))
+          const radius = (Math.min(6, 1.3 + Math.log2(cluster.events.length) * 1.1) + (active ? 2 : 0)) * 0.45
+          // One band per moment, segmented along the board by each story's share of the events.
+          let from = a0
+          for (const { storyId, share } of storyShares(cluster)) {
+            const to = from + (a1 - a0) * share, steps = Math.max(2, Math.ceil(10 * share))
+            const arc = Array.from({ length: steps + 1 }, (_, i) => on(cluster.t, from + (to - from) * i / steps, STAVE_R + 0.6))
+            const band = tube(arc, radius, solid(storyColor(storyId), emphasis === 'dim' ? 0.3 : 0.9), steps * 2)
+            band.userData.band = storyId ?? null
+            world.add(band)
+            from = to
+          }
         }
         // Every event is represented at the root; connectors emphasize focus and selection only.
         for (const cluster of clusters) {
-          const color = storyColor(cluster.events[0]?.storyId)
+          const color = storyColor(dominantStory(cluster))
           const p = helix(cluster.t), active = cluster.events.some(event => event.id === state.selected)
           if (emphasis === 'focus' || active) world.add(tube([p, on(cluster.t, center(stave))], active ? 0.9 : 0.5, solid(color, active ? 1 : 0.6), 2))
           const dot = new THREE.Mesh(own(new THREE.SphereGeometry(Math.min(6, 2.2 + Math.log2(cluster.events.length)) + (active ? 1.5 : 0), 16, 12)), solid(color, emphasis === 'dim' ? 0.3 : 1))
@@ -279,8 +288,15 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
       if (Math.abs(clusterSpan() - builtSpan) > builtSpan * 0.5) rebuild()
       renderer.render(scene, view3d)
       ctx.clearRect(0, 0, width, height)
+      // Turn labels give way to event marks, whose counts are drawn on top of the helix.
+      const marks = meshes.filter(mesh => mesh.userData.cluster).map(mesh => project(mesh.position))
       ctx.font = '10px system-ui'; ctx.fillStyle = muted
-      for (const time of ticks) { const p = project(helix(time)); if (!p.behind) ctx.fillText(dateText(time), p.x + 6, p.y + 3) }
+      for (const time of ticks) {
+        const p = project(helix(time)); if (p.behind) continue
+        const text = dateText(time), w = ctx.measureText(text).width
+        if (marks.some(mark => mark.x > p.x - 8 && mark.x < p.x + w + 14 && Math.abs(mark.y - p.y) < 10)) continue
+        ctx.fillText(text, p.x + 6, p.y + 3)
+      }
       // Names only for staves facing the viewer, without overlaps; the focused stave always.
       const direction = view3d.position.clone().normalize(), placed: number[][] = []
       const labels = staves.map(stave => ({ stave, facing: Math.cos(center(stave)) * direction.x + Math.sin(center(stave)) * direction.z,
