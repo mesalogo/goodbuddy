@@ -191,6 +191,10 @@ export class OpenCodeSubagentProgress {
       })
       if (!event) return undefined
       const previous = this.tasks.get(callId)
+      // Native abort precedes the parent Task's error/completion frame.
+      if (previous?.event.state === 'cancelled') {
+        return { ...previous.event, progress: [...previous.blocks] }
+      }
       const metadata = part.state.metadata
       const task = {
         event,
@@ -206,6 +210,11 @@ export class OpenCodeSubagentProgress {
       (candidate) => candidate.sessionId === properties.sessionID
     ) ?? (ownerCallId ? this.tasks.get(ownerCallId) : undefined)
     if (!task) return undefined
+    if (value.type === 'session.error' && isRecord(properties.error) &&
+      properties.error.name === 'MessageAbortedError') {
+      task.event = { ...task.event, state: 'cancelled' }
+      return { ...task.event, progress: [...task.blocks] }
+    }
     if (value.type === 'message.updated' && isRecord(properties.info)) {
       this.roles.set(String(properties.info.id), String(properties.info.role))
       return undefined
@@ -277,7 +286,7 @@ export class OpenCodeSubagentProgress {
       }
       return event
     }
-    task.event = event
-    return { ...event, progress: [...task.blocks] }
+    if (task.event.state !== 'cancelled') task.event = event
+    return { ...task.event, progress: [...task.blocks] }
   }
 }

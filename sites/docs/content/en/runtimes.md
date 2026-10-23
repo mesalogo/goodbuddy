@@ -12,7 +12,7 @@ A Runtime selects the execution path for a request. A connection answers which m
 | DeepSeek Harness | A fixed host and compatible plugin capabilities | GoodBuddy-managed compatible connection |
 | Factory Droid (planned) | Native sessions, background tasks, local or in-network models, and airgapped coding | Planned mapping from GoodBuddy model profiles to Droid BYOK custom models |
 
-Use Direct models for ordinary questions and retrieval. Choose OpenCode or Continue for continuing project-file and command work. Choose DeepSeek Harness when its fixed host capabilities fit. Factory Droid is in design and validation, with native `stream-jsonrpc` planned for BYOK, questions, and conversation background tasks. Product integration is not implemented, and independent background-task stopping remains unverified. Tools and native questions differ by Runtime. See [Factory Droid Airgap Runtime design](https://github.com/mesalogo/goodbuddy/blob/main/docs/features/factory-droid-airgap/README.md).
+Use Direct models for ordinary questions and retrieval. Choose OpenCode or Continue for continuing project-file and command work. Choose DeepSeek Harness when its fixed host capabilities fit. Factory Droid is in design and validation, with the native SDK and a local daemon planned for BYOK, questions, and background tasks. Todo, Skills/MCP and background subagent controls have validation evidence; product UI, targeted background-shell stopping and the full composition remain unverified. Tools and native questions differ by Runtime. See [Factory Droid Airgap Runtime design](https://github.com/mesalogo/goodbuddy/blob/main/docs/agent-runtime/providers/factory-droid/README.md).
 
 ## Selection and capabilities
 

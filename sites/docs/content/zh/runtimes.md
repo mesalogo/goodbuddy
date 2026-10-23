@@ -12,7 +12,7 @@ Runtime 决定请求由哪条执行路径处理。它与模型连接不同：连
 | DeepSeek Harness | 固定 Host 和兼容插件能力 | GoodBuddy 管理的兼容连接 |
 | Factory Droid（规划中） | 原生会话、后台任务、本地或内网模型、Airgap 编程工作 | 计划将 GoodBuddy 模型配置映射为 Droid BYOK custom model |
 
-先用直连模型完成普通问答或知识检索；需要持续操作项目文件、命令和 Skills 时选择 OpenCode 或 Continue；需要其固定 Host 能力时再选择 DeepSeek Harness。Factory Droid 目前处于设计与验证阶段，计划通过原生 `stream-jsonrpc` 接入 BYOK、问答和会话后台任务；产品尚未接入，后台任务独立停止仍待验证。不同 Runtime 的工具、问答和原生客户端能力可能不同，选择器会显示当前可用项。详见 [Factory Droid Airgap Runtime 设计](https://github.com/mesalogo/goodbuddy/blob/main/docs/features/factory-droid-airgap/README.md)。
+先用直连模型完成普通问答或知识检索；需要持续操作项目文件、命令和 Skills 时选择 OpenCode 或 Continue；需要其固定 Host 能力时再选择 DeepSeek Harness。Factory Droid 目前处于设计与验证阶段，计划通过原生 SDK 和本地 daemon 接入 BYOK、问答和会话后台任务；已验证 Todo、Skills/MCP 和后台子代理控制，产品 UI、后台 Shell 独立停止及完整组合仍待接入验证。不同 Runtime 的工具、问答和原生客户端能力可能不同，选择器会显示当前可用项。详见 [Factory Droid Airgap Runtime 设计](https://github.com/mesalogo/goodbuddy/blob/main/docs/agent-runtime/providers/factory-droid/README.md)。
 
 ## 选择范围和能力
 

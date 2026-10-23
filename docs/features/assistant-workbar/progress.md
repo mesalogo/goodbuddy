@@ -171,7 +171,7 @@ and macOS/Linux desktop image rendering have not been run for this change.
 本机 OpenCode 提交失败后会结束所属 SSE 等待；远程原生 Session 启动等待期间，
 取消与其他 binding 的控制请求可继续处理。保留无默认 Prompt 总时限、共享 peer
 隔离、取消后的会话清理及原有事件顺序。实现规则见
-[进程复用设计](./runtime-process-reuse-technical-design.md)，旧/新回归、当前源码
+[进程复用设计](../../agent-runtime/design/process-reuse.md)，旧/新回归、当前源码
 Windows/Linux x64 实测、真实数据检查及本轮 5 次文本模型调用计数统一记录在
 [统一执行进度](../unified-execution/progress.md#2026-10-05-runtime-生命周期审查修复)。
 
@@ -223,7 +223,7 @@ OpenCode 用例单独复跑通过；监督者布局未重复运行。未改动�
 ## 2026-10-01：自定义 MCP 失败中断回复
 
 已修复共用网关将单个上游发现失败升级为整轮失败的问题，行为见
-[本地 MCP 初始化失败恢复](./runtime-process-reuse-technical-design.md#41-本地-mcp-初始化失败恢复)。
+[本地 MCP 初始化失败恢复](../../agent-runtime/design/process-reuse.md#41-本地-mcp-初始化失败恢复)。
 正常服务的连接继续复用，失败服务不进入工具列表，动态刷新失败也按服务隔离；
 取消和授权撤销继续生效。初次失败的服务在下一请求重试，原有连接超时未改。
 
@@ -242,7 +242,7 @@ Magic Notes 采集的 `memo is not defined`，以及终态探针和手动压缩�
 
 ## 2026-10-01：本地 MCP 晚到初始化覆盖新连接
 
-根因修复见[本地 MCP 初始化失败恢复](./runtime-process-reuse-technical-design.md#41-本地-mcp-初始化失败恢复)。
+根因修复见[本地 MCP 初始化失败恢复](../../agent-runtime/design/process-reuse.md#41-本地-mcp-初始化失败恢复)。
 已核对随包 OpenCode 1.18.29：`MCP.add` 的初始化不随客户端取消而中止，完成后写入同名状态，
 并关闭该名称下已有的连接；`disconnect` 只处理当时已登记的客户端。旧实现在 `mcp.add`
 超时或取消后仍复用同一名称，前一轮的晚到初始化（授权已撤销，结果为 `failed`）会覆盖下一轮
@@ -259,7 +259,7 @@ Magic Notes 采集的 `memo is not defined`，以及终态探针和手动压缩�
 
 ## 2026-09-30：本地 MCP 连接诊断与恢复
 
-已实现[本地 MCP 初始化失败恢复](./runtime-process-reuse-technical-design.md#41-本地-mcp-初始化失败恢复)。
+已实现[本地 MCP 初始化失败恢复](../../agent-runtime/design/process-reuse.md#41-本地-mcp-初始化失败恢复)。
 常驻 HTTP 网关和请求级授权保留；内置及自定义 MCP 对明确的暂时性传输故障最多重试一次，
 必须先成功清理失败连接。SDK 返回错误和抛出错误均有覆盖，未知失败、HTTP/API 拒绝和
 鉴权错误不重试。界面保留脱敏错误详情，两端失败诊断通过令牌摘要关联。
@@ -291,7 +291,7 @@ Windows 本机实测启动准备：首次 2.9 秒，之后 19–44 ms。OpenCode
 
 ## 2026-09-28：消息取消与失败展示
 
-消息终态按[Runtime 交互边界](./runtime-interactions.md)保存和展示。取消使用结构化
+消息终态按[Runtime 交互边界](../../agent-runtime/contracts/interactions.md)保存和展示。取消使用结构化
 `terminalStatus`，保持已有回答；终止提示不再补入正文。“重新编辑”只回填并聚焦输入框，
 没有可回填文字时隐藏入口。旧快照只对精确重复的形态隐藏状态副本，保留原正文。
 深色主题已移除覆盖失败提示颜色的通用规则；检索和压缩记录不再屏蔽终态的无障碍角色。
@@ -347,7 +347,7 @@ Windows Electron 回归覆盖 `300px` 工作栏、默认四页签和 16 个含�
 ## 2026-09-27 Continue Update Status
 
 The shared Continue adapter now skips the update service before it emits the
-checking state; behavior is specified in the [native client design](./runtime-native-client-proposal.md#62-continue-与-opencode).
+checking state; behavior is specified in the [native client design](../../agent-runtime/design/native-client.md#62-continue-与-opencode).
 The regression executes the patched method and verifies idle-only state when
 disabled, while retaining the original path when the flag is absent.
 
@@ -431,7 +431,7 @@ remains seven); the OpenCode regression uses loopback model fixtures.
 
 ## 2026-09-27 Local Native Client Validation
 
-Scope: [native client proposal](./runtime-native-client-proposal.md), FR-2/3/5/6/7/8,
+Scope: [native client proposal](../../agent-runtime/design/native-client.md), FR-2/3/5/6/7/8,
 US-2/4/5/6/8, local portions of P1/P2/P3/P5. Source baseline:
 `55efca3ee1d8a491c4d9709888e302188cd988bd` plus the concurrent working tree.
 
@@ -548,7 +548,7 @@ acceptance remains separate. See [Story Graph validation](../conversation-superv
 
 - Main 在收到问题时保存消息位置块，而不是等回答成功才追加；前台及重启恢复的实时待答
   快照、带来源的语义事件投影共用同一去重函数。答案写入不移动位置块，旧消息不补造历史
-  顺序；规则见[Runtime 交互边界](./runtime-interactions.md#运行与失败)。未改变 schema。
+  顺序；规则见[Runtime 交互边界](../../agent-runtime/contracts/interactions.md#运行与失败)。未改变 schema。
 - `npm exec -- vitest run src/main/assistant/assistant-database.test.ts src/main/ipc.test.ts`
   通过 227 项，覆盖真实 SQLite 的问题/正文/工具交错、重复和重放、回答/跳过、完成及
   重新打开，以及三个设置重载入口的并行远程问题恢复。
@@ -570,7 +570,7 @@ acceptance remains separate. See [Story Graph validation](../conversation-superv
 CN 项目创建。真实输入框发送产生清单更新，顶部和消息保存一致；退出重启后恢复完成
 与待办状态。修复实测发现的 CN 冷会话续发及重复序号问题，复验重启续发、点击停止和
 取消后再次发送通过。证据、调用口径及平台边界见
-[远程记录](../remote-host/runtime-checklist-validation.md#2026-09-19-联合包与完整桌面验收)。
+[远程记录](../../agent-runtime/validation/remote-checklist.md#2026-09-19-联合包与完整桌面验收)。
 
 任务与清单分别展开，容器高度有界，键盘可进入清单滚动区；状态图标不再影响文字
 基线。此前真实 Electron 视觉矩阵覆盖同时展开、长列表、窄窗口、浅深主题及 200% 缩放。
@@ -592,7 +592,7 @@ CL-P1、CL-P3 的远程 CN 源码已接入受管包、HTTP 宿主到 ACP 的适�
 Linux x64 当前源码与开发包通过验包、prepare/commit、Agent bootstrap/health、CN
 激活、真实模型清单新增/清空、未 ACK 断线重放、取消和同对话 Ask 续发。本轮新增
 17 个外部模型 HTTP 请求；精确分项、临时探针、已清理的 Host 目录及剩余验收见
-[远程执行清单验证记录](../remote-host/runtime-checklist-validation.md#cn-部署与生命周期)。
+[远程执行清单验证记录](../../agent-runtime/validation/remote-checklist.md#cn-部署与生命周期)。
 本阶段使用单 Runtime 开发包；后续联合包与完整桌面验证见上方 2026-09-19 记录。
 
 远程相关测试 27 文件、374 项通过；最终项目选择、顶部组件和安装管理 41 项、App
@@ -656,10 +656,10 @@ temporary directory; each run printed its dispatch count and structured results.
 
 - 复现并修复 OpenCode 迟到的会话取消中断下一条请求：同一次运行复用一个有界 abort，
   等待取消结束后释放会话锁；取消失败时移除对应绑定。规则见
-  [本机 OpenCode](./runtime-process-reuse-technical-design.md#4-本机-opencode)。
+  [本机 OpenCode](../../agent-runtime/design/process-reuse.md#4-本机-opencode)。
 - 复现并修复旧 streaming 快照覆盖本地终态后停止按钮残留。完成、取消两种回归在
   修复前失败，修复后通过；连续两条消息结束后按钮恢复。规则见
-  [消息底部请求状态](./runtime-interactions.md#消息底部请求状态)。
+  [消息底部请求状态](../../agent-runtime/contracts/interactions.md#消息底部请求状态)。
 - App 257 项测试通过；最终 OpenCode Runtime、权限与真实 lifecycle 105 项通过。
   lifecycle 使用真实 OpenCode 二进制与 SDK、本地模型 fixture，验证延迟取消后同会话
   下一条正常完成及 SSE 回收。该轮外部真实模型调用 0 次；后续完整 App 实测见下文。
@@ -851,7 +851,7 @@ OS 按本轮目录核对无遗留 Electron／Node 进程，原始失败日志未
 ## 2026-09-15 Runtime 执行清单设计（未实现）
 
 对应 FR-CL1–FR-CL4。用户本轮明确只完善设计与进展文档，不改代码；
-[设计与验收](./runtime-checklist-technical-design.md)不代表功能已经接入或发布。
+[设计与验收](../../agent-runtime/design/checklist.md)不代表功能已经接入或发布。
 
 此前调研已通过真实模型完成以下本地测试；本次文档更新未重新运行测试：
 
@@ -886,7 +886,7 @@ Agent 已传递带 Session、binding/operation 归属的通知，桌面已有 AC
 ## 2026-09-14 Runtime 进程复用（实施中）
 
 对应 FR-RR1–FR-RR6，设计及完整验收清单见
-[Runtime 进程复用技术设计](./runtime-process-reuse-technical-design.md)。
+[Runtime 进程复用技术设计](../../agent-runtime/design/process-reuse.md)。
 用户已授权实施，本次复用改动尚未整体提交或发布，不包含在正式 Desktop 0.13.2 /
 Agent 0.11.25 中。最终验证结果见本节末尾，早期失败及中间状态按时间保留。
 
@@ -1308,7 +1308,7 @@ Runtime 句柄积累，但不构成整个 App 无泄漏证明。
 ## 2026-09-14 Runtime 资源调研与方案（未实施）
 
 - 按用户要求完成文档与源码调研，方案见
-  [Runtime 进程复用技术设计](./runtime-process-reuse-technical-design.md)，对应
+  [Runtime 进程复用技术设计](../../agent-runtime/design/process-reuse.md)，对应
   FR-RR1–FR-RR6。当前工作仅文档和本机忽略目录内的隔离探针，未修改 Runtime/Agent
   源码、停止用户 Runtime、清理用户数据或准备新发布。
 - 源码基线 `de14a6157a6c34f1e3ef22619eca374a50a83706`，保留此前活动 UI 修复。
@@ -1351,7 +1351,7 @@ Runtime 句柄积累，但不构成整个 App 无泄漏证明。
 
 ## 2026-09-14 多 Runtime 工具操作摘要
 
-显示与事件合并规则见[工具操作摘要](./runtime-interactions.md#工具操作摘要)。Continue、
+显示与事件合并规则见[工具操作摘要](../../agent-runtime/contracts/interactions.md#工具操作摘要)。Continue、
 DeepSeek Harness 和直连模型已接入共享摘要函数，完成事件缺少输入时保留已有摘要。
 
 Windows 完整 App 使用当前生产 Main、Preload、Renderer 和隔离配置，模型为
@@ -1371,7 +1371,7 @@ Windows 完整 App 使用当前生产 Main、Preload、Renderer 和隔离配置�
 首轮 Ask 仅提供配置工具，未能读取文件；改用 Execute 成功。DS 前两次因 Windows
 工作区路径写法与 Host `realpath` 比较不一致而返回 ACP `-32602`，均未调用模型；
 同目录改写路径仍复用缓存 Runtime，改用全新规范路径目录后成功。该路径问题随后由
-[DS 工作区路径修复](../deepseek-harness/progress.md#2026-09-14-windows-工作区路径修复)
+[DS 工作区路径修复](../../agent-runtime/providers/deepseek-harness/progress.md#2026-09-14-windows-工作区路径修复)
 单独处理，新增验证计数见该记录，不计入上表。驱动的包解析、
 DOM 定位及卡片比较器失败已记录，修正比较器后的复验没有追加模型请求。
 
@@ -1643,13 +1643,13 @@ src/agent-daemon/runtime-composition.test.ts src/main/ipc.test.ts` 为 179 项�
 - 本节早期验证未操作 Electron 窗口、重装共享 Agent 或模拟整机重启；问答队列的界面行为由
   既有 App/ChatTimeline 测试覆盖。同一存活 Prompt 的待答补发由 Runtime 回归验证，
   不把它描述成 Agent 进程重启后的问题恢复。旧 Agent 和任意第三方 ACP 服务的范围见
-  [Runtime 交互边界](./runtime-interactions.md)。
+  [Runtime 交互边界](../../agent-runtime/contracts/interactions.md)。
 
 ## 2026-09-13 并行提问顺序回答
 
 - 修复同一前台请求的后续提问覆盖未回答问题：Renderer 按 ID 保存待答队列，逐次显示、
   回答和跳过，保留失败重试输入；运行中快照刷新保留队列，终态清理全部待答项。
-  交互和归属限制见 [Runtime 交互边界](./runtime-interactions.md#运行与失败)。
+  交互和归属限制见 [Runtime 交互边界](../../agent-runtime/contracts/interactions.md#运行与失败)。
 - 本机 SDK 使用已收到的 Task 子会话元数据传递可选 `childTaskId`；Task 卡片显示待答状态，
   展开后可定位并聚焦队首表单。没有已知 Task 关联的问题仍能回答。
 - 六份相关测试文件共 346 项通过：`App.test.tsx`、`ChatTimeline.test.tsx`、
@@ -1720,7 +1720,7 @@ src/agent-daemon/runtime-composition.test.ts src/main/ipc.test.ts` 为 179 项�
 ## 2026-09-10 提交后保留问答
 
 - 桌面端在提交成功后保留结构化问答回顾，支持多轮回答、跳过及本地会话重新加载；
-  交互规则见 [Runtime 交互边界](./runtime-interactions.md#运行与失败)。
+  交互规则见 [Runtime 交互边界](../../agent-runtime/contracts/interactions.md#运行与失败)。
 - App 回归覆盖提交与重载、下一轮问题提前到达、终态先于提交返回、提交失败；数据库
   回归覆盖完整替换、增量保存、关闭重开、多选及超过 1,000 字符的自定义答案。
 - `npm test`：3,900 项通过、66 项跳过，Agent 离线依赖清单测试在 60 秒超时；
@@ -1805,7 +1805,7 @@ src/agent-daemon/runtime-composition.test.ts src/main/ipc.test.ts` 为 179 项�
 - 桌面使用确定性 loopback 模型服务驱动真实生产路径，共 24 次本地 completion 请求，
   未发出外部模型请求；可选真实 Provider 探针没有找到已加密保存的 OpenAI 兼容文本连接，
   未据此宣称桌面真实模型验收通过。Ask 与编程 Subagent 的桌面结果见
-  [直连模型验收记录](../direct-model-agent/progress.md#2026-09-10-提交审查后的桌面-ui-验收)。
+  [直连模型验收记录](../../agent-runtime/providers/direct-model/progress.md#2026-09-10-提交审查后的桌面-ui-验收)。
   测试应用与具名浏览器会话已退出，所属 Electron/Node 进程及 fixture 监听端口均为 0；
   临时截图和隔离 profile 保留在本机测试目录，不进入仓库。
 
@@ -1940,13 +1940,13 @@ src/agent-daemon/runtime-composition.test.ts src/main/ipc.test.ts` 为 179 项�
   `npm run release:notes:verify`、差异空白与文档相对链接检查通过。本机和远端的
   测试进程已回收，安装版和正式 Host 环境未改动；正式发布仍需候选 CI 与资产核实。
   运行策略见
-  [托管 Runtime 并行与输出](./runtime-interactions.md#托管-runtime-的并行与输出)。
+  [托管 Runtime 并行与输出](../../agent-runtime/contracts/interactions.md#托管-runtime-的并行与输出)。
 
 ## 2026-09-08 消息底部请求状态
 
 - 已接入本机 OpenCode 父会话的原生重试等待及开始事件；直连模型把退避等待与实际发起
   重试分开显示，Continue 初始文案改为中性的请求处理。显示规则和未接入边界见
-  [消息底部请求状态](./runtime-interactions.md#消息底部请求状态)。
+  [消息底部请求状态](../../agent-runtime/contracts/interactions.md#消息底部请求状态)。
 - 消息底部按真实事件显示准备、工具、待回答及终态；有新进展时清除旧状态，结束后不
   接受迟到状态覆盖。仅该处状态点改为静态，会话列表闪点、发送和停止按钮未改动。
 - Windows 隔离开发桌面通过实际 UI 发送验证 OpenCode 的 503/Retry-After 等待、
@@ -1992,7 +1992,7 @@ src/agent-daemon/runtime-composition.test.ts src/main/ipc.test.ts` 为 179 项�
   回传、yes/no、选项及跳过均验证通过，自定义答案不再误标为选项。
 - DSH 活跃 Execute 的 ACP 权限回调不再等待第二次 authorizer，Ask 继续拒绝；未添加
   通用业务问答工具或从终端日志猜测确认意图。完整范围见
-  [Runtime 交互边界](./runtime-interactions.md)。
+  [Runtime 交互边界](../../agent-runtime/contracts/interactions.md)。
 - 当前源码 Linux x64 Agent 通过签名组包、生产安装、真实 Ask/Execute、原生子代理
   工作区外写入、重连同一 daemon 和 stop/bootstrap。实机回归同时定位并修复了握手
   Base64URL 响应误用 ID 校验及断流未结算等待；13 项 Unix 原生端点测试和连续 20 次

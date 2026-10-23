@@ -2,7 +2,7 @@
 
 ## 2026-09-29：执行方式与模型分层选择
 
-设计见[执行方式与模型选择设计](./runtime-selection-design.md)。
+设计见[执行方式与模型选择设计](../../agent-runtime/contracts/selection.md)。
 
 ### 已完成（未提交）
 
@@ -23,8 +23,8 @@
 ### 待办
 
 - 在运行中的应用里目测两栏选择器（窄窗口、深色主题、长名称）。
-- 移除全局 `provider`，见[设计第 6 节](./runtime-selection-design.md#6-全局-provider历史遗留待移除)。
-- 用途模型，见[设计第 7 节](./runtime-selection-design.md#7-用途模型规划未实现)。
+- 移除全局 `provider`，见[设计第 6 节](../../agent-runtime/contracts/selection.md#6-全局-provider历史遗留待移除)。
+- 用途模型，见[设计第 7 节](../../agent-runtime/contracts/selection.md#7-用途模型规划未实现)。
 
 
 ## 2026-09-27：窄容器协议显示

@@ -1261,14 +1261,6 @@ export class GoodBuddyHarnessControlPlane {
       cancel: async ({ sessionId }) => {
         const record = this.sessions.get(sessionId)
         record?.handle.agent.cancel({ kind: 'user' })
-        if (record?.inflight) {
-          const inflight = record.inflight
-          if (inflight.pendingDeltaTimer) {
-            clearTimeout(inflight.pendingDeltaTimer)
-          }
-          record.inflight = undefined
-          inflight.resolve('cancelled')
-        }
       },
       closeSession: async ({ sessionId }) => {
         await this.releaseSession(sessionId)

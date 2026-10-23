@@ -188,6 +188,11 @@ additional hardening beyond the actual internal-network threat model:
 
 - Organize feature documentation by product feature under
   `docs/features/<feature-name>/`, not by document type.
+- Agent Runtime is the user-selected cross-feature exception: use
+  `docs/agent-runtime/README.md` for the unified onboarding standard, with shared
+  contracts/designs and provider-specific documents in its subdirectories. Follow
+  `docs/agent-runtime/AGENTS.md`; keep general storage, Host deployment, and workbar
+  UI rules with their existing owners and link to them.
 - Treat each feature directory's `README.md` as its documentation entry point.
 - Follow `docs/features/AGENTS.md` for required document responsibilities,
   naming, traceability, progress evidence, and migration rules.

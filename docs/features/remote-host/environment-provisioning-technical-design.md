@@ -18,7 +18,7 @@ bootstrap 能力元数据。公开直连能力仍须完成本文末尾 GitHub/�
 
 2026-09-18 补注：现有单 Runtime 复合包格式也支持 CN，安装器按包内 Runtime 身份
 选择并登记 payload。CN 开发包的 Linux 验证及联合分发的剩余工作见
-[执行清单验证记录](./runtime-checklist-validation.md#cn-部署与生命周期)。
+[执行清单验证记录](../../agent-runtime/validation/remote-checklist.md#cn-部署与生命周期)。
 
 ## 设计结论
 

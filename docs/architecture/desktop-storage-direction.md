@@ -149,7 +149,7 @@ Renderer consolidation stays within existing domains:
 their existing owners.
 
 Runtime session behavior remains authoritative in the
-[reuse design](../features/assistant-workbar/runtime-process-reuse-technical-design.md).
+[reuse design](../agent-runtime/design/process-reuse.md).
 [Task timing](../features/task-and-job/technical-design.md) and
 [supervision model scheduling](../features/conversation-supervision/technical-design.md)
 retain their existing semantics. Ending an elapsed-time segment on abort does not

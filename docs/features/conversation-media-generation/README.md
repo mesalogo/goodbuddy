@@ -32,6 +32,6 @@
 “生成操作”指一次图片生成或编辑及其结果记录，不自动创建任务中心的 Task，也不引入新的通用 Job 调度系统。领域边界遵循 [Task 与 Job 模型](../task-and-job/task-and-job-model.md)。
 
 - [模型连接](../model-connections/README.md)：连接、凭据、协议及请求定制。
-- [直连文本 Agent](../direct-model-agent/README.md)：文本工具循环与上下文。
+- [直连文本 Agent](../../agent-runtime/providers/direct-model/README.md)：文本工具循环与上下文。
 - [远程主机](../remote-host/README.md)：远程 Runtime 与桌面通信。
 - [统一界面规则](../../../UI-DESIGN.md)：控件、反馈和可访问性。

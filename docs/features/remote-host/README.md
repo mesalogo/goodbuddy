@@ -12,6 +12,9 @@
 
 ## 文档导航
 
+Runtime 规范与清单验证记录由 [Agent Runtime](../../agent-runtime/README.md)维护；
+本目录维护 Host、Agent 部署、连接与远程执行架构。
+
 | 文档 | 权威职责 |
 | --- | --- |
 | [产品需求](./prd.md) | 应用迁移、六平台适配范围、分期与产品验收；主机管理一期已实现 |
@@ -20,13 +23,13 @@
 | [实施进度](./progress.md) | 主机管理与云环境管理的已验证实现事实、验证结果和剩余工作 |
 | [远程主机与 Agent 技术设计](./technical-design.md) | 当前产品语义、Agent、Runtime、Workspace、协议、生命周期和验证事实 |
 | [远程环境准备技术设计](./environment-provisioning-technical-design.md) | Host 下载、GoodBuddy 传输、安装事务、更新和恢复边界 |
-| [执行清单验证记录](./runtime-checklist-validation.md) | 远程 OC/CN 原生清单、CN 开发包安装、取消及断线重放的实测结果与剩余验收 |
+| [执行清单验证记录](../../agent-runtime/validation/remote-checklist.md) | 远程 OC/CN 原生清单、CN 开发包安装、取消及断线重放的实测结果与剩余验收 |
 
 既有技术文档保留当前 SSH 行为及历史进度；PRD、逻辑和 UI 文档定义主机管理与云环境范围，
 实施进度只记录该范围的验证事实。验收场景随 PRD 维护，不单独创建 User Stories。
 
 跨会话共享 OpenCode 进程、ACP 连接与模型桥的实现设计，见
-[Runtime 进程复用技术设计](../assistant-workbar/runtime-process-reuse-technical-design.md#6-ssh-opencode-与-agent)。
+[Runtime 进程复用技术设计](../../agent-runtime/design/process-reuse.md#6-ssh-opencode-与-agent)。
 当前实现尚未发布；验收状态见[工作栏进度](../assistant-workbar/progress.md#2026-09-14-runtime-进程复用实施中)。
 
 更新退役、任务完成后 Runtime 回收和下一轮历史恢复的当前源码验证，见

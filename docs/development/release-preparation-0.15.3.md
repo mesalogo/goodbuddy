@@ -22,7 +22,7 @@
 取消和清理继续撤销；不修改远程工具通道或部署包，不需要重发 Agent 0.15.0。
 手动直连压缩仅用于本地文本会话，UI 与 IPC 均排除 SSH/远程直连入口。
 
-开发期证据分别见[直连模型进度](../features/direct-model-agent/progress.md)、
+开发期证据分别见[直连模型进度](../agent-runtime/providers/direct-model/progress.md)、
 [导航进度](../features/application-tool-navigation/progress.md)和
 [性能基准](../roadmap/product-performance-experience-improvement-plan.md)。
 开发期全量曾报告侧栏和笔记 Electron 用例失败，不把这些历史结果计为本候选通过。

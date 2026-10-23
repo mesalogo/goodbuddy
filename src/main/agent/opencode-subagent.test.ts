@@ -4,6 +4,45 @@ import { OpenCodeSubagentProgress, toOpenCodeSubagentEvent } from './opencode-su
 const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
 
 describe('OpenCode native subagent events', () => {
+  it.each(['MessageAbortedError', 'APIError', 'UnknownError'])(
+    'distinguishes native %s from task failure and retains sibling progress', name => {
+      const tracker = new OpenCodeSubagentProgress(requestId, 'parent')
+      const task = (callId: string, status: string) => ({
+        type: 'message.part.updated', properties: { sessionID: 'parent', part: {
+          id: callId, callID: callId, type: 'tool', tool: 'task', state: {
+            status, input: { subagent_type: 'general', prompt: 'Inspect' },
+            metadata: { sessionId: `${callId}-session` },
+            error: 'Aborted', output: 'Result'
+          }
+        } }
+      })
+      tracker.update(task('target', 'running'))
+      tracker.update(task('sibling', 'running'))
+      tracker.update({ type: 'message.part.delta', properties: {
+        sessionID: 'target-session', partID: 'text', field: 'text', delta: 'Retained work'
+      } })
+      const error = (sessionID: string) => ({ type: 'session.error', properties: {
+        sessionID, error: { name, data: { message: 'Aborted' } }
+      } })
+      expect(tracker.update(error('unrelated'))).toBeUndefined()
+      const cancelled = name === 'MessageAbortedError'
+      const terminal = tracker.update(error('target-session'))
+      if (cancelled) expect(terminal?.state).toBe('cancelled')
+      else expect(terminal).toBeUndefined()
+      const failed = tracker.update(task('target', 'error'))!
+      expect(failed.state).toBe(cancelled ? 'cancelled' : 'failed')
+      expect(failed.progress).toMatchObject([{ content: 'Retained work' }])
+      if (!cancelled) expect(failed.error).toBe('Aborted')
+      if (cancelled) {
+        expect(tracker.update(task('target', 'completed'))?.state).toBe('cancelled')
+        expect(tracker.retain(toOpenCodeSubagentEvent({ requestId, callId: 'target',
+          state: 'failed', input: { subagent_type: 'general', prompt: 'Inspect' }
+        })!).state).toBe('cancelled')
+      }
+      expect(tracker.update(task('sibling', 'completed'))?.state).toBe('completed')
+    }
+  )
+
   it('extracts ACP output objects without displaying protocol metadata', () => {
     const event = toOpenCodeSubagentEvent({
       requestId, callId: 'task', state: 'completed',

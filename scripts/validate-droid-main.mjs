@@ -12,6 +12,9 @@ import console from 'node:console'
 import { setTimeout, clearTimeout } from 'node:timers'
 import assert from 'node:assert/strict'
 import { validateNative } from './validate-droid-native.mjs'
+import { validateNative as validateCapabilities } from './validate-droid-capabilities.mjs'
+import { validateNative as validateTasks } from './validate-droid-tasks.mjs'
+import { validateNative as validateSession } from './validate-droid-session.mjs'
 /* global AbortController */
 
 const directory = process.env.GB_DROID_DIRECTORY
@@ -56,7 +59,9 @@ async function run(name, action) {
   const started = Date.now()
   try { const result = await action(); report.stages.push({ name, ok: true, ms: Date.now() - started, result }); output(report.stages.at(-1)); return result }
   catch (error) {
-    if (/timeout/i.test(error.message)) await send('session/cancel', { sessionId }, true)
+    if (/timeout/i.test(error.message) && child?.stdin.writable && sessionId) {
+      await send('session/cancel', { sessionId }, true).catch(() => {})
+    }
     report.stages.push({ name, ok: false, ms: Date.now() - started, error: safeError(error) }); output(report.stages.at(-1)); return undefined
   }
 }
@@ -74,7 +79,7 @@ async function start() {
   const env = {}
   for (const key of ['PATH', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT']) if (process.env[key]) env[key] = process.env[key]
   Object.assign(env, { HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local'), TEMP: directory, TMP: directory,
-    FACTORY_HOME_OVERRIDE: join(home, '.factory'), FACTORY_AIRGAP_ENABLED: '1', FACTORY_DROID_AUTO_UPDATE_ENABLED: '0', FACTORY_DISABLE_SETTINGS_PERSISTENCE: 'true' })
+    FACTORY_HOME_OVERRIDE: home, FACTORY_AIRGAP_ENABLED: '1', FACTORY_DROID_AUTO_UPDATE_ENABLED: '0', FACTORY_DISABLE_SETTINGS_PERSISTENCE: 'true' })
   child = spawn(binary, ['exec', '--output-format', 'acp', '--settings', join(directory, 'droid.json'), '--cwd', workspace], { cwd: workspace, env, stdio: 'pipe' })
   child.stderr.resume()
   createInterface({ input: child.stdout }).on('line', async line => {
@@ -187,7 +192,10 @@ async function main() {
   try {
     if (process.env.GB_DROID_NATIVE === 'true') {
       proxyMode = live ? 'live' : 'blocked'
-      report.native = await run('native', () => validateNative({ binary, directory, workspace, home, output, sanitize, live }))
+      const suite = process.env.GB_DROID_SUITE ?? 'native'
+      const validate = { native: validateNative, capabilities: validateCapabilities, tasks: validateTasks, session: validateSession }[suite]
+      assert(validate, 'Unknown Droid validation suite')
+      report.native = await run(suite, () => validate({ binary, directory, workspace, home, output, sanitize, live }))
       return
     }
     report.initialize = await run('initialize', start)

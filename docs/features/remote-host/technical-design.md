@@ -52,7 +52,7 @@ Agent `0.11.23` 提供，显式请求期限与取消仍有效。当前问答源�
 
 进程 owner 与 binding 拆分、单 ACP 连接分派、会话级权限以及模型桥逐 operation
 路由的唯一方案见
-[Runtime 进程复用技术设计 §6](../assistant-workbar/runtime-process-reuse-technical-design.md#6-ssh-opencode-与-agent)。
+[Runtime 进程复用技术设计 §6](../../agent-runtime/design/process-reuse.md#6-ssh-opencode-与-agent)。
 实施必须保留本文件的 released binding、Agent-owned Prompt、transcript/ACK、模型调用
 结果不确定性与断线规则，并在开发期间执行下文真实 Host 验证，不为复用新增持久化账本。
 当前源码已接入共享 process owner、`AgentAcpConnection` 和逐 operation 模型路由；
@@ -162,7 +162,7 @@ Detached GoodBuddy Agent
 ## Agent 安装与生命周期
 - 托管 OpenCode 的直接 ACP profile 与模型桥最终配置都设置 `snapshot: false`，避免
   GoodBuddy 不使用的自动 Git 快照摘要阻塞原生执行；策略和保留的文件、Git、子代理能力
-  见 [Runtime 并行与输出边界](../assistant-workbar/runtime-interactions.md#托管-runtime-的并行与输出)。
+  见 [Runtime 并行与输出边界](../../agent-runtime/contracts/interactions.md#托管-runtime-的并行与输出)。
   此设置随新启动的 Agent Runtime 生效，不改写用户仓库或已运行进程的配置。
 
 - Agent bundle 通过 manifest、Ed25519 签名、payload digest、平台和架构校验。
@@ -330,7 +330,7 @@ Node.js、Python 等工具执行环境同样不修改或同步到 Host，
 
 请求直接启动已签名 Runtime，不要求额外的进程隔离命令。ACP 权限回应保留活动请求归属、
 合法允许选项与取消处理，不再维护产品只读名单。模型路由仍按独立 Session 隔离，见
-[共享 Agent Session 设计](../assistant-workbar/runtime-process-reuse-technical-design.md#6-ssh-opencode-与-agent)。
+[共享 Agent Session 设计](../../agent-runtime/design/process-reuse.md#6-ssh-opencode-与-agent)。
 
 - 直接启动已签名 Runtime entrypoint；
 - 使用 Agent 本地模型 gateway 时，签名 Agent launcher 会 `exec` 候选 manifest 锁定的
@@ -353,8 +353,8 @@ Node.js、Python 等工具执行环境同样不修改或同步到 Host，
 ## 执行清单接入范围
 
 OC `todowrite` / CN `Checklist` 顶部展示的权威需求及接入设计见
-[Runtime 执行清单](../assistant-workbar/runtime-checklist-technical-design.md)，
-远程实现与验证范围见[执行清单验证记录](./runtime-checklist-validation.md)。
+[Runtime 执行清单](../../agent-runtime/design/checklist.md)，
+远程实现与验证范围见[执行清单验证记录](../../agent-runtime/validation/remote-checklist.md)。
 目标范围包括远程 GoodBuddy Agent 运行 OC 和 CN；ACP 仅承担传输与远端协议。
 
 CN 1.5.47 的 `serve` 提供 HTTP `/state`、`/message`，没有原生 ACP 命令。
@@ -384,7 +384,7 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 2026-10-05 修复启动等待阻塞控制队列的问题：原生启动等待同时释放 backend 全局控制
 队列和协议接收分派，取消、watchdog 及其他 binding 的控制请求可继续处理。相同启动
 请求只执行一次，迟到返回的已取消 Session 单独关闭；不增加 Prompt 总时限或新协议
-阶段。实现规则见[共享进程与 Session 所有权](../assistant-workbar/runtime-process-reuse-technical-design.md#61-连接与所有权)，
+阶段。实现规则见[共享进程与 Session 所有权](../../agent-runtime/design/process-reuse.md#61-连接与所有权)，
 本次源码 Host 验证及调用计数见[统一执行进度](../unified-execution/progress.md#2026-10-05-runtime-生命周期审查修复)。
 
 同日 K07 补齐模型路由准备后的取消：broker 关闭及终态提交保持原顺序，原生路由
@@ -442,11 +442,11 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   以上只适用于当前 Agent 管理的 SSH OpenCode 生产路径，不声明任意 ACP 服务的问答兼容性。
   真实二进制、SSH 传输和取消验证见[工作栏进度](../assistant-workbar/progress.md#2026-09-13-托管-ssh-原生问答)。
   未发布进程复用源码补齐 Desktop 重启后的多任务并行附加、实时待答快照及 Main 答案
-  持久化，详见[恢复与终态投影](../assistant-workbar/runtime-process-reuse-technical-design.md#63-恢复与终态投影)；
+  持久化，详见[恢复与终态投影](../../agent-runtime/design/process-reuse.md#63-恢复与终态投影)；
   不把该待答投影当作 durable transcript 或旧版本已经支持的行为。
   Desktop Main 接收实时问题时保存其消息位置，回答后不移动到后续输出之后；实时待答
   快照不伪造语义来源。位置去重、旧会话边界见
-  [Runtime 交互边界](../assistant-workbar/runtime-interactions.md#运行与失败)，
+  [Runtime 交互边界](../../agent-runtime/contracts/interactions.md#运行与失败)，
   当前源码的真实 Host 证据见[问答位置持久化](../assistant-workbar/progress.md#2026-09-19-问答位置持久化)。
 - ACP 工具结果同时支持文本 `content` 和 `rawOutput.output`，移除 OpenCode 的
   `<task><task_result>` 外层包装后渲染正文。恢复已有子代理时使用 ACP 所带的所属
@@ -510,7 +510,7 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 - 远程 context metrics 与对话级压缩后的估算值按本次请求实际使用的 Runtime 选择写入
   `context_state_json`。实时接收与恢复入口都传入请求的选择；数据库在未传入时按对话层、
   项目层解析，缺省执行方式为 OpenCode（规则见
-  [执行方式与模型选择设计](../model-connections/runtime-selection-design.md#4-执行时解析已实现)）。
+  [执行方式与模型选择设计](../../agent-runtime/contracts/selection.md#4-执行时解析已实现)）。
   继承项目设置的对话保持 `runtime_selection_json = NULL`，
   不为接收 usage 固定对话 Runtime；去重和消息/指标写入仍在同一 SQLite 事务中完成。
 - ACK 后 Agent 删除已确认事件，只保留小型操作终态与游标用于幂等核对；未 ACK 输出继续

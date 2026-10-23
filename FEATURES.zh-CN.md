@@ -48,7 +48,7 @@
 
 - [x] **直连模型 Runtime**：支持问答、知识总结、受控工具执行、图像生成，以及通过支持 OpenAI 兼容图片编辑接口的服务商进行参考图编辑。连续请求自动复用最近一次成功生成的图片和文字历史，已保存会话重开后仍可继续修改，本轮显式附图优先；上游明确不支持编辑时继续按文字生成，仅在回复底部提示未使用参考图。编辑使用 multipart 上传图片，结果仍只接受经过校验的内联图片，不下载服务商返回的图片 URL。详见[图片生成与连续修改](./docs/features/image-generation/README.md)。
 - [x] **当前会话图片工具**：为图片模型开启会话调用后，支持工具调用的聊天模型可生成图片、修改上传图片或历史成果，无需另开会话或手动切换图片模型。直连文本模型、本地 OpenCode、Continue、DeepSeek Harness 和托管远程 OpenCode 复用统一服务，Runtime 分配由模型设置派生；图片请求可能产生费用，编辑需服务商支持。详见[实现与验证记录](./docs/features/conversation-media-generation/progress.md)。
-- [x] **跨项目 Runtime 进程复用**：兼容配置的本地 OpenCode 和 DeepSeek Harness 共享重型进程，托管 OpenCode 会话在同一 Host 上复用进程。项目适配器及会话的工作区、模型、工具、问答和取消仍独立路由；远程待答问题和任务状态可在重连或桌面重启后恢复，不重发已接受请求。新的远程行为需要 Desktop `0.13.5` 与 Agent `0.13.0` 配套更新，详见[设计与实测](./docs/features/assistant-workbar/runtime-process-reuse-technical-design.md)。
+- [x] **跨项目 Runtime 进程复用**：兼容配置的本地 OpenCode 和 DeepSeek Harness 共享重型进程，托管 OpenCode 会话在同一 Host 上复用进程。项目适配器及会话的工作区、模型、工具、问答和取消仍独立路由；远程待答问题和任务状态可在重连或桌面重启后恢复，不重发已接受请求。新的远程行为需要 Desktop `0.13.5` 与 Agent `0.13.0` 配套更新，详见[设计与实测](./docs/agent-runtime/design/process-reuse.md)。
 - [x] **直连模型编程 Agent**：本机直连文本模型可运行平台 Shell，并可按父请求模型、工作区和能力范围委派一层编程 Subagent；OpenCode、Continue、DeepSeek Harness 和托管 SSH 不重复注入这两个工具。Windows 本机命令与真实模型“修改、测试、修复、复核”闭环已通过，macOS 与 Linux 真机命令仍待对应平台验收。
 - [x] **高效直连模型工作区工具**：直连模型使用随包 ripgrep 的原生参数按当前账号权限发现文件和搜索内容，按行分页读取大型 UTF-8 文件，并应用多文件补丁；读取和补丁 API 保留工作区相对路径合同。用户无需另行安装 ripgrep。搜索保留原生输出与退出码，大结果通过 `output_read` 完整续读，可处理的参数错误允许模型调整后继续。
 - [x] **长上下文与工具输出分页**：历史消息、长回复和文档解析文本不再采用旧的固定截断限制。直连模型可分页续读已保存的搜索、命令和 Subagent 输出；所选模型的上下文窗口及传输边界仍然有效。
@@ -63,15 +63,15 @@
 - [x] **统一执行源码链路**：已移除 Ask/Execute、“安全”分类和 `toolApproval` 策略；请求按所选 Runtime、已启用能力及本机或 SSH 账号权限执行。“清除本地数据”位于“通用 > 平台功能”，保留二次确认。schema 60 和 Runtime 设置 22 清理旧字段；远程要求 runtime/acp 6，本地 Harness 控制协议为 2。原生工具清单不提供统一的逐工具开关。真实 Electron 与 Linux Host 定向证据见[进度](./docs/features/unified-execution/progress.md)，全量测试及配套发布包验证仍待完成。
 - **本地 Runtime 原生客户端（预览）**：输入区可按当前本地项目与模型，在工作栏终端打开 Continue/OpenCode，或在系统浏览器打开官方 DS Web。客户端使用独立会话，不导入 GoodBuddy 对话历史；关闭 DS 网页不停止服务，可在 GoodBuddy 中停止。Continue/OpenCode 使用 Main 按当前请求分配的工具，无产品工作模式。远程快捷入口未接通，托管标准 Node 交付和完整跨平台安装包验收仍有缺口；Windows 真实模型证据不代表全部会话能力等价，详见[实现与剩余工作](./docs/features/assistant-workbar/progress.md#2026-09-27-local-native-client-validation)。
 - **Runtime 遥测关闭配置**：本地 DS Web、远程 Runtime 和模型桥启动共用遥测关闭环境，不限制模型、MCP 或用户主动联网。Continue 在自动更新关闭时跳过检查；远程改动随配套 Agent 新启动的 Runtime 生效，当前源码 Linux x64 Agent/model 验证见 [0.15.0 发布准备](./docs/development/release-preparation-0.15.0.md)。
-- [x] **Runtime 原生交互转交**：OpenCode 与 Continue 的选择、yes/no、自由文本回答和跳过使用现有问答卡片，本机与托管 SSH OpenCode 同时转交属于当前请求的子会话提问。托管 SSH OpenCode 问答需要配套 Agent 和新启动的托管 Runtime，不扩展到任意 ACP 服务。回答或跳过成功后在原位置保留问题与答案，支持多轮记录和本地会话重载；旧版本已丢弃的答案不能恢复。并行问题按顺序等待回答，重复事件保留草稿，提交失败可重试；取消远程待答后可在同一会话继续发送。原生工具权限确认自动处理，不等待第二次审批；具体支持范围见[交互边界](./docs/features/assistant-workbar/runtime-interactions.md)。
-- [x] **原生执行清单**：OpenCode 和 Continue 在对话顶部更新只读执行清单，进度随会话保存。详情在可滚动的锚定浮层中展开，不挤动聊天内容；点击外部关闭，Escape 关闭后焦点返回入口。显式清空和远程重放保留请求归属，取消不把未完成条目标成完成；远程交付需要配套 Agent，详见[清单契约](./docs/features/assistant-workbar/runtime-checklist-technical-design.md)。
+- [x] **Runtime 原生交互转交**：OpenCode 与 Continue 的选择、yes/no、自由文本回答和跳过使用现有问答卡片，本机与托管 SSH OpenCode 同时转交属于当前请求的子会话提问。托管 SSH OpenCode 问答需要配套 Agent 和新启动的托管 Runtime，不扩展到任意 ACP 服务。回答或跳过成功后在原位置保留问题与答案，支持多轮记录和本地会话重载；旧版本已丢弃的答案不能恢复。并行问题按顺序等待回答，重复事件保留草稿，提交失败可重试；取消远程待答后可在同一会话继续发送。原生工具权限确认自动处理，不等待第二次审批；具体支持范围见[交互边界](./docs/agent-runtime/contracts/interactions.md)。
+- [x] **原生执行清单**：OpenCode 和 Continue 在对话顶部更新只读执行清单，进度随会话保存。详情在可滚动的锚定浮层中展开，不挤动聊天内容；点击外部关闭，Escape 关闭后焦点返回入口。显式清空和远程重放保留请求归属，取消不把未完成条目标成完成；远程交付需要配套 Agent，详见[清单契约](./docs/agent-runtime/design/checklist.md)。
 - **取消后的历史**：模型可见历史保留已中断的部分回复或占位标记，避免旧问题合入下一轮；本地 OpenCode 复用会话时附带一次中断说明。
 - [x] **专家与 Subagent**：支持显式专家、团队分析和最多三个专家并行分析。专家继承父请求执行空间和能力范围，可使用已启用的本机直连模型工具；这些工具不是远程 OpenCode 子会话。聊天先展示可逐项展开的专家完整输出，再在其下展示总 Agent 的综合结果，并随会话保存。
 - [x] **OpenCode 子代理过程与最终结果**：子代理卡片按顺序显示文字、推理和工具过程，最终结果独立展示。远程实时过程需要 Agent `0.11.20`，旧包仍显示最终结果但不补造缺失过程。
 - [x] **OpenCode 事件连接回收**：聊天与原生上下文压缩在结束事件迭代前关闭各自订阅，覆盖完成、失败、取消和消费方提前结束，不取消其他并行会话。
 - [x] **准确的消息底部状态**：区分请求准备、等待重试、开始重试、工具活动、待回答和终态；本机 OpenCode 使用原生重试次数和计划时间，直连模型显示自身退避阶段。消息底部状态点保持静态，未接入的 Runtime 重试不编造提示，会话列表闪点及发送、停止行为不变。
 - [x] **直连模型命令工作目录**：命令可通过绝对路径、相对路径或符号链接使用当前账号可访问的工作区外目录；工作区仍为默认目录和相对路径基准。
-- [x] **Runtime 与模型分层选择**：按会话、项目、全局逐字段解析 Runtime 和模型。会话双栏选择器显示来源，可覆盖或恢复项目默认；项目与通道设置共用规则，Main 在每次请求及排队派发时重新解析。已删除或不兼容的连接会回退，缺少凭据仍明确报错。schema 49 迁移已保存选择，用途模型仍为规划，详见[选择设计](./docs/features/model-connections/runtime-selection-design.md)。
+- [x] **Runtime 与模型分层选择**：按会话、项目、全局逐字段解析 Runtime 和模型。会话双栏选择器显示来源，可覆盖或恢复项目默认；项目与通道设置共用规则，Main 在每次请求及排队派发时重新解析。已删除或不兼容的连接会回退，缺少凭据仍明确报错。schema 49 迁移已保存选择，用途模型仍为规划，详见[选择设计](./docs/agent-runtime/contracts/selection.md)。
 - [x] **角色绑定模型连接**：每个角色可继承默认模型或选择独立文本模型连接，失效连接安全回退默认模型，综合角色始终继承默认模型。
 - [x] **多协议模型配置**：支持 Anthropic Messages、OpenAI Responses、OpenAI Chat Completions、OpenAI Images 和无认证本机模型；新用户默认连接为本机 Ollama 兼容地址，不预置第三方云模型服务。升级时只替换从未配置凭据且仍完全等于旧内置值的历史默认连接，用户显式保存或加密凭据的连接保持不变；已有部署仅使用兼容环境变量提供凭据时继续沿用对应的历史连接参数，通用模型环境变量仍优先。“保存并测试模型”会发送有界的真实文本或图片生成请求并校验生成结果，而不是只检查 HTTP 连通性，因此可能产生少量服务商用量费用。
 - [x] **模型请求定制**：每个 LLM 连接可填写有界 JSON 自定义请求头和顶层请求体。直连与 Continue 支持两者；本地 OpenCode 和 DeepSeek Harness 只使用各自原生支持的请求头，受管 SSH OpenCode 模型网关支持两者。Runtime、协议和认证字段始终优先，这些普通连接设置不能用于保存 API Key 或其他密钥。详见[模型连接请求定制](./docs/features/model-connections/README.md)。
@@ -196,7 +196,7 @@
 
 ### 开放接口、团队协作与远程执行
 
-- [x] **远程 Continue 交付**：已接入 CN 1.5.47 受管包、Agent HTTP-to-ACP 适配、模型路由、项目选择和原生清单。默认包同时携带 OC/CN；Windows 桌面到 Linux x64 已通过安装、真实模型清单更新、长清单、取消及重启恢复验证。Execute 会话 MCP 已通过真实文本模型 Host 往返，图片服务使用替代接收端，不代表真实生图验证。已发布 Agent `0.13.4` 需要 Desktop `0.13.14` 或更新版本；正式发布及原生平台验收与 Linux 开发证据分开，详见[验证记录](./docs/features/remote-host/runtime-checklist-validation.md)。
+- [x] **远程 Continue 交付**：已接入 CN 1.5.47 受管包、Agent HTTP-to-ACP 适配、模型路由、项目选择和原生清单。默认包同时携带 OC/CN；Windows 桌面到 Linux x64 已通过安装、真实模型清单更新、长清单、取消及重启恢复验证。Execute 会话 MCP 已通过真实文本模型 Host 往返，图片服务使用替代接收端，不代表真实生图验证。已发布 Agent `0.13.4` 需要 Desktop `0.13.14` 或更新版本；正式发布及原生平台验收与 Linux 开发证据分开，详见[验证记录](./docs/agent-runtime/validation/remote-checklist.md)。
 
 - [x] **远程任务委派**：仅在用户显式配置端点和令牌后启用，按全局内网兼容模式使用 HTTP(S)，结果进入持久化发件箱。
 - [ ] **Headless Runtime API**（规划中）：提供本机优先的任务、事件、状态和成果 API，以及有范围、有效期、限流和撤销能力的令牌。

@@ -56,13 +56,13 @@ OpenCode 与 DeepSeek Harness 不使用该值。
 
 项目设置分“执行方式”和“模型”两个字段，输入框使用两栏选择器，全局默认模型仍在系统
 设置中按 Runtime 页签配置。分层规则、选择器状态、键盘行为和失效提示由
-[执行方式与模型选择设计](./runtime-selection-design.md#3-各入口行为已实现)唯一维护。
+[执行方式与模型选择设计](../../agent-runtime/contracts/selection.md#3-各入口行为已实现)唯一维护。
 
 ## Harness 模型来源展示
 
 DeepSeek Harness 的 `platform` 选项命名为“管理员环境优先，回退 GoodBuddy 兼容连接”，
 不能沿用 OpenCode/Continue 的“Runtime 自有配置”标签。来源规则以
-[Harness 模型配置](../deepseek-harness/technical-design.md#121-配置来源)为准。
+[Harness 模型配置](../../agent-runtime/providers/deepseek-harness/technical-design.md#121-配置来源)为准。
 帮助文字收进标签同行的 `InlineHelp`，与选择器通过 `aria-describedby` 持续关联，并明确此选项不加载用户 profile 或
 配置文件；无兼容 GoodBuddy 连接时仍可选择管理员环境来源。
 

@@ -28,5 +28,5 @@
 ## 相关功能
 
 - [本机专用推理架构与任务控制评估](../../architecture/local-inference-task-control.md)记录 ASR、OCR、embedding 的任务与服务状态、执行所有权、取消、超时、清理及观测待办；推理请求不自动等同于本目录的产品 Task，候选迁移尚未采用。
-- [直连模型 Agent 能力](../direct-model-agent/README.md) 使用本目录定义的 Subagent 与
+- [直连模型 Agent 能力](../../agent-runtime/providers/direct-model/README.md) 使用本目录定义的 Subagent 与
   Job/Subjob 语义，为直连模型提供单层编程委派，但不重新定义产品对象层级。

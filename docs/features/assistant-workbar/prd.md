@@ -982,8 +982,8 @@ Escape 收起并返回按钮；点击外部或焦点移出也收起。实时区�
 | US-CL4，本地与远程恢复 | 重新打开本地会话或重连共享 Linux Host 上的 OC/CN 请求；已有记录按原请求恢复，重复事件不重复展示，不重新调用模型或工具 | FR-CL1、FR-CL4 |
 | US-CL5，无清单与无障碍 | DS 默认请求或普通 Markdown/list 工具输出没有已确认清单；顶部不出现伪清单；有清单时键盘、窄窗口及浅深主题可用 | FR-CL1–FR-CL3 |
 
-行为规则见 [Runtime 交互边界](./runtime-interactions.md#runtime-执行清单)，接入与验证见
-[技术设计](./runtime-checklist-technical-design.md)。
+行为规则见 [Runtime 交互边界](../../agent-runtime/contracts/interactions.md#runtime-执行清单)，接入与验证见
+[技术设计](../../agent-runtime/design/checklist.md)。
 
 ## 14. 性能与资源边界
 
@@ -1028,9 +1028,9 @@ Escape 收起并返回按钮；点击外部或焦点移出也收起。实时区�
 | US-RR3，续聊与释放 | 一轮任务完成后继续原会话，再释放其中一个；原生上下文可续用、其他会话不受影响，数据库完整历史仍可查看 |
 | US-RR4，边界与远程 | 切换不兼容配置、查看 Continue/直连状态或中断 SSH；不串配置、不伪造多会话能力，Agent 已接受工作按现有归属恢复 |
 
-资源状态规则由 [Runtime 交互边界](./runtime-interactions.md#runtime-资源生命周期)
+资源状态规则由 [Runtime 交互边界](../../agent-runtime/contracts/interactions.md#runtime-资源生命周期)
 定义；锁定版本研究、实现选择与逐项验收由
-[进程复用技术设计](./runtime-process-reuse-technical-design.md)定义。
+[进程复用技术设计](../../agent-runtime/design/process-reuse.md)定义。
 
 ## 15. 无障碍与响应式
 
@@ -1198,7 +1198,7 @@ Escape 收起并返回按钮；点击外部或焦点移出也收起。实时区�
 - [会话监督 PRD](../conversation-supervision/prd.md) 定义监督判断、证据、预算和介入边界。
 - [自动化平台总体设计](../../architecture/automation-platform-architecture.md) 定义 Plan、Job、Run、监督、预算和记忆。
 - [长期助手路线图](../../roadmap/long-term-assistant-roadmap.md) 记录整体长期能力与实施背景。
-- [DeepSeek Harness Runtime 设计](../deepseek-harness/technical-design.md) 定义该 Runtime 的具体适配边界。
+- [DeepSeek Harness Runtime 设计](../../agent-runtime/providers/deepseek-harness/technical-design.md) 定义该 Runtime 的具体适配边界。
 - [SSH Host 远程环境准备与直连下载设计](../remote-host/environment-provisioning-technical-design.md)
   定义 Host 级组件获取、首次准备、更新、回退和项目只验证边界。
 - [Office 协同编辑](../office-document-editing/README.md) 定义文档多实例、ShareServer 编辑会话、

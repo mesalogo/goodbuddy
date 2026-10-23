@@ -100,6 +100,7 @@ function stubAgentContext() {
       }
     >
     observeSessions(): void
+    createAgentApi(): { cancel(params: { sessionId: string }): Promise<void> }
   }
   internals.connection = { extNotification }
   internals.sessions.set('session-output', {
@@ -124,6 +125,16 @@ function stubAgentContext() {
 }
 
 describe('GoodBuddy Harness internal control plane', () => {
+  it('keeps a cancelled prompt in flight until the agent settles', async () => {
+    const { handle, internals } = stubAgentContext()
+    const record = internals.sessions.get('session-output')!
+    const inflight = record.inflight
+    await internals.createAgentApi().cancel({ sessionId: 'session-output' })
+    expect(handle.agent.cancel).toHaveBeenCalledWith({ kind: 'user' })
+    expect(record.inflight).toBe(inflight)
+    expect(inflight.resolve).not.toHaveBeenCalled()
+  })
+
   it('advertises and stores only model-enabled inline image prompts', async () => {
     const textOnly = controlPlane() as unknown as {
       createAgentApi(): {

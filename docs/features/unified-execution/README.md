@@ -30,7 +30,7 @@
 ## 相关功能
 
 - [助手工作栏](../assistant-workbar/README.md)：执行空间、Runtime 交互和原生客户端生命周期。
-- [Model Agent](../direct-model-agent/README.md)、[DeepSeek Harness](../deepseek-harness/README.md)：各自工具执行实现。
+- [Model Agent](../../agent-runtime/providers/direct-model/README.md)、[DeepSeek Harness](../../agent-runtime/providers/deepseek-harness/README.md)：各自工具执行实现。
 - [远程主机](../remote-host/README.md)：Agent 协议、部署与真实 Host 验证。
 - [Task 与 Job](../task-and-job/README.md)、[消息通道](../wechat-channel/README.md)：后台入口与任务恢复。
 - [会话图片](../conversation-media-generation/README.md)、[Obsidian](../obsidian/README.md)：工具业务条件。

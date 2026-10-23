@@ -383,7 +383,7 @@ lock 同时固定 `@continuedev/cli@1.5.47` 的 npm integrity。CN 工件使用
 `--runtime-id continue`；默认 Agent 组包通过 `--continue-archive` 同时携带 OC/CN。
 CN 的 JS payload 通过文件摘要与签名校验，执行它的 Node 仍来自 Agent 固定包。
 默认 workflow 已接入联合组包；开发包与完整桌面到 Linux 的实测见
-[CN 部署记录](./docs/features/remote-host/runtime-checklist-validation.md#cn-部署与生命周期)。
+[CN 部署记录](./docs/agent-runtime/validation/remote-checklist.md#cn-部署与生命周期)。
 
 远程 Runtime 工件由以下命令独立管理：
 

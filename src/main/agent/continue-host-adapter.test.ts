@@ -1663,6 +1663,12 @@ describe('ContinueHostAdapter', () => {
     )
     expect(globalDirectory).toBeTruthy()
     expect(existsSync(globalDirectory)).toBe(true)
+    expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      /\/(pause|exit)$/.test(String(url))
+    )).toBe(false)
+    expect(terminateProcessTree).toHaveBeenCalledWith(
+      expect.anything(), { processGroup: undefined, signal: 'SIGKILL' }
+    )
 
     releaseTermination()
     await expect(run).resolves.toEqual({ text: 'CLEANUP_OK' })

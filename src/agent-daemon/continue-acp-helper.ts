@@ -111,7 +111,10 @@ export async function runContinueAcpHelper(options: {
           protocol: options.protocol, authentication: 'api-key', apiKey: MODEL_BRIDGE_SDK_AUTH_SENTINEL,
           baseUrl: `${origin}/v1`, supportsImageInput: options.supportsImageInput,
           ...(route ? { requestHeaders: { 'x-goodbuddy-session': sessionId, 'x-goodbuddy-operation': route.operationId } } : {}) },
-        launchHost: (entry, args, launch) => spawn(process.execPath, [entry, ...args], { ...launch, stdio: ['ignore', 'ignore', 'pipe'] })
+        launchHost: (entry, args, launch) => Object.assign(
+          spawn(process.execPath, [entry, ...args], { ...launch, detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'] }),
+          { processGroup: process.platform !== 'win32' }
+        )
       })
       const abort = new AbortController()
       let finish!: () => void

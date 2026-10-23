@@ -7,7 +7,7 @@
 K07 已修复共享 Runtime 在模型路由清理阶段阻塞控制队列、取消后迟到安装留下路由的
 问题。broker 关闭与终态提交顺序保留，原生路由撤销在队列外完成；迟到安装按原
 transport／Session／operation 再次清理。transport 退出中止未完成路由 HTTP 请求。
-规则见[Session 所有权](../assistant-workbar/runtime-process-reuse-technical-design.md#61-连接与所有权)。
+规则见[Session 所有权](../../agent-runtime/design/process-reuse.md#61-连接与所有权)。
 
 K08 在监督正文超容量时立即取消，清空正文并只消费用量事件，清理等待上限 1 秒。
 原容量错误优先于后续流错误与超时，不重试、不重复记账；超时以后返回的事件不写库。
@@ -73,7 +73,7 @@ A01（远程启动阻塞控制队列）和 A02（本机 OpenCode 提交失败后
 binding 可以继续处理；Session owner 合并相同启动、拒绝冲突，并关闭取消后迟到的
 原生 Session。本机提交错误立即唤醒所属 SSE 消费，保留原错误和既有 Session 取消。
 两条实现均未增加整个 Prompt 的默认总时限；共享进程、终态提交和写帧顺序规则见
-[Runtime 进程复用设计](../assistant-workbar/runtime-process-reuse-technical-design.md)。
+[Runtime 进程复用设计](../../agent-runtime/design/process-reuse.md)。
 
 ### 确定性复现
 
@@ -263,4 +263,4 @@ SSH 专家保留父请求已解析的 OpenCode 或 Continue 选择，通过现�
 ## 2026-10-05 直连模型工具错误回传
 
 普通工具执行失败不再直接终止直连模型循环，错误结果继续交给模型处理，取消行为保留。
-实现、三协议回归及全量测试边界见[直连模型修复记录](../direct-model-agent/progress.md#2026-10-05-工具执行异常回传)。
+实现、三协议回归及全量测试边界见[直连模型修复记录](../../agent-runtime/providers/direct-model/progress.md#2026-10-05-工具执行异常回传)。

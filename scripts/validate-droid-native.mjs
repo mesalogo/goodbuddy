@@ -13,7 +13,7 @@ export async function validateNative({ binary, directory, workspace, home, outpu
   const sdk = await import(pathToFileURL(join(directory, 'sdk/node_modules/@factory/droid-sdk/dist/node.mjs')).href)
   const env = {}
   for (const key of ['PATH', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT']) if (process.env[key]) env[key] = process.env[key]
-  Object.assign(env, { HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData/Roaming'), LOCALAPPDATA: join(home, 'AppData/Local'), TEMP: directory, TMP: directory, FACTORY_HOME_OVERRIDE: join(home, '.factory'), FACTORY_AIRGAP_ENABLED: '1', FACTORY_DROID_AUTO_UPDATE_ENABLED: '0', FACTORY_DISABLE_SETTINGS_PERSISTENCE: 'true' })
+  Object.assign(env, { HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData/Roaming'), LOCALAPPDATA: join(home, 'AppData/Local'), TEMP: directory, TMP: directory, FACTORY_HOME_OVERRIDE: home, FACTORY_AIRGAP_ENABLED: '1', FACTORY_DROID_AUTO_UPDATE_ENABLED: '0', FACTORY_DISABLE_SETTINGS_PERSISTENCE: 'true' })
   const child = spawn(binary, ['exec', '--input-format', 'stream-jsonrpc', '--output-format', 'stream-jsonrpc', '--settings', join(directory, 'droid.json'), '--cwd', workspace], { cwd: workspace, env, stdio: 'pipe' })
   child.stderr.resume()
   let handler = () => {}

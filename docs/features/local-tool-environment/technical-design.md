@@ -9,7 +9,7 @@
 | 日期 | 2026-09-03 |
 | 关联 PRD | [工具执行环境 PRD](./prd.md) |
 | 功能逻辑 | [工具执行环境功能逻辑设计](./logic-design.md) |
-| 相关架构 | [DeepSeek Harness Runtime 设计](../deepseek-harness/technical-design.md)、[SSH 远程主机与 GoodBuddy Agent 实现说明](../remote-host/technical-design.md) |
+| 相关架构 | [DeepSeek Harness Runtime 设计](../../agent-runtime/providers/deepseek-harness/technical-design.md)、[SSH 远程主机与 GoodBuddy Agent 实现说明](../remote-host/technical-design.md) |
 
 ## 1. 当前基线
 

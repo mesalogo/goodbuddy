@@ -6,16 +6,19 @@ Provider 要求的附加元数据；GoodBuddy 只在直连链路或 Runtime 明�
 
 ## 文档导航
 
+Runtime 规范与执行方式选择契约由 [Agent Runtime](../../agent-runtime/README.md)维护；
+本目录维护模型连接的请求定制与界面行为。
+
 | 文档 | 权威职责 |
 | --- | --- |
 | [UI 设计](./ui-design.md) | 编辑入口、校验反馈、兼容性说明和无障碍行为 |
 | [技术设计](./technical-design.md) | 契约、持久化、合并优先级、Runtime 支持矩阵和验证 |
-| [执行方式与模型选择](./runtime-selection-design.md) | 会话/项目/全局分层解析、选择器行为、存储迁移、全局 `provider` 移除计划和用途模型规划 |
+| [执行方式与模型选择](../../agent-runtime/contracts/selection.md) | 会话/项目/全局分层解析、选择器行为、存储迁移、全局 `provider` 移除计划和用途模型规划 |
 | [功能进度](./progress.md) | 已验证实现、剩余工作和验证证据 |
 
 模型连接选择准确性也在本目录维护：技术设计第 8 节定义通道直连回退修复，
 UI 设计末节定义 Harness 来源标签和公开设置展示；Harness 的实际解析顺序由其
-[技术设计](../deepseek-harness/technical-design.md#121-配置来源)唯一维护。
+[技术设计](../../agent-runtime/providers/deepseek-harness/technical-design.md#121-配置来源)唯一维护。
 
 本次改动是现有模型连接的有界扩展，不新增独立业务对象或工作流，因此不单独建立 PRD、
 User Stories 和逻辑设计；本页定义产品边界，技术设计定义唯一的请求合并规则。
@@ -47,7 +50,7 @@ User Stories 和逻辑设计；本页定义产品边界，技术设计定义唯�
 
 ## 相关功能
 
-- [直连模型 Agent](../direct-model-agent/README.md)
+- [直连模型 Agent](../../agent-runtime/providers/direct-model/README.md)
 - [图片生成与连续修改](../image-generation/README.md)
-- [DeepSeek Harness Runtime](../deepseek-harness/README.md)
+- [DeepSeek Harness Runtime](../../agent-runtime/providers/deepseek-harness/README.md)
 - [远程主机与远程执行](../remote-host/README.md)

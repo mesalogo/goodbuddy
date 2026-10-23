@@ -12,19 +12,37 @@ import { SemanticPromptStore } from './semantic-prompt-store'
 import { openCodeSubagentPluginSource } from './opencode-subagent-plugin'
 import { createOpenCodeModelBridgeProviderConfig } from './model-bridge-helper'
 import type { RuntimeAcpProcessOwner } from './runtime-acp-backend'
+import { OpenCodeSubagentProgress } from '../main/agent/opencode-subagent'
 
 const binary = process.env.GOODBUDDY_TEST_OPENCODE_BINARY ?? join(process.cwd(),
   '.runtime-resources', process.arch, process.platform === 'win32' ? 'opencode.exe' : 'opencode')
 
-it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as const)(
+it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel', 'native-stop'] as const)(
   'round trips native ACP %s questions through the production plugin and Agent owner', async (scenario) => {
   const root = await mkdtemp(join(tmpdir(), 'goodbuddy-remote-question-'))
-  await mkdir(join(root, 'state'))
+  await mkdir(join(root, 'state'), { mode: 0o700 })
   // OpenCode installs dependencies in both config locations before loading plugins.
   const configDirectory = join(root, 'config', 'opencode')
   await cp(join(process.cwd(), '.runtime-resources', 'opencode-config'), configDirectory, { recursive: true })
   const pluginPath = join(root, 'plugin.mjs')
-  await writeFile(pluginPath, openCodeSubagentPluginSource())
+  const productionPlugin = join(root, 'production-plugin.mjs')
+  await writeFile(productionPlugin, openCodeSubagentPluginSource())
+  // Test driver invokes the real native child abort; forwarding stays production code.
+  await writeFile(pluginPath, scenario === 'native-stop' ? `
+import factory from ${JSON.stringify(pathToFileURL(productionPlugin).href)};
+export default async input => {
+  const hooks = await factory(input);
+  const questions = [];
+  return { ...hooks, event: async payload => {
+    await hooks.event(payload);
+    if (payload.event.type !== 'question.asked') return;
+    questions.push(payload.event.properties);
+    if (questions.length === 2) {
+      const target = questions.find(q => q.questions[0].question.includes('TARGET'));
+      void input.client.session.abort({ path: { id: target.sessionID }, throwOnError: true });
+    }
+  } };
+}` : `export { default } from ${JSON.stringify(pathToFileURL(productionPlugin).href)};`)
   let calls = 0
   let answered = false
   let tools: string[] = []
@@ -34,23 +52,24 @@ it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as c
       for await (const chunk of request) body += chunk.toString()
       const input = JSON.parse(body)
       tools = (input.tools ?? []).map((tool: { function: { name: string } }) => tool.function.name)
-      if (++calls > 4) { response.writeHead(500).end(); return }
+      if (++calls > (scenario === 'native-stop' ? 6 : 4)) { response.writeHead(500).end(); return }
       const messages = input.messages as Array<{ role: string; content: unknown; tool_call_id?: string }>
       const results = messages.filter(message => message.role === 'tool')
       answered ||= JSON.stringify(results).includes('REMOTE_ANSWER') ||
         (scenario === 'reject' && JSON.stringify(results).includes('dismissed'))
       const childPrompt = JSON.stringify(messages.filter(message => message.role === 'user').at(-1)).includes('CHILD_DECISION')
-      const task = scenario === 'child' && !childPrompt && results.length === 0
+      const task = (scenario === 'child' || scenario === 'native-stop') && !childPrompt && results.length === 0
+      const target = JSON.stringify(messages.filter(message => message.role === 'user').at(-1)).includes('TARGET')
       const finished = results.length > 0
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       for (const [delta, finish] of [
         [finished ? { role: 'assistant', content: 'QUESTION_OK' } : {
-          role: 'assistant', tool_calls: [{ index: 0, id: task ? 'native-task' : 'native-question', type: 'function',
+          role: 'assistant', tool_calls: (task && scenario === 'native-stop' ? ['TARGET', 'SIBLING'] : ['single']).map((label, index) => ({ index, id: task ? (scenario === 'native-stop' ? label : 'native-task') : 'native-question', type: 'function',
             function: { name: task ? 'task' : 'question', arguments: JSON.stringify(task ? {
-              subagent_type: 'general', description: 'Ask child question', prompt: 'CHILD_DECISION: Ask a question.'
+              subagent_type: 'general', description: 'Ask child question', prompt: `CHILD_DECISION: ${label} Ask a question.`
             } : { questions: [
-              { header: 'Details', question: 'Remote decision?', options: [], custom: true }
-            ] }) } }]
+              { header: 'Details', question: target ? 'TARGET decision?' : 'Remote decision?', options: [], custom: true }
+            ] }) } }))
         }, null], [{}, finished ? 'stop' : 'tool_calls']
       ]) response.write(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk',
         created: 1, model: 'fixture', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`)
@@ -101,12 +120,13 @@ it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as c
           question: { id: string }; endpoint?: string; childCallId?: string
         } } } }
         const extension = notification.update?._meta?.goodbuddyQuestion
+        if (scenario === 'native-stop' && extension?.childCallId === 'TARGET') continue
         if (extension && !questionId) {
           expect(extension.endpoint).toBeUndefined()
           if (scenario === 'child') expect(extension.childCallId).toBe('native-task')
           questionId = extension.question.id
           expect(owner.pendingQuestions('other')).toEqual([])
-          expect(owner.pendingQuestions('operation')).toHaveLength(1)
+          if (scenario !== 'native-stop') expect(owner.pendingQuestions('operation')).toHaveLength(1)
           await expect(owner.respondToQuestion({ bindingId: 'other', operationId: 'operation', questionId,
             answers: [['WRONG']] })).rejects.toThrow('no longer pending')
           if (scenario === 'cancel') {
@@ -127,7 +147,28 @@ it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as c
         controllerId: 'controller', afterSequence: '0', limit: 100 }).events)).toContain('dismissed')
     } else if (scenario !== 'cancel') expect(answered).toBe(true)
     expect(owner.pendingQuestions('operation')).toEqual([])
-    expect(calls).toBe(scenario === 'child' ? 4 : scenario === 'reject' || scenario === 'cancel' ? 1 : 2)
+    expect(calls).toBe(scenario === 'native-stop' ? 5 : scenario === 'child' ? 4 : scenario === 'reject' || scenario === 'cancel' ? 1 : 2)
+    if (scenario === 'native-stop') {
+      const tracker = new OpenCodeSubagentProgress('operation')
+      const states: Record<string, string[]> = { TARGET: [], SIBLING: [] }
+      let aborts = 0
+      for (const event of transcript.page({ bindingId: 'binding', operationId: 'operation',
+        controllerId: 'controller', afterSequence: '0', limit: 1000 }).events) {
+        const update = (event.payload as { update?: { toolCallId?: string; _meta?: {
+          goodbuddySubagentEvent?: { type: string; properties: { error?: { name?: string } } }
+        } } }).update
+        const native = update?._meta?.goodbuddySubagentEvent
+        if (!native) continue
+        if (native.type === 'session.error' && native.properties.error?.name === 'MessageAbortedError') aborts++
+        const projected = tracker.update(native, update?.toolCallId)
+        if (projected?.runtimeCallId) states[projected.runtimeCallId]?.push(projected.state)
+      }
+      expect(aborts).toBe(1)
+      expect(states.TARGET.at(-1)).toBe('cancelled')
+      expect(states.TARGET).not.toContain('completed')
+      expect(states.TARGET).not.toContain('failed')
+      expect(states.SIBLING.at(-1)).toBe('completed')
+    }
     await expect(owner.respondToQuestion({ bindingId: 'binding', operationId: 'operation',
       questionId: questionId!, answers: [['LATE']] })).rejects.toThrow('no longer pending')
   } catch (error) {

@@ -512,6 +512,7 @@ export function hasContinueModelConfiguration(
 }
 
 export type ContinueHostChild = {
+  processGroup?: boolean
   exitCode: number | null
   killed: boolean
   pid?: number
@@ -1562,16 +1563,17 @@ export class ContinueHostAdapter {
       child = (
         this.options.launchHost ??
         ((hostEntryPath, hostArgs, hostOptions) =>
-          spawn(
+          Object.assign(spawn(
             process.platform === 'win32' ? 'node.exe' : 'node',
             [hostEntryPath, ...hostArgs],
             {
               ...hostOptions,
               shell: false,
+              detached: process.platform !== 'win32',
               stdio: ['ignore', 'ignore', 'pipe'],
               windowsHide: true
             }
-          ))
+          ), { processGroup: process.platform !== 'win32' }))
       )(entryPath, args, {
         cwd: this.options.workspace,
         env: environment
@@ -1868,22 +1870,10 @@ export class ContinueHostAdapter {
       for (const questionId of reportedQuestionIds) {
         this.pendingQuestions.delete(questionId)
       }
-      try {
-        const cleanupSignal = AbortSignal.timeout(1_000)
-        if (signal.aborted) {
-          await this.request(origin, token, '/pause', {
-            method: 'POST',
-            signal: cleanupSignal
-          }).catch(() => undefined)
-        }
-        await this.request(origin, token, '/exit', {
-          method: 'POST',
-          signal: cleanupSignal
-        }).catch(() => undefined)
-      } finally {
-        await this.terminate(child)
-        this.children.delete(child)
-      }
+      // Keep the owner alive until tree termination has found its descendants.
+      // /exit can orphan tools before taskkill has enumerated them.
+      await this.terminate(child)
+      this.children.delete(child)
     }
     } finally {
       if (launchedChild) {
@@ -1903,7 +1893,7 @@ export class ContinueHostAdapter {
       return
     }
     const termination = this.dependencies
-      .terminateProcessTree(child)
+      .terminateProcessTree(child, { processGroup: child.processGroup, signal: 'SIGKILL' })
       .catch(() => undefined)
     this.childTerminations.set(child, termination)
     await termination

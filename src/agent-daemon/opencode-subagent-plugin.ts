@@ -240,7 +240,7 @@ async function plugin(input?: {
         if (child) tasks.set(child, owner)
       }
       if (!owner || ![
-        'message.updated', 'message.part.updated', 'message.part.delta'
+        'message.updated', 'message.part.updated', 'message.part.delta', 'session.error'
       ].includes(event.type)) return
       process.stdout.write(JSON.stringify({
         jsonrpc: '2.0',

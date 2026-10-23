@@ -202,7 +202,15 @@ describe('OpenCode ACP child event plugin', () => {
     await hooks.event({ event: {
       type: 'message.part.delta', properties: { sessionID: 'unrelated', delta: 'Private' }
     } })
-    expect(write).toHaveBeenCalledTimes(2)
+    for (const name of ['MessageAbortedError', 'APIError']) {
+      const error = { type: 'session.error', properties: {
+        sessionID: 'child', error: { name, data: { message: 'Aborted' } }
+      } }
+      await hooks.event({ event: error })
+      expect(JSON.parse(write.mock.calls.at(-1)![0]).params.update._meta.goodbuddySubagentEvent).toEqual(error)
+      await hooks.event({ event: { ...error, properties: { ...error.properties, sessionID: 'unrelated' } } })
+    }
+    expect(write).toHaveBeenCalledTimes(4)
     for (const [line] of write.mock.calls) {
       expect(line.endsWith('\n')).toBe(true)
       expect(JSON.parse(line)).toMatchObject({

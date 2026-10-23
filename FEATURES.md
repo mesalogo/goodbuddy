@@ -245,7 +245,7 @@ records are listed separately and do not introduce another feature status.
   routed. Remote pending questions and task status recover after reconnect or
   Desktop restart without resending accepted prompts. Requires Desktop `0.13.5`
   and Agent `0.13.0` together for the new remote behavior. See the
-  [design and measured validation](./docs/features/assistant-workbar/runtime-process-reuse-technical-design.md).
+  [design and measured validation](./docs/agent-runtime/design/process-reuse.md).
 - [x] **Direct model programming agent**: Local direct text models can run the
   platform Shell and delegate one level of programming
   Subagent work while inheriting the parent request's model, workspace,
@@ -456,7 +456,7 @@ records are listed separately and do not introduce another feature status.
   failed submissions remain retryable. Cancelling a pending managed SSH
   question allows another message in the same conversation.
   Native tool permission confirmations are handled automatically, without
-  another approval. See the [interaction boundaries](./docs/features/assistant-workbar/runtime-interactions.md).
+  another approval. See the [interaction boundaries](./docs/agent-runtime/contracts/interactions.md).
 - [x] **Native execution checklists**: OpenCode and Continue update a
   read-only checklist above the conversation, with progress saved in history.
   Details expand in an anchored, scrollable floating panel without shifting chat
@@ -464,7 +464,7 @@ records are listed separately and do not introduce another feature status.
   Explicit clears and remote replay retain request ownership; cancellation
   does not mark unfinished items complete. Remote delivery requires the matching
   Agent package. See the
-  [checklist contract](./docs/features/assistant-workbar/runtime-checklist-technical-design.md).
+  [checklist contract](./docs/agent-runtime/design/checklist.md).
 - [x] **Experts and Subagents**: Supports explicit experts, team analysis, and
   up to three experts running in parallel. Experts inherit the parent
   execution space and capability scope and can use enabled local direct-model
@@ -497,7 +497,7 @@ records are listed separately and do not introduce another feature status.
   each request again, including queued dispatch. Deleted or incompatible
   connections fall back, while missing credentials remain explicit errors.
   Schema 49 migrates stored choices. Purpose-specific models remain planned;
-  see the [selection design](./docs/features/model-connections/runtime-selection-design.md).
+  see the [selection design](./docs/agent-runtime/contracts/selection.md).
 - [x] **Role-bound model connections**: Each role can inherit the default model
   or select an independent text-model connection. Invalid connections safely
   fall back to the default; the synthesis role always inherits the default.
@@ -1219,7 +1219,7 @@ records are listed separately and do not introduce another feature status.
   text-model Host checks with a substituted image service, not real image generation.
   Published Agent `0.13.4` requires Desktop `0.13.14` or later; publication and native
   platform acceptance remain separate from Linux development evidence. See the
-  [validation record](./docs/features/remote-host/runtime-checklist-validation.md).
+  [validation record](./docs/agent-runtime/validation/remote-checklist.md).
 
 - [x] **Remote task delegation**: Enabled only after the user explicitly
   configures an endpoint and token, uses HTTP(S) according to the global

@@ -40,7 +40,7 @@ Task 和 Runtime 能力的一个轻量触发面和状态镜面。
   导航的权威定义，宠物的状态镜面必须与其保持一致，不重新定义任务生命周期。
 - [助手工作栏](../assistant-workbar/README.md)：主窗口执行空间和输入区的权威定义，宠物的
   快速发起和拖放暂存最终落地到该输入区，不复制其行为。
-- [直连模型 Agent 能力](../direct-model-agent/README.md)、[远程主机与远程执行](../remote-host/README.md)：
+- [直连模型 Agent 能力](../../agent-runtime/providers/direct-model/README.md)、[远程主机与远程执行](../remote-host/README.md)：
   统一执行与能力范围的权威定义，宠物不扩大或绕过该边界。
 - [文档处理](../document-processing/README.md)：拖放文件解析和格式支持的权威定义，宠物拖放
   暂存复用同一处理管线，不重新定义支持类型。

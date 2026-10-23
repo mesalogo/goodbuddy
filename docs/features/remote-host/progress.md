@@ -1,6 +1,6 @@
 # 主机管理实施进度
 
-本文只记录主机管理与云环境管理（[PRD](./prd.md) FR-RH-1 至 FR-RH-6）的已验证实现事实。现有 SSH、Agent 和 Runtime 的历史验证见[技术设计](./technical-design.md)和[执行清单验证记录](./runtime-checklist-validation.md)。
+本文只记录主机管理与云环境管理（[PRD](./prd.md) FR-RH-1 至 FR-RH-6）的已验证实现事实。现有 SSH、Agent 和 Runtime 的历史验证见[技术设计](./technical-design.md)和[执行清单验证记录](../../agent-runtime/validation/remote-checklist.md)。
 
 ## 2026-10-13 一期：主机管理迁入应用中心
 

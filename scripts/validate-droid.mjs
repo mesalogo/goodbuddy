@@ -1,4 +1,5 @@
 // Run: node scripts/validate-droid.mjs [--live] [--max-calls=16] [--question-only|--text-only|--native [--native-background]]
+// GB_DROID_SUITE selects native, capabilities, tasks, or session when --native is set.
 import { build } from 'esbuild'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs/promises'
