@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { createServer } from 'node:http'
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import spawn from 'cross-spawn'
@@ -18,14 +19,20 @@ const cipher = {
 }
 const newId = '00000000-0000-4000-8000-000000000123'
 const denial = "OpenCode's free tier can only be used from within OpenCode"
+const { prepareBundledOpenCodeConfig } = createRequire(import.meta.url)(
+  '../../../build/opencode-config.cjs'
+) as { prepareBundledOpenCodeConfig: (projectDir: string) => string }
 
 describe('OpenCode isolated configuration paths', () => {
   let fixtureRoot: string
   let bundledConfigPath: string
   beforeAll(async () => {
-    fixtureRoot = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-config-isolation-'))
-    bundledConfigPath = join(fixtureRoot, 'opencode-config')
-    await cp(join(process.cwd(), '.runtime-resources', 'opencode-config'), bundledConfigPath, { recursive: true })
+    const temporaryRoot = join(process.cwd(), 'temp', 'opencode-config-isolation')
+    await mkdir(temporaryRoot, { recursive: true })
+    fixtureRoot = await mkdtemp(join(temporaryRoot, 'fixture-'))
+    // A clean checkout has no generated runtime resources. Prepare the real
+    // offline template inside this fixture rather than relying on a prior build.
+    bundledConfigPath = prepareBundledOpenCodeConfig(fixtureRoot)
   }, 60_000)
   afterAll(async () => {
     if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true })
