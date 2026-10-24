@@ -464,6 +464,8 @@ export const settings = {
   },
   documentParsing: {
     recognition: {
+      source: 'OCR 来源',
+      savedSource: '已保存来源：{{source}}',
       title: '文档识别',
       manage: '管理模型',
       current: '当前模型：{{name}} · 来源：{{source}}',

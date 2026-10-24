@@ -60,7 +60,7 @@ import {
   RuntimeCustomizationSection,
   type RuntimeCustomizationSectionHandle
 } from './RuntimeCustomizationSection'
-import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
+import { PageHeader, PageTabs } from './WorkspacePrimitives'
 import {
   SettingsCategoryHeader,
   SettingsWarningList
@@ -2251,15 +2251,17 @@ function SettingsPanelView({
               navigation={
                 activeTab === 'runtime' ? (
                   <div className="model-type-navigation agent-runtime-navigation">
-                    <SegmentedControl
+                    <PageTabs
                       ariaLabel="Agent Runtime"
+                      idPrefix="settings-runtime"
+                      variant="segmented"
                       onChange={setAgentRuntimeType}
-                      options={[
-                        { label: 'OpenCode', value: 'opencode' },
-                        { label: 'Continue', value: 'continue' },
+                      tabs={[
+                        { label: 'OpenCode', id: 'opencode' },
+                        { label: 'Continue', id: 'continue' },
                         {
                           label: t('runtime.deepseekHarness.selectorLabel'),
-                          value: 'deepseek-harness'
+                          id: 'deepseek-harness'
                         }
                       ]}
                       value={agentRuntimeType}
@@ -2267,15 +2269,17 @@ function SettingsPanelView({
                   </div>
                 ) : activeTab === 'model' ? (
                 <div className="model-type-navigation model-connections-navigation">
-                  <SegmentedControl
+                  <PageTabs
                     ariaLabel={t('model.typeAriaLabel')}
-                    onChange={(value) => { requestTabChange('model', undefined, false, value) }}
-                    options={[
-                      { label: t('model.types.llm.label'), value: 'llm' },
-                      { label: t('model.types.embedding.label'), value: 'embedding' },
-                      { label: t('model.types.rerank.label'), value: 'rerank' },
-                      { label: t('model.types.speech.label'), value: 'speech' },
-                      { label: t('documentParsing.recognition.title'), value: 'document-recognition' }
+                    idPrefix="settings-model"
+                    variant="segmented"
+                    onChange={(value) => requestTabChange('model', undefined, false, value)}
+                    tabs={[
+                      { label: t('model.types.llm.label'), id: 'llm' },
+                      { label: t('model.types.embedding.label'), id: 'embedding' },
+                      { label: t('model.types.rerank.label'), id: 'rerank' },
+                      { label: t('model.types.speech.label'), id: 'speech' },
+                      { label: t('documentParsing.recognition.title'), id: 'document-recognition' }
                     ]}
                     value={modelType}
                   />
@@ -2444,6 +2448,8 @@ function SettingsPanelView({
               onShortcutSettingsChanged={onShortcutSettingsChanged}
             />
           )}
+          <div className="settings-tab-panel" hidden={activeTab !== 'runtime'} role="tabpanel"
+            id={`settings-runtime-panel-${agentRuntimeType}`} aria-labelledby={`settings-runtime-tab-${agentRuntimeType}`} tabIndex={0}>
           {activeTab === 'runtime' && (
             <>
               <SettingsWarningList warnings={settings?.warnings} />
@@ -2999,9 +3005,11 @@ function SettingsPanelView({
             agentRuntimeType === 'deepseek-harness' && (
               <DshMarketplaceSection onNotify={onNotify} />
             )}
+          </div>
 
           {activeTab === 'model' && (
-            <>
+            <div className="settings-tab-panel" role="tabpanel" id={`settings-model-panel-${modelType}`}
+              aria-labelledby={`settings-model-tab-${modelType}`} tabIndex={0}>
           {modelType === 'llm' && (
           <div className="settings-section">
             <div className="settings-section__title settings-section__title--actions">
@@ -3944,7 +3952,7 @@ function SettingsPanelView({
               selectedModelId={speechModelDraftId}
             />
           )}
-            </>
+            </div>
           )}
 
           {activeTab === 'context-control' && (

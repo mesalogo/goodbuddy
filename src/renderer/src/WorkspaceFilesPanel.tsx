@@ -24,11 +24,12 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useId,
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
-import { SegmentedControl } from './WorkspacePrimitives'
+import { PageTabs, SegmentedControl } from './WorkspacePrimitives'
 import { WorkspaceActionDialog } from './WorkspaceActionDialog'
 import { WorkspaceGitTools } from './WorkspaceGitTools'
 import { useListWindow } from './use-list-window'
@@ -134,6 +135,7 @@ export function WorkspaceFilesPanel({
   onOpenEntry
 }: WorkspaceFilesPanelProps): React.JSX.Element {
   const { t } = useTranslation('workspace')
+  const viewTabsId = useId()
   const tRef = useRef(t)
   useEffect(() => {
     tRef.current = t
@@ -591,12 +593,13 @@ export function WorkspaceFilesPanel({
     </section>}
     <div className="workspace-files__list" hidden={showingDiff}>
       <div className="workspace-files__header">
-        <div className="workspace-files__view-switch"><SegmentedControl ariaLabel={t('files.view')} value={activeView} onChange={setView} options={[
-          { value: 'files', label: t('files.filesView') },
-          ...(showGit ? [{ value: 'changes' as const, label: t('management.gitWorkspace') }] : [])
+        <div className="workspace-files__view-switch"><PageTabs idPrefix={viewTabsId} variant="segmented" ariaLabel={t('files.view')} value={activeView} onChange={setView} tabs={[
+          { id: 'files', label: t('files.filesView') },
+          ...(showGit ? [{ id: 'changes' as const, label: t('management.gitWorkspace') }] : [])
         ]} /></div>
         <button ref={refreshRef} className="icon-button" type="button" disabled={refreshing} aria-label={t('sidebar.workspace.refreshAriaLabel')} title={t('sidebar.workspace.refresh')} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden="true" /></button>
       </div>
+      <div className="workspace-files__view-panel" role="tabpanel" id={`${viewTabsId}-panel-${activeView}`} aria-labelledby={`${viewTabsId}-tab-${activeView}`} tabIndex={0}>
       {activeView === 'files' && root && <div className="workspace-files__toolbar workspace-files__actions">
         <span className="workspace-files__destination" title={createTarget || '/'}>{t('management.importTarget', { path: createTarget || '/' })}</span>
         <button className="icon-button" type="button" aria-label={t('management.createFile')} title={`${t('management.createFile')}: ${createTarget || '/'}`} onClick={() => setDialog({ kind: 'createFile', path: createTarget })}><FilePlus size={14} aria-hidden="true" /></button>
@@ -691,6 +694,7 @@ export function WorkspaceFilesPanel({
         </p>
       )}
       {renderDirectoryError(browsedPath)}
+      </div>
       </div>
     </div>
     {actionError && <p className="workspace-files__error" role="alert">{actionError}</p>}

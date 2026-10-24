@@ -82,15 +82,22 @@ app.whenReady().then(async () => {
           for (const [width, height] of [[640, 600], [960, 720], [1280, 800]]) {
             win.setContentSize(width, height)
             await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&locale=${locale}&theme=${theme}`)
-            await wait('document.querySelectorAll(".model-type-navigation .segmented-control__option").length===5')
-            await js('document.querySelectorAll(".model-type-navigation .segmented-control__option")[4].click()')
+            await wait('document.querySelectorAll(".model-type-navigation [role=tab]").length===5')
+            await click('.model-type-navigation [role=tab]:first-child')
+            await key('End')
             await wait('!!document.querySelector(".document-ocr-model")')
+            assert(await js(`(() => {
+              const tab=document.querySelector('.model-type-navigation [aria-selected=true]');
+              const panel=document.getElementById(tab.getAttribute('aria-controls'));
+              return tab===document.activeElement && !tab.hasAttribute('aria-pressed') && panel?.getAttribute('role')==='tabpanel'
+                && panel.getAttribute('aria-labelledby')===tab.id && !document.getElementById('document-parsing-unsaved-notice');
+            })()`), 'Keyboard tab navigation must select its panel without modifying settings')
             await js('document.fonts.ready')
             await settle()
             const measure = () => js(`(() => {
               const pane=document.querySelector('.settings-panel__content'), source=document.querySelector('.document-ocr-provider');
               const note=source.querySelector('small'), n=note.getBoundingClientRect(), s=source.getBoundingClientRect();
-              const label=source.querySelector('strong').getBoundingClientRect(), toggle=source.querySelector('.segmented-control').getBoundingClientRect();
+              const label=source.querySelector('label:first-of-type').getBoundingClientRect(), toggle=source.querySelector('label:last-of-type').getBoundingClientRect();
               return {overflow:pane.scrollWidth>pane.clientWidth+1, sourceHeight:s.height,
                 sourceSameRow:Math.abs(label.top+label.height/2-toggle.top-toggle.height/2)<1,
                 sourceNoOverlap:label.right<=toggle.left,
@@ -116,8 +123,14 @@ app.whenReady().then(async () => {
             assert(card, 'Model actions must fit the card and remain reachable')
             await screenshot(`${locale}-${theme}-ocr-card-${width}`)
             await scrollSettingsControl('.document-ocr-provider')
-            await click('.document-ocr-provider .segmented-control__option:last-child')
+            await click('.document-ocr-provider input[value="local"]')
+            await key('Right')
             await wait('!!document.querySelector(".http-ocr-settings")')
+            assert(await js(`(() => {
+              const inputs=[...document.querySelectorAll('.document-ocr-provider input[type=radio]')];
+              return inputs.length===2 && inputs.filter(input=>input.checked).length===1
+                && inputs[1].checked && inputs[1]===document.activeElement;
+            })()`), 'Native radio arrow keys must change the single draft source')
             const remote = await measure()
             assert.equal(remote.overflow, false, JSON.stringify({locale,theme,width,remote}))
             await screenshot(`${locale}-${theme}-ocr-remote-${width}`)
@@ -146,7 +159,7 @@ app.whenReady().then(async () => {
             observations.push({locale,theme,width,local,remote,advanced})
             assert.equal(advanced.overflow, false)
             assert(advanced.summaryGap >= 8 && advanced.gridGap >= 8, JSON.stringify({locale,theme,width,advanced}))
-            await js('document.querySelector(".document-ocr-provider .segmented-control__option:first-child").click()')
+            await js('document.querySelector(".document-ocr-provider input[value=local]").click()')
             await wait('!!document.querySelector(".document-ocr-model") && document.querySelector(".settings-category-header__actions .primary-button").disabled')
             assert.equal(await js('!!document.getElementById("document-parsing-unsaved-notice")'), false)
           }
@@ -162,7 +175,7 @@ app.whenReady().then(async () => {
             await js("document.querySelector('.settings-panel__content').scrollTop=0")
             await settle()
             const layout = await js(`(() => {
-              const row=document.querySelector('.model-connections-navigation'),tabs=row.querySelector('.segmented-control'),button=row.querySelector('.model-download-source-control button');
+              const row=document.querySelector('.model-connections-navigation'),tabs=row.querySelector('.page-tabs'),button=row.querySelector('.model-download-source-control button');
               const r=row.getBoundingClientRect(),t=tabs.getBoundingClientRect(),b=button.getBoundingClientRect();
               return {rightAligned:Math.abs(r.right-b.right)<1,sameRow:Math.abs(t.y+t.height/2-b.y-b.height/2)<1,
                 noOverlap:t.right<=b.left,overflow:row.scrollWidth>row.clientWidth+1,hit:button.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2))};

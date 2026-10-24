@@ -39,7 +39,6 @@ import {
 } from './SettingsPrimitives'
 import { modelOperationPercent } from './model-download-presentation'
 import { defaultHttpOcrSettings } from '../../shared/document-parsing-contracts'
-import { SegmentedControl } from './WorkspacePrimitives'
 import { InlineHelp } from './InlineHelp'
 import { HttpOcrSettings } from './HttpOcrSettings'
 import { DocumentResultPreview } from './DocumentResultPreview'
@@ -764,12 +763,20 @@ export function DocumentParsingSettingsSection({
       </>}
       {managingModels && <>
       <section className="settings-section document-ocr-provider">
-        <strong>OCR 来源</strong>
-        <SegmentedControl ariaLabel="OCR 来源" value={draft.ocrProvider ?? 'local'}
-          disabled={saving || busyModelId !== undefined}
-          options={[{ value: 'local', label: '本地模型' }, { value: 'paddleocr-vl', label: '远程服务' }]}
-          onChange={(value) => updateDraft('ocrProvider', value)} />
-        <small>已保存来源：{snapshot.settings.ocrProvider === 'paddleocr-vl' ? 'HTTP PaddleOCR-VL' : '本地模型'}</small>
+        <fieldset className="runtime-source-options document-ocr-provider__options" disabled={saving || busyModelId !== undefined}>
+          <legend>{t('documentParsing.recognition.source')}</legend>
+          {(['local', 'paddleocr-vl'] as const).map((provider) => (
+            <label key={provider}>
+              <input type="radio" name="document-ocr-provider" value={provider}
+                checked={(draft.ocrProvider ?? 'local') === provider}
+                onChange={() => updateDraft('ocrProvider', provider)} />
+              <span>{t(provider === 'local' ? 'documentParsing.recognition.local' : 'documentParsing.recognition.remote')}</span>
+            </label>
+          ))}
+        </fieldset>
+        <small>{t('documentParsing.recognition.savedSource', {
+          source: snapshot.settings.ocrProvider === 'paddleocr-vl' ? 'HTTP PaddleOCR-VL' : t('documentParsing.recognition.local')
+        })}</small>
       </section>
       {draft.ocrProvider === 'paddleocr-vl' ? <HttpOcrSettings
         value={draft.httpOcr ?? defaultHttpOcrSettings} onChange={(value) => updateDraft('httpOcr', value)}

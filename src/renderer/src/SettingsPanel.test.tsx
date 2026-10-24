@@ -1422,7 +1422,7 @@ describe('SettingsPanel runtime files', () => {
       )
     ).toBeInTheDocument()
     expect(screen.queryByText('通过 PATH 检测')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Continue' }))
     expect(
       screen.getByText('Bundled Continue 1.5.47 is ready')
     ).toBeInTheDocument()
@@ -1522,7 +1522,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     const trigger = screen.getByRole('button', { name: '模型下载源' })
-    expect(trigger.closest('.model-type-navigation')).toContainElement(screen.getByRole('group', { name: '模型类型' }))
+    expect(trigger.closest('.model-type-navigation')).toContainElement(screen.getByRole('tablist', { name: '模型类型' }))
     expect(trigger.closest('.settings-category-header__navigation')?.previousElementSibling).toHaveClass('settings-category-header__actions')
     expect(await screen.findByText('当前来源：ModelScope')).toBeInTheDocument()
     trigger.focus()
@@ -1904,7 +1904,7 @@ describe('SettingsPanel runtime files', () => {
     render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
-    fireEvent.click(screen.getByRole('button', { name: kind === 'embedding' ? '向量模型' : '语音输入' }))
+    fireEvent.click(screen.getByRole('tab', { name: kind === 'embedding' ? '向量模型' : '语音输入' }))
     if (kind === 'embedding') {
       fireEvent.click(await screen.findByRole('button', { name: '编辑向量模型连接 GoodBuddy 内置向量模型' }))
     }
@@ -1966,7 +1966,7 @@ describe('SettingsPanel runtime files', () => {
       fireEvent.click(screen.getByRole('button', { name: '放弃更改并切换' }))
     }
     await screen.findByLabelText('当前 OCR 模型')
-    expect(screen.getByRole('button', { name: '文档识别' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('tab', { name: '文档识别' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.queryByRole('combobox', { name: '聊天与成果文件' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '测试解析' })).not.toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: '保存设置' })).toHaveLength(1)
@@ -1982,7 +1982,10 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
     expect(screen.getAllByRole('button', { name: '模型下载源' })[0]).toHaveFocus()
     expect(updateApplicationSettings).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '远程服务' }))
+    expect(screen.getByRole('radio', { name: '本地模型' })).toBeChecked()
+    expect(screen.getByRole('group', { name: 'OCR 来源' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: '远程服务' }))
+    expect(screen.getByRole('radio', { name: '本地模型' })).not.toBeChecked()
     expect(screen.getByRole('button', { name: '保存设置' })).toBeEnabled()
     const notice = (): HTMLElement | null => document.getElementById('document-parsing-unsaved-notice')
     expect(notice()?.closest('.settings-category-header--sticky')).not.toBeNull()
@@ -1991,19 +1994,22 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
     await screen.findByText('保存失败，请重试')
     expect(notice()).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '远程服务' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('radio', { name: '远程服务' })).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
     await waitFor(() => {
       expect(notice()).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: '保存设置' })).toBeDisabled()
     })
-    fireEvent.click(screen.getByRole('button', { name: '本地模型' }))
-    fireEvent.click(screen.getByRole('button', { name: 'LLM 模型' }))
+    fireEvent.click(screen.getByRole('radio', { name: '本地模型' }))
+    const recognitionTab = screen.getByRole('tab', { name: '文档识别' })
+    recognitionTab.focus()
+    fireEvent.keyDown(recognitionTab, { key: 'Home' })
     fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
-    expect(screen.getByRole('button', { name: '文档识别' })).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(screen.getByRole('button', { name: 'LLM 模型' }))
+    expect(screen.getByRole('tab', { name: '文档识别' })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(recognitionTab).toHaveFocus())
+    fireEvent.click(screen.getByRole('tab', { name: 'LLM 模型' }))
     fireEvent.click(screen.getByRole('button', { name: '放弃更改并切换' }))
-    expect(screen.getByRole('button', { name: 'LLM 模型' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('tab', { name: 'LLM 模型' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('refreshes built-in Notes MCP after enabling Magic Notes', async () => {
@@ -2040,6 +2046,26 @@ describe('SettingsPanel runtime files', () => {
     ).not.toHaveLength(0)
   })
 
+  it('navigates model and Runtime panels with tabs without writing settings', async () => {
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
+    const runtimeTab = await screen.findByRole('tab', { name: 'OpenCode' })
+    expect(runtimeTab).not.toHaveAttribute('aria-pressed')
+    runtimeTab.focus()
+    fireEvent.keyDown(runtimeTab, { key: 'ArrowRight' })
+    expect(screen.getByRole('tab', { name: 'Continue' })).toHaveFocus()
+    expect(screen.getByRole('tabpanel', { name: 'Continue' })).toHaveAttribute('id', 'settings-runtime-panel-continue')
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    const modelTab = screen.getByRole('tab', { name: 'LLM 模型' })
+    modelTab.focus()
+    fireEvent.keyDown(modelTab, { key: 'ArrowRight' })
+    expect(screen.getByRole('tab', { name: '向量模型' })).toHaveFocus()
+    expect(screen.getByRole('tabpanel', { name: '向量模型' })).toHaveAttribute('id', 'settings-model-panel-embedding')
+    expect(document.getElementById('document-parsing-unsaved-notice')).toBeNull()
+    expect(updateRuntime).not.toHaveBeenCalled()
+    expect(updateRuntimeCustomizationSettings).not.toHaveBeenCalled()
+    expect(updateApplicationSettings).not.toHaveBeenCalled()
+  })
+
   it('keeps page navigation beside an independently scrollable panel', () => {
     render(
       <SettingsPanel
@@ -2055,7 +2081,7 @@ describe('SettingsPanel runtime files', () => {
     const navigation = screen.getByRole('tablist', {
       name: '设置分类'
     })
-    const content = screen.getByRole('tabpanel')
+    const content = screen.getByRole('tabpanel', { name: 'Agent Runtime' })
     expect(navigation.parentElement).toHaveClass('settings-panel__body')
     expect(content.parentElement).toBe(navigation.parentElement)
     expect(content).toHaveClass('settings-panel__content')
@@ -2143,7 +2169,7 @@ describe('SettingsPanel runtime files', () => {
     const settings = screen.getByRole('region', {
       name: '设置中心'
     })
-    const content = screen.getByRole('tabpanel')
+    const content = screen.getByRole('tabpanel', { name: 'Agent Runtime' })
     const categoryHeader = content.querySelector(
       '.settings-category-header'
     )
@@ -2230,7 +2256,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
 
     const settingsBody = screen
-      .getByRole('tabpanel')
+      .getByRole('tabpanel', { name: '模型连接' })
       .closest('.settings-panel__body')
     await waitFor(() => {
       expect(settingsBody).toHaveAttribute('inert')
@@ -2330,7 +2356,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
     fireEvent.click(
-      screen.getByRole('button', { name: '语音输入' })
+      screen.getByRole('tab', { name: '语音输入' })
     )
     const speechModelSelector = await screen.findByRole('combobox', {
       name: '当前语音模型'
@@ -2599,7 +2625,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
     fireEvent.click(
-      screen.getByRole('button', { name: '语音输入' })
+      screen.getByRole('tab', { name: '语音输入' })
     )
     const speechModelSelector = await screen.findByRole('combobox', {
       name: '当前语音模型'
@@ -2876,7 +2902,7 @@ describe('SettingsPanel runtime files', () => {
       )
     ).not.toBeInTheDocument()
     await screen.findByText('GoodBuddy 内置 OpenCode')
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Continue' }))
     const continueOverview = screen
       .getByText('GoodBuddy 内置 Continue')
       .closest<HTMLElement>('.runtime-overview')
@@ -2942,7 +2968,7 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(
-      await screen.findByRole('button', {
+      await screen.findByRole('tab', {
         name: 'DeepSeek Harness（预览）'
       })
     )
@@ -3081,7 +3107,7 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(
-      await screen.findByRole('button', {
+      await screen.findByRole('tab', {
         name: 'DeepSeek Harness（预览）'
       })
     )
@@ -3163,7 +3189,7 @@ describe('SettingsPanel runtime files', () => {
         onSaved={vi.fn()}
       />
     )
-    fireEvent.click(await screen.findByRole('button', {
+    fireEvent.click(await screen.findByRole('tab', {
       name: locale === 'zh-CN' ? 'DeepSeek Harness（预览）' : 'DeepSeek Harness (Preview)'
     }))
     const source = screen.getByLabelText(locale === 'zh-CN'
@@ -3200,7 +3226,7 @@ describe('SettingsPanel runtime files', () => {
         onSaved={vi.fn()}
       />
     )
-    fireEvent.click(await screen.findByRole('button', { name: 'DeepSeek Harness（预览）' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'DeepSeek Harness（预览）' }))
     const source = screen.getByLabelText('DeepSeek Harness OpenAI 兼容模型连接')
     expect(source).not.toBeDisabled()
     expect(within(source).getByRole('option', { name: '跟随全局默认模型' })).toBeDisabled()
@@ -3237,7 +3263,7 @@ describe('SettingsPanel runtime files', () => {
     await screen.findByDisplayValue('默认模型')
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Draft connection' } })
     fireEvent.click(screen.getByRole('tab', { name: 'Agent Runtime' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'DeepSeek Harness（预览）' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'DeepSeek Harness（预览）' }))
     expect(screen.getByText(/已保存配置中的实际回退：默认模型 · saved-model。/)).toBeInTheDocument()
     expect(screen.getByText(/草稿兼容候选（未保存）：Draft connection · saved-model。/)).toBeInTheDocument()
     expect(updateRuntime).not.toHaveBeenCalled()
@@ -3255,7 +3281,7 @@ describe('SettingsPanel runtime files', () => {
     )
 
     await screen.findByText('GoodBuddy 内置 OpenCode')
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Continue' }))
     fireEvent.click(screen.getByText('高级设置'))
     const input = await screen.findByLabelText('Continue 可执行文件路径')
     const field = input.closest('label')
@@ -3307,8 +3333,8 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.queryByText(/配置可兼容的直连文本模型后即可使用/)
     ).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'OpenCode' }))
-      .toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('tab', { name: 'OpenCode' }))
+      .toHaveAttribute('aria-selected', 'true')
     expect(screen.queryByText('默认 Runtime')).not.toBeInTheDocument()
     expect(
       screen.getAllByText(/GoodBuddy 内置 OpenCode/).length
@@ -3346,7 +3372,7 @@ describe('SettingsPanel runtime files', () => {
       })
     ).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Continue' }))
     expect(
       screen.getAllByText(/GoodBuddy 内置 Continue/).length
     ).toBeGreaterThan(0)
@@ -3833,7 +3859,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'Continue' }))
     const presetName = await screen.findByLabelText('预设名称')
     fireEvent.change(presetName, {
       target: { value: 'Unsaved preset' }
@@ -3893,7 +3919,7 @@ describe('SettingsPanel runtime files', () => {
     )
 
     await screen.findByText('GoodBuddy 内置 OpenCode')
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Continue' }))
     fireEvent.click(screen.getByText('高级设置'))
     expect(
       screen.getByRole('radio', {
@@ -3921,7 +3947,7 @@ describe('SettingsPanel runtime files', () => {
       action: 'show-file'
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'OpenCode' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'OpenCode' }))
     fireEvent.click(screen.getByText('高级设置'))
     fireEvent.click(
       screen.getByRole('radio', {
@@ -4106,14 +4132,14 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    const content = await screen.findByRole('tabpanel')
+    const content = await screen.findByRole('tabpanel', { name: '模型连接' })
     const header = content.querySelector('.settings-category-header')
     expect(header).toHaveClass('settings-category-header--sticky')
     expect(
       header?.querySelector('.model-type-navigation')
     ).toBeInTheDocument()
     expect(
-      header?.querySelector('.segmented-control')
+      header?.querySelector('.page-tabs')
     ).toBeInTheDocument()
   })
 
@@ -4238,7 +4264,7 @@ describe('SettingsPanel runtime files', () => {
     )
     fireEvent.click(screen.getByRole('tab', { name: 'Agent Runtime' }))
     for (const runtimeName of ['OpenCode', 'Continue']) {
-      fireEvent.click(screen.getByRole('button', { name: runtimeName }))
+      fireEvent.click(screen.getByRole('tab', { name: runtimeName }))
       fireEvent.click(screen.getByText('高级设置'))
       const option = await screen.findByRole('option', {
         name: '默认模型'
@@ -4855,7 +4881,7 @@ describe('SettingsPanel runtime files', () => {
         profileId: modelProfileId
       })
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Continue' }))
     fireEvent.click(
       screen.getByRole('button', {
         name: '保存并测试 Continue'
@@ -5020,7 +5046,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
-    fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
+    fireEvent.click(screen.getByRole('tab', { name: '向量模型' }))
     expect(
       screen.getByText('向量模型连接', {
         selector: 'strong'
@@ -5107,7 +5133,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
-    fireEvent.click(screen.getByRole('button', { name: '重排模型' }))
+    fireEvent.click(screen.getByRole('tab', { name: '重排模型' }))
 
     expect(
       screen
@@ -5160,7 +5186,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
     await waitFor(() => expect(getEmbeddingSnapshot).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
+    fireEvent.click(screen.getByRole('tab', { name: '向量模型' }))
 
     const section = screen.getByRole('region', { name: '向量模型' })
     const testButton = within(section).getByRole('button', {
@@ -5211,7 +5237,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
-    fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
+    fireEvent.click(screen.getByRole('tab', { name: '向量模型' }))
     fireEvent.click(
       screen.getByRole('button', {
         name: '编辑向量模型连接 GoodBuddy 内置向量模型'
@@ -5277,7 +5303,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
-    fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
+    fireEvent.click(screen.getByRole('tab', { name: '向量模型' }))
     fireEvent.click(
       screen.getByRole('button', {
         name: '编辑向量模型连接 自定义向量模型'

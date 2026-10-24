@@ -91,7 +91,7 @@ app.whenReady().then(async () => {
         await settle()
         assert.equal(await js('document.querySelectorAll(".workspace-files__view-switch button").length'), git ? 2 : 1)
         assert.equal(await js('document.querySelector(".workspace-files__view-switch button").textContent'), 'Files')
-        assert.equal(await js('document.querySelector(".workspace-files__view-switch button").getAttribute("aria-pressed")'), 'true')
+        assert.equal(await js('document.querySelector(".workspace-files__view-switch [role=tab]").getAttribute("aria-selected")'), 'true')
         const root = await geometry()
         assert.equal(root.innerWidth, width); assert.equal(root.innerHeight, height)
         assert(root.scrollHeight > root.clientHeight * 3 && root.clientHeight > 50, 'Long files list needs a bounded viewport')

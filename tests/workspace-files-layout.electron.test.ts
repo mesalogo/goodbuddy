@@ -1,15 +1,15 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
 
 it('docks workspace Files controls while long Git and non-Git directories scroll', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-files-layout-'))
+  await mkdir(resolve('temp'), { recursive: true })
+  const directory = await mkdtemp(resolve('temp/goodbuddy-files-layout-'))
   const server = await createServer({
     configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
     plugins: [react(), { name: 'workspace-files-layout', configureServer(server) {

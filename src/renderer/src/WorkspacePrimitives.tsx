@@ -194,7 +194,7 @@ export function PageTabs<T extends string>({
 }: {
   ariaLabel: string
   idPrefix: string
-  onChange: (value: T) => void
+  onChange: (value: T) => void | boolean
   tabs: readonly PageTab<T>[]
   value: T
   variant?: 'default' | 'segmented'
@@ -227,7 +227,7 @@ export function PageTabs<T extends string>({
               return
             }
             event.preventDefault()
-            onChange(tabs[nextIndex]!.id)
+            if (onChange(tabs[nextIndex]!.id) === false) return
             const controls =
               event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
                 '[role="tab"]'

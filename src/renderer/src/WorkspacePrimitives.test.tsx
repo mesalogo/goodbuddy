@@ -133,7 +133,8 @@ describe('WorkspacePrimitives', () => {
   it('keeps model download source on the model navigation row and aligned right', () => {
     expect(stylesheet).toMatch(/\.model-type-navigation\s*\{[^}]*flex:\s*0 0 auto;/u)
     expect(stylesheet).toMatch(/\.model-type-navigation\.model-connections-navigation\s*\{[^}]*flex-direction:\s*row;/u)
-    expect(stylesheet).toMatch(/\.model-connections-navigation > \.segmented-control\s*\{[^}]*flex-shrink:\s*1;[^}]*min-width:\s*0;/u)
+    expect(stylesheet).toMatch(/\.model-connections-navigation > \.page-tabs\s*\{[^}]*flex-shrink:\s*1;[^}]*min-width:\s*0;/u)
+    expect(stylesheet).toMatch(/\.settings-tab-panel\s*\{[^}]*flex:\s*0 0 auto;/u)
     expect(stylesheet).toMatch(/\.model-download-source-control\s*\{[^}]*flex:\s*0 0 auto;[^}]*margin-left:\s*auto;/u)
   })
   it('bounds knowledge library cards before truncating long names', () => {
@@ -647,6 +648,19 @@ describe('WorkspacePrimitives', () => {
     expect(stylesheet).toContain('--content-dashboard: 1040px;')
     expect(stylesheet).toMatch(/\.page-shell--supervisor\s*\{[^}]*var\(--page-gutter\)[^}]*var\(--content-supervisor\)/u)
     expect(stylesheet).toMatch(/\.page-shell--dashboard\s*\{[^}]*var\(--content-dashboard\)/u)
+  })
+
+  it('keeps focus on the current tab when navigation is rejected', () => {
+    const onChange = vi.fn(() => false)
+    render(<PageTabs ariaLabel="配置页面" idPrefix="guarded" value="first" onChange={onChange}
+      tabs={[{ id: 'first', label: '当前页' }, { id: 'second', label: '下一页' }]} />)
+    const current = screen.getByRole('tab', { name: '当前页' })
+    current.focus()
+    fireEvent.keyDown(current, { key: 'ArrowRight' })
+    expect(onChange).toHaveBeenCalledWith('second')
+    expect(current).toHaveFocus()
+    expect(current).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '下一页' })).toHaveAttribute('tabindex', '-1')
   })
 
   it('supports arrow-key tab and segmented-control selection', () => {

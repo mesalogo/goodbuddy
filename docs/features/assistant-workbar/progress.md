@@ -1,5 +1,20 @@
 # 工作栏实现与验证进度
 
+## 2026-10-24：页签与配置选择语义复核
+
+检查 Renderer 的共享分段控件与自定义选中控件后，将模型类型、Agent Runtime 配置分类及
+工作区“文件 / Git 工作区”改为共享 `PageTabs`，补齐激活面板关联和单一 Tab 焦点。
+设置页只切换查看面板，不写入配置；工作区保留目录展开、滚动和 Git 草稿。
+OCR 来源随后按用户明确要求改为原生 Radio，验证记录见[文档解析进度](../document-processing/progress.md)。任务筛选、列表／树形和预览／源码继续使用显示模式控件。
+共享页签允许离开保护拒绝切换，此时方向键不提前移动焦点；取消离开后恢复原触发项。
+
+验证：SettingsPanel、WorkspaceFilesPanel、WorkspacePrimitives 和 styles-split 共 213 项通过；
+真实 Electron 文档识别 12 组布局验证通过，包含原生 End 键导航、面板关联、切页无脏状态；
+工作区文件 16 组场景通过，覆盖 Git／非 Git、浅深主题、四种尺寸、原生滚动和切页位置保留。
+模型下载源 Electron 用例单独复跑通过。一次合并执行超过终端 60 秒限制，受影响用例随后单独
+运行通过。类型检查及本次修改的 TS/TSX/MJS 文件 ESLint 通过；外部模型调用为 0。
+本次仅改变 Renderer 导航语义与布局，不改变 Agent、文件读写或 Runtime 执行协议。
+
 ## 2026-10-22: OpenCode 1.19.3 Upgrade
 
 Source pins now coordinate `opencode-ai`, `@opencode-ai/sdk`, and

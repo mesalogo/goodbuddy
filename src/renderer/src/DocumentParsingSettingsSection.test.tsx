@@ -257,7 +257,7 @@ describe('DocumentParsingSettingsSection', () => {
 
     expect(await screen.findByText(/当前模型：PP-OCRv6 Tiny/)).toBeInTheDocument()
     expect(screen.queryByLabelText('当前 OCR 模型')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '远程服务' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: '远程服务' })).not.toBeInTheDocument()
     expect(
       screen.queryByText('onnxruntime-web-wasm')
     ).not.toBeInTheDocument()
@@ -542,7 +542,7 @@ describe('DocumentParsingSettingsSection', () => {
       ...settings, ocrProvider: 'paddleocr-vl', httpOcr: { ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test' }
     } })
     render(<DocumentParsingSettingsSection section="models" />)
-    fireEvent.click(await screen.findByRole('button', { name: '本地模型' }))
+    fireEvent.click(await screen.findByRole('radio', { name: '本地模型' }))
     fireEvent.change(screen.getByLabelText('当前 OCR 模型'), { target: { value: 'pp-ocrv6-medium' } })
     fireEvent.click(screen.getByRole('button', { name: '从 ZIP 导入 PP-OCRv6 Medium' }))
     await waitFor(() => expect(update).toHaveBeenCalledWith({ localOcrModelId: 'pp-ocrv6-medium' }))
@@ -571,8 +571,8 @@ describe('DocumentParsingSettingsSection', () => {
     expect(screen.getByRole('switch', { name: '保留页眉文字' })).not.toBeChecked()
     expect(screen.getByRole('switch', { name: '保留text' })).not.toBeChecked()
     fireEvent.click(screen.getByRole('switch', { name: '保留页眉文字' }))
-    fireEvent.click(screen.getByRole('button', { name: '本地模型' }))
-    fireEvent.click(screen.getByRole('button', { name: '远程服务' }))
+    fireEvent.click(screen.getByRole('radio', { name: '本地模型' }))
+    fireEvent.click(screen.getByRole('radio', { name: '远程服务' }))
     expect(screen.getByRole('switch', { name: '保留text' })).not.toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: '恢复默认' }))
     expect(screen.getByRole('switch', { name: '保留页眉文字' })).toBeChecked()

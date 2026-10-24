@@ -15,7 +15,7 @@
 | 聊天 | `App.tsx` 的 `PageShell variant="reading"`；附件卡位于原 Composer 内，待发送队列仍在 Composer 外，不在助手工作栏增加附件栏目 |
 | 知识库 | `App.tsx` 提供 `PageShell variant="master-detail"`，`KnowledgeWorkspace.tsx` 保留库导航并挂载 `knowledge-workspace/DocumentsView.tsx`；文档区域内切换解析详情与列表，不嵌套页面壳层或新建知识库级页签 |
 | 解析预览 | `DocumentResultPreview.tsx` 分别嵌入设置诊断 Modal、聊天附件 Modal 和知识库文档详情；共享数据和交互，外层容器负责标题、范围、关闭与滚动 |
-| 页签与选择 | `WorkspacePrimitives.tsx` 的 `PageTabs variant="segmented"` 承载正文、图片、详情；来源及过滤模式使用 `SegmentedControl`，不能用它替换页签语义 |
+| 页签与选择 | `WorkspacePrimitives.tsx` 的 `PageTabs variant="segmented"` 承载正文、图片、详情；OCR 来源用原生 Radio 配合 `fieldset/legend`，与页签导航区分 |
 | 浮层 | Modal 沿用 body Portal、`activateModalFocus` 与 `trapTabFocus`；测试及附件菜单复用 `AnchoredMenu`，由共享 `FloatingPortal` 挂入所属 Modal 并在 top layer 绘制。通知遵循根 UI 规范 |
 | 图文内容 | 复用 `MarkdownRenderer.tsx` 的排版、表格滚动和静态 HTML 处理边界；补齐受管图片与 OCR HTML 表格适配，现有 Markdown 渲染器并未直接支持这些资源 |
 | 状态与反馈 | `ScopeBadge`、`EmptyState`、共享按钮、`toggle-row` Switch、应用 `onNotify`；图片多选用 Checkbox，失败重试就地显示 |
@@ -99,9 +99,12 @@
 两页分别保存所属字段，沿用同一配置文件和凭据存储。下载或导入后选用只更新模型 ID，
 不提交其他草稿。跨分类以及从“文档识别”切换其他模型类型均保留未保存提示。
 
-“文档识别”沿用模型连接页头的保存按钮，内容区不重复分类标题和保存栏。OCR 来源使用紧凑的
-共享分段控件行；本地模型选择、卡片、标签和名称旁的仓库图标与语音模型一致。远程服务使用
+“文档识别”沿用模型连接页头的保存按钮，内容区不重复分类标题和保存栏。OCR 来源使用原生
+Radio，复用设置中的来源选择卡片；本地模型选择、卡片、标签和名称旁的仓库图标与语音模型一致。远程服务使用
 模型服务表单的标题、字段间距和次操作按钮，高级选项默认折叠。
+
+模型分类使用共享 `PageTabs` 和关联的 `tabpanel`，切换“文档识别”等页签只改变当前查看的
+配置页面，不选择启用模型，也不生成未保存修改；OCR 来源仍是需要保存的配置单选。
 
 文档识别和文档解析的未保存提示均属于固定页头状态区；文档识别中位于模型分类导航下方，
 滚动表单时与保存按钮持续可见。修改后显示一份提示，保存失败保留，保存成功或恢复已保存值
@@ -109,7 +112,8 @@
 
 ### 2.2 来源配置（模型连接 → 文档识别）
 
-“OCR 来源”使用共享分段控件，选项为“本地模型”“远程服务”，下方显示已保存来源与当前
+“OCR 来源”使用 `fieldset` 和可见 `legend`，同名原生 Radio 选项为“本地模型”“远程服务”，
+整张标签卡片可点击，支持原生方向键切换且始终只选中一个。选择只修改草稿，保存后生效；下方显示已保存来源与当前
 编辑值是否不同。聊天和知识库分别保留工作流选择，不增加每会话 Provider 配置副本。
 
 本地区域保留已有模型档位、下载源、安装校验、取消下载、ZIP 导入导出、删除及打开目录。

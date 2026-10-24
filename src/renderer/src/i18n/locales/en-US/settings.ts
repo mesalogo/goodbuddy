@@ -501,6 +501,8 @@ export const settings = {
   },
   documentParsing: {
     recognition: {
+      source: 'OCR source',
+      savedSource: 'Saved source: {{source}}',
       title: 'Document recognition',
       manage: 'Manage models',
       current: 'Current model: {{name}} · Source: {{source}}',

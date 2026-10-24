@@ -1211,7 +1211,7 @@
   gap: var(--space-3);
 }
 
-.model-type-navigation > .segmented-control {
+.model-type-navigation > .page-tabs {
   flex-shrink: 0;
 }
 
@@ -1220,9 +1220,21 @@
   align-items: center;
 }
 
-.model-connections-navigation > .segmented-control {
+.model-connections-navigation > .page-tabs {
   flex-shrink: 1;
   min-width: 0;
+}
+
+.settings-tab-panel {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.settings-tab-panel[hidden] {
+  display: none;
 }
 
 .model-download-source-control {
@@ -2911,20 +2923,12 @@
   background: var(--surface-raised);
 }
 
-.settings-section.document-ocr-provider {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-.document-ocr-provider strong {
-  font-size: var(--font-caption);
+.document-ocr-provider__options {
+  margin: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .document-ocr-provider > small {
-  margin-left: auto;
   color: var(--text-muted);
   font-size: var(--font-caption);
 }
@@ -3201,11 +3205,6 @@
   .document-ocr-settings .settings-section__title--actions {
     align-items: flex-start;
     flex-wrap: wrap;
-  }
-
-  .document-ocr-provider > small {
-    flex-basis: 100%;
-    margin-left: 0;
   }
 
   .document-ocr-model {

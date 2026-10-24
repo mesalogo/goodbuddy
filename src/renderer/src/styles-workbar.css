@@ -1384,7 +1384,7 @@
 
 .workspace-files__view-switch { align-self: flex-start; max-width: 100%; }
 
-.workspace-files__view-switch > .segmented-control,
+.workspace-files__view-switch > .page-tabs,
 .workspace-git__toolbar > .segmented-control {
   width: max-content;
   flex: 0 0 auto;
@@ -1395,13 +1395,13 @@
   gap: var(--space-1);
 }
 
-.workspace-files__view-switch .segmented-control__option,
+.workspace-files__view-switch .page-tabs__tab,
 .workspace-git__toolbar .segmented-control__option {
   min-height: 32px;
   padding: var(--space-1) var(--space-2);
 }
 
-.workspace-files__view-switch .segmented-control__option--active,
+.workspace-files__view-switch .page-tabs__tab--active,
 .workspace-git__toolbar .segmented-control__option--active {
   background: var(--accent-subtle);
   box-shadow: none;
@@ -1506,6 +1506,7 @@
 
 .workspace-files__navigation .workspace-files,
 .workspace-files__navigation .workspace-files__list:not([hidden]),
+.workspace-files__view-panel,
 .workspace-files__git-view:not([hidden]),
 .workspace-git,
 .workspace-git__current {

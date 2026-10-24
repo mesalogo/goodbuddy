@@ -37,6 +37,16 @@
 以及上述 12 组 Electron 布局下滚动后提示仍在页头内可见且仅有一份。类型检查及修改 TS/TSX/MJS
 文件的 ESLint 通过。
 
+同日完成页签语义复核：模型分类使用共享 `PageTabs`，OCR 来源保持配置选择；方向键切页
+遵循未保存保护，纯导航不产生脏状态。关联验证记录见
+[工作栏页签复核](../assistant-workbar/progress.md#2026-10-24页签与配置选择语义复核)。
+
+同日按用户要求将 OCR 本地／远程来源从分段按钮改为原生 Radio，使用 `fieldset/legend`、
+同名互斥输入和现有来源选择卡片。点击及方向键只修改草稿，保存后生效。17 项定向测试通过，
+包含 12 组 Electron 场景的原生 Radio 方向键、互斥选中和窄窗布局验证；修改文件 ESLint 通过。
+此次全仓类型检查被 `src/main/channels/channel-manager.ts:184` 的未使用函数 `unknownSenderReply`
+（TS6133，其他工作区改动）阻塞，未修改该文件。
+
 ## 2026-10-04 HTTP OCR 故障复核
 
 PPTX 自动解析的异常分支原来将所有来源显示为“本地 OCR 不可用”，已改为实际来源，
