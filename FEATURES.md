@@ -344,7 +344,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.7`, paired with the current Desktop release candidate `0.16.8`; formal
+  `0.15.8`, paired with the current Desktop release candidate `0.16.9`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -983,9 +983,19 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.8`, paired with Agent `0.15.7`, with
+- The current Desktop candidate is `0.16.9`, paired with Agent `0.15.8`, with
   source pins of OpenCode `1.19.3` and Continue `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.16.9` / Agent `0.15.8` update OpenCode to `1.19.3`;
+  Desktop DeepSeek Harness is `0.2.1-rc.2`, while Continue remains `1.5.47`.
+  Continue and Windows controlled DSH cancellation clean up owned command
+  descendants; local/remote OpenCode preserve cancelled subtask states and
+  collected progress. Supervisor story bands are segmented and the initial
+  camera, review-scoped story list and canvas height are corrected.
+  Schema remains 65. Factory Droid documentation/probes are not a newly
+  integrated product Runtime. Current-source Windows/Linux cancellation
+  evidence is recorded in the [validation report](./docs/agent-runtime/validation/cancellation-fixes-2026-10-23.md);
+  full candidate CI, native packaging and public verification remain pending.
 - Desktop `0.16.8` publishes saved Supervisor batches even when the current
   candidate list no longer contains their original entities. Existing identities
   resolve from storage; deleted or revoked entities become new facts for saved

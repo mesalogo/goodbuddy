@@ -2,6 +2,40 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.9",
+      "releasedAt": "2026-10-24",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**更新内置 Runtime**：OpenCode 升级至 `1.19.3`，DeepSeek Harness 升级至 `0.2.1-rc.2`。本地内置 Runtime 随 Desktop 更新，远程 OpenCode 需配套更新 Agent；Continue 保持 `1.5.47`。"
+          ],
+          "fixes": [
+            "**取消命令时清理关联子进程**：修复 Continue 和 Windows 受控 DeepSeek Harness 在取消命令后，部分后代进程仍继续运行的问题。取消流程会等待所属进程树清理，避免过早显示请求已结束；Windows 保留原有 PowerShell 选择，不降级到旧版 Shell。",
+            "**保留 OpenCode 子任务的取消状态**：子任务被中止后，后续父任务状态不再将其覆盖为失败或完成，已收集的进度继续保留。本地和远程路径同步修复，本次未新增前端定向停止按钮。",
+            "**改善监督故事图谱的显示与布局**：同一时段的故事色带按事件占比分段，减少重叠；打开视图时先展示完整螺旋，再随后续选择聚焦。故事列表限定为当前回顾相关故事及其父故事，并修复顶部内容变化后的画布高度和部分标签遮挡。"
+          ],
+          "notices": [
+            "本版本不新增数据库 schema。远程主机请配套更新 Agent `0.15.8`，以获得远程取消修复和 OpenCode `1.19.3`；飞书与企业微信继续保持预览版状态。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Update bundled Runtimes**: OpenCode is updated to `1.19.3` and DeepSeek Harness to `0.2.1-rc.2`. Local bundled Runtimes update with Desktop, while remote OpenCode requires the accompanying Agent update; Continue remains at `1.5.47`."
+          ],
+          "fixes": [
+            "**Clean up command descendants on cancellation**: Fixes cases where Continue and controlled DeepSeek Harness on Windows left descendant processes running after cancellation. Cancellation waits for the owned process tree to be cleaned up instead of reporting completion prematurely; Windows retains the existing PowerShell selection without falling back to an older shell.",
+            "**Preserve cancelled OpenCode subtasks**: Later parent-task events no longer overwrite an aborted subtask as failed or completed, and collected progress remains available. The fix covers local and remote paths; this release does not add a targeted-stop button to the UI.",
+            "**Improve Supervisor story graph display and layout**: Story bands at the same time are split by their share of events to reduce overlap. The view initially shows the complete spiral before focusing on later selections; the story list includes only stories relevant to the current review and their parents, with fixes for canvas height after header changes and overlapping labels."
+          ],
+          "notices": [
+            "This release adds no database schema version. Update remote hosts to Agent `0.15.8` for the remote cancellation fixes and OpenCode `1.19.3`; Feishu and WeCom remain in Preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.8",
       "releasedAt": "2026-10-21",
       "notes": {
