@@ -1071,6 +1071,12 @@
   font-size: var(--font-body);
 }
 
+/* The container draws the focus ring via :focus-within; keep the global
+   input focus ring (loaded later in styles.css) off the inner field. */
+.sidebar-search input:focus-visible {
+  outline: 0;
+}
+
 .sidebar-search input::placeholder {
   color: var(--text-muted);
 }

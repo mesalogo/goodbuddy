@@ -158,4 +158,9 @@ describe('split stylesheet declarations and import order', () => {
     expect(rules.indexOf(ring)).toBeGreaterThan(rules.indexOf(composer))
     expect(declarations('.composer__input textarea:focus-visible')).toEqual({ outline: '0' })
   })
+
+  it('keeps the sidebar search ring on the container only', () => {
+    expect(declarations('.sidebar-search:focus-within').outline).toBe('2px solid var(--accent)')
+    expect(declarations('.sidebar-search input:focus-visible')).toEqual({ outline: '0' })
+  })
 })
