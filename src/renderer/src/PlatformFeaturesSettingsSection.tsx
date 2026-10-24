@@ -31,6 +31,10 @@ type PlatformFeaturesSettingsSectionProps = {
   ) => void
   onWorkspacePathChange: (path: string) => void
   workspacePath: string
+  workspaceDirty: boolean
+  workspaceSaving: boolean
+  workspaceError?: string
+  onSaveWorkspace: () => void
   onNotify?: (notification: AppNotificationInput) => void
   onDirtyChange?: (dirty: boolean) => void
   onShortcutSettingsChanged?: (
@@ -54,6 +58,10 @@ export function PlatformFeaturesSettingsSection({
   onConversationHtmlRenderingEnabledChange,
   onWorkspacePathChange,
   workspacePath,
+  workspaceDirty,
+  workspaceSaving,
+  workspaceError,
+  onSaveWorkspace,
   onNotify,
   onDirtyChange,
   onShortcutSettingsChanged
@@ -291,8 +299,19 @@ export function PlatformFeaturesSettingsSection({
   return (
     <>
       <SettingsCategoryHeader
+        actions={(
+          <button
+            className="primary-button"
+            disabled={!workspaceDirty || workspaceSaving}
+            onClick={onSaveWorkspace}
+            type="button"
+          >
+            <Save aria-hidden="true" size={13} />
+            {settingsT(workspaceSaving ? 'actions.saving' : 'actions.saveSettings')}
+          </button>
+        )}
         category="platform-features"
-        error={error}
+        error={workspaceError ?? error}
         headingId="platform-features-heading"
       />
       <SettingsWarningList warnings={settings?.warnings} />

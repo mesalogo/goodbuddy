@@ -2444,6 +2444,10 @@ function SettingsPanelView({
               }
               onWorkspacePathChange={setWorkspacePath}
               workspacePath={workspacePath}
+              workspaceDirty={runtimeDraftDirty || speechModelSelectionDirty}
+              workspaceSaving={saving}
+              workspaceError={error}
+              onSaveWorkspace={() => void save()}
               onNotify={onNotify}
               onShortcutSettingsChanged={onShortcutSettingsChanged}
             />

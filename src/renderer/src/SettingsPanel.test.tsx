@@ -2477,6 +2477,46 @@ describe('SettingsPanel runtime files', () => {
     expect(accelerator).toHaveValue('Control+Command+K')
   })
 
+  it('saves the workspace from platform settings and then closes without discarding', async () => {
+    const onClose = vi.fn()
+    const onSaved = vi.fn()
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={onClose} onSaved={onSaved} />)
+    await screen.findByText('GoodBuddy 内置 OpenCode')
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const save = screen.getByRole('button', { name: '保存设置' })
+    expect(save).toBeDisabled()
+    expect(save.closest('.settings-category-header')).toHaveClass('settings-category-header--sticky')
+    fireEvent.change(screen.getByLabelText('默认工作区目录'), { target: { value: 'C:\\New workspace' } })
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.click(save)
+    await waitFor(() => {
+      expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ workspacePath: 'C:\\New workspace' }))
+      expect(save).toBeDisabled()
+      expect(screen.queryByRole('button', { name: '放弃更改并关闭' })).not.toBeInTheDocument()
+    })
+    expect(updateRuntime).toHaveBeenCalledWith(expect.objectContaining({ workspacePath: 'C:\\New workspace' }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a failed workspace save editable and allows discarding it to close', async () => {
+    const onClose = vi.fn()
+    updateRuntime.mockRejectedValueOnce(new Error('Workspace save failed'))
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={onClose} onSaved={vi.fn()} />)
+    await screen.findByText('GoodBuddy 内置 OpenCode')
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    fireEvent.change(screen.getByLabelText('默认工作区目录'), { target: { value: 'C:\\Unsaved' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    expect(await screen.findByText('Workspace save failed')).toBeInTheDocument()
+    expect(screen.getByLabelText('默认工作区目录')).toHaveValue('C:\\Unsaved')
+    expect(screen.getByRole('button', { name: '保存设置' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '放弃更改并关闭' }))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(updateRuntime).toHaveBeenCalledOnce()
+  })
+
   it('preserves runtime drafts across navigation and protects them on close', async () => {
     const onClose = vi.fn()
     render(
