@@ -14382,7 +14382,10 @@ describe("App", () => {
 
   it("automatically snapshots the conversation project on new activity", async () => {
     render(<App />);
-    expect(await screen.findByLabelText("项目：默认项目")).toHaveClass("scope-badge");
+    const projectLabel = await screen.findByLabelText("项目：默认项目");
+    expect(projectLabel).toHaveClass("scope-badge");
+    expect(projectLabel).toHaveTextContent(/^默认项目$/);
+    expect(projectLabel.querySelector("svg")).toBeNull();
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "记录项目范围" },

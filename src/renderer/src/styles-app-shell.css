@@ -1358,11 +1358,12 @@
 }
 
 .conversation-title-group__scope .scope-badge {
+  display: block;
   min-width: 0;
   max-width: 100%;
   min-height: 16px;
   overflow: hidden;
-  padding: 1px 5px;
+  padding: 1px 0;
   border: 0;
   border-radius: 4px;
   background: transparent;

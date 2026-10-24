@@ -7122,20 +7122,22 @@ function App(): React.JSX.Element {
                   )}
                 </div>
                 <div className="conversation-title-group__scope">
-                  <ScopeBadge
-                    scope={
-                      activeProject
-                        ? {
-                            kind: "project",
-                            projectName:
-                              activeProjectDisplayName ?? activeProject.name,
-                          }
-                        : {
-                            kind: "unavailable",
-                            explanation: t("notices.projectNotLoaded"),
-                          }
-                    }
-                  />
+                  {activeProject ? (
+                    <span
+                      className="scope-badge"
+                      aria-label={t("workspace:primitives.scope.project", {
+                        projectName: activeProjectDisplayName ?? activeProject.name,
+                      })}
+                      title={activeProjectDisplayName ?? activeProject.name}
+                    >
+                      {activeProjectDisplayName ?? activeProject.name}
+                    </span>
+                  ) : (
+                    <ScopeBadge scope={{
+                      kind: "unavailable",
+                      explanation: t("notices.projectNotLoaded"),
+                    }} />
+                  )}
                 </div>
               </div>
               {magicNotesEnabled && activeConversation && <>
