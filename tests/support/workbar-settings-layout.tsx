@@ -10,6 +10,7 @@ import { defaultRuntimeSettings, type DesktopApi } from '../../src/shared/contra
 import type { WorkbarTabInstance } from '../../src/shared/workbar-contracts'
 import type { ApplicationSettingsUpdate, ModelDownloadSource } from '../../src/shared/application-settings-contracts'
 import '../../src/renderer/src/styles.css'
+import { defaultHttpOcrSettings } from '../../src/shared/document-parsing-contracts'
 
 const query = new URLSearchParams(location.search)
 const locale = query.get('locale') === 'en-US' ? 'en-US' : 'zh-CN'
@@ -20,6 +21,22 @@ const profileId = '10000000-0000-4000-8000-000000000001'
 const sourceFixture = { source: 'modelscope' as ModelDownloadSource, writes: [] as ApplicationSettingsUpdate[] }
 Object.defineProperty(window, 'sourceFixture', { value: sourceFixture })
 Object.defineProperty(window, 'goodbuddy', { value: {
+  documentParsing: {
+    getSnapshot: async () => ({
+      settings: { chatWorkflow: 'auto', knowledgeWorkflow: 'complete-index', localOcrModelId: 'pp-ocrv6-tiny',
+        maximumPages: 100, pageTimeoutSeconds: 60, ocrProvider: 'local', httpOcr: defaultHttpOcrSettings },
+      status: { nativeParsingAvailable: true, conversionAvailable: false,
+        localOcr: { id: 'pp-ocrv6-tiny', displayName: 'PP-OCRv6 Tiny', available: false } },
+      warnings: [], httpCredentialConfigured: false,
+      ocrModels: { rootDirectory: '', selectedDownloadSource: 'modelscope', installed: [], operations: [], catalog: [{
+        id: 'pp-ocrv6-tiny', displayName: 'PP-OCRv6 Tiny', description: 'Local OCR', languages: ['zh', 'en'],
+        runtime: 'onnxruntime-web-wasm', quality: 'basic', speed: 'fast', recommended: true,
+        license: { name: 'Apache-2.0' }, files: [],
+        downloadAvailability: [{ source: 'modelscope', available: true, totalBytes: 12500000 }]
+      }] }
+    }),
+    getOcrModelProgress: async () => ({ operations: [] })
+  },
   updates: {
     getSettings: async () => ({ modelDownloadSource: sourceFixture.source }),
     onSettingsChanged: () => () => {},

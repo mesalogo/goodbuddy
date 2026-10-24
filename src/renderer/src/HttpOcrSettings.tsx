@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { KeyRound } from 'lucide-react'
+import { InlineHelp } from './InlineHelp'
 import { defaultHttpOcrSettings } from '../../shared/document-parsing-contracts'
 
 type HttpSettings = typeof defaultHttpOcrSettings
@@ -29,10 +31,16 @@ export function HttpOcrSettings({ value, onChange, dirty, credentialConfigured, 
   const [check, setCheck] = useState('')
   const [error, setError] = useState('')
   return <section className="settings-section http-ocr-settings">
-    <strong>HTTP PaddleOCR-VL</strong>
+    <div className="settings-section__title">
+      <KeyRound aria-hidden="true" size={17} />
+      <span className="inline-help-label">
+        <strong>HTTP PaddleOCR-VL</strong>
+        <InlineHelp label="HTTP PaddleOCR-VL">需要 OCR 的页面或图片将发送到此服务；快速文本模式不自动上传，主动提取图片文字仍使用此服务。</InlineHelp>
+      </span>
+    </div>
+    <div className="runtime-note model-service-form">
     <label className="field"><span>服务地址</span><input type="url" value={value.baseUrl}
       onChange={(event) => onChange({ ...value, baseUrl: event.target.value })} /></label>
-    <p className="settings-notice">需要 OCR 的页面或图片将发送到此服务；快速文本模式不自动上传，主动提取图片文字仍使用此服务。</p>
     <label className="field"><span>认证方式</span><select value={value.authentication}
       onChange={(event) => onChange({ ...value, authentication: event.target.value as HttpSettings['authentication'] })}>
       <option value="none">无需认证</option><option value="bearer">Bearer API Key</option>
@@ -41,8 +49,9 @@ export function HttpOcrSettings({ value, onChange, dirty, credentialConfigured, 
       <input type="password" autoComplete="off" value={apiKey} onChange={(event) => onApiKey(event.target.value)} />
       <small>{credentialConfigured ? '已保存凭据；留空保持原值' : '未配置凭据'}</small>
     </label>}
-    {credentialConfigured && <label><input type="checkbox" checked={clearApiKey}
+    {credentialConfigured && <label className="inline-help-label"><input type="checkbox" checked={clearApiKey}
       onChange={(event) => onClearApiKey(event.target.checked)} />保存时清除凭据</label>}
+    <div className="update-settings__actions">
     <button type="button" className="secondary-button" disabled={dirty || checking}
       aria-describedby={dirty ? 'document-parsing-unsaved-notice' : undefined}
       onClick={() => {
@@ -52,8 +61,9 @@ export function HttpOcrSettings({ value, onChange, dirty, credentialConfigured, 
         }, (reason: unknown) => { setError(reason instanceof Error ? reason.message : '连接检查失败') })
           .finally(() => setChecking(false))
       }}>{checking ? '正在检查连接' : '检查连接'}</button>
-    {check && <p role="status">{check}</p>}{error && <p role="alert">{error}</p>}
-    <details><summary>HTTP 高级设置</summary>
+    </div>
+    {check && <p className="settings-notice" role="status">{check}</p>}{error && <p className="settings-warning" role="alert">{error}</p>}
+    <details className="document-parsing-subsection"><summary>HTTP 高级设置</summary>
       <p>高级能力取决于服务部署；接口声明不代表模型已安装或效果已经实测。</p>
       <div className="document-parsing-control-header">
         <strong>内容过滤</strong>
@@ -113,5 +123,6 @@ export function HttpOcrSettings({ value, onChange, dirty, credentialConfigured, 
       </label>)}
       <small>跨页整理会增加请求；当前部署尚未验证合并效果。来源无法映射时报告未完成并保留逐页结果。</small>
     </details>
+    </div>
   </section>
 }

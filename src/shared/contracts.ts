@@ -2032,7 +2032,7 @@ export type DesktopApi = {
     getSnapshot: () => Promise<DocumentParsingSnapshot>
     getOcrModelProgress: () => Promise<DocumentOcrModelProgressSnapshot>
     update: (
-      input: DocumentParsingSettings & { apiKey?: string; clearApiKey?: boolean }
+      input: Partial<DocumentParsingSettings> & { apiKey?: string; clearApiKey?: boolean }
     ) => Promise<DocumentParsingSnapshot>
     test: (
       purpose: DocumentParsingTestPurpose,

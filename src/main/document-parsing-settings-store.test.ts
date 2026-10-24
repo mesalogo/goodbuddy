@@ -1,18 +1,20 @@
 import {
   mkdtemp,
+  mkdir,
   readFile,
   readdir,
   rm,
   writeFile
 } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   defaultDocumentParsingSettings,
   DocumentParsingSettingsStore
 } from './document-parsing-settings-store'
 import { defaultHttpOcrSettings } from '../shared/document-parsing-contracts'
+import { DocumentParsingService } from './document-parsing-service'
+import { DocumentOcrModelManager } from './document-ocr-model-manager'
 
 const temporaryDirectories: string[] = []
 
@@ -21,9 +23,9 @@ async function createStore(): Promise<{
   filePath: string
   store: DocumentParsingSettingsStore
 }> {
-  const directory = await mkdtemp(
-    join(tmpdir(), 'goodbuddy-document-parsing-settings-')
-  )
+  const temporaryRoot = resolve('temp')
+  await mkdir(temporaryRoot, { recursive: true })
+  const directory = await mkdtemp(join(temporaryRoot, 'document-recognition-'))
   temporaryDirectories.push(directory)
   const filePath = join(directory, 'document-parsing-settings.json')
   return {
@@ -42,6 +44,39 @@ afterEach(async () => {
 })
 
 describe('DocumentParsingSettingsStore', () => {
+  it('uses saved recognition settings when validating workflow-only service updates', async () => {
+    const { directory, store, filePath } = await createStore()
+    const models = new DocumentOcrModelManager({ userDataDirectory: directory, fetch })
+    const service = new DocumentParsingService(store, models, {} as never)
+    await expect(service.update({ ocrProvider: 'paddleocr-vl' })).rejects.toThrow('服务地址')
+    await service.update({ ocrProvider: 'paddleocr-vl', httpOcr: { ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test' } })
+    const result = await service.update({ chatWorkflow: 'fast-text', maximumPages: 42 })
+    expect(result.settings).toMatchObject({ ocrProvider: 'paddleocr-vl', maximumPages: 42, httpOcr: { baseUrl: 'http://ocr.test' } })
+    expect((await service.parse('fixture.txt', Buffer.from('Native text'), 'chat-attachment')).content).toBe('Native text')
+    expect(await new DocumentParsingSettingsStore(filePath).get()).toEqual(result.settings)
+    await expect(service.update({ ocrProvider: 'local', localOcrModelId: 'pp-ocrv6-small' })).rejects.toThrow('请先安装并校验')
+    expect((await store.get()).ocrProvider).toBe('paddleocr-vl')
+  })
+  it('merges independent model and workflow patches without losing settings or credentials', async () => {
+    const { filePath } = await createStore()
+    const cipher = { isAvailable: () => true, encrypt: (value: string) => Buffer.from(value).reverse(), decrypt: (value: Buffer) => Buffer.from(value).reverse().toString('utf8') }
+    const store = new DocumentParsingSettingsStore(filePath, cipher)
+    await store.update({ ocrProvider: 'paddleocr-vl', httpOcr: { ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test' }, apiKey: 'fixture-key' })
+    await Promise.all([
+      store.update({ chatWorkflow: 'fast-text', maximumPages: 42 }),
+      store.update({ localOcrModelId: 'pp-ocrv6-small' })
+    ])
+    const reopened = new DocumentParsingSettingsStore(filePath, cipher)
+    expect(await reopened.get()).toEqual({
+      ...defaultDocumentParsingSettings, chatWorkflow: 'fast-text', maximumPages: 42,
+      localOcrModelId: 'pp-ocrv6-small', ocrProvider: 'paddleocr-vl',
+      httpOcr: { ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test' }
+    })
+    expect(await reopened.getApiKey()).toBe('fixture-key')
+    await reopened.update({ clearApiKey: true })
+    expect(await reopened.getApiKey()).toBeUndefined()
+    expect((await reopened.get()).maximumPages).toBe(42)
+  })
   it('freezes credentials with the task settings and keeps hidden provider configuration', async () => {
     const { filePath } = await createStore()
     const cipher = { isAvailable: () => true, encrypt: (value: string) => Buffer.from(value).reverse(), decrypt: (value: Buffer) => Buffer.from(value).reverse().toString('utf8') }
@@ -142,10 +177,10 @@ describe('DocumentParsingSettingsStore', () => {
     })
   })
 
-  it('rejects incomplete or out-of-range settings', async () => {
+  it('rejects unknown or out-of-range settings', async () => {
     const { directory, store } = await createStore()
 
-    await expect(store.update({})).rejects.toThrow()
+    await expect(store.update({ unknown: true })).rejects.toThrow()
     await expect(
       store.update({
         ...defaultDocumentParsingSettings,

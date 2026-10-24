@@ -78,6 +78,80 @@ app.whenReady().then(async () => {
     for (const locale of ['zh-CN', 'en-US']) {
       for (const theme of ['light', 'dark']) {
         win.setContentSize(1000, 720)
+        if (process.env.GB_LAYOUT_MODE === 'recognition') {
+          for (const [width, height] of [[640, 600], [960, 720], [1280, 800]]) {
+            win.setContentSize(width, height)
+            await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&locale=${locale}&theme=${theme}`)
+            await wait('document.querySelectorAll(".model-type-navigation .segmented-control__option").length===5')
+            await js('document.querySelectorAll(".model-type-navigation .segmented-control__option")[4].click()')
+            await wait('!!document.querySelector(".document-ocr-model")')
+            await js('document.fonts.ready')
+            await settle()
+            const measure = () => js(`(() => {
+              const pane=document.querySelector('.settings-panel__content'), source=document.querySelector('.document-ocr-provider');
+              const note=source.querySelector('small'), n=note.getBoundingClientRect(), s=source.getBoundingClientRect();
+              const label=source.querySelector('strong').getBoundingClientRect(), toggle=source.querySelector('.segmented-control').getBoundingClientRect();
+              return {overflow:pane.scrollWidth>pane.clientWidth+1, sourceHeight:s.height,
+                sourceSameRow:Math.abs(label.top+label.height/2-toggle.top-toggle.height/2)<1,
+                sourceNoOverlap:label.right<=toggle.left,
+                noteLeft:n.left-s.left, noteTop:n.top-s.top,
+                headers:pane.querySelectorAll('.settings-category-header').length,
+                saveButtons:pane.querySelectorAll('.settings-category-header__actions .primary-button').length};
+            })()`)
+            const local = await measure()
+            assert.equal(local.overflow, false, JSON.stringify({locale,theme,width,local}))
+            assert.equal(local.headers, 1)
+            assert.equal(local.saveButtons, 1)
+            assert.equal(local.sourceSameRow, true, JSON.stringify({locale,theme,width,local}))
+            assert.equal(local.sourceNoOverlap, true)
+            if (width <= 720) assert(local.noteLeft < 24, JSON.stringify(local))
+            await screenshot(`${locale}-${theme}-ocr-local-${width}`)
+            await scrollSettingsControl('.document-ocr-model__actions')
+            const card = await js(`(() => {
+              const card=document.querySelector('.document-ocr-model').getBoundingClientRect();
+              const buttons=[...document.querySelectorAll('.document-ocr-model__actions button')];
+              return buttons.every(button=>{const r=button.getBoundingClientRect();
+                return r.left>=card.left && r.right<=card.right && button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));});
+            })()`)
+            assert(card, 'Model actions must fit the card and remain reachable')
+            await screenshot(`${locale}-${theme}-ocr-card-${width}`)
+            await scrollSettingsControl('.document-ocr-provider')
+            await click('.document-ocr-provider .segmented-control__option:last-child')
+            await wait('!!document.querySelector(".http-ocr-settings")')
+            const remote = await measure()
+            assert.equal(remote.overflow, false, JSON.stringify({locale,theme,width,remote}))
+            await screenshot(`${locale}-${theme}-ocr-remote-${width}`)
+            await scrollSettingsControl('.http-ocr-settings details > summary')
+            await click('.http-ocr-settings details > summary')
+            await settle()
+            const advanced = await js(`(() => {
+              const details=document.querySelector('.http-ocr-settings details');
+              const summary=details.querySelector('summary').getBoundingClientRect();
+              const p=details.querySelector('p').getBoundingClientRect();
+              const grid=details.querySelector('.document-parsing-grid').getBoundingClientRect();
+              const filters=details.querySelector('.document-parsing-filter-list').getBoundingClientRect();
+              return {summaryGap:p.top-summary.bottom, gridGap:grid.top-filters.bottom,
+                overflow:details.scrollWidth>details.clientWidth+1};
+            })()`)
+            const notice = await js(`(() => {
+              const e=document.getElementById('document-parsing-unsaved-notice'), r=e.getBoundingClientRect();
+              const header=e.closest('.settings-category-header--sticky'), h=header?.getBoundingClientRect();
+              return {count:document.querySelectorAll('#document-parsing-unsaved-notice').length,
+                inHeader:!!header, visible:!!h && r.top>=h.top && r.bottom<=h.bottom && r.bottom<innerHeight};
+            })()`)
+            assert.deepEqual(notice, {count:1,inHeader:true,visible:true}, JSON.stringify({locale,theme,width,notice}))
+            await screenshot(`${locale}-${theme}-ocr-advanced-${width}`)
+            await scrollSettingsControl('.http-ocr-settings details .document-parsing-grid .field')
+            await screenshot(`${locale}-${theme}-ocr-parameters-${width}`)
+            observations.push({locale,theme,width,local,remote,advanced})
+            assert.equal(advanced.overflow, false)
+            assert(advanced.summaryGap >= 8 && advanced.gridGap >= 8, JSON.stringify({locale,theme,width,advanced}))
+            await js('document.querySelector(".document-ocr-provider .segmented-control__option:first-child").click()')
+            await wait('!!document.querySelector(".document-ocr-model") && document.querySelector(".settings-category-header__actions .primary-button").disabled')
+            assert.equal(await js('!!document.getElementById("document-parsing-unsaved-notice")'), false)
+          }
+          continue
+        }
         if (process.env.GB_LAYOUT_MODE === 'source') {
           await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&locale=${locale}&theme=${theme}`)
           await wait('!!document.querySelector(".model-download-source-control small") && !document.querySelector(".model-download-source-control [role=status]")')

@@ -192,9 +192,10 @@ export class DocumentParsingService {
   }
 
   async update(input: unknown): Promise<DocumentParsingSnapshot> {
-    const nextSettings =
+    const updates =
       documentParsingSettingsUpdateSchema.parse(input)
     const currentSettings = await this.settingsStore.get()
+    const nextSettings = { ...currentSettings, ...updates }
     if (nextSettings.ocrProvider === 'paddleocr-vl') {
       if (!nextSettings.httpOcr?.baseUrl) throw new Error('请输入 HTTP OCR 服务地址')
       if (nextSettings.httpOcr.authentication === 'bearer' && !nextSettings.apiKey && (nextSettings.clearApiKey || !await this.settingsStore.credentialConfigured())) throw new Error('请输入 Bearer API Key，或选择无需认证')
@@ -211,7 +212,7 @@ export class DocumentParsingService {
         throw new Error('请先安装并校验所选 OCR 模型')
       }
     }
-    await this.settingsStore.update(nextSettings)
+    await this.settingsStore.update(updates)
     return this.snapshot()
   }
 

@@ -308,7 +308,7 @@ export const documentParsingSettingsSchema = z
   .strict()
 
 export const documentParsingSettingsUpdateSchema =
-  documentParsingSettingsSchema.extend({
+  documentParsingSettingsSchema.partial().extend({
     apiKey: z.string().trim().max(4096).optional(),
     clearApiKey: z.boolean().optional()
   })

@@ -252,7 +252,7 @@ export class DocumentParsingSettingsStore {
       }
       const next: StoredDocumentParsingSettings = {
         version: CURRENT_SETTINGS_VERSION,
-        ...updates,
+        ...documentParsingSettingsSchema.parse({ ...(await this.get()), ...updates }),
         ...(credential ? { credential } : {})
       }
       await writeJsonFileAtomically(this.filePath, next)

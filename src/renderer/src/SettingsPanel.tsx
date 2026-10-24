@@ -86,7 +86,7 @@ import {
   type BrandingPreferences
 } from './branding'
 
-type ModelType = 'llm' | 'embedding' | 'rerank' | 'speech'
+type ModelType = 'llm' | 'embedding' | 'rerank' | 'speech' | 'document-recognition'
 type AgentRuntimeType =
   | RuntimeConfigActionInput['runtime']
   | 'deepseek-harness'
@@ -799,11 +799,12 @@ function SettingsPanelView({
     useState(false)
   const [platformFeaturesDirty, setPlatformFeaturesDirty] =
     useState(false)
+  const [documentModelActions, setDocumentModelActions] = useState<HTMLDivElement | null>(null)
   const [documentParsingDirty, setDocumentParsingDirty] =
     useState(false)
   const [pendingLeave, setPendingLeave] = useState<
     | { kind: 'close' }
-    | { kind: 'navigate'; category: SettingsCategoryId; openModelDownloadSource?: boolean }
+    | { kind: 'navigate'; category: SettingsCategoryId; openModelDownloadSource?: boolean; modelType?: ModelType }
     | { kind: 'external'; proceed: () => void }
   >()
   const runtimeCustomizationRef =
@@ -1020,9 +1021,10 @@ function SettingsPanelView({
   const requestTabChange = (
     category: SettingsCategoryId,
     trigger?: HTMLElement,
-    openModelDownloadSource = false
+    openModelDownloadSource = false,
+    nextModelType?: ModelType
   ): boolean => {
-    if (category === activeTab) {
+    if (category === activeTab && (!nextModelType || nextModelType === modelType)) {
       return true
     }
     if (navigationWouldLoseDraft) {
@@ -1031,12 +1033,13 @@ function SettingsPanelView({
         (document.activeElement instanceof HTMLElement
           ? document.activeElement
           : undefined)
-      setPendingLeave({ kind: 'navigate', category, openModelDownloadSource })
+      setPendingLeave({ kind: 'navigate', category, openModelDownloadSource, modelType: nextModelType })
       return false
     }
     setPendingLeave(undefined)
     setError(undefined)
     setActiveTab(category)
+    if (nextModelType) setModelType(nextModelType)
     return true
   }
 
@@ -1294,6 +1297,7 @@ function SettingsPanelView({
     setError(undefined)
     if (leave?.kind === 'navigate') {
       setActiveTab(leave.category)
+      if (leave.modelType) setModelType(leave.modelType)
       if (leave.openModelDownloadSource) {
         setModelDownloadSourceOpen(true)
         return
@@ -2197,7 +2201,7 @@ function SettingsPanelView({
           {!categoryRendersOwnHeader && (
             <SettingsCategoryHeader
               actions={
-                configurationTab ? (
+                configurationTab && !(activeTab === 'model' && modelType === 'document-recognition') ? (
                   <>
                     {(activeTab === 'runtime' ||
                       (activeTab === 'model' && modelType === 'llm')) && (
@@ -2233,10 +2237,17 @@ function SettingsPanelView({
                         : t('actions.saveSettings')}
                     </button>
                   </>
+                ) : activeTab === 'model' && modelType === 'document-recognition' ? (
+                  <div ref={setDocumentModelActions} />
                 ) : undefined
               }
               category={activeTab}
               error={error}
+              status={activeTab === 'model' && modelType === 'document-recognition' && documentParsingDirty ? (
+                <p className="settings-notice" id="document-parsing-unsaved-notice" role="status">
+                  {t('documentParsing.workflows.unsavedNotice')}
+                </p>
+              ) : undefined}
               navigation={
                 activeTab === 'runtime' ? (
                   <div className="model-type-navigation agent-runtime-navigation">
@@ -2258,12 +2269,13 @@ function SettingsPanelView({
                 <div className="model-type-navigation model-connections-navigation">
                   <SegmentedControl
                     ariaLabel={t('model.typeAriaLabel')}
-                    onChange={setModelType}
+                    onChange={(value) => { requestTabChange('model', undefined, false, value) }}
                     options={[
                       { label: t('model.types.llm.label'), value: 'llm' },
                       { label: t('model.types.embedding.label'), value: 'embedding' },
                       { label: t('model.types.rerank.label'), value: 'rerank' },
-                      { label: t('model.types.speech.label'), value: 'speech' }
+                      { label: t('model.types.speech.label'), value: 'speech' },
+                      { label: t('documentParsing.recognition.title'), value: 'document-recognition' }
                     ]}
                     value={modelType}
                   />
@@ -3903,6 +3915,17 @@ function SettingsPanelView({
               </div>
             </div>
           )}
+          {modelType === 'document-recognition' && (
+            <DocumentParsingSettingsSection
+              section="models"
+              actionsContainer={documentModelActions}
+              downloadSource={modelDownloadSource}
+              onBusyChange={setTesting}
+              onDirtyChange={setDocumentParsingDirty}
+              onNotify={onNotify}
+              onOpenModelDownloadSourceSettings={openModelDownloadSource}
+            />
+          )}
           {modelType === 'speech' && (
             <SpeechModelSettingsSection
               downloadSource={modelDownloadSource}
@@ -4114,7 +4137,7 @@ function SettingsPanelView({
               onBusyChange={setTesting}
               onDirtyChange={setDocumentParsingDirty}
               onNotify={onNotify}
-              onOpenModelDownloadSourceSettings={openModelDownloadSource}
+              onManageModels={() => { requestTabChange('model', undefined, false, 'document-recognition') }}
             />
           )}
 

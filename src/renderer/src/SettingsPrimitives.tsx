@@ -40,6 +40,7 @@ export function SettingsCategoryHeader({
   category,
   error,
   navigation,
+  status,
   sticky = true,
   headingId = `settings-category-${category}`
 }: {
@@ -47,6 +48,7 @@ export function SettingsCategoryHeader({
   category: SettingsCategoryId
   error?: string
   navigation?: ReactNode
+  status?: ReactNode
   sticky?: boolean
   headingId?: string
 }): React.JSX.Element {
@@ -57,6 +59,7 @@ export function SettingsCategoryHeader({
       description={definition.description}
       error={error}
       navigation={navigation}
+      status={status}
       sticky={sticky}
       headingId={headingId}
       title={definition.label}
@@ -69,6 +72,7 @@ export function SettingsSectionHeader({
   description,
   error,
   navigation,
+  status,
   sticky = false,
   headingLevel = 2,
   help,
@@ -79,6 +83,7 @@ export function SettingsSectionHeader({
   description?: string
   error?: string
   navigation?: ReactNode
+  status?: ReactNode
   sticky?: boolean
   headingLevel?: 2 | 3
   help?: ReactNode
@@ -105,6 +110,7 @@ export function SettingsSectionHeader({
       {navigation && (
         <div className="settings-category-header__navigation">{navigation}</div>
       )}
+      {status && <div className="settings-category-header__status">{status}</div>}
     </header>
   )
 }

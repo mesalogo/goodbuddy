@@ -36,8 +36,8 @@ export const settings = {
     },
     model: {
       label: '模型连接',
-      navigationDescription: 'LLM、向量、重排模型与凭据',
-      description: 'LLM、向量、重排模型与凭据'
+      navigationDescription: 'LLM、向量、重排、语音与文档识别',
+      description: '管理模型、文档识别服务与凭据'
     },
     contextControl: {
       label: '上下文控制',
@@ -47,8 +47,8 @@ export const settings = {
     },
     documentParsing: {
       label: '文档解析',
-      navigationDescription: '附件、知识库与本地 OCR',
-      description: '统一配置聊天附件和知识库使用的提取、转换与 OCR 策略'
+      navigationDescription: '附件与知识库工作流、限制和解析测试',
+      description: '配置聊天附件和知识库的解析工作流、页数限制与超时'
     },
     runtime: {
       label: 'Agent Runtime',
@@ -463,6 +463,13 @@ export const settings = {
     }
   },
   documentParsing: {
+    recognition: {
+      title: '文档识别',
+      manage: '管理模型',
+      current: '当前模型：{{name}} · 来源：{{source}}',
+      local: '本地模型',
+      remote: '远程服务'
+    },
     loading: '正在加载…',
     status: {
       title: '运行状态',

@@ -979,7 +979,7 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.documentOcrModelsProgress
       ) as Promise<DocumentOcrModelProgressSnapshot>,
-    update: (input: DocumentParsingSettings & { apiKey?: string; clearApiKey?: boolean }) =>
+    update: (input: Partial<DocumentParsingSettings> & { apiKey?: string; clearApiKey?: boolean }) =>
       ipcRenderer.invoke(
         ipcChannels.documentParsingUpdate,
         input

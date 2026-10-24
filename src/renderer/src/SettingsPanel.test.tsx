@@ -1927,7 +1927,7 @@ describe('SettingsPanel runtime files', () => {
     })
   })
 
-  it.each([false, true])('opens the source dialog on the model page from OCR, respecting dirty draft = %s', async (dirty) => {
+  it.each([false, true])('opens document recognition from parsing, respecting dirty draft = %s', async (dirty) => {
     const snapshot: DocumentParsingSnapshot = {
       settings: { chatWorkflow: 'auto', knowledgeWorkflow: 'complete-index', localOcrModelId: 'pp-ocrv6-tiny', maximumPages: 100, pageTimeoutSeconds: 60 },
       status: { nativeParsingAvailable: true, conversionAvailable: false, localOcr: {
@@ -1945,11 +1945,16 @@ describe('SettingsPanel runtime files', () => {
     }
     Object.defineProperty(window.goodbuddy, 'documentParsing', {
       configurable: true,
-      value: { getSnapshot: vi.fn(async () => snapshot), getOcrModelProgress: vi.fn(async () => ({ operations: [] })) }
+      value: {
+        getSnapshot: vi.fn(async () => snapshot),
+        getOcrModelProgress: vi.fn(async () => ({ operations: [] })),
+        update: vi.fn(async (input) => ({ ...snapshot, settings: { ...snapshot.settings, ...input } }))
+          .mockRejectedValueOnce(new Error('保存失败，请重试'))
+      }
     })
     render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
     fireEvent.click(screen.getByRole('tab', { name: '文档解析' }))
-    const entry = await screen.findByRole('button', { name: '模型下载源' })
+    const entry = await screen.findByRole('button', { name: '管理模型' })
     if (dirty) fireEvent.change(screen.getByRole('combobox', { name: '聊天与成果文件' }), { target: { value: 'fast-text' } })
     entry.focus()
     fireEvent.click(entry)
@@ -1960,12 +1965,45 @@ describe('SettingsPanel runtime files', () => {
       fireEvent.click(entry)
       fireEvent.click(screen.getByRole('button', { name: '放弃更改并切换' }))
     }
+    await screen.findByLabelText('当前 OCR 模型')
+    expect(screen.getByRole('button', { name: '文档识别' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('combobox', { name: '聊天与成果文件' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '测试解析' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '保存设置' })).toHaveLength(1)
+    expect(screen.getByRole('button', { name: '保存设置' }).closest('.settings-category-header__actions')).not.toBeNull()
+    expect(screen.getByRole('button', { name: '保存设置' })).toBeDisabled()
+    expect(screen.queryByRole('heading', { name: '文档识别' })).not.toBeInTheDocument()
+    if (dirty) await waitFor(() => expect(document.getElementById('settings-tab-model')).toHaveFocus())
+    screen.getAllByRole('button', { name: '模型下载源' })[0]!.focus()
+    fireEvent.click(screen.getAllByRole('button', { name: '模型下载源' })[0]!)
     const dialog = await screen.findByRole('dialog', { name: '模型下载源' })
     expect(document.getElementById('settings-tab-model')).toHaveAttribute('aria-selected', 'true')
     expect(await within(dialog).findByRole('radio', { name: /ModelScope/u })).toBeChecked()
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
-    expect(screen.getByRole('button', { name: '模型下载源' })).toHaveFocus()
+    expect(screen.getAllByRole('button', { name: '模型下载源' })[0]).toHaveFocus()
     expect(updateApplicationSettings).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '远程服务' }))
+    expect(screen.getByRole('button', { name: '保存设置' })).toBeEnabled()
+    const notice = (): HTMLElement | null => document.getElementById('document-parsing-unsaved-notice')
+    expect(notice()?.closest('.settings-category-header--sticky')).not.toBeNull()
+    expect(document.querySelectorAll('#document-parsing-unsaved-notice')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: '检查连接' })).toHaveAttribute('aria-describedby', 'document-parsing-unsaved-notice')
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await screen.findByText('保存失败，请重试')
+    expect(notice()).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '远程服务' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => {
+      expect(notice()).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '保存设置' })).toBeDisabled()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '本地模型' }))
+    fireEvent.click(screen.getByRole('button', { name: 'LLM 模型' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+    expect(screen.getByRole('button', { name: '文档识别' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'LLM 模型' }))
+    fireEvent.click(screen.getByRole('button', { name: '放弃更改并切换' }))
+    expect(screen.getByRole('button', { name: 'LLM 模型' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('refreshes built-in Notes MCP after enabling Magic Notes', async () => {

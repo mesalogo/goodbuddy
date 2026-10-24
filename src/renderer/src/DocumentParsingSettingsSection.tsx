@@ -5,6 +5,7 @@ import {
   FileSearch,
   FileText,
   FolderOpen,
+  Save,
   ScanText,
   ShieldCheck,
   Square,
@@ -29,10 +30,11 @@ import type {
   DocumentParsingTestPurpose
 } from '../../shared/document-parsing-contracts'
 import type { AppNotificationInput } from './notifications'
+import type { ModelDownloadSource } from '../../shared/model-download-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { displayErrorMessage } from './error-message'
 import {
-  SettingsCategoryHeader,
+  SettingsSectionHeader,
   SettingsWarningList
 } from './SettingsPrimitives'
 import { modelOperationPercent } from './model-download-presentation'
@@ -44,6 +46,10 @@ import { DocumentResultPreview } from './DocumentResultPreview'
 import { AnchoredMenu } from './AnchoredMenu'
 
 type DocumentParsingSettingsSectionProps = {
+  actionsContainer?: HTMLElement | null
+  section?: 'workflow' | 'models'
+  downloadSource?: ModelDownloadSource
+  onManageModels?: () => void
   onNotify?: (notification: AppNotificationInput) => void
   onOpenModelDownloadSourceSettings?: () => void
   onDirtyChange?: (dirty: boolean) => void
@@ -210,12 +216,17 @@ function DiagnosticDialog({
 }
 
 export function DocumentParsingSettingsSection({
+  actionsContainer,
+  section = 'workflow',
+  downloadSource,
+  onManageModels,
   onNotify,
   onOpenModelDownloadSourceSettings,
   onDirtyChange,
   onBusyChange
 }: DocumentParsingSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settings')
+  const managingModels = section === 'models'
   const [snapshot, setSnapshot] = useState<DocumentParsingSnapshot>()
   const [draft, setDraft] = useState<DocumentParsingSettings>()
   const [error, setError] = useState<string>()
@@ -231,11 +242,15 @@ export function DocumentParsingSettingsSection({
   const [diagnostic, setDiagnostic] =
     useState<DocumentParsingDiagnostic>()
   const mountedRef = useRef(false)
+  const previousDownloadSource = useRef(downloadSource)
   const testOperation = useRef<string | undefined>(undefined)
+  const editableKeys: (keyof DocumentParsingSettings)[] = managingModels
+    ? ['localOcrModelId', 'ocrProvider', 'httpOcr']
+    : ['chatWorkflow', 'knowledgeWorkflow', 'maximumPages', 'pageTimeoutSeconds']
   const settingsDirty =
     snapshot !== undefined &&
     draft !== undefined &&
-    (JSON.stringify(draft) !== JSON.stringify(snapshot.settings) || Boolean(apiKey) || clearApiKey)
+    (editableKeys.some((key) => JSON.stringify(draft[key]) !== JSON.stringify(snapshot.settings[key])) || Boolean(apiKey) || clearApiKey)
 
   useEffect(() => {
     onDirtyChange?.(settingsDirty)
@@ -255,6 +270,14 @@ export function DocumentParsingSettingsSection({
       setSnapshot(next)
     }
   }, [t])
+
+  useEffect(() => {
+    if (previousDownloadSource.current === downloadSource) return
+    previousDownloadSource.current = downloadSource
+    void refresh().catch((reason: unknown) => {
+      setError(displayErrorMessage(reason, t('errors.readDocumentParsing')))
+    })
+  }, [downloadSource, refresh, t])
 
   const refreshProgress = useCallback(async (): Promise<void> => {
     const api = window.goodbuddy.documentParsing
@@ -311,9 +334,9 @@ export function DocumentParsingSettingsSection({
     }
   }, [t])
 
-  const shouldPoll =
+  const shouldPoll = managingModels && (
     busyModelId !== undefined ||
-    Boolean(snapshot?.ocrModels.operations.length)
+    Boolean(snapshot?.ocrModels.operations.length))
 
   useEffect(() => {
     if (!shouldPoll) {
@@ -358,7 +381,18 @@ export function DocumentParsingSettingsSection({
     setSaving(true)
     setError(undefined)
     try {
-      const next = await api.update({ ...draft, ...(apiKey ? { apiKey } : {}), ...(clearApiKey ? { clearApiKey } : {}) })
+      const next = await api.update(managingModels ? {
+        localOcrModelId: draft.localOcrModelId,
+        ...(draft.ocrProvider ? { ocrProvider: draft.ocrProvider } : {}),
+        ...(draft.httpOcr ? { httpOcr: draft.httpOcr } : {}),
+        ...(apiKey ? { apiKey } : {}),
+        ...(clearApiKey ? { clearApiKey } : {})
+      } : {
+        chatWorkflow: draft.chatWorkflow,
+        knowledgeWorkflow: draft.knowledgeWorkflow,
+        maximumPages: draft.maximumPages,
+        pageTimeoutSeconds: draft.pageTimeoutSeconds
+      })
       setSnapshot(next)
       setDraft(next.settings)
       setApiKey('')
@@ -464,10 +498,14 @@ export function DocumentParsingSettingsSection({
       : t('errors.documentParsingUnavailable')
     return (
       <>
-        <SettingsCategoryHeader
-          category="document-parsing"
+        {managingModels && actionsContainer ? (
+          (error ?? unavailableError) && <p className="settings-warning" role="alert">{error ?? unavailableError}</p>
+        ) : <SettingsSectionHeader
+          title={managingModels ? t('documentParsing.recognition.title') : t('categories.documentParsing.label')}
+          headingId={managingModels ? 'document-recognition-title' : 'settings-category-document-parsing'}
+          headingLevel={managingModels ? 3 : 2}
           error={error ?? unavailableError}
-        />
+        />}
         {!error && !unavailableError && (
           <p className="settings-empty">
             {t('documentParsing.loading')}
@@ -521,53 +559,58 @@ export function DocumentParsingSettingsSection({
     draft.localOcrModelId !== snapshot.settings.localOcrModelId
   const selectedModelReady = installedModel !== undefined
   const invalidPendingModel =
-    draft.ocrProvider !== 'paddleocr-vl' && pendingModelSelection && !selectedModelReady
+    managingModels && draft.ocrProvider !== 'paddleocr-vl' && pendingModelSelection && !selectedModelReady
   const testing = testingPurpose !== undefined
+  const saveAction = (
+    <button
+      className="primary-button"
+      disabled={saving || testing || busyModelId !== undefined || !settingsDirty || invalidPendingModel}
+      onClick={() => void save()}
+      type="button"
+    >
+      <Save aria-hidden="true" size={13} />
+      {saving ? t('actions.saving') : t('actions.saveSettings')}
+    </button>
+  )
 
   return (
     <>
-      <SettingsCategoryHeader
+      {managingModels && actionsContainer ? <>
+        {createPortal(saveAction, actionsContainer)}
+        {error && <p className="settings-warning" role="alert">{error}</p>}
+      </> : <SettingsSectionHeader
+        title={managingModels ? t('documentParsing.recognition.title') : t('categories.documentParsing.label')}
+        headingId={managingModels ? 'document-recognition-title' : 'settings-category-document-parsing'}
+        headingLevel={managingModels ? 3 : 2}
+        description={managingModels ? undefined : t('categories.documentParsing.description')}
+        sticky={!managingModels}
+        status={settingsDirty ? (
+          <p className="settings-notice" id="document-parsing-unsaved-notice" role="status">
+            {t('documentParsing.workflows.unsavedNotice')}
+          </p>
+        ) : undefined}
         actions={
           <>
-          <button type="button" className="secondary-button" ref={testButtonRef} disabled={saving || testing || settingsDirty}
+          {!managingModels && <button type="button" className="secondary-button" ref={testButtonRef} disabled={saving || testing || settingsDirty}
             aria-describedby={settingsDirty ? 'document-parsing-unsaved-notice' : undefined}
             aria-haspopup="menu" aria-expanded={testMenuOpen} onClick={() => setTestMenuOpen((open) => !open)}>
             <FileSearch aria-hidden="true" size={14} />{testing ? '正在测试解析' : '测试解析'}
-          </button>
+          </button>}
           {testMenuOpen && <AnchoredMenu anchorRef={testButtonRef} id="document-test-menu" label="选择测试场景" onClose={() => setTestMenuOpen(false)}>
             <button type="button" role="menuitem" onClick={() => { setTestMenuOpen(false); void testParsing('chat-attachment') }}>{t('documentParsing.workflows.testChat')}</button>
             <button type="button" role="menuitem" onClick={() => { setTestMenuOpen(false); void testParsing('knowledge-index') }}>{t('documentParsing.workflows.testKnowledge')}</button>
           </AnchoredMenu>}
-          <button
-            className="primary-button"
-            disabled={
-              saving || testing || !settingsDirty || invalidPendingModel
-            }
-            onClick={() => void save()}
-            type="button"
-          >
-            {saving
-              ? t('actions.saving')
-              : t('actions.saveSettings')}
-          </button>
+          {saveAction}
           </>
         }
-        category="document-parsing"
         error={error}
-      />
+      />}
       <SettingsWarningList warnings={snapshot.warnings} />
       {testing && <div role="status" aria-live="polite"><span>正在解析测试文件</span><button type="button" className="secondary-button" onClick={() => {
         if (testOperation.current) void window.goodbuddy.documentParsing!.cancelTest(testOperation.current)
       }}>取消解析</button></div>}
-      {settingsDirty && (
-        <p
-          className="settings-notice"
-          id="document-parsing-unsaved-notice"
-        >
-          {t('documentParsing.workflows.unsavedNotice')}
-        </p>
-      )}
 
+      {!managingModels && <>
       <section
         aria-labelledby="document-parsing-status-title"
         className="settings-section document-parsing-status"
@@ -613,6 +656,18 @@ export function DocumentParsingSettingsSection({
             label={t('documentParsing.status.conversion')}
           />
         </div>
+        <p className="settings-notice">
+          {t('documentParsing.recognition.current', {
+            name: snapshot.settings.ocrProvider === 'paddleocr-vl'
+              ? `HTTP PaddleOCR-VL · ${snapshot.settings.httpOcr?.baseUrl ?? ''}`
+              : snapshot.status.localOcr.displayName,
+            source: snapshot.settings.ocrProvider === 'paddleocr-vl'
+              ? t('documentParsing.recognition.remote') : t('documentParsing.recognition.local')
+          })}
+        </p>
+        {onManageModels && <button className="secondary-button" type="button" onClick={onManageModels}>
+          {t('documentParsing.recognition.manage')}
+        </button>}
       </section>
 
       <section
@@ -706,9 +761,12 @@ export function DocumentParsingSettingsSection({
         </div>
       </section>
 
-      <section className="settings-section">
+      </>}
+      {managingModels && <>
+      <section className="settings-section document-ocr-provider">
         <strong>OCR 来源</strong>
         <SegmentedControl ariaLabel="OCR 来源" value={draft.ocrProvider ?? 'local'}
+          disabled={saving || busyModelId !== undefined}
           options={[{ value: 'local', label: '本地模型' }, { value: 'paddleocr-vl', label: '远程服务' }]}
           onChange={(value) => updateDraft('ocrProvider', value)} />
         <small>已保存来源：{snapshot.settings.ocrProvider === 'paddleocr-vl' ? 'HTTP PaddleOCR-VL' : '本地模型'}</small>
@@ -748,6 +806,7 @@ export function DocumentParsingSettingsSection({
           <span>{t('documentParsing.ocr.modelSelector')}</span>
           <select
             aria-label={t('documentParsing.ocr.modelSelector')}
+            disabled={saving || busyModelId !== undefined}
             onChange={(event) =>
               updateDraft('localOcrModelId', event.target.value)
             }
@@ -807,6 +866,21 @@ export function DocumentParsingSettingsSection({
                       {t('documentParsing.ocr.recommended')}
                     </span>
                   )}
+                  <button
+                    aria-label={t('documentParsing.ocr.accessibility.openRepository', {
+                      name: modelDisplayName,
+                      source: t(`modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`)
+                    })}
+                    title={t('documentParsing.ocr.openRepository', {
+                      source: t(`modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`)
+                    })}
+                    className="icon-button speech-model-card__repository"
+                    disabled={!modelSourceAvailable}
+                    onClick={() => void window.goodbuddy.documentParsing?.openOcrModelRepository(model.id)}
+                    type="button"
+                  >
+                    <ExternalLink aria-hidden="true" size={13} />
+                  </button>
                 </div>
                 <p>{modelDescription}</p>
                 <div className="document-ocr-model__tags">
@@ -849,31 +923,6 @@ export function DocumentParsingSettingsSection({
                   </span>
                 </div>
               </div>
-              <button
-                aria-label={t(
-                  'documentParsing.ocr.accessibility.openRepository',
-                  {
-                    name: modelDisplayName,
-                    source: t(
-                      `modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`
-                    )
-                  }
-                )}
-                className="secondary-button document-ocr-model__repository"
-                disabled={!modelSourceAvailable}
-                onClick={() =>
-                  void window.goodbuddy.documentParsing
-                    ?.openOcrModelRepository(model.id)
-                }
-                type="button"
-              >
-                <ExternalLink aria-hidden="true" size={13} />
-                {t('documentParsing.ocr.openRepository', {
-                  source: t(
-                    `modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`
-                  )
-                })}
-              </button>
             </div>
 
             {modelOperation && (
@@ -986,7 +1035,7 @@ export function DocumentParsingSettingsSection({
                               return installed
                             }
                             return window.goodbuddy.documentParsing!
-                              .update(draft)
+                              .update({ localOcrModelId: model.id })
                           },
                           t(
                             pendingModelSelection
@@ -1036,7 +1085,7 @@ export function DocumentParsingSettingsSection({
                             return imported
                           }
                           return window.goodbuddy.documentParsing!
-                            .update(draft)
+                            .update({ localOcrModelId: model.id })
                         },
                         t(
                           pendingModelSelection
@@ -1105,7 +1154,8 @@ export function DocumentParsingSettingsSection({
         </p>
       </section>}
 
-      <details className="settings-section">
+      </>}
+      {!managingModels && <details className="settings-section">
         <summary>{t('documentParsing.advanced.title')}</summary>
         <div className="document-parsing-grid">
           <label className="field">
@@ -1140,7 +1190,7 @@ export function DocumentParsingSettingsSection({
           </label>
         </div>
         <small>{t('documentParsing.advanced.description')}</small>
-      </details>
+      </details>}
 
       {diagnostic && (
         <DiagnosticDialog

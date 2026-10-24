@@ -125,9 +125,9 @@ const snapshot: DocumentParsingSnapshot = {
 
 const getSnapshot = vi.fn(async () => snapshot)
 const getOcrModelProgress = vi.fn(async () => ({ operations: [] }))
-const update = vi.fn(async (input: DocumentParsingSettings) => ({
+const update = vi.fn(async (input: Partial<DocumentParsingSettings>) => ({
   ...snapshot,
-  settings: input
+  settings: { ...settings, ...input }
 }))
 const test = vi.fn(async () => ({
   fileName: 'scan.pdf',
@@ -221,7 +221,7 @@ describe('DocumentParsingSettingsSection', () => {
   it('localizes built-in OCR model metadata in English', async () => {
     await changeUiLocale('en-US')
 
-    render(<DocumentParsingSettingsSection />)
+    render(<DocumentParsingSettingsSection section="models" />)
 
     expect(await screen.findByText('PP-OCRv6 Tiny')).toBeInTheDocument()
     expect(
@@ -255,10 +255,9 @@ describe('DocumentParsingSettingsSection', () => {
       <DocumentParsingSettingsSection onNotify={onNotify} />
     )
 
-    expect(await screen.findByText('PP-OCRv6 Tiny')).toBeInTheDocument()
-    expect(screen.getByText('ModelScope')).toBeInTheDocument()
-    expect(screen.getByText('质量：基础')).toBeInTheDocument()
-    expect(screen.getByText('速度：快')).toBeInTheDocument()
+    expect(await screen.findByText(/当前模型：PP-OCRv6 Tiny/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('当前 OCR 模型')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '远程服务' })).not.toBeInTheDocument()
     expect(
       screen.queryByText('onnxruntime-web-wasm')
     ).not.toBeInTheDocument()
@@ -274,13 +273,6 @@ describe('DocumentParsingSettingsSection', () => {
     expect(
       screen.queryByText('可从 ModelScope 下载')
     ).not.toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: '打开 PP-OCRv6 Tiny 的 ModelScope 页面'
-      })
-    )
-    expect(openOcrModelRepository).toHaveBeenCalledWith('pp-ocrv6-tiny')
-
     fireEvent.change(screen.getByLabelText('聊天与成果文件'), {
       target: { value: 'fast-text' }
     })
@@ -293,7 +285,7 @@ describe('DocumentParsingSettingsSection', () => {
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith(
-        expect.objectContaining({ chatWorkflow: 'fast-text' })
+        { chatWorkflow: 'fast-text', knowledgeWorkflow: 'complete-index', maximumPages: 100, pageTimeoutSeconds: 60 }
       )
     )
     expect(onNotify).toHaveBeenCalledWith(
@@ -306,7 +298,7 @@ describe('DocumentParsingSettingsSection', () => {
   it('downloads the verified OCR model from the model catalog', async () => {
     const onNotify = vi.fn()
     render(
-      <DocumentParsingSettingsSection onNotify={onNotify} />
+      <DocumentParsingSettingsSection section="models" onNotify={onNotify} />
     )
 
     fireEvent.click(
@@ -347,7 +339,7 @@ describe('DocumentParsingSettingsSection', () => {
           resolveInstall = resolve
         })
     )
-    render(<DocumentParsingSettingsSection />)
+    render(<DocumentParsingSettingsSection section="models" />)
     const installButton = await screen.findByRole('button', {
       name: '下载 PP-OCRv6 Tiny'
     })
@@ -403,7 +395,7 @@ describe('DocumentParsingSettingsSection', () => {
       }
     })
     update.mockResolvedValueOnce(installedMedium)
-    render(<DocumentParsingSettingsSection />)
+    render(<DocumentParsingSettingsSection section="models" />)
 
     fireEvent.change(await screen.findByLabelText('当前 OCR 模型'), {
       target: { value: 'pp-ocrv6-medium' }
@@ -419,9 +411,7 @@ describe('DocumentParsingSettingsSection', () => {
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          localOcrModelId: 'pp-ocrv6-medium'
-        })
+        { localOcrModelId: 'pp-ocrv6-medium' }
       )
     )
   })
@@ -429,7 +419,7 @@ describe('DocumentParsingSettingsSection', () => {
   it('imports and exports verified OCR model ZIP archives', async () => {
     const onNotify = vi.fn()
     render(
-      <DocumentParsingSettingsSection onNotify={onNotify} />
+      <DocumentParsingSettingsSection section="models" onNotify={onNotify} />
     )
 
     fireEvent.click(
@@ -470,7 +460,7 @@ describe('DocumentParsingSettingsSection', () => {
   })
 
   it('switches the selected OCR model only when settings are saved', async () => {
-    render(<DocumentParsingSettingsSection />)
+    render(<DocumentParsingSettingsSection section="models" />)
     const selector = await screen.findByLabelText('当前 OCR 模型')
 
     expect(
@@ -506,16 +496,14 @@ describe('DocumentParsingSettingsSection', () => {
     )
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          localOcrModelId: 'pp-ocrv6-small'
-        })
+        { localOcrModelId: 'pp-ocrv6-small' }
       )
     )
   })
 
   it('runs a real-file diagnostic flow and displays its result', async () => {
     const { container } = render(<DocumentParsingSettingsSection />)
-    await screen.findByText('PP-OCRv6 Tiny')
+    await screen.findByText(/当前模型：PP-OCRv6 Tiny/)
 
     const trigger = screen.getByRole('button', {
       name: '测试解析'
@@ -549,11 +537,35 @@ describe('DocumentParsingSettingsSection', () => {
     expect(update).not.toHaveBeenCalled()
   })
 
+  it('imports and selects only the model ID, without saving a pending provider change', async () => {
+    getSnapshot.mockResolvedValueOnce({ ...snapshot, settings: {
+      ...settings, ocrProvider: 'paddleocr-vl', httpOcr: { ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test' }
+    } })
+    render(<DocumentParsingSettingsSection section="models" />)
+    fireEvent.click(await screen.findByRole('button', { name: '本地模型' }))
+    fireEvent.change(screen.getByLabelText('当前 OCR 模型'), { target: { value: 'pp-ocrv6-medium' } })
+    fireEvent.click(screen.getByRole('button', { name: '从 ZIP 导入 PP-OCRv6 Medium' }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ localOcrModelId: 'pp-ocrv6-medium' }))
+  })
+
+  it('refreshes the download source without discarding a pending model selection', async () => {
+    const { rerender } = render(<DocumentParsingSettingsSection section="models" downloadSource="modelscope" />)
+    fireEvent.change(await screen.findByLabelText('当前 OCR 模型'), { target: { value: 'pp-ocrv6-small' } })
+    getSnapshot.mockResolvedValueOnce({ ...snapshot, ocrModels: { ...snapshot.ocrModels, selectedDownloadSource: 'hugging-face' } })
+    rerender(<DocumentParsingSettingsSection section="models" downloadSource="hugging-face" />)
+    await waitFor(() => {
+      expect(screen.getByText('Hugging Face')).toBeInTheDocument()
+      expect(screen.getByLabelText('当前 OCR 模型')).toHaveValue('pp-ocrv6-small')
+      expect(screen.getByRole('button', { name: '保存设置' })).toBeEnabled()
+    })
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it('keeps custom and unknown excluded labels across provider and filter switches', async () => {
     getSnapshot.mockResolvedValueOnce({ ...snapshot, settings: { ...settings, ocrProvider: 'paddleocr-vl', httpOcr: {
       ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test', filterMode: 'custom', ignoredLabels: ['header', 'text']
     } } })
-    render(<DocumentParsingSettingsSection />)
+    render(<DocumentParsingSettingsSection section="models" />)
     await screen.findByText('已保存来源：HTTP PaddleOCR-VL')
     fireEvent.click(screen.getByText('HTTP 高级设置'))
     expect(screen.getByRole('switch', { name: '保留页眉文字' })).not.toBeChecked()
@@ -565,7 +577,7 @@ describe('DocumentParsingSettingsSection', () => {
     fireEvent.click(screen.getByRole('button', { name: '恢复默认' }))
     expect(screen.getByRole('switch', { name: '保留页眉文字' })).toBeChecked()
     expect(screen.queryByRole('switch', { name: '保留text' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '测试解析' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '测试解析' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ httpOcr: expect.objectContaining({ filterMode: 'default', ignoredLabels: [] }) })))
   })

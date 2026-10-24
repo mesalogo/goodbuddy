@@ -41,8 +41,8 @@ export const settings = {
     model: {
       label: 'Model connections',
       navigationDescription:
-        'LLMs, embedding and rerank models, and credentials',
-      description: 'LLMs, embedding and rerank models, and credentials'
+        'LLMs, embeddings, reranking, speech, and document recognition',
+      description: 'Manage models, document recognition services, and credentials'
     },
     contextControl: {
       label: 'Context control',
@@ -53,9 +53,9 @@ export const settings = {
     },
     documentParsing: {
       label: 'Document parsing',
-      navigationDescription: 'Attachments, knowledge, and local OCR',
+      navigationDescription: 'Attachment and knowledge workflows, limits, and parsing tests',
       description:
-        'Configure extraction, conversion, and OCR for chat attachments and knowledge imports'
+        'Configure parsing workflows, page limits, and timeouts for chat attachments and knowledge imports'
     },
     runtime: {
       label: 'Agent Runtime',
@@ -500,6 +500,13 @@ export const settings = {
     }
   },
   documentParsing: {
+    recognition: {
+      title: 'Document recognition',
+      manage: 'Manage models',
+      current: 'Current model: {{name}} · Source: {{source}}',
+      local: 'Local model',
+      remote: 'Remote service'
+    },
     loading: 'Loading…',
     status: {
       title: 'Runtime status',

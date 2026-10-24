@@ -1,8 +1,7 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -10,9 +9,11 @@ import { expect, it } from 'vitest'
 
 it.each([
   { mode: 'layout', name: 'keeps workbar add reachable and model protocols readable at narrow container widths' },
-  { mode: 'source', name: 'aligns the model download source button and supports native dialog confirm and cancel' }
+  { mode: 'source', name: 'aligns the model download source button and supports native dialog confirm and cancel' },
+  { mode: 'recognition', name: 'keeps document recognition forms aligned and advanced options spaced at desktop and narrow widths' }
 ])('$name', async ({ mode }) => {
-  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-responsive-controls-'))
+  await mkdir(resolve('temp'), { recursive: true })
+  const directory = await mkdtemp(resolve('temp/goodbuddy-responsive-controls-'))
   const server = await createServer({
     configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
     plugins: [react(), { name: 'responsive-controls', configureServer(server) {
