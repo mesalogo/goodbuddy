@@ -185,7 +185,7 @@ Runtime
 - 不提供全系统进程枚举和任意 PID 终止。
 - 不默认扫描用户全部目录、远程主机或 SSH 配置。
 - 不允许 Agent 未经现有 Runtime 边界直接向用户终端注入输入。
-- 不自动执行 HTML 中的脚本或访问网络。
+- HTML 的执行权限与会话渲染条件由[会话 HTML PRD](../conversation-html-rendering/prd.md)维护；文件打开路由见[统一规则](../file-opening/logic-design.md)。
 - 不让监督器自动替用户发言、批准工具、扩大范围或修改安全策略。
 - 不提供以 SSH 连接为生命周期的临时远程 Agent；远程执行必须由用户级常驻 Daemon 承载。
 - 不支持任意 ProxyCommand、任意端口转发或 SSH Agent Forwarding。
@@ -371,6 +371,10 @@ Renderer 不接收任意系统 PID 控制能力。控制动作引用 Main 签发
 重新验证所有权、当前状态和允许操作。
 
 ### 7.6 工作区
+
+文件类型、默认打开目标和会话展示规则统一由
+[文件打开与内容预览](../file-opening/README.md)维护。本节保留工作区操作与返回状态约定；
+尚未接入的 HTML、文档阅读能力以该规范为后续目标，实施事实见各功能进度。
 
 工作区是默认存在、单实例且不可关闭的基础应用。它默认跟随当前项目；项目或目录不可用时
 保留同一 Tab 并显示修复入口，不能通过关闭 Tab 隐藏范围错误。任务中心固定在第一位，工作区
@@ -908,7 +912,7 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 4. 用户终端和 Agent 工具执行使用不同身份和事件来源。
 5. 进程面板只控制 GoodBuddy 受管对象，不接受任意 PID。
 6. 本机和远程路径分别在对应文件系统上 canonicalize 并验证符号链接边界。
-7. HTML 默认静态、无脚本、无网络、无 Electron API。
+7. HTML 权限遵循[会话 HTML PRD](../conversation-html-rendering/prd.md)，预览不能访问 Electron 或 GoodBuddy 应用接口。
 8. Supervisor 不接收授权回调，不能批准工具或替用户发送消息。
 9. SSH Host Key 必须固定，凭据保留在 Main 加密存储。
 10. 远程端只获得请求级、可撤销、最小范围能力。
@@ -1039,7 +1043,7 @@ Escape 收起并返回按钮；点击外部或焦点移出也收起。实时区�
 - 终端需要独立可访问说明，并允许关闭动画和声音提示。
 - 进程和 Runtime 高频日志不逐行进入实时区域，只播报重要状态变化。
 - 监督证据定位后将焦点移动到对应对象，并提供返回监督记录的方式。
-- HTML iframe 有明确标题、静态安全说明和源码替代视图。
+- HTML iframe 有明确标题、与实际权限一致的说明和源码替代视图。
 - 窄窗口下能力目录仍完整可达，不因空间不足隐藏能力。
 - 文字缩放到 200% 时，当前目标、执行空间、风险状态和停止操作不能被裁切。
 
@@ -1064,7 +1068,7 @@ Escape 收起并返回按钮；点击外部或焦点移出也收起。实时区�
 
 - 本机 CPU、内存、磁盘 IO 和 GoodBuddy 桌面进程摘要的按需资源监控。
 - 通用 Artifact Event。
-- HTML 工作区和会话内容的静态即时预览。
+- HTML 工作区和会话内容的预览，打开方式与渲染条件见[统一规则](../file-opening/logic-design.md)。
 - Runtime Inspector Snapshot 与事件。
 - OpenCode 会话、子会话、Todo、工具、用量和取消；本地与托管 SSH 的原生 Task 调用在
   Conversation 中统一显示为可追踪的 Subagent 状态，而不是普通工具参数卡。
@@ -1148,7 +1152,7 @@ Escape 收起并返回按钮；点击外部或焦点移出也收起。实时区�
 - [ ] Agent 不能未经授权向用户终端注入命令。
 - [ ] 进程面板不能枚举或终止任意系统进程。
 - [ ] 本机和远程按已启用能力执行，不保留模式限制或一般工具审批。
-- [ ] HTML 预览无法执行脚本、联网、打开窗口、提交表单或访问 Electron API。
+- [ ] HTML 预览通过[会话 HTML 产品验收](../conversation-html-rendering/prd.md#产品验收)，文件打开通过[统一打开验收](../file-opening/prd.md#用户场景与验收)。
 - [ ] Supervisor 不能自动发送消息、批准工具或扩大范围。
 - [ ] SSH 首次连接和 Host Key 变化均经过明确验证流程。
 - [ ] 凭据不进入 Renderer、日志、SQLite 明文或命令参数。

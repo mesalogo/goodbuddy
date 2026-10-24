@@ -5,6 +5,9 @@ Office 协同编辑通过 ShareServer 集成 ONLYOFFICE Docs，使 GoodBuddy Des
 
 ## 文档导航
 
+文件默认阅读方式、会话展示及能力不可用时的行为统一见
+[文件打开与内容预览](../file-opening/README.md)。本目录继续负责编辑、保存和冲突处理。
+
 | 文档 | 权威职责 |
 | --- | --- |
 | [Office 协同编辑 PRD](./prd.md) | 用户问题、产品范围、功能要求和验收标准 |
