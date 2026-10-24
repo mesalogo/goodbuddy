@@ -877,15 +877,15 @@ export const app = {
     mermaidExportError: 'Export failed. Click Export PNG to retry.',
     htmlPreview: 'HTML preview',
     htmlPreviewNotice:
-      'Static safe preview with scripts and network access disabled',
-    htmlPreviewFrame: 'Static HTML preview from the Agent reply',
+      'Scripts and network access enabled',
+    htmlPreviewFrame: 'HTML preview from the Agent reply',
     htmlActions: 'HTML preview actions',
     htmlViewSource: 'View source',
     htmlHideSource: 'Hide source',
     htmlOpenViewer: 'Full-screen preview',
     htmlViewerTitle: 'Full-screen HTML preview',
     htmlViewerFrame:
-      'Full-screen static HTML preview from the Agent reply',
+      'Full-screen HTML preview from the Agent reply',
     htmlCloseViewer: 'Close full-screen preview'
   }
 } satisfies TranslationShape<typeof chineseApp>

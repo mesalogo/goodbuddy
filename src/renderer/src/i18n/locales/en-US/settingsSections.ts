@@ -596,7 +596,7 @@ export const settingsSections = {
     conversationHtml: {
       title: 'Conversation HTML rendering',
       description:
-        'Shows complete HTML documents and HTML code blocks in Agent replies as static previews. Previews cannot run scripts, access the network, submit forms, or open windows.',
+        'Shows complete HTML documents and HTML code blocks in Agent replies as web previews, with scripts, external resources, and network requests enabled.',
       enabled: 'Render HTML in conversations'
     },
     remoteProjects: {

@@ -7,7 +7,7 @@ import { registerWindowIpcHandlers } from './window-ipc'
 vi.mock('electron', () => ({ clipboard: {} }))
 vi.mock('./window', () => ({ showWindow: vi.fn() }))
 
-it('relays only direct srcdoc Escape keydowns and removes the listener on disposal', () => {
+it('relays only direct HTML preview Escape keydowns and removes the listener on disposal', () => {
   const mainFrame = { url: 'file:///app/index.html', parent: null }
   const contents = Object.assign(new EventEmitter(), {
     mainFrame, focusedFrame: mainFrame as { url: string; parent: unknown } | null, send: vi.fn()
@@ -24,9 +24,9 @@ it('relays only direct srcdoc Escape keydowns and removes the listener on dispos
   input()
   contents.focusedFrame = { url: 'https://example.com', parent: mainFrame }
   input()
-  contents.focusedFrame = { url: 'about:srcdoc', parent: {} }
+  contents.focusedFrame = { url: 'goodbuddy-html://preview/?html=test', parent: {} }
   input()
-  contents.focusedFrame = { url: 'about:srcdoc#section', parent: mainFrame }
+  contents.focusedFrame = { url: 'goodbuddy-html://preview/?html=test#section', parent: mainFrame }
   input('Tab')
   input('Escape', 'keyUp')
   expect(contents.send).not.toHaveBeenCalled()

@@ -1,5 +1,23 @@
 # 会话 HTML 渲染实现进度
 
+## 2026-10-24 脚本与网络访问
+
+- 按用户要求移除预览的脚本清理与禁网络策略；内嵌和全屏均使用独立的
+  `goodbuddy-html` 文档及 `allow-scripts allow-forms` 沙箱。提示文案和设置说明已同步。
+- 主界面的 CSP 只增加预览 frame 协议，Electron、Node 和 GoodBuddy 接口隔离保持有效。
+  此变更属于 Desktop 展示路径；本地及远程 Runtime 的回复共用该 Renderer，无 Agent 端改动。
+- `npm test -- src/renderer/src/MarkdownRenderer.test.tsx src/main/window-ipc.test.ts tests/html-preview.electron.test.ts`：40 项通过。
+  真实 Electron 验证内联/外部脚本、事件属性、CSS、图片、fetch 以及主文档和接口隔离。
+- `npx vitest run tests/overlay-layering.electron.test.ts -t "keeps nested previews"`：1 项通过，
+  覆盖真实 App 全屏预览、正反向 Tab 和 iframe 内 Escape；模型调用 0 次。
+- `npx vitest run src/renderer/src/App.test.tsx -t "HTML"`：1 项通过，验证设置关闭后的源码回退。
+- 修改文件的 ESLint 和 `tsconfig.web.json` 类型检查通过。
+- 全仓 `npm run typecheck` 受其他并行修改的 `story-graph-reader.ts` 类型错误阻塞；
+  `npm run lint` 受文档站构建产物/缓存及 `office-document-editing/local-preview-demo`
+  文件报错阻塞。未运行全量测试。
+
+## 历史记录
+
 2026-09-27 浮层审查修复：全屏 iframe 已纳入共享焦点循环，跨文档 Escape 通过受限
 Main/Preload 通知返回外层。真实 App 中的带链接及纯正文预览均已验证键盘进入和 Escape，
 带链接预览另验证正反向 Tab 返回；没有开放 sandbox 权限或执行预览脚本。
@@ -10,7 +28,7 @@ Main/Preload 通知返回外层。真实 App 中的带链接及纯正文预览�
 - [x] 应用级持久开关，默认开启，并提供旧设置迁移。
 - [x] 平台功能通用设置中的共享 Switch。
 - [x] 已完成 Agent 回复和子 Agent 输出中的完整 HTML 与 fenced HTML 识别。
-- [x] 隔离静态预览、持续安全说明和源码切换。
+- [x] 隔离网页预览、脚本与网络能力说明和源码切换。
 - [x] 预览保留作者 `<style>` 与 `style` 属性，样式不再被整块丢弃。
 - [x] 与 Mermaid 一致的图标按钮组：源码切换与全屏预览 Modal。
 - [x] 嵌入预览固定 480px 高度，源码面板同值上限。

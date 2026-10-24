@@ -14976,8 +14976,8 @@ describe("App", () => {
     render(<App />);
 
     expect(
-      await screen.findByTitle("Agent 回复 HTML 静态预览"),
-    ).toHaveAttribute("sandbox", "");
+      await screen.findByTitle("Agent 回复 HTML 预览"),
+    ).toHaveAttribute("sandbox", "allow-scripts allow-forms");
 
     fireEvent.click(await screen.findByRole("button", { name: /^设置$/u }));
     fireEvent.click(await screen.findByRole("tab", { name: "平台功能" }));
@@ -14994,7 +14994,7 @@ describe("App", () => {
     );
     await waitFor(() =>
       expect(
-        screen.queryByTitle("Agent 回复 HTML 静态预览"),
+        screen.queryByTitle("Agent 回复 HTML 预览"),
       ).not.toBeInTheDocument(),
     );
     expect(screen.getByText(/Rendered dashboard/u)).toBeInTheDocument();

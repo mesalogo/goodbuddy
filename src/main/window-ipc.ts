@@ -24,11 +24,11 @@ export function registerWindowIpcHandlers(
   window: BrowserWindow
 ): () => void {
   const contents = window.webContents
-  // Sandboxed srcdoc keyboard events cannot bubble to the renderer's modal.
+  // Sandboxed preview keyboard events cannot bubble to the renderer's modal.
   const previewEscape = (_event: Electron.Event, input: Electron.Input): void => {
     const frame = contents.focusedFrame
     if (input.type === 'keyDown' && input.key === 'Escape' &&
-      frame?.parent === contents.mainFrame && frame.url.startsWith('about:srcdoc')) {
+      frame?.parent === contents.mainFrame && frame.url.startsWith('goodbuddy-html://preview/')) {
       contents.send(ipcChannels.windowPreviewEscape)
     }
   }

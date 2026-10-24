@@ -1,4 +1,5 @@
 import { startupMark, startupSpan } from './startup-marks'
+import { registerHtmlPreviewProtocol } from './html-preview-protocol'
 import { localInferenceService } from './local-inference-service'
 import { NativeClientCoordinator } from './agent/native-client-coordinator'
 import { createEmbeddingUtilityTransport } from './knowledge/embedding-utility-transport'
@@ -584,6 +585,7 @@ if (hasSingleInstanceLock) {
   })
 
   applicationStartup = app.whenReady().then(async () => {
+    registerHtmlPreviewProtocol()
     startupMark('main:when-ready')
     session.defaultSession.setPermissionRequestHandler(
       (webContents, permission, callback, details) => {

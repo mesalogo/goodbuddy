@@ -155,7 +155,7 @@ const ready = true
     expect(onOpenLink).toHaveBeenCalledWith('docs/review.md')
   })
 
-  it('renders fenced HTML as an isolated static preview when enabled', () => {
+  it('renders fenced HTML with scripts and network resources when enabled', () => {
     render(
       <MarkdownRenderer renderHtml>{`\`\`\`html
 <!doctype html>
@@ -173,17 +173,18 @@ const ready = true
 \`\`\``}</MarkdownRenderer>
     )
 
-    const preview = screen.getByTitle('Agent 回复 HTML 静态预览')
-    const source = preview.getAttribute('srcdoc') ?? ''
-    expect(preview).toHaveAttribute('sandbox', '')
+    const preview = screen.getByTitle('Agent 回复 HTML 预览')
+    const source = new URL(preview.getAttribute('src')!).searchParams.get('html')!
+    expect(preview).toHaveAttribute('sandbox', 'allow-scripts allow-forms')
     expect(preview).toHaveAttribute('referrerpolicy', 'no-referrer')
     expect(source).toContain('HTML dashboard')
-    expect(source).toContain("default-src 'none'")
-    expect(source).not.toContain('<script')
-    expect(source).not.toContain('<form')
-    expect(source).not.toContain('https://tracker.example')
+    expect(source).not.toContain("default-src 'none'")
+    expect(source).toContain('<script>window.bad = true</script>')
+    expect(source).toContain('<form action="https://example.com">')
+    expect(source).toContain('https://tracker.example')
+    expect(source).toContain('onerror="bad()"')
     expect(
-      screen.getByText('静态安全预览，脚本和网络已禁用')
+      screen.getByText('支持脚本交互与网络访问')
     ).toBeInTheDocument()
 
     const sourceButton = screen.getByRole('button', {
@@ -230,11 +231,11 @@ const ready = true
       document.querySelector<HTMLElement>('.app-shell')?.inert
     ).toBe(true)
 
-    const frame = screen.getByTitle('Agent 回复 HTML 全屏静态预览')
-    expect(frame).toHaveAttribute('sandbox', '')
+    const frame = screen.getByTitle('Agent 回复 HTML 全屏预览')
+    expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-forms')
     expect(frame).toHaveAttribute('tabindex', '0')
     expect(frame).toHaveAttribute('referrerpolicy', 'no-referrer')
-    expect(frame.getAttribute('srcdoc') ?? '').toContain(
+    expect(new URL(frame.getAttribute('src')!).searchParams.get('html')).toContain(
       'Full screen page'
     )
 
@@ -270,10 +271,8 @@ const ready = true
 \`\`\``}</MarkdownRenderer>
     )
 
-    const source =
-      screen
-        .getByTitle('Agent 回复 HTML 静态预览')
-        .getAttribute('srcdoc') ?? ''
+    const source = new URL(screen.getByTitle('Agent 回复 HTML 预览')
+      .getAttribute('src')!).searchParams.get('html')!
     expect(source).toContain('background: #101014')
     expect(source).toContain('.hero {')
     expect(source).toContain('padding: 24px')
@@ -286,14 +285,14 @@ const ready = true
     )
 
     expect(
-      screen.getByTitle('Agent 回复 HTML 静态预览')
-    ).toHaveAttribute('sandbox', '')
+      screen.getByTitle('Agent 回复 HTML 预览')
+    ).toHaveAttribute('sandbox', 'allow-scripts allow-forms')
 
     rerender(
       <MarkdownRenderer>{source}</MarkdownRenderer>
     )
     expect(
-      screen.queryByTitle('Agent 回复 HTML 静态预览')
+      screen.queryByTitle('Agent 回复 HTML 预览')
     ).not.toBeInTheDocument()
     expect(
       screen.getByText(source, { exact: true })

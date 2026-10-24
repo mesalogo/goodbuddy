@@ -566,7 +566,7 @@ export const settingsSections = {
     conversationHtml: {
       title: '会话 HTML 渲染',
       description:
-        '将 Agent 回复中的完整 HTML 或 HTML 代码块直接显示为静态预览。预览不会执行脚本、联网、提交表单或打开窗口。',
+        '将 Agent 回复中的完整 HTML 或 HTML 代码块直接显示为网页预览，支持脚本交互、外部资源加载和网络请求。',
       enabled: '在会话中渲染 HTML'
     },
     remoteProjects: {

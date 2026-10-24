@@ -824,14 +824,14 @@ export const app = {
     mermaidExporting: '正在导出 PNG…',
     mermaidExportError: '导出失败，请点击“导出 PNG”重试。',
     htmlPreview: 'HTML 预览',
-    htmlPreviewNotice: '静态安全预览，脚本和网络已禁用',
-    htmlPreviewFrame: 'Agent 回复 HTML 静态预览',
+    htmlPreviewNotice: '支持脚本交互与网络访问',
+    htmlPreviewFrame: 'Agent 回复 HTML 预览',
     htmlActions: 'HTML 预览操作',
     htmlViewSource: '查看源码',
     htmlHideSource: '隐藏源码',
     htmlOpenViewer: '全屏预览',
     htmlViewerTitle: 'HTML 全屏预览',
-    htmlViewerFrame: 'Agent 回复 HTML 全屏静态预览',
+    htmlViewerFrame: 'Agent 回复 HTML 全屏预览',
     htmlCloseViewer: '关闭全屏预览'
   }
 } as const

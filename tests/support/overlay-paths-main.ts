@@ -12,6 +12,7 @@ import { BrowserService } from '../../src/main/browser/browser-service'
 import { CapabilityService } from '../../src/main/capabilities/capability-service'
 import { defaultRuntimeSettings } from '../../src/shared/contracts'
 import { ipcChannels } from '../../src/shared/ipc-channels'
+import { registerHtmlPreviewProtocol } from '../../src/main/html-preview-protocol'
 
 const directory = process.env.GB_MCP_DIRECTORY!
 app.setPath('userData', join(directory, 'profile'))
@@ -19,6 +20,7 @@ app.commandLine.appendSwitch('force-device-scale-factor', '1')
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 
 app.whenReady().then(async () => {
+  registerHtmlPreviewProtocol()
   const win = new BrowserWindow({ show: true, frame: false, width: 1280, height: 800, useContentSize: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false,
       backgroundThrottling: false, preload: join(directory, 'preload.cjs') } })
@@ -137,10 +139,10 @@ app.whenReady().then(async () => {
     evidence.image = true
     await click('.message-html-preview__actions button:last-child')
     await wait('!!document.querySelector(".html-preview-viewer")')
-    assert(await js(`document.querySelector('.html-preview-viewer iframe').getAttribute('sandbox') === '' && document.querySelector('.html-preview-viewer iframe').srcdoc.includes("script-src 'none'")`))
+    assert(await js(`document.querySelector('.html-preview-viewer iframe').getAttribute('sandbox') === 'allow-scripts allow-forms'`))
     await key('Tab')
     await wait('document.activeElement.matches(".html-preview-viewer iframe")')
-    assert(await js(`!document.querySelector('.html-preview-viewer iframe').srcdoc.includes('<script>') && !document.querySelector('.html-preview-viewer iframe').srcdoc.includes('https://example.invalid/leak')`))
+    assert(await js(`new URL(document.querySelector('.html-preview-viewer iframe').src).searchParams.get('html').includes('<script>')`))
     for (let i = 0; i < 6 && !await js('document.activeElement.matches(".html-preview-viewer__header button")'); i++) {
       await key('Tab')
     }
@@ -157,7 +159,7 @@ app.whenReady().then(async () => {
     await wait('!document.querySelector(".html-preview-viewer")')
     assert(await js('document.activeElement.matches(".message-html-preview__actions button:last-child")'))
     assert(await js('window.previewUnsafe !== true'))
-    await click('.message-html-preview:has(iframe[srcdoc*="Plain keyboard preview"]) .message-html-preview__actions button:last-child')
+    await click('.message-html-preview:has(iframe[src*="Plain%20keyboard%20preview"]) .message-html-preview__actions button:last-child')
     await wait('!!document.querySelector(".html-preview-viewer")')
     await key('Tab')
     await wait('document.activeElement.matches(".html-preview-viewer iframe")')

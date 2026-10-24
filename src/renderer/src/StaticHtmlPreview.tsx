@@ -1,4 +1,3 @@
-import DOMPurify from 'dompurify'
 import { Code2, FileCode2, Maximize2, X } from 'lucide-react'
 import {
   memo,
@@ -12,90 +11,6 @@ import {
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { activateModalFocus, getModalFocusableElements, trapTabFocus } from './dialog-focus'
-
-const forbiddenTags = [
-  'base',
-  'embed',
-  'form',
-  'iframe',
-  'link',
-  'meta',
-  'object',
-  'script'
-]
-
-const forbiddenAttributes = [
-  'action',
-  'formaction',
-  'ping',
-  'srcset'
-]
-
-const staticPreviewPolicy = [
-  "default-src 'none'",
-  "base-uri 'none'",
-  "connect-src 'none'",
-  'font-src data:',
-  "form-action 'none'",
-  "frame-src 'none'",
-  'img-src data:',
-  "media-src 'none'",
-  "object-src 'none'",
-  "script-src 'none'",
-  "style-src 'unsafe-inline'"
-].join('; ')
-
-const safeInlineImagePattern =
-  /^data:image\/(?:gif|jpeg|png|webp);base64,[a-z0-9+/=\s]+$/iu
-
-function createStaticHtmlDocument(source: string): string {
-  const sanitized = DOMPurify.sanitize(source, {
-    ALLOW_UNKNOWN_PROTOCOLS: false,
-    FORBID_ATTR: forbiddenAttributes,
-    FORBID_TAGS: forbiddenTags,
-    WHOLE_DOCUMENT: true
-  })
-  const documentNode = new DOMParser().parseFromString(
-    sanitized,
-    'text/html'
-  )
-
-  for (const element of documentNode.querySelectorAll('*')) {
-    for (const attribute of [...element.attributes]) {
-      const name = attribute.name.toLowerCase()
-      if (name.startsWith('on')) {
-        element.removeAttribute(attribute.name)
-        continue
-      }
-      if (name === 'href' || name === 'xlink:href') {
-        if (!attribute.value.trim().startsWith('#')) {
-          element.removeAttribute(attribute.name)
-        }
-        continue
-      }
-      if (name === 'src' || name === 'poster') {
-        if (
-          element.localName !== 'img' ||
-          !safeInlineImagePattern.test(attribute.value.trim())
-        ) {
-          element.removeAttribute(attribute.name)
-        }
-      }
-    }
-  }
-
-  const policy = documentNode.createElement('meta')
-  policy.httpEquiv = 'Content-Security-Policy'
-  policy.content = staticPreviewPolicy
-  documentNode.head.prepend(policy)
-
-  const viewport = documentNode.createElement('meta')
-  viewport.name = 'viewport'
-  viewport.content = 'width=device-width, initial-scale=1'
-  documentNode.head.append(viewport)
-
-  return `<!doctype html>\n${documentNode.documentElement.outerHTML}`
-}
 
 function StaticHtmlViewer({
   documentSource,
@@ -176,8 +91,8 @@ function StaticHtmlViewer({
         <iframe
           ref={frameRef}
           referrerPolicy="no-referrer"
-          sandbox=""
-          srcDoc={documentSource}
+          sandbox="allow-scripts allow-forms"
+          src={documentSource}
           tabIndex={0}
           title={t('markdown.htmlViewerFrame')}
         />
@@ -208,7 +123,8 @@ export const StaticHtmlPreview = memo(function StaticHtmlPreview({
   const sourceVisible = visibleSource === source
   const viewerOpen = viewerSource === source
   const documentSource = useMemo(
-    () => createStaticHtmlDocument(source),
+    // A separate document avoids inheriting the application's script/network CSP.
+    () => `goodbuddy-html://preview/?html=${encodeURIComponent(source)}`,
     [source]
   )
 
@@ -262,8 +178,8 @@ export const StaticHtmlPreview = memo(function StaticHtmlPreview({
       <iframe
         loading="lazy"
         referrerPolicy="no-referrer"
-        sandbox=""
-        srcDoc={documentSource}
+        sandbox="allow-scripts allow-forms"
+        src={documentSource}
         title={t('markdown.htmlPreviewFrame')}
       />
       {sourceVisible && <pre id={sourceId}>{source}</pre>}
