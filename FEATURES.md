@@ -344,7 +344,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.8`, paired with the current Desktop release candidate `0.16.9`; formal
+  `0.15.9`, paired with the current Desktop release candidate `0.16.10`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -983,9 +983,24 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.9`, paired with Agent `0.15.8`, with
+- The current Desktop candidate is `0.16.10`, paired with Agent `0.15.9`, with
   source pins of OpenCode `1.19.3` and Continue `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.16.10` adds interactive HTML previews and sender-ID hints for
+  unknown WeCom, DingTalk, and Feishu direct senders. Adding a sender edits a
+  draft that must be saved; unknown senders cannot execute requests and groups
+  receive no hint. HTML previews retain application API isolation and browser
+  CORS, but can run scripts and access external services.
+- OCR models and remote services share model connections, with independent
+  section saving. Platform workspace edits regain a save action; page tabs,
+  chat header alignment, sidebar focus, and Windows ARM64 all-users default
+  installation paths are corrected. Existing installation paths are retained.
+- Story graph tools return grouped history and structured context with source
+  IDs; automatic reviews remain incomplete evidence, not authoritative rules.
+  The spiral fits active event time. Agent `0.15.9` updates remote tool
+  descriptions; schema stays 65 and Runtime pins are unchanged. Exact-candidate
+  CI, native packaging, public checks, and current-source shared Linux Host
+  acceptance remain pending. See [release preparation](./docs/development/release-preparation-0.16.10.md).
 - Desktop `0.16.9` / Agent `0.15.8` update OpenCode to `1.19.3`;
   Desktop DeepSeek Harness is `0.2.1-rc.2`, while Continue remains `1.5.47`.
   Continue and Windows controlled DSH cancellation clean up owned command

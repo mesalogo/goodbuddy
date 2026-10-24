@@ -2,6 +2,44 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.10",
+      "releasedAt": "2026-10-25",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**在会话中使用交互式 HTML 预览**：完整的 HTML 回复现在可在内嵌或全屏预览中运行脚本、使用表单、加载外部资源和发送网络请求。预览仍与应用接口隔离，网络访问遵循浏览器跨域规则；外部资源的可用性取决于网络和服务。",
+            "**更方便地配置消息发送者**：企业微信、钉钉和飞书收到未在允许列表中的私聊时，会回复发送者 ID，同一发送者十分钟内最多提示一次。消息设置显示最近被忽略的发送者，可一键加入配置草稿并保存；未获允许的消息不会执行，群聊不发送此提示。"
+          ],
+          "fixes": [
+            "**统一文档识别配置入口**：OCR 模型和远程服务现在统一在模型连接中管理，文档解析页保留解析流程和诊断。各部分独立保存，避免覆盖其他草稿；本地与远程识别来源使用单选框，保存后生效。",
+            "**改善故事图谱的历史读取与显示**：Agent 查询历史时，搜索结果按故事、经验和事件分组，可继续读取最近决定、适用条件及来源原文，不再需要拼接被切断的 JSON 对象。图谱螺旋按实际事件时间范围绘制并保持居中，减少全部时间回顾中的空白年份；自动回顾仍可能不完整，不能代替原始证据。",
+            "**恢复平台设置保存并统一导航反馈**：平台功能页提供固定的保存入口，修改默认工作目录后可保存再关闭，保存失败保留输入并显示错误。模型、Runtime 和工作区分类使用页签导航，同时修正聊天项目名对齐和侧栏搜索的重复焦点边框。",
+            "**修正 Windows ARM64 默认安装目录**：面向所有用户的新安装默认使用原生 Program Files 目录。已有安装位置、按用户安装路径和显式指定的目录继续保留。"
+          ],
+          "notices": [
+            "本版本不新增数据库 schema。远程主机需配套更新 Agent `0.15.9` 才能获得新的故事图谱工具说明；内置 Runtime 版本不变。飞书和企业微信继续保持预览版状态。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Use interactive HTML previews in conversations**: Completed HTML replies can now run scripts, use forms, load external resources, and make network requests in embedded or full-screen previews. Previews remain isolated from application APIs and follow browser CORS rules; external resources depend on network and service availability.",
+            "**Configure message senders more easily**: WeCom, DingTalk, and Feishu reply to direct messages from senders outside the allow list with their sender ID, at most once per sender every ten minutes. Message settings show the latest ignored sender so you can add them to the configuration draft and save; unauthorized messages are not executed, and group messages receive no such hint."
+          ],
+          "fixes": [
+            "**Unify document recognition configuration**: OCR models and remote services are now managed under model connections, while document parsing retains workflows and diagnostics. Sections save independently without overwriting other drafts; local and remote recognition sources use radio buttons and take effect after saving.",
+            "**Improve story graph history reading and display**: Agent history searches group stories, experiences, and events, with follow-up access to recent decisions, applicability conditions, and original sources instead of fragmented JSON objects. The spiral fits the actual event time span and stays centered to reduce empty years in all-time reviews; automatic reviews may still be incomplete and do not replace original evidence.",
+            "**Restore platform settings saving and consistent navigation feedback**: Platform Features provides a sticky save action so default workspace changes can be saved before closing, retaining input and showing errors if saving fails. Model, Runtime, and workspace categories use page tabs, with fixes for chat project-name alignment and duplicate sidebar search focus borders.",
+            "**Correct the Windows ARM64 default installation directory**: New all-users installations default to native Program Files. Existing installation locations, per-user paths, and explicit directory overrides are preserved."
+          ],
+          "notices": [
+            "This release adds no database schema version. Update remote hosts to Agent `0.15.9` for the new story graph tool descriptions; bundled Runtime versions are unchanged. Feishu and WeCom remain in Preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.9",
       "releasedAt": "2026-10-24",
       "notes": {
