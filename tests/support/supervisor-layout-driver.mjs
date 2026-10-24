@@ -215,6 +215,19 @@ app
               staveWidths: helix.staves.map(s => s.id), sidebarLegend: !!document.querySelector('.supervisor-workspace__graph-list > p.supervisor-workspace__muted') }
           })()`))
         }
+        // Framing: the spiral's projected bounds at the root, and after opening a story (it must not slide off-centre).
+        win.setContentSize(1440, 1000); await wait('innerWidth === 1440'); await settle(); await settle()
+        const frame = async () => js(`(() => { const b = JSON.parse(document.documentElement.dataset.sceneBounds || '{}'), h = JSON.parse(document.documentElement.dataset.helix)
+          const ys = h.points.map(p => p[1]); return { bounds: b, centerX: Math.round((b.left + b.right) * 50) / 100, centerY: Math.round((b.top + b.bottom) * 50) / 100,
+            helixHeight: Math.round(Math.max(...ys) - Math.min(...ys)), ticks: [...document.querySelectorAll('.story-graph-3d__scale, [class*=scale]')].map(e => e.textContent).slice(0, 2),
+            camera: JSON.parse(document.documentElement.dataset.camera) } })()`)
+        out.push({ framing: 'root', ...(await frame()) })
+        if (process.env.GOODBUDDY_SUPERVISOR_OPEN_STORY) {
+          await js(`[...document.querySelectorAll('.supervisor-workspace__graph-list [role=tab]')].find(b => b.textContent.startsWith('故事'))?.click()`); await settle()
+          await js(`[...document.querySelectorAll('.supervisor-workspace__list-panel button')].find(b => b.textContent.startsWith(${JSON.stringify(process.env.GOODBUDDY_SUPERVISOR_OPEN_STORY)}))?.click()`)
+          await setTimeout(900); await settle()
+          out.push({ framing: process.env.GOODBUDDY_SUPERVISOR_OPEN_STORY, ...(await frame()), detail: await js(`document.querySelector('.supervisor-workspace__detail h4')?.textContent ?? null`) })
+        }
         console.log(JSON.stringify({ resultId, expectedEvents, out, errors }, null, 1))
         await writeFile(join(artifacts, 'measure.json'), JSON.stringify(out, null, 1))
         if (!process.env.GOODBUDDY_SUPERVISOR_NO_SCREENSHOT) { win.setContentSize(1440, 1000); await settle(); await writeFile(join(artifacts, 'measure-1440.png'), (await win.webContents.capturePage()).toPNG()) }

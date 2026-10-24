@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import * as THREE from 'three'
 import type { SupervisionAttentionSlot, SupervisionGraphView } from '../../shared/supervision-contracts'
 import type { SupervisionExperience, SupervisionStory } from '../../shared/supervision-story-contracts'
-import { buildStoryTree, clusterEvents, dominantStory, experienceLinks, storyShares, findNode, radiusLevels, selectionFocus, storyWindow, timelineSegments, visibleLevel, type ExperienceLink, type StoryCluster, type StoryNode, type StorySelection } from './story-graph-3d-model'
+import { activeWindow, buildStoryTree, clusterEvents, dominantStory, experienceLinks, storyShares, findNode, radiusLevels, selectionFocus, timelineSegments, visibleLevel, type ExperienceLink, type StoryCluster, type StoryNode, type StorySelection } from './story-graph-3d-model'
 
 /*
  * 3D story view: one helix of time inside, story staves on the outer cylinder.
@@ -30,6 +30,8 @@ type Props = {
   onSelectExperience?: (id: string) => void
 }
 const TAU = Math.PI * 2, HEIGHT = 430, STAVE_R = 188, DIST = 900, CLUSTER_PX = 9, W_R = 232
+/** Camera target height that centres the whole spiral in the default oblique view (its near rim sits lower than the far one). */
+const ROOT_PAN = -26
 const noExperiences: SupervisionExperience[] = []
 type EngineState = { focus: StoryNode; hovered?: string; selected?: string; experiences: SupervisionExperience[]; experience?: string }
 const VIEWS = { oblique: { yaw: -0.4, tilt: 0.38 }, side: { yaw: -0.4, tilt: 0 }, top: { yaw: -0.4, tilt: Math.PI / 2 - 1e-3 } } as const
@@ -106,21 +108,18 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
     if (target.node.id !== focusId) setFocusId(target.node.id)
   }
   const [hovered, setHovered] = useState<string>()
-  const camera = useRef<{ yaw: number; tilt: number; zoom: number; pan: number; targetX: number; targetZ: number }>({ yaw: VIEWS.oblique.yaw, tilt: VIEWS.oblique.tilt, zoom: 1, pan: 0, targetX: 0, targetZ: 0 })
+  const camera = useRef<{ yaw: number; tilt: number; zoom: number; pan: number; targetX: number; targetZ: number }>({ yaw: VIEWS.oblique.yaw, tilt: VIEWS.oblique.tilt, zoom: 1, pan: ROOT_PAN, targetX: 0, targetZ: 0 })
   const animation = useRef<number | undefined>(undefined)
   const cancelAnimation = () => { if (animation.current !== undefined) cancelAnimationFrame(animation.current); animation.current = undefined }
   const engine = useRef<{ draw: () => void; update: (next: EngineState) => void; dispose: () => void; hit: (x: number, y: number) => { node?: StoryNode; cluster?: StoryCluster; link?: ExperienceLink } | undefined }>(undefined)
-  const computedRange = useMemo(() => {
-    if (timeRange) return storyWindow(Date.parse(timeRange.from), Date.parse(timeRange.to))
-    const times = tree.events.flatMap(event => [event.t, event.end ?? event.t])
-    return times.length ? storyWindow(Math.min(...times) - 1_800_000, Math.max(...times) + 1_800_000) : undefined
-  }, [tree, timeRange])
+  const computedRange = useMemo(() => activeWindow(tree.events, timeRange), [tree, timeRange])
   const range = useMemo(() => computedRange, [computedRange?.from, computedRange?.to]) // eslint-disable-line react-hooks/exhaustive-deps
   const level = visibleLevel(focus)
   const trail: StoryNode[] = []
   for (let node: StoryNode | undefined = focus; node; node = node.parent) trail.unshift(node)
-  const dateText = (value: number) => new Date(value).toLocaleString(i18n.resolvedLanguage, range && range.turnHours >= 24
-    ? { month: '2-digit', day: '2-digit' } : { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  const dateText = (value: number) => new Date(value).toLocaleString(i18n.resolvedLanguage, !range || range.turnHours < 24
+    ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+    : range.turnHours >= 720 ? { year: 'numeric', month: '2-digit' } : { month: '2-digit', day: '2-digit' })
 
   useEffect(() => {
     const canvas = canvasRef.current, overlay = overlayRef.current
@@ -291,10 +290,14 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
       // Turn labels give way to event marks, whose counts are drawn on top of the helix.
       const marks = meshes.filter(mesh => mesh.userData.cluster).map(mesh => project(mesh.position))
       ctx.font = '10px system-ui'; ctx.fillStyle = muted
+      // Turn starts share one angle, so their labels stack in a column; keep only labels that do not touch.
+      const tickBoxes: number[][] = []
       for (const time of ticks) {
         const p = project(helix(time)); if (p.behind) continue
-        const text = dateText(time), w = ctx.measureText(text).width
+        const text = dateText(time), w = ctx.measureText(text).width, box = [p.x + 4, p.y - 8, w + 4, 14]
         if (marks.some(mark => mark.x > p.x - 8 && mark.x < p.x + w + 14 && Math.abs(mark.y - p.y) < 10)) continue
+        if (tickBoxes.some(b => box[0]! < b[0]! + b[2]! && b[0]! < box[0]! + box[2]! && box[1]! < b[1]! + b[3]! && b[1]! < box[1]! + box[3]!)) continue
+        tickBoxes.push(box)
         ctx.fillText(text, p.x + 6, p.y + 3)
       }
       // Names only for staves facing the viewer, without overlaps; the focused stave always.
@@ -405,11 +408,15 @@ export default function StoryGraph3D({ toolbar, stories, events, projectNames, a
     const u = (target.time - range.from) / (range.to - range.from)
     const angle = target.angle ?? u * range.turns * TAU
     const radius = target.radius ?? 78 + 74 * radiusLevels(range, attention)(u)
+    const zoom = Math.max(0.8, Math.min(1.4, camera.current.zoom))
+    // A story spans part of the spiral: turn to face it in the default framing, keeping the whole spiral centred.
+    // Only an event moves the camera to its own time.
+    if (request?.selection.kind !== 'event') { animate({ yaw: angle - Math.PI / 2, tilt: VIEWS.oblique.tilt, pan: ROOT_PAN, targetX: 0, targetZ: 0, zoom }); return }
     const tilt = 0.18
-    animate({ yaw: angle - Math.PI / 2, tilt, pan: (u - 0.5) * HEIGHT - radius * Math.tan(tilt), zoom: Math.max(0.8, Math.min(1.4, camera.current.zoom)) })
+    animate({ yaw: angle - Math.PI / 2, tilt, pan: (u - 0.5) * HEIGHT - radius * Math.tan(tilt), targetX: 0, targetZ: 0, zoom })
   })
   useEffect(() => { focusCamera() }, [request, target, range, attempt, theme])
-  const choose = (name: keyof typeof VIEWS) => animate({ ...VIEWS[name], zoom: 1, pan: 0, targetX: 0, targetZ: 0 })
+  const choose = (name: keyof typeof VIEWS) => animate({ ...VIEWS[name], zoom: 1, pan: name === 'oblique' ? ROOT_PAN : 0, targetX: 0, targetZ: 0 })
   const open = (node: StoryNode) => {
     setRequest({ selection: { kind: 'story', id: node.id } })
     if (node.level !== 'root' && node.level !== 'project' && node.level !== 'unassigned') onSelectStory(node.id)

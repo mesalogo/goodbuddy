@@ -56,6 +56,14 @@ type Props = {
   date: (value: string) => string
 }
 
+/** A story's events: its own primary events plus its threads' (a feature often holds none directly); a cross story's links. */
+export function storyEvents(story: SupervisionStory, stories: SupervisionStory[]): SupervisionStory['events'] {
+  if (story.level === 'cross') return story.events
+  const seen = new Map(story.events.filter(event => event.primary).map(event => [event.id, event]))
+  for (const thread of stories.filter(other => other.parentId === story.id)) for (const event of thread.events) if (event.primary) seen.set(event.id, event)
+  return [...seen.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+}
+
 /** Stories grouped as project › feature › sub-thread, then cross-project stories. */
 export function SupervisionStoryList({ stories, selectedId, onSelect, date }: Props) {
   const { t } = useTranslation('heartbeat')
@@ -63,19 +71,19 @@ export function SupervisionStoryList({ stories, selectedId, onSelect, date }: Pr
   const threads = (id: string) => stories.filter(story => story.parentId === id)
   const projects = [...new Map(features.map(story => [story.projectId ?? '', story.projectName ?? t('settings.scope.unavailableProject')])).entries()]
   const cross = stories.filter(story => story.level === 'cross')
-  const item = (story: SupervisionStory, nested = false) => (
+  const item = (story: SupervisionStory, nested = false) => { const events = storyEvents(story, stories), started = story.startedAt ?? events[0]?.startedAt; return (
     <button key={story.id} className={nested ? 'supervisor-workspace__story-thread' : undefined}
       aria-pressed={selectedId === story.id} onClick={() => onSelect(story.id)}>
       <span className="supervisor-workspace__list-copy">
         {story.name}
         <small>
-          {t('supervisor.stories.count', { count: story.events.filter(event => story.level === 'cross' || event.primary).length })}
-          {story.startedAt && ` · ${date(story.startedAt)}`}
+          {t('supervisor.stories.count', { count: events.length })}
+          {started && ` · ${date(started)}`}
           {story.state === 'concluded' && ` · ${t('supervisor.stories.concluded')}`}
         </small>
       </span>
     </button>
-  )
+  ) }
   return <>
     {projects.map(([projectId, name]) => <section key={projectId} className="supervisor-workspace__story-group" aria-label={name}>
       <h3>{name}</h3>
@@ -106,14 +114,15 @@ export function SupervisionStoryDetail({ story, stories, pending, canUndo, onAct
   const [mergeInto, setMergeInto] = useState('')
   const [confirmRemove, setConfirmRemove] = useState(false)
   const targets = stories.filter(other => other.id !== story.id && other.level === story.level && other.projectId === story.projectId)
-  const shown = story.level === 'cross' ? story.events : story.events.filter(event => event.primary)
+  const shown = storyEvents(story, stories)
+  const startedAt = story.startedAt ?? shown[0]?.startedAt, endedAt = story.endedAt ?? shown.at(-1)?.endedAt
   return <>
     <div className="supervisor-workspace__detail-kicker">
       {t(`supervisor.stories.levels.${story.level}`)}{story.projectName && ` · ${story.projectName}`}
     </div>
     <h3>{story.name}</h3>
     {story.description && <p className="supervisor-workspace__detail-copy">{story.description}</p>}
-    {story.startedAt && <p>{date(story.startedAt)} – {story.endedAt ? date(story.endedAt) : ''}</p>}
+    {startedAt && <p>{date(startedAt)} – {endedAt ? date(endedAt) : ''}</p>}
     <p>{story.state === 'concluded' ? t('supervisor.stories.concluded') : t('supervisor.stories.active')}
       {story.userEdited && ` · ${t('supervisor.stories.edited')}`}</p>
     <div className="supervisor-workspace__actions">

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SupervisionStory } from '../../shared/supervision-story-contracts'
-import { buildStoryTree, clusterEvents, dominantStory, experienceLinks, radiusLevels, selectionFocus, storyShares, storyWindow, timelineSegments, visibleLevel } from './story-graph-3d-model'
+import { activeWindow, buildStoryTree, clusterEvents, dominantStory, experienceLinks, radiusLevels, selectionFocus, storyShares, storyWindow, timelineSegments, visibleLevel } from './story-graph-3d-model'
 
 const day = 86_400_000
 const at = (d: number) => new Date(Date.parse('2026-09-01T00:00:00Z') + d * day).toISOString()
@@ -95,6 +95,25 @@ describe('story graph 3d model', () => {
     const years = storyWindow(0, 3 * 365 * day)
     expect(years.turns).toBeLessThanOrEqual(14)
     expect(storyWindow(0, 3 * day, 3).turnHours).toBe(6)
+    // Spans beyond the largest step still stay within the maximum instead of drawing hundreds of turns.
+    expect(storyWindow(0, 56 * 365 * day).turns).toBeLessThanOrEqual(14)
+  })
+
+  it('draws only the span that holds events, inside the review range', () => {
+    const review = { from: '1970-01-01T00:00:00.000Z', to: '2026-10-11T05:40:41.050Z' }
+    const events = [{ id: 'a', title: '', t: Date.parse('2026-07-30T13:16:00Z') }, { id: 'b', title: '', t: Date.parse('2026-10-10T08:41:00Z') }]
+    const window = activeWindow(events, review)!
+    // An "all time" review starts in 1970; the spiral starts near the first event and keeps uniform time inside.
+    expect(window.from).toBeGreaterThan(Date.parse('2026-07-01T00:00:00Z'))
+    expect(window.from).toBeLessThanOrEqual(events[0]!.t)
+    expect(window.to).toBeGreaterThanOrEqual(events[1]!.t)
+    expect(window.to).toBeLessThanOrEqual(Date.parse(review.to))
+    expect(window.turns).toBeLessThanOrEqual(14)
+    // The margin never leaves the review range, and an empty review still has a window.
+    const edge = activeWindow([{ id: 'c', title: '', t: Date.parse(review.to) }], review)!
+    expect(edge.to).toBe(Date.parse(review.to))
+    expect(activeWindow([], { from: at(0), to: at(1) })).toMatchObject({ from: Date.parse(at(0)), to: Date.parse(at(1)) })
+    expect(activeWindow([])).toBeUndefined()
   })
 
   it('colors only saved intervals with primary membership, keeping points, gaps and overlaps truthful', () => {

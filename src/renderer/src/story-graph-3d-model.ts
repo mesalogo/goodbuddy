@@ -125,9 +125,25 @@ export function storyWindow(from: number, to: number, turnHours?: number): Story
   const span = Math.max(1 / 3_600_000, (to - from) / 3_600_000)
   // Closest to the target among steps that stay within the maximum (13 days → 1 day per turn, not 1.9 weekly turns).
   const fitting = TURN_STEPS.filter(step => span / step <= MAX_TURNS)
-  let hours = turnHours ?? fitting.reduce((best, step) => Math.abs(span / step - TARGET_TURNS) < Math.abs(span / best - TARGET_TURNS) ? step : best, fitting[0] ?? TURN_STEPS.at(-1)!)
-  if (span / hours > MAX_TURNS) hours = fitting[0] ?? TURN_STEPS.at(-1)!
+  // Beyond the largest step, stretch the turn so the spiral still stays within the maximum.
+  const fallback = Math.max(TURN_STEPS.at(-1)!, Math.ceil(span / MAX_TURNS))
+  let hours = turnHours ?? fitting.reduce((best, step) => Math.abs(span / step - TARGET_TURNS) < Math.abs(span / best - TARGET_TURNS) ? step : best, fitting[0] ?? fallback)
+  if (span / hours > MAX_TURNS) hours = fitting[0] ?? fallback
   return { from, to: Math.max(to, from + 1), turnHours: hours, turns: span / hours }
+}
+
+/**
+ * The drawn time span: from the first to the last event, inside the review range, with a small margin.
+ * A review over "all time" starts in 1970; drawing that would spend nearly every turn on empty years.
+ * Time stays uniform inside the span; quiet periods between events are kept.
+ */
+export function activeWindow(events: StoryEventPoint[], review?: { from: string; to: string }, turnHours?: number): StoryWindow | undefined {
+  const times = events.flatMap(event => [event.t, event.end ?? event.t]).filter(Number.isFinite)
+  const lo = review ? Date.parse(review.from) : -Infinity, hi = review ? Date.parse(review.to) : Infinity
+  if (!times.length) return review ? storyWindow(lo, hi, turnHours) : undefined
+  const first = Math.min(...times), last = Math.max(...times)
+  const margin = Math.max(1_800_000, (last - first) * 0.02)
+  return storyWindow(Math.max(lo, first - margin), Math.min(hi, last + margin), turnHours)
 }
 
 /**
