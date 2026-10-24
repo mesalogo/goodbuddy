@@ -8,6 +8,8 @@
 
 从[官网首页](https://mesalogo.github.io/goodbuddy/#download)选择系统、处理器架构和安装包。Windows 提供安装版和便携版，Linux 提供 AppImage、DEB 和 RPM。LoongArch 使用单独的实验预览通道。安装完成后启动 GoodBuddy，首次启动不需要登录。
 
+Windows x64 和 ARM64 安装版在首次选择“为所有用户安装”时，默认使用系统的 64 位 `Program Files\GoodBuddy` 目录。升级或重装沿用已有安装目录，包括旧版使用的 `Program Files (x86)` 路径，不会自动迁移。“仅为我安装”使用当前用户的程序目录；也可以在安装向导中选择其他目录，或通过命令行末尾的 `/D=完整路径` 指定目录。
+
 ### 初始设置
 
 1. 打开“设置”，确认本地工作数据位置，并准备一个可用的文本模型连接。

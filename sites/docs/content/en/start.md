@@ -8,6 +8,8 @@ This guide is for a first GoodBuddy session. No GoodBuddy account is required. C
 
 Choose a platform, processor architecture, and package from the [home page](https://mesalogo.github.io/goodbuddy/en.html#download). Windows provides an installer and a portable ZIP. Linux provides AppImage, DEB, and RPM. LoongArch uses a separate experimental preview channel. Start the app after installation; the first launch does not require sign-in.
 
+On a fresh Windows x64 or ARM64 installation, choosing "all users" defaults to the system's 64-bit `Program Files\GoodBuddy` directory. Upgrades and reinstalls keep the existing location, including older `Program Files (x86)` locations, without migrating it. Per-user installations use the current user's programs directory. You can choose another directory in the installer or specify `/D=full path` as the final command-line argument.
+
 ### Initial setup
 
 1. Open Settings, confirm the local data location, and prepare a text model connection.
