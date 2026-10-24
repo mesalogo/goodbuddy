@@ -190,7 +190,8 @@ export class FeishuChannelDriver implements ChannelDriver {
     const senderId = event.sender?.sender_id?.open_id
     if (!handler || !message?.message_id || !message.chat_id || !senderId) return
     if (event.sender?.sender_type && event.sender.sender_type !== 'user') return
-    if (!this.allowedSenderIds.has(senderId)) return
+    // Unknown direct senders go on so the service can tell them their open_id.
+    if (message.chat_type !== 'p2p' && !this.allowedSenderIds.has(senderId)) return
     if (this.seen.has(message.message_id)) return
     this.seen.add(message.message_id)
     if (this.seen.size > MAX_REPLY_CONTEXTS) this.seen.delete(this.seen.values().next().value!)

@@ -275,6 +275,37 @@ const ChannelStatus = memo(function ChannelStatus({
     : t(`channels.status.${status.state}`)}</span>
 })
 
+/** Latest direct sender that was ignored, with a one-click add to the allow list. */
+function RejectedSenderNotice({ busy, channel, draft, fallback, onChange, store }: {
+  busy: boolean
+  channel: CredentialChannel
+  draft: ChannelDraft
+  fallback: ChannelRuntimeStatus
+  onChange: (next: ChannelDraft) => void
+  store: ChannelStatusStore
+}): React.JSX.Element | null {
+  const { t } = useTranslation('integrations')
+  const status = useChannelStatus(store, channel, fallback)
+  const id = status.rejectedSenderId
+  if (channel === 'telegram' || !id || allowedSenderIds(draft.allowedSenderIdsText).includes(id)) return null
+  return (
+    <div className="settings-notice channel-rejected-sender" role="status">
+      <span>{t('channels.credential.rejectedSender', { id })}</span>
+      <button
+        className="secondary-button"
+        disabled={busy}
+        onClick={() => {
+          const text = draft.allowedSenderIdsText.trim()
+          onChange({ ...draft, allowedSenderIdsText: text ? `${text}\n${id}` : id })
+        }}
+        type="button"
+      >
+        {t('channels.credential.addRejectedSender')}
+      </button>
+    </div>
+  )
+}
+
 function ChannelEditor({
   busy,
   channel,
@@ -345,10 +376,21 @@ function ChannelEditor({
               value={draft.allowedSenderIdsText}
             />
             <small>
-              {t(channel === 'telegram' ? 'channels.telegram.sendersHelp' : 'channels.credential.allowedSendersHelp')}
+              {t(channel === 'telegram' ? 'channels.telegram.sendersHelp'
+                : channel === 'wecom' ? 'channels.credential.allowedSendersHelpWecom'
+                  : channel === 'dingtalk' ? 'channels.credential.allowedSendersHelpDingtalk'
+                    : 'channels.credential.allowedSendersHelpFeishu')}
             </small>
             {invalidSenders && <small className="field-error" id={`${prefix}-senders-error`} role="alert">{t('channels.telegram.invalidSenders')}</small>}
           </label>
+          <RejectedSenderNotice
+            busy={busy || settings.readOnly}
+            channel={channel}
+            draft={draft}
+            fallback={settings.status}
+            onChange={onChange}
+            store={statusStore}
+          />
           {channel !== 'telegram' && <label className="toggle-row">
             <input
               checked={draft.allowGroupMessages}

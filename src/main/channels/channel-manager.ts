@@ -61,6 +61,8 @@ export type ChannelServiceFactory = (
     outbox?: ChannelServiceOptions['outbox']
     onDeliveryFailure?: ChannelServiceOptions['onDeliveryFailure']
     onDeliverySuccess?: ChannelServiceOptions['onDeliverySuccess']
+    onUnknownSender?: ChannelServiceOptions['onUnknownSender']
+    unknownSenderReply?: ChannelServiceOptions['unknownSenderReply']
   }
 ) => ManagedChannelService | Promise<ManagedChannelService>
 
@@ -142,10 +144,7 @@ async function defaultDriverFactory(
 function defaultServiceFactory(
   driver: ChannelDriver,
   executor: ChannelExecutor,
-  options: {
-    allowedSenderIds: readonly string[]
-    allowGroupMessages: boolean
-  }
+  options: ChannelServiceOptions
 ): ChannelService {
   return new ChannelService(driver, executor, options)
 }
@@ -173,6 +172,21 @@ function redactManagerError(
     CHANNEL_SETTINGS_LIMITS.maximumStatusMessageLength
   )
   return bounded || '通道操作失败'
+}
+
+const SENDER_ID_NAMES: Partial<Record<ManagedChannel, string>> = {
+  wecom: '企业微信 userid',
+  dingtalk: '钉钉 staffId',
+  feishu: '飞书 open_id'
+}
+
+/** Reply to a direct sender outside the allow list; Telegram has its own /whoami. */
+function unknownSenderReply(channel: ManagedChannel): ((senderId: string) => string) | undefined {
+  const name = SENDER_ID_NAMES[channel]
+  if (!name) return undefined
+  return (senderId) =>
+    `你还不在 GoodBuddy 的允许发送者中，这条消息没有处理。\n你的${name}：${senderId}\n` +
+    '请让 GoodBuddy 的使用者在桌面端“应用设置 › 消息”中添加这个 ID 并保存。'
 }
 
 function sanitizedManagerFailure(message: string): Error {
@@ -569,7 +583,13 @@ export class ChannelManager {
           return
         }
         onStatus({ state: 'running' })
-      }
+      },
+      onUnknownSender: (senderId) => {
+        if (generation === undefined || this.serviceGenerations.get(settings.channel) !== generation) return
+        const current = this.statuses.get(settings.channel) ?? { state: 'running' as const }
+        this.setStatus(settings.channel, { ...current, rejectedSenderId: senderId.slice(0, CHANNEL_SETTINGS_LIMITS.maximumIdentifierLength) })
+      },
+      ...(unknownSenderReply(settings.channel) ? { unknownSenderReply: unknownSenderReply(settings.channel) } : {})
     })
     return { service, driver }
   }
@@ -661,7 +681,12 @@ export class ChannelManager {
 
   private setStatus(channel: ManagedChannel, status: ChannelRuntimeStatus): void {
     const previous = this.statuses.get(channel)
-    if (previous?.state === status.state && previous.lastError === status.lastError) return
+    // Keep the last rejected sender across connection updates while the channel stays on.
+    if (status.rejectedSenderId === undefined && previous?.rejectedSenderId && status.state !== 'disabled') {
+      status = { ...status, rejectedSenderId: previous.rejectedSenderId }
+    }
+    if (previous?.state === status.state && previous.lastError === status.lastError &&
+      previous.rejectedSenderId === status.rejectedSenderId) return
     this.statuses.set(channel, status)
     this.onStatusChanged?.({ channel, status: { ...status } })
   }

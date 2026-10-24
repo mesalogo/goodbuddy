@@ -14,7 +14,8 @@ export function createChannelStatusStore() {
 
   const update = ({ channel, status }: ChannelRuntimeStatusChange): void => {
     const current = state[channel]
-    if (current?.state === status.state && current.lastError === status.lastError) return
+    if (current?.state === status.state && current.lastError === status.lastError &&
+      current.rejectedSenderId === status.rejectedSenderId) return
     state = { ...state, [channel]: status }
     listeners.forEach((listener) => listener())
   }

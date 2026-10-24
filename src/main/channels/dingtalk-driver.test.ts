@@ -222,7 +222,9 @@ describe('DingTalkDriver', () => {
       )
     )
 
-    expect(handler).toHaveBeenCalledTimes(1)
+    // Unknown direct senders reach the service, which only tells them their ID.
+    expect(handler).toHaveBeenCalledTimes(2)
+    expect(handler).toHaveBeenLastCalledWith(expect.objectContaining({ senderId: 'not-allowed', conversationType: 'direct' }))
   })
 
   it('does not mark a failed delivery as processed', async () => {

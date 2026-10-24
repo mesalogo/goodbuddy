@@ -25,7 +25,14 @@ export type ChannelServiceOptions = {
   outbox?: Outbox
   onDeliveryFailure?: (error: unknown) => void
   onDeliverySuccess?: () => void
+  /** Called when a direct message from a sender outside the allow list arrives. */
+  onUnknownSender?: (senderId: string) => void
+  /** Short hint naming the ID, sent back to unknown direct senders. */
+  unknownSenderReply?: (senderId: string) => string
 }
+
+const UNKNOWN_SENDER_REPLY_COOLDOWN_MS = 10 * 60_000
+const MAXIMUM_UNKNOWN_SENDER_ENTRIES = 200
 
 type ServiceState = 'idle' | 'running' | 'stopped'
 
@@ -73,6 +80,9 @@ export class ChannelService {
   private readonly outbox: Outbox
   private readonly onDeliveryFailure?: (error: unknown) => void
   private readonly onDeliverySuccess?: () => void
+  private readonly onUnknownSender?: (senderId: string) => void
+  private readonly unknownSenderReply?: (senderId: string) => string
+  private readonly unknownSenderReplies = new Map<string, number>()
   private readonly active = new Map<string, AbortController>()
   private readonly conversationTails = new Map<string, Promise<void>>()
   private state: ServiceState = 'idle'
@@ -112,6 +122,8 @@ export class ChannelService {
     this.outbox = options.outbox ?? new MemoryOutbox()
     this.onDeliveryFailure = options.onDeliveryFailure
     this.onDeliverySuccess = options.onDeliverySuccess
+    this.onUnknownSender = options.onUnknownSender
+    this.unknownSenderReply = options.unknownSenderReply
   }
 
   updateAllowedSenderIds(senderIds: readonly string[]): void {
@@ -304,6 +316,15 @@ export class ChannelService {
     const message = parsed.data
 
     if (
+      message.channel === this.driver.channel &&
+      message.conversationType === 'direct' &&
+      !this.allowedSenderIds.has(message.senderId)
+    ) {
+      await this.answerUnknownSender(message)
+      return
+    }
+
+    if (
       message.channel !== this.driver.channel ||
       !this.allowedSenderIds.has(message.senderId) ||
       (message.conversationType === 'group' &&
@@ -408,6 +429,30 @@ export class ChannelService {
         )
       }
     }
+  }
+
+  /**
+   * Unknown direct senders are not executed. They are reported to the desktop
+   * and, at most once per cooldown, told their ID so it can be allow-listed.
+   */
+  private async answerUnknownSender(message: ChannelInboundText): Promise<void> {
+    this.onUnknownSender?.(message.senderId)
+    if (!this.unknownSenderReply) return
+    const now = Date.now()
+    const last = this.unknownSenderReplies.get(message.senderId)
+    if (last !== undefined && now - last < UNKNOWN_SENDER_REPLY_COOLDOWN_MS) return
+    const claimed = await this.dedupStore.claim(message.channel, message.accountId, message.eventId)
+    if (!claimed) return
+    this.unknownSenderReplies.delete(message.senderId)
+    this.unknownSenderReplies.set(message.senderId, now)
+    while (this.unknownSenderReplies.size > MAXIMUM_UNKNOWN_SENDER_ENTRIES) {
+      this.unknownSenderReplies.delete(this.unknownSenderReplies.keys().next().value!)
+    }
+    const delivered = await this.tryDeliver(
+      this.result(message, { status: 'rejected', output: this.unknownSenderReply(message.senderId) }),
+      this.lifetime.signal
+    )
+    if (!delivered) await this.dedupStore.release(message.channel, message.accountId, message.eventId)
   }
 
   private execute(

@@ -36,18 +36,44 @@ const MAX_OUTPUT_BYTES = 256 * 1024
 const COMMAND_TIMEOUT_MS = 120_000
 const MAX_GUIDE_CHARACTERS = 24_000
 
-/** Finds the authorizer's userid in `identity whoami` JSON, whatever its nesting. */
+const USER_ID_PATTERN = /^[\w.@-]{1,128}$/u
+
+/**
+ * Reads the authorized person's userid from free text. wecom-cli 1.3.4 returns
+ * `extra_identity_context`, a prose description of the bot and the human, so
+ * the ID is matched from lines such as `userid: zhangsan` or `用户ID：zhangsan`.
+ * The bot's own ID is skipped.
+ */
+function userIdFromText(text: string): string | undefined {
+  const embedded = text.trim().startsWith('{') ? wecomWhoamiUserId(text) : undefined
+  if (embedded) return embedded
+  const pattern = /(?<![A-Za-z_])(?:user[_\s-]?id|用户\s*id|账号)\s*["']?\s*[:：=]\s*["']?([\w.@-]{1,128})/giu
+  for (const match of text.matchAll(pattern)) {
+    const before = text.slice(Math.max(0, (match.index ?? 0) - 12), (match.index ?? 0) + 2)
+    if (/bot|机器人/iu.test(before)) continue
+    if (match[1] && USER_ID_PATTERN.test(match[1])) return match[1]
+  }
+  return undefined
+}
+
+/** Finds the authorizer's userid in `identity whoami` output, JSON keys or the identity text. */
 export function wecomWhoamiUserId(output: string): string | undefined {
   let parsed: unknown
-  try { parsed = JSON.parse(output) } catch { return undefined }
+  try { parsed = JSON.parse(output) } catch { return userIdFromText(output) }
   const queue: unknown[] = [parsed]
+  const texts: string[] = []
   for (let index = 0; index < queue.length && index < 200; index += 1) {
     const value = queue[index]
     if (!value || typeof value !== 'object') continue
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      if (/^(userid|user_id)$/iu.test(key) && typeof item === 'string' && /^[\w.@-]{1,128}$/u.test(item.trim())) return item.trim()
+      if (/^(userid|user_id)$/iu.test(key) && typeof item === 'string' && USER_ID_PATTERN.test(item.trim())) return item.trim()
       if (item && typeof item === 'object') queue.push(item)
+      else if (typeof item === 'string' && item.length > 8) texts.push(item)
     }
+  }
+  for (const text of texts) {
+    const found = userIdFromText(text)
+    if (found) return found
   }
   return undefined
 }

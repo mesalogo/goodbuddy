@@ -44,4 +44,13 @@ describe('WeCom bot registration', () => {
     expect(wecomWhoamiUserId('{"data":{"user_id":"li.si"}}')).toBe('li.si')
     expect(wecomWhoamiUserId('not json')).toBeUndefined()
   })
+
+  it('reads the human userid from the extra_identity_context text of wecom-cli 1.3.4', () => {
+    const output = JSON.stringify({
+      extra_identity_context: '机器人身份：botid: aibXXXX，名称 GoodBuddy。\n授权真人用户：张三，userid: zhangsan，可访问其有权限的文档。'
+    })
+    expect(wecomWhoamiUserId(output)).toBe('zhangsan')
+    expect(wecomWhoamiUserId(JSON.stringify({ extra_identity_context: '当前用户ID：wang.wu' }))).toBe('wang.wu')
+    expect(wecomWhoamiUserId(JSON.stringify({ extra_identity_context: '机器人 bot_id: aib1' }))).toBeUndefined()
+  })
 })

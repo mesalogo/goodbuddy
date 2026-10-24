@@ -362,7 +362,8 @@ export class DingTalkDriver {
     const message = parseDingTalkStreamMessage(envelope)
     if (
       !message ||
-      !this.allowedSenderIds.has(message.senderId) ||
+      // Unknown direct senders go on so the service can tell them their ID.
+      (message.conversationType !== 'direct' && !this.allowedSenderIds.has(message.senderId)) ||
       this.processedMessageIds.has(message.dedupeKey) ||
       this.inFlightMessageIds.has(message.dedupeKey)
     ) {

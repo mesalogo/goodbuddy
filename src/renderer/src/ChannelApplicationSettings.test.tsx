@@ -231,6 +231,32 @@ describe('ChannelApplicationSettings', () => {
     }
   )
 
+  it('shows the latest ignored sender on the Messages tab and adds it to the allow list', async () => {
+    let receive!: (change: ChannelRuntimeStatusChange) => void
+    const writable: ChannelSettingsSnapshot = {
+      ...snapshot,
+      dingtalk: { ...snapshot.dingtalk, enabled: true, source: 'encrypted', readOnly: false, allowedSenderIds: [] }
+    }
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: { ...bindingApi(), getSnapshot: async () => writable, apply: vi.fn(), testConnection: vi.fn(),
+          onStatusChanged: (listener: typeof receive) => { receive = listener; return () => undefined } },
+        settings: settingsApi(), projects: { update: vi.fn() }
+      } as unknown as DesktopApi
+    })
+    renderChannelSettings({ initialChannel: 'dingtalk' })
+    await screen.findByRole('tab', { name: '消息' })
+    openTab('消息')
+    const senders = await screen.findByLabelText('钉钉允许的发送者 ID')
+    expect(screen.getByText(/staffId/u)).toBeInTheDocument()
+    act(() => receive({ channel: 'dingtalk', status: { state: 'running', rejectedSenderId: 'staff-new' } }))
+    expect(screen.getByText(/staff-new/u)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '添加到白名单' }))
+    expect(senders).toHaveValue('staff-new')
+    expect(screen.queryByRole('button', { name: '添加到白名单' })).not.toBeInTheDocument()
+  })
+
   it('keeps pushed channel status newer than loading and updates reconnect errors without resetting drafts', async () => {
     let receive!: (change: ChannelRuntimeStatusChange) => void
     const unsubscribe = vi.fn()

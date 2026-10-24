@@ -74,9 +74,13 @@ describe('FeishuChannelDriver', () => {
       new AbortController().signal)).rejects.toThrow('回复上下文')
   })
 
-  it('drops unknown senders, bots, duplicates and unsupported messages', async () => {
+  it('passes unknown direct senders on, drops unknown group senders, bots, duplicates and unsupported messages', async () => {
     const { handler, deliver } = await startDriver()
-    deliver(event({}, 'ou_stranger'))
+    deliver(event({ message_id: 'om_g', chat_type: 'group' }, 'ou_stranger'))
+    deliver(event({ message_id: 'om_s' }, 'ou_stranger'))
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce())
+    expect(handler.mock.calls[0]![0]).toMatchObject({ eventId: 'om_s', senderId: 'ou_stranger' })
+    handler.mockClear()
     deliver({ ...event({ message_id: 'om_2' }), sender: { sender_id: { open_id: 'ou_user' }, sender_type: 'app' } })
     deliver(event({ message_id: 'om_3', message_type: 'image', content: '{}' }))
     deliver(event({ message_id: 'om_4' }))

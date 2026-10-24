@@ -140,6 +140,38 @@ describe('ChannelService', () => {
     vi.useRealTimers()
   })
 
+  it('tells unknown direct senders their ID once per cooldown and never executes them', async () => {
+    const driver = new FakeChannelDriver()
+    const executor = vi.fn(async () => ({ status: 'completed' }))
+    const onUnknownSender = vi.fn()
+    const service = new ChannelService(driver, executor, {
+      allowedSenderIds: ['allowed-user'],
+      onUnknownSender,
+      unknownSenderReply: (id) => `ID: ${id}`
+    })
+    await service.start()
+    await driver.emit(inbound({ senderId: 'stranger', eventId: 'a' }))
+    await waitForSent(driver, 1)
+    expect(driver.sent[0]).toMatchObject({ recipientId: 'stranger', status: 'rejected', output: 'ID: stranger' })
+    await driver.emit(inbound({ senderId: 'stranger', eventId: 'b' }))
+    await driver.emit(inbound({ senderId: 'stranger', eventId: 'c', conversationType: 'group', mentioned: true }))
+    await vi.waitFor(() => expect(onUnknownSender).toHaveBeenCalledTimes(2))
+    expect(driver.sent).toHaveLength(1)
+    expect(executor).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('stays silent for unknown senders when no reply is configured', async () => {
+    const driver = new FakeChannelDriver()
+    const onUnknownSender = vi.fn()
+    const service = new ChannelService(driver, vi.fn(), { allowedSenderIds: [], onUnknownSender })
+    await service.start()
+    await driver.emit(inbound({ senderId: 'stranger' }))
+    await vi.waitFor(() => expect(onUnknownSender).toHaveBeenCalledWith('stranger'))
+    expect(driver.sent).toHaveLength(0)
+    await service.stop()
+  })
+
   it('stops the active request without launching queued conversation requests', async () => {
     const driver = new FakeChannelDriver()
     const executor = vi.fn((_message: ChannelInboundText, _signal: AbortSignal) => {

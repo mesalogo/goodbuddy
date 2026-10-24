@@ -165,6 +165,13 @@ export const channelRuntimeStatusSchema = z
       .trim()
       .min(1)
       .max(CHANNEL_SETTINGS_LIMITS.maximumStatusMessageLength)
+      .optional(),
+    /** Latest direct sender that was ignored because it is not allow-listed. */
+    rejectedSenderId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(CHANNEL_SETTINGS_LIMITS.maximumIdentifierLength)
       .optional()
   })
   .strict()

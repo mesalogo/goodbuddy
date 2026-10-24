@@ -103,6 +103,14 @@ export const integrations = {
       allowedSendersPlaceholder: 'One ID per line, up to 100',
       allowedSendersHelp:
         'Only allowlisted senders can message GoodBuddy. No messages are processed when this list is empty.',
+      allowedSendersHelpWecom:
+        'Enter the member\'s WeCom userid (the "Account" field in the admin console contacts), not a name or phone number. If unsure, enable and save, then send the bot a private message: it replies with your userid and an Add button appears here.',
+      allowedSendersHelpDingtalk:
+        'Enter the member\'s DingTalk staffId (the employee UserID in the admin contacts). If unsure, enable and save, then send the bot a private message: it replies with your ID and an Add button appears here.',
+      allowedSendersHelpFeishu:
+        'Enter the user\'s open_id (starts with ou_). If unsure, enable and save, then send the bot a private message: it replies with your open_id and an Add button appears here.',
+      rejectedSender: 'A private message just arrived from a sender not on the list. Sender ID: {{id}}',
+      addRejectedSender: 'Add to allowed senders',
       groupMessages: 'Respond when mentioned in group chats',
       testing: 'Testing…',
       testConnection: 'Test {{channel}} connection',
@@ -297,7 +305,7 @@ export const integrations = {
     qrAlt: 'WeCom authorization QR code',
     qrInstructions: 'Scan the QR code with WeCom and confirm creating the bot on your phone. The tools and the message channel then use the same bot.',
     scanChannelSaved: 'Tools authorized and this bot filled into the message channel. The channel is enabled and the person who scanned is the only allowed sender.',
-    scanChannelSavedNoSender: 'Tools authorized and this bot filled into the message channel. The scanner\'s ID could not be read; add allowed senders on the Messages tab and save to start receiving messages.',
+    scanChannelSavedNoSender: 'Tools authorized and this bot filled into the message channel. The scanner\'s userid could not be read. Send this bot a private message in WeCom: it replies with your userid, and an Add button appears on the Messages tab. Add it and save.',
     scanChannelFailed: 'Tools authorized, but the message channel could not be filled in: {{message}}',
     scanToolsOnly: 'Tools authorized.',
     qrExpires: 'The QR code expires at {{time}}',

@@ -94,6 +94,14 @@ export const integrations = {
       allowedSendersPlaceholder: '每行一个 ID，最多 100 个',
       allowedSendersHelp:
         '只有白名单内的发送者可以向 GoodBuddy 发消息；留空时不会处理任何发送者。',
+      allowedSendersHelpWecom:
+        '填写成员的企业微信 userid（管理后台“通讯录”成员详情里的“账号”），不是姓名或手机号。不知道时，启用并保存后私聊机器人发一句话，机器人会回复你的 userid，这里也会出现“添加”按钮。',
+      allowedSendersHelpDingtalk:
+        '填写成员的钉钉 staffId（管理后台通讯录里的员工 UserID）。不知道时，启用并保存后私聊机器人发一句话，机器人会回复你的 ID，这里也会出现“添加”按钮。',
+      allowedSendersHelpFeishu:
+        '填写用户的 open_id（ou_ 开头）。不知道时，启用并保存后私聊机器人发一句话，机器人会回复你的 open_id，这里也会出现“添加”按钮。',
+      rejectedSender: '刚收到不在白名单中的私聊，发送者 ID：{{id}}',
+      addRejectedSender: '添加到白名单',
       groupMessages: '允许群聊中被提及时响应',
       testing: '正在测试…',
       testConnection: '测试{{channel}}连接',
@@ -286,7 +294,7 @@ export const integrations = {
     qrAlt: '企业微信授权二维码',
     qrInstructions: '请用企业微信扫描二维码，并在手机上确认创建机器人。完成后工具和消息通道使用同一个机器人。',
     scanChannelSaved: '已授权工具，并把这个机器人填入了消息通道：通道已启用，扫码人是唯一允许的发送者。',
-    scanChannelSavedNoSender: '已授权工具，并把这个机器人填入了消息通道。没有读到扫码人的 ID，请在“消息”页填写允许的发送者后保存，通道才会开始接收消息。',
+    scanChannelSavedNoSender: '已授权工具，并把这个机器人填入了消息通道。没有读到扫码人的 userid。请用企业微信私聊这个机器人发一句话，机器人会回复你的 userid，“消息”页也会出现“添加到白名单”按钮，添加并保存后即可使用。',
     scanChannelFailed: '已授权工具，但没能填入消息通道：{{message}}',
     scanToolsOnly: '已授权工具。',
     qrExpires: '二维码将在 {{time}} 过期',
