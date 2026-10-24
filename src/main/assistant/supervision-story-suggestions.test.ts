@@ -118,22 +118,32 @@ it('lets agents search stories and experiences and read their events through the
   await extractExperiences(f.db.supervisionExperiences(), async () => JSON.stringify({
     experiences: [{ key: 'new_1', statement: 'Let long jobs run; pause only on request', conditions: 'Background work', boundaries: 'Not for interactive edits', formed: ['e_1', 'e_3'] }]
   }), { minEvents: 3, batchCharacters: 16000 })
-  type Page = { items: Array<{ object_ref: { type: string; id: string }; confirmation_state: string; event_time: string | null; content?: string }> }
-  const stories = f.db.readStoryGraph('story_graph_search', { query: 'Review scheduling', object_types: ['story'] }, f.project.id) as Page
-  expect(stories.items.map(item => item.object_ref.type)).toEqual(['story'])
-  expect(stories.items[0]!.event_time).toBe('2026-09-20T00:00:00.000Z')
-  const context = f.db.readStoryGraph('story_graph_get_context', { object_ref: stories.items[0]!.object_ref, mode: 'timeline' }, f.project.id) as Page
-  expect(context.items.filter(item => item.object_ref.type === 'event')).toHaveLength(3)
-  const experiences = f.db.readStoryGraph('story_graph_search', { query: 'long jobs run', object_types: ['experience'] }, f.project.id) as Page
-  expect(experiences.items).toHaveLength(1)
-  expect(experiences.items[0]!.confirmation_state).toBe('automatic')
-  const formed = f.db.readStoryGraph('story_graph_get_context', { object_ref: experiences.items[0]!.object_ref }, f.project.id) as Page
-  const events = formed.items.filter(item => item.object_ref.type === 'event')
-  expect(events).toHaveLength(2)
-  expect(formed.items.find(item => item.object_ref.type === 'experience')!.content).toContain('Not for interactive edits')
-  // Outside the project scope nothing is returned.
+  type Card = { type: string; id: string; from?: string; time?: string; story?: string; not_when?: string; user_edited?: boolean }
+  type Search = { status: string; stories?: Card[]; experiences?: Card[]; events?: Card[] }
+  type Context = { object?: Card; related: Card[]; evidence?: Array<{ role: string }>; latest_decisions?: unknown[] }
+  const stories = f.db.readStoryGraph('story_graph_search', { query: 'Review scheduling', object_types: ['story'] }, f.project.id) as Search
+  expect(stories.stories!.map(item => item.type)).toEqual(['story'])
+  expect(stories.events).toBeUndefined()
+  expect(stories.stories![0]!.from).toBe('2026-09-20 00:00Z')
+  const storyRef = { type: 'story', id: stories.stories![0]!.id }
+  const timeline = f.db.readStoryGraph('story_graph_get_context', { object_ref: storyRef, mode: 'timeline' }, f.project.id) as Context
+  expect(timeline.related.filter(item => item.type === 'event')).toHaveLength(3)
+  const times = timeline.related.map(item => item.time!)
+  expect(times).toEqual([...times].sort())
+  const current = f.db.readStoryGraph('story_graph_get_context', { object_ref: storyRef }, f.project.id) as Context
+  expect(current.related.map(item => item.time!)).toEqual([...times].reverse())
+  expect(current.object!.type).toBe('story')
+  expect(current.related.every(item => item.story)).toBe(true)
+  const experiences = f.db.readStoryGraph('story_graph_search', { query: 'long jobs run', object_types: ['experience'] }, f.project.id) as Search
+  expect(experiences.experiences).toHaveLength(1)
+  expect(experiences.experiences![0]!.user_edited).toBeUndefined()
+  const formed = f.db.readStoryGraph('story_graph_get_context', { object_ref: { type: 'experience', id: experiences.experiences![0]!.id } }, f.project.id) as Context
+  expect(formed.related.filter(item => item.type === 'event')).toHaveLength(2)
+  expect(formed.evidence!.filter(item => item.role === 'formed')).toHaveLength(2)
+  expect(formed.object!.not_when).toContain('Not for interactive edits')
+  // Outside the project scope nothing is returned, and the Agent is told to stop.
   const other = f.db.createProject({ name: 'Other', description: '', rootPath: tmpdir() })
-  expect((f.db.readStoryGraph('story_graph_search', { query: 'long jobs', object_types: ['experience'] }, other.id) as Page).items).toEqual([])
+  expect(f.db.readStoryGraph('story_graph_search', { query: 'long jobs', object_types: ['experience'] }, other.id)).toMatchObject({ status: 'no_content' })
 })
 
 it('matches multi-word and Chinese queries by terms, ranking stories and experiences first', async () => {
@@ -141,11 +151,12 @@ it('matches multi-word and Chinese queries by terms, ranking stories and experie
   expect(queryTerms('review pause 300s, a')).toEqual(['review', 'pause', '300s'])
   const f = await fixture()
   await f.publish('Review scheduling', ['Pause after 300 seconds', 'Users clicked continue repeatedly', 'Run until complete'], '2026-09-20')
-  type Page = { items: Array<{ object_ref: { type: string } }> }
-  // No stored text contains the whole phrase; enough of its words do.
-  const hits = f.db.readStoryGraph('story_graph_search', { query: 'review scheduling decision', page_size: 5 }, f.project.id) as Page
-  expect(hits.items[0]!.object_ref.type).toBe('story')
-  expect((f.db.readStoryGraph('story_graph_search', { query: 'billing invoices tax', page_size: 5 }, f.project.id) as Page).items).toEqual([])
+  // No stored text contains the whole phrase; enough of its words do. Stories lead the default search.
+  const hits = f.db.readStoryGraph('story_graph_search', { query: 'review scheduling decision', page_size: 5 }, f.project.id) as { stories?: unknown[]; summaries?: unknown[] }
+  expect(hits.stories?.length).toBeGreaterThan(0)
+  expect(Object.keys(hits).indexOf('stories')).toBeLessThan(Object.keys(hits).indexOf('page'))
+  expect(hits.summaries).toBeUndefined()
+  expect(f.db.readStoryGraph('story_graph_search', { query: 'billing invoices tax', page_size: 5 }, f.project.id)).toMatchObject({ status: 'no_match' })
 })
 it('upgrades schema 55 suggestions to 56 without losing rows', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-suggestions-56-'))

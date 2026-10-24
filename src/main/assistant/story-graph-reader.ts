@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { HeartbeatScope } from '../../shared/assistant-contracts'
 import { storyGraphContextSchema, storyGraphSearchSchema, storyGraphSourceSchema, type StoryGraphToolName } from '../../shared/story-graph-tools'
 import type { SupervisionEvidence, SupervisionSummaryOutput } from '../../shared/supervision-contracts'
+import type { SupervisionExperience } from '../../shared/supervision-story-contracts'
 import { SupervisionExperienceStore } from './supervision-experiences'
 import { SupervisionStoryStore } from './supervision-stories'
 
@@ -62,9 +63,7 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
   if (scope.kind === 'projects') for (const id of scope.projectIds) {
     if (!db.prepare("SELECT id FROM projects WHERE id = ? AND status = 'active'").get(id)) throw new Error('scope_unavailable: project does not exist or is inactive')
   }
-  const base = { requested_scope: args.scope ?? 'current_project', resolved_scope: scope, read_at: new Date().toISOString(),
-    coverage: { status: 'unknown', semantic_completeness: 'unknown', unprocessed_sources: 'unknown', historical_reconstruction: false,
-      note: 'Exact stored scope only. Saved results and fragments do not establish complete source or semantic coverage.' } }
+  const base = { scope: args.scope ? scope : { current_project: true, ...scope } }
   const key = digest({ name, ...args, scope, cursor: undefined })
   let cursor: z.infer<typeof cursorSchema> | undefined
   if (args.cursor) {
@@ -72,10 +71,9 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     catch { throw new Error('invalid_cursor') }
     if (cursor.key !== key) throw new Error('invalid_cursor: repeat the original filters and page sizes')
   }
-  const page = (revision: string, index: number, offset: number, more: boolean, count: number, total: number) => ({
-    returned_count: count, total_count: total, has_more: more, complete: !more,
-    next_cursor: more ? Buffer.from(JSON.stringify({ key, revision, index, offset })).toString('base64url') : null,
-    limit_reason: more ? 'page_size' : null
+  const page = (revision: string, index: number, offset: number, more: boolean, _count: number, total: number) => ({
+    total, has_more: more,
+    ...(more ? { next_cursor: Buffer.from(JSON.stringify({ key, revision, index, offset })).toString('base64url') } : {})
   })
   const checkRevision = (revision: string): void => { if (cursor && cursor.revision !== revision) throw new Error('stale_cursor: stored evidence changed; restart the query') }
   const sameScope = (value: unknown): boolean => JSON.stringify(normalizeScope(JSON.parse(String(value)))) === JSON.stringify(scope)
@@ -83,7 +81,14 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     const sourceArgs = storyGraphSourceSchema.parse(input)
     const source = db.prepare(`SELECT s.*, sr.scope_json, r.created_at AS generated_at FROM supervision_sources s
       JOIN supervision_results r ON r.id = s.result_id JOIN supervision_runs sr ON sr.id = r.run_id WHERE s.id = ?`).get(sourceArgs.source_reference_id)
-    if (!source) throw new Error('source_not_found')
+    if (!source) {
+      const id = sourceArgs.source_reference_id
+      const kind = db.prepare('SELECT id FROM supervision_events WHERE id = ?').get(id) ? 'an event'
+        : db.prepare('SELECT id FROM supervision_stories WHERE id = ?').get(id) ? 'a story'
+          : db.prepare('SELECT id FROM supervision_experiences WHERE id = ?').get(id) ? 'an experience' : undefined
+      throw new Error(kind ? `source_not_found: ${id} is ${kind}; pass one of the source_ids listed on an event`
+        : 'source_not_found: pass a source id from an event\'s source_ids')
+    }
     const locator = source.locator_json ? JSON.parse(String(source.locator_json)) as Row : {}
     // Sources belong to the shared timeline: readable from the run's scope, from global,
     // or from a project scope containing the source's own project.
@@ -127,18 +132,21 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     if (start > content.length) throw new Error('invalid_cursor')
     const end = Math.min(content.length, start + sourceArgs.page_size)
     signal?.throwIfAborted()
-    return bounded({ ...base, source_reference_id: source.id, result_id: source.result_id, original_source_id: source.source_id,
-      source_type: source.source_type, content_kind: sourceArgs.content_kind, requested_version: sourceArgs.source_version ?? null,
-      content_extent: sourceArgs.content_kind === 'snapshot' ? 'saved_fragment' : source.source_type === 'knowledge' ? 'current_reference_fragment' : 'source_record',
-      source_version: returnedVersion, reference_version: version, differs_from_reference: version === 'unknown' ? 'unknown' : returnedVersion !== version,
-      object_revision: revision, source_location: location, availability: source.availability,
-      original_source_availability: sourceArgs.content_kind === 'snapshot' ? 'unknown' : 'available', source_record_time: source.occurred_at, event_time: null,
-      review_generated_at: source.generated_at, recorded_at: source.generated_at,
-      content: content.slice(start, end).join(''), position: { start, end, unit: 'unicode_code_point' },
-      saved_fragment: { start: locator.start ?? 'unknown', end: locator.end ?? 'unknown', length: Array.from(String(source.content)).length },
-      reviewed_source_length: locator.length ?? 'unknown',
-      original_source_length: originalLength,
-      page: page(revision, 0, end, end < content.length, end - start, content.length) })
+    const where: Row = {}
+    for (const [from, to] of [['conversationId', 'conversation_id'], ['messageId', 'message_id'], ['projectId', 'project_id'], ['role', 'role'],
+      ['sequence', 'sequence'], ['libraryId', 'library_id'], ['documentId', 'document_id'], ['chunkId', 'chunk_id'], ['title', 'title']] as const) {
+      if (location[from] !== undefined && location[from] !== null) where[to] = location[from]
+    }
+    const more = end < content.length
+    return bounded({ ...base, source_id: source.id, source_type: source.source_type, content_kind: sourceArgs.content_kind,
+      time: shortTime(source.occurred_at), location: where, availability: source.availability,
+      ...(sourceArgs.content_kind === 'snapshot' ? { note: 'Saved fragment as reviewed; use content_kind=current for the live record.' } : {}),
+      source_version: returnedVersion,
+      ...(version !== 'unknown' && returnedVersion !== version ? { differs_from_reviewed_version: true } : {}),
+      length: { saved_fragment: Array.from(String(source.content)).length, reviewed_source: locator.length ?? 'unknown', original_source: originalLength,
+        ...(typeof locator.start === 'number' ? { fragment_start: locator.start, fragment_end: locator.end } : {}) },
+      content: content.slice(start, end).join(''), position: { start, end, total: content.length },
+      ...(more ? { page: page(revision, 0, end, more, end - start, content.length) } : {}) })
   }
   const facts: Fact[] = []
   const results = new Map<string, Row>()
@@ -230,14 +238,12 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     const fact = facts[facts.length - 1]!
     fact.event_time = timestamp(experience.events.find(event => event.role === 'formed')?.at)
     fact.confirmation_state = experience.userEdited ? 'user_edited' : 'automatic'
-  }  const revision = digest(facts)
+  }
+  const revision = digest(facts)
   checkRevision(revision)
   const timed = args as z.infer<typeof storyGraphSearchSchema>
   const matchesTime = (fact: Fact): boolean => !timed.time_range || Boolean(fact[timed.time_basis] &&
     Date.parse(fact[timed.time_basis]!) >= Date.parse(timed.time_range.from) && Date.parse(fact[timed.time_basis]!) <= Date.parse(timed.time_range.to))
-  const metadata = { ...base, coverage: { ...base.coverage, published_result_count: results.size }, time_basis: timed.time_basis,
-    time_range: timed.time_range ? { from: timestamp(timed.time_range.from), to: timestamp(timed.time_range.to) } : null,
-    interpretation: 'Stored claims within the selected evidence scope; no inferred supersession, completion, or historical state.' }
   const query = 'query' in args ? args.query.toLowerCase() : ''
   // Agents phrase queries as several words ("监督者回顾调度", "review pause 300s"), so match terms, not the whole string.
   const terms = queryTerms(query)
@@ -246,77 +252,153 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
   const hits = (text: string) => terms.filter(term => text.includes(term)).length
   // A fact matches the whole query, or at least half its terms (and at least one).
   const matches = (fact: Fact) => { const text = lower(fact); return text.includes(query) || hits(text) >= Math.max(1, Math.ceil(terms.length / 2)) }
-  let selected: Fact[]
+
+  // Readable projection: what an Agent needs to understand an object, not its storage record.
+  const eventStory = new Map<string, { id: string; name: string }>()
+  for (const story of storyList) for (const event of story.events) if (event.primary && story.level !== 'cross') eventStory.set(event.id, { id: story.id, name: story.name })
+  const storyName = new Map(storyList.map(story => [story.id, story.name]))
+  const decisions = new Map<string, Array<{ id: string; time: string; title: string }>>()
+  for (const fact of facts) {
+    if (fact.object_ref.type !== 'event' || !['decision', 'milestone'].includes(String(fact.data.event_type)) || !fact.event_time) continue
+    const story = eventStory.get(fact.object_ref.id)
+    if (!story) continue
+    decisions.set(story.id, [...(decisions.get(story.id) ?? []), { id: fact.object_ref.id, time: fact.event_time, title: String(fact.data.title) }])
+  }
+  const fieldLimit = 'content_page_size' in args ? args.content_page_size : 280
+  const clip = (value: unknown, limit = fieldLimit): string | undefined => {
+    if (typeof value !== 'string' || !value) return undefined
+    const chars = Array.from(value)
+    return chars.length <= limit ? value : `${chars.slice(0, limit).join('')}… [${chars.length - limit} more characters${name === 'story_graph_search' ? '; read with story_graph_get_context' : '; read the sources for the full text'}]`
+  }
+  const compact = (row: Row): Row => Object.fromEntries(Object.entries(row).filter(([, value]) => value !== undefined && value !== null && value !== ''
+    && !(Array.isArray(value) && value.length === 0) && value !== false))
+  const card = (fact: Fact): Row => {
+    const d = fact.data
+    const edited = fact.confirmation_state === 'user_edited' || fact.confirmation_state === 'confirmed' ? true : undefined
+    switch (fact.object_ref.type) {
+      case 'story': return compact({ type: 'story', id: d.id, name: d.name, level: d.level, project: d.projectName, parent: storyName.get(String(d.parentId)),
+        state: d.state, from: shortTime(d.startedAt), to: shortTime(d.endedAt), events: d.event_count, description: clip(d.description), user_edited: edited })
+      case 'experience': {
+        const events = (d.events as SupervisionExperience['events'])
+        const stories = (role: string) => [...new Set(events.filter(event => event.role === role).map(event => event.storyName).filter(Boolean))]
+        return compact({ type: 'experience', id: d.id, statement: d.statement, when: clip(d.conditions), not_when: clip(d.boundaries),
+          formed_in: stories('formed'), applied_in: stories('applied'), formed_at: shortTime(fact.event_time), user_edited: edited })
+      }
+      case 'event': {
+        const story = eventStory.get(String(d.id))
+        return compact({ type: 'event', id: d.id, kind: d.event_type, time: shortTime(d.occurred_at), title: d.title, description: clip(d.description),
+          story: story?.name, story_id: story?.id, source_ids: fact.source_reference_ids, user_edited: edited })
+      }
+      case 'entity': return compact({ type: 'entity', id: d.id, label: d.canonical_label, description: clip(d.description), user_edited: edited })
+      case 'relation': return compact({ type: 'relation', id: d.id, from: d.from_entity_id, to: d.to_entity_id, relation: d.relation_type, reason: clip(d.reason) })
+      case 'entity_change': return compact({ type: 'entity_change', id: d.id, entity_id: d.entity_id, change: d.change_type, description: clip(d.description) })
+      case 'summary': return compact({ type: 'summary', id: d.id, generated: shortTime(fact.review_generated_at), summary: clip(d.summary),
+        changes: clip(d.change_digest), open_items: Array.isArray(d.open_items) ? d.open_items : typeof d.open_items_json === 'string' ? JSON.parse(d.open_items_json) : undefined,
+        source_ids: fact.source_reference_ids })
+      case 'story_line': return compact({ type: 'story_line', id: d.id, title: d.title })
+      default: return compact({ type: 'source', id: d.id, source_type: d.source_type, title: d.title, time: shortTime(d.occurred_at), excerpt: clip(d.content, 200) })
+    }
+  }
+  const group = (cards: Row[]): Row => {
+    const out: Record<string, Row[]> = {}
+    const keys: Record<string, string> = { story: 'stories', experience: 'experiences', event: 'events', entity: 'entities', relation: 'relations',
+      entity_change: 'entity_changes', summary: 'summaries', story_line: 'story_lines', source: 'sources' }
+    const key = (type: unknown) => keys[String(type)] ?? 'other'
+    for (const item of cards) (out[key(item.type)] ??= []).push(item)
+    return out
+  }
+  const timeOrder = (descending: boolean) => (a: Fact, b: Fact) => {
+    if (!a.event_time || !b.event_time) return a.event_time ? -1 : b.event_time ? 1 : 0
+    return descending ? b.event_time.localeCompare(a.event_time) : a.event_time.localeCompare(b.event_time)
+  }
+  const stable = (a: Fact, b: Fact) => a.object_ref.type.localeCompare(b.object_ref.type) || a.object_ref.id.localeCompare(b.object_ref.id) || (a.result_id ?? '').localeCompare(b.result_id ?? '')
+  // One card per object: snapshot copies of the same entity in several results collapse to the first.
+  const unique = (list: Fact[]) => { const seen = new Set<string>(); return list.filter(fact => { const id = `${fact.object_ref.type}:${fact.object_ref.id}`; if (seen.has(id)) return false; seen.add(id); return true }) }
+  const index = cursor?.index ?? 0
+  const take = (list: Fact[], size: number) => {
+    if (index > list.length) throw new Error('invalid_cursor')
+    const slice = list.slice(index, index + size)
+    signal?.throwIfAborted()
+    return { cards: slice.map(card), more: index + slice.length < list.length, next: index + slice.length }
+  }
+  const timeNote = timed.time_range ? { time_range: { from: timestamp(timed.time_range.from), to: timestamp(timed.time_range.to), basis: timed.time_basis } } : {}
+
   if (name === 'story_graph_search') {
     const search = storyGraphSearchSchema.parse(input)
-    selected = facts.filter(fact => (!search.object_types || search.object_types.includes(fact.object_ref.type as typeof search.object_types[number])) && matches(fact))
-  } else {
-    const context = storyGraphContextSchema.parse(input)
-    const targets = facts.filter(fact => fact.object_ref.type === context.object_ref.type && fact.object_ref.id === context.object_ref.id)
-    if (!targets.length) {
-      const tables = { story_line: 'story_lines', story: 'supervision_stories', experience: 'supervision_experiences', event: 'supervision_events', entity: 'supervision_entities',
-        entity_change: 'supervision_entity_changes', relation: 'supervision_relations', summary: 'supervision_results', source_reference: 'supervision_sources' }
-      const leafId = context.object_ref.id.startsWith('leaf:') ? context.object_ref.id.split(':')[1] : undefined
-      const exists = leafId ? db.prepare('SELECT id FROM supervision_review_batches WHERE id = ?').get(leafId)
-        : db.prepare(`SELECT id FROM ${tables[context.object_ref.type]} WHERE id = ?`).get(context.object_ref.id)
-      throw new Error(exists ? 'scope_mismatch: object is outside the requested scope' : 'object_not_found')
-    }
-    const related = facts.filter(fact => targets.includes(fact) || (context.object_ref.type === 'entity' &&
-      (fact.data.entity_id === context.object_ref.id || fact.data.persisted_entity_id === context.object_ref.id || fact.data.from_entity_id === context.object_ref.id || fact.data.to_entity_id === context.object_ref.id || (Array.isArray(fact.data.entity_ids) && fact.data.entity_ids.includes(context.object_ref.id)))))
-    const targetSources = new Set(related.flatMap(fact => fact.source_reference_ids))
-    const entityIds = new Set(related.flatMap(fact => [fact.data.entity_id, fact.data.from_entity_id, fact.data.to_entity_id, ...(Array.isArray(fact.data.entity_ids) ? fact.data.entity_ids : [])]).filter((id): id is string => typeof id === 'string'))
-    const targetResults = new Set(targets.flatMap(fact => fact.result_id ? [fact.result_id] : []))
-    selected = facts.filter(fact => {
-      if (context.object_ref.type === 'story_line') return true
-      // A story or experience brings its own events; their sources stay one get_context or read_source away.
-      if (context.object_ref.type === 'story' || context.object_ref.type === 'experience') {
-        const ids = new Set(targets.flatMap(target => Array.isArray(target.data.event_ids) ? target.data.event_ids : []))
-        return targets.includes(fact) || (fact.object_ref.type === 'event' && ids.has(fact.object_ref.id))
-      }
-      if (related.includes(fact) || (fact.object_ref.type === 'entity' && entityIds.has(fact.object_ref.id))) return true
-      if (context.object_ref.type === 'summary') return fact.result_id !== null && targetResults.has(fact.result_id)
-      return fact.source_reference_ids.some(id => targetSources.has(id))
-    })
-  }
-  const unknownExcluded = timed.time_range ? selected.filter(fact => !fact[timed.time_basis]).length : 0
-  selected = selected.filter(matchesTime)
-  const score = (fact: Fact): number => {
-    if (name !== 'story_graph_search') return 0
-    // Whole-query hits first, then term hits; named fields weigh more. Stories and experiences lead ties.
-    return Object.entries(fact.data).reduce((sum, [field, value]) => {
+    // Default: the objects an Agent works with. Review summaries and per-batch copies stay available on request.
+    const types = search.object_types ?? ['story', 'experience', 'event', 'entity']
+    const typeRank = (type: string) => type === 'story' ? 0 : type === 'experience' ? 1 : 2
+    const score = (fact: Fact): number => Object.entries(fact.data).reduce((sum, [field, value]) => {
       const text = JSON.stringify(value).toLowerCase()
       const weight = ['title', 'canonical_label', 'summary', 'name', 'statement'].includes(field) ? 3 : 1
       return sum + (text.includes(query) ? weight * (terms.length + 1) : 0) + hits(text) * weight
-    }, 0) + (fact.object_ref.type === 'story' || fact.object_ref.type === 'experience' ? 0.5 : 0)
+    }, 0)
+    let selected = facts.filter(fact => types.includes(fact.object_ref.type as typeof types[number])
+      && (search.object_types || fact.data.content_kind !== 'successful_leaf') && matches(fact))
+    const unknownExcluded = timed.time_range ? selected.filter(fact => !fact[timed.time_basis]).length : 0
+    selected = unique(selected.filter(matchesTime).map(fact => ({ fact, score: score(fact) }))
+      .sort((a, b) => typeRank(a.fact.object_ref.type) - typeRank(b.fact.object_ref.type) || b.score - a.score || stable(a.fact, b.fact)).map(item => item.fact))
+    const { cards, more, next } = take(selected, args.page_size)
+    const indexed = facts.some(fact => ['story', 'experience', 'event'].includes(fact.object_ref.type))
+    const status = cards.length ? 'ok' : indexed ? 'no_match' : 'no_content'
+    return bounded(compact({ status, ...base, ...timeNote,
+      ...(status === 'no_content' ? { hint: 'No reviewed work exists in this scope yet. Do not search again; continue from the current conversation.' } : {}),
+      ...(status === 'no_match' ? { hint: 'Nothing matched. Try one or two different keywords at most, then continue from the current conversation.' } : {}),
+      ...(unknownExcluded ? { excluded_without_time: unknownExcluded } : {}),
+      ...group(cards), page: page(revision, next, 0, more, cards.length, selected.length) }))
   }
-  selected.sort((a, b) => score(b) - score(a) || (name === 'story_graph_get_context' && 'mode' in args && args.mode === 'timeline'
-    ? (a.event_time ?? '\uffff').localeCompare(b.event_time ?? '\uffff') : 0) ||
-    a.object_ref.type.localeCompare(b.object_ref.type) || a.object_ref.id.localeCompare(b.object_ref.id) || (a.result_id ?? '').localeCompare(b.result_id ?? ''))
-  let index = cursor?.index ?? 0
-  let offset = cursor?.offset ?? 0
-  if (index > selected.length) throw new Error('invalid_cursor')
-  const items: Row[] = []
-  for (; index < selected.length && items.length < args.page_size; index++) {
-    signal?.throwIfAborted()
-    const { data, ...fact } = selected[index]!
-    const text = Array.from(JSON.stringify(data))
-    if (name === 'story_graph_search') {
-      const fields = Object.keys(data).filter(field => { const text = JSON.stringify(data[field]).toLowerCase(); return text.includes(query) || hits(text) > 0 })
-      // Readable fields first, so the model sees what the object says, not its IDs.
-      const readable = ['name', 'statement', 'title', 'canonical_label', 'summary', 'description', 'conditions', 'boundaries', 'event_type', 'level',
-        'project_name', 'projectName', 'started_at', 'startedAt', 'occurred_at', 'content'].filter(field => typeof data[field] === 'string' && data[field])
-      const preview = Array.from(readable.length ? readable.map(field => `${field}: ${String(data[field])}`).join(' | ') : JSON.stringify(data))
-      items.push({ ...fact, matched_fields: fields, preview: preview.slice(0, 400).join(''), preview_is_excerpt: preview.length > 400 || readable.length > 0 })
-    } else {
-      const size = storyGraphContextSchema.parse(input).content_page_size
-      const end = Math.min(text.length, offset + size)
-      items.push({ ...fact, content: text.slice(offset, end).join(''), content_format: 'json_fragment', position: { start: offset, end, length: text.length, unit: 'unicode_code_point' } })
-      if (end < text.length) { offset = end; break }
-      offset = 0
+
+  const context = storyGraphContextSchema.parse(input)
+  const targets = facts.filter(fact => fact.object_ref.type === context.object_ref.type && fact.object_ref.id === context.object_ref.id)
+  if (!targets.length) {
+    const tables = { story_line: 'story_lines', story: 'supervision_stories', experience: 'supervision_experiences', event: 'supervision_events', entity: 'supervision_entities',
+      entity_change: 'supervision_entity_changes', relation: 'supervision_relations', summary: 'supervision_results', source_reference: 'supervision_sources' }
+    const leafId = context.object_ref.id.startsWith('leaf:') ? context.object_ref.id.split(':')[1] : undefined
+    const exists = leafId ? db.prepare('SELECT id FROM supervision_review_batches WHERE id = ?').get(leafId)
+      : db.prepare(`SELECT id FROM ${tables[context.object_ref.type]} WHERE id = ?`).get(context.object_ref.id)
+    throw new Error(exists ? 'scope_mismatch: object is outside the requested scope' : 'object_not_found: use the type and id returned by story_graph_search')
+  }
+  const target = targets[0]!
+  const related = (() => {
+    if (context.object_ref.type === 'story_line') return facts.filter(fact => fact !== target)
+    if (context.object_ref.type === 'story' || context.object_ref.type === 'experience') {
+      const ids = new Set(Array.isArray(target.data.event_ids) ? target.data.event_ids as string[] : [])
+      return facts.filter(fact => fact.object_ref.type === 'event' && ids.has(fact.object_ref.id))
     }
-    // Fail explicitly rather than allowing a downstream runtime to truncate metadata.
-    if (Buffer.byteLength(JSON.stringify(items)) > 90_000) throw new Error('response_too_large: retry with a smaller page_size')
+    const id = context.object_ref.id
+    const linked = facts.filter(fact => targets.includes(fact) || (context.object_ref.type === 'entity' &&
+      (fact.data.entity_id === id || fact.data.persisted_entity_id === id || fact.data.from_entity_id === id || fact.data.to_entity_id === id
+        || (Array.isArray(fact.data.entity_ids) && fact.data.entity_ids.includes(id)))))
+    const sources = new Set(linked.flatMap(fact => fact.source_reference_ids))
+    const entityIds = new Set(linked.flatMap(fact => [fact.data.entity_id, fact.data.from_entity_id, fact.data.to_entity_id, ...(Array.isArray(fact.data.entity_ids) ? fact.data.entity_ids : [])])
+      .filter((value): value is string => typeof value === 'string'))
+    const results = new Set(targets.flatMap(fact => fact.result_id ? [fact.result_id] : []))
+    return facts.filter(fact => !targets.includes(fact) && (linked.includes(fact) || (fact.object_ref.type === 'entity' && entityIds.has(fact.object_ref.id))
+      || (context.object_ref.type === 'summary' ? fact.result_id !== null && results.has(fact.result_id) : fact.source_reference_ids.some(source => sources.has(source)))))
+  })()
+  const unknownExcluded = timed.time_range ? related.filter(fact => !fact[timed.time_basis]).length : 0
+  // current: newest first, so the latest state leads; timeline: oldest first, to follow how it developed.
+  const ordered = unique(related.filter(matchesTime)).sort((a, b) => timeOrder(context.mode === 'current')(a, b) || stable(a, b))
+  const { cards, more, next } = take(ordered, args.page_size)
+  const first = !cursor
+  const extra: Row = {}
+  if (first && context.object_ref.type === 'story') {
+    const own = decisions.get(context.object_ref.id) ?? []
+    if (own.length) extra.latest_decisions = [...own].sort((a, b) => b.time.localeCompare(a.time)).slice(0, 5).map(item => ({ id: item.id, time: shortTime(item.time), title: item.title }))
+    const threads = storyList.filter(story => story.parentId === context.object_ref.id).map(story => ({ id: story.id, name: story.name, events: story.events.filter(event => event.primary).length }))
+    if (threads.length) extra.threads = threads
   }
-  const output = { ...metadata, unknown_time_excluded_count: unknownExcluded, ...('mode' in args ? { mode: args.mode } : {}), items, page: page(revision, index, offset, index < selected.length, items.length, selected.length) }
-  return bounded(output)
+  if (first && context.object_ref.type === 'experience') {
+    extra.evidence = (target.data.events as SupervisionExperience['events']).map(event => compact({ role: event.role, event_id: event.id, time: shortTime(event.at),
+      title: event.title, story: event.storyName, note: event.note }))
+  }
+  return bounded(compact({ ...base, mode: context.mode, ...timeNote, ...(first ? { object: card(target) } : {}), ...extra,
+    ...(unknownExcluded ? { excluded_without_time: unknownExcluded } : {}),
+    related: cards, page: page(revision, next, 0, more, cards.length, ordered.length) }))
+}
+
+/** Minute precision in UTC, e.g. "2026-09-26 07:11Z": unambiguous and short. */
+function shortTime(value: unknown): string | undefined {
+  const iso = timestamp(value)
+  return iso ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}Z` : undefined
 }

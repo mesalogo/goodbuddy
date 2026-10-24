@@ -72,23 +72,25 @@ it.each(['local', 'remote'] as const)('%s HTTP MCP reads SQLite through Main and
   const tools = (await connection.listTools()).tools
   expect(tools.map(tool => tool.name)).toEqual(storyGraphToolNames)
   expect(tools.every(tool => tool.annotations?.readOnlyHint)).toBe(true)
-  const search = await connection.callTool({ name: 'story_graph_search', arguments: { query: 'Decision', page_size: 1 } })
+  const search = await connection.callTool({ name: 'story_graph_search', arguments: { query: 'Decision', page_size: 1, object_types: ['entity', 'summary'] } })
   expect(search.isError).not.toBe(true)
   const result = JSON.parse((search.content as { text: string }[])[0]!.text)
-  expect(result.resolved_scope).toEqual({ kind: 'projects', projectIds: [f.projectId] })
+  expect(result.scope).toEqual({ current_project: true, kind: 'projects', projectIds: [f.projectId] })
+  const first = [...(result.entities ?? []), ...(result.summaries ?? [])][0]
+  const ref = { type: first.type, id: first.id }
   expect(result.page.has_more).toBe(true)
-  const context = await connection.callTool({ name: 'story_graph_get_context', arguments: { object_ref: result.items[0].object_ref, mode: 'timeline' } })
+  const context = await connection.callTool({ name: 'story_graph_get_context', arguments: { object_ref: ref, mode: 'timeline' } })
   expect(context.isError).not.toBe(true)
   const reference = (f.db.getSupervisionGraph({}).sources as { id: string }[])[0]!.id
   const source = await connection.callTool({ name: 'story_graph_read_source', arguments: { source_reference_id: reference } })
   expect(JSON.stringify(source)).toContain('revised to B')
-  const unsupported = await connection.callTool({ name: 'story_graph_get_context', arguments: { object_ref: result.items[0].object_ref, mode: 'as_of' } })
+  const unsupported = await connection.callTool({ name: 'story_graph_get_context', arguments: { object_ref: ref, mode: 'as_of' } })
   expect(unsupported.isError).toBe(true)
   expect(JSON.stringify(unsupported)).toContain('unsupported_mode')
   const before = f.read.mock.calls.length
   f.db.setConversationStoryGraphEnabled(f.conversationId, false)
   expect((await connection.listTools()).tools).toEqual([])
-  const blocked = await connection.callTool({ name: 'story_graph_search', arguments: { query: 'Decision', cursor: result.page.next_cursor, page_size: 1 } })
+  const blocked = await connection.callTool({ name: 'story_graph_search', arguments: { query: 'Decision', cursor: result.page.next_cursor, page_size: 1, object_types: ['entity', 'summary'] } })
   expect(blocked.isError).toBe(true)
   expect(f.read).toHaveBeenCalledTimes(before)
   f.db.setConversationStoryGraphEnabled(f.conversationId, true)

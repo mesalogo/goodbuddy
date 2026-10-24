@@ -12,8 +12,10 @@ import { readStoryGraph } from './story-graph-reader'
 
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
-type Page = { items: Array<{ object_ref: { type: string; id: string }; result_id: string | null; event_time: string | null;
-  content: string; source_reference_ids: string[]; validity: string }>; page: { next_cursor: string | null; has_more: boolean; total_count: number } }
+type Card = { type: string; id: string; time?: string; title?: string; label?: string; description?: string; excerpt?: string; source_ids?: string[] }
+type Page = { status?: string; events?: Card[]; entities?: Card[]; story_lines?: Card[]; related?: Card[]; object?: Card
+  page: { next_cursor?: string; has_more: boolean; total: number } }
+const cards = (page: Page): Card[] => [...(page.events ?? []), ...(page.entities ?? []), ...(page.story_lines ?? []), ...(page.related ?? [])]
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'story-graph-'))
@@ -54,29 +56,32 @@ it('retains A, explicit revision B and proposal C without latest-wins, with even
   f.save('Decision B explicitly revises A; execution pending', '2026-09-03T00:00:00Z', id)
   f.save('Decision C is an option, not a replacement', '2026-09-04T00:00:00Z', id)
   f.save('Decision late-recorded discussion', '2026-09-02T09:00:00+09:00', id)
-  const input = { object_ref: { type: 'entity', id }, mode: 'timeline', page_size: 2, content_page_size: 71 }
-  let cursor: string | null = null
-  const fragments = new Map<string, string>()
-  const eventTimes = new Map<string, string>()
+  const input = { object_ref: { type: 'entity', id }, mode: 'timeline', page_size: 2 }
+  let cursor: string | undefined
+  const all: Card[] = []
+  let first: Page | undefined
   do {
     const result = f.read('story_graph_get_context', { ...input, ...(cursor ? { cursor } : {}) }) as Page
-    for (const item of result.items) {
-      const key = `${item.object_ref.type}:${item.object_ref.id}:${item.result_id}`
-      fragments.set(key, (fragments.get(key) ?? '') + item.content)
-      if (item.event_time) eventTimes.set(item.object_ref.id, item.event_time)
-      expect(item.validity).toBe('unknown')
-    }
+    first ??= result
+    all.push(...cards(result))
     cursor = result.page.next_cursor
   } while (cursor)
-  const data = [...fragments.values()].map(text => JSON.parse(text))
-  expect(data.filter(item => item.canonical_label).map(item => item.description)).toEqual(expect.arrayContaining([
+  // Objects come as readable cards, never as JSON text to concatenate and parse.
+  expect(first!.object).toMatchObject({ type: 'entity', label: 'Decision' })
+  expect(all.every(item => typeof item === 'object' && item.type)).toBe(true)
+  const events = all.filter(item => item.type === 'event')
+  expect(events.map(item => item.description)).toEqual(expect.arrayContaining([
     'Decision A', 'Decision B explicitly revises A; execution pending', 'Decision C is an option, not a replacement'
   ]))
-  expect([...eventTimes.values()]).toEqual(['2026-09-01T00:00:00.000Z', '2026-09-02T00:00:00.000Z', '2026-09-03T00:00:00.000Z', '2026-09-04T00:00:00.000Z'])
-  expect(data.some(item => item.content?.includes('measured latency'))).toBe(true)
+  expect(events.map(item => item.time)).toEqual(['2026-09-01 00:00Z', '2026-09-02 00:00Z', '2026-09-03 00:00Z', '2026-09-04 00:00Z'])
+  expect(all.some(item => item.excerpt?.includes('measured latency'))).toBe(true)
+  expect(new Set(all.map(item => `${item.type}:${item.id}`)).size).toBe(all.length)
   const search = f.read('story_graph_search', { query: 'Decision', object_types: ['event'], time_range: { from: '2026-09-02T09:00:00+09:00', to: '2026-09-02T00:00:00Z' } }) as Page
-  expect(search.items).toHaveLength(1)
-  expect(search.items[0]!.event_time).toBe('2026-09-02T00:00:00.000Z')
+  expect(search.events).toHaveLength(1)
+  expect(search.events![0]!.time).toBe('2026-09-02 00:00Z')
+  expect(search.events![0]!.source_ids!.length).toBeGreaterThan(0)
+  // An event ID passed as a source explains how to get the real source.
+  expect(() => f.read('story_graph_read_source', { source_reference_id: search.events![0]!.id })).toThrow('is an event')
 })
 
 it('enforces exact scope, rejects as_of and stale/changed cursors, and never writes during reads', async () => {
@@ -86,10 +91,10 @@ it('enforces exact scope, rejects as_of and stale/changed cursors, and never wri
   const first = f.read('story_graph_search', input) as Page
   const before = f.sql.prepare('SELECT total_changes() AS n').get()!.n
   f.sql.exec('PRAGMA query_only = ON')
-  expect(f.db.readStoryGraph('story_graph_search', input, f.other.id)).toMatchObject({ items: [], coverage: { status: 'unknown' } })
+  expect(f.db.readStoryGraph('story_graph_search', input, f.other.id)).toMatchObject({ status: 'no_content' })
   // Global is the root of the one shared timeline: it sees the project's current events.
   const global = f.read('story_graph_search', { ...input, page_size: 50, scope: { kind: 'global' } }) as Page
-  expect(global.items.map(item => item.object_ref.type)).toEqual(['event'])
+  expect(Object.keys(global).filter(key => Array.isArray((global as Record<string, unknown>)[key]))).toEqual(['events'])
   expect(() => f.db.readStoryGraph('story_graph_get_context', { object_ref: { type: 'entity', id } }, f.other.id)).toThrow('scope_mismatch')
   expect(() => f.read('story_graph_get_context', { object_ref: { type: 'entity', id: 'missing' } })).toThrow('object_not_found')
   expect(() => f.db.readStoryGraph('story_graph_search', input)).toThrow('scope_required')
@@ -110,10 +115,10 @@ it('pages Unicode snapshots, reads explicit current versions, and reports deleti
   const source = f.sql.prepare('SELECT id FROM supervision_sources').get()!
   f.sql.prepare('UPDATE supervision_sources SET content = ? WHERE id = ?').run('A\u{1f600}B\u{1f601}C', source.id!)
   const input = { source_reference_id: source.id, page_size: 2 }
-  let cursor: string | null = null, text = ''
+  let cursor: string | undefined, text = ''
   do {
-    const page = f.read('story_graph_read_source', { ...input, ...(cursor ? { cursor } : {}) }) as { content: string; page: { next_cursor: string | null } }
-    text += page.content; cursor = page.page.next_cursor
+    const page = f.read('story_graph_read_source', { ...input, ...(cursor ? { cursor } : {}) }) as { content: string; page?: { next_cursor?: string } }
+    text += page.content; cursor = page.page?.next_cursor
   } while (cursor)
   expect(text).toBe('A\u{1f600}B\u{1f601}C')
   const current = f.read('story_graph_read_source', { source_reference_id: source.id, content_kind: 'current' })
@@ -134,8 +139,8 @@ it('pages Unicode snapshots, reads explicit current versions, and reports deleti
   expect(f.read('story_graph_read_source', { source_reference_id: source.id, content_kind: 'current' })).toMatchObject({ error: 'current_source_unavailable' })
   expect(f.read('story_graph_read_source', { source_reference_id: source.id })).toMatchObject({ content: text, content_kind: 'snapshot' })
   f.sql.prepare('UPDATE supervision_sources SET source_type = ?, locator_json = ? WHERE id = ?').run('knowledge', JSON.stringify({ length: 999 }), source.id!)
-  expect(f.read('story_graph_read_source', { source_reference_id: source.id })).toMatchObject({ original_source_length: 'unknown', reviewed_source_length: 999 })
-  f.sql.prepare('UPDATE supervision_sources SET locator_json = ? WHERE id = ?').run(JSON.stringify({ detail: 'x'.repeat(100_001) }), source.id!)
+  expect(f.read('story_graph_read_source', { source_reference_id: source.id })).toMatchObject({ length: { original_source: 'unknown', reviewed_source: 999 } })
+  f.sql.prepare('UPDATE supervision_sources SET locator_json = ? WHERE id = ?').run(JSON.stringify({ title: 'x'.repeat(100_001) }), source.id!)
   expect(() => f.read('story_graph_read_source', { source_reference_id: source.id })).toThrow('response_too_large')
 })
 
@@ -149,7 +154,7 @@ it('prefilters story lines by scope in SQL with the exact normalized match, and 
   insert.run('superset', JSON.stringify({ kind: 'projects', projectIds: [f.other.id, f.project.id] }), 'Decision superset', now, now)
   insert.run('global', JSON.stringify({ kind: 'global' }), 'Decision global', now, now)
   const lines = (scope?: unknown) => ((f.read('story_graph_search', { query: 'Decision', page_size: 50, object_types: ['story_line'], ...(scope ? { scope } : {}) }) as Page)
-    .items.map(item => item.object_ref.id)).sort()
+    .story_lines ?? []).map(item => item.id).sort()
   const all = f.sql.prepare('SELECT id FROM story_lines').all().map(row => String(row.id))
   expect(lines()).toEqual(expect.arrayContaining(['dup']))
   expect(lines()).not.toContain('superset')
@@ -158,5 +163,5 @@ it('prefilters story lines by scope in SQL with the exact normalized match, and 
   expect(lines({ kind: 'projects', projectIds: [f.project.id, f.other.id] })).toEqual(['superset'])
   expect(all.length).toBeGreaterThanOrEqual(4)
   expect(() => readStoryGraph(f.sql, 'story_graph_search', { query: 'Decision' }, f.project.id, undefined, 2)).toThrow('scan_limit_exceeded')
-  expect(readStoryGraph(f.sql, 'story_graph_search', { query: 'Decision' }, f.project.id)).toMatchObject({ page: { complete: true } })
+  expect(readStoryGraph(f.sql, 'story_graph_search', { query: 'Decision' }, f.project.id)).toMatchObject({ page: { has_more: false } })
 })

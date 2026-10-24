@@ -291,12 +291,12 @@ describe('assistant readonly worker', () => {
         { query: 'Decision', page_size: 50, scope: { kind: 'global' } }
       ]
       const expected = inputs.map(input => withoutReadAt(database.readStoryGraph('story_graph_search', input, project.id)))
-      expect((expected[0]!.items as unknown[]).length).toBeGreaterThan(2)
+      expect((expected[0]!.events as unknown[]).length).toBeGreaterThan(0)
       const reader = createReader('assistant', join(root, 'assistant.sqlite'))
       const actual = await Promise.all(inputs.map(input => reader.call<Record<string, unknown>>('readStoryGraph', ['story_graph_search', input, project.id])))
       expect(actual.map(withoutReadAt)).toEqual(expected)
-      const entity = (expected[0]!.items as Array<{ object_ref: { type: string; id: string } }>).find(item => item.object_ref.type === 'entity')!
-      const contextInput = { object_ref: entity.object_ref, mode: 'timeline', page_size: 5 }
+      const entity = (expected[0]!.entities as Array<{ type: string; id: string }>)[0]!
+      const contextInput = { object_ref: { type: entity.type, id: entity.id }, mode: 'timeline', page_size: 5 }
       expect(withoutReadAt(await reader.call('readStoryGraph', ['story_graph_get_context', contextInput, project.id])))
         .toEqual(withoutReadAt(database.readStoryGraph('story_graph_get_context', contextInput, project.id)))
       await expect(reader.call('readStoryGraph', ['story_graph_get_context', contextInput, other.id])).rejects.toThrow('scope_mismatch')

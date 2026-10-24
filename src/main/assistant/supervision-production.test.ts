@@ -194,7 +194,7 @@ it('persists publication failure and resumes with saved navigation without model
   }
   const calls = f.respond.mock.calls.length
   expect(f.db.readStoryGraph('story_graph_search', { query: 'Retained source qualification', scope: { kind: 'global' }, object_types: ['event'] }))
-    .toMatchObject({ page: { total_count: 2 }, items: [expect.objectContaining({ source_reference_ids: [] }), expect.objectContaining({ source_reference_ids: [] })] })
+    .toMatchObject({ page: { total: 2 }, events: [expect.not.objectContaining({ source_ids: expect.anything() }), expect.not.objectContaining({ source_ids: expect.anything() })] })
   expect(f.db.readStoryGraph('story_graph_search', { query: 'Atlas', scope: { kind: 'global' }, object_types: ['entity'] }))
     .toMatchObject({ page: { has_more: false } })
   expect(f.respond).toHaveBeenCalledTimes(calls)
