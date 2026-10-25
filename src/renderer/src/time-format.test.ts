@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { formatConversationListTime, formatTime } from './time-format'
+import {
+  formatConversationListTime,
+  formatDayLabel,
+  formatMessageTime,
+  formatTime
+} from './time-format'
 
 describe('formatTime', () => {
   afterEach(() => {
@@ -54,6 +59,43 @@ describe('formatTime', () => {
         day: 'numeric'
       }).format(timestamp)
     )
+  })
+
+  it('shows only the time for a message sent today', () => {
+    const timestamp = new Date(2026, 7, 21, 21, 51).getTime()
+    const referenceTimestamp = new Date(2026, 7, 21, 23, 59).getTime()
+
+    expect(formatMessageTime(timestamp, 'zh-CN', referenceTimestamp)).toBe(
+      formatTime(timestamp, 'zh-CN')
+    )
+  })
+
+  it('shows the full local date and time for an earlier message', () => {
+    const timestamp = new Date(2026, 7, 21, 21, 51).getTime()
+    const referenceTimestamp = new Date(2026, 7, 22, 0, 5).getTime()
+
+    expect(formatMessageTime(timestamp, 'zh-CN', referenceTimestamp)).toBe(
+      '2026/08/21 21:51'
+    )
+    expect(formatMessageTime(timestamp, 'en-US', referenceTimestamp)).toBe(
+      new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(timestamp)
+    )
+  })
+
+  it('labels days compactly and adds the year only for other years', () => {
+    const reference = new Date(2026, 9, 25, 12).getTime()
+    expect(
+      formatDayLabel(new Date(2026, 7, 21, 9).getTime(), 'zh-CN', reference)
+    ).toBe('08/21')
+    expect(
+      formatDayLabel(new Date(2025, 7, 21, 9).getTime(), 'zh-CN', reference)
+    ).toBe('2025/08/21')
   })
 
   it('includes the year for a conversation from another year', () => {

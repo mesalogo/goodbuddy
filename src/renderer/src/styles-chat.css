@@ -1869,7 +1869,8 @@
   right: 0;
   bottom: 0;
   width: 14px;
-  overflow: hidden;
+  /* Visible so day markers can stick out to the left of the rail. */
+  overflow: visible;
   background: transparent;
   cursor: default;
   touch-action: none;
@@ -1913,6 +1914,42 @@
   background: color-mix(in srgb, var(--text-muted, #8f98a8) 22%, transparent);
   pointer-events: none;
   will-change: transform;
+}
+
+/* Expanded overview only: a light margin note (date + short leftward tick)
+   beside the first message of each day. */
+.chat-minimap__days {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.chat-minimap__day {
+  position: absolute;
+  top: 0;
+  /* Absolute offsets start inside the rail's 1px left border; clear the
+     border and keep a 2px gap so the tick ends outside the rail. */
+  right: calc(100% + 3px);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 12px;
+  margin-top: -6px;
+  color: var(--text-muted, #8f98a8);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  line-height: 12px;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
+.chat-minimap__day::after {
+  content: '';
+  width: 8px;
+  height: 0;
+  border-top: 1px solid currentColor;
+  opacity: 0.6;
 }
 
 .chat-minimap:hover .chat-minimap__viewport,

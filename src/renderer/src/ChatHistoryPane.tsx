@@ -1151,6 +1151,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
       </section>
       {active && chatMinimapEnabled && (
         <ChatMinimap
+          locale={locale}
           messages={messages}
           rowHeights={heights}
           scrollContainerRef={scrollRef}

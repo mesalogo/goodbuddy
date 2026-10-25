@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, type KeyboardEvent, type PointerE
 import { useTranslation } from "react-i18next";
 import type { Message } from "./ChatTimeline";
 import type { MessageRowHeights } from "./chat-message-window";
+import { formatDayLabel, type TimeFormatLocale } from "./time-format";
 
 /** Rail width when idle and when hovered (expanded overview), in CSS pixels. */
 export const minimapCollapsedWidth = 14;
@@ -84,6 +85,23 @@ function prefixSums(messages: readonly Message[], size: (message: Message) => nu
   return prefix;
 }
 
+/** Indices of the first message of every local calendar day, including the first message. */
+export function minimapDayStarts(messages: readonly Message[]): number[] {
+  const starts: number[] = [];
+  let previous: number | undefined;
+  for (let index = 0; index < messages.length; index += 1) {
+    const date = new Date(messages[index]!.createdAt);
+    const day = date.getFullYear() * 10_000 + date.getMonth() * 100 + date.getDate();
+    if (Number.isNaN(day)) continue;
+    if (day !== previous) starts.push(index);
+    previous = day;
+  }
+  return starts;
+}
+
+/** Minimum rail distance between two day labels (one label line); closer ones are skipped. */
+const minimapDayMarkerSpacing = 14;
+
 /** Characters per minimap text line, roughly one reading-column line. */
 const minimapCharsPerLine = 72;
 /** Upper bound of text lines kept per message; very long replies are sampled. */
@@ -134,6 +152,7 @@ export function minimapLines(message: Message): MinimapLine[] {
 }
 
 type ChatMinimapProps = {
+  locale?: TimeFormatLocale;
   messages: readonly Message[];
   rowHeights: MessageRowHeights;
   scrollContainerRef: RefObject<HTMLElement | null>;
@@ -146,16 +165,20 @@ type Drag = { pointerId: number; grabOffset: number };
  * Geometry follows the scroller on every scroll/resize event by writing styles
  * directly, so the viewport indicator never waits for a React commit.
  */
-export function ChatMinimap({ messages, rowHeights, scrollContainerRef }: ChatMinimapProps): React.JSX.Element {
+export function ChatMinimap({ locale = "zh-CN", messages, rowHeights, scrollContainerRef }: ChatMinimapProps): React.JSX.Element {
   const { t } = useTranslation("app");
   const railRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sliderRef = useRef<HTMLSpanElement>(null);
+  const daysRef = useRef<HTMLDivElement>(null);
+  const dayStartsRef = useRef<{ messages: readonly Message[] | undefined; starts: number[]; key: string }>({
+    messages: undefined, starts: [], key: "",
+  });
   const dragRef = useRef<Drag | undefined>(undefined);
   const expandedRef = useRef(false);
   const drawnRef = useRef<{ width: number; height: number; messages: readonly Message[] | undefined }>({ width: 0, height: 0, messages: undefined });
   const layoutRef = useRef({ scrollable: false, railHeight: -1, percent: -1, scrollHeight: -1 });
-  const dataRef = useRef({ messages, rowHeights });
+  const dataRef = useRef({ messages, rowHeights, locale });
   // Overview axis: stable content weights. Scroll axis: current row heights
   // (measured or estimated). The slider maps between them row by row, so the
   // drawing never changes when rows are measured during scrolling.
@@ -168,6 +191,43 @@ export function ChatMinimap({ messages, rowHeights, scrollContainerRef }: ChatMi
     const axes = axesRef.current;
     const weights = axes.messages === current ? axes.weights : prefixSums(current, minimapMessageWeight);
     axesRef.current = { messages: current, weights, pixels: prefixSums(current, (message) => heights.size(message.id)) };
+  }, []);
+
+  /**
+   * In the expanded overview, marks the first message of every day with a
+   * short leftward tick and a light date label, like a margin note. The
+   * collapsed rail shows no markers. Markers live in a thin DOM layer over
+   * the canvas and are rewritten only when their positions or labels change.
+   */
+  const placeDayMarkers = useCallback((unit: number, railHeight: number, expanded: boolean): void => {
+    const layer = daysRef.current;
+    if (!layer) return;
+    const { messages: current, locale: currentLocale } = dataRef.current;
+    const cache = dayStartsRef.current;
+    const starts = cache.messages === current ? cache.starts : minimapDayStarts(current);
+    const marks: { top: number; label: string }[] = [];
+    if (expanded && unit > 0) {
+      const { weights } = axesRef.current;
+      const now = Date.now();
+      let last = -Infinity;
+      for (const index of starts) {
+        // Kept half a label line inside the rail so the first and last labels are not cut.
+        const top = Math.max(6, Math.min(railHeight - 6, Math.round((weights[index] ?? 0) * unit)));
+        if (top - last < minimapDayMarkerSpacing) continue;
+        marks.push({ top, label: formatDayLabel(current[index]!.createdAt, currentLocale, now) });
+        last = top;
+      }
+    }
+    const key = marks.map((mark) => `${mark.top}:${mark.label}`).join(",");
+    dayStartsRef.current = { messages: current, starts, key };
+    if (key === cache.key && layer.childElementCount === marks.length) return;
+    layer.replaceChildren(...marks.map(({ top, label }) => {
+      const mark = document.createElement("span");
+      mark.className = "chat-minimap__day";
+      mark.style.transform = `translateY(${top}px)`;
+      mark.textContent = label;
+      return mark;
+    }));
   }, []);
 
   const draw = useCallback((force: boolean): void => {
@@ -192,12 +252,16 @@ export function ChatMinimap({ messages, rowHeights, scrollContainerRef }: ChatMi
     context.clearRect(0, 0, width, height);
     const { weights } = axesRef.current;
     const totalWeight = weights[current.length] ?? 0;
-    if (totalWeight <= 0) return;
     const expanded = expandedRef.current;
+    if (totalWeight <= 0) {
+      placeDayMarkers(0, height, expanded);
+      return;
+    }
     const inset = expanded ? 6 : 2;
     const lineSpan = width - inset * 2;
     // Every overview row gets the same height, so density is uniform.
     const unit = height / totalWeight;
+    placeDayMarkers(unit, height, expanded);
     if (!expanded) {
       for (let index = 0; index < current.length; index += 1) {
         const top = (weights[index]! + minimapMessageGap) * unit;
@@ -237,7 +301,7 @@ export function ChatMinimap({ messages, rowHeights, scrollContainerRef }: ChatMi
       context.fillRect(left, y, Math.min(lineWidth, base + span - left), stroke);
     }
     context.globalAlpha = 1;
-  }, [refreshAxes, scrollContainerRef]);
+  }, [placeDayMarkers, refreshAxes, scrollContainerRef]);
 
   /** Overview position (0..railHeight) of a scroll-content offset. */
   const toRail = (offset: number, scrollHeight: number, railHeight: number): number => {
@@ -335,7 +399,7 @@ export function ChatMinimap({ messages, rowHeights, scrollContainerRef }: ChatMi
   // The canvas redraws only when the message list itself changes; draw()
   // compares identities, so measurement-only commits never repaint it.
   useLayoutEffect(() => {
-    dataRef.current = { messages, rowHeights };
+    dataRef.current = { messages, rowHeights, locale };
     sync();
     if (layoutRef.current.scrollable) draw(false);
   });
@@ -427,6 +491,7 @@ export function ChatMinimap({ messages, rowHeights, scrollContainerRef }: ChatMi
     >
       <canvas aria-hidden="true" className="chat-minimap__canvas" ref={canvasRef} />
       <span aria-hidden="true" className="chat-minimap__viewport" ref={sliderRef} />
+      <div aria-hidden="true" className="chat-minimap__days" ref={daysRef} />
     </div>
   );
 }
