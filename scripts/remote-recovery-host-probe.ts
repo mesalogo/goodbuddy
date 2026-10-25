@@ -38,7 +38,8 @@ async function main(): Promise<void> {
   const peerIdentityProvider = await createLinuxPeerIdentityProvider({ loadKoffi: async () => createRequire(process.argv[1]!)('koffi') })
   const root = await mkdtemp('/root/tmp/goodbuddy-recovery-validation/run-')
   const runtimeCrash = process.argv[2] === '--runtime-crash'
-  const catchUp = process.argv[2] === '--catch-up'
+  const liveChannelBudget = process.argv[2] === '--live-channel-budget'
+  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget
   const retirement = process.argv[2] === '--retirement' || runtimeCrash || catchUp
   const directRetirement = process.argv[2] === '--direct-retirement'
   const directDisconnect = process.argv[2] === '--direct-disconnect'
@@ -183,8 +184,15 @@ async function main(): Promise<void> {
               channel.startOwnedPrompt = async input => { starts++; return start(input) }
               const page = channel.pageOwnedPromptTranscript.bind(channel)
               let interrupt = true
+              let exhaust = liveChannelBudget
               channel.pageOwnedPromptTranscript = async input => {
                 if (interrupt) { interrupt = false; throw new RemoteChannelClosedError('probe transcript interruption') }
+                if (exhaust) {
+                  exhaust = false
+                  await assert.rejects(async () => {
+                    for (let i = 0; i < 4_100; i++) await first.client.request('agent/status', {})
+                  }, /reconnect required/)
+                }
                 return page(input)
               }
               return channel
@@ -201,14 +209,15 @@ async function main(): Promise<void> {
           try {
             await assert.rejects(consume(false, AbortSignal.timeout(30_000)), RemoteChannelClosedError)
             pending = consume(true, controller.signal).catch(error => error)
-            for (let i = 0; !ready && i < 200; i++) await delay(50)
+            for (let i = 0; !ready && i < 800; i++) await delay(50)
             assert.equal(ready, 1, 'Catch-up must finish while the real Runtime remains active')
             assert.equal(terminal, false)
             assert.equal(starts, 1, 'Recovery must not resubmit the prompt')
             await delay(500)
             assert.equal(ready, 1)
             assert.equal(terminal, false)
-            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, externalModelCalls: 0 })}\n`)
+            if (liveChannelBudget) assert.equal(attaches, 2)
+            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, liveChannelBudget, attaches, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, externalModelCalls: 0 })}\n`)
           } finally {
             controller.abort(new Error('probe complete'))
             await pending
@@ -276,7 +285,17 @@ async function main(): Promise<void> {
     }
     const boot = first.status.daemonBootId
     const generation = first.client.generation
-    children.at(-1)!.kill()
+    const channelBudget = process.argv[2] === '--channel-budget'
+    let completedRequests = 0
+    if (channelBudget) {
+      await assert.rejects(async () => {
+        for (let i = 0; i < 4_100; i++) {
+          await first.client.request('agent/status', {})
+          completedRequests++
+        }
+      }, /reconnect required/)
+      assert(completedRequests > 4_000)
+    } else children.at(-1)!.kill()
     for (let i = 0; first.state === 'ready' && i < 100; i++) await delay(10)
     assert.equal(first.state, 'offline')
     unavailable = true
@@ -293,7 +312,7 @@ async function main(): Promise<void> {
     assert.equal(retries, 1)
     assert.equal(attaches, 2)
     first.release()
-    process.stdout.write(`${JSON.stringify({ passed: true, platform: process.platform, architecture: process.arch, relayDisconnect: true, retryAfterOutage: true, retainedLeaseRecovered: true, attaches, retries, modelCalls: 0 })}\n`)
+    process.stdout.write(`${JSON.stringify({ passed: true, platform: process.platform, architecture: process.arch, relayDisconnect: !channelBudget, channelBudget, completedRequests, retryAfterOutage: true, retainedLeaseRecovered: true, attaches, retries, modelCalls: 0 })}\n`)
   } finally {
     await manager.dispose()
     for (const child of children) child.kill()

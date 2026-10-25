@@ -100,6 +100,58 @@ async function waitForSent(
 }
 
 describe('AgentProtocolClient', () => {
+  it.each(['request', 'binary'] as const)('retires an exhausted transport before %s dispatch instead of reusing it forever', async kind => {
+    const transport = new FakeTransport()
+    const client = new AgentProtocolClient(transport as unknown as AgentAttachTransport)
+    const closed = vi.fn()
+    client.onClose(closed)
+    for (let i = 0; i < AGENT_PROTOCOL_LIMITS.maximumChannelsPerConnection * 64; i++) {
+      const binary = client.allocateBinaryChannel({ kind: 'blob' })
+      binary.close()
+    }
+    expect(closed).not.toHaveBeenCalled()
+    const before = transport.sent.length
+    expect(() => kind === 'request' ? client.request('agent/status', {}) : client.registerBinaryChannel({
+      channelId: 'next-binary', channelEpoch: '10000', kind: 'blob'
+    })).toThrow('reconnect required')
+    expect(closed).toHaveBeenCalledOnce()
+    expect(closed.mock.calls[0]![0]).toMatchObject({ code: 'closed' })
+    expect(transport.sent).toHaveLength(before)
+    expect(() => client.request('agent/status', {})).toThrow('reconnect required')
+    expect(closed).toHaveBeenCalledOnce()
+    client.dispose()
+  })
+
+  it('settles concurrent requests and binary readers when the channel budget is exhausted', async () => {
+    const transport = new FakeTransport()
+    const client = new AgentProtocolClient(transport as unknown as AgentAttachTransport)
+    for (let i = 0; i < AGENT_PROTOCOL_LIMITS.maximumChannelsPerConnection * 64 - 2; i++) {
+      client.allocateBinaryChannel({ kind: 'blob' }).close()
+    }
+    const peer = client.allocateBinaryChannel({ kind: 'blob' })
+    const read = peer.receive().catch(error => error)
+    const pending = client.request('agent/status', {}).catch(error => error)
+    const sent = transport.sent.length
+    expect(() => client.request('agent/status', {})).toThrow('reconnect required')
+    expect(await read).toMatchObject({ code: 'closed' })
+    expect(await pending).toMatchObject({ code: 'closed' })
+    expect(transport.sent).toHaveLength(sent)
+    client.dispose()
+  })
+
+  it('does not retire a healthy connection for temporary active-channel capacity', () => {
+    const transport = new FakeTransport()
+    const client = new AgentProtocolClient(transport as unknown as AgentAttachTransport)
+    const closed = vi.fn()
+    client.onClose(closed)
+    const channels = Array.from({ length: AGENT_PROTOCOL_LIMITS.maximumChannelsPerConnection }, () => client.allocateBinaryChannel({ kind: 'blob' }))
+    expect(() => client.allocateBinaryChannel({ kind: 'blob' })).toThrow('channel limit')
+    expect(closed).not.toHaveBeenCalled()
+    channels[0]!.close()
+    expect(() => client.allocateBinaryChannel({ kind: 'blob' })).not.toThrow()
+    client.dispose()
+  })
+
   it('strictly resolves a typed response only after matching channel close', async () => {
     const transport = new FakeTransport()
     const client = new AgentProtocolClient(
