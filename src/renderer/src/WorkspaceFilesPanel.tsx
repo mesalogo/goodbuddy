@@ -33,6 +33,7 @@ import { PageTabs, SegmentedControl } from './WorkspacePrimitives'
 import { WorkspaceActionDialog } from './WorkspaceActionDialog'
 import { WorkspaceGitTools } from './WorkspaceGitTools'
 import { officeStore } from './office-store'
+import { isOfficeFile } from '../../shared/office-contracts'
 import { useListWindow } from './use-list-window'
 import type { AppNotificationInput } from './notifications'
 import type {
@@ -713,7 +714,7 @@ export function WorkspaceFilesPanel({
       })}
       <button role="menuitem" type="button" onClick={() => { closeMenu(true); void copyPath(menu.entry.path) }}><Copy size={14} />{t('sidebar.workspace.copyPath')}</button>
       {onOpenEntry && <button role="menuitem" type="button" onClick={() => { closeMenu(true); openEntry(menu.entry) }}><ExternalLink size={14} />{t('management.defaultOpen')}</button>}
-      {projectId && menu.entry.type === 'file' && /\.docx$/i.test(menu.entry.name) && <button role="menuitem" type="button" onClick={() => {
+      {projectId && menu.entry.type === 'file' && isOfficeFile(menu.entry.name) && <button role="menuitem" type="button" onClick={() => {
         officeStore.requestOpen({ kind: 'workspace', projectId, path: menu.entry.path }, menu.entry.name); closeMenu(true)
       }}><FileText size={14} />在文档页签中编辑</button>}
       <div role="separator" />

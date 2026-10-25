@@ -6,6 +6,7 @@ export const officeOriginSchema = z.string().url().refine(value => {
     url.pathname === '/' && !url.search && !url.hash
 }, '请输入 ShareServer 的 HTTP(S) 地址，不含路径')
 export const officeDocumentSchema = z.object({
+  originalName: z.string().optional(), requiresSaveAs: z.boolean().optional(),
   id: z.string().regex(/^[a-f0-9]{32}$/), name: z.string(),
   revision: z.number().int().positive(), size: z.number().int().nonnegative(),
   digest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -13,6 +14,14 @@ export const officeDocumentSchema = z.object({
   error: z.string().nullable().optional(), updatedAt: z.number()
 })
 export type OfficeDocument = z.infer<typeof officeDocumentSchema>
+export const officeCapabilitiesSchema = z.object({
+  directFormats: z.array(z.string()).optional(), conversions: z.record(z.string(), z.string()).optional(),
+  enabled: z.boolean(), formats: z.array(z.string()), maxBytes: z.number().int().positive(),
+  versionedDownload: z.boolean().optional()
+})
+export type OfficeCapabilities = z.infer<typeof officeCapabilitiesSchema>
+export const officeInputExtensions = ['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt']
+export const isOfficeFile = (name: string): boolean => officeInputExtensions.includes(name.split('.').pop()!.toLowerCase())
 export const officeSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('workspace'), projectId: z.string().uuid(), path: z.string().min(1).max(4096) }).strict(),
   z.object({ kind: z.literal('attachment'), resourceId: z.string().uuid() }).strict()
@@ -28,6 +37,7 @@ export const officeViewportSchema = officeInstanceSchema.extend({
 }).strict()
 export type OfficeSession = { instanceId: string; document: OfficeDocument; savedToSource: boolean; readOnlySource?: boolean }
 export interface OfficeApi {
+  capabilities(input: { serverUrl: string }): Promise<OfficeCapabilities>
   open(input: z.infer<typeof officeOpenSchema>): Promise<OfficeSession | null>
   save(input: { instanceId: string; saveAs?: boolean }): Promise<OfficeSession | null>
   close(input: { instanceId: string }): Promise<boolean>

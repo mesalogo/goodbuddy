@@ -33,3 +33,10 @@
 
 按后续任务范围实现[技术设计](./technical-design.md)中的接入点，并以真实路径验收后更新
 支持状态。格式表中尚未接入的阅读器、会话文件预览卡片及 HTML 返回来源流程均属于目标规则。
+
+## 2026-10-25：Office 编辑分支接入
+
+会话文件链接打开的预览页已提供 DOCX 在线编辑操作，保留项目与路径，与工作区、附件共用
+`officeStore.requestOpen`。已有 ShareServer 连接时自动检查 Office 能力并上传；未配置或失败
+保留来源供重试。普通阅读不触发上传。规则见 [逻辑设计](./logic-design.md#在线编辑的服务条件)，
+验证证据与本地阅读器剩余边界见 [Office 进度](../office-document-editing/progress.md)。

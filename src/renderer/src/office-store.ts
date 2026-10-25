@@ -1,4 +1,5 @@
 import type { OfficeSession, OfficeSource } from '../../shared/office-contracts'
+import { shareServerConnection } from './shareserver-connection-store'
 
 type State = { session?: OfficeSession; source?: OfficeSource; name?: string; busy: boolean; error?: string; message?: string; selectedText?: string; reply?: string; aiPending?: boolean }
 const empty: State = { busy: false }
@@ -16,15 +17,24 @@ export const officeStore = {
     const instanceId = previous?.[0] ?? crypto.randomUUID()
     requested = { instanceId, name }
     update(instanceId, { source, name })
+    const serverUrl = shareServerConnection.getState().serverUrl
+    if (serverUrl && !previous?.[1].session && !previous?.[1].busy) void officeStore.open(instanceId, serverUrl)
   },
   get: (id: string): State => states.get(id) ?? empty,
   subscribe: (listener: () => void): (() => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
   async open(instanceId: string, serverUrl: string): Promise<OfficeSession | null> {
-    update(instanceId, { busy: true, error: undefined, message: '正在选择并上传文件…' })
+    if (officeStore.get(instanceId).busy) return null
+    if (officeStore.get(instanceId).session) return officeStore.get(instanceId).session!
+    update(instanceId, { busy: true, error: undefined, message: '正在检查 Office 能力并上传文件…' })
     try {
       if (!window.goodbuddy.office) throw new Error('请更新 GoodBuddy 后重试')
       const session = await window.goodbuddy.office.open({ instanceId, serverUrl, source: officeStore.get(instanceId).source })
       if (session?.instanceId === instanceId) update(instanceId, { session, message: '编辑后点击“保存回文件”；服务器保存与本地保存分别完成。' })
+      else if (session) {
+        requested = { instanceId: session.instanceId, name: session.document.name }
+        update(session.instanceId, { session })
+        update(instanceId, { message: '已切换到此文件的现有编辑页签。' })
+      }
       else update(instanceId, { message: undefined })
       return session
     } catch (error) { update(instanceId, { error: String(error), message: undefined }); return null }

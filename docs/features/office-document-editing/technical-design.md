@@ -4,7 +4,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 部分实施：本地 DOCX 工作栏链路；完整协同需求待完成 |
+| 状态 | 已接通三种现代格式与三种旧格式转换编辑；完整协同验收待完成 |
 | 版本 | 0.2 |
 | 日期 | 2026-10-25 |
 | 关联 PRD | [Office 协同编辑 PRD](./prd.md) |
@@ -100,8 +100,8 @@ React Web 独立构建，经 Nginx 同源访问统一后端，无单独 Python �
 开发测试须覆盖 IP 地址下的编辑、插件跨端口加载和保存，不把 Docker 名称或 localhost 当作远端主机。
 现有接口的唯一清单见
 [ShareServer 技术设计第 10.1 节](../../../../goodbuddy-shareserver/docs/features/share-server/technical-design.md#101-私有部署第一阶段待实现)。
-GB 适配 `/api/v1/office/documents`：上传原始 DOCX 字节而非 multipart，打开编辑页、请求保存并
-查询状态。`/config` 提供 enabled、maxBytes、publicUrl、`formats: ['docx']`、
+GB 适配 `/api/v1/office/documents`：上传原始文件字节而非 multipart，打开编辑页、请求保存并
+查询状态。`/config` 提供 enabled、maxBytes、publicUrl、formats、directFormats、conversions、
 `versionedDownload: true` 和原型标志；不声明 AI 能力。
 
 当前服务只适用于可信私有网络，没有组织认证；页面返回的是带签名编辑配置，未实现下述
@@ -177,12 +177,27 @@ type DocumentEditSessionSummary = {
 
 ## 6. 文件与保存
 
-### 当前本地 DOCX 实现
+### 当前 Office 文件实现
 
 `office-contracts.ts` 定义窄 IPC；`OfficeService` 管理选择文件、独立沙箱视图、保存与关闭。
 `office-file-worker.ts` 执行上传、摘要计算、版本下载、冲突检查及同目录暂存后 rename；Main
 不执行文档解析或哈希。`office-store.ts` 持有运行期面板状态，布局只保存页签 ID 和文件名；
 应用重启后需重新选择文件，尚无编辑来源恢复。公开服务器地址保存在 Renderer localStorage。
+
+`shareserver-connection-store.ts` 是各文件入口共享的连接状态，沿用既有
+`goodbuddy.office.serverUrl` 偏好键；设置和文档面板共用配置组件。不在应用启动时请求服务。
+连接检查通过窄 `office:capabilities` IPC 请求 `GET /api/v1/office/config`，校验
+`enabled / formats / maxBytes / versionedDownload`。连接到 ShareServer 不等于 Office 已启用，
+能力返回也不证明编辑引擎此时健康；实际编辑页加载错误仍由打开流程报告。
+Main 创建编辑会话前检查启用状态与版本下载能力，失败不读取远程文件或上传。
+Worker 上传前重新读取能力，按格式与上限校验文件。此检查复用于本地、附件和远程 Workspace 来源。
+
+`officeStore.requestOpen` 统一接收来源引用：已配置时自动打开，相同来源正在打开或已有编辑页签时复用。
+会话文件预览页的编辑动作保留项目与路径，复用工作区的请求分发；普通阅读不调用此动作。
+未配置和失败保留来源供重试。当前客户端允许 DOCX、XLSX、PPTX、DOC、XLS、PPT，仍须通过服务端能力检查。
+旧格式由 ShareServer 转换后返回现代格式文件名、`originalName` 与 `requiresSaveAs=true`。
+Main 将该来源标为不可直接回写，首次保存弹出另存为；Worker 拒绝与输出格式不一致的目标扩展名。
+成功另存后后续保存更新新文件，旧的本地或远程来源不再作为写回目标。AI 选区工具当前仅显示于 Word。
 
 保存期间隐藏原生视图防止继续输入，等待编辑器 ready 且 dirty=false，再发 forcesave，等待
 服务端轮次退出 saving，并下载该 revision。无新修改不要求 revision 增长。源文件摘要变化

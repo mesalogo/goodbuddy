@@ -120,7 +120,9 @@ with (root / 'electron.log').open('w') as log:
             app.get_by_role('button', name='打开工作栏应用', exact=True).click()
             app.get_by_text('文档', exact=True).last.click()
             app.get_by_role('textbox', name='ShareServer 地址').fill(args.web)
-            app.get_by_role('button', name='选择 DOCX 并编辑', exact=True).click()
+            app.get_by_role('button', name='连接并检查能力', exact=True).click()
+            app.get_by_role('status').filter(has_text='Office 已启用').wait_for()
+            app.get_by_role('button', name='选择 Office 文件并编辑', exact=True).click()
             editor = None
             for _ in range(120):
                 editor = next((page for context in browser.contexts for page in context.pages if '/office/editor?' in page.url), None)

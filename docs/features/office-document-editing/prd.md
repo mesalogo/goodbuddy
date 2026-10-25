@@ -31,10 +31,11 @@ XLSX 和 PPTX，也无法把当前选区交给 Agent 后在原位置应用修改
 - 不自行实现 Word、Excel 或 PowerPoint 的排版与渲染引擎。
 - 不把 ONLYOFFICE Document Server 打入 Desktop 安装包或由 Electron 启动。
 - 不把编辑能力描述为离线功能；未连接已配置的 ShareServer 时不可创建新编辑会话。
+- 在线编辑只在所连接 ShareServer 启用并支持对应 Office 格式时可用。地址配置一次供所有文件入口复用；默认阅读不要求服务器，不触发上传。
 - 不允许编辑器浏览任意本机目录，也不把本机绝对路径发送给 ShareServer。
 - 不把 Node/Python OOXML SDK 当作可视化编辑器；它们后续只用于受控批处理 Provider。
 - 首期不提供多人实时协作、文档分享链接、移动端编辑或跨组织编辑。
-- 首期不支持 DOC、XLS、PPT 直接编辑；旧格式转换仍属于文档处理能力。
+- DOC、XLS、PPT 由 ShareServer 转换为 DOCX、XLSX、PPTX 后编辑。转换结果另存为现代格式，保留原件；不承诺旧格式往返保存或宏保留。
 
 ## 4. 功能要求
 
@@ -153,6 +154,9 @@ DOCX 简单选区的单次撤销已有探针依据，其余场景仍须分别验
 | 文档 | `.docx` | `word` |
 | 表格 | `.xlsx` | `cell` |
 | 演示文稿 | `.pptx` | `slide` |
+| 旧文档 | `.doc` → `.docx` | 转换后 `word`，另存为 |
+| 旧表格 | `.xls` → `.xlsx` | 转换后 `cell`，另存为 |
+| 旧演示文稿 | `.ppt` → `.pptx` | 转换后 `slide`，另存为 |
 
 PDF 保持预览或文档处理用途，不进入首期 Office 编辑。宏格式、模板格式、受密码保护文件和包含
 活动内容的文件默认拒绝，后续必须单独完成格式、安全和保存兼容性设计。

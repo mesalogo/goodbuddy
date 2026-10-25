@@ -12,17 +12,24 @@ describe('Office file transfer', () => {
   let url: string
   let body: Buffer
   let document: OfficeDocument
+  let enabled: boolean
+  let formats: string[]
+  let uploads: number
   const hash = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
   beforeEach(async () => {
     const parent = resolve('temp/office-file-tests')
     await mkdir(parent, { recursive: true })
     root = await mkdtemp(join(parent, 'run-'))
     body = Buffer.from('saved document')
+    enabled = true
+    formats = ['docx']
+    uploads = 0
     document = { id: 'a'.repeat(32), name: 'file.docx', size: body.length, digest: hash(body), revision: 2, state: 'saved', updatedAt: 1 }
     server = createServer((request, response) => {
       if (request.url?.endsWith('/config')) {
-        response.end(JSON.stringify({ enabled: true, maxBytes: 1000, versionedDownload: true }))
+        response.end(JSON.stringify({ enabled, formats, maxBytes: 1000, versionedDownload: true }))
       } else if (request.method === 'POST') {
+        uploads++
         const chunks: Buffer[] = []
         request.on('data', chunk => chunks.push(chunk))
         request.on('end', () => {
@@ -57,11 +64,29 @@ describe('Office file transfer', () => {
     expect(await readFile(path, 'utf8')).toBe('external edit')
     expect(await readdir(root)).toEqual(['file.docx'])
   })
+  it('does not read or upload a source when Office is disabled', async () => {
+    enabled = false
+    await expect(runOfficeFileJob({ action: 'upload', path: join(root, 'missing.docx'), serverUrl: url })).rejects.toThrow('尚未启用 Office')
+    expect(uploads).toBe(0)
+  })
+  it('checks the advertised formats before reading or uploading', async () => {
+    formats = ['xlsx']
+    await expect(runOfficeFileJob({ action: 'upload', path: join(root, 'missing.docx'), serverUrl: url })).rejects.toThrow('不支持编辑')
+    expect(uploads).toBe(0)
+  })
   it('rejects a corrupt download before replacing a file', async () => {
     const path = join(root, 'file.docx')
     await writeFile(path, 'original')
     body = Buffer.from('wrong contents')
     await expect(runOfficeFileJob({ action: 'download', path, serverUrl: url, document })).rejects.toThrow('下载')
     expect(await readFile(path, 'utf8')).toBe('original')
+  })
+  it.each([['doc', 'docx'], ['xls', 'xlsx'], ['ppt', 'pptx']])('never writes converted %s contents back under the old extension', async (oldFormat, newFormat) => {
+    const path = join(root, `original.${oldFormat}`)
+    await writeFile(path, 'original legacy bytes')
+    await expect(runOfficeFileJob({ action: 'download', path, serverUrl: url,
+      document: { ...document, name: `original.${newFormat}`, originalName: `original.${oldFormat}`, requiresSaveAs: true } })).rejects.toThrow('扩展名必须')
+    expect(await readFile(path, 'utf8')).toBe('original legacy bytes')
+    expect(await readdir(root)).toEqual([`original.${oldFormat}`])
   })
 })

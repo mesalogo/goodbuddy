@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFile, writeFile, rename, unlink, stat, chmod } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { officeDocumentSchema, type OfficeDocument } from '../shared/office-contracts'
+import { readOfficeCapabilities, requireOfficeEditing } from './office-capabilities'
 
 export type OfficeFileJob =
   | { action: 'upload'; path: string; serverUrl: string }
@@ -17,8 +18,8 @@ async function checkedFetch(url: string, init?: RequestInit): Promise<Response> 
 export async function runOfficeFileJob(job: OfficeFileJob): Promise<{ document: OfficeDocument; digest: string }> {
   const base = `${job.serverUrl}/api/v1/office`
   if (job.action === 'upload') {
-    const config = await (await checkedFetch(`${base}/config`)).json() as { enabled: boolean; maxBytes: number; versionedDownload?: boolean }
-    if (!config.enabled || !config.versionedDownload) throw new Error('请启用并更新 ShareServer Office 服务（需要版本下载接口）')
+    const config = await readOfficeCapabilities(job.serverUrl)
+    requireOfficeEditing(config, basename(job.path))
     const info = await stat(job.path)
     if (!info.isFile() || info.size > config.maxBytes) throw new Error('文件类型或大小不符合服务器要求')
     const bytes = await readFile(job.path)
@@ -27,6 +28,9 @@ export async function runOfficeFileJob(job: OfficeFileJob): Promise<{ document: 
       method: 'POST', body: bytes, headers: { 'Content-Type': 'application/octet-stream' }
     })
     return { document: officeDocumentSchema.parse(await response.json()), digest: digest(bytes) }
+  }
+  if (job.path.split('.').pop()!.toLowerCase() !== job.document.name.split('.').pop()!.toLowerCase()) {
+    throw new Error('保存文件的扩展名必须与编辑文档格式一致；旧格式转换后请另存为现代格式')
   }
   const response = await checkedFetch(`${base}/documents/${job.document.id}/download?revision=${job.document.revision}`)
   const chunks: Uint8Array[] = []

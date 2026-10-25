@@ -4,13 +4,14 @@ import { resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import {
-  officeChannels, officeDocumentSchema, officeInstanceSchema, officeOpenSchema,
+  officeChannels, officeDocumentSchema, officeInstanceSchema, officeOpenSchema, officeInputExtensions,
   officeViewportSchema, officeApplySchema, type OfficeDocument, type OfficeSession, type OfficeSource
 } from '../shared/office-contracts'
 import type { OfficeFileJob } from './office-file-operations'
 import { assertTrustedSender } from './trusted-ipc-sender'
 import type { OfficeFileSource } from './office-workspace-source'
 import type { ConversationSnapshot } from '../shared/assistant-contracts'
+import { readOfficeCapabilities, requireOfficeEditing } from './office-capabilities'
 
 type Session = {
   instanceId: string; serverUrl: string; path: string; digest: string;
@@ -47,6 +48,7 @@ export class OfficeService {
   async captureSelection(instanceId: string): Promise<string> {
     const session = this.sessions.get(instanceId)
     if (!session || session.busy) throw new Error('请先打开文档并等待保存完成')
+    if (!/\.docx$/i.test(session.document.name)) throw new Error('当前 AI 选区编辑仅支持 Word 文档')
     const value = await session.view.webContents.executeJavaScript('window.goodbuddyOffice.selection()')
     session.selection = z.object({ text: z.string().min(1).max(32000), epoch: z.number().int().nonnegative() }).parse(value)
     session.conversation = undefined
@@ -103,12 +105,13 @@ export class OfficeService {
     this.opening.add(input.instanceId)
     let source: OfficeFileSource | undefined
     try {
+      requireOfficeEditing(await readOfficeCapabilities(input.serverUrl), input.source?.kind === 'workspace' ? input.source.path : undefined)
       if (input.source) {
         if (!this.resolveSource) throw new Error('文档来源服务未就绪')
         source = await this.resolveSource(input.source)
       } else {
         const selected = await dialog.showOpenDialog(this.window, {
-          title: '选择在线编辑的 DOCX', properties: ['openFile'], filters: [{ name: 'Word 文档', extensions: ['docx'] }]
+          title: '选择在线编辑的 Office 文件', properties: ['openFile'], filters: [{ name: 'Office 文档', extensions: officeInputExtensions }]
         })
         if (selected.canceled || !selected.filePaths[0]) return null
         source = { path: selected.filePaths[0] }
@@ -134,7 +137,7 @@ export class OfficeService {
       this.window.contentView.addChildView(view)
       view.setVisible(false)
       const session: Session = { ...result, instanceId: input.instanceId, serverUrl, path, view,
-        busy: false, savedToSource: false, visible: false, readOnlySource: source.readOnly, source, sourceIdentity }
+        busy: false, savedToSource: false, visible: false, readOnlySource: source.readOnly || result.document.requiresSaveAs, source, sourceIdentity }
       this.sessions.set(input.instanceId, session)
       try {
         await view.webContents.loadURL(`${serverUrl}/office/editor?document=${result.document.id}`)
@@ -171,7 +174,7 @@ export class OfficeService {
       let target = session.path
       if (saveAs || session.readOnlySource) {
         const selected = await dialog.showSaveDialog(this.window, { defaultPath: session.document.name,
-          filters: [{ name: 'Word 文档', extensions: ['docx'] }] })
+          filters: [{ name: 'Office 文档', extensions: [session.document.name.split('.').pop()!.toLowerCase()] }] })
         if (selected.canceled || !selected.filePath) return null
         target = selected.filePath
       }
@@ -252,6 +255,7 @@ export class OfficeService {
 
 export function registerOfficeIpc(window: BrowserWindow, service: OfficeService): () => void {
   const handlers: Record<string, (input: unknown) => unknown> = {
+    [officeChannels.capabilities]: input => readOfficeCapabilities(z.object({ serverUrl: z.string() }).strict().parse(input).serverUrl),
     [officeChannels.open]: input => service.open(officeOpenSchema.parse(input)),
     [officeChannels.save]: input => {
       const value = officeInstanceSchema.extend({ saveAs: z.boolean().optional() }).strict().parse(input)

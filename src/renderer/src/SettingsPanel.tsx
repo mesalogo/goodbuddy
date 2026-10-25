@@ -54,6 +54,7 @@ import { ModelDownloadSourceSettings } from './ModelDownloadSourceSettings'
 import type { ModelDownloadSource } from '../../shared/application-settings-contracts'
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
+import { ShareServerConnectionSettings } from './ShareServerConnectionSettings'
 import { DshMarketplaceSection } from './DshMarketplaceSection'
 import { displayErrorMessage } from './error-message'
 import {
@@ -2437,6 +2438,8 @@ function SettingsPanelView({
             </>
           )}
           {activeTab === 'platform-features' && (
+            <>
+            <ShareServerConnectionSettings />
             <PlatformFeaturesSettingsSection
               onDirtyChange={setPlatformFeaturesDirty}
               onConversationHtmlRenderingEnabledChange={
@@ -2451,6 +2454,7 @@ function SettingsPanelView({
               onNotify={onNotify}
               onShortcutSettingsChanged={onShortcutSettingsChanged}
             />
+            </>
           )}
           <div className="settings-tab-panel" hidden={activeTab !== 'runtime'} role="tabpanel"
             id={`settings-runtime-panel-${agentRuntimeType}`} aria-labelledby={`settings-runtime-tab-${agentRuntimeType}`} tabIndex={0}>

@@ -1,4 +1,5 @@
 import { officeStore } from './office-store'
+import { isOfficeFile } from '../../shared/office-contracts'
 import {
   ArrowLeft,
   ArrowRight,
@@ -2475,6 +2476,12 @@ function RightAssistantSidebarView({
                 <button className="secondary-button" type="button" onClick={() => {
                   void runAction(() => window.goodbuddy.clipboard.writeText(currentWorkspacePreview.path), t('sidebar.workspace.copyError'))
                 }}><Copy size={14} />{t('sidebar.workspace.copyPath')}</button>
+                {workspaceProjectId && isOfficeFile(currentWorkspacePreview.path) && (
+                  <button className="secondary-button" type="button" onClick={() => officeStore.requestOpen(
+                    { kind: 'workspace', projectId: workspaceProjectId, path: currentWorkspacePreview.path },
+                    currentWorkspacePreview.path.split(/[\\/]/).pop() ?? currentWorkspacePreview.path
+                  )}>在线编辑（ShareServer）</button>
+                )}
                 {currentWorkspacePreview.state === 'ready' && (
                   <button className="secondary-button" disabled={workspacePreviewRefreshing || workspacePreviewLoadingMore} type="button" onClick={() => openWorkspaceFile(currentWorkspacePreview.path, true)}>
                     <RefreshCw size={14} />{t(workspacePreviewRefreshing ? 'sidebar.workspace.refreshing' : 'sidebar.workspace.refresh')}

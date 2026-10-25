@@ -1,5 +1,51 @@
 # Office 协同编辑实施进度
 
+## 2026-10-25：三类 Office 与旧格式转换
+
+工作区、会话文件预览、附件菜单和本地文件选择均使用同一六格式候选列表：DOCX、XLSX、PPTX、DOC、XLS、PPT。
+实际打开仍检查所连接 ShareServer 的能力。旧格式由服务端转换，GB 根据 `requiresSaveAs` 选择另存为，
+Worker 拒绝将现代格式写入旧扩展名。另存成功后后续保存更新新文件；原来的本地或 Agent 文件保持不变。
+Word AI 选区桥保持可用，表格／幻灯片暂不显示此工具。
+
+实测与边界：
+
+- 152 项 GB 定向测试通过，覆盖工作区、附件、会话预览六格式入口、传输、旧扩展名拒绝、工作栏及真实 Host 协议。
+  TypeScript 检查和修改文件 lint 通过；全量测试／lint 的上一节限制仍未消除。
+- ShareServer 的真实六格式上传、转换、浏览器键盘编辑、回调保存和下载内容检查通过，证据由
+  [服务端验证记录](../../../../goodbuddy-shareserver/docs/office-10-validation.md)维护。
+- `verify-office-desktop.py --legacy` 用真实 DOC，经产品 OfficeService／Worker／Electron／Docs 转换编辑，
+  保存到 DOCX 后验证原 DOC 字节完全一致。系统文件对话框由夹具返回隔离路径，未宣称完整 App／三平台验收。
+- 真实测试使用独立 API/Web 的主机 IP 地址和现有 Docs 10.0，不重启常驻 ShareServer。临时数据与进程已清理。
+  本轮没有切换常驻容器、发布安装包或调用模型。
+
+尚未完成：PDF.js 产品阅读器、开放文档格式、复杂版式／公式保真度、Excel/PPT AI 操作、远程另存为界面及三平台完整验收。
+以下章节保留此前阶段的历史范围。
+
+## 2026-10-25：共享连接、能力检查与文件入口
+
+设置的“平台功能”新增 ShareServer 连接配置，与文档面板共用地址及能力状态；沿用原偏好键，
+不预填 localhost。连接通过 Main IPC 查询 Office 配置，展示启用状态、格式及上限。
+Main 打开前检查能力，未启用时不解析／读取远程来源；Worker 上传前校验格式和上限。
+本轮复用既有 ShareServer API，没有新增服务或 Python 运行依赖。
+
+工作区／附件的文件请求已改为复用连接自动打开；正在打开和已打开的相同引用不重复上传。
+会话生成文件链接的预览页新增显式 DOCX 在线编辑操作，保留项目与路径进入相同分发。
+无连接与失败时保留来源供配置／重试。默认阅读没有接入上传；本地 Office 阅读器仍不属于本轮交付。
+
+验证：
+
+- Office 传输、来源适配、文件分发、侧栏及真实 Agent 子进程协议测试共 83 项通过；设置测试 119 项通过。
+- 三套 TypeScript 检查和本轮修改文件的 ESLint 检查通过。
+- Linux 真实 Electron 对 `http://192.168.0.23:8088` 的生产组件测试通过：连接检查、本地选择上传、
+  文件引用自动上传、插件读取／替换／撤销、保存回文件、外部修改冲突保护及另存为。
+  `scripts/verify-office-desktop.py --file-entry` 可复现引用分发；测试夹具提供来源路径和系统对话框结果，
+  不等同于完整 App 中所有文件来源或三平台验收。测试使用隔离本地文件，服务器保留测试上传副本。
+- 全量 `npm test -- --maxWorkers=2` 在 60 秒执行窗口超时，期间数据库生命周期用例报告失败；
+  该用例单独重跑通过，未定位全量运行时的原因，不能声明全量通过。
+- 全量 lint 仍被既有 `tests/office-host.integration.test.ts:51` 缺少 cause 的检查错误阻挡。
+
+本轮没有模型调用。XLSX／PPTX、完整本地阅读器及完整应用跨平台验收仍待完成。
+
 ## 2026-10-25：统一 ShareServer 后端后的 IP 内网复测
 
 ShareServer 的 Office 已迁入统一 Node/Hono 后端，React 前端独立部署；不再依赖 FastAPI。

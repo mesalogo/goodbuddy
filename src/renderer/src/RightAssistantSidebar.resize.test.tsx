@@ -12,6 +12,7 @@ import type { TerminalSnapshot } from '../../shared/terminal-contracts'
 import { workbarLayoutPreferencesSchema } from '../../shared/workbar-contracts'
 import { DEFAULT_WORKBAR_INSTANCES } from './WorkbarShell'
 import i18n from './i18n'
+import { officeStore } from './office-store'
 import type {
   AssistantProject,
   AssistantTask,
@@ -1184,6 +1185,24 @@ describe('RightAssistantSidebar resizing', () => {
     fireEvent.click(screen.getByRole('button', { name: '源码' }))
     expect(screen.getByText('# Original heading')).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Original heading' })).not.toBeInTheDocument()
+  })
+
+  it.each(['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt'])('routes a conversation %s file preview to Office only on explicit edit', async extension => {
+    const request = vi.spyOn(officeStore, 'requestOpen').mockImplementation(() => {})
+    try {
+      renderSidebar({
+        tab: 'workspace', workspaceProjectId: 'project-1',
+        workspacePreviewOpenRequest: { id: 1, path: `results/report.${extension}` },
+        onLoadWorkspaceFile: vi.fn().mockResolvedValue({ path: `results/report.${extension}`, name: `report.${extension}`,
+          content: 'Document information', mimeType: 'application/octet-stream', size: 100,
+          offsetBytes: 0, nextOffsetBytes: 100, truncated: false })
+      })
+      const edit = await screen.findByRole('button', { name: '在线编辑（ShareServer）' })
+      expect(request).not.toHaveBeenCalled()
+      fireEvent.click(edit)
+      expect(request).toHaveBeenCalledExactlyOnceWith(
+        { kind: 'workspace', projectId: 'project-1', path: `results/report.${extension}` }, `report.${extension}`)
+    } finally { request.mockRestore() }
   })
 
   it('discards an unfinished file preview when switching projects', async () => {

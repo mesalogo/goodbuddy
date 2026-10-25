@@ -199,7 +199,7 @@ export const WORKBAR_APP_DEFINITIONS = [
   },
   {
     id: 'document', visibleAcrossContextSwitches: true, label: '文档', icon: 'document',
-    description: '打开 DOCX 在线编辑并保存回源文件。', instancePolicy: 'multiple',
+    description: '通过 ShareServer 编辑 Office 文件；旧格式转换后另存为。', instancePolicy: 'multiple',
     defaultContext: 'application', defaultOpen: false, required: false,
     closable: true, reorderable: true, availability: { state: 'available' }
   }

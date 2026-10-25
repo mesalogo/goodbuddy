@@ -15,7 +15,7 @@ export async function prepareOfficeWorkspaceSource(workspace: WorkspaceAccess, p
   let directory: string | undefined
   try {
     const metadata = await workspace.stat({ path })
-    if (metadata.type !== 'file' || metadata.size > maximumBytes) throw new Error('请选择不超过 20 MiB 的 DOCX')
+    if (metadata.type !== 'file' || metadata.size > maximumBytes) throw new Error('请选择不超过 20 MiB 的 Office 文件')
     await mkdir(stagingRoot, { recursive: true })
     directory = await mkdtemp(join(stagingRoot, 'document-'))
     const localPath = join(directory, basename(path))
@@ -32,7 +32,7 @@ export async function prepareOfficeWorkspaceSource(workspace: WorkspaceAccess, p
     return {
       path: localPath,
       async commit(savedPath, expectedDigest, digest) {
-        const staged = posix.join(posix.dirname(path), `.goodbuddy-office-${randomUUID()}.docx`)
+        const staged = posix.join(posix.dirname(path), `.goodbuddy-office-${randomUUID()}${posix.extname(path)}`)
         let created = false
         try {
           await workspace.manage({ kind: 'createFile', path: staged })
