@@ -659,11 +659,9 @@ type RemoteBatchEvent = Exclude<
 >
 
 /**
- * Remote events are committed in one transaction per remote semantic
- * checkpoint. The owned-prompt poller yields a checkpoint after each transcript
- * entry and may acknowledge the page as soon as it is resumed after one, so a
- * checkpoint is the latest point at which buffered events can still be
- * committed before the Agent ACK.
+ * Every transcript entry retains its checkpoint and provenance. Intermediate
+ * checkpoints may share a batch; the final checkpoint commits before the
+ * owned-prompt poller resumes and acknowledges the page.
  */
 function remoteTaskEventBatchInputs(
   taskId: string,
@@ -1754,7 +1752,7 @@ export function registerIpcHandlers(
     lease.detachOnApplicationExit = true
     lease.recoveredMessageId = task.currentAssistantMessageId
     let sawTerminal = false
-    // Replayed transcript entries commit in one transaction per checkpoint.
+    // Replayed transcript entries share a batch until the page's ACK barrier.
     const remoteEventBatcher = new RemoteEventBatcher<RemoteBatchEvent>({
       onError: (error) => controller.abort(error),
       persist: async (entries) =>
@@ -1899,23 +1897,25 @@ export function registerIpcHandlers(
             }
           }
         }
-        await remoteEventBatcher.add(provenance, event)
+        await remoteEventBatcher.add(provenance, event, committed => {
+          if (committed.type === 'remote-semantic-checkpoint') {
+            if (!recoveryReady) publishProgress({
+              projectId: task.projectId,
+              requestId: recoveryRequestId,
+              stage: 'cursor',
+              current: provenance.semanticSequence
+            })
+            publishConversationChange()
+          }
+        })
         if (
-          event.type === 'remote-semantic-checkpoint' ||
+          (event.type === 'remote-semantic-checkpoint' &&
+            !(rawEvent.type === 'remote-semantic-checkpoint' && rawEvent.deferCommit)) ||
           event.type === 'done' ||
           event.type === 'error'
         ) {
           // Commit before the Agent ACK (checkpoint) or terminal handling.
           await remoteEventBatcher.flush()
-        }
-        if (event.type === 'remote-semantic-checkpoint') {
-          if (!recoveryReady) publishProgress({
-            projectId: task.projectId,
-            requestId: recoveryRequestId,
-            stage: 'cursor',
-            current: provenance.semanticSequence
-          })
-          publishConversationChange()
         }
         if (event.type === 'done' || event.type === 'error') {
           sawTerminal = true
@@ -2381,7 +2381,7 @@ export function registerIpcHandlers(
     const resultAttachments: ChannelMediaAttachment[] = []
     const artifactIds: string[] = []
     const eventBuffer = createPersistedEventBuffer(taskId, controller)
-    // Remote semantic events commit in one transaction per checkpoint (see
+    // Remote semantic events commit together at the page checkpoint (see
     // remoteTaskEventBatchInputs) instead of one transaction per event.
     const remoteEventBatcher = new RemoteEventBatcher<RemoteBatchEvent>({
       onError: (error) => controller.abort(error),
@@ -2500,12 +2500,12 @@ export function registerIpcHandlers(
           await remoteEventBatcher.flush()
         }
         if (agentEvent.type === 'remote-semantic-checkpoint') {
-          // The Agent may acknowledge this entry once the generator resumes.
+          // Only the final checkpoint allows the producer to acknowledge the page.
           await remoteEventBatcher.add(provenance!, {
             requestId: agentEvent.requestId,
             type: agentEvent.type
           })
-          await remoteEventBatcher.flush()
+          if (!agentEvent.deferCommit) await remoteEventBatcher.flush()
           continue
         }
         if (agentEvent.type === 'model-usage') {
@@ -4060,7 +4060,7 @@ export function registerIpcHandlers(
         }
       }
       // Remote semantic events are committed in batches. A batch is closed
-      // (one SQLite transaction) at the next remote semantic checkpoint, before
+      // (one SQLite transaction) at the page's final semantic checkpoint, before
       // any non-batched event, at the size cap, or by a short safety timer.
       let remoteEventBatchClosed = false
       const remoteEventBatcher = new RemoteEventBatcher<RemoteBatchEvent>({
@@ -4127,16 +4127,16 @@ export function registerIpcHandlers(
           await flushRemoteEvents()
         }
       }
-      // The Agent may acknowledge the transcript entry once the generator is
-      // resumed after its checkpoint, so the checkpoint always commits the
-      // whole pending batch together with itself.
+      // Preserve every checkpoint, but only the page's final checkpoint must
+      // commit before resuming the generator and allowing the Agent ACK.
       const persistRemoteCheckpoint = async (
         provenance: RemoteSemanticEventProvenance,
         requestId: string,
-        type: 'remote-semantic-checkpoint'
+        type: 'remote-semantic-checkpoint',
+        deferCommit = false
       ): Promise<void> => {
         await remoteEventBatcher.add(provenance, { requestId, type })
-        await flushRemoteEvents()
+        if (!deferCommit) await flushRemoteEvents()
       }
       activeEventBuffers.set(request.requestId, eventBuffer)
       const toolStates = new Map<
@@ -4380,7 +4380,8 @@ export function registerIpcHandlers(
             await persistRemoteCheckpoint(
               agentEvent.remoteProvenance,
               agentEvent.requestId,
-              agentEvent.type
+              agentEvent.type,
+              agentEvent.deferCommit
             )
             continue
           }

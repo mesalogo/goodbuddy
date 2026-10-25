@@ -6161,6 +6161,7 @@ export class AssistantDatabase {
       }
       const inserted: boolean[] = []
       let message: ConversationMessage | undefined
+      let storedMessage: { content: string; state: ConversationMessage['state']; metadata_json: string } | undefined
       let lastReduced: ConversationMessage | undefined
       let conversationState:
         | {
@@ -6196,6 +6197,7 @@ export class AssistantDatabase {
           throw new Error('远程事件的助理消息不存在或不受任务管理')
         }
         const metadata = JSON.parse(row.metadata_json) as MessageMetadata
+        storedMessage = row
         message = conversationMessageSchema.parse(
           storedRemoteAssistantMessage(
             row.id,
@@ -6306,22 +6308,31 @@ export class AssistantDatabase {
         }
       }
       if (lastReduced) {
-        const messageUpdate = database
-          .prepare(
-            `UPDATE messages
-             SET content = ?, state = ?, metadata_json = ?
-             WHERE id = ? AND conversation_id = ? AND request_id = ?`
-          )
-          .run(
-            lastReduced.content,
-            lastReduced.state,
-            serializeConversationMessageMetadata(lastReduced),
-            assistantMessageId,
-            conversationId,
-            taskId
-          )
-        if (messageUpdate.changes !== 1) {
-          throw new Error('远程事件的助理消息写入失败')
+        const metadataJson = serializeConversationMessageMetadata(lastReduced)
+        // Events and checkpoints still commit even when their message projection
+        // is unchanged. Compare stored bytes so normalization is not skipped.
+        if (
+          lastReduced.content !== storedMessage!.content ||
+          lastReduced.state !== storedMessage!.state ||
+          metadataJson !== storedMessage!.metadata_json
+        ) {
+          const messageUpdate = database
+            .prepare(
+              `UPDATE messages
+               SET content = ?, state = ?, metadata_json = ?
+               WHERE id = ? AND conversation_id = ? AND request_id = ?`
+            )
+            .run(
+              lastReduced.content,
+              lastReduced.state,
+              metadataJson,
+              assistantMessageId,
+              conversationId,
+              taskId
+            )
+          if (messageUpdate.changes !== 1) {
+            throw new Error('远程事件的助理消息写入失败')
+          }
         }
       }
       if (conversationState) {
