@@ -1,15 +1,16 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { copyFile, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
 
 it('scrolls real chat messages behind frosted glass while preserving controls, anchors and other routes', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-frosted-glass-'))
+  const tempRoot = resolve('temp')
+  await mkdir(tempRoot, { recursive: true })
+  const directory = await mkdtemp(join(tempRoot, 'goodbuddy-frosted-glass-'))
   const server = await createServer({
     configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
     plugins: [react(), { name: 'frosted-glass', configureServer(server) {

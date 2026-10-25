@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { ChatHistoryPane } from '../../src/renderer/src/ChatHistoryPane'
 import type { Conversation } from '../../src/renderer/src/chat-conversation'
 import { RuntimeChecklistStrip } from '../../src/renderer/src/RuntimeChecklistStrip'
+import { ConversationTaskStrip } from '../../src/renderer/src/ConversationTaskStrip'
 import { PageShell } from '../../src/renderer/src/WorkspacePrimitives'
 import { UiLocaleProvider } from '../../src/renderer/src/i18n/UiLocaleProvider'
 import '../../src/renderer/src/styles.css'
@@ -47,7 +48,13 @@ function Fixture(): React.JSX.Element {
             onRespondQuestion={complete} onRetry={noop} onScrollSnapshotChange={noop}
             onSetInput={noop} quickActions={[]} visibleMessageCount={counts[conversation.id]}
             onVisibleMessageCountChange={(id, count) => setCounts(current => ({ ...current, [id]: count }))}
-            taskStrip={context ? <div className="conversation-context-strips"><RuntimeChecklistStrip messages={[{
+            taskStrip={context ? <div className="conversation-context-strips">
+              <ConversationTaskStrip locale="en-US" onRemoveSchedule={complete} onRunSchedule={complete}
+                onSelectTask={noop} onSetScheduleEnabled={complete} schedules={[]}
+                tasks={[{ id: 'task', conversationId: conversation.id, title: 'Scheduled task',
+                  instructions: 'Summarize status', origin: 'schedule', status: 'idle',
+                  createdAt: '2026-08-19T00:00:00.000Z' }]} />
+              <RuntimeChecklistStrip messages={[{
               id: 'glass', role: 'assistant', content: '', createdAt: 1, state: 'streaming',
               runtimeChecklist: { source: 'opencode', items: [
                 { content: 'Inspect', status: 'completed' },

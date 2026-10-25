@@ -48,7 +48,7 @@ app.whenReady().then(async () => {
         if (shell.contains(panel) || !panel.closest('.floating-portal').matches(':popover-open'))
           throw new Error('Checklist must render outside app-shell in the top layer');
         const selectors = ['.app-shell', '.app-frame', '.topbar', '.workspace',
-          '.runtime-checklist', '.runtime-checklist__content', '[data-ordinary-menu]',
+          '.chat-history-context', '.conversation-task-strip', '.runtime-checklist', '.runtime-checklist__content', '[data-ordinary-menu]',
           '.topbar button', '.topbar input', '.topbar select', '.topbar__actions', '.window-controls', '.window-control'];
         return Object.fromEntries(selectors.map(selector => {
           const e = document.querySelector(selector), s = getComputedStyle(e), r = e.getBoundingClientRect();
@@ -74,7 +74,13 @@ app.whenReady().then(async () => {
         assert.equal(topbar.blur, 'blur(18px)', label)
         assert.equal(result['.app-frame'].image, 'none', label)
         assert.equal(result['.workspace'].layout[1], off['.workspace'].layout[1] - 58, `${label} chat extends behind topbar`)
-        assert.deepEqual(result['.runtime-checklist'], off['.runtime-checklist'], `${label} solid strip unchanged`)
+        assert.equal(result['.chat-history-context'].background, topbar.background, `${label} shared header surface`)
+        assert.equal(result['.chat-history-context'].blur, 'blur(18px)', `${label} context blur`)
+        for (const selector of ['.conversation-task-strip', '.runtime-checklist']) {
+          assert.equal(result[selector].background, 'rgba(0, 0, 0, 0)', `${label} ${selector} reveals shared glass`)
+          assert.equal(result[selector].blur, 'none', `${label} no stacked blur`)
+          assert.equal(result[selector].opacity, '1', `${label} text stays opaque`)
+        }
         assert.deepEqual(result['[data-ordinary-menu]'], off['[data-ordinary-menu]'], `${label} other menus unchanged`)
         const panel = result['.runtime-checklist__content']
         assert.equal(panel.background, theme === 'light' ? 'rgba(255, 255, 255, 0.75)' : 'rgba(7, 16, 31, 0.75)', label)
@@ -150,7 +156,7 @@ app.whenReady().then(async () => {
           composer:rect('.composer-wrap'), workbar:rect('[data-workbar]'), padding:getComputedStyle(document.querySelector('.chat')).paddingTop };
       })()`)
       assert.ok(geometry.first.top >= geometry.strip.bottom, 'initial message clears both headers')
-      assert.equal(geometry.strip.top, 58, 'context strip stays below topbar')
+      assert.equal(geometry.strip.top, 104, 'checklist stays below topbar and task strip')
       assert.equal(geometry.workbar.top, 58, 'workbar stays in original row')
       assert.equal(geometry.viewport.top, enabled ? 0 : geometry.strip.bottom, 'actual viewport extension')
       assert.equal(geometry.padding, '0px', 'inset belongs to scrolling content')
