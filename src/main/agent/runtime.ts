@@ -160,6 +160,8 @@ export type AgentExecutionRequest = AgentRequest & {
   remoteSemanticAfterSequence?: string
   /** Recovery may attach an accepted Agent prompt but must never replay it. */
   remoteRecoveryOnly?: boolean
+  /** Main-only notification after transcript catch-up/ACK and question restoration. */
+  onRemoteRecoveryReady?: () => void
   /** Main-only durable tool state used to merge partial recovery updates. */
   remoteRecoveredTools?: readonly RemoteRecoveredTool[]
   /** Derived from committed task events, including text before disconnect. */

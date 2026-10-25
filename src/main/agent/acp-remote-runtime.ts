@@ -2678,6 +2678,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
 
       let afterSequence = request.remoteSemanticAfterSequence ?? '0'
       let transcriptPollDelayMs = 100
+      let recoveryReady = false
       const acknowledgeThrough = async (
         acknowledgedSequence: string
       ): Promise<void> => {
@@ -2884,6 +2885,11 @@ export class AcpRemoteRuntime implements AgentRuntime {
           page.state === 'outcome-unknown'
         ) {
           throw new Error('远端 Agent 请求缺少终态语义记录')
+        }
+        if (!recoveryReady && request.remoteRecoveryOnly) {
+          signal.throwIfAborted()
+          recoveryReady = true
+          request.onRemoteRecoveryReady?.()
         }
         await delayOwnedTranscriptPoll(
           signal,

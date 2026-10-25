@@ -22,6 +22,9 @@ import { AGENT_PROTOCOL_VERSION } from '../src/shared/agent-protocol'
 import { ControllerStateStore, JsonControllerStateFile } from '../src/main/remote-agent/controller-state-store'
 import { RemoteAgentConnectionManager } from '../src/main/remote-agent/remote-agent-connection-manager'
 import { recoverRemoteTaskWithRetry } from '../src/main/remote-agent/remote-task-recovery'
+import { AcpRemoteRuntime, RemoteChannelClosedError } from '../src/main/agent/acp-remote-runtime'
+import { MemoryRuntimeSessionBindingStore } from '../src/main/agent/runtime-session-binding-store'
+import { createProtocolRemoteRuntimeChannel } from '../src/main/remote-agent/protocol-remote-runtime-channel'
 import { verifyAgentInstallationId } from '../src/main/ssh/ssh-agent-command'
 import type { SshConnectionLease, SshConnectionPoolTarget } from '../src/main/ssh/ssh-connection-pool'
 
@@ -35,7 +38,8 @@ async function main(): Promise<void> {
   const peerIdentityProvider = await createLinuxPeerIdentityProvider({ loadKoffi: async () => createRequire(process.argv[1]!)('koffi') })
   const root = await mkdtemp('/root/tmp/goodbuddy-recovery-validation/run-')
   const runtimeCrash = process.argv[2] === '--runtime-crash'
-  const retirement = process.argv[2] === '--retirement' || runtimeCrash
+  const catchUp = process.argv[2] === '--catch-up'
+  const retirement = process.argv[2] === '--retirement' || runtimeCrash || catchUp
   const directRetirement = process.argv[2] === '--direct-retirement'
   const directDisconnect = process.argv[2] === '--direct-disconnect'
   const directShutdown = process.argv[2] === '--direct-shutdown'
@@ -152,6 +156,67 @@ async function main(): Promise<void> {
         const registered = new RuntimeBundleRegistry({ runtimeRoot: runtimeRoot! }).resolve(runtime.runtimeId, runtime.bundleDigest, 'x64')
         const request = <T>(method: string, params: unknown) => first.client.request(method as never, params) as Promise<T>
         const workspace = await request<{ handle: { workspaceIdentity: string } }>('workspace/validate', { remoteRootPath: root, requestedAccess: 'read-write', requiredCapabilities: [] })
+        if (catchUp) {
+          let starts = 0
+          let ready = 0
+          let terminal = false
+          const instance = new AcpRemoteRuntime({
+            runtimeId: 'opencode', label: 'Recovery probe', workspacePath: root,
+            bindingStore: new MemoryRuntimeSessionBindingStore(), assertHostCurrent: () => {},
+            operationTimeoutMs: 30_000,
+            identity: {
+              controllerId: await controllerState.getControllerId(), controllerGeneration: first.client.generation,
+              hostId: 'probe-host', hostRevision: 1, hostKeyGeneration: 1,
+              workspaceIdentity: workspace.handle.workspaceIdentity, agentInstallationId: installation.installationId,
+              daemonBootIdAtOpen: first.status.daemonBootId, runtimeBundleDigest: runtime.bundleDigest,
+              runtimeAdapterDigest: registered.entry.runtimeAdapterDigest
+            },
+            modelProfile: { profileId: 'local-probe', modelProfileDigest: `sha256:${'b'.repeat(64)}`,
+              provider: 'openai', baseUrl: `http://127.0.0.1:${address.port}/v1`, model: 'probe-model',
+              protocol: 'openai-chat-completions', authentication: 'none', capabilities: { imageInput: false },
+              limits: { maximumOutputTokens: 16, requestTimeoutMilliseconds: 60_000 } },
+            channelFactory: async bindingId => {
+              const channel = await createProtocolRemoteRuntimeChannel({ connection: first, releaseConnectionOnClose: false,
+                openIdentity: { bindingId, runtimeId: runtime.runtimeId, runtimeBundleDigest: runtime.bundleDigest,
+                  workspaceIdentity: workspace.handle.workspaceIdentity } })
+              const start = channel.startOwnedPrompt.bind(channel)
+              channel.startOwnedPrompt = async input => { starts++; return start(input) }
+              const page = channel.pageOwnedPromptTranscript.bind(channel)
+              let interrupt = true
+              channel.pageOwnedPromptTranscript = async input => {
+                if (interrupt) { interrupt = false; throw new RemoteChannelClosedError('probe transcript interruption') }
+                return page(input)
+              }
+              return channel
+            }
+          })
+          const prompt = { requestId: randomUUID(), conversationId: randomUUID(), prompt: 'Reply OK.' }
+          const consume = async (recovering: boolean, signal: AbortSignal) => {
+            for await (const event of instance.run({ ...prompt, remoteRecoveryOnly: recovering,
+              onRemoteRecoveryReady: () => { ready++; assert.equal(terminal, false) }
+            }, signal)) if (event.type === 'done' || event.type === 'error') terminal = true
+          }
+          const controller = new AbortController()
+          let pending: Promise<unknown> | undefined
+          try {
+            await assert.rejects(consume(false, AbortSignal.timeout(30_000)), RemoteChannelClosedError)
+            pending = consume(true, controller.signal).catch(error => error)
+            for (let i = 0; !ready && i < 200; i++) await delay(50)
+            assert.equal(ready, 1, 'Catch-up must finish while the real Runtime remains active')
+            assert.equal(terminal, false)
+            assert.equal(starts, 1, 'Recovery must not resubmit the prompt')
+            await delay(500)
+            assert.equal(ready, 1)
+            assert.equal(terminal, false)
+            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, externalModelCalls: 0 })}\n`)
+          } finally {
+            controller.abort(new Error('probe complete'))
+            await pending
+            await instance.dispose()
+          }
+          first.release()
+          return
+        }
         const channel = await request<{ channelEpoch: string }>('runtime/openAcpChannel', { bindingId: 'retirement-binding', runtimeId: runtime.runtimeId, runtimeBundleDigest: runtime.bundleDigest, workspaceIdentity: workspace.handle.workspaceIdentity })
         const controllerId = await controllerState.getControllerId()
         await request('runtime/preparePrompt', {

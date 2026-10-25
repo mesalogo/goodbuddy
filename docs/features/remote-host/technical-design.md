@@ -551,6 +551,19 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   提示；新 `requestId` 的恢复可以再次展示。进行中状态和失败提示持续保留；重试操作仅放在
   展开的项目列表对应项目旁，收起时只显示状态，不在新建项目按钮旁增加恢复按钮。
   隐藏仅作用于展示层，`App` 保留完成业务状态，继续用于发送、队列恢复和事件顺序判断。
+- Recovery completion means that the accepted prompt has been reattached, the
+  transcript page reports `hasMore: false`, its events have been committed and
+  acknowledged, and current pending questions have been restored. It does not
+  mean the prompt has finished. Empty pages can establish this live state too;
+  incomplete pages or a failed ACK cannot. The Main-only readiness callback uses
+  the existing protocol and does not add a stored or wire-level state.
+  Main continues consuming the original task after clearing recovery progress.
+  Project progress aggregates tasks: failures remain visible, catching-up peers
+  keep progress active, and live peers do not publish new cursor progress. Failed
+  tasks can be retried while live peers remain attached. A later disconnect starts
+  a new project recovery request ID through the network stage so Renderer accepts
+  it after the previous completion. Task controllers still cover live consumption
+  and backoff; the project admission promise only covers scheduling.
 - Transient recovery failures now retry the accepted task after 1, 2, 5, 10 and
   30 seconds (five retries after the first attempt). Each attempt reloads the
   recoverable task and its committed semantic cursor. Only connection, transport

@@ -8359,6 +8359,78 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   })
 
+  it.each(['catch-up', 'failure', 'disconnect'] as const)('settles recovery independently of live peers: %s', async mode => {
+    const projectId = '00000000-0000-4000-8000-000000000781'
+    const ids = ['00000000-0000-4000-8000-000000000782', '00000000-0000-4000-8000-000000000783']
+    const ready = new Map<string, () => void>()
+    const release = new Map<string, () => void>()
+    const attempts = new Map<string, number>()
+    const recoveredRuntime = {
+      runtimeId: 'opencode', capability: 'chat', supportsToolExecution: true,
+      async *run(request: { requestId: string; onRemoteRecoveryReady?: () => void }) {
+        const id = request.requestId
+        const attempt = (attempts.get(id) ?? 0) + 1
+        attempts.set(id, attempt)
+        ready.set(id, request.onRemoteRecoveryReady!)
+        if (mode === 'failure' && id === ids[1] && attempt === 1) throw new Error('peer recovery failed')
+        await new Promise<void>(resolve => release.set(id, resolve))
+        if (mode === 'disconnect' && id === ids[1] && attempt === 1) throw new RemoteChannelClosedError('读取 Agent 语义记录')
+        yield { requestId: id, type: 'remote-semantic-checkpoint', remoteProvenance: {
+          source: 'remote-semantic-transcript', bindingId: id, operationId: id, semanticSequence: '1', eventIndex: 0
+        } } as const
+        yield { requestId: id, type: 'done', sessionId: 'recovered', remoteProvenance: {
+          source: 'remote-semantic-transcript', bindingId: id, operationId: id, semanticSequence: '2', eventIndex: 0
+        } } as const
+      }
+    }
+    const { harness } = createManagedSshHarness(recoveredRuntime)
+    harness.assistantDatabase.getConversation.mockReturnValue({ id: ids[0], projectId, runtimeSelection: { provider: 'opencode' }, messages: [] })
+    harness.assistantDatabase.getHighestCommittedRemoteTaskEventSequenceForTask.mockReturnValue('0')
+    harness.assistantDatabase.listRecoverableRemoteTasks.mockReturnValue(ids.map(taskId => ({
+      taskId, projectId, conversationId: taskId, currentUserMessageId: '00000000-0000-4000-8000-000000000784',
+      currentAssistantMessageId: '00000000-0000-4000-8000-000000000785', instructions: 'original', status: 'interrupted'
+    })))
+    const progress = () => harness.webContents.send.mock.calls.filter(([channel]) => channel === ipcChannels.remoteProjectRecoveryProgress).map(([, state]) => state)
+    const stage = () => progress().at(-1)?.stage
+    try {
+      await harness.recoveryGetHandler?.(trustedEvent(harness.webContents))
+      await vi.waitFor(() => expect(ready.size).toBe(2))
+      ready.get(ids[0]!)!()
+      if (mode === 'failure') {
+        await vi.waitFor(() => expect(stage()).toBe('failed'))
+        await harness.recoveryRetryHandler?.(trustedEvent(harness.webContents), { projectId })
+        await vi.waitFor(() => expect(attempts.get(ids[1]!)).toBe(2))
+        expect(attempts.get(ids[0]!)).toBe(1)
+      }
+      expect(stage()).not.toBe('completed')
+      ready.get(ids[1]!)!()
+      expect(stage()).toBe('completed')
+      expect(harness.assistantDatabase.completeTaskScheduleRun).not.toHaveBeenCalledWith(ids[0])
+      if (mode === 'disconnect') {
+        const completedRequestId = progress().at(-1)?.requestId
+        release.get(ids[1]!)!()
+        await vi.waitFor(() => expect(stage()).toBe('network'))
+        expect(progress().at(-1)?.requestId).not.toBe(completedRequestId)
+        await vi.waitFor(() => expect(attempts.get(ids[1]!)).toBe(2), { timeout: 3_000 })
+        ready.get(ids[1]!)!()
+        expect(stage()).toBe('completed')
+      }
+      for (const resolve of release.values()) resolve()
+      await vi.waitFor(() => expect(harness.assistantDatabase.completeTaskScheduleRun).toHaveBeenCalledWith(ids[0]))
+      expect(progress().some(state => state.stage === 'cursor')).toBe(false)
+      // Mirrors the UI's request identity guard: new IDs enter through network,
+      // and live peers must use the current project's ID after another retry.
+      let requestId: string | undefined
+      for (const state of progress()) {
+        if (requestId !== state.requestId) expect(state.stage).toBe('network')
+        requestId = state.requestId
+      }
+    } finally {
+      for (const resolve of release.values()) resolve()
+      await harness.dispose()
+    }
+  })
+
   it.each([false, true])('reattaches from its committed cursor with tool recovery evidence %s', async (hasRecoveredResponse) => {
     const projectId = '00000000-0000-4000-8000-000000000781'
     const taskId = '00000000-0000-4000-8000-000000000782'

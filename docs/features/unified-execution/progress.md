@@ -1,5 +1,47 @@
 # 进度与证据
 
+## 2026-10-25 Recovery progress ends at transcript catch-up
+
+The project banner previously waited for every recovered prompt to terminate.
+A live task or pending question could therefore keep “restoring conversation”
+visible indefinitely. `AcpRemoteRuntime` now reports readiness after consuming and
+ACKing the last available transcript page and restoring pending questions. Main
+clears catch-up progress while continuing to consume the same task. No Agent wire
+protocol, database schema, or direct-model execution change is needed: this path
+reattaches Agent-owned ACP prompts, not desktop-owned direct-model requests.
+The authoritative behavior is in [remote Host design](../remote-host/technical-design.md#agent-owned-prompt-与-desktop-恢复).
+
+Project progress now considers each task independently. A live peer cannot hide
+another task's failure or prevent its manual retry. Controllers deduplicate tasks
+during retry backoff as well as live consumption. New interruptions after readiness
+enter through a fresh project recovery request ID; this preserves Renderer's
+existing protection against late updates to completed requests.
+
+Validation on current source:
+
+- `npm exec -- vitest run src/main/ipc.test.ts src/main/agent/acp-remote-runtime.test.ts src/main/remote-agent/remote-task-recovery.test.ts src/renderer/src/ProjectSwitcher.test.tsx`:
+  **363 passed, 1 skipped**. Added cases cover empty history, multiple pages,
+  pending questions before readiness, failed ACK, concurrent catch-up, failure
+  beside a live peer, manual retry, another disconnect after readiness, and no
+  return to cursor progress during live output. Existing cancellation and shutdown
+  regressions remain green.
+- `npm exec -- vitest run src/renderer/src/App.test.tsx -t 'keeps managed SSH histories visible|restores live question controls and Stop'`:
+  **2 passed**. Existing UI tests verify project isolation, request identity,
+  completion unblocking, and recovered question/Stop controls. The switcher suite
+  also verifies completion feedback disappears after three seconds.
+- Standard `npm run typecheck`, changed-file ESLint and `git diff --check` pass.
+  The unrelated full repository test and lint suites were not repeated.
+- Shared Linux x64 Host: bundled current-source `remote-recovery-host-probe.ts
+  --catch-up` runs the real daemon, authenticated relay, protocol channel, desktop
+  ACP adapter and installed OpenCode Runtime. It injects a transcript-read
+  interruption after start, reattaches the same running prompt, observes readiness
+  before any terminal, and checks exactly one prompt start. A loopback model
+  response stays open until test cancellation. External model calls: **0**.
+  The final source was rerun successfully; this is not an installed Desktop UI
+  test or a physical network outage. Dedicated test resources were cleaned up.
+
+Deployment remains outstanding: the installed Desktop has not been replaced.
+
 ## 2026-10-25 Remote lifecycle fault matrix
 
 Expanded validation covers both ACP-owned tasks and desktop-driven direct models.
