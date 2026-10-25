@@ -95,7 +95,7 @@ export const integrations = {
       allowedSendersHelp:
         '只有白名单内的发送者可以向 GoodBuddy 发消息；留空时不会处理任何发送者。',
       allowedSendersHelpWecom:
-        '填写成员的企业微信 userid（管理后台“通讯录”成员详情里的“账号”），不是姓名或手机号。不知道时，启用并保存后私聊机器人发一句话，机器人会回复你的 userid，这里也会出现“添加”按钮。',
+        '填写机器人收到的成员 userid，通常是 wo 开头的一串字符，不是姓名、手机号，也不一定是管理后台里的“账号”。扫码连接时会自动填入扫码人本人；其他人启用并保存后私聊机器人发一句话，机器人会回复他的 userid，这里也会出现“添加”按钮。',
       allowedSendersHelpDingtalk:
         '填写成员的钉钉 staffId（管理后台通讯录里的员工 UserID）。不知道时，启用并保存后私聊机器人发一句话，机器人会回复你的 ID，这里也会出现“添加”按钮。',
       allowedSendersHelpFeishu:

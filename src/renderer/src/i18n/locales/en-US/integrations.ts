@@ -104,7 +104,7 @@ export const integrations = {
       allowedSendersHelp:
         'Only allowlisted senders can message GoodBuddy. No messages are processed when this list is empty.',
       allowedSendersHelpWecom:
-        'Enter the member\'s WeCom userid (the "Account" field in the admin console contacts), not a name or phone number. If unsure, enable and save, then send the bot a private message: it replies with your userid and an Add button appears here.',
+        'Enter the userid the bot receives for the member, usually a string starting with "wo". It is not a name or phone number, and may differ from the "Account" field in the admin console. Scanning to connect fills in your own ID; anyone else can enable and save, then send the bot a private message: it replies with their userid and an Add button appears here.',
       allowedSendersHelpDingtalk:
         'Enter the member\'s DingTalk staffId (the employee UserID in the admin contacts). If unsure, enable and save, then send the bot a private message: it replies with your ID and an Add button appears here.',
       allowedSendersHelpFeishu:
