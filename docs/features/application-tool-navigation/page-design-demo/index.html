@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GoodBuddy · 页面内容设计预览</title>
+  <link rel="stylesheet" href="../../../../src/renderer/src/styles-foundations.css">
+  <link rel="stylesheet" href="shared.css"><link rel="stylesheet" href="pages.css">
+  <script src="pages.js" defer></script><script src="app.js" defer></script>
+</head>
+<body>
+  <header class="windowbar"><a href="../four-column-demo.html" title="返回布局 Demo"><b class="brand">G</b><strong>GoodBuddy</strong></a><a href="../workbench-demo/index.html">新版工作台 ↗</a><div class="window-actions"><label class="density-label">间距 <select id="density" aria-label="内容间距"><option value="relaxed">舒展</option><option value="compact">紧凑</option></select></label><button id="theme" aria-label="切换深浅主题" title="切换深浅主题">◐</button><button id="design">设计说明</button></div></header>
+  <div class="app-frame"><nav id="rail" aria-label="应用导航"></nav><div class="content-frame"><aside id="context" aria-label="当前页面导航"></aside><main id="main" tabindex="-1"></main></div></div>
+  <dialog id="modal" aria-labelledby="modal-title"><header class="modal-header"><div><small id="modal-kicker"></small><h2 id="modal-title"></h2></div><form method="dialog"><button class="icon-button" aria-label="关闭弹窗">×</button></form></header><div id="modal-body"></div></dialog>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

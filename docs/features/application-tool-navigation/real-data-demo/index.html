@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GoodBuddy · 真实数据结构预览</title>
+  <link rel="stylesheet" href="../../../../src/renderer/src/styles-foundations.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="snapshot.js" defer></script><script src="app.js" defer></script>
+</head>
+<body>
+  <header class="window-bar"><a href="../page-design-demo/index.html" title="返回早期视觉探索">G <span>GoodBuddy</span></a><span class="preview-label">真实数据结构 · 脱敏快照</span><div class="window-actions"><button id="source">数据说明</button><button id="theme" aria-label="切换到暗色">◐</button></div></header>
+  <div class="shell">
+    <nav id="rail" aria-label="应用导航"></nav>
+    <div class="frame">
+      <aside id="objects" aria-label="对象导航"></aside>
+      <section class="workspace">
+        <header class="workspace-bar"><button id="objects-toggle" aria-expanded="true" aria-controls="objects">收起列表</button><span id="breadcrumb"></span><button id="work-toggle" aria-expanded="true" aria-controls="workbar">收起工作区</button></header>
+        <div class="panes"><main id="main" tabindex="-1"></main><aside id="workbar" aria-label="辅助工作区"></aside></div>
+      </section>
+    </div>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title"><header><h2 id="dialog-title"></h2><button id="dialog-close" aria-label="关闭弹窗">×</button></header><div id="dialog-body"></div></dialog>
+  <div id="notice" role="status" hidden></div>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GoodBuddy · 四栏工作空间 Demo</title>
+  <link rel="stylesheet" href="four-column-demo.css">
+  <script src="four-column-demo.js" defer></script>
+</head>
+<body>
+  <header class="windowbar">
+    <div class="window-left"><span class="brand-mark">G</span><strong>GoodBuddy</strong><span class="prototype">布局预览</span></div>
+    <div class="layouts" aria-label="布局预设"><button data-layout="focus">专注</button><button data-layout="chat">聊天</button><button data-layout="work" class="selected">工作</button></div>
+    <div class="window-right"><a href="page-design-demo/index.html" style="color:var(--text-secondary);font-size:12px;text-decoration:none">页面内容预览</a><button id="layout-settings" title="设置：界面布局">外观设置</button><button id="theme" title="切换深浅主题" aria-label="切换深浅主题" data-icon="sun"></button><span class="window-decoration" aria-hidden="true">−　□　×</span></div>
+  </header>
+  <div class="shell">
+    <nav class="rail" aria-label="应用导航">
+      <div class="rail-top">
+        <button class="rail-button active" title="聊天" aria-label="聊天" aria-current="page" data-app="chat" data-icon="home"></button>
+        <button class="rail-button" title="魔法笔记" aria-label="魔法笔记" data-app="notes" data-icon="note"></button>
+        <button class="rail-button" title="知识库" aria-label="知识库" data-app="knowledge" data-icon="book"></button>
+        <button class="rail-button" title="监督者" aria-label="监督者" data-app="supervisor" data-icon="pulse"></button>
+        <button class="rail-button" title="更多应用" aria-label="更多应用" popovertarget="apps-menu" data-icon="more"></button>
+        <div class="rail-divider"></div>
+        <button class="rail-button" title="应用中心" aria-label="应用中心" popovertarget="apps-menu" data-icon="grid"></button>
+      </div>
+      <div class="rail-bottom"><button class="rail-button" title="布局说明" aria-label="布局说明" id="help" data-icon="info"></button><button class="avatar" title="个人与设置" aria-label="个人与设置" popovertarget="account-menu">DJ</button></div>
+    </nav>
+    <div class="content-frame">
+      <aside class="objects" id="objects" aria-label="项目与会话">
+        <div class="objects-head"><strong>GoodBuddy <span class="muted">⌄</span></strong><button class="icon-button" id="search-toggle" title="搜索会话" aria-label="搜索会话" data-icon="search"></button></div>
+        <button class="new-chat" id="new-chat"><span data-icon="edit"></span>新建会话<span class="shortcut">＋</span></button>
+        <input id="search" class="search" placeholder="搜索项目或会话" aria-label="搜索项目或会话" hidden>
+        <div id="classic-navigation"></div>
+        <div class="list-heading"><span>项目</span><span class="muted">本地与远程</span></div>
+        <div id="project-list" class="project-list"></div>
+        <div id="classic-footer"></div>
+        <div class="objects-foot"><span class="status-dot"></span>所有更改已同步<span>演示数据</span></div>
+      </aside>
+      <main class="chat-pane" id="chat-pane">
+        <header class="pane-header"><button class="icon-button" id="toggle-objects" aria-label="收起项目与会话" aria-expanded="true" aria-controls="objects" title="展开 / 收起项目与会话" data-icon="sidebar"></button><div class="chat-heading"><strong id="conversation-title">新的开始</strong><span id="project-name">GoodBuddy</span></div><button class="icon-button push-right" id="toggle-workspace" aria-label="关闭工作区" aria-expanded="true" aria-controls="workspace" title="打开 / 关闭工作区" data-icon="split"></button></header>
+        <div class="chat-body" id="chat-body">
+          <div class="welcome" id="welcome"><div class="welcome-symbol">✳</div><div class="eyebrow">想法，从这里开始</div><h1>今天，我们做点什么？</h1><p>一起探索问题，把想法变成进展。</p></div>
+          <div class="messages" id="messages" hidden aria-live="polite"></div>
+          <div class="compose-wrap">
+            <form class="composer" id="composer"><textarea id="prompt" aria-label="消息" placeholder="描述你的想法，或输入 / 查看工具" rows="3"></textarea><div class="composer-actions"><button type="button" class="icon-button" title="打开文件" aria-label="打开文件" data-tool="files" data-icon="plus"></button><span class="runtime"><span class="status-dot"></span>OpenCode</span><span class="model">GPT-6 <span class="muted">⌄</span></span><button class="send" type="submit" title="发送演示消息" aria-label="发送演示消息" data-icon="arrow"></button></div></form>
+            <div class="context-strip"><button id="context-project" title="显示项目列表"><span data-icon="folder"></span><span class="context-label" id="context-name">GoodBuddy</span></button><button data-tool="files" title="文件"><span data-icon="file"></span><span class="context-label">文件</span></button><button data-tool="terminal" title="终端"><span data-icon="terminal"></span><span class="context-label">终端</span></button><button class="push-right" data-tool="browser" title="浏览器" aria-label="浏览器" data-icon="globe"></button></div>
+            <div class="composer-note">演示消息仅保留在当前页面，不调用模型</div>
+          </div>
+        </div>
+      </main>
+      <div class="resize" id="resize" role="separator" tabindex="0" aria-label="调整聊天与工作区宽度" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="46"></div>
+      <section class="workspace" id="workspace" aria-label="工作区">
+        <header class="workspace-header"><div class="tabs" id="tabs" role="tablist" aria-label="工作区标签"></div><button class="icon-button" id="add-tab" title="新标签页" aria-label="新标签页" data-icon="plus"></button><button class="icon-button push-right" id="maximize" title="最大化 / 恢复工作区" aria-label="最大化工作区" data-icon="expand"></button><button class="icon-button" id="close-workspace" title="关闭工作区" aria-label="关闭工作区" data-icon="close"></button></header>
+        <div id="workspace-content" class="workspace-content" role="tabpanel" tabindex="0"></div>
+        <footer class="workspace-footer"><span><span class="status-dot"></span> 本地工作空间</span><span>GoodBuddy / main</span></footer>
+      </section>
+    </div>
+  </div>
+  <div id="apps-menu" class="floating-menu apps-menu" popover><div class="menu-caption">应用</div><button data-app="notes"><span data-icon="note"></span>魔法笔记</button><button data-app="knowledge"><span data-icon="book"></span>知识库</button><button data-app="supervisor"><span data-icon="pulse"></span>监督者</button><hr><button data-tool="files"><span data-icon="folder"></span>项目文件</button><button data-tool="terminal"><span data-icon="terminal"></span>终端</button></div>
+  <div id="account-menu" class="floating-menu account-menu" popover><strong>Di Jiang</strong><p>GoodBuddy · 个人工作空间</p><hr><button id="account-layout"><span data-icon="grid"></span>设置 · 外观 · 界面布局</button><button id="account-theme"><span data-icon="sun"></span>切换深浅主题</button><button id="reset"><span data-icon="refresh"></span>恢复初始布局</button></div>
+  <dialog id="layout-dialog" aria-labelledby="layout-title">
+    <div class="settings-heading"><div><small>设置 / 外观</small><h2 id="layout-title">界面布局</h2></div><form method="dialog"><button class="icon-button" aria-label="关闭外观设置" data-icon="close"></button></form></div>
+    <fieldset class="layout-options"><legend>选择适合你的工作方式</legend>
+      <label class="layout-option"><input type="radio" name="shell-layout" value="classic"><span class="layout-preview preview-classic" aria-hidden="true"><i></i><i></i><i></i></span><strong>经典布局</strong><span>应用入口与会话列表集中在左侧，沿用熟悉的界面。</span></label>
+      <label class="layout-option"><input type="radio" name="shell-layout" value="workbench"><span class="layout-preview preview-workbench" aria-hidden="true"><i></i><i></i><i></i><i></i></span><strong>工作台布局</strong><span>独立应用导航，会话列表可收起，聊天与工具工作区并列展开。</span></label>
+    </fieldset>
+    <p id="layout-status" role="status"></p><p class="settings-note">选择立即生效。此 Demo 仅在当前浏览器保存布局偏好；消息、草稿和示例标签在刷新后清空。经典布局用于结构对比，并非正式客户端的逐项复刻。</p>
+    <form method="dialog"><button class="primary-button">完成</button></form>
+  </dialog>
+  <dialog id="info-dialog"><h2>四栏工作空间</h2><p>参考提供的桌面客户端截图制作。左侧应用导航常驻；项目会话栏独立收起；聊天与标签工作区共享剩余空间。</p><p>试试顶部的三种布局、拖动中间分隔线、打开文件或终端、关闭与新增标签。分隔线也支持左右方向键。窄窗口下项目列表以抽屉打开。</p><p>所有内容为示例；浏览器、文件和终端不连接真实服务。其他应用入口展示候选工作区内容，尚未设计完整应用页面。</p><form method="dialog"><button class="primary-button">知道了</button></form></dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>
