@@ -1,5 +1,49 @@
 # 进度与证据
 
+## 2026-10-25 Exhausted protocol connections become reconnectable
+
+The exact reported `Connection channel lifetime is exhausted` string originates
+in `AgentConnectionChannels.open`: 64 active channels and 4096 cumulative channel
+identities are different limits. Every transcript read/ACK allocates a new control
+channel, so a healthy long-lived connection can reach the cumulative limit even
+with no concurrent work. Previously allocation threw a raw `ChannelProtocolError`
+without closing the client. The pool could therefore keep returning the same
+exhausted connection. This identifies the source and reachable failure mechanism;
+it does not establish that every reported transcript disconnect has this cause.
+
+Desktop now translates only cumulative exhaustion into a closed-client error and
+notifies existing connection owners before dispatch. Control and registered binary
+channels share this handling. Existing reconnect/resume logic can then replace the
+generation. Temporary active-channel capacity and protocol errors keep their
+original handling. Agent-side protocol limits and persistent formats are unchanged.
+Behavior and direct-tool boundaries are defined in [remote Host design](../remote-host/technical-design.md#agent-owned-prompt-与-desktop-恢复).
+
+Validation:
+
+- Eight focused files (protocol client, connection manager, Runtime channel,
+  recovery retry, ACP runtime, IPC, Agent channel state and direct tool adapter):
+  **426 passed, 1 skipped**. New regressions allocate all 4096 identities, test
+  both control and binary allocation failure, pending reader/request settlement,
+  no failed-request dispatch and healthy active-capacity recovery.
+- Standard typecheck and changed-file ESLint pass.
+- Shared Linux x64 source probe `--channel-budget`: **4094 successful status
+  requests**, plus initialization reaching the real cumulative limit. The old
+  connection becomes offline; one injected outage is retried; a new generation
+  on the same daemon serves the original lease. Two attaches total.
+- Source probe `--live-channel-budget`: real installed OpenCode Runtime remains
+  active against a loopback model endpoint while the connection consumes its full
+  channel budget. Existing channel recovery reconnects and resumes the accepted
+  task: **two attaches, one prompt start, readiness before terminal**. This checks
+  automatic recovery after actual budget exhaustion, not an artificially lowered
+  test quota. The initial transcript interruption is injected by the probe.
+- `tests/remote-direct-model.live.test.ts`: **2 real-Host tests pass**, covering
+  direct tools, long output, process timeout/cancellation, concurrent peer isolation
+  and provider failure after a write. These do not inject channel exhaustion into
+  an in-flight direct write and do not prove transparent continuation of that write.
+- External model calls: **0**; model responses use fixtures/loopback. Test-owned
+  Host/local temporary resources cleaned up. Installed Desktop/Agent packages were
+  not replaced, and the full repository suite was not repeated.
+
 ## 2026-10-25 Recovery progress ends at transcript catch-up
 
 The project banner previously waited for every recovered prompt to terminate.

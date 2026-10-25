@@ -574,6 +574,17 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   leases; concurrent callers share that reconnect. A transcript read timeout or
   closed channel does not escalate cancellation of the accepted owned prompt.
   Retry exhaustion leaves the recoverable task and manual retry entry intact.
+- Each protocol connection retains channel identities and accepts at most 4096
+  channels over its lifetime, including short-lived transcript read/ACK RPCs.
+  When Desktop reaches that limit before allocating a new channel, it marks the
+  protocol client closed and notifies its existing connection owner. The next
+  generation uses the normal reconnect/resume path; an exhausted connection must
+  never remain eligible for pooling. Active-channel capacity is a separate,
+  temporary error and does not close a healthy connection. No new request is sent
+  for the rejected allocation and no generic mutating RPC retry is introduced.
+  Already accepted ACP prompts resume through their existing identity/transcript
+  rules. In-flight direct tools retain their existing disconnect/cancellation and
+  uncertain-result behavior; connection renewal is not proof they completed.
 - During retry backoff, Stop cancels automatic recovery and reports that remote
   status still needs confirmation; it does not claim the unreachable task stopped.
   During an attached run, existing operation cancellation remains in effect.

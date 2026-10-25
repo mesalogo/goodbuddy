@@ -7,6 +7,7 @@ import {
   AGENT_PROTOCOL_LIMITS,
   AGENT_PROTOCOL_VERSION,
   AgentConnectionChannels,
+  ChannelProtocolError,
   acpBindingCursorsSchema,
   acpCompletePromptRequestSchema,
   acpCompletePromptResultSchema,
@@ -608,7 +609,7 @@ export class AgentProtocolClient {
         'protocol'
       )
     }
-    const state = this.#channels.open({
+    const state = this.#openChannel({
       channelId: input.channelId,
       channelEpoch: input.channelEpoch,
       inboundDirection: 'agent-to-main',
@@ -966,12 +967,28 @@ export class AgentProtocolClient {
     this.#nextChannelEpoch += 1n
     this.#allocatedEpochs.add(channelEpoch)
     return {
-      state: this.#channels.open({
+      state: this.#openChannel({
         channelId,
         channelEpoch,
         inboundDirection: 'agent-to-main'
       }),
       requestId: `${kind}-${entropy}`
+    }
+  }
+
+  #openChannel(options: Parameters<AgentConnectionChannels['open']>[0]): AgentChannelState {
+    try {
+      return this.#channels.open(options)
+    } catch (error) {
+      if (error instanceof ChannelProtocolError && error.code === 'channel-lifetime-exhausted') {
+        // No request has been sent on this channel. Retire the transport so the
+        // connection manager can reattach accepted work using a fresh generation.
+        // Leaving it ready would make every subsequent allocation fail forever.
+        const closed = new AgentProtocolClientError('Agent connection channel budget exhausted; reconnect required', 'closed', error)
+        this.#close(closed)
+        throw closed
+      }
+      throw error
     }
   }
 
