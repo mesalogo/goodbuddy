@@ -378,6 +378,7 @@
   align-self: stretch;
   flex-direction: column;
   grid-template-columns: none;
+  gap: var(--space-1);
   scrollbar-gutter: auto;
 }
 
