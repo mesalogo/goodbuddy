@@ -17,19 +17,19 @@ export const officeStore = {
     const instanceId = previous?.[0] ?? crypto.randomUUID()
     requested = { instanceId, name }
     update(instanceId, { source, name })
-    const serverUrl = shareServerConnection.getState().serverUrl
-    if (serverUrl && !previous?.[1].session && !previous?.[1].busy) void officeStore.open(instanceId, serverUrl)
+    if (!previous?.[1].session && !previous?.[1].busy) void officeStore.open(instanceId)
   },
   get: (id: string): State => states.get(id) ?? empty,
   subscribe: (listener: () => void): (() => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
-  async open(instanceId: string, serverUrl: string): Promise<OfficeSession | null> {
+  async open(instanceId: string, serverUrl?: string): Promise<OfficeSession | null> {
     if (officeStore.get(instanceId).busy) return null
     if (officeStore.get(instanceId).session) return officeStore.get(instanceId).session!
     update(instanceId, { busy: true, error: undefined, message: '正在检查 Office 能力并上传文件…' })
     try {
       if (!window.goodbuddy.office) throw new Error('请更新 GoodBuddy 后重试')
+      serverUrl ??= await shareServerConnection.resolve()
       const session = await window.goodbuddy.office.open({ instanceId, serverUrl, source: officeStore.get(instanceId).source })
-      if (session?.instanceId === instanceId) update(instanceId, { session, message: '编辑后点击“保存回文件”；服务器保存与本地保存分别完成。' })
+      if (session?.instanceId === instanceId) update(instanceId, { session, message: undefined })
       else if (session) {
         requested = { instanceId: session.instanceId, name: session.document.name }
         update(session.instanceId, { session })
@@ -74,7 +74,7 @@ export const officeStore = {
     update(instanceId, { busy: true, error: undefined })
     try {
       await window.goodbuddy.office!.apply({ instanceId, text })
-      update(instanceId, { reply: undefined, selectedText: undefined, message: '已替换原选区，可在编辑器中撤销。请保存回文件。' })
+      update(instanceId, { reply: undefined, selectedText: undefined, message: '已替换原选区，可撤销；按 Ctrl/Cmd+S 保存回文件。' })
     } catch (error) { update(instanceId, { error: String(error) }) }
     finally { update(instanceId, { busy: false }) }
   },

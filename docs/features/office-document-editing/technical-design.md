@@ -185,7 +185,9 @@ type DocumentEditSessionSummary = {
 应用重启后需重新选择文件，尚无编辑来源恢复。公开服务器地址保存在 Renderer localStorage。
 
 `shareserver-connection-store.ts` 是各文件入口共享的连接状态，沿用既有
-`goodbuddy.office.serverUrl` 偏好键；设置和文档面板共用配置组件。不在应用启动时请求服务。
+`goodbuddy.office.serverUrl` 偏好键；连接表单仅在设置中展示。不在应用启动时请求服务。
+文档打开时，已有 Office 地址优先，否则读取 Main 中设备共享的连接设置；不再要求在文档 Tab 重填。
+能力返回的可选 `webUrl` 用于从 API 端口定位浏览器可达的编辑入口，旧服务缺少此字段时沿用连接地址。
 连接检查通过窄 `office:capabilities` IPC 请求 `GET /api/v1/office/config`，校验
 `enabled / formats / maxBytes / versionedDownload`。连接到 ShareServer 不等于 Office 已启用，
 能力返回也不证明编辑引擎此时健康；实际编辑页加载错误仍由打开流程报告。
@@ -198,6 +200,11 @@ Worker 上传前重新读取能力，按格式与上限校验文件。此检查�
 旧格式由 ShareServer 转换后返回现代格式文件名、`originalName` 与 `requiresSaveAs=true`。
 Main 将该来源标为不可直接回写，首次保存弹出另存为；Worker 拒绝与输出格式不一致的目标扩展名。
 成功另存后后续保存更新新文件，旧的本地或远程来源不再作为写回目标。AI 选区工具当前仅显示于 Word。
+
+嵌入编辑页去除重复顶部工具栏及内边距。编辑 WebContents 的原生键盘事件处理 Ctrl/Cmd+S 与
+Ctrl/Cmd+Shift+S，分别调用既有保存和另存为；GB 面板内的键盘事件使用相同 IPC。
+原生视图保存成功后向同源宿主页发送固定的短暂反馈事件，不给远程页面暴露通用 preload。
+ONLYOFFICE 内置保存由 forcesave 类型 1 回调持久化至服务器，不自动回写来源；关闭时回写规则保留。
 
 保存期间隐藏原生视图防止继续输入，等待编辑器 ready 且 dirty=false，再发 forcesave，等待
 服务端轮次退出 saving，并下载该 revision。无新修改不要求 revision 增长。源文件摘要变化

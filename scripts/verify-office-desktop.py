@@ -41,7 +41,7 @@ def text(path):
         return archive.read('word/document.xml').decode()
 
 with (root / 'electron.log').open('w') as log:
-    env = dict(os.environ, TMPDIR=str(root), GB_OFFICE_PROBE_ROOT=str(root), GB_OFFICE_PROBE_FILENAME='source.doc' if args.legacy else 'source.docx')
+    env = dict(os.environ, TMPDIR=str(root), GB_OFFICE_PROBE_ROOT=str(root), GB_OFFICE_PROBE_WEB=args.web, GB_OFFICE_PROBE_FILENAME='source.doc' if args.legacy else 'source.docx')
     env.pop('ELECTRON_RUN_AS_NODE', None)
     child = subprocess.Popen(['xvfb-run', '-a', str(repo / 'node_modules/electron/dist/electron'),
                               '--no-sandbox', str(repo / 'tests/support/office-desktop-main.cjs')], env=env, stdout=log, stderr=log,
@@ -57,9 +57,7 @@ with (root / 'electron.log').open('w') as log:
                     time.sleep(.5)
             else: raise RuntimeError('CDP unavailable')
             panel = browser.contexts[0].pages[0]
-            panel.get_by_role('textbox').fill(args.web)
-            panel.get_by_role('button', name='连接并检查能力', exact=True).click()
-            panel.get_by_role('status').filter(has_text='Office 已启用').wait_for()
+            assert panel.get_by_role('textbox', name='ShareServer 地址').count() == 0
             panel.get_by_role('button', name='编辑文件引用' if args.file_entry else '选择 Office 文件并编辑', exact=True).click()
             editor = None
             observed = set()
@@ -75,6 +73,13 @@ with (root / 'electron.log').open('w') as log:
                 panel.wait_for_timeout(500)
             else: raise RuntimeError('Editor not ready: ' + panel.inner_text('body'))
             print('PASS: OfficePanel -> IPC -> upload worker -> real sandboxed editor', flush=True)
+            assert panel.get_by_role('button', name='保存回文件', exact=True).count() == 0
+            assert panel.get_by_role('button', name='另存为', exact=True).count() == 0
+            assert editor.get_by_role('button', name='保存到服务器', exact=True).count() == 0
+            bounds = editor.get_by_label('ONLYOFFICE 文档编辑器').bounding_box()
+            viewport = editor.evaluate('({width:innerWidth,height:innerHeight})')
+            assert bounds['x'] == 0 and bounds['y'] == 0 and abs(bounds['height'] - viewport['height']) <= 1
+            print('PASS: inherited connection, no duplicate toolbars, embedded editor fills viewport', flush=True)
             frame = editor.frames[1]
             if frame.get_by_role('button', name='取消', exact=True).count():
                 frame.get_by_role('button', name='取消', exact=True).click()
@@ -109,9 +114,8 @@ with (root / 'electron.log').open('w') as log:
             except Exception as error:
                 assert 'Stale selection was accepted' not in str(error)
             print('PASS: production plugin selection, replace, undo and stale-target rejection', flush=True)
-            editor.keyboard.press('Control+s')
-            panel.get_by_role('button', name='保存到本地文件' if args.legacy else '保存回文件', exact=True).click()
-            panel.get_by_role('status').filter(has_text='已保存到文件').wait_for(timeout=65000)
+            panel.evaluate('window.goodbuddy.probeSaveKey(false)')
+            editor.get_by_role('status').filter(has_text='已保存到文件').wait_for(timeout=65000)
             assert 'GB_DESKTOP_WRITEBACK_10' in text(root / ('export.docx' if args.legacy else 'source.docx'))
             print('PASS: actual edit -> force save -> verified revision -> source writeback', flush=True)
             if args.legacy:
@@ -120,12 +124,15 @@ with (root / 'electron.log').open('w') as log:
             else:
                 # An external writer must survive a subsequent save attempt.
                 (root / 'source.docx').write_bytes(docx('external edit'))
-                panel.get_by_role('button', name='保存回文件', exact=True).click()
-                panel.get_by_role('alert').filter(has_text='源文件已被其他程序修改').wait_for(timeout=65000)
+                panel.evaluate('window.goodbuddy.probeSaveKey(false)')
+                panel.wait_for_function('async () => (await window.goodbuddy.probeError()).includes("源文件已被其他程序修改")', timeout=65000)
                 assert 'external edit' in text(root / 'source.docx')
                 print('PASS: conflict keeps external source and editing view', flush=True)
-                panel.get_by_role('button', name='另存为', exact=True).click()
-                panel.get_by_role('status').filter(has_text='已保存到文件').wait_for(timeout=65000)
+                panel.evaluate('window.goodbuddy.probeSaveKey(true)')
+                for _ in range(130):
+                    if (root / 'export.docx').exists(): break
+                    panel.wait_for_timeout(500)
+                assert (root / 'export.docx').exists(), panel.evaluate('window.goodbuddy.probeDiagnostics()')
                 assert 'GB_DESKTOP_WRITEBACK_10' in text(root / 'export.docx')
                 print('PASS: save-as recovers edited document after conflict', flush=True)
             instance_id = panel.evaluate('''() => {

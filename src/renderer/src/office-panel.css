@@ -1,4 +1,7 @@
-.office-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; gap: var(--space-2); }
+.office-panel { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; height: 100%; gap: 0; overflow: hidden; }
+.office-panel__empty { padding: var(--space-3); display: grid; gap: var(--space-2); }
+.office-panel > details, .office-panel > [role="alert"], .office-panel > [role="status"] { padding: var(--space-2); }
+.assistant-sidebar__body--document { padding: 0; gap: 0; overflow: hidden; }
 .office-panel__toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .office-panel__toolbar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .office-panel p { margin: 0; color: var(--text-secondary); }

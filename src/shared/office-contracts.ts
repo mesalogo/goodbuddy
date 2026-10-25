@@ -15,6 +15,7 @@ export const officeDocumentSchema = z.object({
 })
 export type OfficeDocument = z.infer<typeof officeDocumentSchema>
 export const officeCapabilitiesSchema = z.object({
+  webUrl: officeOriginSchema.optional(),
   directFormats: z.array(z.string()).optional(), conversions: z.record(z.string(), z.string()).optional(),
   enabled: z.boolean(), formats: z.array(z.string()), maxBytes: z.number().int().positive(),
   versionedDownload: z.boolean().optional()

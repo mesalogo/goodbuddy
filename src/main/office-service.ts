@@ -139,6 +139,11 @@ export class OfficeService {
       const session: Session = { ...result, instanceId: input.instanceId, serverUrl, path, view,
         busy: false, savedToSource: false, visible: false, readOnlySource: source.readOnly || result.document.requiresSaveAs, source, sourceIdentity }
       this.sessions.set(input.instanceId, session)
+      view.webContents.on('before-input-event', (event, key) => {
+        if (key.type !== 'keyDown' || !(key.control || key.meta) || key.alt || key.key.toLowerCase() !== 's') return
+        event.preventDefault()
+        if (!session.busy) void this.saveFromKeyboard(session, key.shift)
+      })
       try {
         await view.webContents.loadURL(`${serverUrl}/office/editor?document=${result.document.id}`)
       } catch (error) {
@@ -162,6 +167,21 @@ export class OfficeService {
     session.view.setBounds({ x: Math.round(input.x), y: Math.round(input.y),
       width: Math.max(0, Math.round(input.width)), height: Math.max(0, Math.round(input.height)) })
     session.view.setVisible(input.visible && !session.busy)
+  }
+
+  private async saveFromKeyboard(session: Session, saveAs: boolean): Promise<void> {
+    try {
+      const result = await this.save(session.instanceId, saveAs)
+      if (result && !session.view.webContents.isDestroyed()) {
+        await session.view.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('gb-office-save-result',{detail:${JSON.stringify(`版本 ${result.document.revision} 已保存到文件`)}}))`)
+      }
+    } catch (error) {
+      session.view.setVisible(false)
+      try {
+        await dialog.showMessageBox(this.window, { type: 'error', message: '文档保存失败',
+          detail: `${error instanceof Error ? error.message : String(error)}\n可使用 Ctrl/Cmd+Shift+S 另存为，或重试保存。` })
+      } finally { if (!session.view.webContents.isDestroyed()) session.view.setVisible(session.visible) }
+    }
   }
 
   async save(instanceId: string, saveAs = false): Promise<OfficeSession | null> {

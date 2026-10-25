@@ -3,12 +3,9 @@ import { officeStore } from './office-store'
 import { isBrowserViewportOccluded } from './browser-viewport-occlusion'
 import './office-panel.css'
 import type { OfficeSession } from '../../shared/office-contracts'
-import { shareServerConnection } from './shareserver-connection-store'
-import { ShareServerConnectionSettings } from './ShareServerConnectionSettings'
 
 export function OfficePanel({ instanceId, onOpened, conversationId }: { instanceId: string; onOpened?: (session: OfficeSession) => void; conversationId?: string }): React.JSX.Element {
   const state = useSyncExternalStore(officeStore.subscribe, () => officeStore.get(instanceId))
-  const connection = useSyncExternalStore(shareServerConnection.subscribe, shareServerConnection.getState)
   const host = useRef<HTMLDivElement>(null)
   const [instruction, setInstruction] = useState('请润色选区，保持原意，表达更清晰。')
   useEffect(() => {
@@ -42,19 +39,19 @@ export function OfficePanel({ instanceId, onOpened, conversationId }: { instance
       void window.goodbuddy.office?.viewport({ instanceId, visible: false, x: 0, y: 0, width: 0, height: 0 })
     }
   }, [instanceId, state.session])
-  return <section className="office-panel" aria-label="在线文档" data-office-instance={instanceId}>
-    {!state.session ? <div>
-      <ShareServerConnectionSettings />
-      <p>{state.name ?? '选择 Office 文件后上传编辑副本。'} DOC、XLS、PPT 转换为现代格式后另存为；请核对转换结果，宏不保留。附件也使用另存为。</p>
-      <button type="button" className="primary-button" disabled={state.busy || connection.checking || !connection.serverUrl} onClick={() => {
-        void officeStore.open(instanceId, connection.serverUrl).then(session => { if (session) onOpened?.(session) })
-      }}>{state.source ? '打开在线编辑' : '选择 Office 文件并编辑'}</button>
-    </div> : <div className="office-panel__toolbar">
-      <strong title={state.session.document.name}>{state.session.document.name}</strong>
-      <button className="primary-button" disabled={state.busy} onClick={() => void officeStore.save(instanceId, false)}>{state.session.readOnlySource ? '保存到本地文件' : '保存回文件'}</button>
-      <button className="secondary-button" disabled={state.busy} onClick={() => void officeStore.save(instanceId, true)}>另存为</button>
+  return <section className="office-panel" aria-label="在线文档" data-office-instance={instanceId} onKeyDown={event => {
+    if (state.session && (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+      event.preventDefault()
+      if (!state.busy) void officeStore.save(instanceId, event.shiftKey)
+    }
+  }}>
+    {!state.session && <div className="office-panel__empty">
+      <p>{state.name ?? '选择 Office 文件，使用已配置的 ShareServer 编辑。'}</p>
+      <p>Ctrl/Cmd+S 保存回文件，Ctrl/Cmd+Shift+S 另存为。旧格式转换和附件首次保存将选择新文件。</p>
+      <button type="button" className="primary-button" disabled={state.busy} onClick={() => {
+        void officeStore.open(instanceId).then(session => { if (session) onOpened?.(session) })
+      }}>{state.source ? '重试打开' : '选择 Office 文件并编辑'}</button>
     </div>}
-    {state.session?.document.originalName && <p>转换来源：{state.session.document.originalName}。当前格式：{state.session.document.name}；原文件保持不变。</p>}
     {state.session && /\.docx$/i.test(state.session.document.name) && <details>
       <summary>AI 编辑选区</summary>
       <label className="field">修改要求<input value={instruction} onChange={event => setInstruction(event.target.value)} maxLength={4000} /></label>

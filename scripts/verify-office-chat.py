@@ -119,9 +119,7 @@ with (root / 'electron.log').open('w') as log:
             if toggle.get_attribute('aria-expanded') != 'true': toggle.click()
             app.get_by_role('button', name='打开工作栏应用', exact=True).click()
             app.get_by_text('文档', exact=True).last.click()
-            app.get_by_role('textbox', name='ShareServer 地址').fill(args.web)
-            app.get_by_role('button', name='连接并检查能力', exact=True).click()
-            app.get_by_role('status').filter(has_text='Office 已启用').wait_for()
+            app.evaluate('url => localStorage.setItem("goodbuddy.office.serverUrl", url)', args.web)
             app.get_by_role('button', name='选择 Office 文件并编辑', exact=True).click()
             editor = None
             for _ in range(120):
@@ -147,7 +145,7 @@ with (root / 'electron.log').open('w') as log:
             assert reply in outcome['text'], outcome
             assert any('Office unsaved selection' in json.dumps(request, ensure_ascii=False) for request in requests)
             app.evaluate('(args) => window.goodbuddy.office.apply(args)', {'instanceId': instance_id, 'text': outcome['text']})
-            app.get_by_role('button', name='保存回文件', exact=True).click()
+            app.get_by_text('AI 编辑选区', exact=True).press('Control+s')
             app.get_by_role('status').filter(has_text='已保存到文件').wait_for(timeout=65000)
             with zipfile.ZipFile(root / 'source.docx') as document:
                 assert reply in document.read('word/document.xml').decode()

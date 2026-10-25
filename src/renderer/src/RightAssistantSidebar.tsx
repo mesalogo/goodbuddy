@@ -2147,7 +2147,7 @@ function RightAssistantSidebarView({
         }
         renderPanel={(instance) => (
           <div
-            className={`assistant-sidebar__body${instance.appId === 'browser' ? ' assistant-sidebar__body--browser' : instance.appId === 'notes' ? ' assistant-sidebar__body--notes' : ''}`}
+            className={`assistant-sidebar__body${instance.appId === 'browser' ? ' assistant-sidebar__body--browser' : instance.appId === 'notes' ? ' assistant-sidebar__body--notes' : instance.appId === 'document' ? ' assistant-sidebar__body--document' : ''}`}
           >
         {hasUnboundRequestBrowser &&
           workbarInstances.length >= WORKBAR_LIMITS.maximumOpenInstances ? (
