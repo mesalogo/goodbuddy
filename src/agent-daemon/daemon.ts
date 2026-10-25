@@ -471,9 +471,12 @@ export class AgentDaemon {
       void (async () => {
         try {
           this.#draining ||= this.#isSuperseded?.() === true
+          // Both execution paths must enter draining, even if the other still
+          // has work. Direct tools retain output until Desktop releases it.
+          const directToolsDrained = !this.#draining || (this.#directModelTools?.drain() ?? true)
           if (this.#draining &&
             (await this.#activeRuntimeProtocol?.drain?.() ?? true) &&
-            this.#activeRequests === 0) {
+            directToolsDrained && this.#activeRequests === 0) {
             this.#resolveRetirement()
             return
           }

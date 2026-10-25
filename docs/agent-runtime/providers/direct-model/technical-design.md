@@ -71,6 +71,19 @@ PATH 等本机工具配置不会复制到 Host。
 长输出暂存在 Agent 调用目录，按页传入桌面既有输出存储，完成历史 adoption 后释放 Agent
 资源。模型收到桌面输出句柄，`output_read` 和历史读取使用同一正文。短输出直接传输。
 
+Cancellation also stops paginated output transfer and releases its partial
+Desktop backing. A release failure must not replace the original execution or
+transfer error. If a complete result has already reached Desktop, a connection
+closure during release preserves that known result instead of reporting the
+command as failed. Other release errors remain visible.
+
+Agent retirement accounts for active calls and completed calls with retained
+output; the lifecycle rules are owned by
+[remote Host design](../../../features/remote-host/technical-design.md).
+The [fault matrix](../../../features/unified-execution/progress.md#2026-10-25-remote-lifecycle-fault-matrix)
+records real-Host timeout, cancellation isolation, disconnect/shutdown cleanup,
+output transfer during upgrade, and Provider failure after a remote side effect.
+
 Skills 指令、知识、笔记、配置、浏览器、联网及已分配的自定义 MCP 保持桌面直连的启用规则。
 这些应用能力仍运行在其原来的桌面/服务端位置，尤其自定义 stdio MCP 不会自动搬到 Host。
 只有上述工作区/命令工具明确改为远端执行；图像生成与保存沿用现有远端图片绑定。

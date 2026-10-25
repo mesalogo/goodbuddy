@@ -66,7 +66,13 @@ it.skipIf(!process.env.GB_DIRECT_MODEL_HOST || !process.env.GB_DIRECT_MODEL_HOST
     const reference = long.outputReferences![0]!
     expect(reference.handle).toMatch(/^remote:/u)
     expect(text(await run('output_read', { handle: reference.handle, cursor: reference.totalBytes - 4 }))).toContain('tail')
+    const failedCommand = JSON.parse(text(await run('process_execute', { command: 'printf expected-error >&2; exit 7' })))
+    expect(failedCommand.exitCode).toBe(7)
+    expect(failedCommand.stderr).toContain('expected-error')
+    const timedOut = JSON.parse(text(await run('process_execute', { command: 'sleep 10; echo unexpected > timed-out.txt', timeoutMs: 1000 })))
+    expect(timedOut.terminationReason).toBe('timeout')
     const controller = new AbortController()
+    const peer = run('process_execute', { command: 'sleep 2; printf peer-survived' })
     const pending = run('process_execute', { command: 'echo $$ > running.pid; sleep 30 & echo $! > child.pid; wait; echo bad > completed.txt' }, controller.signal)
     for (let attempt = 0; attempt < 60; attempt++) {
       const check = JSON.parse(text(await run('process_execute', { command: 'test -f child.pid' })))
@@ -76,12 +82,38 @@ it.skipIf(!process.env.GB_DIRECT_MODEL_HOST || !process.env.GB_DIRECT_MODEL_HOST
     controller.abort(new Error('Validation cancellation'))
     const cancelled = JSON.parse(text(await pending))
     expect(cancelled.terminationReason).toBe('cancelled')
+    expect(text(await peer)).toContain('peer-survived')
     expect(JSON.parse(text(await run('process_execute', { command: 'test ! -e completed.txt && ! kill -0 "$(cat running.pid)" 2>/dev/null && ! kill -0 "$(cat child.pid)" 2>/dev/null' }))).exitCode).toBe(0)
     expect(text(await run('process_execute', { command: 'printf after-cancel' }))).toContain('after-cancel')
+    expect(JSON.parse(text(await run('process_execute', { command: 'test ! -e timed-out.txt' }))).exitCode).toBe(0)
     await runtime.dispose()
     expect(stored.size).toBe(0)
     console.log(JSON.stringify({ hostTools: 4, scriptedModelCalls: calls, remoteWorkingDirectory: true, longOutputTransferred: true, cancellationSettled: true, connectionReusable: true }))
   } finally {
     await close()
   }
+}, 180000)
+
+it.skipIf(!process.env.GB_DIRECT_MODEL_HOST || !process.env.GB_DIRECT_MODEL_HOST_NODE)('does not replay a remote side effect after a direct-model provider failure', async () => {
+  const connection = await connectDirectModelTestHost(process.env.GB_DIRECT_MODEL_HOST!, process.env.GB_DIRECT_MODEL_HOST_NODE!)
+  const tools = new RemoteModelTools(connection.workspace, {})
+  const profile = { id: randomUUID(), name: 'Failure fixture', baseUrl: 'https://fixture.invalid/v1', modelName: 'fixture', protocol: 'openai-chat-completions' as const, authentication: 'none' as const, apiKey: '' }
+  let calls = 0
+  const runtime = createAgentRuntime(connection.local, { ...defaultRuntimeSettings, provider: 'model', modelProfiles: [profile], defaultModelProfileId: profile.id } as ResolvedRuntimeSettings, {
+    executionSpace: { kind: 'ssh', hostId: 'host-test', remoteRootPath: `${connection.remote}/workspace`, cacheIdentity: connection.remote, routeIdentity: connection.remote, workspaceAccess: connection.workspace },
+    remoteModelTools: tools,
+    modelFetcher: async () => ++calls === 1
+      ? Response.json({ choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'write-once', type: 'function', function: { name: 'process_execute', arguments: JSON.stringify({ command: 'printf once >> once.txt' }) } }] } }] })
+      : Response.json({ error: { message: 'fixture authentication failure' } }, { status: 401 })
+  })
+  try {
+    const execute = async () => { for await (const event of runtime.run({ requestId: randomUUID(), conversationId: randomUUID(), prompt: 'Run the fixture' }, new AbortController().signal)) { void event } }
+    await expect(execute()).rejects.toThrow()
+    expect(calls).toBe(2)
+    const result = await tools.callTool('workspace_read_text', { path: 'once.txt' }, new AbortController().signal, { conversationId: randomUUID(), runtimeTarget: 'model' })
+    const content = result.parts.map(part => part.type === 'text' ? part.text : '').join('\n')
+    expect(content).toContain('once')
+    expect(content).not.toContain('onceonce')
+    console.log(JSON.stringify({ providerFailureAfterRemoteWrite: true, sideEffectNotReplayed: true, scriptedModelCalls: calls, externalModelCalls: 0 }))
+  } finally { await runtime.dispose(); await tools.dispose(); await connection.close() }
 }, 180000)

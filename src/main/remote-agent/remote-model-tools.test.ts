@@ -5,6 +5,8 @@ import { RecoverableModelToolError } from '../agent/model-tool-provider'
 import type { RemoteWorkspaceAccess } from '../workspace/remote-workspace-access'
 import type { RemoteModelToolsAction, RemoteModelToolsResult } from '../../shared/remote-model-tools-contracts'
 import type { PagedOutputBackingStore } from '../agent/paged-output-store'
+import { AgentProtocolClientError } from './agent-protocol-client'
+import { ProtocolRemoteWorkspaceTransportError } from './protocol-remote-workspace-transport'
 
 const context = { conversationId: 'conversation', runtimeTarget: 'model' as const }
 function fixture(invoke: (action: RemoteModelToolsAction) => Promise<RemoteModelToolsResult>) {
@@ -14,6 +16,64 @@ function fixture(invoke: (action: RemoteModelToolsAction) => Promise<RemoteModel
 }
 
 describe('RemoteModelTools', () => {
+  it.each([
+    new AgentProtocolClientError('connection closed', 'closed'),
+    new ProtocolRemoteWorkspaceTransportError('connection generation lost', 'stale-generation')
+  ])('keeps a known tool result when the connection closes during release: %s', async error => {
+    const result = { parts: [{ type: 'text' as const, text: 'write completed' }], contextBytes: 15 }
+    const test = fixture(async action => {
+      if (action.kind === 'call') return { kind: 'result', result }
+      throw error
+    })
+    const tools = new RemoteModelTools(test.workspace, {})
+    try {
+      await expect(tools.callTool('process_execute', { command: 'write once' }, new AbortController().signal, context)).resolves.toEqual(result)
+      expect(test.modelTools.mock.calls.map(([action]) => action.kind)).toEqual(['call', 'release'])
+    } finally { await tools.dispose() }
+  })
+
+  it('preserves the original execution error when release also fails after disconnect', async () => {
+    const original = new Error('transport closed during tool execution')
+    const test = fixture(async action => {
+      if (action.kind === 'call') throw original
+      throw new Error('release failed on closed transport')
+    })
+    const tools = new RemoteModelTools(test.workspace, {})
+    try {
+      await expect(tools.callTool('process_execute', { command: 'work' }, new AbortController().signal, context)).rejects.toBe(original)
+      expect(test.modelTools.mock.calls.map(([action]) => action.kind)).toEqual(['call', 'release'])
+    } finally { await tools.dispose() }
+  })
+
+  it('stops copying long output when cancelled and releases partial Desktop output', async () => {
+    const controller = new AbortController()
+    const cancellation = new Error('cancel output transfer')
+    let reads = 0
+    const stored = new Map<string, Buffer>()
+    const backingStore: PagedOutputBackingStore = {
+      create: async (_owner, handle) => { stored.set(handle, Buffer.alloc(0)) },
+      append: async (_owner, handle, bytes) => { stored.set(handle, Buffer.concat([stored.get(handle)!, bytes])) },
+      finish: async () => {}, read: async () => Buffer.alloc(0),
+      release: async (_owner, handle) => { stored.delete(handle) }
+    }
+    const test = fixture(async action => {
+      if (action.kind === 'call') return { kind: 'result', result: { parts: [{ type: 'text', text: 'long output' }], contextBytes: 11, outputReferences: [{ handle: 'process:host', nextCursor: 1, totalBytes: 2 }] } }
+      if (action.kind === 'read') {
+        reads++
+        controller.abort(cancellation)
+        return { kind: 'page', page: { handle: 'process:host', content: 'x', cursor: action.cursor, nextCursor: action.cursor + 1, totalBytes: 2, eof: action.cursor === 1 } }
+      }
+      return { kind: 'done' }
+    })
+    const tools = new RemoteModelTools(test.workspace, { outputStore: { backingStore } })
+    try {
+      await expect(tools.callTool('process_execute', { command: 'work' }, controller.signal, context)).rejects.toBe(cancellation)
+      expect(reads).toBe(1)
+      expect(stored.size).toBe(0)
+      expect(test.modelTools.mock.calls.at(-1)?.[0].kind).toBe('release')
+    } finally { await tools.dispose() }
+  })
+
   it('waits for remote cancellation settlement before releasing the call', async () => {
     let finish!: (value: RemoteModelToolsResult) => void
     let start!: () => void

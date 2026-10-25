@@ -37,11 +37,12 @@ function outputBacking(directory: () => Promise<string>): PagedOutputBackingStor
 }
 
 export function createDirectModelTools(workspaces: WorkspaceRegistry, outputRoot: string, ripgrepExecutablePath = 'rg'): {
-  handler: ProtocolMethodHandler; dispose(): Promise<void>
+  handler: ProtocolMethodHandler; drain(): boolean; dispose(): Promise<void>
 } {
   type Call = { controller: AbortController; provider: Promise<ModelToolProvider>; settled?: Promise<unknown>; cleanup(): Promise<void> }
   const calls = new Map<string, Call>()
   let disposed = false
+  let draining = false
   const createProvider = async (root: string, outputStore?: PagedOutputStoreOptions) => {
     const [{ ModelToolProvider }, { LocalDirectModelProcessService }] = await Promise.all([
       import('../main/agent/model-tool-provider'), import('../main/agent/direct-model-process-service')
@@ -83,6 +84,7 @@ export function createDirectModelTools(workspaces: WorkspaceRegistry, outputRoot
         return remoteModelToolsResultSchema.parse({ kind: 'tools', tools: tools.filter(tool => (remoteModelToolNames as readonly string[]).includes(tool.name)) })
       } finally { await provider.dispose() }
     }
+    if (draining) throw new Error('Remote Agent is draining; new tool calls must use the current Agent')
     if (calls.has(key)) throw new Error('Remote tool call already exists')
     const controller = new AbortController()
     let directory: Promise<string> | undefined
@@ -115,7 +117,13 @@ export function createDirectModelTools(workspaces: WorkspaceRegistry, outputRoot
           ...(error instanceof Error && error.name === 'RecoverableModelToolError' && 'nextAction' in error && typeof error.nextAction === 'string' ? { nextAction: error.nextAction } : {}) }
       }
     })()
+    // An already-aborted connection does not dispatch another abort event.
+    if (context.signal?.aborted) disconnected()
     return await call.settled
   }
-  return { handler, dispose: async () => { disposed = true; await Promise.all([...calls.values()].map(call => call.cleanup())) } }
+  return {
+    handler,
+    drain: () => { draining = true; return calls.size === 0 },
+    dispose: async () => { disposed = true; await Promise.all([...calls.values()].map(call => call.cleanup())) }
+  }
 }

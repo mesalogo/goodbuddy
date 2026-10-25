@@ -518,6 +518,39 @@ function harness(input: {
 }
 
 describe('RuntimeAcpBackend', () => {
+  it('ignores a late disconnect from the old connection after output failure and takeover', async () => {
+    const output = deferred()
+    const fixture = harness({ outputGate: output.promise })
+    try {
+      await open(fixture)
+      await invoke(fixture, 'runtime/preparePrompt', fixture.preparation())
+      const delivery = fixture.process.emit('stdout', 'before-disconnect')
+      output.reject(new Error('transport write failed'))
+      await delivery
+      const replacement = protocolContext({ generation: 2, connectionId: 'connection-2' })
+      await fixture.backend.methods['runtime/resumeAcpChannel']!({ bindingId: 'binding-1', channelId: 'binding-1', channelEpoch: '1000' }, replacement)
+      // The socket-close event can arrive after write failure and reattachment.
+      fixture.context.abort.abort()
+      await expect(fixture.backend.methods['runtime/replayAcpChannel']!({ bindingId: 'binding-1', channelId: 'binding-1', channelEpoch: '1000', acknowledgedSequence: '1' }, replacement)).resolves.toMatchObject({ live: true })
+    } finally { await fixture.backend.dispose() }
+  })
+
+  it.each([false, true])('retires unexpected Runtime exits after disconnect, keeping the terminal result (shared=%s)', async shared => {
+    const fixture = await ownedHarness(shared)
+    try {
+      await fixture.start()
+      await fixture.processes[0]!.emitExit('failed')
+      const terminal = fixture.page()
+      expect(terminal.state).toBe('failed')
+      expect(terminal.events.filter(event => event.kind === 'prompt-terminal')).toHaveLength(1)
+      await expect(fixture.backend.drain()).resolves.toBe(false)
+      fixture.context.abort.abort()
+      await expect(fixture.backend.drain()).resolves.toBe(true)
+      await fixture.backend.dispose()
+      expect(fixture.page()).toEqual(terminal)
+    } finally { await fixture.cleanup() }
+  })
+
   it.each([false, true])('retires cancelled bindings after disconnect without losing unacknowledged results (shared=%s)', async shared => {
     const fixture = await ownedHarness(shared)
     try {

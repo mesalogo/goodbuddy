@@ -3,6 +3,8 @@ import { remoteModelToolNames, remoteModelToolsActionSchema } from '../../shared
 import { RecoverableModelToolError, type ModelToolCallContext, type ModelToolDefinition, type ModelToolProviderProgrammingOptions, type ModelToolResult } from '../agent/model-tool-provider'
 import { PagedOutputStore } from '../agent/paged-output-store'
 import type { RemoteWorkspaceAccess } from '../workspace/remote-workspace-access'
+import { AgentProtocolClientError } from './agent-protocol-client'
+import { ProtocolRemoteWorkspaceTransportError } from './protocol-remote-workspace-transport'
 
 export class RemoteModelTools {
   private readonly outputs: PagedOutputStore
@@ -37,6 +39,7 @@ export class RemoteModelTools {
     const cancel = () => { cancellation ??= this.workspace.modelTools({ kind: 'cancel', callId }).catch(() => undefined) }
     signal.addEventListener('abort', cancel, { once: true })
     if (signal.aborted) cancel()
+    let failed = false
     try {
       const response = await operation
       if (response.kind === 'error') {
@@ -54,7 +57,9 @@ export class RemoteModelTools {
         try {
           let cursor = 0
           while (cursor < reference.totalBytes) {
-            const response = await this.workspace.modelTools({ kind: 'read', callId, handle: oldHandle, cursor })
+            signal.throwIfAborted()
+            const response = await this.workspace.modelTools({ kind: 'read', callId, handle: oldHandle, cursor }, signal)
+            signal.throwIfAborted()
             if (response.kind !== 'page' || response.page.cursor !== cursor || response.page.nextCursor <= cursor || response.page.totalBytes !== reference.totalBytes) throw new Error('Invalid remote output page')
             await writer.append(response.page.content)
             cursor = response.page.nextCursor
@@ -71,10 +76,22 @@ export class RemoteModelTools {
       }
       result.contextBytes = result.parts.reduce((total, part) => total + Buffer.byteLength(part.text), 0)
       return result
+    } catch (error) {
+      failed = true
+      throw error
     } finally {
       signal.removeEventListener('abort', cancel)
       await cancellation
-      await this.workspace.modelTools({ kind: 'release', callId })
+      await this.workspace.modelTools({ kind: 'release', callId }).catch((error: unknown) => {
+        // A disconnected transport often rejects both requests. Preserve the
+        // actual execution/transfer failure rather than replacing it with cleanup.
+        const disconnected = (error instanceof AgentProtocolClientError && error.code === 'closed') ||
+          (error instanceof ProtocolRemoteWorkspaceTransportError &&
+            (error.reason === 'closed' || error.reason === 'stale-generation'))
+        // All output has already reached Desktop if the call succeeded. Losing
+        // the release ACK cannot turn that known side effect into a failed tool.
+        if (!failed && !disconnected) throw error
+      })
     }
   }
 

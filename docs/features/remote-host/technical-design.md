@@ -246,6 +246,22 @@ Detached GoodBuddy Agent
   draining，不再接受新 Prompt；无活动任务时退出，有任务时等待完成。已连接 Desktop 的
   终态 transcript ACK 也计入排空条件；断线任务完成后不等待离线 Desktop。待答问题仍是
   活动任务。旧安装退出前可以重新 Attach 原任务，但不得重新 bootstrap 已退役安装。
+  Connection teardown also detaches bindings already marked `closed`: cancellation
+  can close the Runtime before Desktop acknowledges the terminal transcript. A
+  closed binding must not retain a live transport marker after disconnect, or its
+  pending ACK would prevent retirement forever. This transition retains the
+  semantic store and does not acknowledge or delete unread results. Evidence:
+  [cancelled-binding retirement](../unified-execution/progress.md#2026-10-25-cancelled-binding-retirement).
+  Disconnect listeners retain the connection identity from registration and
+  check it again when queued cleanup runs. A delayed close from an old connection
+  cannot detach a binding already taken over by a newer connection.
+- Direct-model tools participate in the same Agent retirement decision. Draining
+  rejects new calls while allowing existing output reads, cancellation and release.
+  Completed calls still retain Host output until Desktop releases them; those
+  calls block retirement even between page requests. Disconnect and shutdown
+  cancel owned process trees and finish output cleanup before releasing the blocker.
+  Direct-model tool calls are never replayed automatically. See the
+  [fault matrix](../unified-execution/progress.md#2026-10-25-remote-lifecycle-fault-matrix).
 - Prompt 完成后释放空闲 Runtime；共享进程仍有其他活动任务时保留，最后一个任务完成后
   关闭并核对进程树为空。保留语义 transcript 与会话标识；下一轮重建 Runtime，OpenCode
   加载原生 session，Continue 通过已有冷启动路径从持久对话历史初始化。

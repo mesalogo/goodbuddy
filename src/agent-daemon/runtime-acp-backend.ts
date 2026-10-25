@@ -2641,19 +2641,24 @@ export class RuntimeAcpBackend {
       return
     }
     this.#boundConnectionSignals.add(signal)
+    // A binding is mutated on takeover. A late close belongs to the connection
+    // that installed this listener, never to the binding's newer transport.
+    const { controllerId, controllerGeneration, connectionId } = binding
     const disconnect = (): void => {
       for (const candidate of this.#bindings.values()) {
         if (
-          candidate.controllerId === binding.controllerId &&
-          candidate.controllerGeneration === binding.controllerGeneration &&
-          candidate.connectionId === binding.connectionId
+          candidate.controllerId === controllerId &&
+          candidate.controllerGeneration === controllerGeneration &&
+          candidate.connectionId === connectionId
         ) {
           // Closed bindings can still have unacknowledged terminal output.
           // They must detach too, otherwise drain waits forever for an offline
           // Desktop's ACK. The semantic store retains that output independently.
-          void this.#enqueueControl(() =>
-            this.#detachBinding(candidate)
-          ).catch(() => undefined)
+          void this.#enqueueControl(async () => {
+            if (candidate.controllerId === controllerId &&
+              candidate.controllerGeneration === controllerGeneration &&
+              candidate.connectionId === connectionId) await this.#detachBinding(candidate)
+          }).catch(() => undefined)
         }
       }
     }
