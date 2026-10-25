@@ -8186,11 +8186,11 @@ describe("App", () => {
       fireEvent.click(screen.getByLabelText("切换助手工作栏"));
       expect(await screen.findByRole("tab", { name: "工作区" })).toHaveAttribute("aria-selected", "true");
       await waitFor(() => expect(api.workspace.getChanges).toHaveBeenCalledWith(projectId));
-      expect(screen.queryByRole("button", { name: "Git 工作区" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("tab", { name: "Git 工作区" })).not.toBeInTheDocument();
 
       selectProjectOption(secondProject.name);
 
-      expect(await screen.findByRole("button", { name: "Git 工作区" })).toBeVisible();
+      expect(await screen.findByRole("tab", { name: "Git 工作区" })).toBeVisible();
       expect(api.workspace.getChanges).toHaveBeenLastCalledWith(secondProject.id);
       expect(api.workspace.getChanges).toHaveBeenCalledTimes(2);
     });
@@ -8204,19 +8204,19 @@ describe("App", () => {
           .mockReturnValueOnce(next.promise);
         render(<App />);
         fireEvent.click(screen.getByLabelText("切换助手工作栏"));
-        fireEvent.click(await screen.findByRole("button", { name: "Git 工作区" }));
+        fireEvent.click(await screen.findByRole("tab", { name: "Git 工作区" }));
         expect(await screen.findByText("first-only.md")).toBeVisible();
 
         selectProjectOption(secondProject.name);
         await waitFor(() => expect(api.workspace.getChanges).toHaveBeenLastCalledWith(secondProject.id));
-        expect(screen.queryByRole("button", { name: "Git 工作区" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("tab", { name: "Git 工作区" })).not.toBeInTheDocument();
         expect(screen.queryByText("first-only.md")).not.toBeInTheDocument();
         await act(async () => {
           if (outcome === "rejection") next.reject(new Error("Git offline"));
           else next.resolve({ ...nonRepositoryChanges, ...(outcome === "error result" ? { error: "Git offline" } : {}) });
         });
 
-        expect(screen.queryByRole("button", { name: "Git 工作区" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("tab", { name: "Git 工作区" })).not.toBeInTheDocument();
         expect(screen.queryByText("first-only.md")).not.toBeInTheDocument();
       },
     );
@@ -8227,7 +8227,7 @@ describe("App", () => {
         const getChanges = vi.spyOn(api.workspace, "getChanges").mockResolvedValueOnce(repositoryChanges);
         render(<App />);
         fireEvent.click(screen.getByLabelText("切换助手工作栏"));
-        fireEvent.click(await screen.findByRole("button", { name: "Git 工作区" }));
+        fireEvent.click(await screen.findByRole("tab", { name: "Git 工作区" }));
         expect(await screen.findByText("first-only.md")).toBeVisible();
         if (outcome === "rejection") getChanges.mockRejectedValueOnce(new Error("Git offline"));
         else getChanges.mockResolvedValueOnce({ ...nonRepositoryChanges, rootPath: project.rootPath, error: "Git offline" });
@@ -8237,7 +8237,7 @@ describe("App", () => {
         });
 
         await waitFor(() => expect(getChanges).toHaveBeenCalledTimes(2));
-        expect(screen.getByRole("button", { name: "Git 工作区" })).toBeVisible();
+        expect(screen.getByRole("tab", { name: "Git 工作区" })).toBeVisible();
         expect(screen.getByText("first-only.md")).toBeVisible();
       },
     );
@@ -8346,6 +8346,7 @@ describe("App", () => {
       truncated: false,
     });
     fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Git 工作区" }));
     expect(await screen.findByText("second.md")).toBeInTheDocument();
     await act(async () => {
       resolveFirst?.({
