@@ -786,6 +786,7 @@ function validateLicenses(
 function expectedAgentMode(path: string): '0644' | '0755' {
   return (
     path === 'node' ||
+    path === 'rg' ||
     path === 'goodbuddy-agent' ||
     path.startsWith('helpers/')
   )

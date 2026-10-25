@@ -204,7 +204,7 @@ app.whenReady().then(async () => {
           const times = [...document.querySelectorAll('.workspace-menu__conversation time')];
           const enter = rect('.workspace-menu__enter button'), right = rect('.workspace-menu__activity');
           return { bounded: input.left >= left.left && input.right <= left.right && menu.left >= 16 && menu.right <= innerWidth - 16 && menu.top >= 16 && menu.bottom <= innerHeight - 16,
-            divider: border.borderRightWidth === '1px' && border.borderRightStyle === 'solid' && border.borderRightColor === getComputedStyle(document.querySelector('.workspace-menu__search')).borderRightColor,
+            divider: border.borderRightWidth === '1px' && border.borderRightStyle === 'solid' && border.borderRightColor !== 'rgba(0, 0, 0, 0)',
             compact: toolbar.height < 70 && filters.right <= action.left && Math.abs(filters.top + filters.height / 2 - action.top - action.height / 2) < 2,
             rows: parts.length >= 3 && parts[0].bottom <= parts[1].top && parts[1].bottom <= parts[2].top,
             gap: menu.top - anchor.bottom,

@@ -15,7 +15,9 @@
           ],
           "fixes": [
             "**改善远端会话断线恢复**：修复连接通道额度耗尽后持续恢复失败、迟到的关闭事件影响已恢复会话，以及历史同步完成后恢复提示仍不结束的问题。恢复重新接管已接受的 ACP 任务，不重发原请求；Agent 更新等待在途直连工具及保留输出，清理失败不再丢失已知执行结果。",
-            "**改善日期辨识与界面一致性**：非当天消息显示完整日期和时间，聊天缩略导航增加日期标记。顶部任务和执行清单跟随透明磨砂设置，同时调整设置导航高亮间距及项目菜单分隔线。"
+            "**改善日期辨识与界面一致性**：非当天消息显示完整日期和时间，聊天缩略导航增加日期标记。顶部任务和执行清单跟随透明磨砂设置，同时调整设置导航高亮间距及项目菜单分隔线。",
+            "**减少远端任务的重复写入**：远端会话的中间记录合并写入，仍在向 Agent 确认前完成持久化，保留完整输出与恢复记录。远端 Continue 复用已校验的运行缓存，减少重复启动时的磁盘写入，任务结束后仍清理本次请求文件。",
+            "**修复企业微信授权人识别**：从真实身份查询结果中的授权用户段读取用户 ID，避免误用机器人身份。查询失败时显示具体原因，并修正允许发送者列表的填写提示；企业微信仍为预览版。"
           ],
           "notices": [
             "配套 Agent `0.15.10`；数据库 schema 和内置 Runtime 版本不变。Office 已有真实 Linux Electron、服务端六格式及 Host 协议验证，但复杂格式保真、远程另存为界面和三平台完整验收尚未完成；飞书与企业微信继续保持预览版。"
@@ -31,7 +33,9 @@
           ],
           "fixes": [
             "**Improve remote session recovery**: Fixes persistent recovery failure after connection channel exhaustion, late close events disrupting resumed sessions, and recovery banners remaining after history catches up. Recovery reattaches accepted ACP tasks without resubmitting prompts; Agent updates wait for active direct tools and retained output, while cleanup failures preserve known execution results.",
-            "**Improve date visibility and UI consistency**: Older messages show full dates and times, and the chat minimap adds day markers. Task and TODO strips follow the frosted-glass setting, with adjusted settings highlight spacing and project-menu dividers."
+            "**Improve date visibility and UI consistency**: Older messages show full dates and times, and the chat minimap adds day markers. Task and TODO strips follow the frosted-glass setting, with adjusted settings highlight spacing and project-menu dividers.",
+            "**Reduce repeated writes during remote tasks**: Intermediate remote conversation records are written in batches, still committing before acknowledgment to Agent and preserving complete output and recovery records. Remote Continue reuses its validated runtime cache to reduce disk writes on repeated starts while still cleaning request-specific files after tasks finish.",
+            "**Fix WeCom authorized-user identification**: Read the user ID from the authorized-user section of actual identity responses instead of mistaking the bot identity for the user. Failures show their specific cause, and allow-list guidance is corrected; WeCom remains in Preview."
           ],
           "notices": [
             "Pair with Agent `0.15.10`; database schema and bundled Runtime versions are unchanged. Office has real Linux Electron, server-side six-format, and Host protocol validation, but complex-format fidelity, remote Save As UI, and complete three-platform acceptance remain outstanding; Feishu and WeCom remain in Preview."

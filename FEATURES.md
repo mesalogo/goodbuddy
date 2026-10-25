@@ -1004,6 +1004,12 @@ records are listed separately and do not introduce another feature status.
   and bundled ripgrep, fix ACP reconnection and recovery completion, and preserve
   direct-tool output during retirement. Desktop drives direct-model execution;
   this is not autonomous ACP continuation after Desktop exits.
+- Remote transcript checkpoints share batches with the durable commit-before-ACK
+  barrier retained; unchanged message projections avoid redundant updates.
+  Remote Continue reuses its validated account-owned cache while cleaning prompt
+  files. Probe write reductions are scoped measurements, not overall device
+  performance claims. WeCom reads the authorized human ID from real whoami output
+  and reports CLI failures; Preview status is unchanged.
 - Office editing and device registration use compatible ShareServer services.
   Chat adds older-message dates and minimap day markers; task strips follow
   frosted appearance. Workbench demos and OpenCode v2/Droid marketplace plans

@@ -211,6 +211,7 @@ function writeFixtureBundle(): {
   mkdirSync(join(directory, 'lib'), { recursive: true })
   mkdirSync(join(directory, 'licenses'), { recursive: true })
   writeFileSync(join(directory, 'node'), elf('x64'))
+  writeFileSync(join(directory, 'rg'), elf('x64'))
   writeFileSync(join(directory, 'goodbuddy-agent'), '#!/bin/sh\n')
   writeFileSync(join(directory, 'lib', 'agent.cjs'), 'module.exports={}\n')
   writeFileSync(join(directory, 'licenses', 'GoodBuddy-0BSD.txt'), '0BSD')
@@ -232,6 +233,7 @@ function writeFixtureBundle(): {
   writeKoffiPayload(directory, 'x64')
   for (const path of [
     'node',
+    'rg',
     'goodbuddy-agent'
   ]) {
     chmodSync(join(directory, path), 0o755)

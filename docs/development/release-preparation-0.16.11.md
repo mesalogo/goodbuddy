@@ -49,6 +49,34 @@ Date: 2026-10-26.
 
 ## Release checks
 
+Initial candidate `774fce43` failed Desktop run `40215520250` on a stale
+project-menu divider-color assertion; Pages `40215520240` passed.
+Agent run `40215520272` failed all three targets because the new executable
+`rg` was still classified as a 0644 data file. The correction must cover both
+bundle manifests and the production control-plane installer, not just packaging.
+Approved user-facing notes remain unchanged. Tags have not been created.
+
+Subsequently the user requested inclusion and pushing of commits `915adf7d`,
+`2f66f4fb`, and `c4cbd704`: transcript batching, prepared Continue cache reuse,
+and WeCom authorized-human identity parsing. Notes now add those changes and
+require renewed approval with the final exact SHA. Uncommitted PR-article edits
+are excluded. Cache validation includes three alternating Linux Host rounds,
+cancellation/sibling isolation and one real model request, recorded in
+`docs/architecture/runtime-storage.md`; no overall hardware performance claim.
+
+CI corrections: 17 Agent manifest tests and 31 compound/build/Electron tests
+passed, with one opt-in skip. Agent compound fixtures now also contain executable
+`rg` to exercise production installer permission validation. Shared Host SSH
+responded, but Node was not on PATH and subsequent discovery was cancelled by
+the user; no new remote installer check is claimed.
+
+The executable compound fixture exposed the third copy of the permission rule
+in shared Agent installation contracts. All three readers now accept root `rg`
+as 0755; other data files retain 0644. Final manifest/compound regression:
+41 passed, one opt-in skip; changed-file ESLint, notes and diff checks passed.
+Production packaging already declares the current Desktop version as its minimum,
+so Agent 0.15.10 requires Desktop 0.16.11 for the updated reader.
+
 - Version consistency, bilingual note validation and diff checks: passed.
 - Candidate CI and exact commit approval: pending.
 - Immutable paired tags, six Desktop / three Agent native builds and public

@@ -264,6 +264,7 @@ function modeString(filePath) {
 
 function expectedManifestMode(path) {
   return path === 'node' ||
+    path === 'rg' ||
     path === 'goodbuddy-agent' ||
     path.startsWith('helpers/')
     ? '0755'
