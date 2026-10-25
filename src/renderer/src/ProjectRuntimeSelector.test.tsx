@@ -65,11 +65,19 @@ describe('ProjectRuntimeSelector', () => {
     expect(onChange).toHaveBeenLastCalledWith({ provider: 'opencode' })
   })
 
-  it('limits remote projects to OpenCode and Continue without own configuration', () => {
+  it('includes direct models for remote projects without own configuration', () => {
     render(<ProjectRuntimeSelector label="Runtime" onChange={vi.fn()} remote runtimeSettings={settings} />)
     const providers = Array.from((screen.getByLabelText('执行方式') as HTMLSelectElement).options)
       .map((option) => option.value)
-    expect(providers).toEqual(['opencode', 'continue'])
+    expect(providers).toEqual(['model', 'opencode', 'continue'])
     expect(screen.queryByRole('option', { name: /自有配置/u })).not.toBeInTheDocument()
+  })
+
+  it('selects a direct model and preserves its explicit profile for a remote project', () => {
+    const onChange = vi.fn()
+    render(<ProjectRuntimeSelector label="Runtime" onChange={onChange} remote runtimeSettings={settings}
+      selection={{ provider: 'opencode', model: { kind: 'profile', profileId: secondId } }} />)
+    fireEvent.change(screen.getByLabelText('执行方式'), { target: { value: 'model' } })
+    expect(onChange).toHaveBeenCalledWith({ provider: 'model', model: { kind: 'profile', profileId: secondId } })
   })
 })

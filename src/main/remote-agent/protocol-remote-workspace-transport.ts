@@ -1,6 +1,7 @@
 import type {
   RemoteWorkspaceCloseResult
 } from '../../shared/remote-agent-contracts'
+import { REMOTE_MODEL_TOOLS_CAPABILITY } from '../../shared/remote-model-tools-contracts'
 import type {
   RemoteWorkspaceProjectBinding,
   RemoteWorkspaceTransport,
@@ -208,6 +209,13 @@ function createLease(state: LeaseState): RemoteWorkspaceTransportLease {
   }
 
   return {
+    modelTools: async (value, signal) => {
+      const client = currentClient()
+      if (!state.connection.capabilities.capabilities.some(capability => capability.name === REMOTE_MODEL_TOOLS_CAPABILITY && capability.version === 1)) {
+        throw new Error('远端 Agent 不支持直连模型工具，请更新 Agent')
+      }
+      return client.request('workspace/modelTools', value, { signal })
+    },
     get binding() {
       currentClient()
       return liveBinding(

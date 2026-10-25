@@ -305,7 +305,7 @@ export const app = {
       missing: '所选模型连接已删除，已回退到 {{fallback}}',
       incompatible: '所选模型与当前执行方式不兼容，已回退到 {{fallback}}',
       unavailable: '所选模型缺少 API Key，已回退到 {{fallback}}',
-      provider: '远程项目仅支持 OpenCode 和 Continue，已回退到 {{fallback}}'
+      provider: '远程项目支持直连模型、OpenCode 和 Continue，已回退到 {{fallback}}'
     },
     followGlobalAction: '改为跟随默认模型',
     missingProfile: '已删除的模型',

@@ -518,6 +518,26 @@ function harness(input: {
 }
 
 describe('RuntimeAcpBackend', () => {
+  it.each([false, true])('retires cancelled bindings after disconnect without losing unacknowledged results (shared=%s)', async shared => {
+    const fixture = await ownedHarness(shared)
+    try {
+      await fixture.start()
+      await invoke(fixture, 'runtime/escalateCancellation', {
+        bindingId: 'binding-1', sessionId: 'session-1', operationId: 'request-1', requestId: 'request-1', reason: 'requested'
+      })
+      const terminal = fixture.page()
+      expect(terminal.state).toBe('cancelled')
+      expect(terminal.events.filter(event => event.kind === 'prompt-terminal')).toHaveLength(1)
+      expect(BigInt(terminal.latestSequence)).toBeGreaterThan(BigInt(terminal.acknowledgedSequence))
+      // A connected Desktop still gets a chance to commit and ACK its result.
+      await expect(fixture.backend.drain()).resolves.toBe(false)
+      fixture.context.abort.abort()
+      await expect(fixture.backend.drain()).resolves.toBe(true)
+      await fixture.backend.dispose()
+      expect(fixture.page()).toEqual(terminal)
+    } finally { await fixture.cleanup() }
+  })
+
   it.each(['cancel', 'deadline'])('does not hold peer control while releasing a startup route after %s', async reason => {
     const fixture = await ownedHarness(true)
     const releaseRoute = deferred()

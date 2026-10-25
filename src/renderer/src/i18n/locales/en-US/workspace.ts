@@ -183,7 +183,7 @@ export const workspace = {
         select: 'Select this directory'
       },
       runtimeHelp:
-        'Managed SSH projects can use an installed OpenCode or Continue Runtime. Saving checks the Host, Agent, workspace, and selected Runtime.',
+        'Managed SSH projects can use direct models or an installed OpenCode or Continue Runtime. Direct-model file and command tools execute on the remote Host. Saving checks the Host, Agent, workspace, and selected Runtime.',
       actions: {
         save: 'Save remote project',
         saving: 'Saving remote project…'

@@ -18,6 +18,7 @@ import { SubagentScheduler } from './subagent-scheduler'
 import { ExecutionSpaceResolver, type ExecutionSpaceDescriptor } from '../execution-space'
 import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
 import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
+import { RemoteWorkspaceAccess } from '../workspace/remote-workspace-access'
 
 export type SubagentRunResult = {
   childTaskId: string
@@ -58,10 +59,18 @@ export async function createSubagentRuntime(
   )?.id ?? settings.defaultModelProfileId
   if (input.executionSpace?.kind === 'ssh') {
     const provider = input.parentRequest.runtimeSelection?.provider
-    if (provider !== 'opencode' && provider !== 'continue') {
-      throw new Error('SSH experts require the resolved OpenCode or Continue runtime selection')
+    if (provider !== 'model' && provider !== 'opencode' && provider !== 'continue') {
+      throw new Error('SSH experts require a resolved direct model, OpenCode or Continue runtime selection')
     }
-    return createSelectedRuntime({ provider, profileId }, input.executionSpace)
+    const workspace = input.executionSpace.workspaceAccess
+    const space = provider === 'model' && workspace instanceof RemoteWorkspaceAccess
+      ? { ...input.executionSpace, workspaceAccess: workspace.fork() }
+      : input.executionSpace
+    try { return await createSelectedRuntime({ provider, profileId }, space) }
+    catch (error) {
+      if (space !== input.executionSpace) await space.workspaceAccess.dispose()
+      throw error
+    }
   }
   const executionSpace = input.executionSpace
     ? new ExecutionSpaceResolver().resolveLocal(input.executionSpace.rootPath)

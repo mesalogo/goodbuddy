@@ -37,6 +37,7 @@ import {
   type RemoteWorkspaceValidateRequest,
   type RemoteWorkspaceValidateResult
 } from '../../shared/remote-agent-contracts'
+import type { RemoteModelToolsAction, RemoteModelToolsResult } from '../../shared/remote-model-tools-contracts'
 import type {
   DirectoryPage,
   FilePreview,
@@ -81,6 +82,7 @@ export type RemoteWorkspaceTransportBinding = {
  * exposes neither an SSH connection nor a generic JSON-RPC method.
  */
 export interface RemoteWorkspaceTransportLease {
+  modelTools?(request: { workspaceId: string; generation: number; action: RemoteModelToolsAction }, signal?: AbortSignal): Promise<RemoteModelToolsResult>
   manageWorkspace(request: import('zod').infer<typeof remoteWorkspaceManageRequestSchema>, signal?: AbortSignal): Promise<import('../../shared/workspace-management-contracts').WorkspaceManagementResult>
   readonly binding: RemoteWorkspaceTransportBinding
   validateWorkspace(
@@ -288,6 +290,8 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
     private readonly transport: RemoteWorkspaceTransport
   ) {}
 
+  fork(): RemoteWorkspaceAccess { return new RemoteWorkspaceAccess({ ...this.binding }, this.transport) }
+
   private async open(signal?: AbortSignal): Promise<OpenRemoteWorkspace> {
     signal?.throwIfAborted()
     if (this.disposed) {
@@ -375,6 +379,12 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
       canonicalDisplayPath: handle.canonicalDisplayPath,
       access: 'read-only'
     }
+  }
+
+  async modelTools(action: RemoteModelToolsAction, signal?: AbortSignal): Promise<RemoteModelToolsResult> {
+    const opened = await this.open(signal)
+    if (!opened.lease.modelTools) throw new Error('远端 Agent 不支持直连模型工具，请更新 Agent')
+    return opened.lease.modelTools({ ...this.reference(opened), action }, signal)
   }
 
   async listDirectory(

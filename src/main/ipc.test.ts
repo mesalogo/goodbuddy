@@ -57,7 +57,7 @@ import { ExecutionSpaceResolver, type ExecutionSpaceDescriptor } from './executi
 import type { WorkspaceAccess } from './workspace'
 import { KnowledgeDatabase } from './knowledge/knowledge-database'
 import { BrowserNavigationStoppedError } from './browser/browser-service'
-import { RemotePromptCancelledError } from './agent/acp-remote-runtime'
+import { RemoteChannelClosedError, RemotePromptCancelledError } from './agent/acp-remote-runtime'
 import { CapabilityService } from './capabilities/capability-service'
 import { ObsidianService } from './obsidian'
 import { ReadonlyQueryReader } from './readonly-query-reader'
@@ -4555,7 +4555,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
     vi.clearAllMocks()
   })
 
-  it.each(['current', 'profile', 'image', 'missing'] as const)(
+  it.each(['current', 'profile', 'image', 'missing', 'ssh'] as const)(
     'routes direct model manual compaction using %s selection', async (source) => {
       const profile = {
         id: crypto.randomUUID(), name: 'Selected', baseUrl: 'https://models.example',
@@ -4575,11 +4575,13 @@ describe('registerIpcHandlers local conversation persistence', () => {
         { id: crypto.randomUUID(), role: 'assistant', content: 'earlier answer', state: 'complete' }
       ]
       const conversationId = crypto.randomUUID()
+      const projectId = source === 'ssh' ? crypto.randomUUID() : undefined
       const database = {
         queueDueSchedules: vi.fn(() => []), listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => []),
         // Stored conversations hold a layer; the renderer sends the resolved selection.
-        getConversation: vi.fn(() => ({ id: conversationId, runtimeSelection: {
+        getProject: vi.fn(() => ({ id: projectId, rootPath: '/srv/project', executionSpace: { kind: 'ssh', hostId: crypto.randomUUID(), remoteRootPath: '/srv/project' } })),
+        getConversation: vi.fn(() => ({ id: conversationId, projectId, runtimeSelection: {
           provider: 'model', model: { kind: 'profile', profileId: selection.profileId }
         }, messages })),
         createTask: vi.fn(), updateTaskStatus: vi.fn()
@@ -4600,12 +4602,13 @@ describe('registerIpcHandlers local conversation persistence', () => {
         window as never, {} as never, 'CommandOrControl+Shift+Space',
         { getResolvedSettings: vi.fn(async () => settings) } as never,
         {} as never, { clear: vi.fn() } as never, {} as never, database as never,
-        {} as never, vi.fn(async () => {})
+        {} as never, vi.fn(async () => {}), undefined, undefined, undefined, undefined,
+        { onChanged: vi.fn(), get: vi.fn(async () => ({ remoteProjectsEnabled: true })) } as never
       )
       try {
         const result = electronMocks.handlers.get(ipcChannels.agentCompactConversation)?.(
           { sender: webContents, senderFrame: webContents.mainFrame },
-          { requestId: crypto.randomUUID(), conversationId, runtimeSelection: selection,
+          { requestId: crypto.randomUUID(), conversationId, projectId, runtimeSelection: selection,
             history: messages.map(({ role, content }) => ({ role, content })),
             historyMessageIds: messages.map(({ id }) => id) }
         )
@@ -4615,7 +4618,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
         } else {
           await expect(result).resolves.toMatchObject({ provider: 'model', compacted: true })
           expect(runtimeFactoryMocks.createModelProfileRuntime).toHaveBeenCalledWith(
-            'C:\\Workspace', expect.objectContaining({ defaultModelProfileId: profile.id }),
+            source === 'ssh' ? '/srv/project' : 'C:\\Workspace', expect.objectContaining({ defaultModelProfileId: profile.id }),
             source === 'profile' ? summary : profile
           )
           expect(compactor.dispose).toHaveBeenCalledOnce()
@@ -8299,6 +8302,61 @@ describe('registerIpcHandlers agent terminal state', () => {
       }
     ])
     await harness.dispose()
+  })
+
+  it.each(['resume', 'cancel', 'shutdown'] as const)('handles a transcript disconnect during recovery: %s', async outcome => {
+    const projectId = '00000000-0000-4000-8000-000000000781'
+    const taskId = '00000000-0000-4000-8000-000000000782'
+    const conversationId = '00000000-0000-4000-8000-000000000783'
+    let attempts = 0
+    const recoveredRuntime = {
+      runtimeId: 'opencode', capability: 'chat', supportsToolExecution: true,
+      async *run(request: { remoteRecoveryOnly?: boolean; remoteSemanticAfterSequence?: string }) {
+        attempts += 1
+        expect(request.remoteRecoveryOnly).toBe(true)
+        expect(request.remoteSemanticAfterSequence).toBe(attempts === 1 ? '0' : '3')
+        if (attempts === 1) {
+          harness.assistantDatabase.getHighestCommittedRemoteTaskEventSequenceForTask.mockReturnValue('3')
+          throw new RemoteChannelClosedError('读取 Agent 语义记录')
+        }
+        yield {
+          requestId: taskId, type: 'done', sessionId: 'recovered',
+          remoteProvenance: { source: 'remote-semantic-transcript', bindingId: 'recovery-test', operationId: taskId, semanticSequence: '4', eventIndex: 0 }
+        } as const
+      }
+    }
+    const { harness } = createManagedSshHarness(recoveredRuntime)
+    harness.assistantDatabase.getConversation.mockReturnValue({ id: conversationId, projectId, runtimeSelection: { provider: 'opencode' }, messages: [] })
+    harness.assistantDatabase.getHighestCommittedRemoteTaskEventSequenceForTask.mockReturnValue('0')
+    harness.assistantDatabase.listRecoverableRemoteTasks.mockReturnValue([{
+      taskId, projectId, conversationId, currentUserMessageId: '00000000-0000-4000-8000-000000000784',
+      currentAssistantMessageId: '00000000-0000-4000-8000-000000000785', instructions: 'original task', status: 'interrupted'
+    }])
+    let disposed = false
+    try {
+      await harness.recoveryGetHandler?.(trustedEvent(harness.webContents))
+      await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(
+        ipcChannels.remoteProjectRecoveryProgress, expect.objectContaining({ stage: 'network' })
+      ))
+      await vi.waitFor(() => expect(attempts).toBe(1))
+      if (outcome === 'shutdown') {
+        await harness.dispose()
+        disposed = true
+      } else if (outcome === 'cancel') {
+        await harness.cancelHandler?.(trustedEvent(harness.webContents), taskId)
+        await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(
+          ipcChannels.remoteProjectRecoveryProgress, expect.objectContaining({ stage: 'failed' })
+        ))
+      } else {
+        await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(
+          ipcChannels.remoteProjectRecoveryProgress, expect.objectContaining({ stage: 'completed' })
+        ), { timeout: 3_000 })
+      }
+      expect(attempts).toBe(outcome === 'resume' ? 2 : 1)
+      expect(harness.assistantDatabase.endRecoverableRemoteTask).not.toHaveBeenCalled()
+    } finally {
+      if (!disposed) await harness.dispose()
+    }
   })
 
   it.each([false, true])('reattaches from its committed cursor with tool recovery evidence %s', async (hasRecoveredResponse) => {

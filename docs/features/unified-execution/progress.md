@@ -1,5 +1,49 @@
 # 进度与证据
 
+## 2026-10-25 Remote session recovery
+
+The reported transcript disconnect led to a reproducible pooled-connection bug:
+`acquire()` awaited the previous successful connection promise while the entry
+was offline and retained by another session. The regression failed before the
+fix with `Remote Agent connection request became stale`. Acquisition now joins
+or starts reconnect, preserving the leases used by other sessions.
+
+Accepted-task recovery now uses bounded backoff and reloads committed cursors
+before reattachment. Transcript timeout/closure no longer triggers owned-task
+cancellation. Stop during backoff and application exit stop retry timers; an
+unreachable task is not falsely marked cancelled. Behavior and limits are defined
+in [remote Host design](../remote-host/technical-design.md#acp-与断线).
+
+Validation:
+
+- Seven focused files: **417 passed, 1 skipped**. They cover connection acquisition,
+  shared reconnect, retry exhaustion, cancellation/shutdown during backoff,
+  refreshed semantic cursor, owned-prompt continuation without a second start,
+  existing channel/runtime recovery, and diagnostic persistence/export.
+- Shared Linux x64 Host: bundled current source from
+  `scripts/remote-recovery-host-probe.ts`; real `AgentDaemon`, authenticated private
+  endpoint, attach relay, framed protocol client and connection manager. Killing
+  the dedicated relay and injecting one connection outage produced one automatic
+  retry, two attaches total, a newer controller generation on the same daemon,
+  and a usable original retained lease. The adapter replaces SSH exec with child
+  pipes on the Host; this is not a packaged Desktop UI or live-model recovery test.
+  Probe model calls: **0**. No Agent daemon production source change is required;
+  the fix is in Desktop acquisition, ACP consumption and IPC recovery scheduling.
+- Full `npm test`: **6,706 passed, 4 failed, 85 skipped** in the concurrently changing
+  workspace. Failures: Markdown cache timing, message expansion Electron timeout,
+  overlay divider layout, and Obsidian's test requiring a temp directory outside
+  the checkout (conflicts with the repository temp rule). These are not accepted
+  as a clean full-suite result.
+- Changed-file ESLint passes. Full lint scans generated VitePress cache files and
+  fails. Standard typecheck reports TS6307 for Agent files imported by concurrent
+  `tests/support/remote-direct-model-host.ts` work; Node typecheck with
+  `--composite false`, and normal Agent/Renderer typechecks pass. This does not
+  replace the standard project-reference validation.
+
+The installed application has not been replaced. Full packaged UI/live-task
+validation and resolution of the workspace-wide check failures remain outside
+this verified source-level result.
+
 ## 2026-10-05 K07/K08 局部修复
 
 最终集成补注：排除并行删除功能后，待提交内容的隔离全量测试为 6,212 项通过、0 失败、87 跳过，类型检查及 lint 通过。下文分组阶段的失败轮次不是最终结果；完整证据见[KISS 验收](../../review/kiss-local-fixes-2026-10-05.md#最终检查)。

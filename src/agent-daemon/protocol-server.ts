@@ -1,4 +1,5 @@
 import type { Socket } from 'node:net'
+import { REMOTE_MODEL_TOOLS_CAPABILITY } from '../shared/remote-model-tools-contracts'
 import { MODEL_BRIDGE_OPTIONAL_LIMITS_CAPABILITY } from '../shared/model-bridge-contracts'
 import {
   AGENT_PROTOCOL_LIMITS,
@@ -230,6 +231,7 @@ export class AgentProtocolServer {
             generation: current.capabilityGeneration,
             capabilities: [
               { name: 'agent/control', version: 1, critical: true },
+              ...(this.#methods['workspace/modelTools'] ? [{ name: REMOTE_MODEL_TOOLS_CAPABILITY, version: 1, critical: false }] : []),
               ...(WORKSPACE_READ_METHODS.every(
                 (method) => this.#methods[method] !== undefined
               )
@@ -872,7 +874,7 @@ class ProtocolConnection {
         this.#channels.close(channel.channelId)
         this.#channelKinds.delete(channel.channelId)
       })
-      if (request.method === 'runtime/startPrompt') {
+      if (request.method === 'runtime/startPrompt' || request.method === 'workspace/modelTools') {
         // Startup holds its admitted request channel (and its existing capacity
         // slot), but must leave the socket free for cancellation and peer work.
         void completion.catch(error => this.#close(protocolFailureCategory('dispatch', error)))

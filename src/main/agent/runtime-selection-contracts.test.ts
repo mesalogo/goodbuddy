@@ -96,7 +96,9 @@ describe('layered runtime resolution', () => {
     expect(direct.ignored?.reason).toBe('incompatible')
   })
 
-  it('limits managed SSH projects to OpenCode and Continue with GoodBuddy connections', () => {
+  it('supports managed SSH direct models, OpenCode and Continue with GoodBuddy connections', () => {
+    expect(resolveRuntimeChoice(settings(), { conversation: { provider: 'model', model: { kind: 'profile', profileId: defaultId } } }, { remote: true }).selection)
+      .toEqual({ provider: 'model', profileId: defaultId })
     const resolved = resolveRuntimeChoice(
       settings({ provider: 'model', continueModelSource: { kind: 'platform' } }),
       { project: { provider: 'deepseek-harness' }, conversation: { provider: 'continue' } },

@@ -10,6 +10,37 @@
 | 日期 | 2026-09-09 |
 | 关联入口 | [直连模型 Agent 能力](./README.md) |
 
+## 2026-10-25 远端直连模型
+
+- 项目与 Composer 共用的选择规则增加 SSH `model`，保留会话/项目/默认模型继承。
+  项目保存校验模型连接与 Agent `workspace/model-tools` 能力，不要求 OC/CN 安装；旧 Agent
+  提示更新。Main 将 SSH 直连送入共享 `ModelAgentRuntime`，没有切换为 ACP Runtime。
+- 读取、rg、补丁和前台命令经现有 Agent 连接执行，复用本地工具实现；Agent 随包增加对应
+  平台 rg，进程 PATH 包含 Agent Node 目录。长输出按页转入桌面输出 owner 后释放 Host
+  暂存，历史 adoption 与续读使用桌面句柄。短输出不创建暂存目录。
+- SSH 直连开放现有手动压缩入口；外部消息通道只读会话仍隐藏。专家子任务支持继承直连
+  选择并持有独立远端 Workspace lease，编程 Subagent 继续复用父模型和工具范围。
+- Linux x64 共享 Host 使用当前源码运行生产 `AgentProtocolClient` / `AgentProtocolServer`、
+  Workspace bridge、模型 Runtime 和工具实现。确定性模型的 8 个轮次覆盖补丁、读取、搜索、
+  命令和子任务；另验证 120 KB 输出转移/续读、在途取消及随后复用连接。测试目录与进程独立，
+  不替换用户的 Agent 安装。
+- 真实模型验证通过：模型读取远端随机标记，后续对话正确复述；3 次外部文本请求。
+  前面的配置探测失败均发生在发请求之前。未发图像生成请求。
+- 选择/保存/输出取消定向测试 43 项通过；Agent 包、CLI、daemon、Workspace transport
+  相关测试 69 项通过、1 项跳过；Composer 定向测试 6 项、手动压缩 IPC 5 项通过。
+- 全量测试第一轮：6,701 项通过、94 项跳过，3 个文件未全绿。SSH 压缩入口修改误影响
+  外部通道只读会话，已修正并通过定向复测；另外两项是 Windows 的 OpenCode config 准备
+  `spawnSync npm.cmd EINVAL` 和 overlay Electron fixture 缺少飞书/企业微信 snapshot handler，
+  本任务未修改其实现。不把该轮记为全量通过。
+- 全仓 lint 扫描已有 `sites/docs/.vitepress/cache` 生成代码失败；`npx.cmd eslint src tests build/agent-bundle.cjs`
+  通过。`npm.cmd run typecheck` 与 `npm.cmd run build` 通过，后者包含 control-plane installer 校验。
+- 最终源码再次运行 Linux x64 工具回归及输出单测，4 项通过；取消检查同时确认 Shell 和
+  `sleep` 子进程退出，子任务生成的文件位于同一远端工作区。Agent 直连工具按需加载，
+  不在 daemon 启动时初始化整套模型工具目录。
+- 能力边界：桌面负责模型、历史和应用工具；文件/命令在 Host，stdio MCP 等应用能力保持
+  原执行位置。直连不提供桌面退出后的 ACP 自治续跑。macOS/arm64、图像生成、真实桌面 UI
+  到部署 Agent 的整条流程，以及新版签名 Agent 包发布均不在本次已验证范围内。
+
 ## 2026-10-05 工具执行异常回传
 
 - 普通工具执行异常也返回模型，保留失败活动与错误详情，由模型决定后续行动；规则见

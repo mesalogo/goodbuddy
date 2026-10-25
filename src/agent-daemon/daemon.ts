@@ -35,6 +35,7 @@ import {
 import { AgentUnsupportedError } from './errors'
 import { WorkspaceGitService } from './workspace-git-service'
 import { createWorkspaceProtocolMethods } from './workspace-protocol-methods'
+import { createDirectModelTools } from './direct-model-tools'
 import { WorkspaceRegistry } from './workspace-registry'
 import { AgentDiagnosticLog } from './diagnostic-log'
 
@@ -48,6 +49,7 @@ export type AgentDaemonOptions = {
   peerIdentityProvider: UnixPeerIdentityProvider
   now?: () => number
   gitExecutable?: string
+  ripgrepExecutablePath?: string
   workspaceRequestTimeoutMs?: number
   isSuperseded?: () => boolean
   runtimeProtocol?: {
@@ -110,6 +112,7 @@ export class AgentDaemon {
   readonly #peerIdentityProvider: UnixPeerIdentityProvider
   readonly #now: () => number
   readonly #gitExecutable?: string
+  readonly #ripgrepExecutablePath?: string
   readonly #workspaceRequestTimeoutMs?: number
   readonly #runtimeProtocol?: AgentDaemonOptions['runtimeProtocol']
   readonly #runtimeFactory?: AgentDaemonOptions['runtimeFactory']
@@ -119,6 +122,7 @@ export class AgentDaemon {
   #endpoint?: PrivateEndpoint
   #events?: EventJournal
   #workspaces?: WorkspaceRegistry
+  #directModelTools?: ReturnType<typeof createDirectModelTools>
   #activeRuntimeProtocol?: AgentDaemonOptions['runtimeProtocol']
   readonly #isSuperseded?: () => boolean
   #draining = false
@@ -154,6 +158,7 @@ export class AgentDaemon {
     })
     this.#peerIdentityProvider = options.peerIdentityProvider
     this.#gitExecutable = options.gitExecutable
+    this.#ripgrepExecutablePath = options.ripgrepExecutablePath
     this.#workspaceRequestTimeoutMs = options.workspaceRequestTimeoutMs
     this.#isSuperseded = options.isSuperseded
     this.#runtimeProtocol = options.runtimeProtocol
@@ -238,7 +243,8 @@ export class AgentDaemon {
         ),
         inspectGit: async (access, io) => await git.inspect(access, io)
       })
-      const workspaceMethods = createWorkspaceProtocolMethods({
+      this.#directModelTools = createDirectModelTools(this.#workspaces, this.#stateDirectory, this.#ripgrepExecutablePath)
+      const workspaceMethods = { 'workspace/modelTools': this.#directModelTools.handler, ...createWorkspaceProtocolMethods({
         workspaces: this.#workspaces,
         git,
         ...(this.#workspaceRequestTimeoutMs === undefined
@@ -247,7 +253,7 @@ export class AgentDaemon {
               requestTimeoutMs:
                 this.#workspaceRequestTimeoutMs
             })
-      })
+      }) }
       const protocolBox: {
         current?: AgentProtocolServer
       } = {}
@@ -395,6 +401,8 @@ export class AgentDaemon {
   }
 
   async stop(): Promise<void> {
+    await this.#directModelTools?.dispose()
+    this.#directModelTools = undefined
     if (this.#retirementTimer) clearTimeout(this.#retirementTimer)
     if (this.#state !== 'stopped') {
       this.#diagnostics.tryRecord('daemon.stopping', {

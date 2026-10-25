@@ -316,7 +316,7 @@ export const app = {
       missing: 'The selected model connection was deleted. Using {{fallback}} instead.',
       incompatible: 'The selected model does not work with this execution mode. Using {{fallback}} instead.',
       unavailable: 'The selected model has no API key. Using {{fallback}} instead.',
-      provider: 'Remote projects support only OpenCode and Continue. Using {{fallback}} instead.'
+      provider: 'Remote projects support direct models, OpenCode and Continue. Using {{fallback}} instead.'
     },
     followGlobalAction: 'Use the default model',
     missingProfile: 'Deleted model',

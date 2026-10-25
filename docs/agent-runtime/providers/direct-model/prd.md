@@ -54,7 +54,7 @@ macOS/Linux 改用 `bash_execute`。
 
 | Runtime | GoodBuddy `process_execute` | GoodBuddy `subagent_delegate` |
 | --- | --- | --- |
-| 直连模型 `model` | 本机 Shell 可用时提供 | 按既有委派设置提供 |
+| 直连模型 `model` | 所选本机或 SSH Host 的 Shell 可用时提供 | 按既有委派设置提供，继承执行空间 |
 | OpenCode | 不提供 | 不提供 |
 | Continue | 不提供 | 不提供 |
 | DeepSeek Harness | 不提供 | 不提供 |
@@ -95,13 +95,14 @@ Subagent 使用父请求的项目、执行空间、直连模型连接和已启�
 - 父子请求的工具、模型用量、活动和成果归属。
 - 桌面聊天和选择直连模型的消息通道项目使用相同 Runtime 能力矩阵。
 - 安装包按目标平台和架构携带固定版本 ripgrep，并将其提供给工作区搜索和命令 PATH。
+- 托管 SSH 项目可选择直连模型。Agent 执行工作区工具与前台进程，文本生成、历史、摘要和应用能力沿用桌面直连实现；Agent 包携带目标架构的 ripgrep。
 
 ### 4.2 不包含
 
 - 交互式 PTY、终端复用、持续 stdin、密码提示或 TUI 自动化。
 - 后台守护进程、任意 PID 枚举、接管或停止用户已有进程。
 - Shell Session 持久化，环境变更不会跨 `process_execute` 调用保留。
-- 首版远程 SSH 直连模型进程执行。
+- 直连模型在桌面退出后继续自治执行；SSH 直连与本地一样由桌面驱动，退出或断连会取消活动工具。
 - 向 OpenCode、Continue 或 DeepSeek Harness 注入本功能工具。
 - 递归 Subagent、长期运行的自治 Agent、Workflow、Hook 或恢复未完成子任务。
 - 新的权限矩阵、逐命令批准、沙箱档位或命令白名单。

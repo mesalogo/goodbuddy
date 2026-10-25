@@ -24,6 +24,8 @@ import {
 import type { RuntimeEvent, RemoteSemanticEventProvenance } from './runtime'
 import {
   AcpRemoteRuntime,
+  RemoteChannelClosedError,
+  RemoteOperationTimeoutError,
   RemotePromptCancelledError,
   RemotePromptRecoveryUnavailableError,
   type AcpRemoteRuntimeOptions
@@ -2820,6 +2822,24 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
       escalateCancellation: channel.escalateCancellation
     }
   }
+
+  it.each([
+    new RemoteChannelClosedError('读取 Agent 语义记录'),
+    new RemoteOperationTimeoutError('读取 Agent 语义记录')
+  ])('preserves an accepted task when transcript reading is interrupted: %s', async error => {
+    const fixture = ownedChannel()
+    fixture.pageOwnedPromptTranscript.mockRejectedValueOnce(error)
+    try {
+      await expect(collect(fixture.instance.run(request, new AbortController().signal))).rejects.toBe(error)
+      expect(fixture.escalateCancellation).not.toHaveBeenCalled()
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+      const resumed = await collect(fixture.instance.run({ ...request, remoteRecoveryOnly: true }, new AbortController().signal))
+      expect(resumed.some(event => event.type === 'done')).toBe(true)
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+    } finally {
+      await fixture.instance.dispose()
+    }
+  })
 
   it.each(['continue', 'opencode'] as const)('continues %s after reopening the desktop binding database', async (runtimeId) => {
     const directory = mkdtempSync(join(tmpdir(), 'remote-runtime-restart-'))

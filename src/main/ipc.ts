@@ -230,6 +230,7 @@ import {
   remoteProjectRecoveryStateSchema,
   type RemoteProjectRecoveryState
 } from '../shared/remote-project-recovery-contracts'
+import { recoverRemoteTaskWithRetry } from './remote-agent/remote-task-recovery'
 import {
   type RemoteProjectSaveOwner,
   type RemoteProjectSaveService
@@ -1703,7 +1704,8 @@ export function registerIpcHandlers(
   }
   const recoverRemoteTask = async (
     task: RecoverableRemoteTask,
-    recoveryRequestId: string
+    recoveryRequestId: string,
+    controller: AbortController
   ): Promise<void> => {
     const highestCommitted =
       await assistantDatabase.getHighestCommittedRemoteTaskEventSequenceForTask(
@@ -1740,7 +1742,7 @@ export function registerIpcHandlers(
       projectId: task.projectId,
       conversationLayer: conversation.runtimeSelection
     })
-    const controller = new AbortController()
+    controller.signal.throwIfAborted()
     const lease = await leaseActiveRequest(
       task.taskId,
       task.conversationId,
@@ -1949,6 +1951,8 @@ export function registerIpcHandlers(
       await assistantDatabase.completeTaskScheduleRun(task.taskId)
     }
   }
+  const remoteRecoveryLifetime = new AbortController()
+  const remoteTaskRecoveryControllers = new Map<string, AbortController>()
   const startRemoteProjectRecovery = (
     projectId: string,
     knownTasks?: readonly RecoverableRemoteTask[]
@@ -1979,7 +1983,31 @@ export function registerIpcHandlers(
               !activeRequests.has(task.taskId)
           )
         const results = await Promise.allSettled(
-          tasks.map(task => recoverRemoteTask(task, requestId))
+          tasks.map(async task => {
+            const controller = new AbortController()
+            const recoverySignal = AbortSignal.any([remoteRecoveryLifetime.signal, controller.signal])
+            remoteTaskRecoveryControllers.set(task.taskId, controller)
+            try {
+              await recoverRemoteTaskWithRetry(async () => {
+                if (shuttingDown || executionPaused) {
+                  throw new DOMException('远端恢复已暂停', 'AbortError')
+                }
+                // Refresh after every interruption: committed cursors,
+                // cancellation and terminal states may change during backoff.
+                const current = (await listRecoverableRemoteTasks()).find(
+                  candidate => candidate.taskId === task.taskId
+                )
+                recoverySignal.throwIfAborted()
+                if (current && !activeRequests.has(current.taskId)) {
+                  await recoverRemoteTask(current, requestId, controller)
+                }
+              }, recoverySignal, () => {
+                publishRemoteProjectRecovery({ projectId, requestId, stage: 'network' })
+              })
+            } finally {
+              remoteTaskRecoveryControllers.delete(task.taskId)
+            }
+          })
         )
         const failure = results.find(result => result.status === 'rejected')
         if (failure?.status === 'rejected') throw failure.reason
@@ -4626,9 +4654,14 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.agentCancel, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const requestId = requestIdSchema.parse(input)
-    activeRequests
-      .get(requestId)
-      ?.controller.abort(new Error('用户取消了请求'))
+    const active = activeRequests.get(requestId)
+    if (active) {
+      active.controller.abort(new Error('用户取消了请求'))
+    } else {
+      remoteTaskRecoveryControllers.get(requestId)?.abort(
+        new DOMException('已停止自动恢复；远端任务状态需在连接恢复后确认', 'AbortError')
+      )
+    }
   })
 
   registerHandler(
@@ -4734,10 +4767,10 @@ export function registerIpcHandlers(
       const executionSpace = project
         ? spaceResolver.resolveProject(project)
         : spaceResolver.resolveLocal(selected.settings.workspacePath)
-      if (executionSpace.kind === 'ssh') {
+      if (executionSpace.kind === 'ssh' && request.runtimeSelection.provider !== 'model') {
         throw new Error(REMOTE_EXECUTION_SPACE_UNAVAILABLE)
       }
-      const workspacePath = executionSpace.rootPath
+      const workspacePath = executionSpace.kind === 'ssh' ? executionSpace.remoteRootPath : executionSpace.rootPath
       const controller = new AbortController()
       const activeRequestLease = await leaseActiveRequest(
         request.requestId,
@@ -7501,6 +7534,7 @@ export function registerIpcHandlers(
   return async () => {
     disposeWindowIpc()
     shuttingDown = true
+    remoteRecoveryLifetime.abort(new DOMException('应用正在退出', 'AbortError'))
     if (nativeClientCoordinator) window.webContents.removeListener('destroyed', closeNativeClients)
     await nativeClientCoordinator?.closeOwner(nativeClientOwnerId)
     supervisionModelPool.dispose()

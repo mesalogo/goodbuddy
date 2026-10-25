@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { REMOTE_MODEL_TOOLS_CAPABILITY } from '../../shared/remote-model-tools-contracts'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import type { RemoteAgentConnection } from './remote-agent-connection-manager'
 import type {
@@ -46,10 +47,10 @@ export class ManagedRemoteProjectRuntimeValidator
   ): Promise<RemoteProjectRuntimeValidationLease> {
     input.signal.throwIfAborted()
     if (
-      input.selection.provider !== 'opencode' && input.selection.provider !== 'continue'
+      input.selection.provider !== 'model' && input.selection.provider !== 'opencode' && input.selection.provider !== 'continue'
     ) {
       throw new Error(
-        'Managed remote projects require OpenCode or Continue'
+        'Managed remote projects require a direct model, OpenCode or Continue'
       )
     }
     assertInputIdentity(input)
@@ -59,15 +60,15 @@ export class ManagedRemoteProjectRuntimeValidator
     input.signal.throwIfAborted()
     if (
       modelProfile === undefined ||
-      modelProfile.protocol === 'openai-images-generations' ||
+      (input.selection.provider !== 'model' && modelProfile.protocol === 'openai-images-generations') ||
       (modelProfile.authentication === 'api-key' &&
         !modelProfile.apiKey)
     ) {
       throw new Error(
-        'Managed remote OpenCode requires a usable text model profile'
+        'Managed remote Runtime requires a usable model profile'
       )
     }
-    const installation =
+    const installation = input.selection.provider === 'model' ? undefined :
       await this.#installationManager.activateInstalled(
         input.host.hostId,
         {
@@ -77,7 +78,7 @@ export class ManagedRemoteProjectRuntimeValidator
         }
       )
     input.signal.throwIfAborted()
-    assertInstallationIdentity(input, installation)
+    if (installation) assertInstallationIdentity(input, installation)
 
     const refreshed = await input.connection.refreshCapabilities(
       input.signal
@@ -91,7 +92,10 @@ export class ManagedRemoteProjectRuntimeValidator
         'Remote Agent capabilities changed during Runtime validation'
       )
     }
-    assertRuntimeCapability(refreshed, installation)
+    if (installation) assertRuntimeCapability(refreshed, installation)
+    else if (!refreshed.capabilities.some(capability => capability.name === REMOTE_MODEL_TOOLS_CAPABILITY && capability.version === 1)) {
+      throw new Error('远端 Agent 不支持直连模型工具，请更新 Agent')
+    }
 
     const capabilitySnapshot = structuredClone(refreshed)
     let released = false

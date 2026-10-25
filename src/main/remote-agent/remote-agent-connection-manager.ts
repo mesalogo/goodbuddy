@@ -310,7 +310,13 @@ export class RemoteAgentConnectionManager {
     }
     entry.waiters += 1
     try {
-      await waitForShared(entry.connectPromise, signal)
+      // Offline entries may still have leases held by other sessions. Waiting
+      // for their previous connectPromise cannot reopen the transport.
+      if (entry.connectionState === 'offline' || entry.reconnectPromise) {
+        await this.#reconnect(entry, signal)
+      } else {
+        await waitForShared(entry.connectPromise, signal)
+      }
       if (
         this.#disposed ||
         this.#entries.get(entry.key) !== entry ||

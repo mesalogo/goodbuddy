@@ -47,9 +47,9 @@ Task、Job、Subjob、Run 和 Subagent 的对象关系以
 - 搜索、进程和 Subagent 的长输出返回预览与续读位置，完整内容保留到所属会话或 Runtime 释放。
   可续读当前会话已取得的输出，详见 [输出契约](./technical-design.md#43-输出边界)。
 - 使用当前执行空间账号权限，不增加第二套工具审批或权限档位。
-- 首版跨平台指桌面本机 Windows、macOS 和 Linux。托管 SSH 项目当前继续使用远端
-  OpenCode；未来若向远端直连模型开放本工具，命令必须由 Host Agent 执行，绝不能回退到
-  桌面本机。
+- 支持本机 Windows、macOS 和 Linux，以及提供 `workspace/model-tools` 能力的 SSH Agent。
+  远端直连的模型循环仍在桌面，文件和命令在 Host 执行，不回退到桌面工作区。
+  当前 Linux x64 验证及待覆盖平台见[进度](./progress.md#2026-10-25-远端直连模型)。
 
 ## 相关功能
 

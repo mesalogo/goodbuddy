@@ -34,6 +34,8 @@ import type { BrowserToolService } from '../browser/browser-model-tools'
 import type { SubagentScheduler } from '../assistant/subagent-scheduler'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { ModelToolProvider } from './model-tool-provider'
+import { RemoteModelTools } from '../remote-agent/remote-model-tools'
+import { RemoteWorkspaceAccess } from '../workspace/remote-workspace-access'
 import type { ControlledHarnessExtensionPackage } from './deepseek-harness-extension-loader'
 import {
   LocalWorkspaceAccess,
@@ -46,6 +48,7 @@ import {
 import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 import type { DesktopDiagnosticFailureObserver } from '../desktop-diagnostics'
 export type AgentCapabilityContext = {
+  remoteModelTools?: ModelRuntimeOptions['remoteTools']
   modelFetcher?: ModelRuntimeOptions['fetcher']
   outputStore?: ModelRuntimeOptions['outputStore']
   outputAdopt?: ModelRuntimeOptions['outputAdopt']
@@ -395,7 +398,10 @@ export function createAgentRuntime(
         settings?.imageGenerationQuality ??
         defaultRuntimeSettings.imageGenerationQuality,
       skillInstructions: capabilities.skillInstructions,
-      defaultWorkspace: workspace,
+      defaultWorkspace: executionSpace?.kind === 'ssh' ? executionSpace.remoteRootPath : workspace,
+      remoteTools: capabilities.remoteModelTools ?? (remote && getWorkspaceAccess() instanceof RemoteWorkspaceAccess
+        ? new RemoteModelTools(getWorkspaceAccess() as RemoteWorkspaceAccess, { outputStore: capabilities.outputStore, outputAdopt: capabilities.outputAdopt })
+        : undefined),
       mcpServers: capabilities.mcpServers,
       browserService: capabilities.browserService,
       knowledgeGateway: capabilities.knowledgeGateway,

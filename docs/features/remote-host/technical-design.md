@@ -312,10 +312,13 @@ Main 传入已规范化的绝对 POSIX root。Agent 返回 Workspace identity、
 
 ## Runtime
 
-托管 SSH 项目支持签名 OpenCode ACP bundle 和 Continue 1.5.47 HTTP 宿主。
-Composer Runtime 菜单显示 OpenCode、Continue 和管理入口，不显示直连模型或
-DeepSeek Harness。项目与历史会话保留 OC/CN 选择；不支持的旧 selection 恢复为项目
-默认值。Main 校验已安装 Runtime 身份与选择一致，按相应 CN/OC 模型 profile 建立模型桥。
+托管 SSH 项目支持直连模型、签名 OpenCode ACP bundle 和 Continue 1.5.47 HTTP 宿主。
+Composer 和项目设置均提供这三种选择及模型连接，不显示 DeepSeek Harness。
+项目与历史会话保留相应选择。直连模型复用桌面模型循环，凭据留在 Main，工作区读、搜索、
+补丁与命令通过 Agent 的 `workspace/model-tools` 能力执行；不激活 OC/CN 安装，也不建立
+ACP 模型桥。保存前检查模型连接与该 Agent 能力，旧 Agent 提示更新。
+完整执行、输出、取消及本地能力边界见[直连模型远端执行](../../agent-runtime/providers/direct-model/technical-design.md#远端直连模型)。
+OC/CN 路径仍校验已安装 Runtime 身份与选择一致，按相应模型 profile 建立模型桥。
 本机配置的 SKILL 包和 stdio MCP Server 不上传或分配给远程 Runtime；远程 ACP Session
 仅接收当前请求由 Agent 管理的 HTTP MCP 能力（例如图片工具），不继承本机原生
 MCP 配置。Continue helper 将 ACP Session 的服务器作为显式 `sessionMcpServers` 交给
@@ -532,8 +535,25 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   提示；新 `requestId` 的恢复可以再次展示。进行中状态和失败提示持续保留；重试操作仅放在
   展开的项目列表对应项目旁，收起时只显示状态，不在新建项目按钮旁增加恢复按钮。
   隐藏仅作用于展示层，`App` 保留完成业务状态，继续用于发送、队列恢复和事件顺序判断。
+- Transient recovery failures now retry the accepted task after 1, 2, 5, 10 and
+  30 seconds (five retries after the first attempt). Each attempt reloads the
+  recoverable task and its committed semantic cursor. Only connection, transport
+  closure and remote operation timeout errors qualify; authentication, identity,
+  protocol validation and unknown failures do not automatically retry. This policy
+  applies to `remoteRecoveryOnly` reattachment, never new prompt/tool submission.
+  An offline pooled connection is reconnected even while older sessions retain
+  leases; concurrent callers share that reconnect. A transcript read timeout or
+  closed channel does not escalate cancellation of the accepted owned prompt.
+  Retry exhaustion leaves the recoverable task and manual retry entry intact.
+- During retry backoff, Stop cancels automatic recovery and reports that remote
+  status still needs confirmation; it does not claim the unreachable task stopped.
+  During an attached run, existing operation cancellation remains in effect.
+  Application exit aborts retry timers. Desktop diagnostics preserve the distinct
+  closed-channel, timeout, protocol-channel and unavailable-recovery error types.
+  Validation and remaining boundaries are recorded in
+  [the execution progress](../unified-execution/progress.md#2026-10-25-remote-session-recovery).
 - 正常应用退出对已接受托管 SSH 请求执行 detach，不等待远端完成；本地请求和尚未接受的
-  请求仍按原行为取消。用户显式“停止”始终发送稳定 operation cancellation，并等待 Agent
+  请求仍按原行为取消。连接有效时，用户显式“停止”发送稳定 operation cancellation，并等待 Agent
   语义终态。已进入 Agent-owned `run` 但 start/attach 响应仍不确定的请求继续保留为
   `interrupted + remote_recoverable`，并自动走 exact attach；不会因为尚未收到第一个公开
   事件而丢失恢复身份。

@@ -2646,9 +2646,11 @@ export class RuntimeAcpBackend {
         if (
           candidate.controllerId === binding.controllerId &&
           candidate.controllerGeneration === binding.controllerGeneration &&
-          candidate.connectionId === binding.connectionId &&
-          candidate.state !== 'closed'
+          candidate.connectionId === binding.connectionId
         ) {
+          // Closed bindings can still have unacknowledged terminal output.
+          // They must detach too, otherwise drain waits forever for an offline
+          // Desktop's ACK. The semantic store retains that output independently.
           void this.#enqueueControl(() =>
             this.#detachBinding(candidate)
           ).catch(() => undefined)

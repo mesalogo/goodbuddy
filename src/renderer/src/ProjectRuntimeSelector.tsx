@@ -28,7 +28,7 @@ type ProjectRuntimeSelectorProps = {
   onChange: (selection: RuntimeSelectionLayer | undefined) => void
   runtimeSettings: RuntimeSettings
   selection?: RuntimeSelectionLayer
-  /** Managed SSH projects accept only OpenCode and Continue with a GoodBuddy connection. */
+  /** Managed SSH projects use a GoodBuddy connection for direct models, OpenCode or Continue. */
   remote?: boolean
   /** Prefix for accessible names when several projects are edited on one page. */
   ariaLabelPrefix?: string

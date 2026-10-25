@@ -6405,9 +6405,7 @@ function App(): React.JSX.Element {
   );
   const runtimeContextCompactAvailable =
     activeRuntimeSelection?.provider === "model"
-      ? !activeConversation?.remote &&
-        activeProject?.executionSpace.kind !== "ssh" &&
-        runtimeSettings?.modelProfiles.some(
+      ? !activeConversation?.remote && runtimeSettings?.modelProfiles.some(
           (profile) =>
             profile.id === activeRuntimeSelection.profileId &&
             profile.protocol !== "openai-images-generations",
