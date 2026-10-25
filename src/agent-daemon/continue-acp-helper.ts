@@ -1,8 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import fs, { rm } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import fs from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
+import { homedir } from 'node:os'
 import { Readable, Writable } from 'node:stream'
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION, type Agent, type McpServer } from '@agentclientprotocol/sdk'
 import { ContinueHostAdapter } from '../main/agent/continue-host-adapter'
@@ -26,7 +27,6 @@ export async function runContinueAcpHelper(options: {
     exchange: createUnixModelBridgeExchange({ socketPath: options.socketPath }),
     sharedSessions: options.sharedSessions
   })
-  let root: string | undefined
   const questions = new Map<string, { sessionId: string; adapter: ContinueHostAdapter }>()
   const token = randomBytes(32).toString('base64url')
   const replies = createServer((request, response) => { void (async () => {
@@ -53,10 +53,12 @@ export async function runContinueAcpHelper(options: {
   process.on('SIGINT', stop)
   try {
   const origin = await proxy.listen()
-  const launchRoot = join(dirname(options.socketPath), 'goodbuddy-runtime-launch')
-  await fs.mkdir(launchRoot, { recursive: true, mode: 0o700 })
-  root = await fs.mkdtemp(join(launchRoot, 'goodbuddy-continue-'))
-  const cacheRoot = root
+  // Account-owned, disposable cache. The adapter validates layout/version/source
+  // hashes before reuse and removes private prompt files after child termination.
+  // XDG paths must be absolute; ignore relative values per the XDG specification.
+  const xdgCache = process.env.XDG_CACHE_HOME
+  const cacheRoot = join(xdgCache && isAbsolute(xdgCache) ? xdgCache : join(homedir(), '.cache'), 'goodbuddy', 'continue-host')
+  await fs.mkdir(cacheRoot, { recursive: true, mode: 0o700 })
   await new Promise<void>((resolve, reject) => { replies.once('error', reject); replies.listen(0, '127.0.0.1', resolve) })
   const questionEndpoint = `http://127.0.0.1:${(replies.address() as import('node:net').AddressInfo).port}/${token}`
   if (stopping) return 128
@@ -210,12 +212,8 @@ export async function runContinueAcpHelper(options: {
         replies.closeAllConnections()
         await new Promise<void>(resolve => replies.close(() => resolve()))
       } finally {
-        try {
-          if (root) await rm(root, { recursive: true, force: true })
-        } finally {
-          process.off('SIGTERM', stop)
-          process.off('SIGINT', stop)
-        }
+        process.off('SIGTERM', stop)
+        process.off('SIGINT', stop)
       }
     }
   }
