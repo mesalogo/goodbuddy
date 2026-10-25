@@ -236,6 +236,7 @@ function getCurrentTimeInstruction(now = new Date()): string {
 }
 
 export type ModelRuntimeOptions = {
+  remoteTools?: ModelToolProviderProgrammingOptions['remoteTools']
   outputStore?: ModelToolProviderProgrammingOptions['outputStore']
   outputAdopt?: ModelToolProviderProgrammingOptions['outputAdopt']
   apiKey?: string
@@ -1690,7 +1691,8 @@ export class ModelAgentRuntime implements AgentRuntime {
         {
           outputStore: options.outputStore,
           outputAdopt: options.outputAdopt,
-          processService: new LocalDirectModelProcessService({
+          remoteTools: options.remoteTools,
+          processService: options.remoteTools ? undefined : new LocalDirectModelProcessService({
             outputStore: options.outputStore,
             environment: options.launchEnvironmentProvider
               ? buildLaunchUserEnvironment(options.launchEnvironmentProvider)

@@ -35,7 +35,7 @@
 
 .workspace-menu__projects {
   background: var(--surface-subtle);
-  border-right: 1px solid var(--border-control);
+  border-right: 1px solid var(--border-subtle);
 }
 
 .workspace-menu__search {

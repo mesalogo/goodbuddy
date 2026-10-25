@@ -230,6 +230,7 @@ import {
   remoteProjectRecoveryStateSchema,
   type RemoteProjectRecoveryState
 } from '../shared/remote-project-recovery-contracts'
+import { recoverRemoteTaskWithRetry } from './remote-agent/remote-task-recovery'
 import {
   type RemoteProjectSaveOwner,
   type RemoteProjectSaveService
@@ -1704,8 +1705,11 @@ export function registerIpcHandlers(
   }
   const recoverRemoteTask = async (
     task: RecoverableRemoteTask,
-    recoveryRequestId: string
+    recoveryRequestId: string,
+    controller: AbortController,
+    publishProgress: (state: RemoteProjectRecoveryState) => void
   ): Promise<void> => {
+    let recoveryReady = false
     const highestCommitted =
       await assistantDatabase.getHighestCommittedRemoteTaskEventSequenceForTask(
         task.taskId
@@ -1741,7 +1745,7 @@ export function registerIpcHandlers(
       projectId: task.projectId,
       conversationLayer: conversation.runtimeSelection
     })
-    const controller = new AbortController()
+    controller.signal.throwIfAborted()
     const lease = await leaseActiveRequest(
       task.taskId,
       task.conversationId,
@@ -1763,7 +1767,7 @@ export function registerIpcHandlers(
         }))
     })
     try {
-      publishRemoteProjectRecovery({
+      publishProgress({
         projectId: task.projectId,
         requestId: recoveryRequestId,
         stage: 'agent'
@@ -1777,7 +1781,7 @@ export function registerIpcHandlers(
           '原远程任务的 Agent Runtime 不再可用'
         )
       }
-      publishRemoteProjectRecovery({
+      publishProgress({
         projectId: task.projectId,
         requestId: recoveryRequestId,
         stage: 'runtime'
@@ -1794,6 +1798,11 @@ export function registerIpcHandlers(
         currentAssistantMessageId: task.currentAssistantMessageId,
         remoteSemanticAfterSequence: highestCommitted,
         remoteRecoveryOnly: true,
+        onRemoteRecoveryReady: () => {
+          recoveryReady = true
+          publishProgress({ projectId: task.projectId, requestId: recoveryRequestId, stage: 'completed' })
+          publishConversationChange()
+        },
         remoteRecoveredTools: recoveredTools,
         remoteHasResponseTextAfterToolFailure:
           await assistantDatabase.hasRemoteResponseTextAfterToolFailure(task.taskId),
@@ -1900,7 +1909,7 @@ export function registerIpcHandlers(
           await remoteEventBatcher.flush()
         }
         if (event.type === 'remote-semantic-checkpoint') {
-          publishRemoteProjectRecovery({
+          if (!recoveryReady) publishProgress({
             projectId: task.projectId,
             requestId: recoveryRequestId,
             stage: 'cursor',
@@ -1950,6 +1959,28 @@ export function registerIpcHandlers(
       await assistantDatabase.completeTaskScheduleRun(task.taskId)
     }
   }
+  const remoteRecoveryLifetime = new AbortController()
+  const remoteTaskRecoveryControllers = new Map<string, AbortController>()
+  const remoteTaskRecoveryProgress = new Map<string, RemoteProjectRecoveryState>()
+  const publishProjectTaskRecovery = (state: RemoteProjectRecoveryState): RemoteProjectRecoveryState => {
+    const states = [...remoteTaskRecoveryProgress.values()].filter(candidate => candidate.projectId === state.projectId)
+    // A live peer must not hide failure or catch-up in another conversation.
+    const next = states.find(candidate => candidate.stage === 'failed') ??
+      states.find(candidate => candidate.stage !== 'completed') ?? state
+    const previous = remoteProjectRecoveries.get(state.projectId)
+    let requestId = previous?.requestId ?? state.requestId
+    // Renderer terminal states are final for their request ID. A later loss of
+    // an already-live stream starts a new recovery, including a network event.
+    if (previous && ['completed', 'failed'].includes(previous.stage) && previous.stage !== next.stage) {
+      requestId = randomUUID()
+      publishRemoteProjectRecovery({ projectId: state.projectId, requestId, stage: 'network' })
+    }
+    return publishRemoteProjectRecovery({ ...next, requestId })
+  }
+  const publishTaskRecovery = (taskId: string, state: RemoteProjectRecoveryState): void => {
+    remoteTaskRecoveryProgress.set(taskId, state)
+    publishProjectTaskRecovery(state)
+  }
   const startRemoteProjectRecovery = (
     projectId: string,
     knownTasks?: readonly RecoverableRemoteTask[]
@@ -1963,7 +1994,9 @@ export function registerIpcHandlers(
           stage: 'network'
         })
     }
-    const requestId = randomUUID()
+    const previous = remoteProjectRecoveries.get(projectId)
+    const requestId = previous && !['completed', 'failed'].includes(previous.stage)
+      ? previous.requestId : randomUUID()
     const initial = publishRemoteProjectRecovery({
       projectId,
       requestId,
@@ -1973,21 +2006,61 @@ export function registerIpcHandlers(
       // Let the operation enter the map before an empty recovery completes.
       await Promise.resolve()
       try {
-        const tasks = (knownTasks ?? (await listRecoverableRemoteTasks()))
+        const recoverableTasks = knownTasks ?? (await listRecoverableRemoteTasks())
+        const recoverableIds = new Set(recoverableTasks.map(task => task.taskId))
+        for (const [taskId, state] of remoteTaskRecoveryProgress) {
+          if (state.projectId === projectId && !recoverableIds.has(taskId) && !remoteTaskRecoveryControllers.has(taskId)) {
+            remoteTaskRecoveryProgress.delete(taskId)
+          }
+        }
+        const tasks = recoverableTasks
           .filter(
             (task) =>
               task.projectId === projectId &&
-              !activeRequests.has(task.taskId)
+              !activeRequests.has(task.taskId) &&
+              !remoteTaskRecoveryControllers.has(task.taskId)
           )
-        const results = await Promise.allSettled(
-          tasks.map(task => recoverRemoteTask(task, requestId))
-        )
-        const failure = results.find(result => result.status === 'rejected')
-        if (failure?.status === 'rejected') throw failure.reason
-        // Recovery may terminalize the task without a trailing checkpoint;
-        // let the renderer converge on the persisted terminal state.
-        publishConversationChange()
-        publishRemoteProjectRecovery({
+        for (const task of tasks) {
+          remoteTaskRecoveryProgress.set(task.taskId, { projectId, requestId, stage: 'network' })
+        }
+        for (const task of tasks) {
+          const operation = (async () => {
+            const controller = new AbortController()
+            const recoverySignal = AbortSignal.any([remoteRecoveryLifetime.signal, controller.signal])
+            remoteTaskRecoveryControllers.set(task.taskId, controller)
+            try {
+              await recoverRemoteTaskWithRetry(async () => {
+                if (shuttingDown || executionPaused) {
+                  throw new DOMException('远端恢复已暂停', 'AbortError')
+                }
+                // Refresh after every interruption: committed cursors,
+                // cancellation and terminal states may change during backoff.
+                const current = (await listRecoverableRemoteTasks()).find(
+                  candidate => candidate.taskId === task.taskId
+                )
+                recoverySignal.throwIfAborted()
+                if (current && !activeRequests.has(current.taskId)) {
+                  await recoverRemoteTask(current, requestId, controller, state => publishTaskRecovery(task.taskId, state))
+                }
+              }, recoverySignal, () => {
+                publishTaskRecovery(task.taskId, { projectId, requestId, stage: 'network' })
+              })
+              publishTaskRecovery(task.taskId, { projectId, requestId, stage: 'completed' })
+              remoteTaskRecoveryProgress.delete(task.taskId)
+            } catch (error) {
+              publishTaskRecovery(task.taskId, {
+                projectId, requestId, stage: 'failed',
+                message: safeRuntimeError(error, '远程项目恢复失败').slice(0, 1_000),
+                retryable: true
+              })
+            } finally {
+              remoteTaskRecoveryControllers.delete(task.taskId)
+              publishConversationChange()
+            }
+          })()
+          void detachedRemoteExecutionTracker.track(operation)
+        }
+        publishProjectTaskRecovery({
           projectId,
           requestId,
           stage: 'completed'
@@ -4627,9 +4700,14 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.agentCancel, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const requestId = requestIdSchema.parse(input)
-    activeRequests
-      .get(requestId)
-      ?.controller.abort(new Error('用户取消了请求'))
+    const active = activeRequests.get(requestId)
+    if (active) {
+      active.controller.abort(new Error('用户取消了请求'))
+    } else {
+      remoteTaskRecoveryControllers.get(requestId)?.abort(
+        new DOMException('已停止自动恢复；远端任务状态需在连接恢复后确认', 'AbortError')
+      )
+    }
   })
 
   registerHandler(
@@ -4735,10 +4813,10 @@ export function registerIpcHandlers(
       const executionSpace = project
         ? spaceResolver.resolveProject(project)
         : spaceResolver.resolveLocal(selected.settings.workspacePath)
-      if (executionSpace.kind === 'ssh') {
+      if (executionSpace.kind === 'ssh' && request.runtimeSelection.provider !== 'model') {
         throw new Error(REMOTE_EXECUTION_SPACE_UNAVAILABLE)
       }
-      const workspacePath = executionSpace.rootPath
+      const workspacePath = executionSpace.kind === 'ssh' ? executionSpace.remoteRootPath : executionSpace.rootPath
       const controller = new AbortController()
       const activeRequestLease = await leaseActiveRequest(
         request.requestId,
@@ -7517,6 +7595,7 @@ export function registerIpcHandlers(
   return async () => {
     disposeWindowIpc()
     shuttingDown = true
+    remoteRecoveryLifetime.abort(new DOMException('应用正在退出', 'AbortError'))
     if (nativeClientCoordinator) window.webContents.removeListener('destroyed', closeNativeClients)
     await nativeClientCoordinator?.closeOwner(nativeClientOwnerId)
     supervisionModelPool.dispose()

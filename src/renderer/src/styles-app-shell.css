@@ -1277,6 +1277,14 @@
   z-index: 2;
   top: 58px;
   width: 100%;
+  background: var(--surface-glass);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.app-shell[data-frosted-glass='true'] .chat-history-context :is(.conversation-task-strip, .runtime-checklist) {
+  background: transparent;
+  border-bottom-color: var(--border-glass);
 }
 
 .app-shell[data-frosted-glass='true'] .chat-content {

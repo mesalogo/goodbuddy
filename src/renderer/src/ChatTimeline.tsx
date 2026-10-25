@@ -45,7 +45,7 @@ import { platformToolCard } from './platform-tool-card'
 import './platform-tool-card.css'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { useLiveMessage } from './live-message-store'
-import { formatTime, type TimeFormatLocale } from './time-format'
+import { formatMessageTime, type TimeFormatLocale } from './time-format'
 import { formatCompactTokens } from './token-format'
 import { isCancelledMessage } from './message-terminal-status'
 import type { MessageWindowSegment } from './chat-message-window'
@@ -837,7 +837,7 @@ function ChatMessageRowView({
               {message.task.title}
             </span>
           )}
-          <span>{formatTime(message.createdAt, locale)}</span>
+          <span>{formatMessageTime(message.createdAt, locale)}</span>
         </div>
         {roleCaption && (
           <small className="message__role" title={t('composer.expertLabel')}>

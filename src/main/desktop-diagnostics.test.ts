@@ -34,6 +34,24 @@ afterEach(async () => {
 })
 
 describe('DesktopDiagnostics', () => {
+  it('retains remote failure categories through persistence and export', async () => {
+    const directory = await temporaryDirectory()
+    const names = ['RemoteChannelClosedError', 'RemoteOperationTimeoutError', 'ProtocolRemoteRuntimeChannelError', 'RemotePromptRecoveryUnavailableError']
+    const diagnostics = new DesktopDiagnostics(directory)
+    for (const name of names) {
+      const error = new Error('private remote details')
+      error.name = name
+      await diagnostics.recordFailure({ component: 'runtime', stage: 'run', code: 'runtime.run.failed', error })
+    }
+    await diagnostics.dispose()
+    const reopened = new DesktopDiagnostics(directory)
+    try {
+      const exported = (await reopened.exportRecent()).toString('utf8')
+      expect(exported.trim().split('\n').map(line => JSON.parse(line).errorType)).toEqual(names)
+      expect(exported).not.toContain('private remote details')
+    } finally { await reopened.dispose() }
+  })
+
   it('gates MCP metadata and discards unknown or unsafe fields', () => {
     const record = { timestamp: '2026-09-30T00:00:00Z', component: 'runtime', stage: 'connect', code: 'runtime.mcp.failed' }
     const mcp = { phase: 'initialize', category: 'http-rejection', elapsedMs: 25, status: 406, correlationId: `sha256:${'a'.repeat(64)}`, token: 'private-token', headers: { authorization: 'private-token' } }

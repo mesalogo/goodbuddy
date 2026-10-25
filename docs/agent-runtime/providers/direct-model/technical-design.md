@@ -52,6 +52,45 @@ OpenCode、Continue 和 DeepSeek Harness 的创建路径不接收
 `DirectModelProcessService` 或 `DirectModelSubagentService`。DeepSeek Harness 即使继续使用
 `ModelToolProvider` 代理 Web/MCP，也必须通过明确的工具视图排除直连模型专属工具。
 
+## 远端直连模型
+
+`createAgentRuntime` 对 SSH 直连仍创建 `ModelAgentRuntime`，向 `ModelToolProvider` 注入
+`RemoteModelTools`。模型协议、headers/body、图像输入、历史、自动/手动摘要、用量及单层委派
+使用同一本地实现。专家直连子任务使用独立的远端 Workspace lease，释放子任务不关闭父工作区。
+
+`workspace_read_text`、`workspace_rg`、`workspace_apply_patch` 和 `process_execute` 使用
+现有 Agent 连接上的类型化 `workspace/modelTools` 请求。Agent 按当前 Workspace 和连接归属
+调用同一个 `ModelToolProvider`、补丁/读取实现及 `LocalDirectModelProcessService`。Agent 包携带
+目标平台的 rg；命令 PATH 加入 Agent Node 所在目录，并保留 Host 的正常环境。桌面的 Python、
+PATH 等本机工具配置不会复制到 Host。
+
+工具请求包含 list/call/read/cancel/release 操作，调用 ID 仅用于在途取消和输出归属，不持久化
+新操作日志。控制通道沿用 Runtime 启动的异步分发方式，让取消和其他会话不会等待长命令。
+取消等待所属进程树结算，连接关闭或 Agent 停止时清理调用；不重放写入与命令。
+
+长输出暂存在 Agent 调用目录，按页传入桌面既有输出存储，完成历史 adoption 后释放 Agent
+资源。模型收到桌面输出句柄，`output_read` 和历史读取使用同一正文。短输出直接传输。
+
+Cancellation also stops paginated output transfer and releases its partial
+Desktop backing. A release failure must not replace the original execution or
+transfer error. If a complete result has already reached Desktop, a connection
+closure during release preserves that known result instead of reporting the
+command as failed. Other release errors remain visible.
+
+Agent retirement accounts for active calls and completed calls with retained
+output; the lifecycle rules are owned by
+[remote Host design](../../../features/remote-host/technical-design.md).
+The [fault matrix](../../../features/unified-execution/progress.md#2026-10-25-remote-lifecycle-fault-matrix)
+records real-Host timeout, cancellation isolation, disconnect/shutdown cleanup,
+output transfer during upgrade, and Provider failure after a remote side effect.
+
+Skills 指令、知识、笔记、配置、浏览器、联网及已分配的自定义 MCP 保持桌面直连的启用规则。
+这些应用能力仍运行在其原来的桌面/服务端位置，尤其自定义 stdio MCP 不会自动搬到 Host。
+只有上述工作区/命令工具明确改为远端执行；图像生成与保存沿用现有远端图片绑定。
+
+本路径由桌面驱动，不具有远端 ACP 的桌面退出后续跑语义。需要同时更新包含该能力的 Agent
+和桌面；不支持的旧 Agent 返回明确更新提示。实测范围见[进度记录](./progress.md#2026-10-25-远端直连模型)。
+
 ## 3. 共享工具目录
 
 `BuiltinModelToolSummary` 增加 `programming` 分组和 Runtime 可见性：
@@ -119,8 +158,8 @@ ripgrep 结果按退出状态处理：
 `workspace_read_text` 若使用 `RemoteWorkspaceAccess`，仍经同一 Provider 分类远端
 `data.code` 中的预期文件系统和路径/文本错误。Agent daemon 的 RPC 错误序列化保留
 `ENOENT` 等大写系统错误码，避免远端文件不存在被误判为不可恢复错误；远端原生工具
-处理不变。内置 rg 仍仅支持本机工作区，托管 SSH 当前仍使用远端 OpenCode 原生工具，
-不因共享读取抽象而开放远端直连模型，见[远程 Runtime 边界](../../../features/remote-host/technical-design.md#runtime)。
+处理不变。SSH 直连通过 Agent 的同一 Provider 分类读取错误，并回传 `nextAction`；
+远端搜索使用 Agent 随包 rg，见[远端直连模型](#远端直连模型)。
 
 ### ripgrep 打包
 
@@ -275,9 +314,8 @@ interface ExecutionSpaceProcessExecutor {
 }
 ```
 
-首版只有 `LocalProcessExecutor`。`ExecutionSpaceDescriptor.kind === 'ssh'` 时使用不可用实现，
-工具清单不注册进程能力。未来远端实现必须新增 Agent 协议、由 Agent 直接拥有命令进程，并
-按远端身份、取消和断线语义验证；不得把 SSH 路径传给本机 executor。
+实际进程服务为 `LocalDirectModelProcessService`。本机直连在桌面调用，SSH 直连通过
+Agent 工具协议在 Host 调用，由 Agent 拥有命令进程。SSH 路径不传给桌面 executor。
 
 工作目录通过 `WorkspaceAccess.getIdentity()` 和本机真实路径解析共同确认。路径检查与 spawn
 之间若目录被外部替换，spawn 失败并返回准确错误；不为此增加持久路径凭据或恢复协议。
@@ -450,7 +488,8 @@ Runtime；GoodBuddy 不再额外保留最后 20 条或限制为 128,000 字符�
 `agentCompactConversation` 接受 `model`，结果保留实际 provider，压缩策略为
 `goodbuddy-summary`。摘要来源为 `current` 时，IPC 使用 `applyRuntimeSelection`
 解析后的当前直连连接；来源为 `profile` 时，使用既有指定摘要连接配置。
-图像连接不进入文本摘要路径，SSH 执行空间仍由本地 IPC 拒绝。
+图像连接不进入文本摘要路径。SSH 直连同样使用该无工具摘要路径，保留远端目录描述，
+不会为摘要在桌面读取或执行该目录。
 
 `ModelAgentRuntime.compactConversation` 复用 `prepareCompressedRequest` 的强制压缩，
 跳过自动开关和触发阈值，保留最新轮次。返回的 `contextCompressionState` 沿用会话保存，

@@ -8931,9 +8931,9 @@ describe("App", () => {
     );
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 
-    // The saved direct-model conversation choice is ignored for the remote project, not rewritten.
+    // A saved direct-model conversation remains selected on a remote project.
     const runtimeButton = await screen.findByRole("button", {
-      name: /OpenCode · 默认模型/u,
+      name: /直连模型 · 默认模型/u,
     });
     fireEvent.click(runtimeButton);
     const runtimeMenu = screen.getByRole("menu", {
@@ -8942,21 +8942,20 @@ describe("App", () => {
     const providers = within(runtimeMenu).getByRole("group", { name: "执行方式" });
     expect(
       within(providers).getAllByRole("menuitemradio").map((item) => item.textContent),
-    ).toEqual(["OpenCode", "Continue"]);
+    ).toEqual(["直连模型", "OpenCode", "Continue"]);
     const models = within(runtimeMenu).getByRole("group", { name: "模型" });
     expect(
-      // The conversation's saved model still applies to OpenCode; only its mode is ignored.
+      // Both the saved execution mode and model remain selected.
       within(models).getByRole("menuitemradio", { name: /^默认模型 · sonnet-5/u }),
     ).toHaveAttribute("aria-checked", "true");
     expect(within(models).queryByText(/自有配置/u)).not.toBeInTheDocument();
-    expect(within(runtimeMenu).getByRole("status")).toHaveTextContent(
-      "远程项目仅支持 OpenCode 和 Continue",
-    );
+    expect(within(runtimeMenu).queryByRole("status")).not.toBeInTheDocument();
     expect(
       within(runtimeMenu).getByRole("menuitem", { name: "管理模型连接…" }),
     ).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "压缩上下文" })).toBeInTheDocument();
     fireEvent.click(screen.getByText("旧 Continue 会话").closest("button")!);
     expect(
       await screen.findByRole("button", {

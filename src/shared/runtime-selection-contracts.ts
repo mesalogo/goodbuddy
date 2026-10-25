@@ -180,7 +180,7 @@ export type RuntimeResolutionSettings = {
 }
 
 export type RuntimeResolutionOptions = {
-  /** Managed SSH projects: OpenCode or Continue with a GoodBuddy model connection. */
+  /** Managed SSH projects: direct model, OpenCode or Continue with a GoodBuddy connection. */
   remote?: boolean
 }
 
@@ -209,7 +209,7 @@ export type ResolvedRuntimeChoice = {
 export function allowedRuntimeProviders(
   options: RuntimeResolutionOptions = {}
 ): readonly AgentRuntimeProvider[] {
-  return options.remote ? ['opencode', 'continue'] : agentRuntimeProviders
+  return options.remote ? ['model', 'opencode', 'continue'] : agentRuntimeProviders
 }
 
 function normalizedGlobalProvider(

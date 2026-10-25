@@ -178,7 +178,7 @@ export const workspace = {
         select: '选择此目录'
       },
       runtimeHelp:
-        '托管 SSH 项目可使用已安装的 OpenCode 或 Continue Runtime。保存时会检查主机、远端 Agent、工作区和所选 Runtime。',
+        '托管 SSH 项目可使用直连模型或已安装的 OpenCode、Continue Runtime。直连模型的文件和命令工具在远端执行。保存时会检查主机、远端 Agent、工作区和所选 Runtime。',
       actions: {
         save: '保存远程项目',
         saving: '正在保存远程项目…'

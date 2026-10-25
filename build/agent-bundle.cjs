@@ -878,6 +878,11 @@ function buildAgentBundle(options) {
     copyFileSync(runtimeBinary, join(staging, 'node'))
     chmodSync(join(staging, 'node'), 0o755)
 
+    const ripgrepBinary = require.resolve(`@vscode/ripgrep-${platform}-${arch}/bin/rg`, { paths: [projectRoot] })
+    assertElfArchitecture(ripgrepBinary, arch, 'Agent ripgrep', platform)
+    copyFileSync(ripgrepBinary, join(staging, 'rg'))
+    chmodSync(join(staging, 'rg'), 0o755)
+
     mkdirSync(join(staging, 'lib'), { recursive: true })
     const esbuild = require('esbuild')
     esbuild.buildSync({
@@ -928,6 +933,7 @@ function buildAgentBundle(options) {
     chmodSync(join(staging, 'goodbuddy-agent'), 0o755)
 
     mkdirSync(join(staging, 'licenses'), { recursive: true })
+    copyLicense(join(dirname(dirname(ripgrepBinary)), 'LICENSE'), join(staging, 'licenses', 'ripgrep-LICENSE.txt'))
     copyLicense(
       join(projectRoot, 'LICENSE'),
       join(staging, 'licenses', 'GoodBuddy-0BSD.txt')

@@ -281,14 +281,14 @@ function boundedRetainedToolInput(
   )
 }
 
-class RemoteOperationTimeoutError extends Error {
+export class RemoteOperationTimeoutError extends Error {
   constructor(readonly operation: string) {
     super(`远端 Runtime ${operation}超时`)
     this.name = 'RemoteOperationTimeoutError'
   }
 }
 
-class RemoteChannelClosedError extends Error {
+export class RemoteChannelClosedError extends Error {
   constructor(readonly operation: string) {
     super(`远端 Runtime 在${operation}期间连接已关闭`)
     this.name = 'RemoteChannelClosedError'
@@ -2588,6 +2588,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
     this.activePrompts.set(binding.bindingId, prompt)
     const recoveringOwnedPrompt = session.ownedPromptAttached === true
     let reachedTerminal = false
+    let interruptedTransport = false
     let cancellationEscalation: Promise<void> | undefined
     const escalate = (reason: unknown): Promise<void> => {
       if (!context.channel.capabilities.cancellationEscalation) {
@@ -2677,6 +2678,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
 
       let afterSequence = request.remoteSemanticAfterSequence ?? '0'
       let transcriptPollDelayMs = 100
+      let recoveryReady = false
       const acknowledgeThrough = async (
         acknowledgedSequence: string
       ): Promise<void> => {
@@ -2884,6 +2886,11 @@ export class AcpRemoteRuntime implements AgentRuntime {
         ) {
           throw new Error('远端 Agent 请求缺少终态语义记录')
         }
+        if (!recoveryReady && request.remoteRecoveryOnly) {
+          signal.throwIfAborted()
+          recoveryReady = true
+          request.onRemoteRecoveryReady?.()
+        }
         await delayOwnedTranscriptPoll(
           signal,
           transcriptPollDelayMs
@@ -2893,8 +2900,13 @@ export class AcpRemoteRuntime implements AgentRuntime {
           transcriptPollDelayMs * 2
         )
       }
+    } catch (error) {
+      interruptedTransport = context.channelHasClosed ||
+        error instanceof RemoteChannelClosedError ||
+        error instanceof RemoteOperationTimeoutError
+      throw error
     } finally {
-      if (!reachedTerminal) {
+      if (!reachedTerminal && (!interruptedTransport || signal.aborted)) {
         await escalate(
           signal.aborted
             ? abortReason(signal)

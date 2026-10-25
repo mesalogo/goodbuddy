@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatMinimap, minimapLines, minimapMessageColor, minimapScrollTop } from "./ChatMinimap";
+import { ChatMinimap, minimapDayStarts, minimapLines, minimapMessageColor, minimapScrollTop } from "./ChatMinimap";
 import { MessageRowHeights } from "./chat-message-window";
 import type { Message } from "./ChatTimeline";
+import { formatDayLabel } from "./time-format";
 
 function message(role: Message["role"], id: string, extra: Partial<Message> = {}): Message {
   return { id, role, content: id, createdAt: 1, state: "complete", ...extra } as Message;
@@ -145,6 +146,51 @@ describe("ChatMinimap", () => {
     // Viewport [0, 200] lies inside row 0, i.e. inside its 10 px overview block.
     expect(slider.style.transform).toBe("translateY(0px)");
     expect(slider.style.height).toBe("16px");
+  });
+
+  it("finds the first message of every local day", () => {
+    const at = (day: number, hour: number) => new Date(2026, 7, day, hour).getTime();
+    const dated = [
+      message("user", "a", { createdAt: at(20, 9) }),
+      message("assistant", "b", { createdAt: at(20, 23) }),
+      message("user", "c", { createdAt: at(21, 0) }),
+      message("assistant", "d", { createdAt: at(21, 8) }),
+      message("user", "e", { createdAt: at(23, 12) }),
+    ];
+    expect(minimapDayStarts(dated)).toEqual([0, 2, 4]);
+  });
+
+  it("marks the start of each day on the rail and skips crowded markers", () => {
+    const at = (day: number) => new Date(2026, 7, day, 12).getTime();
+    const dated = [
+      message("user", "a", { createdAt: at(20) }),
+      message("assistant", "b", { createdAt: at(20) }),
+      message("user", "c", { createdAt: at(21) }),
+      message("assistant", "d", { createdAt: at(21) }),
+    ];
+    const view = render(<ChatMinimap locale="zh-CN" messages={dated} rowHeights={new MessageRowHeights()} scrollContainerRef={{ current: scroller() }} />);
+    const rail = view.getByRole("scrollbar");
+    const marks = () => [...rail.querySelectorAll<HTMLElement>(".chat-minimap__day")];
+    // Collapsed: no markers.
+    expect(marks()).toHaveLength(0);
+    fireEvent.pointerEnter(rail);
+    // Four 2-row messages on a 200 px rail: days start at rows 0 and 4; the
+    // first label is kept half a line inside the rail.
+    expect(marks().map((mark) => mark.style.transform)).toEqual(["translateY(6px)", "translateY(100px)"]);
+    expect(marks().map((mark) => mark.textContent)).toEqual([
+      formatDayLabel(at(20), "zh-CN"),
+      formatDayLabel(at(21), "zh-CN"),
+    ]);
+    fireEvent.pointerLeave(rail);
+    expect(marks()).toHaveLength(0);
+
+    const crowded = Array.from({ length: 200 }, (_, index) => message("user", `x${index}`, { createdAt: at(1) + index * 86_400_000 }));
+    view.rerender(<ChatMinimap locale="zh-CN" messages={crowded} rowHeights={new MessageRowHeights()} scrollContainerRef={{ current: scroller() }} />);
+    fireEvent.pointerEnter(rail);
+    const tops = marks().map((mark) => Number(/translateY\((.+)px\)/.exec(mark.style.transform)?.[1]));
+    expect(tops.length).toBeGreaterThan(1);
+    expect(tops.length).toBeLessThan(200);
+    for (let index = 1; index < tops.length; index += 1) expect(tops[index]! - tops[index - 1]!).toBeGreaterThanOrEqual(14);
   });
 
   it("hides itself when the conversation does not scroll", () => {

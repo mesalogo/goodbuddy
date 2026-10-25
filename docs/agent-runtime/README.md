@@ -27,6 +27,7 @@ docs/agent-runtime/
 | [进程复用](./design/process-reuse.md) | 进程、会话和请求的资源归属及回收实现 |
 | [原生客户端](./design/native-client.md) | 在终端打开、Web 客户端、独立会话与启动/关闭规则 |
 | [Checklist 适配](./design/checklist.md) | 原生待办提取、成功更新、事件投影和恢复 |
+| [应用市场交付方向](./design/marketplace-delivery.md) | OpenCode v2、Droid 的按需下载、手动导入及安装管理规划 |
 | [直连模型](./providers/direct-model/README.md) | GoodBuddy 自有模型 Agent 的需求、能力与实现记录 |
 | [DeepSeek Harness](./providers/deepseek-harness/README.md) | 固定 Harness Host 与官方 Web 的接入设计和验证 |
 | [Factory Droid](./providers/factory-droid/README.md) | Droid 原生 SDK/daemon 接入设计、协议测试及未实现范围 |
@@ -146,6 +147,11 @@ Todo、后台任务与定时任务复用既有顶部区域，但保持不同状�
 不表示各 Runtime 已具备统一的运行任务组件。
 
 ## 接入与升级流程
+
+2026-10-25 确定：OpenCode v2 和 Factory Droid 后续作为应用市场中的可选 Runtime 提供，
+由用户通过市场下载或手动导入，不把两者的完整运行资源默认捆绑进 GoodBuddy 主安装包。
+安装后的聊天、原生客户端、能力分配和任务展示继续遵循本规范。市场交付尚未实现，
+当前 OpenCode 1.x 的依赖与安装方式保持现状；详细范围见[交付方向](./design/marketplace-delivery.md)。
 
 1. 核对能力矩阵和该 Runtime 的产品承诺，标出本地聊天、远程聊天、原生 Terminal/Web 的差异。
 2. 固定版本并验证上游接口；协议脚本证明可行性，不替代实际产品接入。

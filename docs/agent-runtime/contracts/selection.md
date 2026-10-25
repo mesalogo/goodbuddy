@@ -36,7 +36,7 @@
 | `incompatible`（协议或能力不匹配） | 同上 |
 
 - 图像生成连接只对直连模型有效，且永远不作为回退默认值。
-- 远程项目只允许 OpenCode 与 Continue；其他执行方式按 `provider` 原因回退。
+- 远程项目允许直连模型、OpenCode 与 Continue；DeepSeek Harness 按 `provider` 原因回退。直连模型沿用本地的模型连接选择与继承规则，工作区工具在远端 Agent 执行。
 - 全局 `defaultModelProfileId` 为空时解析为 `{ provider: 'model' }`，不生成空 `profileId`。
 - 不存在 `auto`。旧 `{ provider: 'auto' }` 在读取和 IPC 入口处去除，按上述顺序解析。
 

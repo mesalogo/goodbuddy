@@ -1,5 +1,200 @@
 # 进度与证据
 
+## 2026-10-25 Recovery progress ends at transcript catch-up
+
+The project banner previously waited for every recovered prompt to terminate.
+A live task or pending question could therefore keep “restoring conversation”
+visible indefinitely. `AcpRemoteRuntime` now reports readiness after consuming and
+ACKing the last available transcript page and restoring pending questions. Main
+clears catch-up progress while continuing to consume the same task. No Agent wire
+protocol, database schema, or direct-model execution change is needed: this path
+reattaches Agent-owned ACP prompts, not desktop-owned direct-model requests.
+The authoritative behavior is in [remote Host design](../remote-host/technical-design.md#agent-owned-prompt-与-desktop-恢复).
+
+Project progress now considers each task independently. A live peer cannot hide
+another task's failure or prevent its manual retry. Controllers deduplicate tasks
+during retry backoff as well as live consumption. New interruptions after readiness
+enter through a fresh project recovery request ID; this preserves Renderer's
+existing protection against late updates to completed requests.
+
+Validation on current source:
+
+- `npm exec -- vitest run src/main/ipc.test.ts src/main/agent/acp-remote-runtime.test.ts src/main/remote-agent/remote-task-recovery.test.ts src/renderer/src/ProjectSwitcher.test.tsx`:
+  **363 passed, 1 skipped**. Added cases cover empty history, multiple pages,
+  pending questions before readiness, failed ACK, concurrent catch-up, failure
+  beside a live peer, manual retry, another disconnect after readiness, and no
+  return to cursor progress during live output. Existing cancellation and shutdown
+  regressions remain green.
+- `npm exec -- vitest run src/renderer/src/App.test.tsx -t 'keeps managed SSH histories visible|restores live question controls and Stop'`:
+  **2 passed**. Existing UI tests verify project isolation, request identity,
+  completion unblocking, and recovered question/Stop controls. The switcher suite
+  also verifies completion feedback disappears after three seconds.
+- Standard `npm run typecheck`, changed-file ESLint and `git diff --check` pass.
+  The unrelated full repository test and lint suites were not repeated.
+- Shared Linux x64 Host: bundled current-source `remote-recovery-host-probe.ts
+  --catch-up` runs the real daemon, authenticated relay, protocol channel, desktop
+  ACP adapter and installed OpenCode Runtime. It injects a transcript-read
+  interruption after start, reattaches the same running prompt, observes readiness
+  before any terminal, and checks exactly one prompt start. A loopback model
+  response stays open until test cancellation. External model calls: **0**.
+  The final source was rerun successfully; this is not an installed Desktop UI
+  test or a physical network outage. Dedicated test resources were cleaned up.
+
+Deployment remains outstanding: the installed Desktop has not been replaced.
+
+## 2026-10-25 Remote lifecycle fault matrix
+
+Expanded validation covers both ACP-owned tasks and desktop-driven direct models.
+The latter shares model request/retry/cancellation code with local direct models;
+remote file, search and process calls use the Agent's direct-tool handler.
+
+Confirmed and fixed additional failures:
+
+- A late socket-close callback captured a mutable ACP binding. After an output
+  write failure and takeover, it detached the replacement connection. The new
+  regression failed with an ACP replay identity/phase error before the fix.
+  Cleanup now captures and rechecks the originating connection identity.
+- Agent retirement ignored completed direct-tool calls between output-page
+  requests and still admitted new calls. The direct-tool handler now drains:
+  new calls are rejected, retained output and running calls block retirement,
+  and read/cancel/release remain available until cleanup finishes.
+- An already-aborted direct-tool connection could miss its disconnect callback;
+  it now starts cleanup after registering the settled operation.
+- Direct long-output copying ignored cancellation, and release failures replaced
+  the original execution error. Both had failing regressions. Copying now checks
+  cancellation and aborts partial output; release preserves the original failure.
+  A known complete result also survives a closed transport during release without
+  repeating the successful command.
+
+| Scenario | Evidence | Result |
+| --- | --- | --- |
+| Cancelled ACP, connected/unconnected Desktop, unacknowledged terminal | Unit tests, real OpenCode Host probe | Wait while connected; retire after disconnect; retain transcript after stop |
+| Unexpected ACP process exit | Shared/dedicated unit cases and real OpenCode SIGKILL probe | Non-success terminal retained; subsequent disconnect permits retirement |
+| Late close from old connection after takeover | Ordered write-failure/reconnect unit regression | Replacement connection remains replayable |
+| Model HTTP failure, ambiguous dispatch, partial stream, stalled body, cancellation during retry | Existing direct-model request tests rerun | No replay after published output/uncertain dispatch; cancellation and timeout settle |
+| Direct remote write followed by Provider 401 | Real Host tools with scripted ModelAgentRuntime responses | Two model rounds, one write; no duplicate side effect |
+| Direct command exit 7, timeout, parent/child cancellation, concurrent peer | SSH Host direct-model suite | Correct nonzero/timeout result; cancelled tree gone; peer succeeds |
+| Direct output pending during upgrade | Source AgentDaemon Host probe | New calls rejected; output fully copied; release permits retirement |
+| Direct command running during disconnect or Agent shutdown | Source AgentDaemon Host probes | Parent and child no longer exist; no completion marker or output temp directory remains |
+| Cancellation while copying output; execution plus release failure; late close during release | Desktop adapter unit regressions | Partial backing removed; original error/known result preserved |
+
+Final checks: **577 passed, 2 skipped** across 11 focused test files; **2 real-Host
+direct-model tests passed**. Standard `npm run typecheck` and changed-file ESLint
+pass. This turn did not repeat the unrelated full repository suite; its earlier
+failures are recorded below. Host probes use current source for daemon, protocol,
+backend and direct tools; real OpenCode uses the installed bundle. The model
+responses are deterministic fixtures or a loopback endpoint, not external model
+providers. External model calls: **0**. The direct-model suite has ten scripted
+model rounds per run (eight normal/delegated rounds and two failure rounds).
+
+Reproduction uses `scripts/remote-recovery-host-probe.ts` modes `--retirement`,
+`--runtime-crash`, `--direct-retirement`, `--direct-disconnect`, and
+`--direct-shutdown`, plus `tests/remote-direct-model.live.test.ts` with the existing
+Host and Node environment variables. This verifies source behavior, not a newly
+published/installed Agent package or packaged Desktop UI. Existing user daemons
+were not replaced or stopped.
+
+Remaining operational acceptance: deploy the updated Desktop and Agent, verify
+recovery through the installed UI, and separately inspect and clean already-stuck
+superseded daemons. Source validation does not mark those actions complete.
+
+### Commit verification commands
+
+Run from the repository root. In Windows PowerShell, use `npm.cmd` if execution
+policy prevents invoking `npm.ps1`. Keep `TEMP` and `TMP` in a task-specific
+directory under the repository's ignored `temp/` directory.
+
+```text
+npm exec -- vitest run src/agent-daemon/runtime-acp-backend.test.ts src/agent-daemon/direct-model-tools.test.ts src/agent-daemon/daemon.test.ts src/main/remote-agent/remote-model-tools.test.ts
+npm run typecheck
+npm exec -- eslint scripts/remote-recovery-host-probe.ts src/agent-daemon/daemon.ts src/agent-daemon/direct-model-tools.ts src/agent-daemon/direct-model-tools.test.ts src/agent-daemon/runtime-acp-backend.ts src/agent-daemon/runtime-acp-backend.test.ts src/main/remote-agent/remote-model-tools.ts src/main/remote-agent/remote-model-tools.test.ts tests/remote-direct-model.live.test.ts
+git diff --check
+```
+
+These commit checks cover the changed lifecycle suites; the broader fault matrix
+and real-Host results above are development-time evidence from the preceding run.
+Commit-time rerun on 2026-10-25: **76 tests passed across 4 files**; standard
+typecheck, changed-file ESLint and `git diff --check` passed. No additional Host
+probe or external model request was made during this documentation/commit pass.
+
+## 2026-10-25 Cancelled-binding retirement
+
+Host inspection found two superseded daemons with no Runtime children or owner
+records and only terminal prompts. They retained four and two unacknowledged
+cancelled prompts respectively. Both shipped bundles skipped `closed` bindings
+on connection teardown, leaving a live transport marker that blocked `drain()`.
+
+The fix detaches all bindings belonging to the disconnected connection, including
+closed bindings. Existing drain rules continue to protect running work and allow
+a connected Desktop to commit and acknowledge terminal output. No new timeout,
+forced process kill or data deletion was introduced.
+
+Two new regression cases (shared and dedicated Runtime) failed before the fix
+and pass afterward. They verify that a connected unacknowledged cancelled task
+blocks retirement, disconnect releases the blocker, and backend disposal retains
+the terminal transcript. Seven affected Agent test files pass **111 tests**;
+standard `npm run typecheck` and changed-file ESLint pass. Repository-wide lint
+still fails on documentation site output and the unrelated office preview demo.
+
+The `--retirement` mode of `scripts/remote-recovery-host-probe.ts` was run on the
+shared Linux x64 Host with current-source Agent daemon, runtime composition,
+backend, private endpoint and attach relay, plus the installed real OpenCode
+Runtime. A loopback model endpoint held the request until cancellation; external
+model calls: **0**. The probe set the superseded condition after cancellation,
+verified the connected Desktop still blocked retirement, killed its dedicated
+relay, observed retirement eligibility, stopped the daemon, and reopened the
+semantic store to read the unacknowledged cancelled terminal. Test state and
+processes were isolated from the user's daemon and projects.
+
+The existing superseded daemons are running old code; this source change does
+not hot-patch them. The test did not stop those daemons or replace installed
+Agent packages. Deployment and cleanup of already-stuck instances remain separate
+operational actions.
+
+## 2026-10-25 Remote session recovery
+
+The reported transcript disconnect led to a reproducible pooled-connection bug:
+`acquire()` awaited the previous successful connection promise while the entry
+was offline and retained by another session. The regression failed before the
+fix with `Remote Agent connection request became stale`. Acquisition now joins
+or starts reconnect, preserving the leases used by other sessions.
+
+Accepted-task recovery now uses bounded backoff and reloads committed cursors
+before reattachment. Transcript timeout/closure no longer triggers owned-task
+cancellation. Stop during backoff and application exit stop retry timers; an
+unreachable task is not falsely marked cancelled. Behavior and limits are defined
+in [remote Host design](../remote-host/technical-design.md#acp-与断线).
+
+Validation:
+
+- Seven focused files: **417 passed, 1 skipped**. They cover connection acquisition,
+  shared reconnect, retry exhaustion, cancellation/shutdown during backoff,
+  refreshed semantic cursor, owned-prompt continuation without a second start,
+  existing channel/runtime recovery, and diagnostic persistence/export.
+- Shared Linux x64 Host: bundled current source from
+  `scripts/remote-recovery-host-probe.ts`; real `AgentDaemon`, authenticated private
+  endpoint, attach relay, framed protocol client and connection manager. Killing
+  the dedicated relay and injecting one connection outage produced one automatic
+  retry, two attaches total, a newer controller generation on the same daemon,
+  and a usable original retained lease. The adapter replaces SSH exec with child
+  pipes on the Host; this is not a packaged Desktop UI or live-model recovery test.
+  Probe model calls: **0**. No Agent daemon production source change is required;
+  the fix is in Desktop acquisition, ACP consumption and IPC recovery scheduling.
+- Full `npm test`: **6,706 passed, 4 failed, 85 skipped** in the concurrently changing
+  workspace. Failures: Markdown cache timing, message expansion Electron timeout,
+  overlay divider layout, and Obsidian's test requiring a temp directory outside
+  the checkout (conflicts with the repository temp rule). These are not accepted
+  as a clean full-suite result.
+- Changed-file ESLint passes. Full lint scans generated VitePress cache files and
+  fails. Standard typecheck reports TS6307 for Agent files imported by concurrent
+  `tests/support/remote-direct-model-host.ts` work; Node typecheck with
+  `--composite false`, and normal Agent/Renderer typechecks pass. This does not
+  replace the standard project-reference validation.
+
+The installed application has not been replaced. Full packaged UI/live-task
+validation and resolution of the workspace-wide check failures remain outside
+this verified source-level result.
+
 ## 2026-10-05 K07/K08 局部修复
 
 最终集成补注：排除并行删除功能后，待提交内容的隔离全量测试为 6,212 项通过、0 失败、87 跳过，类型检查及 lint 通过。下文分组阶段的失败轮次不是最终结果；完整证据见[KISS 验收](../../review/kiss-local-fixes-2026-10-05.md#最终检查)。

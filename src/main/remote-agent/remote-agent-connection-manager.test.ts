@@ -236,6 +236,41 @@ function harness(
 }
 
 describe('RemoteAgentConnectionManager', () => {
+  it('reacquires an offline shared connection instead of awaiting its old connect result', async () => {
+    const test = harness(undefined, undefined, 60_000)
+    try {
+      const original = await test.manager.acquire('host-1', installation)
+      test.clients[0]!.transportClose()
+      const [first, second] = await Promise.all([
+        test.manager.acquire('host-1', installation),
+        test.manager.acquire('host-1', installation)
+      ])
+      expect(test.connectTransport).toHaveBeenCalledTimes(2)
+      expect(first.client).toBe(second.client)
+      expect(original.client).toBe(first.client)
+      expect(first.state).toBe('ready')
+      original.release()
+      first.release()
+      second.release()
+    } finally {
+      await test.manager.dispose()
+    }
+  })
+
+  it('can acquire again after a transient initial connection failure without waiting for eviction', async () => {
+    const test = harness(undefined, undefined, 60_000)
+    try {
+      test.connectTransport.mockRejectedValueOnce(new Error('network unavailable'))
+      await expect(test.manager.acquire('host-1', installation)).rejects.toThrow()
+      const lease = await test.manager.acquire('host-1', installation)
+      expect(lease.state).toBe('ready')
+      expect(test.connectTransport).toHaveBeenCalledTimes(2)
+      lease.release()
+    } finally {
+      await test.manager.dispose()
+    }
+  })
+
   it('publishes the aggregate live connection state for each Host', async () => {
     let finishTransport!: () => void
     const gate = new Promise<void>((resolve) => {

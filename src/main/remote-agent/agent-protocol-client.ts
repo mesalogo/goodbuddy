@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import { remoteModelToolsRequestSchema, remoteModelToolsResultSchema } from '../../shared/remote-model-tools-contracts'
 import { remoteQuestionResponseSchema } from '../../shared/remote-question-contracts'
 import { workspaceManagementResultSchema } from '../../shared/workspace-management-contracts'
 import {
@@ -92,6 +93,7 @@ type MethodDefinition = {
  * shared schemas here; callers cannot send arbitrary JSON-RPC method names.
  */
 export const AGENT_PROTOCOL_METHODS = {
+  'workspace/modelTools': { params: remoteModelToolsRequestSchema, result: remoteModelToolsResultSchema },
   'agent/status': {
     params: emptyParamsSchema,
     result: daemonStatusSchema

@@ -249,12 +249,18 @@ records are listed separately and do not introduce another feature status.
 - [x] **Direct model programming agent**: Local direct text models can run the
   platform Shell and delegate one level of programming
   Subagent work while inheriting the parent request's model, workspace,
-  and capability scope. OpenCode, Continue, DeepSeek Harness, and managed SSH
+  and capability scope. OpenCode, Continue and DeepSeek Harness
   do not receive duplicate copies of these tools. The Windows local command
   path and a real-model edit, test, fix, and review loop have passed; native
   macOS and Linux command validation remains. Commands can select
   absolute, relative, or symbolic-link directories outside the workspace;
   the workspace stays the default and relative-path base.
+- **Direct models in SSH projects (source implemented)**: Project and conversation selectors
+  now include direct models. The Desktop runs the model loop while Agent executes file reads,
+  searches, patches and commands in the remote workspace, including inherited subagent work.
+  This requires the matching updated Agent; Linux x64 source validation and a three-request
+  real-model read/history check passed. Desktop exit cancels this path rather than continuing
+  an autonomous ACP prompt. See [validation](./docs/agent-runtime/providers/direct-model/progress.md#2026-10-25-远端直连模型).
 - [x] **OpenCode and Continue**: Use isolated child processes, an environment
   variable allowlist, unified configuration, cancellation, startup and control-request
   deadlines, bounded streaming output, and activity records. Shared process
@@ -522,11 +528,11 @@ records are listed separately and do not introduce another feature status.
   fields take precedence, and these ordinary connection settings must not be
   used to store API keys or other secrets. See
   [model request customization](./docs/features/model-connections/README.md).
-- [x] **Context usage and compaction**: Local direct text-model conversations
+- [x] **Context usage and compaction**: Local and SSH direct text-model conversations
   also support manual compaction below the automatic threshold or with automatic
   compaction disabled. The selected summary model may incur charges; recent turns
   and full stored history remain available, and saved summaries are reused.
-  Image connections and remote direct-model entry points are excluded.
+  Image connections and read-only messaging-channel conversations are excluded.
   Direct models update usage
   from each successful provider call. Images and tool rounds use the same
   accounting, with estimation only when the provider omits usage. The UI

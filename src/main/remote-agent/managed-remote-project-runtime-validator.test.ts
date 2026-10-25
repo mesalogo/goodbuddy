@@ -224,7 +224,7 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
   it('rejects unsupported selections before installation', async () => {
     const test = harness({
       selection: {
-        provider: 'model',
+        provider: 'deepseek-harness',
         profileId: '00000000-0000-4000-8000-000000000001'
       }
     })
@@ -234,6 +234,24 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
     )
     expect(test.activateInstalled).not.toHaveBeenCalled()
     expect(test.refreshCapabilities).not.toHaveBeenCalled()
+  })
+
+  it.each(['openai-responses', 'openai-images-generations'] as const)('validates direct %s without an ACP Runtime installation', async protocol => {
+    const refreshed = advertisedCapabilities()
+    refreshed.runtimes = []
+    refreshed.capabilities = [{ name: 'workspace/model-tools', version: 1, critical: false }]
+    const test = harness({ selection: { provider: 'model' }, refreshed, modelProfile: { ...modelProfile, protocol } })
+    const lease = await test.validator.validate(test.input)
+    expect(test.activateInstalled).not.toHaveBeenCalled()
+    expect(() => lease.assertCurrent()).not.toThrow()
+    lease.release()
+    expect(() => lease.assertCurrent()).toThrow(/released/u)
+  })
+
+  it('reports the missing Agent capability for a direct model', async () => {
+    const test = harness({ selection: { provider: 'model' } })
+    await expect(test.validator.validate(test.input)).rejects.toThrow('请更新 Agent')
+    expect(test.activateInstalled).not.toHaveBeenCalled()
   })
 
   it('validates Continue against its own installed bundle and capability', async () => {

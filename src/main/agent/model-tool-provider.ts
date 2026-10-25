@@ -288,6 +288,7 @@ export type ModelSubagentBridge = {
 }
 
 export type ModelToolProviderProgrammingOptions = {
+  remoteTools?: import('../remote-agent/remote-model-tools').RemoteModelTools
   outputStore?: PagedOutputStoreOptions
   outputAdopt?: AttachmentStorageAccess['outputAdopt']
   runtimeTarget?: RuntimeTarget
@@ -951,7 +952,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
   ): ModelToolDefinition[] {
     if (
       context.runtimeTarget !== 'model' ||
-      (!this.programming.ripgrepExecutablePath && !this.programming.processService && !this.programming.subagentService)
+      (!this.programming.remoteTools && !this.programming.ripgrepExecutablePath && !this.programming.processService && !this.programming.subagentService)
     ) {
       return []
     }
@@ -1243,9 +1244,11 @@ export class ModelToolProvider implements ModelToolProviderLike {
       : []
     const subagentTools = this.getSubagentTool(context)
     const outputTools = this.getOutputReadTool(context)
-    const workspaceTools = await this.getWorkspaceTools(signal)
+    const workspaceTools = this.programming.remoteTools
+      ? await this.programming.remoteTools.listTools(signal)
+      : await this.getWorkspaceTools(signal)
     const browserTools = this.getBrowserTools(context)?.listTools() ?? []
-    const processTools = await this.getProcessTool(context, signal)
+    const processTools = this.programming.remoteTools ? [] : await this.getProcessTool(context, signal)
     const bindings = await this.getMcpBindings(signal, scopedTools.length, true)
     return [
       ...workspaceTools,
@@ -1419,7 +1422,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     signal: AbortSignal,
     context: ModelToolCallContext
   ): Promise<ModelToolResult> {
-    if (!['process_execute', 'workspace_rg', 'subagent_delegate'].includes(name)) {
+    if (!this.programming.remoteTools?.owns(name, argumentsValue) && !['process_execute', 'workspace_rg', 'subagent_delegate'].includes(name)) {
       return this.callToolOnce(name, argumentsValue, signal, context)
     }
     const controller = new AbortController()
@@ -1443,6 +1446,9 @@ export class ModelToolProvider implements ModelToolProviderLike {
     context: ModelToolCallContext
   ): Promise<ModelToolResult> {
     signal.throwIfAborted()
+    if (this.programming.remoteTools?.owns(name, argumentsValue)) {
+      return this.programming.remoteTools.callTool(name, argumentsValue, signal, context)
+    }
     if (name.startsWith('story_graph_') && scopedDataToolByName.has(name as ScopedDataToolName)) {
       if (!this.knowledgeGateway || !context.knowledgeCapabilityToken) throw new Error('Story Graph capability is unavailable')
       return createTextToolResult(JSON.stringify(await this.knowledgeGateway.callStoryGraphTool(
@@ -2034,6 +2040,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       this.ripgrepService.dispose(),
       this.programming.processService?.dispose(),
       this.programming.subagentService?.dispose(),
+      this.programming.remoteTools?.dispose(),
       this.workspaceAccess.dispose()
     ])
   }
@@ -2045,6 +2052,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     await Promise.allSettled(calls.map(call => call.settled))
     await Promise.allSettled([
       this.ripgrepService.releaseConversation(conversationId),
+      this.programming.remoteTools?.releaseConversation(conversationId),
       this.browserService?.releaseConversation(conversationId),
       this.programming.processService?.releaseConversation(
         conversationId

@@ -24,6 +24,8 @@ import {
 import type { RuntimeEvent, RemoteSemanticEventProvenance } from './runtime'
 import {
   AcpRemoteRuntime,
+  RemoteChannelClosedError,
+  RemoteOperationTimeoutError,
   RemotePromptCancelledError,
   RemotePromptRecoveryUnavailableError,
   type AcpRemoteRuntimeOptions
@@ -2820,6 +2822,78 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
       escalateCancellation: channel.escalateCancellation
     }
   }
+
+  it.each([
+    new RemoteChannelClosedError('读取 Agent 语义记录'),
+    new RemoteOperationTimeoutError('读取 Agent 语义记录')
+  ])('preserves an accepted task when transcript reading is interrupted: %s', async error => {
+    const fixture = ownedChannel()
+    fixture.pageOwnedPromptTranscript.mockRejectedValueOnce(error)
+    try {
+      await expect(collect(fixture.instance.run(request, new AbortController().signal))).rejects.toBe(error)
+      expect(fixture.escalateCancellation).not.toHaveBeenCalled()
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+      const resumed = await collect(fixture.instance.run({ ...request, remoteRecoveryOnly: true }, new AbortController().signal))
+      expect(resumed.some(event => event.type === 'done')).toBe(true)
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+    } finally {
+      await fixture.instance.dispose()
+    }
+  })
+
+  it.each(['empty', 'pages', 'question', 'ack-failure'] as const)('finishes recovery at live catch-up: %s', async mode => {
+    const fixture = ownedChannel()
+    fixture.channel.respondToQuestion = vi.fn(async () => undefined)
+    fixture.pageOwnedPromptTranscript.mockRejectedValueOnce(new RemoteChannelClosedError('读取 Agent 语义记录'))
+    const ready = vi.fn()
+    const events: RuntimeEvent[] = []
+    let pages = 0
+    let finish = false
+    try {
+      await expect(collect(fixture.instance.run(request, new AbortController().signal))).rejects.toThrow()
+      fixture.channel.pageOwnedPromptTranscript = async ({ bindingId, operationId, afterSequence }) => {
+        pages++
+        if (pages === 2 && mode === 'pages') expect(ready).not.toHaveBeenCalled()
+        if (pages >= 3) finish = true
+        return {
+          bindingId, operationId, sessionId: 'owned-session', state: finish ? 'completed' : 'running',
+          latestSequence: finish ? '3' : mode === 'empty' || mode === 'question' ? '0' : '2',
+          acknowledgedSequence: afterSequence, hasMore: mode === 'pages' && pages === 1,
+          pendingQuestions: !finish && mode === 'question' ? [{ sessionId: 'owned-session', update: {
+            sessionUpdate: 'tool_call_update', toolCallId: 'question', _meta: { goodbuddyQuestion: {
+              question: { id: 'question', sessionID: 'owned-session', questions: [{ header: 'Input', question: 'Which?', options: [] }] }
+            } }
+          } }] : [],
+          events: finish ? [{ sequence: '3', kind: 'prompt-terminal', createdAt: 3,
+            payload: { status: 'completed', response: { stopReason: 'end_turn' } } }]
+            : (mode === 'pages' || mode === 'ack-failure') && pages <= 2 ? [{
+              sequence: String(pages), kind: 'session-update', createdAt: pages,
+              payload: { sessionId: 'owned-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'history' } } }
+            }] : []
+        }
+      }
+      if (mode === 'ack-failure') fixture.ackOwnedPromptTranscript.mockRejectedValueOnce(new RemoteChannelClosedError('ACK'))
+      const consume = (async () => {
+        for await (const event of fixture.instance.run({ ...request, remoteRecoveryOnly: true,
+          onRemoteRecoveryReady: () => {
+            expect(finish).toBe(false)
+            if (mode === 'pages') expect(fixture.ackOwnedPromptTranscript).toHaveBeenLastCalledWith(expect.objectContaining({ acknowledgedSequence: '2' }))
+            if (mode === 'question') expect(events.some(event => event.type === 'question')).toBe(true)
+            ready()
+          }
+        }, new AbortController().signal)) events.push(event)
+      })()
+      if (mode === 'ack-failure') {
+        await expect(consume).rejects.toThrow()
+        expect(ready).not.toHaveBeenCalled()
+      } else {
+        await consume
+        expect(ready).toHaveBeenCalledOnce()
+        expect(events.some(event => event.type === 'done')).toBe(true)
+      }
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+    } finally { await fixture.instance.dispose() }
+  })
 
   it.each(['continue', 'opencode'] as const)('continues %s after reopening the desktop binding database', async (runtimeId) => {
     const directory = mkdtempSync(join(tmpdir(), 'remote-runtime-restart-'))

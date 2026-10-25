@@ -805,7 +805,9 @@ if (hasSingleInstanceLock) {
             await settingsStore.getResolvedSettings(),
             selection
           ).settings
-          return selection.provider === 'continue' ? resolved.continueModelProfile : resolved.opencodeModelProfile
+          return selection.provider === 'model'
+            ? resolved.modelProfiles.find(profile => profile.id === resolved.defaultModelProfileId)
+            : selection.provider === 'continue' ? resolved.continueModelProfile : resolved.opencodeModelProfile
         }
       })
     managedRemoteExecutionServices =
@@ -1221,7 +1223,7 @@ if (hasSingleInstanceLock) {
         await settingsStore.getResolvedSettings(),
         selection
       )
-      if (executionSpace?.kind === 'ssh') {
+      if (executionSpace?.kind === 'ssh' && selection.provider !== 'model') {
         const profile = selection.provider === 'continue' ? resolved.settings.continueModelProfile : resolved.settings.opencodeModelProfile
         if (profile === undefined) {
           throw new Error(

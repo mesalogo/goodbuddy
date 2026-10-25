@@ -371,6 +371,7 @@ async function runDaemon(
     protocol: verified.manifest.protocol,
     stateDirectory: paths.stateDirectory,
     socketPath: paths.socketPath,
+    ripgrepExecutablePath: resolve(dirname(paths.executablePath), 'rg'),
     isSuperseded: () => {
       const registry = dependencies.installationRegistry ?? new InstallationRegistry({
         storagePath: resolve(dirname(dirname(dirname(paths.executablePath))), 'registry.json')
