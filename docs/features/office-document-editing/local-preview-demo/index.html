@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>GoodBuddy · Office 本地预览实验</title><link rel="stylesheet" href="./style.css"></head>
+<body>
+  <header class="app-header"><div class="brand">G<span>GoodBuddy</span></div><span>Office 集成 / 本地预览实验</span><button id="theme" aria-label="切换浅色或深色主题">切换主题</button></header>
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="eyebrow">LOCAL WORKSPACE</div><h1>文件，直接打开。</h1><p>在右侧阅读文档，保留当前对话。文件内容在本机浏览器中解析。</p>
+      <button class="primary" id="open">＋ 打开本地文件</button><input id="file" type="file" accept=".docx,.xlsx,.pptx,.pdf" multiple hidden>
+      <h2>示例文件</h2><div id="samples" class="samples"></div>
+      <div class="note"><strong>试一试你的文档</strong><p>拖入 DOCX、XLSX、PPTX 或 PDF，比较实际版式。旧版 DOC / XLS / PPT 请先转换。</p></div>
+      <details><summary>关于这个 Demo</summary><p>本地依赖首次安装需要网络。启动后无需 Office 服务；编辑功能以后通过 ONLYOFFICE 接入。</p><p>PPTX 为实验组件。复杂排版、图表、公式和字体需要逐项验证。</p></details>
+      <div class="sidebar-bottom">原型演示 · 尚未接入 Desktop</div>
+    </aside>
+    <section class="workspace" aria-label="右侧文档工作区">
+      <div class="workspace-heading"><span>助手工作区 <span class="muted">/ 文档</span></span><button id="expand" aria-pressed="false">展开阅读</button></div>
+      <div id="tabs" class="tabs" role="tablist" aria-label="已打开的文档"></div>
+      <div class="toolbar"><div><strong id="filename">准备示例文档…</strong><div id="engine" class="muted"></div></div><span class="badge">只读 · 本地</span><div class="spacer"></div><button id="download" disabled>下载源文件</button><button disabled title="Demo 未连接 ShareServer；后续接入 ONLYOFFICE">ONLYOFFICE 编辑 ↗</button></div>
+      <div id="status" role="status" aria-live="polite">正在初始化…</div>
+      <div id="viewer" role="tabpanel" aria-label="文档预览"></div>
+      <footer><span>文件内容不上传到预览服务</span><span id="metrics">浏览器本地解析</span></footer>
+    </section>
+  </main>
+  <script type="module" src="./main.js"></script>
+</body></html>

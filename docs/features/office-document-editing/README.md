@@ -15,6 +15,7 @@ Office 协同编辑通过 ShareServer 集成 ONLYOFFICE Docs，使 GoodBuddy Des
 | [功能逻辑设计](./logic-design.md) | 文档会话、保存、冲突、断线和关闭规则 |
 | [界面设计](./ui-design.md) | 工作栏多实例文档页签、编辑状态和响应式行为 |
 | [技术设计](./technical-design.md) | Desktop、ShareServer、ONLYOFFICE 的边界、协议、安全与实施顺序 |
+| [本地预览 Demo](./local-preview-demo/README.md) | 独立网页的运行方式、解析组件、真实文件验证和已知限制 |
 
 ## 术语
 
@@ -28,5 +29,7 @@ Office 协同编辑通过 ShareServer 集成 ONLYOFFICE Docs，使 GoodBuddy Des
 的组织、服务部署和运维由独立仓库的 ShareServer 文档负责；跨端身份、传输和审计共同规则见
 [共享网络总体设计](../../architecture/share-network-architecture.md)。
 
-当前功能仍处于设计阶段，尚无可验证实现，因此不建立进度文档。开始实施后再新增
-`progress.md`，只记录实际完成范围和验证证据。
+Desktop 协同编辑仍处于设计阶段。2026-10-24 增加独立的本地预览 Demo，可在浏览器中打开
+DOCX、XLSX、PPTX、PDF，评估“本地阅读、ONLYOFFICE 编辑”的分层方案。Demo 不代表
+Desktop、远程文件通道或 ShareServer 已完成接入；验证记录见 Demo 说明。产品开始实施后
+再新增 `progress.md`，只记录实际完成范围和验证证据。

@@ -1,0 +1,17 @@
+{
+  "name": "goodbuddy-office-preview-demo",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite --host 127.0.0.1 --port 5188", "build": "vite build" },
+  "dependencies": {
+    "docx": "9.5.1",
+    "docx-preview": "0.3.6",
+    "xlsx": "0.18.5",
+    "pptx-preview": "1.0.7",
+    "pptxgenjs": "4.0.1",
+    "jspdf": "3.0.3",
+    "jszip": "3.10.1",
+    "pdfjs-dist": "4.10.38"
+  },
+  "devDependencies": { "vite": "6.4.1", "playwright": "1.56.1" }
+}
