@@ -1,6 +1,6 @@
 # Office 协同编辑
 
-Office 协同编辑通过 ShareServer 集成 ONLYOFFICE Docs，使 GoodBuddy Desktop 可以在助手
+Office 协同编辑计划通过 ShareServer 集成 ONLYOFFICE Docs，使 GoodBuddy Desktop 可以在助手
 工作栏中打开多个文档页签，并在同一编辑器中完成人工编辑、AI 选区修改、保存、撤销和冲突处理。
 
 ## 文档导航
@@ -16,6 +16,8 @@ Office 协同编辑通过 ShareServer 集成 ONLYOFFICE Docs，使 GoodBuddy Des
 | [界面设计](./ui-design.md) | 工作栏多实例文档页签、编辑状态和响应式行为 |
 | [技术设计](./technical-design.md) | Desktop、ShareServer、ONLYOFFICE 的边界、协议、安全与实施顺序 |
 | [本地预览 Demo](./local-preview-demo/README.md) | 独立网页的运行方式、解析组件、真实文件验证和已知限制 |
+| [实施进度](./progress.md) | 本地 Demo、服务端与 Desktop 实测证据及剩余范围 |
+| [ShareServer Office 部署](../../../../goodbuddy-shareserver/docs/office-deployment.md) | 独立 React 前端、统一 Node 后端和 Docs 的 IP 内网部署（ShareServer 仓库） |
 
 ## 术语
 
@@ -29,7 +31,9 @@ Office 协同编辑通过 ShareServer 集成 ONLYOFFICE Docs，使 GoodBuddy Des
 的组织、服务部署和运维由独立仓库的 ShareServer 文档负责；跨端身份、传输和审计共同规则见
 [共享网络总体设计](../../architecture/share-network-architecture.md)。
 
-Desktop 协同编辑仍处于设计阶段。2026-10-24 增加独立的本地预览 Demo，可在浏览器中打开
-DOCX、XLSX、PPTX、PDF，评估“本地阅读、ONLYOFFICE 编辑”的分层方案。Demo 不代表
-Desktop、远程文件通道或 ShareServer 已完成接入；验证记录见 Demo 说明。产品开始实施后
-再新增 `progress.md`，只记录实际完成范围和验证证据。
+当前采用“本地阅读、用户选择后进入 ONLYOFFICE 编辑”的分层接入方向：预览不上传文件或
+创建编辑会话；编辑链路才通过 ShareServer 管理工作副本。默认打开规则仍由文件打开功能维护。
+当前 Desktop 已接入工作栏“+ → 文档”：填写 ShareServer Web 地址、选择本地 DOCX 后在线编辑，
+可保存回文件或另存为。工作区／附件入口、远程源文件适配和 AI 消息桥已有实现；完整应用已用
+本地测试模型验证选区往返，真实供应商与跨平台验收仍待完成。本地预览 Demo
+仍是独立候选。具体完成范围及证据统一见[实施进度](./progress.md)。

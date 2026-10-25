@@ -3,6 +3,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   FolderTree,
+  FileText,
   Globe2,
   NotebookPen,
   SquareTerminal,
@@ -38,6 +39,7 @@ const FeishuIcon = (): React.JSX.Element => <ChannelIcon channel="feishu" />
 
 const WORKBAR_APP_ICONS: Record<WorkbarAppId, LucideIcon | (() => React.JSX.Element)> = {
   tasks: ClipboardCheck,
+  document: FileText,
   workspace: FolderTree,
   browser: Globe2,
   notes: NotebookPen,

@@ -1,3 +1,4 @@
+import { officeStore } from './office-store'
 import {
   ArrowLeft,
   ArrowRight,
@@ -23,6 +24,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   memo
 } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -74,6 +76,10 @@ import './task-center.css'
 const TerminalPanel = lazy(async () => {
   const module = await import('./TerminalPanel')
   return { default: module.TerminalPanel }
+})
+const OfficePanel = lazy(async () => {
+  const module = await import('./OfficePanel')
+  return { default: module.OfficePanel }
 })
 
 export type AssistantSidebarTab =
@@ -136,6 +142,7 @@ export type RightAssistantSidebarProps = {
   onBeforeCloseNotes?: () => Promise<boolean>
   nativeTerminals?: readonly { terminal: TerminalSnapshot; focus: boolean }[]
   open: boolean
+  onRequestOpen?: () => void
   tab: AssistantSidebarTab
   approvals: PendingSidebarApproval[]
   schedules: AssistantSchedule[]
@@ -816,6 +823,7 @@ function RightAssistantSidebarView({
   onBeforeCloseNotes,
   nativeTerminals,
   open,
+  onRequestOpen,
   tab,
   approvals,
   schedules,
@@ -884,8 +892,8 @@ function RightAssistantSidebarView({
         const tabDefinition = tabs.find((item) => item.id === definition.id)
         return {
           ...definition,
-          label: tabDefinition?.label ?? t('sidebar.tabs.terminal.label'),
-          description: tabDefinition?.description ?? t('sidebar.tabs.terminal.description')
+          label: tabDefinition?.label ?? (definition.id === 'document' ? definition.label : t('sidebar.tabs.terminal.label')),
+          description: tabDefinition?.description ?? (definition.id === 'document' ? definition.description : t('sidebar.tabs.terminal.description'))
         } satisfies WorkbarAppDefinition
       }),
     [t, tabs]
@@ -955,7 +963,7 @@ function RightAssistantSidebarView({
   const localizedWorkbarInstances = useMemo(
     () => workbarInstances.map((instance) => {
       if (
-        instance.appId === 'browser' ||
+        instance.appId === 'browser' || instance.appId === 'document' ||
         (instance.appId === 'terminal' && instance.defaultTitleNumber === undefined)
       ) {
         return instance
@@ -984,6 +992,17 @@ function RightAssistantSidebarView({
     (instance) => instance.id === activeWorkbarInstanceId
   )
   const activeWorkbarApp = activeWorkbarInstance?.appId
+  const officeRequest = useSyncExternalStore(officeStore.subscribe, officeStore.getOpenRequest)
+  const handledOfficeRequest = useRef<typeof officeRequest>(null)
+  useEffect(() => {
+    if (!officeRequest || handledOfficeRequest.current === officeRequest) return
+    handledOfficeRequest.current = officeRequest
+    setWorkbarInstances(current => current.some(item => item.id === officeRequest.instanceId) ? current : [
+      ...current, { id: officeRequest.instanceId, appId: 'document', title: officeRequest.name }
+    ])
+    setActiveWorkbarInstanceId(officeRequest.instanceId)
+    onRequestOpen?.()
+  }, [officeRequest, onRequestOpen])
   const [splitLayoutWidth, setSplitLayoutWidth] = useState(
     window.innerWidth
   )
@@ -1303,7 +1322,7 @@ function RightAssistantSidebarView({
       )
       if (
         instance &&
-        instance.appId !== 'terminal'
+        instance.appId !== 'terminal' && instance.appId !== 'document'
       ) {
         if (instance.appId === 'browser') {
           browserMruRef.current[instance.id] = ++nextBrowserMruRef.current
@@ -1615,6 +1634,7 @@ function RightAssistantSidebarView({
         return false
       }
       if (instance.appId === 'notes' && onBeforeCloseNotes && !await onBeforeCloseNotes()) return false
+      if (instance.appId === 'document' && !await officeStore.close(instance.id)) return false
       if (instance.appId === 'browser') {
         let tabId = browserTabIdsRef.current[instance.id]
         let conversationId =
@@ -2140,6 +2160,11 @@ function RightAssistantSidebarView({
           </p>
         ) : null}
         {instance.appId === 'notes' && notesPanel}
+        {instance.appId === 'document' && <Suspense fallback={<p role="status">正在加载文档面板…</p>}><OfficePanel instanceId={instance.id} conversationId={activeConversationId} onOpened={session => {
+          setWorkbarInstances(current => current.map(item => item.id === session.instanceId
+            ? { ...item, title: session.document.name } : item))
+          setActiveWorkbarInstanceId(session.instanceId)
+        }} /></Suspense>}
         {instance.appId === 'wecom' && (wecomPanel ?? (
           <PlatformPanelUnavailable reason={platformAppBlockers?.wecom} onResolve={onResolvePlatformApp ? () => onResolvePlatformApp('wecom') : undefined} />
         ))}

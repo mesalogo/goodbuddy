@@ -7826,6 +7826,7 @@ function App(): React.JSX.Element {
             onLoadWorkspaceDiff={loadWorkspaceDiff}
             onRefreshChanges={refreshWorkspaceChanges}
             onTabChange={setAssistantSidebarTab}
+            onRequestOpen={() => setAssistantSidebarOpen(true)}
             open={assistantSidebarOpen}
             restoreFocusRef={assistantSidebarToggleRef}
             tab={assistantSidebarTab}

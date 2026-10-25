@@ -32,6 +32,7 @@ import { createPortal } from 'react-dom'
 import { PageTabs, SegmentedControl } from './WorkspacePrimitives'
 import { WorkspaceActionDialog } from './WorkspaceActionDialog'
 import { WorkspaceGitTools } from './WorkspaceGitTools'
+import { officeStore } from './office-store'
 import { useListWindow } from './use-list-window'
 import type { AppNotificationInput } from './notifications'
 import type {
@@ -712,6 +713,9 @@ export function WorkspaceFilesPanel({
       })}
       <button role="menuitem" type="button" onClick={() => { closeMenu(true); void copyPath(menu.entry.path) }}><Copy size={14} />{t('sidebar.workspace.copyPath')}</button>
       {onOpenEntry && <button role="menuitem" type="button" onClick={() => { closeMenu(true); openEntry(menu.entry) }}><ExternalLink size={14} />{t('management.defaultOpen')}</button>}
+      {projectId && menu.entry.type === 'file' && /\.docx$/i.test(menu.entry.name) && <button role="menuitem" type="button" onClick={() => {
+        officeStore.requestOpen({ kind: 'workspace', projectId, path: menu.entry.path }, menu.entry.name); closeMenu(true)
+      }}><FileText size={14} />在文档页签中编辑</button>}
       <div role="separator" />
       <button role="menuitem" type="button" className="danger-ghost" onClick={() => { closeMenu(true); setDialog({ kind: 'delete', path: menu.entry.path }) }}><Trash2 size={14} />{t('management.delete')}</button>
     </div>, document.body)}

@@ -96,6 +96,7 @@ import {
 import { FeedbackService } from './feedback/feedback-service'
 import { registerFeedbackIpcHandler } from './feedback/feedback-ipc'
 import { registerDeviceSharingIpc } from './device-sharing-ipc'
+import { OfficeService, registerOfficeIpc } from './office-service'
 import { WecomCliService } from './wecom/wecom-cli-service'
 import { registerWecomIpc } from './wecom/wecom-ipc'
 import { FeishuToolService } from './feishu/feishu-tool-service'
@@ -1617,7 +1618,8 @@ if (hasSingleInstanceLock) {
       nativeClientCoordinator,
       supervisionPorts,
       startupWecomService,
-      startupFeishuService
+      startupFeishuService,
+      () => officeService
     )
     if (storageUpgradeController.signal.aborted) return
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
@@ -1631,6 +1633,25 @@ if (hasSingleInstanceLock) {
     removeFeishuIpc = registerFeishuIpc(mainWindow, startupFeishuService)
     removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow,
       new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion()))
+    officeService = new OfficeService(mainWindow, join(mainModuleDirectory, 'office-file-worker.js'), async source => {
+      if (source.kind === 'attachment') {
+        const original = await contextManager.assets?.original(source.resourceId)
+        if (!original) throw new Error('此附件未保存原件')
+        return { path: original.path, readOnly: true }
+      }
+      const project = await startupAssistantDatabase.getProject(source.projectId)
+      if (project.executionSpace?.kind === 'ssh' && !(await applicationSettingsStore.get()).remoteProjectsEnabled) throw new Error('远程项目未启用')
+      const space = executionSpaceResolver.resolveProject(project)
+      if (space.kind === 'ssh') {
+        const { prepareOfficeWorkspaceSource } = await import('./office-workspace-source')
+        return prepareOfficeWorkspaceSource(space.workspaceAccess, source.path, join(app.getPath('userData'), 'office-staging'))
+      }
+      try {
+        const { getCanonicalWorkspace, resolveExistingWorkspacePath } = await import('./workspace-file-access')
+        return { path: await resolveExistingWorkspacePath(await getCanonicalWorkspace(space.rootPath), [source.path], 'file') }
+      } finally { await space.workspaceAccess.dispose() }
+    }, id => startupAssistantDatabase.getConversation(id))
+    removeOfficeIpc = registerOfficeIpc(mainWindow, officeService)
     // Reclaim confirmed inactive runs, including their shared immutable caches.
     runtimeTemporaryCleanupTimer = setTimeout(() => {
       runtimeTemporaryCleanupTimer = undefined
@@ -1714,8 +1735,22 @@ if (hasSingleInstanceLock) {
 
 let cleanupStarted = false
 let cleanupComplete = false
+let officeService: OfficeService | undefined
+let removeOfficeIpc: (() => void) | undefined
+let officeClosing = false
 
 app.on('before-quit', (event) => {
+  if (officeService?.hasSessions && !cleanupStarted) {
+    event.preventDefault()
+    if (!officeClosing) {
+      officeClosing = true
+      void officeService.closeAll().then(accepted => {
+        officeClosing = false
+        if (accepted) app.quit()
+      }).catch(() => { officeClosing = false })
+    }
+    return
+  }
   isQuitting = true
   storageUpgradeController.abort()
   runtimeTemporaryCleanupController.abort()
@@ -1738,6 +1773,7 @@ app.on('before-quit', (event) => {
           () => feedbackService?.dispose(),
           () => removeFeedbackIpcHandler?.(),
           () => removeDeviceSharingIpc?.(),
+          () => removeOfficeIpc?.(),
           () => removeWecomIpc?.(),
           () => wecomService?.dispose(),
           () => removeFeishuIpc?.(),

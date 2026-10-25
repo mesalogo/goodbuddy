@@ -1,0 +1,5 @@
+.office-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; gap: var(--space-2); }
+.office-panel__toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.office-panel__toolbar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-panel p { margin: 0; color: var(--text-secondary); }
+.office-panel__viewport { flex: 1; min-height: 0; }

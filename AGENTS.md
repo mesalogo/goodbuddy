@@ -73,6 +73,11 @@ work as the implemented feature.
 
 ## Architecture
 
+- LAN services commonly have only a host IP and port, with no DNS/domain.
+  Support and test this path for ShareServer/ONLYOFFICE and remote Hosts,
+  including editor loading, plugin CORS, downloads and save callbacks. Browser
+  addresses must be client-reachable; Docker names and localhost are not remote
+  server addresses. Do not hard-code test Host addresses into product defaults.
 - `src/main`: privileged Electron main process, runtimes, persistence, IPC,
   knowledge, automation, and OS integration.
 - `src/preload`: the narrow, typed bridge exposed to the renderer.

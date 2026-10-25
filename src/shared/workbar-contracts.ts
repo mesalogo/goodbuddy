@@ -25,6 +25,7 @@ export const workbarAppIdSchema = z.enum([
   'browser',
   'notes',
   'terminal',
+  'document',
   'wecom',
   'feishu'
 ])
@@ -195,6 +196,12 @@ export const WORKBAR_APP_DEFINITIONS = [
     closable: true,
     reorderable: true,
     availability: { state: 'available' }
+  },
+  {
+    id: 'document', visibleAcrossContextSwitches: true, label: '文档', icon: 'document',
+    description: '打开 DOCX 在线编辑并保存回源文件。', instancePolicy: 'multiple',
+    defaultContext: 'application', defaultOpen: false, required: false,
+    closable: true, reorderable: true, availability: { state: 'available' }
   }
 ] as const satisfies readonly WorkbarAppDefinition[]
 

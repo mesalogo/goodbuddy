@@ -3,6 +3,7 @@ import { Ellipsis } from 'lucide-react'
 import type { ContextAttachment } from '../../shared/contracts'
 import { AnchoredMenu } from './AnchoredMenu'
 import { DocumentConversationContext } from './DocumentConversationContext'
+import { officeStore } from './office-store'
 
 export function AttachmentStatus({ attachment }: { attachment: ContextAttachment }): React.JSX.Element {
   return <>
@@ -40,6 +41,9 @@ export function AttachmentActions({ attachment, conversationId, onBusyChange, re
     {menu && <AnchoredMenu anchorRef={anchor} id={id} label={`附件操作：${attachment.name}`} onClose={() => setMenu(false)}>
       {!readOnly && <small>{provider}</small>}
       <button type="button" role="menuitem" onClick={() => run(() => window.goodbuddy.context.openOriginal(attachment.resourceId!))}>打开原文件：{attachment.originalName ?? attachment.name}</button>
+      {/\.docx$/i.test(attachment.originalName ?? attachment.name) && <button type="button" role="menuitem" onClick={() => {
+        setMenu(false); officeStore.requestOpen({ kind: 'attachment', resourceId: attachment.resourceId! }, attachment.originalName ?? attachment.name)
+      }}>在文档页签中编辑</button>}
       {!readOnly && conversationId && <button type="button" role="menuitem" onClick={() => run((operationId) => window.goodbuddy.context.reparseDraft(conversationId, attachment.id, operationId))}>
         {attachment.sendMode ? '提取图片文字' : '使用当前设置重新解析'}：{attachment.originalName ?? attachment.name}
       </button>}

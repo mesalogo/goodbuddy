@@ -1764,6 +1764,7 @@ export type KnowledgeSearchReference = {
 }
 
 export type DesktopApi = {
+  office?: import('./office-contracts').OfficeApi
   sharing: import('./device-sharing-contracts').DeviceSharingApi
   wecom?: import('./wecom-contracts').WecomApi
   feishu?: import('./feishu-contracts').FeishuApiBridge

@@ -177,7 +177,7 @@ export default tseslint.config(
     }
   },
   {
-    files: ['build/**/*.cjs'],
+    files: ['build/**/*.cjs', 'tests/support/office-desktop-*.cjs', 'tests/support/office-chat-main.cjs'],
     languageOptions: {
       globals: {
         ...globals.node
@@ -216,6 +216,18 @@ export default tseslint.config(
         ...globals.node
       }
     }
+  },
+  {
+    files: ['docs/features/office-document-editing/local-preview-demo/*.js'],
+    languageOptions: { globals: globals.browser }
+  },
+  {
+    files: ['tests/support/office-desktop-panel.tsx'],
+    languageOptions: { globals: globals.browser }
+  },
+  {
+    files: ['docs/features/office-document-editing/local-preview-demo/verify.mjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } }
   },
   {
     files: ['**/*.test.{ts,tsx}', 'vitest.config.ts'],

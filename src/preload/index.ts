@@ -44,6 +44,7 @@ import {
   type WindowCaptureOption
 } from '../shared/contracts'
 import { ipcChannels } from '../shared/ipc-channels'
+import { officeChannels } from '../shared/office-ipc-channels'
 import type { WecomSnapshot } from '../shared/wecom-contracts'
 import type { FeishuSnapshot } from '../shared/feishu-contracts'
 import type {
@@ -819,6 +820,15 @@ const desktopApi: DesktopApi = {
     getSnapshot: () => ipcRenderer.invoke(ipcChannels.localInferenceGet),
     act: (input) => ipcRenderer.invoke(ipcChannels.localInferenceAct, input),
     cancel: (taskId) => ipcRenderer.invoke(ipcChannels.localInferenceCancel, { taskId })
+  },
+  office: {
+    open: input => ipcRenderer.invoke(officeChannels.open, input),
+    save: input => ipcRenderer.invoke(officeChannels.save, input),
+    close: input => ipcRenderer.invoke(officeChannels.close, input),
+    viewport: input => ipcRenderer.invoke(officeChannels.viewport, input),
+    ask: input => ipcRenderer.invoke(officeChannels.ask, input),
+    result: input => ipcRenderer.invoke(officeChannels.result, input),
+    apply: input => ipcRenderer.invoke(officeChannels.apply, input)
   },
   sharing: {
     getSettings: () => ipcRenderer.invoke(ipcChannels.sharingSettingsGet),

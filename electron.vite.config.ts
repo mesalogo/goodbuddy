@@ -136,6 +136,7 @@ export default defineConfig({
           'desktop-storage-entry': resolve('src/main/desktop-storage-entry.ts'),
           'readonly-query-worker': resolve('src/main/readonly-query-worker.ts'),
           'document-parse-worker': resolve('src/main/document-parse-worker.ts'),
+          'office-file-worker': resolve('src/main/office-file-worker.ts'),
           'wechat-sidecar': resolve(
             'src/main/channels/wechat-sidecar.ts'
           ),

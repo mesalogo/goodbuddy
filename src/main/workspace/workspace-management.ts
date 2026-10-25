@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, realpath, rename, rm, readFile, chmod } from 'node:fs/promises'
+import { webcrypto } from 'node:crypto'
 import { basename, dirname, resolve } from 'node:path'
 import { workspaceManagementActionSchema, type WorkspaceManagementAction, type WorkspaceManagementResult } from '../../shared/workspace-management-contracts'
 import { getCanonicalWorkspace, isPathInside } from '../workspace-file-access'
@@ -30,7 +31,7 @@ export async function manageWorkspace(rootPath: string, input: WorkspaceManageme
     }
     return { kind: 'commitFiles', files }
   }
-  if (['importFile', 'createFile', 'createDirectory', 'move', 'delete', 'properties'].includes(action.kind) && 'path' in action) {
+  if (['importFile', 'createFile', 'createDirectory', 'move', 'replaceFile', 'delete', 'properties'].includes(action.kind) && 'path' in action) {
     const target = resolve(root, action.path)
     const parent = await realpath(dirname(target))
     if (target === root || !isPathInside(root, target) || !isPathInside(root, parent)) throw new Error('Path is outside the workspace')
@@ -58,6 +59,21 @@ export async function manageWorkspace(rootPath: string, input: WorkspaceManageme
       if (metadata.isSymbolicLink()) throw new Error('Cannot modify a symbolic link through workspace management')
       if (action.kind === 'properties') return { kind: 'properties', path: target, type: metadata.isDirectory() ? 'directory' : metadata.isFile() ? 'file' : 'other', size: metadata.size, modifiedAt: metadata.mtime.toISOString() }
       if (action.kind === 'delete') await rm(target, { recursive: metadata.isDirectory() })
+      if (action.kind === 'replaceFile') {
+        const destination = resolve(root, action.destination)
+        if (!metadata.isFile() || !basename(target).startsWith('.goodbuddy-office-') ||
+          !isPathInside(root, destination) || !isPathInside(root, await realpath(dirname(destination)))) throw new Error('Invalid Office staging path')
+        const original = await lstat(destination)
+        if (!original.isFile() || original.isSymbolicLink() || Math.max(original.size, metadata.size) > action.maximumBytes) throw new Error('Source file changed or exceeds Office size limit')
+        // WebCrypto computes SHA-256 on its background thread pool, including when called locally.
+        const digest = async (path: string): Promise<string> => Buffer.from(await webcrypto.subtle.digest('SHA-256', await readFile(path))).toString('hex')
+        if (await digest(target) !== action.digest) throw new Error('Uploaded Office revision digest does not match')
+        if (await digest(destination) !== action.expectedDigest) throw new Error('源文件已被其他程序修改，请另存为')
+        await chmod(target, original.mode)
+        signal?.throwIfAborted()
+        await rename(target, destination)
+        return { kind: 'done' }
+      }
       if (action.kind === 'move') {
         const destination = resolve(root, action.destination)
         const destinationParent = await realpath(dirname(destination))

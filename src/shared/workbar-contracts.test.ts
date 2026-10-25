@@ -65,7 +65,8 @@ describe('workbar contracts', () => {
         reorderable: true
       },
       { id: 'wecom', instancePolicy: 'single', defaultContext: 'application', defaultOpen: false, required: false, closable: true, reorderable: true },
-      { id: 'feishu', instancePolicy: 'single', defaultContext: 'application', defaultOpen: false, required: false, closable: true, reorderable: true }
+      { id: 'feishu', instancePolicy: 'single', defaultContext: 'application', defaultOpen: false, required: false, closable: true, reorderable: true },
+      { id: 'document', instancePolicy: 'multiple', defaultContext: 'application', defaultOpen: false, required: false, closable: true, reorderable: true }
     ])
     for (const definition of WORKBAR_APP_DEFINITIONS) {
       expect(workbarAppDefinitionSchema.parse(definition)).toEqual(

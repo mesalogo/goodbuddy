@@ -1,0 +1,131 @@
+"""Linux Electron + real isolated Office stack. Requires Python Playwright and Node on PATH."""
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import time
+import zipfile
+from pathlib import Path
+import tempfile
+from playwright.sync_api import sync_playwright
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--web', default='http://127.0.0.1:18088')
+args = parser.parse_args()
+repo = Path(__file__).resolve().parents[1]
+(repo / 'temp').mkdir(exist_ok=True)
+root = Path(tempfile.mkdtemp(prefix='office-desktop-', dir=repo / 'temp'))
+sys.path.insert(0, str(repo.parent / 'goodbuddy-shareserver/scripts/office-e2e'))
+from fixtures import docx
+
+esbuild = str(repo / 'node_modules/.bin/esbuild')
+for source, output, platform in [
+    ('src/main/office-service.ts', 'service.cjs', 'node'),
+    ('src/main/office-file-worker.ts', 'office-file-worker.js', 'node'),
+    ('tests/support/office-desktop-panel.tsx', 'panel.js', 'browser'),
+]:
+    subprocess.run([esbuild, source, '--bundle', '--platform=' + platform,
+                    '--format=' + ('cjs' if platform == 'node' else 'iife'),
+                    '--external:electron', '--jsx=automatic', '--outfile=' + str(root / output)], cwd=repo, check=True)
+shutil.copyfile(repo / 'tests/support/office-desktop.html', root / 'index.html')
+(root / 'package.json').write_text('{"type":"commonjs"}')
+(root / 'source.docx').write_bytes(docx())
+def text(path):
+    with zipfile.ZipFile(path) as archive:
+        return archive.read('word/document.xml').decode()
+
+with (root / 'electron.log').open('w') as log:
+    env = dict(os.environ, TMPDIR=str(root), GB_OFFICE_PROBE_ROOT=str(root))
+    env.pop('ELECTRON_RUN_AS_NODE', None)
+    child = subprocess.Popen(['xvfb-run', '-a', str(repo / 'node_modules/electron/dist/electron'),
+                              '--no-sandbox', str(repo / 'tests/support/office-desktop-main.cjs')], env=env, stdout=log, stderr=log,
+                             start_new_session=True)
+    try:
+        with sync_playwright() as playwright:
+            for _ in range(60):
+                try:
+                    browser = playwright.chromium.connect_over_cdp('http://127.0.0.1:19222')
+                    break
+                except Exception:
+                    if child.poll() is not None: raise RuntimeError('Electron exited')
+                    time.sleep(.5)
+            else: raise RuntimeError('CDP unavailable')
+            panel = browser.contexts[0].pages[0]
+            panel.get_by_role('textbox').fill(args.web)
+            panel.get_by_role('button', name='选择 DOCX 并编辑', exact=True).click()
+            editor = None
+            observed = set()
+            for _ in range(120):
+                pages = browser.contexts[0].pages
+                for target in pages:
+                    if target not in observed:
+                        observed.add(target)
+                        target.on('pageerror', lambda error: print('Browser error:', error, flush=True))
+                        target.on('console', lambda message: print('Browser console:', message.text, flush=True) if message.type == 'error' else None)
+                editor = next((page for page in pages if '/office/editor?' in page.url), None)
+                if editor and editor.evaluate('document.documentElement.dataset.officeReady === "true"'): break
+                panel.wait_for_timeout(500)
+            else: raise RuntimeError('Editor not ready: ' + panel.inner_text('body'))
+            print('PASS: OfficePanel -> IPC -> upload worker -> real sandboxed editor', flush=True)
+            frame = editor.frames[1]
+            if frame.get_by_role('button', name='取消', exact=True).count():
+                frame.get_by_role('button', name='取消', exact=True).click()
+            editor.mouse.click(650, 560)
+            editor.keyboard.press('Control+End')
+            editor.keyboard.type(' GB_DESKTOP_WRITEBACK_10', delay=40)
+            editor.keyboard.press('Control+a')
+            selection = None
+            selection_error = ''
+            for _ in range(20):
+                try:
+                    selection = editor.evaluate('window.goodbuddyOffice.selection()')
+                    break
+                except Exception as error:
+                    selection_error = str(error)
+                    editor.wait_for_timeout(500)
+            assert selection and 'GB_DESKTOP_WRITEBACK_10' in selection['text'], (selection, selection_error, [frame.url for frame in editor.frames])
+            editor.evaluate('args => window.goodbuddyOffice.replace(args.selection, args.text)', {
+                'selection': selection, 'text': 'GB_DESKTOP_WRITEBACK_10 插件修改'})
+            editor.keyboard.press('Control+a')
+            changed = editor.evaluate('window.goodbuddyOffice.selection()')
+            assert '插件修改' in changed['text']
+            editor.keyboard.press('Control+z')
+            editor.keyboard.press('Control+a')
+            restored = editor.evaluate('window.goodbuddyOffice.selection()')
+            assert restored['text'].strip() == selection['text'].strip()
+            editor.keyboard.press('ArrowRight')
+            try:
+                editor.evaluate('args => window.goodbuddyOffice.replace(args.selection, args.text)', {
+                    'selection': restored, 'text': 'STALE_REPLACEMENT'})
+                raise AssertionError('Stale selection was accepted')
+            except Exception as error:
+                assert 'Stale selection was accepted' not in str(error)
+            print('PASS: production plugin selection, replace, undo and stale-target rejection', flush=True)
+            editor.keyboard.press('Control+s')
+            panel.get_by_role('button', name='保存回文件', exact=True).click()
+            panel.get_by_role('status').filter(has_text='已保存到文件').wait_for(timeout=65000)
+            assert 'GB_DESKTOP_WRITEBACK_10' in text(root / 'source.docx'), text(root / 'source.docx')
+            print('PASS: actual edit -> force save -> verified revision -> source writeback', flush=True)
+            # An external writer must survive a subsequent save attempt.
+            (root / 'source.docx').write_bytes(docx('external edit'))
+            panel.get_by_role('button', name='保存回文件', exact=True).click()
+            panel.get_by_role('alert').filter(has_text='源文件已被其他程序修改').wait_for(timeout=65000)
+            assert 'external edit' in text(root / 'source.docx')
+            print('PASS: conflict keeps external source and editing view', flush=True)
+            panel.get_by_role('button', name='另存为', exact=True).click()
+            panel.get_by_role('status').filter(has_text='已保存到文件').wait_for(timeout=65000)
+            assert 'GB_DESKTOP_WRITEBACK_10' in text(root / 'export.docx')
+            print('PASS: save-as recovers edited document after conflict', flush=True)
+            assert panel.evaluate('window.goodbuddy.office.close({instanceId:"10000000-0000-4000-8000-000000000099"})')
+            print('PASS: document closes through real IPC', flush=True)
+            browser.close()
+    finally:
+        import signal
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGTERM)
+            child.wait(timeout=15)
+        log.flush()
+        if sys.exc_info()[0]:
+            print((root / 'electron.log').read_text(), file=sys.stderr)
+        shutil.rmtree(root)
