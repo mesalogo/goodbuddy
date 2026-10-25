@@ -11,6 +11,7 @@ export const sharingSettingsInputSchema = z.object({
 }).strict()
 export const sharingSettingsSchema = sharingSettingsInputSchema.extend({ deviceId: sharingIdSchema })
 export const sharingDeviceSchema = z.object({
+  registrationStatus: z.enum(['approved', 'pending', 'rejected', 'disabled']).optional(),
   id: sharingIdSchema, name: z.string(), platform: z.string(), appVersion: z.string(),
   registeredAt: z.string(), updatedAt: z.string()
 })
@@ -30,7 +31,7 @@ export type SharingSettingsInput = z.infer<typeof sharingSettingsInputSchema>
 export type SharingDevice = z.infer<typeof sharingDeviceSchema>
 export type SharingPublicationDraft = z.infer<typeof sharingPublicationDraftSchema>
 export type SharingPublication = z.infer<typeof sharingPublicationSchema>
-export type SharingCatalog = { devices: SharingDevice[]; publications: SharingPublication[] }
+export type SharingCatalog = { devices: SharingDevice[]; publications: SharingPublication[]; registrationStatus?: 'unregistered' | 'approved' | 'pending' | 'rejected' | 'disabled' }
 export type DeviceSharingApi = {
   getSettings: () => Promise<SharingSettings>
   saveSettings: (input: SharingSettingsInput) => Promise<SharingSettings>

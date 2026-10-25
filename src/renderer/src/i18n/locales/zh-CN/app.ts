@@ -1,6 +1,12 @@
 export const app = {
   sharing: {
-    title: '设备共享（技术预览）', boundary: '本地未认证的元数据服务。设备 ID 仅用于识别，不代表身份认证；注册记录不代表设备在线。此页不提供远程执行或知识内容访问。',
+    title: '设备共享（技术预览）', boundary: '连接 ShareServer 共享目录。注册按服务器策略自动接纳或等待管理员审批，后续请求使用设备凭据。注册记录不代表设备在线；此页不提供远程执行或知识内容访问。',
+    registrationStatus: {
+      unregistered: '尚未注册，请点击注册设备。', approved: '设备已接纳，可以使用共享目录。',
+      pending: '等待 ShareServer 管理员批准。批准后点击刷新即可连接。',
+      rejected: '设备注册申请已被拒绝，请联系 ShareServer 管理员。',
+      disabled: '设备已被管理员停用，请联系 ShareServer 管理员。'
+    },
     refresh: '刷新列表', working: '正在处理…', loadFailed: '列表读取失败，已有列表可能过期。请检查服务地址并刷新。',
     thisDevice: '本机', deviceId: '设备 ID', serverUrl: '服务地址', deviceName: '设备名称', save: '保存设置', saved: '共享设置已保存',
     register: '注册本机', registered: '本机注册信息已保存到服务', saveFirst: '请先保存设置，再注册或发布。',

@@ -40,6 +40,7 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
       setCatalog(await window.goodbuddy.sharing.getCatalog())
       setError('')
     } catch (reason) {
+      setCatalog(undefined)
       setError(String(reason))
     }
   }
@@ -66,6 +67,7 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
       }}>{t('sharing.refresh')}</button>} />
     <div className="device-sharing" aria-busy={busy}>
       {busy && <p role="status">{t('sharing.working')}</p>}
+      {catalog?.registrationStatus && <p role="status">{t(`sharing.registrationStatus.${catalog.registrationStatus}`)}</p>}
       {error && <div role="alert" className="settings-warning">{t('sharing.loadFailed')} {error}</div>}
       {settings && <section aria-labelledby="sharing-settings">
         <h2 id="sharing-settings">{t('sharing.thisDevice')}</h2>
@@ -80,8 +82,10 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
           <div className="device-sharing__actions">
             <button className="secondary-button" disabled={busy || !dirty || !validSettings}>{t('sharing.save')}</button>
             <button type="button" className="secondary-button" disabled={busy || Boolean(dirty)} onClick={() => void run(async () => {
-              await window.goodbuddy.sharing.registerDevice(); await refresh()
-            }, t('sharing.registered'))}>{t('sharing.register')}</button>
+              const device = await window.goodbuddy.sharing.registerDevice()
+              notify({ tone: device.registrationStatus === 'approved' ? 'success' : 'info', message: t(`sharing.registrationStatus.${device.registrationStatus ?? 'unregistered'}`) })
+              await refresh()
+            })}>{t('sharing.register')}</button>
           </div>
           {dirty && <p>{t('sharing.saveFirst')}</p>}
         </form>

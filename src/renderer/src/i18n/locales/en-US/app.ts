@@ -3,7 +3,13 @@ import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
   sharing: {
-    title: 'Device Sharing (Technical Preview)', boundary: 'Local unauthenticated metadata service. Device IDs identify records, not authenticated owners; registration does not indicate online status. Remote execution and knowledge content access are not provided here.',
+    title: 'Device Sharing (Technical Preview)', boundary: 'Connect to the ShareServer catalog. Server policy accepts devices automatically or requires administrator approval; subsequent requests use device credentials. Registration does not indicate online status. Remote execution and knowledge content access are not provided here.',
+    registrationStatus: {
+      unregistered: 'Not registered. Register this device to connect.', approved: 'Device accepted. The shared catalog is available.',
+      pending: 'Waiting for ShareServer administrator approval. Refresh after approval to connect.',
+      rejected: 'Device registration was rejected. Contact the ShareServer administrator.',
+      disabled: 'This device was disabled. Contact the ShareServer administrator.'
+    },
     refresh: 'Refresh lists', working: 'Working…', loadFailed: 'Could not load the lists. Previous results may be stale. Check the service URL and refresh.',
     thisDevice: 'This device', deviceId: 'Device ID', serverUrl: 'Service URL', deviceName: 'Device name', save: 'Save settings', saved: 'Sharing settings saved',
     register: 'Register this device', registered: 'Device registration saved to the service', saveFirst: 'Save settings before registering or publishing.',

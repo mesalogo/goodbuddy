@@ -62,3 +62,13 @@ it('preserves unsaved input on failure and does not offer revocation for other d
   expect(screen.getByLabelText('设备名称')).toHaveValue('My edit')
   expect(screen.getByRole('button', { name: '注册本机' })).toBeDisabled()
 })
+it('shows pending, rejection and disabled status without enabling publication', async () => {
+  const { catalog } = setup()
+  for (const [status, message] of [['pending', '等待 ShareServer 管理员批准'], ['rejected', '设备注册申请已被拒绝'], ['disabled', '设备已被管理员停用']] as const) {
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新列表' })).toBeEnabled())
+    catalog.registrationStatus = status
+    fireEvent.click(screen.getByRole('button', { name: '刷新列表' }))
+    await screen.findByText(new RegExp(message))
+    expect(screen.getByRole('button', { name: '发布元数据' })).toBeDisabled()
+  }
+})

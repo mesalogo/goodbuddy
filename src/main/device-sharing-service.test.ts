@@ -17,9 +17,11 @@ async function setup(timeout = 1000) {
   const requests: { path: string; method: string; body: Record<string, unknown> }[] = []
   let failure = 0
   let stall = false
+  const authorizations: (string | undefined)[] = []
   const server = createServer(async (request, response) => {
     if (stall) return
     if (failure) { response.writeHead(failure).end(); return }
+    authorizations.push(request.headers.authorization)
     const buffers: Buffer[] = []
     for await (const chunk of request) buffers.push(Buffer.from(chunk))
     const body = JSON.parse(Buffer.concat(buffers).toString() || '{}')
@@ -27,9 +29,10 @@ async function setup(timeout = 1000) {
     requests.push({ path, method: request.method!, body })
     let value: unknown
     if (path.endsWith('/devices/register')) {
-      value = { ...body, registeredAt: '2026-10-01', updatedAt: '2026-10-01' }
+      value = { ...body, registrationStatus: 'approved', registeredAt: '2026-10-01', updatedAt: '2026-10-01' }
       devices.splice(0, devices.length, value as SharingDevice)
-    } else if (path.endsWith('/devices')) value = { devices }
+    } else if (path.endsWith('/status')) value = devices[0]
+    else if (path.endsWith('/devices')) value = { devices }
     else if (request.method === 'GET') value = { publications }
     else if (path.endsWith('/revoke')) {
       const entry = publications.find(item => path.includes(item.id))!
@@ -46,7 +49,7 @@ async function setup(timeout = 1000) {
   const file = join(directory, 'settings.json')
   const service = new DeviceSharingService(file, 'test-version', timeout)
   await service.saveSettings({ name: 'Desktop', serverUrl: url })
-  return { service, file, url, requests, publications, fail: (code: number) => { failure = code }, stall: () => { stall = true } }
+  return { service, file, url, requests, publications, devices, authorizations, fail: (code: number) => { failure = code }, stall: () => { stall = true } }
 }
 
 it('persists one identity across concurrent first reads, saves and restarts without accepting renderer identity', async () => {
@@ -68,26 +71,56 @@ it('persists one identity across concurrent first reads, saves and restarts with
 it('uses the exact HTTP contract for registration, catalog, both publication kinds and own-device revocation', async () => {
   const { service, requests, publications } = await setup()
   const device = await service.registerDevice()
-  expect(requests[0]).toEqual({ path: '/api/v1/sharing/devices/register', method: 'POST', body: {
+  expect(requests[0]).toEqual({ path: '/api/v1/device-sharing/devices/register', method: 'POST', body: {
     id: device.id, name: 'Desktop', platform: process.platform, appVersion: 'test-version'
   } })
   const draft = { name: 'Knowledge', description: 'Metadata only', kind: 'knowledge', sourceMode: 'server', permissions: { search: true, read: false, download: true } }
   const publication = await service.publish(draft)
   expect(publication).toMatchObject({ ...draft, deviceId: device.id, status: 'published' })
-  expect(await service.getCatalog()).toEqual({ devices: [device], publications: [publication] })
+  expect(await service.getCatalog()).toEqual({ devices: [device], publications: [publication], registrationStatus: 'approved' })
   expect(await service.publish({ ...draft, kind: 'capability', sourceMode: 'device' })).toMatchObject({ permissions: { search: false, read: false, download: false } })
   publications.push({ ...publication, id: 'other-publication', deviceId: 'other-device' })
   await expect(service.revoke('other-publication')).rejects.toThrow('does not belong')
   expect(requests.some(item => item.path.includes('other-publication/revoke'))).toBe(false)
   expect(await service.revoke(publication.id)).toMatchObject({ status: 'revoked' })
-  expect(requests.at(-2)?.path).toBe(`/api/v1/sharing/publications?deviceId=${device.id}`)
-  expect(requests.at(-1)).toMatchObject({ path: `/api/v1/sharing/publications/${publication.id}/revoke`, method: 'POST', body: {} })
+  expect(requests.at(-2)?.path).toBe(`/api/v1/device-sharing/publications?deviceId=${device.id}`)
+  expect(requests.at(-1)).toMatchObject({ path: `/api/v1/device-sharing/publications/${publication.id}/revoke`, method: 'POST', body: {} })
 })
 
 it('preserves HTTP failure status and bounds a stalled request', async () => {
   const { service, fail, stall } = await setup(50)
+  await service.registerDevice()
   fail(503)
   await expect(service.getCatalog()).rejects.toThrow('HTTP 503')
   fail(0); stall()
   await expect(service.registerDevice()).rejects.toThrow(/timeout/i)
+})
+
+it('persists a per-server credential across restart without exposing it in settings', async () => {
+  const { service, file, authorizations, url } = await setup()
+  expect((await service.getCatalog()).registrationStatus).toBe('unregistered')
+  await service.registerDevice()
+  const first = authorizations[0]
+  expect(first).toMatch(/^Bearer [a-f0-9]{64}$/)
+  await new DeviceSharingService(file, 'v2').registerDevice()
+  expect(authorizations[1]).toBe(first)
+  expect(JSON.stringify(await service.getSettings())).not.toContain(first!.slice(7))
+  const other = await setup()
+  await service.saveSettings({ serverUrl: other.url, name: 'Desktop' })
+  await service.registerDevice()
+  expect(other.authorizations[0]).not.toBe(first)
+  await service.saveSettings({ serverUrl: url, name: 'Desktop' })
+  await service.registerDevice()
+  expect(authorizations.at(-1)).toBe(first)
+})
+
+it('returns pending, rejected and disabled status without requesting the protected catalog', async () => {
+  const { service, devices, requests } = await setup()
+  await service.registerDevice()
+  for (const status of ['pending', 'rejected', 'disabled'] as const) {
+    devices[0]!.registrationStatus = status
+    requests.length = 0
+    expect(await service.getCatalog()).toEqual({ devices: [], publications: [], registrationStatus: status })
+    expect(requests.map(r => r.path)).toEqual(['/api/v1/device-sharing/status'])
+  }
 })

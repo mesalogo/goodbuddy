@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { z } from 'zod'
@@ -50,14 +50,38 @@ export class DeviceSharingService {
     return operation
   }
 
+  private credential(settings: SharingSettings, create = false): Promise<string | undefined> {
+    const operation = this.updateQueue.then(async () => {
+      const path = `${this.filePath}.credentials`
+      let credentials: Record<string, string>
+      try { credentials = z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/)).parse(JSON.parse(await readFile(path, 'utf8'))) }
+      catch (error) { if (!isMissingFileError(error)) throw error; credentials = {} }
+      const key = settings.serverUrl.replace(/\/+$/, '')
+      if (!credentials[key] && create) {
+        credentials[key] = randomBytes(32).toString('hex')
+        // Persist before enrollment: retries/restarts retain the same device proof.
+        await writeJsonFileAtomically(path, credentials)
+      }
+      return credentials[key]
+    })
+    this.updateQueue = operation.catch(() => undefined)
+    return operation
+  }
+
   private async request<T>(settings: SharingSettings, path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
-    const response = await fetch(`${settings.serverUrl.replace(/\/+$/, '')}/api/v1/sharing/${path}`, {
+    const credential = await this.credential(settings, path === 'devices/register')
+    if (!credential) throw new Error('请先注册此设备。')
+    const response = await fetch(`${settings.serverUrl.replace(/\/+$/, '')}/api/v1/device-sharing/${path}`, {
       method: body === undefined ? 'GET' : 'POST',
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${credential}`, 'X-Device-Id': settings.deviceId, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: 'error',
       signal: AbortSignal.timeout(this.timeoutMs)
     })
-    if (!response.ok) throw new Error(`Sharing HTTP ${response.status} ${response.statusText}`)
+    if (!response.ok) {
+      const error = await response.json().catch(() => null) as { message?: string } | null
+      throw new Error(`Sharing HTTP ${response.status}: ${error?.message ?? (response.status === 404 ? '请升级 ShareServer，以支持设备注册策略。' : response.statusText)}`)
+    }
     return schema.parse(await response.json())
   }
 
@@ -70,11 +94,14 @@ export class DeviceSharingService {
 
   async getCatalog(): Promise<SharingCatalog> {
     const settings = await this.getSettings()
+    if (!await this.credential(settings)) return { devices: [], publications: [], registrationStatus: 'unregistered' }
+    const identity = await this.request(settings, 'status', sharingDeviceSchema)
+    if (identity.registrationStatus !== 'approved') return { devices: [], publications: [], registrationStatus: identity.registrationStatus ?? 'unregistered' }
     const [devices, publications] = await Promise.all([
       this.request(settings, 'devices', z.object({ devices: z.array(sharingDeviceSchema) })),
       this.request(settings, 'publications', z.object({ publications: z.array(sharingPublicationSchema) }))
     ])
-    return { ...devices, ...publications }
+    return { ...devices, ...publications, registrationStatus: identity.registrationStatus }
   }
 
   async publish(input: unknown) {

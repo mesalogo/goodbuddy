@@ -16,15 +16,16 @@ it.skipIf(!process.env.GOODBUDDY_SHARING_SERVER_ROOT)('uses the real ShareServer
   await new Promise<void>(resolve => portProbe.listen(0, '127.0.0.1', resolve))
   const port = (portProbe.address() as { port: number }).port
   await new Promise<void>(resolve => portProbe.close(() => resolve()))
-  const backend = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
+  const backend = spawn(process.execPath, ['--import', 'tsx', 'server/src/index.ts'], {
     cwd: process.env.GOODBUDDY_SHARING_SERVER_ROOT,
-    env: { ...process.env, SHARESERVER_PORT: String(port), SHARESERVER_DATA_DIR: join(directory, 'server-data') },
+    env: { ...process.env, DATABASE_URL: '', OFFICE_ENABLED: 'false', SHARESERVER_AUTH_ENABLED: 'true',
+      SHARESERVER_PUBLIC_URL: `http://127.0.0.1:${port}`, SHARESERVER_PORT: String(port), SHARESERVER_DATA_DIR: join(directory, 'server-data') },
     stdio: ['ignore', 'pipe', 'pipe']
   })
   let backendOutput = ''
   backend.stdout.on('data', data => { backendOutput += data })
   backend.stderr.on('data', data => { backendOutput += data })
-  const server = await createServer({ configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
+  const server = await createServer({ configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'), optimizeDeps: { entries: ['tests/support/device-sharing-renderer.tsx'] },
     plugins: [react(), { name: 'sharing-smoke', configureServer(server) {
       server.middlewares.use('/sharing.html', async (_request, response) => {
         response.setHeader('Content-Type', 'text/html')
@@ -44,7 +45,7 @@ it.skipIf(!process.env.GOODBUDDY_SHARING_SERVER_ROOT)('uses the real ShareServer
     const env: NodeJS.ProcessEnv = { ...process.env, GB_SHARING_DIRECTORY: directory, GB_SHARING_URL: `http://127.0.0.1:${port}`,
       GB_SHARING_RENDERER: server.resolvedUrls!.local[0] + 'sharing.html' }
     delete env.ELECTRON_RUN_AS_NODE
-    const child = spawn(createRequire(import.meta.url)('electron'), [join(directory, 'main.cjs')], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(createRequire(import.meta.url)('electron'), [...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), join(directory, 'main.cjs')], { env, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
     child.stdout.on('data', data => { output += data })
     child.stderr.on('data', data => { output += data })

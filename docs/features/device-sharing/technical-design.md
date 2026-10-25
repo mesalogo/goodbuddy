@@ -23,15 +23,23 @@
 
 `DeviceSharingService` 在 Main 内使用 `fetch`，每个请求含响应体读取采用 10 秒超时，非成功
 响应保留 HTTP 状态；响应再经 Zod 校验。请求只在页面读取或用户动作时发出，不启动后台发现。
-URL 接受 HTTP／HTTPS，禁止内嵌凭据、查询和片段。没有令牌或 Agent／Runtime 改动。
+URL 接受 HTTP／HTTPS，禁止内嵌凭据、查询和片段；请求禁止重定向。无 Agent／Runtime 改动，
+远程 Host 不是本次设备登记的执行端，不自动继承桌面身份。
 
 | 方法 | HTTP 请求 |
 | --- | --- |
-| 注册 | `POST /api/v1/sharing/devices/register`，字段为 `id,name,platform,appVersion` |
-| 设备列表 | `GET /api/v1/sharing/devices`，读取 `{devices:[]}` |
-| 发布列表 | `GET /api/v1/sharing/publications`，读取 `{publications:[]}` |
-| 发布 | `POST /api/v1/sharing/publications`，Main 生成条目 ID 并填入本机设备 ID |
-| 撤销 | 先按 `?deviceId=` 获取本机条目，再 `POST /api/v1/sharing/publications/:id/revoke` |
+| 注册 | `POST /api/v1/device-sharing/devices/register`，字段为 `id,name,platform,appVersion` |
+| 自身状态 | `GET /api/v1/device-sharing/status`，查询 `registrationStatus` |
+| 设备列表 | `GET /api/v1/device-sharing/devices`，读取 `{devices:[]}` |
+| 发布列表 | `GET /api/v1/device-sharing/publications`，读取 `{publications:[]}` |
+| 发布 | `POST /api/v1/device-sharing/publications`，Main 生成条目 ID 并填入本机设备 ID |
+| 撤销 | 先按 `?deviceId=` 获取本机条目，再 `POST /api/v1/device-sharing/publications/:id/revoke` |
+
+Main 首次注册前生成 32 字节随机凭据，按服务器地址存入 `device-sharing-settings.json.credentials`，
+复用原子写入和 0600 权限；保存成功后才发送注册请求，重启／请求重试复用同一凭据。
+此文件仅由 Main 读取，不进入 Renderer、IPC 设置响应或日志。服务端注册时绑定其 SHA-256 摘要。
+HTTP 请求携带 Bearer 凭据和 `X-Device-Id`；`getCatalog` 先查询自身状态，未接纳时仅返回状态和空目录。
+审批策略及协议以[服务端契约](../../../../goodbuddy-shareserver/docs/features/share-server/device-registration.md)为准。
 
 设备 ID、名称与服务 URL 存在用户数据目录的 `device-sharing-settings.json`，版本为 1；
 复用 `writeJsonFileAtomically`，加载 Promise 去重、保存串行。损坏设置报错而不重置 ID。
