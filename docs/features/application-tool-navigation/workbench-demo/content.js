@@ -1,3 +1,4 @@
+/* exported icon, projectNames, conversationNames, noteCopy, recordCopy, documentArticle */
 /* Curated example copy. Identity, counts and states come from the existing sanitized snapshot.
    None of these titles or paragraphs are exported private user content. */
 'use strict';

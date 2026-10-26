@@ -19,7 +19,7 @@ function renderRail(){
 function contextItem(label,actionName,value,active=false,meta=''){return `<button class="context-item ${active?'active':''}" data-action="${actionName}" data-value="${value}" ${active?'aria-current="page"':''}>${escapeHTML(label)}${meta?`<small>${meta}</small>`:''}</button>`;}
 function renderContext(){
  const titles={chat:['GoodBuddy','本地项目'],notes:['魔法笔记','全局 · 个人'],knowledge:['知识库','全局 · 本地与外部'],supervisor:['监督者','工作回顾与故事线'],activity:['运行记录','全部项目'],hosts:['远程主机','全局'],sharing:['设备共享','全局 · 元数据目录']};
- const [title,scope]=titles[state.page];let items='';
+ const [title,scope]=titles[state.page];let items;
  if(state.page==='chat')items=`${contextItem('＋ 新建会话','new-chat','')}<div class="context-group">今天</div>${contextItem('让页面内容更清晰','go','chat',true)}${contextItem('四栏布局设计','layout-link','')}<div class="context-group">相关内容</div>${contextItem('工作空间设计笔记','note','0')}${contextItem('团队知识','go','knowledge')}`;
  else if(state.page==='notes')items=contextItem('全部笔记','note-overview','',state.note===null&&!state.todos)+contextItem('待办','todos-on','',state.todos)+`<div class="context-group">最近笔记</div>`+noteData.map((n,i)=>contextItem(n[0],'note',i,state.note===i&&!state.todos)).join('');
  else if(state.page==='knowledge')items=contextItem('团队知识','knowledge-home','',true,'4')+`<div class="context-group">管理</div>${contextItem('知识库范围说明','library-scope','')}${contextItem('检索测试','retrieval','')}`;
