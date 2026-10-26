@@ -1323,16 +1323,15 @@ function ChatMessageRowView({
             {t('chat.retry')}
           </button>
         )}
-        {message.role === 'assistant' &&
-          message.state !== 'streaming' &&
+        {message.state !== 'streaming' &&
           Boolean(message.content.trim()) && (
             <div className="message__actions">
-              {!greeting && onAddToNote && <button type="button" className="icon-button" aria-label={t('magicNotes:capture.add')} title={t('magicNotes:capture.add')} onClick={event => onAddToNote(conversationId, message, event.currentTarget)}><FileText aria-hidden="true" size={15} /></button>}
+              {message.role === 'assistant' && !greeting && onAddToNote && <button type="button" className="icon-button" aria-label={t('magicNotes:capture.add')} title={t('magicNotes:capture.add')} onClick={event => onAddToNote(conversationId, message, event.currentTarget)}><FileText aria-hidden="true" size={15} /></button>}
               <button
-                aria-label={t(copied ? 'notices.messageCopied' : 'chat.copyMessage')}
+                aria-label={t(copied ? 'notices.messageCopied' : message.role === 'user' ? 'messageEdit.copy' : 'chat.copyMessage')}
                 className="icon-button"
                 onClick={() => void copyReply()}
-                title={t(copied ? 'notices.messageCopied' : 'chat.copyMessage')}
+                title={t(copied ? 'notices.messageCopied' : message.role === 'user' ? 'messageEdit.copy' : 'chat.copyMessage')}
                 type="button"
               >
                 {copied

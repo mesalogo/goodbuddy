@@ -1,4 +1,7 @@
 export const app = {
+  messageEdit: {
+    copy: '复制消息',
+  },
   sharing: {
     title: '设备共享（技术预览）', boundary: '连接 ShareServer 共享目录。注册按服务器策略自动接纳或等待管理员审批，后续请求使用设备凭据。注册记录不代表设备在线；此页不提供远程执行或知识内容访问。',
     registrationStatus: {

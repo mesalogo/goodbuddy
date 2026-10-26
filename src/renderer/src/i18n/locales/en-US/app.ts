@@ -2,6 +2,9 @@ import type { TranslationShape } from '../../resource-types'
 import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
+  messageEdit: {
+    copy: 'Copy message',
+  },
   sharing: {
     title: 'Device Sharing (Technical Preview)', boundary: 'Connect to the ShareServer catalog. Server policy accepts devices automatically or requires administrator approval; subsequent requests use device credentials. Registration does not indicate online status. Remote execution and knowledge content access are not provided here.',
     registrationStatus: {
