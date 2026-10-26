@@ -4039,32 +4039,17 @@
   outline-offset: -2px;
 }
 
-.conversation-rename {
-  display: grid;
-  padding: var(--space-1);
-  margin: 2px 5px var(--space-2);
-  gap: var(--space-1);
-  grid-template-columns: minmax(0, 1fr) 28px 28px;
-}
-
-.conversation-rename input {
+.conversation-rename.field-control {
+  width: 0;
   min-width: 0;
-  height: 30px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  background: var(--surface-raised);
-  font-size: var(--font-caption);
-}
-
-.conversation-rename button {
-  display: grid;
-  height: 28px;
-  place-items: center;
-  border-radius: 6px;
-  background: var(--surface-muted);
-  color: var(--text-secondary);
-  cursor: pointer;
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  line-height: inherit;
 }
 
 .app-notification-viewport {

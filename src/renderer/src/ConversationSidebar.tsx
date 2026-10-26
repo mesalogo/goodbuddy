@@ -12,9 +12,8 @@ import {
   PinOff,
   RefreshCw,
   Trash2,
-  X,
 } from "lucide-react";
-import { memo, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -76,11 +75,45 @@ export type ConversationListRowHandlers = {
   cancelDelete: () => void;
   confirmDelete: (conversationId: string) => void;
   requestDelete: (conversationId: string) => void;
-  saveTitle: (conversationId: string, title: string) => void;
-  cancelRename: (conversationId: string) => void;
+  saveTitle: (conversationId: string, title: string, restoreFocus?: boolean) => void;
+  cancelRename: (conversationId: string, restoreFocus?: boolean) => void;
   openTask: (task: AssistantTask) => void;
   viewAllTasks: (conversationId: string, firstTaskId: string | undefined) => void;
 };
+
+function ConversationTitleInput({ conversation, conversationTitle, handlers }: {
+  conversation: Conversation;
+  conversationTitle: string;
+  handlers: ConversationListRowHandlers;
+}): React.JSX.Element {
+  const { t } = useTranslation("app");
+  const finished = useRef(false);
+  const finish = (value: string, cancel: boolean, restoreFocus: boolean): void => {
+    if (finished.current) return;
+    finished.current = true;
+    if (cancel || !value.trim()) handlers.cancelRename(conversation.id, restoreFocus);
+    else handlers.saveTitle(conversation.id, value, restoreFocus);
+  };
+  return (
+    <input
+      aria-label={t("conversation.renameAria", { title: conversationTitle })}
+      autoFocus
+      className="field-control conversation-rename"
+      defaultValue={conversation.title}
+      maxLength={80}
+      onFocus={(event) => event.currentTarget.select()}
+      onBlur={(event) => finish(event.currentTarget.value, false, false)}
+      onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === "Enter" || event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          finish(event.currentTarget.value, event.key === "Escape", true);
+        }
+      }}
+    />
+  );
+}
 
 type ConversationListRowProps = {
   conversation: Conversation;
@@ -146,6 +179,8 @@ const ConversationListRow = memo(function ConversationListRow({
   const { t } = useTranslation("app");
   const { t: tWorkspace } = useTranslation("workspace");
   const branchDisabledReasonId = `conversation-branch-disabled-${conversation.id}`;
+  const editing = renaming && !conversation.remote;
+  const Item = editing ? "div" : "button";
   return (
     <div
       aria-posinset={position}
@@ -174,14 +209,14 @@ const ConversationListRow = memo(function ConversationListRow({
             )}
           </button>
         )}
-        <button
+        <Item
           className={
             active
               ? "conversation-item conversation-item--active"
               : "conversation-item"
           }
-          type="button"
-          onClick={() => handlers.select(conversation.id)}
+          type={editing ? undefined : "button"}
+          onClick={editing ? undefined : () => handlers.select(conversation.id)}
         >
           <span className="conversation-item__primary">
             {conversation.pinned && (
@@ -199,10 +234,12 @@ const ConversationListRow = memo(function ConversationListRow({
                 {projectChannelLabels[conversation.remote.channel]}
               </b>
             )}
-            <OverflowMarquee
+            {editing ? (
+              <ConversationTitleInput conversation={conversation} conversationTitle={conversationTitle} handlers={handlers} />
+            ) : <OverflowMarquee
               className="conversation-item__title"
               text={conversationTitle}
-            />
+            />}
             {unread && (
               <i
                 aria-label={t("conversation.unread")}
@@ -227,7 +264,7 @@ const ConversationListRow = memo(function ConversationListRow({
               )}
             </time>
           </small>
-        </button>
+        </Item>
         {activity && (
           <span
             aria-label={activity.status === "running"
@@ -375,52 +412,6 @@ const ConversationListRow = memo(function ConversationListRow({
           )}
         </div>, document.body
       )}
-      {!conversation.remote &&
-        renaming && (
-          <form
-            className="conversation-rename"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const input =
-                event.currentTarget.elements.namedItem("title");
-              if (input instanceof HTMLInputElement) {
-                handlers.saveTitle(conversation.id, input.value);
-              }
-            }}
-          >
-            <input
-              aria-label={t("conversation.renameAria", {
-                title: conversationTitle,
-              })}
-              autoFocus
-              defaultValue={conversation.title}
-              maxLength={80}
-              name="title"
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  handlers.cancelRename(conversation.id);
-                }
-              }}
-              pattern=".*\S.*"
-              required
-            />
-            <button
-              aria-label={t("conversation.saveName")}
-              type="submit"
-            >
-              <Check size={14} />
-            </button>
-            <button
-              aria-label={t("conversation.cancelRename")}
-              onClick={() => {
-                handlers.cancelRename(conversation.id);
-              }}
-              type="button"
-            >
-              <X size={14} />
-            </button>
-          </form>
-        )}
       {tasksExpanded && conversationTasks.length > 0 && (
         <ul
           aria-label={t("conversation.tasks.list", {

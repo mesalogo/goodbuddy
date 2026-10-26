@@ -4745,7 +4745,7 @@ function App(): React.JSX.Element {
     );
   };
 
-  const saveTitle = (conversationId: string, titleInput: string): void => {
+  const saveTitle = (conversationId: string, titleInput: string, restoreFocus = true): void => {
     const title = titleInput.trim().slice(0, 80);
     if (!title) {
       return;
@@ -4758,7 +4758,7 @@ function App(): React.JSX.Element {
       ),
     );
     setRenamingConversationId("");
-    focusConversationActions(conversationId);
+    if (restoreFocus) focusConversationActions(conversationId);
   };
 
   const writeClipboardText = useCallback(
@@ -6289,9 +6289,9 @@ function App(): React.JSX.Element {
       confirmDelete: (conversationId) => void deleteConversation(conversationId),
       requestDelete: (conversationId) => setConfirmingConversationId(conversationId),
       saveTitle,
-      cancelRename: (conversationId) => {
+      cancelRename: (conversationId, restoreFocus = true) => {
         setRenamingConversationId("");
-        focusConversationActions(conversationId);
+        if (restoreFocus) focusConversationActions(conversationId);
       },
       openTask: (task) => {
         openAssistantTask(task);

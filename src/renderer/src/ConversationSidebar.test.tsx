@@ -205,6 +205,63 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('ConversationSidebar inline rename', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('replaces the title in its row and selects the existing name', () => {
+    const { list } = setup(2, { renamingConversationId: idOf(0) })
+    const input = screen.getByRole('textbox') as HTMLInputElement
+    expect(input.closest('.conversation-item__primary')).not.toBeNull()
+    expect(input.closest('button')).toBeNull()
+    expect(list.querySelectorAll('.conversation-row')).toHaveLength(2)
+    expect(screen.queryByText(title(0))).toBeNull()
+    expect(input).toHaveFocus()
+    expect(input.selectionStart).toBe(0)
+    expect(input.selectionEnd).toBe(title(0).length)
+    fireEvent.click(input)
+    expect(handlers.select).not.toHaveBeenCalled()
+  })
+
+  it('saves with Enter only once even when blur follows', () => {
+    setup(1, { renamingConversationId: idOf(0) })
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: '新名称' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(handlers.saveTitle).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.blur(input)
+    expect(handlers.saveTitle).toHaveBeenCalledExactlyOnceWith(idOf(0), '新名称', true)
+  })
+
+  it('cancels with Escape without saving on blur', () => {
+    setup(1, { renamingConversationId: idOf(0) })
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: '取消的名称' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.blur(input)
+    expect(handlers.cancelRename).toHaveBeenCalledExactlyOnceWith(idOf(0), true)
+    expect(handlers.saveTitle).not.toHaveBeenCalled()
+  })
+
+  it('saves on blur without requesting focus back', () => {
+    setup(1, { renamingConversationId: idOf(0) })
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: '失焦保存' } })
+    fireEvent.blur(input)
+    expect(handlers.saveTitle).toHaveBeenCalledExactlyOnceWith(idOf(0), '失焦保存', false)
+  })
+
+  it.each(['Enter', 'blur'])('restores the original name for blank input on %s', (action) => {
+    setup(1, { renamingConversationId: idOf(0) })
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: '   ' } })
+    if (action === 'blur') fireEvent.blur(input)
+    else fireEvent.keyDown(input, { key: action })
+    expect(handlers.cancelRename).toHaveBeenCalledExactlyOnceWith(idOf(0), action !== 'blur')
+    expect(handlers.saveTitle).not.toHaveBeenCalled()
+  })
+})
+
 describe('ConversationSidebar windowing', () => {
   it('renders every row without spacers below the threshold', () => {
     const { list } = setup(conversationListWindowThreshold - 1)
