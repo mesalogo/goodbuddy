@@ -23,6 +23,8 @@ import {
 } from './error-message'
 import { FeedbackDialog } from './FeedbackDialog'
 import { formatModelPackageBytes } from './model-download-presentation'
+import { useDesktopUpdates } from './use-desktop-updates'
+import { DesktopUpdateDownload } from './DesktopUpdateDownload'
 
 export function UpdateSettingsSection({
   onNotify
@@ -32,7 +34,9 @@ export function UpdateSettingsSection({
   const { t } = useTranslation('settingsSections')
   const [settings, setSettings] = useState<ApplicationSettings>()
   const [appInfo, setAppInfo] = useState<AppInfo>()
-  const [result, setResult] = useState<VersionCheckResult>()
+  const [checkedResult, setResult] = useState<VersionCheckResult>()
+  const downloads = useDesktopUpdates()
+  const result = downloads.snapshot?.result ?? checkedResult
   const [checking, setChecking] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
@@ -278,7 +282,16 @@ export function UpdateSettingsSection({
             <ExternalLink aria-hidden="true" size={13} />
             {t('updates.actions.openDownloadPage')}
           </button>
+          {downloads.supported && <button
+            className="secondary-button"
+            type="button"
+            disabled={downloads.snapshot?.cacheCleaning || downloads.snapshot?.packageHandedOff || ['downloading', 'verifying', 'cancelling', 'restarting'].includes(downloads.snapshot?.status ?? '')}
+            onClick={() => void downloads.actions.clearCache().then(cleared => {
+              if (cleared) onNotify?.({ tone: 'success', message: t('updates.download.cacheCleared'), dedupeKey: 'update-cache-cleared' })
+            })}
+          >{t(downloads.snapshot?.cacheCleaning ? 'updates.download.clearingCache' : 'updates.download.clearCache')}</button>}
         </div>
+        {downloads.snapshot?.cleanupWarning && <p role="alert">{downloads.snapshot.cleanupWarning}</p>}
       </article>
 
       {result && (
@@ -303,6 +316,12 @@ export function UpdateSettingsSection({
                 })}
               </small>
             </div>
+            {downloads.snapshot?.result?.updateAvailable && <DesktopUpdateDownload
+              key={downloads.snapshot.result.latestVersion}
+              snapshot={downloads.snapshot}
+              error={downloads.error}
+              actions={downloads.actions}
+            />}
           </div>
           <ul>
             {result.target.files.map((file) => (
@@ -312,9 +331,7 @@ export function UpdateSettingsSection({
               </li>
             ))}
           </ul>
-          <p>
-            {t('updates.result.safety')}
-          </p>
+          {!downloads.supported && <p>{t('updates.result.safety')}</p>}
         </article>
       )}
       <article className="capability-card feedback-entry-card">

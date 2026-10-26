@@ -972,7 +972,7 @@ export const settingsSections = {
     loadingAppInfo: '正在读取应用信息…',
     source: {
       label: '检查更新源',
-      description: '用于手动检查、启动时检查和打开下载页。',
+      description: '用于检查版本、下载更新和打开下载页。正在下载的文件继续使用开始时选择的来源。',
       options: {
         github: 'GitHub（默认）',
         mirror: '镜像节点'
@@ -983,6 +983,19 @@ export const settingsSections = {
       }
     },
     checkOnStartup: '启动时检查新版本',
+    download: {
+      start: '下载更新', retry: '重试下载', cancel: '取消下载', cancelling: '正在取消…',
+      open: '打开安装包', reveal: '显示更新文件',
+      restart: '重启并更新', restarting: '正在准备重启…',
+      clearCache: '清理更新缓存', clearingCache: '正在清理…', cacheCleared: '可清理的更新缓存已清理',
+      handedOff: '更新文件已打开。本次运行期间将保留这些文件；请完成安装并重新打开 GoodBuddy 后再清理或下载。',
+      restartHelp: '将先保存会话并退出，再安装新版本并重新启动。如有未保存的编辑或正在执行的任务，会提示你先处理。',
+      format: '安装包格式', chooseFormat: '请选择当前使用的安装格式',
+      progress: '更新下载进度', verifying: '正在校验更新文件…',
+      source: '本次下载来源：{{source}}',
+      installHelp: '更新包已通过校验。打开后请按安装程序提示完成更新；此操作不会自动保存或重启 GoodBuddy。',
+      revealHelp: '更新文件已通过校验。请先保存工作并退出 GoodBuddy，再手动替换程序；便携版请保留 data 目录及个人文件。'
+    },
     actions: {
       checking: '正在检查…',
       checkNow: '立即检查更新',

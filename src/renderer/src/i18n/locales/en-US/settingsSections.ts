@@ -1037,7 +1037,7 @@ export const settingsSections = {
     source: {
       label: 'Update source',
       description:
-        'Used for manual checks, startup checks, and the download page.',
+        'Used for version checks, update downloads, and the download page. Active downloads keep their original source.',
       options: {
         github: 'GitHub (default)',
         mirror: 'Mirror node'
@@ -1048,6 +1048,19 @@ export const settingsSections = {
       }
     },
     checkOnStartup: 'Check for updates at startup',
+    download: {
+      start: 'Download update', retry: 'Retry download', cancel: 'Cancel download', cancelling: 'Cancelling…',
+      open: 'Open installer', reveal: 'Show update file',
+      restart: 'Restart and update', restarting: 'Preparing to restart…',
+      clearCache: 'Clear update cache', clearingCache: 'Clearing…', cacheCleared: 'Unused update cache files cleared',
+      handedOff: 'The update file has been opened and will be retained for this session. Finish installation and reopen GoodBuddy before clearing or downloading again.',
+      restartHelp: 'Saves conversations and exits before installing and restarting. Resolve unsaved edits and active tasks before continuing.',
+      format: 'Package format', chooseFormat: 'Select your current installation format',
+      progress: 'Update download progress', verifying: 'Verifying update file…',
+      source: 'Download source: {{source}}',
+      installHelp: 'The package has been verified. Follow the installer to update. This action does not automatically save your work or restart GoodBuddy.',
+      revealHelp: 'The update file has been verified. Save your work and exit GoodBuddy before replacing the application manually. Preserve the portable data directory and personal files.'
+    },
     actions: {
       checking: 'Checking…',
       checkNow: 'Check for updates now',

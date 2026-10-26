@@ -137,6 +137,7 @@ export default defineConfig({
           'readonly-query-worker': resolve('src/main/readonly-query-worker.ts'),
           'document-parse-worker': resolve('src/main/document-parse-worker.ts'),
           'office-file-worker': resolve('src/main/office-file-worker.ts'),
+          'desktop-update-worker': resolve('src/main/desktop-update-worker.ts'),
           'wechat-sidecar': resolve(
             'src/main/channels/wechat-sidecar.ts'
           ),

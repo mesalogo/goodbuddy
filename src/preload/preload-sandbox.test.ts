@@ -12,6 +12,21 @@ const electron = vi.hoisted(() => ({
 vi.mock('electron', () => electron)
 
 describe('sandboxed preload', () => {
+  it('distinguishes failed update persistence from a successful acknowledgement', async () => {
+    await import('./index')
+    const api = electron.contextBridge.exposeInMainWorld.mock.calls[0]![1] as DesktopApi
+    const listener = vi.fn(async () => { throw new Error('disk full') })
+    const unsubscribe = api.app.onBeforeQuit(listener)
+    const [, handler] = electron.ipcRenderer.on.mock.calls.at(-1)!
+    handler({}, 'request-id', 'update')
+    await vi.waitFor(() => expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(
+      ipcChannels.appRendererPersistenceComplete, 'request-id', 'disk full'
+    ))
+    expect(listener).toHaveBeenCalledWith('update')
+    unsubscribe()
+    electron.ipcRenderer.invoke.mockClear()
+    electron.ipcRenderer.removeListener.mockClear()
+  })
   it('forwards status deltas without the Electron event and removes the exact subscription', async () => {
     await import('./index')
     const api = electron.contextBridge.exposeInMainWorld.mock.calls[0]![1] as DesktopApi

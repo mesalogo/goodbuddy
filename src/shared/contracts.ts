@@ -1786,7 +1786,7 @@ export type DesktopApi = {
     isMaximized: () => Promise<boolean>
     onMaximizedChanged: (listener: (maximized: boolean) => void) => () => void
     onPreviewEscape: (listener: () => void) => () => void
-    onBeforeQuit: (listener: () => Promise<void>) => () => void
+    onBeforeQuit: (listener: (reason?: 'update') => Promise<void>) => () => void
     clearLocalData: () => Promise<void>
     onNewConversation: (listener: () => void) => () => void
     onOpenSettings: (listener: (category?: 'model' | 'document-parsing') => void) => () => void
@@ -1936,6 +1936,7 @@ export type DesktopApi = {
       listener: (activity: RemoteChannelActivity) => void
     ) => () => void
   }
+  desktopUpdates?: import('./desktop-update-contracts').DesktopUpdateBridge
   updates?: {
     getSettings: () => Promise<ApplicationSettings>
     onSettingsChanged: (listener: (settings: ApplicationSettings) => void) => () => void

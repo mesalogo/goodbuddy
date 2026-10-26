@@ -1,3 +1,4 @@
+import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
 import {
   Copy,
   KeyRound,
@@ -991,6 +992,7 @@ function SettingsPanelView({
     brandingDirty ||
     platformFeaturesDirty ||
     documentParsingDirty
+  useWorkspaceUnsavedChanges(open && hasUnsavedDrafts)
   const navigationWouldLoseDraft =
     runtimeCustomizationDirty ||
     brandingDirty ||

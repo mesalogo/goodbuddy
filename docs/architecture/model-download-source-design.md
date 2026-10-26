@@ -821,10 +821,13 @@ ModelScope 和 Hugging Face 都可能跳转到文件存储或 CDN。每个来源
 | 设置 | 位置 | 作用 |
 | --- | --- | --- |
 | 模型下载源 | 模型连接页头 → 模型下载源弹窗 | GoodBuddy 托管本地模型 |
-| 检查更新源 | 关于与更新 | GoodBuddy 版本检查和下载页 |
+| 检查更新源 | 关于与更新 | GoodBuddy 版本检查、安装包下载和下载页 |
 
 切换任一设置不得修改另一个设置。用户选择 ModelScope 不表示应用更新使用镜像节点；选择
 Hugging Face 也不表示应用更新使用 GitHub。
+
+应用安装包下载在开始时固定来源和版本，切源只影响后续操作；行为定义见
+[桌面更新规则](../features/desktop-updates/logic-design.md)。
 
 ### 15.2 Ollama
 

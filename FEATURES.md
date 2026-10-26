@@ -978,11 +978,22 @@ records are listed separately and do not introduce another feature status.
   feedback, and resource cleanup.
 - [x] **Version checks and mirror source**: About and Updates selects GitHub
   (default) or the mirror. Manual checks, startup checks, and the download page
-  use the same choice and read only fixed trusted release indexes; GoodBuddy
-  does not automatically download or install updates.
+  use the same choice. Source now supports package downloads, size/SHA-256
+  verification, cancellation and retry. Installed Windows NSIS builds offer a
+  user-initiated Restart and update action that checks active work and unsaved
+  edits, confirms persistence, then drains resources and starts the installer.
+  Automatic downloading and installation for other formats remain pending;
+  full-payload and all-users elevation validation is tracked in
+  [desktop update progress](./docs/features/desktop-updates/progress.md).
 - [x] **Window recovery controls**: Rendering errors show a localized Reload
   action and renderer crashes offer a native recovery confirmation. Reload may
   lose unsaved input. See [window recovery](./docs/development/window-recovery.md).
+- **Update cache cleanup (source integrated)**: Failed, cancelled and corrupt
+  downloads are removed. Startup reclaims installed-version packages and partial
+  files; intact newer candidates can be reused after verification. Settings offer
+  manual cleanup, with visible lock failures and bounded retries, while unknown
+  files and running executables are preserved. See
+  [desktop update progress](./docs/features/desktop-updates/progress.md).
 - [x] **In-app feedback**: About and Updates can submit problems, suggestions,
   or experience feedback with an optional email and one screenshot.
   Diagnostics are not uploaded by default; users can explicitly attach a

@@ -1,4 +1,6 @@
 import { registerKnowledgeIpcHandlers } from './knowledge/knowledge-ipc'
+import type { DesktopUpdateService } from './desktop-update-service'
+import { runCleanupBeforeDeadline } from './shutdown'
 import { registerModelSettingsIpcHandlers } from './model-settings-ipc'
 import { knowledgeReferenceKey, toKnowledgeReference } from '../shared/knowledge-reference'
 import { buildRuntimeHistory } from '../shared/runtime-history'
@@ -1126,7 +1128,8 @@ export function registerIpcHandlers(
   supervisionPorts?: ReturnType<typeof createSupervisionDomainPorts>,
   wecomService?: Pick<WecomCliService, 'getEnabledCategories' | 'getSettings'> & Partial<Pick<WecomCliService, 'disconnect'>>,
   feishuService?: Pick<FeishuToolService, 'getEnabledCategories' | 'getSettings'>,
-  getOfficeService?: () => import('./office-service').OfficeService | undefined
+  getOfficeService?: () => import('./office-service').OfficeService | undefined,
+  desktopUpdateService?: DesktopUpdateService
 ): () => Promise<void> {
   /** Feishu tools for one request, with the same message-session rule as WeCom. */
   const resolveFeishuCapability = async (
@@ -1263,7 +1266,7 @@ export function registerIpcHandlers(
   let contextImports = 0
   const diagnosticOperations = new Set<string>()
   let rendererPersistenceReady = false
-  const pendingRendererPersistence = new Map<string, () => void>()
+  const pendingRendererPersistence = new Map<string, (failure?: string) => void>()
   let pendingGoodBuddyConfigReload = false
   let goodBuddyConfigReloadQueue: Promise<void> = Promise.resolve()
   let runtimeSettingsUpdateQueue: Promise<void> = Promise.resolve()
@@ -1450,30 +1453,37 @@ export function registerIpcHandlers(
       }
     )
 
-  const requestRendererPersistence = async (): Promise<void> => {
+  const requestRendererPersistence = async (strict = false): Promise<void> => {
     if (
       !rendererPersistenceReady ||
       window.isDestroyed() ||
       (typeof window.webContents.isDestroyed === 'function' &&
         window.webContents.isDestroyed())
     ) {
+      if (strict) throw new Error('界面尚未准备好保存，请稍后重试更新')
       return
     }
     const requestId = randomUUID()
-    const completion = new Promise<void>((resolve) => {
-      const finish = (): void => {
+    const completion = new Promise<void>((resolve, reject) => {
+      const finish = (failure?: string): void => {
         clearTimeout(timeout)
         pendingRendererPersistence.delete(requestId)
-        resolve()
+        if (strict && failure !== undefined) reject(new Error(failure || '界面保存失败'))
+        else resolve()
       }
       pendingRendererPersistence.set(requestId, finish)
-      const timeout = setTimeout(finish, 1_500)
+      const timeout = setTimeout(() => finish('界面保存确认超时，未启动更新'), strict ? 15_000 : 1_500)
       timeout.unref?.()
     })
-    window.webContents.send(
-      ipcChannels.appRendererPersistenceRequest,
-      requestId
-    )
+    try {
+      window.webContents.send(
+        ipcChannels.appRendererPersistenceRequest,
+        requestId,
+        ...(strict ? ['update'] : [])
+      )
+    } catch (error) {
+      pendingRendererPersistence.get(requestId)?.(error instanceof Error ? error.message : String(error))
+    }
     await completion
   }
 
@@ -3303,10 +3313,11 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.appRendererPersistenceComplete,
-    (event, input: unknown) => {
+    (event, input: unknown, failureInput: unknown) => {
       assertTrustedSender(event, window)
       const requestId = requestIdSchema.parse(input)
-      pendingRendererPersistence.get(requestId)?.()
+      const failure = z.string().max(2048).optional().parse(failureInput)
+      pendingRendererPersistence.get(requestId)?.(failure)
     },
     false
   )
@@ -5673,6 +5684,37 @@ export function registerIpcHandlers(
     await shell.openExternal(getUpdateDownloadPage(updateSource))
   })
 
+  desktopUpdateService?.setRestartPreparation(async () => {
+    if (shuttingDown || executionPaused) throw new Error('应用正在处理其他退出或维护操作，请稍后更新')
+    const office = getOfficeService?.()
+    if (office?.hasSessions && !await office.closeAll()) throw new Error('请先保存或关闭打开的文档，再重启更新')
+    if (shuttingDown || executionPaused) throw new Error('应用正在退出或维护，请稍后更新')
+    executionPaused = true
+    const resume = (): void => {
+      executionPaused = false
+      if (!window.isDestroyed()) window.setEnabled(true)
+    }
+    try {
+      if (activeRequests.size || preparingRequestConversations.size || contextImports || clearLocalDataOperation) {
+        throw new Error('仍有任务或文件操作正在进行，请完成后重启更新')
+      }
+      const tasks = await assistantDatabase.listTasks()
+      if (tasks.some(task => ['queued', 'running', 'waiting_approval'].includes(task.status))) {
+        throw new Error('仍有排队、运行或等待处理的任务，请完成后重启更新')
+      }
+      // Prevent new edits between the renderer's persistence ACK and app.quit().
+      window.setEnabled(false)
+      await requestRendererPersistence(true)
+      if (!await runCleanupBeforeDeadline(waitForRendererQuiescence(), 5_000, () => undefined)) {
+        throw new Error('仍有后台操作未完成，未启动更新，请稍后重试')
+      }
+      return resume
+    } catch (error) {
+      resume()
+      throw error
+    }
+  })
+
   registerHandler(ipcChannels.releaseNotesGetPending, (event) => {
     assertTrustedSender(event, window)
     if (!releaseNotesService) {
@@ -7648,7 +7690,7 @@ export function registerIpcHandlers(
     }
     rendererPersistenceReady = false
     for (const complete of pendingRendererPersistence.values()) {
-      complete()
+      complete('应用已开始退出，保存确认被取消')
     }
     pendingRendererPersistence.clear()
     await goodBuddyConfigReloadQueue

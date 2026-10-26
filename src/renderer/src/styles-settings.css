@@ -2898,6 +2898,29 @@
   line-height: 1.5;
 }
 
+.desktop-update-download {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 0 1 55%;
+}
+
+.desktop-update-download progress {
+  width: 100%;
+  accent-color: var(--accent-solid);
+}
+
+.update-settings__result .capability-card__header {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .update-settings__result .desktop-update-download {
+    flex-basis: 100%;
+  }
+}
+
 .document-parsing-subsection > :not(summary) {
   margin-top: var(--space-3);
 }

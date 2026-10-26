@@ -268,6 +268,7 @@ import {
   type KeepAliveCacheEntry,
 } from "./keep-alive-cache";
 import type { ReportWorkspaceUnsavedChanges } from "./workspace-unsaved-changes";
+import { persistForDesktopQuit } from "./desktop-update-restart-guard";
 import { KeepAliveRoute } from "./KeepAliveRoute";
 import { activateModalFocus, trapTabFocus } from "./dialog-focus";
 import { FloatingPortal } from "./FloatingPortal";
@@ -3301,15 +3302,20 @@ function App(): React.JSX.Element {
 
   useEffect(
     () =>
-      window.goodbuddy.app.onBeforeQuit(async () => {
+      window.goodbuddy.app.onBeforeQuit((reason) => persistForDesktopQuit(reason, () => ({
+            ready: conversationStoreReady,
+            activeRequests: activeRuns.current.size + preparingConversations.current.size,
+            taskStatuses: taskStore.getTasks().map(task => task.status),
+            hasComposerDrafts: composerDrafts.hasDrafts(), knowledgeBusy: knowledgeOperationCount > 0,
+      }), async () => {
         await persistActivityHistory();
         if (!conversationStoreReady) {
           return;
         }
         await conversationPersistence.flushForQuit();
         await attachmentSaveQueue.current;
-      }),
-    [conversationStoreReady, persistActivityHistory, conversationPersistence],
+      })),
+    [conversationStoreReady, persistActivityHistory, conversationPersistence, taskStore, composerDrafts, knowledgeOperationCount],
   );
 
   // Main's "data changed" notifications: conversation-refresh.ts re-reads

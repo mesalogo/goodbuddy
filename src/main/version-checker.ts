@@ -148,6 +148,7 @@ export type VersionCheckerDependencies = {
   arch: string
   timeoutMs?: number
   maxJsonBytes?: number
+  onResult?: (result: VersionCheckResult, source: UpdateSource) => void
 }
 
 function boundedInteger(
@@ -727,9 +728,11 @@ export function getUpdateDownloadPage(source: UpdateSource): string {
 export class VersionChecker {
   constructor(private readonly dependencies: VersionCheckerDependencies) {}
 
-  check(source: UpdateSource = 'github'): Promise<VersionCheckResult> {
-    return source === 'mirror'
+  async check(source: UpdateSource = 'github'): Promise<VersionCheckResult> {
+    const result = await (source === 'mirror'
       ? checkMirrorForUpdates(this.dependencies)
-      : checkForUpdates(this.dependencies)
+      : checkForUpdates(this.dependencies))
+    this.dependencies.onResult?.(result, source)
+    return result
   }
 }

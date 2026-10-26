@@ -19,6 +19,7 @@ export function createComposerDraftStore() {
     for (const listener of [...listeners]) listener();
   };
   return {
+    hasDrafts: (): boolean => [...drafts.values()].some(draft => draft.trim().length > 0),
     get(conversationId: string): string {
       return drafts.get(conversationId) ?? "";
     },

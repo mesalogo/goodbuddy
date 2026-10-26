@@ -471,6 +471,15 @@ npm run release:package -- --platform macos --arch <x64|arm64> --unsigned
 `.goodbuddy-portable.json`。每个目标目录都包含带文件大小和 SHA-256 的
 `release-manifest.json`。
 
+桌面设置的“下载更新”使用此清单的大小和 SHA-256，并在打开安装包前重新校验。
+下载 Worker 通过 `electron.vite.config.ts` 的 `desktop-update-worker` 入口打包，
+随现有 `out/main/**/*` 规则分发。当前客户端提供下载、取消、重试与安装包打开，
+Windows NSIS 安装版已接入保存确认、关闭清理后交接现有安装器的重启更新；
+新版本首屏加载后回收已安装版本的缓存包和遗留半包，未安装候选重新校验后可复用；
+手动清理、文件占用重试及旧缓存位置的处理遵循桌面更新功能文档。
+其他格式自动安装、自动下载设置和 macOS 更新 ZIP 尚未交付；状态与验收见
+[桌面更新实施记录](docs/features/desktop-updates/progress.md)。
+
 推送 `main` 时只运行源码验证和 production bundle 构建，不运行六平台
 打包矩阵，避免随后推送版本标签时对同一提交重复完整打包。手动触发会运行
 验证和六平台打包，并保留 30 天 Actions artifacts，但不会创建 Release。

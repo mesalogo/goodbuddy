@@ -213,7 +213,7 @@ let fileSelectionProgressListener:
 let newConversationListener: (() => void) | undefined;
 let magicTodoStatusChangedListener: (() => void) | undefined;
 let maximizedChangedListener: ((maximized: boolean) => void) | undefined;
-let beforeQuitListener: (() => Promise<void>) | undefined;
+let beforeQuitListener: ((reason?: 'update') => Promise<void>) | undefined;
 let conversationQueueDispatchListener:
   ((dispatch: ConversationQueueDispatch) => void) | undefined;
 let conversationQueueChangeListener:
@@ -5812,6 +5812,16 @@ describe("App", () => {
         ]),
       }),
     ]);
+  });
+
+  it("blocks update restart until the unsent composer draft is handled", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "keep this unsent draft" } });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    await expect(beforeQuitListener!('update')).rejects.toThrow('草稿');
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue('keep this unsent draft');
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: '' } });
+    await act(async () => { await beforeQuitListener!('update'); });
   });
 
   it("replaces the direct-model thinking status with real reasoning", async () => {

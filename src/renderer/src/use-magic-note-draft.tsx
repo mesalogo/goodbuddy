@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
 import type { MagicNoteSource } from '../../shared/magic-notes-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
+import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
 
 export type MagicNoteDraft = {
   text: string
@@ -19,6 +20,7 @@ export type MagicNoteDraft = {
 export function useMagicNoteDraft() {
   const [draft, setDraft] = useState<MagicNoteDraft>()
   const [saving, setSaving] = useState(false)
+  useWorkspaceUnsavedChanges(saving || Boolean(draft && (draft.text || draft.title || draft.source)))
   const [selectedNoteId, setSelectedNoteId] = useState('')
   const [confirmation, setConfirmation] = useState<{ resolve: (discard: boolean) => void }>()
   const pendingGuard = useRef<Promise<boolean> | undefined>(undefined)

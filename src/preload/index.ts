@@ -271,15 +271,20 @@ const desktopApi: DesktopApi = {
     onBeforeQuit: (listener) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
-        requestId: string
+        requestId: string,
+        reason?: 'update'
       ): void => {
-        const acknowledge = (): void => {
+        const acknowledge = (failure?: string): void => {
           void ipcRenderer.invoke(
             ipcChannels.appRendererPersistenceComplete,
-            requestId
+            requestId,
+            failure
           )
         }
-        void listener().then(acknowledge, acknowledge)
+        void Promise.resolve().then(() => listener(reason)).then(
+          () => acknowledge(),
+          error => acknowledge((error instanceof Error ? error.message : String(error)).slice(0, 2048))
+        )
       }
       ipcRenderer.on(
         ipcChannels.appRendererPersistenceRequest,
@@ -699,6 +704,19 @@ const desktopApi: DesktopApi = {
           ipcChannels.remoteChannelActivity,
           handler
         )
+    }
+  },
+  desktopUpdates: {
+    getSnapshot: () => ipcRenderer.invoke(ipcChannels.desktopUpdateGet),
+    download: input => ipcRenderer.invoke(ipcChannels.desktopUpdateDownload, input),
+    cancel: () => ipcRenderer.invoke(ipcChannels.desktopUpdateCancel),
+    openPackage: () => ipcRenderer.invoke(ipcChannels.desktopUpdateOpen),
+    restart: () => ipcRenderer.invoke(ipcChannels.desktopUpdateRestart),
+    clearCache: () => ipcRenderer.invoke(ipcChannels.desktopUpdateClearCache),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: import('../shared/desktop-update-contracts').DesktopUpdateSnapshot): void => listener(snapshot)
+      ipcRenderer.on(ipcChannels.desktopUpdateChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.desktopUpdateChanged, handler)
     }
   },
   updates: {

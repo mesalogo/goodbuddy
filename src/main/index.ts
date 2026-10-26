@@ -85,6 +85,9 @@ import type {
 import { buildWechatSidecarEnvironment } from './channels/wechat-sidecar-environment'
 import { ApplicationSettingsStore } from './application-settings-store'
 import { VersionChecker } from './version-checker'
+import { DesktopUpdateService, runUpdateWorker } from './desktop-update-service'
+import { registerDesktopUpdateIpc } from './desktop-update-ipc'
+import { finishDesktopUpdateShutdown, launchDesktopUpdateInstaller } from './desktop-update-install'
 import { SpeechModelManager } from './speech/speech-model-manager'
 import { SpeechTranscriptionService } from './speech/speech-transcription-service'
 import { GlobalTlsPolicy } from './global-tls-policy'
@@ -985,11 +988,30 @@ if (hasSingleInstanceLock) {
         }
       }
     })
+    desktopUpdateService = new DesktopUpdateService({
+      directory: join(app.getPath('userData'), 'desktop-updates', 'package'),
+      portable: Boolean(portableUserDataPath),
+      cleanup: (mode, keepFileName) => runUpdateWorker(join(mainModuleDirectory, 'desktop-update-worker.js'), {
+        kind: 'cleanup', mode, currentVersion: app.getVersion(),
+        directory: join(app.getPath('userData'), 'desktop-updates', 'package'),
+        legacyDirectory: join(app.getPath('userData'), 'desktop-updates'),
+        protectedPaths: [process.execPath, ...(process.env.APPIMAGE ? [process.env.APPIMAGE] : []),
+          ...(keepFileName ? [join(app.getPath('userData'), 'desktop-updates', 'package', keepFileName)] : [])]
+      }, () => undefined),
+      run: (job, report) => runUpdateWorker(join(mainModuleDirectory, 'desktop-update-worker.js'), job, report),
+      openPath: path => shell.openPath(path),
+      showItemInFolder: path => shell.showItemInFolder(path),
+      requestRestart: installedWindowsBuild && !portableUserDataPath ? path => {
+        pendingDesktopUpdateInstaller = path
+        app.quit()
+      } : undefined
+    })
     const versionChecker = new VersionChecker({
       fetch: globalThis.fetch,
       currentVersion: app.getVersion(),
       platform: process.platform,
-      arch: process.arch
+      arch: process.arch,
+      onResult: (result, source) => desktopUpdateService?.accept(result, source)
     })
     const speechModelManager = new SpeechModelManager({
       userDataDirectory: app.getPath('userData'),
@@ -1621,7 +1643,8 @@ if (hasSingleInstanceLock) {
       supervisionPorts,
       startupWecomService,
       startupFeishuService,
-      () => officeService
+      () => officeService,
+      desktopUpdateService
     )
     if (storageUpgradeController.signal.aborted) return
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
@@ -1629,12 +1652,14 @@ if (hasSingleInstanceLock) {
       startupFeedbackService
     )
     startupMark('main:ipc-register:end')
+    mainWindow.webContents.once('did-finish-load', () => { void desktopUpdateService?.cleanupStalePackages() })
     loadMainWindow(mainWindow)
     startupMark('main:load-main-window')
     removeWecomIpc = registerWecomIpc(mainWindow, startupWecomService)
     removeFeishuIpc = registerFeishuIpc(mainWindow, startupFeishuService)
     removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow,
       new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion()))
+    removeDesktopUpdateIpc = registerDesktopUpdateIpc(mainWindow, desktopUpdateService)
     officeService = new OfficeService(mainWindow, join(mainModuleDirectory, 'office-file-worker.js'), async source => {
       if (source.kind === 'attachment') {
         const original = await contextManager.assets?.original(source.resourceId)
@@ -1736,6 +1761,9 @@ if (hasSingleInstanceLock) {
 }
 
 let cleanupStarted = false
+let desktopUpdateService: DesktopUpdateService | undefined
+let removeDesktopUpdateIpc: (() => void) | undefined
+let pendingDesktopUpdateInstaller: string | undefined
 let cleanupComplete = false
 let officeService: OfficeService | undefined
 let removeOfficeIpc: (() => void) | undefined
@@ -1776,6 +1804,8 @@ app.on('before-quit', (event) => {
           () => removeFeedbackIpcHandler?.(),
           () => removeDeviceSharingIpc?.(),
           () => removeOfficeIpc?.(),
+          () => removeDesktopUpdateIpc?.(),
+          () => desktopUpdateService?.dispose(),
           () => removeWecomIpc?.(),
           () => wecomService?.dispose(),
           () => removeFeishuIpc?.(),
@@ -1849,9 +1879,18 @@ app.on('before-quit', (event) => {
         cleanupFailed = true
         console.error('Desktop shutdown deadline expired before storage drain was confirmed')
       }
+    } catch (error) {
+      cleanupFailed = true
+      console.error('Desktop shutdown failed', error)
     } finally {
       cleanupComplete = true
-      app.exit(cleanupFailed ? 1 : 0)
+      await finishDesktopUpdateShutdown({
+        installerPath: pendingDesktopUpdateInstaller,
+        cleanupFailed,
+        install: launchDesktopUpdateInstaller,
+        reportFailure: message => dialog.showErrorBox('GoodBuddy 更新未完成', message),
+        exit: code => app.exit(code)
+      })
     }
   })()
 })

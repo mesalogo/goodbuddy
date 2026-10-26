@@ -5078,6 +5078,45 @@ describe('registerIpcHandlers local conversation persistence', () => {
       await electronMocks.handlers.has(ipcChannels.conversationsSaveLocal)
     ).toBe(false)
   })
+
+  it.each(['saved', 'save-failed', 'not-ready', 'busy'] as const)('requires successful renderer persistence before update restart: %s', async mode => {
+    const assistantDatabase = {
+      queueDueSchedules: vi.fn(() => []), listConversationQueueItems: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => []),
+      listTasks: vi.fn(async () => mode === 'busy' ? [{ status: 'running' }] : [])
+    }
+    const webContents = { on: vi.fn(), removeListener: vi.fn(),
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'), isDestroyed: vi.fn(() => false), send: vi.fn()
+    }
+    const window = { webContents, isDestroyed: vi.fn(() => false), on: vi.fn(), removeListener: vi.fn(), setEnabled: vi.fn() }
+    const event = { sender: webContents, senderFrame: webContents.mainFrame }
+    const setRestartPreparation = vi.fn()
+    const args: unknown[] = [window, { capability: 'text' }, 'CommandOrControl+Shift+Space', {}, {}, { clear: vi.fn() }, {}, assistantDatabase, {}, vi.fn(async () => {})]
+    args[registerProductionIpcHandlers.length - 1] = { setRestartPreparation }
+    const dispose = registerIpcHandlers(...args as Parameters<typeof registerProductionIpcHandlers>)
+    const prepare = setRestartPreparation.mock.calls[0]![0] as () => Promise<() => void>
+    webContents.send.mockImplementation((channel, requestId, reason) => {
+      if (channel === ipcChannels.appRendererPersistenceRequest) {
+        queueMicrotask(() => {
+          const acknowledge = electronMocks.handlers.get(ipcChannels.appRendererPersistenceComplete)
+          if (acknowledge) Reflect.apply(acknowledge, undefined, [event, requestId, reason === 'update' && mode === 'save-failed' ? 'disk full' : undefined])
+        })
+      }
+    })
+    if (mode !== 'not-ready') electronMocks.handlers.get(ipcChannels.appRendererPersistenceReady)?.(event)
+    try {
+      if (mode === 'saved') {
+        const resume = await prepare()
+        expect(window.setEnabled).toHaveBeenLastCalledWith(false)
+        expect(webContents.send).toHaveBeenCalledWith(ipcChannels.appRendererPersistenceRequest, expect.any(String), 'update')
+        resume()
+      } else {
+        await expect(prepare()).rejects.toThrow(mode === 'save-failed' ? 'disk full' : mode === 'busy' ? '任务' : '尚未准备')
+      }
+      expect(window.setEnabled).toHaveBeenLastCalledWith(true)
+    } finally { await dispose() }
+  })
 })
 
 describe('registerIpcHandlers Runtime customization', () => {
