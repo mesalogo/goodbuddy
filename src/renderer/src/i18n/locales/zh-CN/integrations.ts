@@ -337,6 +337,7 @@ export const integrations = {
       results: '企业微信文档',
       updated: '更新于 {{time}}',
       emptyView: '这里还没有文档',
+      keywordRequired: '企业微信当前要求提供关键词。请输入关键词，搜索近 30 天内最近浏览或自己创建的文档。',
       create: '新建在线文档',
       createOff: '需要开启“在线文档”类别',
       createPrompt: '新文档标题',

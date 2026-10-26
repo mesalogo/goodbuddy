@@ -137,8 +137,12 @@ describe('WecomWorkbarPanel', () => {
     installApi(snapshot({ authorization: { state: 'authorized', botId: 'bot-1' } }), { listView })
     const onUse = vi.fn()
     render(<WecomWorkbarPanel onUseInConversation={onUse} />)
+    expect(await screen.findByText(/企业微信当前要求提供关键词/u)).toBeInTheDocument()
+    expect(listView).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '周报' } })
+    fireEvent.submit(screen.getByRole('search'))
     expect(await screen.findByText('周报汇总')).toBeInTheDocument()
-    expect(listView).toHaveBeenCalledWith({ view: 'recent' })
+    expect(listView).toHaveBeenCalledWith({ view: 'recent', query: '周报' })
     expect(screen.getByText('2 项')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '表格' }))
     expect(screen.queryByText('发布说明')).not.toBeInTheDocument()
@@ -150,10 +154,10 @@ describe('WecomWorkbarPanel', () => {
     expect(screen.getByText(/法务空间\/合同/u)).toBeInTheDocument()
   })
 
-  it('searches documents and replaces the list until the search is cleared', async () => {
+  it('searches within the selected view and stops requesting when cleared', async () => {
     const ready = snapshot({ authorization: { state: 'authorized' } })
     const { api } = installApi(ready, {
-      searchDocuments: vi.fn(async () => [
+      listView: vi.fn(async () => [
         { id: 'd1', name: '周报汇总', type: 'smartsheet', url: 'https://doc.weixin.qq.com/smartsheet/1', modifiedAt: '2026-10-10 09:00:00' }
       ])
     })
@@ -161,10 +165,16 @@ describe('WecomWorkbarPanel', () => {
     fireEvent.change(await screen.findByRole('searchbox', { name: '搜索企业微信文档' }), { target: { value: '周报' } })
     fireEvent.submit(screen.getByRole('search'))
     expect(await screen.findByText('周报汇总')).toBeInTheDocument()
-    expect(api.searchDocuments).toHaveBeenCalledWith({ query: '周报' })
+    expect(api.listView).toHaveBeenCalledWith({ view: 'recent', query: '周报' })
     expect(screen.getByText(/智能表格 · 更新于 2026-10-10/u)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '打开原文' })).toHaveAttribute('href', 'https://doc.weixin.qq.com/smartsheet/1')
-    expect(screen.getByRole('combobox', { name: '选择列表' })).toBeDisabled()
+    fireEvent.change(screen.getByRole('combobox', { name: '选择列表' }), { target: { value: 'created' } })
+    await waitFor(() => expect(api.listView).toHaveBeenCalledWith({ view: 'created', query: '周报' }))
+    vi.mocked(api.listView).mockClear()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+    expect(await screen.findByText(/企业微信当前要求提供关键词/u)).toBeInTheDocument()
+    expect(screen.queryByText('周报汇总')).not.toBeInTheDocument()
+    expect(api.listView).not.toHaveBeenCalled()
   })
 
   it('creates a document and gates create and upload by category', async () => {

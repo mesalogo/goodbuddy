@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { wecomCommandCategory } from '../../shared/wecom-contracts'
@@ -261,17 +261,38 @@ describe('WecomCliService', () => {
       : args[0] === 'identity' ? { stdout: '{"user":{"userid":"zhangsan"}}' }
       : args[0] === 'disk' ? { stdout: JSON.stringify({ files: [{ id: 'f1', file_name: '合同.pdf', type: 'file', path: '法务/合同', update_time: '2026-10-11 10:00:00' }, { id: 'x' }] }) }
       : { stdout: JSON.stringify({ docs: [{ docid: 'd1', doc_name: '周报', doc_type: 'doc' }] }) })
-    expect(await instance.listView('recent')).toEqual([{ id: 'd1', name: '周报', type: 'doc' }])
+    for (const view of ['recent', 'created'] as const) {
+      await expect(instance.listView(view)).rejects.toThrow('请输入关键词')
+      await expect(instance.listView(view, undefined, '  ')).rejects.toThrow('请输入关键词')
+    }
+    expect(calls.some(call => call.args[0] === 'identity' || call.args[0] === 'doc')).toBe(false)
+    expect(await instance.listView('recent', undefined, ' 周报 ')).toEqual([{ id: 'd1', name: '周报', type: 'doc' }])
     const recent = JSON.parse(calls.find(call => call.args[1] === 'search')!.args[3]!) as Record<string, unknown>
-    expect(recent).toMatchObject({ keywords: [], visitor_userids: ['zhangsan'], sort_by: 'best_match' })
-    await instance.listView('created')
+    expect(recent).toMatchObject({ keywords: ['周报'], visitor_userids: ['zhangsan'], sort_by: 'best_match' })
+    await instance.listView('created', undefined, '周报')
     const created = JSON.parse(calls.filter(call => call.args[1] === 'search').at(-1)!.args[3]!) as Record<string, unknown>
-    expect(created).toMatchObject({ creator_userids: ['zhangsan'], sort_by: 'create_time' })
+    expect(created).toMatchObject({ keywords: ['周报'], creator_userids: ['zhangsan'], sort_by: 'create_time' })
     expect(await instance.listView('disk')).toEqual([
       { id: 'f1', name: '合同.pdf', type: 'file', source: 'disk', path: '法务/合同', modifiedAt: '2026-10-11 10:00:00' }
     ])
     await instance.updateSettings({ categories: { disk: false } })
     await expect(instance.listView('disk')).rejects.toThrow('微盘')
+  })
+
+  it('uploads selected files outside the app directory with their real parent as CLI cwd', async () => {
+    const directory = join(root, '用户 Downloads')
+    await mkdir(directory)
+    const path = join(directory, 'upload sample.conf')
+    await writeFile(path, 'test upload fixture')
+    const { instance, calls } = service((args) => args[0] === 'auth'
+      ? { stdout: 'Status: authorized' }
+      : { stdout: JSON.stringify({ id: 'uploaded', file_name: 'upload sample.conf' }) })
+    await instance.uploadFile(path)
+    const upload = calls.find(call => call.args[0] === 'disk')!
+    const source = await realpath(path)
+    expect(upload.cwd).toBe(dirname(source))
+    expect(JSON.parse(upload.args[4]!)).toEqual({ file_path: source })
+    expect(await readFile(path, 'utf8')).toBe('test upload fixture')
   })
 
   it('creates online documents through doc create and requires the 在线文档 category', async () => {

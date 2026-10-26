@@ -176,7 +176,10 @@ export type WecomDocument = {
 
 /** Panel views: what the space dropdown selects. */
 export const wecomPanelViews = ['recent', 'created', 'disk'] as const
-export const wecomPanelViewSchema = z.object({ view: z.enum(wecomPanelViews) }).strict()
+export const wecomPanelViewSchema = z.object({
+  view: z.enum(wecomPanelViews),
+  query: z.string().trim().min(1).max(200).optional()
+}).strict()
 export type WecomPanelView = (typeof wecomPanelViews)[number]
 
 /** Creates an empty online document with this title. */

@@ -21,7 +21,7 @@ function matchesType(doc: WecomDocument, filter: TypeFilter): boolean {
 /**
  * Right workbar panel: WeCom documents and drive files the authorized person
  * can access. The space dropdown picks a list (recent, created, drive) and a
- * search replaces it until cleared.
+ * keyword filters the selected document view. The live doc API requires keywords.
  */
 export function WecomWorkbarPanel({
   onUseInConversation,
@@ -43,21 +43,24 @@ export function WecomWorkbarPanel({
   const [creating, setCreating] = useState(false)
   const ready = snapshot?.authorization.state === 'authorized' && snapshot.appEnabled
   const categories = snapshot?.settings.categories
-  const key = `${submitted ? `q:${submitted}` : `v:${view}`}:${reload}`
+  const key = `${view}:${submitted}:${reload}`
+  const needsKeyword = view !== 'disk' && !submitted
 
   useEffect(() => {
     const api = window.goodbuddy?.wecom
-    if (!ready || !api) return
+    if (!ready || !api || needsKeyword) return
     let active = true
-    const request = submitted ? api.searchDocuments({ query: submitted }) : api.listView({ view })
+    const request = view === 'disk' && submitted
+      ? api.searchDocuments({ query: submitted })
+      : api.listView({ view, ...(submitted ? { query: submitted } : {}) })
     void request.then(
       (items) => { if (active) setResult({ key, items }) },
       (reason: unknown) => { if (active) setResult({ key, error: reason instanceof Error ? reason.message : String(reason) }) }
     )
     return () => { active = false }
-  }, [key, ready, submitted, view])
+  }, [key, ready, submitted, view, needsKeyword])
 
-  const loading = ready && result?.key !== key
+  const loading = ready && !needsKeyword && result?.key !== key
   const visible = useMemo(() => (result?.key === key ? result.items ?? [] : []).filter((doc) => matchesType(doc, filter)), [filter, key, result])
 
   const act = async (operation: () => Promise<WecomDocument | undefined>, done: (doc: WecomDocument) => string): Promise<void> => {
@@ -128,8 +131,10 @@ export function WecomWorkbarPanel({
           <div className="wecom-panel__toolbar">
             <select
               aria-label={t('wecom.panel.space')}
-              disabled={Boolean(submitted)}
-              onChange={(event) => setView(event.target.value as WecomPanelView)}
+              onChange={(event) => {
+                setView(event.target.value as WecomPanelView)
+                if (event.target.value === 'disk') { setQuery(''); setSubmitted('') }
+              }}
               value={view}
             >
               {wecomPanelViews.map((option) => (
@@ -169,8 +174,9 @@ export function WecomWorkbarPanel({
           </div>
           {notice && <p className="settings-notice" role="status">{notice}</p>}
           {loading && <p className="settings-empty" role="status">{t('wecom.panel.searching')}</p>}
-          {!loading && result?.error && <p className="settings-warning" role="alert">{result.error}</p>}
-          {!loading && !result?.error && (
+          {needsKeyword && <p className="settings-empty" role="status">{t('wecom.panel.keywordRequired')}</p>}
+          {!needsKeyword && !loading && result?.key === key && result.error && <p className="settings-warning" role="alert">{result.error}</p>}
+          {!needsKeyword && !loading && result?.key === key && !result.error && (
             <>
               <small className="wecom-panel__count">{t('wecom.panel.count', { count: visible.length })}</small>
               {visible.length === 0

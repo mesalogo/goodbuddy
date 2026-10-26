@@ -20,7 +20,10 @@ export function registerWecomIpc(window: BrowserWindow, service: WecomCliService
     [ipcChannels.wecomAuthorizeChannelBot]: () => service.authorizeWithChannelBot(),
     [ipcChannels.wecomDisconnect]: () => service.disconnect(),
     [ipcChannels.wecomSearchDocuments]: (input) => service.searchDocuments(wecomDocSearchInputSchema.parse(input).query),
-    [ipcChannels.wecomListView]: (input) => service.listView(wecomPanelViewSchema.parse(input).view),
+    [ipcChannels.wecomListView]: (input) => {
+      const { view, query } = wecomPanelViewSchema.parse(input)
+      return service.listView(view, undefined, query)
+    },
     [ipcChannels.wecomCreateDocument]: (input) => service.createDocument(wecomCreateDocumentInputSchema.parse(input).title),
     // The file is picked in a main-process dialog, never a renderer-supplied path.
     [ipcChannels.wecomUploadFile]: async () => {

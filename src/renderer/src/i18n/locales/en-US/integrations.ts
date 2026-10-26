@@ -348,6 +348,7 @@ export const integrations = {
       results: 'WeCom documents',
       updated: 'Updated {{time}}',
       emptyView: 'No documents here yet',
+      keywordRequired: 'WeCom currently requires keywords. Enter a keyword to search documents opened or created by you in the last 30 days.',
       create: 'New online document',
       createOff: 'Requires the Online documents category',
       createPrompt: 'Title of the new document',

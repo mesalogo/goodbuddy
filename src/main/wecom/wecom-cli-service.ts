@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, normalize, relative, resolve, sep } from 'node:path'
 import {
   WECOM_CLI_VERSION,
@@ -504,8 +504,8 @@ export class WecomCliService {
     }
   }
 
-  private async runJson(args: readonly string[], failure: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    const result = await this.run(args, { signal, timeoutMs: 30_000 })
+  private async runJson(args: readonly string[], failure: string, signal?: AbortSignal, cwd?: string): Promise<Record<string, unknown>> {
+    const result = await this.run(args, { signal, cwd, timeoutMs: 30_000 })
     if (result.exitCode !== 0) throw WecomCliService.failure(result, failure)
     let parsed: unknown
     try { parsed = JSON.parse(result.stdout) } catch { throw new Error(`${failure}：返回了无法识别的结果`) }
@@ -531,7 +531,7 @@ export class WecomCliService {
    * Panel views: recently opened and self-created online documents (doc
    * search, "文档管理"), or recently viewed drive files ("微盘").
    */
-  async listView(view: WecomPanelView, signal?: AbortSignal): Promise<WecomDocument[]> {
+  async listView(view: WecomPanelView, signal?: AbortSignal, keyword?: string): Promise<WecomDocument[]> {
     if (view === 'disk') {
       await this.requireCategory('disk', '微盘')
       const payload = await this.runJson(['disk', 'files', 'list', '--json', JSON.stringify({ limit: 50 })], '读取企业微信微盘失败', signal)
@@ -554,13 +554,17 @@ export class WecomCliService {
       })
     }
     await this.requireCategory('doc-manage', '文档管理')
+    // The live API rejects [] despite the bundled skill documenting it as valid.
+    // Do not invent a wildcard or silently replace these scoped views with global search.
+    const term = keyword?.trim()
+    if (!term) throw new Error('请输入关键词，再查询最近浏览或我创建的文档')
     const me = await this.userId(signal)
     const since = new Date(Date.now() - 30 * 24 * 3600_000)
     const stamp = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, '0')}-${String(since.getDate()).padStart(2, '0')} 00:00:00`
     // Patterns (b) and (d) of the official doc-manage skill.
     const query = view === 'recent'
-      ? { keywords: [], visitor_userids: [me], opened_after: stamp, sort_by: 'best_match', limit: 50 }
-      : { keywords: [], creator_userids: [me], created_after: stamp, sort_by: 'create_time', limit: 50 }
+      ? { keywords: [term], visitor_userids: [me], opened_after: stamp, sort_by: 'best_match', limit: 50 }
+      : { keywords: [term], creator_userids: [me], created_after: stamp, sort_by: 'create_time', limit: 50 }
     return this.mapDocs(await this.runJson(['doc', 'search', '--json', JSON.stringify(query)], '读取企业微信文档失败', signal))
   }
 
@@ -585,7 +589,11 @@ export class WecomCliService {
     const info = await stat(path).catch(() => undefined)
     if (!info?.isFile()) throw new Error('请选择一个本地文件')
     if (info.size > 200 * 1024 * 1024) throw new Error('文件超过 200MB，请在企业微信客户端上传')
-    const payload = await this.runJson(['disk', 'files', 'upload', '--json', JSON.stringify({ file_path: path })], '上传到企业微信微盘失败', signal)
+    // The official CLI confines file access to cwd and the OS temp directory.
+    // Use the selected file's actual directory so any user-selected location works,
+    // including junctions/symlinks, without copying the file into our downloads folder.
+    const source = await realpath(path)
+    const payload = await this.runJson(['disk', 'files', 'upload', '--json', JSON.stringify({ file_path: source })], '上传到企业微信微盘失败', signal, dirname(source))
     const file = ((payload.file && typeof payload.file === 'object') ? payload.file : payload) as Record<string, unknown>
     const name = typeof file.file_name === 'string' ? file.file_name : path.split(/[\\/]/u).at(-1) ?? path
     return {
