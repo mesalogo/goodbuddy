@@ -6414,9 +6414,9 @@ function App(): React.JSX.Element {
           activeRuntimeSelection?.provider === "continue") &&
         runtimeNativeSnapshot?.context.manualCompact === true;
 
-  const nativeClientAvailable = activeRuntimeSelection?.provider === "continue" ||
+  const nativeClientAvailable = activeProject?.executionSpace.kind === "local" && (activeRuntimeSelection?.provider === "continue" ||
     activeRuntimeSelection?.provider === "opencode" ||
-    (activeRuntimeSelection?.provider === "deepseek-harness" && activeProject?.executionSpace.kind === "local");
+    activeRuntimeSelection?.provider === "deepseek-harness");
   const nativeClientContextKey = useMemo(() => JSON.stringify([
     activeId, activeProjectId, activeRuntimeSelection, runtimeSettings,
   ]), [activeId, activeProjectId, activeRuntimeSelection, runtimeSettings]);
