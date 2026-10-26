@@ -7621,10 +7621,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       capability: 'chat',
       supportsToolExecution: true,
       async *run(
-        request: { requestId: string },
+        request: { requestId: string; onRemotePromptSubmitted?: () => void },
         signal: AbortSignal
       ) {
         remoteSignal = signal
+        request.onRemotePromptSubmitted?.()
         yield {
           requestId: request.requestId,
           type: 'status',
@@ -9000,10 +9001,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       capability: 'chat',
       supportsToolExecution: true,
       async *run(
-        request: { requestId: string },
+        request: { requestId: string; onRemotePromptSubmitted?: () => void },
         signal: AbortSignal
       ) {
         remoteSignal = signal
+        request.onRemotePromptSubmitted?.()
         yield {
           requestId: request.requestId,
           type: 'status',
@@ -9082,12 +9084,13 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('keeps a managed SSH start ambiguity recoverable before its first event', async () => {
+  it.each([false, true])('only recovers a managed SSH failure after submission began (submitted=%s)', async submitted => {
     const remoteRuntime = {
       runtimeId: 'opencode',
       capability: 'chat',
       supportsToolExecution: true,
-      async *run(): AsyncGenerator<never, void, void> {
+      async *run(request: { onRemotePromptSubmitted?: () => void }): AsyncGenerator<never, void, void> {
+        if (submitted) request.onRemotePromptSubmitted?.()
         await Promise.reject(
           new Error('prompt start response was lost')
         )
@@ -9134,9 +9137,12 @@ describe('registerIpcHandlers agent terminal state', () => {
         harness.assistantDatabase.updateTaskStatus
       ).toHaveBeenCalledWith(
         requestId,
-        'interrupted',
+        submitted ? 'interrupted' : 'failed',
         'prompt start response was lost'
       )
+    )
+    if (!submitted) expect(harness.webContents.send).not.toHaveBeenCalledWith(
+      ipcChannels.remoteProjectRecoveryProgress, expect.anything()
     )
     await harness.dispose()
   })

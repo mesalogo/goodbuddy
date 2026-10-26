@@ -69,6 +69,9 @@ import {
   toOpenCodeSubagentEvent
 } from './opencode-subagent'
 import { promptWithUntrustedConversationHistory } from './runtime-conversation-history'
+import { isTransientRemoteRecoveryError } from '../remote-agent/remote-task-recovery'
+
+const REMOTE_INITIALIZATION_RETRY_DELAYS_MS = [1_000, 2_000, 5_000] as const
 
 type BindingIdentity = Pick<
   RuntimeSessionBinding,
@@ -1350,6 +1353,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
       this.options.bindingStore.getByConversation(conversationId),
       signal
     )
+    if (binding?.activePromptOperationId === request.requestId) request.onRemotePromptSubmitted?.()
     if (
       request.remoteRecoveryOnly === true &&
       !(
@@ -1431,6 +1435,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
       throw error
     }
     let pendingModelBridge: RemoteModelBridgeSession | undefined
+    const attachingOwnedPrompt = this.options.modelProfile !== undefined && binding?.state === 'prompt-running'
     try {
       this.assertUsable(context)
       if (
@@ -1712,14 +1717,11 @@ export class AcpRemoteRuntime implements AgentRuntime {
         ?.close('session-initialization-failed')
         .catch(() => undefined)
       if (binding) {
-        if (
-          this.options.modelProfile !== undefined &&
-          binding.state === 'prompt-running'
-        ) {
+        if (attachingOwnedPrompt) {
           throw error
         }
         const persist =
-          isDefinitiveRemoteRuntimeRequestRejection(
+          this.options.modelProfile !== undefined || isDefinitiveRemoteRuntimeRequestRejection(
             error,
             'runtime/preparePrompt'
           )
@@ -1741,6 +1743,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
     signal: AbortSignal
   ): Promise<SessionRecord> {
     let current = this.sessions.get(conversationId)
+    if (current?.binding.activePromptOperationId === request.requestId) request.onRemotePromptSubmitted?.()
     if (current && request.remoteRecoveryOnly === true && !(
       current.binding.state === 'prompt-running' &&
       current.binding.activePromptOperationId === request.requestId
@@ -1845,7 +1848,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         return current
       } catch (error) {
         const persist =
-          isDefinitiveRemoteRuntimeRequestRejection(
+          this.options.modelProfile !== undefined || isDefinitiveRemoteRuntimeRequestRejection(
             error,
             'runtime/preparePrompt'
           )
@@ -2624,6 +2627,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
           request,
           session.sendHistoryWithNextPrompt
         )
+        request.onRemotePromptSubmitted?.()
         const started = remoteOwnedPromptStartResultSchema.parse(
           await this.awaitOperation(
             context,
@@ -2957,16 +2961,40 @@ export class AcpRemoteRuntime implements AgentRuntime {
       throw new Error('远端 ACP 会话已有活动请求')
     }
     this.sessionReservations.add(request.conversationId)
+    let submissionStarted = request.remoteRecoveryOnly === true
+    const onSubmitted = request.onRemotePromptSubmitted
+    request = { ...request, onRemotePromptSubmitted: () => {
+      submissionStarted = true
+      onSubmitted?.()
+    } }
     let session: SessionRecord
+    let sessionReady = false
     try {
-      session = await this.getSession(
-        request.conversationId,
-        request,
-        signal
-      )
-    } catch (error) {
-      this.sessionReservations.delete(request.conversationId)
-      throw error
+      for (let attempt = 0; ; attempt++) {
+        try {
+          session = await this.getSession(request.conversationId, request, signal)
+          sessionReady = true
+          break
+        } catch (error) {
+          // Only initialization is retried. No start/attach or prompt consumption
+          // is inside this loop. Timed-out local operations may still be settling.
+          if (submissionStarted || this.options.modelProfile === undefined ||
+            signal.aborted || error instanceof RemoteOperationTimeoutError) throw error
+          const delayMs = REMOTE_INITIALIZATION_RETRY_DELAYS_MS[attempt]
+          if (delayMs === undefined || !isTransientRemoteRecoveryError(error)) throw error
+          try {
+            const retained = await this.options.bindingStore.getByConversation(request.conversationId)
+            if (retained?.activePromptOperationId === request.requestId) throw error
+          } catch { throw error }
+          yield { requestId: request.requestId, type: 'status', message: `远端连接中断，正在重新准备请求（${attempt + 1}/3）` }
+          await delayOwnedTranscriptPoll(signal, delayMs)
+        }
+      }
+    } finally {
+      if (!sessionReady) {
+        this.sessionReservations.delete(request.conversationId)
+        this.notifyDrain()
+      }
     }
     const context = session.context
     if (this.options.modelProfile !== undefined) {
@@ -3052,6 +3080,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         request,
         session.sendHistoryWithNextPrompt
       )
+      request.onRemotePromptSubmitted?.()
       promptPromise = state.agent
         .prompt({
           sessionId: session.sessionId,

@@ -39,7 +39,10 @@ async function main(): Promise<void> {
   const root = await mkdtemp('/root/tmp/goodbuddy-recovery-validation/run-')
   const runtimeCrash = process.argv[2] === '--runtime-crash'
   const liveChannelBudget = process.argv[2] === '--live-channel-budget'
-  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget
+  const prepareLoss = process.argv[2] === '--prepare-loss'
+  const startResponseLoss = process.argv[2] === '--start-response-loss'
+  const liveDisconnect = process.argv[2] === '--live-disconnect'
+  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect
   const retirement = process.argv[2] === '--retirement' || runtimeCrash || catchUp
   const directRetirement = process.argv[2] === '--direct-retirement'
   const directDisconnect = process.argv[2] === '--direct-disconnect'
@@ -146,6 +149,9 @@ async function main(): Promise<void> {
       const server = createServer((_request, response) => {
         response.writeHead(200, { 'content-type': 'text/event-stream' })
         response.flushHeaders()
+        if (prepareLoss) {
+          response.end(`data: ${JSON.stringify({ id: 'probe', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: 'probe', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`)
+        }
         // Keep this local deterministic model call open until cancellation.
       })
       await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -161,9 +167,13 @@ async function main(): Promise<void> {
           let starts = 0
           let ready = 0
           let terminal = false
+          let losePreparation = false
+          let prepareAccepted = 0
+          let attachments = 0
+          const bindings = new MemoryRuntimeSessionBindingStore()
           const instance = new AcpRemoteRuntime({
             runtimeId: 'opencode', label: 'Recovery probe', workspacePath: root,
-            bindingStore: new MemoryRuntimeSessionBindingStore(), assertHostCurrent: () => {},
+            bindingStore: bindings, assertHostCurrent: () => {},
             operationTimeoutMs: 30_000,
             identity: {
               controllerId: await controllerState.getControllerId(), controllerGeneration: first.client.generation,
@@ -177,16 +187,48 @@ async function main(): Promise<void> {
               protocol: 'openai-chat-completions', authentication: 'none', capabilities: { imageInput: false },
               limits: { maximumOutputTokens: 16, requestTimeoutMilliseconds: 60_000 } },
             channelFactory: async bindingId => {
-              const channel = await createProtocolRemoteRuntimeChannel({ connection: first, releaseConnectionOnClose: false,
+              const connection = await manager.acquire('probe-host', installation)
+              // Production ManagedRemoteRuntimeResources revalidates the workspace
+              // on a new transport generation before preparing another prompt.
+              const validated = await connection.client.request('workspace/validate', {
+                remoteRootPath: root, requestedAccess: 'read-write', requiredCapabilities: []
+              })
+              assert.equal(validated.handle.workspaceIdentity, workspace.handle.workspaceIdentity)
+              const channel = await createProtocolRemoteRuntimeChannel({ connection, releaseConnectionOnClose: true,
                 openIdentity: { bindingId, runtimeId: runtime.runtimeId, runtimeBundleDigest: runtime.bundleDigest,
                   workspaceIdentity: workspace.handle.workspaceIdentity } })
               const start = channel.startOwnedPrompt.bind(channel)
-              channel.startOwnedPrompt = async input => { starts++; return start(input) }
+              channel.startOwnedPrompt = async input => {
+                starts++
+                const result = await start(input)
+                if (startResponseLoss) {
+                  children.at(-1)!.kill()
+                  throw new RemoteChannelClosedError('probe lost start response')
+                }
+                return result
+              }
+              const prepare = channel.preparePrompt.bind(channel)
+              channel.preparePrompt = async input => {
+                const result = await prepare(input)
+                if (losePreparation) {
+                  losePreparation = false
+                  prepareAccepted++
+                  children.at(-1)!.kill()
+                  throw new RemoteChannelClosedError('probe lost prepare response')
+                }
+                return result
+              }
+              const attach = channel.attachOwnedPrompt.bind(channel)
+              channel.attachOwnedPrompt = async input => { attachments++; return attach(input) }
               const page = channel.pageOwnedPromptTranscript.bind(channel)
-              let interrupt = true
+              let interrupt = !prepareLoss && !startResponseLoss
               let exhaust = liveChannelBudget
               channel.pageOwnedPromptTranscript = async input => {
-                if (interrupt) { interrupt = false; throw new RemoteChannelClosedError('probe transcript interruption') }
+                if (interrupt) {
+                  interrupt = false
+                  if (liveDisconnect) children.at(-1)!.kill()
+                  throw new RemoteChannelClosedError('probe transcript interruption')
+                }
                 if (exhaust) {
                   exhaust = false
                   await assert.rejects(async () => {
@@ -207,6 +249,22 @@ async function main(): Promise<void> {
           const controller = new AbortController()
           let pending: Promise<unknown> | undefined
           try {
+            if (prepareLoss) {
+              await consume(false, AbortSignal.timeout(30_000))
+              assert.equal((await bindings.getByConversation(prompt.conversationId))?.state, 'ready')
+              assert.equal(starts, 1)
+              prompt.requestId = randomUUID()
+              losePreparation = true
+              await consume(false, AbortSignal.timeout(30_000))
+              const binding = await bindings.getByConversation(prompt.conversationId)
+              assert.equal(binding?.state, 'ready')
+              assert.equal(binding.activePromptOperationId, undefined)
+              assert.equal(starts, 2)
+              assert.equal(attachments, 0)
+              assert.equal(prepareAccepted, 1)
+              process.stdout.write(`${JSON.stringify({ passed: true, prepareLoss: true, realRuntime: runtime.runtimeId, priorPromptCompleted: true, prepareAccepted, secondPromptStarts: starts - 1, recoveryAttachments: attachments, bindingState: binding.state, externalModelCalls: 0 })}\n`)
+              return
+            }
             await assert.rejects(consume(false, AbortSignal.timeout(30_000)), RemoteChannelClosedError)
             pending = consume(true, controller.signal).catch(error => error)
             for (let i = 0; !ready && i < 800; i++) await delay(50)
@@ -217,7 +275,7 @@ async function main(): Promise<void> {
             assert.equal(ready, 1)
             assert.equal(terminal, false)
             if (liveChannelBudget) assert.equal(attaches, 2)
-            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, liveChannelBudget, attaches, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, externalModelCalls: 0 })}\n`)
+            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, liveChannelBudget, liveDisconnect, startResponseLoss, attaches, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, externalModelCalls: 0 })}\n`)
           } finally {
             controller.abort(new Error('probe complete'))
             await pending

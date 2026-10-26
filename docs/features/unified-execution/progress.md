@@ -1,5 +1,81 @@
 # 进度与证据
 
+## 2026-10-26 Pre-submission recovery fix
+
+Implemented the submission boundary described in
+[remote Host technical design](../remote-host/technical-design.md#项目保存).
+Fresh and cached Agent-owned preparation failures close the unsubmitted binding.
+Only transient connection failures retry initialization (1/2/5 seconds, three
+retries); cancellation, definitive errors and unsettled timeouts do not retry.
+Submission and transcript consumption remain outside that loop. IPC receives a
+Main-only submission notification instead of marking every generator invocation
+as an accepted remote operation. Exhausted preparation failures retain their
+original error and do not start attach-only task recovery.
+
+Final current-source shared Linux x64 validation:
+
+- `--prepare-loss`: first OpenCode prompt completed; relay killed after the next
+  preparation reached the Agent, before its response reached the Runtime.
+  Automatic initialization retry completed the second prompt, second-prompt
+  starts **1**, recovery attachments **0**, final binding **ready**.
+- `--start-response-loss` and `--live-disconnect`: each reconnected to the
+  original running prompt; **2 connections, 1 prompt start**, recovery ready
+  before task termination. The Host probe now revalidates its workspace after
+  acquiring a transport, matching production `ManagedRemoteRuntimeResources`.
+- Four targeted test files (`acp-remote-runtime`, `ipc`, `remote-task-recovery`,
+  `managed-remote-acp-runtime`): **363 passed, 1 skipped**. Includes retry
+  exhaustion, cancellation/consumer return during backoff, definite rejection/timeout, and IPC
+  handling before/after submission. Real SSH direct-model regression: **2 passed**.
+- Standard typecheck and changed-file ESLint passed. External model calls **0**;
+  OpenCode uses the local scripted endpoint. Isolated test resources cleaned.
+
+The earlier diagnosis below is retained as before-fix evidence. No installed
+Desktop or user Agent was replaced; installed UI acceptance remains outstanding.
+
+## 2026-10-26 Attach-unavailable diagnosis (before-fix evidence)
+
+The initial investigation added diagnostic tests and Host probe modes before
+changing production recovery behavior. The installed Desktop diagnostics contained
+three `RemotePromptRecoveryUnavailableError` entries on October 26; two follow
+protocol-channel failures, but the log lacks request correlation and cannot prove
+the reported incidents share the reproduced cause.
+
+Confirmed in `AcpRemoteRuntime`: after an existing session completes, a transport
+failure during the next `preparePrompt` writes `outcome-unknown` with the next
+operation ID. Attach-only recovery then rejects locally before contacting the
+Agent. Cold initialization preserves `prompt-running` for the same failure.
+Neither diagnostic case invokes `startOwnedPrompt` for the failed request.
+The IPC ordinary stream also marks managed SSH execution accepted before entering
+the Runtime generator; this is not evidence that the Agent accepted a prompt.
+
+Shared Linux x64, current-source bundled Desktop driver, Agent and helper, with
+installed OpenCode and a local scripted SSE endpoint:
+
+| Probe | Observed result |
+| --- | --- |
+| `--prepare-loss` | First real prompt completed. Next preparation reached the Agent; its response was withheld and relay killed. Failed-request start count 0, recovery attach count 0, local binding `outcome-unknown`, exact reported Chinese error reproduced. |
+| `--live-disconnect` | Kill relay after prompt start; two connections, one prompt start, recovery ready while task remains running. |
+| `--start-response-loss` | Agent starts prompt; withhold response and kill relay. Recovery attaches original request; two connections, one prompt start. |
+
+The fault wrappers control the cut point; SSH carries the probe to the Host, and
+the existing probe uses child-process pipes for the attach transport. This is not
+an installed Electron UI acceptance or a physical network-outage simulation.
+An initial probe setup failed because the helper bundle did not invoke its CLI;
+the successful runs used a current-source `runAgentCli` entry and a regular Node
+executable in the isolated helper layout. No existing user daemon was replaced.
+
+Validation: `npx.cmd vitest run src/main/agent/acp-remote-runtime.test.ts
+src/main/remote-agent/remote-task-recovery.test.ts`: 125 passed. Real SSH
+`tests/remote-direct-model.live.test.ts`: 2 passed (including remote side effect
+followed by provider failure without replay). Typecheck, changed test/probe lint,
+and diff whitespace checks passed. External model calls: 0. Test run directories
+were removed by probe/fixture cleanup. The diagnostic assertions described the
+defect; the fix above replaces them with successful initialization-retry assertions.
+
+The follow-up fix above corrects pre-submit versus uncertain-submit classification,
+preserves the original failure, and validates the repaired Runtime path. Passing
+the control cases above does not establish that all production disconnects recover.
+
 ## 2026-10-25 Exhausted protocol connections become reconnectable
 
 The exact reported `Connection channel lifetime is exhausted` string originates

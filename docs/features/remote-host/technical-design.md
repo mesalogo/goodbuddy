@@ -935,8 +935,15 @@ Renderer 在用户主动打开已有托管 SSH 项目时立即切换，不显示
 Workspace、Runtime 和 Saving 进度仅用于新建或显式保存项目；进行中可显式取消并禁用会
 产生冲突的项目创建和设置入口。远端 RPC 拒绝只向
 Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转发 Host 私有错误详情。
-`runtime/preparePrompt` 在远端明确拒绝且尚未接受 Prompt 时会关闭对应 Main binding，
-不会把确定性失败错误保留为 `outcome-unknown`。未确认终态的 Prompt 仍不会自动重放；
+托管 ACP 请求在尚未尝试 `startPrompt` 时发生初始化失败，会关闭对应未提交的 Main
+binding；新会话与已有会话使用相同规则。临时连接故障在清理完成后按 1、2、5 秒最多
+重试三次初始化。取消、确定性错误和可能仍在收尾的操作超时不进入该重试；耗尽后保留
+原始错误。重试范围只包含会话初始化，不包含提交 Prompt 或消费任务结果。
+Main 在 Runtime 即将尝试提交，或确认存在原 operation 并进入接管路径时，通过
+`onRemotePromptSubmitted` 标记可恢复请求；不再以调用 Runtime generator 作为已提交证据。
+因此启动响应丢失仍会查询和接管同一 operation，启动前失败则不会误入任务恢复。
+重启后的既有持久化请求仍按原身份核实；缺少证据时不会自动重新提交。
+未确认终态的 Prompt 仍不会自动重放；
 同一当前 Agent identity 上的 `prompt-running` binding 会阻止不同的新 operation，直到
 原 operation 恢复或取消，避免遗留 Host 工作与新 Prompt 并行。只有 Host/Agent/Runtime
 identity 已变化且旧 authority 无法恢复，或原 binding 已有 `outcome-unknown` 终态时，显式

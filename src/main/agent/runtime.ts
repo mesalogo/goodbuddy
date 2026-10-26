@@ -162,6 +162,9 @@ export type AgentExecutionRequest = AgentRequest & {
   remoteSemanticAfterSequence?: string
   /** Recovery may attach an accepted Agent prompt but must never replay it. */
   remoteRecoveryOnly?: boolean
+  /** Main-only: submission is about to be attempted, or an existing operation is being attached.
+   * A lost response must still recover this operation rather than submit a replacement. */
+  onRemotePromptSubmitted?: () => void
   /** Main-only notification after transcript catch-up/ACK and question restoration. */
   onRemoteRecoveryReady?: () => void
   /** Main-only durable tool state used to merge partial recovery updates. */

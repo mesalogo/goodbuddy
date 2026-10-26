@@ -2824,6 +2824,28 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     }
   }
 
+  it.each(['cold', 'warm'] as const)('retries %s preparation loss without submitting a duplicate prompt', async mode => {
+    const fixture = ownedChannel()
+    try {
+      if (mode === 'warm') await collect(fixture.instance.run(request, new AbortController().signal))
+      const next = { ...request, requestId: `${request.requestId}-prepare-loss` }
+      const error = new RemoteChannelClosedError('diagnostic prepare response lost')
+      fixture.preparePrompt.mockRejectedValueOnce(error)
+      const starts = fixture.startOwnedPrompt.mock.calls.length
+      const submitted = vi.fn()
+      const events = await collect(fixture.instance.run({ ...next, onRemotePromptSubmitted: submitted }, new AbortController().signal))
+      expect(events.some(event => event.type === 'done')).toBe(true)
+      expect(submitted).toHaveBeenCalledOnce()
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledTimes(starts + 1)
+      const binding = await fixture.store.getByConversation(request.conversationId)
+      expect(binding).toMatchObject({
+        state: 'ready',
+        activePromptOperationId: undefined
+      })
+      expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
+    } finally { await fixture.instance.dispose() }
+  })
+
   it.each([
     new RemoteChannelClosedError('读取 Agent 语义记录'),
     new RemoteOperationTimeoutError('读取 Agent 语义记录')
@@ -2840,6 +2862,66 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     } finally {
       await fixture.instance.dispose()
     }
+  })
+
+  it('bounds initialization retries and preserves the original failure without submission', async () => {
+    vi.useFakeTimers()
+    const fixture = ownedChannel()
+    const error = new RemoteChannelClosedError('preparation unavailable')
+    fixture.preparePrompt.mockRejectedValue(error)
+    const submitted = vi.fn()
+    try {
+      const result = collect(fixture.instance.run({ ...request, onRemotePromptSubmitted: submitted }, new AbortController().signal)).catch(error => error)
+      await vi.advanceTimersByTimeAsync(8_100)
+      expect(await result).toBe(error)
+      expect(fixture.preparePrompt).toHaveBeenCalledTimes(4)
+      expect(fixture.startOwnedPrompt).not.toHaveBeenCalled()
+      expect(submitted).not.toHaveBeenCalled()
+      expect(await fixture.store.getByConversation(request.conversationId)).toBeUndefined()
+    } finally { await fixture.instance.dispose(); vi.useRealTimers() }
+  })
+
+  it('stops preparation retries when cancelled during backoff', async () => {
+    const fixture = ownedChannel()
+    fixture.preparePrompt.mockRejectedValue(new RemoteChannelClosedError('preparation unavailable'))
+    const controller = new AbortController()
+    const submitted = vi.fn()
+    try {
+      const stream = fixture.instance.run({ ...request, onRemotePromptSubmitted: submitted }, controller.signal)
+      expect((await stream.next()).value).toMatchObject({ type: 'status' })
+      controller.abort(new Error('stop initialization'))
+      await expect(stream.next()).rejects.toThrow('stop initialization')
+      expect(fixture.preparePrompt).toHaveBeenCalledOnce()
+      expect(fixture.startOwnedPrompt).not.toHaveBeenCalled()
+      expect(submitted).not.toHaveBeenCalled()
+    } finally { await fixture.instance.dispose() }
+  })
+
+  it('releases the conversation reservation when the consumer stops at a retry status', async () => {
+    const fixture = ownedChannel()
+    fixture.preparePrompt.mockRejectedValueOnce(new RemoteChannelClosedError('preparation unavailable'))
+    try {
+      const stream = fixture.instance.run(request, new AbortController().signal)
+      expect((await stream.next()).value).toMatchObject({ type: 'status' })
+      await stream.return()
+      await fixture.instance.waitForDrain()
+      const events = await collect(fixture.instance.run({ ...request, requestId: 'after-stopped-initialization' }, new AbortController().signal))
+      expect(events.some(event => event.type === 'done')).toBe(true)
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+    } finally { await fixture.instance.dispose() }
+  })
+
+  it.each([new Error('invalid model configuration'), new RemoteOperationTimeoutError('preparation')])('does not retry a definitive failure or an unsettled timeout: %s', async error => {
+    const fixture = ownedChannel()
+    fixture.preparePrompt.mockRejectedValue(error)
+    const submitted = vi.fn()
+    try {
+      await expect(collect(fixture.instance.run({ ...request, onRemotePromptSubmitted: submitted }, new AbortController().signal))).rejects.toBe(error)
+      expect(fixture.preparePrompt).toHaveBeenCalledOnce()
+      expect(fixture.startOwnedPrompt).not.toHaveBeenCalled()
+      expect(submitted).not.toHaveBeenCalled()
+      expect(await fixture.store.getByConversation(request.conversationId)).toBeUndefined()
+    } finally { await fixture.instance.dispose() }
   })
 
   it.each(['empty', 'pages', 'question', 'ack-failure'] as const)('finishes recovery at live catch-up: %s', async mode => {

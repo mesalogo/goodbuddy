@@ -4015,9 +4015,9 @@ export function registerIpcHandlers(
       }
     }
 
-    let markManagedSshAccepted = (): void => undefined
-    const managedSshAccepted = new Promise<void>((resolve) => {
-      markManagedSshAccepted = resolve
+    let markManagedSshSubmitted = (): void => undefined
+    const managedSshSubmitted = new Promise<void>((resolve) => {
+      markManagedSshSubmitted = resolve
     })
     const execution = (async () => {
       let completed = false
@@ -4025,7 +4025,7 @@ export function registerIpcHandlers(
         | Extract<AgentEvent, { type: 'error' }>
         | undefined
       let runtimeErrorPersistedRemotely = false
-      let managedSshOperationAccepted = false
+      let managedSshOperationSubmitted = false
       let remoteRecoveryPending = false
       let executionRequest = remoteEventSelection
         ? { ...request, runtimeSelection: remoteEventSelection }
@@ -4330,9 +4330,11 @@ export function registerIpcHandlers(
           void
         > => {
           if (managedSshExecution) {
-            activeRequestLease.detachOnApplicationExit = true
-            managedSshOperationAccepted = true
-            markManagedSshAccepted()
+            executionRequest = { ...executionRequest, onRemotePromptSubmitted: () => {
+              activeRequestLease.detachOnApplicationExit = true
+              managedSshOperationSubmitted = true
+              markManagedSshSubmitted()
+            } }
           }
           const runtimeRequest: AgentExecutionRequest = rolePrompt
             ? {
@@ -4575,13 +4577,13 @@ export function registerIpcHandlers(
           agentEvent.status === 'cancelled'
             ? 'cancelled'
             : 'failed'
-        const shouldRecoverAcceptedRemoteOperation =
+        const shouldRecoverSubmittedRemoteOperation =
           remoteConversationRecovery !== undefined &&
-          managedSshOperationAccepted &&
+          managedSshOperationSubmitted &&
           !runtimeErrorPersistedRemotely &&
           !(error instanceof RemotePromptCancelledError)
         remoteRecoveryPending =
-          shouldRecoverAcceptedRemoteOperation
+          shouldRecoverSubmittedRemoteOperation
         if (
           remoteConversationRecovery !== undefined &&
           error instanceof RemotePromptCancelledError &&
@@ -4596,7 +4598,7 @@ export function registerIpcHandlers(
         } else {
           await assistantDatabase.updateTaskStatus(
             request.requestId,
-            shouldRecoverAcceptedRemoteOperation
+            shouldRecoverSubmittedRemoteOperation
               ? 'interrupted'
               : terminalStatus,
             errorMessage
@@ -4656,7 +4658,7 @@ export function registerIpcHandlers(
     if (managedSshExecution) {
       void detachedRemoteExecutionTracker.track(execution).catch(reportBackgroundError)
       void trackExecution(
-        Promise.race([execution, managedSshAccepted])
+        Promise.race([execution, managedSshSubmitted])
       ).catch(reportBackgroundError)
     } else {
       void trackExecution(execution).catch(reportBackgroundError)
