@@ -3273,6 +3273,7 @@ function MagicNotesWorkspaceView({
           hidden={!aiPaneOpen}
           id="magic-notes-ai-pane"
         >
+          <div className="magic-notes-ai-content">
           <div className="magic-notes-ai-controls">
             <div>
               <div className="inline-help-label">
@@ -3402,6 +3403,7 @@ function MagicNotesWorkspaceView({
               ))}
             </div>
           )}
+          </div>
           {detail && <MagicNoteQuestions key={detail.id} note={detail} selectedEntryId={selectedEntryId}
             editingEntryId={editingEntry?.id} getCanvas={entryId => canvasViewRefs.current.get(entryId)} onError={notifyError} />}
         </aside>

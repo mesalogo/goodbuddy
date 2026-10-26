@@ -678,7 +678,7 @@
     .magic-notes-overview,
     .magic-notes-index-pane,
     .magic-notes-stream-pane,
-    .magic-notes-ai-pane,
+    .magic-notes-ai-content,
     .magic-notes-list,
     .magic-todo-detail,
     .magic-note-editor__content .ql-editor
@@ -756,14 +756,14 @@
 }
 
 .magic-notes-ai-pane {
-  padding: 0 var(--space-4) var(--space-4);
+  overflow: hidden;
 }
 
-.magic-notes-ai-pane > .magic-notes-ai-controls {
+.magic-notes-ai-content > .magic-notes-ai-controls {
   padding-top: 0;
 }
 
-.magic-notes-ai-pane > .magic-notes-ai-controls .inline-help-label {
+.magic-notes-ai-content > .magic-notes-ai-controls .inline-help-label {
   min-height: var(--magic-notes-heading-height);
   margin-bottom: 0;
 }

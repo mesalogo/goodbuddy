@@ -360,7 +360,25 @@ it('resizes record columns with native Electron input and preserves desktop widt
           await js('window.dispatchEvent(new Event("layout-stream"))'); await settle();
           assert.equal(await assertShellPanels(), shellLongHeight, 'Streaming keeps shell panel height');
         }
-        for (const selector of ['.magic-notes-stream-pane', '.magic-notes-ai-pane']) {
+        for (const theme of ['light', 'dark']) {
+          await js('document.documentElement.dataset.theme = ' + JSON.stringify(theme));
+          for (const height of [900, 600]) {
+            win.setContentSize(1600, height); await settle(); await settle();
+            for (const bottom of [false, true]) {
+              await js('(() => { const el = document.querySelector(".magic-notes-ai-content"); el.scrollTop = ' + (bottom ? 'el.scrollHeight' : '0') + '; })()');
+              await settle();
+              const content = await rect('.magic-notes-ai-content');
+              const question = await rect('.magic-notes-question');
+              const pane = await rect('.magic-notes-ai-pane');
+              assert(Math.abs(content.y + content.height - question.y) <= 1, 'Comments stop above the question area');
+              assert(Math.abs(question.y + question.height - pane.y - pane.height) <= 1, 'Question background closes the panel bottom');
+              assert.equal(await js('document.querySelector(".magic-notes-ai-pane").scrollTop'), 0, 'Outer pane never scrolls behind the question');
+              assert(await js('(() => { const p = document.querySelector(".magic-notes-question"), r = p.getBoundingClientRect(); return p.contains(document.elementFromPoint(r.x + r.width / 2, r.bottom - 2)); })()'), 'Bottom edge belongs to the question surface');
+            }
+          }
+        }
+        win.setContentSize(1600, 900); await settle(); await settle();
+        for (const selector of ['.magic-notes-stream-pane', '.magic-notes-ai-content']) {
           assert(await js('(() => { const el = document.querySelector(' + JSON.stringify(selector) + '); el.scrollTop = el.scrollHeight; return el.scrollTop > 0; })()'), selector + ' scrolls internally');
         }
         await settle();
