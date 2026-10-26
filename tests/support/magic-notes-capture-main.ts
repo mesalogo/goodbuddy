@@ -114,8 +114,10 @@ app.whenReady().then(async () => {
     await click('View source message', `document.getElementById('magic-note-entry-${captured.id}')`)
     await wait('document.activeElement?.matches("article.message") && document.activeElement.textContent.includes("CAPTURE_HISTORY_501_END")', 'source message focus')
     evidence.sourceOpened = true
-    await click('Conversation actions')
-    await click('Save conversation to note')
+    await run(`document.querySelector('[data-conversation-window-row="${header.id}"] .conversation-more').click()`)
+    await wait(`Boolean(${button('Save full conversation to note')})`, 'conversation actions menu')
+    assert.equal(await run(`${button('Copy full conversation')}.nextElementSibling.textContent`), 'Save full conversation to note')
+    await click('Save full conversation to note')
     await wait('Boolean(document.querySelector("#compact-note-text"))', 'full history preview')
     const expected = messages.map(message => `## ${message.role === 'user' ? 'User' : 'Assistant'}\n\n${message.content}`).join('\n\n')
     assert.equal(await run('document.querySelector("#compact-note-text").value'), expected)

@@ -4,7 +4,7 @@ Magic Notes is for meeting records, research drafts, ideas, and long-term plans.
 
 ## Capture conversation content
 
-Choose Add to note from an assistant response, or Save current conversation to note from the conversation menu. Review the preview, source, and destination, then explicitly save. A full capture contains completed user and assistant text, preserving Markdown, line breaks, and code. Reasoning, tool logs, system prompts, binary attachments, and images are excluded.
+Choose Add to note from an assistant response, or open a conversation's actions in the left sidebar and choose Save full conversation to note directly below Copy full conversation. Review the preview, source, and destination, then explicitly save. A full capture contains completed user and assistant text, preserving Markdown, line breaks, and code. Reasoning, tool logs, system prompts, binary attachments, and images are excluded.
 
 Saved entries keep structured source information. Open a source to return to the conversation or locate the message. If the source is later removed, the note body remains and the source is marked unavailable. A failed save keeps the preview and destination for retry; cancelling writes nothing.
 

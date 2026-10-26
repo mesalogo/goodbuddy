@@ -4,7 +4,6 @@ import { WecomWorkbarPanel } from './WecomWorkbarPanel';
 import { useWecomSnapshot } from './wecom-snapshot';
 import { FeishuWorkbarPanel } from './FeishuWorkbarPanel';
 import { useFeishuSnapshot } from './feishu-snapshot';
-import { AnchoredMenu } from './AnchoredMenu';
 import { useMagicNoteDraft } from './use-magic-note-draft';
 import type { MagicNoteSource } from '../../shared/magic-notes-contracts';
 import type { TerminalSnapshot } from "../../shared/terminal-contracts";
@@ -44,7 +43,6 @@ import {
   Minimize2,
   Minus,
   Moon,
-  MoreHorizontal,
   PanelLeft,
   Search,
   Settings,
@@ -1377,8 +1375,6 @@ function App(): React.JSX.Element {
   const [noteCaptureLoading, setNoteCaptureLoading] = useState(false);
   const noteCapturePending = useRef(false);
   const noteCaptureTrigger = useRef<HTMLElement | null>(null);
-  const noteTitleMenuRef = useRef<HTMLButtonElement>(null);
-  const [noteTitleMenuOpen, setNoteTitleMenuOpen] = useState(false);
   const registerNotesLeaveRequester = useCallback((requester: SettingsLeaveRequester | undefined): void => {
     notesLeaveRequesterRef.current = requester;
   }, []);
@@ -5968,7 +5964,9 @@ function App(): React.JSX.Element {
     if (!magicNotesEnabled || noteCapturePending.current || noteDraft.saving) return;
     const snapshot = conversationStore.getState().find(item => item.id === conversationId);
     if (!snapshot || (message && (message.state === 'streaming' || !message.content.trim()))) return;
-    if (!message && snapshot.messages.some(item => item.state === 'streaming')) {
+    const activity = activityByConversationId.get(conversationId);
+    if (!message && (activeConversationIds.has(conversationId) || queuedConversationIds.has(conversationId) ||
+      (activity && activity.status !== 'completed') || snapshot.messages.some(item => item.state === 'streaming'))) {
       notify({ tone: 'info', message: t('magicNotes:capture.wait') });
       return;
     }
@@ -5990,11 +5988,11 @@ function App(): React.JSX.Element {
         incomplete: message ? message.state !== 'complete' : undefined,
         source: { kind: message ? 'message' : 'conversation', conversationId, messageIds: messages.map(item => item.id), capturedAt,
           conversationTitle: conversation.title, projectId: conversation.projectId, projectName: conversation.projectId ? projectNames.get(conversation.projectId) : undefined } });
-      noteCaptureTrigger.current = trigger ?? noteTitleMenuRef.current;
+      noteCaptureTrigger.current = trigger ?? conversationActionTriggers.get(conversationId) ?? null;
       openQuickNotes();
     } catch (reason) { notify({ tone: 'error', message: displayErrorMessage(reason, t('magicNotes:errors.operationFailed')) }); }
     finally { noteCapturePending.current = false; setNoteCaptureLoading(false); }
-  }, [magicNotesEnabled, noteDraft.saving, ensureConversationHistory, persistLocalConversationChanges, guardNoteDraft, setNoteDraft, projectNames, openQuickNotes, notify, t, conversationStore, conversationPersistence]);
+  }, [magicNotesEnabled, noteDraft.saving, ensureConversationHistory, persistLocalConversationChanges, guardNoteDraft, setNoteDraft, projectNames, openQuickNotes, notify, t, conversationStore, conversationPersistence, conversationActionTriggers, activeConversationIds, queuedConversationIds, activityByConversationId]);
   const openNoteSource = async (source: MagicNoteSource, messageId?: string): Promise<'opened' | 'missing'> => {
     let snapshot;
     try { snapshot = await window.goodbuddy.conversations.get(source.conversationId); }
@@ -6285,6 +6283,11 @@ function App(): React.JSX.Element {
         void exportConversation(conversation);
         focusConversationActions(conversation.id);
       },
+      saveToNote: (conversation) => {
+        setConversationActionsId("");
+        focusConversationActions(conversation.id);
+        void captureToNote(conversation.id);
+      },
       cancelDelete: () => setConfirmingConversationId(""),
       confirmDelete: (conversationId) => void deleteConversation(conversationId),
       requestDelete: (conversationId) => setConfirmingConversationId(conversationId),
@@ -6549,7 +6552,7 @@ function App(): React.JSX.Element {
     onOpenSource: openNoteSource,
     onCancelNoteCapture: () => requestAnimationFrame(() => {
       const trigger = noteCaptureTrigger.current;
-      (trigger?.isConnected && !trigger.closest('[hidden], [inert]') ? trigger : noteTitleMenuRef.current)?.focus();
+      (trigger?.isConnected && !trigger.closest('[hidden], [inert]') ? trigger : assistantSidebarToggleRef.current)?.focus();
     }),
     onOpenNoteWorkspace: (noteId: string, entryId?: string) =>
       requestWorkspaceLeave('magic-notes', () => {
@@ -6967,6 +6970,8 @@ function App(): React.JSX.Element {
           loadError={conversationLoadError}
           locale={locale}
           pinningConversationId={pinningConversationId}
+          noteCaptureEnabled={magicNotesEnabled}
+          noteCaptureDisabled={noteCaptureLoading || Boolean(noteDraft.saving)}
           queuedConversationIds={queuedConversationIds}
           renamingConversationId={renamingConversationId}
           searchQuery={searchQuery}
@@ -7138,12 +7143,6 @@ function App(): React.JSX.Element {
                   )}
                 </div>
               </div>
-              {magicNotesEnabled && activeConversation && <>
-                <button type="button" className="icon-button" ref={noteTitleMenuRef} aria-label={t('magicNotes:capture.menu')} title={t('magicNotes:capture.menu')} aria-haspopup="menu" aria-expanded={noteTitleMenuOpen} onClick={() => setNoteTitleMenuOpen(value => !value)}><MoreHorizontal size={16} /></button>
-                {noteTitleMenuOpen && <AnchoredMenu anchorRef={noteTitleMenuRef} id="note-conversation-menu" label={t('magicNotes:capture.menu')} onClose={() => setNoteTitleMenuOpen(false)}>
-                  <button role="menuitem" tabIndex={-1} type="button" disabled={isRunning || noteCaptureLoading || noteDraft.saving} title={isRunning ? t('magicNotes:capture.wait') : undefined} onClick={() => { setNoteTitleMenuOpen(false); void captureToNote(activeConversation.id); }}>{t(noteCaptureLoading ? 'magicNotes:capture.loading' : 'magicNotes:capture.conversation')}</button>
-                </AnchoredMenu>}
-              </>}
             </>
           )}
           <div className="topbar__actions">

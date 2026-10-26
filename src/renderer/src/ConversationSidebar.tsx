@@ -5,6 +5,7 @@ import {
   Copy,
   Download,
   Edit3,
+  FileText,
   GitFork,
   MessageSquarePlus,
   MoreHorizontal,
@@ -71,6 +72,7 @@ export type ConversationListRowHandlers = {
   branch: (conversation: Conversation, disabledReason: string | undefined) => void;
   startRename: (conversationId: string) => void;
   copy: (conversation: Conversation) => void;
+  saveToNote: (conversation: Conversation) => void;
   exportConversation: (conversation: Conversation) => void;
   cancelDelete: () => void;
   confirmDelete: (conversationId: string) => void;
@@ -129,6 +131,9 @@ type ConversationListRowProps = {
   actionsOpen: boolean;
   menuVisible: boolean;
   pinDisabled: boolean;
+  noteCaptureEnabled: boolean;
+  noteCaptureDisabled: boolean;
+  noteCaptureWaiting: boolean;
   renaming: boolean;
   confirmingDelete: boolean;
   deleting: boolean;
@@ -162,6 +167,9 @@ const ConversationListRow = memo(function ConversationListRow({
   actionsOpen,
   menuVisible,
   pinDisabled,
+  noteCaptureEnabled,
+  noteCaptureDisabled,
+  noteCaptureWaiting,
   renaming,
   confirmingDelete,
   deleting,
@@ -374,6 +382,18 @@ const ConversationListRow = memo(function ConversationListRow({
             <Copy size={14} />
             {t("conversation.actions.copy")}
           </button>
+          {noteCaptureEnabled && (
+            <button
+              role="menuitem"
+              disabled={noteCaptureDisabled || noteCaptureWaiting}
+              title={noteCaptureWaiting ? t("magicNotes:capture.wait") : undefined}
+              onClick={() => handlers.saveToNote(conversation)}
+              type="button"
+            >
+              <FileText aria-hidden="true" size={14} />
+              {t("magicNotes:capture.conversation")}
+            </button>
+          )}
           <button
             role="menuitem"
             onClick={() => handlers.exportConversation(conversation)}
@@ -527,6 +547,8 @@ type ConversationSidebarProps = {
   renamingConversationId: string;
   branchingConversationId: string;
   pinningConversationId: string;
+  noteCaptureEnabled: boolean;
+  noteCaptureDisabled: boolean;
   assistantSchedules: readonly AssistantSchedule[];
   selectedAssistantTaskId: string | undefined;
   actionsRef: React.RefObject<HTMLDivElement | null>;
@@ -561,6 +583,8 @@ export const ConversationSidebar = memo(function ConversationSidebar({
   renamingConversationId,
   branchingConversationId,
   pinningConversationId,
+  noteCaptureEnabled,
+  noteCaptureDisabled,
   assistantSchedules,
   selectedAssistantTaskId,
   actionsRef,
@@ -720,6 +744,11 @@ export const ConversationSidebar = memo(function ConversationSidebar({
                 locale={locale}
                 menuVisible={sidebarOpen && conversationActionsId === conversation.id}
                 pinDisabled={!conversationStoreReady || Boolean(pinningConversationId)}
+                noteCaptureEnabled={noteCaptureEnabled}
+                noteCaptureDisabled={noteCaptureDisabled}
+                noteCaptureWaiting={branchUnavailable ||
+                  (activityByConversationId.has(conversation.id) && activityByConversationId.get(conversation.id)?.status !== 'completed') ||
+                  conversation.messages.some(message => message.state === 'streaming')}
                 position={listWindow.windowed ? segment.index + 1 : undefined}
                 renaming={renamingConversationId === conversation.id}
                 rowRef={listWindow.windowed ? listWindow.rowRef(conversation.id) : undefined}

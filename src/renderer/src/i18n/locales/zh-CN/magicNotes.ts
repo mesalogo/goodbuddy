@@ -1,6 +1,6 @@
 export const magicNotes = {
   capture: {
-    add: '加入笔记', quick: '快速笔记', conversation: '保存当前对话到笔记', menu: '会话操作',
+    add: '加入笔记', quick: '快速笔记', conversation: '保存完整会话到笔记', menu: '会话操作',
     search: '搜索笔记', target: '保存到', title: '笔记标题', content: '待加入内容', global: '全局',
     openWorkspace: '在完整工作区打开', back: '返回笔记列表', choose: '选择已有笔记',
     empty: '还没有笔记，创建一篇开始记录。', noResults: '未找到相关笔记，请修改搜索词或新建笔记。',

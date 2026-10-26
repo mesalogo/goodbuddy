@@ -119,7 +119,7 @@ function makeConversations(count: number): Conversation[] {
 const handlers: ConversationListRowHandlers = {
   toggleTasks: vi.fn(), select: vi.fn(), toggleActions: vi.fn(), registerActionTrigger: vi.fn(),
   closeActions: vi.fn(), pin: vi.fn(), branch: vi.fn(), startRename: vi.fn(), copy: vi.fn(),
-  exportConversation: vi.fn(), cancelDelete: vi.fn(), confirmDelete: vi.fn(), requestDelete: vi.fn(),
+  exportConversation: vi.fn(), saveToNote: vi.fn(), cancelDelete: vi.fn(), confirmDelete: vi.fn(), requestDelete: vi.fn(),
   saveTitle: vi.fn(), cancelRename: vi.fn(), openTask: vi.fn(), viewAllTasks: vi.fn(),
 }
 
@@ -148,6 +148,8 @@ function props(store: ConversationStore, overrides: Partial<SidebarProps> = {}):
     renamingConversationId: '',
     branchingConversationId: '',
     pinningConversationId: '',
+    noteCaptureEnabled: false,
+    noteCaptureDisabled: false,
     assistantSchedules: [],
     selectedAssistantTaskId: undefined,
     actionsRef: { current: null },
@@ -203,6 +205,31 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('ConversationSidebar note capture', () => {
+  it('uses the selected row and respects feature, running, and capture states', () => {
+    const { update, store } = setup(2, { conversationActionsId: 'c1', noteCaptureEnabled: true })
+    const name = '保存完整会话到笔记'
+    fireEvent.click(screen.getByRole('menuitem', { name }))
+    expect(handlers.saveToNote).toHaveBeenCalledWith(store.getState().find(conversation => conversation.id === 'c1'))
+    update({ activeConversationIds: new Set(['c0']) })
+    expect(screen.getByRole('menuitem', { name })).toBeEnabled()
+    update({ activeConversationIds: new Set(['c1']) })
+    expect(screen.getByRole('menuitem', { name })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name })).toHaveAttribute('title', '请等待回答完成或停止生成后再保存。')
+    update({ queuedConversationIds: new Set(['c1']) })
+    expect(screen.getByRole('menuitem', { name })).toBeDisabled()
+    for (const status of ['running', 'approval', 'question', 'attention', 'completed'] as const) {
+      update({ activityByConversationId: new Map([['c1', { conversationId: 'c1', title: 'Other discussion', projectName: '', status }]]) })
+      if (status === 'completed') expect(screen.getByRole('menuitem', { name })).toBeEnabled()
+      else expect(screen.getByRole('menuitem', { name })).toBeDisabled()
+    }
+    update({ noteCaptureDisabled: true })
+    expect(screen.getByRole('menuitem', { name })).toBeDisabled()
+    update({ noteCaptureEnabled: false })
+    expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument()
+  })
 })
 
 describe('ConversationSidebar inline rename', () => {

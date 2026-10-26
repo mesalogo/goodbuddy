@@ -15248,8 +15248,11 @@ describe("App", () => {
     render(<App />)
     await screen.findByText('Capture history 501')
     expect(screen.queryByText('Capture history 0')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '会话操作' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '保存当前对话到笔记' }))
+    expect(screen.queryByRole('button', { name: '会话操作' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: `更多会话操作 ${conversation.title}` }))
+    const copy = screen.getByRole('menuitem', { name: '复制完整会话' })
+    expect(copy.nextElementSibling).toHaveTextContent('保存完整会话到笔记')
+    fireEvent.click(screen.getByRole('menuitem', { name: '保存完整会话到笔记' }))
     const preview = await screen.findByLabelText('待加入内容')
     expect(preview).toHaveValue(messages.map(message => `## ${message.role === 'user' ? '用户' : '助手'}\n\n${message.content}`).join('\n\n'))
     expect(screen.getAllByRole('tab', { name: '笔记' })).toHaveLength(1)
@@ -15268,6 +15271,27 @@ describe("App", () => {
     fireEvent.click(within(screen.getByRole('region', { name: '快速笔记' })).getByRole('button', { name: '加入笔记' }))
     await waitFor(() => expect(api.magicNotes.create).toHaveBeenCalledWith(expect.objectContaining({ source: expect.objectContaining({ kind: 'conversation', conversationId: conversation.id, messageIds: messages.map(message => message.id) }), content: { version: 1, ops: [{ insert: 'Frozen edited capture\n' }] } })))
   }, 15_000)
+
+  it('captures a different sidebar conversation and restores focus to its action trigger on cancel', async () => {
+    await api.updates!.updateSettings({ magicNotesEnabled: true })
+    const conversations = ['Active discussion', 'Other discussion'].map((title, index) => ({
+      id: crypto.randomUUID(), projectId, title, updatedAt: 20 - index,
+      messages: [{ id: crypto.randomUUID(), role: 'assistant' as const, content: `${title} text`, createdAt: 1, state: 'complete' as const }],
+    }))
+    vi.mocked(api.conversations.list).mockResolvedValueOnce(conversations)
+    render(<App />)
+    await screen.findByText('Active discussion text')
+    const trigger = screen.getByRole('button', { name: '更多会话操作 Other discussion' })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: '保存完整会话到笔记' }))
+    expect(await screen.findByLabelText('待加入内容')).toHaveValue('## 助手\n\nOther discussion text')
+    expect(screen.getByText('Active discussion text')).toBeVisible()
+    fireEvent.keyDown(screen.getByLabelText('待加入内容'), { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.queryByLabelText('待加入内容')).not.toBeInTheDocument()
+      expect(trigger).toHaveFocus()
+    })
+  })
 
   it('adds an assistant reply to an explicitly selected note and opens the returned entry in the full workspace', async () => {
     await api.updates!.updateSettings({ magicNotesEnabled: true, magicNoteCommentMode: 'after-save-manual' })
@@ -15333,9 +15357,9 @@ describe("App", () => {
     await screen.findByText('Opened discussion text')
     fireEvent.click(screen.getByText('Unavailable history'))
     await screen.findByText('History read failed')
-    fireEvent.click(screen.getByRole('button', { name: '会话操作' }))
-    expect(screen.getByRole('menuitem', { name: '保存当前对话到笔记' })).toBeEnabled()
-    fireEvent.click(screen.getByRole('menuitem', { name: '保存当前对话到笔记' }))
+    fireEvent.click(screen.getByRole('button', { name: '更多会话操作 Unavailable history' }))
+    expect(screen.getByRole('menuitem', { name: '保存完整会话到笔记' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('menuitem', { name: '保存完整会话到笔记' }))
     await waitFor(() => expect(api.conversations.get).toHaveBeenCalledTimes(2))
     expect(screen.queryByLabelText('待加入内容')).not.toBeInTheDocument()
     expect(api.magicNotes.create).not.toHaveBeenCalled()

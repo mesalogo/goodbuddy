@@ -1,5 +1,35 @@
 # Magic Notes Progress
 
+## 2026-10-26: Conversation Capture Menu
+
+FR-3 now lives in the sidebar conversation actions, directly after Copy full
+conversation, labelled Save full conversation to note. The separate chat-title
+menu was removed. Capture uses the selected row, including an inactive conversation;
+cancel restores its action trigger, with the workbar toggle as fallback.
+Feature visibility, generation/loading/saving guards and draft protection remain
+connected to the existing capture flow. See [UI design](./ui-design.md).
+
+Validation: four targeted App/sidebar regressions passed, covering menu order,
+inactive-conversation capture, cancel focus, availability and failed history reads.
+The real `magic-notes-capture.electron.test.ts` passed through the new menu, preload,
+IPC and SQLite: 502 messages, existing/new notes, source navigation, narrow-panel
+keyboard use and database reopen. No external model calls were made by this scenario.
+Renderer type checking and ESLint on changed files passed; `git diff --check` passed.
+
+The concurrent working tree is not globally green: `npm test` completed with 6,804
+passed, 9 failed and 89 skipped tests. Failures were in App rename/branch/streaming
+and knowledge-binding scenarios, message-expansion Electron, Obsidian Electron and
+WeCom document queries. Full type checking reported errors in desktop-update test
+files; full lint reported a ref-access error in `use-message-edit.ts`. These checks
+include other ongoing work and do not establish a clean baseline for those failures.
+
+Follow-up: capture is disabled for queued conversations and active task activity
+(including tool execution and waiting for answers/approval), as well as streaming
+messages. Completed activity allows capture again. The capture handler checks the
+same running states before loading history. The four focused regressions and changed
+file ESLint passed again. Full type checking now reports two errors in the concurrent
+`src/main/assistant/message-edit-branch.test.ts` changes (`basis` and subagent name).
+
 ## 2026-10-19: On-Canvas Region Selection
 
 FR-13 region capture moved from a side-pane copy of the page to an overlay on the

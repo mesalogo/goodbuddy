@@ -3,7 +3,7 @@ import type { magicNotes as chineseMagicNotes } from '../zh-CN/magicNotes'
 
 export const magicNotes = {
   capture: {
-    add: 'Add to note', quick: 'Quick note', conversation: 'Save conversation to note', menu: 'Conversation actions',
+    add: 'Add to note', quick: 'Quick note', conversation: 'Save full conversation to note', menu: 'Conversation actions',
     search: 'Search notes', target: 'Save to', title: 'Note title', content: 'Text to add', global: 'Global',
     openWorkspace: 'Open in full workspace', back: 'Back to notes', choose: 'Choose an existing note',
     empty: 'No notes yet. Create one to start writing.', noResults: 'No matching notes. Change your search or create a note.',
