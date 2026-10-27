@@ -84,6 +84,74 @@ class DeaiScanTests(unittest.TestCase):
         findings = self.scan("正文没有问题。\n```text\n综上所述，打造闭环。\n```\n")
         self.assertEqual(findings, [])
 
+    def test_editorial_slogans_and_business_colloquialisms_are_review_only(self):
+        samples = [
+            ("真正实在的写法，是把对象、条件、动作和责任写清楚，让语气自然落下来。", "抽象写作评语"),
+            ("好的表达应该让文字更有力量。", "抽象写作评语"),
+            ("Good writing should let the words speak for themselves.", "抽象写作评语"),
+            ("质量责任切不开，出了事谁也跑不掉。", "口语化业务描述"),
+            ("系统盯首批交付，再查一遍，迟迟不放行则通报。", "口语化业务描述"),
+            ("The system keeps an eye on delivery.", "口语化业务描述"),
+        ]
+        for text, category in samples:
+            with self.subTest(text=text):
+                findings = self.scan(text)
+                self.assertTrue(any(f["category"] == category for f in findings))
+                self.assertTrue(all(f["level"] == deai_scan.LEVEL_REVIEW for f in findings))
+
+    def test_specific_feedback_and_ordinary_speech_avoid_new_categories(self):
+        samples = [
+            "删除末句，前文已经说明测试环境。",
+            "请确认‘未确认生产’指生产计划未确认，还是生产尚未完成。",
+            "标题提到票据一致性，正文还缺少核对字段。",
+            "超过合同约定的交付日后，系统向合同负责人发送提醒。",
+            "这段读起来有点绕，我明天再看。",
+            "```text\n真正实在的写法，让语气自然落下来。\n系统盯首批交付。\n```",
+        ]
+        for text in samples:
+            with self.subTest(text=text):
+                self.assertFalse(any(
+                    f["category"] in {"抽象写作评语", "口语化业务描述"}
+                    for f in self.scan(text)
+                ))
+
+    def test_disclaimer_candidates_are_review_only(self):
+        samples = [
+            "演示已完成，但这不代表接入真实环境。",
+            "这并不意味着已经上线。",
+            "不等于已经完成客户联调。",
+            "不能据此认为服务可用。",
+            "以上仅供参考，具体以实际情况为准。",
+            "This does not mean the service is deployed.",
+            "This doesn't necessarily imply production readiness.",
+            "For informational purposes only.",
+            "相关性不代表因果关系。",
+            "本通知不代表放弃合同项下的权利。",
+        ]
+        for text in samples:
+            with self.subTest(text=text):
+                findings = self.scan(text)
+                candidates = [f for f in findings if f["category"] == "句尾免责"]
+                self.assertTrue(candidates)
+                self.assertTrue(all(f["level"] == deai_scan.LEVEL_REVIEW for f in findings))
+
+    def test_concrete_status_does_not_trigger_disclaimer_rule(self):
+        findings = self.scan(
+            "接口已通过测试环境验证，客户环境联调待完成。\n"
+            "部署配置已生成，下一步启动服务并检查健康状态。\n"
+            "本次测试覆盖 Windows 11，Linux 待验证。"
+        )
+        self.assertFalse(any(f["category"] == "句尾免责" for f in findings))
+
+    def test_disclaimer_rule_respects_code_masking_and_line_breaks(self):
+        findings = self.scan(
+            "```text\n不代表接入真实环境。\n```\n"
+            "This does not\nmean the service is deployed."
+        )
+        candidates = [f for f in findings if f["category"] == "句尾免责"]
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["line"], 4)
+
     def test_masks_html_code_and_attributes(self):
         findings = self.scan(
             '<div data-note="综上所述">正常正文</div>'
