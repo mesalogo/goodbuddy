@@ -188,6 +188,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
+        input: { index: resolve('src/preload/index.ts'), 'office-editor': resolve('src/preload/office-editor.ts') },
         output: {
           entryFileNames: '[name].cjs',
           format: 'cjs'

@@ -32,12 +32,21 @@ export const officeOpenSchema = z.object({ instanceId: z.string().uuid(), server
 export const officeInstanceSchema = z.object({ instanceId: z.string().uuid() }).strict()
 export const officeAskSchema = officeInstanceSchema.extend({ conversationId: z.string().uuid(), instruction: z.string().trim().min(1).max(4000) }).strict()
 export const officeApplySchema = officeInstanceSchema.extend({ text: z.string().min(1).max(32000) }).strict()
+export const officeContextSchema = officeInstanceSchema.extend({ conversationId: z.string().uuid().optional() }).strict()
+export const officeEditorRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('persisted'), revision: z.number().int().positive() }).strict(),
+  z.object({ action: z.literal('context') }).strict(),
+  z.object({ action: z.literal('ask'), instruction: z.string().trim().min(1).max(4000), allowFormulas: z.boolean().optional() }).strict(),
+  z.object({ action: z.literal('result'), requestId: z.string().min(1).max(200) }).strict(),
+  z.object({ action: z.literal('apply'), requestId: z.string().min(1).max(200), text: z.string().min(1).max(32000), allowFormulas: z.boolean().optional() }).strict()
+])
 export const officeViewportSchema = officeInstanceSchema.extend({
   visible: z.boolean(), x: z.number().finite(), y: z.number().finite(),
   width: z.number().finite().nonnegative(), height: z.number().finite().nonnegative()
 }).strict()
 export type OfficeSession = { instanceId: string; document: OfficeDocument; savedToSource: boolean; readOnlySource?: boolean }
 export interface OfficeApi {
+  context(input: z.infer<typeof officeContextSchema>): Promise<void>
   capabilities(input: { serverUrl: string }): Promise<OfficeCapabilities>
   open(input: z.infer<typeof officeOpenSchema>): Promise<OfficeSession | null>
   save(input: { instanceId: string; saveAs?: boolean }): Promise<OfficeSession | null>

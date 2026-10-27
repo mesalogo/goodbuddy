@@ -12,9 +12,10 @@
 
 ## 1. 技术选型
 
-当前接入基线使用用户指定的 `onlyoffice/documentserver:10.0`（Community），普通插件作为
-DOCX 实时选区接入路径。实际验证与限制见[实施进度](./progress.md)。Developer Edition 和
-Automation API 不作为当前已具备的能力；需要时单独评估。正式分发仍按实际嵌入方式确认许可。
+当前服务已切换到 `onlyoffice/documentserver-de:10.0`（Developer Edition），普通插件仍作为
+三格式右键 AI 接入路径。实际验证与限制见[实施进度](./progress.md)。Automation API 仍需单独评估。
+GoodBuddy Logo 与内网界面裁剪由服务端配置；加载页和“关于”隐藏需要扩展 White Label 权限，见
+[ShareServer 品牌与许可证](../../../../goodbuddy-shareserver/docs/office-branding.md)。
 
 本地阅读与在线编辑分层：先复用[文件打开规则](../file-opening/README.md)和本地预览候选，
 用户选择编辑时才上传工作副本。预览 Demo 没有 Desktop IPC 或编辑会话，不直接搬入产品作为
@@ -199,12 +200,27 @@ Worker 上传前重新读取能力，按格式与上限校验文件。此检查�
 未配置和失败保留来源供重试。当前客户端允许 DOCX、XLSX、PPTX、DOC、XLS、PPT，仍须通过服务端能力检查。
 旧格式由 ShareServer 转换后返回现代格式文件名、`originalName` 与 `requiresSaveAs=true`。
 Main 将该来源标为不可直接回写，首次保存弹出另存为；Worker 拒绝与输出格式不一致的目标扩展名。
-成功另存后后续保存更新新文件，旧的本地或远程来源不再作为写回目标。AI 选区工具当前仅显示于 Word。
+成功另存后后续保存更新新文件，旧的本地或远程来源不再作为写回目标。
+
+### 右键 AI 编辑（Word／Excel／PPT）
+
+插件声明 word/cell/slide 与 onContextMenuShow/onContextMenuClick 事件，读取 Word／PPT 文字选区或
+Excel 连续区域。文本以位置、段落 ID 和原文核对；表格以工作表、地址、尺寸及原值／公式核对，最多 400 格、32000 字。
+表格通过单次 callCommand 的 SetValue 写入整个矩阵，保持行列数与单元格格式，默认拒绝公式变更；用户可显式允许。
+
+插件右键事件通过同源 postMessage 到 ShareServer 编辑宿主页，宿主页渲染模态窗口，不占文档顶部空间。
+专用 `office-editor.cjs` 沙箱 preload 仅暴露 `goodbuddyOfficeAi.request`；没有通用 Desktop API 或密钥。
+Main 校验请求来自登记的编辑 WebContents 主 frame 和精确文档 URL，动作经 Zod 严格限定为 context/ask/result/apply。
+可信 GB 面板通过 `office:context` 更新当前对话；窗口打开后绑定对话，切换聊天不改变此次生成归属。
+生成复用既有 enqueueFollowup／Runtime 队列，结果按 queueItemId 查询，应用校验对应请求与选区；错误保留回复。
+此路径沿用当前对话的本地／远程 Runtime 调度，没有新建独立模型客户端；Excel 的内部结果为 JSON 矩阵，UI 展示可编辑单元格。
 
 嵌入编辑页去除重复顶部工具栏及内边距。编辑 WebContents 的原生键盘事件处理 Ctrl/Cmd+S 与
 Ctrl/Cmd+Shift+S，分别调用既有保存和另存为；GB 面板内的键盘事件使用相同 IPC。
 原生视图保存成功后向同源宿主页发送固定的短暂反馈事件，不给远程页面暴露通用 preload。
-ONLYOFFICE 内置保存由 forcesave 类型 1 回调持久化至服务器，不自动回写来源；关闭时回写规则保留。
+ONLYOFFICE 内置保存由 forcesave 类型 1 回调持久化至服务器。嵌入页复用已有版本轮询，通过专用 preload 的 `goodbuddyOfficeSave.persisted(revision)` 通知 Main。Main 校验编辑页身份、读取服务器权威元数据，并复用下载 Worker 和来源 commit 回写确定版本，不再发送第二次 forcesave。普通浏览器不执行桌面回写。
+
+会话以打开时 revision 为基准，仅处理后续版本；与手动保存共用 busy 状态，重复通知不重复写入。关闭确认期间不启动自动回写。失败或首次另存为取消时暂停自动回写，直到显式保存成功；成功后更新 revision 和源文件摘要。本地文件与远程 Workspace 来源共用此流程，远程落盘仍由既有来源 commit 与 Host 摘要检查负责。
 
 保存期间隐藏原生视图防止继续输入，等待编辑器 ready 且 dirty=false，再发 forcesave，等待
 服务端轮次退出 saving，并下载该 revision。无新修改不要求 revision 增长。源文件摘要变化

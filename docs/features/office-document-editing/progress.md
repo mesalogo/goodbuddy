@@ -1,5 +1,33 @@
 # Office 协同编辑实施进度
 
+## 2026-10-26：Developer Edition 品牌复测
+
+- ShareServer 主机已切换 Developer Edition 10.0.0-169，使用本地 GoodBuddy Logo 并隐藏聊天、反馈、帮助和内置 AI；GB 右键 AI 保留。
+- Developer 下三格式右键、弹窗、受控回复、源文件回写及单次撤销／重做通过。验证脚本明确等待 GB 插件就绪，避免将文档就绪等同于插件就绪。
+- 当前 Developer 试用支持标准品牌；扩展 White Label 未授权，加载文字／Logo、关于和试用标识没有被绕过隐藏。
+  部署及许可证唯一说明见[ShareServer 品牌配置](../../../../goodbuddy-shareserver/docs/office-branding.md)。客户端代码不依赖许可证内容。
+
+## 2026-10-26：三格式右键 AI 弹窗
+
+- 移除文档顶部 AI 表单，Word／PPT 文字选区右键“AI 润色…”，Excel 区域右键“AI 处理所选单元格…”。
+  编辑区域内弹窗提供要求、自动生成进度、可编辑结果及应用；Excel 以表格展示结果，公式默认保护，显式允许后才可变更。
+- 新增独立沙箱 Office preload，仅暴露受主 frame／文档 URL 校验的四种 AI 动作。生成复用当前对话队列和 Runtime，
+  窗口打开时绑定对话，结果按请求 ID 关联，切换会话或伪造 frame 不会改发到其他目标。
+- 真实 Linux Electron／Docs 10 完成三格式右键、弹窗生成、回复应用、回写、单次撤销／重做；Excel 验证公式保护、字体样式，
+  PPT 验证对象坐标与尺寸（允许 OOXML 往返不超过 2 EMU 的取整）。此三格式探针使用受控会话回复；Excel 另通过原有数字格式保留验证。
+- 完整构建的 GB 从 UI 创建当前对话，经过弹窗的专用 preload、生产 Main 队列和 Model Runtime，完成生成、应用与源文件回写。
+  使用隔离本地模型实际请求 1 次，外部供应商请求 0 次。`verify-office-chat.py` 验证完整队列，`verify-office-ai.py` 验证真实右键及三格式编辑。
+- GB 13 项定向测试、三套类型检查和生产构建通过；服务端全量 189 项测试、类型检查、lint 与生产构建通过。
+  未运行 GB 全量测试、真实供应商、三平台安装包验收；本轮不包含整页生成、图表或 PPT 对象属性 AI 操作。
+- 主机 ShareServer 前后端已更新，插件配置包含三格式和右键事件；需要新版 GB 的专用 Office preload，旧客户端仅展示升级提示。未发布客户端安装包。
+
+## 2026-10-26：AI 选区应用误拒绝修正
+
+- 服务端插件改为验证实际选区位置、段落身份和原文，不再把目标位置通知次数当作文档版本。
+- 真实 Electron 增加选区读取后展开 GB AI 面板并填写要求的操作，验证失焦／布局变化后仍可应用、撤销和保存。
+  DOCX 与旧 DOC 转换链路通过；实际目标变化仍被拒绝。没有模型请求，GB 产品代码无需为此修复更新。
+- 插件实现与回归证据见[服务端验证记录](../../../../goodbuddy-shareserver/docs/office-10-validation.md)。
+
 ## 2026-10-26：复用连接与嵌入编辑布局
 
 - 文档 Tab 移除地址表单，优先使用已有 Office 连接，未单独配置时复用设备共享连接。
@@ -123,3 +151,10 @@ DOCX 简单文本成功不能推导 XLSX／PPTX 编辑、Automation API 或 Elec
 本轮更新文档以对齐实际接口、前后端分离、普通插件接入方向及本地预览边界；未修改产品代码。
 后续顺序见[技术设计第 10 节](./technical-design.md#10-实施顺序)。Desktop 完整验收仍按 PRD，
 不将独立 Demo 或浏览器探针标记为产品已交付。
+# 2026-10-26 内置保存自动回写
+
+- Office 内置保存生成服务器版本后，嵌入页经专用 preload 通知 Main，复用版本下载、摘要检查及来源 commit 自动回写；不再二次请求 forcesave。
+- 重复版本、手动保存并发、关闭确认、冲突暂停和首次另存为取消均有定向回归。失败后可用保存／另存为快捷键恢复。
+- 真实 Linux Electron + 主机 IP 的 Community 10.0：点击可见的内置保存按钮后，本地 DOCX 自动回写；外部修改冲突被拒绝，另存为成功；DOC 转换后自动首次另存为，原 DOC 字节不变。使用 `scripts/verify-office-desktop.py --native-save --file-entry` 和 `--native-save --legacy` 复现。系统文件对话框由测试返回隔离路径。
+- 本轮未进行 Windows/macOS 验证，未发布安装包。
+- 验证：GB 16 项定向测试（包含当前源码的真实 Host 子进程协议回写与旧摘要拒绝）、三套类型检查及修改文件 lint 通过；ShareServer 193 项测试、类型检查及 lint 通过。远程 Host 协议验证与 Electron 本地文件验证分别执行，未将其描述为完整远程桌面 UI 验收。

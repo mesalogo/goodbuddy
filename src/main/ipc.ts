@@ -7421,6 +7421,12 @@ export function registerIpcHandlers(
     office.bindConversation(request.instanceId, request.conversationId, queueItemId)
     return { queueItemId, selectedText }
   })
+  registerHandler('office:editor-ai', async (event, input: unknown) => {
+    const office = getOfficeService?.()
+    if (!office) throw new Error('Office 服务未就绪')
+    return office.editorRequest(event, input, (conversationId, prompt) =>
+      enqueueFollowup(supervisionContinueRequestSchema.parse({ conversationId, prompt })))
+  })
   const supervisionKnowledgePreviews = new Map<string, ReturnType<typeof supervisionKnowledgePreviewRequestSchema.parse>>()
   const validateSupervisionKnowledgeTarget = async (request: ReturnType<typeof supervisionKnowledgePreviewRequestSchema.parse>): Promise<void> => {
     if (await knowledgeService.database.externalStore.hasBinding(request.libraryId)) {

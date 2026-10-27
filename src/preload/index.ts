@@ -822,6 +822,7 @@ const desktopApi: DesktopApi = {
     cancel: (taskId) => ipcRenderer.invoke(ipcChannels.localInferenceCancel, { taskId })
   },
   office: {
+    context: input => ipcRenderer.invoke(officeChannels.context, input),
     capabilities: input => ipcRenderer.invoke(officeChannels.capabilities, input),
     open: input => ipcRenderer.invoke(officeChannels.open, input),
     save: input => ipcRenderer.invoke(officeChannels.save, input),

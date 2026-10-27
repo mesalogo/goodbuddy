@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain } = require('electron')
 const { join } = require('node:path')
+const { randomUUID } = require('node:crypto')
 const root = process.env.GB_OFFICE_PROBE_ROOT
 const filename = process.env.GB_OFFICE_PROBE_FILENAME || 'source.docx'
 const { OfficeService, registerOfficeIpc } = require(join(root, 'service.cjs'))
@@ -15,12 +16,13 @@ app.whenReady().then(async () => {
   }))
   ipcMain.handle('office-probe:error', () => lastError)
   let service
+  const conversation = { id: '10000000-0000-4000-8000-000000000010', title: 'Office test conversation', updatedAt: Date.now(), messages: [] }
   let saveDialogs = 0
   ipcMain.handle('office-probe:diagnostics', () => ({ lastError, keys, saveDialogs, sessions: [...service.sessions.values()].map(s => ({ busy: s.busy, path: s.path })) }))
   const window = new BrowserWindow({ width: 1440, height: 1000, webPreferences: {
     preload: join(__dirname, 'office-desktop-preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false
   } })
-  ipcMain.handle('office-probe:save-key', async (_event, saveAs) => {
+  const editorKey = async (keyCode, shift = false) => {
     for (let attempt = 0; attempt < 100 && [...service.sessions.values()].some(s => s.busy); attempt++) await new Promise(resolve => setTimeout(resolve, 10))
     if ([...service.sessions.values()].some(s => s.busy)) throw new Error('Previous save has not settled')
     const editor = window.contentView.children.find(view => view.webContents?.getURL().includes('/office/editor?'))
@@ -28,15 +30,22 @@ app.whenReady().then(async () => {
     window.focus(); editor.webContents.focus()
     for (let attempt = 0; attempt < 100 && !editor.webContents.isFocused(); attempt++) await new Promise(resolve => setTimeout(resolve, 10))
     if (!editor.webContents.isFocused()) throw new Error('Editor did not acquire focus')
-    const modifiers = ['control', ...(saveAs ? ['shift'] : [])]
-    editor.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S', modifiers })
-    editor.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S', modifiers })
-  })
+    const modifiers = ['control', ...(shift ? ['shift'] : [])]
+    editor.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+    editor.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+  }
+  ipcMain.handle('office-probe:save-key', (_event, saveAs) => editorKey('S', saveAs))
+  ipcMain.handle('office-probe:editor-key', (_event, key) => editorKey(key))
   dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [join(root, filename)] })
-  dialog.showSaveDialog = async () => { saveDialogs++; return { canceled: false, filePath: join(root, 'export.docx') } }
+  dialog.showSaveDialog = async () => { saveDialogs++; return { canceled: false, filePath: join(root, 'export.' + filename.split('.').pop().replace(/^doc$/, 'docx')) } }
   dialog.showMessageBox = async (_window, options) => { if (options.type === 'error') lastError = options.detail; return { response: options.type === 'error' ? 0 : 1 } }
-  service = new OfficeService(window, join(root, 'office-file-worker.js'), async () => ({ path: join(root, filename) }))
+  service = new OfficeService(window, join(root, 'office-file-worker.js'), async () => ({ path: join(root, filename) }), async () => conversation, join(root, 'office-editor.cjs'))
   registerOfficeIpc(window, service)
+  ipcMain.handle('office:editor-ai', (event, input) => service.editorRequest(event, input, async (_id, prompt) => {
+    const queueItemId = randomUUID()
+    conversation.messages.push({ role: 'user', queueItemId, content: prompt }, { role: 'assistant', state: 'complete', content: process.env.GB_OFFICE_PROBE_REPLY || 'GB_AI_REPLACEMENT' })
+    return queueItemId
+  }))
   await window.loadFile(join(root, 'index.html'))
 })
 app.on('window-all-closed', () => app.quit())
