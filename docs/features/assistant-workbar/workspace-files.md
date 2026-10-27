@@ -40,6 +40,18 @@ US-WF3：升级前会话图片在聊天和重新打开应用后仍可读取；�
 
 ## 存储与实现
 
+### 文件类型图标（FR-WF5）
+
+文件树、Git 变更列表／目录树和提交历史的文件列表共用 Material Icon Theme 图标。
+按完整文件名、最长扩展名后缀、通用文件的顺序匹配；目录按名称匹配并区分展开与收起。
+未知类型保留通用图标，Git 状态字母独立显示。图标固定为 16px，浅色主题使用上游提供的
+浅色变体；类型图标保留原配色，操作按钮沿用现有 Lucide 图标和主题令牌。
+
+`WorkspaceFileIcon` 与 `workspace-file-icons.ts` 是唯一渲染和匹配入口，直接读取锁定版本
+`material-icon-theme` 的映射，不另行维护扩展名表。SVG 经 Vite 作为本地资源打包，按需加载，
+不使用远程图标服务、不读取文件内容或增加 IPC。MIT 许可证随安装包进入 `licenses/`。
+图标只帮助识别文件，不表示相应预览器已经支持该格式，也不改变默认打开规则。
+
 ### Image Preview (FR-WF4)
 
 The file list and chat links to files inside the current project open the same right-hand

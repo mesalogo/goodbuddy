@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ChevronLeft, ChevronRight, Download, FileText, GitBranch } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Download, GitBranch } from 'lucide-react'
+import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import type { WorkspaceManagementAction, WorkspaceManagementResult } from '../../shared/workspace-management-contracts'
 import { FloatingPortal } from './FloatingPortal'
 
@@ -177,7 +178,7 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
       <div hidden={Boolean(path)}>
         <button ref={commitBack} className="assistant-sidebar__back" type="button" onClick={() => { request.current++; setBusy(false); setCommit(undefined); setError(''); requestAnimationFrame(() => returnTrigger.current?.focus({ preventScroll: true })) }}><ChevronLeft size={14} aria-hidden="true" />{t('management.backHistory')}</button>
         <p>{commit.slice(0, 8)}</p>
-        {files?.files.map((file) => <button className="workspace-files__changed-row" type="button" key={file.path} onClick={(event) => { fileTrigger.current = event.currentTarget; void loadCommit(commit, file.path) }}><FileText size={14} aria-hidden="true" /><span title={file.path}>{file.path}</span><small>{file.status}</small></button>)}
+        {files?.files.map((file) => <button className="workspace-files__changed-row" type="button" key={file.path} onClick={(event) => { fileTrigger.current = event.currentTarget; void loadCommit(commit, file.path) }}><WorkspaceFileIcon path={file.path} /><span title={file.path}>{file.path}</span><small>{file.status}</small></button>)}
       </div>
       {path && <div><button ref={diffBack} className="assistant-sidebar__back" type="button" onClick={() => { request.current++; setBusy(false); setPath(undefined); setError(''); requestAnimationFrame(() => fileTrigger.current?.focus({ preventScroll: true })) }}><ChevronLeft size={14} aria-hidden="true" />{t('management.backCommit')}</button><strong>{path}</strong>
         <pre className="assistant-sidebar__diff workspace-files__diff">{patch?.patch.split('\n').map((line, index) => <span key={index} data-line={line.startsWith('+') ? 'added' : line.startsWith('-') ? 'deleted' : undefined}>{line}{'\n'}</span>)}</pre>

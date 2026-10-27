@@ -87,6 +87,16 @@ app.whenReady().then(async () => {
         await wait(`document.querySelectorAll('.workspace-files__row').length>0 && !!${viewport}`)
         await settle()
         assert(await js(`document.querySelectorAll('.workspace-files__row').length<121`), 'Long files tree must be windowed')
+        await wait(`Array.from(document.querySelectorAll('.workspace-files__row .workspace-file-icon img')).every(img => img.complete && img.naturalWidth > 0)`)
+        assert(await js(`Array.from(document.querySelectorAll('.workspace-files__row')).every(row => {
+          const icons = Array.from(row.querySelectorAll('.workspace-file-icon img')).filter(img => getComputedStyle(img).display !== 'none');
+          return icons.length === 1 && icons[0].getBoundingClientRect().width === 16 && icons[0].getBoundingClientRect().height === 16;
+        })`), 'Each file row needs one loaded 16px icon in either theme')
+        assert(await js(`(() => {
+          const row = document.querySelector('.workspace-files__row[title$=".toml"]');
+          const icon = Array.from(row.querySelectorAll('img')).find(img => getComputedStyle(img).display !== 'none');
+          return icon.src.includes(${JSON.stringify(theme === 'light' ? '/toml_light.svg' : '/toml.svg')});
+        })()`), 'File icons must follow the selected application theme')
         await js('document.fonts.ready')
         await settle()
         assert.equal(await js('document.querySelectorAll(".workspace-files__view-switch button").length'), git ? 2 : 1)

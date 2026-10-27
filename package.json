@@ -94,6 +94,10 @@
     ],
     "extraResources": [
       {
+        "from": "node_modules/material-icon-theme/LICENSE",
+        "to": "licenses/material-icon-theme-MIT.txt"
+      },
+      {
         "from": ".runtime-resources/dsh-${arch}/node_modules",
         "to": "runtimes/dsh/node_modules",
         "filter": [
@@ -423,6 +427,7 @@
     "jsdom": "^30.0.1",
     "katex": "^0.16.47",
     "lucide-react": "^1.27.0",
+    "material-icon-theme": "5.40.0",
     "mermaid": "^11.16.1",
     "opencode-ai": "1.19.3",
     "png-to-ico": "^3.0.2",

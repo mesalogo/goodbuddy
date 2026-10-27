@@ -11,6 +11,22 @@
 验证：MarkdownRenderer 与 workspace-link 共 54 项测试通过，覆盖用户报告的完整路径、
 相对路径、图片后缀回退、项目外链接和 JavaScript 协议过滤。完整类型检查与 lint 通过。
 
+## 2026-10-27：工作区文件类型图标
+
+文件树、Git 变更列表／树和提交历史文件列表已接入 Material Icon Theme 5.40.0；
+匹配规则与资源归属见[文件类型图标](./workspace-files.md#文件类型图标fr-wf5)。
+复用上游文件名、复合后缀、目录与浅色变体映射，SVG 离线打包，许可证加入安装包资源。
+本次仅改变 Renderer 展示及桌面资源，不改变本机／远程文件读写和 Agent 协议。
+
+验证：图标映射与资源检查 3 项、WorkspaceFilesPanel 组件与窗口化测试 46 项通过。
+`tests/workspace-files-layout.electron.test.ts` 的 16 组场景通过，覆盖 Git／非 Git、浅深主题、
+300／320／420／560px 工作区宽度、实际 SVG 加载、16px 尺寸和 TOML 浅色变体，
+并保留原有滚动、预览返回、Git 切页及新建入口检查。`npm.cmd run build`（含完整类型检查）、
+`npm.cmd run lint` 与 `git diff --check` 通过。全量 `npm.cmd test` 已结束：6875 项通过、
+90 项跳过、2 项失败。`tests/message-expansion.electron.test.ts` 未找到监督者详情中的
+`.link-button`；`tests/workspace-import.electron.test.ts` 等待已有会话图片的 `naturalWidth`
+变为 1 超时。不能标为整库通过，未在本次图标适配中处理这两项失败。后台测试日志已清理。
+
 ## 2026-10-24：页签与配置选择语义复核
 
 检查 Renderer 的共享分段控件与自定义选中控件后，将模型类型、Agent Runtime 配置分类及

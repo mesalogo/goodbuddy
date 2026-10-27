@@ -13,7 +13,6 @@ import {
   Info,
   Trash2,
   FileText,
-  Folder,
   FolderOpen,
   Upload
 } from 'lucide-react'
@@ -34,6 +33,7 @@ import { WorkspaceActionDialog } from './WorkspaceActionDialog'
 import { WorkspaceGitTools } from './WorkspaceGitTools'
 import { officeStore } from './office-store'
 import { isOfficeFile } from '../../shared/office-contracts'
+import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import { useListWindow } from './use-list-window'
 import type { AppNotificationInput } from './notifications'
 import type {
@@ -76,7 +76,15 @@ function changedTree(entries: { path: string; row: React.JSX.Element }[], prefix
     const directory = rest.split('/')[0]!
     groups.set(directory, [...(groups.get(directory) ?? []), entry])
   }
-  return <>{[...groups].map(([name, children]) => <details key={name} open><summary>{name}</summary><div className="workspace-files__children">{changedTree(children, `${prefix}${name}/`)}</div></details>)}{files.map((entry) => entry.row)}</>
+  return <>{[...groups].map(([name, children]) => <ChangedDirectory key={name} name={name}>{changedTree(children, `${prefix}${name}/`)}</ChangedDirectory>)}{files.map((entry) => entry.row)}</>
+}
+
+function ChangedDirectory({ name, children }: { name: string; children: React.ReactNode }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(true)
+  return <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+    <summary><WorkspaceFileIcon path={name} directory expanded={expanded} />{name}</summary>
+    <div className="workspace-files__children">{children}</div>
+  </details>
 }
 
 export type FileTreeRow =
@@ -478,7 +486,7 @@ export function WorkspaceFilesPanel({
             ) : (
               <ChevronRight size={13} />
             )}
-            {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
+            <WorkspaceFileIcon path={entry.path} directory expanded={expanded} />
             <span title={entry.path}>{entry.name}</span>
           </button>
           {renderModifiedTime(entry)}
@@ -501,7 +509,7 @@ export function WorkspaceFilesPanel({
           type="button"
         >
           <span className="workspace-files__indent" />
-          <FileText size={15} />
+          <WorkspaceFileIcon path={entry.path} />
           <span>{entry.name}</span>
           {changed && (
             <small className="workspace-files__change" data-status={gitStatusLetter(changed.status)} title={changed.status}>
@@ -639,7 +647,7 @@ export function WorkspaceFilesPanel({
                 title={`${file.previousPath ? `${file.previousPath} -> ` : ''}${file.path} (${file.status})`}
                 type="button"
               >
-                <FileText size={14} />
+                <WorkspaceFileIcon path={file.path} />
                 <span>{changeView === 'tree' ? file.path.split('/').at(-1) : file.path}</span>
                 <small data-status={gitStatusLetter(file.status)} data-conflict={['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'].includes(file.status)} aria-label={file.status}>
                   {gitStatusLetter(file.status)}
