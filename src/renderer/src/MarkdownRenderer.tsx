@@ -22,6 +22,7 @@ import {
   storeMarkdown
 } from './markdown-render-cache'
 import { StaticHtmlPreview } from './StaticHtmlPreview'
+import { markdownUrlTransform } from './markdown-url-transform'
 
 const MermaidDiagram = lazy(() =>
   import('./MermaidDiagram').then((module) => ({
@@ -512,6 +513,7 @@ function MarkdownDocument({
     return (
       <ReactMarkdown
         components={components}
+        urlTransform={markdownUrlTransform}
         rehypePlugins={referenceRehypePlugins}
         remarkPlugins={referenceRemarkPlugins}
         skipHtml

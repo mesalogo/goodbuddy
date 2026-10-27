@@ -54,6 +54,12 @@ such as `:12:3` and `#L12` are removed before reading. POSIX roots are case-sens
 Windows drive paths are compared case-insensitively. HTTP(S), protocol-relative URLs and
 paths outside the project are not handled as workspace files.
 
+Markdown URL filtering preserves Windows drive paths such as `D:/project/readme.md:43`
+and bare relative links such as `README.md:43:2` by expressing them as paths before
+applying the standard URL filter. Cached and uncached rendering share this rule.
+The current preview opens the file with location suffixes removed; it does not yet
+scroll to the requested line. This fallback applies to images and other file types too.
+
 `WorkspaceChangesService.readFile` uses the existing `WorkspaceAccess.readText` operation
 with optional Base64 encoding, reading at most 256 KiB per request. The preview response
 contains an inline image data URL; no artifact record, file copy or new IPC endpoint is created.

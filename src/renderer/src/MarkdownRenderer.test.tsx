@@ -16,6 +16,7 @@ import {
 } from 'vitest'
 import { changeUiLocale } from './i18n'
 import { clearMermaidResultCacheForTest } from './MermaidDiagram'
+import { resolveWorkspaceLink } from './workspace-link'
 import {
   InlineMarkdown,
   MarkdownRenderer,
@@ -153,6 +154,36 @@ const ready = true
     const link = screen.getByRole('link', { name: 'Review' })
     fireEvent.click(link)
     expect(onOpenLink).toHaveBeenCalledWith('docs/review.md')
+  })
+
+  it.each([MarkdownRenderer, UnsegmentedMarkdownRenderer])('opens Windows and bare file links with location suffixes through the workspace handler (%#)', (Renderer) => {
+    const opened = vi.fn()
+    const onOpenLink = (href: string): boolean => {
+      const path = resolveWorkspaceLink(href, 'D:\\my_git\\goodbuddy')
+      if (!path) return false
+      opened(path)
+      return true
+    }
+    render(<Renderer onOpenLink={onOpenLink}>{[
+      '[规范](D:/my_git/goodbuddy/docs/features/assistant-workbar/workspace-files.md:43)',
+      '[相对路径](README.md:43:2)',
+      '[图片](images/example.png#L43)',
+      '[项目外](D:/elsewhere/report.md:43)',
+      '[不安全](javascript:alert(1))',
+      '[不安全数字](javascript:123)'
+    ].join('\n\n')}</Renderer>)
+    for (const [name, path] of [
+      ['规范', 'docs/features/assistant-workbar/workspace-files.md'],
+      ['相对路径', 'README.md'],
+      ['图片', 'images/example.png']
+    ]) {
+      expect(fireEvent.click(screen.getByRole('link', { name }))).toBe(false)
+      expect(opened).toHaveBeenLastCalledWith(path)
+    }
+    fireEvent.click(screen.getByRole('link', { name: '项目外' }))
+    expect(opened).toHaveBeenCalledTimes(3)
+    expect(screen.getByText('不安全').closest('a')).toHaveAttribute('href', '')
+    expect(screen.getByText('不安全数字').closest('a')).toHaveAttribute('href', '')
   })
 
   it('renders fenced HTML with scripts and network resources when enabled', () => {

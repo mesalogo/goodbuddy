@@ -2,7 +2,7 @@ import type { Nodes, Root } from 'hast'
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime'
 import { urlAttributes } from 'html-url-attributes'
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
-import { defaultUrlTransform } from 'react-markdown'
+import { markdownUrlTransform } from './markdown-url-transform'
 import type { Components } from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
@@ -23,8 +23,8 @@ import { VFile } from 'vfile'
  * callbacks, state, locale-dependent labels and the HTML preview mode are
  * never captured by a cache entry.
  *
- * The output matches `react-markdown` 10 (`Markdown`): same processor, same
- * post-processing (raw HTML handling, URL sanitizing) and the same
+ * The output matches our configured `react-markdown` 10 (`Markdown`): same processor,
+ * post-processing (raw HTML handling, shared URL transform) and the same
  * `toJsxRuntime` options. Cached trees are immutable after `parse`;
  * `toJsxRuntime` only reads them.
  */
@@ -83,8 +83,8 @@ function postProcess(tree: Root, pipeline: MarkdownPipeline): number {
         ) {
           const test = urlAttributes[key]
           if (test === null || test?.includes(node.tagName)) {
-            node.properties[key] = defaultUrlTransform(
-              String(node.properties[key] || '')
+            node.properties[key] = markdownUrlTransform(
+              String(node.properties[key] || ''), key, node
             )
           }
         }

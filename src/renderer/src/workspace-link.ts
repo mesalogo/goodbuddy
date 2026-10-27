@@ -1,8 +1,9 @@
 export function resolveWorkspaceLink(href: string, rootPath?: string): string | undefined {
   let decoded: string
   try { decoded = decodeURIComponent(href).replaceAll('\\', '/') } catch { return undefined }
-  if (!decoded || decoded.startsWith('#') || decoded.startsWith('//') || (/^[a-z][a-z\d+.-]*:/iu.test(decoded) && !/^[A-Za-z]:\//u.test(decoded))) return undefined
+  if (!decoded || decoded.startsWith('#') || decoded.startsWith('//')) return undefined
   decoded = decoded.replace(/(?::\d+(?::\d+)?|#L\d+(?:C\d+)?(?:-L\d+)?)$/u, '')
+  if (/^[a-z][a-z\d+.-]*:/iu.test(decoded) && !/^[A-Za-z]:\//u.test(decoded)) return undefined
   const normalize = (value: string): string | undefined => {
     const segments = value.split('/').filter(segment => segment && segment !== '.')
     return segments.includes('..') ? undefined : segments.join('/')

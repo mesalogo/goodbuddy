@@ -3,6 +3,9 @@ import { resolveWorkspaceLink } from './workspace-link'
 
 describe('workspace links', () => {
   it.each([
+    ['README.md:43', 'D:\\work', 'README.md'],
+    ['./README.md:43:2', 'D:\\work', 'README.md'],
+    ['D:/my_git/goodbuddy/docs/features/assistant-workbar/workspace-files.md:43', 'D:\\my_git\\goodbuddy', 'docs/features/assistant-workbar/workspace-files.md'],
     ['images/a%20b.png:12:3', '/work', 'images/a b.png'],
     ['/work/image.png#L12', '/work', 'image.png'],
     ['/D:/WORK/image.png', 'D:\\work', 'image.png'],
