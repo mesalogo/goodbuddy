@@ -14,6 +14,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--web', default='http://127.0.0.1:18088')
 parser.add_argument('--file-entry', action='store_true', help='Open a file reference through the production store after configuring the connection')
 parser.add_argument('--legacy', action='store_true', help='Convert a real DOC and verify saving preserves the original')
+parser.add_argument('--native-save', action='store_true', help='Use ONLYOFFICE toolbar Save and verify automatic source writeback')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[1]
 (repo / 'temp').mkdir(exist_ok=True)
@@ -25,6 +26,7 @@ esbuild = str(repo / 'node_modules/.bin/esbuild')
 for source, output, platform in [
     ('src/main/office-service.ts', 'service.cjs', 'node'),
     ('src/main/office-file-worker.ts', 'office-file-worker.js', 'node'),
+    ('src/preload/office-editor.ts', 'office-editor.cjs', 'node'),
     ('tests/support/office-desktop-panel.tsx', 'panel.js', 'browser'),
 ]:
     subprocess.run([esbuild, source, '--bundle', '--platform=' + platform,
@@ -73,6 +75,7 @@ with (root / 'electron.log').open('w') as log:
                 panel.wait_for_timeout(500)
             else: raise RuntimeError('Editor not ready: ' + panel.inner_text('body'))
             print('PASS: OfficePanel -> IPC -> upload worker -> real sandboxed editor', flush=True)
+            print('Editor URL:', editor.url, flush=True)
             assert panel.get_by_role('button', name='保存回文件', exact=True).count() == 0
             assert panel.get_by_role('button', name='另存为', exact=True).count() == 0
             assert editor.get_by_role('button', name='保存到服务器', exact=True).count() == 0
@@ -97,6 +100,8 @@ with (root / 'electron.log').open('w') as log:
                     selection_error = str(error)
                     editor.wait_for_timeout(500)
             assert selection and 'GB_DESKTOP_WRITEBACK_10' in selection['text'], (selection, selection_error, [frame.url for frame in editor.frames])
+            # Real workflow: expanding the GB panel resizes/defocuses the native editor.
+            panel.get_by_role('button', name='编辑文件引用', exact=True).focus()
             editor.evaluate('args => window.goodbuddyOffice.replace(args.selection, args.text)', {
                 'selection': selection, 'text': 'GB_DESKTOP_WRITEBACK_10 插件修改'})
             editor.keyboard.press('Control+a')
@@ -113,18 +118,31 @@ with (root / 'electron.log').open('w') as log:
                 raise AssertionError('Stale selection was accepted')
             except Exception as error:
                 assert 'Stale selection was accepted' not in str(error)
-            print('PASS: production plugin selection, replace, undo and stale-target rejection', flush=True)
-            panel.evaluate('window.goodbuddy.probeSaveKey(false)')
-            editor.get_by_role('status').filter(has_text='已保存到文件').wait_for(timeout=65000)
+            print('PASS: production plugin survives GB panel focus/resize; replace, undo and stale-target rejection', flush=True)
+            if args.native_save:
+                frame.locator('button[aria-label^="保存"]:visible').first.click()
+            else:
+                panel.evaluate('window.goodbuddy.probeSaveKey(false)')
+            try:
+                editor.get_by_role('status').filter(has_text='已保存到文件').wait_for(timeout=65000)
+            except Exception:
+                print('Save diagnostics:', panel.evaluate('window.goodbuddy.probeDiagnostics()'), editor.inner_text('body'), flush=True)
+                raise
             assert 'GB_DESKTOP_WRITEBACK_10' in text(root / ('export.docx' if args.legacy else 'source.docx'))
-            print('PASS: actual edit -> force save -> verified revision -> source writeback', flush=True)
+            print('PASS: actual edit -> ' + ('native Save -> automatic' if args.native_save else 'keyboard Save ->') + ' verified revision -> source writeback', flush=True)
             if args.legacy:
                 assert (root / 'source.doc').read_bytes() == original_legacy
                 print('PASS: legacy DOC original unchanged; edited conversion saved as DOCX', flush=True)
             else:
                 # An external writer must survive a subsequent save attempt.
                 (root / 'source.docx').write_bytes(docx('external edit'))
-                panel.evaluate('window.goodbuddy.probeSaveKey(false)')
+                if args.native_save:
+                    editor.mouse.click(650, 560)
+                    editor.keyboard.press('Control+End')
+                    editor.keyboard.type(' SECOND_NATIVE_SAVE', delay=40)
+                    frame.locator('button[aria-label^="保存"]:visible').first.click()
+                else:
+                    panel.evaluate('window.goodbuddy.probeSaveKey(false)')
                 panel.wait_for_function('async () => (await window.goodbuddy.probeError()).includes("源文件已被其他程序修改")', timeout=65000)
                 assert 'external edit' in text(root / 'source.docx')
                 print('PASS: conflict keeps external source and editing view', flush=True)

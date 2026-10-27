@@ -111,10 +111,9 @@ with (root / 'electron.log').open('w') as log:
             app.reload()
             app.wait_for_function('Boolean(window.goodbuddy?.office)')
             app.wait_for_timeout(1000)
-            # Create the conversation via the production API; user operations below use the real UI.
-            conversation = {'id': str(uuid.uuid4()), 'title': 'Office integration', 'updatedAt': int(time.time() * 1000)}
-            app.evaluate('(header) => window.goodbuddy.conversations.saveLocal([{header, messages:[]}])', conversation)
-            print('conversation created', flush=True)
+            # Create and select through the real UI so Office inherits the active conversation.
+            app.get_by_role('button', name='新建对话', exact=True).first.click()
+            print('conversation created through UI', flush=True)
             toggle = app.locator('.assistant-sidebar-toggle')
             if toggle.get_attribute('aria-expanded') != 'true': toggle.click()
             app.get_by_role('button', name='打开工作栏应用', exact=True).click()
@@ -133,20 +132,20 @@ with (root / 'electron.log').open('w') as log:
                 frame.get_by_role('button', name='取消', exact=True).click()
             editor.mouse.click(editor.evaluate('window.innerWidth / 2'), 400)
             editor.keyboard.press('Control+a')
-            # Call the same narrow IPC as the panel, then inspect the actual queue/model/result.
+            # The three-format probe covers the actual right-click menu. This probe
+            # exercises its dialog with the full application's selected Runtime/queue.
             instance_id = app.evaluate('JSON.parse(localStorage.getItem("goodbuddy.workbar-layout.v1")).instances.filter(x=>x.appId==="document").at(-1).id')
-            result = app.evaluate('(args) => window.goodbuddy.office.ask(args)', {
-                'instanceId': instance_id, 'conversationId': conversation['id'], 'instruction': '润色选区'})
-            for _ in range(120):
-                outcome = app.evaluate('(instanceId) => window.goodbuddy.office.result({instanceId})', instance_id)
-                if outcome['state'] != 'pending': break
-                time.sleep(.5)
-            assert outcome['state'] == 'complete', outcome
-            assert reply in outcome['text'], outcome
+            editor.evaluate('async () => window.dispatchEvent(new CustomEvent("gb-office-ai-open", {detail:{selection:await window.goodbuddyOffice.selection()}}))')
+            modal = editor.get_by_role('dialog')
+            modal.get_by_label('修改要求', exact=True).fill('润色选区')
+            modal.get_by_role('button', name='开始润色', exact=True).click()
+            result = modal.get_by_label('修改结果', exact=True)
+            result.wait_for(timeout=65000)
+            assert reply in result.input_value()
             assert any('Office unsaved selection' in json.dumps(request, ensure_ascii=False) for request in requests)
-            app.evaluate('(args) => window.goodbuddy.office.apply(args)', {'instanceId': instance_id, 'text': outcome['text']})
-            app.get_by_text('AI 编辑选区', exact=True).press('Control+s')
-            app.get_by_role('status').filter(has_text='已保存到文件').wait_for(timeout=65000)
+            modal.get_by_role('button', name='应用到原选区', exact=True).click()
+            modal.wait_for(state='hidden')
+            app.evaluate('(instanceId) => window.goodbuddy.office.save({instanceId})', instance_id)
             with zipfile.ZipFile(root / 'source.docx') as document:
                 assert reply in document.read('word/document.xml').decode()
             print('PASS: full GB queue -> configured local Model Runtime -> original selection -> source file; model requests:', len(requests), flush=True)
