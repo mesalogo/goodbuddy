@@ -4498,6 +4498,58 @@ describe('AssistantDatabase', () => {
       }
     })
 
+    it('commits no-op projections and context metrics without rewriting the message', () => {
+      const database = openRecoverableTask()
+      try {
+        database.appendRemoteConversationTaskEventsBatch({ ...owner, events: page.slice(0, 7) })
+        const raw = (database as unknown as { requireDatabase(): DatabaseSync }).requireDatabase()
+        const before = comparable(database).message
+        const prepare = vi.spyOn(raw, 'prepare')
+        const events = [
+          entry('3', 0, { requestId: taskId, type: 'status', message: 'working' }),
+          entry('3', 1, { requestId: taskId, type: 'context-metrics', contextTokens: 99,
+            effectiveTriggerTokens: 1000, compressionEnabled: false, source: 'provider' }),
+          entry('3', 2, { requestId: taskId, type: 'remote-semantic-checkpoint' })
+        ]
+        expect(database.appendRemoteConversationTaskEventsBatch({ ...owner, events })).toEqual([true, true, true])
+        expect(prepare.mock.calls.filter(([sql]) => sql.trim().startsWith('UPDATE messages'))).toHaveLength(0)
+        prepare.mockRestore()
+        expect(comparable(database)).toMatchObject({ message: before, cursor: '3',
+          contextMetrics: expect.objectContaining({ contextTokens: 99 }) })
+        expect(taskEvents(database).slice(-3).map(({ kind }) => kind))
+          .toEqual(['status', 'context-metrics', 'remote-semantic-checkpoint'])
+        expect(database.appendRemoteConversationTaskEventsBatch({ ...owner, events })).toEqual([false, false, false])
+
+        // A failure after the skipped message write must still roll back events
+        // and the checkpoint, so the caller cannot ACK an uncommitted sequence.
+        const committed = comparable(database)
+        raw.exec(`CREATE TEMP TRIGGER fail_remote_context BEFORE UPDATE ON conversations
+          BEGIN SELECT RAISE(ABORT, 'injected write failure'); END`)
+        expect(() => database.appendRemoteConversationTaskEventsBatch({ ...owner,
+          events: events.map(item => ({ ...item, semanticSequence: '4' }))
+        })).toThrow('injected write failure')
+        expect(comparable(database)).toEqual(committed)
+      } finally { database.close() }
+    })
+
+    it('still normalizes stored metadata when the reduced message appears unchanged', () => {
+      const database = openRecoverableTask()
+      try {
+        database.appendRemoteConversationTaskEventsBatch({ ...owner, events: page.slice(0, 7) })
+        const raw = (database as unknown as { requireDatabase(): DatabaseSync }).requireDatabase()
+        raw.prepare("UPDATE messages SET metadata_json = json_set(metadata_json, '$.obsolete', 1) WHERE id = ?")
+          .run(assistantMessageId)
+        const prepare = vi.spyOn(raw, 'prepare')
+        database.appendRemoteConversationTaskEventsBatch({ ...owner, events: [
+          entry('3', 0, { requestId: taskId, type: 'status', message: 'working' })
+        ] })
+        expect(prepare.mock.calls.filter(([sql]) => sql.trim().startsWith('UPDATE messages'))).toHaveLength(1)
+        prepare.mockRestore()
+        expect(raw.prepare("SELECT json_extract(metadata_json, '$.obsolete') AS obsolete FROM messages WHERE id = ?")
+          .get(assistantMessageId)).toMatchObject({ obsolete: null })
+      } finally { database.close() }
+    })
+
     it('deduplicates replayed events within and across batches and keeps their order', () => {
       const database = openRecoverableTask()
       try {

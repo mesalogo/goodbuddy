@@ -2490,11 +2490,13 @@ export class AcpRemoteRuntime implements AgentRuntime {
     bindingId: string,
     operationId: string,
     semanticSequence: string,
-    eventIndex = 0
+    eventIndex = 0,
+    deferCommit = false
   ): RemoteSemanticCheckpointEvent {
     return {
       requestId,
       type: 'remote-semantic-checkpoint',
+      ...(deferCommit ? { deferCommit: true } : {}),
       remoteProvenance: {
         source: 'remote-semantic-transcript',
         bindingId,
@@ -2723,6 +2725,9 @@ export class AcpRemoteRuntime implements AgentRuntime {
           transcriptPollDelayMs = 100
         }
         let pageAcknowledgedThrough: string | undefined
+        // Entries at or behind the cursor are skipped, including replayed tails.
+        const pageFinalSequence = page.events.reduce((latest, event) =>
+          BigInt(event.sequence) > BigInt(latest) ? event.sequence : latest, afterSequence)
         for (const rawEvent of page.events) {
           const transcriptEvent =
             remoteSemanticTranscriptEventSchema.parse(rawEvent)
@@ -2803,7 +2808,9 @@ export class AcpRemoteRuntime implements AgentRuntime {
             binding.bindingId,
             operationId,
             transcriptEvent.sequence,
-            publicEvents.length
+            publicEvents.length,
+            transcriptEvent.kind !== 'prompt-terminal' &&
+              transcriptEvent.sequence !== pageFinalSequence
           )
 
           afterSequence = transcriptEvent.sequence

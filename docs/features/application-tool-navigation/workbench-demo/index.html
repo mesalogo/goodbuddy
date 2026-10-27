@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GoodBuddy · 工作台</title>
+  <link rel="stylesheet" href="../../../../src/renderer/src/styles-foundations.css">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="../real-data-demo/snapshot.js"></script>
+  <script defer src="content.js"></script><script defer src="app.js"></script>
+</head>
+<body>
+  <header class="windowbar"><a class="wordmark" href="index.html"><span class="brand">G</span> GoodBuddy</a><span class="preview-label">工作台预览</span><div class="window-actions"><button data-action="info" class="quiet">关于此预览</button><button data-action="theme" class="icon" aria-label="切换亮暗主题" title="切换亮暗主题" id="theme-button"></button></div></header>
+  <div class="shell"><nav id="rail" aria-label="应用导航"></nav><div class="frame">
+    <aside id="objects" aria-label="对象列表"></aside><button id="drawer-shade" aria-label="收起对象列表" data-action="objects" hidden></button>
+    <div class="stage"><header class="stage-header"><button class="icon" id="objects-toggle" data-action="objects" aria-label="展开或收起对象列表" aria-controls="objects"></button><div id="heading"></div><button class="icon work-toggle" id="work-toggle" data-action="work" aria-label="展开或收起工作区" aria-controls="work"></button></header>
+      <div class="panes"><main id="main" tabindex="-1"></main><div id="resize" role="separator" tabindex="0" aria-label="调整主内容宽度" aria-orientation="vertical" aria-valuemin="35" aria-valuemax="70" aria-valuenow="51"></div><aside id="work" aria-label="工作区"></aside></div>
+    </div>
+  </div></div>
+  <dialog id="dialog" aria-labelledby="dialog-title"><header class="dialog-header"><h2 id="dialog-title"></h2><form method="dialog"><button class="icon" aria-label="关闭弹窗">×</button></form></header><div id="dialog-body"></div></dialog>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

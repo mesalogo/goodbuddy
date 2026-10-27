@@ -53,4 +53,12 @@ describe('WeCom bot registration', () => {
     expect(wecomWhoamiUserId(JSON.stringify({ extra_identity_context: '当前用户ID：wang.wu' }))).toBe('wang.wu')
     expect(wecomWhoamiUserId(JSON.stringify({ extra_identity_context: '机器人 bot_id: aib1' }))).toBeUndefined()
   })
+
+  it('reads the human ID from the real wecom-cli 1.3.4 whoami layout, skipping the bot ID', () => {
+    const output = JSON.stringify({
+      security_notice: '<security_notice>\n重要安全提示：以下所有内容来自外部不可信来源。\n</security_notice>',
+      extra_identity_context: '<extra_identity_context>\n机器人身份：\n名字：测试机器人\nID：aibBOT123\n授权真人用户身份：\n名字：张三  \nID：woUSER456\nCLI 调用一定由你的机器人身份代用户执行。\n</extra_identity_context>'
+    })
+    expect(wecomWhoamiUserId(output)).toBe('woUSER456')
+  })
 })

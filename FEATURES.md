@@ -179,7 +179,9 @@ records are listed separately and do not introduce another feature status.
   or revoking publications. Open it from Apps or Application Center, save a service URL and device name, register the
   device, browse returned records, publish capability or knowledge metadata, and
   revoke this device ID's entries. The default service is `http://127.0.0.1:8787`.
-  This unauthenticated local service uses IDs for identification only. Server source
+  A compatible ShareServer now uses dedicated device credentials retained across
+  restarts and reports pending, rejected, disabled, and approved registration states.
+  Existing device IDs are preserved; older servers must be upgraded. Server source
   mode does not upload or sync content, and independent knowledge search/read/download
   flags are declarations, not content access or remote execution. See
   [scope and validation](./docs/features/device-sharing/README.md).
@@ -196,13 +198,19 @@ records are listed separately and do not introduce another feature status.
   attachments and knowledge remain in the conversation composer, while memory,
   when implemented, and historical execution context belong to the associated Task. See
   the [Feature PRD](./docs/features/assistant-workbar/prd.md).
-- [ ] **ShareServer Office co-editing** (design): Uses an optional ShareServer
+- [x] **ShareServer Office editing** (implemented source, partial acceptance): Uses an optional ShareServer
   integration with ONLYOFFICE Docs to open multiple filename-labelled document
-  tabs in the assistant workbar. The planned scope covers DOCX, XLSX, and PPTX
-  manual editing, save and undo, source-file conflict protection, and later AI
-  selection edits. The selected ShareServer and editor process document content;
+  tabs in the assistant workbar. DOCX, XLSX, and PPTX support editing and source
+  writeback; DOC, XLS, and PPT convert to modern-format copies through Save As,
+  preserving the originals. Existing Office connections are reused, falling back
+  to the device-sharing connection. Ctrl/Cmd+S writes back and Ctrl/Cmd+Shift+S
+  saves as; external source changes prevent overwriting. Word selections can use
+  the existing conversation Runtime queue for AI rewrites, not Excel/PPT AI.
+  The selected ShareServer and editor process document content;
   Desktop neither bundles nor starts Document Server and does not claim offline
-  editing when no service is configured. See the
+  editing when no service is configured. Linux Electron, server six-format and Host
+  protocol checks are recorded; complex fidelity, remote Save As UI and complete
+  three-platform acceptance remain outstanding. See the
   [design](./docs/features/office-document-editing/README.md).
 
 ### Agent Runtimes and model connections
@@ -350,7 +358,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.9`, paired with the current Desktop release candidate `0.16.10`; formal
+  `0.15.10`, paired with the current Desktop release candidate `0.16.11`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -989,9 +997,25 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.10`, paired with Agent `0.15.9`, with
+- The current Desktop candidate is `0.16.11`, paired with Agent `0.15.10`, with
   source pins of OpenCode `1.19.3` and Continue `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.16.11` / Agent `0.15.10` add remote direct-model workspace tools
+  and bundled ripgrep, fix ACP reconnection and recovery completion, and preserve
+  direct-tool output during retirement. Desktop drives direct-model execution;
+  this is not autonomous ACP continuation after Desktop exits.
+- Remote transcript checkpoints share batches with the durable commit-before-ACK
+  barrier retained; unchanged message projections avoid redundant updates.
+  Remote Continue reuses its validated account-owned cache while cleaning prompt
+  files. Probe write reductions are scoped measurements, not overall device
+  performance claims. WeCom reads the authorized human ID from real whoami output
+  and reports CLI failures; Preview status is unchanged.
+- Office editing and device registration use compatible ShareServer services.
+  Chat adds older-message dates and minimap day markers; task strips follow
+  frosted appearance. Workbench demos and OpenCode v2/Droid marketplace plans
+  are not shipped product capabilities. Schema stays 65 and Runtime pins are
+  unchanged; exact candidate CI, native packages and public verification remain
+  pending. See [release preparation](./docs/development/release-preparation-0.16.11.md).
 - Desktop `0.16.10` adds interactive HTML previews and sender-ID hints for
   unknown WeCom, DingTalk, and Feishu direct senders. Adding a sender edits a
   draft that must be saved; unknown senders cannot execute requests and groups

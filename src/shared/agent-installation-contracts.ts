@@ -284,6 +284,7 @@ export function expectedAgentManifestMode(
   filePath: string
 ): '0644' | '0755' {
   return filePath === 'node' ||
+    filePath === 'rg' ||
     filePath === 'goodbuddy-agent' ||
     filePath.startsWith('helpers/')
     ? '0755'

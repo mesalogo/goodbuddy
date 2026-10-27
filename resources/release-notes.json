@@ -2,6 +2,48 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.11",
+      "releasedAt": "2026-10-26",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**在工作栏编辑 Office 文件**：配置兼容的内网 ShareServer 与 ONLYOFFICE 后，可从工作区、会话文件预览、附件或本地选择入口打开 DOCX、XLSX、PPTX，并编辑 DOC、XLS、PPT 转换后的副本。使用 `Ctrl/Cmd+S` 回写源文件、`Ctrl/Cmd+Shift+S` 另存为；旧格式转换需另存为现代格式，原件保留，源文件已被外部修改时拒绝覆盖。",
+            "**围绕 Word 选区使用 AI**：在文档中选择文字后，可通过现有会话和所选 Runtime 发起改写，再将回答应用到原选区。当前仅支持 Word 选区，表格和幻灯片不提供此操作；文档内容会交给所配置的 ShareServer 和编辑服务处理，未配置服务时不提供离线编辑。",
+            "**远端项目支持直连模型**：SSH 项目和会话现在可选择直连模型，文件读取、搜索、补丁和命令在 Host 工作区执行，并支持子任务、长输出续读和手动压缩。模型循环仍由 Desktop 驱动，不提供关闭 Desktop 后的 ACP 自治续跑；需要同步更新 Agent。",
+            "**显示设备注册审批状态**：设备共享接入独立设备凭据，重启后复用注册身份，并显示待审批、拒绝、停用和批准状态。需要升级兼容的 ShareServer；共享范围仍是目录和能力元数据，不代表已经支持正文同步或远程执行。"
+          ],
+          "fixes": [
+            "**改善远端会话断线恢复**：修复连接通道额度耗尽后持续恢复失败、迟到的关闭事件影响已恢复会话，以及历史同步完成后恢复提示仍不结束的问题。恢复重新接管已接受的 ACP 任务，不重发原请求；Agent 更新等待在途直连工具及保留输出，清理失败不再丢失已知执行结果。",
+            "**改善日期辨识与界面一致性**：非当天消息显示完整日期和时间，聊天缩略导航增加日期标记。顶部任务和执行清单跟随透明磨砂设置，同时调整设置导航高亮间距及项目菜单分隔线。",
+            "**减少远端任务的重复写入**：远端会话的中间记录合并写入，仍在向 Agent 确认前完成持久化，保留完整输出与恢复记录。远端 Continue 复用已校验的运行缓存，减少重复启动时的磁盘写入，任务结束后仍清理本次请求文件。",
+            "**修复企业微信授权人识别**：从真实身份查询结果中的授权用户段读取用户 ID，避免误用机器人身份。查询失败时显示具体原因，并修正允许发送者列表的填写提示；企业微信仍为预览版。"
+          ],
+          "notices": [
+            "配套 Agent `0.15.10`；数据库 schema 和内置 Runtime 版本不变。Office 已有真实 Linux Electron、服务端六格式及 Host 协议验证，但复杂格式保真、远程另存为界面和三平台完整验收尚未完成；飞书与企业微信继续保持预览版。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Edit Office files in workbar tabs**: With a compatible LAN ShareServer and ONLYOFFICE configured, open DOCX, XLSX, and PPTX from workspace files, conversation previews, attachments, or the local file picker, and edit converted copies of DOC, XLS, and PPT. Use `Ctrl/Cmd+S` to save back to the source and `Ctrl/Cmd+Shift+S` to save as; legacy formats require a modern-format copy, preserving the original, and external source changes prevent overwriting.",
+            "**Use AI on Word selections**: Select text and request a rewrite through the existing conversation and selected Runtime, then apply the answer to the original selection. This currently supports Word only, not spreadsheets or slides; document content is processed by the configured ShareServer and editor, with no offline editing when no service is configured.",
+            "**Use direct models in remote projects**: SSH projects and conversations can now select direct models, with file reading, search, patches, and commands running in the Host workspace, including subtasks, paged long output, and manual context compression. Desktop still drives the model loop, so this does not provide autonomous ACP execution after Desktop closes; update Agent as well.",
+            "**See device registration approval states**: Device sharing uses dedicated device credentials, retains registration identity across restarts, and shows pending, rejected, disabled, and approved states. A compatible ShareServer upgrade is required; sharing remains directory and capability metadata, not content synchronization or remote execution."
+          ],
+          "fixes": [
+            "**Improve remote session recovery**: Fixes persistent recovery failure after connection channel exhaustion, late close events disrupting resumed sessions, and recovery banners remaining after history catches up. Recovery reattaches accepted ACP tasks without resubmitting prompts; Agent updates wait for active direct tools and retained output, while cleanup failures preserve known execution results.",
+            "**Improve date visibility and UI consistency**: Older messages show full dates and times, and the chat minimap adds day markers. Task and TODO strips follow the frosted-glass setting, with adjusted settings highlight spacing and project-menu dividers.",
+            "**Reduce repeated writes during remote tasks**: Intermediate remote conversation records are written in batches, still committing before acknowledgment to Agent and preserving complete output and recovery records. Remote Continue reuses its validated runtime cache to reduce disk writes on repeated starts while still cleaning request-specific files after tasks finish.",
+            "**Fix WeCom authorized-user identification**: Read the user ID from the authorized-user section of actual identity responses instead of mistaking the bot identity for the user. Failures show their specific cause, and allow-list guidance is corrected; WeCom remains in Preview."
+          ],
+          "notices": [
+            "Pair with Agent `0.15.10`; database schema and bundled Runtime versions are unchanged. Office has real Linux Electron, server-side six-format, and Host protocol validation, but complex-format fidelity, remote Save As UI, and complete three-platform acceptance remain outstanding; Feishu and WeCom remain in Preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.10",
       "releasedAt": "2026-10-25",
       "notes": {

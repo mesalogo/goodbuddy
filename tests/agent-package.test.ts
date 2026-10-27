@@ -1998,6 +1998,7 @@ function writeAgentBundle(
   mkdirSync(join(directory, 'licenses'), { recursive: true })
   mkdirSync(join(directory, 'helpers'), { recursive: true })
   writeFileSync(join(directory, 'node'), elf(architecture))
+  writeFileSync(join(directory, 'rg'), elf(architecture))
   writeFileSync(
     join(directory, 'goodbuddy-agent'),
     '#!/bin/sh\n'
@@ -2022,6 +2023,7 @@ function writeAgentBundle(
   writeKoffiPayload(directory, architecture)
   for (const path of [
     'node',
+    'rg',
     'goodbuddy-agent',
     'helpers/fixture-helper'
   ]) {

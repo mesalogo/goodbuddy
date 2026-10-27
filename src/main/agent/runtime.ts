@@ -73,6 +73,8 @@ export type RemoteSemanticCheckpointEvent = {
   requestId: string
   type: 'remote-semantic-checkpoint'
   remoteProvenance: RemoteSemanticEventProvenance
+  /** More entries follow in this page; the producer cannot ACK at this checkpoint. */
+  deferCommit?: boolean
 }
 
 export type RuntimeEvent =

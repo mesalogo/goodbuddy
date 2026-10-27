@@ -153,6 +153,9 @@ export default tseslint.config(
       'docs/**/*-demo.*',
       'docs/**/*-demo-*.js',
       'docs/**/vendor/**',
+      'docs/features/office-document-editing/local-preview-demo/dist/**',
+      'sites/docs/.vitepress/cache/**',
+      'sites/docs-dist/**',
       'node_modules/**',
       'out/**',
       'temp/**',
@@ -208,6 +211,38 @@ export default tseslint.config(
         ...globals.browser
       }
     }
+  },
+  {
+    files: ['docs/features/application-tool-navigation/**/*.js'],
+    languageOptions: { sourceType: 'script', globals: { ...globals.browser, status: 'off' } },
+    rules: {
+      'no-empty': ['error', { allowEmptyCatch: true }],
+      'no-irregular-whitespace': ['error', { skipTemplates: true }]
+    }
+  },
+  {
+    files: ['docs/features/application-tool-navigation/page-design-demo/app.js'],
+    languageOptions: { globals: Object.fromEntries([
+      'escapeHTML', 'action', 'badge', 'header', 'tabs', 'panel',
+      'switchControl', 'noteData', 'docData', 'renderChat', 'renderNotes',
+      'renderKnowledge', 'renderSupervisor', 'renderActivity', 'renderHosts',
+      'renderSharing', 'renderSettings', 'renderApps', 'renderInference'
+    ].map(name => [name, 'readonly'])) }
+  },
+  {
+    files: ['docs/features/application-tool-navigation/page-design-demo/pages.js'],
+    languageOptions: { globals: { state: 'readonly', $: 'readonly' } }
+  },
+  {
+    files: ['docs/features/application-tool-navigation/workbench-demo/app.js'],
+    languageOptions: { globals: Object.fromEntries([
+      'icon', 'projectNames', 'conversationNames', 'noteCopy', 'recordCopy', 'documentArticle'
+    ].map(name => [name, 'readonly'])) }
+  },
+  {
+    files: ['docs/features/application-tool-navigation/**/validate.cjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
+    rules: { '@typescript-eslint/no-require-imports': 'off' }
   },
   {
     files: ['sites/**/*.mjs'],

@@ -65,8 +65,8 @@ Execute，不等于可直接绑定 UI 的 shell-stop API。
 | DeepSeek Harness | 打开 DSH Web | 本地 | 独立原生历史；匹配存活服务可重开 | 标准 Node、官方 Web 资源与模型 profile |
 | Droid | 未实现 | 未声明已支持 | 应先对齐独立客户端合同；续接需另行验收 | 不能由 CLI 存在推断入口已可用 |
 
-现有 [native-client 设计](./design/native-client.md)包含远程目标范围，但当前
-`NativeClientCoordinator` 只接受本地执行空间。普通终端支持 SSH 不改变此结论。
+按 [native-client 设计](./design/native-client.md)，三个 Runtime 的原生客户端入口均只在本地项目显示，
+远程项目直接隐藏对应按钮；`NativeClientCoordinator` 只接受本地执行空间。普通终端支持 SSH 不改变此结论。
 Continue 的标准 Node 回退可能在点击时下载安装，尚未达到完整的预备离线资源交付。
 
 ## 待对齐项与源码依据

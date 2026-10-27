@@ -245,3 +245,97 @@ passed. Full desktop typecheck and repository lint remain blocked by concurrent
 errors; unfiltered lint also visits generated files under `temp`. Focused lint for
 the edited source/tests passed. The C01-C07 concurrent acceptance matrix remains
 incomplete; these results do not establish full storage-architecture acceptance.
+
+## Remote-task disk writes — 2026-10-26
+
+Remote work can write on both Desktop and Host. Measure those owners separately:
+Desktop persists transcript events and message projections; the Host prepares the
+runtime and retains output needed for replay/transfer. A smaller temporary directory
+does not, by itself, prove lower disk write traffic.
+
+### Changes and maintenance boundaries
+
+- Desktop commit `915adf7d` reuses `RemoteEventBatcher` across intermediate
+  checkpoints in a fetched transcript page. Every event and checkpoint remains
+  persisted; the final checkpoint waits for commit before the runtime sends ACK.
+  Terminal and local-event boundaries and the existing timer can flush earlier.
+  Live, scheduled/channel, and recovery consumers follow this rule. The optional
+  `deferCommit` field is internal to Desktop, not a new Agent protocol phase.
+- Unchanged message projections no longer issue a message UPDATE. Comparison is
+  against stored content, state, and serialized metadata, so metadata normalization
+  still occurs. Events, checkpoints and conversation context continue to commit.
+  SQLite FULL durability is unchanged.
+- Remote Continue now passes an account-owned cache root to the existing
+  `ContinueHostAdapter`: `$XDG_CACHE_HOME/goodbuddy/continue-host` when XDG is
+  absolute, otherwise `~/.cache/goodbuddy/continue-host`. The adapter already keys
+  prepared hosts by layout/version/source hash and validates cached contents.
+  A binding no longer recreates and deletes that prepared host at every restart.
+- Per-prompt configuration and isolated globals still belong to the adapter and
+  are removed after the child stops. Helper shutdown must not remove the shared
+  prepared-host cache. Clearing this disposable cache is supported and causes a
+  rebuild; old hash/version entries are retained until it is cleared. No automatic
+  eviction, new write queue, task quota, or durability downgrade was introduced.
+
+### Measurements
+
+Desktop baseline was `774fce43`. Three alternating baseline/candidate rounds used
+an isolated database with a roughly 96 KiB transcript and 120 event/checkpoint
+calls. `build/run-remote-write-perf.cjs [baseline-worktree]` reproduces the owner-local
+probe. Automatic checkpointing is disabled only in this probe to count WAL growth;
+FULL durability is asserted at every commit.
+
+| Desktop workload | Baseline WAL bytes | Candidate WAL bytes | Result |
+| --- | ---: | ---: | --- |
+| Growing text, same per-call batch shape | 31,143,112 | 31,143,112 | No change |
+| Repeated status | 5,042,912 | 4,054,112 | 19.6% less |
+| Changing context metrics | 4,527,912 | 3,539,112 | 21.8% less |
+
+All rounds retained 240 measured events and 120 commits. Separate production IPC
+handler fixtures for an eight-entry page reduced batch-storage calls from eight
+to one in each of three runs for both plain and conversation tasks. This count
+uses a storage test double; it is not a physical-device measurement. Failed commits
+prevent runtime ACK, and reopen checks preserve content, sequence, and integrity.
+
+Remote baseline was `915adf7d`; the candidate changes the Continue helper cache
+ownership. Three alternating rounds ran current-source bundles against installed
+Continue 1.5.47 on the shared Linux x64 Host: Node 24.16.0, AMD Ryzen 7 255,
+16 logical CPUs, ext4/NVMe. Each round used an empty isolated account followed by
+a helper restart with that account. Cold means empty application cache, not a
+flushed OS page cache.
+
+| Host measurement | Baseline | Candidate |
+| --- | ---: | ---: |
+| Cold accounted `write_bytes` | 13,389,824 B | 13,389,824 B |
+| Warm restart accounted `write_bytes` | 13,389,824 B | 49,152 B |
+| Cache retained after helper shutdown | 0 B | 13,320,011 B |
+| Warm logical directory growth before cleanup | 13,320,011 B | 0 B |
+
+The same byte counts occurred in all three rounds: warm accounted writes fell
+99.63%, while cold writes stayed unchanged. `/proc/PID/io` was sampled after the
+prompt settled, including reaped runtime children, before helper exit. These are
+Linux-accounted writes, not device wear. Existing cache verification increases warm
+reads (about 27.98 MB to 41.26 MB); timing variation does not establish a speedup.
+The reusable probe is `src/agent-daemon/continue-write-probe.manual.ts`; it runs
+under a dedicated `/root/tmp/goodbuddy-*` directory and removes its test data.
+
+### Verification and scope
+
+All 12 deterministic model responses matched exactly. Real SIGTERM and ACP cancel
+checks confirmed child exit, prompt/staging cleanup, and cache retention. The native
+tool cancellation probe stopped its descendant in 14 ms while a sibling completed.
+One additional external text-model request returned HTTP 200 and the exact expected
+answer; credentials were supplied in memory. Remote test artifacts, local bundles,
+credential snapshots and baseline worktrees were removed.
+
+The combined candidate passed 510 tests with one opt-in native-client integration
+skip across database, IPC, runtime, batcher, helper and adapter suites. Node, Agent
+and Renderer typechecks passed; scoped lint passed. This verifies the source
+helper/adapter/bridge and Desktop persistence paths, not a packaged release or the
+full Desktop UI on the Host. Repository-wide release acceptance remains separate.
+
+These changes address the measured repeated projections, page-level commit overhead
+and repeated Continue preparation. They do not prove that every remote Runtime has
+minimal I/O: growing message projections still write, necessary Agent replay data
+and transfer backing remain, third-party runtime histories are not deleted, and old
+ephemeral binding directories are not swept by this change. Deploy the updated
+Agent for the Host-side cache optimization to take effect.

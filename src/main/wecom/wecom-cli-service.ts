@@ -47,6 +47,13 @@ const USER_ID_PATTERN = /^[\w.@-]{1,128}$/u
 function userIdFromText(text: string): string | undefined {
   const embedded = text.trim().startsWith('{') ? wecomWhoamiUserId(text) : undefined
   if (embedded) return embedded
+  // Real 1.3.4 output: "机器人身份：…ID：aib…\n授权真人用户身份：\n名字：…\nID：wo…".
+  // Take the first "ID：" after the human section heading.
+  const human = /授权(?:真人)?用户身份\s*[:：]?([\s\S]*)/u.exec(text)?.[1]
+  if (human) {
+    const id = /(?:^|\n)\s*(?:user[_\s-]?)?id\s*[:：=]\s*([\w.@-]{1,128})/iu.exec(human)?.[1]
+    if (id && USER_ID_PATTERN.test(id)) return id
+  }
   const pattern = /(?<![A-Za-z_])(?:user[_\s-]?id|用户\s*id|账号)\s*["']?\s*[:：=]\s*["']?([\w.@-]{1,128})/giu
   for (const match of text.matchAll(pattern)) {
     const before = text.slice(Math.max(0, (match.index ?? 0) - 12), (match.index ?? 0) + 2)
@@ -513,7 +520,10 @@ export class WecomCliService {
   private async userId(signal?: AbortSignal): Promise<string> {
     const result = await this.run(['identity', 'whoami'], { signal, timeoutMs: 15_000 })
     const id = result.exitCode === 0 ? wecomWhoamiUserId(result.stdout) : undefined
-    if (!id) throw new Error('读取企业微信授权人身份失败')
+    if (!id) {
+      if (result.exitCode !== 0) throw WecomCliService.failure(result, '读取企业微信授权人身份失败')
+      throw new Error('读取企业微信授权人身份失败：whoami 返回中没有识别到授权人 ID，可以改用上方搜索')
+    }
     return id
   }
 

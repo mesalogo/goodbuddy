@@ -42,6 +42,7 @@ import type {
 } from './remote-runtime-channel'
 import { MemoryRuntimeSessionBindingStore, SqliteRuntimeSessionBindingStore, type RuntimeSessionBindingStore } from './runtime-session-binding-store'
 import { AssistantDatabase } from '../assistant/assistant-database'
+import { RemoteEventBatcher } from '../remote-event-batcher'
 
 type FakeServer = {
   channel: RemoteRuntimeChannel
@@ -3061,6 +3062,64 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     await fixture.instance.dispose()
   })
 
+  it('marks the final consumed entry as the ACK barrier even with a replayed page tail', async () => {
+    const fixture = ownedChannel()
+    fixture.channel.pageOwnedPromptTranscript = vi.fn<NonNullable<RemoteRuntimeChannel['pageOwnedPromptTranscript']>>()
+      .mockImplementation(fixture.channel.pageOwnedPromptTranscript!)
+      .mockImplementationOnce(async ({ bindingId, operationId }) => ({
+      bindingId, operationId, latestSequence: '2', acknowledgedSequence: '0',
+      state: 'running', sessionId: 'owned-session', hasMore: true,
+      events: ['1', '2', '1'].map(sequence => ({
+        sequence, kind: 'session-update' as const, createdAt: 1,
+        payload: { sessionId: 'owned-session', update: {
+          sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: sequence }
+        } }
+      }))
+    }))
+    try {
+      const events = await collect(fixture.instance.run(request, new AbortController().signal))
+      expect(events.filter(event => event.type === 'remote-semantic-checkpoint').map(event => [
+        event.remoteProvenance.semanticSequence, event.deferCommit === true
+      ])).toEqual([['1', true], ['2', false], ['3', true], ['4', false]])
+      expect(fixture.ackOwnedPromptTranscript.mock.calls.map(([input]) => input.acknowledgedSequence)).toEqual(['2', '4'])
+    } finally { await fixture.instance.dispose() }
+  })
+
+  it.each([false, true])('waits for the page checkpoint commit before ACK (failure=%s)', async fail => {
+    const fixture = ownedChannel({ includePermissionCheckpoint: true })
+    const committed: RuntimeEvent[] = []
+    const persist = vi.fn(async (entries: readonly { event: RuntimeEvent }[]) => {
+      expect(fixture.ackOwnedPromptTranscript).not.toHaveBeenCalled()
+      if (fail) throw new Error('disk full')
+      committed.push(...entries.map(entry => entry.event))
+      return entries.map(() => true)
+    })
+    const batcher = new RemoteEventBatcher<RuntimeEvent>({ persist })
+    const consume = async () => {
+      for await (const event of fixture.instance.run(request, new AbortController().signal)) {
+        if (!('remoteProvenance' in event)) continue
+        await batcher.add(event.remoteProvenance, event)
+        if (event.type === 'remote-semantic-checkpoint' && !event.deferCommit) {
+          await batcher.flush()
+        }
+      }
+    }
+    try {
+      if (fail) {
+        await expect(consume()).rejects.toThrow('disk full')
+        expect(fixture.ackOwnedPromptTranscript).not.toHaveBeenCalled()
+        expect(committed).toEqual([])
+      } else {
+        await consume()
+        expect(fixture.ackOwnedPromptTranscript).toHaveBeenCalledOnce()
+        expect(committed.filter(event => event.type === 'remote-semantic-checkpoint').map(event => [
+          event.remoteProvenance.semanticSequence, event.deferCommit === true
+        ])).toEqual([['1', true], ['2', true], ['3', true], ['4', true], ['5', false]])
+      }
+      expect(persist).toHaveBeenCalledOnce()
+    } finally { batcher.dispose(); await fixture.instance.dispose() }
+  })
+
   it('starts once, maps multiple rounds, and ACKs only after consumption', async () => {
     const fixture = ownedChannel({
       includePermissionCheckpoint: true
@@ -3087,6 +3146,7 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     const checkpoint = await stream.next()
     expect(checkpoint.value).toMatchObject({
       type: 'remote-semantic-checkpoint',
+      deferCommit: true,
       remoteProvenance: { semanticSequence: '1', eventIndex: 1 }
     })
     expect(fixture.ackOwnedPromptTranscript).not.toHaveBeenCalled()

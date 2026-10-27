@@ -1,6 +1,6 @@
 import { readFile, rm, mkdtemp, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import fs from 'node:fs/promises'
 import type { Agent } from '@agentclientprotocol/sdk'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -42,10 +42,12 @@ let socketPath: string
 beforeEach(async () => {
   helperRoot = await mkdtemp(join(tmpdir(), 'goodbuddy-continue-helper-'))
   socketPath = join(helperRoot, 'bridge.sock')
+  vi.stubEnv('XDG_CACHE_HOME', join(helperRoot, 'cache'))
 })
 afterEach(async () => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
   transport.agent = undefined
   proxy.listen.mockClear()
   proxy.close.mockReset()
@@ -57,9 +59,18 @@ const server = (name: string) => ({
   headers: [{ name: 'Authorization', value: 'Bearer session-test-token' }]
 })
 
+it.each(['', 'relative-cache'])('falls back to the account home for XDG_CACHE_HOME=%j', async value => {
+  vi.stubEnv('XDG_CACHE_HOME', value)
+  const mkdir = vi.spyOn(fs, 'mkdir').mockRejectedValueOnce(new Error('probe stop'))
+  await expect(runContinueAcpHelper({ socketPath, protocol: 'openai-chat-completions',
+    model: 'test', supportsImageInput: false, entrypoint: 'unused' })).rejects.toThrow('probe stop')
+  expect(mkdir).toHaveBeenCalledWith(join(homedir(), '.cache', 'goodbuddy', 'continue-host'),
+    { recursive: true, mode: 0o700 })
+})
+
 it('closes the proxy and removes signal listeners when directory creation fails', async () => {
   const listeners = ['SIGTERM', 'SIGINT'].map(signal => process.listenerCount(signal))
-  vi.spyOn(fs, 'mkdtemp').mockRejectedValueOnce(new Error('disk full'))
+  vi.spyOn(fs, 'mkdir').mockRejectedValueOnce(new Error('disk full'))
   await expect(runContinueAcpHelper({ socketPath, protocol: 'openai-chat-completions',
     model: 'test', supportsImageInput: false, entrypoint: 'unused' })).rejects.toThrow('disk full')
   expect(proxy.close).toHaveBeenCalledOnce()
@@ -67,33 +78,39 @@ it('closes the proxy and removes signal listeners when directory creation fails'
 })
 
 it('does not start ACP after a signal during setup and cleans up even if proxy close fails', async () => {
-  const create = fs.mkdtemp
+  const create = fs.mkdir
   let root = ''
   const listeners = process.listenerCount('SIGTERM')
-  vi.spyOn(fs, 'mkdtemp').mockImplementationOnce(async (...args) => {
-    root = await create(...args)
+  vi.spyOn(fs, 'mkdir').mockImplementationOnce(async (...args) => {
+    root = String(args[0])
+    const result = await create(...args)
     process.emit('SIGTERM')
-    return root
+    return result
   })
   proxy.close.mockRejectedValueOnce(new Error('proxy close failed'))
   await expect(runContinueAcpHelper({ socketPath, protocol: 'openai-chat-completions',
     model: 'test', supportsImageInput: false, entrypoint: 'unused' })).rejects.toThrow('proxy close failed')
   expect(transport.agent).toBeUndefined()
-  await expect(fs.stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await fs.readdir(root)).toEqual([])
   expect(process.listenerCount('SIGTERM')).toBe(listeners)
 })
 
-it.each(['SIGTERM', 'SIGINT'] as const)('drains active work and removes owned files on %s', async signal => {
+it.each(['SIGTERM', 'SIGINT'] as const)('drains active work and disposes prompt files without deleting the shared cache on %s', async signal => {
   let root = ''
   let started!: () => void
   const active = new Promise<void>(resolve => { started = resolve })
   const listeners = process.listenerCount(signal)
   vi.spyOn(ContinueHostAdapter.prototype, 'run').mockImplementation(async function (this: ContinueHostAdapter, _prompt, abort) {
-    root = (this as unknown as { options: { cacheRoot: string } }).options.cacheRoot
+    const cacheRoot = (this as unknown as { options: { cacheRoot: string } }).options.cacheRoot
+    root = await mkdtemp(join(cacheRoot, 'goodbuddy-continue-'))
+    await writeFile(join(cacheRoot, 'prepared-host'), 'reusable')
     await writeFile(join(root, 'partial'), 'owned')
     started()
     await new Promise<void>(resolve => abort.addEventListener('abort', () => resolve(), { once: true }))
     throw abort.reason
+  })
+  vi.spyOn(ContinueHostAdapter.prototype, 'dispose').mockImplementation(async () => {
+    await rm(root, { recursive: true, force: true })
   })
   const running = runContinueAcpHelper({ socketPath, protocol: 'openai-chat-completions',
     model: 'test', supportsImageInput: false, entrypoint: 'unused' })
@@ -106,12 +123,38 @@ it.each(['SIGTERM', 'SIGINT'] as const)('drains active work and removes owned fi
     await expect(prompt).resolves.toEqual({ stopReason: 'cancelled' })
     await running
     await expect(fs.stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(root, '..', 'prepared-host'), 'utf8')).toBe('reusable')
     expect(process.listenerCount(signal)).toBe(listeners)
     await expect(transport.agent!.prompt({ sessionId, prompt: [] })).rejects.toThrow('unavailable')
   } finally {
     transport.close()
     await running
   }
+})
+
+it('reuses the account cache across helper restarts and different bindings', async () => {
+  const roots: string[] = []
+  vi.spyOn(ContinueHostAdapter.prototype, 'run').mockImplementation(async function (this: ContinueHostAdapter) {
+    const cacheRoot = (this as unknown as { options: { cacheRoot: string } }).options.cacheRoot
+    roots.push(cacheRoot)
+    if (roots.length === 1) await writeFile(join(cacheRoot, 'prepared-host'), 'reusable')
+    else expect(await readFile(join(cacheRoot, 'prepared-host'), 'utf8')).toBe('reusable')
+    return { text: 'OK' }
+  })
+  for (const binding of ['first', 'second']) {
+    transport.agent = undefined
+    const running = runContinueAcpHelper({ socketPath: join(helperRoot, binding, 'bridge.sock'),
+      protocol: 'openai-chat-completions', model: 'test', supportsImageInput: false, entrypoint: 'unused' })
+    try {
+      await vi.waitFor(() => expect(transport.agent).toBeDefined())
+      const { sessionId } = await transport.agent!.newSession({ cwd: helperRoot, mcpServers: [] })
+      await transport.agent!.prompt({ sessionId, prompt: [{ type: 'text', text: 'test' }] })
+    } finally {
+      transport.close()
+      await running
+    }
+  }
+  expect(roots).toEqual(Array(2).fill(join(helperRoot, 'cache', 'goodbuddy', 'continue-host')))
 })
 
 // Keep the actual helper and adapter config builder together: mocking the

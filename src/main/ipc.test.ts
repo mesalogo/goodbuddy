@@ -7950,6 +7950,51 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it.each([0, 1, 2, 3, 4, 5])('measures multi-entry page commits through production IPC (round %i)', async round => {
+    const requestId = '00000000-0000-4000-8000-000000000771'
+    const conversationId = 'remote-page-write-measurement'
+    const conversation = round % 2 === 1
+    const acknowledged = vi.fn()
+    const selectedRuntime = {
+      runtimeId: 'opencode', capability: 'chat', supportsToolExecution: true,
+      async *run() {
+        for (let index = 0; index < 8; index++) {
+          const remoteProvenance = {
+            source: 'remote-semantic-transcript' as const, bindingId: 'page-binding',
+            operationId: requestId, semanticSequence: String(index + 1), eventIndex: 0
+          }
+          yield { requestId, type: 'text', delta: String(index), remoteProvenance } as const
+          yield { requestId, type: 'remote-semantic-checkpoint', deferCommit: index < 7,
+            remoteProvenance: { ...remoteProvenance, eventIndex: 1 } } as const
+        }
+        acknowledged()
+        yield { requestId, type: 'done' } as const
+      }
+    }
+    const { harness, projectId } = createManagedSshHarness(selectedRuntime)
+    harness.assistantDatabase.getConversation.mockReturnValue({ id: conversationId, projectId, messages: [] })
+    try {
+      await harness.handler?.(trustedEvent(harness.webContents), {
+        ...managedSshRequest(projectId, requestId, conversationId),
+        ...(conversation ? {
+          currentUserMessageId: '00000000-0000-4000-8000-000000000772',
+          currentAssistantMessageId: '00000000-0000-4000-8000-000000000773'
+        } : {})
+      })
+      await vi.waitFor(() => expect(acknowledged).toHaveBeenCalledOnce())
+      const commits = conversation
+        ? harness.assistantDatabase.appendRemoteConversationTaskEventsBatch.mock.calls
+        : harness.assistantDatabase.appendRemoteTaskEventsOnce.mock.calls
+      expect(commits).toHaveLength(1)
+      const entries = conversation
+        ? harness.assistantDatabase.appendRemoteConversationTaskEventsBatch.mock.calls.flatMap(([input]) => input.events)
+        : harness.assistantDatabase.appendRemoteTaskEventsOnce.mock.calls.flatMap(([input]) => input)
+      expect(entries.map(entry => [entry.semanticSequence, entry.eventIndex])).toEqual(
+        Array.from({ length: 8 }, (_, index) => [[String(index + 1), 0], [String(index + 1), 1]]).flat()
+      )
+    } finally { await harness.dispose() }
+  })
+
   it('batches a remote transcript page into one transaction and keeps order with local events', async () => {
     const requestId = '00000000-0000-4000-8000-000000000767'
     const conversationId = 'managed-ssh-remote-batch'
@@ -7973,7 +8018,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         // Replayed event from an earlier page: already stored.
         yield { requestId: id, type: 'text', delta: 'old', remoteProvenance: remote('1', 3) } as const
         lifecycle.push('before-checkpoint')
-        yield { requestId: id, type: 'remote-semantic-checkpoint', remoteProvenance: remote('1', 4) } as const
+        yield { requestId: id, type: 'remote-semantic-checkpoint', deferCommit: true, remoteProvenance: remote('1', 4) } as const
         lifecycle.push('after-checkpoint')
         yield { requestId: id, type: 'text', delta: 'C', remoteProvenance: remote('2', 0) } as const
         // A local event forces the pending remote batch to commit first.
@@ -8003,9 +8048,8 @@ describe('registerIpcHandlers agent terminal state', () => {
 
     expect(lifecycle).toEqual([
       'before-checkpoint',
-      'batch:reasoning,text,text,text,remote-semantic-checkpoint',
       'after-checkpoint',
-      'batch:text',
+      'batch:reasoning,text,text,text,remote-semantic-checkpoint,text',
       'after-local',
       'batch:remote-semantic-checkpoint',
       'batch:done',
@@ -8044,13 +8088,16 @@ describe('registerIpcHandlers agent terminal state', () => {
       eventIndex
     })
     const resumedAfterCheckpoint = vi.fn()
+    const resumedAfterIntermediate = vi.fn()
     const selectedRuntime = {
       runtimeId: 'opencode',
       capability: 'chat',
       supportsToolExecution: true,
       async *run(request: { requestId: string }) {
         yield { requestId: request.requestId, type: 'text', delta: 'lost', remoteProvenance: remote(0) } as const
-        yield { requestId: request.requestId, type: 'remote-semantic-checkpoint', remoteProvenance: remote(1) } as const
+        yield { requestId: request.requestId, type: 'remote-semantic-checkpoint', deferCommit: true, remoteProvenance: remote(1) } as const
+        resumedAfterIntermediate()
+        yield { requestId: request.requestId, type: 'remote-semantic-checkpoint', remoteProvenance: { ...remote(0), semanticSequence: '2' } } as const
         resumedAfterCheckpoint()
       }
     }
@@ -8071,6 +8118,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       )
     )
     expect(resumedAfterCheckpoint).not.toHaveBeenCalled()
+    expect(resumedAfterIntermediate).toHaveBeenCalledOnce()
     const publicEvents = harness.webContents.send.mock.calls
       .filter(([channel]) => channel === ipcChannels.agentEvent)
       .map(([, event]) => event)
@@ -8480,6 +8528,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         yield {
           requestId: taskId,
           type: 'remote-semantic-checkpoint',
+          deferCommit: true,
           remoteProvenance: {
             source: 'remote-semantic-transcript',
             bindingId: 'binding-recovery',
@@ -8488,6 +8537,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             eventIndex: 1
           }
         } as const
+        expect(harness.assistantDatabase.appendRemoteConversationTaskEventsBatch).not.toHaveBeenCalled()
         if (hasRecoveredResponse) yield {
           requestId: taskId, type: 'tool', callId: 'tool-before-restart',
           name: 'Read', state: 'recoverable', summary: 'Handled missing file', error: 'missing file',
@@ -8619,6 +8669,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       })
     )
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledOnce()
+    expect(harness.assistantDatabase.appendRemoteConversationTaskEventsBatch).toHaveBeenCalledTimes(2)
     await vi.waitFor(() =>
       expect(harness.webContents.send).toHaveBeenCalledWith(
         ipcChannels.remoteProjectRecoveryProgress,

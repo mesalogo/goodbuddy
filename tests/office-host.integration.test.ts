@@ -48,7 +48,7 @@ it.skipIf(process.platform !== 'linux')('commits binary Office data through the 
     await client.request('workspace/manage', { ...handle, action: { kind: 'replaceFile', path: staged, destination: 'source.docx', expectedDigest: digest(original), digest: digest(output), maximumBytes: 20971520 } })
     expect(await readFile(join(workspace, 'source.docx'))).toEqual(output)
   } catch (error) {
-    throw new Error(`${String(error)}\n${diagnostic}`)
+    throw new Error(`${String(error)}\n${diagnostic}`, { cause: error })
   } finally {
     transport?.dispose()
     child.kill('SIGTERM')
