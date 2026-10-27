@@ -1,6 +1,12 @@
 export const app = {
   messageEdit: {
     copy: '复制消息',
+    attachmentLimit: '每条消息最多添加 8 个附件，请先移除不需要的附件。',
+    title: '编辑消息', action: '编辑', content: '消息内容', cancel: '取消', submit: '保存并重新回复', submitting: '正在提交…',
+    hint: '将从此处创建新分支并重新回复，原对话会保留。已执行的文件和外部操作不会撤销。',
+    addAttachment: '添加附件', adding: '正在添加附件…', removeAttachment: '移除附件 {{name}}',
+    branchSaved: '新分支已保存。可在这里重试发送，取消后修改内容会保留为新分支的草稿。',
+    openSource: '返回原会话：{{title}}', sourceMissing: '原会话已不可用：{{title}}',
   },
   sharing: {
     title: '设备共享（技术预览）', boundary: '连接 ShareServer 共享目录。注册按服务器策略自动接纳或等待管理员审批，后续请求使用设备凭据。注册记录不代表设备在线；此页不提供远程执行或知识内容访问。',

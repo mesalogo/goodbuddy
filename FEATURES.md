@@ -39,6 +39,12 @@ records are listed separately and do not introduce another feature status.
   local, managed SSH, and remote messaging-channel projects. Managed SSH
   projects are grouped by Host, with the real Agent connection state on the
   Host heading and only the remote path on each project row.
+- [x] **Edit a sent message and regenerate**: Edit a user message to start a new
+  branch containing only its earlier history and the revised request. The
+  original conversation and composer draft are preserved. Attachments can be
+  retained, removed, or added; the branch provides a link back to its source.
+  Existing file changes and external actions are not undone. See the
+  [feature and validation record](./docs/features/message-edit-branch/README.md).
 - [x] **Cross-project conversation activity**: A shared activity entry lists
   running conversations and conversations needing attention across projects,
   including older conversations with live work. Anchored project-to-conversation

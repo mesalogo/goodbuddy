@@ -17,6 +17,8 @@ FR-S11 的读取架构见[时态 Story Graph 内置 MCP 设计](./story-graph-mc
 
 生产入口由 `supervision-production.ts` 组装服务、SQLite、共享池和无工具 Runtime。`supervision-review-store.ts` 保存冻结来源清单，按有界页和片段供 `SupervisorService` 派发；叶子及连续位置先提交，导航和完整结果之后发布。消息已有知识引用保留本地或外部 locator，已确认记忆通过独立背景输入提供。不会检索外部全库。详细存储、调度及当前限制统一见[分块调度第 0 节](./review-scheduling-design.md#0-生产接线与剩余边界)。
 
+会话分支复制的历史前缀通过消息来源标记从新增回顾证据中排除；规则与验证见[消息编辑分支技术设计](../message-edit-branch/technical-design.md)。编辑后的新请求和回复继续正常参与回顾，原分支已有故事图谱记录保持可追溯。
+
 模型实体 `id` 只在单次输出内有效。生产服务将批次的 `projectId` 和 `crossProject` 经 `supervisionCandidates` 传到只读 Worker，再由 `listSupervisionCandidates` 查询共享时间线。跨项目关闭时，只提供该项目当前事件关联的未撤销实体；开启时允许其他项目的实体。候选仍最多 100 个，按更新时间和 ID 排序。查询先取得项目事件关联的实体集合，再筛选候选，避免对每个实体重复扫描事件。省略批次参数的旧读取入口保留精确 scope 查询。
 
 生产提示只暴露 `candidateRef`（如 `known_1`）、名称和说明。模型显式选择候选后，Main 转换为严格 UUID 类型的内部 `persistedId`。服务校验候选集成员和重复映射，保存事务再次按实体主键校验存在性及撤销状态。没有有效候选引用时分配新 UUID，不按名称或裸模型 ID 合并。来源仍按每次结果分配 UUID，保留原始 `source_id` 和 locator。

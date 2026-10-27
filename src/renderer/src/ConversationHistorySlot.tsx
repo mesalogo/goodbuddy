@@ -77,6 +77,7 @@ export const ConversationHistorySlot = memo(function ConversationHistorySlot({
   ...paneProps
 }: ConversationHistorySlotProps): React.JSX.Element | null {
   const conversation = useConversation(store, conversationId);
+  const sourceConversation = useConversation(store, conversation?.branch?.sourceConversationId ?? '');
   const artifactById = useArtifactById(taskStore);
   const remote = Boolean(conversation?.remote);
   const selectedTaskId = tasks.some(task => task.id === selectedAssistantTaskId)
@@ -114,6 +115,7 @@ export const ConversationHistorySlot = memo(function ConversationHistorySlot({
   }
   return <ChatHistoryPane
     {...paneProps}
+    onOpenSourceConversation={sourceConversation ? paneProps.onOpenSourceConversation : undefined}
     artifactById={artifactById}
     conversation={conversation}
     onVisibleMessageCountChange={ignoreVisibleMessageCountChange}

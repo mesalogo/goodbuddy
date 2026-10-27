@@ -4152,7 +4152,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "重命名会话" }));
     const input = screen.getByLabelText("重命名会话 Original discussion");
     fireEvent.change(input, { target: { value: "Locally renamed" } });
-    fireEvent.submit(input.closest("form")!);
+    fireEvent.keyDown(input, { key: 'Enter' });
     vi.mocked(api.conversations.listSummaries).mockResolvedValue([{
       ...snapshot, pinned: true, ...(summary ? { messageSummary: { count: 0 } } : {}),
     }]);
@@ -4223,7 +4223,7 @@ describe("App", () => {
     fireEvent.change(renameInput, {
       target: { value: "重命名后的会话" },
     });
-    fireEvent.submit(renameInput.closest("form")!);
+    fireEvent.keyDown(renameInput, { key: 'Enter' });
     expect(
       within(conversationList).getByText("重命名后的会话"),
     ).toBeInTheDocument();
@@ -4268,6 +4268,37 @@ describe("App", () => {
       "无法访问剪贴板，请检查系统权限",
     );
     expect(screen.getByRole("button", { name: "复制此回复" })).toBeVisible();
+  });
+
+  it("edits a historical user message into a branch and sends only its prefix without replacing the source draft", async () => {
+    const sourceId = crypto.randomUUID(), branchId = crypto.randomUUID();
+    const messages: ConversationSnapshot['messages'] = ['前缀问题', '前缀回答', '原问题', '不能进入新上下文的旧回复'].map((content, i) => ({ id: crypto.randomUUID(), role: i % 2 ? 'assistant' : 'user', content, createdAt: Date.now() + i, state: 'complete' }));
+    const source: ConversationSnapshot = { id: sourceId, projectId, title: '编辑测试', updatedAt: Date.now(), messages,
+      contextCompressionState: { summary: '旧压缩摘要', coveredHistoryDigest: 'a'.repeat(64), coveredMessageCount: 4 } };
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([source]);
+    vi.mocked(api.conversations.branchLocal).mockImplementationOnce(async input => ({
+      id: branchId, projectId, title: input.title, updatedAt: Date.now(),
+      branch: { sourceConversationId: sourceId, sourceTitle: source.title, sourceMessageId: messages[2]!.id },
+      messages: messages.slice(0, 2).map(message => ({ ...message, id: crypto.randomUUID(), copiedFromMessageId: message.id })),
+    }));
+    render(<App />);
+    const original = await screen.findByText('原问题');
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: '保留的下一条草稿' } });
+    fireEvent.click(within(original.closest('article')!).getByRole('button', { name: '编辑消息' }));
+    const dialog = screen.getByRole('dialog', { name: '编辑消息' });
+    expect(within(dialog).getByLabelText('消息内容')).toHaveFocus();
+    fireEvent.change(within(dialog).getByLabelText('消息内容'), { target: { value: '修改后的问题' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存并重新回复' }));
+    await waitFor(() => expect(api.agent.run).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: branchId, prompt: '修改后的问题', contextCompressionState: undefined,
+      history: [{ role: 'user', content: '前缀问题' }, { role: 'assistant', content: '前缀回答' }],
+    })));
+    expect(api.conversations.branchLocal).toHaveBeenCalledWith({ sourceConversationId: sourceId, beforeMessageId: messages[2]!.id, title: '编辑测试 · 分支' });
+    expect(api.conversationQueue.enqueueUser).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑消息' })).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '返回原会话：编辑测试' }));
+    await waitFor(() => expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('保留的下一条草稿'));
+    expect(await screen.findByText('不能进入新上下文的旧回复')).toBeVisible();
   });
 
   it("flushes and opens an independent conversation branch with provenance badges", async () => {
@@ -4328,7 +4359,7 @@ describe("App", () => {
     fireEvent.change(renameInput, {
       target: { value: "方案讨论更新" },
     });
-    fireEvent.submit(renameInput.closest("form")!);
+    fireEvent.keyDown(renameInput, { key: 'Enter' });
     expect(
       await within(container.querySelector(".conversation-list") as HTMLElement)
         .findByText("方案讨论更新"),
@@ -4926,7 +4957,7 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: /^重命名/u }));
     const renameInput = within(target as HTMLElement).getByRole("textbox");
     fireEvent.change(renameInput, { target: { value: "Renamed while streaming" } });
-    fireEvent.submit(renameInput.closest("form")!);
+    fireEvent.keyDown(renameInput, { key: 'Enter' });
     const renamedTitle = () => within(target as HTMLElement).getByText("Renamed while streaming");
     await waitFor(() => expect(renamedTitle()).toBeInTheDocument());
     fireEvent.click(renamedTitle());

@@ -147,6 +147,8 @@ export class SupervisionReviewStore {
         WHERE ((s.occurred >= ? AND s.occurred <= ?) OR (s.alternate_time >= ? AND s.alternate_time <= ?))
           AND (? = 'global' OR s.project_id IN (SELECT value FROM json_each(?)))
           AND length(s.body) > 0
+          AND (s.type = 'task' OR NOT EXISTS (SELECT 1 FROM messages original
+            WHERE original.id = s.record_id AND json_extract(original.metadata_json, '$.copiedFromMessageId') IS NOT NULL))
           AND (c.revision IS NULL OR c.revision != review_revision(s.context) OR c.processed_offset < length(s.body))`)
         .run(isIncrementalReview(request) ? 1 : 0, request.timeRange.from, request.timeRange.to,
           request.timeRange.from, request.timeRange.to, request.scope.kind,

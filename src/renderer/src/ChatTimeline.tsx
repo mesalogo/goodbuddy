@@ -16,6 +16,7 @@ import {
   Library,
   ClockFading,
   LoaderCircle,
+  Pencil,
   ShieldCheck,
   UserRound,
   XCircle
@@ -63,6 +64,7 @@ export type KnowledgeRetrievalStatus = Omit<
 export type Message = {
   id: string
   queueItemId?: ConversationMessage['queueItemId']
+  copiedFromMessageId?: string
   role: 'user' | 'assistant'
   content: string
   reasoning?: string
@@ -592,6 +594,7 @@ function SubagentStatusList({
 }
 
 type ChatMessageRowProps = {
+  onEditMessage?: (conversationId: string, messageId: string) => void
   onOpenWorkspaceFile?: (href: string) => boolean
   onAddToNote?: (conversationId: string, message: Message, trigger: HTMLElement) => void
   onOpenImageModelSettings?: () => void
@@ -625,6 +628,7 @@ type ChatMessageRowProps = {
 }
 
 function ChatMessageRowView({
+  onEditMessage,
   onOpenWorkspaceFile,
   onAddToNote,
   onOpenImageModelSettings,
@@ -1326,6 +1330,7 @@ function ChatMessageRowView({
         {message.state !== 'streaming' &&
           Boolean(message.content.trim()) && (
             <div className="message__actions">
+              {message.role === 'user' && onEditMessage && <button type="button" className="icon-button" aria-label={t('messageEdit.title')} title={t('messageEdit.title')} onClick={() => onEditMessage(conversationId, message.id)}><Pencil aria-hidden="true" size={15} /></button>}
               {message.role === 'assistant' && !greeting && onAddToNote && <button type="button" className="icon-button" aria-label={t('magicNotes:capture.add')} title={t('magicNotes:capture.add')} onClick={event => onAddToNote(conversationId, message, event.currentTarget)}><FileText aria-hidden="true" size={15} /></button>}
               <button
                 aria-label={t(copied ? 'notices.messageCopied' : message.role === 'user' ? 'messageEdit.copy' : 'chat.copyMessage')}
@@ -1412,6 +1417,7 @@ const ChatMessageWindowRow = memo(function ChatMessageWindowRow({
 })
 
 type ChatTimelineProps = {
+  onEditMessage?: ChatMessageRowProps['onEditMessage']
   onOpenWorkspaceFile?: (href: string) => boolean
   onAddToNote?: ChatMessageRowProps['onAddToNote']
   onOpenImageModelSettings?: () => void
@@ -1456,6 +1462,7 @@ type ChatTimelineProps = {
 }
 
 export const ChatTimeline = memo(function ChatTimeline({
+  onEditMessage,
   onOpenWorkspaceFile,
   onAddToNote,
   onOpenImageModelSettings,
@@ -1487,6 +1494,7 @@ export const ChatTimeline = memo(function ChatTimeline({
 
   if (segments) {
     const rowProps = {
+      onEditMessage,
       onOpenWorkspaceFile,
       onAddToNote,
       onOpenImageModelSettings,
@@ -1574,6 +1582,7 @@ export const ChatTimeline = memo(function ChatTimeline({
         const messageIndex = messageStartIndex + visibleMessageIndex
         return (
           <ChatMessageRow
+            onEditMessage={onEditMessage}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
             onAddToNote={onAddToNote}
             onOpenImageModelSettings={onOpenImageModelSettings}

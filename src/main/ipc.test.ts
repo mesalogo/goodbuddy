@@ -4729,7 +4729,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
     }
   })
 
-  it('validates full handles across child adoption, stale/current saves and branching, and releases deleted history', async () => {
+  it.each([false, true])('validates full handles across child adoption, stale/current saves and branching (edit: %s), and releases deleted history', async (editing) => {
     const parent = join(process.cwd(), 'temp', 'output-history-ipc')
     await mkdir(parent, { recursive: true })
     const root = await mkdtemp(join(parent, 'fixture-'))
@@ -4814,15 +4814,28 @@ describe('registerIpcHandlers local conversation persistence', () => {
       await expect(read(event, { conversationId, handle, limitBytes: 32769 })).rejects.toThrow()
       await expect(read(event, { conversationId: crypto.randomUUID(), handle })).rejects.toThrow('owner')
       await expect(read({ ...event, sender: {} }, { conversationId, handle })).rejects.toThrow()
-      const branch = await electronMocks.handlers.get(ipcChannels.conversationsBranchLocal)!(event, { sourceConversationId: conversationId, title: 'Branch' }) as ConversationSnapshot
+      const boundaryId = crypto.randomUUID()
+      if (editing) database.saveLocalConversations([{ header: batch[0]!.header, messages: [{ id: boundaryId, role: 'user', content: 'edit here', state: 'complete', createdAt: 2 }] }])
+      if (editing) {
+        const beforeIds = database.listConversations().map(item => item.id)
+        referenced.mockImplementationOnce(() => { throw new Error('reference failed') })
+        await expect(electronMocks.handlers.get(ipcChannels.conversationsBranchLocal)!(event, { sourceConversationId: conversationId, title: 'Failed branch', beforeMessageId: boundaryId })).rejects.toThrow('reference failed')
+        expect(database.listConversations().map(item => item.id)).toEqual(beforeIds)
+        expect(await read(event, { conversationId, handle })).toHaveProperty('content')
+      }
+      const branch = await electronMocks.handlers.get(ipcChannels.conversationsBranchLocal)!(event, { sourceConversationId: conversationId, title: 'Branch', ...(editing ? { beforeMessageId: boundaryId } : {}) }) as ConversationSnapshot
       expect(branch.messages[0]?.tools?.[0]?.outputReferences).toEqual([reference])
-      expect(branch.messages[0]?.subagents).toBeUndefined()
+      if (editing) expect(branch.messages[0]?.subagents).toEqual(batch[0]!.messages[0]!.subagents)
+      else expect(branch.messages[0]?.subagents).toBeUndefined()
       expect(referenced).toHaveBeenLastCalledWith(branch.id, 'message', branch.messages[0]!.id,
-        [outputId], [handle])
+        editing ? handles.map(outputHandle => outputHandle.split(':')[1]) : [outputId], editing ? handles : [handle])
       await electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, conversationId)
       await save(event, [{ header: { id: branch.id, title: 'Header-only update', updatedAt: Date.now() }, messages: [] }])
       expect(await read(event, { conversationId: branch.id, handle, cursor: bytes.length - 4 })).toMatchObject({ content: 'tail', eof: true })
-      for (const outputHandle of [childHandle, progressHandle]) expect(assets.has(outputHandle.split(':')[1]!)).toBe(false)
+      for (const outputHandle of [childHandle, progressHandle]) {
+        expect(assets.has(outputHandle.split(':')[1]!)).toBe(editing)
+        if (editing) expect(await read(event, { conversationId: branch.id, handle: outputHandle })).toMatchObject({ content: 'child output', eof: true })
+      }
       await electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, branch.id)
       await expect(read(event, { conversationId: branch.id, handle })).rejects.toThrow()
       for (const outputHandle of handles) expect(assets.has(outputHandle.split(':')[1]!)).toBe(false)

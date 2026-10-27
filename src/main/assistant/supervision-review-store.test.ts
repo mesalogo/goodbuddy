@@ -77,6 +77,18 @@ it('scans read-only, transfers at most 200 rows, yields without a transaction, a
   await expect(f.worker.call('reviewManifestPage', [f.runId, 0])).rejects.toThrow('lost its snapshot')
 })
 
+it('does not review copied branch prefixes twice but includes the edited request', async () => {
+  const f = await fixture()
+  const source = f.database.getConversation(f.conversationId)
+  const branch = f.database.branchLocalConversation({ sourceConversationId: source.id, beforeMessageId: source.messages[300]!.id, title: 'edited branch' })
+  const { messages: _messages, ...header } = branch
+  void _messages
+  f.database.saveLocalConversations([{ header, messages: [{ id: randomUUID(), role: 'user', content: 'edited request', createdAt: Date.parse('2026-10-01T13:00:00Z'), state: 'complete' }] }])
+  await f.store.initializeWithReader(f.runId, f.state, f.reader)
+  expect(f.store.progress(f.runId).sources).toBe(451)
+  expect(f.sql.prepare('SELECT count(*) AS n FROM supervision_review_sources WHERE conversation_id = ?').get(branch.id)).toMatchObject({ n: 1 })
+})
+
 it('cancels between committed batches, retains the marker, and rebuilds on resume', async () => {
   const f = await fixture()
   const abort = new AbortController()

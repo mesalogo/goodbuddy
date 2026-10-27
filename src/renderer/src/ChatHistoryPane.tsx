@@ -144,6 +144,8 @@ function contentPaddingTop(container: HTMLElement): number {
 }
 
 export const ChatHistoryPane = memo(function ChatHistoryPane({
+  onEditMessage,
+  onOpenSourceConversation,
   onAddToNote,
   noteMessageNavigation,
   onOpenImageModelSettings,
@@ -171,6 +173,8 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
   taskStrip,
   visibleMessageCount,
 }: {
+  onEditMessage?: (conversationId: string, messageId: string) => void;
+  onOpenSourceConversation?: (conversationId: string) => void;
   onAddToNote?: (conversationId: string, message: Message, trigger: HTMLElement) => void;
   noteMessageNavigation?: { conversationId: string; messageId: string; requestId: number };
   onOpenImageModelSettings: () => void;
@@ -1092,6 +1096,9 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
         ref={handleScrollRef}
       >
         <div className="chat-content" ref={listRef}>
+          {conversation.branch && (onOpenSourceConversation
+            ? <button className="secondary-button" type="button" onClick={() => onOpenSourceConversation(conversation.branch!.sourceConversationId)}>{t('messageEdit.openSource', { title: conversation.branch.sourceTitle })}</button>
+            : <p>{t('messageEdit.sourceMissing', { title: conversation.branch.sourceTitle })}</p>)}
           {isUnusedConversation(conversation) && (
             <div className="welcome">
               <div className="welcome__badge">
@@ -1116,6 +1123,7 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
             </div>
           )}
           <ChatTimeline
+            onEditMessage={conversation.remote ? undefined : onEditMessage}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
             onOpenImageModelSettings={onOpenImageModelSettings}
             onReselectImageSources={onReselectImageSources}

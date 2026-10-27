@@ -6549,7 +6549,18 @@ export function registerIpcHandlers(
         throw new Error('当前会话仍有正在执行的请求，请等待完成后再创建分支')
       }
       const branch = await assistantDatabase.branchLocalConversation(parsed)
-      for (const message of branch.messages) await contextManager.assets?.reference(branch.id, 'message', message.id, conversationMessageResourceIds(message), conversationMessageOutputHandles(message))
+      try {
+        for (const message of branch.messages) {
+          if (parsed.beforeMessageId && contextManager.assets) for (const attachment of message.attachments ?? []) {
+            if (attachment.resourceId && !await contextManager.assets.has(attachment.resourceId)) throw new Error(`历史附件已不可用：${attachment.name}`)
+          }
+          await contextManager.assets?.reference(branch.id, 'message', message.id, conversationMessageResourceIds(message), conversationMessageOutputHandles(message))
+        }
+      } catch (error) {
+        await assistantDatabase.deleteLocalConversation(branch.id)
+        await contextManager.assets?.deleteConversation(branch.id, contextManager.activeContextIds())
+        throw error
+      }
       return branch
     }
   )

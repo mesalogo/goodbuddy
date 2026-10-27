@@ -540,6 +540,7 @@ export const conversationMessageSchema = z
   .object({
     id: assistantIdSchema,
     queueItemId: assistantIdSchema.optional(),
+    copiedFromMessageId: assistantIdSchema.optional(),
     role: z.enum(['user', 'assistant']),
     content: z.string(),
     reasoning: z.string().optional(),
@@ -703,6 +704,7 @@ export type ConversationContextCompressionState = z.infer<
 export const conversationBranchInputSchema = z
   .object({
     sourceConversationId: assistantIdSchema,
+    beforeMessageId: assistantIdSchema.optional(),
     title: z.string().trim().min(1).max(200)
   })
   .strict()
@@ -714,6 +716,7 @@ export type ConversationBranchInput = z.infer<
 export const conversationBranchSchema = z
   .object({
     sourceConversationId: assistantIdSchema,
+    sourceMessageId: assistantIdSchema.optional(),
     sourceTitle: z.string().trim().min(1).max(200)
   })
   .strict()

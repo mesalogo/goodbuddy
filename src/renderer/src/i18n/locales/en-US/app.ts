@@ -4,6 +4,12 @@ import type { app as chineseApp } from '../zh-CN/app'
 export const app = {
   messageEdit: {
     copy: 'Copy message',
+    attachmentLimit: 'A message can contain up to 8 attachments. Remove unused attachments first.',
+    title: 'Edit message', action: 'Edit', content: 'Message', cancel: 'Cancel', submit: 'Save and regenerate', submitting: 'Submitting…',
+    hint: 'Create a new branch from here and generate a new reply. The original conversation is preserved. File changes and external actions already performed will not be undone.',
+    addAttachment: 'Add attachment', adding: 'Adding attachments…', removeAttachment: 'Remove attachment {{name}}',
+    branchSaved: 'The new branch is saved. Retry sending here, or cancel to keep the edited content as its draft.',
+    openSource: 'Return to original conversation: {{title}}', sourceMissing: 'Original conversation unavailable: {{title}}',
   },
   sharing: {
     title: 'Device Sharing (Technical Preview)', boundary: 'Connect to the ShareServer catalog. Server policy accepts devices automatically or requires administrator approval; subsequent requests use device credentials. Registration does not indicate online status. Remote execution and knowledge content access are not provided here.',

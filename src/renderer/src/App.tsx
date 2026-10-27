@@ -13,6 +13,8 @@ import { DocumentConversationContext } from './DocumentConversationContext';
 import { maximumAttachmentsPerMessage } from '../../shared/attachment-limits';
 import { buildRuntimeHistory } from '../../shared/runtime-history';
 import { DeviceSharingPage } from './DeviceSharingPage';
+import { useMessageEdit } from './use-message-edit';
+import { MessageEditDialog } from './MessageEditDialog';
 import {
   ApplicationAvailability,
   ApplicationCenter,
@@ -6760,9 +6762,28 @@ function App(): React.JSX.Element {
       ? workspaceChanges.changes
       : undefined;
 
+  const messageEdit = useMessageEdit({
+    conversations: conversationStore, persistence: conversationPersistence,
+    flush: persistLocalConversationChanges,
+    unavailable: id => !conversationStoreReady ? t('conversation.branch.storageUnavailable')
+      : activeConversationIds.has(id) || queuedConversationIds.has(id) ? t('conversation.branch.unavailable')
+      : !activeRuntimeSelection ? t('runtime.notSelected') : undefined,
+    queueDefaults: () => ({ runtimeSelection: activeRuntimeSelection, knowledgeLibraryIds: enabledKnowledgeLibraryIds,
+      runtimeControl: activeRuntimeSelection?.provider === 'opencode' && selectedRuntimeAgent ? { provider: 'opencode', agent: selectedRuntimeAgent }
+        : activeRuntimeSelection?.provider === 'continue' && selectedContinuePreset ? { provider: 'continue', presetId: selectedContinuePreset } : undefined,
+      expertId: selectedExpertId && selectedExpertId !== 'team' ? selectedExpertId : undefined,
+      teamMode: selectedExpertId === 'team' || undefined,
+      smartRouting: (runtimeSettings?.subagentSmartRoutingEnabled && !selectedExpertId) || undefined }),
+    openConversation: id => { conversationListRowHandlers.select(id); showChatAndFocusComposer(); }, setDraft: setConversationInput,
+    branchTitle: source => createConversationBranchTitle(getConversationDisplayTitle(source, t('conversation.defaultTitle')), t('conversation.branch.suffix')),
+    fallbackError: () => t('notices.conversationBranchFailed'),
+    attachmentLimitError: () => t('messageEdit.attachmentLimit'),
+  });
+
   return (
     <div className="app-shell" data-frosted-glass={applicationSettings?.transparentFrostedEffectEnabled ? 'true' : undefined}>
       <LiveMessageStoreContext value={liveMessages}>
+      <MessageEditDialog store={messageEdit} unavailable={activeId && (activeConversationIds.has(activeId) || queuedConversationIds.has(activeId)) ? t('conversation.branch.unavailable') : undefined} />
       <ConversationStoreEffects
         liveMessages={liveMessages}
         onCommit={flushConversationPersistenceAfterCommit}
@@ -7230,6 +7251,8 @@ function App(): React.JSX.Element {
                         onRemoveSchedule={removeAssistantSchedule}
                         onRespondQuestion={respondToQuestion}
                         onRetry={retryMessage}
+                        onEditMessage={messageEdit.open}
+                        onOpenSourceConversation={conversationListRowHandlers.select}
                         onRunSchedule={runAssistantSchedule}
                         onScrollSnapshotChange={handleChatScrollSnapshotChange}
                         onSelectTask={setSelectedAssistantTaskId}

@@ -352,6 +352,7 @@ type MagicTodoRow = {
 }
 
 type MessageMetadata = {
+  copiedFromMessageId?: string
   createdAt?: number
   queueItemId?: string
   status?: string
@@ -1236,6 +1237,7 @@ function interruptActiveToolBlocks(
 }
 
 const conversationContextStateSchema = conversationSnapshotSchema.pick({
+  branch: true,
   knowledgeLibraryIds: true,
   knowledgeRetrievalMode: true,
   storyGraphEnabled: true,
@@ -1248,7 +1250,7 @@ function parseConversationContextState(
   value: string | null
 ): Pick<
   ConversationSnapshot,
-  'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'selectedExpertId' | 'contextMetrics' | 'contextCompressionState'
+  'branch' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'selectedExpertId' | 'contextMetrics' | 'contextCompressionState'
 > {
   if (!value) {
     return {}
@@ -1266,16 +1268,17 @@ function parseConversationContextState(
 function serializeConversationContextState(
   conversation: Pick<
     ConversationSnapshot,
-    'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'selectedExpertId' | 'contextMetrics' | 'contextCompressionState'
+    'branch' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'storyGraphEnabled' | 'selectedExpertId' | 'contextMetrics' | 'contextCompressionState'
   >
 ): string | null {
-  return conversation.knowledgeLibraryIds !== undefined ||
+  return conversation.branch !== undefined || conversation.knowledgeLibraryIds !== undefined ||
     conversation.knowledgeRetrievalMode !== undefined ||
     conversation.storyGraphEnabled !== undefined ||
     conversation.selectedExpertId !== undefined ||
     conversation.contextMetrics ||
     conversation.contextCompressionState
     ? JSON.stringify({
+        branch: conversation.branch,
         knowledgeLibraryIds: conversation.knowledgeLibraryIds,
         knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
         storyGraphEnabled: conversation.storyGraphEnabled,
@@ -1314,6 +1317,7 @@ function toConversationSnapshot(
     conversation.branch_source_title
       ? {
           branch: {
+            ...parseConversationContextState(conversation.context_state_json).branch,
             sourceConversationId:
               conversation.branch_source_conversation_id,
             sourceTitle: conversation.branch_source_title
@@ -1334,6 +1338,7 @@ function toConversationSnapshot(
       return {
         id: message.id,
         queueItemId: metadata.queueItemId,
+        copiedFromMessageId: metadata.copiedFromMessageId,
         role: message.role,
         content: message.content,
         reasoning: metadata.reasoning,
@@ -1372,6 +1377,7 @@ function serializeConversationMessageMetadata(
   return JSON.stringify({
     createdAt: message.createdAt,
     queueItemId: message.queueItemId,
+    copiedFromMessageId: message.copiedFromMessageId,
     status: message.status,
     terminalStatus: message.terminalStatus,
     reasoning: message.reasoning,
@@ -3609,6 +3615,11 @@ export class AssistantDatabase {
       if (!source) {
         throw new Error('只能从现有的本地会话创建分支')
       }
+      const boundary = input.beforeMessageId ? database.prepare(
+        "SELECT sequence FROM messages WHERE id = ? AND conversation_id = ? AND role = 'user'"
+      ).get(input.beforeMessageId, source.id) as { sequence: number } | undefined : undefined
+      if (input.beforeMessageId && !boundary) throw new Error('所选用户消息不存在或不属于此会话')
+      const beforeSequence = boundary?.sequence ?? Number.MAX_SAFE_INTEGER
       const activeTask = database
         .prepare(
           `SELECT 1
@@ -3635,12 +3646,12 @@ export class AssistantDatabase {
       }
       const messageStates = database
         .prepare(
-          `SELECT state
+          `SELECT state, sequence
            FROM messages
            WHERE conversation_id = ?
            ORDER BY sequence ASC`
         )
-        .all(source.id) as Array<{ state: MessageRow['state'] }>
+        .all(source.id) as Array<{ state: MessageRow['state']; sequence: number }>
       if (
         messageStates.some((message) => message.state === 'streaming')
       ) {
@@ -3661,6 +3672,11 @@ export class AssistantDatabase {
           source.runtime_selection_json,
           source.knowledge_retrieval_mode,
           serializeConversationContextState({
+            ...(input.beforeMessageId ? {
+              branch: { sourceConversationId: source.id, sourceTitle: source.title, sourceMessageId: input.beforeMessageId },
+              storyGraphEnabled: parseConversationContextState(source.context_state_json).storyGraphEnabled,
+              selectedExpertId: parseConversationContextState(source.context_state_json).selectedExpertId,
+            } : {}),
             knowledgeLibraryIds:
               parseConversationContextState(source.context_state_json)
                 .knowledgeLibraryIds
@@ -3686,20 +3702,19 @@ export class AssistantDatabase {
                   ),
                   ?, NULL, role, content, state,
                   ROW_NUMBER() OVER (ORDER BY sequence) - 1,
-                  json_remove(
-                    metadata_json,
-                    '$.artifactIds',
-                    '$.subagents',
+                   json_set(json_remove(
+                    CASE WHEN ? = 1 THEN metadata_json ELSE json_remove(metadata_json, '$.artifactIds', '$.subagents') END,
                     '$.task',
-                    '$.queueItemId'
-                  ),
+                    '$.queueItemId',
+                    '$.imageOperations'
+                   ), '$.copiedFromMessageId', COALESCE(json_extract(metadata_json, '$.copiedFromMessageId'), id)),
                   created_at
            FROM messages
-           WHERE conversation_id = ?
-           ORDER BY sequence`
+            WHERE conversation_id = ? AND sequence < ?
+            ORDER BY sequence`
         )
-        .run(destinationConversationId, source.id)
-      if (copiedMessages.changes !== messageStates.length) {
+        .run(destinationConversationId, input.beforeMessageId ? 1 : 0, source.id, beforeSequence)
+      if (copiedMessages.changes !== messageStates.filter(message => message.sequence < beforeSequence).length) {
         throw new Error('分支消息复制不完整')
       }
       database.exec('COMMIT')
@@ -8791,6 +8806,7 @@ export class AssistantDatabase {
         json_object('messageId', m.id, 'role', m.role, 'projectId', c.project_id) AS locator
       FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN projects p ON p.id = c.project_id
       WHERE c.status = 'active' AND p.status = 'active' AND m.role IN ('user', 'assistant')
+        AND json_extract(m.metadata_json, '$.copiedFromMessageId') IS NULL
         AND m.created_at >= ? AND m.created_at <= ?
         AND (? = 'global' OR c.project_id IN (SELECT value FROM json_each(?)))
       UNION ALL
@@ -8812,6 +8828,7 @@ export class AssistantDatabase {
       FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN projects p ON p.id = c.project_id
         JOIN json_each(m.metadata_json, '$.sourceReferences') ref
       WHERE c.status = 'active' AND p.status = 'active' AND m.role IN ('user', 'assistant')
+        AND json_extract(m.metadata_json, '$.copiedFromMessageId') IS NULL
         AND m.created_at >= ? AND m.created_at <= ?
         AND (? = 'global' OR c.project_id IN (SELECT value FROM json_each(?)))
     ), revisions AS (

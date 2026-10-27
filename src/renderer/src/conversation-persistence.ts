@@ -27,6 +27,7 @@ export function toConversationMessage(message: Message): ConversationMessage {
   return {
     id: message.id,
     queueItemId: message.queueItemId,
+    copiedFromMessageId: message.copiedFromMessageId,
     role: message.role,
     content: message.content,
     reasoning: message.reasoning,
