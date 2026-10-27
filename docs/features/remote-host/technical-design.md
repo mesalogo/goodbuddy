@@ -478,6 +478,8 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   不作为恢复依据；后续再次失败会清除该依据。原生子代理失败不参与普通工具恢复，
   Prompt 失败、取消或 `outcome-unknown` 也不触发转换。Agent-owned 与直接 ACP 路径
   共用此规则；转换表示后续响应已处理失败，不表示工具重新执行成功。
+  该工具展示转换不决定整轮请求终态；没有转换为 `recoverable` 的失败工具也不否定
+  Runtime 的正常 `done`。统一判定见[消息底部请求状态](../../agent-runtime/contracts/interactions.md#消息底部请求状态)。
 - 本机 OpenCode SDK 路径允许不同会话并行，同一会话仍按请求顺序执行。每个请求独立拥有
   SSE 事件订阅，并在正常完成、错误、取消或消费方结束迭代时主动关闭自己的响应流，
   不关闭其他会话的订阅或共享 Server。聊天与原生 Compact 共用 `consumeEventSubscription`，
@@ -526,6 +528,9 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   `eventIndex`，沿用既有 provenance 去重和 checkpoint 提交。
   重连时，工具及原生子代理的状态也以已提交的远端活动事件为准，覆盖消息终态处理派生的
   失败状态，避免将未完成活动误判为可恢复错误，保证终态重放内容一致。
+  若某个终态已经保存但其 checkpoint 尚未提交，恢复时从现有 `task_events` 读取该终态，
+  核对 binding、operation、sequence、eventIndex 后原样重放。这样旧版把工具失败投影成
+  整轮失败的记录，也能完成去重和 ACK；不按新版规则改写已存终态，不新增数据库字段。
 - 远程 context metrics 与对话级压缩后的估算值按本次请求实际使用的 Runtime 选择写入
   `context_state_json`。实时接收与恢复入口都传入请求的选择；数据库在未传入时按对话层、
   项目层解析，缺省执行方式为 OpenCode（规则见

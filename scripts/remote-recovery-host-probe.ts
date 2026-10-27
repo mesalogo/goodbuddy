@@ -42,7 +42,8 @@ async function main(): Promise<void> {
   const prepareLoss = process.argv[2] === '--prepare-loss'
   const startResponseLoss = process.argv[2] === '--start-response-loss'
   const liveDisconnect = process.argv[2] === '--live-disconnect'
-  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect
+  const toolFailure = process.argv[2] === '--tool-failure'
+  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect || toolFailure
   const retirement = process.argv[2] === '--retirement' || runtimeCrash || catchUp
   const directRetirement = process.argv[2] === '--direct-retirement'
   const directDisconnect = process.argv[2] === '--direct-disconnect'
@@ -146,7 +147,27 @@ async function main(): Promise<void> {
       return
     }
     if (retirement) {
-      const server = createServer((_request, response) => {
+      let scriptedModelCalls = 0
+      let toolResultReturned = false
+      const server = createServer((modelRequest, response) => {
+        if (toolFailure) {
+          let body = ''
+          modelRequest.on('data', chunk => { body += String(chunk) })
+          modelRequest.on('end', () => {
+            const payload = JSON.parse(body)
+            scriptedModelCalls++
+            if (scriptedModelCalls === 2) toolResultReturned = payload.messages.some((message: { role?: string; tool_call_id?: string }) =>
+              message.role === 'tool' && message.tool_call_id === 'missing-read')
+            response.writeHead(200, { 'content-type': 'text/event-stream' })
+            const delta = scriptedModelCalls === 1
+              ? { tool_calls: [{ index: 0, id: 'missing-read', type: 'function', function: {
+                name: 'read', arguments: JSON.stringify({ filePath: join(root, 'missing-file.txt') })
+              } }] }
+              : { content: scriptedModelCalls === 2 ? '' : 'OK' }
+            response.end(`data: ${JSON.stringify({ id: 'tool-probe', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: 'tool-probe', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: scriptedModelCalls === 1 ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`)
+          })
+          return
+        }
         response.writeHead(200, { 'content-type': 'text/event-stream' })
         response.flushHeaders()
         if (prepareLoss) {
@@ -221,7 +242,7 @@ async function main(): Promise<void> {
               const attach = channel.attachOwnedPrompt.bind(channel)
               channel.attachOwnedPrompt = async input => { attachments++; return attach(input) }
               const page = channel.pageOwnedPromptTranscript.bind(channel)
-              let interrupt = !prepareLoss && !startResponseLoss
+              let interrupt = !prepareLoss && !startResponseLoss && !toolFailure
               let exhaust = liveChannelBudget
               channel.pageOwnedPromptTranscript = async input => {
                 if (interrupt) {
@@ -249,6 +270,22 @@ async function main(): Promise<void> {
           const controller = new AbortController()
           let pending: Promise<unknown> | undefined
           try {
+            if (toolFailure) {
+              const events = []
+              for await (const event of instance.run(prompt, AbortSignal.timeout(30_000))) events.push(event)
+              assert(events.some(event => event.type === 'tool' && event.state === 'failed'))
+              assert(events.some(event => event.type === 'done'))
+              assert(!events.some(event => event.type === 'error' || (event.type === 'text' && event.delta.trim())))
+              assert.equal(toolResultReturned, true, 'Read failure must reach the next model turn')
+              assert.equal(scriptedModelCalls, 2)
+              const followup = []
+              for await (const event of instance.run({ ...prompt, requestId: randomUUID() }, AbortSignal.timeout(30_000))) followup.push(event)
+              assert(followup.some(event => event.type === 'done'))
+              assert(!followup.some(event => event.type === 'error'))
+              assert.equal(starts, 2)
+              process.stdout.write(`${JSON.stringify({ passed: true, toolFailure: true, realRuntime: runtime.runtimeId, failedReadPreserved: true, toolResultReturned, completedWithoutLaterText: true, followupCompleted: true, scriptedModelCalls, externalModelCalls: 0 })}\n`)
+              return
+            }
             if (prepareLoss) {
               await consume(false, AbortSignal.timeout(30_000))
               assert.equal((await bindings.getByConversation(prompt.conversationId))?.state, 'ready')

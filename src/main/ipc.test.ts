@@ -8568,7 +8568,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         yield {
           requestId: taskId,
           type: 'text',
-          delta: 'recovered answer',
+          delta: hasRecoveredResponse ? 'recovered answer' : '',
           remoteProvenance: {
             source: 'remote-semantic-transcript',
             bindingId: 'binding-recovery',
@@ -8700,7 +8700,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         event: {
           requestId: taskId,
           type: 'text',
-          delta: 'recovered answer'
+          delta: hasRecoveredResponse ? 'recovered answer' : ''
         }
       })
     )
@@ -8711,13 +8711,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect.objectContaining({
         taskId,
         semanticSequence: '4',
-        event: hasRecoveredResponse ? {
+        event: {
           requestId: taskId, type: 'done', sessionId: 'session-recovery'
-        } : {
-          requestId: taskId,
-          type: 'error',
-          status: 'failed',
-          message: 'Read 工具执行失败：missing file'
         }
       })
     )
@@ -8749,7 +8744,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('replays an error committed before its checkpoint using remote tool states instead of terminal message states', async () => {
+  it.each([false, true])('replays the stored terminal across projection changes (unfinished peer=%s)', async unfinished => {
     const database = new AssistantDatabase(':memory:')
     database.initialize('C:\\Workspace')
     const project = database.createSshProject({
@@ -8774,7 +8769,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const events: AgentEvent[] = [
       { requestId: taskId, type: 'tool', callId: 'A', name: 'Read', state: 'failed', summary: 'Read', error: 'missing file' },
       { requestId: taskId, type: 'text', delta: 'Handled missing file' },
-      { requestId: taskId, type: 'tool', callId: 'B', name: 'Write', state: 'running', summary: 'Write', input: 'preserve input' }
+      { requestId: taskId, type: 'tool', callId: 'B', name: 'Write', state: unfinished ? 'running' : 'completed', summary: 'Write', input: 'preserve input' }
     ]
     events.forEach((event, index) => {
       append(String(index + 1), 0, event)
@@ -8782,7 +8777,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     })
     const error: AgentEvent = { requestId: taskId, type: 'error', status: 'failed', message: 'Read 工具执行失败：missing file' }
     append('4', 0, error)
-    expect(database.getConversation(conversationId).messages[1]?.tools?.map(tool => tool.state)).toEqual(['failed', 'failed'])
+    expect(database.getConversation(conversationId).messages[1]?.tools?.map(tool => tool.state)).toEqual(['failed', unfinished ? 'failed' : 'completed'])
     expect(database.getTask(taskId).status).toBe('running')
     const recoveredRuntime = {
       runtimeId: 'opencode', capability: 'chat', supportsToolExecution: true,
@@ -8792,7 +8787,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           remoteHasResponseTextAfterToolFailure: true,
           remoteRecoveredTools: [
             expect.objectContaining({ callId: 'A', state: 'failed', error: 'missing file' }),
-            expect.objectContaining({ callId: 'B', state: 'running', input: 'preserve input' })
+            expect.objectContaining({ callId: 'B', state: unfinished ? 'running' : 'completed', input: 'preserve input' })
           ]
         })
         const remoteProvenance = {
@@ -8818,7 +8813,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce).toHaveBeenNthCalledWith(1,
         expect.objectContaining({ semanticSequence: '4', eventIndex: 0, event: error }))
       expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce.mock.results.map(result => result.value)).toEqual([false, true])
-      expect(database.getRemoteTaskActivityStates(taskId).tools.get('B')).toBe('running')
+      expect(database.getRemoteTaskActivityStates(taskId).tools.get('B')).toBe(unfinished ? 'running' : 'completed')
     } finally {
       await harness.dispose()
       database.close()
@@ -12045,7 +12040,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('marks a request failed when a tool fails before runtime done', async () => {
+  it.each([false, true])('preserves runtime completion and the failed tool without later text (remote=%s)', async remote => {
     const runtime = {
       capability: 'chat',
       requiresToolApproval: false,
@@ -12053,6 +12048,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       getStatus: vi.fn(),
       dispose: vi.fn(),
       async *run(request: { requestId: string }) {
+        const provenance = (semanticSequence: string) => remote ? { remoteProvenance: {
+          source: 'remote-semantic-transcript' as const, bindingId: 'failed-tool-binding', operationId: request.requestId,
+          semanticSequence, eventIndex: 0
+        } } : {}
         yield {
           requestId: request.requestId,
           type: 'tool',
@@ -12060,9 +12059,10 @@ describe('registerIpcHandlers agent terminal state', () => {
           name: 'write',
           state: 'failed',
           summary: 'OpenCode 工具：write',
-          error: 'write path denied'
+          error: 'write path denied',
+          ...provenance('1')
         }
-        yield { requestId: request.requestId, type: 'done' }
+        yield { requestId: request.requestId, type: 'done', ...provenance('2') }
       }
     }
     const harness = createHarness(runtime)
@@ -12077,14 +12077,13 @@ describe('registerIpcHandlers agent terminal state', () => {
     await vi.waitFor(() =>
       expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
         requestId,
-        'failed',
-        'write 工具执行失败：write path denied'
+        'completed'
       )
     )
     expect(
       harness.assistantDatabase.updateTaskStatus
-    ).not.toHaveBeenCalledWith(requestId, 'completed')
-    expect(harness.webContents.send).toHaveBeenCalledWith(
+    ).not.toHaveBeenCalledWith(requestId, 'failed', expect.anything())
+    expect(harness.webContents.send).not.toHaveBeenCalledWith(
       ipcChannels.agentEvent,
       expect.objectContaining({
         requestId,
@@ -12093,6 +12092,11 @@ describe('registerIpcHandlers agent terminal state', () => {
         message: 'write 工具执行失败：write path denied'
       })
     )
+    const failedTool = expect.objectContaining({ type: 'tool', state: 'failed', error: 'write path denied' })
+    if (remote) expect(harness.assistantDatabase.appendRemoteTaskEventsOnce).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ payload: failedTool })])
+    )
+    else expect(harness.webContents.send).toHaveBeenCalledWith(ipcChannels.agentEvent, failedTool)
     await harness.dispose()
   })
 
@@ -12138,6 +12142,41 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect.any(String)
     )
     await harness.dispose()
+  })
+
+  it.each(['pending', 'running', 'cancelled', 'interrupted'] as const)('still rejects a done event with an unfinished %s tool', async state => {
+    const harness = createHarness({
+      capability: 'chat', supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'tool', callId: 'read-1', name: 'Read', state, summary: 'Read' }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    })
+    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
+    try {
+      await harness.handler?.(trustedEvent(harness.webContents), { requestId, conversationId: 'unfinished-read', prompt: 'read a file' })
+      await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId, 'failed', 'Read 工具未完成，任务不能标记为成功'
+      ))
+    } finally { await harness.dispose() }
+  })
+
+  it.each(['failed', 'cancelled'] as const)('preserves the actual Runtime %s after a tool error', async status => {
+    const harness = createHarness({
+      capability: 'chat', supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'tool', callId: 'read-1', name: 'Read', state: 'failed', summary: 'Read', error: 'missing file' }
+        yield { requestId: request.requestId, type: 'error', status, message: 'Runtime terminal reason' }
+      }
+    })
+    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
+    try {
+      await harness.handler?.(trustedEvent(harness.webContents), { requestId, conversationId: 'failed-runtime', prompt: 'read a file' })
+      await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId, status, 'Runtime terminal reason'
+      ))
+      expect(harness.assistantDatabase.updateTaskStatus).not.toHaveBeenCalledWith(requestId, 'completed')
+    } finally { await harness.dispose() }
   })
 
   it('does not fail a completed native subagent for its provisional Task tool', async () => {

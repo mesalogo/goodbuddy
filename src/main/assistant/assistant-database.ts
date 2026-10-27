@@ -6486,6 +6486,13 @@ export class AssistantDatabase {
   getRemoteTaskActivityStates(taskIdInput: string): {
     tools: Map<string, ConversationToolActivity['state']>
     subagents: Map<string, Pick<ConversationSubagentActivity, 'state' | 'error'>>
+    terminal?: {
+      bindingId: string
+      operationId: string
+      semanticSequence: string
+      eventIndex: number
+      event: Extract<AgentEvent, { type: 'done' | 'error' }>
+    }
   } {
     const taskId = assistantIdSchema.parse(taskIdInput)
     const tools = new Map<string, ConversationToolActivity['state']>()
@@ -6512,7 +6519,26 @@ export class AssistantDatabase {
         })
       }
     }
-    return { tools, subagents }
+    // Terminal projection can change between Desktop versions. Preserve a
+    // terminal already persisted before its checkpoint when replaying that page.
+    const terminal = this.requireDatabase().prepare(
+      `SELECT remote_binding_id, remote_operation_id, remote_semantic_sequence,
+              remote_event_index, payload_json
+       FROM task_events WHERE task_id = ? AND remote_semantic_sequence IS NOT NULL
+         AND kind IN ('done', 'error')
+       ORDER BY CAST(remote_semantic_sequence AS INTEGER) DESC, remote_event_index DESC
+       LIMIT 1`
+    ).get(taskId) as {
+      remote_binding_id: string; remote_operation_id: string; remote_semantic_sequence: string
+      remote_event_index: number; payload_json: string
+    } | undefined
+    return { tools, subagents, ...(terminal ? { terminal: {
+      bindingId: terminal.remote_binding_id,
+      operationId: terminal.remote_operation_id,
+      semanticSequence: String(terminal.remote_semantic_sequence),
+      eventIndex: terminal.remote_event_index,
+      event: JSON.parse(terminal.payload_json) as Extract<AgentEvent, { type: 'done' | 'error' }>
+    } } : {}) }
   }
 
   private queryHighestCommittedRemoteTaskEventSequence(

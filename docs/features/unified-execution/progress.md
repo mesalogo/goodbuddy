@@ -1,5 +1,39 @@
 # 进度与证据
 
+## 2026-10-27 Tool failure no longer overrides Runtime completion
+
+Reproduced in IPC regression tests: both plain and remote-provenance streams
+changed a normal `done` after a failed tool into a failed request. Main now keeps
+the Runtime terminal when tool calls have completed with an error. The original
+tool error remains visible; no later assistant text is required. Unfinished tool
+states and actual Runtime errors/cancellation still retain their existing checks.
+The same helper covers ordinary execution and remote task recovery.
+
+Recovery also reads a previously persisted terminal from existing task events and
+replays it verbatim when its full provenance matches. Two real SQLite regression
+cases verify old projected failures committed before their checkpoint can still
+deduplicate and ACK after this change, with and without an unfinished peer tool.
+No database schema or Agent protocol changes were needed. Shared behavior is
+defined in [Runtime interactions](../../agent-runtime/contracts/interactions.md#消息底部请求状态).
+
+Validation:
+
+- `npx.cmd vitest run src/main/ipc.test.ts src/main/agent/acp-remote-runtime.test.ts
+  src/main/assistant/assistant-database.test.ts`: **481 passed, 1 skipped**.
+- Standard typecheck and changed-file ESLint passed.
+- Shared Linux x64, reached over VPN after LAN SSH closed: current-source Agent,
+  helper and Desktop protocol driver with installed OpenCode. The new
+  `scripts/remote-recovery-host-probe.ts --tool-failure` mode requested a missing
+  file through the real Read tool. Its failure reached the next model turn; that
+  turn ended without response text, the tool retained `failed`, the Runtime
+  returned `done`, and a follow-up prompt in the same conversation completed.
+  Local scripted model calls **3**, external model calls **0**. This probes the
+  real Runtime lifecycle; IPC status projection is covered separately above.
+- Supplemental `tests/remote-direct-model.live.test.ts` attempts twice exceeded
+  the 60-second command bound before reporting a result. They are **not counted
+  as passing**; isolated transfer/setup artifacts were cleaned. The OpenCode
+  lifecycle probe above passed. No installed Desktop UI acceptance was run.
+
 ## 2026-10-26 Pre-submission recovery fix
 
 Implemented the submission boundary described in

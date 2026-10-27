@@ -606,7 +606,7 @@ function safeRuntimeError(error: unknown, fallback: string): string {
   return safeToolErrorDetail(error, 2_000) ?? fallback
 }
 
-function unsuccessfulToolMessage(
+function unfinishedToolMessage(
   tools: Iterable<{
     name: string
     state:
@@ -623,13 +623,12 @@ function unsuccessfulToolMessage(
   for (const tool of tools) {
     if (
       tool.state === 'completed' ||
+      tool.state === 'failed' ||
       tool.state === 'recoverable'
     ) {
       continue
     }
-    return tool.state === 'failed'
-      ? `${tool.name} 工具执行失败${tool.error ? `：${tool.error}` : ''}`
-      : `${tool.name} 工具未完成，任务不能标记为成功`
+    return `${tool.name} 工具未完成，任务不能标记为成功`
   }
   return undefined
 }
@@ -1897,7 +1896,7 @@ export function registerIpcHandlers(
           toolStates.delete(event.runtimeCallId)
         }
         if (event.type === 'done') {
-          const message = unsuccessfulToolMessage(toolStates.values())
+          const message = unfinishedToolMessage(toolStates.values())
           if (message !== undefined) {
             event = {
               requestId: task.taskId,
@@ -1906,6 +1905,17 @@ export function registerIpcHandlers(
               message
             }
           }
+        }
+        // A previous version may already have committed a projected terminal
+        // before the page checkpoint. Replay that immutable event, not today's
+        // projection, so it can be acknowledged without an identity conflict.
+        const retainedTerminal = activityStates.terminal
+        if ((event.type === 'done' || event.type === 'error') && retainedTerminal &&
+          retainedTerminal.bindingId === provenance.bindingId &&
+          retainedTerminal.operationId === provenance.operationId &&
+          retainedTerminal.semanticSequence === provenance.semanticSequence &&
+          retainedTerminal.eventIndex === provenance.eventIndex) {
+          event = retainedTerminal.event
         }
         await remoteEventBatcher.add(provenance, event, committed => {
           if (committed.type === 'remote-semantic-checkpoint') {
@@ -4482,7 +4492,7 @@ export function registerIpcHandlers(
             }
           }
           if (publicEvent.type === 'done') {
-            const message = unsuccessfulToolMessage(
+            const message = unfinishedToolMessage(
               toolStates.values()
             )
             if (message !== undefined) {
