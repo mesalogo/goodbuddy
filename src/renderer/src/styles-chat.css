@@ -1340,6 +1340,23 @@
   margin-top: var(--space-2);
 }
 
+.message--user .message__actions {
+  justify-content: flex-end;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .message__actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .message:hover .message__actions,
+  .message:focus-within .message__actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .message-attachments {
   display: flex;
   max-width: 100%;
