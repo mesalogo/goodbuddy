@@ -1,9 +1,16 @@
-import { useState, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { shareServerConnection } from './shareserver-connection-store'
 
 export function ShareServerConnectionSettings(): React.JSX.Element {
   const state = useSyncExternalStore(shareServerConnection.subscribe, shareServerConnection.getState)
-  const [address, setAddress] = useState(state.serverUrl)
+  const [address, setAddress] = useState('')
+  useEffect(() => {
+    let mounted = true
+    void shareServerConnection.load().then(value => {
+      if (mounted) setAddress(current => current || value)
+    }).catch(() => { /* load() exposes the error in the shared connection state. */ })
+    return () => { mounted = false }
+  }, [])
   return <section className="settings-section" aria-label="ShareServer 连接">
     <h3>ShareServer 连接</h3>
     <p>所有文件在线编辑入口共用此连接。服务器需要启用 Office 能力；支持内网 IP 和端口。</p>

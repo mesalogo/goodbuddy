@@ -8,6 +8,7 @@ describe('file entry Office dispatch', () => {
     const { officeStore } = await import('./office-store')
     const source = { kind: 'workspace' as const, projectId: 'project', path: 'result.docx' }
     officeStore.requestOpen(source, 'result.docx')
+    await vi.waitFor(() => expect(officeStore.get(officeStore.getOpenRequest()!.instanceId).error).toContain('请先在设置中连接'))
     expect(officeStore.get(officeStore.getOpenRequest()!.instanceId).source).toEqual(source)
     expect(open).not.toHaveBeenCalled()
   })
@@ -15,7 +16,7 @@ describe('file entry Office dispatch', () => {
     localStorage.setItem('goodbuddy.office.serverUrl', 'http://192.168.0.23:8088')
     let complete!: (value: null) => void
     const open = vi.fn(() => new Promise<null>(resolve => { complete = resolve }))
-    window.goodbuddy = { office: { open, capabilities: vi.fn().mockResolvedValue({}) } } as unknown as typeof window.goodbuddy
+    window.goodbuddy = { office: { open, capabilities: vi.fn().mockResolvedValue({}) }, sharing: { getSettings: vi.fn().mockResolvedValue({ serverUrl: 'http://192.168.0.23:8088' }) } } as unknown as typeof window.goodbuddy
     const { officeStore } = await import('./office-store')
     const source = { kind: 'workspace' as const, projectId: 'project', path: 'result.docx' }
     officeStore.requestOpen(source, 'result.docx')
@@ -29,7 +30,7 @@ describe('file entry Office dispatch', () => {
   it('keeps the original source for retry when the service rejects Office editing', async () => {
     localStorage.setItem('goodbuddy.office.serverUrl', 'http://192.168.0.23:8088')
     const open = vi.fn().mockRejectedValue(new Error('Office 未启用'))
-    window.goodbuddy = { office: { open, capabilities: vi.fn().mockResolvedValue({}) } } as unknown as typeof window.goodbuddy
+    window.goodbuddy = { office: { open, capabilities: vi.fn().mockResolvedValue({}) }, sharing: { getSettings: vi.fn().mockResolvedValue({ serverUrl: 'http://192.168.0.23:8088' }) } } as unknown as typeof window.goodbuddy
     const { officeStore } = await import('./office-store')
     const source = { kind: 'attachment' as const, resourceId: 'resource' }
     officeStore.requestOpen(source, 'report.docx')

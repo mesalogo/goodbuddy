@@ -183,11 +183,14 @@ type DocumentEditSessionSummary = {
 `office-contracts.ts` 定义窄 IPC；`OfficeService` 管理选择文件、独立沙箱视图、保存与关闭。
 `office-file-worker.ts` 执行上传、摘要计算、版本下载、冲突检查及同目录暂存后 rename；Main
 不执行文档解析或哈希。`office-store.ts` 持有运行期面板状态，布局只保存页签 ID 和文件名；
-应用重启后需重新选择文件，尚无编辑来源恢复。公开服务器地址保存在 Renderer localStorage。
+应用重启后需重新选择文件，尚无编辑来源恢复。服务器地址统一由 Main 的设备共享连接设置持久化。
 
-`shareserver-connection-store.ts` 是各文件入口共享的连接状态，沿用既有
-`goodbuddy.office.serverUrl` 偏好键；连接表单仅在设置中展示。不在应用启动时请求服务。
-文档打开时，已有 Office 地址优先，否则读取 Main 中设备共享的连接设置；不再要求在文档 Tab 重填。
+`shareserver-connection-store.ts` 是各文件入口共享的运行期连接状态，持久化复用 Main 的设备共享设置；
+连接表单仅在设置中展示。不在应用启动时请求服务。
+每次打开新文档时读取 Main 中设备共享的当前连接设置；忽略旧 `goodbuddy.office.serverUrl`，不再要求在文档 Tab 重填。
+平台功能中的连接检查成功后也保存同一份设置，保留设备名称；连接检查失败不改写设置。
+能力响应中的 `webUrl` 仅用于此次编辑入口，不覆盖已登记的服务地址；分端口部署须保证该 Web 地址从客户端可达。
+已打开的编辑会话保留原服务器地址，后续连接设置变化不改变其保存目标。
 能力返回的可选 `webUrl` 用于从 API 端口定位浏览器可达的编辑入口，旧服务缺少此字段时沿用连接地址。
 连接检查通过窄 `office:capabilities` IPC 请求 `GET /api/v1/office/config`，校验
 `enabled / formats / maxBytes / versionedDownload`。连接到 ShareServer 不等于 Office 已启用，
