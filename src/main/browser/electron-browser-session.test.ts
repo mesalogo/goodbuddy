@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { BrowserUrlPolicy } from './browser-url-policy'
+import type { BrowserDriverLike } from './browser-service'
 import {
   ElectronBrowserSession,
   type BrowserPartitionSession,
@@ -150,6 +151,43 @@ function createHarness() {
 }
 
 describe('ElectronBrowserSession', () => {
+  it('keeps native file selection and records each download once across shared tabs', async () => {
+    const first = createHarness()
+    const second = createHarness()
+    let views = 0
+    let records!: () => unknown[]
+    const session = await ElectronBrowserSession.create({
+      policy: first.policy,
+      createPartition: async () => first.partition,
+      createView: async () => views++ ? second.window : first.window,
+      createProxy: () => first.proxy,
+      downloadsDirectory: '/downloads',
+      createDriver: async (_contents, getDownloads) => {
+        records = getDownloads
+        return {} as BrowserDriverLike
+      }
+    })
+    const sibling = await session.createTab(new AbortController().signal)
+    try {
+      await session.getDriver()
+      expect(first.sendCommand.mock.calls.flat()).not.toContain('Page.setInterceptFileChooserDialog')
+      const done = new EventEmitter()
+      let savedPath = ''
+      const item = {
+        getFilename: () => 'report.txt',
+        setSavePath: vi.fn((path: string) => { savedPath = path }),
+        getSavePath: () => savedPath,
+        once: done.once.bind(done)
+      }
+      const event = { preventDefault: vi.fn() }
+      first.partitionEvents.emit('will-download', event, item, second.webContents)
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(item.setSavePath).toHaveBeenCalledOnce()
+      expect(records()).toHaveLength(1)
+      done.emit('done', {}, 'completed')
+      expect(records()).toEqual([{ name: 'report.txt', path: savedPath, status: 'completed' }])
+    } finally { await sibling.dispose(); await session.dispose() }
+  })
   it('creates native popups in the sandboxed shared partition and rejects unsupported URLs', async () => {
     const opener = createHarness()
     const child = createHarness()

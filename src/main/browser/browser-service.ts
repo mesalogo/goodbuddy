@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { mkdir } from 'node:fs/promises'
 import { BrowserUrlPolicy, canonicalizeBrowserUrl } from './browser-url-policy'
 import {
   CdpBrowserDriver,
@@ -18,6 +19,7 @@ import type {
   BrowserTabId,
   BrowserTabSummary
 } from '../../shared/contracts'
+import type { BrowserAction } from '../../shared/browser-interaction'
 
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_CLEANUP_TIMEOUT_MS = 5_000
@@ -40,7 +42,8 @@ export type BrowserTabUsageLease = {
 }
 
 export type BrowserSessionLike = {
-  readonly webContents: BrowserWebContents
+  readonly webContents: Pick<BrowserWebContents, 'on' | 'off' | 'getURL' | 'isDestroyed'>
+  getDriver?(): Promise<BrowserDriverLike | undefined>
   approveNavigation(
     target: Awaited<ReturnType<BrowserUrlPolicy['validate']>>
   ): void
@@ -60,6 +63,7 @@ export type BrowserSessionLike = {
 }
 
 export type BrowserDriverLike = {
+  action?(action: BrowserAction, signal: AbortSignal): Promise<unknown>
   navigate(url: string, signal: AbortSignal): Promise<{ url: string }>
   reload(signal: AbortSignal): Promise<{ url: string }>
   snapshot(signal: AbortSignal): Promise<BrowserSnapshot>
@@ -79,6 +83,7 @@ export type BrowserDriverLike = {
 }
 
 export type BrowserServiceOptions = {
+  downloadsDirectory?: string
   policy?: BrowserUrlPolicy
   maximumSessions?: number
   maximumTabsPerConversation?: number
@@ -207,12 +212,14 @@ async function boundedCleanup(
 async function defaultCreateSession(
   policy: BrowserUrlPolicy,
   signal: AbortSignal,
+  downloads?: string,
   parentWindow?: BrowserParentWindowHandle
 ): Promise<BrowserSessionLike> {
-  return ElectronBrowserSession.create(
-    { policy, ...(parentWindow ? { parentWindow } : {}) },
-    signal
-  )
+  const { attachNativeBrowser } = await import('./electron-playwright')
+  if (downloads) await mkdir(downloads, { recursive: true })
+  return ElectronBrowserSession.create({ policy, parentWindow, downloadsDirectory: downloads,
+    createDriver: (contents, records) => attachNativeBrowser(contents, records)
+  }, signal)
 }
 
 function defaultCreateDriver(webContents: BrowserWebContents): BrowserDriverLike {
@@ -266,7 +273,7 @@ export class BrowserService {
     this.cleanupTimeoutMs = options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS
     this.createSession =
       options.createSession ??
-      ((policy, signal) => defaultCreateSession(policy, signal, options.parentWindow))
+      ((policy, signal) => defaultCreateSession(policy, signal, options.downloadsDirectory, options.parentWindow))
     this.createDriver = options.createDriver ?? defaultCreateDriver
     for (const value of [
       this.maximumSessions,
@@ -490,7 +497,7 @@ export class BrowserService {
   ): Promise<BrowserTabSlot> {
     let driver: BrowserDriverLike
     try {
-      driver = this.createDriver(session.webContents)
+      driver = await session.getDriver?.() ?? this.createDriver(session.webContents as BrowserWebContents)
     } catch (error) {
       await boundedCleanup(session.dispose(), this.cleanupTimeoutMs).catch(() => undefined)
       throw error
@@ -1147,6 +1154,13 @@ export class BrowserService {
       if (tab && this.shouldEmitFailure(conversationId, signal, error)) this.emitFailure(tab, '浏览器导航', error)
       throw error
     }
+  }
+
+  async action(conversationId: string, action: BrowserAction, signal: AbortSignal, tabId: BrowserTabId, ownerWindowId?: number): Promise<unknown> {
+    return this.runInTab(conversationId, signal, 'acting', false, '浏览器操作', async (tab, effectiveSignal) => {
+      if (!tab.driver.action) throw new Error('浏览器后端不支持此操作')
+      return tab.driver.action(action, effectiveSignal)
+    }, tabId, ownerWindowId)
   }
 
   async snapshot(conversationId: string, signal: AbortSignal, tabId?: BrowserTabId, ownerWindowId?: number): Promise<BrowserSnapshot> {

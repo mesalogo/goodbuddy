@@ -66,7 +66,7 @@ describe('BrowserModelTools', () => {
     tools.getApproval('browser_snapshot', {})
     expect(service.getOrigin).toHaveBeenLastCalledWith('conversation', popupId)
   })
-  it('publishes seven strict, bounded builtin tool definitions', () => {
+  it('publishes browser automation and tab management definitions', () => {
     const tools = new BrowserModelTools({
       service: createService(),
       conversationId: 'conversation',
@@ -80,7 +80,9 @@ describe('BrowserModelTools', () => {
       'browser_type',
       'browser_select',
       'browser_back',
-      'browser_screenshot'
+      'browser_screenshot',
+      'browser_action',
+      'browser_tabs'
     ])
     expect(
       definitions.every(

@@ -931,8 +931,11 @@ records are listed separately and do not introduce another feature status.
 
 ### Browser, communication, voice, and application maintenance
 
-- [x] **Shared built-in browser for runtimes**: Uses GoodBuddy's isolated
-  Chromium and never controls a browser installed by the user. A separate
+- [x] **Shared built-in browser for runtimes**: The right workbar retains its
+  ordinary address bar, native page rendering and direct interaction. Playwright
+  operates that same bundled Chromium page. AI runs automatically; users click
+  and type directly, with no control-mode switch or additional file toolbar.
+  No separately installed browser is required. A separate
   master switch decides whether assigned runtimes receive the capability in
   requests, with no per-use prompt after enablement. Turning Agent access off
   does not disable manual browser workbar actions. The Browser workbar and
@@ -942,9 +945,12 @@ records are listed separately and do not introduce another feature status.
   changes the page the Agent sees next.
   Multiple tabs in one conversation share login state while keeping separate
   pages and navigation. Each model request retains its starting tab binding;
-  unused request reservations do not create browser resources. Released tabs
-  can be reopened, explicit screenshots remain available, and ordinary
-  operations no longer trigger unused automatic screenshot capture.
+  unused request reservations do not create browser resources. Models can
+  explicitly manage tabs and perform keyboard, drag, upload, download and dialog
+  operations. Hidden views retain their pages; only explicit screenshots send
+  images to the model.
+  Windows evidence and untested platforms are recorded in the
+  [implementation notes](./docs/features/computer-control/managed-browser-progress.md).
   Tabs can be closed while an AI request uses them without cancelling the
   whole request. A later explicit navigation creates a separate replacement
   tab; blank pages cannot reload, and switching or closing panels clears stale

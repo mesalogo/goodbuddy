@@ -1584,6 +1584,7 @@ export type BrowserSetViewportRequest =
   | { leaseToken: string }
 
 export type BrowserSnapshotResult = {
+  tree?: string
   url: string
   title: string
   nodes: Array<{

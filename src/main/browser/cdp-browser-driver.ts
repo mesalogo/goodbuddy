@@ -69,6 +69,7 @@ export type BrowserSnapshot = {
   title: string
   nodes: BrowserSnapshotNode[]
   truncated: boolean
+  tree?: string
 }
 
 export class BrowserStaleReferenceError extends Error {

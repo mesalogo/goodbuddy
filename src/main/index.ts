@@ -3,6 +3,7 @@ import { registerHtmlPreviewProtocol } from './html-preview-protocol'
 import { localInferenceService } from './local-inference-service'
 import { NativeClientCoordinator } from './agent/native-client-coordinator'
 import { createEmbeddingUtilityTransport } from './knowledge/embedding-utility-transport'
+import { configureNativeBrowserAutomation } from './browser/electron-playwright'
 import {
   app,
   BrowserWindow,
@@ -588,6 +589,7 @@ if (hasSingleInstanceLock) {
     }
   })
 
+  configureNativeBrowserAutomation()
   applicationStartup = app.whenReady().then(async () => {
     registerHtmlPreviewProtocol()
     startupMark('main:when-ready')
@@ -1034,7 +1036,7 @@ if (hasSingleInstanceLock) {
         }
       }
     })
-    browserService = new BrowserService({ parentWindow: mainWindow })
+    browserService = new BrowserService({ parentWindow: mainWindow, downloadsDirectory: join(app.getPath('downloads'), 'GoodBuddy') })
     const bundledRuntimePaths = resolveBundledRuntimePaths({
       appPath: app.getAppPath(),
       resourcesPath: process.resourcesPath,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { browserActionSchema } from '../../shared/browser-interaction'
 import { z } from 'zod'
 import { builtinModelTools } from '../../shared/builtin-model-tools'
 import type {
@@ -39,7 +40,7 @@ export const browserClickInputSchema = z
 export const browserTypeInputSchema = z
   .object({
     ref: refSchema,
-    text: z.string().min(1).max(MAX_INPUT_LENGTH)
+    text: z.string().max(MAX_INPUT_LENGTH)
   })
   .strict()
 
@@ -52,8 +53,15 @@ export const browserSelectInputSchema = z
 
 export const browserBackInputSchema = z.object({}).strict()
 export const browserScreenshotInputSchema = z.object({}).strict()
+export const browserTabsInputSchema = z.object({
+  action: z.enum(['list', 'new', 'select', 'close']),
+  tabId: z.string().uuid().optional(),
+  url: z.string().url().optional()
+}).strict()
 
 export type BrowserToolName =
+  | 'browser_action'
+  | 'browser_tabs'
   | 'browser_navigate'
   | 'browser_snapshot'
   | 'browser_click'
@@ -133,7 +141,6 @@ const definitions = [
         },
         text: {
           type: 'string',
-          minLength: 1,
           maxLength: MAX_INPUT_LENGTH,
           description: '要输入的文本（审批界面不会显示内容）'
         }
@@ -177,7 +184,9 @@ const definitions = [
       properties: {},
       additionalProperties: false
     }
-  }
+  },
+  { ...getBrowserToolMetadata('browser_action'), inputSchema: z.toJSONSchema(z.object({ action: browserActionSchema }).strict()) },
+  { ...getBrowserToolMetadata('browser_tabs'), inputSchema: z.toJSONSchema(browserTabsInputSchema) }
 ] as const satisfies readonly ModelToolDefinition[]
 
 export type BrowserToolService = Pick<
@@ -191,7 +200,7 @@ export type BrowserToolService = Pick<
   | 'back'
   | 'screenshot'
   | 'releaseConversation'
-> & Partial<Pick<BrowserService, 'acquireTabUsage' | 'createTab'>>
+> & Partial<Pick<BrowserService, 'acquireTabUsage' | 'createTab' | 'action' | 'listTabs' | 'closeTab'>>
 
 export type BrowserModelToolsOptions = {
   service: BrowserToolService
@@ -270,7 +279,11 @@ export class BrowserModelTools {
     let description: string
     let argumentSummary: string
     let scopeKey: string
-    if (name === 'browser_navigate') {
+    if (name === 'browser_action' || name === 'browser_tabs') {
+      description = `操作 ${currentOrigin} 的浏览器页面。`
+      argumentSummary = `来源：${currentOrigin}`
+      scopeKey = `model:browser:action:${randomUUID()}`
+    } else if (name === 'browser_navigate') {
       const input = browserNavigateInputSchema.parse(argumentsValue)
       const target = canonicalizeBrowserUrl(input.url)
       const label = navigationLabel(target)
@@ -384,6 +397,31 @@ export class BrowserModelTools {
     browserTabId: BrowserTabId
   ): Promise<ModelToolResult> {
     signal.throwIfAborted()
+    if (name === 'browser_action') {
+      if (!this.service.action) throw new Error('浏览器交互不可用')
+      const input = z.object({ action: browserActionSchema }).strict().parse(argumentsValue)
+      return createTextResult(await this.service.action(this.conversationId, input.action, signal, browserTabId))
+    }
+    if (name === 'browser_tabs') {
+      const input = browserTabsInputSchema.parse(argumentsValue)
+      if (!this.service.listTabs) throw new Error('浏览器标签管理不可用')
+      if (input.action === 'list') return createTextResult(this.service.listTabs(this.conversationId))
+      if (input.action === 'new') {
+        if (!this.service.createTab) throw new Error('浏览器标签创建不可用')
+        const tab = await this.service.createTab(this.conversationId, undefined, signal, randomUUID())
+        this.browserTabId = tab.tabId
+        if (input.url) await this.service.navigate(this.conversationId, input.url, signal, tab.tabId)
+        return createTextResult(tab)
+      }
+      const target = input.tabId as BrowserTabId | undefined ?? browserTabId
+      if (!this.service.listTabs(this.conversationId).some((tab) => tab.tabId === target)) throw new Error('浏览器标签不属于当前会话')
+      if (input.action === 'close') {
+        await this.service.closeTab?.(this.conversationId, target)
+        return createTextResult({ closed: target })
+      }
+      this.browserTabId = target
+      return createTextResult({ selected: target })
+    }
     if (name === 'browser_navigate') {
       const input = browserNavigateInputSchema.parse(argumentsValue)
       return createTextResult(

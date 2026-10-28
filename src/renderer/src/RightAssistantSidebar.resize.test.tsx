@@ -694,13 +694,17 @@ describe('RightAssistantSidebar resizing', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('uses the browser panel for only the toolbar and page viewport', () => {
+  it('uses the browser panel for navigation and a controllable live viewport', () => {
     const sidebar = renderSidebar({ tab: 'browser' })
     const viewport = screen.getByLabelText('浏览器页面')
-    const browserPanel = viewport.parentElement
+    const browserPanel = viewport.closest('.assistant-sidebar__browser')
 
     expect(browserPanel).toHaveClass('assistant-sidebar__browser')
     expect(browserPanel?.children).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: '接管浏览器' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '上传文件' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '下载文件' })).not.toBeInTheDocument()
+    expect(viewport.querySelector('canvas')).not.toBeInTheDocument()
     expect(screen.queryByText('实时浏览器')).not.toBeInTheDocument()
 
     fireEvent.click(

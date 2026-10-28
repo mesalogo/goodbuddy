@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { join, basename } from 'node:path'
+import type { BrowserDriverLike } from './browser-service'
 import {
   BrowserUrlPolicy,
   canonicalizeBrowserUrl,
@@ -32,6 +34,7 @@ export type BrowserCapturedImage = {
 }
 
 export type BrowserWebContents = {
+  getOrCreateDevToolsTargetId?(): string
   debugger: BrowserDebugger
   on(event: string, listener: BrowserEventListener): unknown
   off(event: string, listener: BrowserEventListener): unknown
@@ -115,6 +118,8 @@ export type FilteringProxyLike = {
 }
 
 export type ElectronBrowserSessionOptions = {
+  createDriver?: (contents: BrowserWebContents, downloads: () => unknown[]) => Promise<BrowserDriverLike>
+  downloadsDirectory?: string
   policy: BrowserUrlPolicy
   cleanupTimeoutMs?: number
   setupTimeoutMs?: number
@@ -133,6 +138,9 @@ type Listener = {
 }
 
 type SharedBrowserResources = {
+  createDriver?: ElectronBrowserSessionOptions['createDriver']
+  downloadsDirectory?: string
+  downloads: Array<{ name: string; path: string; status: string }>
   partition: string
   partitionSession: BrowserPartitionSession
   proxy: FilteringProxyLike
@@ -266,6 +274,11 @@ async function defaultCreateView(
 }
 
 export class ElectronBrowserSession {
+  private driverReady?: Promise<BrowserDriverLike>
+  getDriver(): Promise<BrowserDriverLike | undefined> {
+    if (!this.resources.createDriver) return Promise.resolve(undefined)
+    return this.driverReady ??= this.resources.createDriver(this.webContents, () => this.resources.downloads)
+  }
   readonly partition: string
   readonly webContents: BrowserWebContents
   private approvedOrigin?: string
@@ -419,7 +432,10 @@ export class ElectronBrowserSession {
           createView,
           setupTimeoutMs,
           cleanupTimeoutMs,
-          references: 1
+          references: 1,
+          createDriver: options.createDriver,
+          downloadsDirectory: options.downloadsDirectory,
+          downloads: []
         },
         options.parentWindow
       )
@@ -566,7 +582,17 @@ export class ElectronBrowserSession {
       this.listen(
         this.resources.partitionSession,
         'will-download',
-        (event: { preventDefault(): void }, item: { cancel?(): void }) => {
+        (event: { preventDefault(): void }, item: { cancel?(): void; getFilename?(): string; getSavePath?(): string; setSavePath?(path: string): void; once?(event: string, listener: (_event: unknown, state: string) => void): void }, source?: BrowserWebContents) => {
+          if (this.resources.createDriver) {
+            if (source && source !== contents) return
+            const name = basename(item.getFilename?.() ?? 'download')
+            const path = this.resources.downloadsDirectory ? join(this.resources.downloadsDirectory, `${randomUUID()}-${name}`) : ''
+            if (path) item.setSavePath?.(path)
+            const entry = { name, path, status: 'downloading' }
+            this.resources.downloads.push(entry)
+            item.once?.('done', (_event, state) => { entry.status = state; entry.path = item.getSavePath?.() ?? path })
+            return
+          }
           event.preventDefault()
           item.cancel?.()
         }
@@ -577,6 +603,7 @@ export class ElectronBrowserSession {
     this.assertOpen()
     await contents.debugger.sendCommand('Accessibility.enable')
     this.assertOpen()
+    if (this.resources.createDriver) return
     await contents.debugger.sendCommand('Page.setInterceptFileChooserDialog', {
       enabled: true
     })

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { resolve } from 'node:path'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { app, BrowserWindow, webContents } from 'electron'
@@ -7,10 +8,14 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { KnowledgeService } from '../src/main/knowledge/knowledge-service'
 import { KnowledgeMcpGateway } from '../src/main/agent/knowledge-mcp-gateway'
 import { BrowserService } from '../src/main/browser/browser-service'
+import { configureNativeBrowserAutomation } from '../src/main/browser/electron-playwright'
 import { BrowserModelTools } from '../src/main/browser/browser-model-tools'
 import type { BrowserLiveState } from '../src/shared/contracts'
 
 const conversationId = 'browser-tabs-electron-e2e'
+app.setPath('userData', resolve('temp/managed-browser/legacy-profile'))
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+configureNativeBrowserAutomation()
 const otherConversationId = 'browser-tabs-electron-e2e-other'
 const firstWorkbarId = '00000000-0000-4000-8000-000000000901'
 const secondWorkbarId = '00000000-0000-4000-8000-000000000902'
@@ -45,7 +50,7 @@ async function main(): Promise<void> {
   const address = target.address()
   assert(address && typeof address !== 'string')
   const origin = `http://127.0.0.1:${address.port}`
-  const window = new BrowserWindow({ show: false, width: 900, height: 700 })
+  const window = new BrowserWindow({ show: false, width: 900, height: 700, webPreferences: { backgroundThrottling: false } })
   const browser = new BrowserService({ parentWindow: window })
   const gateway = new KnowledgeMcpGateway(
     {

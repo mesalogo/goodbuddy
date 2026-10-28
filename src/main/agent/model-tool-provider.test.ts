@@ -1499,7 +1499,7 @@ describe('ModelToolProvider', () => {
     const signal = new AbortController().signal
     const tools = (await provider.listTools(context, signal))
       .filter((tool) => tool.name.startsWith('browser_'))
-    expect(tools).toHaveLength(7)
+    expect(tools).toHaveLength(9)
     for (const tool of tools.filter(tool => ['browser_snapshot', 'browser_screenshot'].includes(tool.name))) {
       expect(() => provider.getApproval(tool, {}, '', context)).not.toThrow()
       await provider.callTool(tool.name, {}, signal, context)
@@ -1562,7 +1562,7 @@ describe('ModelToolProvider', () => {
     const tools = await provider.listTools(firstContext, signal)
     expect(
       tools.filter((tool) => tool.name.startsWith('browser_'))
-    ).toHaveLength(7)
+    ).toHaveLength(9)
     const navigate = tools.find((tool) => tool.name === 'browser_navigate')
     expect(
       provider.getApproval(

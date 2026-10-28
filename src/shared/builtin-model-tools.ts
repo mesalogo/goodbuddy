@@ -54,7 +54,7 @@ export const builtinModelTools = [
   {
     name: 'browser_snapshot',
     displayName: '读取浏览器快照',
-    description: '读取当前页面的有界可访问性快照；可编辑值会被隐藏。',
+    description: '读取当前页面的结构化可访问性快照及元素引用，包含框架内页面。',
     access: 'read',
     group: 'browser'
   },
@@ -68,7 +68,7 @@ export const builtinModelTools = [
   {
     name: 'browser_type',
     displayName: '输入浏览器文本',
-    description: '向可编辑页面元素（包括密码框）输入文本；不支持上传文件。',
+    description: '将页面输入框内容替换为指定文本，包括密码框；空文本可清空字段。',
     access: 'write',
     group: 'browser'
   },
@@ -91,6 +91,20 @@ export const builtinModelTools = [
     displayName: '截取浏览器页面',
     description: '截取当前可见页面区域、约 200KB 的有界 JPEG 图片。',
     access: 'read',
+    group: 'browser'
+  },
+  {
+    name: 'browser_action',
+    displayName: '浏览器交互',
+    description: '使用 Playwright 执行悬停、按键、滚动、拖拽、勾选、等待、上传、弹框、坐标点击、填表；读取控制台、网络请求或下载结果。ref 来自最近快照。上传路径与下载路径均位于运行 GoodBuddy 桌面的设备，远端工作区文件须先传到该设备。',
+    access: 'write',
+    group: 'browser'
+  },
+  {
+    name: 'browser_tabs',
+    displayName: '管理浏览器标签',
+    description: '列出、创建、选择或关闭当前会话的浏览器标签。选择后请重新获取快照。',
+    access: 'write',
     group: 'browser'
   },
   {

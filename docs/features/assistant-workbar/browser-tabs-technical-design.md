@@ -4,9 +4,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 基础多实例已实施，Agent 多 Tab 工具待需求 |
-| 版本 | 1.0 |
-| 日期 | 2026-09-13 |
+| 状态 | 多实例和模型标签工具已接入；后端替换验收见受管浏览器实施记录 |
+| 版本 | 2.0 |
+| 日期 | 2026-10-27 |
 | 关联 PRD | [通用助手工作栏与执行空间 PRD](./prd.md) |
 | 页签策略 | [助手工作栏多终端页签 PRD](./terminal-tabs-prd.md) |
 
@@ -14,10 +14,10 @@
 
 浏览器改为可关闭的多实例工作栏应用。每个工作栏浏览器实例对应一个独立 Browser Tab，拥有
 独立页面、导航状态、操作队列、画面状态和元素引用空间。同一 Conversation 下的多个 Tab
-共享隔离存储与代理上下文，使登录状态符合常规浏览器预期。
+共享 Electron partition 的登录与存储状态。自动化驱动与原生展示的组合由[浏览器升级设计](../computer-control/managed-browser-design.md)定义。
 
 本设计不把多个工作栏 Tab 实现为同一页面的重复入口，不允许用户切换 Tab 后改变正在执行的
-Agent 工具目标，也不在首期要求模型主动管理多个 Tab。
+Agent 工具目标。模型可通过 `browser_tabs` 显式管理当前会话的 Tab。
 
 ## 2. 改造前限制
 
@@ -48,16 +48,16 @@ type BrowserTab = {
   id: BrowserTabId
   conversationId: string
   view: WebContentsView
-  driver: CdpBrowserDriver
+  driver: PlaywrightBrowserDriver
   state: BrowserLiveState
 }
 ```
 
-- Conversation Browser Context 拥有隔离 partition、代理配置和全部 Tab。
+- Conversation Browser Context 拥有隔离 partition、代理和全部 Tab。
 - Browser Tab 拥有页面、Driver、串行操作队列、snapshot 代次、idle 状态和可见 viewport。
 - `BrowserTabId` 是 Main 签发的不透明 ID。Renderer 和 Runtime 不能自行选择或复用。
 - 工作栏实例保存公开的逻辑实例 ID 和 Conversation 绑定；进程重启后不恢复旧
-  `WebContentsView`，首次使用时由 Main 为该逻辑实例创建新的 Browser Tab。
+  WebContentsView，首次使用时由 Main 为该逻辑实例创建新的 Browser Tab。
 - 删除 Conversation 时关闭该 Context 下全部 Tab；关闭一个工作栏浏览器实例只关闭对应
   Browser Tab，不得调用 Conversation 级 Runtime 释放路径。
 
@@ -74,18 +74,16 @@ Record<ConversationId, Record<BrowserTabId, BrowserLiveState>>
 回传同一个 token。Main 只接受当前 token 的清理，避免已隐藏实例的延迟 cleanup 隐藏新实例，
 也避免 Renderer 重载后从零开始的数字序列无法覆盖旧租约。
 
-非活动 Browser Tab 保持页面和状态，但隐藏 `WebContentsView` 并停止非必要画面采集。工作栏
+非活动 Browser Tab 保持页面和状态，隐藏原生视图。工作栏
 收起、切换主页面和窗口隐藏时采用相同规则，不销毁 Tab。
-普通导航、快照与页面操作只同步轻量导航状态，不自动截图、等待画面或传输 JPEG；只有显式
-`browser_screenshot` 调用生成图片。
+普通导航和操作只同步轻量状态，网页由原生视图直接绘制；没有自动截图或画面传输。`browser_screenshot` 生成供模型使用的有界图片。
 
-`BrowserViewport` 统一观察 body Portal 的插入、移除和可见属性变化，以及浮层尺寸、
+`NativeBrowserViewport` 统一观察 body Portal 的插入、移除和可见属性变化，以及浮层尺寸、
 窗口尺寸、滚动和过渡结束。`browser-viewport-occlusion.ts` 按共享语义识别
 `aria-modal="true"`、dialog、alertdialog、menu、tooltip 和应用通知：可见应用级 Modal 始终释放
 viewport，其余浮层只在与浏览器区域相交时释放。隐藏节点和隐藏祖先不阻塞浏览器。
 最后一个遮挡消失后，只有当前活动实例恢复同一 viewport 租约；网页、历史和页面状态不变。
-终端关闭确认复用此机制，不再维护单独的隐藏条件。页面无需逐个登记弹窗，也不能靠提高
-CSS `z-index` 覆盖原生子视图。此逻辑仅涉及 Desktop Renderer 的显示租约，不改变
+终端关闭确认复用此机制。原生视图不参与 CSS 层叠，应用 Modal 出现时须释放显示租约；恢复后仍是原页面。此逻辑涉及 Desktop Renderer 的显示租约，不改变
 Runtime、MCP 或远端 Agent 的请求、导航与生命周期。
 同行帮助仍使用 `role="tooltip"`；相交判定使用其内容矩形，不使用铺满窗口的
 `FloatingPortal` 宿主。真实 App 的相交与非相交验证见[浮层审查修复记录](../../quality/overlay-review-2026-09-27.md)。
@@ -159,13 +157,12 @@ Conversation 归属，不新建租约或把页面重新归属到子级对话。
 
 ### 6.2 Page-created tabs
 
-`target="_blank"` and `window.open` create managed `WebContentsView` tabs through Electron's
-`setWindowOpenHandler.createWindow`. Chromium retains the original request and opener relationship,
-including a blank window followed by a script-assigned location. These tabs share the Conversation
-partition, proxy and permission restrictions. HTTP(S) URL checks remain in the session and filtering
-proxy; `about:blank` is permitted only as the initial empty popup. Unsupported URL schemes remain denied.
+`target="_blank"` and `window.open` create managed WebContentsView tabs through Electron's
+`setWindowOpenHandler.createWindow`. The original request, opener and Conversation partition are
+preserved. BrowserService attaches the Playwright driver to the exact new target and validates
+the committed HTTP(S) URL. A blank popup may navigate afterward.
 
-BrowserService reserves capacity before creating the native view, assigns a new Tab/workbar identity,
+BrowserService checks capacity before adopting the popup, assigns a new Tab/workbar identity,
 and owns initialization, the Driver and cleanup. Initialization failure or Conversation disposal releases
 the popup. Closing the opener leaves an already created popup alive. A popup's `window.close()` releases
 its service slot and usage leases; Renderer removes its workbar instance and returns to the opener when
@@ -188,15 +185,7 @@ this change does not add browser access to the deployed GoodBuddy Agent.
 
 ### 6.3 Agent 多 Tab 阶段
 
-只有明确需要 Agent 管理多个页面时，才增加：
-
-- `browser_tab_list`
-- `browser_tab_open`
-- `browser_tab_close`
-
-导航、snapshot、back 和 screenshot 增加可选 `tabId`；省略时使用请求绑定的默认 Tab。
-`browser_snapshot` 返回 `tabId` 和 snapshot 代次。click、type 和 select 必须校验 capability、
-`tabId`、引用代次和元素 `ref` 属于同一 Driver，禁止跨 Tab 猜测或解析引用。
+`browser_tabs` 提供 `list`、`new`、`select`、`close`。显式选择或创建更新请求绑定；其他工具继续操作绑定页。元素引用包含 Driver 随机前缀和快照代次，调用时必须命中同一 Driver 的引用表。用户切换可见工作栏不修改模型绑定。
 
 ## 7. 工作栏创建与快捷入口
 

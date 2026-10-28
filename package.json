@@ -28,6 +28,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:browser": "node build/run-managed-browser-e2e.cjs",
     "perf:app": "node build/run-app-perf.cjs",
     "perf:check": "node build/check-perf-thresholds.cjs",
     "perf:document-parse": "node build/run-document-parse-perf.cjs",
@@ -68,6 +69,7 @@
     "beforePack": "build/runtime-hooks.cjs",
     "asar": true,
     "asarUnpack": [
+      "node_modules/playwright-core/**/*",
       "out/main/obsidian-mcpvault/**/*",
       "out/main/package.json",
       "out/main/deepseek-harness-*",
@@ -93,6 +95,14 @@
       "!node_modules/npm{,/**/*}"
     ],
     "extraResources": [
+      {
+        "from": "node_modules/playwright-core/LICENSE",
+        "to": "licenses/playwright-Apache-2.0.txt"
+      },
+      {
+        "from": "node_modules/playwright-core/NOTICE",
+        "to": "licenses/playwright-NOTICE.txt"
+      },
       {
         "from": "node_modules/material-icon-theme/LICENSE",
         "to": "licenses/material-icon-theme-MIT.txt"
@@ -384,6 +394,7 @@
     "npm": "11.19.0",
     "onnxruntime-web": "^1.23.2",
     "pdfjs-dist": "^6.2.108",
+    "playwright": "1.64.1",
     "ppu-paddle-ocr": "^6.4.0",
     "qrcode": "^1.5.4",
     "sherpa-onnx": "1.13.4",

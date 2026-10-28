@@ -1,4 +1,5 @@
 import { app, BrowserWindow, safeStorage, WebContentsView } from 'electron'
+import { configureNativeBrowserAutomation } from '../../src/main/browser/electron-playwright'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -12,6 +13,7 @@ import { RuntimeSettingsStore } from '../../src/main/runtime-settings-store'
 
 const directory = process.env.GB_MCP_DIRECTORY!
 app.setPath('userData', join(directory, 'profile'))
+configureNativeBrowserAutomation()
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
 // Other desktop windows must not suspend the frame-based input synchronization.
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')

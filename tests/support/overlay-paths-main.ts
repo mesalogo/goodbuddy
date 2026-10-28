@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, nativeImage, safeStorage, screen, WebContentsView } from 'electron'
+import { configureNativeBrowserAutomation } from '../../src/main/browser/electron-playwright'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -16,6 +17,7 @@ import { registerHtmlPreviewProtocol } from '../../src/main/html-preview-protoco
 
 const directory = process.env.GB_MCP_DIRECTORY!
 app.setPath('userData', join(directory, 'profile'))
+configureNativeBrowserAutomation()
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 
