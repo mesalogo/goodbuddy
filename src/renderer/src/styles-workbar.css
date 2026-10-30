@@ -835,6 +835,11 @@
   font-size: var(--font-caption);
 }
 
+.workspace-files__columns .workspace-files__modified-column {
+  padding-right: var(--space-2);
+  text-align: right;
+}
+
 .workspace-files__time {
   overflow: hidden;
   padding-right: var(--space-2);

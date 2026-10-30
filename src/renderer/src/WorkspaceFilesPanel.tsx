@@ -678,7 +678,7 @@ export function WorkspaceFilesPanel({
         <>
           <div ref={treeRef} className="workspace-files__tree" onBlur={treeWindow.onBlur} onFocus={treeWindow.onFocus}>
             <div className="workspace-files__columns">
-              {(['name', 'modifiedAt'] as const).map(field => <button type="button" key={field} aria-pressed={sort.field === field} onClick={() => setSort(current => ({ field, descending: current.field === field ? !current.descending : field !== 'name' }))}>
+              {(['name', 'modifiedAt'] as const).map(field => <button className={field === 'modifiedAt' ? 'workspace-files__modified-column' : undefined} type="button" key={field} aria-pressed={sort.field === field} onClick={() => setSort(current => ({ field, descending: current.field === field ? !current.descending : field !== 'name' }))}>
                 {t(field === 'name' ? 'management.name' : 'management.modified')}{sort.field === field ? (sort.descending ? ' ↓' : ' ↑') : ''}
               </button>)}
             </div>
