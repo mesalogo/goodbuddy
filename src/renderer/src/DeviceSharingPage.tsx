@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SharingCatalog, SharingPublicationDraft, SharingSettings } from '../../shared/device-sharing-contracts'
 import { sharingSettingsInputSchema } from '../../shared/device-sharing-contracts'
-import { EmptyState, PageHeader, PageShell } from './WorkspacePrimitives'
+import { EmptyState, PageHeader, PageShell, PageTabs } from './WorkspacePrimitives'
 import type { AppNotificationInput } from './notifications'
 import './device-sharing.css'
 
@@ -13,6 +13,7 @@ const emptyDraft: SharingPublicationDraft = {
 
 export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationInput) => void }): React.JSX.Element {
   const { t } = useTranslation('app')
+  const [activeTab, setActiveTab] = useState<'mine' | 'shared'>('mine')
   const [settings, setSettings] = useState<SharingSettings>()
   const [name, setName] = useState('')
   const [serverUrl, setServerUrl] = useState('')
@@ -58,6 +59,14 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
   const registered = Boolean(settings && catalog?.devices.some(device => device.id === settings.deviceId))
   const canPublish = registered && !dirty && !error && !busy
   const validSettings = sharingSettingsInputSchema.safeParse({ name, serverUrl }).success
+  const myDevices = catalog?.devices.filter(device => device.id === settings?.deviceId) ?? []
+  const myPublications = catalog?.publications.filter(item => item.deviceId === settings?.deviceId) ?? []
+  const sharedDevices = catalog?.devices.filter(device => device.id !== settings?.deviceId) ?? []
+  const sharedPublications = catalog?.publications.filter(item => item.deviceId !== settings?.deviceId) ?? []
+  const tabs = [
+    { id: 'mine' as const, label: t('sharing.tabs.mine') },
+    { id: 'shared' as const, label: t('sharing.tabs.shared') }
+  ]
 
   return <PageShell variant="standard">
     <PageHeader headingId="device-sharing-title" title={t('sharing.title')} scope={{ kind: 'global' }} description={t('sharing.boundary')}
@@ -69,10 +78,12 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
       {busy && <p role="status">{t('sharing.working')}</p>}
       {catalog?.registrationStatus && <p role="status">{t(`sharing.registrationStatus.${catalog.registrationStatus}`)}</p>}
       {error && <div role="alert" className="settings-warning">{t('sharing.loadFailed')} {error}</div>}
-      {settings && <section aria-labelledby="sharing-settings">
+      <PageTabs ariaLabel={t('sharing.tabsLabel')} idPrefix="sharing" onChange={setActiveTab} tabs={tabs} value={activeTab} />
+      {activeTab === 'mine' && <div id="sharing-panel-mine" className="device-sharing__panel" role="tabpanel" aria-labelledby="sharing-tab-mine">
+      {settings && <section className="device-sharing__section" aria-labelledby="sharing-settings">
         <h2 id="sharing-settings">{t('sharing.thisDevice')}</h2>
         <p>{t('sharing.deviceId')}: <code>{settings.deviceId}</code></p>
-        <form onSubmit={event => { event.preventDefault(); void run(async () => {
+          <form className="device-sharing__settings-form" onSubmit={event => { event.preventDefault(); void run(async () => {
           const next = await window.goodbuddy.sharing.saveSettings({ name, serverUrl })
           setSettings(next); setName(next.name); setServerUrl(next.serverUrl); setCatalog(undefined)
           await refresh()
@@ -90,20 +101,20 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
           {dirty && <p>{t('sharing.saveFirst')}</p>}
         </form>
       </section>}
-      <section aria-labelledby="sharing-devices">
+      <section className="device-sharing__section" aria-labelledby="sharing-devices">
         <h2 id="sharing-devices">{t('sharing.devices')}</h2>
-        {catalog?.devices.length === 0 && <EmptyState title={t('sharing.noDevices')} description={t('sharing.registerFirst')} />}
-        {catalog?.devices.map(device => <article key={device.id}>
+        {myDevices.length === 0 && <EmptyState title={t('sharing.noDevices')} description={t('sharing.registerFirst')} />}
+        {myDevices.map(device => <article key={device.id}>
           <h3>{device.name} {device.id === settings?.deviceId && <small>({t('sharing.thisDevice')})</small>}</h3>
           <p>{device.platform} · {device.appVersion} · <code>{device.id}</code></p>
           <p>{t('sharing.updatedAt')}: {device.updatedAt}</p>
         </article>)}
       </section>
-      <section aria-labelledby="sharing-publish">
+      <section className="device-sharing__section" aria-labelledby="sharing-publish">
         <h2 id="sharing-publish">{t('sharing.publishMetadata')}</h2>
         <p>{t('sharing.sourceHelp')}</p>
         {!registered && <p>{t('sharing.registerFirst')}</p>}
-        <form onSubmit={event => { event.preventDefault(); if (!canPublish) return; void run(async () => {
+        <form className="device-sharing__publication-form" onSubmit={event => { event.preventDefault(); if (!canPublish) return; void run(async () => {
           await window.goodbuddy.sharing.publish(draft); setDraft(emptyDraft); await refresh()
         }, t('sharing.publishedNotice')) }}>
           <fieldset disabled={busy}>
@@ -123,10 +134,10 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
           <button className="primary-button" disabled={!canPublish || !draft.name.trim()}>{t('sharing.publishMetadata')}</button>
         </form>
       </section>
-      <section aria-labelledby="sharing-publications">
+      <section className="device-sharing__section" aria-labelledby="sharing-publications">
         <h2 id="sharing-publications">{t('sharing.publications')}</h2>
-        {catalog?.publications.length === 0 && <EmptyState title={t('sharing.noPublications')} description={t('sharing.publishHelp')} />}
-        {catalog?.publications.map(item => <article key={item.id}>
+        {myPublications.length === 0 && <EmptyState title={t('sharing.noPublications')} description={t('sharing.publishHelp')} />}
+        {myPublications.map(item => <article key={item.id}>
           <h3>{item.name} <small>{t(`sharing.${item.status}`)}</small></h3>
           <p>{item.description}</p>
           <p>{t(`sharing.${item.kind}`)} · {t('sharing.sourceMode')}: {t(`sharing.${item.sourceMode}`)}</p>
@@ -142,6 +153,29 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
           </div> : <button className="danger-ghost" disabled={busy || Boolean(dirty) || Boolean(error)} onClick={() => setRevokeId(item.id)}>{t('sharing.revoke')}</button>)}
         </article>)}
       </section>
+      </div>}
+      {activeTab === 'shared' && <div id="sharing-panel-shared" className="device-sharing__panel" role="tabpanel" aria-labelledby="sharing-tab-shared">
+        <section className="device-sharing__section" aria-labelledby="sharing-shared-devices">
+          <h2 id="sharing-shared-devices">{t('sharing.sharedDevices')}</h2>
+          {sharedDevices.length === 0 && <EmptyState title={t('sharing.noSharedDevices')} description={t('sharing.sharedDevicesHelp')} />}
+          {sharedDevices.map(device => <article key={device.id}>
+            <h3>{device.name}</h3>
+            <p>{device.platform} · {device.appVersion} · <code>{device.id}</code></p>
+            <p>{t('sharing.updatedAt')}: {device.updatedAt}</p>
+          </article>)}
+        </section>
+        <section className="device-sharing__section" aria-labelledby="sharing-shared-publications">
+          <h2 id="sharing-shared-publications">{t('sharing.sharedPublications')}</h2>
+          {sharedPublications.length === 0 && <EmptyState title={t('sharing.noSharedPublications')} description={t('sharing.sharedPublicationsHelp')} />}
+          {sharedPublications.map(item => <article key={item.id}>
+            <h3>{item.name} <small>{t(`sharing.${item.status}`)}</small></h3>
+            <p>{item.description}</p>
+            <p>{t(`sharing.${item.kind}`)} · {t('sharing.sourceMode')}: {t(`sharing.${item.sourceMode}`)}</p>
+            <p>{t('sharing.deviceId')}: <code>{item.deviceId}</code> · {t('sharing.updatedAt')}: {item.updatedAt}</p>
+            {item.kind === 'knowledge' && <p>{(['search', 'read', 'download'] as const).map(key => `${t(`sharing.${key}`)}: ${t(item.permissions[key] ? 'sharing.yes' : 'sharing.no')}`).join(' · ')}</p>}
+          </article>)}
+        </section>
+      </div>}
     </div>
   </PageShell>
 }

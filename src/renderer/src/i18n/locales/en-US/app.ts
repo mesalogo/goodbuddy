@@ -22,6 +22,7 @@ export const app = {
     refresh: 'Refresh lists', working: 'Working…', loadFailed: 'Could not load the lists. Previous results may be stale. Check the service URL and refresh.',
     thisDevice: 'This device', deviceId: 'Device ID', serverUrl: 'Service URL', deviceName: 'Device name', save: 'Save settings', saved: 'Sharing settings saved',
     register: 'Register this device', registered: 'Device registration saved to the service', saveFirst: 'Save settings before registering or publishing.',
+    tabsLabel: 'Device sharing content', tabs: { mine: 'My device', shared: 'Shared with me' }, sharedDevices: 'Shared devices', noSharedDevices: 'No shared devices', sharedDevicesHelp: 'Devices registered by others will appear here.', sharedPublications: 'Shared catalog', noSharedPublications: 'No shared entries', sharedPublicationsHelp: 'Metadata published by other devices will appear here.',
     devices: 'Registered devices', noDevices: 'No registered devices', registerFirst: 'Register this device to publish metadata.', updatedAt: 'Updated at',
     publishMetadata: 'Publish metadata', sourceHelp: 'Source mode describes the entry only. Selecting Server does not upload or sync content; knowledge permissions are declarations only.',
     name: 'Entry name', description: 'Description', kind: 'Kind', capability: 'Capability', knowledge: 'Knowledge', sourceMode: 'Source mode', device: 'Device', server: 'Server',

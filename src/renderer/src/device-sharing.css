@@ -1,10 +1,30 @@
-.device-sharing { display: grid; gap: var(--space-6); overflow-wrap: anywhere; }
-.device-sharing section { border-top: 1px solid var(--border-subtle); padding-top: var(--space-4); }
-.device-sharing h2, .device-sharing h3 { font-size: var(--font-section-title); }
+.device-sharing { display: grid; gap: var(--space-4); min-width: 0; overflow-wrap: anywhere; }
+.device-sharing__panel { display: grid; min-width: 0; gap: var(--space-4); }
+.device-sharing__section { min-width: 0; margin: 0; padding: var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-card); background: var(--surface-raised); box-shadow: var(--shadow-card); }
+.device-sharing__section h2 { margin: 0; font-size: var(--font-section-title); }
+.device-sharing__section h3 { margin: 0; font-size: var(--font-body); }
+.device-sharing__section > p { margin-block: var(--space-2) 0; }
 .device-sharing small, .device-sharing p { color: var(--text-secondary); }
 .device-sharing form, .device-sharing fieldset { display: grid; gap: var(--space-3); min-width: 0; }
+.device-sharing form { margin-top: var(--space-4); }
 .device-sharing fieldset { border: 0; padding: 0; margin: 0; }
 .device-sharing form > button { justify-self: start; }
-.device-sharing article { padding-block: var(--space-3); border-bottom: 1px solid var(--border-subtle); }
+.device-sharing article { display: grid; gap: var(--space-1); padding: var(--space-3) 0; border-top: 1px solid var(--border-subtle); }
+.device-sharing article:first-of-type { margin-top: var(--space-4); }
+.device-sharing article p { margin: 0; }
+.device-sharing article button { justify-self: start; margin-top: var(--space-2); }
+.device-sharing__settings-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.device-sharing__settings-form .device-sharing__actions, .device-sharing__settings-form > p { grid-column: 1 / -1; }
+.device-sharing__publication-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.device-sharing__publication-form > fieldset, .device-sharing__publication-form > p, .device-sharing__publication-form > button { grid-column: 1 / -1; }
+.device-sharing__publication-form > fieldset { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.device-sharing__publication-form > fieldset > label:nth-child(1), .device-sharing__publication-form > fieldset > label:nth-child(2) { grid-column: 1 / -1; }
+.device-sharing__publication-form > fieldset > fieldset { grid-column: 1 / -1; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: var(--surface-subtle); }
 .device-sharing__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .device-sharing__permission { display: flex; align-items: center; gap: var(--space-2); }
+
+@media (max-width: 640px) {
+  .device-sharing__section { padding: var(--space-4); }
+  .device-sharing__settings-form, .device-sharing__publication-form, .device-sharing__publication-form > fieldset { grid-template-columns: 1fr; }
+  .device-sharing__publication-form > fieldset > label:nth-child(1), .device-sharing__publication-form > fieldset > label:nth-child(2), .device-sharing__publication-form > fieldset > fieldset { grid-column: auto; }
+}

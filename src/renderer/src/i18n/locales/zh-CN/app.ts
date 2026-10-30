@@ -19,6 +19,7 @@ export const app = {
     refresh: '刷新列表', working: '正在处理…', loadFailed: '列表读取失败，已有列表可能过期。请检查服务地址并刷新。',
     thisDevice: '本机', deviceId: '设备 ID', serverUrl: '服务地址', deviceName: '设备名称', save: '保存设置', saved: '共享设置已保存',
     register: '注册本机', registered: '本机注册信息已保存到服务', saveFirst: '请先保存设置，再注册或发布。',
+    tabsLabel: '设备共享内容', tabs: { mine: '我的设备', shared: '共享给我的' }, sharedDevices: '共享设备', noSharedDevices: '暂无共享设备', sharedDevicesHelp: '其他设备注册后会显示在这里。', sharedPublications: '共享目录', noSharedPublications: '暂无共享条目', sharedPublicationsHelp: '其他设备发布的元数据会显示在这里。',
     devices: '已注册设备', noDevices: '暂无注册设备', registerFirst: '注册本机后即可发布元数据。', updatedAt: '更新时间',
     publishMetadata: '发布元数据', sourceHelp: '来源模式只描述条目来源。选择“服务器”不会上传或同步内容；知识权限只保存声明。',
     name: '条目名称', description: '描述', kind: '类型', capability: '能力', knowledge: '知识', sourceMode: '来源模式', device: '设备', server: '服务器',
