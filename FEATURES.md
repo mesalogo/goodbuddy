@@ -364,7 +364,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.10`, paired with the current Desktop release candidate `0.16.11`; formal
+  `0.15.11`, paired with the current Desktop release candidate `0.16.12`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -1020,9 +1020,18 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.11`, paired with Agent `0.15.10`, with
+- The current Desktop candidate is `0.16.12`, paired with Agent `0.15.11`, with
   source pins of OpenCode `1.19.3` and Continue `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.16.12` adds Playwright-driven managed browser actions, local message
+  editing and branching, Office selection AI, Windows NSIS update download and
+  restart handoff, workspace file icons, Windows file links, message dates and
+  action feedback. It also fixes normal Runtime completion after tool failures,
+  retries remote preparation without replaying unsubmitted work, and improves
+  WeCom/device-sharing boundaries. Agent `0.15.11` carries the remote
+  initialization and terminal-state changes. Automatic installation remains
+  Windows NSIS-only; exact candidate CI, native packaging and public checks are
+  pending. See [release preparation](./docs/development/release-preparation-0.16.12.md).
 - Desktop `0.16.11` / Agent `0.15.10` add remote direct-model workspace tools
   and bundled ripgrep, fix ACP reconnection and recovery completion, and preserve
   direct-tool output during retirement. Desktop drives direct-model execution;

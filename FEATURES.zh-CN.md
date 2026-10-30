@@ -162,7 +162,8 @@
 ### 开源、构建与发布
 
 - Desktop `0.15.3` 修复本地直连手动压缩和请求有效期间的工具授权，区分取消与失败并去除重复提示，优化侧栏搜索、注册成功后的快捷键提示及笔记操作布局，减少启动和存储中的重复处理，并精简重复依赖及开发文件。不宣称整体渲染性能已显著提升；Office 实时编辑仍为设计。证据见[0.15.3 发布准备](./docs/development/release-preparation-0.15.3.md)。
-- 当前 Desktop 候选为 `0.16.11`，配套 Agent 候选 `0.15.10`；OpenCode 固定为 `1.19.3`、Continue 为 `1.5.47`、Desktop DeepSeek Harness 为 `0.2.1-rc.2`；正式发布状态以独立发布渠道为准。
+- 当前 Desktop 候选为 `0.16.12`，配套 Agent 候选 `0.15.11`；OpenCode 固定为 `1.19.3`、Continue 为 `1.5.47`、Desktop DeepSeek Harness 为 `0.2.1-rc.2`；正式发布状态以独立发布渠道为准。
+- Desktop `0.16.12` 增加 Playwright 驱动的托管浏览器操作、已发送消息编辑与分支、Office 选区 AI、Windows NSIS 更新下载与重启交接、工作区文件图标、Windows 文件链接、消息日期和操作反馈；修复工具失败后的正常完成状态、远端准备阶段重试及企业微信／设备共享边界。Agent `0.15.11` 包含远端初始化和终态处理改动。自动安装仍仅支持 Windows NSIS，精确候选 CI、原生打包和公开核验待完成，见[发布准备](./docs/development/release-preparation-0.16.12.md)。
 - 远端会话检查点合批写入，保留提交后再 ACK 的屏障，未变化的消息投影不重复更新。远端 Continue 复用已校验的账号缓存，任务文件仍单独清理；探针写入降低仅代表限定测量，不宣称整机性能提升。企业微信从真实 whoami 输出读取授权真人 ID，展示 CLI 失败原因，预览状态不变。
 - Desktop `0.16.11` / Agent `0.15.10` 新增远端直连模型工作区工具和随包 ripgrep，修复 ACP 重连与恢复提示结束时机，并在旧 Agent 退出时保留直连工具输出。直连模型由 Desktop 驱动，不等同于退出后的 ACP 自治续跑。Office 编辑及设备注册需兼容 ShareServer；聊天补充历史日期与缩略导航日期标记，任务条跟随磨砂外观。工作台 Demo、OpenCode v2/Droid 市场交付方案不是已上线能力。schema 保持 65，Runtime 版本不变，精确候选 CI、原生打包和公开核验待完成，见[发布准备](./docs/development/release-preparation-0.16.11.md)。
 - Desktop `0.16.10` 支持交互式 HTML 预览，并向企业微信、钉钉和飞书的未知私聊发送者提示 ID；一键添加只修改配置草稿，需保存后生效，未知发送者不能执行请求，群聊不发送提示。HTML 可执行脚本并访问外部服务，仍隔离应用接口并遵循浏览器跨域规则。

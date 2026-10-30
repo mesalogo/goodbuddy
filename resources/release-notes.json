@@ -2,6 +2,52 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.12",
+      "releasedAt": "2026-10-30",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**升级内置浏览器自动化**：托管浏览器继续使用原生浏览器窗口，AI 自动操作同一页面；页面定位、自动滚动、复杂交互、弹窗、文件操作和多标签能力改用 Playwright 驱动，并保留取消、权限和远端 Host 路径。",
+            "**编辑已发送消息并创建分支**：可以直接修改本地对话中的用户消息，从该消息之前创建独立分支并重新发送。原对话、附件、已有执行结果和草稿保留，失败时不会重复创建或重复发送。",
+            "**在 Office 编辑器中使用 AI**：Word、Excel 和 PowerPoint 的选区可以通过右键编辑弹窗调用当前对话。保存后的版本会自动回写源文件；发生外部修改、取消或需要另存为时，暂停自动回写以保护源文件。",
+            "**下载并安装 Desktop 更新**：设置中可以下载、校验、暂停、取消和清理更新缓存。Windows NSIS 安装版可在确认未保存内容并完成退出清理后交接现有安装器重启更新；其他平台和安装格式暂不自动安装。",
+            "**更清晰地管理工作区文件**：工作区、Git 变更和提交文件按文件类型和目录显示图标，支持浅色和深色主题；聊天中的 Windows 文件路径和带行号后缀的链接可以打开到工作区。",
+            "**增强消息编辑与操作反馈**：用户消息支持复制、悬停或键盘聚焦时显示操作按钮；历史消息显示日期分隔和完整日期信息。",
+            "**改进企业微信和设备共享体验**：企业微信搜索和上传遵循实际 CLI 限制，上传使用用户选中的文件目录；设备共享页面和 Office 入口的布局与连接状态反馈进一步统一。"
+          ],
+          "fixes": [
+            "**修复工具失败后的错误终态**：普通工具失败会保留错误详情并交给后续模型处理；如果 Runtime 后续正常结束，整轮请求不再被错误标记为失败。远端恢复路径使用同样规则。",
+            "**改善远端会话初始化和恢复**：准备阶段的短暂断线会有限重试，不会误恢复尚未提交的任务；启动响应丢失时继续接管原请求，避免重复执行。原生客户端按钮不再出现在不支持的远端项目中。",
+            "**减少文档和会话操作中的数据风险**：Office 保存、另存为、外部修改检测、会话分支和草稿状态保持明确边界，取消操作不会撤销已完成的外部文件修改。"
+          ],
+          "notices": [
+            "配套 Agent `0.15.11`；数据库 schema、OpenCode、Continue 和 Desktop DeepSeek Harness 版本不变。自动更新目前仅支持 Windows NSIS；Office 复杂格式保真、其他平台自动安装和完整三平台安装包验收仍有限制。飞书和企业微信继续保持预览版状态。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Upgrade built-in browser automation**: Managed browsers continue to use native browser windows, with AI operating the same page. Playwright now drives page location, scrolling, complex interactions, popups, file operations, and multiple tabs while preserving cancellation, permissions, and remote Host support.",
+            "**Edit sent messages and create branches**: Edit a local user message directly, create an independent branch before it, and resend the revised request. The original conversation, attachments, completed work, and draft are preserved without duplicate branches or sends after failures.",
+            "**Use AI inside Office editors**: Use a context-menu editing dialog to send Word, Excel, or PowerPoint selections to the current conversation. Saved versions write back to the source automatically; external changes, cancellation, or Save As requirements pause automatic writeback to protect the source.",
+            "**Download and install Desktop updates**: Settings can download, verify, pause, cancel, and clean update caches. Windows NSIS installations can confirm unsaved work, finish shutdown cleanup, and hand off the existing installer for a restart update; other platforms and formats are not installed automatically yet.",
+            "**Manage workspace files more clearly**: Workspace files, Git changes, and commit files show type- and directory-aware icons in light and dark themes. Windows file paths and line-suffixed links in chat can open in the workspace.",
+            "**Improve message editing and action feedback**: User messages can be copied, and message actions appear on hover or keyboard focus. Older messages show date separators and complete dates.",
+            "**Improve WeCom and device-sharing workflows**: WeCom search and upload follow the actual CLI limits, with uploads using the selected file directory; device-sharing and Office entry layouts and connection feedback are more consistent."
+          ],
+          "fixes": [
+            "**Fix terminal states after tool failures**: Ordinary tool failures retain their details for the next model turn; when the Runtime later finishes normally, the request is no longer incorrectly marked failed. Remote recovery uses the same rule.",
+            "**Improve remote session initialization and recovery**: Temporary disconnects during preparation retry within bounds without recovering an unsubmitted task; lost start responses continue the original task without replaying execution. Native client buttons are hidden for unsupported remote projects.",
+            "**Reduce data risks in document and conversation actions**: Office save, Save As, external-change detection, conversation branches, and drafts keep explicit boundaries; cancellation never undoes completed external file changes."
+          ],
+          "notices": [
+            "Pair with Agent `0.15.11`; database schema, OpenCode, Continue, and Desktop DeepSeek Harness versions are unchanged. Automatic updates currently support Windows NSIS only; complex Office fidelity, automatic installation on other platforms, and complete three-platform installed acceptance remain limited. Feishu and WeCom remain in Preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.11",
       "releasedAt": "2026-10-26",
       "notes": {
