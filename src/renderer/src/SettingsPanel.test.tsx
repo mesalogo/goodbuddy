@@ -4279,7 +4279,8 @@ describe('SettingsPanel runtime files', () => {
       'openai-chat-completions',
       'openai-responses',
       'anthropic-messages',
-      'openai-images-generations'
+      'openai-images-generations',
+      'system-one'
     ])
   })
 

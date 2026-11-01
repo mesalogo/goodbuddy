@@ -13972,7 +13972,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       ).toHaveBeenCalledWith(requestId, 'completed')
     )
     expect(receivedAuthorize).toBeUndefined()
-    expect(harness.getPolicySettings).not.toHaveBeenCalled()
+    expect(harness.getPolicySettings).toHaveBeenCalledOnce()
     expect(harness.getResolvedSettings).not.toHaveBeenCalled()
     expect(
       harness.assistantDatabase.updateTaskStatus

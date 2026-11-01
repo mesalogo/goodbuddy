@@ -30,6 +30,7 @@ import type { SelectedRuntimeResolver } from './agent/selected-runtime-manager'
 import type { ExecutionSpaceResolver } from './execution-space'
 import type { RuntimeSettingsStore } from './runtime-settings-store'
 import { assertTrustedSender } from './trusted-ipc-sender'
+import { requestSystemOne } from './agent/system-one-service'
 
 const runtimeConfigFileMetadata = {
   opencode: {
@@ -350,6 +351,31 @@ export function registerModelSettingsIpcHandlers(
       }
       if (profile.authentication === 'api-key' && !profile.apiKey) {
         throw new Error(`模型连接“${profile.name}”未配置 API Key`)
+      }
+      if (profile.protocol === 'system-one') {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(new Error('System One 连接测试超时')), 15_000)
+        try {
+          await requestSystemOne(profile, {
+            model: profile.modelName,
+            state: 'GoodBuddy connection test',
+            questions: {
+              healthy: {
+                type: 'noul',
+                instructions: '这是一条连接测试。服务是否能够返回结构化决策结果？'
+              }
+            }
+          }, controller.signal)
+          return {
+            id: 'model',
+            label: `System One · ${profile.name}`,
+            available: true,
+            detail: 'System One 决策接口可用',
+            supportsToolExecution: false
+          }
+        } finally {
+          clearTimeout(timeout)
+        }
       }
       const modelRuntime = createModelProfileRuntime(
         settings.workspacePath,

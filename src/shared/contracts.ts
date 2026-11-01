@@ -438,7 +438,8 @@ export const modelProtocolSchema = z.enum([
   'anthropic-messages',
   'openai-responses',
   'openai-chat-completions',
-  'openai-images-generations'
+  'openai-images-generations',
+  'system-one'
 ])
 export const modelAuthenticationSchema = z.enum(['api-key', 'none'])
 export const imageGenerationQualitySchema = z.enum([
@@ -451,7 +452,7 @@ export type ModelProtocol = z.infer<typeof modelProtocolSchema>
 export function isAgentRuntimeModelProtocol(
   protocol: ModelProtocol
 ): boolean {
-  return protocol !== 'openai-images-generations'
+  return protocol !== 'openai-images-generations' && protocol !== 'system-one'
 }
 export type ModelAuthentication = z.infer<
   typeof modelAuthenticationSchema
@@ -774,6 +775,7 @@ export const runtimeSettingsInputSchema = z
     modelProfiles: z.array(modelProfileInputSchema).min(1).max(20).optional(),
     defaultModelProfileId: modelProfileIdSchema.optional(),
     defaultImageModelProfileId: modelProfileIdSchema.nullable().optional(),
+    roleSelectionModelProfileId: modelProfileIdSchema.nullable().optional(),
     opencodeModelSource: runtimeModelSourceSchema.optional(),
     continueModelSource: runtimeModelSourceSchema.optional(),
     deepseekHarnessModelSource: runtimeModelSourceSchema
@@ -826,6 +828,15 @@ export const runtimeSettingsInputSchema = z
           path: ['defaultModelProfileId'],
           message: '默认模型连接不存在'
         })
+      } else if (
+        settings.modelProfiles.find((profile) => profile.id === defaultId)
+          ?.protocol === 'system-one'
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['defaultModelProfileId'],
+          message: 'System One 连接不能作为普通聊天默认模型'
+        })
       }
       for (const [key, source] of [
         ['opencodeModelSource', settings.opencodeModelSource],
@@ -837,6 +848,18 @@ export const runtimeSettingsInputSchema = z
             code: 'custom',
             path: [key],
             message: 'Runtime 引用的模型连接不存在'
+          })
+        }
+      }
+      if (settings.roleSelectionModelProfileId !== undefined && settings.roleSelectionModelProfileId !== null) {
+        const roleSelectionProfile = settings.modelProfiles.find(
+          (profile) => profile.id === settings.roleSelectionModelProfileId
+        )
+        if (!roleSelectionProfile || roleSelectionProfile.protocol !== 'system-one') {
+          context.addIssue({
+            code: 'custom',
+            path: ['roleSelectionModelProfileId'],
+            message: '角色选择模型必须是 System One 连接'
           })
         }
       }
@@ -1078,6 +1101,7 @@ export type EmbeddingConnectionSettings =
 
 export type ConfiguredRuntimeSettings = {
   modelProfiles: ModelConnectionSettings[]
+  roleSelectionModelProfileId?: string | null
   opencodeBaseUrl: string
   opencodeBinaryPath: string
   opencodeConfigPath: string
@@ -1133,6 +1157,7 @@ export type RuntimeSettings = {
   modelProfiles: ModelConnectionSettings[]
   defaultModelProfileId: string
   defaultImageModelProfileId?: string | null
+  roleSelectionModelProfileId?: string | null
   opencodeModelSource: RuntimeModelSource
   continueModelSource: RuntimeModelSource
   deepseekHarnessModelSource?: RuntimeModelSource

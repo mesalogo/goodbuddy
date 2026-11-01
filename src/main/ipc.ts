@@ -292,6 +292,7 @@ import {
 import { showDesktopNotificationWhenUnfocused } from './desktop-notification'
 import type { SubagentService } from './assistant/subagent-service'
 import { routeSubagent } from './assistant/subagent-router'
+import { selectRoleWithSystemOne } from './assistant/system-one-role-selector'
 import {
   startEnvironmentChannels
 } from './channels/channel-env'
@@ -4322,18 +4323,33 @@ export function registerIpcHandlers(
         let smartRoute:
           | ReturnType<typeof routeSubagent>
           | undefined
-        if (
-          !imageGeneration &&
-          !request.expertId &&
-          !request.teamMode &&
-          request.smartRouting === true
-        ) {
+        let systemOneRoute:
+          | Awaited<ReturnType<typeof selectRoleWithSystemOne>>
+          | undefined
+        if (!imageGeneration && !request.expertId && !request.teamMode) {
           const settings = await settingsStore.getPolicySettings()
-          if (settings.subagentSmartRoutingEnabled) {
-            smartRoute = routeSubagent(
-              request.prompt,
-              await assistantDatabase.listExperts()
-            )
+          const shouldUseSystemOne = Boolean(settings.roleSelectionModelProfileId)
+          const shouldUseKeywordRouting =
+            request.smartRouting === true && settings.subagentSmartRoutingEnabled
+          if (shouldUseSystemOne || shouldUseKeywordRouting) {
+            const experts = await assistantDatabase.listExperts()
+            if (shouldUseSystemOne) {
+              const resolvedSettings = await settingsStore.getResolvedSettings()
+              try {
+                systemOneRoute = await selectRoleWithSystemOne(
+                  request.prompt,
+                  experts,
+                  resolvedSettings,
+                  controller.signal
+                )
+              } catch (error) {
+                if (controller.signal.aborted) throw error
+                systemOneRoute = undefined
+              }
+            }
+            if (shouldUseKeywordRouting) {
+              smartRoute = routeSubagent(request.prompt, experts)
+            }
           }
         }
         // A selected or smart-routed expert is a role prompt for the
@@ -4343,7 +4359,7 @@ export function registerIpcHandlers(
             ? undefined
             : executionRequest.expertId
               ? await assistantDatabase.getExpert(executionRequest.expertId)
-              : smartRoute?.expert
+              : systemOneRoute?.expert ?? smartRoute?.expert
         const rolePrompt = roleExpert ? expertRolePrompt(roleExpert) : ''
         const ordinaryStream = (): AsyncGenerator<
           RuntimeEvent,

@@ -358,6 +358,7 @@ function hydrateRuntimeSettings(
     selectedModelProfileId: (value: RuntimeDraftSelection) => void
     defaultModelProfileId: (value: string) => void
     defaultImageModelProfileId: (value: string | null) => void
+    roleSelectionModelProfileId: (value: string | null) => void
     opencodeModelSource: (value: RuntimeModelSource) => void
     continueModelSource: (value: RuntimeModelSource) => void
     deepseekHarnessModelSource: (value: RuntimeModelSource) => void
@@ -406,6 +407,7 @@ function hydrateRuntimeSettings(
   )
   setters.defaultModelProfileId(value.defaultModelProfileId)
   setters.defaultImageModelProfileId(value.defaultImageModelProfileId ?? null)
+  setters.roleSelectionModelProfileId(value.roleSelectionModelProfileId ?? null)
   setters.opencodeModelSource(configured.opencodeModelSource)
   setters.continueModelSource(configured.continueModelSource)
   setters.deepseekHarnessModelSource(
@@ -673,6 +675,8 @@ function SettingsPanelView({
   const [defaultModelProfileId, setDefaultModelProfileId] = useState('')
   const [defaultImageModelProfileId, setDefaultImageModelProfileId] =
     useState<string | null>(null)
+  const [roleSelectionModelProfileId, setRoleSelectionModelProfileId] =
+    useState<string | null>(null)
   const [opencodeModelSource, setOpencodeModelSource] =
     useState<RuntimeModelSource>({ kind: 'platform' })
   const [continueModelSource, setContinueModelSource] =
@@ -844,6 +848,7 @@ function SettingsPanelView({
         selectedModelProfileId: setSelectedModelProfileId,
         defaultModelProfileId: setDefaultModelProfileId,
         defaultImageModelProfileId: setDefaultImageModelProfileId,
+        roleSelectionModelProfileId: setRoleSelectionModelProfileId,
         opencodeModelSource: setOpencodeModelSource,
         continueModelSource: setContinueModelSource,
         deepseekHarnessModelSource: setDeepseekHarnessModelSource,
@@ -903,6 +908,7 @@ function SettingsPanelView({
       modelProfiles,
       defaultModelProfileId,
       defaultImageModelProfileId,
+      roleSelectionModelProfileId,
       opencodeModelSource,
       continueModelSource,
       deepseekHarnessModelSource,
@@ -934,6 +940,7 @@ function SettingsPanelView({
         modelProfiles: toModelProfileDrafts(settings),
         defaultModelProfileId: settings.defaultModelProfileId,
         defaultImageModelProfileId: settings.defaultImageModelProfileId ?? null,
+        roleSelectionModelProfileId: settings.roleSelectionModelProfileId ?? null,
         opencodeModelSource:
           savedConfiguredSettings?.opencodeModelSource,
         continueModelSource:
@@ -1547,6 +1554,7 @@ function SettingsPanelView({
         modelProfiles: profileInputs,
         defaultModelProfileId: defaultProfile.id,
         defaultImageModelProfileId,
+        roleSelectionModelProfileId,
         opencodeModelSource,
         continueModelSource,
         deepseekHarnessModelSource,
@@ -1646,9 +1654,11 @@ function SettingsPanelView({
       onNotify({
         tone: 'success',
         message: testingModel
-          ? t('notifications.modelGenerationTestSucceeded', {
-              label: status.label
-            })
+          ? modelProfiles.find((profile) => profile.id === profileId)?.protocol === 'system-one'
+            ? `System One 决策模型连接测试成功：${status.label}`
+            : t('notifications.modelGenerationTestSucceeded', {
+                label: status.label
+              })
           : t('notifications.connectionSucceeded', {
               label: status.label
             }),
@@ -1910,6 +1920,9 @@ function SettingsPanelView({
       ? { kind: 'profile', profileId: compatibleFallback.id }
       : { kind: 'platform' }
     setModelProfiles(remaining)
+    if (roleSelectionModelProfileId === id) {
+      setRoleSelectionModelProfileId(null)
+    }
     if (selectedModelProfileId === id) {
       setSelectedModelProfileId(
         remaining[Math.min(removedIndex, remaining.length - 1)]?.id ??
@@ -3226,6 +3239,20 @@ function SettingsPanelView({
                           const protocol = event.target
                             .value as ModelProfileDraft['protocol']
                           updateModelProfile(profile.id, { protocol })
+                          if (
+                            protocol !== 'system-one' &&
+                            roleSelectionModelProfileId === profile.id
+                          ) {
+                            setRoleSelectionModelProfileId(null)
+                          }
+                          if (protocol === 'system-one' && defaultModelProfileId === profile.id) {
+                            const fallback = modelProfiles.find(
+                              (candidate) =>
+                                candidate.id !== profile.id &&
+                                isAgentRuntimeModelProtocol(candidate.protocol)
+                            )
+                            if (fallback) setDefaultModelProfileId(fallback.id)
+                          }
                           const compatibleFallback =
                             findPreferredCompatibleModelProfile(
                               modelProfiles.filter(
@@ -3310,8 +3337,26 @@ function SettingsPanelView({
                       <option value="openai-images-generations">
                         {t('model.profile.imageProtocol')}
                       </option>
+                      <option value="system-one">
+                        System One 决策模型
+                      </option>
                     </select>
                   </label>
+                  {profile.protocol === 'system-one' && (
+                    <label className="toggle-row">
+                      <span>用作角色选择模型</span>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={roleSelectionModelProfileId === profile.id}
+                        onChange={(event) =>
+                          setRoleSelectionModelProfileId(
+                            event.currentTarget.checked ? profile.id : null
+                          )
+                        }
+                      />
+                    </label>
+                  )}
                   <label className="field">
                     <span>{t('model.profile.authentication')}</span>
                     <select

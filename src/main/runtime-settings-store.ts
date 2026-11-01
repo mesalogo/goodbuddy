@@ -300,7 +300,8 @@ const version21StoredSettingsSchema = version20StoredSettingsSchema
       )
       .min(1)
       .max(20),
-    defaultImageModelProfileId: z.string().uuid().nullable().optional()
+    defaultImageModelProfileId: z.string().uuid().nullable().optional(),
+    roleSelectionModelProfileId: z.string().uuid().nullable().optional()
   })
 
 const storedSettingsSchema = version21StoredSettingsSchema
@@ -432,6 +433,7 @@ export type ResolvedRuntimeSettings = {
   modelProfiles: ResolvedModelProfile[]
   defaultModelProfileId: string
   defaultImageModelProfileId?: string | null
+  roleSelectionModelProfileId?: string | null
   opencodeModelProfile?: ResolvedModelProfile
   continueModelProfile?: ResolvedModelProfile
   deepseekHarnessModelProfile?: ResolvedModelProfile
@@ -463,7 +465,7 @@ export type ResolvedRuntimeSettings = {
 
 export type RuntimePolicySettings = Pick<
   ResolvedRuntimeSettings,
-  'subagentSmartRoutingEnabled'
+  'subagentSmartRoutingEnabled' | 'roleSelectionModelProfileId'
 >
 
 export type ResolvedModelProfile = {
@@ -1890,6 +1892,7 @@ export class RuntimeSettingsStore {
       modelProfiles,
       defaultModelProfileId: settings.defaultModelProfileId,
       defaultImageModelProfileId: settings.defaultImageModelProfileId,
+      roleSelectionModelProfileId: settings.roleSelectionModelProfileId,
       opencodeModelSource: agent.opencodeBaseUrl
         ? { kind: 'platform' }
         : settings.opencodeModelSource,
@@ -1899,6 +1902,7 @@ export class RuntimeSettingsStore {
       secureStorageAvailable: this.cipher.isAvailable(),
       configured: {
         modelProfiles: configuredModelProfiles,
+        roleSelectionModelProfileId: settings.roleSelectionModelProfileId,
         opencodeBaseUrl: settings.opencodeBaseUrl,
         opencodeBinaryPath: settings.opencodeBinaryPath,
         opencodeConfigPath: settings.opencodeConfigPath,
@@ -2036,6 +2040,7 @@ export class RuntimeSettingsStore {
       defaultModelProfileId: settings.defaultModelProfileId,
       opencodeModelProfile,
       defaultImageModelProfileId: settings.defaultImageModelProfileId,
+      roleSelectionModelProfileId: settings.roleSelectionModelProfileId,
       continueModelProfile,
       deepseekHarnessModelProfile,
       deepseekHarnessPlatformModelProfile,
@@ -2561,6 +2566,9 @@ export class RuntimeSettingsStore {
       defaultImageModelProfileId: input.defaultImageModelProfileId === undefined
         ? current.defaultImageModelProfileId
         : input.defaultImageModelProfileId,
+      roleSelectionModelProfileId: input.roleSelectionModelProfileId === undefined
+        ? current.roleSelectionModelProfileId
+        : input.roleSelectionModelProfileId,
       continueModelSource,
       deepseekHarnessModelSource:
         requestedDeepSeekHarnessSource,

@@ -5011,7 +5011,11 @@ function App(): React.JSX.Element {
         attachments: [],
         knowledgeLibraryIds: conversation.knowledgeLibraryIds ?? [],
         knowledgeRetrievalMode: conversation.knowledgeRetrievalMode ?? "auto",
-        smartRouting: runtimeSettings?.subagentSmartRoutingEnabled === true ? true : undefined,
+        smartRouting:
+          runtimeSettings?.subagentSmartRoutingEnabled === true ||
+          Boolean(runtimeSettings?.roleSelectionModelProfileId)
+            ? true
+            : undefined,
       };
     }
     const releaseQueuedItem = async (): Promise<void> => {
@@ -5189,7 +5193,8 @@ function App(): React.JSX.Element {
       queuedInput?.smartRouting ??
       (!queuedInput &&
       runtime?.capability !== "image-generation" &&
-      runtimeSettings?.subagentSmartRoutingEnabled === true &&
+      (runtimeSettings?.subagentSmartRoutingEnabled === true ||
+        Boolean(runtimeSettings?.roleSelectionModelProfileId)) &&
       !selectedExpertSnapshot
         ? true
         : undefined);
@@ -6773,7 +6778,12 @@ function App(): React.JSX.Element {
         : activeRuntimeSelection?.provider === 'continue' && selectedContinuePreset ? { provider: 'continue', presetId: selectedContinuePreset } : undefined,
       expertId: selectedExpertId && selectedExpertId !== 'team' ? selectedExpertId : undefined,
       teamMode: selectedExpertId === 'team' || undefined,
-      smartRouting: (runtimeSettings?.subagentSmartRoutingEnabled && !selectedExpertId) || undefined }),
+      smartRouting:
+        ((runtimeSettings?.subagentSmartRoutingEnabled ||
+          runtimeSettings?.roleSelectionModelProfileId) &&
+          !selectedExpertId) ||
+        undefined
+    }),
     openConversation: id => { conversationListRowHandlers.select(id); showChatAndFocusComposer(); }, setDraft: setConversationInput,
     branchTitle: source => createConversationBranchTitle(getConversationDisplayTitle(source, t('conversation.defaultTitle')), t('conversation.branch.suffix')),
     fallbackError: () => t('notices.conversationBranchFailed'),

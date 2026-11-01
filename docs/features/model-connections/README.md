@@ -4,6 +4,9 @@
 Provider 要求的附加元数据；GoodBuddy 只在直连链路或 Runtime 明确原生支持的链路中应用
 这些值，不为不支持的 Runtime 伪造透传能力。
 
+System One 决策模型的协议、角色选择用途和后续决策用途由
+[System One 决策模型](../system-one-decision-model/README.md)维护。
+
 ## 文档导航
 
 Runtime 规范与执行方式选择契约由 [Agent Runtime](../../agent-runtime/README.md)维护；
