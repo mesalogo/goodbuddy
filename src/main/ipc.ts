@@ -4326,6 +4326,7 @@ export function registerIpcHandlers(
         let systemOneRoute:
           | Awaited<ReturnType<typeof selectRoleWithSystemOne>>
           | undefined
+        let systemOneSelectionStatus: string | undefined
         if (!imageGeneration && !request.expertId && !request.teamMode) {
           const settings = await settingsStore.getPolicySettings()
           const shouldUseSystemOne = Boolean(settings.roleSelectionModelProfileId)
@@ -4346,11 +4347,8 @@ export function registerIpcHandlers(
                   const selectionProfile = resolvedSettings.modelProfiles.find(
                     (profile) => profile.id === resolvedSettings.roleSelectionModelProfileId
                   )
-                  window.webContents.send(ipcChannels.agentEvent, {
-                    requestId: request.requestId,
-                    type: 'status',
-                    message: `自动选择角色：${systemOneRoute.expert.name} · ${selectionProfile?.modelName ?? 'System One'}`
-                  })
+                  systemOneSelectionStatus =
+                    `自动选择角色：${systemOneRoute.expert.name} · ${selectionProfile?.modelName ?? 'System One'}`
                 }
               } catch (error) {
                 if (controller.signal.aborted) throw error
@@ -4584,6 +4582,13 @@ export function registerIpcHandlers(
                 ipcChannels.agentEvent,
                 publicEvent
               )
+            }
+            if (systemOneSelectionStatus !== undefined && !window.isDestroyed()) {
+              window.webContents.send(ipcChannels.agentEvent, {
+                requestId: request.requestId,
+                type: 'status',
+                message: systemOneSelectionStatus
+              })
             }
           }
         }
