@@ -4342,6 +4342,16 @@ export function registerIpcHandlers(
                   resolvedSettings,
                   controller.signal
                 )
+                if (systemOneRoute) {
+                  const selectionProfile = resolvedSettings.modelProfiles.find(
+                    (profile) => profile.id === resolvedSettings.roleSelectionModelProfileId
+                  )
+                  window.webContents.send(ipcChannels.agentEvent, {
+                    requestId: request.requestId,
+                    type: 'status',
+                    message: `自动选择角色：${systemOneRoute.expert.name} · ${selectionProfile?.modelName ?? 'System One'}`
+                  })
+                }
               } catch (error) {
                 if (controller.signal.aborted) throw error
                 systemOneRoute = undefined
