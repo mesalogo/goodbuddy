@@ -1,6 +1,7 @@
 // Adapted from PeopleLib (MIT). See NOTICE.md.
 /* global document, TextEncoder, btoa, Image, cancelAnimationFrame, requestAnimationFrame, XMLSerializer, getComputedStyle */
 import Quill from 'quill';
+import { workspaceFileIconName, workspaceFileIconUrl } from '../workspace-file-icons';
 let pageBreakRegistered = false;
 const FLOW_VERSION = 1;
 const PAGE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
@@ -136,7 +137,16 @@ function registerAttachment(Quill) {
       node.dataset.name = name;
       node.dataset.mimeType = String(attachment.mimeType || 'application/octet-stream');
       node.dataset.size = Number.isFinite(size) ? String(size) : '0';
-      node.textContent = `📎 ${name}`;
+      const icon = document.createElement('img');
+      icon.src = workspaceFileIconUrl(workspaceFileIconName(name));
+      icon.alt = '';
+      icon.width = 16;
+      icon.height = 16;
+      icon.draggable = false;
+      icon.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.textContent = name;
+      node.append(icon, label);
       return node;
     }
 

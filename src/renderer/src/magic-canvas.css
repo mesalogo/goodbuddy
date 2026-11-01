@@ -112,6 +112,12 @@
   cursor: pointer;
 }
 
+.canvas-flow-attachment img {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
 .canvas-flow-attachment:hover,
 .canvas-flow-attachment:focus-visible {
   border-color: var(--accent, #2563eb);

@@ -445,6 +445,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     toolButtons.set(name, button);
     toolGroup.appendChild(button);
   }
+  const attachmentButton = makeButton('附件', '添加任意类型附件', 'add-attachment');
+  toolGroup.appendChild(attachmentButton);
 
   const styleGroup = document.createElement('span');
   styleGroup.className = 'canvas-note-tool-group';
@@ -560,8 +562,6 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   pageSurface.append(backgroundElement, annotationElement, flowLayer);
   pageShell.appendChild(pageSurface);
   viewport.appendChild(pageShell);
-  const attachmentButton = makeButton('附件', '添加任意类型附件到正文', 'add-attachment');
-  documentGroup.appendChild(attachmentButton);
   root.append(toolbar, flowToolbarHost, viewport, imageInput, attachmentInput);
   host.textContent = '';
   host.appendChild(root);

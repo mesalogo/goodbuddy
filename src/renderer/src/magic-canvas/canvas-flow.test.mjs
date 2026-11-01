@@ -71,6 +71,8 @@ describe('canvas flow content', () => {
     const link = document.querySelector('.canvas-flow-attachment');
     expect(link).toHaveAttribute('download', 'archive.custom');
     expect(link).toHaveAttribute('href', attachment.dataUrl);
+    expect(link.querySelector('img')).toHaveAttribute('alt', '');
+    expect(link.textContent?.replace(/\uFEFF/g, '')).toBe('archive.custom');
   });
 
   it('keeps normal accepted undo/redo and does not replace other Quill editors history modules', () => {
