@@ -126,7 +126,7 @@ export function ComposerMenuSelect<T extends string>({
         </span>
         {statusLabel && (
           <span className="runtime-capability-badge" title={statusLabel}>
-            自动选择
+            {statusLabel}
           </span>
         )}
         <ChevronDown aria-hidden="true" size={14} />

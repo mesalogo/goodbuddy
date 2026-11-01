@@ -171,6 +171,6 @@ describe("Composer render boundary", () => {
     const { props, rerender } = setup();
     props.roleSelectionModelLabel = "d3";
     rerender(<Composer {...props} />);
-    expect(screen.getByText("自动选择")).toBeInTheDocument();
+    expect(screen.getByText("自动选择角色 · d3")).toBeInTheDocument();
   });
 });
