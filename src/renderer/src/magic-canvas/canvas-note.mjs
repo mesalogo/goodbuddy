@@ -1541,7 +1541,6 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   });
   attachmentButton.addEventListener('click', () => {
     if (readOnly || busy) return;
-    setTool('flow-text');
     attachmentInput.value = '';
     attachmentInput.click();
   }, { signal: uiAbort.signal });
