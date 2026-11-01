@@ -126,6 +126,7 @@ export type ComposerProps = {
   runtimeContextCompactAvailable: boolean;
   runtimeContextCompacting: boolean;
   runtimeLabel: string;
+  roleSelectionModelLabel?: string;
   runtimeMenuButtonRef: RefObject<HTMLButtonElement | null>;
   runtimeModelDetail: string | undefined;
   runtimeNativeSnapshot: RuntimeNativeSnapshot | undefined;
@@ -215,6 +216,7 @@ export const Composer = memo(function Composer({
   runtimeContextCompactAvailable,
   runtimeContextCompacting,
   runtimeLabel,
+  roleSelectionModelLabel,
   runtimeMenuButtonRef,
   runtimeModelDetail,
   runtimeNativeSnapshot,
@@ -1235,6 +1237,14 @@ export const Composer = memo(function Composer({
                   </span>
                   {!runtimeSwitching && runtimeModelDetail && (
                     <span className="sr-only">{` (${runtimeModelDetail})`}</span>
+                  )}
+                  {!runtimeSwitching && roleSelectionModelLabel && (
+                    <span
+                      className="runtime-capability-badge"
+                      title={`角色选择模型：${roleSelectionModelLabel}`}
+                    >
+                      角色选择
+                    </span>
                   )}
                   {runtime?.capability ===
                     "image-generation" && (

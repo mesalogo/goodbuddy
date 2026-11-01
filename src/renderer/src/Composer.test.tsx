@@ -166,4 +166,11 @@ describe("Composer render boundary", () => {
     act(() => drafts.set("b", "hello"));
     expect(renders).not.toHaveBeenCalled();
   });
+
+  it("shows when a System One role selector is active", () => {
+    const { props, rerender } = setup();
+    props.roleSelectionModelLabel = "d3";
+    rerender(<Composer {...props} />);
+    expect(screen.getByText("角色选择")).toBeInTheDocument();
+  });
 });

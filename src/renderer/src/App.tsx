@@ -6766,6 +6766,11 @@ function App(): React.JSX.Element {
     workspaceChanges?.projectId === activeProjectId
       ? workspaceChanges.changes
       : undefined;
+  const roleSelectionModelLabel = runtimeSettings?.roleSelectionModelProfileId
+    ? runtimeSettings.modelProfiles.find(
+        (profile) => profile.id === runtimeSettings.roleSelectionModelProfileId,
+      )?.name
+    : undefined;
 
   const messageEdit = useMessageEdit({
     conversations: conversationStore, persistence: conversationPersistence,
@@ -7358,6 +7363,7 @@ function App(): React.JSX.Element {
                           runtimeContextCompactAvailable={runtimeContextCompactAvailable}
                           runtimeContextCompacting={runtimeContextCompacting}
                           runtimeLabel={activeRuntimeLabel}
+                          roleSelectionModelLabel={roleSelectionModelLabel}
                           runtimeMenuButtonRef={runtimeMenuButtonRef}
                           runtimeModelDetail={activeRuntimeModelDetail}
                           runtimeNativeSnapshot={runtimeNativeSnapshot}
