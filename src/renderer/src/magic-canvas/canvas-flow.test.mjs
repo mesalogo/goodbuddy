@@ -75,6 +75,18 @@ describe('canvas flow content', () => {
     expect(link.textContent?.replace(/\uFEFF/g, '')).toBe('archive.custom');
   });
 
+  it('inserts attachments while the flow editor is inactive', () => {
+    const attachment = {
+      name: 'notes.txt', mimeType: 'text/plain', size: 5,
+      dataUrl: 'data:text/plain;base64,aGVsbG8='
+    };
+    const { editor } = mount({ version: 1, ops: [{ insert: '\n' }] });
+    editor.setActive(true);
+    expect(editor.insertAttachment(attachment)).toBe(true);
+    editor.setActive(false);
+    expect(editor.content().ops[0]).toEqual({ insert: { attachment } });
+  });
+
   it('keeps normal accepted undo/redo and does not replace other Quill editors history modules', () => {
     const History = Quill.import('modules/history');
     const { editor, quill, onError } = mount({ version: 1, ops: [{ insert: 'x'.repeat(19995) + '\n' }] });

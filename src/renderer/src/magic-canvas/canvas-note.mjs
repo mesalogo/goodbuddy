@@ -324,7 +324,7 @@ const BUTTON_ICONS = Object.freeze({
   'tool-eraser': '<path d="m4 15 8-10 7 6-7 8H7Z"/><path d="m9 19 7-11M12 19h8"/>',
   'tool-text': '<path d="M5 5h14M12 5v14M8 19h8"/>',
   'tool-image': '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/>',
-  'add-attachment': '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M9 15h6M12 12v6"/>',
+  'add-attachment': '<path d="M8 12.5 14.5 6a3.5 3.5 0 0 1 5 5l-8.25 8.25a5 5 0 0 1-7.1-7.1L12 4.3"/>',
   'tool-flow-text': '<path d="M4 5h16M8 5v14M5 19h6"/><path d="M14 11h6M14 15h6M14 19h6"/>',
   undo: '<path d="m9 7-5 5 5 5"/><path d="M5 12h8a6 6 0 0 1 6 6"/>',
   redo: '<path d="m15 7 5 5-5 5"/><path d="M19 12h-8a6 6 0 0 0-6 6"/>',
@@ -790,12 +790,18 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     if (!file) return;
     const dataUrl = await readFileDataUrl(file);
     if (destroyed) return;
-    if (!flowEditor.insertAttachment({
-      name: file.name || '附件',
-      mimeType: file.type || 'application/octet-stream',
-      size: Math.max(1, file.size || 0),
-      dataUrl
-    })) throw new Error('附件无法插入正文');
+    const wasFlowActive = tool === 'flow-text';
+    if (!wasFlowActive) flowEditor.setActive(true);
+    try {
+      if (!flowEditor.insertAttachment({
+        name: file.name || '附件',
+        mimeType: file.type || 'application/octet-stream',
+        size: Math.max(1, file.size || 0),
+        dataUrl
+      })) throw new Error('附件无法插入正文');
+    } finally {
+      if (!wasFlowActive) flowEditor.setActive(false);
+    }
   }
 
   function applyZoom() {
