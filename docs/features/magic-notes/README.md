@@ -81,7 +81,7 @@ bodies. There is no product one-click backup action; see the
 
 The integrated PeopleLib editor uses Fabric for paged annotations and Quill for
 body text flowing across pages. It supports paper templates, pen/highlighter,
-object erasing and selection/transforms, floating text, images, PDF backgrounds
+object erasing and selection/transforms, floating text, images, arbitrary file attachments, PDF backgrounds
 with native text extraction, and raster PDF export. Saves are manual. Undo/redo
 belongs to the current annotation page or Quill body mode; it is not a global
 document history. There is no infinite canvas or PNG download button.

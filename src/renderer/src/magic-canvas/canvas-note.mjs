@@ -324,6 +324,7 @@ const BUTTON_ICONS = Object.freeze({
   'tool-eraser': '<path d="m4 15 8-10 7 6-7 8H7Z"/><path d="m9 19 7-11M12 19h8"/>',
   'tool-text': '<path d="M5 5h14M12 5v14M8 19h8"/>',
   'tool-image': '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/>',
+  'add-attachment': '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M9 15h6M12 12v6"/>',
   'tool-flow-text': '<path d="M4 5h16M8 5v14M5 19h6"/><path d="M14 11h6M14 15h6M14 19h6"/>',
   undo: '<path d="m9 7-5 5 5 5"/><path d="M5 12h8a6 6 0 0 1 6 6"/>',
   redo: '<path d="m15 7 5 5-5 5"/><path d="M19 12h-8a6 6 0 0 0-6 6"/>',
@@ -526,6 +527,10 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   imageInput.accept = 'image/jpeg,image/png,image/gif,image/webp';
   imageInput.className = 'canvas-note-image-input';
   imageInput.style.display = 'none';
+  const attachmentInput = document.createElement('input');
+  attachmentInput.type = 'file';
+  attachmentInput.className = 'canvas-note-attachment-input';
+  attachmentInput.style.display = 'none';
 
   const viewport = document.createElement('div');
   viewport.className = 'canvas-note-viewport';
@@ -555,7 +560,9 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   pageSurface.append(backgroundElement, annotationElement, flowLayer);
   pageShell.appendChild(pageSurface);
   viewport.appendChild(pageShell);
-  root.append(toolbar, flowToolbarHost, viewport, imageInput);
+  const attachmentButton = makeButton('附件', '添加任意类型附件到正文', 'add-attachment');
+  documentGroup.appendChild(attachmentButton);
+  root.append(toolbar, flowToolbarHost, viewport, imageInput, attachmentInput);
   host.textContent = '';
   host.appendChild(root);
 
@@ -682,6 +689,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
       : page.historyIndex >= page.history.length - 1);
     importButton.disabled = busy;
     exportButton.disabled = busy;
+    attachmentButton.disabled = busy;
     templateSelect.disabled = busy;
     colorInput.disabled = busy || flowMode;
     widthSelect.disabled = busy || flowMode;
@@ -776,6 +784,18 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     tool = nextTool;
     applyMode();
     if (tool === 'flow-text') flowEditor.focus();
+  }
+
+  async function addAttachment(file) {
+    if (!file) return;
+    const dataUrl = await readFileDataUrl(file);
+    if (destroyed) return;
+    if (!flowEditor.insertAttachment({
+      name: file.name || '附件',
+      mimeType: file.type || 'application/octet-stream',
+      size: Math.max(1, file.size || 0),
+      dataUrl
+    })) throw new Error('附件无法插入正文');
   }
 
   function applyZoom() {
@@ -1095,9 +1115,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     }
   }
 
-  function addText(event) {
-    const point = fabricCanvas.getScenePoint(event);
-    const object = new IText('输入文字', {
+  function createTextObject(text, point) {
+    const object = new IText(text, {
       left: point.x,
       top: point.y,
       originX: 'left',
@@ -1111,8 +1130,31 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     });
     fabricCanvas.add(object);
     fabricCanvas.setActiveObject(object);
+    return object;
+  }
+
+  function addText(event) {
+    const point = fabricCanvas.getScenePoint(event);
+    const object = createTextObject('输入文字', point);
     object.enterEditing();
     object.selectAll();
+    fabricCanvas.requestRenderAll();
+    pushHistory();
+  }
+
+  function addPastedText(text) {
+    const value = String(text || '').replace(/\r\n?/g, '\n');
+    if (!value) return;
+    const page = currentPage();
+    const object = createTextObject(value, {
+      x: Math.max(24, page.width * 0.2),
+      y: Math.max(24, page.height * 0.2)
+    });
+    object.set({
+      left: Math.min(object.left, Math.max(24, page.width - object.getScaledWidth() - 24)),
+      top: Math.min(object.top, Math.max(24, page.height - object.getScaledHeight() - 24))
+    });
+    object.setCoords();
     fabricCanvas.requestRenderAll();
     pushHistory();
   }
@@ -1497,6 +1539,12 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   exportButton.addEventListener('click', () => enqueueBusy(exportPdf), {
     signal: uiAbort.signal
   });
+  attachmentButton.addEventListener('click', () => {
+    if (readOnly || busy) return;
+    setTool('flow-text');
+    attachmentInput.value = '';
+    attachmentInput.click();
+  }, { signal: uiAbort.signal });
   previousButton.addEventListener('click', () => {
     enqueueBusy(() => switchPage(currentIndex - 1));
   }, { signal: uiAbort.signal });
@@ -1549,6 +1597,42 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     const file = imageInput.files?.[0] || null;
     imageInput.value = '';
     if (file) enqueueBusy(() => addImageFile(file));
+  }, { signal: uiAbort.signal });
+  attachmentInput.addEventListener('change', () => {
+    const file = attachmentInput.files?.[0] || null;
+    attachmentInput.value = '';
+    if (file) enqueueBusy(() => addAttachment(file));
+  }, { signal: uiAbort.signal });
+  root.addEventListener('paste', (event) => {
+    if (destroyed || busy || readOnly) return;
+    const target = event.target;
+    if (
+      target instanceof HTMLInputElement
+      || target instanceof HTMLSelectElement
+      || target instanceof HTMLTextAreaElement
+      || target instanceof Element && target.closest('.canvas-flow-layer')
+    ) {
+      return;
+    }
+    const active = fabricCanvas.getActiveObject();
+    if (active?.isEditing) return;
+
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+    const files = Array.from(clipboard.files || []);
+    const itemFile = Array.from(clipboard.items || [])
+      .map((item) => item.kind === 'file' ? item.getAsFile() : null)
+      .find(Boolean);
+    const file = files[0] || itemFile;
+    if (file) {
+      event.preventDefault();
+      enqueueBusy(() => file.type.startsWith('image/') ? addImageFile(file) : addAttachment(file));
+      return;
+    }
+    const text = clipboard.getData('text/plain');
+    if (!text) return;
+    event.preventDefault();
+    addPastedText(text);
   }, { signal: uiAbort.signal });
   root.addEventListener('keydown', (event) => {
     if (destroyed || busy || readOnly) return;

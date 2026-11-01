@@ -54,6 +54,25 @@ function mount(initial) {
 }
 
 describe('canvas flow content', () => {
+  it('inserts and renders arbitrary file attachments as downloadable embeds', () => {
+    const attachment = {
+      name: 'archive.custom',
+      mimeType: 'application/x-custom',
+      size: 3,
+      dataUrl: 'data:application/x-custom;base64,YWJj'
+    };
+    const { editor, quill } = mount({ version: 1, ops: [{ insert: '\n' }] });
+    quill.setSelection(0, 0, 'api');
+    expect(editor.insertAttachment(attachment)).toBe(true);
+    expect(editor.content()).toEqual({ version: 1, ops: [
+      { insert: { attachment } },
+      { insert: '\n' }
+    ] });
+    const link = document.querySelector('.canvas-flow-attachment');
+    expect(link).toHaveAttribute('download', 'archive.custom');
+    expect(link).toHaveAttribute('href', attachment.dataUrl);
+  });
+
   it('keeps normal accepted undo/redo and does not replace other Quill editors history modules', () => {
     const History = Quill.import('modules/history');
     const { editor, quill, onError } = mount({ version: 1, ops: [{ insert: 'x'.repeat(19995) + '\n' }] });

@@ -97,3 +97,23 @@
   .magic-canvas-editor .canvas-note-page-controls { flex-basis: 100%; justify-content: flex-end; }
   .magic-canvas-editor .canvas-note-viewport { padding: var(--space-2); }
 }
+.canvas-flow-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border-subtle, #cbd5e1);
+  border-radius: 0.35rem;
+  color: var(--text-link, #2563eb);
+  background: var(--surface-raised, #fff);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.canvas-flow-attachment:hover,
+.canvas-flow-attachment:focus-visible {
+  border-color: var(--accent, #2563eb);
+  text-decoration: underline;
+}

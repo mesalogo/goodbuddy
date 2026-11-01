@@ -769,7 +769,7 @@ records are listed separately and do not introduce another feature status.
   passed the full suite, typecheck and lint.
 - [x] **Paged canvas notes**: The integrated PeopleLib Fabric + Quill editor
   combines flowing body text with pen/highlighter, object selection/transforms,
-  floating text, images and paper templates. Editors and read-only viewers support
+  floating text, images, arbitrary file attachments and paper templates. Editors and read-only viewers support
   25%-300% view zoom, 100% reset and responsive Fit width, without changing saved
   content or export dimensions. Import PDFs as page backgrounds
   with native text extraction, then export a raster PDF of text and annotations;

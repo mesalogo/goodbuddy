@@ -60,6 +60,31 @@ function canvas(size = 40): MagicNoteCanvasContent {
 }
 
 describe('Magic note SQLite and filesystem storage', () => {
+  it('keeps unknown attachment extensions and omits a made-up extension when absent', () => {
+    const { database, directory } = setup()
+    const content: MagicNoteContent = { version: 1, ops: [{ insert: {
+      attachment: {
+        name: 'payload.custom', mimeType: 'application/x-custom', size: 3,
+        dataUrl: 'data:application/x-custom;base64,YWJj'
+      }
+    } }, { insert: '\n' }] }
+    const note = database.createMagicNote({ title: 'Unknown attachment', content })
+    const root = join(directory, 'notes', note.id, 'assets')
+    expect(readdirSync(root)).toEqual([expect.stringMatching(/^[a-f0-9]{64}\.custom$/)])
+    expect(database.getMagicNote(note.id).entries[0]?.content).toEqual(content)
+
+    const noExtension: MagicNoteContent = { version: 1, ops: [{ insert: {
+      attachment: {
+        name: 'payload', mimeType: 'application/x-custom', size: 3,
+        dataUrl: 'data:application/x-custom;base64,REVG'
+      }
+    } }, { insert: '\n' }] }
+    const second = database.createMagicNote({ title: 'Extensionless attachment', content: noExtension })
+    const secondRoot = join(directory, 'notes', second.id, 'assets')
+    expect(readdirSync(secondRoot)).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/)])
+    expect(database.getMagicNote(second.id).entries[0]?.content).toEqual(noExtension)
+  })
+
   it('measures current entry startup body reads on real SQLite and filesystem fixtures', () => {
     const { database, directory, sql } = setup()
     const paths: string[] = []

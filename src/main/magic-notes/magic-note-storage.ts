@@ -20,9 +20,9 @@ const extensions: Record<string, string> = {
 
 // Only media slots may contain storage references. Text and arbitrary canvas
 // properties (including objects named "$asset") are ordinary user content.
-function mapMediaFields(content: MagicNoteContent, transform: (value: unknown) => unknown): void {
+function mapMediaFields(content: MagicNoteContent, transform: (value: unknown, owner?: Record<string, unknown>) => unknown): void {
   const field = (record: Record<string, unknown>, key: string): void => {
-    if (record[key] !== undefined) record[key] = transform(record[key])
+    if (record[key] !== undefined) record[key] = transform(record[key], record)
   }
   const embeds = (ops: Array<{ insert: unknown }>): void => {
     for (const op of ops) {
@@ -93,13 +93,16 @@ export class MagicNoteStorage {
   write(entry: MagicNoteStoredEntry): void {
     const notePath = join(this.rootPath, entry.noteId)
     const stored = JSON.parse(JSON.stringify(entry)) as MagicNoteStoredEntry
-    mapMediaFields(stored.content, (value) => {
+    mapMediaFields(stored.content, (value, owner) => {
       if (typeof value !== 'string') return value
       const match = /^data:([^;]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(value)
       if (!match) return value
       const mimeType = match[1]!
       const bytes = Buffer.from(match[2]!, 'base64')
-      const name = `${createHash('sha256').update(bytes).digest('hex')}.${extensions[mimeType] ?? 'bin'}`
+      const originalName = typeof owner?.name === 'string' ? owner.name : ''
+      const originalExtension = /\.([a-z0-9]{1,16})$/i.exec(originalName)?.[1]?.toLowerCase()
+      const extension = extensions[mimeType] ?? originalExtension
+      const name = `${createHash('sha256').update(bytes).digest('hex')}${extension ? `.${extension}` : ''}`
       const path = join(notePath, 'assets', name)
       if (!existsSync(path)) this.atomicWrite(path, bytes)
       return { $asset: `assets/${name}`, mimeType }
@@ -112,7 +115,7 @@ export class MagicNoteStorage {
     mapMediaFields(entry.content, (value) => {
       if (!value || typeof value !== 'object' || !('$asset' in value)) return value
       const reference = value as { $asset: string; mimeType: string }
-      if (!/^assets\/[a-f0-9]{64}\.[a-z0-9]+$/.test(reference.$asset)) throw new Error('Invalid note asset reference')
+      if (!/^assets\/[a-f0-9]{64}(?:\.[a-z0-9]+)?$/.test(reference.$asset)) throw new Error('Invalid note asset reference')
       return `data:${reference.mimeType};base64,${readFileSync(join(this.rootPath, noteId, reference.$asset)).toString('base64')}`
     })
     if (entry.id !== entryId || entry.noteId !== noteId) throw new Error('Note entry identity mismatch')

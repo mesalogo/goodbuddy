@@ -283,11 +283,14 @@ optimistic revisions, todos and comments. Entry `content_json` contains only
 `{storage: "file", version: <content version>, revision: <body revision>}`.
 Comment-only revision increments do not change the indexed body revision.
 
-Known media fields become `{$asset: "assets/<sha256>.<ext>", mimeType: "..."}`
+Known media fields become `{$asset: "assets/<sha256>[.<ext>]", mimeType: "..."}`
 on disk and hydrate back to data URLs on API reads. These fields are v1
 `insert.image`, `localVideo.dataUrl` and `attachment.dataUrl`; canvas
 `assets[].dataUrl`, `preview`, flow embeds and image-object `src`, including
-nested objects. Ordinary text, insert strings, names and arbitrary `$asset`
+nested objects. Canvas flow attachments render as downloadable file cards and
+accept any MIME type. Known MIME types keep their conventional extension;
+unknown types use the original filename extension, or no extension when the
+filename has none. Ordinary text, insert strings, names and arbitrary `$asset`
 objects remain unchanged. Canvas asset IDs and PDF references are preserved.
 Write, read and garbage collection use the same scoped field traversal.
 

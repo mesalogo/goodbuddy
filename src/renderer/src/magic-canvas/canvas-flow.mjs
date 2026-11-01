@@ -7,6 +7,7 @@ const PAGE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
 const INLINE_FORMATS = ['bold', 'italic', 'underline', 'strike', 'code'];
 const BLOCK_FORMATS = ['header', 'blockquote', 'code-block', 'list', 'indent'];
 const FLOW_FORMATS = [...INLINE_FORMATS, ...BLOCK_FORMATS, 'canvasPageBreak'];
+const DATA_URL_RE = /^data:[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*;base64,[A-Za-z0-9+/]+={0,2}$/i;
 
 class FlowHistory extends Quill.import('modules/history') {
   record(delta, oldDelta) {
@@ -63,6 +64,17 @@ export function normalizeFlowContent(value) {
       });
       continue;
     }
+    const attachment = raw.insert && typeof raw.insert === 'object'
+      ? (raw.insert.attachment || raw.insert.canvasAttachment)
+      : null;
+    if (attachment && typeof attachment === 'object'
+      && typeof attachment.name === 'string' && attachment.name.trim()
+      && typeof attachment.mimeType === 'string' && attachment.mimeType.includes('/')
+      && Number.isInteger(attachment.size) && attachment.size > 0
+      && typeof attachment.dataUrl === 'string' && DATA_URL_RE.test(attachment.dataUrl)) {
+      ops.push({ insert: { attachment: cloneJson(attachment) } });
+      continue;
+    }
     const pageId = raw.insert && typeof raw.insert === 'object'
       ? String(raw.insert.canvasPageBreak || '')
       : '';
@@ -108,6 +120,39 @@ function registerPageBreak(Quill) {
   CanvasPageBreak.className = 'canvas-flow-page-break';
   Quill.register(CanvasPageBreak, true);
   pageBreakRegistered = true;
+}
+
+function registerAttachment(Quill) {
+  const Embed = Quill.import('blots/embed');
+  class CanvasAttachment extends Embed {
+    static create(value) {
+      const node = super.create();
+      const attachment = value && typeof value === 'object' ? value : {};
+      const name = String(attachment.name || '附件');
+      const size = Number(attachment.size);
+      node.href = String(attachment.dataUrl || '');
+      node.download = name;
+      node.title = name;
+      node.dataset.name = name;
+      node.dataset.mimeType = String(attachment.mimeType || 'application/octet-stream');
+      node.dataset.size = Number.isFinite(size) ? String(size) : '0';
+      node.textContent = `📎 ${name}`;
+      return node;
+    }
+
+    static value(node) {
+      return {
+        name: node?.dataset?.name || node?.textContent?.replace(/^📎\s*/, '') || '附件',
+        mimeType: node?.dataset?.mimeType || 'application/octet-stream',
+        size: Number(node?.dataset?.size) || 1,
+        dataUrl: node?.getAttribute('href') || ''
+      };
+    }
+  }
+  CanvasAttachment.blotName = 'canvasAttachment';
+  CanvasAttachment.tagName = 'a';
+  CanvasAttachment.className = 'canvas-flow-attachment';
+  Quill.register(CanvasAttachment, true);
 }
 
 function makeFormatButton(name, title, value = null) {
@@ -178,6 +223,7 @@ function imageFromUrl(url) {
 export function mountFlowText(layerHost, toolbarHost, initialContent, options = {}) {
   const initial = normalizeFlowContent(initialContent);
   registerPageBreak(Quill);
+  registerAttachment(Quill);
   layerHost.textContent = '';
   toolbarHost.textContent = '';
 
@@ -190,7 +236,7 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
   const quill = new FlowQuill(editorHost, {
     theme: 'snow',
     placeholder: '输入正文，内容超过纸张后会自动分页',
-    formats: FLOW_FORMATS,
+    formats: [...FLOW_FORMATS, 'canvasAttachment'],
     modules: {
       toolbar,
       history: {
@@ -376,6 +422,16 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
       suppressUserFollowSelection = true;
       quill.insertEmbed(index, 'canvasPageBreak', id, 'user');
       quill.setSelection(index + 1, 0, 'silent');
+      scheduleLayout();
+      return true;
+    },
+    insertAttachment(attachment) {
+      const normalized = normalizeFlowContent({ version: FLOW_VERSION, ops: [{ insert: { attachment } }] });
+      const value = normalized?.ops[0]?.insert;
+      if (!value || typeof value !== 'object' || !value.attachment) return false;
+      const range = quill.getSelection() || { index: Math.max(0, quill.getLength() - 1), length: 0 };
+      quill.insertEmbed(range.index, 'canvasAttachment', value.attachment, 'user');
+      quill.setSelection(range.index + 1, 0, 'silent');
       scheduleLayout();
       return true;
     },
