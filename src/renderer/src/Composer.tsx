@@ -766,10 +766,15 @@ export const Composer = memo(function Composer({
               }
               icon={<Bot aria-hidden="true" size={13} />}
               menuOpen={composerMenuOpen === "expert"}
-              onChange={actions.selectExpert}
-              onOpenChange={setExpertMenuOpen}
-              options={assistantExpertOptions}
-              value={selectedExpertId}
+                onChange={actions.selectExpert}
+                onOpenChange={setExpertMenuOpen}
+                options={assistantExpertOptions}
+                statusLabel={
+                  !selectedExpertId && roleSelectionModelLabel
+                    ? `自动选择角色 · ${roleSelectionModelLabel}`
+                    : undefined
+                }
+                value={selectedExpertId}
             />
           </div>
           <ComposerDraftText
@@ -1237,14 +1242,6 @@ export const Composer = memo(function Composer({
                   </span>
                   {!runtimeSwitching && runtimeModelDetail && (
                     <span className="sr-only">{` (${runtimeModelDetail})`}</span>
-                  )}
-                  {!runtimeSwitching && roleSelectionModelLabel && (
-                    <span
-                      className="runtime-capability-badge"
-                      title={`角色选择模型：${roleSelectionModelLabel}`}
-                    >
-                      角色选择
-                    </span>
                   )}
                   {runtime?.capability ===
                     "image-generation" && (

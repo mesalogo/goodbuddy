@@ -26,6 +26,7 @@ export function ComposerMenuSelect<T extends string>({
   onChange,
   onOpenChange,
   options,
+  statusLabel,
   triggerLabel,
   value,
 }: {
@@ -38,6 +39,7 @@ export function ComposerMenuSelect<T extends string>({
   onChange: (value: T) => void;
   onOpenChange: (open: boolean) => void;
   options: readonly ComposerMenuOption<T>[];
+  statusLabel?: string;
   triggerLabel?: string;
   value: T;
 }): React.JSX.Element {
@@ -122,6 +124,11 @@ export function ComposerMenuSelect<T extends string>({
         <span className="model-button__label">
           {triggerLabel ?? selectedOption?.label}
         </span>
+        {statusLabel && (
+          <span className="runtime-capability-badge" title={statusLabel}>
+            自动选择
+          </span>
+        )}
         <ChevronDown aria-hidden="true" size={14} />
       </button>
       {menuOpen && (
@@ -164,6 +171,11 @@ export function ComposerMenuSelect<T extends string>({
           ref={menuRef}
           role="menu"
         >
+          {statusLabel && (
+            <div className="composer-picker__status" role="status">
+              {statusLabel}
+            </div>
+          )}
           {options.map((option) => (
             <button
               aria-checked={option.value === value}
