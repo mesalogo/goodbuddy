@@ -5,11 +5,38 @@ import { PagedOutputStore } from '../agent/paged-output-store'
 import type { RemoteWorkspaceAccess } from '../workspace/remote-workspace-access'
 import { AgentProtocolClientError } from './agent-protocol-client'
 import { ProtocolRemoteWorkspaceTransportError } from './protocol-remote-workspace-transport'
+import type { AgentFile } from '../agent/runtime'
 
 export class RemoteModelTools {
   private readonly outputs: PagedOutputStore
   constructor(private readonly workspace: RemoteWorkspaceAccess, private readonly options: Pick<ModelToolProviderProgrammingOptions, 'outputStore' | 'outputAdopt'>) {
     this.outputs = new PagedOutputStore('remote', options.outputStore)
+  }
+
+  async prepareFiles(files: AgentFile[], context: ModelToolCallContext, signal: AbortSignal): Promise<Record<string, string>> {
+    const paths: Record<string, string> = {}
+    for (const file of files) {
+      if (!file.dataBase64) throw new Error(`附件 ${file.name} 的原始内容不可用`)
+      const raw = Buffer.from(file.dataBase64, 'base64')
+      if (raw.byteLength !== file.size) throw new Error(`附件 ${file.name} 的大小校验失败`)
+      const extension = file.name.match(/\.[a-z0-9]{1,16}$/iu)?.[0]?.toLowerCase() ?? '.bin'
+      const remotePath = `.goodbuddy/sessions/${context.conversationId}/attachments/${file.attachmentId}/original${extension}`
+      const encoded = raw.toString('base64')
+      // process_execute limits the command argument to 100,000 characters;
+      // Base64 expands the raw bytes, so keep each raw chunk at 64 KiB.
+      const chunkSize = 64 * 1024
+      let firstChunk = true
+      for (let offset = 0; offset < encoded.length; offset += chunkSize) {
+        signal.throwIfAborted()
+        const chunk = encoded.slice(offset, offset + chunkSize)
+        const redirect = firstChunk ? '>' : '>>'
+        const command = `mkdir -p .goodbuddy/sessions/${shellPath(context.conversationId)}/attachments/${shellPath(file.attachmentId)} && printf '%s' '${chunk}' | base64 -d ${redirect} ${shellPath(remotePath)}`
+        await this.callTool('process_execute', { command }, signal, context)
+        firstChunk = false
+      }
+      paths[file.path] = remotePath
+    }
+    return paths
   }
 
   owns(name: string, args: Record<string, unknown>): boolean {
@@ -97,4 +124,9 @@ export class RemoteModelTools {
 
   async releaseConversation(id: string): Promise<void> { await this.outputs.releaseOwner(id) }
   async dispose(): Promise<void> { await this.outputs.dispose() }
+}
+
+function shellPath(value: string): string {
+  if (!/^[A-Za-z0-9._:/-]+$/u.test(value)) throw new Error('远端附件路径包含无效字符')
+  return value
 }

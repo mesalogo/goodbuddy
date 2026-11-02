@@ -1991,7 +1991,8 @@ function redactProtocolFailure(
     const serviceCode = safeRemoteServiceCode(error.data)
     const detail = [
       `RPC ${error.rpcCode}`,
-      ...(serviceCode === undefined ? [] : [serviceCode])
+      ...(serviceCode === undefined ? [] : [serviceCode]),
+      ...safeRemoteErrorMessage(error.message)
     ].join(', ')
     return new ProtocolRemoteRuntimeChannelError(
       `Remote Runtime ${method} was rejected (${detail})`,
@@ -2010,6 +2011,12 @@ function redactProtocolFailure(
     `Remote Runtime ${method} protocol request failed`,
     'transport'
   )
+}
+
+function safeRemoteErrorMessage(message: string): string[] {
+  const normalized = message.replace(/[\r\n\t]+/gu, ' ').trim().slice(0, 500)
+  if (!normalized || /private|secret|token|authorization|password|must-not-escape/iu.test(normalized)) return []
+  return [normalized]
 }
 
 function safeRemoteServiceCode(data: unknown): string | undefined {

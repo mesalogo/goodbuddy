@@ -21,7 +21,9 @@ function metadata(context: ContextAttachment): string {
 }
 
 function originalFileName(context: Pick<ContextAttachment, 'name' | 'originalMime'>): string {
-  return `original${context.originalMime ? `.${context.originalMime === 'image/jpeg' ? 'jpg' : context.originalMime.slice(6)}` : extname(context.name).toLowerCase()}`
+  const extension = extname(context.name).toLowerCase()
+  if (extension) return `original${extension}`
+  return `original${context.originalMime ? `.${context.originalMime.split('/').at(-1) ?? 'bin'}` : '.bin'}`
 }
 
 /** Construct only in the desktop storage host. */
@@ -156,8 +158,9 @@ export class ConversationAttachmentStorage {
     for (const asset of assets) {
       if (!asset.path.startsWith(`temp`)) continue
       const context = JSON.parse(asset.metadata) as ContextAttachment
-      const target = portablePath(join('conversation-assets', conversationId, context.kind === 'image' ? 'images' : 'documents', asset.id))
-      mkdirSync(join(this.root, 'conversation-assets', conversationId, context.kind === 'image' ? 'images' : 'documents'), { recursive: true })
+      const folder = context.kind === 'image' ? 'images' : context.kind === 'file' ? 'others' : 'documents'
+      const target = portablePath(join('conversation-assets', conversationId, folder, asset.id))
+      mkdirSync(join(this.root, 'conversation-assets', conversationId, folder), { recursive: true })
       renameSync(join(this.root, asset.path), join(this.root, target))
       try {
         this.database.prepare('UPDATE attachments SET path = ? WHERE id = ?').run(target, asset.id)
@@ -209,7 +212,7 @@ export class ConversationAttachmentStorage {
     }
     const candidates = directories(join(this.root, 'temp', 'document-parsing')).map((id) => join('temp', 'document-parsing', id))
     for (const conversationId of directories(join(this.root, 'conversation-assets'))) {
-      for (const kind of ['images', 'documents']) {
+      for (const kind of ['images', 'documents', 'others']) {
         for (const id of directories(join(this.root, 'conversation-assets', conversationId, kind))) candidates.push(join('conversation-assets', conversationId, kind, id))
       }
     }

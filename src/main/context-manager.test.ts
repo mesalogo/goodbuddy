@@ -173,8 +173,29 @@ describe('ContextManager', () => {
     expect(request.prompt).toContain('PASTED_DOCX')
   })
 
+  it('stores an unknown extension as a durable file attachment under others', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-other-files-'))
+    temporaryDirectories.push(directory)
+    const source = join(directory, 'recording.mp3')
+    await writeFile(source, Buffer.from('audio-bytes'))
+    const results = new DocumentResultStorage(join(directory, 'temp', 'document-parsing'))
+    const assets = new ConversationAttachmentStorage(directory, results)
+    const manager = new ContextManager({ assets })
+    const conversation = crypto.randomUUID()
+    try {
+      const [attachment] = await manager.importFiles([source])
+      expect(attachment).toMatchObject({ kind: 'file', originalName: 'recording.mp3', originalSize: 11 })
+      await manager.saveDraft(conversation, [attachment!.id])
+      const original = assets.original(attachment!.id)
+      expect(original.path.replaceAll('\\', '/')).toContain(`/conversation-assets/${conversation}/others/${attachment!.id}/`)
+      const request = await manager.enrichRequest({ requestId: crypto.randomUUID(), conversationId: conversation, prompt: 'inspect', contextIds: [attachment!.id] })
+      expect(request.prompt).toContain('<attachment-file>')
+      expect(request.prompt).toContain(original.path.replaceAll('\\', '\\\\'))
+    } finally { manager.clear(); assets.close(); await results.close() }
+  })
+
   it.each([
-    ['unsupported.zip', 1, /不支持的文件类型/],
+    ['large.zip', 12 * 1024 * 1024 + 1, /12MB/],
     ['large.txt', 256 * 1024 + 1, /256KB/],
     ['large.pdf', 20 * 1024 * 1024 + 1, /20MB/],
     ['large.png', 12 * 1024 * 1024 + 1, /12MB/]

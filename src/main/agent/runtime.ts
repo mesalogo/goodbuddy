@@ -133,6 +133,16 @@ export type AgentImage = {
   data: string
 }
 
+export type AgentFile = {
+  attachmentId: string
+  name: string
+  mimeType: string
+  size: number
+  path: string
+  /** Main-process-only bytes used by remote Runtime upload. */
+  dataBase64?: string
+}
+
 export type RemoteRecoveredTool = ConversationToolActivity & {
   callId: string
 }
@@ -144,6 +154,7 @@ export type AgentExecutionRequest = AgentRequest & {
   /** Resolved Main-side workspace, never taken from the current UI selection. */
   executionWorkspace?: string
   images?: AgentImage[]
+  files?: AgentFile[]
   imageContextNotice?: ConversationMessage['imageContextNotice']
   /** Main-process-only recursion guard for direct-model programming delegation. */
   directModelDelegationDepth?: 0 | 1

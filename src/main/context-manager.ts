@@ -41,7 +41,11 @@ type StoredImageContext = ContextAttachment & {
   data: string
 }
 
-type StoredContext = StoredTextContext | StoredImageContext
+type StoredFileContext = ContextAttachment & {
+  kind: 'file'
+}
+
+type StoredContext = StoredTextContext | StoredImageContext | StoredFileContext
 
 const maximumFileSize = 256 * 1024
 const maximumDocumentFileSize = 20 * 1024 * 1024
@@ -80,6 +84,8 @@ const supportedDocumentExtensions = new Set([
   '.pptx',
   '.xlsx'
 ])
+
+const maximumOtherFileSize = maximumContextBytes
 
 function formatParsedDocument(
   sections: ParsedDocument['sections']
@@ -252,6 +258,25 @@ export class ContextManager {
     return this.toPublic(context)
   }
 
+  private async storeFile(name: string, original: Buffer, mimeType?: string): Promise<ContextAttachment> {
+    if (original.length === 0 || original.length > maximumOtherFileSize) throw new Error('其他文件必须小于 12MB')
+    this.assertCapacity(original.length)
+    const context: ContextAttachment = {
+      id: crypto.randomUUID(), name, size: original.length, preview: `${original.length} bytes`, kind: 'file',
+      originalName: name, originalSize: original.length, ...(mimeType ? { originalMime: mimeType } : {})
+    }
+    context.resourceId = context.id
+    context.attachmentId = context.id
+    this.contexts.set(context.id, context as StoredContext)
+    this.totalBytes += context.size
+    try {
+      if (this.assets) await this.assets.save(context, JSON.stringify(context), original)
+    } catch (error) {
+      this.contexts.delete(context.id); this.totalBytes -= context.size; throw error
+    }
+    return context
+  }
+
   async storePastedImage(input: PastedImageInput): Promise<ContextAttachment> {
     if (
       input.mimeType !== 'image/jpeg' &&
@@ -311,9 +336,7 @@ export class ContextManager {
       )
       return this.storeParsed(name, data, parsed)
     }
-    if (!supportedExtensions.has(extension)) {
-      throw new Error(`暂不支持此远程文件类型：${extension || '未知'}`)
-    }
+    if (!supportedExtensions.has(extension)) return this.storeFile(name, data, attachment.mimeType)
     if (data.byteLength > maximumFileSize) {
       throw new Error('远程文本文件不能超过 256KB')
     }
@@ -376,14 +399,6 @@ export class ContextManager {
           })
         reportProgress('reading')
         const extension = extname(canonicalPath).toLowerCase()
-        if (
-          !supportedExtensions.has(extension) &&
-          !supportedImageExtensions.has(extension) &&
-          !supportedDocumentExtensions.has(extension)
-        ) {
-          throw new Error(`不支持的文件类型：${extension || '未知'}`)
-        }
-
         const handle = await open(canonicalPath, 'r')
         if (supportedImageExtensions.has(extension)) {
           try {
@@ -437,9 +452,17 @@ export class ContextManager {
         let originalText: Buffer
         try {
           const fileStat = await handle.stat()
-          if (!fileStat.isFile() || fileStat.size > maximumFileSize) {
-            throw new Error('文件必须小于 256KB 且不能是目录')
+          if (!fileStat.isFile()) {
+            throw new Error('所选路径必须是文件')
           }
+          if (!supportedExtensions.has(extension)) {
+            if (fileStat.size > maximumOtherFileSize) throw new Error('其他文件必须小于 12MB')
+            const original = await handle.readFile()
+            attachments.push(await this.storeFile(basename(canonicalPath), original))
+            controller.signal.throwIfAborted()
+            continue
+          }
+          if (fileStat.size > maximumFileSize) throw new Error('文件必须小于 256KB')
           const buffer = Buffer.alloc(maximumFileSize + 1)
           const result = await handle.read(buffer, 0, buffer.length, 0)
           if (result.bytesRead > maximumFileSize) {
@@ -606,8 +629,15 @@ export class ContextManager {
     const textContexts = selected.filter(
       (context): context is StoredTextContext => context.kind === 'text' && context.completeness !== 'images-only'
     )
+    const fileContexts = selected.filter((context): context is StoredFileContext => context.kind === 'file')
     const imageSources = selected.filter((item) => item.kind === 'image' && item.provenance).map((item) =>
       `<attachment-json>${JSON.stringify({ name: item.name, source: item.provenance!.documentName, pageNumber: item.provenance!.pageNumber })}</attachment-json>`)
+    const files = this.assets
+      ? await Promise.all(fileContexts.map(async (attachment) => {
+          const original = await this.assets!.original(attachment.id)
+          return { attachmentId: attachment.attachmentId ?? attachment.id, name: attachment.name, mimeType: attachment.originalMime ?? 'application/octet-stream', size: attachment.originalSize ?? original.data.length, path: original.path, dataBase64: original.data.toString('base64') }
+        }))
+      : []
     const context = [...textContexts
       .map(
         (attachment) =>
@@ -615,11 +645,11 @@ export class ContextManager {
             name: attachment.name,
             content: attachment.content
           })}</attachment-json>`
-      ), ...imageSources]
+      ), ...imageSources, ...files.map((file) => `<attachment-file>${JSON.stringify(file)}</attachment-file>`)]
       .join('\n\n')
 
     const prompt =
-      textContexts.length > 0 || imageSources.length > 0
+      textContexts.length > 0 || imageSources.length > 0 || files.length > 0
         ? [
             request.prompt,
             '',
@@ -643,7 +673,8 @@ export class ContextManager {
     return {
       ...normalizedRequest,
       prompt,
-      images: images.length > 0 ? images : undefined
+      images: images.length > 0 ? images : undefined,
+      ...(files.length > 0 ? { files } : {})
     }
   }
 
@@ -702,7 +733,7 @@ export class ContextManager {
         candidate.name.length > 500 ||
         typeof candidate.preview !== 'string' ||
         candidate.preview.length > 500 ||
-        (candidate.kind !== 'text' && candidate.kind !== 'image')
+        (candidate.kind !== 'text' && candidate.kind !== 'image' && candidate.kind !== 'file')
       ) {
         throw new Error('待发送附件数据无效')
       }
@@ -733,7 +764,7 @@ export class ContextManager {
           size,
           content: candidate.content
         }
-      } else {
+      } else if (candidate.kind === 'image') {
         if (
           candidate.mediaType !== 'image/jpeg' ||
           typeof candidate.data !== 'string' ||
@@ -766,6 +797,20 @@ export class ContextManager {
           mediaType: 'image/jpeg',
           data: candidate.data,
           ...(thumbnailUrl ? { thumbnailUrl } : {})
+        }
+      } else {
+        if (typeof candidate.originalName !== 'string' || typeof candidate.originalSize !== 'number' || candidate.originalSize < 1 || candidate.originalSize > maximumOtherFileSize) {
+          throw new Error('待发送文件附件数据无效')
+        }
+        context = {
+          id: candidate.id,
+          name: candidate.name,
+          preview: candidate.preview,
+          kind: 'file',
+          size: candidate.originalSize,
+          originalName: candidate.originalName,
+          originalSize: candidate.originalSize,
+          ...(typeof candidate.originalMime === 'string' ? { originalMime: candidate.originalMime } : {})
         }
       }
       restoredIds.add(context.id)

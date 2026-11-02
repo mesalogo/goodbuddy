@@ -25,7 +25,43 @@ Main。IPC 先验证可信 sender，再使用共享 `contextImportFilesSchema` �
 附件添加的异步失败通过右上角应用错误通知显示，使用共享 `displayErrorMessage` 去除
 Electron IPC 错误前缀，保留文字草稿和已有附件，不重复显示为输入框错误。
 附件数量限制等就地校验仍在输入区提示。
-本次变更不修改 Agent、远端协议或 Runtime 的附件消费实现。
+文本、图片和文档附件沿用已有模型上下文路径；通用原始文件附件使用会话资产的 `others`
+目录。执行空间映射和远端会话上传目录在 Runtime 请求开始前完成，只有路径可读后才提交模型
+请求。远端项目的直连模型路径使用 gbagent 的 direct model tools 写入文件，再由同一 Agent
+的 `process_execute`、搜索和读取工具处理；ACP 托管 Runtime 不承担这类原始文件上传。
+
+## 通用原始文件附件
+
+`ContextManager.importFiles` 对文本、图片和文档使用现有解析分支；其他受支持的文件读取
+原始字节并创建 `kind: 'file'` 的会话附件。原始文件不进入 `enrichRequest` 的文本或图片
+字段，附件描述以执行空间相对路径加入请求上下文。桌面资产 owner 将这类文件保存到：
+
+```text
+conversation-assets/<conversationId>/others/<attachmentId>/
+├─ original.<扩展名>
+└─ request.json
+```
+
+附件加入草稿、队列或消息前仍使用已有引用事务。Main 只负责请求校验和 Runtime 编排；原始
+字节的保存、读取、引用转移和回收继续由附件 storage owner 完成。
+
+目标链路中，本地 Runtime 在请求开始前将选中的原始文件映射到当前执行空间的会话附件目录，
+并向 Agent 提供工作区相对路径。远端直连 Runtime 使用 gbagent 的 `process_execute` 分块
+写入远端会话目录，再以远端工作区相对路径提交模型请求。上传采用附件 ID 分目录；请求失败
+或取消时，保留仍有会话引用的文件，释放执行引用后由对应 owner 清理。
+
+生产实现已完成 `file` 附件的导入、持久化、草稿引用、队列恢复、gbagent 直连上传和请求
+路径替换。上传通过现有 `process_execute` 工具完成，不要求 OpenCode ACP 的
+`runtime/uploadAttachment` 操作，也不会把 Desktop 上的绝对附件路径传给远端模型。
+
+远端目录位于当前远端项目工作区下，布局为：
+
+```text
+<remote-workspace>/.goodbuddy/sessions/<conversationId>/attachments/<attachmentId>/original.<扩展名>
+```
+
+Agent 通过 `process_execute`、压缩包工具、媒体工具或其他已安装能力处理原始文件。GoodBuddy
+只传递路径和元数据，不假设所有模型直接支持音频、视频或压缩包。
 
 ## 2026-09-19 生产更新
 

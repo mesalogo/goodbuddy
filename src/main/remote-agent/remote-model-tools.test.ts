@@ -146,4 +146,24 @@ describe('RemoteModelTools', () => {
     expect(stored.size).toBe(0)
     await tools.dispose()
   })
+
+  it('writes multi-chunk attachments through gbagent without overwriting earlier chunks', async () => {
+    const test = fixture(async action => action.kind === 'call'
+      ? { kind: 'result', result: { parts: [{ type: 'text', text: 'ok' }], contextBytes: 2 } }
+      : { kind: 'done' })
+    const tools = new RemoteModelTools(test.workspace, {})
+    try {
+      const file = { attachmentId: 'attachment', name: 'archive.zip', mimeType: 'application/zip', size: 700_000, path: 'C:\\local\\archive.zip', dataBase64: Buffer.alloc(700_000, 7).toString('base64') }
+      const paths = await tools.prepareFiles([file], context, new AbortController().signal)
+      expect(paths[file.path]).toBe('.goodbuddy/sessions/conversation/attachments/attachment/original.zip')
+      const commands = test.modelTools.mock.calls
+        .map(([action]) => action)
+        .filter((action): action is Extract<RemoteModelToolsAction, { kind: 'call' }> => action.kind === 'call')
+        .map(action => String(action.arguments.command))
+      expect(commands).toHaveLength(15)
+      expect(commands[0]).toContain('| base64 -d > ')
+      expect(commands[1]).toContain('| base64 -d >> ')
+      expect(commands.at(-1)).toContain('| base64 -d >> ')
+    } finally { await tools.dispose() }
+  })
 })

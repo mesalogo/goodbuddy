@@ -1250,8 +1250,11 @@ export class RuntimeAcpBackend {
         await this.#closeModelBridge(binding, false).catch(
           () => undefined
         )
+        const detail = error instanceof Error
+          ? error.message.replace(/[\r\n\t]+/gu, ' ').trim().slice(0, 500)
+          : String(error).slice(0, 500)
         throw new RuntimeAcpBackendError(
-          'Runtime process launch failed',
+          `Runtime process launch failed${detail ? `: ${detail}` : ''}`,
           'process'
         )
       }

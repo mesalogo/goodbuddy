@@ -3556,6 +3556,14 @@ export class ModelAgentRuntime implements AgentRuntime {
         }
       }
     }
+    if (request.files?.length) {
+      if (!this.toolProvider.prepareFiles) throw new Error('当前 Runtime 未提供远端附件上传能力')
+      const paths = await this.toolProvider.prepareFiles(request.files, toolContext, signal)
+      for (const [localPath, remotePath] of Object.entries(paths)) {
+        request.prompt = request.prompt.replaceAll(JSON.stringify(localPath).slice(1, -1), remotePath).replaceAll(localPath, remotePath)
+      }
+      request.files = request.files.map(file => ({ ...file, path: paths[file.path] ?? file.path, dataBase64: undefined }))
+    }
     const loadToolSnapshot = async (): Promise<{
       tools: ModelToolDefinition[]
       toolsByName: Map<string, ModelToolDefinition>

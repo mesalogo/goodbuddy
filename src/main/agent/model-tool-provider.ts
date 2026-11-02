@@ -319,6 +319,7 @@ export class RecoverableModelToolError extends Error {
 }
 
 export interface ModelToolProviderLike {
+  prepareFiles?(files: import('./runtime').AgentFile[], context: ModelToolCallContext, signal: AbortSignal): Promise<Record<string, string>>
   listTools(
     context: ModelToolCallContext,
     signal: AbortSignal
@@ -667,6 +668,11 @@ export class ModelToolProvider implements ModelToolProviderLike {
 
   private readonly ripgrepService: LocalDirectModelProcessService
   private readonly workspaceAccess: WorkspaceAccess
+
+  async prepareFiles(files: import('./runtime').AgentFile[], context: ModelToolCallContext, signal: AbortSignal): Promise<Record<string, string>> {
+    if (!this.programming.remoteTools?.prepareFiles) throw new Error('当前工作区未提供远端附件上传能力')
+    return this.programming.remoteTools.prepareFiles(files, context, signal)
+  }
 
   private getScopedTools(
     context: ModelToolCallContext
