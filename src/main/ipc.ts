@@ -4348,6 +4348,7 @@ export function registerIpcHandlers(
                 await eventBuffer.push({
                   requestId: request.requestId,
                   type: 'role-selecting',
+                  mode: 'system-one',
                   modelName: selectionModelName
                 })
               }
@@ -4362,6 +4363,7 @@ export function registerIpcHandlers(
                   await eventBuffer.push({
                     requestId: request.requestId,
                     type: 'role-selected',
+                    mode: 'system-one',
                     expertId: systemOneRoute.expert.id,
                     expertName: systemOneRoute.expert.name.trim().slice(0, 80),
                     modelName: selectionModelName
@@ -4378,6 +4380,7 @@ export function registerIpcHandlers(
                 await eventBuffer.push({
                   requestId: request.requestId,
                   type: 'role-selection-skipped',
+                  mode: 'system-one',
                   reason: skippedReason,
                   modelName: selectionModelName
                 })
@@ -4385,6 +4388,16 @@ export function registerIpcHandlers(
             }
             if (shouldUseKeywordRouting && (!shouldUseSystemOne || !systemOneRoute)) {
               smartRoute = routeSubagent(request.prompt, experts)
+              if (smartRoute) {
+                await eventBuffer.push({
+                  requestId: request.requestId,
+                  type: 'role-selected',
+                  mode: 'keyword',
+                  expertId: smartRoute.expert.id,
+                  expertName: smartRoute.expert.name.trim().slice(0, 80),
+                  modelName: '关键词'
+                })
+              }
             }
           }
         }

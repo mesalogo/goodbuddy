@@ -526,10 +526,31 @@ export const conversationMessageExpertSchema = z.union([
     .object({
       kind: z.literal('expert'),
       id: assistantIdSchema,
-      name: z.string().trim().min(1).max(80)
+      name: z.string().trim().min(1).max(80),
+      /** Present when the role was chosen automatically by a decision model. */
+      selection: z
+        .object({
+          mode: z.enum(['system-one', 'keyword']),
+          modelName: z.string().trim().min(1).max(120)
+        })
+        .strict()
+        .optional()
     })
     .strict(),
-  z.object({ kind: z.literal('team') }).strict()
+  z.object({ kind: z.literal('team') }).strict(),
+  /** The decision model ran but adopted no role; the general assistant replied. */
+  z
+    .object({
+      kind: z.literal('general'),
+      selection: z
+        .object({
+          mode: z.enum(['system-one', 'keyword']),
+          modelName: z.string().trim().min(1).max(120),
+          outcome: z.enum(['selecting', 'uncertain', 'failed'])
+        })
+        .strict()
+    })
+    .strict()
 ])
 
 export type ConversationMessageExpert = z.infer<

@@ -1298,6 +1298,34 @@ export type AgentEvent =
       message: string
     }
   | {
+      /** The decision model picked a role before the runtime started. */
+      requestId: string
+      type: 'role-selected'
+      mode?: 'system-one' | 'keyword'
+      expertId: string
+      expertName: string
+      modelName: string
+    }
+  | {
+      /** The decision model started choosing a role; a result event follows. */
+      requestId: string
+      type: 'role-selecting'
+      mode?: 'system-one' | 'keyword'
+      modelName: string
+    }
+  | {
+      /**
+       * The decision model ran but no role was adopted: its answer was not
+       * confident enough ('uncertain') or the request failed ('failed').
+       * The conversation continues with the general assistant.
+       */
+      requestId: string
+      type: 'role-selection-skipped'
+      mode?: 'system-one' | 'keyword'
+      reason: 'uncertain' | 'failed'
+      modelName: string
+    }
+  | {
       requestId: string
       type: 'text'
       delta: string

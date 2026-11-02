@@ -1446,6 +1446,11 @@ vi.mock('electron', () => ({
 
 vi.mock('./agent/create-runtime', () => runtimeFactoryMocks)
 
+const systemOneRoleMocks = vi.hoisted(() => ({ select: vi.fn() }))
+vi.mock('./assistant/system-one-role-selector', () => ({
+  selectRoleWithSystemOne: systemOneRoleMocks.select
+}))
+
 vi.mock('./channels/channel-env', () => ({
   startEnvironmentChannels: vi.fn(
     (options: { executor: typeof channelMocks.executor }) => {
@@ -12485,6 +12490,133 @@ describe('registerIpcHandlers agent terminal state', () => {
       ipcChannels.agentEvent,
       expect.objectContaining({ type: 'text', delta: '角色回答' })
     )
+    await harness.dispose()
+  })
+
+  it('publishes the System One role selection before the runtime output, independent of smartRouting', async () => {
+    const received: Array<{ trustedInstructions?: string }> = []
+    const runtime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      consumesTrustedInstructions: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      async *run(request: { requestId: string; trustedInstructions?: string }) {
+        received.push(request)
+        yield { requestId: request.requestId, type: 'text', delta: '回答' }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const expert = {
+      id: '00000000-0000-4000-8000-000000000002',
+      name: '文档专家',
+      description: '撰写和润色文档',
+      systemInstructions: 'Polish documents.',
+      routingKeywords: [],
+      enabled: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    }
+    const profileId = '00000000-0000-4000-8000-0000000000d3'
+    systemOneRoleMocks.select.mockResolvedValue({ expert })
+    const harness = createHarness(runtime, undefined, {
+      run: vi.fn(), cancelAll: vi.fn(), dispose: vi.fn(async () => undefined)
+    })
+    vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([expert])
+    vi.mocked(harness.assistantDatabase.getExpert).mockReturnValue(expert)
+    harness.getPolicySettings.mockResolvedValue({
+      subagentSmartRoutingEnabled: false,
+      roleSelectionModelProfileId: profileId
+    })
+    harness.getResolvedSettings.mockResolvedValue({
+      modelProfiles: [
+        { id: profileId, name: 'System One', modelName: 'd3', protocol: 'system-one', authentication: 'none' }
+      ],
+      roleSelectionModelProfileId: profileId,
+      subagentSmartRoutingEnabled: false
+    })
+    const requestId = '9b1f2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d'
+
+    harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'conversation-system-one',
+      prompt: '你来润色一下'
+    })
+
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed')
+    )
+    expect(received[0]?.trustedInstructions).toContain('Polish documents.')
+    const events = harness.webContents.send.mock.calls
+      .filter(call => call[0] === ipcChannels.agentEvent)
+      .map(call => call[1] as { type: string })
+    const types = events.map(event => event.type)
+    const selected = events.find(event => event.type === 'role-selected')
+    expect(selected).toEqual({
+      requestId,
+      type: 'role-selected',
+      expertId: expert.id,
+      expertName: '文档专家',
+      modelName: 'd3',
+      mode: 'system-one'
+    })
+    expect(events.find(event => event.type === 'role-selecting')).toEqual({ requestId, type: 'role-selecting', mode: 'system-one', modelName: 'd3' })
+    expect(types.indexOf('role-selecting')).toBeLessThan(types.indexOf('role-selected'))
+    expect(types.indexOf('role-selected')).toBeGreaterThanOrEqual(0)
+    expect(types.indexOf('role-selected')).toBeLessThan(types.indexOf('text'))
+    expect(types.indexOf('role-selected')).toBeLessThan(types.indexOf('done'))
+    expect(types).not.toContain('status')
+    await harness.dispose()
+  })
+
+  it.each([
+    { name: 'no confident role', outcome: 'uncertain', select: () => Promise.resolve(undefined) },
+    { name: 'a failed request', outcome: 'failed', select: () => Promise.reject(new Error('connect ECONNREFUSED')) }
+  ] as const)('publishes a skipped role selection before the runtime output when System One returns $name', async ({ outcome, select }) => {
+    const runtime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      consumesTrustedInstructions: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'text', delta: '回答' }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const profileId = '00000000-0000-4000-8000-0000000000d4'
+    systemOneRoleMocks.select.mockImplementation(select)
+    const harness = createHarness(runtime, undefined, {
+      run: vi.fn(), cancelAll: vi.fn(), dispose: vi.fn(async () => undefined)
+    })
+    vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([])
+    harness.getPolicySettings.mockResolvedValue({ subagentSmartRoutingEnabled: false, roleSelectionModelProfileId: profileId })
+    harness.getResolvedSettings.mockResolvedValue({
+      modelProfiles: [{ id: profileId, name: 'System One', modelName: 'd3', protocol: 'system-one', authentication: 'none' }],
+      roleSelectionModelProfileId: profileId,
+      subagentSmartRoutingEnabled: false
+    })
+    const requestId = '7a1f2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5e'
+
+    harness.handler?.(trustedEvent(harness.webContents), { requestId, conversationId: 'conversation-system-one-skip', prompt: 'hi' })
+
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed')
+    )
+    const events = harness.webContents.send.mock.calls
+      .filter(call => call[0] === ipcChannels.agentEvent)
+      .map(call => call[1] as { type: string })
+    const types = events.map(event => event.type)
+    expect(events.find(event => event.type === 'role-selection-skipped')).toEqual({
+      requestId, type: 'role-selection-skipped', reason: outcome, mode: 'system-one', modelName: 'd3'
+    })
+    expect(types).not.toContain('role-selected')
+    expect(types.indexOf('role-selecting')).toBeLessThan(types.indexOf('role-selection-skipped'))
+    expect(types.indexOf('role-selection-skipped')).toBeLessThan(types.indexOf('text'))
     await harness.dispose()
   })
 

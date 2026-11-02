@@ -1560,6 +1560,40 @@ function reduceRecoveredAgentEvent(
     next = { ...message, runtimeChecklist: event.checklist }
   } else if (event.type === 'status') {
     next = { ...message, status: event.message }
+  } else if (event.type === 'role-selected') {
+    next = {
+      ...message,
+      expert: {
+        kind: 'expert',
+        id: event.expertId,
+        name: event.expertName,
+        selection: { mode: event.mode ?? 'system-one', modelName: event.modelName }
+      }
+    }
+  } else if (event.type === 'role-selecting') {
+    next = {
+      ...message,
+      expert: {
+        kind: 'general',
+        selection: {
+          mode: event.mode ?? 'system-one',
+          modelName: event.modelName,
+          outcome: 'selecting'
+        }
+      }
+    }
+  } else if (event.type === 'role-selection-skipped') {
+    next = {
+      ...message,
+      expert: {
+        kind: 'general',
+        selection: {
+          mode: event.mode ?? 'system-one',
+          modelName: event.modelName,
+          outcome: event.reason
+        }
+      }
+    }
   } else if (event.type === 'context-compression') {
     const scope = event.scope ?? 'conversation'
     const marker = {

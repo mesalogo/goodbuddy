@@ -457,6 +457,40 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
       ...message,
       status: event.message,
     }));
+  } else if (event.type === "role-selected") {
+    updateMessage(run.conversationId, run.messageId, (message) => ({
+      ...message,
+      expert: {
+        kind: "expert",
+        id: event.expertId,
+        name: event.expertName,
+        selection: { mode: event.mode ?? "system-one", modelName: event.modelName },
+      },
+    }));
+  } else if (event.type === "role-selecting") {
+    updateMessage(run.conversationId, run.messageId, (message) => ({
+      ...message,
+      expert: {
+        kind: "general",
+        selection: {
+          mode: event.mode ?? "system-one",
+          modelName: event.modelName,
+          outcome: "selecting",
+        },
+      },
+    }));
+  } else if (event.type === "role-selection-skipped") {
+    updateMessage(run.conversationId, run.messageId, (message) => ({
+      ...message,
+      expert: {
+        kind: "general",
+        selection: {
+          mode: event.mode ?? "system-one",
+          modelName: event.modelName,
+          outcome: event.reason,
+        },
+      },
+    }));
   } else if (event.type === "tool") {
     recordActivity({
       conversationId: run.conversationId,

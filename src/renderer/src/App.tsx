@@ -6770,7 +6770,9 @@ function App(): React.JSX.Element {
     ? runtimeSettings.modelProfiles.find(
         (profile) => profile.id === runtimeSettings.roleSelectionModelProfileId,
       )?.name
-    : undefined;
+    : runtimeSettings?.subagentSmartRoutingEnabled
+      ? "关键词"
+      : undefined;
 
   const messageEdit = useMessageEdit({
     conversations: conversationStore, persistence: conversationPersistence,
