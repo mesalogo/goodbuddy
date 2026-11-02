@@ -87,6 +87,25 @@ describe('canvas flow content', () => {
     expect(editor.content().ops[0]).toEqual({ insert: { attachment } });
   });
 
+  it('[probe] reloads a saved attachment', () => {
+    const attachment = {
+      name: 'notes.txt', mimeType: 'text/plain', size: 5,
+      dataUrl: 'data:text/plain;base64,aGVsbG8='
+    };
+    const { editor } = mount({ version: 1, ops: [{ insert: { attachment } }, { insert: '\n' }] });
+    expect(document.querySelector('.canvas-flow-attachment')).not.toBeNull();
+    expect(editor.content().ops[0]).toEqual({ insert: { attachment } });
+  });
+
+  it('[probe] attachment-only content counts as content', () => {
+    const attachment = {
+      name: 'notes.txt', mimeType: 'text/plain', size: 5,
+      dataUrl: 'data:text/plain;base64,aGVsbG8='
+    };
+    const { editor } = mount({ version: 1, ops: [{ insert: { attachment } }, { insert: '\n' }] });
+    expect(editor.hasContent()).toBe(true);
+  });
+
   it('keeps normal accepted undo/redo and does not replace other Quill editors history modules', () => {
     const History = Quill.import('modules/history');
     const { editor, quill, onError } = mount({ version: 1, ops: [{ insert: 'x'.repeat(19995) + '\n' }] });

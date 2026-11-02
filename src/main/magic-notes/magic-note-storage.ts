@@ -45,6 +45,7 @@ function mapMediaFields(content: MagicNoteContent, transform: (value: unknown, o
   const objects = (items: Record<string, unknown>[]): void => {
     for (const item of items) {
       if (item.type === 'Image' || item.type === 'image' || item.canvasKind === 'image') field(item, 'src')
+      if (item.canvasKind === 'attachment') field(item, 'dataUrl')
       if (Array.isArray(item.objects)) objects(item.objects as Record<string, unknown>[])
     }
   }

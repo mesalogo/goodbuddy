@@ -1,5 +1,5 @@
 // Adapted from PeopleLib (MIT). See NOTICE.md.
-/* global document, FileReader, DOMException, AbortController, clearTimeout, setTimeout, HTMLInputElement, HTMLSelectElement, HTMLTextAreaElement, Element, Worker */
+/* global document, FileReader, DOMException, AbortController, clearTimeout, setTimeout, HTMLInputElement, HTMLSelectElement, HTMLTextAreaElement, Element, Worker, atob, Blob, URL */
 import {
   Canvas,
   FabricImage,
@@ -38,7 +38,8 @@ const OBJECT_KEYS_BY_KIND = {
     'pathAlign', 'underline', 'overline', 'linethrough', 'textBackgroundColor',
     'direction', 'textDecorationThickness', 'textDecorationColor'
   ],
-  image: ['src', 'crossOrigin', 'cropX', 'cropY']
+  image: ['src', 'crossOrigin', 'cropX', 'cropY'],
+  attachment: ['text', 'fontSize', 'fontFamily', 'fontWeight', 'fontStyle', 'lineHeight', 'charSpacing', 'textAlign', 'fill', 'backgroundColor', 'padding', 'name', 'mimeType', 'size', 'dataUrl']
 };
 const TEMPLATE_NAMES = new Set(['blank', 'lined', 'grid', 'dots']);
 const IMAGE_MIME_TYPES = new Set([
@@ -52,6 +53,7 @@ const PAIR_BY_KIND = Object.freeze({
   highlight: 'Path',
   text: 'IText',
   image: 'Image',
+  attachment: 'IText',
   rectangle: 'Rect'
 });
 const ASSET_ID_RE = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
@@ -385,6 +387,26 @@ function readFileDataUrl(file) {
     });
     reader.readAsDataURL(file);
   });
+}
+
+// CSP forbids fetch() of data: URLs, so decode the base64 payload by hand.
+function downloadAttachment(link) {
+  const href = link.getAttribute('href') || '';
+  const match = /^data:([^;,]*);base64,(.*)$/s.exec(href);
+  if (!match) return false;
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  const url = URL.createObjectURL(new Blob([bytes], { type: match[1] || 'application/octet-stream' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = link.dataset.name || '附件';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return true;
 }
 
 export function mountCanvasNote(host, initialContent, options = {}) {
@@ -787,21 +809,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   }
 
   async function addAttachment(file) {
-    if (!file) return;
-    const dataUrl = await readFileDataUrl(file);
-    if (destroyed) return;
-    const wasFlowActive = tool === 'flow-text';
-    if (!wasFlowActive) flowEditor.setActive(true);
-    try {
-      if (!flowEditor.insertAttachment({
-        name: file.name || '附件',
-        mimeType: file.type || 'application/octet-stream',
-        size: Math.max(1, file.size || 0),
-        dataUrl
-      })) throw new Error('附件无法插入正文');
-    } finally {
-      if (!wasFlowActive) flowEditor.setActive(false);
-    }
+    await addAttachmentFile(file);
   }
 
   function applyZoom() {
@@ -1165,6 +1173,33 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     pushHistory();
   }
 
+  async function addAttachmentFile(file) {
+    if (!file) return;
+    if (!Number.isFinite(file.size) || file.size <= 0) throw new Error('选择的附件文件为空');
+    const dataUrl = await readFileDataUrl(file);
+    if (destroyed) return;
+    const page = currentPage();
+    const name = file.name || '附件';
+    const object = new IText(`📎 ${name}`, {
+      left: Math.max(24, page.width * 0.2), top: Math.max(24, page.height * 0.2),
+      originX: 'left', originY: 'top', fill: '#2563eb', backgroundColor: '#eff6ff',
+      padding: 8, fontFamily: 'sans-serif', fontSize: 16,
+      selectable: true, evented: true, canvasKind: 'attachment', name,
+      mimeType: file.type || 'application/octet-stream', size: Math.max(1, file.size), dataUrl
+    });
+    object.set({
+      left: Math.min(object.left, Math.max(24, page.width - object.getScaledWidth() - 24)),
+      top: Math.min(object.top, Math.max(24, page.height - object.getScaledHeight() - 24))
+    });
+    object.setCoords();
+    fabricCanvas.add(object);
+    tool = 'select';
+    applyMode();
+    fabricCanvas.setActiveObject(object);
+    fabricCanvas.requestRenderAll();
+    pushHistory();
+  }
+
   function eraseObject(target) {
     if (!target) return;
     fabricCanvas.remove(target);
@@ -1483,6 +1518,18 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     if (tool === 'text' && !event.target) addText(event.e);
     else if (tool === 'eraser') eraseObject(event.target);
   });
+  fabricCanvas.on('mouse:dblclick', (event) => {
+    const object = event.target;
+    if (!object || object.canvasKind !== 'attachment' || typeof object.dataUrl !== 'string') return;
+    try {
+      if (!downloadAttachment({
+        getAttribute: () => object.dataUrl,
+        dataset: { name: object.name || '附件' }
+      })) reportError('附件无法下载');
+    } catch {
+      reportError('附件无法下载');
+    }
+  });
   fabricCanvas.on('path:created', (event) => {
     if (destroyed || restoring || !event.path) return;
     event.path.set({
@@ -1607,6 +1654,48 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     const file = attachmentInput.files?.[0] || null;
     attachmentInput.value = '';
     if (file) enqueueBusy(() => addAttachment(file));
+  }, { signal: uiAbort.signal });
+  root.addEventListener('paste', (event) => {
+    if (destroyed || busy || readOnly) return;
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return;
+    if (tool === 'flow-text' && target instanceof Element && target.closest('.canvas-flow-layer')) return;
+    const file = event.clipboardData?.files?.[0];
+    if (file) {
+      event.preventDefault();
+      enqueueBusy(() => IMAGE_MIME_TYPES.has(file.type) ? addImageFile(file) : addAttachmentFile(file));
+      return;
+    }
+    const text = event.clipboardData?.getData('text/plain') || '';
+    if (text) {
+      event.preventDefault();
+      enqueueBusy(() => { addPastedText(text); });
+    }
+  }, { capture: true, signal: uiAbort.signal });
+  // Attachment cards live in the flow layer, which is click-through unless
+  // text editing is active; hit-test them explicitly in the select tool.
+  root.addEventListener('click', (event) => {
+    if (destroyed || busy || event.button !== 0) return;
+    const direct = event.target instanceof Element
+      ? event.target.closest('.canvas-flow-attachment') : null;
+    let link = direct;
+    if (!link && tool === 'select') {
+      // pointer-events:none elements are invisible to elementsFromPoint, so compare rectangles.
+      link = Array.from(flowLayer.querySelectorAll('.canvas-flow-attachment')).find((element) => {
+        const rect = element.getBoundingClientRect();
+        return event.clientX >= rect.left && event.clientX <= rect.right
+          && event.clientY >= rect.top && event.clientY <= rect.bottom;
+      }) || null;
+      // Annotation objects drawn over the card keep priority.
+      if (link && (fabricCanvas.getActiveObject() || fabricCanvas.findTarget(event)?.target)) link = null;
+    }
+    if (!link) return;
+    event.preventDefault();
+    try {
+      if (!downloadAttachment(link)) reportError('附件无法下载');
+    } catch {
+      reportError('附件无法下载');
+    }
   }, { signal: uiAbort.signal });
   root.addEventListener('paste', (event) => {
     if (destroyed || busy || readOnly) return;

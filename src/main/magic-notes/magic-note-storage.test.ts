@@ -85,6 +85,20 @@ describe('Magic note SQLite and filesystem storage', () => {
     expect(database.getMagicNote(second.id).entries[0]?.content).toEqual(noExtension)
   })
 
+  it('persists canvas attachment objects through the note asset directory', () => {
+    const { database, directory } = setup()
+    const content = canvas()
+    content.pages[0]!.objects.push({
+      type: 'IText', canvasKind: 'attachment', text: '📎 data.custom',
+      name: 'data.custom', mimeType: 'application/x-custom', size: 3,
+      dataUrl: 'data:application/x-custom;base64,YWJj'
+    })
+    const note = database.createMagicNote({ title: 'Canvas attachment', content })
+    const root = join(directory, 'notes', note.id, 'assets')
+    expect(readdirSync(root)).toEqual(expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}\.custom$/)]))
+    expect(database.getMagicNote(note.id).entries[0]?.content).toEqual(content)
+  })
+
   it('measures current entry startup body reads on real SQLite and filesystem fixtures', () => {
     const { database, directory, sql } = setup()
     const paths: string[] = []

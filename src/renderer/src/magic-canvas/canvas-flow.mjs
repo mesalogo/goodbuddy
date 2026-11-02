@@ -66,7 +66,7 @@ export function normalizeFlowContent(value) {
       continue;
     }
     const attachment = raw.insert && typeof raw.insert === 'object'
-      ? (raw.insert.attachment || raw.insert.canvasAttachment)
+      ? raw.insert.attachment
       : null;
     if (attachment && typeof attachment === 'object'
       && typeof attachment.name === 'string' && attachment.name.trim()
@@ -98,6 +98,14 @@ export function flowPlainText(value) {
     .map((op) => op.insert)
     .join('')
     .replace(/\n$/, '');
+}
+
+// 附件没有文字，但同样是正文内容；页分隔符不算。
+function hasFlowBody(value) {
+  const flow = normalizeFlowContent(value);
+  if (!flow) return false;
+  return !!flowPlainText(flow).trim()
+    || flow.ops.some((op) => typeof op.insert === 'object' && !!op.insert.attachment);
 }
 
 function registerPageBreak(Quill) {
@@ -159,7 +167,7 @@ function registerAttachment(Quill) {
       };
     }
   }
-  CanvasAttachment.blotName = 'canvasAttachment';
+  CanvasAttachment.blotName = 'attachment';
   CanvasAttachment.tagName = 'a';
   CanvasAttachment.className = 'canvas-flow-attachment';
   Quill.register(CanvasAttachment, true);
@@ -246,7 +254,7 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
   const quill = new FlowQuill(editorHost, {
     theme: 'snow',
     placeholder: '输入正文，内容超过纸张后会自动分页',
-    formats: [...FLOW_FORMATS, 'canvasAttachment'],
+    formats: [...FLOW_FORMATS, 'attachment'],
     modules: {
       toolbar,
       history: {
@@ -411,7 +419,7 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
     pageCount,
     content,
     text: () => flowPlainText(content()),
-    hasContent: () => !!flowPlainText(content()).trim(),
+    hasContent: () => hasFlowBody(content()),
     pageBreakIds() {
       const ids = [];
       for (const op of content()?.ops || []) {
@@ -440,8 +448,16 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
       const value = normalized?.ops[0]?.insert;
       if (!value || typeof value !== 'object' || !value.attachment) return false;
       const range = quill.getSelection() || { index: Math.max(0, quill.getLength() - 1), length: 0 };
-      quill.insertEmbed(range.index, 'canvasAttachment', value.attachment, 'user');
-      quill.setSelection(range.index + 1, 0, 'silent');
+      // Quill silently drops 'user' edits while disabled (busy or non-text tool),
+      // so enable it only for this insertion and restore the previous state.
+      const wasEnabled = quill.isEnabled();
+      quill.enable(true);
+      try {
+        quill.insertEmbed(range.index, 'attachment', value.attachment, 'user');
+      } finally {
+        quill.enable(wasEnabled);
+      }
+      if (!quill.getContents().ops.some((op) => op.insert?.attachment)) return false;
       scheduleLayout();
       return true;
     },
@@ -516,7 +532,7 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
       const canvas = document.createElement('canvas');
       canvas.width = pageWidth;
       canvas.height = pageHeight;
-      if (!flowPlainText(content()).trim()) return canvas;
+      if (!hasFlowBody(content())) return canvas;
       const clone = surface.cloneNode(true);
       const originals = [surface, ...surface.querySelectorAll('*')];
       const copies = [clone, ...clone.querySelectorAll('*')];
