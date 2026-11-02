@@ -4326,16 +4326,31 @@ export function registerIpcHandlers(
         let systemOneRoute:
           | Awaited<ReturnType<typeof selectRoleWithSystemOne>>
           | undefined
-        let systemOneSelectionStatus: string | undefined
         if (!imageGeneration && !request.expertId && !request.teamMode) {
           const settings = await settingsStore.getPolicySettings()
           const shouldUseSystemOne = Boolean(settings.roleSelectionModelProfileId)
           const shouldUseKeywordRouting =
-            request.smartRouting === true && settings.subagentSmartRoutingEnabled
+            settings.subagentSmartRoutingEnabled || shouldUseSystemOne
           if (shouldUseSystemOne || shouldUseKeywordRouting) {
             const experts = await assistantDatabase.listExperts()
             if (shouldUseSystemOne) {
               const resolvedSettings = await settingsStore.getResolvedSettings()
+              const selectionProfile = resolvedSettings.modelProfiles.find(
+                (profile) => profile.id === resolvedSettings.roleSelectionModelProfileId
+              )
+              const selectionModelName = (selectionProfile?.modelName ?? 'System One').slice(0, 120)
+              // Every outcome is published before the runtime starts, so the
+              // message header always shows what the decision model did and
+              // the later terminal events cannot overwrite it. Silence would
+              // look the same as "not enabled".
+              let skippedReason: 'uncertain' | 'failed' | undefined
+              if (selectionProfile) {
+                await eventBuffer.push({
+                  requestId: request.requestId,
+                  type: 'role-selecting',
+                  modelName: selectionModelName
+                })
+              }
               try {
                 systemOneRoute = await selectRoleWithSystemOne(
                   request.prompt,
@@ -4344,18 +4359,31 @@ export function registerIpcHandlers(
                   controller.signal
                 )
                 if (systemOneRoute) {
-                  const selectionProfile = resolvedSettings.modelProfiles.find(
-                    (profile) => profile.id === resolvedSettings.roleSelectionModelProfileId
-                  )
-                  systemOneSelectionStatus =
-                    `自动选择角色：${systemOneRoute.expert.name} · ${selectionProfile?.modelName ?? 'System One'}`
+                  await eventBuffer.push({
+                    requestId: request.requestId,
+                    type: 'role-selected',
+                    expertId: systemOneRoute.expert.id,
+                    expertName: systemOneRoute.expert.name.trim().slice(0, 80),
+                    modelName: selectionModelName
+                  })
+                } else if (selectionProfile) {
+                  skippedReason = 'uncertain'
                 }
               } catch (error) {
                 if (controller.signal.aborted) throw error
                 systemOneRoute = undefined
+                skippedReason = 'failed'
+              }
+              if (skippedReason && selectionProfile) {
+                await eventBuffer.push({
+                  requestId: request.requestId,
+                  type: 'role-selection-skipped',
+                  reason: skippedReason,
+                  modelName: selectionModelName
+                })
               }
             }
-            if (shouldUseKeywordRouting) {
+            if (shouldUseKeywordRouting && (!shouldUseSystemOne || !systemOneRoute)) {
               smartRoute = routeSubagent(request.prompt, experts)
             }
           }
@@ -4582,13 +4610,6 @@ export function registerIpcHandlers(
                 ipcChannels.agentEvent,
                 publicEvent
               )
-            }
-            if (systemOneSelectionStatus !== undefined && !window.isDestroyed()) {
-              window.webContents.send(ipcChannels.agentEvent, {
-                requestId: request.requestId,
-                type: 'status',
-                message: systemOneSelectionStatus
-              })
             }
           }
         }
