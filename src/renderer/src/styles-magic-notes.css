@@ -1292,6 +1292,16 @@
   .magic-notes-stream-pane { --magic-note-stream-gutter: var(--space-3); }
 }
 
+.magic-notes-detail-body {
+  margin-inline: calc(-1 * var(--magic-note-stream-gutter));
+}
+
+@container magic-notes-detail (max-width: 600px) {
+  .magic-notes-detail-body {
+    margin-inline: calc(-1 * var(--magic-note-stream-gutter));
+  }
+}
+
 .magic-notes-layout--detail {
   border: 0;
   border-radius: 0;

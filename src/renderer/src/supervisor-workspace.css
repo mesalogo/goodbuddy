@@ -893,7 +893,7 @@
   background: var(--surface-subtle);
 }
 .supervisor-workspace__recap {
-  padding: var(--space-6);
+  padding: var(--space-6) 0;
   line-height: 1.8;
 }
 .supervisor-workspace__detail .link-button {
@@ -983,6 +983,9 @@
   .supervisor-workspace__source,
   .supervisor-workspace__empty {
     padding: var(--space-4);
+  }
+  .supervisor-workspace__recap {
+    padding-inline: 0;
   }
 }
 .supervisor-activity {

@@ -2830,6 +2830,7 @@ function MagicNotesWorkspaceView({
               {aiPaneOpen ? <PanelRightClose aria-hidden="true" size={16} /> : <PanelRightOpen aria-hidden="true" size={16} />}
             </button>
           </div>
+          <div className="magic-notes-detail-body">
           {!detail ? (
             <EmptyState
               action={detailLoadError ? (
@@ -3263,6 +3264,7 @@ function MagicNotesWorkspaceView({
               </div>
             </>
           )}
+          </div>
         </section>
 
         {aiPaneOpen && renderPaneSeparator('ai')}
