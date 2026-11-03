@@ -83,3 +83,20 @@ Date: 2026-11-03.
   it is not a full pass. No further local tests will be run for this CI handoff.
 - Exact-candidate main CI/production build, native release workflows and public
   GitHub/OSS/website checks remain required. A prepared candidate is not a release.
+
+## GitHub CI handoff
+
+- Pushed `f37a3b03d5c464bb3dda022423e63ad91ecc158f` to GitHub `main` only.
+  Agent run `41626584725` and website run `41626584760` succeeded.
+- Desktop run `41626584722` failed with 6,945 passed, 1 failed and 74 skipped.
+  Message expansion, workspace import and Markdown cache regressions passed.
+  The sole failure was `canvas-core.electron.test.ts`: the child reached its
+  60-second deadline, returned zero after termination, and had not written
+  `result.json`. Desktop typecheck, lint and production build did not run.
+- The canvas fixture now shows and focuses its window for frame-based pixel
+  checks, reports its execution phases, and checks the deadline independently
+  of the process exit code. All content assertions, sandboxing and original
+  timeouts remain unchanged. This targets the hidden-window stall; the exact
+  stalled phase was not available in the first CI log, so the fix still needs CI.
+- The user requested fixing and continuing through GitHub CI. No local tests
+  were rerun for this follow-up, and no release tag is authorized by this step.

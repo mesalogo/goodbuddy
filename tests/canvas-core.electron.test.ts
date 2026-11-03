@@ -32,10 +32,16 @@ it('preserves annotations when flow removes the active page and renders scoped t
       const fs = require('node:fs');
       app.setPath('userData', ${JSON.stringify(join(directory, 'profile'))});
       app.whenReady().then(async () => {
-        const win = new BrowserWindow({ show: false, width: 1200, height: 950,
+        const win = new BrowserWindow({ show: true, width: 1200, height: 950,
           webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
-        win.webContents.on('console-message', details => { if (details.level === 'error') console.error(details.message); });
+        win.webContents.on('console-message', details => {
+          if (details.level === 'error') console.error(details.message);
+          if (details.message.startsWith('CanvasRegressionPhase ')) console.log(details.message);
+        });
         await win.loadURL(${JSON.stringify(server.resolvedUrls!.local[0] + 'canvas-regression.html')});
+        // Canvas pixels and Quill selection need the real visible rendering path.
+        win.focus();
+        win.webContents.focus();
         for (let i = 0; i < 400; i++) {
           if (await win.webContents.executeJavaScript('typeof window.canvasRegression === "function"')) break;
           await new Promise(resolve => setTimeout(resolve, 50));
@@ -43,6 +49,7 @@ it('preserves annotations when flow removes the active page and renders scoped t
         const result = await win.webContents.executeJavaScript('(async () => { try { return await window.canvasRegression(); } catch (error) { return {failure: error.stack || String(error)}; } })()');
         if (result.failure) throw new Error(result.failure);
         fs.writeFileSync(${JSON.stringify(join(directory, 'result.json'))}, JSON.stringify(result));
+        win.destroy();
         app.exit(0);
       }).catch(error => { console.error(error); app.exit(1); });
     `)
@@ -52,9 +59,14 @@ it('preserves annotations when flow removes the active page and renders scoped t
     let output = ''
     child.stdout.on('data', (data) => { output += data })
     child.stderr.on('data', (data) => { output += data })
-    const timeout = setTimeout(() => child.kill(), 60000)
+    let timedOut = false
+    const timeout = setTimeout(() => { timedOut = true; child.kill() }, 60000)
     try {
-      const code = await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) })
+      const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.once('close', (code, signal) => resolve({ code, signal }))
+        child.once('error', reject)
+      })
+      expect(timedOut, `Canvas Electron exceeded 60s (exit=${code}, signal=${signal}).\n${output}`).toBe(false)
       expect(code, output).toBe(0)
     } finally { clearTimeout(timeout) }
     const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))

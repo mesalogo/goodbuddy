@@ -11,6 +11,9 @@ import '../../src/renderer/src/styles.css'
 import '../../src/renderer/src/magic-canvas.css'
 
 async function canvasRegression() {
+  const started = performance.now()
+  const mark = (phase: string) => console.info('CanvasRegressionPhase ' + JSON.stringify({ phase, elapsedMs: performance.now() - started }))
+  mark('annotations')
   const errors: string[] = []
   const host = document.createElement('div')
   host.className = 'magic-canvas-editor'
@@ -53,6 +56,7 @@ async function canvasRegression() {
   const editorStyles = styles(host.querySelector('.canvas-flow-surface')!)
   const [expectedThumbnail] = await editor.capturePages({ firstPageOnly: true, thumbnailWidth: 240 })
   await editor.destroy()
+  mark('thumbnail')
   const thumbnailHost = document.createElement('div')
   document.body.append(thumbnailHost)
   let thumbnailStyles: ReturnType<typeof styles> | undefined
@@ -73,6 +77,7 @@ async function canvasRegression() {
   pixel.width = pixel.height = 1
   const png = await new Promise<Blob>((resolve) => pixel.toBlob(blob => resolve(blob!), 'image/png'))
   for (const size of [2 * 1024 * 1024 + 1, 20 * 1024 * 1024, 20 * 1024 * 1024 + 1]) {
+    mark(`image-import-${size}`)
     const importErrors: string[] = []
     editor = mountCanvasNote(host, undefined, { onError: error => importErrors.push(error) })
     await editor.flush()
@@ -90,6 +95,7 @@ async function canvasRegression() {
       restored: restored.pages[0].objects.length, errors: importErrors })
     await editor.destroy()
   }
+  mark('pdf-import')
   const pdf = new jsPDF()
   for (let page = 1; page <= 51; page++) {
     if (page > 1) pdf.addPage()
@@ -107,6 +113,7 @@ async function canvasRegression() {
   host.querySelector<HTMLButtonElement>('.canvas-note-add-page')!.click()
   const extendedPdf = await editor.flush()
   await editor.destroy()
+  mark('pdf-restore-and-capture')
   editor = mountCanvasNote(host, extendedPdf, { readPdf: async () => pdfBytes.slice(0), onError: error => errors.push(error) })
   const restoredPdf = await editor.flush()
   const tenPages = await editor.capturePages({ pageLimit: 10, includeImages: false })
@@ -115,6 +122,7 @@ async function canvasRegression() {
   try { await editor.capturePages({ pageStart: 999, pageLimit: 1 }) } catch { invalidRangeRejected = true }
   await editor.destroy()
   host.remove()
+  mark('flow-history')
   const layer = document.createElement('div')
   const toolbar = document.createElement('div')
   document.body.append(layer, toolbar)
@@ -146,6 +154,7 @@ async function canvasRegression() {
   flow.destroy()
   layer.remove()
   toolbar.remove()
+  mark('complete')
   return { errors, activePage, tenPageCount: tenPages.length, ninthPageId: ninthPage[0].pageId, expectedNinthPageId: restoredPdf.pages[8].id, invalidRangeRejected,
     initialPages: initial.pages.length, initialObjects: initial.pages[0].objects,
     beforeShrink, afterShrink, savedPages: saved.pages.length, savedObjects: saved.pages[0].objects,
