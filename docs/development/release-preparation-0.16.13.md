@@ -1,6 +1,6 @@
 # Desktop 0.16.13 / Agent 0.15.12
 
-Date: 2026-11-03.
+Date: 2026-11-04.
 
 ## Scope and approval
 
@@ -130,3 +130,20 @@ Date: 2026-11-03.
   not a sufficient fix. Add explicit module/React initialization stages and
   uncaught-page/rejection diagnostics to distinguish import startup from a
   failed render before changing production code; the root cause remains open.
+- Run `41667353256` at `284d39092e21358f4485b647f7c6a22627509033`
+  again failed only supervisor layout. It stopped at `loading-module`, before
+  fixture API setup or React scheduling, following the deliberately unresolved
+  loading scenario. Each layout/state scenario now gets a fresh renderer with
+  the same viewport; all scenario/error assertions and deadlines remain.
+  The previous renderer is destroyed rather than carrying pending fixture work
+  into the next module startup. This isolation change still needs CI.
+- On 2026-11-04 the user requested including new commit
+  `68bb0045de714800bc3be6c92d4bfd124227601b`. It opens canvas editors/viewers
+  in Fit width, follows container resizing until manual zoom, and returns to
+  Fit width when remounted. Both feature lists were reviewed and aligned.
+  Validation and release tags must use the latest candidate containing it,
+  not a previously successful ancestor.
+- The user approved the exact bilingual Fit width note, date `2026-11-04`,
+  and committing/pushing the combined latest candidate (including scenario
+  isolation) to both remotes. Versions and the other Desktop/Agent notes are
+  unchanged. CI success and exact release SHA/tag approval remain required.

@@ -3,7 +3,7 @@
   "releases": [
     {
       "version": "0.16.13",
-      "releasedAt": "2026-11-03",
+      "releasedAt": "2026-11-04",
       "notes": {
         "zh-CN": {
           "highlights": [],
@@ -15,7 +15,8 @@
           "fixes": [
             "**改善笔记布局与通知可读性**：调整魔法笔记和监督回顾正文的边缘对齐。成功与信息通知保留三秒，减少提示过快消失的情况。",
             "**显示更具体的远端启动错误**：Runtime 启动失败时，显示可用的具体原因，而不只有笼统的失败提示。需配套升级 Agent 0.15.12。",
-            "**修复历史消息跳转**：从笔记来源跳转到长会话中的消息时，正确定位并聚焦目标消息。修复快速连续跳转时焦点可能停留在上一条消息的问题。"
+            "**修复历史消息跳转**：从笔记来源跳转到长会话中的消息时，正确定位并聚焦目标消息。修复快速连续跳转时焦点可能停留在上一条消息的问题。",
+            "**画布笔记默认适应宽度**：打开画布编辑器或只读预览时，自动适应可用宽度，并随窗口或工作栏宽度调整。手动缩放后，当前视图保持所选比例；重新打开时仍从适应宽度开始。"
           ],
           "notices": [
             "配套 Agent `0.15.12`；数据库 schema 和内置 Runtime 版本不变。飞书与企业微信仍为预览版。"
@@ -31,7 +32,8 @@
           "fixes": [
             "**Improve note layout and notification readability**: Align content edges in Magic Notes and Supervisor recaps. Success and information notifications remain visible for three seconds instead of disappearing too quickly.",
             "**Show more useful remote startup errors**: Runtime launch failures display an available underlying cause instead of only a generic failure message. Update to Agent 0.15.12 for this change.",
-            "**Fix navigation to historical messages**: Following a note source into a long conversation now scrolls to and focuses the target message. This fixes cases where rapid navigation left focus on the previous message."
+            "**Fix navigation to historical messages**: Following a note source into a long conversation now scrolls to and focuses the target message. This fixes cases where rapid navigation left focus on the previous message.",
+            "**Fit canvas notes to the available width**: Canvas editors and read-only viewers open in Fit width mode and follow window or workspace-panel resizing. Manual zoom keeps the chosen scale for the current view; reopening starts in Fit width mode again."
           ],
           "notices": [
             "Pair with Agent `0.15.12`; database schema and bundled Runtime versions are unchanged. Feishu and WeCom remain in Preview."

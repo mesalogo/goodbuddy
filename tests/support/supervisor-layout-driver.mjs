@@ -18,26 +18,30 @@ app
   .whenReady()
   .then(async () => {
     await mkdir(artifacts, { recursive: true })
-    const win = new BrowserWindow({
-      show: true,
-      width: 1440,
-      height: 1100,
-      useContentSize: true,
-      webPreferences: {
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        backgroundThrottling: false
-      }
-    })
     const errors = []
-    win.webContents.on('did-finish-load', () => {
-      win.focus()
-      win.webContents.focus()
-    })
-    win.webContents.on('console-message', (event) => {
-      if (event.level === 'error') errors.push(event.message)
-    })
+    const createWindow = (width = 1440, height = 1100) => {
+      const window = new BrowserWindow({
+        show: true,
+        width,
+        height,
+        useContentSize: true,
+        webPreferences: {
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+          backgroundThrottling: false
+        }
+      })
+      window.webContents.on('did-finish-load', () => {
+        window.focus()
+        window.webContents.focus()
+      })
+      window.webContents.on('console-message', (event) => {
+        if (event.level === 'error') errors.push(event.message)
+      })
+      return window
+    }
+    let win = createWindow()
     const js = async (code) => {
       try {
         return await win.webContents.executeJavaScript(code)
@@ -1455,6 +1459,11 @@ app
       'state=unavailable',
       'state=empty'
     ]) {
+      // Each scenario has its own renderer, including the deliberately
+      // never-resolving loading fixture. Keep the same viewport and assertions.
+      const next = createWindow(...win.getContentSize())
+      win.destroy()
+      win = next
       await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + '?' + query)
       await wait('!!document.querySelector("#supervisor-tab-graph")')
       await js('document.querySelector("#supervisor-tab-graph").click()')

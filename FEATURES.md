@@ -788,7 +788,9 @@ records are listed separately and do not introduce another feature status.
   combines flowing body text with pen/highlighter, object selection/transforms,
   floating text, images, arbitrary file attachments and paper templates. Editors and read-only viewers support
   25%-300% view zoom, 100% reset and responsive Fit width, without changing saved
-  content or export dimensions. Paste text, images or files in canvas mode;
+  content or export dimensions. Opening or reopening starts in Fit width mode;
+  manual zoom keeps a fixed scale for the current view.
+  Paste text, images or files in canvas mode;
   attachment cards can be moved and double-clicked to download. Adding a file
   keeps the canvas editor instead of switching to flowing text.
   Import PDFs as page backgrounds
