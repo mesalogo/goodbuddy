@@ -151,12 +151,14 @@ Pagination replaces the current page within the same entry, including its height
 
 Editor and viewer toolbars provide minus/plus (25 percentage points), a current
 percentage button that resets to 100%, and Fit width. The range is 25%-300%, with
-100% as the initial value. Ctrl/Command + wheel continuously zooms over the paper;
+Fit width enabled on opening. Ctrl/Command + wheel continuously zooms over the paper;
 ordinary wheel and Shift horizontal scrolling retain their existing behavior.
 Fit width follows the actual viewport's width minus its computed padding, within
 the same range. Resizing the window or a workspace column updates it automatically.
 Page navigation preserves the selected fixed scale or fit policy. Remounting a
-document starts at 100%; the view preference is not persisted.
+document starts in Fit width mode; the view preference is not persisted. If the
+container is initially hidden, fitting takes place when its width becomes available.
+Manual zoom or resetting to 100% switches to a fixed scale until Fit width is selected again.
 
 `canvas-note-page` is the displayed-size layout box. Its absolutely positioned
 logical-size surface applies one CSS scale to the PDF/template, Fabric and Quill

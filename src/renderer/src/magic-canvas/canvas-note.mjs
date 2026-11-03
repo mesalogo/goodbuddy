@@ -431,7 +431,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   let suggestedPdfName = 'GoodBuddy-笔记.pdf';
   let readOnly = Boolean(options.disabled);
   let zoom = 1;
-  let fitWidth = false;
+  let fitWidth = true;
 
   const pdfDocuments = new Map();
   const backgroundCache = new Map();

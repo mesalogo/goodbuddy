@@ -1,4 +1,4 @@
-/* global HTMLCanvasElement, document, WheelEvent */
+/* global HTMLCanvasElement, HTMLElement, document, WheelEvent */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mountCanvasNote } from './canvas-note.mjs';
 
@@ -54,6 +54,7 @@ afterEach(async () => {
   await editor.destroy();
   host.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function wheel(init = {}) {
@@ -140,6 +141,48 @@ it('clamps toolbar zoom, resets to 100%, and keeps logical sizes and readonly co
   expect(parseFloat(host.querySelector('.canvas-note-page').style.width)).toBeCloseTo(500);
   click('in');
   expect(host.querySelector('.canvas-note-zoom-fit').getAttribute('aria-pressed')).toBe('false');
+  expect(editor.content()).toEqual(before);
+});
+
+it.each([false, true])('opens fitted to the available width (readonly=%s)', async (readOnly) => {
+  await editor.destroy();
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(500);
+  editor = mountCanvasNote(host, undefined, { disabled: readOnly });
+  await editor.flush();
+  expect(host.querySelector('.canvas-note-zoom-fit').getAttribute('aria-pressed')).toBe('true');
+  expect(parseFloat(host.querySelector('.canvas-note-page').style.width)).toBeCloseTo(500);
+});
+
+it('fits when a hidden container becomes visible and preserves subsequent manual zoom', async () => {
+  await editor.destroy();
+  let notifyResize;
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback) { notifyResize = callback; }
+    observe() {}
+    disconnect() {}
+  });
+  editor = mountCanvasNote(host);
+  await editor.flush();
+  const before = editor.content();
+  viewport = host.querySelector('.canvas-note-viewport');
+  Object.defineProperty(viewport, 'clientWidth', { value: 500, configurable: true });
+  notifyResize([{ contentRect: { width: 500 } }]);
+  await vi.waitFor(() => {
+    expect(parseFloat(host.querySelector('.canvas-note-page').style.width)).toBeCloseTo(500);
+  });
+  host.querySelector('.canvas-note-zoom-reset').click();
+  Object.defineProperty(viewport, 'clientWidth', { value: 600, configurable: true });
+  const frame = new Promise(resolve => {
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => {
+      callback();
+      resolve();
+      return 0;
+    });
+  });
+  notifyResize([{ contentRect: { width: 600 } }]);
+  await frame;
+  expect(host.querySelector('.canvas-note-zoom-reset').textContent).toBe('100%');
+  expect(parseFloat(host.querySelector('.canvas-note-page').style.width)).toBe(794);
   expect(editor.content()).toEqual(before);
 });
 
