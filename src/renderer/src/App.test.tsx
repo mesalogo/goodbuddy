@@ -12724,6 +12724,53 @@ describe("App", () => {
     await waitFor(() => expect(composerMenuTrigger("专家角色")).toHaveAccessibleName("专家角色：审查专家"));
   });
 
+  it.each([true, false])("shows the System One selection process only with role routing enabled=%s", async (enabled) => {
+    const expertId = "00000000-0000-4000-8000-000000000521";
+    const settings = await api.settings.getRuntime();
+    const profileId = "00000000-0000-4000-8000-0000000000d3";
+    vi.mocked(api.settings.getRuntime).mockResolvedValue({
+      ...settings,
+      modelProfiles: [
+        ...settings.modelProfiles,
+        { id: profileId, name: "d3", baseUrl: "http://10.7.0.152:11434", modelName: "d3",
+          protocol: "system-one", authentication: "none" } as never,
+      ],
+      roleSelectionModelProfileId: profileId,
+      subagentSmartRoutingEnabled: enabled,
+    });
+    vi.mocked(api.experts.list).mockResolvedValue([
+      {
+        id: expertId, name: "文档专家", description: "撰写和润色文档",
+        systemInstructions: "Polish documents.", routingKeywords: [], enabled: true,
+        createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+    render(<App />);
+    await waitFor(() => expect(api.experts.list).toHaveBeenCalled());
+    if (enabled) expect(await screen.findByText("自动 · d3")).toBeVisible();
+    else expect(screen.queryByText("自动 · d3")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "你来润色一下" } });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalled());
+    expect(run.mock.calls.at(-1)![0].smartRouting).toBe(enabled ? true : undefined);
+    if (!enabled) return;
+    const requestId = run.mock.calls.at(-1)![0].requestId;
+
+    act(() => agentListener?.({ requestId, type: "role-selecting", modelName: "d3" }));
+    expect(await screen.findByText("正在选择角色… · d3", { selector: ".message__role" })).toBeVisible();
+    act(() => agentListener?.({ requestId, type: "role-selected", expertId, expertName: "文档专家", modelName: "d3" }));
+    expect(await screen.findByText("文档专家 · 自动 · d3", { selector: ".message__role" })).toBeVisible();
+    expect(screen.queryByText("正在选择角色… · d3")).not.toBeInTheDocument();
+    expect(screen.getByText("自动 · d3")).toBeVisible();
+    expect(screen.queryByText("自动选择：文档专家 · d3")).not.toBeInTheDocument();
+
+    act(() => agentListener?.({ requestId, type: "text", delta: "可以。" }));
+    act(() => agentListener?.({ requestId, type: "done" }));
+    await waitFor(() => expect(screen.queryByLabelText("停止生成")).not.toBeInTheDocument());
+    expect(screen.getByText("文档专家 · 自动 · d3", { selector: ".message__role" })).toBeVisible();
+    expect(screen.getByText("自动 · d3")).toBeVisible();
+  });
   it("shows Subagent states and records child expert activity", async () => {
     render(<App />);
     fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {

@@ -806,10 +806,22 @@ function ChatMessageRowView({
   const roleCaption = message.role !== 'assistant'
     ? undefined
     : message.expert?.kind === 'expert'
-      ? message.expert.name
+      ? message.expert.selection
+        ? `${message.expert.name} · 自动 · ${message.expert.selection.modelName}`
+        : message.expert.name
       : message.expert?.kind === 'team'
         ? t('composer.experts.team')
-        : undefined
+        : message.expert?.kind === 'general'
+          ? message.expert.selection.outcome === 'selecting'
+            ? message.state === 'streaming'
+              ? `正在选择角色… · ${message.expert.selection.modelName}`
+              : undefined
+            : message.expert.selection.outcome === 'uncertain'
+              ? message.expert.selection.mode === 'keyword'
+                ? '通用助手 · 自动 · 关键词未匹配'
+                : `通用助手 · 自动选择未采用（置信度不足） · ${message.expert.selection.modelName}`
+              : `通用助手 · 自动选择失败 · ${message.expert.selection.modelName}`
+          : undefined
 
   return (
     <>

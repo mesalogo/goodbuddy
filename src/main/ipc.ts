@@ -4328,9 +4328,8 @@ export function registerIpcHandlers(
           | undefined
         if (!imageGeneration && !request.expertId && !request.teamMode) {
           const settings = await settingsStore.getPolicySettings()
-          const shouldUseSystemOne = Boolean(settings.roleSelectionModelProfileId)
-          const shouldUseKeywordRouting =
-            settings.subagentSmartRoutingEnabled || shouldUseSystemOne
+          const shouldUseKeywordRouting = settings.subagentSmartRoutingEnabled
+          const shouldUseSystemOne = shouldUseKeywordRouting && Boolean(settings.roleSelectionModelProfileId)
           if (shouldUseSystemOne || shouldUseKeywordRouting) {
             const experts = await assistantDatabase.listExperts()
             if (shouldUseSystemOne) {
@@ -4387,6 +4386,14 @@ export function registerIpcHandlers(
               }
             }
             if (shouldUseKeywordRouting && (!shouldUseSystemOne || !systemOneRoute)) {
+              if (!shouldUseSystemOne) {
+                await eventBuffer.push({
+                  requestId: request.requestId,
+                  type: 'role-selecting',
+                  mode: 'keyword',
+                  modelName: '关键词'
+                })
+              }
               smartRoute = routeSubagent(request.prompt, experts)
               if (smartRoute) {
                 await eventBuffer.push({
@@ -4395,6 +4402,14 @@ export function registerIpcHandlers(
                   mode: 'keyword',
                   expertId: smartRoute.expert.id,
                   expertName: smartRoute.expert.name.trim().slice(0, 80),
+                  modelName: '关键词'
+                })
+              } else if (!shouldUseSystemOne) {
+                await eventBuffer.push({
+                  requestId: request.requestId,
+                  type: 'role-selection-skipped',
+                  mode: 'keyword',
+                  reason: 'uncertain',
                   modelName: '关键词'
                 })
               }

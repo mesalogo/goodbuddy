@@ -1974,6 +1974,7 @@ export class RuntimeSettingsStore {
     return {
       subagentSmartRoutingEnabled:
         settings.subagentSmartRoutingEnabled,
+      roleSelectionModelProfileId: settings.roleSelectionModelProfileId,
     }
   }
 

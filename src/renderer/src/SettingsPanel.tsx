@@ -3096,6 +3096,12 @@ function SettingsPanelView({
                           {defaultModelProfileId === profile.id && (
                             <span>{t('model.profile.defaultBadge')}</span>
                           )}
+                          {profile.protocol === 'system-one' && (
+                            <span>决策模型</span>
+                          )}
+                          {roleSelectionModelProfileId === profile.id && (
+                            <span title="自动选择会话角色">角色选择</span>
+                          )}
                           {profile.protocol === 'openai-images-generations' && profile.allowConversationInvocation && (
                             <span>{t('conversationImages.callable')}</span>
                           )}
@@ -3344,11 +3350,12 @@ function SettingsPanelView({
                   </label>
                   {profile.protocol === 'system-one' && (
                     <label className="toggle-row">
-                      <span>用作角色选择模型</span>
+                      <span>用作角色选择模型<small>启用角色路由后生效</small></span>
                       <input
                         type="checkbox"
                         role="switch"
                         checked={roleSelectionModelProfileId === profile.id}
+                        aria-label="用作角色选择模型"
                         onChange={(event) =>
                           setRoleSelectionModelProfileId(
                             event.currentTarget.checked ? profile.id : null

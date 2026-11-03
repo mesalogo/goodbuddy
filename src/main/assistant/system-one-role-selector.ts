@@ -23,7 +23,7 @@ export async function selectRoleWithSystemOne(
   const timeoutController = new AbortController()
   const timeout = setTimeout(() => {
     timeoutController.abort(new Error('System One 角色选择超时'))
-  }, 15_000)
+  }, 10_000)
   let response
   try {
     response = await requestSystemOne(profile, {

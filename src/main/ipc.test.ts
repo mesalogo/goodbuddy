@@ -12493,7 +12493,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('publishes the System One role selection before the runtime output, independent of smartRouting', async () => {
+  it.each([true, false])('gates the configured System One selector on role routing enabled=%s', async (enabled) => {
     const received: Array<{ trustedInstructions?: string }> = []
     const runtime = {
       runtimeId: 'opencode',
@@ -12527,7 +12527,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([expert])
     vi.mocked(harness.assistantDatabase.getExpert).mockReturnValue(expert)
     harness.getPolicySettings.mockResolvedValue({
-      subagentSmartRoutingEnabled: false,
+      subagentSmartRoutingEnabled: enabled,
       roleSelectionModelProfileId: profileId
     })
     harness.getResolvedSettings.mockResolvedValue({
@@ -12535,7 +12535,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         { id: profileId, name: 'System One', modelName: 'd3', protocol: 'system-one', authentication: 'none' }
       ],
       roleSelectionModelProfileId: profileId,
-      subagentSmartRoutingEnabled: false
+      subagentSmartRoutingEnabled: enabled
     })
     const requestId = '9b1f2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d'
 
@@ -12548,11 +12548,19 @@ describe('registerIpcHandlers agent terminal state', () => {
     await vi.waitFor(() =>
       expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed')
     )
-    expect(received[0]?.trustedInstructions).toContain('Polish documents.')
     const events = harness.webContents.send.mock.calls
       .filter(call => call[0] === ipcChannels.agentEvent)
       .map(call => call[1] as { type: string })
     const types = events.map(event => event.type)
+    if (!enabled) {
+      expect(systemOneRoleMocks.select).not.toHaveBeenCalled()
+      expect(received[0]?.trustedInstructions ?? '').not.toContain('Polish documents.')
+      expect(types.some(type => type.startsWith('role-select'))).toBe(false)
+      expect(types).toContain('done')
+      await harness.dispose()
+      return
+    }
+    expect(received[0]?.trustedInstructions).toContain('Polish documents.')
     const selected = events.find(event => event.type === 'role-selected')
     expect(selected).toEqual({
       requestId,
@@ -12572,9 +12580,10 @@ describe('registerIpcHandlers agent terminal state', () => {
   })
 
   it.each([
-    { name: 'no confident role', outcome: 'uncertain', select: () => Promise.resolve(undefined) },
-    { name: 'a failed request', outcome: 'failed', select: () => Promise.reject(new Error('connect ECONNREFUSED')) }
-  ] as const)('publishes a skipped role selection before the runtime output when System One returns $name', async ({ outcome, select }) => {
+    { name: 'no confident role', mode: 'system-one', outcome: 'uncertain', select: () => Promise.resolve(undefined) },
+    { name: 'a failed request', mode: 'system-one', outcome: 'failed', select: () => Promise.reject(new Error('connect ECONNREFUSED')) },
+    { name: 'no keyword match', mode: 'keyword', outcome: 'uncertain', select: () => Promise.resolve(undefined) }
+  ] as const)('publishes a skipped role selection before the runtime output for $name', async ({ mode, outcome, select }) => {
     const runtime = {
       runtimeId: 'opencode',
       capability: 'chat',
@@ -12594,7 +12603,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       run: vi.fn(), cancelAll: vi.fn(), dispose: vi.fn(async () => undefined)
     })
     vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([])
-    harness.getPolicySettings.mockResolvedValue({ subagentSmartRoutingEnabled: false, roleSelectionModelProfileId: profileId })
+    harness.getPolicySettings.mockResolvedValue({ subagentSmartRoutingEnabled: true, roleSelectionModelProfileId: mode === 'system-one' ? profileId : null })
     harness.getResolvedSettings.mockResolvedValue({
       modelProfiles: [{ id: profileId, name: 'System One', modelName: 'd3', protocol: 'system-one', authentication: 'none' }],
       roleSelectionModelProfileId: profileId,
@@ -12612,7 +12621,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       .map(call => call[1] as { type: string })
     const types = events.map(event => event.type)
     expect(events.find(event => event.type === 'role-selection-skipped')).toEqual({
-      requestId, type: 'role-selection-skipped', reason: outcome, mode: 'system-one', modelName: 'd3'
+      requestId, type: 'role-selection-skipped', reason: outcome, mode, modelName: mode === 'keyword' ? '关键词' : 'd3'
     })
     expect(types).not.toContain('role-selected')
     expect(types.indexOf('role-selecting')).toBeLessThan(types.indexOf('role-selection-skipped'))

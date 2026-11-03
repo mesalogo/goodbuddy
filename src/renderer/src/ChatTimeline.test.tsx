@@ -193,6 +193,50 @@ describe('ChatTimeline', () => {
       .toEqual(['代码审查专家', '专家团队（并行）', null])
   })
 
+  it('marks a role chosen by the decision model in the message header', () => {
+    const props = { ...callbacks, artifactById: new Map(), conversationId: 'auto-role', hiddenMessageCount: 0,
+      isUnusedConversation: false, locale: 'zh-CN' as const, messageStartIndex: 0, totalMessageCount: 1 }
+    const messages: Message[] = [
+      { id: 'auto', role: 'assistant', content: 'a', createdAt: 1, state: 'streaming',
+        expert: { kind: 'expert', id: '00000000-0000-4000-8000-000000000902', name: '文档专家',
+          selection: { mode: 'system-one', modelName: 'd3' } } }
+    ]
+    const view = render(<ChatTimeline {...props} messages={messages} />)
+    expect(view.container.querySelector('.message__role')?.textContent).toBe('文档专家 · 自动 · d3')
+  })
+
+  it('shows the selecting phase only while the reply is still streaming', () => {
+    const props = { ...callbacks, artifactById: new Map(), conversationId: 'selecting-role', hiddenMessageCount: 0,
+       isUnusedConversation: false, locale: 'zh-CN' as const, messageStartIndex: 0, totalMessageCount: 2 }
+    const selecting = { kind: 'general' as const, selection: { mode: 'system-one' as const, modelName: 'd3', outcome: 'selecting' as const } }
+    const messages: Message[] = [
+      { id: 'live', role: 'assistant', content: '', createdAt: 1, state: 'streaming', expert: selecting },
+      { id: 'stale', role: 'assistant', content: 'x', createdAt: 2, state: 'error', expert: selecting }
+    ]
+    const view = render(<ChatTimeline {...props} messages={messages} />)
+    expect([...view.container.querySelectorAll('article.message')].map(article =>
+      article.querySelector('.message__role')?.textContent ?? null)).toEqual(['正在选择角色… · d3', null])
+  })
+
+  it('tells the user when the decision model adopted no role', () => {
+    const props = { ...callbacks, artifactById: new Map(), conversationId: 'skipped-role', hiddenMessageCount: 0,
+      isUnusedConversation: false, locale: 'zh-CN' as const, messageStartIndex: 0, totalMessageCount: 2 }
+    const messages: Message[] = [
+      { id: 'uncertain', role: 'assistant', content: 'a', createdAt: 1, state: 'complete',
+        expert: { kind: 'general', selection: { mode: 'system-one', modelName: 'd3', outcome: 'uncertain' } } },
+      { id: 'failed', role: 'assistant', content: 'b', createdAt: 2, state: 'complete',
+        expert: { kind: 'general', selection: { mode: 'system-one', modelName: 'd3', outcome: 'failed' } } },
+      { id: 'keyword', role: 'assistant', content: 'c', createdAt: 3, state: 'complete',
+        expert: { kind: 'general', selection: { mode: 'keyword', modelName: '关键词', outcome: 'uncertain' } } }
+    ]
+    const view = render(<ChatTimeline {...props} messages={messages} />)
+    expect([...view.container.querySelectorAll('.message__role')].map(node => node.textContent)).toEqual([
+      '通用助手 · 自动选择未采用（置信度不足） · d3',
+      '通用助手 · 自动选择失败 · d3',
+      '通用助手 · 自动 · 关键词未匹配'
+    ])
+  })
+
   it('captures only nonempty settled assistant replies, including incomplete replies', () => {
     const onAddToNote = vi.fn()
     const messages: Message[] = [

@@ -2023,6 +2023,31 @@ describe('RuntimeSettingsStore', () => {
     expect(decrypt).not.toHaveBeenCalled()
   })
 
+  it.each([true, false])('loads the saved decision model binding in routing policy with routing enabled=%s', async (enabled) => {
+    const { filePath, store } = await createStore()
+    const initial = await store.getPublicSettings()
+    const text = {
+      id: initial.modelProfiles[0]!.id, name: 'Text',
+      baseUrl: 'https://example.com', modelName: 'text',
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'none' as const,
+      imageGenerationQuality: 'auto' as const,
+      apiKey: { action: 'keep' as const }
+    }
+    const decision = { ...text, id: '00000000-0000-4000-8000-0000000000d3',
+      name: 'Decision', modelName: 'd3', protocol: 'system-one' as const }
+    await store.update(runtimeSettingsInputSchema.parse(settings({
+      modelProfiles: [text, decision], defaultModelProfileId: text.id,
+      roleSelectionModelProfileId: decision.id, subagentSmartRoutingEnabled: enabled
+    })))
+    const decrypt = vi.fn(cipher.decrypt)
+    const reloaded = new RuntimeSettingsStore(filePath, { ...cipher, decrypt }, {})
+    await expect(reloaded.getPolicySettings()).resolves.toEqual({
+      subagentSmartRoutingEnabled: enabled, roleSelectionModelProfileId: decision.id
+    })
+    expect(decrypt).not.toHaveBeenCalled()
+  })
+
   it('clears rerank credentials and rejects replacement without secure storage', async () => {
     const { filePath, store } = await createStore()
     await store.update(

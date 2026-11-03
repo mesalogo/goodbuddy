@@ -5012,8 +5012,7 @@ function App(): React.JSX.Element {
         knowledgeLibraryIds: conversation.knowledgeLibraryIds ?? [],
         knowledgeRetrievalMode: conversation.knowledgeRetrievalMode ?? "auto",
         smartRouting:
-          runtimeSettings?.subagentSmartRoutingEnabled === true ||
-          Boolean(runtimeSettings?.roleSelectionModelProfileId)
+          runtimeSettings?.subagentSmartRoutingEnabled === true
             ? true
             : undefined,
       };
@@ -5193,8 +5192,7 @@ function App(): React.JSX.Element {
       queuedInput?.smartRouting ??
       (!queuedInput &&
       runtime?.capability !== "image-generation" &&
-      (runtimeSettings?.subagentSmartRoutingEnabled === true ||
-        Boolean(runtimeSettings?.roleSelectionModelProfileId)) &&
+       runtimeSettings?.subagentSmartRoutingEnabled === true &&
       !selectedExpertSnapshot
         ? true
         : undefined);
@@ -6766,7 +6764,9 @@ function App(): React.JSX.Element {
     workspaceChanges?.projectId === activeProjectId
       ? workspaceChanges.changes
       : undefined;
-  const roleSelectionModelLabel = runtimeSettings?.roleSelectionModelProfileId
+  const roleSelectionModelLabel = !runtimeSettings?.subagentSmartRoutingEnabled
+    ? undefined
+    : runtimeSettings.roleSelectionModelProfileId
     ? runtimeSettings.modelProfiles.find(
         (profile) => profile.id === runtimeSettings.roleSelectionModelProfileId,
       )?.name
@@ -6786,8 +6786,7 @@ function App(): React.JSX.Element {
       expertId: selectedExpertId && selectedExpertId !== 'team' ? selectedExpertId : undefined,
       teamMode: selectedExpertId === 'team' || undefined,
       smartRouting:
-        ((runtimeSettings?.subagentSmartRoutingEnabled ||
-          runtimeSettings?.roleSelectionModelProfileId) &&
+        (runtimeSettings?.subagentSmartRoutingEnabled &&
           !selectedExpertId) ||
         undefined
     }),

@@ -22,7 +22,15 @@ Ollama 和 TypeSafe 使用同一请求结构。服务地址、认证方式和模
 
 调用顺序为：手动角色、会话固定角色、System One 角色选择、现有关键词智能路由、默认角色。System One 结果只产生候选角色，角色存在性、可用性和路由模式仍由 GoodBuddy 校验。
 
+自动路由统一由 `subagentSmartRoutingEnabled` 控制。`roleSelectionModelProfileId` 仅指定模型，不能绕过总开关。Main 使用当前设置判断；Renderer 的普通发送、队列补发、编辑重发和自动标记使用相同开关语义。
+
 请求使用调用方的 AbortSignal。取消、超时和 Provider 错误返回可识别的失败原因，路由层将其转换为回退结果，不让错误吞掉原始 HTTP 状态和取消信息。
+
+角色选择和设置页连接测试的超时均为 10 秒；用户取消会提前终止请求。角色选择超时后继续走关键词回退。
+
+角色选择过程通过 `role-selecting`、`role-selected`、`role-selection-skipped` 写入本条助手消息的 `expert` 元数据，显示在 GoodBuddy 名称下方的角色行。完成状态不会覆盖角色元数据。关键词路由未命中时也发送结果，显示“通用助手 · 自动 · 关键词未匹配”；System One 回退未命中时保留其失败或不确定原因。
+
+输入区专家选择器仅显示静态标记“自动 · 模型名”，不展示每次请求的选择过程。选中结果显示为“专家名 · 自动 · 模型名”。该显示链路由桌面 Main 和 Renderer 共享，远程 Runtime 无需单独实现角色显示。
 
 ## 5. 进程与凭据
 

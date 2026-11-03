@@ -771,7 +771,7 @@ export const Composer = memo(function Composer({
                 options={assistantExpertOptions}
                 statusLabel={
                   !selectedExpertId && roleSelectionModelLabel
-                    ? `自动选择角色 · ${roleSelectionModelLabel}`
+                    ? `自动 · ${roleSelectionModelLabel}`
                     : undefined
                 }
                 value={selectedExpertId}

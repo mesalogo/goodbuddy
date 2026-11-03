@@ -45,3 +45,65 @@ it.each(['completed', 'failed', 'cancelled'] as const)('retains output reference
   })
   expect(conversationMessageResourceIds(message)).toEqual([reference.handle.split(':')[1], childReference.handle.split(':')[1]])
 })
+
+it('keeps the System One role selection on the message through completion and persistence', () => {
+  const conversationId = crypto.randomUUID(), messageId = crypto.randomUUID(), requestId = crypto.randomUUID()
+  const expertId = crypto.randomUUID()
+  const liveMessages = createLiveMessageStore()
+  const store = createConversationStore([{ id: conversationId, title: 'Role', updatedAt: 0, messages: [
+    { id: messageId, role: 'assistant', content: '', state: 'streaming', createdAt: 0, blocks: [] }
+  ] }], liveMessages)
+  const deps: AgentEventDependencies = {
+    activeRuns: { current: new Map([[requestId, { conversationId, messageId, runtimeSelectionKey: 'model' }]]) },
+    activeConversationIdRef: { current: conversationId }, activeProjectIdRef: { current: '' },
+    hydratingArtifactIds: { current: new Set() }, requestPersistenceFlush: vi.fn(),
+    tRef: { current: ((key: string) => key) as AgentEventDependencies['tRef']['current'] },
+    conversationStore: store, liveMessages, setConversations: store.set,
+    taskStore: createTaskStore(), activityStore: createActivityStore(), setUnreadConversationIds: vi.fn(),
+    notify: vi.fn(), updateMessage: (id, mid, update) => store.set(current => current.map(conversation =>
+      conversation.id === id ? { ...conversation, messages: conversation.messages.map(message => message.id === mid ? update(message) : message) } : conversation)),
+    recordActivity: vi.fn(), loadWorkspaceChanges: vi.fn(), markConversationCompleted: vi.fn(),
+    setConversationActivity: vi.fn(), releaseConversationQueueAfterRun: vi.fn()
+  }
+  vi.stubGlobal('window', { goodbuddy: { artifacts: { list: vi.fn(async () => []) } } })
+  handleAgentEvent({ requestId, type: 'role-selecting', modelName: 'd3' }, deps)
+  expect(store.getState()[0]!.messages[0]!.expert).toEqual({ kind: 'general', selection: { mode: 'system-one', modelName: 'd3', outcome: 'selecting' } })
+  handleAgentEvent({ requestId, type: 'role-selected', expertId, expertName: '文档专家', modelName: 'd3' }, deps)
+  const selected = store.getState()[0]!.messages[0]!
+  expect(selected.expert).toEqual({ kind: 'expert', id: expertId, name: '文档专家', selection: { mode: 'system-one', modelName: 'd3' } })
+  handleAgentEvent({ requestId, type: 'done' }, deps)
+  const finished = store.getState()[0]!.messages[0]!
+  expect(finished.state).toBe('complete')
+  expect(finished.expert).toEqual(selected.expert)
+  const saved = conversationMessageSchema.parse(toConversationMessage(finished))
+  expect(saved.expert).toEqual(selected.expert)
+  vi.unstubAllGlobals()
+})
+
+it('records a skipped System One selection on the message and keeps it through persistence', () => {
+  const conversationId = crypto.randomUUID(), messageId = crypto.randomUUID(), requestId = crypto.randomUUID()
+  const liveMessages = createLiveMessageStore()
+  const store = createConversationStore([{ id: conversationId, title: 'Skipped', updatedAt: 0, messages: [
+    { id: messageId, role: 'assistant', content: '', state: 'streaming', createdAt: 0, blocks: [] }
+  ] }], liveMessages)
+  const deps: AgentEventDependencies = {
+    activeRuns: { current: new Map([[requestId, { conversationId, messageId, runtimeSelectionKey: 'model' }]]) },
+    activeConversationIdRef: { current: conversationId }, activeProjectIdRef: { current: '' },
+    hydratingArtifactIds: { current: new Set() }, requestPersistenceFlush: vi.fn(),
+    tRef: { current: ((key: string) => key) as AgentEventDependencies['tRef']['current'] },
+    conversationStore: store, liveMessages, setConversations: store.set,
+    taskStore: createTaskStore(), activityStore: createActivityStore(), setUnreadConversationIds: vi.fn(),
+    notify: vi.fn(), updateMessage: (id, mid, update) => store.set(current => current.map(conversation =>
+      conversation.id === id ? { ...conversation, messages: conversation.messages.map(message => message.id === mid ? update(message) : message) } : conversation)),
+    recordActivity: vi.fn(), loadWorkspaceChanges: vi.fn(), markConversationCompleted: vi.fn(),
+    setConversationActivity: vi.fn(), releaseConversationQueueAfterRun: vi.fn()
+  }
+  vi.stubGlobal('window', { goodbuddy: { artifacts: { list: vi.fn(async () => []) } } })
+  handleAgentEvent({ requestId, type: 'role-selection-skipped', reason: 'uncertain', modelName: 'd3' }, deps)
+  handleAgentEvent({ requestId, type: 'done' }, deps)
+  const finished = store.getState()[0]!.messages[0]!
+  const expected = { kind: 'general', selection: { mode: 'system-one', modelName: 'd3', outcome: 'uncertain' } }
+  expect(finished.expert).toEqual(expected)
+  expect(conversationMessageSchema.parse(toConversationMessage(finished)).expert).toEqual(expected)
+  vi.unstubAllGlobals()
+})

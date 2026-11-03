@@ -4284,6 +4284,32 @@ describe('SettingsPanel runtime files', () => {
     ])
   })
 
+  it('marks a System One connection and its role selection use in the model list', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    const list = screen.getByRole('complementary', { name: /./u })
+    expect(within(list).queryByText('决策模型')).not.toBeInTheDocument()
+    expect(within(list).queryByText('角色选择')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('接口协议 默认模型'), {
+      target: { value: 'system-one' }
+    })
+    expect(within(list).getByText('决策模型')).toBeInTheDocument()
+    expect(within(list).queryByText('角色选择')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('switch', { name: '用作角色选择模型' }))
+    expect(within(list).getByText('角色选择')).toBeInTheDocument()
+  })
   it('assigns an OpenAI Responses connection to both Agent Runtimes', async () => {
     render(
       <SettingsPanel

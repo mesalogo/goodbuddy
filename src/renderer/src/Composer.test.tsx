@@ -171,6 +171,26 @@ describe("Composer render boundary", () => {
     const { props, rerender } = setup();
     props.roleSelectionModelLabel = "d3";
     rerender(<Composer {...props} />);
-    expect(screen.getByText("自动选择角色 · d3")).toBeInTheDocument();
+    expect(screen.getByText("自动 · d3")).toBeInTheDocument();
+  });
+
+  it("keeps the picker marker static and leaves the per-reply result to the message header", () => {
+    const { props, rerender, store } = setup();
+    props.roleSelectionModelLabel = "d3";
+    act(() => store.set((current) => current.map((item) =>
+      item.id === "a"
+        ? {
+            ...item,
+            messages: [{
+              id: "m1", role: "assistant", content: "ok", createdAt: 1, state: "complete",
+              expert: { kind: "expert", id: "00000000-0000-4000-8000-000000000001", name: "文档专家",
+                selection: { mode: "system-one", modelName: "d3" } },
+            } as unknown as Conversation["messages"][number]],
+          }
+        : item)));
+    rerender(<Composer {...props} />);
+    expect(screen.getByText("自动 · d3")).toBeInTheDocument();
+    expect(screen.queryByText(/自动选择：/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/文档专家/u)).not.toBeInTheDocument();
   });
 });

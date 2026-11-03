@@ -354,7 +354,7 @@ export function registerModelSettingsIpcHandlers(
       }
       if (profile.protocol === 'system-one') {
         const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(new Error('System One 连接测试超时')), 15_000)
+        const timeout = setTimeout(() => controller.abort(new Error('System One 连接测试超时')), 10_000)
         try {
           await requestSystemOne(profile, {
             model: profile.modelName,
