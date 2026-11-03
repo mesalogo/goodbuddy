@@ -11,8 +11,11 @@ Date: 2026-11-03.
 - User approved preparing both versions, fixing the attachment blockers first,
   six standard Desktop and three Agent targets, and no LoongArch preview.
 - User approved the exact bilingual Desktop and Agent notes and preparing the
-  candidate commit after checks pass. The later navigation fix needs a Desktop
-  note addition and renewed approval before release.
+  candidate commit after checks pass. After CI passed, the user also approved
+  the exact bilingual Desktop navigation-fix addition, keeping all other
+  Desktop and Agent notes unchanged, and committing/pushing the final candidate
+  to both `origin/main` and `github/main` for CI. Exact release SHA/tag approval
+  is still separate.
 - User subsequently stopped local validation and explicitly requested a push
   to GitHub to inspect CI. Prepare a branch-only commit/push for that purpose;
   this is not release authorization or a claim that local validation is green.
@@ -96,7 +99,15 @@ Date: 2026-11-03.
 - The canvas fixture now shows and focuses its window for frame-based pixel
   checks, reports its execution phases, and checks the deadline independently
   of the process exit code. All content assertions, sandboxing and original
-  timeouts remain unchanged. This targets the hidden-window stall; the exact
-  stalled phase was not available in the first CI log, so the fix still needs CI.
+  timeouts remain unchanged. The exact stalled phase was not available in the
+  first CI log; this change targeted the hidden-window rendering path.
 - The user requested fixing and continuing through GitHub CI. No local tests
   were rerun for this follow-up, and no release tag is authorized by this step.
+- Follow-up `a85d35fa53ae224fe7184f72a543f6970b8b7ff0` passed Desktop run
+  `41632710745`: 6,946 tests passed, 74 skipped; typecheck, lint and production
+  bundle succeeded. The canvas regression passed in 10.162 seconds with its
+  original assertions and deadlines. Agent/website were not retriggered by the
+  test-only follow-up; their earlier successful runs remain scoped to `f37a3b03`.
+- The final notes/evidence-only commit must receive its own main-branch CI
+  result before exact-SHA/tag approval. Six Desktop and three Agent native
+  release targets, immutable tags and public verification remain pending.
