@@ -67,7 +67,13 @@ it(process.env.GOODBUDDY_STORY_GRAPH_FOCUS
               response.end(
                 await server.transformIndexHtml(
                   '/supervisor.html',
-                  '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SIMULATED Supervisor validation</title><body><div id="root"></div><script type="module" src="/tests/support/supervisor-layout-regression.tsx"></script></body></html>'
+                  `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SIMULATED Supervisor validation</title><body><div id="root"></div>
+                  <script>
+                    document.documentElement.dataset.supervisorFixturePhase = 'loading-module';
+                    window.addEventListener('error', event => console.error('Supervisor fixture error: ' + (event.error?.stack || event.message)));
+                    window.addEventListener('unhandledrejection', event => console.error('Supervisor fixture rejection: ' + (event.reason?.stack || String(event.reason))));
+                  </script>
+                  <script type="module" src="/tests/support/supervisor-layout-regression.tsx"></script></body></html>`
                 )
               )
             }

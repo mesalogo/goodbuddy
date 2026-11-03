@@ -59,6 +59,8 @@ app
       const state = await js(`({
         scenario: location.search, readyState: document.readyState,
         visibility: document.visibilityState, focused: document.hasFocus(),
+        phase: document.documentElement.dataset.supervisorFixturePhase,
+        apiReady: Boolean(window.goodbuddy?.supervision),
         rootChildren: document.querySelector('#root')?.childElementCount
       })`)
       throw new Error(`Timeout: ${code}; ${JSON.stringify(state)}\n${errors.join('\n')}`)

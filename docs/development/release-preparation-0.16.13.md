@@ -123,3 +123,10 @@ Date: 2026-11-03.
   because Electron returned zero. Scenarios, assertions, sandbox and deadlines
   are unchanged. Root-cause isolation is incomplete; the next CI result must
   verify this fixture correction. No local tests were run.
+- Run `41660766955` at `4788c35535ae0cdb50c3e57c052cf1dd108d24fd`
+  still failed only supervisor layout (6,945 passed, 1 failed, 74 skipped).
+  The new diagnostic identified `?state=error`, a complete/visible/focused page,
+  and an empty React root. Visibility and dependency scanning were therefore
+  not a sufficient fix. Add explicit module/React initialization stages and
+  uncaught-page/rejection diagnostics to distinguish import startup from a
+  failed render before changing production code; the root cause remains open.

@@ -12,6 +12,7 @@ import '../../src/renderer/src/styles.css'
 import '@fontsource-variable/noto-sans-sc/wght.css'
 import { installBundledUiFonts } from '../../src/renderer/src/fonts'
 
+document.documentElement.dataset.supervisorFixturePhase = 'configuring'
 installBundledUiFonts()
 
 const params = new URLSearchParams(location.search)
@@ -393,7 +394,10 @@ if (windowed) {
   updateCalls()
 }
 const noop = async () => {}
-createRoot(document.getElementById('root')!).render(
+document.documentElement.dataset.supervisorFixturePhase = 'render-scheduled'
+createRoot(document.getElementById('root')!, {
+  onUncaughtError: error => console.error('Supervisor fixture React error', error)
+}).render(
   <UiLocaleProvider initialPreference="zh-CN">
     <div
       style={{
