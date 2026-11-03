@@ -33,7 +33,8 @@ app.whenReady().then(async () => {
   const appSettings = new ApplicationSettingsStore(join(directory, 'application.json'))
   await appSettings.update({ checkUpdatesOnStartup: false, heartbeatEnabled: false })
   const dispose = registerIpcHandlers(win, runtime, 'CommandOrControl+Shift+Space',
-    { getResolvedSettings: async () => settings, getPublicSettings: async () => settings } as never,
+    { getResolvedSettings: async () => settings, getPublicSettings: async () => settings,
+      getPolicySettings: async () => settings } as never,
     { getEnabledBuiltinMcpServerIds: async () => [] } as never, new ContextManager(),
     { snapshot: () => ({ libraries: [], sources: [], documents: [], entities: [], relations: [], evidence: [], tasks: [] }),
       database: { externalStore: { listBindings: () => [] } }, external: { listInstances: () => [] } } as never,

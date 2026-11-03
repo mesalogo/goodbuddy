@@ -2,7 +2,25 @@
 
 ## 状态
 
-2026-10-24：设置职责拆分见下节。HTTP OCR 故障复核保留在后文，历史成功记录不能代表服务当前可用。
+2026-11-03：通用附件修复与真实 Host 验证见下节。HTTP OCR 故障复核保留在后文，历史成功记录不能代表服务当前可用。
+
+## 2026-11-03 通用附件与直连模型修复
+
+- 新回归在修改前复现两处错误：原始文件 Base64 进入 Prompt，本地直连模型误要求远端
+  上传能力。修复后 Prompt 只含元数据，本地通过异步复制生成工作区副本，原件保持不变。
+- `model-file-attachments.test.ts`、`context-manager.test.ts` 和
+  `remote-model-tools.test.ts` 共 36 项通过。覆盖真实附件存储、富化、生产直连工具读取、
+  原件保留、分块上传及既有取消语义。确定性模型不代表真实 Provider 验收。
+- 共享 Linux x64 Host 通过 VPN 路由运行当前源码的 Agent daemon、协议和工具；
+  `remote-direct-model.live.test.ts` 两项通过，包括 700,000 字节附件上传后 SHA-256 一致、
+  文件读写、搜索、命令、长输出、子任务、取消和失败后不重复执行。
+- `remote-direct-model-provider.electron.test.ts` 一项通过：真实 Electron 读取现有加密模型
+  配置，通过生产导入、持久化、富化、远端上传和模型工具链读取合成 `.bin` 附件，并在
+  下一轮保留结果。真实文本模型调用共 3 次，无用户文件、图片生成或批量请求。
+- 测试专用本地和远端目录由 fixture 关闭并清理。未验证自然鼠标附件选择、安装包、
+  Linux arm64 或 macOS Host；远端 ACP 通用文件上传不在本次实现范围。
+- 全量测试、类型检查和 lint 结果见
+  [0.16.13 发布准备](../../development/release-preparation-0.16.13.md)。
 
 ## 2026-10-24 文档识别配置归位
 

@@ -645,7 +645,13 @@ export class ContextManager {
             name: attachment.name,
             content: attachment.content
           })}</attachment-json>`
-      ), ...imageSources, ...files.map((file) => `<attachment-file>${JSON.stringify(file)}</attachment-file>`)]
+      ), ...imageSources, ...files.map((file) => `<attachment-file>${JSON.stringify({
+        attachmentId: file.attachmentId,
+        name: file.name,
+        mimeType: file.mimeType,
+        size: file.size,
+        path: file.path
+      })}</attachment-file>`)]
       .join('\n\n')
 
     const prompt =

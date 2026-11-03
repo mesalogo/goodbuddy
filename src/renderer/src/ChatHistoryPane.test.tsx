@@ -421,6 +421,27 @@ describe('ChatHistoryPane windowing', () => {
     Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
   })
 
+  it('focuses each committed navigation target before queued scroll frames run', () => {
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    try {
+      const { chat, container, rerender, props } = setup(makeMessages(2_000), { visibleMessageCount: 80 })
+      for (const [requestId, messageId] of [[1, 'm42'], [2, 'm84']] as const) {
+        fireEvent.scroll(chat)
+        rerender(<ChatHistoryPane {...props} noteMessageNavigation={{ conversationId: 'conversation-1', messageId, requestId }} />)
+        measure()
+        const target = container.querySelector<HTMLElement>(`[data-message-id="${messageId}"] article`)!
+        expect(target).toHaveFocus()
+        expect(scrollIntoView.mock.contexts.at(-1)).toBe(target)
+      }
+      expect(scrollIntoView).toHaveBeenCalledTimes(2)
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+    }
+  })
+
   it('restores the reader position across hide/show and from a saved snapshot', async () => {
     const messages = makeMessages(2_000)
     const onScrollSnapshotChange = vi.fn()

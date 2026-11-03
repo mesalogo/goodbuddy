@@ -537,22 +537,21 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
     };
   }, [active, heights, scrollToBottomNow, syncAnchor]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active || !navigationTarget) return;
     if (navigationScrolledRef.current === navigationTarget.requestId) return;
     const element = messageArticleRefs.current.get(navigationTarget.messageId);
     if (!element) return;
-    const frame = requestAnimationFrame(() => {
-      navigationScrolledRef.current = navigationTarget.requestId;
-      pinnedToBottomRef.current = false;
-      element.scrollIntoView?.({ block: 'center' });
-      element.tabIndex = -1;
-      element.focus({ preventScroll: true });
-      // Keep the target mounted while it has focus, and remember the place.
-      setKeptMessageIds([navigationTarget.messageId]);
-      captureAnchor(navigationTarget.messageId);
-    });
-    return () => cancelAnimationFrame(frame);
+    // Position the committed target before a queued scroll frame can replace
+    // its virtualized row and leave us focusing a detached element.
+    navigationScrolledRef.current = navigationTarget.requestId;
+    pinnedToBottomRef.current = false;
+    element.scrollIntoView?.({ block: 'center' });
+    element.tabIndex = -1;
+    element.focus({ preventScroll: true });
+    // Keep the target mounted while it has focus, and remember the place.
+    setKeptMessageIds([navigationTarget.messageId]);
+    captureAnchor(navigationTarget.messageId);
   }, [active, captureAnchor, navigationTarget, view, visibleMessageCount]);
 
   // Keep a bounded set of recently interacted rows mounted. Disclosure state

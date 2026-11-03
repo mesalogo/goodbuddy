@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { expect, it } from 'vitest'
 import { connectDirectModelTestHost } from './support/remote-direct-model-connection'
 import { RemoteModelTools } from '../src/main/remote-agent/remote-model-tools'
@@ -28,6 +28,14 @@ it.skipIf(!process.env.GB_DIRECT_MODEL_HOST || !process.env.GB_DIRECT_MODEL_HOST
     const context = { conversationId: randomUUID(), runtimeTarget: 'model' as const }
     const run = (name: string, args: Record<string, unknown>, signal = new AbortController().signal) => remoteTools.callTool(name, args, signal, context)
     const text = (result: Awaited<ReturnType<typeof run>>) => result.parts.map(part => part.type === 'text' ? part.text : '').join('\n')
+    const attachmentBytes = Buffer.alloc(700_000, 7)
+    const attachment = { attachmentId: randomUUID(), name: 'attachment.bin',
+      mimeType: 'application/octet-stream', size: attachmentBytes.length,
+      path: 'desktop-only-original.bin', dataBase64: attachmentBytes.toString('base64') }
+    const paths = await remoteTools.prepareFiles([attachment], context, AbortSignal.timeout(30000))
+    const uploaded = JSON.parse(text(await run('process_execute', { command: `sha256sum ${paths[attachment.path]}` })))
+    expect(uploaded.exitCode).toBe(0)
+    expect(uploaded.stdout).toContain(createHash('sha256').update(attachmentBytes).digest('hex'))
     const tool = (name: string, args: unknown) => ({ choices: [{ message: { role: 'assistant', content: null,
       tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }] })
     const responses = [

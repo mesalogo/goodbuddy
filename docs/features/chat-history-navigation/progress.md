@@ -1,5 +1,25 @@
 # 实施进度
 
+## 2026-11-03 来源消息定位竞态
+
+- 真实 Electron 连续定位历史消息时，目标行仍在 DOM 中，焦点却停在上一条。诊断捕获
+  导航回调持有的节点 `isConnected=false`，且已经不是当前消息引用；旧代码仍将请求
+  标记为完成。只关闭 Windows 遮挡节流也能复现，不能将这个故障归为测试窗口问题。
+- 共享 `ChatHistoryPane` 改在目标提交后的布局 Effect 完成滚动、焦点和锚点保存，
+  不再跨动画帧持有目标节点。不改变消息持久化、普通滚动分帧或平滑跳底，也不改变
+  Agent／远端执行协议；本地与远端对话共用此 Renderer。
+- `ChatHistoryPane.test.tsx`、`message-expansion.electron.test.ts`、
+  `workspace-import.electron.test.ts` 共 18 项通过，修改文件 lint 通过。
+  单测覆盖排队滚动帧尚未执行时的连续定位；旧实现的真实 Electron 路径在定位第
+  20／30 条消息时失败，修复后完成 2,000／10,000 条消息的全部原生交互。
+- Windows x64、Electron 44.5.1、1280×800：每种规模采样 14 次，定位加两帧 p95
+  分别为 75.4／77.5 ms；最多 15 行、931 个节点，展开状态恢复、草稿保留、删除后
+  状态释放及监督来源失效检查通过。此为功能回归样本，不宣称性能提升或全平台验收。
+- 两个 Electron fixture 另行关闭 Windows 原生遮挡节流；普通 DOM 条件不依赖帧回调，
+  图片先滚入视口再检查解码。真实两帧测量、历史规模、断言、沙箱和超时均保留。
+  最后全量本地测试被用户中止，后续改查 GitHub CI，见
+  [发布准备](../../development/release-preparation-0.16.13.md)。
+
 ## 2026-10-08
 
 - 已确认 80 条限制由 `ChatHistoryPane` 的 `messageRenderBatchSize` 和 `revealEarlierMessages` 驱动。

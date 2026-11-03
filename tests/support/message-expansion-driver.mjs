@@ -6,12 +6,15 @@ import console from 'node:console'
 
 app.setPath('userData', join(process.env.GB_EXPANSION_DIRECTORY, 'profile'))
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
+// Native Windows occlusion must not suspend frames when another test window overlaps.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: true, width: 1280, height: 800, useContentSize: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } })
   const errors = []
   win.webContents.on('console-message', event => {
     if (event.level === 'error') { errors.push(event.message); console.error('RendererError', event.message) }
+    if (event.message.startsWith('MessageExpansionSweep ')) console.log(event.message)
   })
   const evaluate = source => win.webContents.executeJavaScript(source)
   const started = Date.now()
@@ -19,12 +22,12 @@ app.whenReady().then(async () => {
     console.log('MessageExpansionPhase ' + JSON.stringify({ phase, elapsedMs: Date.now() - started }))
   }
   const waitFor = source => evaluate(`new Promise((resolve, reject) => {
-    let frame;
-    const timeout = setTimeout(() => { cancelAnimationFrame(frame); reject(new Error(${JSON.stringify(source)})); }, 10000);
+    let timer;
+    const timeout = setTimeout(() => { clearTimeout(timer); reject(new Error(${JSON.stringify(source)} + ': ' + document.body.innerText)); }, 10000);
     const check = () => {
       try {
         if (${source}) { clearTimeout(timeout); resolve(true); }
-        else frame = requestAnimationFrame(check);
+        else timer = setTimeout(check, 16);
       } catch (error) { clearTimeout(timeout); reject(error); }
     }; check(); })`)
   const frames = () => evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))')
@@ -38,7 +41,7 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 })
     win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 })
   }
-  for (const count of process.env.GB_EXPANSION_SUPERVISOR_ONLY ? [] : [2000, 10000]) {
+  for (const count of [2000, 10000]) {
     mark(`history-${count}-load`)
     await win.loadURL(process.env.GB_EXPANSION_URL + '?count=' + count)
     win.focus()
@@ -49,15 +52,21 @@ app.whenReady().then(async () => {
     const untouched = await evaluate(`(async () => {
       const start = performance.now(), visited = new Set(); let maxRows = 0;
       for (let index = 0; index < ${count}; index += Math.floor(${count} / 200)) {
+        if (index % (${count} / 4) === 0) console.log('MessageExpansionSweep ' + JSON.stringify({ count: ${count}, index, elapsedMs: performance.now() - start }));
         window.expansionNavigate(index);
         await new Promise((resolve, reject) => {
           const deadline = performance.now() + 5000;
           const check = () => {
             const row = document.querySelector('[data-message-id=m' + index + ']');
             if (row?.contains(document.activeElement) && document.activeElement.matches('article')) resolve();
-            else if (performance.now() > deadline) reject(new Error('Sweep navigation timeout'));
-            else requestAnimationFrame(check);
-          }; requestAnimationFrame(check);
+            else if (performance.now() > deadline) reject(new Error('Sweep navigation timeout: ' + JSON.stringify({
+              index, focused: document.hasFocus(), visibility: document.visibilityState,
+              activeTag: document.activeElement?.tagName,
+              activeMessage: document.activeElement?.closest('[data-message-id]')?.getAttribute('data-message-id'),
+              targetPresent: Boolean(row), rows: [...document.querySelectorAll('.message-window-row')].map(item => item.dataset.messageId)
+            })));
+            else setTimeout(check, 16);
+          }; check();
         });
         const rows = [...document.querySelectorAll('.message-window-row')];
         maxRows = Math.max(maxRows, rows.length); rows.forEach(row => visited.add(row.dataset.messageId));
@@ -80,8 +89,8 @@ app.whenReady().then(async () => {
           if (row?.contains(document.activeElement) && document.activeElement.matches('article')) {
             requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - start)));
           } else if (performance.now() - start > 10000) reject(new Error('Navigation timeout ${index}'));
-          else requestAnimationFrame(check);
-        }; requestAnimationFrame(check);
+          else setTimeout(check, 16);
+        }; check();
       })`)
       times.push(elapsed)
       const size = await evaluate('({rows:document.querySelectorAll(".message-window-row").length,nodes:document.querySelectorAll("*").length})')
@@ -127,8 +136,10 @@ app.whenReady().then(async () => {
   }
   mark('supervisor-load')
   await win.loadURL(process.env.GB_EXPANSION_URL + '?supervisor=1')
+  win.focus()
+  win.webContents.focus()
   mark('supervisor-source-ready')
-  await waitFor('document.querySelector(".supervisor-workspace__detail .link-button")')
+  await waitFor('document.hasFocus() && document.querySelector(".supervisor-workspace__detail .link-button")')
   await click('.supervisor-workspace__detail .link-button')
   await waitFor('typeof window.finishSource === "function"')
   await click('#change-language')

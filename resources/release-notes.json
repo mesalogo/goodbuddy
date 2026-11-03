@@ -2,6 +2,42 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.16.13",
+      "releasedAt": "2026-11-03",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**使用 System One 自动选择角色**：在模型连接中配置 System One、指定角色选择用途并启用自动角色路由后，GoodBuddy 会先选择合适的专家，再交给当前 Runtime 执行。手动角色优先，决策失败、不确定或超过 10 秒时回退关键词路由，再回退通用助手；每条回复保留选择结果。当前任务和候选角色说明会发送给配置的决策服务，可能增加一次模型请求。",
+            "**在画布笔记中添加文件**：可以通过附件按钮或粘贴加入文件，并拖动附件卡片、双击下载。画布还支持粘贴文字和图片，添加附件不再切换到正文编辑模式；文件随笔记保存。",
+            "**让直连模型处理原始文件附件**：音视频、压缩包等文件可以作为原件加入会话，本地使用工作区副本，SSH 项目先上传到 Host 再执行。提示词只携带文件元数据和路径，不嵌入 Base64；单文件不超过 12 MiB，并计入既有附件容量。实际处理能力取决于环境中的工具，远端 ACP Runtime 的通用原始文件上传不在本次范围内。"
+          ],
+          "fixes": [
+            "**改善笔记布局与通知可读性**：调整魔法笔记和监督回顾正文的边缘对齐。成功与信息通知保留三秒，减少提示过快消失的情况。",
+            "**显示更具体的远端启动错误**：Runtime 启动失败时，显示可用的具体原因，而不只有笼统的失败提示。需配套升级 Agent 0.15.12。"
+          ],
+          "notices": [
+            "配套 Agent `0.15.12`；数据库 schema 和内置 Runtime 版本不变。飞书与企业微信仍为预览版。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Choose roles automatically with System One**: Configure a System One connection, assign it to role selection, and enable automatic role routing to choose an expert before the current Runtime executes the task. Manual roles take priority; failed, uncertain, or timed-out decisions fall back to keyword routing and then the general assistant, with selection results retained on each reply. The task and candidate role descriptions are sent to the configured decision service, potentially adding one model request, with a ten-second timeout.",
+            "**Add files to canvas notes**: Use the attachment button or paste to add files, move their cards, and double-click to download them. Canvas mode also supports pasted text and images; adding an attachment keeps the canvas editor, and files are saved with the note.",
+            "**Process raw attachments with direct models**: Add audio, video, archives, and other files as originals; local execution uses a workspace copy, while SSH projects upload to the Host before execution. Prompts contain file metadata and paths rather than Base64 payloads, with a 12 MiB per-file limit within the existing attachment budget. Processing depends on available tools; generic raw-file uploads for remote ACP Runtimes are outside this release."
+          ],
+          "fixes": [
+            "**Improve note layout and notification readability**: Align content edges in Magic Notes and Supervisor recaps. Success and information notifications remain visible for three seconds instead of disappearing too quickly.",
+            "**Show more useful remote startup errors**: Runtime launch failures display an available underlying cause instead of only a generic failure message. Update to Agent 0.15.12 for this change."
+          ],
+          "notices": [
+            "Pair with Agent `0.15.12`; database schema and bundled Runtime versions are unchanged. Feishu and WeCom remain in Preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.12",
       "releasedAt": "2026-10-30",
       "notes": {

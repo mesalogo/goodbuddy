@@ -45,10 +45,13 @@ conversation-assets/<conversationId>/others/<attachmentId>/
 附件加入草稿、队列或消息前仍使用已有引用事务。Main 只负责请求校验和 Runtime 编排；原始
 字节的保存、读取、引用转移和回收继续由附件 storage owner 完成。
 
-目标链路中，本地 Runtime 在请求开始前将选中的原始文件映射到当前执行空间的会话附件目录，
-并向 Agent 提供工作区相对路径。远端直连 Runtime 使用 gbagent 的 `process_execute` 分块
+本地直连 Runtime 在请求开始前异步复制所选原件到当前执行空间的会话附件目录，
+不把工作区文件编辑直接作用于会话资产，并向模型提供工作区相对路径。
+远端直连 Runtime 使用 gbagent 的 `process_execute` 分块
 写入远端会话目录，再以远端工作区相对路径提交模型请求。上传采用附件 ID 分目录；请求失败
-或取消时，保留仍有会话引用的文件，释放执行引用后由对应 owner 清理。
+或取消时，保留仍有会话引用的原件。工作区副本属于执行空间文件，不随释放草稿引用删除。
+`ContextManager.enrichRequest` 只把附件 ID、名称、MIME、大小和路径写入 Prompt；
+Base64 仅留在 Main 的 `files` 传输字段，不能进入模型请求或会话提示词。
 
 生产实现已完成 `file` 附件的导入、持久化、草稿引用、队列恢复、gbagent 直连上传和请求
 路径替换。上传通过现有 `process_execute` 工具完成，不要求 OpenCode ACP 的

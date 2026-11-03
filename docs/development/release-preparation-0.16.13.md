@@ -1,0 +1,85 @@
+# Desktop 0.16.13 / Agent 0.15.12
+
+Date: 2026-11-03.
+
+## Scope and approval
+
+- Published baseline: Desktop `v0.16.12`, Agent `agent-v0.15.11`.
+  GitHub reports Desktop published 2026-10-31 and Agent published 2026-10-30.
+- Reviewed source range: `v0.16.12..17587e553b6018450b65388f9ee79da7710ed362`,
+  plus the attachment and message-navigation fixes in this release preparation.
+- User approved preparing both versions, fixing the attachment blockers first,
+  six standard Desktop and three Agent targets, and no LoongArch preview.
+- User approved the exact bilingual Desktop and Agent notes and preparing the
+  candidate commit after checks pass. The later navigation fix needs a Desktop
+  note addition and renewed approval before release.
+- User subsequently stopped local validation and explicitly requested a push
+  to GitHub to inspect CI. Prepare a branch-only commit/push for that purpose;
+  this is not release authorization or a claim that local validation is green.
+  Exact release SHA approval, synchronized remotes and green CI remain tag gates.
+  No new release tag has been created or pushed.
+- Both remote main refs were `3337bd9dc5f1d802a65f6c3962b964b5173983ac`
+  at initial inspection. Source feature commits are local only at that point.
+- Preserve and exclude the user's untracked
+  `tests/magic-canvas-attachment.electron.mjs`. The previously excluded article
+  work is now committed in `3337bd9d`; do not rewrite it.
+
+## Verified changes
+
+- System One decision-model connection and automatic role selection before the
+  selected Runtime, with manual precedence, master-switch behavior, ten-second
+  timeout, keyword fallback and persistent reply role metadata.
+- Canvas file attachments, paste handling, draggable/downloadable cards and
+  retained canvas mode; note/Supervisor content alignment and three-second
+  success/info notifications.
+- Raw attachments for local and SSH direct models. Fix local preparation to use
+  a workspace copy and keep Base64 transfer data out of model prompts.
+- Message navigation now focuses the committed target before a queued scroll
+  frame can replace its virtualized row. Evidence and boundaries are recorded in
+  [chat history progress](../features/chat-history-navigation/progress.md#2026-11-03-来源消息定位竞态).
+- Agent Runtime launch errors include a bounded cause, with Desktop displaying
+  allowed remote error detail. This requires Agent 0.15.12 for the daemon-side
+  change, not for System One selection itself.
+- Schema 65, OpenCode 1.19.3, Continue 1.5.47, Desktop DeepSeek Harness
+  0.2.1-rc.2 and protocol versions are unchanged.
+- Both feature lists have been reviewed and aligned; source implementation does not establish
+  full installed-package acceptance. No performance-speedup claim.
+
+## Validation
+
+- Before the attachment fixes: both new regression tests fail for the exact
+  reported defects. After the fixes: 36 focused tests pass.
+- Shared Linux x64 Host: three checks pass against current source, including
+  700,000-byte upload hash equality and actual model reading/history retention.
+  Exactly three real text-model requests. Scope and cleanup are recorded in
+  [document-processing progress](../features/document-processing/progress.md#2026-11-03-通用附件与直连模型修复).
+- Typecheck and lint passed. Release-note verification
+  and Desktop/Agent version consistency passed after writing the approved notes.
+  No local production build, packaging, installer
+  download or packaged-app probe.
+- The full run exposed an Obsidian fixture assertion that required temporary
+  files outside the repository, contradicting the current temp-directory rule.
+  The fixture now lives under repo `temp/` and rejects dependency resolution
+  outside its isolated tree. Its offline Electron check passes independently.
+  The Markdown micro-benchmark also failed when run alone. It now uses three
+  alternating cold/warm pairs and median timing, while retaining identical HTML,
+  cache-hit/no-reparse checks and the warm-faster-than-cold criterion; all 16
+  tests pass. This is a test methodology correction, not a product speedup.
+- First full run: 6,922 passed, 6 failed, 91 skipped. In addition to the two
+  cases above, the terminal fixture lacked the policy-settings method now used
+  by automatic routing; adding it restores the production IPC/HTTP test.
+  Initial isolated reruns of message expansion, workspace import and two-project/
+  ten-project OpenCode reuse passed, but did not establish full-suite stability.
+- Second full run: 6,926 passed, 2 failed, 91 skipped. Message expansion still
+  timed out and workspace import still waited indefinitely for image decoding.
+  Focus diagnostics reproduced navigation to a detached message element.
+  The Renderer fix completes navigation in its layout effect. Electron fixtures
+  also disable native Windows occlusion, independently poll DOM state, and
+  reveal lazy-loaded images before checking decoding. Workload, native input,
+  frame measurements, assertions, sandbox and timeout limits remain intact.
+- Final focused run: 18 tests pass, including the 2,000/10,000-message Electron
+  scenarios and production App/preload/IPC workspace import. Changed-file lint
+  passes. The subsequent full local run was interrupted at the user's request;
+  it is not a full pass. No further local tests will be run for this CI handoff.
+- Exact-candidate main CI/production build, native release workflows and public
+  GitHub/OSS/website checks remain required. A prepared candidate is not a release.

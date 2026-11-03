@@ -1,7 +1,6 @@
 // @vitest-environment node
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { delimiter, isAbsolute, join, relative } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import spawn from 'cross-spawn'
 import { expect, it } from 'vitest'
@@ -23,10 +22,10 @@ it('runs copied MCPVault over stdio using real managed Electron without npm or n
     return
   }
 
-  const root = await mkdtemp(join(tmpdir(), 'goodbuddy-obsidian-electron-'))
+  const temporaryRoot = join(projectRoot, 'temp', 'obsidian-electron')
+  await mkdir(temporaryRoot, { recursive: true })
+  const root = await mkdtemp(join(temporaryRoot, 'run-'))
   try {
-    const location = relative(projectRoot, root)
-    expect(isAbsolute(location) || location === '..' || location.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)).toBe(true)
     const appPath = join(root, 'app.asar.unpacked')
     const vaultPath = join(root, 'Temporary Vault')
     const binDirectory = join(root, 'managed bin')
@@ -83,6 +82,17 @@ it('runs copied MCPVault over stdio using real managed Electron without npm or n
     // These Node API guards cover MCPVault's process, not an OS-wide network sandbox.
     await writeFile(preload, `
 const fs = require('node:fs');
+// The fixture lives under repo/temp, but may not resolve repository dependencies.
+const Module = require('node:module');
+const path = require('node:path');
+const resolveFilename = Module._resolveFilename;
+Module._resolveFilename = function (...args) {
+  const resolved = resolveFilename.apply(this, args);
+  if (path.isAbsolute(resolved) && !resolved.startsWith(${JSON.stringify(root)} + path.sep)) {
+    throw new Error('MCPVault resolved a dependency outside the isolated fixture');
+  }
+  return resolved;
+};
 const block = () => {
   fs.appendFileSync(${JSON.stringify(attemptsPath)}, 'blocked\\n');
   throw new Error('Network connections are forbidden in the Electron MCPVault test');

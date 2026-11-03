@@ -321,13 +321,32 @@ describe('Markdown render cache', () => {
       view.unmount()
       return { html, ms }
     }
-    const cold = measure()
-    await flushUnmountStores()
-    const warm = measure()
-    expect(warm.html).toBe(cold.html)
+    const segments = segmentsOf(content)
+    const seed = segments.map((segment) => parseMarkdown(segment, blockMarkdownPipeline))
+    const coldSamples: number[] = []
+    const warmSamples: number[] = []
+    let expectedHtml: string | undefined
+    // Alternate three cold/warm pairs rather than comparing two GC-sensitive mounts.
+    for (let round = 0; round < 3; round++) {
+      for (const cached of round % 2 ? [true, false] : [false, true]) {
+        markdownRenderCache.clear()
+        if (cached) segments.forEach((segment, index) => storeMarkdown(segment, blockMarkdownPipeline, seed[index]!))
+        const parses = markdownRenderCache.stats().parses
+        const sample = measure()
+        expectedHtml ??= sample.html
+        expect(sample.html).toBe(expectedHtml)
+        if (cached) expect(markdownRenderCache.stats().parses).toBe(parses)
+        const samples = cached ? warmSamples : coldSamples
+        samples.push(sample.ms)
+        await flushUnmountStores()
+        cleanup()
+      }
+    }
+    const median = (samples: number[]): number => [...samples].sort((a, b) => a - b)[1]!
+    const coldMs = median(coldSamples)
+    const warmMs = median(warmSamples)
 
     // The pipeline alone, without jsdom DOM creation and React commit.
-    const segments = segmentsOf(content)
     let start = performance.now()
     for (const segment of segments) parseMarkdown(segment, blockMarkdownPipeline)
     const parseMs = performance.now() - start
@@ -336,9 +355,9 @@ describe('Markdown render cache', () => {
     const hitMs = performance.now() - start
     console.info(
       `[markdown-render-cache] ${content.length} chars, ${segments.length} segments: ` +
-        `mount cold ${cold.ms.toFixed(1)} ms, mount cache hit ${warm.ms.toFixed(1)} ms; ` +
+        `median mount cold ${coldMs.toFixed(1)} ms, median cache hit ${warmMs.toFixed(1)} ms; ` +
         `pipeline parse ${parseMs.toFixed(1)} ms, cache hit + hast->React ${hitMs.toFixed(1)} ms`
     )
-    expect(warm.ms).toBeLessThan(cold.ms)
+    expect(warmMs).toBeLessThan(coldMs)
   }, 30000)
 })

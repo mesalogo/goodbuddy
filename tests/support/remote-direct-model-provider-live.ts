@@ -1,10 +1,13 @@
 import { app, safeStorage, net } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { copyFile, unlink } from 'node:fs/promises'
+import { copyFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { RuntimeSettingsStore } from '../../src/main/runtime-settings-store'
-import { defaultRuntimeSettings } from '../../src/shared/contracts'
+import { defaultRuntimeSettings, isAgentRuntimeModelProtocol } from '../../src/shared/contracts'
+import { ContextManager } from '../../src/main/context-manager'
+import { ConversationAttachmentStorage } from '../../src/main/conversation-attachment-storage'
+import { DocumentResultStorage } from '../../src/main/document-result-storage'
 import { createAgentRuntime } from '../../src/main/agent/create-runtime'
 import { applyRuntimeSelection } from '../../src/main/agent/runtime-selection'
 import { RemoteModelTools } from '../../src/main/remote-agent/remote-model-tools'
@@ -27,21 +30,34 @@ void app.whenReady().then(async () => {
     }, process.env)
     const settings = await store.getResolvedSettings().finally(() => unlink(snapshot))
     for (const profile of settings.modelProfiles) redactions.push(profile.apiKey ?? '', profile.baseUrl)
-    const profile = settings.modelProfiles.find(profile => profile.id === settings.defaultModelProfileId && profile.protocol !== 'openai-images-generations' && (profile.authentication === 'none' || profile.apiKey)) ??
-      settings.modelProfiles.find(profile => profile.protocol !== 'openai-images-generations' && (profile.authentication === 'none' || profile.apiKey))
+    const profile = settings.modelProfiles.find(profile => profile.id === settings.defaultModelProfileId && isAgentRuntimeModelProtocol(profile.protocol) && (profile.authentication === 'none' || profile.apiKey)) ??
+      settings.modelProfiles.find(profile => isAgentRuntimeModelProtocol(profile.protocol) && (profile.authentication === 'none' || profile.apiKey))
     assert(profile)
     const selection = { provider: 'model' as const, profileId: profile.id }
     const selected = applyRuntimeSelection(settings, selection).settings
     selected.contextCompression = { ...(selected.contextCompression ?? defaultRuntimeSettings.contextCompression), enabled: false }
     const conversationId = randomUUID()
     const token = `remote-${randomUUID()}`
-    stage = 'seed'
+    stage = 'import-attachment'
     const tools = new RemoteModelTools(fixture.workspace, {})
-    await tools.callTool('workspace_apply_patch', { patch: `*** Begin Patch\n*** Add File: verification.txt\n+${token}\n*** End Patch` }, AbortSignal.timeout(10000), { conversationId, runtimeTarget: 'model' })
+    const results = new DocumentResultStorage(join(fixture.local, 'parsing'))
+    const assets = new ConversationAttachmentStorage(join(fixture.local, 'assets'), results)
+    const manager = new ContextManager({ assets })
+    const source = join(fixture.local, 'verification.bin')
+    await writeFile(source, token)
+    const [attachment] = await manager.importFiles([source])
+    const request = await manager.enrichRequest({
+      requestId: randomUUID(), conversationId, runtimeSelection: selection,
+      prompt: 'Use workspace_read_text to read the attached file at its provided path. Reply with only the exact token stored in that file. Do not use other tools.',
+      contextIds: [attachment!.id]
+    })
+    assert(!request.prompt.includes('dataBase64'))
     const runtime = createAgentRuntime(fixture.local, selected, {
       executionSpace: { kind: 'ssh', hostId: 'host-test', remoteRootPath: `${fixture.remote}/workspace`, cacheIdentity: fixture.remote, routeIdentity: fixture.remote, workspaceAccess: fixture.workspace },
       modelFetcher: async (input, init) => {
         assert(calls < 3, 'Three-request real-model budget exceeded')
+        assert(!String(init?.body).includes('dataBase64'), 'Transfer bytes must not enter model prompts')
+        assert(!String(init?.body).includes('original.bin","data'), 'Raw attachment data must not enter model prompts')
         calls++
         console.log(JSON.stringify({ stage, realModelCallStarted: calls }))
         return net.fetch(input instanceof URL ? input.href : input, init)
@@ -51,8 +67,7 @@ void app.whenReady().then(async () => {
       stage = 'real-tool-request'
       let answer = ''
       let reads = 0
-      for await (const event of runtime.run({ requestId: randomUUID(), conversationId, runtimeSelection: selection,
-        prompt: 'Use workspace_read_text to read verification.txt in the current workspace. Reply with only the exact token stored in that file. Do not use other tools.' }, AbortSignal.timeout(90000))) {
+      for await (const event of runtime.run(request, AbortSignal.timeout(90000))) {
         assert.notEqual(event.type, 'error')
         if (event.type === 'text') answer += event.delta
         if (event.type === 'tool' && event.state === 'completed') reads++
@@ -68,8 +83,14 @@ void app.whenReady().then(async () => {
       }
       assert(answer.includes(token), 'Conversation history must preserve the remote result')
       assert.equal(calls, 3)
-      console.log(JSON.stringify({ realModelCalls: calls, remoteFileRead: true, tokenCorrect: true, historyRetained: true }))
-    } finally { await runtime.dispose(); await tools.dispose() }
+      console.log(JSON.stringify({ realModelCalls: calls, rawAttachmentImported: true, remoteFileRead: true, tokenCorrect: true, historyRetained: true, promptExcludesTransferData: true }))
+    } finally {
+      await runtime.dispose()
+      await tools.dispose()
+      await manager.dispose()
+      assets.close()
+      await results.close()
+    }
   } finally { await fixture.close() }
   app.exit(0)
 }).catch(error => {

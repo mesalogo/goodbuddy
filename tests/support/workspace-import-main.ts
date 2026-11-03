@@ -10,6 +10,8 @@ import { defaultRuntimeSettings } from '../../src/shared/contracts'
 
 const directory = process.env.GB_IMPORT_DIRECTORY!
 app.setPath('userData', join(directory, 'profile'))
+// Keep lazy image decoding active even if another test window overlaps.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: true, width: 1400, height: 900, webPreferences: {
     sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, preload: join(directory, 'preload.cjs')
@@ -51,6 +53,8 @@ app.whenReady().then(async () => {
   try {
     await win.loadURL(process.env.GB_IMPORT_URL!)
     await wait('Boolean(document.querySelector(".message-generated-image img"))')
+    // The image is lazy-loaded. Bring it into view before waiting for decoding.
+    await run('document.querySelector(".message-generated-image img").scrollIntoView({block:"center"})')
     await wait('document.querySelector(".message-generated-image img").naturalWidth===1')
     assert.equal(await run('[...document.querySelectorAll("[role=tab]")].some(e=>e.textContent==="Results")'), false)
     if (await run('document.querySelector(".assistant-sidebar-toggle").getAttribute("aria-expanded")==="false"')) await click('Toggle assistant workspace')
@@ -80,7 +84,9 @@ app.whenReady().then(async () => {
     await click('Import files')
     await wait(ready('Import files'))
     await win.reload()
-    await wait('Boolean(document.querySelector(".message-generated-image img")) && document.querySelector(".message-generated-image img").naturalWidth===1')
+    await wait('Boolean(document.querySelector(".message-generated-image img"))')
+    await run('document.querySelector(".message-generated-image img").scrollIntoView({block:"center"})')
+    await wait('document.querySelector(".message-generated-image img").naturalWidth===1')
     await writeFile(join(directory, 'result.json'), JSON.stringify({ passed: true, picks, bytes: bytes.length, workspaceImageFromChatAndList: true, imageAfterReload: true, artifactCount: database.listArtifacts().length, modelCalls: 0 }))
     await dispose(); database.close(); win.destroy(); app.exit(0)
   } catch (error) {

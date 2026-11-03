@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { isAbsolute } from 'node:path'
+import { copyFile, mkdir } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 import { isIP } from 'node:net'
 import { z } from 'zod'
 import { builtinModelTools } from '../../shared/builtin-model-tools'
@@ -670,8 +671,25 @@ export class ModelToolProvider implements ModelToolProviderLike {
   private readonly workspaceAccess: WorkspaceAccess
 
   async prepareFiles(files: import('./runtime').AgentFile[], context: ModelToolCallContext, signal: AbortSignal): Promise<Record<string, string>> {
-    if (!this.programming.remoteTools?.prepareFiles) throw new Error('当前工作区未提供远端附件上传能力')
-    return this.programming.remoteTools.prepareFiles(files, context, signal)
+    signal.throwIfAborted()
+    if (this.programming.remoteTools) {
+      return this.programming.remoteTools.prepareFiles(files, context, signal)
+    }
+    const workspace = await this.workspaceAccess.getIdentity()
+    if (workspace.kind !== 'local') throw new Error('当前工作区未提供远端附件上传能力')
+    const paths: Record<string, string> = {}
+    for (const file of files) {
+      signal.throwIfAborted()
+      const extension = file.name.match(/\.[a-z0-9]{1,16}$/iu)?.[0]?.toLowerCase() ?? '.bin'
+      const path = `.goodbuddy/sessions/${context.conversationId}/attachments/${file.attachmentId}/original${extension}`
+      const target = join(workspace.canonicalDisplayPath, path)
+      await mkdir(dirname(target), { recursive: true })
+      // Copy the stored original, so workspace tools cannot edit the conversation asset.
+      await copyFile(file.path, target)
+      signal.throwIfAborted()
+      paths[file.path] = path
+    }
+    return paths
   }
 
   private getScopedTools(

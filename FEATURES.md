@@ -85,6 +85,13 @@ records are listed separately and do not introduce another feature status.
   files into the chat composer with `Ctrl+V` to add attachments, using the same
   parsing progress and limits as the attachment button. Text and screenshot
   paste remain available. See [attachment rules](./docs/features/document-processing/prd.md#321-聊天附件入口).
+- [x] **Raw file attachments for direct models**: Attach other file types, up to
+  12 MiB within the existing attachment budget. Local direct models receive a
+  workspace copy; SSH direct models upload to the Host before execution.
+  Prompts contain file metadata and paths, not Base64 payloads. Processing
+  depends on available tools; this is not native audio/video understanding or
+  raw-file upload support for remote ACP Runtimes. See
+  [validation](./docs/features/document-processing/progress.md#2026-11-03-通用附件与直连模型修复).
 - [x] **Text recognition in image-based PPTX files**: With local OCR configured
   and an OCR-enabled parsing workflow, embedded PNG, JPEG, and WebP images are
   recognized alongside native text, retaining slide locations. OCR releases
@@ -210,8 +217,8 @@ records are listed separately and do not introduce another feature status.
   writeback; DOC, XLS, and PPT convert to modern-format copies through Save As,
   preserving the originals. Existing Office connections are reused, falling back
   to the device-sharing connection. Ctrl/Cmd+S writes back and Ctrl/Cmd+Shift+S
-  saves as; external source changes prevent overwriting. Word selections can use
-  the existing conversation Runtime queue for AI rewrites, not Excel/PPT AI.
+  saves as; external source changes prevent overwriting. Word, Excel and PowerPoint
+  selections can use the current conversation through the context-menu AI dialog.
   The selected ShareServer and editor process document content;
   Desktop neither bundles nor starts Document Server and does not claim offline
   editing when no service is configured. Linux Electron, server six-format and Host
@@ -220,6 +227,16 @@ records are listed separately and do not introduce another feature status.
   [design](./docs/features/office-document-editing/README.md).
 
 ### Agent Runtimes and model connections
+
+- [x] **System One role selection**: Configure a System One decision-model
+  connection, assign it to role selection, and enable automatic role routing.
+  Manual roles keep priority; uncertain, failed, or timed-out decisions fall back
+  to keyword routing and then the general assistant. The expert selector shows
+  the configured decision model, and each reply retains its selection result.
+  Selection runs before the chosen Runtime and does not replace the execution
+  model. It sends the task and candidate descriptions to the configured service
+  and can incur an additional request; the timeout is ten seconds. See the
+  [feature and validation scope](./docs/features/system-one-decision-model/README.md).
 
 - [x] **Compact subagent history without lost details**: Local and managed SSH
   subagent events store changes instead of repeated full progress snapshots.
@@ -364,7 +381,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.11`, paired with the current Desktop release candidate `0.16.12`; formal
+  `0.15.12`, paired with the current Desktop release candidate `0.16.13`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -771,7 +788,10 @@ records are listed separately and do not introduce another feature status.
   combines flowing body text with pen/highlighter, object selection/transforms,
   floating text, images, arbitrary file attachments and paper templates. Editors and read-only viewers support
   25%-300% view zoom, 100% reset and responsive Fit width, without changing saved
-  content or export dimensions. Import PDFs as page backgrounds
+  content or export dimensions. Paste text, images or files in canvas mode;
+  attachment cards can be moved and double-clicked to download. Adding a file
+  keeps the canvas editor instead of switching to flowing text.
+  Import PDFs as page backgrounds
   with native text extraction, then export a raster PDF of text and annotations;
   exported PDFs do not retain a searchable text layer. Manual saves store entry
   bodies and binary assets in local note files; SQLite retains metadata, indexes,
@@ -1020,9 +1040,19 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.12`, paired with Agent `0.15.11`, with
-  source pins of OpenCode `1.19.3` and Continue `1.5.47`. Publication status follows the independent
+- The current Desktop candidate is `0.16.13`, paired with Agent `0.15.12`, with
+  source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
+  `0.2.1-rc.2`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.16.13` adds System One role selection, canvas file attachments and
+  paste handling, and raw attachments for local/SSH direct models. It preserves
+  automatic role results, keeps transfer bytes out of prompts, improves note
+  content alignment and retains success/info notifications for three seconds.
+  Message-source navigation no longer completes against an unmounted target.
+  Agent `0.15.12` includes more useful Runtime launch failures. Schema 65 and
+  Runtime pins are unchanged; exact candidate CI, native packaging and public
+  checks remain pending. No LoongArch build. See
+  [release preparation](./docs/development/release-preparation-0.16.13.md).
 - Desktop `0.16.12` adds Playwright-driven managed browser actions, local message
   editing and branching, Office selection AI, Windows NSIS update download and
   restart handoff, workspace file icons, Windows file links, message dates and
@@ -1030,8 +1060,9 @@ records are listed separately and do not introduce another feature status.
   retries remote preparation without replaying unsubmitted work, and improves
   WeCom/device-sharing boundaries. Agent `0.15.11` carries the remote
   initialization and terminal-state changes. Automatic installation remains
-  Windows NSIS-only; exact candidate CI, native packaging and public checks are
-  pending. See [release preparation](./docs/development/release-preparation-0.16.12.md).
+  Windows NSIS-only. GitHub published Desktop `0.16.12` on 2026-10-31 and Agent
+  `0.15.11` on 2026-10-30; this publication fact does not extend installed-package
+  acceptance coverage. See [release preparation](./docs/development/release-preparation-0.16.12.md).
 - Desktop `0.16.11` / Agent `0.15.10` add remote direct-model workspace tools
   and bundled ripgrep, fix ACP reconnection and recovery completion, and preserve
   direct-tool output during retirement. Desktop drives direct-model execution;
