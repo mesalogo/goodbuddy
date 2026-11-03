@@ -19,7 +19,7 @@ app
   .then(async () => {
     await mkdir(artifacts, { recursive: true })
     const win = new BrowserWindow({
-      show: false,
+      show: true,
       width: 1440,
       height: 1100,
       useContentSize: true,
@@ -31,6 +31,10 @@ app
       }
     })
     const errors = []
+    win.webContents.on('did-finish-load', () => {
+      win.focus()
+      win.webContents.focus()
+    })
     win.webContents.on('console-message', (event) => {
       if (event.level === 'error') errors.push(event.message)
     })
@@ -52,7 +56,12 @@ app
         if (await js(code)) return
         await setTimeout(25)
       }
-      throw new Error(`Timeout: ${code}\n${errors.join('\n')}`)
+      const state = await js(`({
+        scenario: location.search, readyState: document.readyState,
+        visibility: document.visibilityState, focused: document.hasFocus(),
+        rootChildren: document.querySelector('#root')?.childElementCount
+      })`)
+      throw new Error(`Timeout: ${code}; ${JSON.stringify(state)}\n${errors.join('\n')}`)
     }
     const open = async (dense) => {
       await win.loadURL(

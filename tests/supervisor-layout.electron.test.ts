@@ -47,7 +47,7 @@ it(process.env.GOODBUDDY_STORY_GRAPH_FOCUS
     root: resolve('.'),
     cacheDir: join(directory, 'vite'),
     plugins: [
-      react(),
+      react({ exclude: [/node_modules/, /[\\/]temp[\\/]/] }),
       {
         name: 'supervisor-fixture',
         configureServer(server) {
@@ -75,7 +75,9 @@ it(process.env.GOODBUDDY_STORY_GRAPH_FOCUS
         }
       }
     ],
-    server: { host: '127.0.0.1', port: 0, watch: null }
+    server: { host: '127.0.0.1', port: 0, watch: null },
+    // The synthetic HTML is served by middleware, not the repository's demo pages.
+    optimizeDeps: { entries: [resolve('tests/support/supervisor-layout-regression.tsx')] }
   })
   try {
     await server.listen()
@@ -110,12 +112,14 @@ it(process.env.GOODBUDDY_STORY_GRAPH_FOCUS
     child.stderr.on('data', (data) => {
       output += data
     })
-    const timeout = setTimeout(() => child.kill(), 90000)
+    let timedOut = false
+    const timeout = setTimeout(() => { timedOut = true; child.kill() }, 90000)
     try {
-      const code = await new Promise((resolve, reject) => {
-        child.once('exit', resolve)
+      const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.once('close', (code, signal) => resolve({ code, signal }))
         child.once('error', reject)
       })
+      expect(timedOut, `Supervisor Electron exceeded 90s (exit=${code}, signal=${signal}).\n${output}`).toBe(false)
       expect(code, output).toBe(0)
       if (process.env.GOODBUDDY_STORY_GRAPH_FOCUS) process.stdout.write(output)
       else console.log(output)

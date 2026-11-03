@@ -111,3 +111,15 @@ Date: 2026-11-03.
 - The final notes/evidence-only commit must receive its own main-branch CI
   result before exact-SHA/tag approval. Six Desktop and three Agent native
   release targets, immutable tags and public verification remain pending.
+- Notes/evidence commit `e98eb12380aae10393ee633feafcfbfe3a754ee8` was
+  synchronized to both remotes. Desktop run `41655382509` failed with 6,945
+  passed, 1 failed and 74 skipped: supervisor layout timed out waiting for its
+  graph tab after scenario navigation. The log also showed unrelated demo
+  dependency scanning and optimized-dependency reloads.
+- The supervisor fixture now uses a visible window, reacquires focus after
+  page loads, limits Vite discovery to its actual entry, and excludes generated
+  dependency caches from React transforms. Timeout diagnostics include the
+  synthetic scenario and page readiness, and an outer timeout cannot pass just
+  because Electron returned zero. Scenarios, assertions, sandbox and deadlines
+  are unchanged. Root-cause isolation is incomplete; the next CI result must
+  verify this fixture correction. No local tests were run.
