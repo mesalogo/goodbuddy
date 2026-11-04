@@ -66,6 +66,23 @@ class Probe { static void Main(string[] args) {
   await writeFile(join(unpacked, 'version.txt'), version)
   if (version === '1.0.0') await writeFile(join(unpacked, 'obsolete.txt'), 'Only in version one')
   const pkg = require('../package.json')
+  const include = join(project, 'probe.nsh')
+  await writeFile(include, `!include "${join(root, 'build', 'installer.nsh')}"
+!macro customInstall
+  \${If} \${isForceRun}
+    System::Call 'user32::IsWindowVisible(p $HWNDPARENT) i .r0'
+    FileOpen $1 "$INSTDIR\\visible.txt" w
+    FileWrite $1 "$0"
+    FileClose $1
+    Sleep 1500
+    System::Call 'user32::IsWindowVisible(p $HWNDPARENT) i .r0'
+    FileOpen $1 "$INSTDIR\\visible.txt" a
+    FileSeek $1 0 END
+    FileWrite $1 "$0"
+    FileClose $1
+  \${EndIf}
+!macroend
+`)
   const output = join(directory, `output-${version}`)
   await build({ projectDir: project, prepackaged: unpacked, targets: Platform.WINDOWS.createTarget(['nsis'], Arch.x64), publish: 'never', config: {
     appId: `live.digiman.goodbuddy.update-probe.${id.guid}`, productName: id.name,
@@ -76,7 +93,7 @@ class Probe { static void Main(string[] args) {
     win: { target: ['nsis'], signAndEditExecutable: false, icon: join(root, 'build', 'icon-taskbar.ico') },
     nsis: {
       ...pkg.build.nsis, guid: id.guid,
-      include: join(root, 'build', 'installer.nsh'),
+      include,
       // Avoid creating desktop/start-menu shortcuts for the experiment.
       createDesktopShortcut: false, createStartMenuShortcut: false
     }
@@ -116,7 +133,8 @@ async function exercise() {
   assert.equal(await exists(join(install, 'obsolete.txt')), false)
   assert.equal(await readFile(userData, 'utf8'), '{"keep":"original user settings"}')
   assert.equal(await readFile(launched, 'utf8'), '1.0.1|--updated')
-  console.log('NSIS_PROBE_OK: production launchDesktopUpdateInstaller (/S --updated --force-run) retained custom path, removed obsolete application file, preserved external user-data fixture, and launched v1.0.1 with --updated')
+  assert.equal(await readFile(join(install, 'visible.txt'), 'utf8'), '11')
+  console.log('NSIS_PROBE_OK: production launcher retained custom path, removed obsolete files, preserved user data, kept progress visible during install, and launched v1.0.1')
   // The product intentionally exits after spawning NSIS, not after installation.
   // The new app can start before NSIS releases its single-installer mutex.
   const installerLiteral = cachedInstaller.replace(/'/g, "''")
@@ -130,6 +148,14 @@ async function exercise() {
   assert.equal(await exists(abandonedPartial), false)
   assert.equal(await readFile(userData, 'utf8'), '{"keep":"original user settings"}')
   console.log('NSIS_PROBE_CACHE_OK: installed version drives production cleanup; cached installer and abandoned partial removed after installer exit; user data preserved')
+  await rm(launched)
+  await run(next, ['/S', '--updated', '--force-run'])
+  assert.equal(await readFile(join(install, 'visible.txt'), 'utf8'), '11')
+  for (let count = 0; count < 100 && !(await exists(launched)); count++) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.equal(await readFile(launched, 'utf8'), '1.0.1|--updated')
+  console.log('NSIS_PROBE_OK: released client /S arguments also show progress and auto-launch')
   await rm(launched)
   await run(next, ['/S', '--updated'])
   assert.equal(await readFile(join(install, 'version.txt'), 'utf8'), '1.0.1')

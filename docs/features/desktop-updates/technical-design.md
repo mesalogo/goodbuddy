@@ -24,7 +24,9 @@ macOS 和 AppImage 继续评估成熟的自动更新实现。它们与现有检�
 
 deb/rpm 经系统软件包安装流程交接。运行方式不能可靠识别时由用户选择格式。任何平台不得凭操作系统类型就承诺静默安装成功。
 
-当前 before-quit 清理结束调用 app.exit，且清理期限为 8 秒。该路径会触发 quit，但跳过 will-quit。安装交接由清理结束处直接调用 `finishDesktopUpdateShutdown`；只有清理完成且无失败时，才以 `/S --updated --force-run` 启动 NSIS，随后退出旧进程。启动成功仅表示安装器进程已创建，不代表安装已经完成。
+当前 before-quit 清理结束调用 app.exit，且清理期限为 8 秒。该路径会触发 quit，但跳过 will-quit。安装交接由清理结束处直接调用 `finishDesktopUpdateShutdown`；只有清理完成且无失败时，才以 `--updated --force-run` 启动 NSIS，随后退出旧进程。启动成功仅表示安装器进程已创建，不代表安装已经完成。
+
+NSIS 更新显示原生安装进度。`customInit` 对同时带有 `--updated --force-run` 的调用恢复非静默模式，覆盖已发布客户端仍传 `/S` 的升级路径。已有唯一安装范围时，`customInstallMode` 沿用该范围并走模板的提权处理；存在用户级与全局两份安装时保留选择页。安装完成页的前置回调启动新版并跳过完成页，避免需要用户再次点击。首次安装保留常规完成页及启动选项。
 
 ## 发布支持
 

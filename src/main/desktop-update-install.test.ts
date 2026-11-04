@@ -3,7 +3,7 @@ import { desktopUpdateInstallArguments, finishDesktopUpdateShutdown } from './de
 
 describe('desktop update shutdown handoff', () => {
   it('uses the existing install scope and path and requests launch after installation', () => {
-    expect(desktopUpdateInstallArguments).toEqual(['/S', '--updated', '--force-run'])
+    expect(desktopUpdateInstallArguments).toEqual(['--updated', '--force-run'])
   })
   it('exits only after the installer launch succeeds', async () => {
     const events: string[] = []

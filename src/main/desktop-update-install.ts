@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process'
 
 /** NSIS recovers the previous install scope/path from its own registration. */
-export const desktopUpdateInstallArguments = ['/S', '--updated', '--force-run'] as const
+export const desktopUpdateInstallArguments = ['--updated', '--force-run'] as const
 
 export async function launchDesktopUpdateInstaller(installerPath: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(installerPath, [...desktopUpdateInstallArguments], {
-      detached: true, stdio: 'ignore', windowsHide: true, shell: false
+      detached: true, stdio: 'ignore', windowsHide: false, shell: false
     })
     child.once('error', reject)
     child.once('spawn', () => { child.unref(); resolve() })
