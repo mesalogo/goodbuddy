@@ -2,6 +2,20 @@
 
 Date: 2026-11-04.
 
+## Publication status checked on 2026-11-04
+
+- Final release commit: `c634092bcf7ec25569606bf08edea028cbe16654`.
+  The user approved tagging after its main CI run `41676361714` passed
+  source validation and the production bundle. Both annotated tags were pushed
+  to `origin` and `github`; neither tag was moved or reused.
+- Desktop tag workflow `41682983745` and Agent tag workflow `41682983641`
+  succeeded. GitHub lists Desktop `v0.16.13` as public stable Latest, published
+  `2026-11-04T04:02:57Z`, and Agent `agent-v0.15.12` as public stable non-Latest,
+  published `2026-11-03T17:29:28Z`.
+- These are verified GitHub workflow/publication facts, not new installed-package
+  or independent OSS/website acceptance results. The preparation and CI records
+  below describe their respective earlier checkpoints, not the current tag state.
+
 ## Scope and approval
 
 - Published baseline: Desktop `v0.16.12`, Agent `agent-v0.15.11`.

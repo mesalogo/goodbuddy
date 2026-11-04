@@ -381,7 +381,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.12`, paired with the current Desktop release candidate `0.16.13`; formal
+  `0.15.12`, unchanged for the current Desktop release candidate `0.17.0`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -1016,8 +1016,12 @@ records are listed separately and do not introduce another feature status.
   verification, cancellation and retry. Installed Windows NSIS builds offer a
   user-initiated Restart and update action that checks active work and unsaved
   edits, confirms persistence, then drains resources and starts the installer.
+  Installation progress stays visible, including updates requested by older
+  clients with silent arguments, and the new version starts after installation.
+  A single existing installation retains its scope; first-time installation
+  keeps its normal finish page.
   Automatic downloading and installation for other formats remain pending;
-  full-payload and all-users elevation validation is tracked in
+  full-payload, all-users elevation and ARM64 upgrade validation is tracked in
   [desktop update progress](./docs/features/desktop-updates/progress.md).
 - [x] **Window recovery controls**: Rendering errors show a localized Reload
   action and renderer crashes offer a native recovery confirmation. Reload may
@@ -1042,18 +1046,28 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.16.13`, paired with Agent `0.15.12`, with
+- The current Desktop candidate is `0.17.0`, paired with the published Agent `0.15.12`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
   `0.2.1-rc.2`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.17.0` fixes visible Windows NSIS update progress, including
+  updates initiated by older clients, and launches the new version after
+  installation. Agent `0.15.12`, schema 65 and Runtime pins are unchanged.
+  Source evidence covers isolated small-payload x64 installers, not full-payload,
+  all-users elevation or ARM64 upgrade acceptance. Exact-candidate CI, six-target
+  native packaging and public verification remain pending; no LoongArch build
+  or new Agent release. See [release preparation](./docs/development/release-preparation-0.17.0.md).
 - Desktop `0.16.13` adds System One role selection, canvas file attachments and
   paste handling, and raw attachments for local/SSH direct models. It preserves
   automatic role results, keeps transfer bytes out of prompts, improves note
   content alignment and retains success/info notifications for three seconds.
-  Message-source navigation no longer completes against an unmounted target.
+  Message-source navigation no longer completes against an unmounted target;
+  canvas editors and viewers open in Fit width mode.
   Agent `0.15.12` includes more useful Runtime launch failures. Schema 65 and
-  Runtime pins are unchanged; exact candidate CI, native packaging and public
-  checks remain pending. No LoongArch build. See
+  Runtime pins are unchanged. Main CI and both tag workflows succeeded.
+  GitHub published Desktop `0.16.13` on 2026-11-04 and Agent `0.15.12` on
+  2026-11-03 (UTC); this does not extend installed-package acceptance coverage.
+  No LoongArch build. See
   [release preparation](./docs/development/release-preparation-0.16.13.md).
 - Desktop `0.16.12` adds Playwright-driven managed browser actions, local message
   editing and branching, Office selection AI, Windows NSIS update download and

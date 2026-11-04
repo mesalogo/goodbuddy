@@ -2,6 +2,32 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.17.0",
+      "releasedAt": "2026-11-04",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**显示 Windows 更新安装进度**：在 Windows 安装版中点击“重启并更新”后，安装期间显示进度窗口，完成后自动启动新版，避免应用窗口关闭后看不到更新状态。从仍使用静默更新参数的旧版本升级时，也会显示进度。仅有一份现有安装时沿用原安装范围；首次安装流程不变。"
+          ],
+          "notices": [
+            "继续配套 Agent `0.15.12`；数据库 schema 和内置 Runtime 版本不变。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Show Windows update installation progress**: Selecting Restart and update in an installed Windows build now shows installation progress and automatically launches the new version when finished, instead of leaving no visible update status after the app closes. Updates initiated by older versions using silent arguments also show progress. When only one existing installation is present, its installation scope is reused; first-time installation is unchanged."
+          ],
+          "notices": [
+            "Continues to use Agent `0.15.12`; the database schema and bundled Runtime versions are unchanged."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.16.13",
       "releasedAt": "2026-11-04",
       "notes": {
