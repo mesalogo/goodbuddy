@@ -108,6 +108,7 @@ export const magicNotes = {
     entryCountOther: '{{count}} 条记录',
     updatedAt: '更新于 {{date}}',
     newEntryLabel: '新记录内容',
+    newEntryTitle: '新记录',
     composerImmediateHint:
       '输入 -、1.、[ ] 或 [x] 后按空格可创建列表；停止输入 5 秒后自动评论',
     composerRichTextHint:

@@ -1,8 +1,7 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
@@ -13,7 +12,8 @@ import { expect, it } from 'vitest'
 const live = process.env.GB_NOTES_LIVE === '1'
 const livePageCounts = process.env.GB_NOTES_LIVE_PAGES === '8' ? [8] : [1, 8]
 it.each(live ? [true] : [true, false])('analyzes selected canvas pages through production Electron UI and IPC (vision=%s)', async (supportsImageInput) => {
-  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-notes-analysis-'))
+  await mkdir(resolve('temp'), { recursive: true })
+  const directory = await mkdtemp(join(resolve('temp'), 'goodbuddy-notes-analysis-'))
   const server = await createServer({ configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
     plugins: [react(), { name: 'notes-analysis', configureServer(server) {
       server.middlewares.use('/analysis.html', async (_request, response) => {
@@ -21,7 +21,7 @@ it.each(live ? [true] : [true, false])('analyzes selected canvas pages through p
         response.end(await server.transformIndexHtml('/analysis.html', '<html><body><script type="module" src="/tests/support/magic-notes-analysis-regression.tsx"></script></body></html>'))
       })
     } }], server: { host: '127.0.0.1', port: 0, watch: null },
-    optimizeDeps: { include: ['fabric', 'quill', 'quill-delta', 'jspdf', 'react', 'react-dom/client', 'react-i18next'] }
+    optimizeDeps: { entries: ['tests/support/magic-notes-analysis-regression.tsx'], include: ['fabric', 'quill', 'quill-delta', 'jspdf', 'react', 'react-dom/client', 'react-i18next'] }
   })
   try {
     const driver = join(directory, 'main.mjs'), preload = join(directory, 'preload.cjs')
@@ -76,7 +76,7 @@ it.each(live ? [true] : [true, false])('analyzes selected canvas pages through p
       }
       return
     }
-    expect(result).toMatchObject({ errors: [], manualRevision: 1, editedRevision: 3, createdAnalyzed: true, todoAnalyzed: supportsImageInput ? 'canvas-images' : 'text-fallback' })
+    expect(result).toMatchObject({ errors: [], manualRevision: 1, editedRevision: 3, createdAnalyzed: true, textCreated: true, todoAnalyzed: supportsImageInput ? 'canvas-images' : 'text-fallback' })
     expect(result.requests).toHaveLength(6)
     for (const request of result.requests.slice(0, 5)) {
       expect(request.imageCount).toBe(supportsImageInput ? 2 : 0)

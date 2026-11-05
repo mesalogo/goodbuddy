@@ -1417,12 +1417,15 @@
 
 .magic-note-draft-confirmation {
   display: grid;
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--warning);
-  border-bottom: 1px solid var(--warning);
-  background: var(--surface-subtle);
+  width: min(480px, calc(100% - 2 * var(--space-4)));
+  margin: var(--space-4) auto;
+  padding: var(--space-6);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
   color: var(--text-secondary);
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 
 .magic-note-draft-confirmation > strong {
@@ -1431,6 +1434,7 @@
 
 .magic-note-draft-confirmation > div {
   display: flex;
+  justify-content: flex-end;
   flex-wrap: wrap;
   margin-top: var(--space-2);
   gap: var(--space-2);
@@ -1553,7 +1557,7 @@
   .magic-note-entry:focus-within .magic-note-entry__actions { opacity: 1; }
 }
 
-/* Idle composer collapses to a single prompt line; focus or a draft expands it. */
+/* Idle composer keeps the original single prompt line. */
 .magic-notes-stream-pane .magic-note-composer:not(.magic-note-composer--active):not(:focus-within) :is(.magic-note-composer__header, .magic-note-editor__toolbar.ql-toolbar.ql-snow, footer) {
   display: none;
 }
@@ -1577,15 +1581,19 @@
 
 .magic-note-entry-type {
   display: flex;
-  gap: var(--space-2);
+  min-width: 0;
 }
 
-.magic-note-entry-type [aria-pressed='true'] {
-  border-color: var(--accent);
+.magic-note-composer__title {
+  color: var(--text-primary);
+  font-size: var(--font-section-title);
 }
 
-.magic-note-composer__header,
-.magic-note-entry--canvas-editing > header {
+.magic-note-composer__header > .magic-note-canvas-actions {
+  flex: 0 0 auto;
+}
+
+.magic-note-composer__header {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1616,10 +1624,6 @@
   white-space: nowrap;
 }
 
-.magic-note-entry--canvas-editing {
-  min-width: 0;
-}
-
 .magic-note-composer > footer {
   flex-wrap: wrap;
   gap: 8px;
@@ -1627,10 +1631,6 @@
 
 .magic-note-entry__editor {
   min-width: 0;
-}
-
-.magic-note-entry--canvas-editing > .magic-note-entry__editor {
-  padding: var(--space-3);
 }
 
 .magic-note-entry__editor > .magic-note-editor,

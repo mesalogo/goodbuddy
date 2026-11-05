@@ -1,5 +1,88 @@
 # Magic Notes Progress
 
+## 2026-11-05: New-entry Focus Layout
+
+Starting a new text or canvas record now fills the middle record column, matching
+saved-record editing. The same editor remains mounted during expansion. Caption,
+type switch, cancel and save share one header row; long content scrolls inside
+the editor and narrow headers scroll horizontally. Blur does not exit creation.
+Successful save and confirmed cancellation return to reading, while failed saves
+retain the draft. Canvas creation retains the selected type behind a collapsed
+New entry prompt. See [UI design](./ui-design.md#单条记录内容区编辑).
+
+Validation: 192 workspace/window/shared-primitive tests, full type checking and
+lint passed. Electron layout verifies equal create/edit column bounds, one-row
+actions, internal scrolling, theme/narrow layouts and cancel restoration. The
+production IPC/persistence scenario includes creating canvas and text records,
+checking column geometry and returning to reading after save. The analysis test
+window now starts visible so native focus events can exercise the text composer.
+External model calls: 0; analysis uses the deterministic test runtime.
+Final validation: all four Electron layout, production analysis/create and
+navigation scenarios passed, along with type checking, lint and diff checks.
+
+## 2026-11-04: Composer Types and Draft Confirmation Card
+
+The idle composer retains its original single prompt line. Starting a new entry
+reveals the New entry caption followed immediately by the shared Text/Canvas
+segmented control, without right alignment. Canvas actions occupy a separate row below the
+caption. Selecting the current type leaves the draft intact; switching types uses
+the existing discard guard. Chinese and English captions are provided.
+
+Draft confirmation now has four equal neutral borders, shared card radius,
+light shadow and padding. Actions align right with the shared solid danger
+button. Focused-editor confirmations retain side margins and scroll internally
+when the column is short. See [UI design](./ui-design.md#单条记录内容区编辑).
+
+Validation: 191 workspace/window/shared-primitive tests, full type checking and
+lint passed. Real Electron layout checks passed for keyboard type selection from
+the expanded composer, selected state, equal confirmation borders, radius, shadow,
+safe padding and no horizontal overflow in light/dark themes at 1280px and 520px.
+The existing Escape/continue/discard, scroll restoration and pane geometry checks
+also passed. Final Electron layout, footer and navigation runs all passed, and
+screenshots were inspected for the idle composer and light/dark confirmation
+cards. `git diff --check` passed. No external model calls were made.
+
+Visibility follow-up: the Electron layout regression passed again after restoring
+idle collapse and placing the type switch directly after the caption. It checks
+the hidden idle header, the 8px title-to-switch gap and collapse after leaving an
+empty composer.
+
+## 2026-11-04: Record-column Editing
+
+Saved text and canvas records now open in a borderless editor filling only the
+middle record column. Application navigation, the top bar, note list, record
+index and AI pane remain in place and usable. The
+existing draft, save and revision paths are retained. Cancel/Escape protect dirty
+drafts; successful save and discard return to the reading position and record
+focus. Only dirty-draft confirmation isolates other controls; normal editing has
+no modal focus trap. Draft analysis stays in the AI pane and refresh errors remain
+accessible in the editor. See [UI design](./ui-design.md#单条记录内容区编辑).
+
+Validation: `npm run typecheck` and `npm run lint` passed. All Magic Notes suites
+passed in the full run, including 146 workspace unit tests, 40 shared primitive
+tests, real Electron layout/navigation/capture/footer tests and both canvas
+analysis scenarios through production preload, IPC and persistence. Layout checks
+cover record-column geometry, border removal, native Tab/Escape, dirty-draft
+confirmation, scroll/focus restoration, light/dark themes and 520×480 windows.
+The canvas scenarios verify column bounds and saving the edited revision.
+External model calls: 0; analysis used the existing deterministic test model.
+
+Before the scope correction, the full `npm test` equivalent (`vitest run`, JSON reporter) reported 6,924 passed,
+1 failed and 98 skipped tests. Failed-file reports name the settings local-data
+confirmation Electron scenario (button hit-testing timeout) and OpenCode selection
+isolation (suite failure with its seven cases skipped). These paths were not
+changed by this feature; this run does not establish whether their failures predate
+the change. The affected layout Electron scenario also passed independently.
+
+Scope correction: removed the body-level full-window Portal and modal semantics.
+The local host shares the reading column's bounds. Electron checks verify the
+surrounding columns keep their geometry and AI controls can still receive focus.
+After the correction, 191 targeted unit tests, three Electron layout/analysis
+scenarios, full type checking and lint passed. Draft-confirmation isolation no
+longer conflicts with React's inert flags when continuing to edit.
+The layout scenario additionally verifies hit-testing on the application sidebar,
+top bar, note list and AI pane while the editor occupies only the middle column.
+
 ## 2026-10-26: Conversation Capture Menu
 
 FR-3 now lives in the sidebar conversation actions, directly after Copy full

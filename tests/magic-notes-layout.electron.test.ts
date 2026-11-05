@@ -134,33 +134,124 @@ it('resizes record columns with native Electron input and preserves desktop widt
         assert.equal((await rect('.magic-notes-overview')).width, 160);
         await js('document.querySelector(".magic-notes-stream-pane").scrollTop = 0');
         const editor = '.magic-note-composer .magic-note-editor__content .ql-editor';
-        const saveButton = '.magic-note-composer > footer > .primary-button';
-        // Idle composer is a single prompt line without toolbar or footer.
+        const saveButton = '.magic-note-composer__header .primary-button';
+        await settle();
+        await js('document.querySelector(".magic-notes-stream-pane").scrollTop = 0'); await settle();
+        // Idle stays collapsed; starting a new entry reveals options immediately after its title.
         const idleHeight = (await rect('.magic-note-composer')).height;
-        assert(idleHeight <= 60, 'Idle composer height: ' + idleHeight);
+        assert(idleHeight <= 60, 'Idle prompt stays compact: ' + idleHeight);
+        assert.equal((await rect('.magic-note-composer__header')).height, 0);
         assert.equal((await rect(saveButton)).width, 0);
+        await js('document.querySelector(' + JSON.stringify(editor) + ').focus()'); await settle();
+        const newTitle = await rect('.magic-note-composer__title'), typeSwitch = await rect('.magic-note-entry-type');
+        assert(newTitle.y >= 0 && typeSwitch.y >= 0 && typeSwitch.y + typeSwitch.height <= 800, 'Type options are visible in the initial viewport');
+        assert(Math.abs(typeSwitch.x - newTitle.x - newTitle.width - 8) <= 1 && Math.abs(typeSwitch.y + typeSwitch.height/2 - newTitle.y - newTitle.height/2) <= 1, 'Type options immediately follow the title');
+        assert(await js('document.querySelector(".magic-note-entry-type .segmented-control").checkVisibility()'));
+        await screenshot('magic-notes-new-entry-types');
+        await key('.magic-note-entry-type button:first-child', 'Right');
+        await wait('document.querySelector(".magic-note-composer [data-tool=flow-text]")?.disabled === false');
+        assert.equal(await js('document.querySelector(".magic-note-entry-type button:last-child").getAttribute("aria-pressed")'), 'true');
+        await click('.magic-note-entry-type button:first-child');
+        await wait('!!document.querySelector(' + JSON.stringify(editor) + ')');
+        await click('.magic-note-composer__header .secondary-button');
+        await wait('!document.querySelector(".magic-note-composer--active")');
+        assert.equal((await rect('.magic-note-composer__header')).height, 0, 'Cancelling an empty new entry restores the collapsed prompt');
         assert.equal(await js('document.querySelector(".magic-notes-ai-pane")?.checkVisibility() ?? false'), false, 'AI stays closed for notes without comments');
         assert.equal((await rect('.magic-notes-index-pane')).width, 0, 'Record index starts collapsed');
         await click('.magic-note-entry button[aria-label="Edit"]');
         await wait('!!document.querySelector(".magic-note-entry__editor .ql-editor")');
-        const entryBox = await rect('.magic-note-entry');
-        const entryHeader = await rect('.magic-note-entry > header');
+        const entryBox = await rect('.magic-note-entry-focus');
+        const entryHeader = await rect('.magic-note-entry-focus__header');
         const editToolbar = await rect('.magic-note-entry__editor .ql-toolbar');
         const editInput = await rect('.magic-note-entry__editor .ql-container');
+        assert.deepEqual(entryBox, await rect('.magic-notes-stream-container'), 'Editing fills only the record column');
+        assert(entryBox.x > 0 && entryBox.y > 0 && entryBox.width < 1280, 'Application header and note list remain outside the editor');
         for (const box of [editToolbar, editInput]) {
-          assert(Math.abs(box.x - entryBox.x - 1) <= 1 && Math.abs(box.width - entryBox.width + 2) <= 1, 'Editor fills the card inside its border: ' + JSON.stringify({ box, entryBox }));
+          assert(Math.abs(box.x - entryBox.x) <= 1 && Math.abs(box.width - entryBox.width) <= 1, 'Editor spans the record column without card padding: ' + JSON.stringify({ box, entryBox }));
         }
+        assert.equal(editInput.y + editInput.height, entryBox.y + entryBox.height, 'Text area fills remaining column height');
+        assert.equal(await js('getComputedStyle(document.querySelector(".magic-note-entry-focus .ql-container")).resize'), 'none', 'Column height is owned by the layout');
         assert(Math.abs(editToolbar.y - entryHeader.y - entryHeader.height) <= 1, 'Toolbar directly follows the entry header');
         assert(Math.abs(editInput.y - editToolbar.y - editToolbar.height) <= 1, 'Input directly follows the toolbar');
+        assert(await js('document.querySelector(".magic-note-entry-focus").parentElement.id === "magic-note-entry-focus-host"'));
+        assert(await js('!document.querySelector(".magic-notes-overview").closest("[inert]") && !document.querySelector(".magic-note-entry-focus").hasAttribute("aria-modal")'));
+        assert(await js('!document.querySelector(".magic-note-entry-stream").checkVisibility({visibilityProperty:true})'));
+        await key('.magic-note-entry-focus__header .secondary-button', 'Tab');
+        assert(await js('document.activeElement.matches(".magic-note-entry-focus__header .primary-button")'));
+        for (const theme of ['light', 'dark']) {
+          await js('document.documentElement.dataset.theme = ' + JSON.stringify(theme));
+          win.setContentSize(520, 480); await settle(); await settle();
+          assert.deepEqual(await rect('.magic-note-entry-focus'), await rect('.magic-notes-stream-container'));
+          const save = await rect('.magic-note-entry-focus__header .primary-button');
+          assert(save.x >= 0 && save.x + save.width <= 520 && save.y + save.height < 480);
+          assert(await js('document.querySelector(".magic-note-entry-focus").scrollWidth <= innerWidth'));
+        }
+        win.setContentSize(1280, 800); await js('document.documentElement.dataset.theme = "light"'); await settle();
         await screenshot('magic-notes-entry-editor');
         await click('.magic-note-entry__editor-actions .secondary-button');
         await wait('!document.querySelector(".magic-note-entry__editor")');
+        assert(await js('document.activeElement.matches("[data-entry-edit]")'));
+        // Escape guards the draft, and dismissing that guard keeps this editor mounted.
+        await js('document.querySelector(".magic-notes-stream-pane").scrollTop = 420'); await settle();
+        await click('.magic-note-entry [data-entry-edit]');
+        await wait('!!document.querySelector(".magic-note-entry-focus .ql-editor")');
+        await js('document.querySelector(".magic-note-entry-focus .ql-editor").focus()');
+        await win.webContents.insertText('Unsaved focused edit');
+        await key('.magic-note-entry-focus .ql-editor', 'Escape');
+        await wait('!!document.querySelector(".magic-note-entry-focus .magic-note-draft-confirmation")');
+        for (const theme of ['light', 'dark']) {
+          await js('document.documentElement.dataset.theme = ' + JSON.stringify(theme));
+          for (const width of [1280, 520]) {
+            win.setContentSize(width, 600); await settle(); await settle();
+            const card = await rect('.magic-note-draft-confirmation'), column = await rect('.magic-note-entry-focus');
+            assert(card.x >= column.x + 15 && card.x + card.width <= column.x + column.width - 15, 'Confirmation keeps side margins');
+            const style = await js('(() => { const s=getComputedStyle(document.querySelector(".magic-note-draft-confirmation")); return { borders: [s.borderTop,s.borderRight,s.borderBottom,s.borderLeft], radius:s.borderRadius,shadow:s.boxShadow }; })()');
+            assert(style.borders.every(border => border === style.borders[0] && border.startsWith('1px solid')), 'Four uniform card borders');
+            assert.notEqual(style.radius, '0px'); assert.notEqual(style.shadow, 'none');
+            const discard = await rect('.magic-note-draft-confirmation .danger-solid');
+            assert(discard.x + discard.width <= card.x + card.width - 16 && discard.y + discard.height <= card.y + card.height - 16, 'Actions have safe padding');
+            assert(await js('document.querySelector(".magic-note-draft-confirmation").scrollWidth <= document.querySelector(".magic-note-draft-confirmation").clientWidth'));
+            await screenshot('magic-notes-confirm-' + theme + '-' + width);
+          }
+        }
+        win.setContentSize(1280, 800); await js('document.documentElement.dataset.theme = "light"'); await settle();
+        await key('.magic-note-draft-confirmation .secondary-button', 'Escape');
+        await wait('!document.querySelector(".magic-note-draft-confirmation")');
+        assert(await js('document.querySelector(".magic-note-entry-focus .ql-editor").textContent.includes("Unsaved focused edit")'));
+        await key('.magic-note-entry-focus .ql-editor', 'Escape');
+        await wait('!!document.querySelector(".magic-note-draft-confirmation")');
+        await click('.magic-note-draft-confirmation .danger-solid');
+        await wait('!document.querySelector(".magic-note-entry-focus")'); await settle();
+        assert.equal(await js('document.querySelector(".magic-notes-stream-pane").scrollTop'), 420);
+        assert(await js('!document.querySelector(".magic-notes-page").closest("[inert]")'));
+        // All surrounding columns remain visible, focusable and stationary while editing.
+        await click('#magic-notes-index-toggle');
+        await click('button[aria-controls="magic-notes-ai-pane"]');
+        const surrounding = ['.magic-notes-overview', '.magic-notes-index-pane', '.magic-notes-ai-pane'];
+        const beforeEdit = await Promise.all(surrounding.map(rect));
+        await click('.magic-note-entry [data-entry-edit]');
+        await wait('!!document.querySelector(".magic-note-entry-focus .ql-editor")');
+        assert.deepEqual(await Promise.all(surrounding.map(rect)), beforeEdit);
+        for (const selector of surrounding) assert(await js('document.querySelector(' + JSON.stringify(selector) + ').checkVisibility()'));
+        await js('document.querySelector(".magic-notes-ai-controls select").focus()');
+        assert(await js('document.activeElement.matches(".magic-notes-ai-controls select")'), 'Editing does not trap focus away from AI controls');
+        await click('.magic-note-entry-focus__header .secondary-button');
+        await wait('!document.querySelector(".magic-note-entry-focus")');
+        await click('#magic-notes-index-toggle');
+        await click('button[aria-controls="magic-notes-ai-pane"]');
         await js('document.querySelector(".magic-notes-stream-pane").scrollTop = 0');
         const focusComposer = async () => { await js('document.querySelector(' + JSON.stringify(editor) + ').focus()'); await settle(); };
         await focusComposer();
         const emptyHeight = (await rect(editor)).height;
         const desktopSaveWidth = (await rect(saveButton)).width;
-        assert(emptyHeight >= 110 && emptyHeight <= 125, 'Empty composer height: ' + emptyHeight);
+        assert.deepEqual(await rect('.magic-note-composer'), await rect('.magic-notes-stream-container'), 'New entry fills the same column as editing');
+        const newHeader = await rect('.magic-note-composer__header');
+        const newBody = await rect(editor);
+        assert.equal(newBody.y + newBody.height, (await rect('.magic-note-composer')).y + (await rect('.magic-note-composer')).height);
+        for (const selector of ['.magic-note-composer__title', '.magic-note-entry-type', saveButton, '.magic-note-composer__header .secondary-button']) {
+          const box = await rect(selector);
+          assert(Math.abs(box.y + box.height/2 - newHeader.y - newHeader.height/2) <= 1, 'New entry header shares one row');
+        }
         assert.equal(await js('document.querySelector(".magic-note-detail-title").value'), 'Layout note');
         assert.equal(await js('document.querySelector("#magic-notes-title").textContent'), 'Magic Notes');
         await screenshot('magic-notes-light');
@@ -168,6 +259,8 @@ it('resizes record columns with native Electron input and preserves desktop widt
         assert.equal((await rect(editor)).height, emptyHeight);
         await screenshot('magic-notes-dark');
         await js('document.documentElement.dataset.theme = "light"'); await settle();
+        await click('.magic-note-composer__header .secondary-button');
+        await wait('!document.querySelector(".magic-note-composer--active")');
         const index = '.magic-notes-index-pane', handle = '.magic-notes-index-resize-handle', stream = '.magic-notes-stream-pane';
         await click('#magic-notes-index-toggle');
         await click('button[aria-controls="magic-notes-ai-pane"]');
@@ -235,11 +328,14 @@ it('resizes record columns with native Electron input and preserves desktop widt
         const narrowStream = (await rect(stream)).width;
         await click('#magic-notes-index-toggle'); assert.equal((await rect(stream)).width, narrowStream);
         await focusComposer();
-        const narrowSave = await rect(saveButton), narrowFooter = await rect('.magic-note-composer > footer');
-        const footerPaddingRight = await js('parseFloat(getComputedStyle(document.querySelector(".magic-note-composer > footer")).paddingRight)');
+        await js('document.querySelector(".magic-note-composer__header").scrollLeft = 10000'); await settle();
+        const narrowSave = await rect(saveButton), narrowFooter = await rect('.magic-note-composer__header');
+        const footerPaddingRight = await js('parseFloat(getComputedStyle(document.querySelector(".magic-note-composer__header")).paddingRight)');
         assert(Math.abs(narrowSave.width - desktopSaveWidth) <= 1, 'Narrow Save button retains its content width: ' + JSON.stringify({ desktopSaveWidth, narrowSave, narrowFooter }));
         assert(Math.abs(narrowFooter.x + narrowFooter.width - footerPaddingRight - narrowSave.x - narrowSave.width) <= 1, 'Narrow Save button stays right-aligned within footer padding');
         await screenshot('magic-notes-narrow');
+        await click('.magic-note-composer__header .secondary-button');
+        await wait('!document.querySelector(".magic-note-composer--active")');
         win.setContentSize(560, 640); await settle(); await settle();
         assert(await js('document.querySelector("#magic-notes-list-toggle").checkVisibility()'));
         const detailBeforeDrawer = await rect('.magic-notes-detail-container');
@@ -272,9 +368,8 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await win.webContents.insertText('Composer growth check\\n'.repeat(30)); await settle();
         const grownHeight = (await rect(editor)).height;
         assert.equal(await assertViewportHeight(), longNoteHeight, 'Growing drafts keep the same divider height');
-        assert(grownHeight > emptyHeight + 400, 'Composer must grow with content');
-        assert(await js('(() => { const el = document.querySelector(' + JSON.stringify(editor) + '); return el.scrollHeight <= el.clientHeight + 1; })()'), 'Quill content must not be clipped');
-        assert(await js('(() => { const el = document.querySelector(".magic-notes-stream-pane"); el.scrollTop = el.scrollHeight; return el.scrollTop > 0; })()'), 'Long draft must remain reachable through the note stream');
+        assert.deepEqual(await rect('.magic-note-composer'), await rect('.magic-notes-stream-container'), 'Long drafts stay inside the record column');
+        assert(await js('(() => { const el = document.querySelector(' + JSON.stringify(editor) + '); el.scrollTop = el.scrollHeight; return el.scrollTop > 0; })()'), 'Long drafts scroll inside the editor');
         await settle();
         await screenshot('magic-notes-long-draft');
         win.webContents.debugger.attach('1.3');
@@ -335,6 +430,18 @@ it('resizes record columns with native Electron input and preserves desktop widt
           return workspace.height;
         };
         await assertShellPanels();
+        const shellBeforeEdit = await Promise.all(['.sidebar', '.topbar', '.magic-notes-overview', '.magic-notes-ai-pane'].map(rect));
+        await click('.magic-note-entry [data-entry-edit]');
+        await wait('!!document.querySelector(".magic-note-entry-focus .ql-editor")');
+        assert.deepEqual(await rect('.magic-note-entry-focus'), await rect('.magic-notes-stream-container'));
+        assert.deepEqual(await Promise.all(['.sidebar', '.topbar', '.magic-notes-overview', '.magic-notes-ai-pane'].map(rect)), shellBeforeEdit);
+        assert(await js('!document.querySelector(".app-shell").inert'));
+        for (const selector of ['.sidebar', '.topbar', '.magic-notes-overview', '.magic-notes-ai-pane']) {
+          assert(await js('(() => { const el = document.querySelector(' + JSON.stringify(selector) + '); const r=el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); })()'), selector + ' stays uncovered');
+        }
+        await screenshot('magic-notes-column-editor');
+        await click('.magic-note-entry-focus__header .secondary-button');
+        await wait('!document.querySelector(".magic-note-entry-focus")');
         await click('#magic-note-select-other-note-3');
         await wait('document.querySelector(".magic-note-detail-title").value === "Other note 3"');
         await settle();
@@ -378,7 +485,7 @@ it('resizes record columns with native Electron input and preserves desktop widt
           }
         }
         win.setContentSize(1600, 900); await settle(); await settle();
-        for (const selector of ['.magic-notes-stream-pane', '.magic-notes-ai-content']) {
+        for (const selector of [editor, '.magic-notes-ai-content']) {
           assert(await js('(() => { const el = document.querySelector(' + JSON.stringify(selector) + '); el.scrollTop = el.scrollHeight; return el.scrollTop > 0; })()'), selector + ' scrolls internally');
         }
         await settle();

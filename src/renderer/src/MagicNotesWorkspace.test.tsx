@@ -415,6 +415,25 @@ describe('MagicNotesWorkspace overview navigation', () => {
     expect(screen.getByRole('alertdialog')).toBeVisible()
   })
 
+  it('keeps the new-entry editor mounted and expanded until cancel, with actions in its header', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    const editor = screen.getByTestId('magic-note-editor')
+    editor.focus()
+    const region = await screen.findByRole('region', { name: '新记录' })
+    expect(region).toHaveClass('magic-note-entry-focus')
+    expect(screen.getByTestId('magic-note-editor')).toBe(editor)
+    const header = region.querySelector('.magic-note-composer__header')!
+    expect(header).toContainElement(screen.getByRole('button', { name: '保存记录' }))
+    expect(header).toContainElement(screen.getByRole('group', { name: '新记录类型' }))
+    expect(region.querySelector('footer')).toBeNull()
+    screen.getByRole('button', { name: '返回总览' }).focus()
+    expect(region).toHaveClass('magic-note-composer--active')
+    fireEvent.click(within(region).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('region', { name: '新记录' })).not.toBeInTheDocument())
+    expect(createEntry).not.toHaveBeenCalled()
+  })
+
   it('starts a fresh canvas after saving and permits leaving its blank initialized page', async () => {
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
@@ -577,7 +596,7 @@ describe('MagicNotesWorkspace overview navigation', () => {
     expect(screen.getByRole('searchbox')).toBeVisible()
     expect(screen.getByRole('button', { name: '新建笔记' })).toBeVisible()
     expect(screen.getByRole('region', { name: '笔记记录' })).toBeVisible()
-    expect(screen.getByRole('region', { name: '笔记记录' }).parentElement).toHaveClass('magic-notes-layout--detail')
+    expect(screen.getByRole('region', { name: '笔记记录' }).parentElement?.parentElement).toHaveClass('magic-notes-layout--detail')
     const css = readFileSync('src/renderer/src/styles-magic-notes.css', 'utf8')
     expect(css).toMatch(/\.magic-notes-layout--detail\s*\{\s*border: 0;\s*border-radius: 0;/)
     expect(css).toMatch(/\.magic-notes-stream-pane\s*\{[^}]*padding: 0 var\(--magic-note-stream-gutter\)/)
@@ -770,7 +789,7 @@ describe('MagicNotesWorkspace overview navigation', () => {
     let editor: HTMLElement | null = null
     if (draft === 'entry') {
       fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-      editor = container.querySelector<HTMLElement>('.magic-note-entry__editor [data-testid="magic-note-editor"]')!
+      editor = document.querySelector<HTMLElement>('.magic-note-entry__editor [data-testid="magic-note-editor"]')!
     }
     if (draft === 'title') fireEvent.change(screen.getByLabelText('笔记标题'), { target: { value: '未保存标题' } })
     else { editor = screen.getByTestId('magic-note-editor'); fireEvent.click(editor) }
@@ -829,11 +848,11 @@ describe('MagicNotesWorkspace overview navigation', () => {
     fireEvent.click(document.querySelectorAll<HTMLButtonElement>('.magic-note-record')[0]!)
     const original = within(document.getElementById(`magic-note-entry-${entryId}`)!)
     fireEvent.click(original.getByRole('button', { name: '编辑' }))
-    fireEvent.click(original.getByTestId('magic-note-editor'))
+    fireEvent.click(screen.getByTestId('magic-note-editor'))
     fireEvent.click(document.querySelectorAll<HTMLButtonElement>('.magic-note-record')[1]!)
     back()
     fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
-    expect(original.getByTestId('magic-note-editor')).toBeInTheDocument()
+    expect(screen.getByTestId('magic-note-editor')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(updateEntry).toHaveBeenCalledWith({ entryId, content, expectedRevision: 1 }))
 
@@ -841,7 +860,7 @@ describe('MagicNotesWorkspace overview navigation', () => {
     act(() => changeListener?.())
     await waitFor(() => expect(document.querySelectorAll('.magic-note-record')).toHaveLength(2))
     fireEvent.click(original.getByRole('button', { name: '编辑' }))
-    fireEvent.click(original.getByTestId('magic-note-editor'))
+    fireEvent.click(screen.getByTestId('magic-note-editor'))
     fireEvent.click(document.querySelectorAll<HTMLButtonElement>('.magic-note-record')[1]!)
     back()
     fireEvent.click(screen.getByRole('button', { name: '放弃草稿并切换' }))
@@ -913,14 +932,23 @@ describe('MagicNotesWorkspace overview navigation', () => {
     expect(createEntry).not.toHaveBeenCalled()
   })
 
-  it('returns focus to the entry edit button after cancelling an inline edit', async () => {
+  it('edits only in the record column and restores focus and reading position on cancel', async () => {
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
     const article = document.getElementById(`magic-note-entry-${entryId}`)!
+    const stream = document.querySelector<HTMLElement>('.magic-notes-stream-pane')!
+    stream.scrollTop = 420
     fireEvent.click(within(article).getByRole('button', { name: '编辑' }))
-    await within(article).findByTestId('magic-note-editor')
-    fireEvent.click(within(article).getByRole('button', { name: '取消' }))
+    const dialog = screen.getByRole('region', { name: '编辑记录内容' })
+    expect(dialog.parentElement).toBe(document.getElementById('magic-note-entry-focus-host'))
+    expect(dialog).not.toHaveAttribute('aria-modal')
+    expect(document.querySelector<HTMLElement>('.page-header')?.inert).not.toBe(true)
+    expect(screen.getByRole('region', { name: '笔记列表' }).closest('[inert]')).toBeNull()
+    expect(dialog).not.toHaveClass('magic-note-entry')
+    await within(dialog).findByTestId('magic-note-editor')
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
     await waitFor(() => expect(within(article).getByRole('button', { name: '编辑' })).toHaveFocus())
+    expect(stream.scrollTop).toBe(420)
   })
 
   it('keeps todo filters and search when opening its source note and returning', async () => {
@@ -1078,7 +1106,7 @@ describe('MagicNotesWorkspace detail behavior', () => {
     const editLabel = kind === 'canvas' ? '展开编辑画布' : '编辑'
     const editorId = kind === 'canvas' ? 'canvas-editor' : 'magic-note-editor'
     fireEvent.click(entry.getByRole('button', { name: editLabel }))
-    fireEvent.click(entry.getByTestId(editorId))
+    fireEvent.click(within(screen.getByRole('region', { name: '编辑记录内容' })).getByTestId(editorId))
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(analyze).toHaveBeenCalledWith(entryId, expect.objectContaining({ expectedRevision: 2 })))
     expect(updateEntry).toHaveBeenCalledWith({ entryId, content: editedContent, expectedRevision: 1 })
@@ -1090,7 +1118,7 @@ describe('MagicNotesWorkspace detail behavior', () => {
     expect(screen.queryByRole('button', { name: '保存修改' })).not.toBeInTheDocument()
     expect(entry.getByRole('button', { name: editLabel })).toBeEnabled()
     fireEvent.click(entry.getByRole('button', { name: editLabel }))
-    expect(entry.getByTestId(editorId)).toBeVisible()
+    expect(within(screen.getByRole('region', { name: '编辑记录内容' })).getByTestId(editorId)).toBeVisible()
   })
 
   it.each(['text', 'canvas'] as const)('retains the %s editor and draft after a failed save and exits after retry', async (kind) => {
@@ -1108,14 +1136,13 @@ describe('MagicNotesWorkspace detail behavior', () => {
     const editLabel = kind === 'canvas' ? '展开编辑画布' : '编辑'
     const editorId = kind === 'canvas' ? 'canvas-editor' : 'magic-note-editor'
     fireEvent.click(entry.getByRole('button', { name: editLabel }))
-    const editor = entry.getByTestId(editorId)
+    const editor = within(screen.getByRole('region', { name: '编辑记录内容' })).getByTestId(editorId)
     fireEvent.click(editor)
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ message: 'save failed' })))
-    expect(entry.getByTestId(editorId)).toBe(editor)
+    expect(within(screen.getByRole('region', { name: '编辑记录内容' })).getByTestId(editorId)).toBe(editor)
     expect(screen.getByRole('button', { name: '保存修改' })).toBeEnabled()
-    if (kind === 'text') expect(entry.getByRole('button', { name: editLabel })).toBeDisabled()
-    else expect(entry.queryByRole('button', { name: editLabel })).not.toBeInTheDocument()
+    expect(entry.getByRole('button', { name: editLabel })).toBeDisabled()
     expect(analyze).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(entry.getByRole('button', { name: editLabel })).toBeEnabled())
@@ -1142,7 +1169,7 @@ describe('MagicNotesWorkspace detail behavior', () => {
     openIndex()
     expect(screen.getByRole('button', { name: /Local B/ })).toHaveAttribute('aria-current', 'true')
     fireEvent.click(within(document.getElementById(`magic-note-entry-${createdEntryId}`)!).getByRole('button', { name: '编辑' }))
-    expect(screen.getByTestId('magic-note-editor').closest('article')).toHaveAttribute('id', `magic-note-entry-${createdEntryId}`)
+    expect(screen.getByRole('region', { name: '编辑记录内容' })).toHaveAttribute('data-entry-id', createdEntryId)
     fireEvent.click(screen.getByTestId('magic-note-editor'))
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(updateEntry).toHaveBeenCalledWith({ entryId: createdEntryId, content, expectedRevision: localEntry.revision }))
@@ -1466,12 +1493,12 @@ describe('MagicNotesWorkspace detail behavior', () => {
     expect(container.querySelector('.magic-note-detail-header > :first-child')).toBe(screen.getByLabelText('笔记标题'))
     expect(screen.getByRole('button', { name: '删除记录' })).toHaveClass('magic-note-entry__action-button', 'magic-note-entry__delete-button')
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    expect(container.querySelector('.magic-note-entry__editor')).toBeVisible()
+    expect(document.querySelector('.magic-note-entry__editor')).toBeVisible()
     expect(screen.getByRole('button', { name: '删除记录' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
     fireEvent.click(screen.getByRole('button', { name: '删除记录' }))
     expect(screen.getByText('删除这条记录？此操作不可撤销。')).toBeVisible()
-    expect(container.querySelector('.magic-note-entry__editor')).toBeNull()
+    expect(document.querySelector('.magic-note-entry__editor')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
     expect(screen.queryByText('删除这条记录？此操作不可撤销。')).not.toBeInTheDocument()
   })
@@ -1493,12 +1520,12 @@ describe('MagicNotesWorkspace detail behavior', () => {
   })
 
   it.each(['create', 'edit'] as const)('finalizes %s before a todo refresh failure', async (operation) => {
-    const { container } = render(<MagicNotesWorkspace onNotify={onNotify} />)
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
     listTodos.mockRejectedValueOnce(new Error('todo refresh failed'))
     if (operation === 'edit') fireEvent.click(screen.getByRole('button', { name: '编辑' }))
     else newEntry()
-    fireEvent.click(operation === 'create' ? screen.getByTestId('magic-note-editor') : container.querySelector<HTMLElement>('.magic-note-entry__editor [data-testid="magic-note-editor"]')!)
+    fireEvent.click(screen.getByTestId('magic-note-editor'))
     fireEvent.click(screen.getByRole('button', { name: operation === 'create' ? '保存记录' : '保存修改' }))
     await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ message: 'todo refresh failed' })))
     expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({
@@ -1767,11 +1794,11 @@ describe('MagicNotesWorkspace canvas integration', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '展开编辑画布' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '展开编辑画布' }))
     await screen.findByTestId('canvas-editor')
-    const article = screen.getByRole('article')
-    const editHeader = article.querySelector('header')!
+    const focusEditor = screen.getByRole('region', { name: '编辑记录内容' })
+    const editHeader = focusEditor.querySelector('header')!
     expect(Array.from(editHeader.querySelectorAll('button'), (button) => button.textContent)).toEqual(['分析画布草稿', '取消', '保存修改'])
     expect(editHeader.nextElementSibling).toContainElement(screen.getByTestId('canvas-editor'))
-    expect(article.querySelector('.magic-note-entry__editor-actions')).toBeNull()
+    expect(focusEditor.querySelectorAll('.magic-note-entry__editor-actions')).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: '保存修改' })).toHaveLength(1)
     expect(screen.getByRole('button', { name: '保存修改' })).toHaveClass('primary-button')
     expect(screen.queryByText(/不随笔画自动请求|保存后自动分析画布/)).not.toBeInTheDocument()
@@ -2063,14 +2090,24 @@ describe('MagicNotesWorkspace canvas integration', () => {
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
     newEntry()
+    const typeSwitch = screen.getByRole('group', { name: '新记录类型' })
+    expect(typeSwitch).toHaveClass('segmented-control')
+    expect(within(typeSwitch).getByRole('button', { name: '文字' })).toHaveAttribute('aria-pressed', 'true')
+    expect(document.querySelector('.magic-note-composer__title')).toHaveTextContent('新记录')
     fireEvent.click(screen.getByTestId('magic-note-editor'))
+    const textEditor = screen.getByTestId('magic-note-editor')
+    fireEvent.click(within(typeSwitch).getByRole('button', { name: '文字' }))
+    expect(screen.getByTestId('magic-note-editor')).toBe(textEditor)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '画布' }))
     expect(screen.getByRole('alertdialog')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
     expect(screen.getByTestId('magic-note-editor')).toBeVisible()
+    expect(within(typeSwitch).getByRole('button', { name: '文字' })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByRole('button', { name: '画布' }))
     fireEvent.click(screen.getByRole('button', { name: '放弃草稿并切换' }))
     const editor = screen.getByTestId('canvas-editor')
+    expect(screen.getByRole('button', { name: '画布' })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
     await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ message: 'canvas save failed' })))
     expect(screen.getByTestId('canvas-editor')).toBe(editor)
@@ -2448,20 +2485,20 @@ describe('MagicNotesWorkspace external refresh', () => {
   })
 
   it.each(['updated', 'deleted'] as const)('retains an entry draft externally %s and its original revision', async (change) => {
-    const { container } = render(<MagicNotesWorkspace onNotify={onNotify} />)
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    const editor = container.querySelector<HTMLElement>('.magic-note-entry__editor [data-testid="magic-note-editor"]')!
+    const editor = document.querySelector<HTMLElement>('.magic-note-entry__editor [data-testid="magic-note-editor"]')!
     fireEvent.click(editor)
     get.mockResolvedValue({ ...detail, title: 'External change', revision: 2, entries: change === 'deleted' ? [] : detail.entries.map((entry) => ({ ...entry, revision: 2 })) })
     act(() => changeListener?.())
     await screen.findByDisplayValue('External change')
-    expect(container.querySelector('.magic-note-entry__editor [data-testid="magic-note-editor"]')).toBe(editor)
+    expect(document.querySelector('.magic-note-entry__editor [data-testid="magic-note-editor"]')).toBe(editor)
     if (change === 'deleted') expect(screen.getByText(/正在编辑的记录已在其他入口删除/)).toBeVisible()
     updateEntry.mockRejectedValueOnce(new Error('revision conflict'))
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
     await waitFor(() => expect(updateEntry).toHaveBeenCalledWith({ entryId, content, expectedRevision: 1 }))
-    expect(container.querySelector('.magic-note-entry__editor [data-testid="magic-note-editor"]')).toBe(editor)
+    expect(document.querySelector('.magic-note-entry__editor [data-testid="magic-note-editor"]')).toBe(editor)
   })
 
   it('retains a deleted note with drafts until the user returns to the overview', async () => {

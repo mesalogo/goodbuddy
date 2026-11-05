@@ -157,3 +157,157 @@
 }
 
 
+.magic-notes-stream-container {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.magic-notes-stream-container > .magic-notes-stream-pane {
+  flex: 1;
+}
+
+.magic-notes-stream-pane--editing {
+  visibility: hidden;
+}
+
+.magic-notes-stream-pane--composing {
+  overflow: hidden;
+}
+
+.magic-notes-stream-pane--composing > .magic-note-detail-toolbar,
+.magic-notes-stream-pane--composing .magic-notes-detail-body > :not(.magic-note-composer):not(.magic-note-draft-confirmation) {
+  visibility: hidden;
+}
+
+/* Keep the same editor mounted so focus, pending imports and undo history survive expansion. */
+.magic-note-composer.magic-note-entry-focus {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.magic-note-composer.magic-note-entry-focus > .magic-note-composer__header {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.magic-note-composer__header > .magic-note-composer__title,
+.magic-note-composer__header > .magic-note-entry-type {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.magic-note-composer.magic-note-entry-focus > .magic-canvas-editor {
+  padding: 0;
+}
+
+.magic-note-composer.magic-note-entry-focus > .magic-note-editor .magic-note-editor__content,
+.magic-note-composer.magic-note-entry-focus > .magic-note-editor .magic-note-editor__content .ql-editor {
+  min-height: 0;
+}
+
+.magic-note-composer:not(.magic-note-composer--active) > .magic-canvas-editor {
+  display: none;
+}
+
+.magic-note-composer__start {
+  width: 100%;
+  padding: var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: text;
+}
+
+#magic-note-entry-focus-host {
+  position: absolute;
+  inset: 0;
+}
+
+.magic-note-entry-focus {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  overflow: hidden;
+  outline: none;
+}
+
+.magic-note-entry-focus__header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.magic-note-entry-focus__header > strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.magic-note-entry-focus__header .magic-note-entry__editor-actions {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+}
+
+.magic-note-entry-focus .magic-note-entry__editor,
+.magic-note-entry-focus .magic-note-editor,
+.magic-note-entry-focus .magic-canvas-editor,
+.magic-note-entry-focus .canvas-note-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+}
+
+.magic-note-entry-focus .magic-note-editor__toolbar,
+.magic-note-entry-focus .magic-note-editor__table-toolbar {
+  flex: 0 0 auto;
+}
+
+.magic-note-entry-focus .magic-note-editor__content.ql-container.ql-snow,
+.magic-note-entry-focus .canvas-note-viewport {
+  flex: 1 1 0;
+  min-height: 0;
+  resize: none;
+}
+
+.magic-note-entry-focus .magic-note-editor__content .ql-editor {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.magic-note-entry-focus > .magic-note-draft-confirmation {
+  position: absolute;
+  inset: var(--space-4);
+  z-index: 1;
+  margin: auto;
+  width: auto;
+  max-width: 480px;
+  max-height: calc(100% - 2 * var(--space-4));
+  height: fit-content;
+  overflow: auto;
+}

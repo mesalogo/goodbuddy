@@ -44,8 +44,8 @@ async function notesAnalysisRegression() {
     }
     throw new Error(`Timed out: ${predicate}`)
   }
-  const button = (label: string, parent: ParentNode = host) => [...parent.querySelectorAll<HTMLButtonElement>('button')].find(node => (node.getAttribute('aria-label') ?? node.textContent?.trim()) === label)!
-  const click = async (label: string, parent: ParentNode = host) => {
+  const button = (label: string, parent: ParentNode = document) => [...parent.querySelectorAll<HTMLButtonElement>('button')].find(node => (node.getAttribute('aria-label') ?? node.textContent?.trim()) === label)!
+  const click = async (label: string, parent: ParentNode = document) => {
     await wait(() => button(label, parent) && !button(label, parent).disabled)
     button(label, parent).click()
   }
@@ -68,19 +68,36 @@ async function notesAnalysisRegression() {
   await wait(async () => (await entry()).comments[0]?.inputMode === inputMode)
   const manualRevision = (await entry()).revision
   await click('Expand canvas editor')
-  const editor = () => host.querySelector<HTMLElement>('.magic-note-entry__editor')!
+  const editor = () => document.querySelector<HTMLElement>('.magic-note-entry__editor')!
   await wait(() => editor()?.querySelector<HTMLButtonElement>('[data-tool="flow-text"]')?.disabled === false)
+  const focus = document.querySelector<HTMLElement>('.magic-note-entry-focus')!
+  const box = focus.getBoundingClientRect()
+  const column = document.querySelector('.magic-notes-stream-container')!.getBoundingClientRect()
+  if ((['x', 'y', 'width', 'height'] as const).some(key => Math.abs(box[key] - column[key]) > 1)) throw new Error('Canvas edit must fill only the record column')
+  if (focus.hasAttribute('aria-modal') || host.inert) throw new Error('Editing must leave surrounding navigation usable')
+  const canvasRoot = editor().querySelector<HTMLElement>('.canvas-note-root')!
+  if (getComputedStyle(canvasRoot).borderWidth !== '0px') throw new Error('Canvas editor must have no outer border')
   editor().querySelector<HTMLButtonElement>('[data-tool="flow-text"]')!.click()
   await wait(() => editor().querySelector('.canvas-flow-quill'))
   const quill = Quill.find(editor().querySelector('.canvas-flow-quill')!) as Quill
   quill.insertText(0, 'Updated ', 'user')
   await click('Save changes')
   await wait(async () => (await entry()).revision >= manualRevision + 2)
+  await wait(() => !document.querySelector('.magic-note-entry-focus'))
+  if (host.inert) throw new Error('Saving must release background isolation')
   const editedRevision = (await entry()).revision
   await wait(() => host.querySelector('.magic-note-composer'))
   await click('Canvas', host.querySelector('.magic-note-composer')!)
   const composer = () => host.querySelector<HTMLElement>('.magic-note-composer')!
   await wait(() => composer().querySelector<HTMLButtonElement>('[data-tool="flow-text"]')?.disabled === false)
+  const canvasBox = composer().getBoundingClientRect()
+  const canvasColumn = document.querySelector('.magic-notes-stream-container')!.getBoundingClientRect()
+  if ((['x', 'y', 'width', 'height'] as const).some(key => Math.abs(canvasBox[key] - canvasColumn[key]) > 1)) throw new Error('New canvas must fill the record column')
+  const canvasHeader = composer().querySelector('.magic-note-composer__header')!.getBoundingClientRect()
+  for (const selector of ['.magic-note-composer__title', '.magic-note-entry-type', '.magic-note-canvas-actions']) {
+    const box = composer().querySelector(selector)!.getBoundingClientRect()
+    if (Math.abs(box.y + box.height / 2 - canvasHeader.y - canvasHeader.height / 2) > 1) throw new Error('Canvas title, type and save actions must share one row')
+  }
   composer().querySelector<HTMLButtonElement>('[data-tool="flow-text"]')!.click()
   await wait(() => composer().querySelector('.canvas-flow-quill'))
   ;(Quill.find(composer().querySelector('.canvas-flow-quill')!) as Quill).setContents(content.flow!.ops, 'user')
@@ -88,6 +105,7 @@ async function notesAnalysisRegression() {
   await wait(() => button('Analyze canvas draft', composer())?.disabled === false)
   await click('Save entry', composer())
   await wait(async () => (await api.get(note.id)).entries.some(item => item.id !== entryId && item.comments[0]?.inputMode === inputMode))
+  await wait(() => !composer().classList.contains('magic-note-composer--active'))
   await click('Back to overview')
   await click('Switch to to-dos')
   await wait(() => host.querySelector<HTMLButtonElement>('.magic-todo-list-item__content'))
@@ -100,13 +118,30 @@ async function notesAnalysisRegression() {
   await wait(() => host.querySelector('[id^="magic-note-select-"]'))
   host.querySelector<HTMLButtonElement>('[id^="magic-note-select-"]')!.click()
   await wait(() => composer())
+  await click('New entry', composer())
   await wait(() => composer().querySelector<HTMLButtonElement>('[data-tool="flow-text"]')?.disabled === false)
   composer().querySelector<HTMLButtonElement>('[data-tool="flow-text"]')!.click()
   const autoFlow = Quill.find(composer().querySelector('.canvas-flow-quill')!) as Quill
   autoFlow.setText('Automatic start\n' + 'Flow line\n'.repeat(180) + 'Automatic excluded tail\n', 'user')
   await click('Analyze canvas draft', composer())
   await wait(() => button('Analyze canvas draft', composer())?.disabled === false)
-  const result = { errors, manualRevision, editedRevision, createdAnalyzed: true, todoAnalyzed: todo.comments[0]?.inputMode }
+  // Exercise new text creation through the same production UI/IPC with automatic analysis disabled.
+  root.render(<MagicNotesWorkspace navigation={{ noteId: note.id, requestId: 1 }}
+    applicationSettings={{ ...initialSettings, magicNoteCommentMode: 'after-save-manual' }}
+    onNotify={notification => { if (notification.tone === 'error') errors.push(notification.message) }} />)
+  await wait(() => composer()?.querySelector<HTMLElement>('.magic-note-editor__content .ql-editor')?.isContentEditable)
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  const textEditor = composer().querySelector<HTMLElement>('.magic-note-editor__content .ql-editor')!
+  textEditor.focus()
+  await wait(() => composer().classList.contains('magic-note-entry-focus'))
+  const textBox = composer().getBoundingClientRect()
+  const textColumn = document.querySelector('.magic-notes-stream-container')!.getBoundingClientRect()
+  if ((['x', 'y', 'width', 'height'] as const).some(key => Math.abs(textBox[key] - textColumn[key]) > 1)) throw new Error('New text must fill the record column')
+  ;(Quill.find(textEditor.parentElement!) as Quill).setText('Focused new text record\n', 'user')
+  await click('Save entry', composer())
+  await wait(async () => (await api.get(note.id)).entries.some(item => item.plainText.includes('Focused new text record')))
+  await wait(() => !composer().classList.contains('magic-note-composer--active'))
+  const result = { errors, manualRevision, editedRevision, createdAnalyzed: true, textCreated: true, todoAnalyzed: todo.comments[0]?.inputMode }
   root.unmount()
   host.remove()
   return result

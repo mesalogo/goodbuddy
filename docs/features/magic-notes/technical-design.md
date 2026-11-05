@@ -368,10 +368,21 @@ Quill owns the continuous body flow. Saving awaits `flush()` so queued imports,
 text edits and pagination reach the existing preload/IPC create/update handlers.
 There is no autosave or separate canvas persistence path.
 
-Editor and viewer heights follow the current paper element's displayed height
+Read-only viewer heights follow the current paper element's displayed height
 through natural CSS layout, including wrapped toolbars and viewport padding.
 No fixed preview height or viewport-height cap clips the page. The outer note
 stream scrolls vertically; the paper viewport retains horizontal scrolling.
+Saved-record editing uses `MagicNoteEntryFocus` with a Portal into a host inside
+the middle record column. The reading stream remains mounted but hidden, retaining
+its scroll state; the editor fills this column and scrolls its paper viewport
+internally. Application navigation and adjacent panes remain interactive. Only
+the unsaved-draft confirmation uses shared modal focus isolation. This layout does
+not change canvas dimensions, persistence or the application window mode.
+New-entry composition uses the same column bounds and internal scrolling, with
+the caption, type selection and actions in one header row. Expanding keeps the
+existing editor mounted to preserve focus, undo and pending imports. Explicit
+composer state stays open across blur; successful save or discard restores the
+reading stream. The saved type remains selected for the next new entry.
 View zoom is local to each mounted core instance. A displayed-size outer box and
 one transformed logical-size surface keep PDF, flow and Fabric aligned; Quill
 screen measurements are converted back to logical coordinates. Neither zoom nor

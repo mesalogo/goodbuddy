@@ -68,6 +68,7 @@ import './magic-notes-panel.css'
 import './magic-notes-workspace.css'
 import { MagicTodoDirectory } from './MagicTodoDirectory'
 import { MagicNoteEditor } from './MagicNoteEditor'
+import { MagicNoteEntryConfirmation, MagicNoteEntryFocus } from './MagicNoteEntryFocus'
 import { MagicCanvasEditor, canvasHasContent, type MagicCanvasEditorHandle } from './MagicCanvasEditor'
 import type { MagicCanvasContentHandle } from './MagicCanvasContent'
 import { MagicCanvasThumbnail } from './MagicCanvasThumbnail'
@@ -503,6 +504,10 @@ function MagicNotesWorkspaceView({
   const noteActionTriggerRef = useRef<HTMLButtonElement | null>(null)
   const [composerKey, setComposerKey] = useState(0)
   const [entryType, setEntryType] = useState<'text' | 'canvas'>('text')
+  const entryTypeOptions = useMemo(() => ([
+    { value: 'text' as const, label: t('canvas.text') },
+    { value: 'canvas' as const, label: t('canvas.canvas') }
+  ]), [t])
   const composerCanvasRef = useRef<MagicCanvasEditorHandle>(null)
   const editingCanvasRef = useRef<MagicCanvasEditorHandle>(null)
   const canvasViewRefs = useRef(new Map<string, MagicCanvasContentHandle>())
@@ -522,6 +527,8 @@ function MagicNotesWorkspaceView({
   )
   const [indexPaneOpen, setIndexPaneOpen] = useState(initialLayoutPreferences.recordIndexOpen)
   const [composerHasDraft, setComposerHasDraft] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
+  const composerExpanded = composerOpen || composerHasDraft
   const [indexPaneWidth, setIndexPaneWidth] = useState(initialLayoutPreferences.indexPaneWidth)
   const [todoPaneWidth, setTodoPaneWidth] = useState(initialLayoutPreferences.todoPaneWidth)
   const [notesPaneOpen, setNotesPaneOpen] = useState(initialLayoutPreferences.notesPaneOpen)
@@ -607,6 +614,7 @@ function MagicNotesWorkspaceView({
   const magicNotesLayoutRef = useRef<HTMLDivElement>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const streamRef = useRef<HTMLElement>(null)
+  const editingReturnPosition = useRef<{ entryId: string; scrollTop: number } | undefined>(undefined)
   const noteScrollPositions = useRef(new Map<string, number>())
   const todoLayoutRef = useRef<HTMLDivElement>(null)
   const paneResizeRef = useRef<{ pane: 'ai' | 'index' | 'todo' | 'notes'; pointerId: number; width: number } | undefined>(undefined)
@@ -721,6 +729,19 @@ function MagicNotesWorkspaceView({
     const frame = requestAnimationFrame(() => { stream.scrollTop = position })
     return () => cancelAnimationFrame(frame)
   }, [detail?.id, detailView])
+
+  useLayoutEffect(() => {
+    if (editingEntry || composerExpanded || !editingReturnPosition.current) return
+    const { entryId, scrollTop } = editingReturnPosition.current
+    editingReturnPosition.current = undefined
+    const frame = requestAnimationFrame(() => {
+      const article = document.getElementById(`magic-note-entry-${entryId}`)
+      const button = article?.querySelector<HTMLButtonElement>('[data-entry-edit]:not(:disabled)')
+      ;(button ?? article ?? document.getElementById('magic-notes-back'))?.focus({ preventScroll: true })
+      if (streamRef.current) streamRef.current.scrollTop = scrollTop
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [editingEntry, composerExpanded])
 
   useLayoutEffect(() => {
     const entryId = requestedEntryIdRef.current
@@ -990,6 +1011,7 @@ function MagicNotesWorkspaceView({
           composerContentRef.current = undefined
           setComposerKey((current) => current + 1)
           setComposerHasDraft(false)
+          setComposerOpen(false)
           setEditingEntry(undefined)
           setSelectedEntryId(nextDetail.entries.find((entry) => entry.id === entryId)?.id ?? nextDetail.entries.at(-1)?.id ?? '')
           editingContentRef.current = undefined
@@ -1016,6 +1038,7 @@ function MagicNotesWorkspaceView({
     composerContentRef.current = undefined
     setComposerKey((current) => current + 1)
     setComposerHasDraft(false)
+    setComposerOpen(false)
   }, [clearDraftAnalysis])
 
   const discardEditingDraft = useCallback((): void => {
@@ -1083,7 +1106,6 @@ function MagicNotesWorkspaceView({
     (target: DraftSwitchTarget): void => {
       requestAnimationFrame(() => {
         if (target.kind === 'edit-entry' && target.entry.content.version === 2) {
-          document.getElementById(`magic-note-entry-${target.entry.id}`)?.scrollIntoView({ block: 'start' })
           editingCanvasRef.current?.focus()
           return
         }
@@ -1100,7 +1122,7 @@ function MagicNotesWorkspaceView({
                 : target.kind === 'edit-entry'
                   ? document
                       .getElementById(
-                        `magic-note-entry-${target.entry.id}`
+                        'magic-note-entry-focus'
                       )
                       ?.querySelector<HTMLElement>(
                         '.ql-editor, [data-testid="magic-note-editor"]'
@@ -1139,6 +1161,7 @@ function MagicNotesWorkspaceView({
       }
       if (target.kind === 'entry-type') {
         discardComposerDraft()
+        setComposerOpen(true)
         setEntryType(target.value)
         // The composer remounts with the new type; move focus into the new editor.
         requestAnimationFrame(() => {
@@ -1206,6 +1229,7 @@ function MagicNotesWorkspaceView({
         return
       }
       if (target.kind === 'edit-entry') {
+        editingReturnPosition.current = { entryId: target.entry.id, scrollTop: streamRef.current?.scrollTop ?? 0 }
         discardComposerDraft()
         setSelectedEntryId(target.entry.id)
         discardEditingDraft()
@@ -1328,7 +1352,7 @@ function MagicNotesWorkspaceView({
       if (canvas) { canvas.focus(); return }
       const editor = editingEntry
         ? document
-            .getElementById(`magic-note-entry-${editingEntry.id}`)
+            .getElementById('magic-note-entry-focus')
             ?.querySelector<HTMLElement>(
               '.ql-editor, [data-testid="magic-note-editor"]'
             )
@@ -2069,12 +2093,14 @@ function MagicNotesWorkspaceView({
       )
       if (createdEntry) {
         setSelectedEntryId(createdEntry.id)
+        if (editingReturnPosition.current) editingReturnPosition.current.entryId = createdEntry.id
       }
       composerContentRef.current = undefined
       setPendingDraftSwitch(undefined)
       clearDraftAnalysis()
       setComposerKey((current) => current + 1)
       setComposerHasDraft(false)
+      setComposerOpen(false)
       notifySuccess(t('notifications.entrySaved'))
       if (analysisPreparationError !== undefined) notifyError(t('canvas.savedAnalysisFailed', { error: analysisPreparationError }))
       try {
@@ -2382,7 +2408,7 @@ function MagicNotesWorkspaceView({
         />
       ) : (
         <>
-          {refreshError && (
+          {refreshError && !editingEntry && (
             <div className="magic-note-delete-confirmation" role="alert">
               <span>
                 {t('errors.refreshFailed', { error: refreshError })}
@@ -2782,9 +2808,11 @@ function MagicNotesWorkspaceView({
           </nav>
         </aside>
         {indexExpanded && !isNarrowLayout && renderPaneSeparator('index')}
+        <div className="magic-notes-stream-container">
+        <div id="magic-note-entry-focus-host" hidden={!editingEntry} />
         <section
           aria-label={t('notes.streamLabel')}
-          className="magic-notes-stream-pane"
+          className={`magic-notes-stream-pane${editingEntry ? ' magic-notes-stream-pane--editing' : ''}${composerExpanded ? ' magic-notes-stream-pane--composing' : ''}`}
           ref={streamRef}
           onScroll={(event) => {
             if (detail) noteScrollPositions.current.set(detail.id, event.currentTarget.scrollTop)
@@ -2919,13 +2947,30 @@ function MagicNotesWorkspaceView({
               />
 
               {!editingEntry && <div
-                className={`magic-note-composer${composerHasDraft || entryType === 'canvas' || validation?.target === 'new-entry' ? ' magic-note-composer--active' : ''}`}
+                className={`magic-note-composer${composerExpanded ? ' magic-note-composer--active magic-note-entry-focus' : ''}`}
+                id={composerExpanded ? 'magic-note-entry-focus' : undefined}
+                role={composerExpanded ? 'region' : undefined}
+                aria-label={composerExpanded ? t('notes.newEntryTitle') : undefined}
+                onFocusCapture={(event) => {
+                  if (composerExpanded || busy) return
+                  if (!(event.target as HTMLElement).closest('.magic-note-editor__content, [data-testid="magic-note-editor"], .magic-note-composer__start')) return
+                  editingReturnPosition.current = { entryId: selectedEntryId, scrollTop: streamRef.current?.scrollTop ?? 0 }
+                  setComposerOpen(true)
+                }}
+                onKeyDown={(event) => {
+                  if (event.defaultPrevented || (event.target as HTMLElement).closest('[aria-modal="true"]')) return
+                  if (composerExpanded && event.key === 'Escape') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void requestDraftSwitch({ kind: 'cancel-new-entry' })
+                  }
+                }}
                 ref={composerRef}
                 inert={Boolean(busy)}
               >
-                <div className="magic-note-composer__header">
-                <div className="magic-note-entry-type" role="group" aria-label={t('canvas.entryType')}>
-                  {(['text', 'canvas'] as const).map((value) => <button key={value} type="button" className="secondary-button" aria-pressed={entryType === value} disabled={Boolean(busy) || entryType === value} onClick={() => void requestDraftSwitch({ kind: 'entry-type', value })}>{t(`canvas.${value}`)}</button>)}
+                <div className="magic-note-composer__header magic-note-entry-focus__header">
+                <div className="inline-help-label magic-note-composer__title">
+                  <strong>{t('notes.newEntryTitle')}</strong>
                   {entryType === 'text' && <InlineHelp label={t('notes.newEntryLabel')}>
                     <p>{commentMode === 'immediate'
                       ? t('notes.composerImmediateHint')
@@ -2933,12 +2978,19 @@ function MagicNotesWorkspaceView({
                     {commentMode === 'after-save-auto' && <p>{t('comments.autoHint')}</p>}
                   </InlineHelp>}
                 </div>
-                {entryType === 'canvas' && <div className="magic-note-canvas-actions">
-                  <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(false)}>{t('canvas.analyzeDraft')}</button>
+                <div className="magic-note-entry-type">
+                  <SegmentedControl ariaLabel={t('canvas.entryType')} value={entryType}
+                    options={entryTypeOptions} disabled={Boolean(busy)}
+                    onChange={(value) => { if (value !== entryType) void requestDraftSwitch({ kind: 'entry-type', value }) }} />
+                </div>
+                <div className="magic-note-canvas-actions">
+                  {entryType === 'canvas' && <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(false)}>{t('canvas.analyzeDraft')}</button>}
                   <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void requestDraftSwitch({ kind: 'cancel-new-entry' })}>{t('actions.cancel')}</button>
                   <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={() => void saveEntry()}>{t('actions.saveEntry')}</button>
-                </div>}
                 </div>
+                </div>
+                {!composerExpanded && entryType === 'canvas' && <button type="button" className="magic-note-composer__start"
+                  onClick={() => { setComposerOpen(true); requestAnimationFrame(() => composerCanvasRef.current?.focus()) }}>{t('notes.newEntryTitle')}</button>}
                 {entryType === 'canvas' ? <MagicCanvasEditor
                   key={`${detail.id}-${composerKey}-canvas`}
                   ref={composerCanvasRef}
@@ -2991,26 +3043,8 @@ function MagicNotesWorkspaceView({
                     {validation.message}
                   </p>
                 )}
-                {entryType === 'text' && <footer style={{ justifyContent: 'flex-end' }}>
-                  <button
-                    className="secondary-button"
-                    disabled={Boolean(busy)}
-                    type="button"
-                    onClick={() => void requestDraftSwitch({ kind: 'cancel-new-entry' })}
-                  >
-                    {t('actions.cancel')}
-                  </button>
-                  <button
-                    className="primary-button"
-                    disabled={Boolean(busy)}
-                    type="button"
-                    onClick={() => void saveEntry()}
-                  >
-                    {t('actions.saveEntry')}
-                  </button>
-                </footer>}
               </div>}
-                {pendingDraftSwitch && (
+                {pendingDraftSwitch && <MagicNoteEntryConfirmation>
                   <div
                     aria-describedby={discardDraftDescriptionId}
                     aria-labelledby={discardDraftTitleId}
@@ -3044,7 +3078,7 @@ function MagicNotesWorkspaceView({
                         {t('actions.continueEditing')}
                       </button>
                       <button
-                        className="danger-button"
+                        className="danger-solid"
                         onClick={() =>
                           performDraftSwitch(pendingDraftSwitch)
                         }
@@ -3055,7 +3089,7 @@ function MagicNotesWorkspaceView({
                       </button>
                     </div>
                   </div>
-                )}
+                </MagicNoteEntryConfirmation>}
               <div className="magic-note-entry-stream">
                 {displayedEntries.length === 0 ? (
                   <p className="magic-notes-muted">
@@ -3069,18 +3103,14 @@ function MagicNotesWorkspaceView({
                       tabIndex={-1}
                       onFocusCapture={() => setSelectedEntryId(entry.id)}
                       onPointerDownCapture={() => setSelectedEntryId(entry.id)}
-                      className={`magic-note-entry${editingEntry?.id === entry.id && entry.content.version === 2 ? ' magic-note-entry--canvas-editing' : ''}`}
+                      className="magic-note-entry"
                     >
                       {entry.source && <MagicNoteSource source={entry.source} onOpen={onOpenSource} />}
                       <header>
                         <time dateTime={entry.createdAt}>
                           {dateFormatter.format(new Date(entry.createdAt))}
                         </time>
-                        {editingEntry?.id === entry.id && entry.content.version === 2 ? <div className="magic-note-canvas-actions">
-                          <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(true)}>{t('canvas.analyzeDraft')}</button>
-                          <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void requestDraftSwitch({ kind: 'cancel-edit' })}>{t('actions.cancel')}</button>
-                          <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={() => void saveEditedEntry()}>{t('actions.saveChanges')}</button>
-                        </div> : <div className="magic-note-entry__actions">
+                        <div className="magic-note-entry__actions">
                           {(commentMode === 'after-save-manual' || entry.content.version === 2) && editingEntry?.id !== entry.id && (
                             <button
                               className="icon-button"
@@ -3126,7 +3156,7 @@ function MagicNotesWorkspaceView({
                             <Trash2 aria-hidden="true" size={14} />
                             <span>{t('actions.deleteEntry')}</span>
                           </button>
-                        </div>}
+                        </div>
                       </header>
                       {deletingEntryId === entry.id && (
                         <div className="magic-note-entry__delete">
@@ -3167,7 +3197,20 @@ function MagicNotesWorkspaceView({
                           </button>
                         </div>
                       )}
-                      {editingEntry?.id === entry.id ? (
+                      {editingEntry?.id === entry.id && (
+                        <MagicNoteEntryFocus entryId={entry.id} label={t('notes.editEntryLabel')}
+                          onCancel={() => void requestDraftSwitch({ kind: 'cancel-edit' })}>
+                        <header className="magic-note-entry-focus__header">
+                          <strong>{detail.title}</strong>
+                          <div className="magic-note-entry__editor-actions">
+                            {editingEntry.content.version === 2 && <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(true)}>{t('canvas.analyzeDraft')}</button>}
+                            <button className="secondary-button" disabled={Boolean(busy)} type="button"
+                              onClick={() => void requestDraftSwitch({ kind: 'cancel-edit' })}>{t('actions.cancel')}</button>
+                            <button className="primary-button" disabled={Boolean(busy)} type="button"
+                              onClick={() => void saveEditedEntry()}>{t('actions.saveChanges')}</button>
+                          </div>
+                        </header>
+                        {refreshError && <p className="magic-notes-field-error" role="alert">{t('errors.refreshFailed', { error: refreshError })}</p>}
                         <div className="magic-note-entry__editor" inert={Boolean(busy)}>
                           {editingEntry.content.version === 2 ? <>
                             <MagicCanvasEditor
@@ -3231,33 +3274,13 @@ function MagicNotesWorkspaceView({
                               {validation.message}
                             </p>
                           )}
-                          {editingEntry.content.version === 1 && <div className="magic-note-entry__editor-actions">
-                            <button
-                              className="secondary-button"
-                              disabled={Boolean(busy)}
-                              type="button"
-                              onClick={() => {
-                                void requestDraftSwitch({ kind: 'cancel-edit' })
-                              }}
-                            >
-                              {t('actions.cancel')}
-                            </button>
-                            <button
-                              className="primary-button"
-                              disabled={Boolean(busy)}
-                              type="button"
-                              onClick={() => void saveEditedEntry()}
-                            >
-                              {t('actions.saveChanges')}
-                            </button>
-                          </div>}
                         </div>
-                      ) : (
+                        </MagicNoteEntryFocus>
+                      )}
                         <MagicNoteContent content={entry.content} onError={notifyError} canvasRef={(viewer) => {
                           if (viewer) canvasViewRefs.current.set(entry.id, viewer)
                           else canvasViewRefs.current.delete(entry.id)
                         }} />
-                      )}
                     </article>
                   ))
                 )}
@@ -3266,6 +3289,7 @@ function MagicNotesWorkspaceView({
           )}
           </div>
         </section>
+        </div>
 
         {aiPaneOpen && renderPaneSeparator('ai')}
 

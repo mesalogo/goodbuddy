@@ -10,6 +10,7 @@ const directory = process.env.GB_NOTES_PROBE_DIRECTORY!
 const url = process.env.GB_NOTES_PROBE_URL!
 const preload = join(directory, 'preload.cjs')
 app.setPath('userData', join(directory, 'profile'))
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 if (process.env.GB_NOTES_LIVE === '1' && process.platform === 'win32') {
   const localState = JSON.parse(readFileSync(join(dirname(process.env.GB_NOTES_LIVE_SETTINGS!), 'Local State'), 'utf8'))
   mkdirSync(join(directory, 'profile'), { recursive: true })
@@ -19,7 +20,7 @@ app.on('will-quit', () => {
   if (process.env.GB_NOTES_LIVE === '1') rmSync(join(directory, 'profile', 'Local State'), { force: true })
 })
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: false, width: 1400, height: 1000, webPreferences: {
+  const win = new BrowserWindow({ show: true, width: 1400, height: 1000, webPreferences: {
     sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, preload
   } })
   const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
@@ -41,6 +42,8 @@ app.whenReady().then(async () => {
   if (!live) win.webContents.on('console-message', event => console.log(event.message))
   try {
     await win.loadURL(url)
+    win.focus()
+    win.webContents.focus()
     for (let i = 0; i < 400; i++) {
       if (await win.webContents.executeJavaScript('typeof window.notesAnalysisRegression === "function"')) break
       await new Promise(resolve => setTimeout(resolve, 50))

@@ -113,6 +113,7 @@ export const magicNotes = {
     entryCountOther: '{{count}} entries',
     updatedAt: 'Updated {{date}}',
     newEntryLabel: 'New entry content',
+    newEntryTitle: 'New entry',
     composerImmediateHint:
       'Type -, 1., [ ], or [x] then Space to start a list; AI comments after 5 seconds of inactivity',
     composerRichTextHint:
