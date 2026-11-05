@@ -2,6 +2,36 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.17.1",
+      "releasedAt": "2026-11-05",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**在正文栏专注编写笔记**：新建或编辑文字、画布记录时，编辑区铺满中间正文栏，笔记列表、记录索引和 AI 分栏保持可用。新建记录的标题、类型切换、取消和保存集中在同一顶栏，长内容在编辑器内滚动。优化草稿确认卡片，保存或确认放弃后恢复阅读位置，保存失败保留草稿。"
+          ],
+          "fixes": [
+            "**自动收起错误通知**：右上角应用级错误通知在约五秒后自动消失，也可提前手动关闭。成功和信息通知仍显示约三秒，通知关闭不清除输入草稿。"
+          ],
+          "notices": [
+            "继续配套 Agent `0.15.12`；数据库 schema 和内置 Runtime 版本不变。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Focus note writing in the content pane**: Creating or editing text and canvas entries fills the middle content column while keeping the note list, entry index, and AI pane accessible. New-entry titles, type selection, Cancel, and Save share one header row, with long content scrolling inside the editor. Refined draft-confirmation cards protect unsaved work; saving or confirming discard restores the reading position, while failed saves retain the draft."
+          ],
+          "fixes": [
+            "**Dismiss error notifications automatically**: Application error notifications in the top-right corner disappear after about five seconds and can still be dismissed manually. Success and information notifications retain their three-second duration, and dismissing a notification does not clear input drafts."
+          ],
+          "notices": [
+            "Continues to use Agent `0.15.12`; the database schema and bundled Runtime versions are unchanged."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.17.0",
       "releasedAt": "2026-11-04",
       "notes": {

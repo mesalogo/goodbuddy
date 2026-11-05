@@ -381,7 +381,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.12`, unchanged for the current Desktop release candidate `0.17.0`; formal
+  `0.15.12`, unchanged for the current Desktop release candidate `0.17.1`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -757,10 +757,16 @@ records are listed separately and do not introduce another feature status.
   Real first-page thumbnails scroll to
   records without replacing editors. Successful saves establish the editor's
    normalized baseline; only unsaved changes require confirmation on leaving. Opening
-   a note shows a blank text/canvas composer above the history, and creation resets it
-   for the next record. Explicit editing updates a saved record and exits after a
-   successful save; automatic comments do not reopen the editor, and failed saves
-   retain drafts. The separate To-dos view offers search, status filters,
+   a note shows a compact new-entry prompt above the history. Creating or editing
+   text/canvas entries fills only the middle content column, leaving navigation
+   and adjacent panes usable. New-entry caption, type selection, cancel and save
+   share one header row; long content scrolls inside the editor and narrow headers
+   scroll horizontally. Save or confirmed discard restores the reading position;
+   failed saves retain drafts. Creation resets the composer for the next record
+   while retaining its selected type. Explicit editing updates the same saved
+   record; automatic comments do not reopen the editor. Draft-confirmation cards
+   follow the [note UI design](./docs/features/magic-notes/ui-design.md#单条记录内容区编辑).
+   The separate To-dos view offers search, status filters,
   grouped tasks and direct completion, with instructions, source entries and AI
   comments in a right detail pane beside a stable task list. Narrow views offer
   on-demand detail with an explicit return to the list. Wide views support a
@@ -1023,6 +1029,10 @@ records are listed separately and do not introduce another feature status.
   Automatic downloading and installation for other formats remain pending;
   full-payload, all-users elevation and ARM64 upgrade validation is tracked in
   [desktop update progress](./docs/features/desktop-updates/progress.md).
+- [x] **Application notifications**: Top-right error notifications dismiss after
+  about five seconds; success and information notifications last about three
+  seconds. Manual dismissal remains available without clearing input drafts.
+  Field validation and contextual recovery messages remain local to their controls.
 - [x] **Window recovery controls**: Rendering errors show a localized Reload
   action and renderer crashes offer a native recovery confirmation. Reload may
   lose unsaved input. See [window recovery](./docs/development/window-recovery.md).
@@ -1046,16 +1056,27 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.17.0`, paired with the published Agent `0.15.12`, with
+- The current Desktop candidate is `0.17.1`, paired with the published Agent `0.15.12`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
   `0.2.1-rc.2`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.17.1` brings content-column creation/editing for text and canvas
+  notes, one-row new-entry controls and refined draft confirmations. Application
+  error notifications now dismiss after five seconds without clearing drafts;
+  success/information notifications retain three seconds. The canvas attachment
+  commit adds regression coverage for an existing capability, not a new feature.
+  Agent `0.15.12`, schema 65 and Runtime pins are unchanged. Exact-candidate CI,
+  native packaging and public verification remain pending; six Desktop targets,
+  no LoongArch or new Agent release. See
+  [release preparation](./docs/development/release-preparation-0.17.1.md).
 - Desktop `0.17.0` fixes visible Windows NSIS update progress, including
   updates initiated by older clients, and launches the new version after
   installation. Agent `0.15.12`, schema 65 and Runtime pins are unchanged.
   Source evidence covers isolated small-payload x64 installers, not full-payload,
-  all-users elevation or ARM64 upgrade acceptance. Exact-candidate CI, six-target
-  native packaging and public verification remain pending; no LoongArch build
+  all-users elevation or ARM64 upgrade acceptance. The immutable tag workflow
+  succeeded on attempt 3 after an Apple ticket-service network failure and an
+  expired build artifact. GitHub published stable Latest `v0.17.0` on 2026-11-05;
+  this does not extend installed-package acceptance coverage. No LoongArch build
   or new Agent release. See [release preparation](./docs/development/release-preparation-0.17.0.md).
 - Desktop `0.16.13` adds System One role selection, canvas file attachments and
   paste handling, and raw attachments for local/SSH direct models. It preserves

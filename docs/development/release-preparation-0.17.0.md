@@ -2,6 +2,26 @@
 
 Date: 2026-11-04.
 
+## Publication status checked on 2026-11-05
+
+- The user approved exact commit `de1ade225cad522039d391f70deaff4f130ef31f`
+  after main CI, Agent validation and website deployment succeeded. New Magic
+  Notes work was explicitly excluded. A clean detached checkout was used so the
+  original worktree remained untouched.
+- Annotated tag `v0.17.0` was pushed to both remotes, with peeled target equal to
+  that commit. The tag was never moved, deleted or recreated.
+- Workflow `41785513936` attempt 1 passed five native targets but failed macOS
+  x64 stapling with Apple ticket-service connection loss (`-1005`, staple 68).
+  Publication was skipped. A failed-job-only rerun could not download the
+  production bundle, whose retention was one day.
+- A full rerun of the same immutable tag regenerated the expired bundle.
+  Attempt 3 succeeded. GitHub reports stable, non-draft Latest `v0.17.0`
+  published at `2026-11-05T08:39:12Z`. Agent remains `0.15.12`.
+- These are workflow and GitHub publication facts, not additional full-payload
+  upgrade or independent OSS/website acceptance results. The earlier preparation
+  checkpoints below are retained as history. The owned detached checkout and
+  watch/diagnostic logs were cleaned up after confirming publication.
+
 ## Scope and approval
 
 - Published baseline: Desktop `v0.16.13`, commit
