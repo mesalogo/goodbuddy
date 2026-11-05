@@ -7699,6 +7699,29 @@ describe("App", () => {
     await waitFor(() => expect(addButton).toBeEnabled());
   });
 
+  it("dismisses application errors after five seconds and preserves the draft", async () => {
+    vi.mocked(api.context.selectFiles).mockRejectedValueOnce(
+      new Error("不支持的文件类型：.mp3"),
+    );
+    render(<App />);
+    const addButton = await screen.findByLabelText("添加附件");
+    const input = screen.getByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(input, { target: { value: "Keep this draft" } });
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(addButton);
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.getByRole("alert")).toHaveTextContent("不支持的文件类型：.mp3");
+      act(() => vi.advanceTimersByTime(4_999));
+      expect(screen.getByRole("alert")).toHaveTextContent("不支持的文件类型：.mp3");
+      act(() => vi.advanceTimersByTime(1));
+      expect(screen.queryByRole("region", { name: "应用通知" })).not.toBeInTheDocument();
+      expect(input).toHaveValue("Keep this draft");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends and renders five selected images together", async () => {
     const imageAttachments = Array.from({ length: 5 }, (_, index) => ({
       id: `00000000-0000-4000-8000-00000000031${index}`,

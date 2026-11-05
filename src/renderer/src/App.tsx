@@ -454,12 +454,9 @@ function AppNotificationItem({
   const { t } = useTranslation("app");
 
   useEffect(() => {
-    if (notification.tone === "error") {
-      return;
-    }
     const timeout = window.setTimeout(() => {
       dispatch({ dismiss: notification.id });
-    }, 3_000);
+    }, notification.tone === "error" ? 5_000 : 3_000);
     return () => window.clearTimeout(timeout);
   }, [dispatch, notification.id, notification.revision, notification.tone]);
 
