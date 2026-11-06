@@ -43,6 +43,8 @@ import type {
 import { MemoryRuntimeSessionBindingStore, SqliteRuntimeSessionBindingStore, type RuntimeSessionBindingStore } from './runtime-session-binding-store'
 import { AssistantDatabase } from '../assistant/assistant-database'
 import { RemoteEventBatcher } from '../remote-event-batcher'
+import { ProtocolRemoteRuntimeChannelError } from '../remote-agent/protocol-remote-runtime-channel'
+import { StaleRemoteRuntimeGenerationError } from './remote-runtime-channel'
 
 type FakeServer = {
   channel: RemoteRuntimeChannel
@@ -2848,7 +2850,9 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
 
   it.each([
     new RemoteChannelClosedError('读取 Agent 语义记录'),
-    new RemoteOperationTimeoutError('读取 Agent 语义记录')
+    new RemoteOperationTimeoutError('读取 Agent 语义记录'),
+    new ProtocolRemoteRuntimeChannelError('closed while reading', 'closed'),
+    new ProtocolRemoteRuntimeChannelError('transport interrupted', 'transport')
   ])('preserves an accepted task when transcript reading is interrupted: %s', async error => {
     const fixture = ownedChannel()
     fixture.pageOwnedPromptTranscript.mockRejectedValueOnce(error)
@@ -2862,6 +2866,71 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     } finally {
       await fixture.instance.dispose()
     }
+  })
+
+  it.each(['accepted', 'start-response-lost', 'stale-generation', 'reopen-failure'] as const)('reopens a closed transport to attach the %s task without resubmission', async mode => {
+    const first = ownedChannel()
+    const replacement = ownedChannel()
+    let close!: () => void
+    let closed = false
+    const firstChannel: RemoteRuntimeChannel = {
+      ...first.channel,
+      closed: new Promise<void>(resolve => { close = () => { closed = true; resolve() } }),
+      isCurrentGeneration: () => !closed
+    }
+    const factory = vi.fn().mockResolvedValueOnce(firstChannel).mockResolvedValue({ ...replacement.channel, generation: 2 })
+    if (mode === 'reopen-failure') factory.mockRejectedValueOnce(new ProtocolRemoteRuntimeChannelError('network still unavailable', 'transport'))
+    const instance = factoryRuntime(factory, first.store, { modelBridgePolicy, modelProfile: ownedModelProfile })
+    const lost = new RemoteChannelClosedError('读取 Agent 语义记录')
+    if (mode === 'stale-generation') first.pageOwnedPromptTranscript.mockImplementation(async () => {
+      closed = true
+      throw new StaleRemoteRuntimeGenerationError()
+    })
+    else if (mode !== 'start-response-lost') first.pageOwnedPromptTranscript.mockImplementation(async () => { close(); throw lost })
+    else first.startOwnedPrompt.mockImplementationOnce(async () => { close(); throw lost })
+    try {
+      await expect(collect(instance.run(request, new AbortController().signal))).rejects.toThrow()
+      if (mode === 'reopen-failure') {
+        await expect(collect(instance.run({ ...request, remoteRecoveryOnly: true }, new AbortController().signal))).rejects.toThrow('network still unavailable')
+        expect(await first.store.getByConversation(request.conversationId)).toMatchObject({ state: 'prompt-running', activePromptOperationId: request.requestId })
+      }
+      const events = await collect(instance.run({ ...request, remoteRecoveryOnly: true }, new AbortController().signal))
+      expect(events.some(event => event.type === 'done')).toBe(true)
+      expect(factory).toHaveBeenCalledTimes(mode === 'reopen-failure' ? 3 : 2)
+      expect(first.startOwnedPrompt).toHaveBeenCalledOnce()
+      expect(replacement.startOwnedPrompt).not.toHaveBeenCalled()
+      expect(replacement.preparePrompt).not.toHaveBeenCalled()
+      expect(replacement.attachOwnedPrompt).toHaveBeenCalledOnce()
+      expect(first.escalateCancellation).not.toHaveBeenCalled()
+    } finally { await instance.dispose(); await first.instance.dispose(); await replacement.instance.dispose() }
+  })
+
+  it('does not attach later when recovery is cancelled while closing the stale channel', async () => {
+    const first = ownedChannel()
+    const replacement = ownedChannel()
+    let stale = false
+    let finishClose!: () => void
+    const close = vi.fn(() => new Promise<void>(resolve => { finishClose = resolve }))
+    const channel: RemoteRuntimeChannel = { ...first.channel, close, isCurrentGeneration: () => !stale }
+    const factory = vi.fn().mockResolvedValueOnce(channel).mockResolvedValue({ ...replacement.channel, generation: 2 })
+    const instance = factoryRuntime(factory, first.store, { modelBridgePolicy, modelProfile: ownedModelProfile, maxConcurrentChannels: 1 })
+    first.pageOwnedPromptTranscript.mockImplementation(async () => { stale = true; throw new StaleRemoteRuntimeGenerationError() })
+    try {
+      await expect(collect(instance.run(request, new AbortController().signal))).rejects.toThrow()
+      const controller = new AbortController()
+      const pending = collect(instance.run({ ...request, remoteRecoveryOnly: true }, controller.signal)).catch(error => error)
+      await vi.waitFor(() => expect(close).toHaveBeenCalledOnce())
+      controller.abort(new Error('stop recovery during cleanup'))
+      expect(await pending).toMatchObject({ message: 'stop recovery during cleanup' })
+      finishClose()
+      expect(factory).toHaveBeenCalledOnce()
+      expect(replacement.attachOwnedPrompt).not.toHaveBeenCalled()
+      const events = await collect(instance.run({ ...request, remoteRecoveryOnly: true }, new AbortController().signal))
+      expect(events.some(event => event.type === 'done')).toBe(true)
+      expect(first.startOwnedPrompt).toHaveBeenCalledOnce()
+      expect(replacement.startOwnedPrompt).not.toHaveBeenCalled()
+      expect(first.escalateCancellation).not.toHaveBeenCalled()
+    } finally { finishClose?.(); await instance.dispose(); await first.instance.dispose(); await replacement.instance.dispose() }
   })
 
   it('bounds initialization retries and preserves the original failure without submission', async () => {

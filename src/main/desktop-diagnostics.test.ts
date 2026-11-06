@@ -34,9 +34,30 @@ afterEach(async () => {
 })
 
 describe('DesktopDiagnostics', () => {
+  it('retains bounded protocol failure details through wrapped errors and export', async () => {
+    const directory = await temporaryDirectory()
+    const diagnostics = new DesktopDiagnostics(directory)
+    const cause = Object.assign(new Error('private remote response'), {
+      name: 'ProtocolRemoteRuntimeChannelError', reason: 'remote',
+      remoteMethod: 'runtime/attachPrompt', remoteRpcCode: -32000
+    })
+    await diagnostics.recordFailure({ component: 'runtime', stage: 'run', code: 'runtime.run.failed', error: new Error('private outer error', { cause }) })
+    await diagnostics.dispose()
+    const reopened = new DesktopDiagnostics(directory)
+    try {
+      const exported = (await reopened.exportRecent()).toString('utf8')
+      expect(JSON.parse(exported).remote).toEqual({ reason: 'remote', method: 'runtime/attachPrompt', rpcCode: -32000 })
+      expect(exported).not.toContain('private')
+      const record = JSON.parse(exported)
+      expect(normalizeDesktopDiagnosticRecord({ ...record, remote: { reason: 'closed', method: 'private-method', rpcCode: 'private-code', payload: 'private' } })?.remote).toEqual({ reason: 'closed' })
+      expect(normalizeDesktopDiagnosticRecord({ ...record, remote: { reason: 'private-reason' } })).not.toHaveProperty('remote')
+      expect(normalizeDesktopDiagnosticRecord({ ...record, component: 'desktop' })).not.toHaveProperty('remote')
+    } finally { await reopened.dispose() }
+  })
+
   it('retains remote failure categories through persistence and export', async () => {
     const directory = await temporaryDirectory()
-    const names = ['RemoteChannelClosedError', 'RemoteOperationTimeoutError', 'ProtocolRemoteRuntimeChannelError', 'RemotePromptRecoveryUnavailableError']
+    const names = ['RemoteChannelClosedError', 'RemoteOperationTimeoutError', 'ProtocolRemoteRuntimeChannelError', 'RemotePromptRecoveryUnavailableError', 'StaleRemoteRuntimeGenerationError']
     const diagnostics = new DesktopDiagnostics(directory)
     for (const name of names) {
       const error = new Error('private remote details')

@@ -1743,6 +1743,19 @@ export class AcpRemoteRuntime implements AgentRuntime {
     signal: AbortSignal
   ): Promise<SessionRecord> {
     let current = this.sessions.get(conversationId)
+    const context = this.contexts.get(conversationId)
+    if (this.options.channelFactory && context &&
+      (context.channelHasClosed || !context.channel.isCurrentGeneration())) {
+      // A live task is owned by the Agent, not by this transport. Discard only
+      // the cached transport/session and let openSession attach the persisted
+      // operation. Never return an attached session on a dead channel.
+      this.sessions.delete(conversationId)
+      this.contexts.delete(conversationId)
+      await this.awaitLocalOperation(
+        '关闭失效会话通道', this.closeContext(context), signal
+      )
+      current = undefined
+    }
     if (current?.binding.activePromptOperationId === request.requestId) request.onRemotePromptSubmitted?.()
     if (current && request.remoteRecoveryOnly === true && !(
       current.binding.state === 'prompt-running' &&
@@ -2913,8 +2926,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
       }
     } catch (error) {
       interruptedTransport = context.channelHasClosed ||
-        error instanceof RemoteChannelClosedError ||
-        error instanceof RemoteOperationTimeoutError
+        isTransientRemoteRecoveryError(error)
       throw error
     } finally {
       if (!reachedTerminal && (!interruptedTransport || signal.aborted)) {

@@ -42,8 +42,10 @@ async function main(): Promise<void> {
   const prepareLoss = process.argv[2] === '--prepare-loss'
   const startResponseLoss = process.argv[2] === '--start-response-loss'
   const liveDisconnect = process.argv[2] === '--live-disconnect'
+  const realModel = process.argv[2] === '--real-model'
+  const closedChannel = process.argv[2] === '--closed-channel' || realModel
   const toolFailure = process.argv[2] === '--tool-failure'
-  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect || toolFailure
+  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect || closedChannel || toolFailure
   const retirement = process.argv[2] === '--retirement' || runtimeCrash || catchUp
   const directRetirement = process.argv[2] === '--direct-retirement'
   const directDisconnect = process.argv[2] === '--direct-disconnect'
@@ -149,7 +151,32 @@ async function main(): Promise<void> {
     if (retirement) {
       let scriptedModelCalls = 0
       let toolResultReturned = false
+      let realModelCalls = 0
+      let realResponseReady = false
+      let releaseRealResponse!: () => void
+      const realResponseGate = new Promise<void>(resolve => { releaseRealResponse = resolve })
       const server = createServer((modelRequest, response) => {
+        if (realModel) {
+          void (async () => {
+            assert.equal(realModelCalls, 0, 'Real-model recovery probe allows one provider request')
+            realModelCalls++
+            const chunks: Buffer[] = []
+            for await (const chunk of modelRequest) chunks.push(Buffer.from(chunk))
+            const upstream = await fetch(new URL(modelRequest.url!, process.env.GB_PROBE_MODEL_URL!), {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: Buffer.concat(chunks), signal: AbortSignal.timeout(90_000)
+            })
+            assert.equal(upstream.status, 200, `Real provider returned HTTP ${upstream.status}`)
+            const bytes = Buffer.from(await upstream.arrayBuffer())
+            realResponseReady = true
+            // Hold only delivery, not model generation, to deterministically cut
+            // the ACP transport while the actual Runtime is awaiting its reply.
+            await realResponseGate
+            response.writeHead(200, { 'content-type': upstream.headers.get('content-type') ?? 'text/event-stream' })
+            response.end(bytes)
+          })().catch(() => { response.writeHead(502); response.end('Real model validation failed') })
+          return
+        }
         if (toolFailure) {
           let body = ''
           modelRequest.on('data', chunk => { body += String(chunk) })
@@ -191,11 +218,14 @@ async function main(): Promise<void> {
           let losePreparation = false
           let prepareAccepted = 0
           let attachments = 0
+          let channels = 0
+          let interrupt = !prepareLoss && !startResponseLoss && !toolFailure
+          let exhaust = liveChannelBudget
           const bindings = new MemoryRuntimeSessionBindingStore()
           const instance = new AcpRemoteRuntime({
             runtimeId: 'opencode', label: 'Recovery probe', workspacePath: root,
             bindingStore: bindings, assertHostCurrent: () => {},
-            operationTimeoutMs: 30_000,
+            operationTimeoutMs: realModel ? 110_000 : 30_000,
             identity: {
               controllerId: await controllerState.getControllerId(), controllerGeneration: first.client.generation,
               hostId: 'probe-host', hostRevision: 1, hostKeyGeneration: 1,
@@ -204,10 +234,11 @@ async function main(): Promise<void> {
               runtimeAdapterDigest: registered.entry.runtimeAdapterDigest
             },
             modelProfile: { profileId: 'local-probe', modelProfileDigest: `sha256:${'b'.repeat(64)}`,
-              provider: 'openai', baseUrl: `http://127.0.0.1:${address.port}/v1`, model: 'probe-model',
-              protocol: 'openai-chat-completions', authentication: 'none', capabilities: { imageInput: false },
-              limits: { maximumOutputTokens: 16, requestTimeoutMilliseconds: 60_000 } },
+              provider: 'openai', baseUrl: `http://127.0.0.1:${address.port}/v1`, model: realModel ? process.env.GB_PROBE_MODEL_NAME! : 'probe-model',
+              protocol: realModel ? process.env.GB_PROBE_MODEL_PROTOCOL as 'openai-responses' | 'openai-chat-completions' : 'openai-chat-completions', authentication: 'none', capabilities: { imageInput: false },
+              limits: { maximumOutputTokens: realModel ? 1024 : 16, requestTimeoutMilliseconds: realModel ? 120_000 : 60_000 } },
             channelFactory: async bindingId => {
+              channels++
               const connection = await manager.acquire('probe-host', installation)
               // Production ManagedRemoteRuntimeResources revalidates the workspace
               // on a new transport generation before preparing another prompt.
@@ -242,12 +273,19 @@ async function main(): Promise<void> {
               const attach = channel.attachOwnedPrompt.bind(channel)
               channel.attachOwnedPrompt = async input => { attachments++; return attach(input) }
               const page = channel.pageOwnedPromptTranscript.bind(channel)
-              let interrupt = !prepareLoss && !startResponseLoss && !toolFailure
-              let exhaust = liveChannelBudget
               channel.pageOwnedPromptTranscript = async input => {
                 if (interrupt) {
                   interrupt = false
-                  if (liveDisconnect) children.at(-1)!.kill()
+                  if (realModel) {
+                    for (let i = 0; !realResponseReady && i < 1800; i++) await delay(50)
+                    assert(realResponseReady, 'Real model response must arrive before the injected disconnect')
+                  }
+                  if (closedChannel) {
+                    unavailable = true
+                    children.at(-1)!.kill()
+                    await channel.closed
+                    unavailable = false
+                  } else if (liveDisconnect) children.at(-1)!.kill()
                   throw new RemoteChannelClosedError('probe transcript interruption')
                 }
                 if (exhaust) {
@@ -261,11 +299,16 @@ async function main(): Promise<void> {
               return channel
             }
           })
-          const prompt = { requestId: randomUUID(), conversationId: randomUUID(), prompt: 'Reply OK.' }
+          const prompt = { requestId: randomUUID(), conversationId: randomUUID(), prompt: realModel ? 'Reply exactly RECOVERY_OK. Do not call any tools.' : 'Reply OK.' }
+          let answer = ''
           const consume = async (recovering: boolean, signal: AbortSignal) => {
             for await (const event of instance.run({ ...prompt, remoteRecoveryOnly: recovering,
               onRemoteRecoveryReady: () => { ready++; assert.equal(terminal, false) }
-            }, signal)) if (event.type === 'done' || event.type === 'error') terminal = true
+            }, signal)) {
+              if (event.type === 'text') answer += event.delta
+              if (realModel) assert.notEqual(event.type, 'error', 'Real Runtime must complete successfully')
+              if (event.type === 'done' || event.type === 'error') terminal = true
+            }
           }
           const controller = new AbortController()
           let pending: Promise<unknown> | undefined
@@ -302,7 +345,7 @@ async function main(): Promise<void> {
               process.stdout.write(`${JSON.stringify({ passed: true, prepareLoss: true, realRuntime: runtime.runtimeId, priorPromptCompleted: true, prepareAccepted, secondPromptStarts: starts - 1, recoveryAttachments: attachments, bindingState: binding.state, externalModelCalls: 0 })}\n`)
               return
             }
-            await assert.rejects(consume(false, AbortSignal.timeout(30_000)), RemoteChannelClosedError)
+            await assert.rejects(consume(false, AbortSignal.timeout(realModel ? 110_000 : 30_000)), RemoteChannelClosedError)
             pending = consume(true, controller.signal).catch(error => error)
             for (let i = 0; !ready && i < 800; i++) await delay(50)
             assert.equal(ready, 1, 'Catch-up must finish while the real Runtime remains active')
@@ -312,7 +355,16 @@ async function main(): Promise<void> {
             assert.equal(ready, 1)
             assert.equal(terminal, false)
             if (liveChannelBudget) assert.equal(attaches, 2)
-            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, liveChannelBudget, liveDisconnect, startResponseLoss, attaches, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, externalModelCalls: 0 })}\n`)
+            if (closedChannel) { assert.equal(channels, 2); assert.equal(attachments, 1) }
+            if (realModel) {
+              releaseRealResponse()
+              const result = await pending
+              if (result instanceof Error) throw result
+              assert.equal(terminal, true)
+              assert.equal(answer.trim(), 'RECOVERY_OK')
+              assert.equal(realModelCalls, 1)
+            }
+            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, liveChannelBudget, liveDisconnect, closedChannel, startResponseLoss, attaches, channels, attachments, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, realModelCompleted: realModel && terminal, externalModelCalls: realModelCalls })}\n`)
           } finally {
             controller.abort(new Error('probe complete'))
             await pending
@@ -372,6 +424,7 @@ async function main(): Promise<void> {
         } finally { retained.close() }
         process.stdout.write(`${JSON.stringify({ passed: true, retirement: true, runtimeCrash, realRuntime: runtime.runtimeId, cancelledBeforeDisconnect: !runtimeCrash, waitsForConnectedDesktop: true, retiresAfterDisconnect: true, transcriptSurvivesDaemonStop: true, externalModelCalls: 0 })}\n`)
       } finally {
+        releaseRealResponse()
         server.closeAllConnections()
         await new Promise<void>(resolve => server.close(() => resolve()))
       }

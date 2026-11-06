@@ -1,5 +1,124 @@
 # 进度与证据
 
+## 2026-11-06 Real-provider recovery and direct-model acceptance
+
+At the user's request, repeated the affected flow with the configured default
+**gpt-6-astra / OpenAI Responses** provider. Total external model HTTP requests:
+**4**, with no automatic validation rerun. Both validation processes exited 0.
+
+- ACP recovery: **1 external request**. The current-source Host probe's new
+  `--real-model` mode used real OpenCode and the actual provider response. An
+  isolated Electron Main process read the saved encrypted settings, decrypted
+  credentials in memory, and forwarded one request over a loopback SSH tunnel.
+  The provider returned HTTP 200. The probe held delivery of that real response,
+  killed its relay and made the first reconnect unavailable, then waited for the
+  original channel to close. Reattachment reached live state while the Runtime
+  was waiting; releasing the response completed the original task with the exact
+  expected `RECOVERY_OK` answer. Counts: **2 connections, 2 channels, 1 attach,
+  1 Prompt start**. No synthetic model response or second Prompt submission.
+- Direct model: **3 external requests** through the existing
+  `tests/support/remote-direct-model-provider-live.ts` production fixture. The
+  model selected the remote read tool, read the actual uploaded token file,
+  returned its exact token, and repeated it in a follow-up without tools. One
+  completed read; attachment transfer bytes were absent from the model prompt;
+  conversation history retained the result. This verifies the normal direct
+  tool/provider path, not resumption of an interrupted direct-model write.
+
+The Host probe accepts `GB_PROBE_MODEL_URL` (a separately credentialed loopback
+forwarder), `GB_PROBE_MODEL_NAME` and `GB_PROBE_MODEL_PROTOCOL` for the real mode;
+provider credentials are not passed to the Host or written into the probe. The
+forwarder used an isolated Electron user-data directory with the existing
+`Local State.os_crypt`, copied before Electron initialization. Credential
+snapshots, profiles, local/remote bundles and owned test resources were removed
+after both processes exited; existing user daemons were untouched.
+
+Standard typecheck, probe ESLint and diff checks passed. This validates real model
+requests and Runtime completion under controlled channel failure, with response
+delivery deliberately gated. It is not a physical network outage during provider
+generation or installed Desktop UI acceptance. Earlier full-suite failures remain
+as recorded below; installation deployment and UI acceptance remain outstanding.
+
+## 2026-11-06 Closed cached channels prevented task recovery
+
+Follow-up review found a gap in the stale-generation fixture: it invalidated the
+channel but threw a generic transport error, while production throws
+`StaleRemoteRuntimeGenerationError`. Using the actual error reproduced an
+unwanted cancellation escalation. The shared recovery classifier now treats this
+transport-generation error as transient; explicit binding mismatch and Host
+identity failures remain terminal. The diagnostic error-type allowlist also
+retains the generation error. A delayed-close regression verifies cancellation
+during stale-channel cleanup does not attach later, releases its channel permit
+after cleanup, and leaves the original operation recoverable.
+
+Review validation: the six related suites passed **443 tests, 1 skipped** before
+the additional delayed-close case; the final three directly changed suites
+(`acp-remote-runtime`, `remote-task-recovery`, `desktop-diagnostics`) passed
+**152 tests** including that case. Standard typecheck passed. The final source
+was bundled again and the shared Linux `--closed-channel` probe passed with
+**2 connections, 2 channels, 1 attach, 1 Prompt start**, readiness before terminal,
+and **0 external model calls**. This review did not repeat the full repository
+suite; its previously recorded unrelated failures below remain unresolved.
+
+Reproduced two branches in `AcpRemoteRuntime`: after an accepted task loses its
+channel, `getSession` returns the cached attached session before checking the
+channel; after a lost start response it removes only the session, leaving the
+closed context for `openSession`. Repeated task recovery can therefore reuse the
+same unusable channel. Earlier transcript-interruption tests threw an error but
+kept their mock channel usable, so they did not exercise this lifetime boundary.
+
+The fix checks channel lifetime/generation before session reuse, evicts only the
+transport-owned cache, and uses the existing persisted binding to attach the
+original task. It adds no state machine, protocol or database schema. Protocol
+`closed`/`transport` failures now share the existing transient-error classifier,
+preventing transcript cleanup from cancelling an accepted task on these errors.
+The connection pool still owns connection replacement; task recovery retains its
+existing finite retry policy. Binary transport recovery is retained where it
+already works; this change repairs the handoff after that channel has closed.
+
+Desktop diagnostics now preserve bounded protocol reason/method/RPC-code fields
+through persistence and export, including wrapped errors. Unknown fields and raw
+messages remain excluded. The installed November 6 logs contain only error types,
+so this reproduction is not proof that every reported failure had this cause.
+
+Validation on current source:
+
+- New closed-channel tests failed before the fix. Regressions cover accepted
+  tasks, lost start responses, stale generations before close notification, a
+  failed reopen followed by successful attachment, and transient errors without
+  cancellation. Existing cancellation, initialization retry, semantic ACK and
+  recovery-readiness tests remain in the related suites.
+- Shared Linux x64 over VPN: `scripts/remote-recovery-host-probe.ts --closed-channel`
+  kills its own relay and makes the first reconnect unavailable, waits for actual
+  channel closure, then restores connectivity. The same probe bundled with the
+  HEAD version of `acp-remote-runtime.ts` failed its recovery-readiness assertion.
+  The fixed source passed: **2 connections, 2 channels, 1 attach, 1 Prompt start**;
+  readiness arrived while real OpenCode remained active. Cancellation/disposal
+  completed in probe cleanup. The one-time fault is scoped to the test operation,
+  rather than being injected again on every replacement channel.
+- Real Host `--live-disconnect` and `--start-response-loss` controls also passed,
+  each with **1 Prompt start**. The fixture uses actual Agent/Runtime processes and
+  authenticated pipe relays on the Host, with local scripted model responses; it
+  is not an installed Electron UI or physical network-outage acceptance.
+- `tests/remote-direct-model.live.test.ts`: **2 passed** over real SSH, including
+  file/search/process tools, long output, timeout, concurrent cancellation and
+  provider failure after a remote write without replay. This path shares the
+  connection infrastructure but does not use `AcpRemoteRuntime` session caching.
+- Final focused command: `npx.cmd vitest run src/main/agent/acp-remote-runtime.test.ts
+  src/main/remote-agent/managed-remote-acp-runtime.test.ts
+  src/main/remote-agent/remote-task-recovery.test.ts
+  src/main/remote-agent/protocol-remote-runtime-channel.test.ts
+  src/main/desktop-diagnostics.test.ts src/main/ipc.test.ts`:
+  **442 passed, 1 skipped** across six files.
+- Standard typecheck and full-repository lint passed. Full Vitest run:
+  **6,932 passed, 98 skipped, 2 failed tests plus 1 failed suite setup** (3 failed
+  files). The remaining failures are OpenCode selection-isolation setup
+  (`spawnSync npm.cmd EINVAL`), overlay Electron hit-testing timeout and workspace
+  Files Electron focus timeout. Full-repository acceptance is therefore not green.
+- External model calls: **0**. Probe processes and task-local/remote temporary
+  artifacts were cleaned. No user daemon was replaced or stopped. Installed
+  Desktop UI deployment/acceptance and confirmation against the original incident
+  remain outstanding; this entry records source-level fixes and Host evidence.
+
 ## 2026-10-27 Tool failure no longer overrides Runtime completion
 
 Reproduced in IPC regression tests: both plain and remote-provenance streams

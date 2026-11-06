@@ -61,6 +61,7 @@ const safeErrorTypes = new Set([
   'RemoteOperationTimeoutError',
   'ProtocolRemoteRuntimeChannelError',
   'RemotePromptRecoveryUnavailableError',
+  'StaleRemoteRuntimeGenerationError',
   'StartupPrerequisiteError',
   'SyntaxError',
   'TimeoutError',
@@ -126,7 +127,37 @@ export type DesktopDiagnosticRecord = Readonly<{
   reason?: string
   exitCode?: number
   mcp?: DesktopMcpDiagnosticMetadata
+  remote?: RemoteFailureMetadata
 }>
+
+type RemoteFailureMetadata = Readonly<{ reason: string; method?: string; rpcCode?: number }>
+const remoteFailureReasons = new Set(['capability-mismatch', 'binding-mismatch', 'protocol', 'capacity', 'closed', 'remote', 'transport', 'aborted'])
+const remoteFailureMethods = new Set([
+  'runtime/openAcpChannel', 'runtime/preparePrompt', 'runtime/startPrompt',
+  'runtime/attachPrompt', 'runtime/pagePromptTranscript', 'runtime/ackPromptTranscript',
+  'runtime/resumeAcpChannel', 'runtime/replayAcpChannel', 'runtime/respondToQuestion'
+])
+
+function normalizeRemoteFailure(value: unknown): RemoteFailureMetadata | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const candidate = value as Partial<RemoteFailureMetadata>
+  if (typeof candidate.reason !== 'string' || !remoteFailureReasons.has(candidate.reason)) return undefined
+  return {
+    reason: candidate.reason,
+    ...(typeof candidate.method === 'string' && remoteFailureMethods.has(candidate.method) ? { method: candidate.method } : {}),
+    ...(Number.isSafeInteger(candidate.rpcCode) ? { rpcCode: candidate.rpcCode } : {})
+  }
+}
+
+function remoteFailureMetadata(error: unknown, errorType: string): RemoteFailureMetadata | undefined {
+  // Preserve protocol categories, never arbitrary messages, paths or payloads.
+  for (let depth = 0; depth < 4 && error instanceof Error; depth++, error = error.cause) {
+    if ((depth === 0 ? errorType : safeErrorType(error)) !== 'ProtocolRemoteRuntimeChannelError') continue
+    const details = error as Error & { reason?: unknown; remoteMethod?: unknown; remoteRpcCode?: unknown }
+    return normalizeRemoteFailure({ reason: details.reason, method: details.remoteMethod, rpcCode: details.remoteRpcCode })
+  }
+  return undefined
+}
 
 export type DesktopDiagnosticsOptions = Readonly<{
   maximumFileBytes?: number
@@ -216,6 +247,8 @@ export function normalizeDesktopDiagnosticRecord(
   const code = safeCode(candidate.code)
   const mcp = component === 'runtime' && code === 'runtime.mcp.failed'
     ? normalizeMcpMetadata(candidate.mcp) : undefined
+  const remote = component === 'runtime' && code === 'runtime.run.failed'
+    ? normalizeRemoteFailure(candidate.remote) : undefined
   const rendererGone = component === 'desktop' && stage === 'renderer' &&
     code === 'desktop.renderer.gone'
   return Object.freeze({
@@ -226,6 +259,7 @@ export function normalizeDesktopDiagnosticRecord(
     errorType: safeStoredErrorType(candidate.errorType),
     message: fixedMessage(component, stage),
     ...(mcp ? { mcp } : {}),
+    ...(remote ? { remote } : {}),
     ...(rendererGone && typeof candidate.reason === 'string' &&
       rendererExitReasons.has(candidate.reason) ? { reason: candidate.reason } : {}),
     ...(rendererGone && Number.isSafeInteger(candidate.exitCode)
@@ -298,15 +332,17 @@ export class DesktopDiagnostics {
     }
     let record: DesktopDiagnosticRecord
     try {
+      const errorType = safeErrorType(failure.error)
       const normalized = normalizeDesktopDiagnosticRecord({
         timestamp: this.#now().toISOString(),
         component: failure.component,
         stage: failure.stage,
         code: failure.code,
-        errorType: safeErrorType(failure.error),
+        errorType,
         reason: failure.reason,
         exitCode: failure.exitCode,
-        mcp: failure.mcp
+        mcp: failure.mcp,
+        remote: remoteFailureMetadata(failure.error, errorType)
       })
       if (normalized === undefined) {
         return Promise.reject(

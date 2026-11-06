@@ -515,6 +515,19 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 - Agent 把 ACP session update、permission decision 和唯一 Prompt 终态写入有界语义
   transcript。Main 不恢复旧 JSON-RPC Promise，也不重发 `session/prompt`；Fresh Desktop
   只对同一 controller/binding/operation 执行 takeover、attach 和 ACK-exclusive page。
+- An in-memory attached session is reusable only while its channel is open and
+  its transport generation is current. Before opening or reusing a session,
+  Desktop evicts a closed/stale channel and its cached session, releases that
+  channel's permit, and reopens through the existing persisted binding and
+  `attachPrompt` path. The Agent-owned operation and committed transcript cursor
+  survive this eviction; it does not prepare or submit another Prompt. Failure
+  to reopen leaves the binding available for the existing bounded task retry.
+  This is also required after an unconfirmed start response. Transient transport
+  and channel-closed errors, including `StaleRemoteRuntimeGenerationError`, use
+  the same classification as task recovery and do not invoke cancellation
+  escalation. A stale transport is retryable; an explicit binding/Host identity
+  rejection remains terminal. Explicit user cancellation still follows the
+  existing cancellation path.
 - 每个 Agent 语义 sequence 在 Main 映射为零到多个公开事件，最后追加内部 checkpoint。
   Desktop 在同一 SQLite 事务中去重 provenance、归并原 assistant message，并在 checkpoint
   时提交 Task 终态；事务成功后生成器才继续并向 Agent ACK。断电发生在同一 sequence
@@ -963,6 +976,13 @@ v32 保留项目及关联用户数据，并加入 remote-recoverable Task/messag
 四列，并删除旧 Runtime 验证表。
 
 ## Agent 有界诊断
+
+Desktop Runtime failure records additionally retain allowlisted protocol reasons,
+known Runtime method names and integer RPC error codes when present, including
+those on wrapped causes. Export revalidates these fields. Raw protocol messages,
+response bodies, workspace paths and credentials are not copied. This metadata
+does not establish task correlation or connection generation; old records that
+contain only an error type cannot retrospectively identify a disconnect's cause.
 
 Detached Agent 不依赖 stdio 留存故障证据。每个 installation 在固定私有目录
 `~/.goodbuddy/state/<installationId>/diagnostics/` 中维护

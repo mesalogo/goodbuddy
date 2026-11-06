@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RemoteChannelClosedError, RemoteOperationTimeoutError } from '../agent/acp-remote-runtime'
 import { ProtocolRemoteRuntimeChannelError } from './protocol-remote-runtime-channel'
 import { RemoteAgentConnectionError } from './remote-agent-connection-manager'
+import { StaleRemoteRuntimeGenerationError } from '../agent/remote-runtime-channel'
 import { isTransientRemoteRecoveryError, recoverRemoteTaskWithRetry, REMOTE_TASK_RECOVERY_DELAYS_MS } from './remote-task-recovery'
 
 vi.mock('node:timers/promises', () => {
@@ -16,6 +17,16 @@ vi.mock('node:timers/promises', () => {
 afterEach(() => vi.useRealTimers())
 
 describe('remote task reattachment retry', () => {
+  it('retries a stale transport generation without treating it as an identity rejection', async () => {
+    vi.useFakeTimers()
+    const error = new StaleRemoteRuntimeGenerationError()
+    expect(isTransientRemoteRecoveryError(error)).toBe(true)
+    const recover = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined)
+    const pending = recoverRemoteTaskWithRetry(recover, new AbortController().signal, vi.fn())
+    await vi.advanceTimersByTimeAsync(1_000)
+    await pending
+    expect(recover).toHaveBeenCalledTimes(2)
+  })
   it('backs off transient failures and stops after success', async () => {
     vi.useFakeTimers()
     const recover = vi.fn().mockRejectedValueOnce(new RemoteChannelClosedError('读取 Agent 语义记录'))

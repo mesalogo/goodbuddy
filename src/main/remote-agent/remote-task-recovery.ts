@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { RemoteChannelClosedError, RemoteOperationTimeoutError } from '../agent/acp-remote-runtime'
 import { ProtocolRemoteRuntimeChannelError } from './protocol-remote-runtime-channel'
 import { RemoteAgentConnectionError } from './remote-agent-connection-manager'
+import { StaleRemoteRuntimeGenerationError } from '../agent/remote-runtime-channel'
 
 // Only reattach/read an already accepted task. Never wrap prompt submission
 // or a tool invocation with this retry policy.
@@ -9,6 +10,7 @@ export const REMOTE_TASK_RECOVERY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_0
 
 export function isTransientRemoteRecoveryError(error: unknown): boolean {
   if (error instanceof RemoteAgentConnectionError) return error.disposition === 'transient'
+  if (error instanceof StaleRemoteRuntimeGenerationError) return true
   if (error instanceof RemoteChannelClosedError || error instanceof RemoteOperationTimeoutError) return true
   return error instanceof ProtocolRemoteRuntimeChannelError &&
     (error.reason === 'transport' || error.reason === 'closed')
