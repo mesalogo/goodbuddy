@@ -375,13 +375,21 @@ records are listed separately and do not introduce another feature status.
   prompt-wide output-token total, and Runtime output uses transport
   backpressure instead of cancellation when GoodBuddy buffers fill;
   recovery separately reports network, Agent, Runtime, committed-event cursor,
-  completion, or failure/retry and blocks only the affected project. A real
-  Linux x64 Host has covered short and long detach, forced local harness exit,
+  completion, or failure/retry and blocks only the affected project. Desktop
+  discards closed or stale cached channels before reattaching the original
+  accepted operation, including when its start response was lost. Transient
+  transport errors do not cancel accepted work; bounded retries, explicit
+  cancellation and terminal identity rejection retain their existing behavior.
+  This client-side recovery fix uses the existing Agent protocol and needs no
+  replacement of Agent `0.15.12`. Current-source Linux/OpenCode evidence and its
+  controlled-failure limits are recorded in
+  [unified execution progress](./docs/features/unified-execution/progress.md).
+  A real Linux x64 Host has covered short and long detach, forced local harness exit,
   concurrency, SSH relay loss, cancellation, definite and uncertain provider
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.12`, unchanged for the current Desktop release candidate `0.17.1`; formal
+  `0.15.12`, unchanged for the current Desktop release candidate `0.17.2`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -1046,7 +1054,11 @@ records are listed separately and do not introduce another feature status.
   or experience feedback with an optional email and one screenshot.
   Diagnostics are not uploaded by default; users can explicitly attach a
   bounded recent Desktop diagnostic summary. Failed submission preserves the
-  draft, diagnostic choice, and request ID. Conversations, Prompts,
+  draft, diagnostic choice, and request ID. Remote Runtime failure records retain
+  available allowlisted protocol categories, method names and integer error codes,
+  including wrapped causes, without raw response bodies. This does not identify
+  an old incident's cause when its earlier record lacks those fields.
+  Conversations, Prompts,
   credentials, file contents, paths, raw provider responses, and remote Agent
   logs are never attached.
 - [x] **Private-network compatibility**: Permits in-app HTTP plus invalid,
@@ -1056,18 +1068,28 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.17.1`, paired with the published Agent `0.15.12`, with
+- The current Desktop candidate is `0.17.2`, paired with the published Agent `0.15.12`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
   `0.2.1-rc.2`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.17.2` repairs reattachment after a cached remote channel closes or
+  becomes stale and avoids unintended cancellation of accepted tasks. Exported
+  Desktop diagnostics retain bounded protocol failure details. Agent daemon,
+  protocol and Runtime locks are unchanged; Agent `0.15.12` is not republished.
+  Linux x64 development evidence includes controlled real-OpenCode recovery
+  and four real-provider requests; it is not installed-UI or physical network-outage
+  acceptance. Exact-candidate CI and six-target publication remain pending, with
+  no LoongArch build. See
+  [release preparation](./docs/development/release-preparation-0.17.2.md).
 - Desktop `0.17.1` brings content-column creation/editing for text and canvas
   notes, one-row new-entry controls and refined draft confirmations. Application
   error notifications now dismiss after five seconds without clearing drafts;
   success/information notifications retain three seconds. The canvas attachment
   commit adds regression coverage for an existing capability, not a new feature.
-  Agent `0.15.12`, schema 65 and Runtime pins are unchanged. Exact-candidate CI,
-  native packaging and public verification remain pending; six Desktop targets,
-  no LoongArch or new Agent release. See
+  Agent `0.15.12`, schema 65 and Runtime pins are unchanged. Main CI and the
+  six-target tag workflow succeeded; GitHub published stable `v0.17.1` on
+  2026-11-05. This publication fact does not extend installed-package acceptance.
+  No LoongArch or new Agent release. See
   [release preparation](./docs/development/release-preparation-0.17.1.md).
 - Desktop `0.17.0` fixes visible Windows NSIS update progress, including
   updates initiated by older clients, and launches the new version after

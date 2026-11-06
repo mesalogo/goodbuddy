@@ -2,6 +2,34 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.17.2",
+      "releasedAt": "2026-11-06",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**修复远端任务断线恢复**：远端任务已接收后，如果连接关闭或连接状态失效，恢复时会重新建立通道并接管原任务，不再反复使用失效连接。避免因此误取消任务或重复提交原请求，沿用现有有限重试与主动取消规则。",
+            "**保留更有用的远端失败诊断**：排查远端运行失败时，导出的桌面诊断会保留可用的错误类别、相关操作和错误码。不会附带原始响应正文、工作区路径或凭据。"
+          ],
+          "notices": [
+            "继续配套 Agent `0.15.12`，已使用此版本的 Host 无需重新安装；数据库 schema 和内置 Runtime 版本不变。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Fix recovery of disconnected remote tasks**: After a remote task has been accepted, recovery opens a replacement channel and reattaches the original task when its connection closes or becomes stale, instead of repeatedly reusing the invalid connection. This avoids unintended cancellation or duplicate submission caused by those failures while preserving existing bounded retries and explicit cancellation behavior.",
+            "**Retain more useful remote failure diagnostics**: Exported desktop diagnostics preserve available error categories, related operations, and error codes when investigating remote execution failures. Raw response bodies, workspace paths, and credentials are excluded."
+          ],
+          "notices": [
+            "Continues to use Agent `0.15.12`; Hosts already using this version do not need reinstallation. The database schema and bundled Runtime versions are unchanged."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.17.1",
       "releasedAt": "2026-11-05",
       "notes": {

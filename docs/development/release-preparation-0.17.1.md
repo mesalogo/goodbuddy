@@ -2,6 +2,20 @@
 
 Date: 2026-11-05.
 
+## Publication status checked on 2026-11-06
+
+- Final approved commit: `8474737b0f310950cf8c65ca843b961ed3c2c89a`.
+  Desktop main CI `42029331862`, Agent validation `42029331747` and website
+  deployment `42029331771` all succeeded.
+- The user approved the exact commit and `v0.17.1`. A clean detached checkout
+  preserved unrelated PR article edits. Both remote annotated tags were
+  verified against the approved commit; the tag was not moved or recreated.
+- Tag workflow `42033747326` succeeded on attempt 1. GitHub reports a public
+  stable Latest release published at `2026-11-05T14:16:27Z`.
+- These are workflow and GitHub publication facts, not independent
+  OSS/website or installed-package acceptance. Earlier candidate checkpoints
+  below are preserved as history. Agent remains `0.15.12`.
+
 ## Scope and approval
 
 - Published baseline: `v0.17.0`, commit
