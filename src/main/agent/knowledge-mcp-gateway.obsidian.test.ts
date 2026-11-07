@@ -153,7 +153,7 @@ describe('Obsidian gateway', () => {
     for (const revoked of [token, writeToken, mixedToken]) {
       expect(() => gateway.getAvailableToolNames(revoked)).toThrow('Tool authorization is unavailable')
     }
-    expect(gateway.getAvailableToolNames(knowledgeToken)).toEqual(['knowledge_list', 'knowledge_search'])
+    expect(gateway.getAvailableToolNames(knowledgeToken)).toEqual(['knowledge_read', 'knowledge_list', 'knowledge_search'])
     const replacement = gateway.grant('replacement', [], signal, 'none', undefined, undefined, undefined, undefined,
       { settings: { vaultPath }, access: 'write' })!
     expect(gateway.getAvailableToolNames(replacement)).toEqual([...obsidianReadToolNames, ...obsidianWriteToolNames])

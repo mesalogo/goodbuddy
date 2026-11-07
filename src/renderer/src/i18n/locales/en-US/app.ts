@@ -583,8 +583,11 @@ export const app = {
   },
   composer: {
     references: {
-      providers: { feishu: 'Feishu', wecom: 'WeCom' },
-      listLabel: 'External documents to reference',
+      messageSummary: 'Referenced documents ({{count}})',
+      providers: { local: 'Local knowledge', feishu: 'Feishu', wecom: 'WeCom' },
+      listLabel: 'Documents to reference',
+      localScopeOff: 'Enable a local knowledge library for this conversation first.',
+      status: { queued: 'Pending', parsing: 'Parsing', indexing: 'Indexing', ready: 'Ready', failed: 'Parsing failed' },
       typeToSearch: 'Type a document title to search. Picked documents are sent as references.',
       searching: 'Searching "{{query}}"',
       loading: 'Searching…',

@@ -1,4 +1,5 @@
 // Composer textarea sizing and attachment size formatting, moved out of App.tsx.
+import { composerInputValue, type ComposerInputElement } from './composer-input-dom';
 
 export function formatAttachmentSize(size: number): string {
   return `${Math.max(1, Math.ceil(size / 1024))} KB`;
@@ -8,7 +9,7 @@ const composerTextareaMinHeight = 72;
 const composerTextareaMaxHeight = 220;
 
 const composerTextareaSizes = new WeakMap<
-  HTMLTextAreaElement,
+  ComposerInputElement,
   { height: number; value: string }
 >();
 
@@ -22,11 +23,11 @@ function clampComposerTextareaHeight(height: number): number {
 // Sizing reads scrollHeight, which forces a synchronous layout of the whole
 // window. Skip the read when the result is known, and avoid the extra
 // "auto" reset layout when text was only appended (it can only grow).
-export function resizeComposerTextarea(textarea: HTMLTextAreaElement | null): void {
+export function resizeComposerTextarea(textarea: ComposerInputElement | null): void {
   if (!textarea) {
     return;
   }
-  const value = textarea.value;
+  const value = composerInputValue(textarea);
   const previous = composerTextareaSizes.get(textarea);
   const previousHeightApplied =
     previous !== undefined &&

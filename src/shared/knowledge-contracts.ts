@@ -269,6 +269,23 @@ export type KnowledgeSettingsUpdateInput = z.infer<
   typeof knowledgeSettingsUpdateInputSchema
 >
 
+export const knowledgeDocumentSearchInputSchema = z.object({
+  libraryIds: z.array(idSchema).max(20),
+  query: z.string().trim().min(1).max(512)
+}).strict()
+export type KnowledgeDocumentSearchInput = z.infer<typeof knowledgeDocumentSearchInputSchema>
+export type KnowledgeDocumentMatch = {
+  id: string; libraryId: string; libraryName: string; title: string; path: string; status: string
+}
+
+export const knowledgeDocumentReadInputSchema = z.object({
+  documentId: idSchema,
+  ordinal: z.number().int().min(0).default(0),
+  offset: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).max(24_000).default(12_000)
+}).strict()
+export type KnowledgeDocumentReadInput = z.infer<typeof knowledgeDocumentReadInputSchema>
+
 export const knowledgeChunksListInputSchema = z
   .object({
     knowledgeBaseId: idSchema,

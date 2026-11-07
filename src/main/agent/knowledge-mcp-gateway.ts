@@ -135,6 +135,7 @@ export type GoodBuddyBuiltinToolName =
 
 const {
   knowledge_list: knowledgeListTool,
+  knowledge_read: knowledgeReadTool,
   knowledge_search: knowledgeSearchTool
 } = knowledgeScopedDataToolCatalog
 const {
@@ -781,6 +782,21 @@ export class KnowledgeMcpGateway {
       throw new Error('Tool authorization is unavailable: the request has ended or the token is invalid')
     }
     return capability
+  }
+
+  async readDocument(token: string, rawInput: unknown, signal?: AbortSignal) {
+    const capability = this.getCapability(token)
+    const input = knowledgeReadTool.inputSchema.parse(rawInput)
+    const effectiveSignal = AbortSignal.any([capability.signal, capability.brokerController.signal, ...(signal ? [signal] : [])])
+    effectiveSignal.throwIfAborted()
+    const document = await this.knowledgeService.database.getDocument(input.documentId)
+    if (!document || !capability.libraryIds.includes(document.knowledgeBaseId)) {
+      throw new Error('Document is unavailable in the enabled knowledge libraries')
+    }
+    const page = await this.knowledgeService.database.readDocumentPage(input)
+    effectiveSignal.throwIfAborted()
+    return { documentId: document.id, title: document.title, status: document.metadata.status ?? 'ready', ...page,
+      ...(!page.text && !page.chunkId ? { message: 'No enabled parsed text is available at this position. Check the document status; do not infer its contents.' } : {}) }
   }
 
   async search(
@@ -1770,6 +1786,8 @@ export class KnowledgeMcpGateway {
         return this.callStoryGraphTool(token, name, input, signal)
       case 'knowledge_list':
         return { libraries: await this.listLibraries(token, input) }
+      case 'knowledge_read':
+        return this.readDocument(token, input, signal)
       case 'knowledge_search':
         return { references: await this.search(token, input, signal) }
       case 'note_list':

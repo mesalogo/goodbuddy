@@ -83,3 +83,80 @@
 .context-chip--reference > svg {
   flex: 0 0 auto;
 }
+.external-reference-menu__detail {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+.composer-inline-input {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
+.composer-inline-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.composer-inline-reference {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: min(280px, 100%);
+  margin: 0 var(--space-1);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+  vertical-align: baseline;
+  white-space: nowrap;
+  user-select: all;
+}
+.composer-inline-reference > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer-inline-reference > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.composer-inline-reference > button {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.composer-inline-reference > button:hover {
+  background: var(--surface-muted);
+}
+.message-document-references ol {
+  padding-left: var(--space-6);
+}
+
+.message-document-references li {
+  margin-block: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.message-document-references__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.message-document-references__title svg {
+  flex-shrink: 0;
+}
+
+.message-document-references small {
+  display: block;
+  color: var(--text-secondary);
+}

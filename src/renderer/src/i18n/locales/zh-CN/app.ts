@@ -566,8 +566,11 @@ export const app = {
   },
   composer: {
     references: {
-      providers: { feishu: '飞书', wecom: '企业微信' },
-      listLabel: '可引用的外部文档',
+      messageSummary: '引用文档（{{count}}）',
+      providers: { local: '本地知识库', feishu: '飞书', wecom: '企业微信' },
+      listLabel: '可引用的文档',
+      localScopeOff: '请先在当前对话中启用本地知识库。',
+      status: { queued: '待解析', parsing: '解析中', indexing: '索引中', ready: '已就绪', failed: '解析失败' },
       typeToSearch: '输入文档标题搜索，选择后作为引用发送',
       searching: '搜索“{{query}}”',
       loading: '正在搜索…',

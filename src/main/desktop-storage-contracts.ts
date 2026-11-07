@@ -72,6 +72,7 @@ export const knowledgeStorageMethods = [
   'updateKnowledgeTask', 'cancelKnowledgeTask', 'interruptActiveKnowledgeTasks', 'pruneKnowledgeTasks',
   'upsertSource', 'listSources', 'listSourcesForSnapshot', 'getSource', 'removeSource',
   'upsertDocument', 'getDocumentByParsedResultId', 'getDocument', 'listDocuments',
+  'searchDocumentNames', 'readDocumentPage',
   'listDocumentsForSource', 'listDocumentsForLibraryRebuild', 'listDocumentsForSnapshot',
   'getDocumentChunkCounts', 'removeDocument', 'removeEvidenceForDocument',
   'pruneUnreferencedGeneratedGraph', 'listChunks', 'listChunksPage', 'getChunkForReference',

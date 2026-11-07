@@ -165,10 +165,12 @@ import { createComposerMenuStore } from "./composer-menu-store";
 import {
   createExternalReferenceStore,
   promptWithReferences,
+  referenceDraftText,
   type ExternalReferenceSources,
 } from "./external-references";
 import type { ComposerMenuOption, RuntimeActionChoice } from "./ComposerMenuSelect";
 import { formatAttachmentSize, resizeComposerTextarea } from "./composer-textarea";
+import type { ComposerInputElement } from './composer-input-dom';
 import { Composer } from "./Composer";
 import { useComposerActions } from "./use-composer-actions";
 import { useKnowledgeWorkspaceActions } from "./use-knowledge-workspace-actions";
@@ -1802,7 +1804,7 @@ function App(): React.JSX.Element {
     [],
   );
   const hydratingArtifactIds = useRef(new Set<string>());
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<ComposerInputElement>(null);
   const attachmentButtonRef = useRef<HTMLButtonElement>(null);
   const [chatScrollSnapshots, setChatScrollSnapshots] = useState<
     Record<string, ChatScrollSnapshot>
@@ -4641,6 +4643,7 @@ function App(): React.JSX.Element {
       return next;
     });
     composerDrafts.delete(conversationId);
+    externalReferences.clear(conversationId);
     setChatScrollSnapshots((current) => {
       const next = { ...current };
       delete next[conversationId];
@@ -5071,7 +5074,7 @@ function App(): React.JSX.Element {
     const referenceSnapshot = queuedInput || command || promptOverride !== undefined
       ? []
       : externalReferences.get(activeId);
-    const commandArguments = typedText;
+    const commandArguments = command ? referenceDraftText(typedText, externalReferences.get(activeId)) : typedText;
     const prompt =
       queuedInput?.prompt ??
       (command

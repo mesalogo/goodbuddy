@@ -13,6 +13,7 @@ import {
   type Message
 } from './ChatTimeline'
 import { readStylesheetBundle } from './stylesheet-bundle'
+import { formatExternalReferences } from './external-references'
 
 const markdownRenderProbe = vi.hoisted(() => vi.fn())
 const htmlRenderProbe = vi.hoisted(() => vi.fn())
@@ -75,6 +76,31 @@ function createMessages(): Message[] {
 }
 
 describe('ChatTimeline', () => {
+  it.each([false, true])('collapses user document references and copies only the visible body (blocks=%s)', async blocks => {
+    const body = '@报告.pdf [1] 这个文件是什么？'
+    const content = `${body}\n\n${formatExternalReferences([{ provider: 'local', id: 'local-doc', title: '报告.pdf', libraryName: 'AAA', path: 'C:\\报告.pdf' }])}`
+    const message: Message = { id: 'user-ref', role: 'user', content, state: 'complete', createdAt: 1,
+      ...(blocks ? { blocks: [{ id: 'text', type: 'text' as const, content }] } : {}) }
+    const view = render(<ChatTimeline {...callbacks} artifactById={new Map()} conversationId="references"
+      hiddenMessageCount={0} isUnusedConversation={false} locale="zh-CN" messageStartIndex={0} totalMessageCount={1} messages={[message]} />)
+    expect(screen.getByText(body)).toBeVisible()
+    const details = view.container.querySelector<HTMLDetailsElement>('.message-document-references')!
+    expect(details.open).toBe(false)
+    expect(details.querySelector('summary')).toHaveTextContent('引用文档（1）')
+    expect(view.container).not.toHaveTextContent('knowledge_read')
+    expect(view.container).not.toHaveTextContent('documentId:')
+    details.open = true
+    fireEvent(details, new Event('toggle'))
+    expect(screen.getByText('报告.pdf')).toBeVisible()
+    expect(screen.getByText('本地知识库 · AAA')).toBeVisible()
+    expect(screen.getByText('C:\\报告.pdf')).toBeVisible()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: /复制/u })))
+    expect(callbacks.onCopyMessage).toHaveBeenLastCalledWith(body)
+    view.rerender(<ChatTimeline {...callbacks} artifactById={new Map()} conversationId="references"
+      hiddenMessageCount={0} isUnusedConversation={false} locale="zh-CN" messageStartIndex={0} totalMessageCount={1} messages={[{ ...message, role: 'assistant' }]} />)
+    expect(view.container).toHaveTextContent('knowledge_read')
+  })
+
   it('opens persisted tool and cancelled subagent output through the conversation-scoped reader', async () => {
     const readOutput = vi.fn(async ({ handle }: { handle: string }) => ({
       content: `stored:${handle}`, cursor: 0, nextCursor: 20, totalBytes: 20, eof: true

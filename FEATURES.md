@@ -717,6 +717,7 @@ records are listed separately and do not introduce another feature status.
   sources do not duplicate rows, while directories retain grouped documents and
   failed sources retain recovery actions. Task history and secondary operations
   remain reachable from the consolidated controls.
+- [x] **Reference local knowledge files with @**: Search by filename in the conversation's enabled local libraries and distinguish duplicate names by library and source path. Selected documents appear inline at the mention position with their source icons; type before or after them, delete whole references, and undo or redo edits. The model reads the selected document IDs through `knowledge_read`, with pagination for long text. Uses the existing knowledge-tool Runtime support and scope; see [validation](./docs/features/knowledge-base/progress.md).
 - [x] **External knowledge-base connections**: Manage Dify, FastGPT,
   and RAGFlow instances from the Knowledge page, then discover remote
   knowledge bases or enter their IDs and verify bindings with provider-specific

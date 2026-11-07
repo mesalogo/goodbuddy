@@ -102,6 +102,7 @@
 - [x] **MCP Tools**：显式启用的自定义 MCP 可按 Runtime 分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 和 DeepSeek Harness；Agent 子进程只获得按请求签发的本机回环权限，MCP 地址、命令和凭据保留在 Main，动态工具仍经过发现、执行记录与资源范围校验。直连模型与 Harness 的健康调用复用当前请求已发现的工具清单，不在每次调用前重复发现。
 - [x] **MCP Prompts 与 Resources 元数据**：MCP 测试仅在 Server 声明对应能力时发现有界的 Prompt、参数与 Resource 元数据，不读取 Resource 内容；Runtime 支持的 Prompt 可填入聊天草稿后继续编辑。OpenCode 可报告实验性 Resource 清单，Continue 当前版本明确不支持 Resources。
 - [x] **本地知识库**：支持文件、目录和网页导入、SQLite FTS5 检索及来源追溯。知识范围按对话保存，新对话默认不选择知识库；创建与检索高级参数默认折叠。文档区分可用、处理中和失败，支持打开来源、失败重试及移除来源前确认。
+- [x] **@ 引用本地知识库文件**：按文件名搜索当前对话已启用的本地库，通过库名和来源路径区分同名文件。选择后在正文原位置显示带来源图标的引用块，支持前后输入、整体删除和撤销重做。模型使用 `knowledge_read` 按选中的文档 ID 读取，长文本可继续分页。沿用知识库工具的 Runtime 支持范围和会话范围，见[验证记录](./docs/features/knowledge-base/progress.md)。
   内容来源与文档索引共用可搜索列表，单文档来源不重复占行，目录保留分组文档，失败来源保留恢复操作；任务历史和次级操作从统一入口访问。
 - [x] **外部知识库接入**：在知识库页面管理 Dify、FastGPT 和 RAGFlow 实例，通过目录或手工 ID 验证并绑定远端知识库，保留 Provider 专属检索配置和引用；对话支持按需检索及每次回答前检索。外部系统只负责知识检索，不接入其 App、Chat、Workflow 或 Agent，也不批量同步、本地索引或修改远端内容。被回答引用的有界检索片段随会话保存在本机。详见[外部知识库接入 PRD](./docs/features/knowledge-base/external-knowledge-prd.md)。
 - **外部知识库验证记录**：三家 Provider 已通过真实服务、本机 HTTP MCP 和生产 IPC 短答案检查，Dify 另通过完整 App 输入区到回答及引用的链路。现有记录未覆盖 FastGPT/RAGFlow 桌面专属参数、复杂多库问答和远程回答前检索，详见[验证记录](./docs/features/knowledge-base/progress.md)。

@@ -3037,7 +3037,8 @@
   padding-top: var(--space-3);
 }
 
-.composer__input textarea {
+.composer__input textarea,
+.composer__input .composer-inline-input {
   display: block;
   width: 100%;
   min-height: 56px;
@@ -3053,7 +3054,8 @@
   line-height: 1.6;
 }
 
-.composer__input textarea:focus-visible {
+.composer__input textarea:focus-visible,
+.composer__input .composer-inline-input:focus-visible {
   outline: 0;
 }
 

@@ -40,6 +40,8 @@ export function createKnowledgeStoragePort(storage: Pick<DesktopStorageClient, '
     upsertDocument: (...args) => storage.call('knowledge', 'upsertDocument', args),
     getDocumentByParsedResultId: (...args) => storage.call('knowledge', 'getDocumentByParsedResultId', args),
     getDocument: (...args) => storage.call('knowledge', 'getDocument', args),
+    searchDocumentNames: (...args) => storage.call('knowledge', 'searchDocumentNames', args),
+    readDocumentPage: (...args) => storage.call('knowledge', 'readDocumentPage', args),
     listDocuments: (...args) => storage.call('knowledge', 'listDocuments', args),
     listDocumentsForSource: (...args) => storage.call('knowledge', 'listDocumentsForSource', args),
     listDocumentsForLibraryRebuild: (...args) => storage.call('knowledge', 'listDocumentsForLibraryRebuild', args),

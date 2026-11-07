@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Message } from './ChatTimeline'
+import { referencedMessagePresentation } from './external-references'
 
 type Expansion = { open: boolean; automaticOpen: boolean }
 type Override = Expansion & { messageId: string; scopeId?: string; id: string }
@@ -15,6 +16,7 @@ function currentDefault(message: Message, entry: Override): boolean | undefined 
   const automaticOpen = !child && message.state === 'streaming'
   if (entry.id === 'subagent') return child ? false : undefined
   if (entry.id === 'citations') return message.sourceReferences?.length ? false : undefined
+  if (entry.id === 'document-references') return message.role === 'user' && referencedMessagePresentation(message.content).references.length ? false : undefined
   if (entry.id === 'reasoning') return !blocks?.length && message.reasoning ? automaticOpen : undefined
   if (entry.id.startsWith('reasoning:')) {
     return blocks?.some(block => block.type === 'reasoning' && `reasoning:${block.id}` === entry.id) ? automaticOpen : undefined

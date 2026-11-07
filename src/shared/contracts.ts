@@ -2463,6 +2463,7 @@ export type DesktopApi = {
     onChanged: (listener: () => void) => () => void
   }
   knowledge: {
+    searchDocuments: (input: import('./knowledge-contracts').KnowledgeDocumentSearchInput) => Promise<import('./knowledge-contracts').KnowledgeDocumentMatch[]>
     externalInstancesList: () => Promise<import('./external-knowledge-contracts').ExternalKnowledgeInstanceSummary[]>
     externalInstancesSave: (input: import('./external-knowledge-contracts').ExternalKnowledgeInstanceSaveInput) => Promise<import('./external-knowledge-contracts').ExternalKnowledgeInstanceSummary>
     externalInstancesTest: (input: {instanceId:string}) => Promise<import('./external-knowledge-contracts').ExternalKnowledgeInstanceSummary>

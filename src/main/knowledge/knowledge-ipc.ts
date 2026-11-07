@@ -25,6 +25,7 @@ import {
 } from '../../shared/contracts'
 import {
   knowledgeChunkDeleteInputSchema,
+  knowledgeDocumentSearchInputSchema,
   knowledgeChunkPageSchema,
   knowledgeChunksListInputSchema,
   knowledgeChunkUpdateInputSchema,
@@ -398,6 +399,11 @@ export function registerKnowledgeIpcHandlers(
       await action(knowledgeIdSchema.parse(input))
     })
   }
+
+  registerHandler(ipcChannels.knowledgeSearchDocuments, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return knowledgeService.database.searchDocumentNames(knowledgeDocumentSearchInputSchema.parse(input))
+  })
 
   registerHandler(ipcChannels.knowledgeSearch, async (event, input: unknown) => {
     assertTrustedSender(event, window)

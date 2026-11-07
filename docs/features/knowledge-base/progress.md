@@ -16,6 +16,68 @@
 
 ## 验证证据
 
+### 2026-11-07 用户消息底部引用
+
+- 用户消息的生成引用说明改为底部默认收起的“引用文档（数量）”，展开显示来源图标、
+  文档名、平台、库名与路径或链接；工具读取提示和内部 ID 不进入展示 DOM。复制消息
+  只输出正文，模型和历史保存的完整提示保持原样。适用于本地知识库、飞书、企业微信。
+- 采用完整生成格式比对，未完成或附有后续正文的说明不拆分；助手回答保持原文。
+  复用消息展开状态，验证消息更新、滚动卸载后的展开状态保留及引用移除后的状态清理。
+- `npm test -- src/renderer/src/referenced-message-presentation.test.ts src/renderer/src/ChatTimeline.test.tsx src/renderer/src/message-expansion.test.tsx src/renderer/src/ChatHistoryPane.test.tsx src/renderer/src/ExternalReferences.test.tsx src/renderer/src/App.test.tsx`：6 文件、444 项通过。
+- `tests/local-knowledge-reference.electron.test.ts` 实际导入、选择两篇文档、发送、工具读取、
+  重载和点击展开通过；用户消息 DOM 不含 documentId 和分页提示。3 次本地 HTTP 请求、
+  2 次生产 knowledge_read，外部模型请求为 0。首次运行在既有编辑器方向键后插字断言
+  失败，原代码单独复跑通过；本次未修改该断言或编辑器行为。
+- `npm run typecheck`、`npm run lint`、`git diff --check` 通过。本轮未重跑全仓测试；
+  变更仅为桌面展示，未改桌面或远程 Runtime 协议。Electron 隔离目录已由测试清理。
+
+### 2026-11-07 正文内引用块
+
+- `@搜索词` 在原位置替换成来源图标、文档名和移除按钮组成的引用块，适用于本地知识库、
+  飞书和企业微信。正文前后继续输入、整体删除、撤销重做以及第二次 `@` 搜索均已接入。
+- 发送按正文顺序转换为 `@文件名 [序号]`，只附带仍在正文中的引用。已移除引用的元数据
+  暂留供撤销使用，发送或删除会话时释放。交互和存储边界已更新到 UI 与技术设计。
+- 单测覆盖来源图标、顺序、删除后不发送、退格／Delete、移除按钮、撤销重做、纯文本
+  剪贴板、换行和输入法确认键。编辑器、Composer、引用菜单和共享样式合计 64 项通过。
+- 真实 Electron 使用两个磁盘 TXT，验证正文内插入、方向键跨越引用、前后输入、退格、
+  撤销重做、Shift+Enter 后继续输入、第二次选择、浅深主题、发送及重载。模型协议服务
+  收到 3 次 HTTP 请求，生产 `knowledge_read` 执行 2 次；正文编号与选中顺序一致。
+  已查看浅深主题截图。本轮没有新增外部模型请求。
+- 回归中修正了输入节点因会话 key 改变而重建的问题，保留原有草稿恢复、图片重试和焦点
+  行为；完整 `App.test.tsx` 356 项复跑通过。Chromium 尾部换行改用 BR 与末尾占位节点，
+  实测确认后续打字不会吞掉换行。
+- 本轮全量运行跨越了长时间系统暂停，记录为 6,936 项通过、10 项失败、99 项跳过。
+  失败涉及 App、共享样式、IPC、原生提问与笔记采集，另有 OpenCode 隔离套件初始化超时。
+  修正输入节点与样式断言后，失败用例及 OpenCode 套件均已单独复跑通过；笔记采集真实
+  Electron 也通过。该次全量记录不是一次全绿运行。
+- 最终 `npm run typecheck`、`npm run lint`、`git diff --check` 通过。
+- 本次修改在 Renderer 完成，发送前恢复为现有纯文本协议，远程 Runtime 与桌面知识读取
+  接口未新增变更；前一节功能的 Host 验证见下方记录。
+
+### 2026-11-06 本地知识库 `@` 文档引用
+
+FR-LOCAL-REF／US-A-REF 已接入输入区候选、键盘选择、标签、发送及 `knowledge_read`。
+技术边界见[本地文档引用技术设计](./local-reference-technical-design.md)。
+
+- 定向回归覆盖 501 条旧文档之后的名称匹配、字面 `%`／`_`、空范围、越范围读取、取消、
+  中文和 emoji 连续分页、停用分块，以及同名文件路径、解析状态和范围变化后的迟到结果。
+- `tests/local-knowledge-reference.electron.test.ts` 从磁盘 TXT 导入开始，使用完整 App、
+  生产 Preload／IPC、解析 Worker 和 storage utility。输入完整文件名、Tab 选择、发送、
+  模型工具读取和会话重载通过。本地协议服务执行 2 次 HTTP 请求。
+- 同一 Electron 流程使用已配置的真实文本模型通过，两轮合计 4 次外部模型请求。最后一轮
+  显式计数确认生产 `knowledge_read` 执行 1 次，模型正确回答测试文档中的验收码。
+  模型设置在隔离目录中读取，原设置不写回；测试文件及副本均清理。
+- 输入到候选可用的实测约 283–305 ms，包含 250 ms 防抖。这是功能测试的
+  单次计时，不作为性能优化对比或全应用性能预算达标证据。
+- `tests/local-knowledge-reference.remote.test.ts` 在共享 Linux x64 Host 通过，使用当前源码
+  工具目录和桌面 MCP 网关，连续 5 页内容一致。没有远端持久文件；未逐一运行全部第三方 Runtime。
+- 定向回归 5 个文件、111 项通过；`npm run typecheck`、`npm run lint`、`git diff --check`
+  通过。中文技术说明扫描无阻断项；两处枚举属于排序字段和测试调用路径，保留。
+- `npm test`：592 个文件通过、21 个跳过、1 个失败；6,947 项通过、92 项跳过、1 项失败。
+  失败为 `overlay-layering.electron.test.ts` 的清除数据确认用例，鼠标命中检查等待窗口外
+  坐标 `(1118, 1004)` 超时。当前源码单独复跑及修改前 `b37b466a` 的隔离 worktree 均同样
+  失败，确认是已有问题。本次新增的 Electron 引用流程在全量中通过。
+
 ### 2026-09-27 独立评审 P2 修复
 
 - `DocumentsView` 将任务来源 ID 与维护用来源分开传递。目录和一对多 URL 的文档预览

@@ -1861,6 +1861,7 @@ const desktopApi: DesktopApi = {
     }
   },
   knowledge: {
+    searchDocuments: (input) => ipcRenderer.invoke(ipcChannels.knowledgeSearchDocuments, input),
     externalInstancesList: () => ipcRenderer.invoke(ipcChannels.externalInstancesList),
     externalInstancesSave: (input) => ipcRenderer.invoke(ipcChannels.externalInstancesSave,input),
     externalInstancesTest: (input) => ipcRenderer.invoke(ipcChannels.externalInstancesTest,input),

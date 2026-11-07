@@ -248,7 +248,7 @@ describe('WorkspacePrimitives', () => {
       /\.markdown-content\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.65;/u
     )
     expect(stylesheet).toMatch(
-      /\.composer__input textarea\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.6;/u
+      /\.composer__input textarea,\s*\.composer__input \.composer-inline-input\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.6;/u
     )
   })
 

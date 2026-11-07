@@ -1510,6 +1510,12 @@ export class ModelToolProvider implements ModelToolProviderLike {
       if (!context.imageToolBinding?.save) throw new Error('Image save capability is unavailable')
       return createTextToolResult(JSON.stringify(await context.imageToolBinding.save(argumentsValue, signal)))
     }
+    if (name === 'knowledge_read') {
+      if (!this.knowledgeGateway || !context.knowledgeCapabilityToken) throw new Error('知识库读取授权不可用')
+      return createTextToolResult(boundedJson(await this.knowledgeGateway.readDocument(
+        context.knowledgeCapabilityToken, argumentsValue, signal
+      ), '知识库文档无法序列化'))
+    }
     if (name === 'knowledge_list') {
       if (
         !this.knowledgeGateway ||

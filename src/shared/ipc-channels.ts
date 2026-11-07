@@ -409,6 +409,7 @@ export const ipcChannels = {
   knowledgeRetrySource: 'knowledge:source:retry',
   knowledgeRemoveSource: 'knowledge:source:remove',
   knowledgeSearch: 'knowledge:search',
+  knowledgeSearchDocuments: 'knowledge:search-documents',
   knowledgeRetrieve: 'knowledge:retrieve',
   knowledgeUpdateSettings: 'knowledge:settings:update',
   knowledgeListChunks: 'knowledge:chunks:list',

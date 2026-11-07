@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from './ChatTimeline'
+import { formatExternalReferences } from './external-references'
 import { MessageExpansionProvider, MessageExpansionScope, useMessageExpansion } from './message-expansion'
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
@@ -21,6 +22,22 @@ function captureMaps() {
 }
 
 describe('message expansion retention', () => {
+  it('retains expanded document references across message updates and row eviction', () => {
+    const message: Message = { id: 'm', role: 'user', state: 'complete', createdAt: 1,
+      content: `Read\n\n${formatExternalReferences([{ provider: 'wecom', id: 'doc', title: 'Report' }])}` }
+    const window = (current: Message, visible: boolean) => <MessageExpansionProvider messages={[current]} messageIndexes={new Map([['m', 0]])}>
+      {visible && <MessageExpansionScope id="m"><Disclosure id="document-references" /></MessageExpansionScope>}
+    </MessageExpansionProvider>
+    const view = render(window(message, true))
+    fireEvent.click(view.getByRole('button'))
+    view.rerender(window({ ...message }, false))
+    view.rerender(window(message, true))
+    expect(view.getByRole('button')).toHaveAttribute('aria-pressed', 'true')
+    view.rerender(window({ ...message, content: 'No references' }, false))
+    view.rerender(window(message, true))
+    expect(view.getByRole('button')).toHaveAttribute('aria-pressed', 'false')
+  })
+
   it('keeps streaming defaults sparse and releases an unmounted manual collapse on completion', async () => {
     const entries = captureMaps()
     const message: Message = { id: 'm', content: '', reasoning: 'Reason', state: 'streaming', role: 'assistant', createdAt: 1 }

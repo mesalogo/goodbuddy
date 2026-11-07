@@ -804,6 +804,7 @@ describe('KnowledgeMcpGateway', () => {
 
     expect(token).toMatch(/^[A-Za-z0-9_-]{40,}$/u)
     expect(gateway.getAvailableToolNames(token!)).toEqual([
+      'knowledge_read',
       'knowledge_list',
       'knowledge_search'
     ])

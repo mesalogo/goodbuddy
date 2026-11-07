@@ -11,6 +11,11 @@ import {
   knowledgeChunkingSettingsSchema,
   knowledgeChunkRoleSchema,
   knowledgeRetrievalSettingsSchema,
+  knowledgeDocumentSearchInputSchema,
+  knowledgeDocumentReadInputSchema,
+  type KnowledgeDocumentSearchInput,
+  type KnowledgeDocumentReadInput,
+  type KnowledgeDocumentMatch,
   type KnowledgeChunkRole,
   type KnowledgeChunksListInput,
   type KnowledgeSettingsUpdateInput
@@ -1979,6 +1984,49 @@ export class KnowledgeDatabase {
       .prepare('SELECT * FROM documents WHERE id = ?')
       .get(normalizedId)
     return row ? mapDocument(row) : undefined
+  }
+
+  searchDocumentNames(rawInput: KnowledgeDocumentSearchInput): KnowledgeDocumentMatch[] {
+    const { libraryIds, query } = knowledgeDocumentSearchInputSchema.parse(rawInput)
+    if (!libraryIds.length) return []
+    return this.requireDatabase().prepare(`
+      SELECT d.id, d.knowledge_base_id, k.name AS library_name, d.title, d.source_location,
+        coalesce(json_extract(d.metadata, '$.status'), 'ready') AS status
+      FROM documents d JOIN knowledge_bases k ON k.id = d.knowledge_base_id
+      WHERE d.knowledge_base_id IN (${libraryIds.map(() => '?').join(',')})
+        AND (instr(lower(d.title), lower(?)) > 0 OR instr(lower(d.source_location), lower(?)) > 0)
+      ORDER BY CASE WHEN lower(d.title) = lower(?) THEN 0 ELSE 1 END, d.title, d.id LIMIT 30
+    `).all(...libraryIds, query, query, query).map(row => ({
+      id: asString(row, 'id'), libraryId: asString(row, 'knowledge_base_id'),
+      libraryName: asString(row, 'library_name'), title: asString(row, 'title'),
+      path: asOptionalString(row, 'source_location') ?? '', status: asString(row, 'status')
+    }))
+  }
+
+  /** Read enabled leaf chunks in source order; SQL slices before crossing the storage boundary. */
+  readDocumentPage(rawInput: KnowledgeDocumentReadInput) {
+    const input = knowledgeDocumentReadInputSchema.parse(rawInput)
+    const row = this.requireDatabase().prepare(`
+      SELECT id, ordinal, length(content) AS characters,
+        substr(content, CASE WHEN ordinal = ? THEN ? + 1 ELSE 1 END, ?) AS text
+      FROM chunks WHERE document_id = ? AND enabled = 1 AND role <> 'parent' AND ordinal >= ?
+      ORDER BY ordinal, id LIMIT 1
+    `).get(input.ordinal, input.offset, input.limit, input.documentId, input.ordinal)
+    if (!row) return { text: '', next: null }
+    const ordinal = asNumber(row, 'ordinal')
+    const offset = ordinal === input.ordinal ? input.offset : 0
+    const characters = asNumber(row, 'characters')
+    if (offset > characters) throw new Error('Document offset is outside the chunk')
+    const nextOffset = Math.min(offset + input.limit, characters)
+    const nextOrdinal = this.requireDatabase().prepare(`
+      SELECT ordinal FROM chunks WHERE document_id = ? AND enabled = 1 AND role <> 'parent'
+      AND ordinal > ? ORDER BY ordinal LIMIT 1
+    `).get(input.documentId, ordinal)
+    return {
+      text: asString(row, 'text'), chunkId: asString(row, 'id'), ordinal, offset,
+      next: nextOffset < characters ? { ordinal, offset: nextOffset }
+        : nextOrdinal ? { ordinal: asNumber(nextOrdinal, 'ordinal'), offset: 0 } : null
+    }
   }
 
   listDocuments(

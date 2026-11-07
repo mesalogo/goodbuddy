@@ -1,9 +1,10 @@
-import { FileText } from 'lucide-react'
+import { FileText, Library } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChannelIcon } from './ChannelIcon'
 import {
   referenceKey,
+  referencesInDraft,
   type ExternalDocumentReference,
   type ExternalReferenceProvider,
   type ExternalReferenceSources
@@ -11,7 +12,8 @@ import {
 import './external-references.css'
 
 const SEARCH_DELAY_MS = 250
-const providers: readonly ExternalReferenceProvider[] = ['feishu', 'wecom']
+const providers: readonly ExternalReferenceProvider[] = ['local', 'feishu', 'wecom']
+const noLibraryIds: readonly string[] = []
 // Stable empties: a fresh object or array each render would loop through onItemsChange.
 const noResults: Partial<Record<ExternalReferenceProvider, ProviderResult>> = {}
 const noItems: readonly ExternalDocumentReference[] = []
@@ -21,7 +23,11 @@ type ProviderResult =
   | { state: 'done'; items: ExternalDocumentReference[] }
   | { state: 'failed'; message: string }
 
-async function search(provider: ExternalReferenceProvider, query: string): Promise<ExternalDocumentReference[]> {
+async function search(provider: ExternalReferenceProvider, query: string, libraryIds: readonly string[]): Promise<ExternalDocumentReference[]> {
+  if (provider === 'local') {
+    const docs = await window.goodbuddy.knowledge.searchDocuments({ libraryIds: [...libraryIds], query })
+    return docs.map(doc => ({ provider, ...doc, title: /^https?:/u.test(doc.path) ? doc.title : doc.path.split(/[\\/]/u).pop() || doc.title }))
+  }
   if (provider === 'wecom') {
     const docs = await window.goodbuddy.wecom!.searchDocuments({ query })
     return docs.map((doc) => ({ provider, id: doc.id, title: doc.name, type: doc.type, ...(doc.url ? { url: doc.url } : {}) }))
@@ -44,7 +50,9 @@ export function ExternalReferenceMenu({
   anchor,
   query,
   sources,
+  libraryIds = noLibraryIds,
   selected,
+  draft,
   activeIndex,
   onActiveIndexChange,
   onItemsChange,
@@ -55,7 +63,9 @@ export function ExternalReferenceMenu({
   anchor?: { top: number; left: number; height: number; containerWidth: number }
   query: string
   sources: ExternalReferenceSources
+  libraryIds?: readonly string[]
   selected: readonly ExternalDocumentReference[]
+  draft?: string
   activeIndex: number
   onActiveIndexChange: (index: number) => void
   onItemsChange: (items: readonly ExternalDocumentReference[]) => void
@@ -65,27 +75,27 @@ export function ExternalReferenceMenu({
   const { t } = useTranslation('app')
   const ready = useMemo(() => providers.filter((provider) => sources[provider]?.state === 'ready'), [sources])
   const term = query.trim()
-  const [results, setResults] = useState<{ term: string; byProvider: Partial<Record<ExternalReferenceProvider, ProviderResult>> }>({ term: '', byProvider: {} })
+  const [results, setResults] = useState<{ term: string; libraryIds: readonly string[]; byProvider: Partial<Record<ExternalReferenceProvider, ProviderResult>> }>({ term: '', libraryIds: noLibraryIds, byProvider: {} })
 
   useEffect(() => {
     if (!term) return
     let active = true
     const timer = setTimeout(() => {
-      setResults({ term, byProvider: Object.fromEntries(ready.map((provider) => [provider, { state: 'loading' }])) })
+      setResults({ term, libraryIds, byProvider: Object.fromEntries(ready.map((provider) => [provider, { state: 'loading' }])) })
       for (const provider of ready) {
-        void search(provider, term).then(
-          (items) => { if (active) setResults((current) => current.term === term ? { term, byProvider: { ...current.byProvider, [provider]: { state: 'done', items } } } : current) },
+        void search(provider, term, libraryIds).then(
+          (items) => { if (active) setResults((current) => current.term === term ? { term, libraryIds, byProvider: { ...current.byProvider, [provider]: { state: 'done', items } } } : current) },
           (reason: unknown) => {
-            if (active) setResults((current) => current.term === term ? { term, byProvider: { ...current.byProvider, [provider]: { state: 'failed', message: reason instanceof Error ? reason.message : String(reason) } } } : current)
+            if (active) setResults((current) => current.term === term ? { term, libraryIds, byProvider: { ...current.byProvider, [provider]: { state: 'failed', message: reason instanceof Error ? reason.message : String(reason) } } } : current)
           }
         )
       }
     }, SEARCH_DELAY_MS)
     return () => { active = false; clearTimeout(timer) }
-  }, [ready, term])
+  }, [ready, term, libraryIds])
 
-  const byProvider = results.term === term ? results.byProvider : noResults
-  const selectedKeys = useMemo(() => new Set(selected.map(referenceKey)), [selected])
+  const byProvider = results.term === term && results.libraryIds === libraryIds ? results.byProvider : noResults
+  const selectedKeys = useMemo(() => new Set((draft === undefined ? selected : referencesInDraft(draft, selected)).map(referenceKey)), [draft, selected])
   // Visible items per platform, numbered in display order for keyboard focus.
   const { groups, items } = useMemo(() => {
     const visible: Partial<Record<ExternalReferenceProvider, { item: ExternalDocumentReference; index: number }[]>> = {}
@@ -124,7 +134,7 @@ export function ExternalReferenceMenu({
           return (
             <li className="external-reference-menu__group" key={provider} role="presentation">
               <span className="external-reference-menu__group-label">
-                <ChannelIcon channel={provider} size={14} />
+                {provider === 'local' ? <Library size={14} /> : <ChannelIcon channel={provider} size={14} />}
                 {label}
               </span>
               {source.state === 'unavailable' ? (
@@ -156,7 +166,7 @@ export function ExternalReferenceMenu({
                         role="option"
                       >
                         <FileText aria-hidden="true" size={14} />
-                        <span>{item.title}</span>
+                        <span title={item.path}>{item.title}{item.provider === 'local' && <small className="external-reference-menu__detail">{item.libraryName} · {item.path} · {t(`composer.references.status.${item.status}`)}</small>}</span>
                         {item.type && <small>{item.type}</small>}
                       </li>
                     )

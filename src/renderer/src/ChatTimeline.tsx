@@ -1,4 +1,6 @@
 import { AttachmentResultButton } from './AttachmentResultButton'
+import { referencedMessagePresentation } from './external-references'
+import { MessageDocumentReferences } from './MessageDocumentReferences'
 import { ToolOutputReader } from './ToolOutputReader'
 import { AttachmentActions, AttachmentStatus } from './AttachmentActions'
 import { MessageExpansionScope, useMessageExpansion } from './message-expansion'
@@ -653,12 +655,15 @@ function ChatMessageRowView({
 }: ChatMessageRowProps): React.JSX.Element {
   const { t } = useTranslation('app')
   const [copied, setCopied] = useState(false)
+  const presentation = useMemo(() => message.role === 'user'
+    ? referencedMessagePresentation(message.content)
+    : { body: message.content, references: [] }, [message.role, message.content])
   const [citationsExpanded, setCitationsExpanded] = useMessageExpansion('citations')
   const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(copyResetTimer.current), [])
 
   const copyReply = async (): Promise<void> => {
-    const success = await onCopyMessage(greeting ? t('conversation.greeting') : message.content)
+    const success = await onCopyMessage(greeting ? t('conversation.greeting') : presentation.body)
     clearTimeout(copyResetTimer.current)
     setCopied(success)
     if (success) {
@@ -960,7 +965,7 @@ function ChatMessageRowView({
             })}
           </div>
         )}
-        {message.blocks && message.blocks.length > 0 ? (
+        {message.blocks && message.blocks.length > 0 && !presentation.references.length ? (
           <div className="message-blocks">
             {groupMessageBlocks(message.blocks).map((item) =>
               item.kind === 'question' ? renderQuestion(item.questionId)
@@ -1024,12 +1029,13 @@ function ChatMessageRowView({
                     message.state === 'complete'
                   }
                 >
-                  {greeting ? t('conversation.greeting') : message.content}
+                  {greeting ? t('conversation.greeting') : presentation.body}
                 </MarkdownRenderer>
               </div>
             )}
           </>
         )}
+        <MessageDocumentReferences references={presentation.references} />
         {unorderedSubagents && unorderedSubagents.length > 0 && (
           <SubagentStatusList
             conversationId={conversationId}

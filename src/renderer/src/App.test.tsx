@@ -1012,6 +1012,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     }),
   },
   knowledge: {
+    searchDocuments: vi.fn(async () => []),
     externalInstancesList: vi.fn(async () => []),
     externalInstancesSave: vi.fn(),
     externalInstancesTest: vi.fn(),
