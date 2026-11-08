@@ -5062,6 +5062,12 @@ describe('AssistantDatabase', () => {
       expect(completed.answeredQuestions).toHaveLength(2)
       expect(completed.content).toBe('After first. After second.')
       expect(completed.state).toBe('complete')
+      expect(completed.status).toBeUndefined()
+      expect(completed.terminalStatus).toBeUndefined()
+      expect(completed.tools).toEqual([expect.objectContaining({ callId: 'read-1', state: 'interrupted' })])
+      if (!legacy) expect(completed.blocks?.find(block => block.type === 'tool')).toMatchObject({
+        type: 'tool', tool: { callId: 'read-1', state: 'interrupted' }
+      })
       expect(completed.blocks?.filter(block => block.type === 'question')).toEqual(beforeTerminal.blocks?.filter(block => block.type === 'question'))
       database.close()
       database.initialize('C:\\Workspace')

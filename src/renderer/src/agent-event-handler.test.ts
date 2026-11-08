@@ -8,7 +8,7 @@ import { toConversationMessage, createLocalConversationSaveBatch } from './conve
 import { conversationMessageSchema } from '../../shared/assistant-contracts'
 import { conversationMessageResourceIds } from '../../shared/conversation-output'
 
-it.each(['completed', 'failed', 'cancelled'] as const)('retains output references in renderer %s events, blocks and local save metadata', state => {
+it.each(['pending', 'running', 'completed', 'failed', 'cancelled'] as const)('retains output references in renderer %s events, blocks and local save metadata', state => {
   const conversationId = crypto.randomUUID(), messageId = crypto.randomUUID(), requestId = crypto.randomUUID()
   const liveMessages = createLiveMessageStore()
   const store = createConversationStore([{ id: conversationId, title: 'Output', updatedAt: 0, messages: [
@@ -32,7 +32,7 @@ it.each(['completed', 'failed', 'cancelled'] as const)('retains output reference
   handleAgentEvent({ requestId, type: 'tool', callId: 'process', name: 'Process',
     state: state === 'cancelled' ? 'completed' : state, summary: 'Output', output, outputReferences: [reference] }, deps)
   handleAgentEvent({ requestId, type: 'subagent', childTaskId: crypto.randomUUID(),
-    actor: { kind: 'direct-model', label: '编程 Subagent' }, routingMode: 'native', state,
+     actor: { kind: 'direct-model', label: '编程 Subagent' }, routingMode: 'native', state: state === 'pending' ? 'queued' : state,
     output: 'child preview', outputReference: childReference }, deps)
   const conversation = store.getState()[0]!
   const message = conversationMessageSchema.parse(toConversationMessage(conversation.messages[0]!))
@@ -44,6 +44,18 @@ it.each(['completed', 'failed', 'cancelled'] as const)('retains output reference
     tools: [{ outputReferences: [reference], output }], subagents: [{ outputReference: childReference }]
   })
   expect(conversationMessageResourceIds(message)).toEqual([reference.handle.split(':')[1], childReference.handle.split(':')[1]])
+  vi.stubGlobal('window', { goodbuddy: { artifacts: { list: vi.fn(async () => []) } } })
+  try {
+    handleAgentEvent({ requestId, type: 'done' }, deps)
+    const finished = conversationMessageSchema.parse(toConversationMessage(store.getState()[0]!.messages[0]!))
+    const expectedState = state === 'pending' || state === 'running' ? 'interrupted' : state === 'cancelled' ? 'completed' : state
+    expect(finished.state).toBe('complete')
+    expect(finished.terminalStatus).toBeUndefined()
+    expect(finished.tools?.[0]).toMatchObject({ state: expectedState, output, outputReferences: [reference] })
+    expect(finished.blocks?.[0]).toMatchObject({ type: 'tool', tool: { state: expectedState, output } })
+    expect(deps.releaseConversationQueueAfterRun).toHaveBeenCalledOnce()
+    expect(deps.notify).not.toHaveBeenCalled()
+  } finally { vi.unstubAllGlobals() }
 })
 
 it('keeps the System One role selection on the message through completion and persistence', () => {

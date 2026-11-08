@@ -607,33 +607,6 @@ function safeRuntimeError(error: unknown, fallback: string): string {
   return safeToolErrorDetail(error, 2_000) ?? fallback
 }
 
-function unfinishedToolMessage(
-  tools: Iterable<{
-    name: string
-    state:
-      | 'pending'
-      | 'running'
-      | 'completed'
-      | 'failed'
-      | 'recoverable'
-      | 'cancelled'
-      | 'interrupted'
-    error?: string
-  }>
-): string | undefined {
-  for (const tool of tools) {
-    if (
-      tool.state === 'completed' ||
-      tool.state === 'failed' ||
-      tool.state === 'recoverable'
-    ) {
-      continue
-    }
-    return `${tool.name} 工具未完成，任务不能标记为成功`
-  }
-  return undefined
-}
-
 function remoteSemanticProvenance(
   event: RuntimeEvent
 ): RemoteSemanticEventProvenance | undefined {
@@ -1746,9 +1719,6 @@ export function registerIpcHandlers(
         ...subagent,
         ...activityStates.subagents.get(subagent.childTaskId)
       })) ?? []
-    const toolStates = new Map(
-      recoveredTools.map((tool) => [tool.callId, tool])
-    )
     const runtimeSelection = await resolveStoredRuntimeSelection({
       projectId: task.projectId,
       conversationLayer: conversation.runtimeSelection
@@ -1885,27 +1855,6 @@ export function registerIpcHandlers(
           event = stripRemoteSemanticProvenance(
             rawEvent as RemoteSemanticRuntimeEvent
           ) as AgentEvent
-        }
-        if (event.type === 'tool') {
-          toolStates.set(event.callId, event)
-        }
-        if (
-          event.type === 'subagent' &&
-          event.routingMode === 'native' &&
-          event.runtimeCallId
-        ) {
-          toolStates.delete(event.runtimeCallId)
-        }
-        if (event.type === 'done') {
-          const message = unfinishedToolMessage(toolStates.values())
-          if (message !== undefined) {
-            event = {
-              requestId: task.taskId,
-              type: 'error',
-              status: 'failed',
-              message
-            }
-          }
         }
         // A previous version may already have committed a projected terminal
         // before the page checkpoint. Replay that immutable event, not today's
@@ -4161,10 +4110,6 @@ export function registerIpcHandlers(
         if (!deferCommit) await flushRemoteEvents()
       }
       activeEventBuffers.set(request.requestId, eventBuffer)
-      const toolStates = new Map<
-        string,
-        Extract<AgentEvent, { type: 'tool' }>
-      >()
       const publishKnowledgeRetrieval = async (
         retrievalEvent: Extract<
           AgentEvent,
@@ -4523,7 +4468,7 @@ export function registerIpcHandlers(
             }
             continue
           }
-          let publicEvent: AgentEvent =
+          const publicEvent: AgentEvent =
             agentEvent.type === 'generated-image'
               ? await persistGeneratedImage(agentEvent, {
                   projectId: request.projectId,
@@ -4537,16 +4482,6 @@ export function registerIpcHandlers(
                 : (stripRemoteSemanticProvenance(
                     agentEvent as RemoteSemanticRuntimeEvent
                   ) as AgentEvent)
-          if (publicEvent.type === 'tool') {
-            toolStates.set(publicEvent.callId, publicEvent)
-          }
-          if (
-            publicEvent.type === 'subagent' &&
-            publicEvent.routingMode === 'native' &&
-            publicEvent.runtimeCallId
-          ) {
-            toolStates.delete(publicEvent.runtimeCallId)
-          }
           if (publicEvent.type === 'question') {
             // The arrival rewrites the assistant message; commit earlier
             // remote events first so message blocks keep their order.
@@ -4572,21 +4507,8 @@ export function registerIpcHandlers(
             }
           }
           if (publicEvent.type === 'done') {
-            const message = unfinishedToolMessage(
-              toolStates.values()
-            )
-            if (message !== undefined) {
-              if (provenance === undefined) {
-                throw new Error(message)
-              }
-              publicEvent = {
-                requestId: request.requestId,
-                type: 'error',
-                status: 'failed',
-                message
-              }
-              runtimeErrorEvent = publicEvent
-            }
+            // Runtime owns the turn outcome. Message reducers settle pending
+            // tools without inventing a successful result or failing the turn.
             await publishReferences()
             await eventBuffer.flush()
           }

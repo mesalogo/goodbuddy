@@ -8537,7 +8537,9 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   })
 
-  it.each([false, true])('reattaches from its committed cursor with tool recovery evidence %s', async (hasRecoveredResponse) => {
+  it.each([
+    [false, 'failed'], [true, 'failed'], [false, 'pending'], [false, 'running']
+  ] as const)('reattaches from its committed cursor with tool recovery evidence %s / %s', async (hasRecoveredResponse, toolState) => {
     const projectId = '00000000-0000-4000-8000-000000000781'
     const taskId = '00000000-0000-4000-8000-000000000782'
     const conversationId =
@@ -8566,7 +8568,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             expect.objectContaining({
               callId: 'tool-before-restart',
               name: 'Read',
-              state: 'failed'
+              state: toolState
             })
           ]
         })
@@ -8659,7 +8661,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             {
               callId: 'tool-before-restart',
               name: 'Read',
-              state: 'failed',
+              state: toolState,
               summary: 'Read failed',
               error: 'missing file'
             }
@@ -12149,7 +12151,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it.each(['pending', 'running', 'cancelled', 'interrupted'] as const)('still rejects a done event with an unfinished %s tool', async state => {
+  it.each(['pending', 'running', 'cancelled', 'interrupted'] as const)('preserves Runtime completion with an unfinished %s tool', async state => {
     const harness = createHarness({
       capability: 'chat', supportsToolExecution: true,
       async *run(request: { requestId: string }) {
@@ -12161,10 +12163,41 @@ describe('registerIpcHandlers agent terminal state', () => {
     try {
       await harness.handler?.(trustedEvent(harness.webContents), { requestId, conversationId: 'unfinished-read', prompt: 'read a file' })
       await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
-        requestId, 'failed', 'Read 工具未完成，任务不能标记为成功'
+        requestId, 'completed'
       ))
+      expect(harness.webContents.send).not.toHaveBeenCalledWith(
+        ipcChannels.agentEvent, expect.objectContaining({ type: 'error' })
+      )
     } finally { await harness.dispose() }
   })
+
+  it.skipIf(!process.env.GB_DIRECT_MODEL_HOST || !process.env.GB_DIRECT_MODEL_HOST_NODE)('completes IPC after a real Host read with a missing tool terminal event', async () => {
+    const { connectDirectModelTestHost } = await import('../../tests/support/remote-direct-model-connection')
+    const { RemoteModelTools } = await import('./remote-agent/remote-model-tools')
+    const connection = await connectDirectModelTestHost(process.env.GB_DIRECT_MODEL_HOST!, process.env.GB_DIRECT_MODEL_HOST_NODE!)
+    const tools = new RemoteModelTools(connection.workspace, {})
+    const harness = createHarness({
+      capability: 'chat', supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'tool', callId: 'host-read', name: 'read', state: 'running', summary: 'Read remote file' }
+        await expect(tools.callTool('workspace_read_text', { path: 'missing-file.txt' }, AbortSignal.timeout(30000), {
+          conversationId: 'host-read-completion', runtimeTarget: 'model'
+        })).rejects.toThrow(/ENOENT|not found|不存在/)
+        // Simulate loss of just the tool's final update, not the turn terminal.
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    })
+    const requestId = crypto.randomUUID()
+    try {
+      await harness.handler?.(trustedEvent(harness.webContents), { requestId, conversationId: 'host-read-completion', prompt: 'read missing file' })
+      await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'), { timeout: 45000 })
+      expect(harness.webContents.send).not.toHaveBeenCalledWith(ipcChannels.agentEvent, expect.objectContaining({ type: 'error' }))
+    } finally {
+      await harness.dispose()
+      await tools.dispose()
+      await connection.close()
+    }
+  }, 90000)
 
   it.each(['failed', 'cancelled'] as const)('preserves the actual Runtime %s after a tool error', async status => {
     const harness = createHarness({

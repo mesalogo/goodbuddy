@@ -1,5 +1,49 @@
 # 进度与证据
 
+## 2026-11-08 Runtime completion with unfinished tool metadata
+
+Removed the IPC projection that changed Runtime `done` into task failure when
+a tool remained pending, running, cancelled or interrupted. The ordinary and
+recovery paths now retain the Runtime terminal; their redundant tool-state maps
+and unfinished-tool error helper were removed. Existing renderer and remote
+storage reducers settle pending/running tools as interrupted, retain partial
+output and references, and release the conversation queue. No Agent protocol,
+schema or Runtime adapter change was needed. The behavior contract is in
+[Runtime interactions](../../agent-runtime/contracts/interactions.md).
+
+Evidence:
+
+- Before the fix, six targeted cases failed: four ordinary completion cases
+  and two recovery cases with persisted pending/running tools. All pass after
+  removal of the projection. Actual Runtime failure/cancellation and replay of
+  previously committed terminal events remain covered.
+- IPC, renderer event handler and database suites: **373 passed, 2 skipped**.
+  The optional Host case was then run separately and passed. Renderer tests
+  check retained output/references, interrupted tool cards, completion and queue
+  release; database tests check terminal tool state through replay and reopen.
+- Shared Linux x64: current-source Agent tool execution over SSH read a missing
+  file and returned the expected error. A test adapter deliberately omitted
+  the tool terminal update and emitted `done`; the production IPC handler
+  completed the task without a task error. **1 Host test passed**, external
+  model calls **0**. This is a deterministic tool-event loss test, not a real
+  model or installed Electron UI acceptance. Fixture resources were cleaned.
+- Standard typecheck, full-repository lint and diff checks passed. Full test
+  suite and installed application acceptance were not repeated.
+
+Reproduction:
+
+```text
+npx vitest run src/main/ipc.test.ts src/renderer/src/agent-event-handler.test.ts src/main/assistant/assistant-database.test.ts
+npx vitest run --config tests/support/ipc-host-validation.ts -t "real Host read"
+npm run typecheck
+npm run lint
+```
+
+The Host command needs `GB_DIRECT_MODEL_HOST` and `GB_DIRECT_MODEL_HOST_NODE`
+set to the existing SSH target and installed Node executable. Its Node-only
+config avoids esbuild's typed-array mismatch in the default jsdom environment;
+the first two jsdom attempts failed before opening a Host connection.
+
 ## 2026-11-06 Real-provider recovery and direct-model acceptance
 
 At the user's request, repeated the affected flow with the configured default
