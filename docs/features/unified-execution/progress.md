@@ -1,5 +1,47 @@
 # 进度与证据
 
+## 2026-11-08 Real-provider task progress and follow-up
+
+Validated the production recovery code committed in `ff4bbe0e` on the shared
+Linux x64 Host with actual OpenCode and the configured default **gpt-6-astra /
+OpenAI Responses** provider. Both provider requests returned **HTTP 200**.
+
+- The first task received a real provider response. The probe held delivery of
+  that response, disconnected its relay and made the immediate reconnect fail,
+  then waited until the old channel was closed. Desktop acquired a new connection
+  and queried/read/acknowledged the original task through the task-progress reader.
+  Catch-up completed before the task terminal; releasing the response completed
+  that same task with the exact `RECOVERY_OK` answer.
+- A second, explicit message in the same conversation returned `FOLLOWUP_OK`.
+  It replaced the progress reader with an execution channel. Final counts were
+  **2 connections, 3 channel objects (including 1 progress reader), 1 attach,
+  2 Prompt starts and 2 provider requests**. The two starts correspond to the two
+  explicit messages; progress synchronization did not submit another Prompt.
+- This is a real-provider/current-source Agent and Runtime test, using the
+  existing relay pipe adapter and deliberately held response delivery. It does
+  not establish physical-network or installed Electron UI acceptance.
+
+The first validation setup could not decrypt the default profile in a fresh
+Electron user-data directory. A fallback configuration made **1 model request
+attempt without a recorded HTTP response**, and the test stopped before fault
+injection. It is not counted as a successful recovery or provider completion.
+The final helper requires the default profile rather than silently substituting
+another model. Copying the source profile's encrypted Windows `Local State` into
+the isolated Electron directory before startup made the configured credential
+readable. No decrypted key was written to disk or sent to the Host; the local
+proxy added provider authentication in memory.
+
+Reusable entry: `tests/support/remote-task-progress-provider-live.ts`; the Host
+probe's `--real-model` mode now verifies the follow-up as well. The Electron
+entry uses `GB_PROBE_HOST`, `GB_PROBE_INSTALLED_AGENT`, `GB_PROBE_RUNTIME_ROOT`,
+`GB_PROBE_SETTINGS` and `GB_PROBE_ELECTRON_DATA`; it has a two-request budget and
+no automatic paid rerun. Typecheck and lint of both validation scripts passed.
+Production source was unchanged in this validation turn.
+Confirmed the isolated Electron processes exited and no probe processes or
+`real-*` test directories remained on the Host. Removed the local runner outputs,
+settings snapshot and isolated Electron profile, including its encrypted Local
+State copy. Validation scripts and this evidence remain in the workspace.
+
 ## 2026-11-08 Task progress independent of the old ACP channel
 
 Agent-owned task synchronization now uses the existing attach/page/ACK RPCs

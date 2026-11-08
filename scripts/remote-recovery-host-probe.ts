@@ -187,7 +187,7 @@ async function main(): Promise<void> {
       const server = createServer((modelRequest, response) => {
         if (realModel) {
           void (async () => {
-            assert.equal(realModelCalls, 0, 'Real-model recovery probe allows one provider request')
+            assert(realModelCalls < 2, 'Real-model recovery probe allows two provider requests')
             realModelCalls++
             const chunks: Buffer[] = []
             for await (const chunk of modelRequest) chunks.push(Buffer.from(chunk))
@@ -397,8 +397,25 @@ async function main(): Promise<void> {
               assert.equal(terminal, true)
               assert.equal(answer.trim(), 'RECOVERY_OK')
               assert.equal(realModelCalls, 1)
+              let followup = ''
+              let followupDone = false
+              for await (const event of instance.run({
+                ...prompt, requestId: randomUUID(),
+                prompt: 'Reply exactly FOLLOWUP_OK. Do not call any tools.'
+              }, AbortSignal.timeout(110_000))) {
+                assert.notEqual(event.type, 'error', 'The next message must complete after progress synchronization')
+                if (event.type === 'text') followup += event.delta
+                if (event.type === 'done') followupDone = true
+              }
+              assert(followupDone)
+              assert.equal(followup.trim(), 'FOLLOWUP_OK')
+              assert.equal(starts, 2, 'Only the explicitly sent follow-up may start another task')
+              assert.equal(channels, 3, 'The follow-up must replace the progress reader with an execution channel')
+              assert.equal(progressConnections, 1)
+              assert.equal(attachments, 1)
+              assert.equal(realModelCalls, 2)
             }
-            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, liveChannelBudget, liveDisconnect, closedChannel, startResponseLoss, attaches, channels, progressConnections, attachments, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, realModelCompleted: realModel && terminal, externalModelCalls: realModelCalls })}\n`)
+            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, liveChannelBudget, liveDisconnect, closedChannel, startResponseLoss, attaches, channels, progressConnections, attachments, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, realModelCompleted: realModel && terminal, followupCompleted: realModel && realModelCalls === 2, externalModelCalls: realModelCalls })}\n`)
           } finally {
             controller.abort(new Error('probe complete'))
             await pending
