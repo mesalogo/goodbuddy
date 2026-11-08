@@ -248,6 +248,7 @@ async function main(): Promise<void> {
           let prepareAccepted = 0
           let attachments = 0
           let channels = 0
+          let progressConnections = 0
           let interrupt = !prepareLoss && !startResponseLoss && !toolFailure
           let exhaust = liveChannelBudget
           const bindings = new MemoryRuntimeSessionBindingStore()
@@ -266,8 +267,9 @@ async function main(): Promise<void> {
               provider: 'openai', baseUrl: `http://127.0.0.1:${address.port}/v1`, model: realModel ? process.env.GB_PROBE_MODEL_NAME! : 'probe-model',
               protocol: realModel ? process.env.GB_PROBE_MODEL_PROTOCOL as 'openai-responses' | 'openai-chat-completions' : 'openai-chat-completions', authentication: 'none', capabilities: { imageInput: false },
               limits: { maximumOutputTokens: realModel ? 1024 : 16, requestTimeoutMilliseconds: realModel ? 120_000 : 60_000 } },
-            channelFactory: async bindingId => {
+            channelFactory: async (bindingId, transcript) => {
               channels++
+              if (transcript) progressConnections++
               const connection = await manager.acquire('probe-host', installation)
               // Production ManagedRemoteRuntimeResources revalidates the workspace
               // on a new transport generation before preparing another prompt.
@@ -275,7 +277,7 @@ async function main(): Promise<void> {
                 remoteRootPath: root, requestedAccess: 'read-write', requiredCapabilities: []
               })
               assert.equal(validated.handle.workspaceIdentity, workspace.handle.workspaceIdentity)
-              const channel = await createProtocolRemoteRuntimeChannel({ connection, releaseConnectionOnClose: true,
+              const channel = await createProtocolRemoteRuntimeChannel({ connection, transcript, releaseConnectionOnClose: true,
                 openIdentity: { bindingId, runtimeId: runtime.runtimeId, runtimeBundleDigest: runtime.bundleDigest,
                   workspaceIdentity: workspace.handle.workspaceIdentity } })
               const start = channel.startOwnedPrompt.bind(channel)
@@ -283,7 +285,10 @@ async function main(): Promise<void> {
                 starts++
                 const result = await start(input)
                 if (startResponseLoss) {
+                  unavailable = true
                   children.at(-1)!.kill()
+                  await channel.closed
+                  unavailable = false
                   throw new RemoteChannelClosedError('probe lost start response')
                 }
                 return result
@@ -384,7 +389,7 @@ async function main(): Promise<void> {
             assert.equal(ready, 1)
             assert.equal(terminal, false)
             if (liveChannelBudget) assert.equal(attaches, 2)
-            if (closedChannel) { assert.equal(channels, 2); assert.equal(attachments, 1) }
+            if (closedChannel || startResponseLoss) { assert.equal(channels, 2); assert.equal(attachments, 1); assert.equal(progressConnections, 1) }
             if (realModel) {
               releaseRealResponse()
               const result = await pending
@@ -393,7 +398,7 @@ async function main(): Promise<void> {
               assert.equal(answer.trim(), 'RECOVERY_OK')
               assert.equal(realModelCalls, 1)
             }
-            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, liveChannelBudget, liveDisconnect, closedChannel, startResponseLoss, attaches, channels, attachments, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, realModelCompleted: realModel && terminal, externalModelCalls: realModelCalls })}\n`)
+            process.stdout.write(`${JSON.stringify({ passed: true, catchUp: true, liveChannelBudget, liveDisconnect, closedChannel, startResponseLoss, attaches, channels, progressConnections, attachments, realRuntime: runtime.runtimeId, readyBeforeTerminal: true, promptStarts: starts, realModelCompleted: realModel && terminal, externalModelCalls: realModelCalls })}\n`)
           } finally {
             controller.abort(new Error('probe complete'))
             await pending

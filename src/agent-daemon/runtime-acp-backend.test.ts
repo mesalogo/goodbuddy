@@ -518,6 +518,57 @@ function harness(input: {
 }
 
 describe('RuntimeAcpBackend', () => {
+  it('reads a durable terminal task after losing the in-memory execution binding', async () => {
+    const fixture = await ownedHarness(false)
+    let restarted: Harness | undefined
+    try {
+      await fixture.start()
+      await vi.waitFor(() => expect(fixture.prompts).toHaveLength(1))
+      await fixture.prompts[0]!()
+      await vi.waitFor(() => expect(fixture.page().state).toBe('completed'))
+      restarted = harness({ agentOwned: true, semanticStore: fixture.transcript })
+      await expect(invoke(restarted, 'runtime/attachPrompt', {
+        bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1'
+      })).resolves.toMatchObject({ state: 'completed' })
+      const page = await invoke(restarted, 'runtime/pagePromptTranscript', {
+        bindingId: 'binding-1', operationId: 'request-1', afterSequence: '0', limit: 10
+      })
+      expect(page).toMatchObject({ state: 'completed' })
+      expect(restarted.launches).toHaveLength(0)
+    } finally {
+      await restarted?.backend.dispose()
+      await fixture.cleanup()
+    }
+  })
+
+  it('takes over a running task through task RPCs without opening an ACP channel', async () => {
+    const fixture = await ownedHarness(false)
+    try {
+      await fixture.start()
+      const peer = { bindingId: 'binding-2', operationId: 'request-2', requestId: 'request-2' }
+      const opened = await invoke(fixture, 'runtime/openAcpChannel', { ...fixture.openRequest, bindingId: peer.bindingId }) as { channelEpoch: string }
+      await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({ ...peer, channelEpoch: opened.channelEpoch }))
+      await invoke(fixture, 'runtime/startPrompt', { ...peer, prompt: [{ type: 'text', text: 'Finish peer' }] })
+      fixture.context.abort.abort()
+      await new Promise<void>(resolve => setImmediate(resolve))
+      const replacement = protocolContext({ generation: 2, connectionId: 'connection-2' })
+      replacement.controllerTakeoverProven = true
+      await expect(fixture.backend.methods['runtime/attachPrompt']!({
+        bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1'
+      }, replacement)).resolves.toMatchObject({ state: 'running' })
+      await expect(fixture.backend.methods['runtime/escalateCancellation']!({
+        bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1',
+        sessionId: 'session-1', reason: 'requested'
+      }, replacement)).resolves.toMatchObject({ stopped: true })
+      expect(fixture.page().state).toBe('cancelled')
+      await expect(fixture.backend.methods['runtime/attachPrompt']!(peer, replacement)).resolves.toMatchObject({ state: 'running' })
+      expect(fixture.processes[1]!.stops).toHaveLength(0)
+      await fixture.prompts[1]!()
+      await vi.waitFor(() => expect(fixture.transcript.attach(peer.bindingId, peer.operationId, replacement.controller.controllerId).state).toBe('completed'))
+      expect(fixture.launches).toHaveLength(2)
+    } finally { await fixture.cleanup() }
+  })
+
   it('ignores a late disconnect from the old connection after output failure and takeover', async () => {
     const output = deferred()
     const fixture = harness({ outputGate: output.promise })

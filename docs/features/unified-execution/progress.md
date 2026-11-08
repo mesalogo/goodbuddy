@@ -1,5 +1,59 @@
 # 进度与证据
 
+## 2026-11-08 Task progress independent of the old ACP channel
+
+Agent-owned task synchronization now uses the existing attach/page/ACK RPCs
+without first opening or resuming an ACP execution channel. The protocol reader
+retains the recorded epoch only as local metadata and does not register a binary
+stream or issue remote channel close on disposal. Its disconnect returns to the
+existing task-sync retry. A subsequent new message opens an execution channel.
+Agent attach now reads the durable task first; a terminal task does not require
+an in-memory execution binding. Live attachment still updates connection ownership
+and lifetime for questions/cancellation. No database fields, new RPCs or recovery
+state machine were added. Rules: [remote lifecycle design](../remote-host/technical-design.md#agent-owned-prompt-与-desktop-恢复).
+
+Validation:
+
+- Ran two new regression cases against the committed production modules through
+  a temporary Vitest source loader. Both failed: old channel refusal blocked
+  transcript access; a durable completed task with no memory binding was rejected
+  as `not-found`. Both pass with the changed source.
+- Four relevant full suites: **250 passed**. They cover task-only reads/ACK/close,
+  disconnect without ACP resume or cancellation, terminal reads without a binding,
+  two concurrent tasks with cancellation of one while its peer completes,
+  lost-start/closed-channel retries and the next message's execution channel.
+- Shared Linux x64: current-source Agent and desktop protocol with actual OpenCode
+  passed both closed-channel and lost-start-response tests. Each used two connections, one task-progress reader,
+  one attach and **one Prompt start**; synchronization reached live state while
+  the task remained active. Model responses were local test responses, external
+  model calls **0**. The probe uses its existing relay pipe adapter, not installed
+  Electron UI or physical network interruption.
+  Initial Host attempts failed before the fault scenario because of the selected
+  installed helper's dependency/launch layout. The passing runs used a dedicated
+  current-source CLI helper with a real Node executable in its expected layout.
+  Test daemon/Runtime processes and the dedicated local/remote probe directories
+  were cleaned after validation; no user daemon was stopped.
+- Full repository run: **6,975 passed, 93 skipped, 2 failed**. Failures were in
+  `message-edit-branch.electron.test.ts` (history/focus timeout) and
+  `local-knowledge-reference.electron.test.ts` (composer text assertion). Their
+  output also reports missing Feishu/WeCom snapshot handlers, without establishing
+  those warnings as the cause. Full-suite acceptance is not claimed.
+- Standard typecheck and full lint passed on the later validation run. An earlier
+  typecheck encountered concurrently edited DeepSeek test support errors, which
+  were no longer present on that run. Unrelated working-tree changes were retained.
+
+Commands:
+
+```text
+npx vitest run src/main/remote-agent/protocol-remote-runtime-channel.test.ts src/agent-daemon/runtime-acp-backend.test.ts src/main/agent/acp-remote-runtime.test.ts src/main/remote-agent/managed-remote-acp-runtime.test.ts
+npm test
+npm run typecheck
+npm run lint
+```
+
+No installation or release was performed. Agent restart still requires a valid
+new connection, and a lost process is not resumed by reading its persisted results.
+
 ## 2026-11-08 Sending after remote recovery failure
 
 Reproduced two blocking defects before changing production code: both a recovery

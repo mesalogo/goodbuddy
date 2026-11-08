@@ -2878,7 +2878,7 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
       closed: new Promise<void>(resolve => { close = () => { closed = true; resolve() } }),
       isCurrentGeneration: () => !closed
     }
-    const factory = vi.fn().mockResolvedValueOnce(firstChannel).mockResolvedValue({ ...replacement.channel, generation: 2 })
+    const factory = vi.fn().mockResolvedValueOnce(firstChannel).mockResolvedValue({ ...replacement.channel, generation: 2, transcriptOnly: true })
     if (mode === 'reopen-failure') factory.mockRejectedValueOnce(new ProtocolRemoteRuntimeChannelError('network still unavailable', 'transport'))
     const instance = factoryRuntime(factory, first.store, { modelBridgePolicy, modelProfile: ownedModelProfile })
     const lost = new RemoteChannelClosedError('读取 Agent 语义记录')
@@ -2897,11 +2897,19 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
       const events = await collect(instance.run({ ...request, remoteRecoveryOnly: true }, new AbortController().signal))
       expect(events.some(event => event.type === 'done')).toBe(true)
       expect(factory).toHaveBeenCalledTimes(mode === 'reopen-failure' ? 3 : 2)
+      expect(factory).toHaveBeenLastCalledWith(expect.any(String), { channelEpoch: first.channel.channelEpoch })
       expect(first.startOwnedPrompt).toHaveBeenCalledOnce()
       expect(replacement.startOwnedPrompt).not.toHaveBeenCalled()
       expect(replacement.preparePrompt).not.toHaveBeenCalled()
       expect(replacement.attachOwnedPrompt).toHaveBeenCalledOnce()
       expect(first.escalateCancellation).not.toHaveBeenCalled()
+      if (mode === 'accepted') {
+        factory.mockResolvedValue({ ...replacement.channel, generation: 2, transcriptOnly: false })
+        await collect(instance.run({ ...request, requestId: 'next-prompt' }, new AbortController().signal))
+        expect(factory).toHaveBeenLastCalledWith(expect.any(String), undefined)
+        expect(replacement.preparePrompt).toHaveBeenCalledOnce()
+        expect(replacement.startOwnedPrompt).toHaveBeenCalledOnce()
+      }
     } finally { await instance.dispose(); await first.instance.dispose(); await replacement.instance.dispose() }
   })
 

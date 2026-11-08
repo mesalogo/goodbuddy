@@ -98,11 +98,12 @@ export type AcpRemoteRuntimeOptions = {
    */
   channel?: RemoteRuntimeChannel
   /**
-   * Creates one virtual ACP channel for one stable binding identity.
-   * The binding ID passed here is the same ID persisted for recovery.
+   * Creates an execution channel, or a task-progress reader when transcript
+   * metadata is supplied. Both use the same persisted binding identity.
    */
   channelFactory?: (
-    bindingId: string
+    bindingId: string,
+    transcript?: { channelEpoch: string }
   ) => Promise<RemoteRuntimeChannel>
   maxConcurrentChannels?: number
   bindingStore: RuntimeSessionBindingStore
@@ -504,7 +505,8 @@ export class AcpRemoteRuntime implements AgentRuntime {
   private async createConversationContext(
     conversationId: string,
     bindingId: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    transcript?: { channelEpoch: string }
   ): Promise<ChannelContext> {
     const current = this.contexts.get(conversationId)
     if (current) {
@@ -524,7 +526,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
     let context: ChannelContext | undefined
     let channelPromise: Promise<RemoteRuntimeChannel> | undefined
     try {
-      channelPromise = this.options.channelFactory!(bindingId)
+      channelPromise = this.options.channelFactory!(bindingId, transcript)
       const channel = await this.awaitLocalOperation(
         '创建远端通道',
         channelPromise,
@@ -1417,7 +1419,10 @@ export class AcpRemoteRuntime implements AgentRuntime {
       context = await this.createConversationContext(
         conversationId,
         bindingId,
-        signal
+        signal,
+        binding?.state === 'prompt-running' && this.options.modelProfile !== undefined
+          ? { channelEpoch: binding.channelEpoch }
+          : undefined
       )
     } catch (error) {
       if (
@@ -1745,7 +1750,8 @@ export class AcpRemoteRuntime implements AgentRuntime {
     let current = this.sessions.get(conversationId)
     const context = this.contexts.get(conversationId)
     if (this.options.channelFactory && context &&
-      (context.channelHasClosed || !context.channel.isCurrentGeneration())) {
+      (context.channelHasClosed || !context.channel.isCurrentGeneration() ||
+        (context.channel.transcriptOnly && current?.binding.state === 'ready'))) {
       // A live task is owned by the Agent, not by this transport. Discard only
       // the cached transport/session and let openSession attach the persisted
       // operation. Never return an attached session on a dead channel.

@@ -490,6 +490,51 @@ async function openChannel(fixture = connectionFixture()) {
 }
 
 describe('ProtocolRemoteRuntimeChannel', () => {
+  it('ends a disconnected progress reader without attempting ACP resume or cancelling its task', async () => {
+    const fixture = connectionFixture()
+    const channel = await createProtocolRemoteRuntimeChannel({
+      connection: fixture.connection, openIdentity: openIdentity(),
+      transcript: { channelEpoch: '9' }, releaseConnectionOnClose: true
+    })
+    channel.setRecoveryBoundary(new Date(Date.now() + 30_000).toISOString(), new AbortController().signal)
+    fixture.client.transportClose(new Error('lost progress connection'))
+    await channel.closed
+    expect(channel.isCurrentGeneration()).toBe(false)
+    expect(fixture.connection.reconnect).not.toHaveBeenCalled()
+    expect(fixture.client.requests).toEqual([])
+    expect(fixture.release).toHaveBeenCalledOnce()
+  })
+
+  it('reads and acknowledges task progress without reopening or closing its execution channel', async () => {
+    const fixture = connectionFixture()
+    fixture.client.responder = (method, params) => {
+      if (method === 'runtime/openAcpChannel') {
+        throw new AgentRpcError(-32000, 'ACP binding was poisoned by uncertain model delivery')
+      }
+      return defaultResponse(method, params)
+    }
+    const channel = await createProtocolRemoteRuntimeChannel({
+      connection: fixture.connection, openIdentity: openIdentity(),
+      transcript: { channelEpoch: '9' }
+    })
+    try {
+      expect(channel.transcriptOnly).toBe(true)
+      await expect(channel.attachOwnedPrompt({
+        bindingId: 'binding-1', operationId: 'operation-1', requestId: 'operation-1'
+      })).resolves.toMatchObject({ state: 'running' })
+      await expect(channel.pageOwnedPromptTranscript({
+        bindingId: 'binding-1', operationId: 'operation-1', afterSequence: '0', limit: 10
+      })).resolves.toMatchObject({ latestSequence: '1' })
+      await channel.ackOwnedPromptTranscript({
+        bindingId: 'binding-1', operationId: 'operation-1', acknowledgedSequence: '1'
+      })
+    } finally { await channel.close() }
+    expect(fixture.client.requests.map(({ method }) => method)).toEqual([
+      'runtime/attachPrompt', 'runtime/pagePromptTranscript', 'runtime/ackPromptTranscript'
+    ])
+    expect(fixture.client.events).not.toContain('register')
+  })
+
   it('refreshes image binding descriptions per prompt and closes failed preparations', async () => {
     const fixture = await openChannel()
     const describe = vi.fn(async () => 'First image catalog')

@@ -93,6 +93,8 @@ export interface RemoteModelBridgeSession {
  * The runtime intentionally receives no SSH client, socket or command API.
  */
 export interface RemoteRuntimeChannel {
+  /** Uses task RPCs only; no ACP execution channel is opened or resumed. */
+  readonly transcriptOnly?: boolean
   respondToQuestion?(request: RemoteQuestionResponse): Promise<void>
   readonly input: ReadableStream<Uint8Array>
   readonly output: WritableStream<Uint8Array>

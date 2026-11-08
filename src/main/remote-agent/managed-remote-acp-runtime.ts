@@ -156,8 +156,8 @@ export async function createManagedRemoteAcpRuntime(
           runtimeBundleDigest: runtime.bundleDigest,
           runtimeAdapterDigest: runtime.runtimeAdapterDigest
         },
-        channelFactory: async (bindingId) =>
-          resources.openChannel(transport, bindingId),
+        channelFactory: async (bindingId, transcript) =>
+          resources.openChannel(transport, bindingId, transcript),
         bindingStore: options.bindingStore,
         modelBridgePolicy: options.modelBridge.policy,
         modelProfile: modelProfileForAgent(
@@ -286,7 +286,8 @@ class ManagedRemoteRuntimeResources {
 
   async openChannel(
     expected: ManagedRemoteTransportIdentity,
-    bindingId: string
+    bindingId: string,
+    transcript?: { channelEpoch: string }
   ) {
     const transport = await this.prepareTransport()
     if (
@@ -297,6 +298,7 @@ class ManagedRemoteRuntimeResources {
     }
     const channel = await createProtocolRemoteRuntimeChannel({
       connection: this.connection,
+      transcript,
       openIdentity: {
         bindingId,
         runtimeId: this.runtime.runtimeId,

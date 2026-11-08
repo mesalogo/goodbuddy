@@ -518,8 +518,10 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 - An in-memory attached session is reusable only while its channel is open and
   its transport generation is current. Before opening or reusing a session,
   Desktop evicts a closed/stale channel and its cached session, releases that
-  channel's permit, and reopens through the existing persisted binding and
-  `attachPrompt` path. The Agent-owned operation and committed transcript cursor
+  channel's permit, and opens a task-progress RPC reader using the persisted
+  binding and `attachPrompt` path. This reader does not call `openAcpChannel`,
+  register an ACP binary stream, persist new binary cursors, or resume/replay the
+  old ACP stream. Its recorded channel epoch is metadata only. The Agent-owned operation and committed transcript cursor
   survive this eviction; it does not prepare or submit another Prompt. Failure
   to reopen leaves the binding available for the existing bounded task retry.
   This is also required after an unconfirmed start response. Transient transport
@@ -528,6 +530,18 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   escalation. A stale transport is retryable; an explicit binding/Host identity
   rejection remains terminal. Explicit user cancellation still follows the
   existing cancellation path.
+- `attachPrompt` resolves the task from the semantic store before consulting an
+  in-memory execution binding. Terminal progress remains readable without that
+  binding, including after process cleanup or daemon restart. For a live task,
+  the existing controller takeover checks still apply; attaching updates the
+  connection lifetime so question responses and cancellation reach the same
+  running operation. Closing a progress reader never closes the Agent's execution
+  binding. A disconnected reader returns to the existing bounded task-sync retry,
+  rather than starting an ACP stream recovery cycle. After a completed turn, the
+  next new message opens an execution channel before preparing its new operation.
+  This does not reconstruct a lost Runtime process or bypass Host/controller
+  identity checks. Desktop and Agent must both include this fix for terminal
+  synchronization without an in-memory binding.
 - 每个 Agent 语义 sequence 在 Main 映射为零到多个公开事件，最后追加内部 checkpoint。
   Desktop 在同一 SQLite 事务中去重 provenance、归并原 assistant message，并在 checkpoint
   时提交 Task 终态；事务成功后生成器才继续并向 Agent ACK。断电发生在同一 sequence

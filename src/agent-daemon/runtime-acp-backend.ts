@@ -1567,11 +1567,15 @@ export class RuntimeAcpBackend {
         'process'
       )
     }
+    // The durable task is authoritative even after its execution binding has
+    // closed or the daemon has restarted. Reading a terminal task needs no ACP.
+    const task = this.#options.semanticPrompts.attach(
+      request.bindingId, request.operationId, context.controller.controllerId
+    )
+    if (task.state !== 'starting' && task.state !== 'running') return task
     const binding = this.#bindings.get(request.bindingId)
-    if (
-      binding === undefined ||
-      binding.controllerId !== context.controller.controllerId
-    ) {
+    if (binding === undefined) return task
+    if (binding.controllerId !== context.controller.controllerId) {
       throw new RuntimeAcpBackendError(
         'Prompt attach binding does not exist for this controller',
         'not-found'
@@ -1594,11 +1598,9 @@ export class RuntimeAcpBackend {
       binding.controllerGeneration = context.controller.generation
       binding.connectionId = context.controller.connectionId
     }
-    return this.#options.semanticPrompts.attach(
-      request.bindingId,
-      request.operationId,
-      context.controller.controllerId
-    )
+    binding.transportState = 'live'
+    this.#bindConnectionLifetime(binding, context.signal)
+    return task
   }
 
   #pageOwnedPrompt(

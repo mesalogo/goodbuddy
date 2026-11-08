@@ -169,6 +169,8 @@ export type RuntimeProtocolConnection = Pick<
 
 export type ProtocolRemoteRuntimeChannelOptions = {
   connection: RuntimeProtocolConnection
+  /** Retains the recorded epoch as metadata, without reopening its ACP channel. */
+  transcript?: { channelEpoch: string }
   openIdentity: z.input<typeof acpOpenChannelRequestSchema>
   signal?: AbortSignal
   releaseConnectionOnClose?: boolean
@@ -222,7 +224,7 @@ type OpenState = {
   client: RuntimeProtocolClient
   openIdentity: z.infer<typeof acpOpenChannelRequestSchema>
   openResult: z.infer<typeof acpOpenChannelResultSchema>
-  binary: RuntimeProtocolBinaryChannel
+  binary?: RuntimeProtocolBinaryChannel
   generation: number
   capabilityGeneration: number
   daemonBootId: string
@@ -233,7 +235,8 @@ type OpenState = {
 }
 
 /**
- * Opens a stable ACP binding before registering its binary channel.
+ * Opens an execution binding and binary channel, or only task RPC access when
+ * reading an already submitted operation's transcript.
  * Mutating Runtime requests are issued once and are never replayed here.
  */
 export async function createProtocolRemoteRuntimeChannel(
@@ -265,6 +268,24 @@ export async function createProtocolRemoteRuntimeChannel(
     openIdentity.runtimeBundleDigest,
     options.modelBridge !== undefined
   )
+
+  if (options.transcript) {
+    options.signal?.throwIfAborted()
+    return new ProtocolRemoteRuntimeChannel({
+      connection, client, openIdentity,
+      openResult: acpOpenChannelResultSchema.parse({
+        bindingId: openIdentity.bindingId,
+        channelId: openIdentity.bindingId,
+        channelEpoch: options.transcript.channelEpoch,
+        acpCapabilitiesDigest: runtime.acpCapabilitiesDigest
+      }),
+      generation, capabilityGeneration,
+      daemonBootId: connection.status.daemonBootId,
+      releaseConnectionOnClose: options.releaseConnectionOnClose ?? false,
+      controlTimeoutMs, maximumPendingControlRequests,
+      modelBridge: options.modelBridge
+    })
+  }
 
   let openResult: z.infer<typeof acpOpenChannelResultSchema>
   try {
@@ -416,6 +437,7 @@ export async function createProtocolRemoteRuntimeChannel(
 export class ProtocolRemoteRuntimeChannel
   implements RemoteRuntimeChannel
 {
+  readonly transcriptOnly: boolean
   readonly input: ReadableStream<Uint8Array>
   readonly output: WritableStream<Uint8Array>
   readonly channelEpoch: string
@@ -469,6 +491,7 @@ export class ProtocolRemoteRuntimeChannel
 
   constructor(state: OpenState) {
     this.#state = state
+    this.transcriptOnly = state.binary === undefined
     this.channelEpoch = state.openResult.channelEpoch
     this.advertisedAcpCapabilitiesDigest =
       state.openResult.acpCapabilitiesDigest
@@ -949,6 +972,7 @@ export class ProtocolRemoteRuntimeChannel
           return
         }
         const binary = this.#state.binary
+        if (!binary) throw new Error('Task progress has no ACP input stream')
         const frame =
           this.#pendingFrame ??
           (await binary.receive(this.#lifetime.signal))
@@ -1030,6 +1054,7 @@ export class ProtocolRemoteRuntimeChannel
         )
         const frame = new Uint8Array(chunk.subarray(offset, end))
         const binary = this.#state.binary
+        if (!binary) throw new Error('Task progress has no ACP output stream')
         this.#activeBinarySends += 1
         try {
           await binary.send(frame, this.#lifetime.signal)
@@ -1295,7 +1320,7 @@ export class ProtocolRemoteRuntimeChannel
 
   #subscribeTransport(
     client: RuntimeProtocolClient,
-    binary: RuntimeProtocolBinaryChannel
+    binary?: RuntimeProtocolBinaryChannel
   ): void {
     this.#unsubscribeClientClose()
     this.#unsubscribeBinaryClose()
@@ -1303,10 +1328,10 @@ export class ProtocolRemoteRuntimeChannel
       this.#captureTransportDiagnostic(error)
       void this.#transportInterrupted()
     })
-    this.#unsubscribeBinaryClose = binary.onClose((error) => {
+    this.#unsubscribeBinaryClose = binary?.onClose((error) => {
       this.#captureTransportDiagnostic(error)
       void this.#transportInterrupted()
-    })
+    }) ?? (() => undefined)
   }
 
   #captureTransportDiagnostic(error: unknown): void {
@@ -1319,6 +1344,12 @@ export class ProtocolRemoteRuntimeChannel
     }
     if (this.#recoveryPromise !== undefined) {
       return this.#recoveryPromise
+    }
+    if (this.transcriptOnly) {
+      // Task synchronization owns reconnection. Never resume the old ACP stream.
+      return this.#fatalTransport(new ProtocolRemoteRuntimeChannelError(
+        'Remote task progress connection closed', 'transport'
+      ))
     }
     const providerDeliveryMayBeUncertain = [
       ...this.#modelBridges
@@ -1646,6 +1677,7 @@ export class ProtocolRemoteRuntimeChannel
     }
     const canRequestRemoteClose =
       requestRemoteClose &&
+      !this.transcriptOnly &&
       matchesGeneration(
         this.#state.connection,
         this.#state.client,
@@ -1663,7 +1695,7 @@ export class ProtocolRemoteRuntimeChannel
     })
     this.#resumeInput()
     this.#wakeRecoveryWaiters()
-    this.#state.binary.close()
+    this.#state.binary?.close()
     try {
       this.#readController?.close()
     } catch {
