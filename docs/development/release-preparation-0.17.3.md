@@ -2,6 +2,19 @@
 
 Date: 2026-11-08.
 
+## Publication status checked on 2026-11-08
+
+- Approved final commit: `ace8e52337a59be84d6aabb6b01b95fb8789ccc7`.
+  Desktop main CI `42449336825` passed validators and production build;
+  Agent native validation `42449336711` and website `42449336794` succeeded.
+- Both remote annotated `v0.17.3` tags were verified as object
+  `8f047160407151c40ce52372249e963aec71c065`, peeled to the approved commit.
+- Tag workflow `42451154833` succeeded on attempt 1. GitHub reports stable
+  Latest `v0.17.3`, published at `2026-11-08T06:27:42Z`.
+- These are workflow and GitHub publication facts, not independent OSS/website
+  or installed-package acceptance. Earlier candidate checkpoints below remain
+  historical. No Agent release was made for this version.
+
 ## Scope and approval
 
 - Published baseline: `v0.17.2`,

@@ -2,6 +2,34 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.17.4",
+      "releasedAt": "2026-11-08",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**修复远端任务进度同步**：远端执行通道失效后，重新连接可直接读取原任务的进度和已保存结果，不再要求重新打开旧执行通道，也不会重复提交任务。需配套 Agent `0.15.13`；读取历史结果不会恢复已经丢失的运行进程。",
+            "**修复 DeepSeek Harness 启动失败**：修复安装包缺少依赖导致 Harness 在启动前退出的问题，并完成新版工具执行和会话初始化适配。内置 Harness 与 DS Web 升级至 `0.2.2-rc.1`，该上游版本仍为候选版。"
+          ],
+          "notices": [
+            "使用远端能力时，请同时更新 Host 上的 Agent 至 `0.15.13`。数据库 schema、OpenCode `1.19.3` 和 Continue `1.5.47` 不变。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Fix remote task progress synchronization**: After an execution channel becomes unusable, reconnecting reads the original task’s progress and persisted results without reopening the old execution channel or submitting the task again. Requires Agent `0.15.13`; reading saved results does not restore a lost Runtime process.",
+            "**Fix DeepSeek Harness startup failures**: Fix missing packaged dependencies that caused Harness to exit before startup, and adapt tool execution and session initialization to the updated runtime. Bundled Harness and DS Web move to `0.2.2-rc.1`, which remains an upstream release candidate."
+          ],
+          "notices": [
+            "For remote execution, also update the Host’s Agent to `0.15.13`. The database schema, OpenCode `1.19.3`, and Continue `1.5.47` are unchanged."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.17.3",
       "releasedAt": "2026-11-08",
       "notes": {

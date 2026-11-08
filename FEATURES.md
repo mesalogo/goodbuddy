@@ -384,8 +384,12 @@ records are listed separately and do not introduce another feature status.
   accepted operation, including when its start response was lost. Transient
   transport errors do not cancel accepted work; bounded retries, explicit
   cancellation and terminal identity rejection retain their existing behavior.
-  This client-side recovery fix uses the existing Agent protocol and needs no
-  replacement of Agent `0.15.12`. Current-source Linux/OpenCode evidence and its
+  Desktop `0.17.4` and Agent `0.15.13` synchronize task progress through existing
+  task RPCs without reopening or resuming the old ACP execution channel.
+  Persisted terminal results remain readable after the in-memory binding is
+  gone; live reattachment retains cancellation and the next new message opens
+  an execution channel. Both components need this fix; reading persisted
+  results does not recreate a lost Runtime process. Current-source Linux/OpenCode evidence and its
   controlled-failure limits are recorded in
   [unified execution progress](./docs/features/unified-execution/progress.md).
   A real Linux x64 Host has covered short and long detach, forced local harness exit,
@@ -393,7 +397,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.12`, unchanged for the current Desktop release candidate `0.17.3`; formal
+  `0.15.13`, paired with the current Desktop release candidate `0.17.4`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -1077,10 +1081,21 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.17.3`, paired with the published Agent `0.15.12`, with
+- The current Desktop candidate is `0.17.4`, paired with Agent candidate `0.15.13`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
-  `0.2.2-rc.1` (unreleased source upgrade). Publication status follows the independent
+  `0.2.2-rc.1` (upstream RC). Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.17.4` and Agent `0.15.13` repair remote task progress synchronization
+  without reopening the old execution channel or replaying the task. Hosts need
+  the new Agent; its catalog requires Desktop `0.17.4`. Desktop also updates
+  Harness and DS Web to `0.2.2-rc.1` with Cordis `4.1.0`, bundles the missing
+  startup dependency and adapts tool/session initialization. Managed SSH still
+  does not support DSH. Schema 65, OpenCode `1.19.3`, Continue `1.5.47` and
+  protocol versions remain unchanged. Latest-source full tests recorded two
+  Electron failures despite focused and Linux Host checks passing; exact
+  candidate CI remains required. Six Desktop targets and three independent
+  Agent targets are planned, with Agent non-Latest and no LoongArch. See
+  [release preparation](./docs/development/release-preparation-0.17.4.md).
 - Desktop `0.17.3` adds local knowledge document references and inline reference
   editing, with collapsed source details beneath sent messages. Normal Runtime
   completion is no longer converted to failure by unfinished tool metadata;
@@ -1089,8 +1104,9 @@ records are listed separately and do not introduce another feature status.
   no longer leaves new requests using a terminal cached connection.
   Agent `0.15.12`, schema 65 and Runtime pins remain unchanged. Development
   evidence includes Electron document reading and Linux Host recovery checks,
-  not installed-app acceptance of both new fixes. Exact-candidate CI and
-  six-target publication remain pending, with no LoongArch or new Agent release.
+  not installed-app acceptance of both new fixes. Main CI and tag workflow
+  succeeded; GitHub published stable `v0.17.3` on 2026-11-08. These publication
+  facts do not extend installed-package acceptance. No LoongArch or new Agent release.
   See [release preparation](./docs/development/release-preparation-0.17.3.md).
 - Desktop `0.17.2` repairs reattachment after a cached remote channel closes or
   becomes stale and avoids unintended cancellation of accepted tasks. Exported
