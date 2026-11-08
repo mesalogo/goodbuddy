@@ -107,12 +107,14 @@ export default defineConfig({
           '@deepseek-ai/dsh-system-prompt',
           '@deepseek-ai/dsh-token-meter',
           '@deepseek-ai/dsh-tool-bash',
+          '@deepseek-ai/dsh-tool-executor-native',
           '@deepseek-ai/dsh-tool-fs',
           '@deepseek-ai/dsh-tool-pwsh',
           '@deepseek-ai/dsh-tool-skill',
           '@deepseek-ai/dsh-tools',
           '@deepseek-ai/dsh-user-approval',
           '@deepseek-ai/dsh-working-directory',
+          'cross-spawn',
           'yaml',
           'zod'
         ]

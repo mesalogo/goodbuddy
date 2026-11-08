@@ -13,6 +13,7 @@ import type {
 import { GoodBuddyHarnessAttachmentStore } from './agent/goodbuddy-harness-attachment-store'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import { SessionId } from '@deepseek-ai/dsh-session'
 
 async function readAllMessages(
   readable: ReadableStream<unknown>
@@ -93,7 +94,12 @@ describe('controlled DeepSeek Harness host', () => {
 
     expect(host.context.fs.sandboxMode).toBeUndefined()
     expect(host.context.get('sessionProjections')).toBeDefined()
-    expect(host.context.get('agentLoop')).toBeDefined()
+    const agent = await host.context.agents.create({
+      sessionId: SessionId('host-startup-probe'),
+      agentOptions: { provider: 'goodbuddy', model: 'qwen-plus' },
+      meta: { cwd: root }
+    })
+    await agent.dispose()
     expect(host.context.shell.sandboxMode).toBeUndefined()
     expect(host.context.get('attachments')).toBeInstanceOf(
       GoodBuddyHarnessAttachmentStore
@@ -305,13 +311,11 @@ describe('controlled DeepSeek Harness host', () => {
         .map((tool) => tool.name)
     ).toContain('skill')
     const loadedSkill = await createdContext!.tools.execute({
-      callId: 'skill-call',
-      name: 'skill',
-      arguments: { name: 'web-3d-game' },
+      calls: [{ type: 'tool_call', id: 'skill-call', name: 'skill', arguments: { name: 'web-3d-game' } }],
       agent: createdAgent,
       signal: new AbortController().signal
     } as never)
-    expect(loadedSkill).toMatchObject({
+    expect(loadedSkill.results[0]?.result).toMatchObject({
       isError: false,
       value: {
         name: 'web-3d-game',

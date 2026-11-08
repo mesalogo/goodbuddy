@@ -53,14 +53,11 @@ describe.skipIf(!entrypoint)(
       ).toContain('greet')
       await expect(
         host.context.tools.execute({
-          callId: 'marketplace-greet',
-          name: 'greet',
-          arguments: { name: 'Ada' },
+          calls: [{ type: 'tool_call', id: 'marketplace-greet', name: 'greet', arguments: { name: 'Ada' } }],
           signal: new AbortController().signal
         } as never)
       ).resolves.toMatchObject({
-        isError: false,
-        value: 'Hello, Ada!'
+        results: [{ result: { isError: false, value: 'Hello, Ada!' } }]
       })
       await host.dispose()
     })

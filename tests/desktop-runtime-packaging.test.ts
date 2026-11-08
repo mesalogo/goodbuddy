@@ -103,6 +103,14 @@ describe('desktop Runtime packaging', () => {
   })
 
   it.each([
+    'import spawn from "cross-spawn";',
+    'const spawn = require("cross-spawn");',
+    'await import("cross-spawn");'
+  ])('rejects the external cross-spawn dependency that crashes the unpacked Host', (source) => {
+    expect(() => verifyHarnessBundleImports(source, 'host.js')).toThrow('external cross-spawn')
+  })
+
+  it.each([
     'import Registry from "@deepseek-ai/dsh-session-projection";',
     'export { Registry } from "@deepseek-ai/dsh-session-projection";',
     'await import("@deepseek-ai/dsh-session-projection");'

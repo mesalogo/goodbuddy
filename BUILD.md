@@ -615,6 +615,20 @@ npm run smoke:deepseek-harness
 `utilityProcess`，等待固定 Host 完成本地主机执行器初始化与内部 ready 握手。它不会发起
 模型请求，也不会读取或传递 API Key。
 
+To verify cold-start continuation through the built Host, run
+`npm run smoke:deepseek-harness:resume`. It starts two separate Electron processes
+and checks new conversations, retained sessions, history replay and Host restart
+against a local deterministic Chat Completions endpoint (seven requests, no
+external model calls). It also rejects the external `cross-spawn` import that
+prevents an unpacked Host from starting. Temporary profiles and history are
+removed from the repository `temp/` directory after the run.
+
+After building, an optional Windows live check uses
+`GB_DSH_RESUME_SETTINGS=<absolute runtime-settings.json path>` with
+`node build/run-deepseek-harness-resume-smoke.cjs`. It resolves a compatible saved
+profile from isolated encrypted settings and Local State copies, then sends one
+text turn before and one after restarting Electron. Credentials are not printed.
+
 Windows x64 完整打包后的 Utility Host 与内置 npm 冒烟测试：
 
 ```bash

@@ -7,7 +7,7 @@
 | 文档状态 | 实现与发布验收基线 |
 | 设计目标 | 将 DeepSeek Harness 作为 GoodBuddy 的第三个 Agent Runtime |
 | Runtime 标识 | `deepseek-harness` |
-| 当前依赖基线 | 实际使用的 `@deepseek-ai/dsh-*` 底层库，精确锁定 `0.2.1-rc.2`，Cordis 为 `4.0.5` |
+| 当前依赖基线 | 实际使用的 `@deepseek-ai/dsh-*` 底层库，精确锁定 `0.2.2-rc.1`，Cordis 为 `4.1.0`；Node.js ≥ 24.9 |
 | 上游状态 | Developer Preview，允许出现破坏性变更 |
 | 上游许可证 | MIT |
 | GoodBuddy 目标平台 | Windows、macOS、Linux，x64 与 arm64 |
@@ -145,7 +145,10 @@ Harness 子进程内控制面不能取代 Main 控制面，Main 控制面也不�
 
 Harness Session 只在当前 Runtime 进程生命周期内存在。释放 GoodBuddy 会话时必须同步释放对应 Harness Agent。
 固定 Host 显式加载 `dsh-session-projection` 的内存 SessionProjectionRegistry，这是
-`0.2.1-rc.2` AgentLoop 的必需依赖；不加载 Session persistence，也不新增磁盘会话副本。
+`0.2.2-rc.1` AgentLoop 的必需依赖；不加载 Session persistence，也不新增磁盘会话副本。
+Host 按依赖顺序等待核心插件完成初始化，先完成 Session Projection 与 Agent Registry，
+再加载工具注册表、`dsh-tool-executor-native` 和 AgentLoop。旧 `tools.mode` 配置已移除；
+ready 握手发生在 Agent 工厂可用之后，避免异步投影尚未注册就接收新会话。
 Host 同时加载 `dsh-working-directory`，文件、Shell 和 Skill 工具依赖该服务读取各 Session
 的有效工作目录。缺少该服务时，Host 可以完成握手，但这些工具不会注册。
 该依赖与其余 DSH 依赖一起由 Vite 打入 Host，不能从 `app.asar.unpacked` 外部导入
@@ -380,7 +383,7 @@ inflight。直接进程退出后，继承输出句柄的后代可能继续存活
 
 ### 9.5 跨项目复用
 
-锁定 0.2.1-rc.2 的文件和 Bash/PowerShell 工具通过 `workingDirectory` 服务读取 Session
+锁定 0.2.2-rc.1 的文件和 Bash/PowerShell 工具通过 `workingDirectory` 服务读取 Session
 工作目录，初始值来自原生 Session header.cwd；Host workspace 作为默认目录。
 不为每工作区复制本地 Provider；
 Main 的 Web/MCP ToolProvider 按工作区保存，最后一个对应 Session 释放时 dispose。
@@ -563,7 +566,7 @@ Runtime：       GoodBuddy 内置 DeepSeek Harness
 模型配置：      跟随 GoodBuddy · 企业网关（qwen-plus）
 状态：          已就绪
 路径：          <受控 Host 路径>
-版本：          0.2.1-rc.2
+版本：          0.2.2-rc.1
 执行权限：      当前用户权限
 
 Host 始终由当前 GoodBuddy 版本提供，不存在自定义 Host 入口。
@@ -667,6 +670,10 @@ Renderer 只接收公开 npm 元数据和受管插件状态。任何凭据、完
 - 包中没有混入其他平台不需要的可执行内容，除非上游包无法拆分且已记录。
 
 ### 16.4 生产闭包
+
+固定 Host 从 `app.asar.unpacked/out/main` 启动。`cross-spawn` 与 DSH JavaScript
+依赖由 Vite 打入 Host/chunk，不能依赖 ASAR 内的包解析；发布检查拒绝残留的
+外部 `cross-spawn` 导入。缺少它会在内部握手前触发 `ERR_MODULE_NOT_FOUND` 和 code 1。
 
 发布包包含受控 Host、锁定的 npm 安装 Runtime 和许可证。应尽量避免把 Harness Web profile、HMR 和其他未加载产品面带入生产闭包。若 npm 依赖结构无法拆分，必须：
 

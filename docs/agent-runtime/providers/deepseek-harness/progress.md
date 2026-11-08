@@ -1,5 +1,61 @@
 # DeepSeek Harness 实现进度
 
+## 2026-11-08: DSH 0.2.2-rc.1 and packaged Host startup
+
+Upgraded the controlled Host libraries and official DS Web CLI from `0.2.1-rc.2`
+to the upstream November 4 release `0.2.2-rc.1`, and Cordis from `4.0.5` to `4.1.0`.
+The upstream release is still an RC. Node >=24.9 is required; the existing desktop
+Electron and Agent Node pins meet that requirement. OpenCode and Continue direct
+dependency pins are unchanged. No commit, push, installer or release was made.
+The lockfile audit confirms every installed DSH package is `0.2.2-rc.1`, and
+unrelated direct dependencies retain both their declared and installed versions.
+An initial npm update hit stale Cordis peer-resolution conflicts; resolving the
+whole DSH graph together completed installation, and a subsequent ordinary
+`npm install --package-lock-only --ignore-scripts --no-audit --no-fund` succeeded
+without force or legacy peer resolution.
+
+The installed Windows Host reproduced `启动前退出（code 1）`: an unpacked chunk
+imported `cross-spawn`, which could not be resolved outside ASAR. The same
+installed Host code ran successfully in an isolated dependency-complete copy.
+Vite now bundles `cross-spawn`, and the existing release import verifier rejects
+that external import alongside external DeepSeek imports. This reproduces the
+reported error, but does not establish why the other user's new conversation
+worked while their old conversation failed; that machine was not inspected.
+
+The upgrade requires actual composition changes: remove `tools.mode`, mount
+`dsh-tool-executor-native`, and await core plugins in dependency order. Session
+projection registration is asynchronous in the new baseline. Before the startup
+ordering fix, an immediate agent creation failed with “no agent factory
+registered” even though an ACP round-trip could give initialization time to
+finish. The Host regression now creates and disposes a real Agent immediately
+after startup. Direct test tool invocations use the new batch API.
+
+Validation on Windows x64:
+
+| Check | Result |
+| --- | --- |
+| DSH, control plane, native Web, discovery, bundle and Vite targeted tests | 149 passed, 5 opt-in tests skipped |
+| `npm test` | 595 files passed, 21 skipped; 6,976 tests passed, 93 skipped |
+| `npm run typecheck`, `npm run lint` | Passed |
+| `npm run build` | Main/Preload/Renderer build and control-plane installer check passed |
+| `node build/run-deepseek-harness-resume-smoke.cjs` | Actual built Host, two Electron lifetimes, four Host instances, seven local model requests; new/warm/cold-history/restarted-Host turns passed |
+| Same resume smoke with saved compatible model profile | Two successful real-model turns, before and after Electron restart; recovered the earlier marker |
+| Production `prepareNativeDshResources` in an isolated staging project, then native Web suite against copied CLI | 7 passed; real official Web process and model bridge, filesystem/Skill/MCP, history, cancellation and cleanup |
+
+The first two live-check attempts made zero model requests because Windows
+safeStorage lacked the profile's encrypted master key. Copying Local State into
+the isolated profile allowed resolution; original settings and the live profile
+were not modified. The staging probe's initial 60-second run timed out while
+copying resources; a clean run with enough time passed. Test profiles, encrypted
+copies, staged resources and scratch files are cleaned after verification.
+
+Remote scope: `src/agent-daemon` does not load DSH; managed SSH currently exposes
+direct model, OpenCode and Continue, and rejects DSH selection. The changed
+Host/bootstrap and native Web resources are desktop-local. No Agent source,
+remote Runtime bundle or protocol change was required, and no Linux Host/model
+call was made. This evidence does not replace release CI, full installer/ASAR
+acceptance, macOS/Linux native testing or verification on the reporting machine.
+
 ## 2026-10-23：命令取消与 Utility 子进程修复
 
 Windows 固定 Host 改用 GoodBuddyHarnessSubprocess，保留实际 shell 句柄并复用已有树终止

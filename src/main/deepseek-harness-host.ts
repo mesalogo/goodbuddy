@@ -1,4 +1,4 @@
-import { Context, type Fiber } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
@@ -16,6 +16,7 @@ import LocalSubprocess from './agent/deepseek-harness-subprocess'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
 import * as ToolPwsh from '@deepseek-ai/dsh-tool-pwsh'
@@ -228,6 +229,7 @@ export async function startControlledDeepSeekHarnessHost(
     { plugin: LlmRuntime },
     { plugin: SessionStore },
     { plugin: SessionProjectionRegistry },
+    { plugin: AgentRegistry },
     ...(config.supportsImageInput
       ? [{ plugin: GoodBuddyHarnessAttachmentStore }]
       : []),
@@ -240,8 +242,8 @@ export async function startControlledDeepSeekHarnessHost(
         includeRuntimeContext: true
       }
     },
-    { plugin: ToolRuntime, config: { mode: 'native' } },
-    { plugin: AgentRegistry },
+    { plugin: ToolRuntime },
+    { plugin: NativeToolExecutor },
     {
       plugin: GoodBuddyCredentialProvider,
       config: new Set(config.credentialRefs)
@@ -293,19 +295,17 @@ export async function startControlledDeepSeekHarnessHost(
       config: { agents: [], maxParallelToolCalls: 10 }
     }
   ]
-  const fibers: Fiber[] = []
   let startupCode: ControlledHarnessHostStartupCode =
     'HOST_PLUGIN_GRAPH_FAILED'
   try {
     for (const spec of specs) {
-      fibers.push(
-        ctx.plugin(
-          spec.plugin,
-          ...(spec.config === undefined ? [] : [spec.config])
-        )
+      // Providers precede their consumers. In Cordis 4.1 a fiber awaiting
+      // missing injections can settle before an async provider is published.
+      await ctx.plugin(
+        spec.plugin,
+        ...(spec.config === undefined ? [] : [spec.config])
       )
     }
-    await Promise.all(fibers)
     const extensions = await loadControlledHarnessExtensions(
       ctx,
       config.extensionPackages ?? []

@@ -107,19 +107,19 @@ describe.skipIf(!enabled)('DSH marketplace live E2E', () => {
         expect(host.extensionFailures).toEqual([])
         await expect(
           host.context.tools.execute({
-            callId: 'marketplace-live-greet',
-            name: 'greet',
-            arguments: { name: 'GoodBuddy' },
+            calls: [{ type: 'tool_call', id: 'marketplace-live-greet', name: 'greet', arguments: { name: 'GoodBuddy' } }],
             signal: new AbortController().signal
           } as never)
         ).resolves.toMatchObject({
-          isError: false,
-          value: {
-            message: 'Hello, GoodBuddy!',
-            name: 'GoodBuddy',
-            language: 'en',
-            style: 'friendly'
-          }
+          results: [{ result: {
+            isError: false,
+            value: {
+              message: 'Hello, GoodBuddy!',
+              name: 'GoodBuddy',
+              language: 'en',
+              style: 'friendly'
+            }
+          } }]
         })
       } finally {
         await host?.dispose().catch(() => undefined)

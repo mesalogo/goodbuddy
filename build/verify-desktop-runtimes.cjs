@@ -34,6 +34,9 @@ function verifyHarnessBundleImports(source, name) {
   if (/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)["']@deepseek-ai\//u.test(source)) {
     throw new Error(`DeepSeek Harness bundle contains an external DeepSeek dependency: ${name}`)
   }
+  if (/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)["']cross-spawn["']/u.test(source)) {
+    throw new Error(`DeepSeek Harness bundle contains external cross-spawn: ${name}`)
+  }
 }
 
 module.exports = { verifyOpenCodeConfig, verifyHarnessBundleImports }

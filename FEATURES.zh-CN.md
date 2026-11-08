@@ -171,7 +171,7 @@
 ### 开源、构建与发布
 
 - Desktop `0.15.3` 修复本地直连手动压缩和请求有效期间的工具授权，区分取消与失败并去除重复提示，优化侧栏搜索、注册成功后的快捷键提示及笔记操作布局，减少启动和存储中的重复处理，并精简重复依赖及开发文件。不宣称整体渲染性能已显著提升；Office 实时编辑仍为设计。证据见[0.15.3 发布准备](./docs/development/release-preparation-0.15.3.md)。
-- 当前 Desktop 候选为 `0.17.3`，配套已发布的 Agent `0.15.12`；OpenCode 固定为 `1.19.3`、Continue 为 `1.5.47`、Desktop DeepSeek Harness 为 `0.2.1-rc.2`；正式发布状态以独立发布渠道为准。
+- 当前 Desktop 候选为 `0.17.3`，配套已发布的 Agent `0.15.12`；OpenCode 固定为 `1.19.3`、Continue 为 `1.5.47`、Desktop DeepSeek Harness 源码已升级至 `0.2.2-rc.1`（尚未发布）；正式发布状态以独立发布渠道为准。
 - Desktop `0.17.3` 增加本地知识库文档引用和正文内引用编辑，已发送消息底部收起来源详情。运行正常结束时不再因工具状态未收尾而误判整轮失败，保留已有工具输出并将未结束工具标记为中断；恢复失败后解除发送和队列阻塞，Agent 重启后新请求不再复用已失效连接。Agent `0.15.12`、schema 65 和 Runtime 版本不变。开发证据包含 Electron 文档读取和 Linux Host 恢复验证，不代表两项新修复已通过安装版应用验收。精确候选 CI 和六目标发布待完成，不构建 LoongArch、不新发 Agent，见[发布准备](./docs/development/release-preparation-0.17.3.md)。
 - Desktop `0.17.2` 修复远端缓存通道关闭或失效后的重新接管，避免误取消已接收任务，并在桌面诊断导出中保留有界协议失败信息。Agent 守护进程、协议和 Runtime 锁不变，不重新发布 Agent `0.15.12`。Linux x64 开发证据包含受控的真实 OpenCode 恢复及四次真实 Provider 请求，不代表已安装桌面 UI 或物理断网验收。主分支 CI 已通过，不可变标签流程第三次运行成功，GitHub 已于 2026-11-06 发布稳定版 `v0.17.2`；这些发布事实不扩大安装包验收范围。不构建 LoongArch，见[发布准备](./docs/development/release-preparation-0.17.2.md)。
 - Desktop `0.17.1` 将文字和画布记录的新建、编辑放入正文栏，集中新建顶栏操作并优化草稿确认；应用级错误通知五秒后自动关闭，成功和信息通知仍为三秒，不清除输入草稿。画布附件提交仅补回归覆盖，不算新增附件功能。Agent `0.15.12`、schema 65 和 Runtime 版本不变；主分支 CI 和六目标标签流程成功，GitHub 已于 2026-11-05 发布稳定版 `v0.17.1`，这不扩大已安装包验收范围。不构建 LoongArch、不新发 Agent，见[发布准备](./docs/development/release-preparation-0.17.1.md)。

@@ -41,7 +41,7 @@ Skill 预算、名称约束及业务范围可能使已分配能力不可注入�
 取消行为已按[后续修复验证](./validation/cancellation-fixes-2026-10-23.md)更新。
 模型是确定性夹具，Runtime/工具/进程实际执行；不代表真实 UI、远程或所有上游功能已验收。
 
-| 能力 | 直连模型 | OpenCode 1.19.3 | Continue 1.5.47 | 受控 DSH 0.2.1-rc.2 | Droid 0.245.1 |
+| 能力 | 直连模型 | OpenCode 1.19.3 | Continue 1.5.47 | 受控 DSH 0.2.2-rc.1 | Droid 0.245.1 |
 | --- | --- | --- | --- | --- | --- |
 | 子代理/委派 | 真实服务/调度器/child Runtime 执行命令通过 | 原生 Task 并发、父子归属和子问答通过 | 本轮目录无委派工具 | 固定 Host 目录无子代理工具 | 原生 Task/daemon 测试通过 |
 | 跨父回复存活 | 本轮委派等待结果，无统一后台合同 | 本轮 Task 等待结果，无后台参数 | Bash 被等待，有 CheckBackgroundJob 但无已验创建/停止合同 | pwsh 被等待，无 job 工具 | detached 子任务可在父轮结束和中断后继续 |

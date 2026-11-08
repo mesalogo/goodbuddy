@@ -1079,7 +1079,7 @@ records are listed separately and do not introduce another feature status.
 
 - The current Desktop candidate is `0.17.3`, paired with the published Agent `0.15.12`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
-  `0.2.1-rc.2`. Publication status follows the independent
+  `0.2.2-rc.1` (unreleased source upgrade). Publication status follows the independent
   Desktop and Agent release channels.
 - Desktop `0.17.3` adds local knowledge document references and inline reference
   editing, with collapsed source details beneath sent messages. Normal Runtime
