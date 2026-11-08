@@ -2,6 +2,22 @@
 
 Date: 2026-11-06.
 
+## Publication status checked on 2026-11-08
+
+- Approved final commit: `b37b466a768bf81e3835bfdf41502af20a238688`.
+  Desktop main CI `42177907640` passed tests, typecheck, lint and the production
+  build. Agent validation `42177907688` passed all three native targets;
+  website workflow `42177907745` also succeeded.
+- The user approved `v0.17.2` at that exact commit. Both remote annotated tag
+  objects were verified as `d02a34954ea6d28cd8148793a530bc5f03c74fd3`, peeled to
+  the approved commit. No tag was moved or recreated.
+- Tag workflow `42184693186` is successful on attempt 3. GitHub reports public,
+  stable Latest `v0.17.2`, published at `2026-11-06T10:56:57Z`.
+- This records the verified workflow and GitHub result, not independent
+  OSS/website or installed-package acceptance. The first watcher exiting 1
+  was not itself evidence of workflow failure. Earlier checkpoints below
+  remain historical; Agent remains `0.15.12`.
+
 ## Scope and approval
 
 - Published Desktop baseline: `v0.17.1`, commit

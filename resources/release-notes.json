@@ -2,6 +2,40 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.17.3",
+      "releasedAt": "2026-11-08",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**用 @ 引用本地知识库文档**：在当前对话启用本地知识库后，输入 `@文件名` 搜索并选择文档，可通过库名和路径区分同名文件。模型可读取所选文档的已解析正文，并分页读取长内容；沿用当前会话的知识范围和所选 Runtime 的支持范围。",
+            "**在正文中编辑文档引用**：本地知识库、飞书和企业微信的引用直接显示在输入正文中，带来源图标，支持前后输入、整体删除和撤销重做。发送后，引用详情默认收起在用户消息底部，可展开查看来源；复制消息只复制正文，不附带内部读取提示，模型请求和历史仍保留完整引用信息。"
+          ],
+          "fixes": [
+            "**避免正常回复被误判失败**：运行正常结束时，不再因工具状态未及时收尾而将整轮回复判为失败。工具错误、已有输出和引用仍保留，未结束的工具标记为中断，不伪造成功结果。",
+            "**恢复失败后继续发送消息**：远端会话恢复失败后，不再持续阻止发送新消息，仍保留失败提示、历史结果和手动重试入口。Agent 重启导致旧连接失效时，新请求会重新建立连接，不自动重放旧任务；恢复失败并不表示远端任务已停止。"
+          ],
+          "notices": [
+            "继续配套 Agent `0.15.12`；数据库 schema 和内置 Runtime 版本不变。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Reference local knowledge documents with @**: Enable a local knowledge library for the conversation, then type `@filename` to find and select documents, using library names and paths to distinguish matching filenames. The model can read the selected documents’ parsed text and page through longer content, within the conversation’s knowledge scope and the selected Runtime’s existing support.",
+            "**Edit document references inline**: Local knowledge, Feishu, and WeCom references appear directly in the composer with source icons, supporting surrounding text, whole-reference deletion, and undo/redo. After sending, reference details are collapsed below the user message and can be expanded; copying copies only the message body without internal reading instructions, while model requests and saved history retain the complete reference information."
+          ],
+          "fixes": [
+            "**Avoid incorrectly failing completed replies**: A normally completed run is no longer marked failed because tool status updates have not finished. Tool errors, existing output, and references remain available; unfinished tools are marked interrupted rather than reported as successful.",
+            "**Continue sending after recovery fails**: Failed remote-session recovery no longer keeps new messages blocked, while preserving the failure notice, history, and manual retry. When an Agent restart invalidates the old connection, new requests establish a fresh connection without replaying old tasks; recovery failure does not mean the remote task has stopped."
+          ],
+          "notices": [
+            "Continues to use Agent `0.15.12`; the database schema and bundled Runtime versions are unchanged."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.17.2",
       "releasedAt": "2026-11-06",
       "notes": {

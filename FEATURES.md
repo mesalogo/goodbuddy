@@ -375,7 +375,11 @@ records are listed separately and do not introduce another feature status.
   prompt-wide output-token total, and Runtime output uses transport
   backpressure instead of cancellation when GoodBuddy buffers fill;
   recovery separately reports network, Agent, Runtime, committed-event cursor,
-  completion, or failure/retry and blocks only the affected project. Desktop
+  completion, or failure/retry and blocks the affected project's sending and queue
+  only while recovery is active. Failure releases that gate but retains its
+  error and manual retry; local interrupted metadata does not assert that the
+  remote task stopped. New requests can acquire a fresh connection after a
+  daemon restart without replaying old work. Desktop
   discards closed or stale cached channels before reattaching the original
   accepted operation, including when its start response was lost. Transient
   transport errors do not cancel accepted work; bounded retries, explicit
@@ -389,7 +393,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.12`, unchanged for the current Desktop release candidate `0.17.2`; formal
+  `0.15.12`, unchanged for the current Desktop release candidate `0.17.3`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -718,6 +722,10 @@ records are listed separately and do not introduce another feature status.
   failed sources retain recovery actions. Task history and secondary operations
   remain reachable from the consolidated controls.
 - [x] **Reference local knowledge files with @**: Search by filename in the conversation's enabled local libraries and distinguish duplicate names by library and source path. Selected documents appear inline at the mention position with their source icons; type before or after them, delete whole references, and undo or redo edits. The model reads the selected document IDs through `knowledge_read`, with pagination for long text. Uses the existing knowledge-tool Runtime support and scope; see [validation](./docs/features/knowledge-base/progress.md).
+  Local, Feishu and WeCom references share inline editing and collapsed source
+  details beneath sent user messages. Copying includes only the displayed body;
+  internal reading instructions remain in model requests and saved history,
+  not in the displayed or copied body.
 - [x] **External knowledge-base connections**: Manage Dify, FastGPT,
   and RAGFlow instances from the Knowledge page, then discover remote
   knowledge bases or enter their IDs and verify bindings with provider-specific
@@ -1069,18 +1077,30 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.17.2`, paired with the published Agent `0.15.12`, with
+- The current Desktop candidate is `0.17.3`, paired with the published Agent `0.15.12`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
   `0.2.1-rc.2`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.17.3` adds local knowledge document references and inline reference
+  editing, with collapsed source details beneath sent messages. Normal Runtime
+  completion is no longer converted to failure by unfinished tool metadata;
+  partial tool output remains available and unfinished tools are interrupted.
+  Failed remote recovery releases the send/queue gate, and a daemon restart
+  no longer leaves new requests using a terminal cached connection.
+  Agent `0.15.12`, schema 65 and Runtime pins remain unchanged. Development
+  evidence includes Electron document reading and Linux Host recovery checks,
+  not installed-app acceptance of both new fixes. Exact-candidate CI and
+  six-target publication remain pending, with no LoongArch or new Agent release.
+  See [release preparation](./docs/development/release-preparation-0.17.3.md).
 - Desktop `0.17.2` repairs reattachment after a cached remote channel closes or
   becomes stale and avoids unintended cancellation of accepted tasks. Exported
   Desktop diagnostics retain bounded protocol failure details. Agent daemon,
   protocol and Runtime locks are unchanged; Agent `0.15.12` is not republished.
   Linux x64 development evidence includes controlled real-OpenCode recovery
   and four real-provider requests; it is not installed-UI or physical network-outage
-  acceptance. Exact-candidate CI and six-target publication remain pending, with
-  no LoongArch build. See
+  acceptance. Main CI passed and the immutable tag workflow succeeded on
+  attempt 3; GitHub published stable `v0.17.2` on 2026-11-06. These publication
+  facts do not extend installed-package acceptance. No LoongArch build. See
   [release preparation](./docs/development/release-preparation-0.17.2.md).
 - Desktop `0.17.1` brings content-column creation/editing for text and canvas
   notes, one-row new-entry controls and refined draft confirmations. Application
