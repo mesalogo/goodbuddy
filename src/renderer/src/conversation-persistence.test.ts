@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationListSnapshot, LocalConversationSaveBatch } from "../../shared/assistant-contracts";
 import type { Message } from "./ChatTimeline";
 import type { Conversation } from "./chat-conversation";
-import { createConversationPersistence, createLocalConversationSaveBatch, LOCAL_CONVERSATION_SAVE_BYTES } from "./conversation-persistence";
+import { createConversationPersistence, createLocalConversationSaveBatch, LOCAL_CONVERSATION_SAVE_BYTES, withRecoveredQuestions, mergePersistedConversations } from "./conversation-persistence";
 import { storageDataBytes } from "../../shared/storage-data-size";
 import { startConversationRefresh, type ConversationRefreshApi } from "./conversation-refresh";
 import { createConversationStore } from "./conversation-store";
@@ -23,6 +23,17 @@ function deferred<T = void>() {
 }
 
 const remoteSource = { channel: "wecom", accountDisplay: "bot", conversationType: "direct" } as const;
+
+it("shows a manually retried recovery as active and releases it on another failure", () => {
+  const paused = conversation("c", [message("m", { state: "error", status: "恢复已停止，远端结果尚未确认" })]);
+  const active = withRecoveredQuestions({ ...paused, activeRequest: { requestId: "r", messageId: "m", questions: [] } });
+  expect(active.messages[0]?.state).toBe("streaming");
+  const merged = mergePersistedConversations([active], [paused as ConversationListSnapshot], new Map());
+  expect(merged[0]?.messages[0]?.state).toBe("error");
+  expect(merged[0]?.activeRequest).toBeUndefined();
+  const terminal = withRecoveredQuestions({ ...active, messages: [message("m", { state: "error", terminalStatus: "failed" })] });
+  expect(terminal.messages[0]?.state).toBe("error");
+});
 
 type SaveLocal = (batch: LocalConversationSaveBatch) => Promise<unknown>;
 

@@ -94,6 +94,35 @@ async function main(): Promise<void> {
   try {
     await daemon.start()
     const first = await manager.acquire('probe-host', installation)
+    if (process.argv[2] === '--daemon-restart') {
+      const oldBoot = first.status.daemonBootId
+      await daemon.stop()
+      const replacement = new AgentDaemon({ ...installation, stateDirectory: join(root, 'state'),
+        socketPath: join(root, 'agent.sock'), peerIdentityProvider })
+      try {
+        await replacement.start()
+        for (let i = 0; first.state === 'ready' && i < 100; i++) await delay(20)
+        await assert.rejects(first.reconnect(), /boot changed before controller resume/)
+        const fresh = await manager.acquire('probe-host', installation)
+        assert.notEqual(fresh.status.daemonBootId, oldBoot)
+        first.release()
+        const { handle } = await fresh.client.request('workspace/validate', {
+          remoteRootPath: root, requestedAccess: 'read-write', requiredCapabilities: []
+        })
+        const callId = randomUUID()
+        const result = await fresh.client.request('workspace/modelTools', {
+          workspaceId: handle.workspaceId, generation: handle.generation,
+          action: { kind: 'call', callId, name: 'process_execute', arguments: { command: 'printf fresh-request-after-restart' } }
+        })
+        assert.equal(result.kind, 'result')
+        assert(JSON.stringify(result).includes('fresh-request-after-restart'))
+        await fresh.client.request('workspace/modelTools', { workspaceId: handle.workspaceId, generation: handle.generation,
+          action: { kind: 'release', callId } })
+        fresh.release()
+        process.stdout.write(`${JSON.stringify({ passed: true, daemonRestart: true, freshRequest: true, attaches, externalModelCalls: 0 })}\n`)
+      } finally { await replacement.stop() }
+      return
+    }
     if (directRetirement || directDisconnect || directShutdown) {
       const request = <T>(method: string, params: unknown) => first.client.request(method as never, params) as Promise<T>
       const { handle } = await request<{ handle: { workspaceId: string; generation: number } }>('workspace/validate', { remoteRootPath: root, requestedAccess: 'read-write', requiredCapabilities: [] })

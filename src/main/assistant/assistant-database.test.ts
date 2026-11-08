@@ -5003,6 +5003,43 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
+  it('releases failed recovery metadata without losing the remote task cursor or later result', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-recovery-paused-'))
+    temporaryDirectories.push(directory)
+    const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
+    database.initialize('C:\\Workspace')
+    try {
+      const project = database.createSshProject(validatedSshProjectWrite())
+      const conversationId = randomUUID(), taskId = randomUUID(), assistantMessageId = randomUUID()
+      database.saveLocalConversations([{
+        header: { id: conversationId, projectId: project.id, title: 'Recovery paused', updatedAt: Date.now() }, messages: []
+      }])
+      database.createTask({ id: taskId, projectId: project.id, conversationId, title: 'Recovery paused', instructions: 'original',
+        remoteRecovery: { recoverable: true, currentUserMessageId: randomUUID(), currentAssistantMessageId: assistantMessageId } })
+      const append = (sequence: string, event: Parameters<AssistantDatabase['appendRemoteConversationTaskEventOnce']>[0]['event'], eventIndex = 0) =>
+        database.appendRemoteConversationTaskEventOnce({ taskId, conversationId, assistantMessageId,
+          bindingId: 'paused-binding', operationId: taskId, semanticSequence: sequence, eventIndex, event })
+      append('1', { requestId: taskId, type: 'text', delta: 'retained output' })
+      append('2', { requestId: taskId, type: 'tool', callId: 'read', name: 'Read', state: 'running', summary: 'Reading' })
+      append('3', { requestId: taskId, type: 'remote-semantic-checkpoint' })
+      database.endRecoverableRemoteTask(taskId, '恢复已停止，远端结果尚未确认', 'interrupted')
+      expect(database.getTask(taskId).status).toBe('interrupted')
+      expect(database.listRecoverableRemoteTasks()).toEqual([expect.objectContaining({ taskId, status: 'interrupted' })])
+      expect(database.getConversation(conversationId).messages[1]).toMatchObject({
+        state: 'error', content: 'retained output', tools: [expect.objectContaining({ state: 'interrupted' })]
+      })
+      // Projection does not fabricate a remote terminal or overwrite the raw tool state.
+      expect(database.getRemoteTaskActivityStates(taskId).terminal).toBeUndefined()
+      expect(database.getRemoteTaskActivityStates(taskId).tools.get('read')).toBe('running')
+      expect(database.getHighestCommittedRemoteTaskEventSequenceForTask(taskId)).toBe('3')
+      append('4', { requestId: taskId, type: 'done' })
+      append('4', { requestId: taskId, type: 'remote-semantic-checkpoint' }, 1)
+      expect(database.getTask(taskId).status).toBe('completed')
+      expect(database.getConversation(conversationId).messages[1]).toMatchObject({ state: 'complete', content: 'retained output' })
+      expect(database.listRecoverableRemoteTasks()).toEqual([])
+    } finally { database.close() }
+  })
+
   it.each([false, true])('keeps remote questions in arrival order through replay and reopen (legacy=%s)', async legacy => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-question-order-'))
     temporaryDirectories.push(directory)

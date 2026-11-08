@@ -9554,6 +9554,37 @@ describe("App", () => {
     });
   });
 
+  it.each([false, true])("allows a new message after recovery fails (snapshot=%s)", async snapshot => {
+    installRemoteProjectsSetting(true);
+    const remoteProject = {
+      ...project, id: "00000000-0000-4000-8000-000000000133", name: "恢复失败后继续",
+      rootPath: "/srv/failed", runtimeSelection: { provider: "opencode" as const },
+      executionSpace: { kind: "ssh" as const, hostId: "00000000-0000-4000-8000-000000000233", remoteRootPath: "/srv/failed" },
+      builtInDefault: false,
+    };
+    const failed = { projectId: remoteProject.id, requestId: "00000000-0000-4000-8000-000000000433",
+      stage: "failed" as const, message: "Agent daemon boot changed before controller resume", retryable: true };
+    vi.mocked(api.projects.list).mockResolvedValueOnce([project, remoteProject]);
+    vi.mocked(api.projects.remote.getRecoverySnapshot).mockResolvedValueOnce({
+      recoveries: [snapshot ? failed : { projectId: failed.projectId, requestId: failed.requestId, stage: "network" }],
+    });
+    render(<App />);
+    await screen.findByRole("button", { name: "当前项目" });
+    selectProjectOption(remoteProject.name);
+    const input = await screen.findByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(input, { target: { value: "这是新请求，不要重放旧任务" } });
+    if (!snapshot) {
+      expect(screen.getByLabelText("发送")).toBeDisabled();
+      act(() => remoteProjectRecoveryProgressListener?.(failed));
+    }
+    expect(await screen.findByRole("alert")).toHaveTextContent(failed.message);
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(api.agent.run).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: remoteProject.id, prompt: "这是新请求，不要重放旧任务",
+    })));
+  });
+
   it("retries a failed recovery with a new request ID and cleans up its listener", async () => {
     installRemoteProjectsSetting(true);
     const remoteProject = {

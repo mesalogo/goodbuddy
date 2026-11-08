@@ -8504,6 +8504,12 @@ describe('registerIpcHandlers agent terminal state', () => {
       ready.get(ids[0]!)!()
       if (mode === 'failure') {
         await vi.waitFor(() => expect(stage()).toBe('failed'))
+        expect(harness.assistantDatabase.endRecoverableRemoteTask).toHaveBeenCalledWith(
+          ids[1], expect.stringContaining('peer recovery failed'), 'interrupted'
+        )
+        expect(harness.assistantDatabase.endRecoverableRemoteTask).not.toHaveBeenCalledWith(
+          ids[0], expect.anything(), expect.anything()
+        )
         await harness.recoveryRetryHandler?.(trustedEvent(harness.webContents), { projectId })
         await vi.waitFor(() => expect(attempts.get(ids[1]!)).toBe(2))
         expect(attempts.get(ids[0]!)).toBe(1)

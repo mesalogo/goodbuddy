@@ -896,7 +896,7 @@ function isManagedSshProject(
 function isProjectRecoveryUnsettled(
   state: RemoteProjectRecoveryState | undefined,
 ): boolean {
-  return Boolean(state && state.stage !== "completed");
+  return Boolean(state && state.stage !== "completed" && state.stage !== "failed");
 }
 
 function remoteRecoveryStageOrder(
@@ -3567,7 +3567,7 @@ function App(): React.JSX.Element {
       };
       projectRecoveryByProjectIdRef.current = next;
       setProjectRecoveryByProjectId(next);
-      if (state.stage === "completed" && previous?.stage !== "completed") {
+      if ((state.stage === "completed" || state.stage === "failed") && previous?.stage !== state.stage) {
         resumeProjectConversationQueues(state.projectId);
       }
     },

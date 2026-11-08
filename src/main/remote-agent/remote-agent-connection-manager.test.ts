@@ -45,6 +45,7 @@ class MemoryStateFile implements ControllerStateFile {
 }
 
 class FakeProtocolClient {
+  daemonBootId = 'boot-1'
   readonly connectionId: string
   readonly generation: number
   capabilitiesGate?: Promise<void>
@@ -76,7 +77,7 @@ class FakeProtocolClient {
         state: 'ready',
         installationId: 'agent-v1',
         binaryDigest: `sha256:${'a'.repeat(64)}`,
-        daemonBootId: 'boot-1',
+        daemonBootId: this.daemonBootId,
         agentVersion: '1.0.0',
         protocol: AGENT_PROTOCOL_VERSION,
         platform: 'linux',
@@ -165,6 +166,7 @@ function harness(
   observeFailure?: DesktopDiagnosticFailureObserver
 ) {
   let currentTarget = target()
+  let daemonBootId = 'boot-1'
   const release = vi.fn()
   const sshLease = {
     identity: {
@@ -196,7 +198,7 @@ function harness(
       generation: connectTransport.mock.calls.length + 1,
       installationId: 'agent-v1',
       binaryDigest: `sha256:${'a'.repeat(64)}`,
-      daemonBootId: 'boot-1',
+      daemonBootId,
       serverNonce: 'server-1'
     }
     return {
@@ -214,6 +216,7 @@ function harness(
     connectTransport,
     createProtocolClient: () => {
       const client = new FakeProtocolClient(clients.length)
+      client.daemonBootId = daemonBootId
       if (clients.length > 0) {
         client.resumeGate = reconnectResumeGate
       }
@@ -229,6 +232,7 @@ function harness(
     connectTransport,
     clients,
     stateFile,
+    restartDaemon: () => { daemonBootId = 'boot-2' },
     changeRevision: (revision: number) => {
       currentTarget = target(revision)
     }
@@ -236,6 +240,24 @@ function harness(
 }
 
 describe('RemoteAgentConnectionManager', () => {
+  it('allows a fresh connection after daemon restart invalidates a retained controller', async () => {
+    const observeFailure = vi.fn()
+    const test = harness(undefined, undefined, 60_000, observeFailure)
+    try {
+      const old = await test.manager.acquire('host-1', installation)
+      test.clients[0]!.transportClose()
+      test.restartDaemon()
+      await expect(old.reconnect()).rejects.toThrow('Agent daemon boot changed before controller resume')
+      expect(observeFailure.mock.calls.filter(([event]) => event.code === 'remote.connection.daemon-status')).toHaveLength(1)
+      const fresh = await test.manager.acquire('host-1', installation)
+      expect(fresh.status.daemonBootId).toBe('boot-2')
+      expect(test.clients[2]!.requests.some(request => request.method === 'controller/resume')).toBe(false)
+      old.release()
+      expect(fresh.state).toBe('ready')
+      fresh.release()
+    } finally { await test.manager.dispose() }
+  })
+
   it('reacquires an offline shared connection instead of awaiting its old connect result', async () => {
     const test = harness(undefined, undefined, 60_000)
     try {

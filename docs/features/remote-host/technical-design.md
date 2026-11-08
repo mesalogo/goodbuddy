@@ -561,8 +561,8 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   进程和 Prompt 凭据并记录 `outcome-unknown`，避免无界 Prompt 哨兵造成永久悬挂。
 - Desktop SQLite 仍是永久可见项目/对话数据的权威；Agent transcript 只是尚未同步事件的
   权威。启动后 Renderer 先订阅恢复进度，再触发每项目恢复。项目选择器依次显示网络、
-  Agent、Runtime、cursor、完成或失败/重试；只阻塞受影响项目的发送和队列，已有历史与
-  其他项目保持可用。
+  Agent、Runtime、cursor、完成或失败/重试；仅恢复进行中阻塞受影响项目的发送和队列，
+  完成或失败均解除这层阻塞。失败提示和手动重试入口继续保留，已有历史与其他项目保持可用。
 - 完成提示是项目选择器内恢复进度的收尾反馈，首次收到该项目该 `requestId` 的完成状态后
   显示 3 秒，然后从收起按钮和展开菜单同时隐藏；不另发全局成功通知。计时由
   `ProjectSwitcher` 持有，切换项目、开合菜单或重复状态快照不延长期限，也不重放已隐藏的
@@ -592,6 +592,19 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   leases; concurrent callers share that reconnect. A transcript read timeout or
   closed channel does not escalate cancellation of the accepted owned prompt.
   Retry exhaustion leaves the recoverable task and manual retry entry intact.
+  Once recovery stops with an error, Main projects the task as `interrupted` and
+  its message as an error explaining that the remote result is still unconfirmed.
+  This releases local running metadata without inventing a remote terminal:
+  operation identity, transcript cursor and original semantic tool states remain
+  available for manual recovery. A later authoritative terminal can still finish
+  the task. Renderer releases the project send/queue gate on failure; active peers
+  retain their own execution leases. A manual retry's active-request projection
+  restores the recovering message's running UI until it completes or fails.
+- A daemon boot or capability-generation change cannot resume the predecessor
+  controller. That failed connection is evicted immediately, even when old leases
+  remain. A subsequent acquisition uses the normal fresh handshake and validation,
+  rather than repeatedly returning the terminal cached error. This does not replay
+  any old prompt or tool call, or treat the new connection as a recovered task.
 - Each protocol connection retains channel identities and accepts at most 4096
   channels over its lifetime, including short-lived transcript read/ACK RPCs.
   When Desktop reaches that limit before allocating a new channel, it marks the

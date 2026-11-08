@@ -478,7 +478,7 @@ export class RemoteAgentConnectionManager {
             capabilities.generation
           )
         } else if (requireExactResume) {
-          throw terminalError(
+          const error = terminalError(
             previous.daemonBootId !==
               transport.welcome.daemonBootId
               ? 'Agent daemon boot changed before controller resume'
@@ -488,6 +488,12 @@ export class RemoteAgentConnectionManager {
               ? 'daemon-status'
               : 'capability'
           )
+          // The predecessor can no longer resume, but a new request may connect
+          // to this validated daemon. Do not poison the shared acquisition cache.
+          entry.failure = error
+          this.#reportFailure('connect', `remote.connection.${error.reason}`, error)
+          this.#disposeEntry(entry)
+          throw error
         } else {
           previous = undefined
         }

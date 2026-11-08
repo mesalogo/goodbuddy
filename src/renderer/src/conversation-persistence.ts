@@ -136,8 +136,9 @@ export function withRecoveredQuestions(conversation: Conversation): Conversation
   return {
     ...conversation,
     messages: conversation.messages.map(message =>
-      message.id === active.messageId && message.state === "streaming"
-        ? { ...message, pendingQuestions: active.questions }
+      message.id === active.messageId && (message.state === "streaming" ||
+        (message.state === "error" && !message.terminalStatus))
+        ? { ...message, state: "streaming" as const, pendingQuestions: active.questions }
         : message,
     ),
   };

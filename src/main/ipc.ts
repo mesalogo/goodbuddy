@@ -2018,9 +2018,18 @@ export function registerIpcHandlers(
               publishTaskRecovery(task.taskId, { projectId, requestId, stage: 'completed' })
               remoteTaskRecoveryProgress.delete(task.taskId)
             } catch (error) {
+              const message = safeRuntimeError(error, '远程项目恢复失败').slice(0, 1_000)
+              if (!shuttingDown && !recoverySignal.aborted &&
+                (await listRecoverableRemoteTasks()).some(current => current.taskId === task.taskId)) {
+                // Recovery stopped, not necessarily the remote task. Release
+                // local running metadata while preserving its identity/cursor.
+                await assistantDatabase.endRecoverableRemoteTask(
+                  task.taskId, `恢复已停止，远端结果尚未确认：${message}`, 'interrupted'
+                )
+              }
               publishTaskRecovery(task.taskId, {
                 projectId, requestId, stage: 'failed',
-                message: safeRuntimeError(error, '远程项目恢复失败').slice(0, 1_000),
+                message,
                 retryable: true
               })
             } finally {

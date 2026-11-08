@@ -5622,7 +5622,7 @@ export class AssistantDatabase {
   endRecoverableRemoteTask(
     taskIdInput: string,
     messageInput: string,
-    status: 'failed' | 'cancelled'
+    status: 'failed' | 'cancelled' | 'interrupted'
   ): void {
     const taskId = assistantIdSchema.parse(taskIdInput)
     const message = messageInput.trim().slice(0, 4_000)
@@ -5702,7 +5702,11 @@ export class AssistantDatabase {
         attachments: metadata.attachments,
         answeredQuestions: metadata.answeredQuestions
       })
-      const ended = reduceRecoveredAgentEvent(current, {
+      const ended: ConversationMessage = status === 'interrupted' ? {
+        ...current, state: 'error', status: message, terminalStatus: undefined,
+        tools: interruptActiveTools(current.tools),
+        blocks: interruptActiveToolBlocks(current.blocks)
+      } : reduceRecoveredAgentEvent(current, {
         requestId: taskId,
         type: 'error',
         status,
@@ -5733,11 +5737,12 @@ export class AssistantDatabase {
         .prepare(
           `INSERT INTO task_events
             (task_id, run_id, kind, payload_json, created_at)
-           VALUES (?, NULL, 'error', ?, ?)`
+            VALUES (?, NULL, ?, ?, ?)`
         )
         .run(
           taskId,
-          JSON.stringify({
+          status === 'interrupted' ? 'status' : 'error',
+          JSON.stringify(status === 'interrupted' ? { status, error: message } : {
             requestId: taskId,
             type: 'error',
             status,

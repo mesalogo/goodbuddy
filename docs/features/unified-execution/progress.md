@@ -1,5 +1,49 @@
 # 进度与证据
 
+## 2026-11-08 Sending after remote recovery failure
+
+Reproduced two blocking defects before changing production code: both a recovery
+failure event and a failed startup snapshot left the send button disabled; after
+a daemon boot change, a retained controller's terminal connection stayed cached
+and rejected a fresh acquisition. The UI now treats failed recovery as settled
+for sending and queue admission, while retaining its error and manual retry.
+The connection manager evicts the invalid predecessor after boot/capability
+generation changes. Old leases cannot dispose the replacement connection.
+
+Main now settles failed recovery as `interrupted` local task metadata and an
+explanatory message, preserving remote identity, committed cursor and raw semantic
+events. Database tests verify that subsequent transcript completion can still be
+committed and acknowledged. A manual retry restores the message's active UI from
+Main's active-request projection; another failure releases it again. This is not
+a claim that the remote task stopped, and no original prompt is resubmitted.
+The authoritative rules are in [remote lifecycle design](../remote-host/technical-design.md).
+
+Validation:
+
+- Four full suites (IPC, database, connection manager, conversation persistence):
+  **404 passed, 2 skipped**.
+- App recovery selection: **8 passed**; queue selection: **16 passed** (separate
+  selections, not a claim of full App-suite acceptance). The new UI tests type
+  and send a new message through the existing queue to `agent.run`, with both
+  startup and live recovery failures.
+- Shared Linux x64, current-source `remote-recovery-host-probe.ts --daemon-restart`:
+  stopped an isolated AgentDaemon, restarted against the same state directory,
+  observed the exact boot-change resume error, acquired a fresh connection and
+  executed a new remote command. **Passed**, three attach connections, external
+  model calls **0**. The probe's attach pipe adapter and actual daemon/protocol/
+  connection-manager implementations were used. Test processes and uploaded
+  probe were cleaned; no existing user daemon was stopped.
+- Standard typecheck, full-repository lint and diff checks passed. Full repository
+  tests and installed Electron UI acceptance were not run for this change.
+
+```text
+npx vitest run src/main/assistant/assistant-database.test.ts src/main/ipc.test.ts src/main/remote-agent/remote-agent-connection-manager.test.ts src/renderer/src/conversation-persistence.test.ts
+npx vitest run src/renderer/src/App.test.tsx -t recover
+npx vitest run src/renderer/src/App.test.tsx -t queue
+npm run typecheck
+npm run lint
+```
+
 ## 2026-11-08 Runtime completion with unfinished tool metadata
 
 Removed the IPC projection that changed Runtime `done` into task failure when
