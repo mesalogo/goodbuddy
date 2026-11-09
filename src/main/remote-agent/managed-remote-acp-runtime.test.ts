@@ -156,7 +156,7 @@ function harness(
     capabilities: capabilities(),
     client: {
       generation: 5,
-      request: vi.fn(async (method: string, params: unknown) => {
+      request: vi.fn(async (method: string, params: unknown): Promise<unknown> => {
         if (method === 'workspace/validate') {
           return await workspaceValidate()
         }
@@ -245,6 +245,30 @@ function harness(
 }
 
 describe('createManagedRemoteAcpRuntime', () => {
+  it('uses task RPC execution without registering a desktop ACP stream', async () => {
+    const fixture = harness()
+    const request = fixture.connection.client.request.getMockImplementation()!
+    fixture.connection.client.request.mockImplementation(async (method, params) => {
+      if (method === 'runtime/openAcpChannel') return {
+        bindingId: 'binding-1', channelId: 'binding-1', channelEpoch: '9', acpCapabilitiesDigest: digest('f')
+      }
+      if (method === 'runtime/closeAcpChannel') return { ...(params as object), closed: true }
+      return request(method, params)
+    })
+    const registerBinaryChannel = vi.fn(() => { throw new Error('ACP stream must not be registered') })
+    Object.assign(fixture.connection.client, { registerBinaryChannel, onClose: () => () => {} })
+    Object.assign(fixture.connection, {
+      updateAcpBinding: vi.fn(async () => {}), flushAcpBindings: vi.fn(async () => {})
+    })
+    const runtime = await createManagedRemoteAcpRuntime(fixture.options)
+    try {
+      const channel = await remoteHarness.instances[0]!.options.channelFactory('binding-1') as import('../agent/remote-runtime-channel').RemoteRuntimeChannel
+      expect(channel.transcriptOnly).toBe(false)
+      await channel.close()
+      expect(registerBinaryChannel).not.toHaveBeenCalled()
+    } finally { await runtime.dispose() }
+  })
+
   it.each([false, true])('selects prompt limits from the connected Agent capability (optional=%s)', async (optional) => {
     const fixture = harness()
     fixture.options.modelBridge.profile.limits = {}

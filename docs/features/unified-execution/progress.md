@@ -1,5 +1,54 @@
 # 进度与证据
 
+## 2026-11-09 Agent-owned execution without unused ACP binary registration
+
+Reproduced `Remote Runtime binary channel could not be registered` on the shared
+Linux x64 Host with actual OpenCode: finish a turn, dispose the Desktop Runtime
+while retaining its ready binding and shared Host connection, then recreate the
+Runtime and send the next turn. The legacy binary-registration path rejects the
+retired channel identity. Explicit `releaseConversation` instead closes the saved
+binding and did not reproduce the problem; the probe now exercises Runtime
+eviction rather than conflating these two lifetimes.
+
+Managed Agent-owned execution now opens only the existing execution binding and
+uses task RPCs, without allocating the unused Desktop ACP binary stream or
+binary replay cursors. Its disconnect returns to task synchronization. Execution
+disposal still closes the binding; progress-reader disposal remains local. Direct
+ACP callers retain binary transport, with bounded error-code diagnostics on
+registration failure. No Agent RPC/schema/database changes were required; local
+Runtime and direct-model tools do not use this changed execution-channel factory.
+Authoritative behavior: [remote lifecycle design](../remote-host/technical-design.md#agent-owned-prompt-与-desktop-恢复).
+
+Validation:
+
+- Two new focused tests failed before the production change: unused binary
+  registration blocked task execution; disconnect started binary recovery.
+- Final four suites: **254 passed**, including the managed production channel
+  factory, transcript/ACK, cancellation, next-message and Agent backend tests.
+- Current-source Host probe `--reopen-channel`: legacy mode
+  (`GB_PROBE_LEGACY_BINARY=1`) reproduced the registration error; fixed mode
+  completed **3 turns, 3 task starts, 1 shared connection**, with Runtime eviction
+  between turns. `--closed-channel` and `--start-response-loss` each passed with
+  **1 task start, 2 connections, 1 progress reader and 1 attach**. Local scripted
+  responses were used for these fault comparisons; external requests: **0**.
+- Real-provider entry `tests/support/remote-task-progress-provider-live.ts`:
+  **2 gpt-6-astra / Responses requests, both HTTP 200**. The task completed after
+  disconnect/progress synchronization, and the same conversation's next message
+  completed. **2 explicit messages, 2 task starts**; no replay. Test resources,
+  isolated Electron profile and credential snapshot were cleaned.
+- Full `npm test`: **6,977 passed, 93 skipped, 15 failed** in three files:
+  `canvas-wheel.test.mjs` (13, missing `getActiveObjects` in the fixture),
+  `inline-help.electron.test.ts` (hover-transfer assertion), and
+  `magic-notes-analysis.electron.test.ts` (composer focus timeout). These are
+  outside the changed remote modules; full-suite acceptance is not claimed.
+- `npm run typecheck`, `npm run lint` and `git diff --check` passed.
+
+The Host probe uses current source, actual Runtime processes and authenticated
+relay transport, with controlled disconnects. It does not establish physical
+network interruption or installed-app UI acceptance. This reproduces a concrete
+registration failure, not proof that every previously reported stuck turn has
+the same cause. No installed desktop or user Agent process was replaced.
+
 ## 2026-11-08 Real-provider task progress and follow-up
 
 Validated the production recovery code committed in `ff4bbe0e` on the shared

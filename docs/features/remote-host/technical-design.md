@@ -515,6 +515,16 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 - Agent 把 ACP session update、permission decision 和唯一 Prompt 终态写入有界语义
   transcript。Main 不恢复旧 JSON-RPC Promise，也不重发 `session/prompt`；Fresh Desktop
   只对同一 controller/binding/operation 执行 takeover、attach 和 ACK-exclusive page。
+- Agent-owned execution opens its binding through the existing `openAcpChannel`
+  RPC, but Desktop does not register an ACP binary stream or persist binary
+  replay cursors. Prepare/start, progress, questions and cancellation use task
+  RPCs; the Agent owns the actual ACP connection. This permits a ready session
+  to reopen after Desktop Runtime eviction while the shared Host connection
+  stays alive, without reusing a retired binary channel ID. Disconnection returns
+  to task synchronization rather than starting a parallel binary-resume cycle.
+  Explicit execution-channel disposal still closes its Agent binding; a
+  transcript-only reader still does not. Direct ACP byte-stream callers retain
+  binary registration/replay and bounded registration-error diagnostics.
 - An in-memory attached session is reusable only while its channel is open and
   its transport generation is current. Before opening or reusing a session,
   Desktop evicts a closed/stale channel and its cached session, releases that
