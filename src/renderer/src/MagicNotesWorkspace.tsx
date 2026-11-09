@@ -2969,6 +2969,7 @@ function MagicNotesWorkspaceView({
                 inert={Boolean(busy)}
               >
                 <div className="magic-note-composer__header magic-note-entry-focus__header">
+                <div className="magic-note-entry-focus__context">
                 <div className="inline-help-label magic-note-composer__title">
                   <strong>{t('notes.newEntryTitle')}</strong>
                   {entryType === 'text' && <InlineHelp label={t('notes.newEntryLabel')}>
@@ -2983,8 +2984,9 @@ function MagicNotesWorkspaceView({
                     options={entryTypeOptions} disabled={Boolean(busy)}
                     onChange={(value) => { if (value !== entryType) void requestDraftSwitch({ kind: 'entry-type', value }) }} />
                 </div>
+                </div>
                 <div className="magic-note-canvas-actions">
-                  {entryType === 'canvas' && <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(false)}>{t('canvas.analyzeDraft')}</button>}
+                  {entryType === 'canvas' && <button type="button" className="secondary-button magic-note-entry-focus__analyze" aria-label={t('canvas.analyzeDraft')} title={t('canvas.analyzeDraft')} disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(false)}><Sparkles size={16} aria-hidden="true" /><span>{t('canvas.analyzeDraft')}</span></button>}
                   <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void requestDraftSwitch({ kind: 'cancel-new-entry' })}>{t('actions.cancel')}</button>
                   <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={() => void saveEntry()}>{t('actions.saveEntry')}</button>
                 </div>
@@ -3203,7 +3205,7 @@ function MagicNotesWorkspaceView({
                         <header className="magic-note-entry-focus__header">
                           <strong>{detail.title}</strong>
                           <div className="magic-note-entry__editor-actions">
-                            {editingEntry.content.version === 2 && <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(true)}>{t('canvas.analyzeDraft')}</button>}
+                            {editingEntry.content.version === 2 && <button type="button" className="secondary-button magic-note-entry-focus__analyze" aria-label={t('canvas.analyzeDraft')} title={t('canvas.analyzeDraft')} disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(true)}><Sparkles size={16} aria-hidden="true" /><span>{t('canvas.analyzeDraft')}</span></button>}
                             <button className="secondary-button" disabled={Boolean(busy)} type="button"
                               onClick={() => void requestDraftSwitch({ kind: 'cancel-edit' })}>{t('actions.cancel')}</button>
                             <button className="primary-button" disabled={Boolean(busy)} type="button"

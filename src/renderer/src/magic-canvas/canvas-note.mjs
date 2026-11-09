@@ -544,7 +544,10 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   const zoomInButton = makeButton('+', '放大（最高 300%；Ctrl/Command + 滚轮）', 'zoom-in');
   const zoomFitButton = makeButton('适应宽度', '适应宽度（随窗口调整）', 'zoom-fit');
   zoomControls.append(zoomOutButton, zoomResetButton, zoomInButton, zoomFitButton);
-  toolbar.append(toolGroup, styleGroup, historyGroup, documentGroup, zoomControls, pageControls);
+  const navigation = document.createElement('span');
+  navigation.className = 'canvas-note-navigation';
+  navigation.append(zoomControls, pageControls);
+  toolbar.append(toolGroup, styleGroup, historyGroup, documentGroup, navigation);
 
   const imageInput = document.createElement('input');
   imageInput.type = 'file';
@@ -698,6 +701,12 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     if (!pages.length) return;
     const page = currentPage();
     const flowMode = tool === 'flow-text';
+    const drawing = tool === 'pen' || tool === 'highlight';
+    const selected = tool === 'select' ? fabricCanvas.getActiveObjects() : [];
+    const selectedStroke = selected.some(object => ['pen', 'highlight', 'rectangle'].includes(object.canvasKind));
+    styleGroup.hidden = !drawing && tool !== 'text' && !selectedStroke
+      && !selected.some(object => object.canvasKind === 'text');
+    widthSelect.hidden = !drawing && !selectedStroke;
     pageCounter.textContent = `${currentIndex + 1} / ${pages.length}`;
     previousButton.disabled = busy || currentIndex <= 0;
     nextButton.disabled = busy || currentIndex >= pages.length - 1;
@@ -1513,6 +1522,9 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     });
   }
 
+  fabricCanvas.on('selection:created', updateControls);
+  fabricCanvas.on('selection:updated', updateControls);
+  fabricCanvas.on('selection:cleared', updateControls);
   fabricCanvas.on('mouse:down', (event) => {
     if (destroyed || restoring || busy || readOnly) return;
     if (tool === 'text' && !event.target) addText(event.e);

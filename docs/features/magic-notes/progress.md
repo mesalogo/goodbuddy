@@ -1,5 +1,45 @@
 # Magic Notes Progress
 
+## 2026-11-09: Stable Editing Actions and Contextual Canvas Properties
+
+New and saved record editors now keep cancel/save on the right of a single-row
+header. Only the new-record title/type area scrolls when space is tight; saved
+titles truncate. Draft analysis uses a labeled icon in columns up to 600px.
+Canvas color/width controls follow the active tool and editable selection,
+including restoring properties when existing strokes or text are selected.
+See [UI design](./ui-design.md#单条记录内容区编辑).
+
+Validation: 148 workspace/layout tests passed; the final Electron layout, canvas
+core, analysis/persistence and navigation run passed all 5 scenarios. Layout
+checks cover tool-specific property visibility, fixed save/cancel bounds and
+header overflow in both themes at 1280/960/520/360px. Narrow light/dark screenshots
+were inspected. The 360px follow-up initially timed out acquiring native window
+focus before the new assertions; its rerun passed. Type checking and lint passed. The earlier full-suite failures
+below remain outside this change; this follow-up used targeted regression runs.
+
+## 2026-11-09: Editor Toolbar Density
+
+Text and canvas editing now use compact 28px tool buttons and lighter separators.
+Canvas tools and secondary header actions have quiet default styling, while save,
+selection, keyboard focus and delete confirmation retain their emphasis. Text
+editing has consistent body/placeholder insets. Canvas zoom and page controls wrap
+together, and narrow layout rules follow the canvas container rather than the
+application window. Existing record-column editing and pane preferences remain
+unchanged. See [UI design](./ui-design.md#单条记录内容区编辑).
+
+Validation: Electron layout, navigation and footer scenarios passed. The final
+layout rerun checks canvas controls and writing height in both themes at 1280,
+960 and 520px, alongside existing draft, focus and pane geometry assertions.
+Canvas and text screenshots were inspected. Type checking, lint and
+`git diff --check` passed. Final icon sizing was followed by another successful
+Electron layout run and text screenshot review.
+
+Full `npm test`: 596 files / 6986 tests passed, 21 files / 93 tests skipped,
+2 files / 4 tests failed. Three Agent package tests timed out (large offline
+inventory, failed registry commit, GitHub catalog); the settings overlay test
+timed out waiting for native hit testing on the local-data clear button. Those
+surfaces were not modified by this change. The full suite is not green.
+
 ## 2026-11-05: New-entry Focus Layout
 
 Starting a new text or canvas record now fills the middle record column, matching

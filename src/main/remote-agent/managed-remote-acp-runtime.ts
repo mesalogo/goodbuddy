@@ -299,6 +299,7 @@ class ManagedRemoteRuntimeResources {
     const channel = await createProtocolRemoteRuntimeChannel({
       connection: this.connection,
       transcript,
+      ownedPrompt: true,
       openIdentity: {
         bindingId,
         runtimeId: this.runtime.runtimeId,

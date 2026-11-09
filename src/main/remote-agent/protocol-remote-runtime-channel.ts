@@ -171,6 +171,8 @@ export type ProtocolRemoteRuntimeChannelOptions = {
   connection: RuntimeProtocolConnection
   /** Retains the recorded epoch as metadata, without reopening its ACP channel. */
   transcript?: { channelEpoch: string }
+  /** Agent owns ACP execution; Desktop uses task RPCs, not the ACP byte stream. */
+  ownedPrompt?: boolean
   openIdentity: z.input<typeof acpOpenChannelRequestSchema>
   signal?: AbortSignal
   releaseConnectionOnClose?: boolean
@@ -220,6 +222,7 @@ export class ProtocolRemoteRuntimeChannelError extends Error {
 }
 
 type OpenState = {
+  transcriptOnly?: boolean
   connection: RuntimeProtocolConnection
   client: RuntimeProtocolClient
   openIdentity: z.infer<typeof acpOpenChannelRequestSchema>
@@ -235,8 +238,8 @@ type OpenState = {
 }
 
 /**
- * Opens an execution binding and binary channel, or only task RPC access when
- * reading an already submitted operation's transcript.
+ * Opens an execution binding, with an ACP byte stream only for direct ACP.
+ * Reading an already submitted operation needs only task RPC access.
  * Mutating Runtime requests are issued once and are never replayed here.
  */
 export async function createProtocolRemoteRuntimeChannel(
@@ -272,6 +275,7 @@ export async function createProtocolRemoteRuntimeChannel(
   if (options.transcript) {
     options.signal?.throwIfAborted()
     return new ProtocolRemoteRuntimeChannel({
+      transcriptOnly: true,
       connection, client, openIdentity,
       openResult: acpOpenChannelResultSchema.parse({
         bindingId: openIdentity.bindingId,
@@ -345,6 +349,15 @@ export async function createProtocolRemoteRuntimeChannel(
     )
   }
 
+  if (options.ownedPrompt) {
+    return new ProtocolRemoteRuntimeChannel({
+      connection, client, openIdentity, openResult, generation, capabilityGeneration,
+      daemonBootId: connection.status.daemonBootId,
+      releaseConnectionOnClose: options.releaseConnectionOnClose ?? false,
+      controlTimeoutMs, maximumPendingControlRequests, modelBridge: options.modelBridge
+    })
+  }
+
   let binary: RuntimeProtocolBinaryChannel
   try {
     binary = client.registerBinaryChannel({
@@ -352,7 +365,7 @@ export async function createProtocolRemoteRuntimeChannel(
       channelEpoch: openResult.channelEpoch,
       kind: 'acp'
     })
-  } catch {
+  } catch (error) {
     await bestEffortCloseOpenBinding(
       client,
       openIdentity.bindingId,
@@ -363,8 +376,9 @@ export async function createProtocolRemoteRuntimeChannel(
       connection.release?.()
     }
     throw new ProtocolRemoteRuntimeChannelError(
-      'Remote Runtime binary channel could not be registered',
-      'transport'
+      appendTransportDiagnostic('Remote Runtime binary channel could not be registered', boundedTransportDiagnostic(error)),
+      'transport',
+      { remoteMethod: 'runtime/openAcpChannel' }
     )
   }
   if (
@@ -491,7 +505,7 @@ export class ProtocolRemoteRuntimeChannel
 
   constructor(state: OpenState) {
     this.#state = state
-    this.transcriptOnly = state.binary === undefined
+    this.transcriptOnly = state.transcriptOnly === true
     this.channelEpoch = state.openResult.channelEpoch
     this.advertisedAcpCapabilitiesDigest =
       state.openResult.acpCapabilitiesDigest
@@ -1345,7 +1359,7 @@ export class ProtocolRemoteRuntimeChannel
     if (this.#recoveryPromise !== undefined) {
       return this.#recoveryPromise
     }
-    if (this.transcriptOnly) {
+    if (this.#state.binary === undefined) {
       // Task synchronization owns reconnection. Never resume the old ACP stream.
       return this.#fatalTransport(new ProtocolRemoteRuntimeChannelError(
         'Remote task progress connection closed', 'transport'

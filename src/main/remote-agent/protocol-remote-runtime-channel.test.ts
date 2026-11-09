@@ -490,6 +490,55 @@ async function openChannel(fixture = connectionFixture()) {
 }
 
 describe('ProtocolRemoteRuntimeChannel', () => {
+  it('keeps bounded registration diagnostics without leaking raw transport errors', async () => {
+    const fixture = connectionFixture()
+    vi.spyOn(fixture.client, 'registerBinaryChannel').mockImplementation(() => {
+      throw new AgentProtocolClientError('private path and credentials', 'protocol',
+        new ChannelProtocolError('private details', 'identity-mismatch'))
+    })
+    await expect(createProtocolRemoteRuntimeChannel({
+      connection: fixture.connection, openIdentity: openIdentity()
+    })).rejects.toMatchObject({
+      message: 'Remote Runtime binary channel could not be registered (client-protocol/channel-identity-mismatch)',
+      reason: 'transport', remoteMethod: 'runtime/openAcpChannel'
+    })
+  })
+
+  it('opens Agent-owned execution without registering an unused ACP binary stream', async () => {
+    const fixture = connectionFixture()
+    vi.spyOn(fixture.client, 'registerBinaryChannel').mockImplementation(() => {
+      throw new AgentProtocolClientError('Agent channel epoch cannot be reused in a connection', 'protocol')
+    })
+    const channel = await createProtocolRemoteRuntimeChannel({
+      connection: fixture.connection, openIdentity: openIdentity(),
+      ...{ ownedPrompt: true }
+    })
+    try {
+      expect(channel.transcriptOnly).toBe(false)
+      await expect(channel.attachOwnedPrompt({
+        bindingId: 'binding-1', operationId: 'operation-1', requestId: 'operation-1'
+      })).resolves.toMatchObject({ state: 'running' })
+    } finally { await channel.close() }
+    expect(fixture.client.registerBinaryChannel).not.toHaveBeenCalled()
+    expect(fixture.client.requests.map(({ method }) => method)).toEqual([
+      'runtime/openAcpChannel', 'runtime/attachPrompt', 'runtime/closeAcpChannel'
+    ])
+  })
+
+  it('returns disconnected Agent-owned execution to task synchronization without binary resume', async () => {
+    const fixture = connectionFixture()
+    const channel = await createProtocolRemoteRuntimeChannel({
+      connection: fixture.connection, openIdentity: openIdentity(),
+      ...{ ownedPrompt: true }, releaseConnectionOnClose: true
+    })
+    channel.setRecoveryBoundary(new Date(Date.now() + 30_000).toISOString(), new AbortController().signal)
+    fixture.client.transportClose(new Error('lost execution connection'))
+    await channel.closed
+    expect(fixture.connection.reconnect).not.toHaveBeenCalled()
+    expect(fixture.client.requests.map(({ method }) => method)).toEqual(['runtime/openAcpChannel'])
+    expect(fixture.release).toHaveBeenCalledOnce()
+  })
+
   it('ends a disconnected progress reader without attempting ACP resume or cancelling its task', async () => {
     const fixture = connectionFixture()
     const channel = await createProtocolRemoteRuntimeChannel({

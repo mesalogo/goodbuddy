@@ -151,6 +151,37 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await key('.magic-note-entry-type button:first-child', 'Right');
         await wait('document.querySelector(".magic-note-composer [data-tool=flow-text]")?.disabled === false');
         assert.equal(await js('document.querySelector(".magic-note-entry-type button:last-child").getAttribute("aria-pressed")'), 'true');
+        const toolStyle = '.magic-note-composer .canvas-note-color';
+        assert.equal(await js('document.querySelector(' + JSON.stringify(toolStyle) + ').checkVisibility()'), false, 'Selection without objects has no drawing attributes');
+        for (const tool of ['pen', 'highlight', 'text', 'eraser', 'flow-text', 'select']) {
+          await click('.magic-note-composer [data-tool="' + tool + '"]');
+          assert.equal(await js('document.querySelector(' + JSON.stringify(toolStyle) + ').checkVisibility()'), ['pen', 'highlight', 'text'].includes(tool), 'Color follows the tool');
+          assert.equal(await js('document.querySelector(".magic-note-composer .canvas-note-width").checkVisibility()'), ['pen', 'highlight'].includes(tool), 'Width is only shown for strokes');
+        }
+        for (const theme of ['light', 'dark']) {
+          await js('document.documentElement.dataset.theme = ' + JSON.stringify(theme));
+          for (const width of [1280, 960, 520, 360]) {
+            win.setContentSize(width, 800); await settle(); await settle();
+            const canvasRoot = '.magic-note-composer .canvas-note-root';
+            const canvasBox = await rect(canvasRoot), canvasToolbar = await rect(canvasRoot + ' > .canvas-note-toolbar');
+            assert(await js('document.querySelector(' + JSON.stringify(canvasRoot) + ').scrollWidth <= document.querySelector(' + JSON.stringify(canvasRoot) + ').clientWidth'), 'Canvas tools do not widen the editor');
+            assert((await rect(canvasRoot + ' .canvas-note-viewport')).height >= 150, 'Canvas retains usable writing height');
+            const controls = await js('Array.from(document.querySelectorAll(' + JSON.stringify(canvasRoot + ' > .canvas-note-toolbar button, ' + canvasRoot + ' > .canvas-note-toolbar select, ' + canvasRoot + ' > .canvas-note-toolbar input') + ')).filter(el => el.checkVisibility()).map(el => { const r = el.getBoundingClientRect(); return {x:r.x, y:r.y, width:r.width, height:r.height}; })');
+            for (const control of controls) {
+              assert(control.x >= canvasBox.x && control.x + control.width <= canvasBox.x + canvasBox.width + 1, 'Every canvas control fits the column');
+              assert(control.y >= canvasToolbar.y && control.y + control.height <= canvasToolbar.y + canvasToolbar.height, 'Every canvas control fits the toolbar');
+              assert(control.width >= 24 && control.height >= 24, 'Compact tools retain usable targets');
+            }
+            const save = await rect(saveButton);
+            const cancel = await rect('.magic-note-composer__header .secondary-button:not(.magic-note-entry-focus__analyze)');
+            for (const action of [save, cancel]) {
+              assert(action.x >= canvasBox.x && action.x + action.width <= canvasBox.x + canvasBox.width + 1, 'Save and cancel stay visible without scrolling the header');
+            }
+            assert.equal(await js('document.querySelector(".magic-note-composer__header").scrollWidth <= document.querySelector(".magic-note-composer__header").clientWidth'), true);
+            await screenshot('magic-notes-canvas-' + theme + '-' + width);
+          }
+        }
+        win.setContentSize(1280, 800); await js('document.documentElement.dataset.theme = "light"'); await settle(); await settle();
         await click('.magic-note-entry-type button:first-child');
         await wait('!!document.querySelector(' + JSON.stringify(editor) + ')');
         await click('.magic-note-composer__header .secondary-button');

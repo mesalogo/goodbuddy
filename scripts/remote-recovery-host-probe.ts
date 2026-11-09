@@ -43,9 +43,10 @@ async function main(): Promise<void> {
   const startResponseLoss = process.argv[2] === '--start-response-loss'
   const liveDisconnect = process.argv[2] === '--live-disconnect'
   const realModel = process.argv[2] === '--real-model'
+  const reopenChannel = process.argv[2] === '--reopen-channel'
   const closedChannel = process.argv[2] === '--closed-channel' || realModel
   const toolFailure = process.argv[2] === '--tool-failure'
-  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect || closedChannel || toolFailure
+  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect || closedChannel || toolFailure || reopenChannel
   const retirement = process.argv[2] === '--retirement' || runtimeCrash || catchUp
   const directRetirement = process.argv[2] === '--direct-retirement'
   const directDisconnect = process.argv[2] === '--direct-disconnect'
@@ -226,7 +227,7 @@ async function main(): Promise<void> {
         }
         response.writeHead(200, { 'content-type': 'text/event-stream' })
         response.flushHeaders()
-        if (prepareLoss) {
+        if (prepareLoss || reopenChannel) {
           response.end(`data: ${JSON.stringify({ id: 'probe', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: 'probe', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`)
         }
         // Keep this local deterministic model call open until cancellation.
@@ -249,15 +250,16 @@ async function main(): Promise<void> {
           let attachments = 0
           let channels = 0
           let progressConnections = 0
-          let interrupt = !prepareLoss && !startResponseLoss && !toolFailure
+          let interrupt = !prepareLoss && !startResponseLoss && !toolFailure && !reopenChannel
           let exhaust = liveChannelBudget
           const bindings = new MemoryRuntimeSessionBindingStore()
-          const instance = new AcpRemoteRuntime({
+          const controllerId = await controllerState.getControllerId()
+          const createInstance = () => new AcpRemoteRuntime({
             runtimeId: 'opencode', label: 'Recovery probe', workspacePath: root,
             bindingStore: bindings, assertHostCurrent: () => {},
             operationTimeoutMs: realModel ? 110_000 : 30_000,
             identity: {
-              controllerId: await controllerState.getControllerId(), controllerGeneration: first.client.generation,
+              controllerId, controllerGeneration: first.client.generation,
               hostId: 'probe-host', hostRevision: 1, hostKeyGeneration: 1,
               workspaceIdentity: workspace.handle.workspaceIdentity, agentInstallationId: installation.installationId,
               daemonBootIdAtOpen: first.status.daemonBootId, runtimeBundleDigest: runtime.bundleDigest,
@@ -277,7 +279,7 @@ async function main(): Promise<void> {
                 remoteRootPath: root, requestedAccess: 'read-write', requiredCapabilities: []
               })
               assert.equal(validated.handle.workspaceIdentity, workspace.handle.workspaceIdentity)
-              const channel = await createProtocolRemoteRuntimeChannel({ connection, transcript, releaseConnectionOnClose: true,
+              const channel = await createProtocolRemoteRuntimeChannel({ connection, transcript, ownedPrompt: process.env.GB_PROBE_LEGACY_BINARY !== '1', releaseConnectionOnClose: true,
                 openIdentity: { bindingId, runtimeId: runtime.runtimeId, runtimeBundleDigest: runtime.bundleDigest,
                   workspaceIdentity: workspace.handle.workspaceIdentity } })
               const start = channel.startOwnedPrompt.bind(channel)
@@ -333,6 +335,7 @@ async function main(): Promise<void> {
               return channel
             }
           })
+          let instance = createInstance()
           const prompt = { requestId: randomUUID(), conversationId: randomUUID(), prompt: realModel ? 'Reply exactly RECOVERY_OK. Do not call any tools.' : 'Reply OK.' }
           let answer = ''
           const consume = async (recovering: boolean, signal: AbortSignal) => {
@@ -347,6 +350,23 @@ async function main(): Promise<void> {
           const controller = new AbortController()
           let pending: Promise<unknown> | undefined
           try {
+            if (reopenChannel) {
+              for (let turn = 0; turn < 3; turn++) {
+                const events = []
+                for await (const event of instance.run({ ...prompt, requestId: randomUUID() }, AbortSignal.timeout(30_000))) events.push(event)
+                assert(events.some(event => event.type === 'done'), `Turn ${turn + 1} must finish`)
+                assert(!events.some(event => event.type === 'error'))
+                assert.equal((await bindings.getByConversation(prompt.conversationId))?.state, 'ready')
+                // Desktop Runtime eviction preserves the ready session binding;
+                // another project can keep the shared Host connection alive.
+                await instance.dispose()
+                instance = createInstance()
+              }
+              assert.equal(starts, 3)
+              assert.equal(attaches, 1, 'All turns must share one healthy connection')
+              process.stdout.write(`${JSON.stringify({ passed: true, reopenChannel, realRuntime: runtime.runtimeId, promptStarts: starts, connections: attaches, channels, externalModelCalls: 0 })}\n`)
+              return
+            }
             if (toolFailure) {
               const events = []
               for await (const event of instance.run(prompt, AbortSignal.timeout(30_000))) events.push(event)
