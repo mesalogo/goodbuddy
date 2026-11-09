@@ -720,10 +720,10 @@ export const app = {
       microphoneUnavailable:
         'The microphone is unavailable. Check your recording device and permissions.',
       recording: 'Recording. Click the voice button again to recognize speech.',
-      localRecognizing: 'Recognizing with the local speech model',
+      localRecognizing: 'Transcribing speech',
       noSpeech: 'No speech detected. Move closer to the microphone and try again.',
       cancelled: 'Speech recognition cancelled',
-      localFailed: 'Local speech recognition failed',
+      localFailed: 'Speech recognition failed',
       permissionDenied:
         'Microphone access was denied. Allow GoodBuddy in system privacy settings.',
       recordingStartFailed: 'Could not start recording',

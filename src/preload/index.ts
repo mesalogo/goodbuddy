@@ -952,6 +952,13 @@ const desktopApi: DesktopApi = {
     }
   },
   speech: {
+    getSettings: () => ipcRenderer.invoke(ipcChannels.speechSettingsGet),
+    updateSettings: input => ipcRenderer.invoke(ipcChannels.speechSettingsUpdate, input),
+    onProgress: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: import('../shared/speech-settings-contracts').SpeechTranscriptionProgress): void => listener(progress)
+      ipcRenderer.on(ipcChannels.speechTranscriptionProgress, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.speechTranscriptionProgress, handler)
+    },
     transcribe: (input: SpeechTranscriptionInput) =>
       ipcRenderer.invoke(
         ipcChannels.speechTranscribe,

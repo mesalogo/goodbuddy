@@ -2,6 +2,9 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { localInferenceService } from '../local-inference-service'
+import { SpeechSettingsStore } from './speech-settings-store'
+import { transcribeRemoteSpeech } from './remote-speech-transcription'
+import type { SpeechTranscriptionProgress } from '../../shared/speech-settings-contracts'
 import {
   speechTranscriptionInputSchema,
   speechTranscriptionResultSchema,
@@ -245,10 +248,11 @@ export class SpeechTranscriptionService {
   constructor(
     private readonly models: SpeechModelResolver,
     private readonly runner: SpeechTranscriptionRunner =
-      runSherpaTranscription
+      runSherpaTranscription,
+    readonly settings?: SpeechSettingsStore
   ) {}
 
-  async transcribe(input: unknown): Promise<SpeechTranscriptionResult> {
+  async transcribe(input: unknown, onProgress?: (progress: SpeechTranscriptionProgress) => void): Promise<SpeechTranscriptionResult> {
     const request = speechTranscriptionInputSchema.parse(input)
     if (this.active.has(request.requestId)) {
       throw new Error('该语音识别请求已在运行')
@@ -267,8 +271,28 @@ export class SpeechTranscriptionService {
     }
     const controller = new AbortController()
     this.active.set(request.requestId, controller)
-    return localInferenceService.run('asr', '语音输入', async () => {
-      try {
+    try {
+      const connection = await this.settings?.resolve()
+      controller.signal.throwIfAborted()
+      if (connection?.settings.provider === 'openai-compatible') {
+        const timeout = AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS)
+        const signal = AbortSignal.any([controller.signal, timeout])
+        try {
+          const text = await transcribeRemoteSpeech({
+            ...connection, samples, sampleRate: request.sampleRate, signal,
+            onProgress: text => {
+              if (!signal.aborted) onProgress?.({ requestId: request.requestId, text })
+            }
+          })
+          signal.throwIfAborted()
+          return speechTranscriptionResultSchema.parse({ text })
+        } catch (error) {
+          if (controller.signal.aborted) throw createAbortError()
+          if (timeout.aborted) throw new Error('远程语音识别超时，请重试', { cause: error })
+          throw error
+        }
+      }
+      return await localInferenceService.run('asr', '语音输入', async () => {
         const model = await this.models.getSelectedRuntimeModel()
         if (!model) {
           throw new Error('请先在设置中安装并选择本地语音模型')
@@ -280,10 +304,10 @@ export class SpeechTranscriptionService {
           controller.signal
         )
         return speechTranscriptionResultSchema.parse({ text })
-      } finally {
-        this.active.delete(request.requestId)
-      }
-    }, { cancel: () => controller.abort() })
+      }, { cancel: () => controller.abort() })
+    } finally {
+      this.active.delete(request.requestId)
+    }
   }
 
   cancel(requestId: SpeechTranscriptionInput['requestId']): boolean {

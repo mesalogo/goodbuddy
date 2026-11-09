@@ -1031,6 +1031,7 @@ records are listed separately and do not introduce another feature status.
   Cancel leaves the saved source unchanged, and errors allow retry. Embedding, speech,
   and OCR source links open this dialog directly. A source without a complete verified file is
   explicitly unavailable and never silently falls back or combines files.
+- [x] **Remote speech transcription**: Configure an OpenAI-compatible ASR service, encrypted API key, language and recording test. Optional result streaming is off by default; after recording and upload, text appears progressively and the final result is inserted into the original conversation draft. This is not live dictation or text-to-speech.
 - [x] **Optional local speech-model management**: Model weights are not bundled.
   Provides verified downloads, progress and cancellation, source links, ZIP or
   local-directory import, switching, and removal.

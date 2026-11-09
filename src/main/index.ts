@@ -91,6 +91,7 @@ import { registerDesktopUpdateIpc } from './desktop-update-ipc'
 import { finishDesktopUpdateShutdown, launchDesktopUpdateInstaller } from './desktop-update-install'
 import { SpeechModelManager } from './speech/speech-model-manager'
 import { SpeechTranscriptionService } from './speech/speech-transcription-service'
+import { SpeechSettingsStore } from './speech/speech-settings-store'
 import { GlobalTlsPolicy } from './global-tls-policy'
 import { FeedbackIdentityStore } from './feedback/feedback-identity-store'
 import {
@@ -1022,7 +1023,9 @@ if (hasSingleInstanceLock) {
         (await applicationSettingsStore.get()).modelDownloadSource
     })
     const speechTranscriptionService = new SpeechTranscriptionService(
-      speechModelManager
+      speechModelManager,
+      undefined,
+      new SpeechSettingsStore(join(app.getPath('userData'), 'speech-settings.json'), secureCipher)
     )
     localInferenceService.register('asr', {
       snapshot: async () => {

@@ -2342,6 +2342,29 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
+  it('guards remote speech drafts on navigation and saves them through the shared Settings action', async () => {
+    const settings = { provider: 'local' as const, baseUrl: '', model: '', language: 'zh', stream: false }
+    const updateSettings = vi.fn(async (input: import('../../shared/speech-settings-contracts').SpeechSettingsUpdate) => ({ settings: input.settings, apiKeyConfigured: false, secureStorageAvailable: true }))
+    window.goodbuddy.speech = {
+      getSettings: async () => ({ settings, apiKeyConfigured: false, secureStorageAvailable: true }),
+      updateSettings, transcribe: vi.fn(), cancel: vi.fn()
+    }
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('tab', { name: '语音输入' }))
+    fireEvent.change(await screen.findByLabelText('识别方式'), { target: { value: 'openai-compatible' } })
+    fireEvent.change(screen.getByLabelText('API 基础地址'), { target: { value: 'http://localhost:6080/v1' } })
+    fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: 'test-asr' } })
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    expect(await screen.findByRole('button', { name: '继续编辑' })).toBeInTheDocument()
+    expect(updateSettings).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ settings: { ...settings, provider: 'openai-compatible', baseUrl: 'http://localhost:6080/v1', model: 'test-asr' }, apiKey: { action: 'keep' } }))
+    await waitFor(() => expect(screen.getByText('保存识别设置')).toBeDisabled())
+  })
+
   it('applies a speech model draft only when Settings is saved', async () => {
     render(
       <SettingsPanel

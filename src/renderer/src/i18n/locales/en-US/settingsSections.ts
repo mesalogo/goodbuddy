@@ -263,6 +263,16 @@ export const settingsSections = {
     }
   },
   speech: {
+    remote: {
+      invalid: 'Check the speech recognition settings',
+      provider: 'Recognition source', local: 'Local model', service: 'Remote service (OpenAI compatible)',
+      baseUrl: 'API base URL', model: 'Model name', language: 'Language', autoLanguage: 'Leave empty to detect automatically, e.g. zh, en',
+      keyConfigured: 'Saved; leave empty to keep', keyOptional: 'Optional API key', clearKey: 'Clear key on save', undoClear: 'Undo clearing key',
+      storageUnavailable: 'System encrypted storage is unavailable; API keys cannot be saved.',
+      stream: 'Stream transcription results', streamHelp: 'Off by default. After recording and upload, text appears progressively. This is not live dictation. Audio is sent to the configured service.',
+      save: 'Save recognition settings', saved: 'Speech recognition settings saved', test: 'Save and test recording', stopRecording: 'Finish recording and transcribe', recognizing: 'Transcribing…', cancel: 'Cancel transcription',
+      preview: 'Transcribing; text will be inserted when complete', noSpeech: 'No speech recognized'
+    },
     title: 'Speech models',
     description:
       'Model weights are not bundled. Download them as needed or move them offline with ZIP archives.',

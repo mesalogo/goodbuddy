@@ -250,6 +250,16 @@ export const settingsSections = {
     }
   },
   speech: {
+    remote: {
+      invalid: '请检查语音识别设置',
+      provider: '识别方式', local: '本地模型', service: '远程服务（OpenAI 兼容）',
+      baseUrl: 'API 基础地址', model: '模型名称', language: '识别语言', autoLanguage: '留空自动识别，例如 zh、en',
+      keyConfigured: '已保存，留空保留原密钥', keyOptional: '可选 API Key', clearKey: '保存时清除密钥', undoClear: '撤销清除密钥',
+      storageUnavailable: '系统加密存储不可用，无法保存 API Key。',
+      stream: '流式返回识别结果', streamHelp: '默认关闭。开启后，录音结束并上传后逐步显示文字；不支持边说边识别。音频将发送到所配置的服务。',
+      save: '保存识别设置', saved: '语音识别设置已保存', test: '保存并录音测试', stopRecording: '结束录音并识别', recognizing: '正在识别…', cancel: '取消识别',
+      preview: '正在识别，完成后填入文本', noSpeech: '未识别到文字'
+    },
     title: '语音模型',
     description: '应用不内置模型权重，按需下载或通过 ZIP 离线迁移',
     openModelsDirectory: '打开模型目录',

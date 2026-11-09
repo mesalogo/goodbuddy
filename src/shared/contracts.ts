@@ -2057,6 +2057,9 @@ export type DesktopApi = {
     openModelsDirectory: () => Promise<void>
   }
   speech?: {
+    getSettings?: () => Promise<import('./speech-settings-contracts').SpeechSettingsSnapshot>
+    updateSettings?: (input: import('./speech-settings-contracts').SpeechSettingsUpdate) => Promise<import('./speech-settings-contracts').SpeechSettingsSnapshot>
+    onProgress?: (listener: (progress: import('./speech-settings-contracts').SpeechTranscriptionProgress) => void) => () => void
     transcribe: (
       input: SpeechTranscriptionInput
     ) => Promise<SpeechTranscriptionResult>

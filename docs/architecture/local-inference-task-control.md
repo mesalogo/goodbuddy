@@ -10,6 +10,10 @@
 
 ## 当前执行边界
 
+2026-11-10 补充：下文 ASR 的 Worker 与资源记账描述仅适用于本地识别。
+新增的[远程录音转写](../features/full-duplex-voice/dictation.md)由桌面直接请求 HTTP 服务，
+不进入本机推理任务记录。
+
 | 能力 | 源码现状 | 所有权与释放 | 评估建议 |
 | --- | --- | --- | --- |
 | ASR | 录音结果就绪后提交完整 PCM；Main 创建 `node:worker_threads` Worker，以 sherpa-onnx WASM 执行离线识别；服务一次只接受一个请求 | 每请求创建识别器；超时或 abort 调用并等待 `worker.terminate()`；正常结果路径的清理确认存在缺口，见 TC-4 | 保留请求级 Worker，适合间歇语音输入；常驻化需流式需求或测量支持 |

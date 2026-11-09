@@ -54,6 +54,7 @@ import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSecti
 import { ModelDownloadSourceSettings } from './ModelDownloadSourceSettings'
 import type { ModelDownloadSource } from '../../shared/application-settings-contracts'
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
+import { SpeechConnectionSettings, type SpeechConnectionSettingsHandle } from './SpeechConnectionSettings'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 import { ShareServerConnectionSettings } from './ShareServerConnectionSettings'
 import { DshMarketplaceSection } from './DshMarketplaceSection'
@@ -799,6 +800,8 @@ function SettingsPanelView({
   ] = useState<string | null | undefined>()
   const [speechModelSelectionDirty, setSpeechModelSelectionDirty] =
     useState(false)
+  const [speechConnectionDirty, setSpeechConnectionDirty] = useState(false)
+  const speechConnectionRef = useRef<SpeechConnectionSettingsHandle>(null)
   const [agentRuntimeType, setAgentRuntimeType] =
     useState<AgentRuntimeType>('opencode')
   const [runtimeCustomizationDirty, setRuntimeCustomizationDirty] =
@@ -993,6 +996,7 @@ function SettingsPanelView({
         )
       })
   const hasUnsavedDrafts =
+    speechConnectionDirty ||
     runtimeDraftDirty ||
     speechModelSelectionDirty ||
     runtimeCustomizationDirty ||
@@ -1001,6 +1005,7 @@ function SettingsPanelView({
     documentParsingDirty
   useWorkspaceUnsavedChanges(open && hasUnsavedDrafts)
   const navigationWouldLoseDraft =
+    speechConnectionDirty ||
     runtimeCustomizationDirty ||
     brandingDirty ||
     platformFeaturesDirty ||
@@ -1008,6 +1013,7 @@ function SettingsPanelView({
   const unsavedCloseMessage =
     runtimeCustomizationDirty &&
     !runtimeDraftDirty &&
+    !speechConnectionDirty &&
     !speechModelSelectionDirty &&
     !brandingDirty &&
     !platformFeaturesDirty &&
@@ -1252,6 +1258,8 @@ function SettingsPanelView({
   }
 
   const resetSensitiveDrafts = (): void => {
+    speechConnectionRef.current?.discard()
+    setSpeechConnectionDirty(false)
     setModelProfiles((profiles) =>
       profiles.map((profile) => ({
         ...profile,
@@ -1292,6 +1300,8 @@ function SettingsPanelView({
   }
 
   const discardAndLeave = (): void => {
+    speechConnectionRef.current?.discard()
+    setSpeechConnectionDirty(false)
     if (settings) {
       hydrateSettings(settings)
     }
@@ -1561,6 +1571,7 @@ function SettingsPanelView({
         contextCompression: contextCompressionInput,
         subagentSmartRoutingEnabled
       })
+      if (speechConnectionDirty && !await speechConnectionRef.current?.save()) return undefined
       let selectedSpeechModelId = speechModelDraftId
       if (speechModelSelectionDirty) {
         const speechModels = window.goodbuddy.speechModels
@@ -2462,7 +2473,7 @@ function SettingsPanelView({
               }
               onWorkspacePathChange={setWorkspacePath}
               workspacePath={workspacePath}
-              workspaceDirty={runtimeDraftDirty || speechModelSelectionDirty}
+              workspaceDirty={runtimeDraftDirty || speechModelSelectionDirty || speechConnectionDirty}
               workspaceSaving={saving}
               workspaceError={error}
               onSaveWorkspace={() => void save()}
@@ -3997,6 +4008,7 @@ function SettingsPanelView({
             />
           )}
           {modelType === 'speech' && (
+            <SpeechConnectionSettings ref={speechConnectionRef} onDirtyChange={setSpeechConnectionDirty} onNotify={onNotify}>
             <SpeechModelSettingsSection
               downloadSource={modelDownloadSource}
               onNotify={onNotify}
@@ -4013,6 +4025,7 @@ function SettingsPanelView({
               persistedSelectedModelId={persistedSpeechModelId}
               selectedModelId={speechModelDraftId}
             />
+            </SpeechConnectionSettings>
           )}
             </div>
           )}

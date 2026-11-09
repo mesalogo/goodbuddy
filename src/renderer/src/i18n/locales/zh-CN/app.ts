@@ -696,10 +696,10 @@ export const app = {
       microphoneUnavailable:
         '当前系统无法访问麦克风，请检查系统录音设备和权限',
       recording: '正在录音，再次点击语音按钮即可结束并识别',
-      localRecognizing: '正在使用本地语音模型识别',
+      localRecognizing: '正在识别语音',
       noSpeech: '没有识别到语音，请靠近麦克风后重试',
       cancelled: '语音识别已取消',
-      localFailed: '本地语音识别失败',
+      localFailed: '语音识别失败',
       permissionDenied:
         '麦克风权限被拒绝，请在系统隐私设置中允许 GoodBuddy 使用麦克风',
       recordingStartFailed: '无法开始录音',

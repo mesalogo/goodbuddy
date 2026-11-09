@@ -318,6 +318,7 @@ import {
 } from './version-checker'
 import type { SpeechModelManager } from './speech/speech-model-manager'
 import type { SpeechTranscriptionService } from './speech/speech-transcription-service'
+import { registerSpeechTranscriptionIpc } from './speech/speech-transcription-ipc'
 import { diagnoseEmbeddingProvider } from './knowledge/embedding-index-coordinator'
 import type { EmbeddingIndexCoordinator } from './knowledge/embedding-index-coordinator'
 import type { EmbeddingModelManager } from './knowledge/embedding-model-manager'
@@ -6314,27 +6315,7 @@ export function registerIpcHandlers(
     }
   )
 
-  registerHandler(
-    ipcChannels.speechTranscribe,
-    (event, input: unknown) => {
-      assertTrustedSender(event, window)
-      if (!speechTranscriptionService) {
-        throw new Error('本地语音识别服务不可用')
-      }
-      return trackExecution(speechTranscriptionService.transcribe(input))
-    }
-  )
-
-  registerHandler(
-    ipcChannels.speechTranscriptionCancel,
-    (event, input: unknown) => {
-      assertTrustedSender(event, window)
-      if (!speechTranscriptionService) {
-        return false
-      }
-      return speechTranscriptionService.cancel(requestIdSchema.parse(input))
-    }
-  )
+  registerSpeechTranscriptionIpc(registerHandler, window, speechTranscriptionService, trackExecution)
 
   registerHandler(
     ipcChannels.remoteProjectRecoveryGet,

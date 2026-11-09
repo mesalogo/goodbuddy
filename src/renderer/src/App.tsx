@@ -263,6 +263,8 @@ import type {
 import type { ReleaseNotesSnapshot } from "../../shared/release-notes-contracts";
 import type { RemoteProjectRecoveryState } from "../../shared/remote-project-recovery-contracts";
 import { ReleaseNotesDialog } from "./ReleaseNotesDialog";
+import { transcribeSpeechWithProgress, speechTranscriptionStore } from "./speech-transcription-store";
+import { SpeechTranscriptionPreview } from "./SpeechTranscriptionPreview";
 import { scheduleIdleRoutePreload } from "./idle-route-preload";
 import { createPreloadableComponent } from "./preloadable-component";
 import {
@@ -2257,6 +2259,8 @@ function App(): React.JSX.Element {
       voiceRecordingRef.current?.cancel();
       const requestId = voiceRequestIdRef.current;
       if (requestId) {
+        speechTranscriptionStore.clear(requestId);
+        voiceRequestIdRef.current = undefined;
         void window.goodbuddy.speech?.cancel(requestId);
       }
     };
@@ -5766,6 +5770,7 @@ function App(): React.JSX.Element {
   };
 
   const startVoiceInput = async (): Promise<void> => {
+    const conversationId = activeId;
     const speech = window.goodbuddy.speech;
     if (!speech) {
       await startWebSpeechInput();
@@ -5807,6 +5812,7 @@ function App(): React.JSX.Element {
       });
       void recording.result
         .then(async ({ audio, sampleRate }) => {
+          if (voiceDisposedRef.current) return;
           voiceRecordingRef.current = undefined;
           setVoiceRecording(false);
           const requestId = crypto.randomUUID();
@@ -5816,12 +5822,12 @@ function App(): React.JSX.Element {
             message: t("composer.voice.localRecognizing"),
             dedupeKey: "speech-status",
           });
-          const result = await speech.transcribe({
+          const result = await transcribeSpeechWithProgress({
             requestId,
             sampleRate,
             audio,
-          });
-          if (voiceRequestIdRef.current !== requestId) {
+          }, conversationId);
+          if (voiceDisposedRef.current || voiceRequestIdRef.current !== requestId) {
             return;
           }
           const transcript = result.text.trim();
@@ -5833,7 +5839,7 @@ function App(): React.JSX.Element {
             });
             return;
           }
-          setInput((current) =>
+          setConversationInput(conversationId, (current) =>
             current ? `${current} ${transcript}` : transcript,
           );
           notify({
@@ -5858,6 +5864,7 @@ function App(): React.JSX.Element {
           });
         })
         .finally(() => {
+          voiceStartingRef.current = false;
           voiceRequestIdRef.current = undefined;
           setVoiceListening(false);
           setVoiceRecording(false);
@@ -5896,6 +5903,8 @@ function App(): React.JSX.Element {
     }
     const requestId = voiceRequestIdRef.current;
     if (requestId) {
+      speechTranscriptionStore.clear(requestId);
+      voiceStartingRef.current = true;
       voiceRequestIdRef.current = undefined;
       void window.goodbuddy.speech?.cancel(requestId);
       notify({
@@ -7386,6 +7395,7 @@ function App(): React.JSX.Element {
                           referenceSources={referenceSources}
                           onResolveReferenceSource={resolvePlatformApp}
                         />
+                        <SpeechTranscriptionPreview owner={activeId} />
                       </>
                     )}
                   </footer>
