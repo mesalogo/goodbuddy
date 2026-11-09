@@ -13,6 +13,7 @@ import {
   type ChannelCredentialCipher,
   type ResolvedChannelSettings
 } from './channel-settings-store'
+import { createDingTalkRegistration } from './dingtalk-registration'
 
 const roots: string[] = []
 
@@ -107,6 +108,26 @@ function managerHarness(
 }
 
 describe('ChannelManager', () => {
+  it('saves scanned DingTalk credentials and starts the existing channel without a second save', async () => {
+    const settingsStore = await store()
+    await settingsStore.apply({ dingtalk: { enabled: false, clientId: 'old-app', secret: { action: 'replace', value: 'old-secret' }, allowedSenderIds: ['old-sender'], allowGroupMessages: true } })
+    const { manager, services } = managerHarness(settingsStore)
+    const registration = createDingTalkRegistration(manager, vi.fn(), vi.fn(async input => new Response(JSON.stringify({ errcode: 0,
+      ...(String(input).endsWith('/init') ? { nonce: 'n' } : String(input).endsWith('/begin')
+        ? { device_code: 'd', verification_uri_complete: 'https://login.dingtalk.com/test', interval: 0.001, expires_in: 30 }
+        : { status: 'SUCCESS', client_id: 'scanned-app', client_secret: 'scanned-secret' })
+    }))))
+    try {
+      await registration.start()
+      await vi.waitFor(() => expect(registration.snapshot().state).toBe('completed'))
+      expect(await settingsStore.resolve('dingtalk')).toMatchObject({ clientId: 'scanned-app', secret: 'scanned-secret', enabled: true, allowedSenderIds: [], allowGroupMessages: false })
+      expect(services.find(item => item.settings.channel === 'dingtalk')?.start).toHaveBeenCalledOnce()
+      const snapshot = registration.snapshot()
+      expect(snapshot).toMatchObject({ state: 'completed', channels: { dingtalk: { clientId: 'scanned-app', secretConfigured: true, enabled: true } } })
+      expect(JSON.stringify(snapshot)).not.toContain('scanned-secret')
+    } finally { await registration.dispose(); await manager.stopAll() }
+  })
+
   it('emits deduplicated status deltas for async transitions and ignores late callbacks', async () => {
     const settingsStore = await store()
     const input = { enabled: true, allowedSenderIds: [], allowGroupMessages: false as const }

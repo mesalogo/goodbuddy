@@ -636,6 +636,16 @@ const desktopApi: DesktopApi = {
       )
     }
   },
+  dingtalkRegistration: {
+    getSnapshot: () => ipcRenderer.invoke(ipcChannels.dingtalkRegistrationGet),
+    start: () => ipcRenderer.invoke(ipcChannels.dingtalkRegistrationStart),
+    cancel: () => ipcRenderer.invoke(ipcChannels.dingtalkRegistrationCancel),
+    onChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: import('../shared/dingtalk-registration-contracts').DingTalkRegistrationSnapshot): void => listener(snapshot)
+      ipcRenderer.on(ipcChannels.dingtalkRegistrationChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.dingtalkRegistrationChanged, handler)
+    }
+  },
   channels: {
     onStatusChanged: (listener) => {
       const handler = (

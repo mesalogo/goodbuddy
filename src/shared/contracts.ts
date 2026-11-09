@@ -1965,6 +1965,7 @@ export type DesktopApi = {
     ) => Promise<SshDirectoryBrowseResult>
     cancelDirectoryBrowse: () => Promise<void>
   }
+  dingtalkRegistration?: import('./dingtalk-registration-contracts').DingTalkRegistrationBridge
   channels?: {
     getSnapshot: () => Promise<ChannelSettingsSnapshot>
     onStatusChanged: (

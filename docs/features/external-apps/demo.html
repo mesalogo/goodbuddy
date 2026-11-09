@@ -477,6 +477,15 @@ function renderSettingsCenter() {
 /* ================= 连接（飞书 / 企业微信） ================= */
 function renderConnect() {
   const a = apps[connectApp], fs = connectApp === 'feishu'
+  if (connectApp === 'dingtalk') {
+    return `<div class="backdrop"><section class="modal" role="dialog">
+      <div class="modal-header">${logo('dingtalk', true)}<div class="grow"><h2>连接钉钉</h2><p>扫码创建机器人，或手动填写应用凭据</p></div><button class="icon-btn" data-close>×</button></div>
+      <div class="modal-body">${connectStep === 0 ? `<p>使用钉钉手机端扫码，在手机上确认创建或配置机器人。</p>${qr()}<p class="caption">有效期由钉钉返回；此处为演示二维码。</p>`
+        : '<div class="notice">应用凭据已保存，消息通道已启用。请私聊机器人，按回复中的 staffId 在“消息”页添加允许的发送者。</div>'}
+      <div class="field"><label>Client ID</label><input value="${connectStep ? 'ding-demo' : ''}" placeholder="也可手动填写"></div><div class="field"><label>Client Secret</label><input type="password" placeholder="手动填写时输入 Secret"></div></div>
+      <div class="modal-footer"><button class="btn" data-scene="settings" data-app="dingtalk" data-tab="connect">返回连接设置</button>${connectStep === 0 ? '<button class="btn primary" data-step="1">模拟扫码完成</button>' : '<button class="btn primary" data-scene="settings" data-app="dingtalk" data-tab="message">设置允许的发送者</button>'}</div>
+    </section></div>`
+  }
   const steps = `<div class="steps">${[0, 1, 2].map(i => `<span class="${i <= connectStep ? 'done' : ''}"></span>`).join('')}</div>`
   let body, foot
   if (connectStep === 0) {
@@ -522,6 +531,7 @@ function tabConnect(id) {
     <div class="form-row"><label>Bot Token</label><div class="inline"><input type="password" placeholder="BotFather 提供的 Token"><button class="btn">测试连接</button></div></div>
     <div><button class="btn primary">保存并启用</button></div></div>`
   return `<div class="block"><h3>账号</h3>
+      ${id === 'dingtalk' ? '<p class="caption">扫码创建后自动保存凭据并启用消息通道。扫码接口不提供本人 staffId，请私聊机器人获取后添加。</p><button class="btn" data-scene="connect" data-app="dingtalk">扫码创建钉钉机器人</button>' : ''}
       <div class="toggle-row">${sw(a.enabled)}<div class="text">启用应用<p>关闭后不再接收消息${a.tools.length ? `，对话中也不再提供${a.name}工具` : ''}；凭据和通道项目保留。</p></div></div>
 
       <div class="cred"><div class="head"><strong>${a.cred.title}</strong><span class="badge ok">正常</span></div>

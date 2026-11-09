@@ -13,6 +13,15 @@ export const integrations = {
       save_image: 'Save a generated or uploaded image from this conversation to a PNG, JPEG or WebP file. In remote projects the file is written on the remote host.'
     }
   },
+  dingtalkRegistration: {
+    help: 'Scan with DingTalk to create a bot, save its credentials and enable the message channel automatically, or enter credentials below.',
+    start: 'Create DingTalk bot with QR code',
+    preparing: 'Connecting…',
+    qrAlt: 'DingTalk bot authorization QR code',
+    instructions: 'Scan with DingTalk and confirm creating or configuring the bot on your phone.',
+    open: 'Open authorization page in browser',
+    completed: 'Credentials saved and message channel enabled. Registration did not provide your sender ID. Message the bot privately, then add the staffId from its reply on the Messages tab. Check the connection status on this page.'
+  },
   channels: {
     tabs: {
       weixin: 'WeChat ClawBot',

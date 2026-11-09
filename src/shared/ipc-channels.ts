@@ -133,6 +133,10 @@ export const ipcChannels = {
   sshHostsAgentConnectionStatus:
     'settings:ssh-hosts:agent-connection-status',
   channelSettingsGet: 'settings:channels:get',
+  dingtalkRegistrationGet: 'dingtalk:registration:get',
+  dingtalkRegistrationStart: 'dingtalk:registration:start',
+  dingtalkRegistrationCancel: 'dingtalk:registration:cancel',
+  dingtalkRegistrationChanged: 'dingtalk:registration:changed',
   channelSettingsApply: 'settings:channels:apply',
   channelSettingsTest: 'settings:channels:test',
   channelSettingsDisconnect: 'settings:channels:disconnect',

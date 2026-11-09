@@ -298,6 +298,8 @@ import {
 } from './channels/channel-env'
 import { ChannelManager } from './channels/channel-manager'
 import type { ChannelSettingsStore } from './channels/channel-settings-store'
+import { createDingTalkRegistration } from './channels/dingtalk-registration'
+import { registerDingTalkRegistrationIpc } from './channels/dingtalk-registration-ipc'
 import type { WechatSidecarLauncher } from './channels/wechat-sidecar-client'
 import { WechatBindingController } from './channels/wechat-binding-controller'
 import {
@@ -3219,6 +3221,11 @@ export function registerIpcHandlers(
         outbox: new SqliteChannelOutbox(assistantDatabase)
       })
     : undefined
+  const dingtalkRegistration = channelSettingsStore && channelManager
+    ? createDingTalkRegistration(channelManager, snapshot => {
+        if (!window.isDestroyed()) window.webContents.send(ipcChannels.dingtalkRegistrationChanged, snapshot)
+      })
+    : undefined
   const wechatBindingController =
     channelSettingsStore && channelManager && launchWechatSidecar
       ? new WechatBindingController(
@@ -5298,14 +5305,18 @@ export function registerIpcHandlers(
     return channelManager.getSnapshot()
   })
 
+  registerDingTalkRegistrationIpc(registerHandler, window, dingtalkRegistration)
+
   registerHandler(
     ipcChannels.channelSettingsApply,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       if (!channelManager) {
         throw new Error('消息通道设置服务不可用')
       }
-      return channelManager.apply(channelSettingsApplySchema.parse(input))
+      const update = channelSettingsApplySchema.parse(input)
+      if (update.dingtalk) await dingtalkRegistration?.cancel()
+      return channelManager.apply(update)
     }
   )
 
@@ -5317,6 +5328,7 @@ export function registerIpcHandlers(
         throw new Error('消息通道设置服务不可用')
       }
       const { channel } = z.object({ channel: z.enum(['wecom', 'dingtalk', 'telegram', 'feishu']) }).strict().parse(input)
+      if (channel === 'dingtalk') await dingtalkRegistration?.cancel()
       // WeCom tools are signed in with the same bot; drop that sign-in too.
       if (channel === 'wecom') await wecomService?.disconnect?.()
       await channelSettingsStore.disconnect(channel)
@@ -7687,6 +7699,7 @@ export function registerIpcHandlers(
     for (const controller of attachmentParsing.values()) controller.abort(new Error('应用正在退出'))
     removeApplicationSettingsListener?.()
     removeExternalChannelChange?.()
+    await dingtalkRegistration?.dispose()
     removeLocalToolEnvironmentProgressListener?.()
     await localToolEnvironmentService?.dispose()
     removeBrowserStateListener?.()

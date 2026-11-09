@@ -367,7 +367,7 @@ describe('sandboxed preload', () => {
     expect(source).not.toContain('agentForward: true')
     const sshHostsSource =
       source.match(
-        /sshHosts: \{(?<body>[\s\S]*?)\n {2}\},\n {2}channels:/u
+        /sshHosts: \{(?<body>[\s\S]*?)\n {2}\},\n {2}dingtalkRegistration:/u
       )
         ?.groups?.body ?? ''
     expect(sshHostsSource).not.toMatch(

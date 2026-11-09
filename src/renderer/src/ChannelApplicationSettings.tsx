@@ -39,6 +39,7 @@ import { SettingsWarningList } from './SettingsPrimitives'
 import { PageTabs } from './WorkspacePrimitives'
 import { WecomToolSettings } from './WecomToolSettings'
 import { WecomBotScan } from './WecomBotScan'
+import { DingTalkAppRegistration } from './DingTalkAppRegistration'
 import { FeishuAppRegistration, FeishuToolSettings } from './FeishuToolSettings'
 import { useFeishuSnapshot } from './feishu-snapshot'
 import { useWecomSnapshot } from './wecom-snapshot'
@@ -321,6 +322,7 @@ function ChannelEditor({
   testing,
   botUsername,
   onReload,
+  onRegistered,
   onDisconnect,
   section
 }: {
@@ -340,6 +342,7 @@ function ChannelEditor({
   botUsername?: string
   /** Reloads saved settings after credentials were written outside this form. */
   onReload?: () => void
+  onRegistered?: (snapshot: ChannelSettingsSnapshot, revision: number) => void
   /** Turns the platform off and deletes its local credentials. */
   onDisconnect?: () => void
 }): React.JSX.Element {
@@ -498,6 +501,9 @@ function ChannelEditor({
       {channel === 'feishu' && <p className="settings-notice">{t('channels.feishu.setup')}</p>}
       {channel === 'feishu' && !settings.readOnly && onReload && (
         <FeishuAppRegistration domain={draft.domain} onCreated={onReload} />
+      )}
+      {channel === 'dingtalk' && !settings.readOnly && onRegistered && (
+        <DingTalkAppRegistration onCreated={onRegistered} />
       )}
       {channel === 'wecom' && !settings.readOnly && onReload && (
         <>
@@ -1207,6 +1213,12 @@ export function ChannelApplicationSettings({
     seedSnapshot(next)
     seedDrafts(next)
   }, [seedDrafts, seedSnapshot])
+  const dingtalkRegistrationRevision = useRef(-1)
+  const completeDingtalkRegistration = useCallback((next: ChannelSettingsSnapshot, revision: number): void => {
+    if (revision <= dingtalkRegistrationRevision.current) return
+    dingtalkRegistrationRevision.current = revision
+    applySnapshot(next)
+  }, [applySnapshot])
 
   const closeBinding = useCallback((): void => {
     bindingButtonRef.current?.focus()
@@ -1537,6 +1549,7 @@ export function ChannelApplicationSettings({
                     ? () => void completeFeishuRegistration()
                     : channel === 'wecom' ? completeWecomScan : undefined}
                   onDisconnect={() => void disconnect()}
+                  onRegistered={completeDingtalkRegistration}
                   onChange={(next) => {
                     if (next.secret !== draft.secret || next.clearSecret !== draft.clearSecret) setTelegramBotUsername(undefined)
                     setDraft(next)

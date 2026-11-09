@@ -10,6 +10,15 @@ export const integrations = {
       save_image: '将当前会话中已生成或已上传的图片保存为 PNG、JPEG 或 WebP 文件；远程项目中文件写入远程主机。'
     }
   },
+  dingtalkRegistration: {
+    help: '使用钉钉手机端扫码创建机器人，自动保存应用凭据并启用消息通道；也可以在下方手动填写。',
+    start: '扫码创建钉钉机器人',
+    preparing: '正在连接…',
+    qrAlt: '钉钉机器人授权二维码',
+    instructions: '用钉钉扫一扫，在手机上确认创建或配置机器人。',
+    open: '在浏览器中打开授权页面',
+    completed: '应用凭据已保存，消息通道已启用。扫码接口未提供本人发送者 ID；请私聊机器人，按回复中的 staffId 在“消息”页添加允许的发送者。连接状态可在本页查看。'
+  },
   channels: {
     tabs: {
       weixin: '微信 ClawBot',

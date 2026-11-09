@@ -24,7 +24,7 @@ Demo 只用演示数据，不连接任何平台、不读写真实设置。可以
 | --- | --- |
 | 外部应用 / 平台应用 | 连接第三方平台账号的内置应用，提供消息、工具或两者 |
 | 凭据 | 平台账号的应用身份：飞书 App ID / App Secret，企业微信智能机器人 Bot ID / Secret，钉钉 Client ID / Client Secret，Telegram Bot Token，微信 ClawBot 绑定信息 |
-| 扫码创建 | 用平台手机端扫码，自动创建应用或机器人并取得凭据。扫码完成后，私聊策略自动设为“仅我自己” |
+| 扫码创建 | 用平台手机端扫码，创建应用或机器人并取得凭据。飞书、企业微信在取得授权人身份后填入发送者；钉钉仅返回应用凭据，需私聊机器人获取 staffId 后添加 |
 | 工具 | 外部应用提供给对话的平台操作，例如读写飞书文档、查询企业微信日程。按类别开关 |
 | 工具身份 | 工具调用平台接口时使用的身份。飞书是应用身份，企业微信智能机器人是授权人本人 |
 | 通道项目 | 处理某个外部应用收到的消息的系统项目，承载工作目录和处理后端 |
@@ -36,6 +36,7 @@ Demo 只用演示数据，不连接任何平台、不读写真实设置。可以
 - OpenClaw 飞书：[概览](https://docs.openclaw.ai/channels/feishu)、[接入](https://docs.openclaw.ai/channels/feishu/setup)、[工具与多账号](https://docs.openclaw.ai/channels/feishu/advanced-configuration)
 - OpenClaw 企业微信：[入口](https://docs.openclaw.ai/channels/wecom)，配置以腾讯维护的 `@wecom/wecom-openclaw-plugin` 说明为准
 - 企业微信 [`wecom-cli`](https://github.com/WecomTeam/wecom-cli)：智能机器人凭据、扫码接入及业务工具清单
+- 钉钉官方 [OpenClaw 插件](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector)及[扫码源码](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/blob/88df00ee594072e9941ef3f71da90a37f3291ad3/bin/dingtalk-connector.js)：Device Flow 获取机器人凭据；GoodBuddy 当前接入消息通道，未接入其 `dws` 文档工具。
 
 ## 相关功能
 
