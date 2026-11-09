@@ -7,6 +7,8 @@ const settings = { deviceId: 'mine', name: 'My desktop', serverUrl: 'http://127.
 function setup() {
   const catalog: SharingCatalog = { devices: [], publications: [] }
   const sharing = {
+    getModelConfigs: vi.fn(async () => ({ items: [{ id: 'config', releaseId: 'release', name: 'Team', version: '1', model: 'chat', baseURL: 'http://192.168.0.2/v1', protocol: 'openai-chat-completions' as const, routeType: 'gateway' as const, authentication: 'client-supplied-api-key' as const }] })),
+    importModelConfig: vi.fn(async () => ({ imported: true })),
     getSettings: vi.fn(async () => settings), saveSettings: vi.fn(async input => ({ ...settings, ...input })),
     getCatalog: vi.fn(async () => structuredClone(catalog)),
     registerDevice: vi.fn(async () => {
@@ -46,6 +48,19 @@ it('registers, publishes independent knowledge flags, revokes and refreshes actu
   await waitFor(() => { expect(screen.getByText('已撤销')).toBeInTheDocument(); expect(screen.getByRole('button', { name: '刷新列表' })).toBeEnabled() })
   expect(sharing.revoke).toHaveBeenCalledWith('publication')
   expect(notify).toHaveBeenCalledWith({ tone: 'success', message: '发布条目已撤销' })
+})
+it('fetches on demand and imports the selected release after registration', async () => {
+  const { sharing, notify } = setup()
+  await waitFor(() => expect(screen.getByRole('button', { name: '注册本机' })).toBeEnabled())
+  expect(sharing.getModelConfigs).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: '获取模型配置' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: '注册本机' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: '获取模型配置' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: '获取模型配置' }))
+  const button = await screen.findByRole('button', { name: '导入模型' })
+  fireEvent.click(button)
+  await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.objectContaining({ tone: 'success', message: expect.stringContaining('模型已导入') })))
+  expect(sharing.importModelConfig).toHaveBeenCalledWith({ serverUrl: settings.serverUrl, id: 'config', releaseId: 'release' })
 })
 it('preserves unsaved input on failure and does not offer revocation for other device IDs', async () => {
   const { sharing, catalog, notify } = setup()

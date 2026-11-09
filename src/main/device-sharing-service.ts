@@ -1,14 +1,15 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { z } from 'zod'
 import {
   sharingDeviceSchema, sharingIdSchema, sharingPublicationDraftSchema, sharingPublicationSchema,
   sharingSettingsInputSchema, sharingSettingsSchema,
+  sharingModelCatalogSchema, sharingModelImportSchema,
   type SharingCatalog, type SharingSettings
 } from '../shared/device-sharing-contracts'
 import { assertSupportedSettingsVersion, isMissingFileError, writeJsonFileAtomically } from './settings-file-utils'
-
+import type { RuntimeSettingsStore } from './runtime-settings-store'
 import { readOfficeCapabilities } from './office-capabilities'
 
 const storedSchema = sharingSettingsSchema.extend({ version: z.literal(1) }).strict()
@@ -17,7 +18,8 @@ export class DeviceSharingService {
   private settings?: Promise<SharingSettings>
   private updateQueue: Promise<unknown> = Promise.resolve()
 
-  constructor(private readonly filePath: string, private readonly appVersion: string, private readonly timeoutMs = 10_000) {}
+  constructor(private readonly filePath: string, private readonly appVersion: string, private readonly timeoutMs = 10_000,
+    private readonly modelSettings?: Pick<RuntimeSettingsStore, 'importModelProfile'>) {}
 
   getSettings(): Promise<SharingSettings> {
     if (!this.settings) {
@@ -97,6 +99,25 @@ export class DeviceSharingService {
       throw new Error(`Sharing HTTP ${response.status}: ${error?.message ?? (response.status === 404 ? '请升级 ShareServer，以支持设备注册策略。' : response.statusText)}`)
     }
     return schema.parse(await response.json())
+  }
+
+  async getModelConfigs() {
+    return this.request(await this.getSettings(), 'model-configs', sharingModelCatalogSchema)
+  }
+
+  async importModelConfig(input: unknown) {
+    const selection = sharingModelImportSchema.parse(input)
+    const settings = await this.getSettings()
+    if (selection.serverUrl !== settings.serverUrl) throw new Error('Server 已改变，请重新获取模型配置。')
+    const catalog = await this.request(settings, 'model-configs', sharingModelCatalogSchema)
+    const item = catalog.items.find(item => item.id === selection.id && item.releaseId === selection.releaseId)
+    if (!item) throw new Error('配置已更新或撤回，请重新获取模型配置。')
+    if (!this.modelSettings) throw new Error('模型设置服务不可用。')
+    const hash = createHash('sha256').update(JSON.stringify([settings.serverUrl, item.id])).digest('hex')
+    const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`
+    return this.modelSettings.importModelProfile({ id, name: `${item.name} · ${item.model}`.slice(0, 64),
+      baseUrl: item.baseURL, modelName: item.model, protocol: item.protocol, authentication: 'api-key',
+      imageGenerationQuality: 'auto', apiKey: { action: 'keep' } })
   }
 
   async registerDevice() {

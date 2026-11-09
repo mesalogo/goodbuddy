@@ -102,3 +102,17 @@ npm test
 `http://127.0.0.1:8787`。先保存名称或地址修改，再注册本机、
 发布条目、检查目录、撤销并刷新。知识类型提供三个独立权限框；重启后可比较同一设备 ID。
 服务关闭时刷新应显示错误并保留旧列表，不应显示为空目录或推断设备离线。
+# 2026-11-09 模型配置主动获取（FR-M7）
+
+- 设备共享页新增获取与逐项导入，复用设备认证、IPC 校验和 RuntimeSettingsStore 原子写入队列。
+- 支持网关地址、自定义地址；重复导入保留本地设置，默认模型不变；凭据仍在已有模型设置填写。
+- 定向测试 4 文件、112 项通过：服务、IPC、设置持久化与界面。真实 Electron 联调 1 项通过，覆盖生产
+  页面 → preload → Main → 已认证 Server → 模型设置持久化，以及重复导入、明暗主题和 480px 页面。
+- 使用相邻服务仓库 `.env.deepseek.local` 完成 2 次真实文本请求：网关转发 1 次、自定义地址直连 1 次。
+  请求使用导入后的地址和模型名，测试脚本在 Main 侧提供调用 Key；此项不等于完整聊天 Runtime 验收。
+- 命令：`TMPDIR=$PWD/temp GOODBUDDY_SHARING_SERVER_ROOT=../goodbuddy-shareserver GOODBUDDY_SHARING_MODEL_ENV=../goodbuddy-shareserver/.env.deepseek.local xvfb-run -a npm test -- tests/device-sharing.electron.test.ts --maxWorkers=1 --pool=threads`。
+- 运行环境一度内存／交换空间耗尽，早期测试进程启动失败；上述通过结果来自资源恢复后的重跑。
+- 首期不包含自动更新、推送、回执。重新导入更新配置需先在模型设置删除旧条目。
+- `npm run lint` 通过。完整类型检查受既有缺失依赖 `playwright`、`@deepseek-ai/dsh-tool-executor-native`、
+  `material-icon-theme/dist/material-icons.json`，以及 `deepseek-harness-host.test.ts:318` 的既有类型错误阻塞。
+  完整 `npm test` 曾启动，但在整机内存／交换空间耗尽时停止；不宣称客户端全量测试通过。

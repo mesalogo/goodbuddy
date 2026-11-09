@@ -9,6 +9,7 @@ export const app = {
     openSource: '返回原会话：{{title}}', sourceMissing: '原会话已不可用：{{title}}',
   },
   sharing: {
+    models: { title: '服务器模型配置', help: '获取管理员向本设备或所属用户组发布的稳定版配置。导入后在模型设置中填写 API Key 并测试连接。已导入的模型保留本地设置；需要重新导入时先在模型设置中删除旧条目。', fetch: '获取模型配置', empty: '暂无向本设备发布的稳定版模型配置。', gateway: '网关地址', custom: '自定义地址', import: '导入模型', imported: '模型已导入，请在模型设置中填写 API Key 并测试连接。', exists: '该模型已导入，已保留本地设置。' },
     title: '设备共享（技术预览）', boundary: '连接 ShareServer 共享目录。注册按服务器策略自动接纳或等待管理员审批，后续请求使用设备凭据。注册记录不代表设备在线；此页不提供远程执行或知识内容访问。',
     registrationStatus: {
       unregistered: '尚未注册，请点击注册设备。', approved: '设备已接纳，可以使用共享目录。',

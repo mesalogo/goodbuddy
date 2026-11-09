@@ -1,11 +1,13 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { ipcChannels } from '../shared/ipc-channels'
-import { sharingIdSchema, sharingPublicationDraftSchema, sharingSettingsInputSchema } from '../shared/device-sharing-contracts'
+import { sharingIdSchema, sharingPublicationDraftSchema, sharingSettingsInputSchema, sharingModelImportSchema } from '../shared/device-sharing-contracts'
 import { assertTrustedSender } from './trusted-ipc-sender'
 import type { DeviceSharingService } from './device-sharing-service'
 
 export function registerDeviceSharingIpc(window: BrowserWindow, service: DeviceSharingService): () => void {
   const handlers = {
+    [ipcChannels.sharingModelConfigs]: () => service.getModelConfigs(),
+    [ipcChannels.sharingModelImport]: (input: unknown) => service.importModelConfig(sharingModelImportSchema.parse(input)),
     [ipcChannels.sharingSettingsGet]: () => service.getSettings(),
     [ipcChannels.sharingSettingsSave]: (input: unknown) => service.saveSettings(sharingSettingsInputSchema.parse(input)),
     [ipcChannels.sharingRegister]: () => service.registerDevice(),

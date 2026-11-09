@@ -4,13 +4,18 @@ import { join } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
 import { DeviceSharingService } from '../../src/main/device-sharing-service'
 import { registerDeviceSharingIpc } from '../../src/main/device-sharing-ipc'
+import { RuntimeSettingsStore } from '../../src/main/runtime-settings-store'
+import { publishSharingModels } from './sharing-model-fixture'
 
 const directory = process.env.GB_SHARING_DIRECTORY!
 app.setPath('userData', join(directory, 'profile'))
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
 void app.whenReady().then(async () => {
   const file = join(directory, 'sharing-settings.json')
-  const service = new DeviceSharingService(file, 'electron-smoke')
+  const modelSettings = new RuntimeSettingsStore(join(directory, 'models.json'), {
+    isAvailable: () => false, encrypt: () => { throw new Error('No credential writes in this fixture') }, decrypt: () => { throw new Error('No stored credentials') }
+  }, {})
+  const service = new DeviceSharingService(file, 'electron-smoke', 10000, modelSettings)
   await service.saveSettings({ name: 'Sharing smoke device', serverUrl: process.env.GB_SHARING_URL! })
   const win = new BrowserWindow({ show: true, width: 1100, height: 850, webPreferences: {
     preload: join(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false
@@ -72,6 +77,34 @@ void app.whenReady().then(async () => {
     catalog = await service.getCatalog()
     assert.equal(catalog.publications[0]!.status, 'revoked')
     assert.deepEqual(await new DeviceSharingService(file, 'restart').getSettings(), await service.getSettings())
+    const keys = await publishSharingModels(directory, process.env.GB_SHARING_URL!, (await service.getSettings()).deviceId)
+    const before = await modelSettings.getPublicSettings()
+    await click('Get model configurations')
+    await wait(`document.querySelector('[aria-labelledby="sharing-models"]').querySelectorAll('article').length === 2`)
+    for (let index = 0; index < 2; index++) {
+      await js(`document.querySelector('[aria-labelledby="sharing-models"]').querySelectorAll('article')[${index}].querySelector('button').click()`)
+      await wait(`document.documentElement.dataset.notification === 'Model imported. Enter an API key and test the connection in model settings.' && document.querySelector('[aria-labelledby="sharing-models"]').getAttribute('aria-busy') === 'false'`)
+    }
+    await click('Import model')
+    await wait(`document.documentElement.dataset.notification === 'This model is already imported. Local settings were preserved.'`)
+    const after = await modelSettings.getPublicSettings()
+    assert.equal(after.defaultModelProfileId, before.defaultModelProfileId)
+    assert.equal(after.modelProfiles.length, before.modelProfiles.length + 2)
+    const imported = after.modelProfiles.filter(item => !before.modelProfiles.some(old => old.id === item.id))
+    let calls = 0
+    for (const profile of imported) {
+      const key = [...keys].find(([name]) => profile.name.startsWith(name))?.[1]
+      if (!key) continue
+      calls++
+      const response = await fetch(`${profile.baseUrl.replace(/\/$/, '')}/chat/completions`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model: profile.modelName, messages: [{ role: 'user', content: 'Reply with OK only.' }], max_tokens: 16, stream: false }),
+        signal: AbortSignal.timeout(60000) })
+      assert.equal(response.ok, true, `Imported model HTTP ${response.status}`)
+      const result = await response.json() as { choices?: { message?: { content?: string } }[] }
+      assert.ok(result.choices?.[0]?.message?.content)
+    }
+    console.log(`SHARING_MODEL_IMPORT_OK: real UI -> preload -> Main -> authenticated Server -> persistent model settings; duplicate preserved; real text calls=${calls}`)
     assert.equal(errors.length, 0, errors.join('\n'))
     console.log('SHARING_ELECTRON_OK: application center -> register -> knowledge/server metadata (search=true, read=false, download=true) -> revoke -> refresh; persisted identity; light/dark 480px; real ShareServer')
   } finally { dispose(); win.destroy() }

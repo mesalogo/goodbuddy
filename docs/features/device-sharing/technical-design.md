@@ -17,8 +17,8 @@
 局域网与网关协议都是后续设计，当前不创建这些基础设施。
 
 `src/shared/device-sharing-contracts.ts` 定义严格输入和返回类型；`DesktopApi.sharing` 暴露
-`getSettings`、`saveSettings`、`registerDevice`、`getCatalog`、`publish`、`revoke` 六个方法。
-生产 preload 对应六个固定 IPC 通道，`device-sharing-ipc.ts` 对每次调用检查可信主窗口主帧，
+`getSettings`、`saveSettings`、`registerDevice`、`getCatalog`、`publish`、`revoke`，以及模型配置的
+`getModelConfigs`、`importModelConfig`。生产 preload 使用固定 IPC 通道，`device-sharing-ipc.ts` 对每次调用检查可信主窗口主帧，
 对变更输入进行 Zod 校验，不暴露通用网络入口。
 
 `DeviceSharingService` 在 Main 内使用 `fetch`，每个请求含响应体读取采用 10 秒超时，非成功
@@ -52,6 +52,15 @@ HTTP 请求携带 Bearer 凭据和 `X-Device-Id`；`getCatalog` 先查询自身�
 服务测试使用真实 loopback HTTP，验证契约、独立权限、识别范围、持久化、错误和超时；
 Electron 测试通过环境变量选择相邻真实 ShareServer 源码，使用临时服务数据与桌面设置。
 具体命令和实测边界见[实施进度](./progress.md)。
+
+## FR-M7 模型获取与存储
+
+`getModelConfigs` 调用服务端设备接口 `GET /api/v1/device-sharing/model-configs`。
+`importModelConfig` 接收 `{serverUrl,id,releaseId}` 并重新读取服务端清单，复用设备认证及超时。
+Main 将 OpenAI Chat Completions 地址与模型名交给既有 `RuntimeSettingsStore.importModelProfile`，
+在该 store 写入队列内去重、检查容量、处理重名并原子追加模型，默认项不变。不增加数据库、来源文件或后台同步。
+凭据仍通过既有模型设置安全存储流程填写。导入不激活或改变 Runtime，Agent 执行协议和模型 bridge 没有变化。
+服务端发布过滤规则以[服务端契约](../../../../goodbuddy-shareserver/docs/features/share-server/console-releases.md#gb-主动获取模型配置)为准。
 
 ## 1. 进程边界
 

@@ -19,6 +19,7 @@ import {
   isDeepSeekHarnessModelProfile,
   minimumModelContextWindowTokens,
   modelAuthenticationSchema,
+  modelProfileInputSchema,
   modelProtocolSchema,
   modelRequestBodySchema,
   modelRequestHeadersSchema,
@@ -2067,6 +2068,29 @@ export class RuntimeSettingsStore {
       contextCompression: settings.contextCompression,
       runtimeCustomization: settings.runtimeCustomization,
     }
+  }
+
+  importModelProfile(input: unknown): Promise<{ imported: boolean }> {
+    const profile = modelProfileInputSchema.parse(input)
+    const operation = this.updateQueue.then(async () => {
+      const current = await this.load()
+      if (current.modelProfiles.some(item => item.id === profile.id)) return { imported: false }
+      if (current.modelProfiles.length >= 20) throw new Error('模型连接已达到 20 个，请先在模型设置中删除不需要的连接。')
+      const names = new Set(current.modelProfiles.map(item => item.name.toLowerCase()))
+      let name = profile.name
+      for (let suffix = 2; names.has(name.toLowerCase()); suffix++) name = `${profile.name.slice(0, 55)} (${suffix})`
+      const next = { ...current, modelProfiles: [...current.modelProfiles, {
+        id: profile.id, name, baseUrl: normalizeModelBaseUrl(profile.baseUrl), modelName: profile.modelName,
+        protocol: profile.protocol, authentication: profile.authentication, imageGenerationQuality: profile.imageGenerationQuality,
+        supportsImageInput: false, allowConversationInvocation: false,
+        requestHeaders: {}, requestBody: {}
+      }] }
+      await writeJsonFileAtomically(this.filePath, next)
+      this.settings = next
+      return { imported: true }
+    })
+    this.updateQueue = operation.then(() => undefined, () => undefined)
+    return operation
   }
 
   update(input: RuntimeSettingsInput): Promise<RuntimeSettings> {

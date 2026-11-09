@@ -638,7 +638,7 @@ export const modelConnectionUrlSchema = z
     '模型服务地址必须是完整的 HTTP 或 HTTPS 地址'
   )
 
-const modelProfileInputSchema = z
+export const modelProfileInputSchema = z
   .object({
     id: modelProfileIdSchema,
     name: z.string().trim().min(1).max(64),

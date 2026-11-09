@@ -3,6 +3,8 @@ export const ipcChannels = {
   sharingSettingsSave: 'sharing:settings-save',
   sharingRegister: 'sharing:register',
   sharingCatalog: 'sharing:catalog',
+  sharingModelConfigs: 'sharing:model-configs',
+  sharingModelImport: 'sharing:model-import',
   sharingPublish: 'sharing:publish',
   sharingRevoke: 'sharing:revoke',
   wecomSnapshot: 'wecom:snapshot',

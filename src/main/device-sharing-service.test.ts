@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { DeviceSharingService } from './device-sharing-service'
 import type { SharingDevice, SharingPublication } from '../shared/device-sharing-contracts'
+import type { SharingModelCatalog } from '../shared/device-sharing-contracts'
+import { RuntimeSettingsStore } from './runtime-settings-store'
 
 const cleanup: (() => Promise<unknown>)[] = []
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn() })
@@ -14,6 +16,7 @@ async function setup(timeout = 1000) {
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const devices: SharingDevice[] = []
   const publications: SharingPublication[] = []
+  const models: SharingModelCatalog = { items: [] }
   const requests: { path: string; method: string; body: Record<string, unknown> }[] = []
   let failure = 0
   let stall = false
@@ -33,6 +36,7 @@ async function setup(timeout = 1000) {
       devices.splice(0, devices.length, value as SharingDevice)
     } else if (path.endsWith('/status')) value = devices[0]
     else if (path.endsWith('/devices')) value = { devices }
+    else if (path.endsWith('/model-configs')) value = models
     else if (request.method === 'GET') value = { publications }
     else if (path.endsWith('/revoke')) {
       const entry = publications.find(item => path.includes(item.id))!
@@ -47,10 +51,30 @@ async function setup(timeout = 1000) {
   cleanup.push(() => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()) }))
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`
   const file = join(directory, 'settings.json')
-  const service = new DeviceSharingService(file, 'test-version', timeout)
+  const modelSettings = new RuntimeSettingsStore(join(directory, 'models.json'), { isAvailable: () => false, encrypt: () => { throw new Error('unused') }, decrypt: () => { throw new Error('unused') } }, {})
+  const service = new DeviceSharingService(file, 'test-version', timeout, modelSettings)
   await service.saveSettings({ name: 'Desktop', serverUrl: url })
-  return { service, file, url, requests, publications, devices, authorizations, fail: (code: number) => { failure = code }, stall: () => { stall = true } }
+  return { service, file, url, requests, publications, devices, models, modelSettings, authorizations, fail: (code: number) => { failure = code }, stall: () => { stall = true } }
 }
+
+it('imports both endpoint types, deduplicates and rejects stale releases or server selection', async () => {
+  const { service, models, modelSettings, url } = await setup()
+  await service.registerDevice()
+  const before = await modelSettings.getPublicSettings()
+  for (const routeType of ['gateway', 'custom'] as const) models.items.push({ id: routeType, releaseId: 'release', name: routeType,
+    version: '1', model: 'chat', baseURL: `http://192.168.0.2/${routeType}/v1`, protocol: 'openai-chat-completions', routeType, authentication: 'client-supplied-api-key' })
+  expect(await service.getModelConfigs()).toEqual(models)
+  for (const item of models.items) {
+    const input = { serverUrl: url, id: item.id, releaseId: item.releaseId }
+    expect(await service.importModelConfig(input)).toEqual({ imported: true })
+    expect(await service.importModelConfig(input)).toEqual({ imported: false })
+    await expect(service.importModelConfig({ ...input, releaseId: 'old' })).rejects.toThrow('重新获取')
+    await expect(service.importModelConfig({ ...input, serverUrl: 'http://other.example' })).rejects.toThrow('Server 已改变')
+  }
+  expect((await modelSettings.getPublicSettings()).modelProfiles).toHaveLength(before.modelProfiles.length + 2)
+  models.items = []
+  await expect(service.importModelConfig({ serverUrl: url, id: 'gateway', releaseId: 'release' })).rejects.toThrow('重新获取')
+})
 
 it('persists one identity across concurrent first reads, saves and restarts without accepting renderer identity', async () => {
   const setupResult = await setup()

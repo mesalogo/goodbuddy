@@ -12,6 +12,7 @@ export const app = {
     openSource: 'Return to original conversation: {{title}}', sourceMissing: 'Original conversation unavailable: {{title}}',
   },
   sharing: {
+    models: { title: 'Server model configurations', help: 'Fetch stable configurations published to this device or its user groups. After importing, enter an API key and test the connection in model settings. Existing imports keep local settings; delete the old entry in model settings before importing again.', fetch: 'Get model configurations', empty: 'No stable model configurations are published to this device.', gateway: 'Gateway endpoint', custom: 'Custom endpoint', import: 'Import model', imported: 'Model imported. Enter an API key and test the connection in model settings.', exists: 'This model is already imported. Local settings were preserved.' },
     title: 'Device Sharing (Technical Preview)', boundary: 'Connect to the ShareServer catalog. Server policy accepts devices automatically or requires administrator approval; subsequent requests use device credentials. Registration does not indicate online status. Remote execution and knowledge content access are not provided here.',
     registrationStatus: {
       unregistered: 'Not registered. Register this device to connect.', approved: 'Device accepted. The shared catalog is available.',

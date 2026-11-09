@@ -1659,7 +1659,7 @@ if (hasSingleInstanceLock) {
     startupMark('main:load-main-window')
     removeWecomIpc = registerWecomIpc(mainWindow, startupWecomService)
     removeFeishuIpc = registerFeishuIpc(mainWindow, startupFeishuService)
-    const sharingService = new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion())
+    const sharingService = new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion(), 10_000, settingsStore)
     removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow, sharingService)
     removeDesktopUpdateIpc = registerDesktopUpdateIpc(mainWindow, desktopUpdateService)
     officeService = new OfficeService(mainWindow, join(mainModuleDirectory, 'office-file-worker.js'), async source => {

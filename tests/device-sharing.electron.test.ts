@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { createServer as createHttpServer } from 'node:http'
 import { build } from 'esbuild'
 import { createServer } from 'vite'
@@ -19,7 +20,8 @@ it.skipIf(!process.env.GOODBUDDY_SHARING_SERVER_ROOT)('uses the real ShareServer
   const backend = spawn(process.execPath, ['--import', 'tsx', 'server/src/index.ts'], {
     cwd: process.env.GOODBUDDY_SHARING_SERVER_ROOT,
     env: { ...process.env, DATABASE_URL: '', OFFICE_ENABLED: 'false', SHARESERVER_AUTH_ENABLED: 'true',
-      SHARESERVER_PUBLIC_URL: `http://127.0.0.1:${port}`, SHARESERVER_PORT: String(port), SHARESERVER_DATA_DIR: join(directory, 'server-data') },
+       SHARESERVER_MASTER_KEY: randomBytes(32).toString('hex'), SHARESERVER_MASTER_KEY_FILE: '',
+       SHARESERVER_PUBLIC_URL: `http://127.0.0.1:${port}`, SHARESERVER_PORT: String(port), SHARESERVER_DATA_DIR: join(directory, 'server-data') },
     stdio: ['ignore', 'pipe', 'pipe']
   })
   let backendOutput = ''
@@ -49,9 +51,12 @@ it.skipIf(!process.env.GOODBUDDY_SHARING_SERVER_ROOT)('uses the real ShareServer
     let output = ''
     child.stdout.on('data', data => { output += data })
     child.stderr.on('data', data => { output += data })
-    const timer = setTimeout(() => child.kill(), 60000)
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; child.kill() }, 150000)
     try {
       expect(await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) }), output).toBe(0)
+      expect(timedOut).toBe(false)
+      expect(output).toContain('SHARING_MODEL_IMPORT_OK')
       process.stdout.write(output)
     } finally { clearTimeout(timer) }
   } finally {
@@ -60,4 +65,4 @@ it.skipIf(!process.env.GOODBUDDY_SHARING_SERVER_ROOT)('uses the real ShareServer
     await server.close()
     await rm(directory, { recursive: true, force: true })
   }
-}, 90000)
+}, 180000)

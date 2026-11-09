@@ -22,6 +22,19 @@ import {
 
 const temporaryDirectories: string[] = []
 
+it('imports models atomically without changing defaults or overwriting local settings', async () => {
+  const { store, filePath } = await createStore()
+  const before = await store.getPublicSettings()
+  const profile = { id: 'a0000000-0000-5000-a000-000000000001', name: 'Imported', baseUrl: 'http://192.168.0.2:8787/v1',
+    modelName: 'chat', protocol: 'openai-chat-completions', authentication: 'api-key', imageGenerationQuality: 'auto', apiKey: { action: 'keep' } }
+  expect(await Promise.all([store.importModelProfile(profile), store.importModelProfile(profile)])).toEqual([{ imported: true }, { imported: false }])
+  expect(await store.importModelProfile({ ...profile, baseUrl: 'https://changed.example/v1' })).toEqual({ imported: false })
+  const restored = await new RuntimeSettingsStore(filePath, cipher, {}).getPublicSettings()
+  expect(restored.defaultModelProfileId).toBe(before.defaultModelProfileId)
+  expect(restored.modelProfiles).toHaveLength(before.modelProfiles.length + 1)
+  expect(restored.modelProfiles.find(item => item.id === profile.id)).toMatchObject({ baseUrl: profile.baseUrl, apiKeyConfigured: false })
+})
+
 const cipher: CredentialCipher = {
   isAvailable: () => true,
   encrypt: (value) => Buffer.from(`encrypted:${value}`),

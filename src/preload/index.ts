@@ -861,6 +861,8 @@ const desktopApi: DesktopApi = {
     apply: input => ipcRenderer.invoke(officeChannels.apply, input)
   },
   sharing: {
+    getModelConfigs: () => ipcRenderer.invoke(ipcChannels.sharingModelConfigs),
+    importModelConfig: input => ipcRenderer.invoke(ipcChannels.sharingModelImport, input),
     getSettings: () => ipcRenderer.invoke(ipcChannels.sharingSettingsGet),
     saveSettings: input => ipcRenderer.invoke(ipcChannels.sharingSettingsSave, input),
     registerDevice: () => ipcRenderer.invoke(ipcChannels.sharingRegister),

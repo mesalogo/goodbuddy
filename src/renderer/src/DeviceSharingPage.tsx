@@ -5,6 +5,7 @@ import { sharingSettingsInputSchema } from '../../shared/device-sharing-contract
 import { EmptyState, PageHeader, PageShell, PageTabs } from './WorkspacePrimitives'
 import type { AppNotificationInput } from './notifications'
 import './device-sharing.css'
+import { SharingModelConfigs } from './SharingModelConfigs'
 
 const emptyDraft: SharingPublicationDraft = {
   name: '', description: '', kind: 'capability', sourceMode: 'device',
@@ -101,6 +102,7 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
           {dirty && <p>{t('sharing.saveFirst')}</p>}
         </form>
       </section>}
+      {settings && <SharingModelConfigs key={settings.serverUrl} serverUrl={settings.serverUrl} disabled={!canPublish} notify={notify} />}
       <section className="device-sharing__section" aria-labelledby="sharing-devices">
         <h2 id="sharing-devices">{t('sharing.devices')}</h2>
         {myDevices.length === 0 && <EmptyState title={t('sharing.noDevices')} description={t('sharing.registerFirst')} />}

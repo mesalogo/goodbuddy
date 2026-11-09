@@ -263,6 +263,8 @@ const terminalSnapshot: TerminalSnapshot = {
 
 const api: DesktopApi & RuntimeNativeClientApi = {
   sharing: {
+    getModelConfigs: vi.fn(async () => ({ items: [] })),
+    importModelConfig: vi.fn(async () => ({ imported: true })),
     getSettings: vi.fn(async () => ({ deviceId: 'test-device', name: 'Test device', serverUrl: 'http://127.0.0.1:8787' })),
     saveSettings: vi.fn(), registerDevice: vi.fn(),
     getCatalog: vi.fn(async () => ({ devices: [], publications: [] })),
