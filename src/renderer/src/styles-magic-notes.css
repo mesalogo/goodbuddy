@@ -1669,7 +1669,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  padding: var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border: 0;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-subtle);
@@ -1679,6 +1679,8 @@
 .magic-note-editor__toolbar.ql-toolbar.ql-snow .ql-formats {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
   padding-right: var(--space-1);
   border-right: 1px solid var(--border-subtle);
   margin: 0;
@@ -1693,6 +1695,25 @@
 .magic-note-editor__toolbar.ql-toolbar button,
 .magic-note-editor__toolbar.ql-toolbar .ql-picker {
   color: var(--text-secondary);
+}
+
+.magic-note-editor__toolbar.ql-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--radius-control);
+}
+
+.magic-note-editor__toolbar.ql-toolbar button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.magic-note-editor__toolbar.ql-toolbar button:is(:hover, :focus-visible, .ql-active) {
+  background: var(--accent-subtle);
 }
 
 .magic-note-editor__table-toolbar {
