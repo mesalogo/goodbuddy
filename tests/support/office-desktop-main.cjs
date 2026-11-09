@@ -39,7 +39,15 @@ app.whenReady().then(async () => {
   dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [join(root, filename)] })
   dialog.showSaveDialog = async () => { saveDialogs++; return { canceled: false, filePath: join(root, 'export.' + filename.split('.').pop().replace(/^doc$/, 'docx')) } }
   dialog.showMessageBox = async (_window, options) => { if (options.type === 'error') lastError = options.detail; return { response: options.type === 'error' ? 0 : 1 } }
-  service = new OfficeService(window, join(root, 'office-file-worker.js'), async () => ({ path: join(root, filename) }), async () => conversation, join(root, 'office-editor.cjs'))
+  let authentication
+  if (process.env.GB_OFFICE_PROBE_REGISTER === 'true') {
+    const { DeviceSharingService } = require(join(root, 'sharing.cjs'))
+    const sharing = new DeviceSharingService(join(root, 'device-sharing.json'), 'office-auth-probe')
+    await sharing.saveSettings({ serverUrl: process.env.GB_OFFICE_PROBE_WEB, name: 'Office authentication acceptance' })
+    await sharing.registerDevice()
+    authentication = url => sharing.officeHeaders(url)
+  }
+  service = new OfficeService(window, join(root, 'office-file-worker.js'), async () => ({ path: join(root, filename) }), async () => conversation, join(root, 'office-editor.cjs'), authentication)
   registerOfficeIpc(window, service)
   ipcMain.handle('office:editor-ai', (event, input) => service.editorRequest(event, input, async (_id, prompt) => {
     const queueItemId = randomUUID()

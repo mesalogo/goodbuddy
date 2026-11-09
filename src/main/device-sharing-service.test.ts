@@ -102,10 +102,12 @@ it('persists a per-server credential across restart without exposing it in setti
   await service.registerDevice()
   const first = authorizations[0]
   expect(first).toMatch(/^Bearer [a-f0-9]{64}$/)
+  expect(await service.officeHeaders(url)).toEqual({ Authorization: first, 'X-Device-Id': (await service.getSettings()).deviceId })
   await new DeviceSharingService(file, 'v2').registerDevice()
   expect(authorizations[1]).toBe(first)
   expect(JSON.stringify(await service.getSettings())).not.toContain(first!.slice(7))
   const other = await setup()
+  await expect(service.officeHeaders(other.url)).rejects.toThrow()
   await service.saveSettings({ serverUrl: other.url, name: 'Desktop' })
   await service.registerDevice()
   expect(other.authorizations[0]).not.toBe(first)

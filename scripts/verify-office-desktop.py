@@ -8,6 +8,8 @@ import time
 import zipfile
 from pathlib import Path
 import tempfile
+import json
+import urllib.request
 from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -15,6 +17,7 @@ parser.add_argument('--web', default='http://127.0.0.1:18088')
 parser.add_argument('--file-entry', action='store_true', help='Open a file reference through the production store after configuring the connection')
 parser.add_argument('--legacy', action='store_true', help='Convert a real DOC and verify saving preserves the original')
 parser.add_argument('--native-save', action='store_true', help='Use ONLYOFFICE toolbar Save and verify automatic source writeback')
+parser.add_argument('--registered-device', action='store_true', help='Register an isolated test device and authenticate every Office request')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[1]
 (repo / 'temp').mkdir(exist_ok=True)
@@ -25,6 +28,7 @@ from fixtures import docx
 esbuild = str(repo / 'node_modules/.bin/esbuild')
 for source, output, platform in [
     ('src/main/office-service.ts', 'service.cjs', 'node'),
+    ('src/main/device-sharing-service.ts', 'sharing.cjs', 'node'),
     ('src/main/office-file-worker.ts', 'office-file-worker.js', 'node'),
     ('src/preload/office-editor.ts', 'office-editor.cjs', 'node'),
     ('tests/support/office-desktop-panel.tsx', 'panel.js', 'browser'),
@@ -44,6 +48,7 @@ def text(path):
 
 with (root / 'electron.log').open('w') as log:
     env = dict(os.environ, TMPDIR=str(root), GB_OFFICE_PROBE_ROOT=str(root), GB_OFFICE_PROBE_WEB=args.web, GB_OFFICE_PROBE_FILENAME='source.doc' if args.legacy else 'source.docx')
+    env['GB_OFFICE_PROBE_REGISTER'] = 'true' if args.registered_device else 'false'
     env.pop('ELECTRON_RUN_AS_NODE', None)
     child = subprocess.Popen(['xvfb-run', '-a', str(repo / 'node_modules/electron/dist/electron'),
                               '--no-sandbox', str(repo / 'tests/support/office-desktop-main.cjs')], env=env, stdout=log, stderr=log,
@@ -52,13 +57,25 @@ with (root / 'electron.log').open('w') as log:
         with sync_playwright() as playwright:
             for _ in range(60):
                 try:
+                    with urllib.request.urlopen('http://127.0.0.1:19222/json/list', timeout=1) as response:
+                        if not any(target.get('type') == 'page' and target.get('url', '').endswith('/index.html') for target in json.load(response)):
+                            time.sleep(.5)
+                            continue
                     browser = playwright.chromium.connect_over_cdp('http://127.0.0.1:19222')
                     break
                 except Exception:
                     if child.poll() is not None: raise RuntimeError('Electron exited')
                     time.sleep(.5)
             else: raise RuntimeError('CDP unavailable')
-            panel = browser.contexts[0].pages[0]
+            for _ in range(100):
+                pages = [page for context in browser.contexts for page in context.pages]
+                if pages:
+                    panel = pages[0]
+                    break
+                time.sleep(.1)
+            else:
+                raise RuntimeError('Desktop panel did not open')
+            panel.wait_for_url('**/index.html')
             assert panel.get_by_role('textbox', name='ShareServer 地址').count() == 0
             panel.get_by_role('button', name='编辑文件引用' if args.file_entry else '选择 Office 文件并编辑', exact=True).click()
             editor = None

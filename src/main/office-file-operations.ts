@@ -4,9 +4,10 @@ import { basename, dirname, join } from 'node:path'
 import { officeDocumentSchema, type OfficeDocument } from '../shared/office-contracts'
 import { readOfficeCapabilities, requireOfficeEditing } from './office-capabilities'
 
-export type OfficeFileJob =
+export type OfficeFileJob = (
   | { action: 'upload'; path: string; serverUrl: string }
   | { action: 'download'; path: string; serverUrl: string; document: OfficeDocument; expectedDigest?: string }
+) & { headers?: Record<string, string> }
 
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 async function checkedFetch(url: string, init?: RequestInit): Promise<Response> {
@@ -25,14 +26,14 @@ export async function runOfficeFileJob(job: OfficeFileJob): Promise<{ document: 
     const bytes = await readFile(job.path)
     if (bytes.length > config.maxBytes) throw new Error('文件超过服务器大小限制')
     const response = await checkedFetch(`${base}/documents?name=${encodeURIComponent(basename(job.path))}`, {
-      method: 'POST', body: bytes, headers: { 'Content-Type': 'application/octet-stream' }
+      method: 'POST', body: bytes, headers: { ...job.headers, 'Content-Type': 'application/octet-stream' }
     })
     return { document: officeDocumentSchema.parse(await response.json()), digest: digest(bytes) }
   }
   if (job.path.split('.').pop()!.toLowerCase() !== job.document.name.split('.').pop()!.toLowerCase()) {
     throw new Error('保存文件的扩展名必须与编辑文档格式一致；旧格式转换后请另存为现代格式')
   }
-  const response = await checkedFetch(`${base}/documents/${job.document.id}/download?revision=${job.document.revision}`)
+  const response = await checkedFetch(`${base}/documents/${job.document.id}/download?revision=${job.document.revision}`, { headers: job.headers })
   const chunks: Uint8Array[] = []
   let size = 0
   if (!response.body) throw new Error('服务器未返回文档内容')

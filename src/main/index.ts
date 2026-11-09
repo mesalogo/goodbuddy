@@ -1659,8 +1659,8 @@ if (hasSingleInstanceLock) {
     startupMark('main:load-main-window')
     removeWecomIpc = registerWecomIpc(mainWindow, startupWecomService)
     removeFeishuIpc = registerFeishuIpc(mainWindow, startupFeishuService)
-    removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow,
-      new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion()))
+    const sharingService = new DeviceSharingService(join(app.getPath('userData'), 'device-sharing-settings.json'), app.getVersion())
+    removeDeviceSharingIpc = registerDeviceSharingIpc(mainWindow, sharingService)
     removeDesktopUpdateIpc = registerDesktopUpdateIpc(mainWindow, desktopUpdateService)
     officeService = new OfficeService(mainWindow, join(mainModuleDirectory, 'office-file-worker.js'), async source => {
       if (source.kind === 'attachment') {
@@ -1679,7 +1679,7 @@ if (hasSingleInstanceLock) {
         const { getCanonicalWorkspace, resolveExistingWorkspacePath } = await import('./workspace-file-access')
         return { path: await resolveExistingWorkspacePath(await getCanonicalWorkspace(space.rootPath), [source.path], 'file') }
       } finally { await space.workspaceAccess.dispose() }
-    }, id => startupAssistantDatabase.getConversation(id))
+    }, id => startupAssistantDatabase.getConversation(id), undefined, serverUrl => sharingService.officeHeaders(serverUrl))
     removeOfficeIpc = registerOfficeIpc(mainWindow, officeService)
     // Reclaim confirmed inactive runs, including their shared immutable caches.
     runtimeTemporaryCleanupTimer = setTimeout(() => {

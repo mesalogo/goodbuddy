@@ -14,6 +14,7 @@ import type { ConversationSnapshot } from '../shared/assistant-contracts'
 import { readOfficeCapabilities, requireOfficeEditing } from './office-capabilities'
 
 type Session = {
+  headers?: Record<string, string>
   instanceId: string; serverUrl: string; path: string; digest: string;
   document: OfficeDocument; view: WebContentsView; busy: boolean; savedToSource: boolean;
   visible: boolean
@@ -49,7 +50,8 @@ export class OfficeService {
   constructor(private window: BrowserWindow, private workerPath: string,
     private resolveSource?: (source: OfficeSource) => Promise<OfficeFileSource>,
     private readConversation?: (id: string) => Promise<ConversationSnapshot>,
-    private editorPreload = resolve(workerPath, '../../preload/office-editor.cjs')) {}
+    private editorPreload = resolve(workerPath, '../../preload/office-editor.cjs'),
+    private authentication?: (serverUrl: string) => Promise<Record<string, string>>) {}
 
   context(input: z.infer<typeof officeContextSchema>): void { this.contexts.set(input.instanceId, input.conversationId) }
 
@@ -126,7 +128,7 @@ export class OfficeService {
 
   private async request(session: Session, suffix = '', method = 'GET'): Promise<unknown> {
     const response = await fetch(`${session.serverUrl}/api/v1/office/documents/${session.document.id}${suffix}`, {
-      method, signal: AbortSignal.timeout(60_000), redirect: 'error'
+      method, headers: session.headers, signal: AbortSignal.timeout(60_000), redirect: 'error'
     })
     if (!response.ok) throw new Error(`Office HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`)
     return response.json()
@@ -157,24 +159,30 @@ export class OfficeService {
       const serverUrl = new URL(input.serverUrl).origin
       const alreadyOpen = [...this.sessions.values()].find(session => session.path === path)
       if (alreadyOpen) { await source.dispose?.(); source = undefined; return this.summary(alreadyOpen) }
-      const result = await fileJob(this.workerPath, { action: 'upload', path, serverUrl })
+      const headers = await this.authentication?.(serverUrl)
+      const result = await fileJob(this.workerPath, { action: 'upload', path, serverUrl, headers })
       const view = new WebContentsView({ webPreferences: {
         sandbox: true, contextIsolation: true, nodeIntegration: false,
         preload: this.editorPreload,
-        partition: 'goodbuddy-office'
+        partition: `goodbuddy-office-${result.document.id}`
       } })
       view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
       view.webContents.on('will-navigate', (event, url) => {
         if (new URL(url).origin !== serverUrl) event.preventDefault()
       })
       view.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+      if (headers) view.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+        const url = new URL(details.url)
+        const isOfficeApi = url.origin === serverUrl && url.pathname.startsWith('/api/v1/office/')
+        callback({ requestHeaders: isOfficeApi ? { ...details.requestHeaders, ...headers } : details.requestHeaders })
+      })
       const downloadSession = view.webContents.session
       const preventDownload = (event: { preventDefault(): void }): void => event.preventDefault()
       downloadSession.on('will-download', preventDownload)
       view.webContents.once('destroyed', () => downloadSession.removeListener('will-download', preventDownload))
       this.window.contentView.addChildView(view)
       view.setVisible(false)
-      const session: Session = { ...result, instanceId: input.instanceId, serverUrl, path, view,
+      const session: Session = { ...result, headers, instanceId: input.instanceId, serverUrl, path, view,
         busy: false, savedToSource: false, visible: false, syncedRevision: result.document.revision, readOnlySource: source.readOnly || result.document.requiresSaveAs, source, sourceIdentity }
       this.sessions.set(input.instanceId, session)
       view.webContents.on('before-input-event', (event, key) => {
@@ -262,7 +270,7 @@ export class OfficeService {
           await delay(500)
         }
       }
-      const result = await fileJob(this.workerPath, { action: 'download', path: target, serverUrl: session.serverUrl,
+      const result = await fileJob(this.workerPath, { action: 'download', path: target, serverUrl: session.serverUrl, headers: session.headers,
         document: session.document, ...(target === session.path && !session.source?.commit ? { expectedDigest: session.digest } : {}) })
       if (target === session.path) await session.source?.commit?.(target, session.digest, result.digest)
       else { await session.source?.dispose?.(); session.source = undefined; session.sourceIdentity = undefined }

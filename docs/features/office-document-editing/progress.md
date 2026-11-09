@@ -1,5 +1,16 @@
 # Office 协同编辑实施进度
 
+## 2026-11-09：已注册设备的 Office 认证
+
+- 修复 Office 新权限边界只接受网页登录，而桌面请求未携带身份导致的 `office:open` 401。
+- Main 从当前注册连接读取设备凭据，传输 Worker、保存查询和专用编辑页的同源 Office API 使用同一身份；凭据不进入 Renderer，不附加到 Docs/其他来源。
+- 各编辑视图使用独立 Electron session，切换 ShareServer 后已打开的文档继续使用原地址与原凭据。
+- ShareServer 以设备身份持有上传文档，每次 API 请求检查注册状态。无需管理员登录，不将设备身份升级为管理员。
+- 20 项 GB 定向测试及修改文件 lint 通过。全仓类型检查被既有缺失 `playwright`、`@deepseek-ai/dsh-tool-executor-native` 依赖和 DeepSeek 测试类型错误阻塞。
+- 认证与保存验收不调用模型；不能视为真实模型 AI 验收。可复现命令：`python scripts/verify-office-desktop.py --web http://<主机IP>:8088 --registered-device --native-save`。
+- 真实 Electron 使用 VPN IP 完成设备注册、上传、编辑器加载、原生保存自动回写、外部修改冲突保护、另存为和关闭。测试使用真实 OfficeService/Worker/编辑器及测试文件路径，系统文件对话框由驱动选择。
+- 同时修复 ShareServer 对 VPN 保存回调仍仅认可固定 LAN origin 的问题，主机后端已更新。客户端需使用本轮源码；未发布安装包。
+
 ## 2026-10-27：Office 跟随设备共享连接
 
 - 修复旧 `goodbuddy.office.serverUrl` 优先导致访问过期地址的问题；每次新建编辑会话读取 Main 中的共享连接，设置页检查成功后也保存同一份连接并保留设备名称。

@@ -9,6 +9,8 @@ import {
 } from '../shared/device-sharing-contracts'
 import { assertSupportedSettingsVersion, isMissingFileError, writeJsonFileAtomically } from './settings-file-utils'
 
+import { readOfficeCapabilities } from './office-capabilities'
+
 const storedSchema = sharingSettingsSchema.extend({ version: z.literal(1) }).strict()
 
 export class DeviceSharingService {
@@ -48,6 +50,18 @@ export class DeviceSharingService {
     })
     this.updateQueue = operation.catch(() => undefined)
     return operation
+  }
+
+  async officeHeaders(serverUrl: string): Promise<Record<string, string>> {
+    const settings = await this.getSettings()
+    const origin = new URL(serverUrl).origin
+    if (origin !== new URL(settings.serverUrl).origin) {
+      const config = await readOfficeCapabilities(settings.serverUrl)
+      if (!config.webUrl || new URL(config.webUrl).origin !== origin) throw new Error('文档地址不属于当前 ShareServer 连接，请重新打开文档')
+    }
+    const credential = await this.credential(settings)
+    if (!credential) throw new Error('请先在设备与共享中注册当前设备，再打开在线文档')
+    return { Authorization: `Bearer ${credential}`, 'X-Device-Id': settings.deviceId }
   }
 
   private credential(settings: SharingSettings, create = false): Promise<string | undefined> {
