@@ -1,4 +1,5 @@
 import type { MagicNoteCanvasContent } from '../../../shared/magic-notes-contracts'
+import { copyNoteValue } from '../../../shared/magic-note-media'
 export type { MagicNoteCanvasContent } from '../../../shared/magic-notes-contracts'
 export type CanvasFlow = NonNullable<MagicNoteCanvasContent['flow']>
 export type CanvasAsset = MagicNoteCanvasContent['assets'][number]
@@ -79,6 +80,6 @@ export function fromCoreContent(core: CoreContent, assets: CanvasAsset[], pdfTex
   return {
     version: 2, kind: 'paged-canvas', pages,
     ...(core.flow ? { flow: structuredClone(core.flow) } : {}),
-    assets: structuredClone(assets.filter((asset) => used.has(asset.id)))
+    assets: copyNoteValue(assets.filter((asset) => used.has(asset.id)))
   }
 }

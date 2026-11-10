@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { mountCanvasNote } from '../../src/renderer/src/magic-canvas/canvas-note.mjs'
 import { MagicCanvasThumbnail } from '../../src/renderer/src/MagicCanvasThumbnail'
 import { fromCoreContent, toCoreContent } from '../../src/renderer/src/magic-canvas/model'
+import { captureSavedPages } from '../../src/renderer/src/magic-canvas/capture-saved-pages'
 import '../../src/renderer/src/i18n'
 import 'quill/dist/quill.snow.css'
 import '../../src/renderer/src/styles.css'
@@ -116,6 +117,50 @@ async function canvasRegression() {
   mark('pdf-restore-and-capture')
   editor = mountCanvasNote(host, extendedPdf, { readPdf: async () => pdfBytes.slice(0), onError: error => errors.push(error) })
   const restoredPdf = await editor.flush()
+  mark('continuous-and-resolution')
+  const waitUntil = async (predicate: () => boolean) => {
+    for (let i = 0; i < 200; i++) {
+      if (predicate()) return
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    throw new Error('Canvas view did not settle: ' + JSON.stringify({ pixels: host.querySelector<HTMLCanvasElement>('.canvas-note-background')?.width, zoom: host.querySelector('.canvas-note-zoom-reset')?.textContent, pages: host.querySelectorAll('.canvas-note-continuous-page').length, previews: host.querySelectorAll('.canvas-note-continuous-page > canvas').length, width: restoredPdf.pages[0].width, dpr: devicePixelRatio, errors }))
+  }
+  host.querySelector<HTMLButtonElement>('.canvas-note-zoom-reset')!.click()
+  const background = host.querySelector<HTMLCanvasElement>('.canvas-note-background')!
+  await waitUntil(() => background.width === Math.floor(restoredPdf.pages[0].width * devicePixelRatio))
+  const normalPixels = background.width
+  for (let i = 0; i < 4; i++) host.querySelector<HTMLButtonElement>('.canvas-note-zoom-in')!.click()
+  await waitUntil(() => background.width === Math.floor(restoredPdf.pages[0].width * devicePixelRatio * 2))
+  const zoomedPixels = background.width
+  const logicalWidth = parseFloat(background.style.width)
+  host.querySelector<HTMLButtonElement>('.canvas-note-zoom-fit')!.click()
+  const layout = host.querySelector<HTMLSelectElement>('.canvas-note-layout')!
+  layout.value = 'continuous'
+  layout.dispatchEvent(new Event('change', { bubbles: true }))
+  const viewport = host.querySelector<HTMLElement>('.canvas-note-viewport')!
+  viewport.scrollTop = viewport.clientHeight
+  viewport.dispatchEvent(new Event('scroll'))
+  await waitUntil(() => !!host.querySelector('.canvas-note-continuous-page:not(.canvas-note-current-page) > canvas'))
+  const initialVisiblePages = host.querySelectorAll('.canvas-note-continuous-page').length
+  const second = host.querySelector<HTMLElement>(`[data-page-id="${restoredPdf.pages[1].id}"]`)!
+  second.click()
+  await editor.flush()
+  const continuousActivePage = await editor.activePage()
+  host.querySelector<HTMLButtonElement>('[data-tool="text"]')!.click()
+  const annotationCanvas = host.querySelector<HTMLCanvasElement>('.upper-canvas')!
+  const rect = annotationCanvas.getBoundingClientRect()
+  annotationCanvas.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: rect.left + 50, clientY: rect.top + 70, button: 0 }))
+  annotationCanvas.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: rect.left + 50, clientY: rect.top + 70, button: 0 }))
+  const beforeLayoutToggle = await editor.flush()
+  layout.value = 'paged'; layout.dispatchEvent(new Event('change', { bubbles: true }))
+  const afterLayoutToggle = await editor.flush()
+  const continuousPreservesContent = JSON.stringify(beforeLayoutToggle) === JSON.stringify(afterLayoutToggle)
+  layout.value = 'continuous'; layout.dispatchEvent(new Event('change', { bubbles: true }))
+  viewport.scrollTop = viewport.scrollHeight
+  viewport.dispatchEvent(new Event('scroll'))
+  await waitUntil(() => !!host.querySelector(`[data-page-id="${restoredPdf.pages.at(-1)!.id}"]`))
+  const lastVisiblePages = host.querySelectorAll('.canvas-note-continuous-page').length
+  const savedCaptures = await captureSavedPages(fromCoreContent(beforeLayoutToggle, [{ id: 'long-pdf', name: 'long.pdf', mimeType: 'application/pdf', dataUrl: 'data:application/pdf;base64,' + btoa(String.fromCharCode(...new Uint8Array(pdfBytes))) }]), 2, true, new AbortController().signal)
   const tenPages = await editor.capturePages({ pageLimit: 10, includeImages: false })
   const ninthPage = await editor.capturePages({ pageStart: 9, pageLimit: 1, includeImages: false })
   let invalidRangeRejected = false
@@ -160,6 +205,8 @@ async function canvasRegression() {
     beforeShrink, afterShrink, savedPages: saved.pages.length, savedObjects: saved.pages[0].objects,
     reopenedObjects: reopened.pages[0].objects, visibleInkBefore, visibleInkAfter, reopenedInk, flowTransform,
     editorStyles, thumbnailStyles, thumbnailMatchesEditor, imageImports,
+    normalPixels, zoomedPixels, logicalWidth, initialVisiblePages, lastVisiblePages, continuousActivePage, continuousPreservesContent, savedCaptureCount: savedCaptures.length,
+    continuousObjects: beforeLayoutToggle.pages[1].objects.length,
     checklistBefore, checklistAfter, overflowErrors,
     importedPdfPages: importedPdf.pages.length, extendedPdfPages: extendedPdf.pages.length, restoredPdfPages: restoredPdf.pages.length,
     acceptedLength, undoneLength, retainedRedo, redoneLength }

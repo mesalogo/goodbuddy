@@ -8,6 +8,7 @@ import { ActivityHistoryRepository, migrateActivityHistoryOrder } from './activi
 import { statSync } from 'node:fs'
 import { MagicNoteStorage } from '../magic-notes/magic-note-storage'
 import type { AssistantStorageProgress } from '../../shared/assistant-storage-contracts'
+import { restoreNoteMedia, type ReusedNoteMedia } from '../../shared/magic-note-media'
 import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
@@ -2184,9 +2185,9 @@ export class AssistantDatabase {
     return toMagicNoteEntry(row, this.noteStorage.read(row.note_id, row.id).content)
   }
 
-  private writeMagicNoteBody(noteId: string, id: string, content: MagicNoteContent, revision: number, updatedAt: string): string {
+  private writeMagicNoteBody(noteId: string, id: string, content: MagicNoteContent, revision: number, updatedAt: string, previousContent?: MagicNoteContent): string {
     this.dirtyMagicNotes.add(noteId)
-    this.noteStorage.write({ noteId, id, content, revision, updatedAt })
+    this.noteStorage.write({ noteId, id, content, revision, updatedAt }, previousContent)
     return JSON.stringify({ storage: 'file', version: content.version, revision })
   }
 
@@ -4374,7 +4375,7 @@ export class AssistantDatabase {
     })
   }
 
-  getMagicNote(noteId: string): MagicNoteDetail {
+  getMagicNote(noteId: string, knownEntries?: { id: string; revision: number }[]): MagicNoteDetail {
     const database = this.requireDatabase()
     const row = database
       .prepare(
@@ -4393,9 +4394,11 @@ export class AssistantDatabase {
          ORDER BY created_at ASC, rowid ASC`
       )
       .all(noteId) as MagicNoteEntryRow[]
+    const knownRevisions = new Map(knownEntries?.map(entry => [entry.id, entry.revision]))
     return {
       ...toMagicNoteSummary(row),
-      entries: entryRows.map((entry) => this.hydrateMagicNoteEntry(entry))
+      entries: entryRows.filter(entry => knownRevisions.get(entry.id) !== entry.revision).map((entry) => this.hydrateMagicNoteEntry(entry)),
+      ...(knownEntries ? { entryOrder: entryRows.map(entry => entry.id) } : {})
     }
   }
 
@@ -4561,6 +4564,7 @@ export class AssistantDatabase {
     content: MagicNoteContent
     plainText: string
     source?: MagicNoteSource
+    knownEntries?: { id: string; revision: number }[]
   }): MagicNoteEntryCreateResult {
     const source = input.source ? magicNoteSourceSchema.parse(input.source) : undefined
     const database = this.requireDatabase()
@@ -4612,7 +4616,7 @@ export class AssistantDatabase {
       throw error
     }
     this.reconcileMagicNoteFiles(input.noteId)
-    const detail = this.getMagicNote(input.noteId)
+    const detail = this.getMagicNote(input.noteId, input.knownEntries)
     this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
     return { ...detail, createdEntryId: entryId }
@@ -4623,6 +4627,8 @@ export class AssistantDatabase {
     content: MagicNoteContent
     plainText: string
     expectedRevision: number
+    knownEntries?: { id: string; revision: number }[]
+    reusedMedia?: ReusedNoteMedia
   }): MagicNoteDetail {
     const database = this.requireDatabase()
     const existing = database
@@ -4631,9 +4637,11 @@ export class AssistantDatabase {
     if (!existing) {
       throw new Error('记录不存在')
     }
-    const content = validateMagicNoteContent(input.content)
-    input = { ...input, content, plainText: magicNotePlainText(content) }
+    if (existing.revision !== input.expectedRevision) throw new Error('记录已被更新，请刷新后重试')
     const previous = this.hydrateMagicNoteEntry(existing)
+    const content = validateMagicNoteContent(input.reusedMedia
+      ? restoreNoteMedia(input.content, previous.content, input.reusedMedia) : input.content)
+    input = { ...input, content, plainText: magicNotePlainText(content) }
     const preserveComments = content.version === 2 && previous.content.version === 2 && (
       JSON.stringify(content) === JSON.stringify(previous.content) ||
       (magicNoteCanvasAnalysisText(content) === magicNoteCanvasAnalysisText(previous.content) &&
@@ -4644,7 +4652,7 @@ export class AssistantDatabase {
     try {
       const current = database.prepare('SELECT revision FROM magic_note_entries WHERE id = ?').get(input.entryId) as { revision: number } | undefined
       if (current?.revision !== input.expectedRevision) throw new Error('记录已被更新，请刷新后重试')
-      const pointer = this.writeMagicNoteBody(existing.note_id, input.entryId, input.content, input.expectedRevision + 1, now)
+      const pointer = this.writeMagicNoteBody(existing.note_id, input.entryId, input.content, input.expectedRevision + 1, now, previous.content)
       const result = database
         .prepare(
           `UPDATE magic_note_entries
@@ -4687,7 +4695,7 @@ export class AssistantDatabase {
       throw error
     }
     this.reconcileMagicNoteFiles(existing.note_id)
-    const detail = this.getMagicNote(existing.note_id)
+    const detail = this.getMagicNote(existing.note_id, input.knownEntries)
     this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
     return detail

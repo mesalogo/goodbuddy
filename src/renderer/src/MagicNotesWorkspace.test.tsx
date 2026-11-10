@@ -27,6 +27,9 @@ vi.mock('./MagicNoteEditor', () => ({
 vi.mock('./MagicCanvasThumbnail', () => ({ MagicCanvasThumbnail: () => <img alt="画布首页" /> }))
 
 const canvas = vi.hoisted(() => ({ flush: vi.fn(), capture: vi.fn(), viewCapture: vi.fn(), focus: vi.fn(), ready: undefined as MagicCanvasEditorProps['onReady'] }))
+vi.mock('./magic-canvas/capture-saved-pages', () => ({
+  captureSavedPages: (_content: unknown, count: number, images: boolean) => canvas.capture(count, images)
+}))
 
 vi.mock('./MagicCanvasEditor', async () => {
   const { forwardRef, useImperativeHandle, useLayoutEffect } = await import('react')
@@ -2203,21 +2206,26 @@ describe('MagicNotesWorkspace canvas integration', () => {
     expect(canvas.capture).toHaveBeenCalledOnce()
   })
 
-  it('captures before resetting the composer in after-save-auto mode', async () => {
+  it('commits and releases the composer before preparing automatic analysis', async () => {
     getSettings.mockResolvedValue({ ...settings, magicNoteCommentMode: 'after-save-auto' })
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
     newEntry()
     fireEvent.click(screen.getByRole('button', { name: '画布' }))
     const editor = screen.getByTestId('canvas-editor')
-    canvas.capture.mockImplementation(async () => {
-      expect(screen.getByTestId('canvas-editor')).toBe(editor)
-      return canvasImages
-    })
+    let finishCapture!: (value: typeof canvasImages) => void
+    canvas.capture.mockImplementation(() => new Promise(resolve => { finishCapture = resolve }))
     fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+    await waitFor(() => {
+      expect(canvas.capture).toHaveBeenCalledOnce()
+      expect(screen.queryByTestId('canvas-editor')).not.toBe(editor)
+      expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ message: '记录已保存' }))
+    })
+    expect(analyze).not.toHaveBeenCalled()
+    await act(async () => finishCapture(canvasImages))
     await waitFor(() => expect(analyze).toHaveBeenCalledWith(createdEntryId, expect.objectContaining({ canvasImages, expectedRevision: 1 })))
     expect(canvas.flush.mock.invocationCallOrder[0]).toBeLessThan(canvas.capture.mock.invocationCallOrder[0]!)
-    expect(canvas.capture.mock.invocationCallOrder[0]).toBeLessThan(createEntry.mock.invocationCallOrder[0]!)
+    expect(createEntry.mock.invocationCallOrder[0]).toBeLessThan(canvas.capture.mock.invocationCallOrder[0]!)
     expect(screen.queryByTestId('canvas-editor')).not.toBe(editor)
   })
 

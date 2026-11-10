@@ -310,10 +310,13 @@ export const magicNoteDeleteSchema = z
   })
   .strict()
 
+const knownNoteEntriesSchema = z.array(z.object({ id: magicNoteIdSchema, revision: z.number().int().nonnegative() }).strict()).optional()
+
 export const magicNoteEntryCreateSchema = z
   .object({
     noteId: magicNoteIdSchema,
     content: magicNoteContentSchema,
+    knownEntries: knownNoteEntriesSchema,
     source: magicNoteSourceSchema.optional()
   })
   .strict()
@@ -325,6 +328,8 @@ export const magicNoteEntryUpdateSchema = z
   .object({
     entryId: magicNoteIdSchema,
     content: magicNoteContentSchema,
+    knownEntries: knownNoteEntriesSchema,
+    reusedMedia: z.array(z.object({ slot: z.number().int().nonnegative(), previousSlot: z.number().int().nonnegative() }).strict()).optional(),
     expectedRevision: z.number().int().nonnegative()
   })
   .strict()
@@ -479,6 +484,8 @@ export type MagicNoteTagRenameResult = {
 
 export type MagicNoteDetail = MagicNoteSummary & {
   entries: MagicNoteEntry[]
+  /** Mutation responses may omit entries whose ID and revision the caller supplied. */
+  entryOrder?: string[]
 }
 
 export type MagicNoteEntryCreateResult = MagicNoteDetail & {

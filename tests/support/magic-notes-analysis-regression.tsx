@@ -18,11 +18,13 @@ async function notesAnalysisRegression() {
   if (initialSettings.magicNoteCanvasPageCount !== 1) throw new Error('Expected default page count 1')
   const inputMode = (await window.goodbuddy.settings.getRuntime()).supportsImageInput ? 'canvas-images' : 'text-fallback'
   const note = await api.create({ title: 'IPC canvas analysis' })
-  const content: MagicNoteCanvasContent = { version: 2, kind: 'paged-canvas', assets: [],
+  const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='
+  const content: MagicNoteCanvasContent = { version: 2, kind: 'paged-canvas', assets: [{ id: 'pixel', name: 'pixel.png', mimeType: 'image/png', dataUrl: image }],
     pages: [1, 2, 3].map(index => ({ id: `page-${index}`, width: 794, height: 1123, background: { type: 'template', template: 'blank' }, objects: [] })),
     flow: { version: 1, ops: [{ insert: 'Review task' }, { insert: '\n', attributes: { list: 'unchecked' } },
       { insert: { canvasPageBreak: 'page-2' } }, { insert: 'Included second\n' },
       { insert: { canvasPageBreak: 'page-3' } }, { insert: 'Excluded third\n' }] } }
+  content.pages[0]!.objects.push({ type: 'Image', canvasKind: 'image', assetId: 'pixel', left: 20, top: 20, width: 1, height: 1 })
   const seeded = await api.createEntry({ noteId: note.id, content })
   const entryId = seeded.createdEntryId
   const host = document.createElement('div')
@@ -106,6 +108,8 @@ async function notesAnalysisRegression() {
   await click('Save entry', composer())
   await wait(async () => (await api.get(note.id)).entries.some(item => item.id !== entryId && item.comments[0]?.inputMode === inputMode))
   await wait(() => !composer().classList.contains('magic-note-composer--active'))
+  const savedCanvas = (await entry()).content
+  if (savedCanvas.version !== 2 || savedCanvas.assets[0]?.dataUrl !== image) throw new Error('Reused image changed during UI save')
   await click('Back to overview')
   await click('Switch to to-dos')
   await wait(() => host.querySelector<HTMLButtonElement>('.magic-todo-list-item__content'))

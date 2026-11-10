@@ -10,6 +10,7 @@ import {
 } from 'fabric';
 import { jsPDF as JsPdf } from 'jspdf';
 import { mountFlowText, normalizeFlowContent } from './canvas-flow.mjs';
+import { mountContinuousPages } from './continuous-pages.mjs';
 
 const VERSION = 2;
 const HISTORY_LIMIT = 50;
@@ -276,7 +277,6 @@ function isCancellation(error) {
 
 function drawTemplate(context, width, height, template) {
   context.save();
-  context.setTransform(1, 0, 0, 1, 0, 0);
   context.clearRect(0, 0, width, height);
   context.fillStyle = '#ffffff';
   context.fillRect(0, 0, width, height);
@@ -432,6 +432,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   let readOnly = Boolean(options.disabled);
   let zoom = 1;
   let fitWidth = true;
+  let backgroundRevision = 0;
+  let backgroundTimer = 0;
 
   const pdfDocuments = new Map();
   const backgroundCache = new Map();
@@ -546,7 +548,12 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   zoomControls.append(zoomOutButton, zoomResetButton, zoomInButton, zoomFitButton);
   const navigation = document.createElement('span');
   navigation.className = 'canvas-note-navigation';
-  navigation.append(zoomControls, pageControls);
+  const layoutSelect = document.createElement('select');
+  layoutSelect.className = 'canvas-note-layout';
+  layoutSelect.setAttribute('aria-label', '排版');
+  layoutSelect.title = '排版';
+  layoutSelect.append(makeOption('paged', '分页'), makeOption('continuous', '连续'));
+  navigation.append(layoutSelect, zoomControls, pageControls);
   toolbar.append(toolGroup, styleGroup, historyGroup, documentGroup, navigation);
 
   const imageInput = document.createElement('input');
@@ -632,6 +639,16 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     }
   });
   flowEditor.setActive(false);
+  const continuousPages = mountContinuousPages(viewport, pageShell, {
+    render: renderPagePreview,
+    activate: index => { if (!busy) enqueueBusy(() => switchPage(index)); },
+    onError: error => { if (!isCancellation(error)) reportError(error?.message || '页面预览失败'); }
+  });
+  layoutSelect.addEventListener('change', () => {
+    continuousPages.update(pages, currentIndex, zoom);
+    continuousPages.setEnabled(layoutSelect.value === 'continuous');
+    fabricCanvas.calcOffset?.();
+  }, { signal: uiAbort.signal });
 
   function currentPage() {
     return pages[currentIndex];
@@ -683,6 +700,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
 
   function emitChange() {
     if (destroyed || options.signal?.aborted || readOnly) return;
+    continuousPages.update(pages, currentIndex, zoom, tool === 'flow-text');
     try {
       options.onChange?.(cloneJson(outputContent()));
     } catch {
@@ -736,13 +754,14 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     if (readOnly) {
       for (const control of toolbar.querySelectorAll('button, input, select')) {
         if (control !== previousButton && control !== nextButton && control !== exportButton
-          && !zoomControls.contains(control)) control.disabled = true;
+          && control !== layoutSelect && !zoomControls.contains(control)) control.disabled = true;
       }
     }
     zoomOutButton.disabled = busy || zoom <= MIN_ZOOM;
     zoomInButton.disabled = busy || zoom >= MAX_ZOOM;
     zoomResetButton.disabled = busy;
     zoomFitButton.disabled = busy;
+    layoutSelect.disabled = busy;
   }
 
   function pushHistory(emit = true) {
@@ -839,6 +858,12 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     zoomFitButton.setAttribute('aria-pressed', String(fitWidth));
     zoomFitButton.classList.toggle('canvas-note-active', fitWidth);
     updateControls();
+    continuousPages.update(pages, currentIndex, zoom);
+    if (backgroundTimer) clearTimeout(backgroundTimer);
+    backgroundTimer = setTimeout(() => {
+      backgroundTimer = 0;
+      if (!destroyed) void paintVisibleBackground();
+    }, 150);
   }
 
   function setZoom(value, fit = false) {
@@ -852,8 +877,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     pageSurface.style.width = `${page.width}px`;
     pageSurface.style.height = `${page.height}px`;
     // Flow pagination can update layout without repainting the current background.
-    if (backgroundElement.width !== page.width) backgroundElement.width = page.width;
-    if (backgroundElement.height !== page.height) backgroundElement.height = page.height;
+    backgroundElement.style.width = `${page.width}px`;
+    backgroundElement.style.height = `${page.height}px`;
     fabricCanvas.setDimensions({ width: page.width, height: page.height });
     if (fabricContainer) {
       fabricContainer.style.width = `${page.width}px`;
@@ -923,23 +948,24 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     return entry.promise;
   }
 
-  async function renderPdfBackground(background, width, height) {
+  async function renderPdfBackground(background, width, height, density = 1) {
     const reference = pdfReference(background);
-    const dpr = Math.min(2, Math.max(1, Number(globalThis.devicePixelRatio) || 1));
-    const cacheKey = `${reference.key}:${background.page}:${width}x${height}:${dpr}`;
+    const cacheKey = `${reference.key}:${background.page}:${width}x${height}:${density}`;
     const existing = backgroundCache.get(cacheKey);
     if (existing) return existing;
 
     const promise = (async () => {
       const documentProxy = await getPdfDocument(background);
+      if (destroyed || options.signal?.aborted) throw new DOMException('Destroyed', 'AbortError');
       if (background.page > documentProxy.numPages) {
         throw new Error(`PDF 第 ${background.page} 页不可用`);
       }
       const pdfPage = await documentProxy.getPage(background.page);
       let renderTask = null;
       try {
+        if (destroyed || options.signal?.aborted) throw new DOMException('Destroyed', 'AbortError');
         const baseViewport = pdfPage.getViewport({ scale: 1 });
-        let scale = Math.max(width / baseViewport.width, height / baseViewport.height) * dpr;
+        let scale = Math.max(width / baseViewport.width, height / baseViewport.height) * density;
         const estimate = baseViewport.width * baseViewport.height * scale * scale;
         if (estimate > MAX_CANVAS_PIXELS) {
           scale *= Math.sqrt(MAX_CANVAS_PIXELS / estimate);
@@ -983,27 +1009,33 @@ export function mountCanvasNote(host, initialContent, options = {}) {
         }
       }
     })().catch((error) => {
-      backgroundCache.delete(cacheKey);
+      if (backgroundCache.get(cacheKey) === promise) backgroundCache.delete(cacheKey);
       throw error;
     });
     backgroundCache.set(cacheKey, promise);
+    // This cache belongs to the editor; retain only nearby page renders, not every
+    // visited page and zoom level. In-flight consumers retain their own promise.
+    while (backgroundCache.size > 4) backgroundCache.delete(backgroundCache.keys().next().value);
     return promise;
   }
 
-  async function paintPageBackground(target, page) {
-    target.width = page.width;
-    target.height = page.height;
+  function displayDensity(page, scale = zoom) {
+    const wanted = Math.max(1, (Number(globalThis.devicePixelRatio) || 1) * scale);
+    return Math.min(wanted, Math.sqrt(MAX_CANVAS_PIXELS / (page.width * page.height)));
+  }
+
+  async function paintPageBackground(target, page, density = 1) {
+    const rendered = page.background.type === 'pdf'
+      ? await renderPdfBackground(page.background, page.width, page.height, density) : null;
+    if (destroyed) throw new DOMException('Destroyed', 'AbortError');
+    target.width = Math.max(1, Math.floor(page.width * density));
+    target.height = Math.max(1, Math.floor(page.height * density));
     const context = target.getContext('2d', { alpha: false });
     if (!context) throw new Error('Canvas rendering is unavailable.');
+    context.setTransform(target.width / page.width, 0, 0, target.height / page.height, 0, 0);
     const template = page.background.type === 'template' ? page.background.template : 'blank';
     drawTemplate(context, page.width, page.height, template);
-    if (page.background.type !== 'pdf') return;
-    const rendered = await renderPdfBackground(
-      page.background,
-      page.width,
-      page.height
-    );
-    if (destroyed) throw new DOMException('Destroyed', 'AbortError');
+    if (!rendered) return;
     context.save();
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
@@ -1012,12 +1044,20 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   }
 
   async function paintVisibleBackground() {
+    const revision = ++backgroundRevision;
+    const page = currentPage();
     try {
-      await paintPageBackground(backgroundElement, currentPage());
+      const rendered = document.createElement('canvas');
+      await paintPageBackground(rendered, page, displayDensity(page));
+      if (destroyed || revision !== backgroundRevision || currentPage().id !== page.id) return;
+      backgroundElement.width = rendered.width;
+      backgroundElement.height = rendered.height;
+      backgroundElement.getContext('2d', { alpha: false }).drawImage(rendered, 0, 0);
     } catch (error) {
-      if (destroyed || isCancellation(error)) return;
+      if (destroyed || revision !== backgroundRevision || isCancellation(error)) return;
       const context = backgroundElement.getContext('2d', { alpha: false });
       if (context) {
+        context.setTransform(backgroundElement.width / currentPage().width, 0, 0, backgroundElement.height / currentPage().height, 0, 0);
         drawTemplate(
           context,
           currentPage().width,
@@ -1027,6 +1067,26 @@ export function mountCanvasNote(host, initialContent, options = {}) {
       }
       reportError(error?.message || 'PDF 底版渲染失败');
     }
+  }
+
+  async function renderPagePreview(page, pageIndex, scale) {
+    const composite = document.createElement('canvas');
+    await paintPageBackground(composite, page, displayDensity(page, scale));
+    const context = composite.getContext('2d');
+    context.drawImage(await flowEditor.renderPage(pageIndex, page.width, page.height), 0, 0);
+    const objectCanvas = new StaticCanvas(document.createElement('canvas'), {
+      width: page.width, height: page.height, enableRetinaScaling: false, renderOnAddRemove: false
+    });
+    try {
+      await objectCanvas.loadFromJSON({ objects: cloneJson(page.objects) }, undefined, { signal: uiAbort.signal });
+      if (destroyed) throw new DOMException('Destroyed', 'AbortError');
+      objectCanvas.renderAll();
+      context.drawImage(objectCanvas.lowerCanvasEl, 0, 0);
+    } finally { await objectCanvas.dispose(); }
+    composite.style.width = '100%';
+    composite.style.height = '100%';
+    composite.setAttribute('aria-hidden', 'true');
+    return composite;
   }
 
   async function loadCurrentPage() {
@@ -1054,6 +1114,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     applyMode();
     await paintVisibleBackground();
     updateControls();
+    continuousPages.reveal();
   }
 
   async function switchPage(nextIndex) {
@@ -1880,6 +1941,9 @@ export function mountCanvasNote(host, initialContent, options = {}) {
       flushPendingText();
       captureCurrentObjects();
       destroyed = true;
+      backgroundRevision++;
+      if (backgroundTimer) clearTimeout(backgroundTimer);
+      continuousPages.destroy();
       uiAbort.abort();
       resizeObserver?.disconnect();
       if (resizeFrame) globalThis.cancelAnimationFrame(resizeFrame);

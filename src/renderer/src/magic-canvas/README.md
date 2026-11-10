@@ -149,6 +149,19 @@ Pagination replaces the current page within the same entry, including its height
 
 ### View Zoom
 
+The `排版` select switches between paged and continuous display. Continuous mode
+virtualizes neighboring page previews and retains one live editor. Clicking a
+preview activates it; Enter/Space supports keyboard activation. Scrolling does
+not change the active editing page. View mode is local to the mounted controller;
+it never changes saved content or history. Unlike paged reading, continuous reading
+uses a bounded internal viewport. The controller releases offscreen preview canvases.
+
+PDF display backing pixels follow zoom × device pixel ratio, bounded by the
+existing 24 Mi-pixel safeguard. A 150 ms coalesced redraw retains the prior image
+while rendering; a revision guard rejects late results. Logical CSS dimensions,
+annotation coordinates and export/capture dimensions remain independent. The
+PDF render cache retains at most four nearby renders and clears on disposal.
+
 Editor and viewer toolbars provide minus/plus (25 percentage points), a current
 percentage button that resets to 100%, and Fit width. The range is 25%-300%, with
 Fit width enabled on opening. Ctrl/Command + wheel continuously zooms over the paper;

@@ -8,6 +8,7 @@ vi.mock('fabric', () => ({
     constructor(element) { this.upperCanvasEl = element; }
     on() {}
     getObjects() { return []; }
+    getActiveObjects() { return []; }
     toObject() { return { objects: [] }; }
     discardActiveObject() {}
     requestRenderAll() {}
@@ -35,7 +36,7 @@ let viewport;
 let target;
 beforeEach(async () => {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-    save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}
+    save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, drawImage() {}
   });
   host = document.createElement('div');
   document.body.append(host);

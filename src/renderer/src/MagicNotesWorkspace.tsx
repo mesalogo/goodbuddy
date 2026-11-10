@@ -1,3 +1,5 @@
+import { compactNoteMedia, mergeNoteSaveResult, noteHasMedia } from '../../shared/magic-note-media'
+import { captureSavedPages } from './magic-canvas/capture-saved-pages'
 import {
   ArrowLeft,
   ListTree,
@@ -1393,8 +1395,12 @@ function MagicNotesWorkspaceView({
           preferredId && snapshot.notes.some((note) => note.id === preferredId)
             ? preferredId
             : ''
+        const cachedDetail = refreshContextRef.current.detail
+        const summary = snapshot.notes.find(note => note.id === nextId)
         const nextDetail = nextId
-          ? await window.goodbuddy.magicNotes.get(nextId)
+          ? background && cachedDetail?.id === nextId && cachedDetail.revision === summary?.revision && noteHasMedia(cachedDetail)
+            ? cachedDetail
+            : await window.goodbuddy.magicNotes.get(nextId)
           : undefined
         if (background && editingCanvasRef.current) {
           const editor = editingCanvasRef.current
@@ -2055,9 +2061,47 @@ function MagicNotesWorkspaceView({
     }
   }
 
+  const savedAnalysisControllers = useRef(new Set<AbortController>())
+  useEffect(() => () => {
+    for (const controller of savedAnalysisControllers.current) controller.abort()
+    savedAnalysisControllers.current.clear()
+  }, [])
+
+  const analyzeSavedEntry = async (noteId: string, entry: MagicNoteEntry): Promise<void> => {
+    const controller = new AbortController()
+    savedAnalysisControllers.current.add(controller)
+    let options: MagicNoteAnalysisOptions | undefined
+    try {
+      const content = entry.content
+      options = await createAnalysisOptions(content.version === 2 ? {
+        capturePages: (count, images) => captureSavedPages(content, count, images, controller.signal)
+      } : undefined)
+      if (controller.signal.aborted) return
+      if (refreshContextRef.current.detail?.id === noteId) {
+        setLiveAnalysis({ requestId: options.requestId, content: '', direction: options.direction, format: options.format })
+      }
+      const analyzed = await window.goodbuddy.magicNotes.analyze(entry.id, { ...options, expectedRevision: entry.revision })
+      if (controller.signal.aborted) return
+      const current = refreshContextRef.current.detail
+      if (current?.id === noteId && current.revision <= analyzed.revision) applyDetail(analyzed)
+      notifySuccess(t('notifications.aiCommentAdded'))
+    } catch (error) {
+      if (!controller.signal.aborted) notifyError(t('canvas.savedAnalysisFailed', { error: errorMessage(error, t('errors.operationFailed')) }))
+    } finally {
+      savedAnalysisControllers.current.delete(controller)
+      const requestId = options?.requestId
+      if (!controller.signal.aborted && requestId) setLiveAnalysis(current => current?.requestId === requestId ? undefined : current)
+    }
+  }
+
+  const knownMediaEntries = (note: MagicNoteDetail): { id: string; revision: number }[] | undefined => {
+    return noteHasMedia(note) ? note.entries.map(({ id, revision }) => ({ id, revision })) : undefined
+  }
+
   const saveEntry = async (): Promise<void> => {
     if (!detail) return
     const operation = 'create-entry'
+    let released = false
     if (!beginBusy(operation)) {
       return
     }
@@ -2074,19 +2118,12 @@ function MagicNotesWorkspaceView({
       const shouldAnalyze = commentMode === 'after-save-auto' && (composerContent.version === 1 ||
         composerContent.pages.some((page) => page.objects.length || page.background.type === 'pdf') ||
         composerContent.flow?.ops.some((op) => typeof op.insert === 'string' && op.insert.trim()))
-      let options: MagicNoteAnalysisOptions | undefined
-      let analysisPreparationError: string | undefined
-      if (shouldAnalyze) {
-        try {
-          options = await createAnalysisOptions(composerContent.version === 2 ? composerCanvasRef.current : undefined)
-        } catch (error) {
-          analysisPreparationError = errorMessage(error, t('errors.operationFailed'))
-        }
-      }
-      const updated = await window.goodbuddy.magicNotes.createEntry({
+      const knownEntries = knownMediaEntries(detail)
+      const updated = mergeNoteSaveResult(await window.goodbuddy.magicNotes.createEntry({
         noteId: detail.id,
-        content: composerContent
-      })
+        content: composerContent,
+        ...(knownEntries ? { knownEntries } : {})
+      }), detail)
       applyDetail(updated)
       const createdEntry = updated.entries.find(
         (entry) => entry.id === updated.createdEntryId
@@ -2102,45 +2139,25 @@ function MagicNotesWorkspaceView({
       setComposerHasDraft(false)
       setComposerOpen(false)
       notifySuccess(t('notifications.entrySaved'))
-      if (analysisPreparationError !== undefined) notifyError(t('canvas.savedAnalysisFailed', { error: analysisPreparationError }))
+      endBusy(operation)
+      released = true
+      if (shouldAnalyze && createdEntry) void analyzeSavedEntry(updated.id, { ...createdEntry, content: composerContent })
       try {
         await reloadTodos()
       } catch (refreshTodosError) {
         notifyError(refreshTodosError)
       }
-      if (options && createdEntry) {
-        setLiveAnalysis({
-          requestId: options.requestId,
-          content: '',
-          direction: options.direction,
-          format: options.format
-        })
-        try {
-          const analyzed = await window.goodbuddy.magicNotes.analyze(createdEntry.id, {
-            ...options, expectedRevision: createdEntry.revision
-          })
-          applyDetail(analyzed)
-          notifySuccess(t('notifications.aiCommentAdded'))
-        } catch (analysisError) {
-          notifyError(analysisError)
-        } finally {
-          setLiveAnalysis((current) =>
-            current?.requestId === options.requestId
-              ? undefined
-              : current
-          )
-        }
-      }
     } catch (saveError) {
       notifyError(saveError)
     } finally {
-      endBusy(operation)
+      if (!released) endBusy(operation)
     }
   }
 
   const saveEditedEntry = async (): Promise<void> => {
     if (!editingEntry) return
     const operation = `edit-${editingEntry.id}`
+    let released = false
     if (!beginBusy(operation)) {
       return
     }
@@ -2161,20 +2178,14 @@ function MagicNotesWorkspaceView({
             : currentEntry.comments.length > 0
               ? magicNoteCanvasAnalysisText(editingContent) !== magicNoteCanvasAnalysisText(currentEntry.content)
               : analysisContentKey(editingContent) !== analysisContentKey(currentEntry.content)))
-      let options: MagicNoteAnalysisOptions | undefined
-      let analysisPreparationError: string | undefined
-      if (shouldAnalyze) {
-        try {
-          options = await createAnalysisOptions(editingContent.version === 2 ? editingCanvasRef.current : undefined)
-        } catch (error) {
-          analysisPreparationError = errorMessage(error, t('errors.operationFailed'))
-        }
-      }
-      const updated = await window.goodbuddy.magicNotes.updateEntry({
+      const previousDetail = detail!
+      const knownEntries = knownMediaEntries(previousDetail)
+      const updated = mergeNoteSaveResult(await window.goodbuddy.magicNotes.updateEntry({
         entryId: editingEntry.id,
-        content: editingContent,
+        ...compactNoteMedia(editingContent, editingEntry.content),
+        ...(knownEntries ? { knownEntries } : {}),
         expectedRevision: editingEntry.revision
-      })
+      }), previousDetail)
       applyDetail(updated)
       const savedEntry = updated.entries.find((entry) => entry.id === editingEntry.id)
       setEditingEntry(undefined)
@@ -2182,39 +2193,18 @@ function MagicNotesWorkspaceView({
       editingContentRef.current = undefined
       clearDraftAnalysis()
       notifySuccess(t('notifications.entryUpdated'))
-      if (analysisPreparationError !== undefined) notifyError(t('canvas.savedAnalysisFailed', { error: analysisPreparationError }))
+      endBusy(operation)
+      released = true
+      if (shouldAnalyze && savedEntry) void analyzeSavedEntry(updated.id, { ...savedEntry, content: editingContent })
       try {
         await reloadTodos()
       } catch (refreshTodosError) {
         notifyError(refreshTodosError)
       }
-      if (options && savedEntry) {
-        setLiveAnalysis({
-          requestId: options.requestId,
-          content: '',
-          direction: options.direction,
-          format: options.format
-        })
-        try {
-          const analyzed = await window.goodbuddy.magicNotes.analyze(savedEntry.id, {
-            ...options, expectedRevision: savedEntry.revision
-          })
-          applyDetail(analyzed)
-          notifySuccess(t('notifications.aiCommentAdded'))
-        } catch (analysisError) {
-          notifyError(analysisError)
-        } finally {
-          setLiveAnalysis((current) =>
-            current?.requestId === options.requestId
-              ? undefined
-              : current
-          )
-        }
-      }
     } catch (updateError) {
       notifyError(updateError)
     } finally {
-      endBusy(operation)
+      if (!released) endBusy(operation)
     }
   }
 

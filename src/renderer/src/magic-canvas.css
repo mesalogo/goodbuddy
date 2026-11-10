@@ -86,6 +86,12 @@
 .magic-canvas-editor .canvas-note-page { position: relative; margin: 0 auto; flex-shrink: 0; overflow: hidden; box-shadow: var(--shadow-card); }
 .magic-canvas-editor .canvas-note-page-surface { position: absolute; top: 0; left: 0; transform-origin: top left; }
 .magic-canvas-editor .canvas-note-background { z-index: 0; display: block; }
+.magic-canvas-editor .canvas-note-viewport.canvas-note-continuous { height: 70vh; max-height: 900px; overflow-anchor: none; }
+.canvas-note-page-stack { position: relative; margin: 0 auto; }
+.canvas-note-continuous-page { position: absolute; left: 50%; transform: translateX(-50%); overflow: hidden; box-shadow: var(--shadow-card); background: white; color: #111827; }
+.canvas-note-continuous-page[role="button"] { cursor: pointer; }
+.canvas-note-continuous-page > canvas { display: block; }
+.canvas-note-current-page { outline: 1px solid var(--accent-selected); }
 .magic-canvas-editor .canvas-note-fabric-container { z-index: 2; }
 .magic-canvas-editor .canvas-note-fabric-container canvas { display: block; }
 .magic-canvas-editor .canvas-flow-layer { position: absolute; z-index: 1; left: 50%; overflow: hidden; transform: translateX(-50%); pointer-events: none; }

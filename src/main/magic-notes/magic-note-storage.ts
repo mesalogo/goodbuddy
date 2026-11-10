@@ -3,6 +3,7 @@ import fs, { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } f
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { MagicNoteContent } from '../../shared/magic-notes-contracts'
+import { copyNoteValue, mapNoteMedia as mapMediaFields } from '../../shared/magic-note-media'
 
 export type MagicNoteStoredEntry = {
   id: string
@@ -16,40 +17,6 @@ const extensions: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
   'application/pdf': 'pdf', 'text/plain': 'txt', 'video/mp4': 'mp4',
   'video/webm': 'webm', 'video/ogg': 'ogv', 'video/quicktime': 'mov'
-}
-
-// Only media slots may contain storage references. Text and arbitrary canvas
-// properties (including objects named "$asset") are ordinary user content.
-function mapMediaFields(content: MagicNoteContent, transform: (value: unknown, owner?: Record<string, unknown>) => unknown): void {
-  const field = (record: Record<string, unknown>, key: string): void => {
-    if (record[key] !== undefined) record[key] = transform(record[key], record)
-  }
-  const embeds = (ops: Array<{ insert: unknown }>): void => {
-    for (const op of ops) {
-      if (!op.insert || typeof op.insert !== 'object') continue
-      const insert = op.insert as Record<string, unknown>
-      field(insert, 'image')
-      for (const key of ['localVideo', 'attachment']) {
-        const file = insert[key]
-        if (file && typeof file === 'object') field(file as Record<string, unknown>, 'dataUrl')
-      }
-    }
-  }
-  if (content.version === 1) {
-    embeds(content.ops)
-    return
-  }
-  for (const asset of content.assets) field(asset, 'dataUrl')
-  field(content, 'preview')
-  if (content.flow) embeds(content.flow.ops)
-  const objects = (items: Record<string, unknown>[]): void => {
-    for (const item of items) {
-      if (item.type === 'Image' || item.type === 'image' || item.canvasKind === 'image') field(item, 'src')
-      if (item.canvasKind === 'attachment') field(item, 'dataUrl')
-      if (Array.isArray(item.objects)) objects(item.objects as Record<string, unknown>[])
-    }
-  }
-  for (const page of content.pages) objects(page.objects)
 }
 
 export class MagicNoteStorage {
@@ -91,11 +58,24 @@ export class MagicNoteStorage {
     return { revision: entry.revision, referencedAssets }
   }
 
-  write(entry: MagicNoteStoredEntry): void {
+  write(entry: MagicNoteStoredEntry, previousContent?: MagicNoteContent): void {
     const notePath = join(this.rootPath, entry.noteId)
-    const stored = JSON.parse(JSON.stringify(entry)) as MagicNoteStoredEntry
+    const stored = copyNoteValue(entry)
+    const existingMedia = new Map<string, unknown>()
+    if (previousContent) {
+      const previous = JSON.parse(readFileSync(this.entryPath(entry.noteId, entry.id), 'utf8')) as MagicNoteStoredEntry
+      const references: unknown[] = []
+      mapMediaFields(previous.content, value => { references.push(value); return value })
+      let index = 0
+      mapMediaFields(previousContent, value => {
+        const reference = references[index++]
+        if (typeof value === 'string' && reference && typeof reference === 'object' && '$asset' in reference) existingMedia.set(value, reference)
+        return value
+      })
+    }
     mapMediaFields(stored.content, (value, owner) => {
       if (typeof value !== 'string') return value
+      if (existingMedia.has(value)) return existingMedia.get(value)
       const match = /^data:([^;]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(value)
       if (!match) return value
       const mimeType = match[1]!

@@ -1,5 +1,50 @@
 # Magic Notes Technical Design
 
+## Canvas Views and Media Saves
+
+FR-15–FR-17 retain the existing paged content format. The native `排版` select switches
+between a single page and a virtual vertical stack. `continuous-pages.mjs` mounts
+only pages within one viewport above and below the visible area, plus the active
+editor page. Clicking or pressing Enter/Space on a preview moves the existing
+Fabric/Quill editor to that page; page IDs, object coordinates, history and flow
+pagination remain authoritative. View changes do not emit content changes. The
+layout choice lasts for the mounted view. Offscreen previews are released.
+
+PDF display uses logical page dimensions for CSS and pointer coordinates, and
+backing pixels derived from zoom × device pixel ratio, subject to the existing
+24 Mi-pixel safeguard. Zoom redraws are coalesced over 150 ms and stale page/zoom
+results cannot replace the current background. The editor retains at most four
+PDF render promises; export and analysis retain their logical output dimensions.
+PeopleLib's original intermediate DPR render followed by logical-size downsampling
+is no longer used for display.
+
+Entry saves accept optional `knownEntries` (ID/revision pairs). The storage owner
+returns changed entries and an `entryOrder`; the workspace merges those with the
+exact acknowledged caller snapshot. Changed revisions and newly created entries
+are always returned, and deleted IDs are absent from the order. Other callers
+continue receiving complete details. Media-bearing notes reuse a loaded detail
+on background refresh only when the list summary revision still matches.
+
+Updates may include `reusedMedia`, mapping media slots in the submitted content
+to slots in the same entry's previous revision. The renderer sends a small valid
+data-URL placeholder for those slots. The owner checks `expectedRevision`, restores
+the original media, then runs full content validation before writing. These slot
+references are transport-only, never persisted. The shared media walker visits
+only actual image/attachment/PDF fields, not ordinary text. Existing binary file
+references are reused during the write, avoiding re-decoding and hashing unchanged
+assets; body copies retain immutable strings instead of serializing the entire
+Base64 payload twice. Main retains sender/schema validation; byte validation and
+plain-text derivation run in the existing storage owner. No database migration or
+new resource store is needed, and old full-content requests remain supported.
+
+Save success releases the editor before automatic analysis preparation. The
+temporary renderer captures the submitted, committed content with its saved
+revision, and is disposed after capture or cancellation. Analysis failures do not
+turn an accepted write into a retry. Late analysis responses cannot replace a
+different selected note or a newer detail revision. This changes desktop note
+rendering and the shared desktop storage implementation; there is no separate
+remote Agent save implementation to deploy.
+
 ## Main IPC Ownership
 
 [magic-notes-ipc.ts](../../../src/main/magic-notes/magic-notes-ipc.ts) owns
@@ -133,7 +178,8 @@ The shared store returns `MagicNoteEntryCreateResult`, the existing detail shape
 plus a required `createdEntryId`. Production IPC and preload preserve that ID.
 Creating an entry selects this exact ID and resets the composer through its key;
 it does not enter editing, including after automatic analysis. Text/canvas selection
-is retained. Canvas capture for automatic analysis completes before the reset.
+is retained. Canvas capture for automatic analysis runs after save acknowledgement
+and reset, using a temporary renderer for the committed content.
 the renderer never infers it from a list difference or timestamp. Agent/MCP
 creation delegates to the same store; its existing public note projection is
 unchanged.

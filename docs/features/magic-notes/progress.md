@@ -1,5 +1,55 @@
 # Magic Notes Progress
 
+## 2026-11-10: Continuous Canvas, PDF Display Density and Media Saves
+
+FR-15–FR-17 are implemented; behavior and ownership are in
+[Canvas Views and Media Saves](./technical-design.md#canvas-views-and-media-saves).
+Both editor and reader expose paged/continuous layout. Continuous mode keeps one
+live editor and virtual neighboring previews. PDF backing pixels follow zoom and
+screen density. Entry updates can reuse unchanged media and return only changed
+records; automatic analysis captures committed content after save acknowledgement.
+
+Validation on Windows:
+
+- The 52-page PDF Electron fixture passed zoom pixel checks at the machine's
+  1.75 device pixel ratio, second-page text insertion, layout toggling without
+  content changes, bounded mounted page count at both document ends, and capture
+  from a separate saved-content renderer. Existing import, checklist, annotation
+  and thumbnail regressions passed in the same fixture.
+- The real workspace/Preload/IPC/storage analysis fixture passed for image and
+  text-only models, with a retained image asset added to exercise media reuse.
+  These use deterministic local runtimes; no paid model requests were made.
+- 154 tests passed across workspace, media codec/owner, core Electron, analysis
+  Electron and responsive layout. A further 67-test group covered virtual-page
+  late responses, wheel controls, file storage, IPC and core Electron (overlapping
+  the preceding core test). Model/editor/flow and media follow-ups passed 31 tests.
+- Responsive Electron validation passed in both themes at 1280/960/520/360px,
+  including the continuous viewport's bounds and active editor. Screenshot review
+  exposed a template transform reset that left a black strip at high density;
+  it was fixed, edge-pixel assertions added, and core/layout Electron tests rerun.
+  Final 1280px light and 520px dark screenshots were visually checked.
+- Type checking and lint passed. A full run started before the final background
+  refresh correction finished with 6,992 passed tests, 12 failed tests and 100
+  skipped; 603 files passed, two failed and 21 skipped. The 12 failures were in
+  workspace refresh tests; after scoping revision-based reuse to media-bearing
+  details, the complete 147-test workspace file passed again. The other failed
+  suite was the unchanged OpenCode selection fixture's setup (`spawnSync npm.cmd
+  EINVAL` in `build/opencode-config.cjs`); its isolated rerun subsequently passed
+  all seven tests without changes to that fixture. Final targeted checks passed;
+  a final all-green full run is not claimed. Task screenshots, benchmark files and
+  the baseline worktree were removed after verification.
+
+Isolated storage comparison: baseline checkout `4925a10f` and the current source
+were bundled separately, alternating three rounds. Each round created three
+records sharing synthetic 8 MiB PDF attachment bytes and updated one annotation.
+The measured region includes request preparation, structured cloning, owner save,
+response cloning and caller merge, but excludes UI rendering, actual process
+transport and model analysis. Baseline milliseconds: 152.2 / 151.7 / 137.7;
+current: 78.0 / 79.7 / 80.8. JSON request bytes fell from 11,185,231 to 661;
+response bytes from 33,556,198 to 11,185,722. This is a focused storage measurement,
+not proof of the repository-wide concurrent performance budgets. The modified
+entry still returns its full content; initial imports still transfer new bytes.
+
 ## 2026-11-09: Stable Editing Actions and Contextual Canvas Properties
 
 New and saved record editors now keep cancel/save on the right of a single-row

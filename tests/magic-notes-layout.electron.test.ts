@@ -179,6 +179,14 @@ it('resizes record columns with native Electron input and preserves desktop widt
             }
             assert.equal(await js('document.querySelector(".magic-note-composer__header").scrollWidth <= document.querySelector(".magic-note-composer__header").clientWidth'), true);
             await screenshot('magic-notes-canvas-' + theme + '-' + width);
+            await js('(() => { const select = document.querySelector(".magic-note-composer .canvas-note-layout"); select.value = "continuous"; select.dispatchEvent(new Event("change", {bubbles:true})); })()');
+            await settle();
+            await wait('(() => { const c = document.querySelector(".magic-note-composer .canvas-note-background"); const p = c.getContext("2d").getImageData(c.width - 1, c.height - 1, 1, 1).data; return p[0] === 255 && p[1] === 255 && p[2] === 255; })()');
+            const continuousViewport = await rect(canvasRoot + ' .canvas-note-viewport');
+            assert(continuousViewport.height >= 150 && continuousViewport.y + continuousViewport.height <= canvasBox.y + canvasBox.height + 1, 'Continuous pages stay within the editor');
+            assert(await js('document.querySelector(".magic-note-composer .canvas-note-current-page .canvas-note-interaction-canvas") !== null'), 'Continuous mode retains the live editor');
+            await screenshot('magic-notes-continuous-' + theme + '-' + width);
+            await js('(() => { const select = document.querySelector(".magic-note-composer .canvas-note-layout"); select.value = "paged"; select.dispatchEvent(new Event("change", {bubbles:true})); })()');
           }
         }
         win.setContentSize(1280, 800); await js('document.documentElement.dataset.theme = "light"'); await settle(); await settle();

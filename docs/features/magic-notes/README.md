@@ -48,6 +48,11 @@ and [request budgets](./technical-design.md#note-questions).
 
 ## Documents
 
+Canvas records also offer a paged/continuous layout selector in both reading and
+editing views. PDF backgrounds render at the display's zoom and pixel density.
+Media saves reuse unchanged attachments, and automatic analysis preparation runs
+after save acknowledgement. See [canvas views and media saves](./technical-design.md#canvas-views-and-media-saves).
+
 - [Conversation integration PRD](./prd.md): scope and acceptance for
   conversation capture and the compact workbar panel.
 - [Conversation integration logic](./logic-design.md): capture boundaries, source

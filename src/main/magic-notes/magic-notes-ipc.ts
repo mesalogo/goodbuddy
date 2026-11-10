@@ -16,7 +16,6 @@ import {
 } from '../../shared/magic-notes-contracts'
 import type { AssistantStoragePort } from '../assistant-storage-port'
 import { assertTrustedSender } from '../trusted-ipc-sender'
-import { magicNotePlainText, validateMagicNoteContent } from './rich-content'
 
 export function registerMagicNotesIpcHandlers(
   registerHandler: typeof ipcMain.handle,
@@ -104,12 +103,12 @@ export function registerMagicNotesIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const parsed = magicNoteEntryCreateSchema.parse(input)
-      const content = validateMagicNoteContent(parsed.content)
       return assistantDatabase.createMagicNoteEntry({
         noteId: parsed.noteId,
-        content,
+        content: parsed.content,
+        ...(parsed.knownEntries ? { knownEntries: parsed.knownEntries } : {}),
         source: await resolveMagicNoteSource(parsed.source),
-        plainText: magicNotePlainText(content)
+        plainText: '' // The storage owner validates bytes and derives text once.
       })
     }
   )
@@ -119,12 +118,13 @@ export function registerMagicNotesIpcHandlers(
     (event, input: unknown) => {
       assertTrustedSender(event, window)
       const parsed = magicNoteEntryUpdateSchema.parse(input)
-      const content = validateMagicNoteContent(parsed.content)
       return assistantDatabase.updateMagicNoteEntry({
         entryId: parsed.entryId,
         expectedRevision: parsed.expectedRevision,
-        content,
-        plainText: magicNotePlainText(content)
+        content: parsed.content,
+        ...(parsed.knownEntries ? { knownEntries: parsed.knownEntries } : {}),
+        ...(parsed.reusedMedia ? { reusedMedia: parsed.reusedMedia } : {}),
+        plainText: ''
       })
     }
   )
