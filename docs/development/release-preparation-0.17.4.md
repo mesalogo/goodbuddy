@@ -2,6 +2,24 @@
 
 Date: 2026-11-08.
 
+## Publication status checked on 2026-11-10
+
+- Approved commit: `b092d37c988e6e24d6df4cb00890ecd701cc2a21`.
+  Main Desktop `42485361627`, Agent `42485361566` and website `42485361584`
+  workflows passed. Both approved annotated tags were pushed to both remotes
+  and verified against that commit.
+- Desktop tag workflow `42487512763` succeeded on attempt 1; GitHub published
+  stable Latest `v0.17.4` at `2026-11-08T15:04:59Z`.
+- Agent tag workflow `42487512679` succeeded with three signed native targets
+  and all publication steps. GitHub published non-Latest `agent-v0.15.13` at
+  `2026-11-08T14:10:14Z`; its body exactly matched the approved notes.
+- The Agent OSS pointer returned HTTP 200 for `0.15.13`. Catalog entries matched
+  GitHub package sizes and SHA-256 digests and required Desktop `0.17.4`.
+  Immutable package bytes and GitHub/OSS catalog/signature equality were checked
+  by the successful publication workflow, not by local package downloads.
+- Desktop public index/live website and installed-package acceptance were not
+  independently completed here. Earlier candidate checkpoints remain history.
+
 ## Scope and approval
 
 - Published baselines: Desktop `v0.17.3` at

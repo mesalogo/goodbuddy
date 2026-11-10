@@ -198,6 +198,11 @@ records are listed separately and do not introduce another feature status.
   mode does not upload or sync content, and independent knowledge search/read/download
   flags are declarations, not content access or remote execution. See
   [scope and validation](./docs/features/device-sharing/README.md).
+- [x] **Import published ShareServer model configurations**: Registered devices
+  fetch a compatible server's catalog and explicitly import gateway/custom
+  endpoint configurations. Credentials are supplied in model settings afterward.
+  Imports preserve the default model and existing entries; there is no automatic
+  update, and replacing an imported configuration requires deleting it first.
 - [ ] **Privately deployable application marketplace** (planned): Extends
   application management with an organization-owned catalog and application
   distribution. Current management covers built-in apps only, not marketplace
@@ -219,6 +224,9 @@ records are listed separately and do not introduce another feature status.
   to the device-sharing connection. Ctrl/Cmd+S writes back and Ctrl/Cmd+Shift+S
   saves as; external source changes prevent overwriting. Word, Excel and PowerPoint
   selections can use the current conversation through the context-menu AI dialog.
+  Uploads, editor Office API calls and save/writeback use the registered device's
+  credentials, not an administrator login. Each open editor retains its original
+  server and authentication when the configured connection changes.
   The selected ShareServer and editor process document content;
   Desktop neither bundles nor starts Document Server and does not claim offline
   editing when no service is configured. Linux Electron, server six-format and Host
@@ -397,7 +405,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.13`, paired with the current Desktop release candidate `0.17.4`; formal
+  `0.15.13`, paired with the current Desktop release candidate `0.17.5`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -781,8 +789,10 @@ records are listed separately and do not introduce another feature status.
    a note shows a compact new-entry prompt above the history. Creating or editing
    text/canvas entries fills only the middle content column, leaving navigation
    and adjacent panes usable. New-entry caption, type selection, cancel and save
-   share one header row; long content scrolls inside the editor and narrow headers
-   scroll horizontally. Save or confirmed discard restores the reading position;
+   share one header row; long content scrolls inside the editor. In narrow headers,
+   only the new-entry title/type area scrolls; Cancel and Save remain visible.
+   Saved titles truncate and canvas properties follow the active tool/selection.
+   Save or confirmed discard restores the reading position;
    failed saves retain drafts. Creation resets the composer for the next record
    while retaining its selected type. Explicit editing updates the same saved
    record; automatic comments do not reopen the editor. Draft-confirmation cards
@@ -811,12 +821,16 @@ records are listed separately and do not introduce another feature status.
   separates focused passes, fixture repairs and earlier execution-time failures;
   the [0.15.0 candidate validation](./docs/development/release-preparation-0.15.0.md)
   passed the full suite, typecheck and lint.
-- [x] **Paged canvas notes**: The integrated PeopleLib Fabric + Quill editor
+- [x] **Paged and continuous canvas notes**: The integrated PeopleLib Fabric + Quill editor
   combines flowing body text with pen/highlighter, object selection/transforms,
   floating text, images, arbitrary file attachments and paper templates. Editors and read-only viewers support
   25%-300% view zoom, 100% reset and responsive Fit width, without changing saved
   content or export dimensions. Opening or reopening starts in Fit width mode;
   manual zoom keeps a fixed scale for the current view.
+  Reading and editing can switch to continuous layout with one active editor
+  and nearby page previews. Layout changes preserve document content and last
+  for the mounted view. PDF display follows zoom and screen density without
+  changing logical annotation coordinates or export dimensions.
   Paste text, images or files in canvas mode;
   attachment cards can be moved and double-clicked to download. Adding a file
   keeps the canvas editor instead of switching to flowing text.
@@ -834,6 +848,11 @@ records are listed separately and do not introduce another feature status.
   exporting still support 50 pages. Purely visual entries/drafts
   require an image-capable model. Immediate-comment mode offers manual canvas
   analysis; after-save automatic analysis failures do not block or undo saving.
+  Updates reuse unchanged media and can return only changed entries; existing
+  full-content callers remain supported. Save acknowledgement releases the
+  editor before analysis captures the committed content independently of the
+  next draft. Storage measurements and platform limits are recorded in
+  [Magic Notes progress](./docs/features/magic-notes/progress.md).
   Text-only comments survive unchanged extracted text; visual comments are
   invalidated by layout changes and reanalyzed in after-save-auto mode. MCP
   rejects plain-text replacement of canvas entries. Implementation is complete;
@@ -1024,6 +1043,11 @@ records are listed separately and do not introduce another feature status.
 - [x] **WeCom (Preview) and DingTalk connections**: Main-only encrypted settings,
   read-only environment-variable overrides, connection tests, dynamic
   enable/disable, sender scope, and status diagnostics.
+- [x] **DingTalk QR setup (Preview)**: The Connection page supports QR bot
+  registration and automatically saves credentials/enables Stream after
+  authorization. Sender IDs still need explicit setup; manual credentials remain
+  available. Live QR creation/wait/cancel and an injected-success Electron flow
+  passed, but actual phone authorization and live messaging remain unverified.
 - [x] **Managed local-model download source**: The Model Connections header shows
   the current source and a secondary button, right-aligned on the same row as the
   model-type tabs below Save. Its dialog selects ModelScope (default) or Hugging Face
@@ -1032,6 +1056,9 @@ records are listed separately and do not introduce another feature status.
   and OCR source links open this dialog directly. A source without a complete verified file is
   explicitly unavailable and never silently falls back or combines files.
 - [x] **Remote speech transcription**: Configure an OpenAI-compatible ASR service, encrypted API key, language and recording test. Optional result streaming is off by default; after recording and upload, text appears progressively and the final result is inserted into the original conversation draft. This is not live dictation or text-to-speech.
+  Local recognition remains the default. Audio goes to the configured service;
+  final text does not send a message automatically. Real Qwen3 ASR validation
+  used file-backed Chromium audio, not a physical microphone or all platforms.
 - [x] **Optional local speech-model management**: Model weights are not bundled.
   Provides verified downloads, progress and cancellation, source links, ZIP or
   local-directory import, switching, and removal.
@@ -1082,20 +1109,29 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.17.4`, paired with Agent candidate `0.15.13`, with
+- The current Desktop candidate is `0.17.5`, paired with published Agent `0.15.13`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
   `0.2.2-rc.1` (upstream RC). Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.17.5` adds continuous canvas views, sharper PDF display, remote
+  transcription, explicit ShareServer model imports and preview DingTalk QR
+  setup. It improves note editing/media saves, authenticates Office through the
+  registered device, and fixes remote follow-up after Desktop Runtime eviction.
+  Agent `0.15.13`, schema 65 and Runtime pins are unchanged. Existing development
+  evidence does not replace exact-candidate CI or close the phone authorization,
+  physical microphone and installed-package gaps. Six Desktop targets only,
+  no LoongArch or new Agent release. See
+  [release preparation](./docs/development/release-preparation-0.17.5.md).
 - Desktop `0.17.4` and Agent `0.15.13` repair remote task progress synchronization
   without reopening the old execution channel or replaying the task. Hosts need
   the new Agent; its catalog requires Desktop `0.17.4`. Desktop also updates
   Harness and DS Web to `0.2.2-rc.1` with Cordis `4.1.0`, bundles the missing
   startup dependency and adapts tool/session initialization. Managed SSH still
   does not support DSH. Schema 65, OpenCode `1.19.3`, Continue `1.5.47` and
-  protocol versions remain unchanged. Latest-source full tests recorded two
-  Electron failures despite focused and Linux Host checks passing; exact
-  candidate CI remains required. Six Desktop targets and three independent
-  Agent targets are planned, with Agent non-Latest and no LoongArch. See
+  protocol versions remain unchanged. Final candidate CI and both production
+  tag workflows succeeded; GitHub published Desktop and Agent on 2026-11-08,
+  with Agent non-Latest. This does not extend installed-package acceptance.
+  No LoongArch. See
   [release preparation](./docs/development/release-preparation-0.17.4.md).
 - Desktop `0.17.3` adds local knowledge document references and inline reference
   editing, with collapsed source details beneath sent messages. Normal Runtime
