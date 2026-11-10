@@ -79,6 +79,8 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
   const sameScope = (value: unknown): boolean => JSON.stringify(normalizeScope(JSON.parse(String(value)))) === JSON.stringify(scope)
   if (name === 'story_graph_read_source') {
     const sourceArgs = storyGraphSourceSchema.parse(input)
+    const withContext = sourceArgs.before > 0 || sourceArgs.after > 0
+    if (withContext && sourceArgs.content_kind !== 'current') throw new Error('context_requires_current: before/after require content_kind=current')
     const source = db.prepare(`SELECT s.*, sr.scope_json, r.created_at AS generated_at FROM supervision_sources s
       JOIN supervision_results r ON r.id = s.result_id JOIN supervision_runs sr ON sr.id = r.run_id WHERE s.id = ?`).get(sourceArgs.source_reference_id)
     if (!source) {
@@ -95,6 +97,7 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
     const inScope = sameScope(source.scope_json) || scope.kind === 'global'
       || (typeof locator.projectId === 'string' && scope.projectIds.includes(locator.projectId))
     if (!inScope) throw new Error('scope_mismatch')
+    if (withContext && source.source_type !== 'conversation') throw new Error('context_requires_conversation: before/after apply only to conversation messages')
     const version = typeof locator.revision === 'string' ? locator.revision : 'unknown'
     if (sourceArgs.content_kind === 'version' && !sourceArgs.source_version) throw new Error('source_version_required')
     let body = String(source.content)
@@ -124,6 +127,43 @@ export function readStoryGraph(db: DatabaseSync, name: StoryGraphToolName, input
       returnedVersion = currentRevision!
       location = JSON.parse(String(current.locator)) as Row
       originalLength = source.source_type === 'knowledge' ? 'unknown' : Array.from(body).length
+    }
+    if (withContext) {
+      const columns = 'record_id, body, locator, occurred, context, title, sequence'
+      const previous = db.prepare(`SELECT ${columns} FROM supervision_review_current
+        WHERE type = 'conversation' AND conversation_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?`)
+        .all(location.conversationId as string, location.sequence as number, sourceArgs.before).reverse()
+      const following = db.prepare(`SELECT ${columns} FROM supervision_review_current
+        WHERE type = 'conversation' AND conversation_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?`)
+        .all(location.conversationId as string, location.sequence as number, sourceArgs.after)
+      const anchor = db.prepare(`SELECT ${columns} FROM supervision_review_current WHERE type = 'conversation' AND record_id = ?`)
+        .get(location.messageId as string)!
+      const messages = [...previous, anchor, ...following]
+      const revision = digest(messages)
+      checkRevision(revision)
+      let index = cursor?.index ?? 0
+      let offset = cursor?.offset ?? 0
+      if (index >= messages.length) throw new Error('invalid_cursor')
+      let budget = sourceArgs.page_size
+      const output: Row[] = []
+      while (index < messages.length && budget > 0) {
+        signal?.throwIfAborted()
+        const message = messages[index]!
+        const text = Array.from(String(message.body))
+        if (offset > text.length) throw new Error('invalid_cursor')
+        const end = Math.min(text.length, offset + budget)
+        const messageLocation = JSON.parse(String(message.locator)) as Row
+        output.push({ message_id: message.record_id, role: messageLocation.role, time: shortTime(message.occurred),
+          anchor: message.record_id === location.messageId, content: text.slice(offset, end).join(''),
+          position: { start: offset, end, total: text.length } })
+        budget -= end - offset
+        if (end < text.length) { offset = end; break }
+        index++; offset = 0
+      }
+      return bounded({ ...base, source_id: source.id, content_kind: 'current',
+        conversation: { id: location.conversationId, title: anchor.title, project_id: location.projectId },
+        ...(version !== 'unknown' && returnedVersion !== version ? { differs_from_reviewed_version: true } : {}),
+        messages: output, page: page(revision, index, offset, index < messages.length, output.length, messages.length) })
     }
     const content = Array.from(body)
     const revision = digest({ source, body, returnedVersion, location })

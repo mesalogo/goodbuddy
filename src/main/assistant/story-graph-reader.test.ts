@@ -47,7 +47,7 @@ async function fixture() {
     return db.listSupervisionCandidates(request)[0]!.id
   }
   const read = (name: StoryGraphToolName, input: Record<string, unknown>) => readStoryGraph(sql, name, input, project.id)
-  return { db, sql, read, save, project, other, request, update, body }
+  return { db, sql, read, save, project, other, request, update, body, messageId, conversationId }
 }
 
 it('retains A, explicit revision B and proposal C without latest-wins, with event-time order and complete nested pagination', async () => {
@@ -114,7 +114,7 @@ it('pages Unicode snapshots, reads explicit current versions, and reports deleti
   f.save('Decision A', '2026-09-01T00:00:00Z')
   const source = f.sql.prepare('SELECT id FROM supervision_sources').get()!
   f.sql.prepare('UPDATE supervision_sources SET content = ? WHERE id = ?').run('A\u{1f600}B\u{1f601}C', source.id!)
-  const input = { source_reference_id: source.id, page_size: 2 }
+  const input = { source_reference_id: source.id, page_size: 2, content_kind: 'snapshot' }
   let cursor: string | undefined, text = ''
   do {
     const page = f.read('story_graph_read_source', { ...input, ...(cursor ? { cursor } : {}) }) as { content: string; page?: { next_cursor?: string } }
@@ -137,11 +137,48 @@ it('pages Unicode snapshots, reads explicit current versions, and reports deleti
   expect(() => f.db.readStoryGraph('story_graph_read_source', { source_reference_id: source.id }, f.other.id)).toThrow('scope_mismatch')
   f.sql.exec('DELETE FROM messages')
   expect(f.read('story_graph_read_source', { source_reference_id: source.id, content_kind: 'current' })).toMatchObject({ error: 'current_source_unavailable' })
-  expect(f.read('story_graph_read_source', { source_reference_id: source.id })).toMatchObject({ content: text, content_kind: 'snapshot' })
+  expect(f.read('story_graph_read_source', { source_reference_id: source.id, content_kind: 'snapshot' })).toMatchObject({ content: text, content_kind: 'snapshot' })
   f.sql.prepare('UPDATE supervision_sources SET source_type = ?, locator_json = ? WHERE id = ?').run('knowledge', JSON.stringify({ length: 999 }), source.id!)
-  expect(f.read('story_graph_read_source', { source_reference_id: source.id })).toMatchObject({ length: { original_source: 'unknown', reviewed_source: 999 } })
+  expect(f.read('story_graph_read_source', { source_reference_id: source.id, content_kind: 'snapshot' })).toMatchObject({ length: { original_source: 'unknown', reviewed_source: 999 } })
   f.sql.prepare('UPDATE supervision_sources SET locator_json = ? WHERE id = ?').run(JSON.stringify({ title: 'x'.repeat(100_001) }), source.id!)
-  expect(() => f.read('story_graph_read_source', { source_reference_id: source.id })).toThrow('response_too_large')
+  expect(() => f.read('story_graph_read_source', { source_reference_id: source.id, content_kind: 'snapshot' })).toThrow('response_too_large')
+})
+
+it('defaults to current and pages neighbouring messages without losing Unicode or crossing conversations', async () => {
+  const f = await fixture()
+  f.save('Decision', '2026-09-01T00:00:00Z')
+  const source = f.sql.prepare('SELECT id FROM supervision_sources').get()!
+  const ids = [randomUUID(), f.messageId, randomUUID()]
+  const texts = ['Before😀', 'Current😀full', 'After😀']
+  f.db.saveLocalConversations([{ header: { id: f.conversationId, projectId: f.project.id, title: 'Discussion', updatedAt: 2 },
+    messages: ids.map((id, i) => ({ id, role: 'user' as const, content: texts[i]!, createdAt: 1000 + i, state: 'complete' as const })) }])
+  f.sql.prepare('UPDATE messages SET sequence = sequence + 100 WHERE conversation_id = ?').run(f.conversationId)
+  ids.forEach((id, i) => f.sql.prepare('UPDATE messages SET sequence = ? WHERE id = ?').run(i, id))
+  expect(f.read('story_graph_read_source', { source_reference_id: source.id })).toMatchObject({ content_kind: 'current', content: texts[1] })
+  const args = { source_reference_id: source.id, before: 5, after: 5, page_size: 3 }
+  const restored = new Map<string, string>()
+  let cursor: string | undefined
+  do {
+    const result = f.read('story_graph_read_source', { ...args, cursor }) as {
+      messages: Array<{ message_id: string; content: string; anchor: boolean }>; page: { next_cursor?: string; total: number }
+    }
+    expect(result.page.total).toBe(3)
+    for (const message of result.messages) {
+      expect(message.anchor).toBe(message.message_id === f.messageId)
+      restored.set(message.message_id, (restored.get(message.message_id) ?? '') + message.content)
+    }
+    cursor = result.page.next_cursor
+  } while (cursor)
+  expect([...restored.keys()]).toEqual(ids)
+  expect([...restored.values()]).toEqual(texts)
+  const first = f.read('story_graph_read_source', args) as { page: { next_cursor: string } }
+  expect(() => f.read('story_graph_read_source', { ...args, before: 1, cursor: first.page.next_cursor })).toThrow('invalid_cursor')
+  f.sql.prepare('UPDATE messages SET content = ? WHERE id = ?').run('Changed neighbour', ids[0]!)
+  expect(() => f.read('story_graph_read_source', { ...args, cursor: first.page.next_cursor })).toThrow('stale_cursor')
+  expect(() => f.db.readStoryGraph('story_graph_read_source', args, f.other.id)).toThrow('scope_mismatch')
+  expect(() => f.read('story_graph_read_source', { ...args, content_kind: 'snapshot' })).toThrow('context_requires_current')
+  f.sql.exec('DELETE FROM messages')
+  expect(f.read('story_graph_read_source', args)).toMatchObject({ error: 'current_source_unavailable' })
 })
 
 it('prefilters story lines by scope in SQL with the exact normalized match, and caps the scanned objects', async () => {

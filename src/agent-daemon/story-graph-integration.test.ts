@@ -82,7 +82,7 @@ it.each(['local', 'remote'] as const)('%s HTTP MCP reads SQLite through Main and
   const context = await connection.callTool({ name: 'story_graph_get_context', arguments: { object_ref: ref, mode: 'timeline' } })
   expect(context.isError).not.toBe(true)
   const reference = (f.db.getSupervisionGraph({}).sources as { id: string }[])[0]!.id
-  const source = await connection.callTool({ name: 'story_graph_read_source', arguments: { source_reference_id: reference } })
+  const source = await connection.callTool({ name: 'story_graph_read_source', arguments: { source_reference_id: reference, content_kind: 'snapshot' } })
   expect(JSON.stringify(source)).toContain('revised to B')
   const unsupported = await connection.callTool({ name: 'story_graph_get_context', arguments: { object_ref: ref, mode: 'as_of' } })
   expect(unsupported.isError).toBe(true)

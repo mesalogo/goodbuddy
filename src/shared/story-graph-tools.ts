@@ -30,7 +30,9 @@ export const storyGraphContextSchema = z.object({
 export const storyGraphSourceSchema = z.object({
   ...common,
   source_reference_id: z.string().min(1).max(256),
-  content_kind: z.enum(['snapshot', 'version', 'current']).default('snapshot'),
+  content_kind: z.enum(['snapshot', 'version', 'current']).default('current'),
+  before: z.number().int().min(0).max(50).default(0),
+  after: z.number().int().min(0).max(50).default(0),
   source_version: z.string().min(1).max(256).optional(),
   page_size: z.number().int().min(1).max(8000).default(4000)
 }).strict()
@@ -42,7 +44,7 @@ export const storyGraphTools = [
   { name: 'story_graph_get_context', displayName: 'Story Graph Context', title: 'Read stored work context', summary: 'Read current claims or a timeline with provenance.',
     description: 'Read an object and its related objects. For a story, the first page returns the story, its latest decisions and threads; mode=current lists its events newest first, mode=timeline oldest first. For an experience it returns the evidence events where it formed and was applied. Long text fields end with a marker saying how many characters remain; read the event sources for the full text. Follow next_cursor with the same arguments for more.' + evidence, access: 'read', inputSchema: storyGraphContextSchema },
   { name: 'story_graph_read_source', displayName: 'Story Graph Source', title: 'Read saved evidence', summary: 'Read a saved source fragment with explicit version and pagination.',
-    description: 'Read the original text behind an event: pass one of its source_ids. Returns the saved fragment as reviewed by default (content_kind=current reads the live record), with where it came from (conversation, message, project). Offsets are Unicode code points; follow next_cursor for long text. A missing current or historical version is reported as an error, never replaced by another version.' + evidence, access: 'read', inputSchema: storyGraphSourceSchema }
+    description: 'Read the original text behind an event: pass one of its source_ids. Defaults to the current full message. Set before and after (for example 5 each) to read neighbouring user/assistant messages in the same conversation, in order. Context requires content_kind=current; use snapshot explicitly for the saved fragment as reviewed. Follow next_cursor with identical arguments for remaining messages or text; offsets are Unicode code points. A missing current or historical version is reported as an error, never replaced by another version.' + evidence, access: 'read', inputSchema: storyGraphSourceSchema }
 ] as const satisfies readonly ScopedDataToolDefinition[]
 export type StoryGraphToolName = (typeof storyGraphTools)[number]['name']
 export const storyGraphToolNames = storyGraphTools.map(tool => tool.name)
