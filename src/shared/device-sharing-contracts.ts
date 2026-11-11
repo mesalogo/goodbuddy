@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { SharingPersonasApi } from './sharing-personas'
 
 export const sharingIdSchema = z.string().trim().min(1).max(200)
 export const sharingSettingsInputSchema = z.object({
@@ -10,8 +11,16 @@ export const sharingSettingsInputSchema = z.object({
   name: z.string().trim().min(1).max(200)
 }).strict()
 export const sharingSettingsSchema = sharingSettingsInputSchema.extend({ deviceId: sharingIdSchema })
+export const sharingRegistrationInputSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('anonymous') }).strict(),
+  z.object({ mode: z.literal('account'), username: z.string().trim().regex(/^[a-zA-Z0-9_.@-]{3,64}$/), password: z.string().min(1).max(1024) }).strict()
+]).default({ mode: 'anonymous' })
+export type SharingRegistrationInput = z.infer<typeof sharingRegistrationInputSchema>
+const sharingMemberSchema = z.object({ id: sharingIdSchema, username: z.string(), displayName: z.string() })
 export const sharingDeviceSchema = z.object({
   registrationStatus: z.enum(['approved', 'pending', 'rejected', 'disabled']).optional(),
+  authenticationMode: z.enum(['anonymous', 'account']).optional(),
+  member: sharingMemberSchema.optional(),
   id: sharingIdSchema, name: z.string(), platform: z.string(), appVersion: z.string(),
   registeredAt: z.string(), updatedAt: z.string()
 })
@@ -31,7 +40,7 @@ export type SharingSettingsInput = z.infer<typeof sharingSettingsInputSchema>
 export type SharingDevice = z.infer<typeof sharingDeviceSchema>
 export type SharingPublicationDraft = z.infer<typeof sharingPublicationDraftSchema>
 export type SharingPublication = z.infer<typeof sharingPublicationSchema>
-export type SharingCatalog = { devices: SharingDevice[]; publications: SharingPublication[]; registrationStatus?: 'unregistered' | 'approved' | 'pending' | 'rejected' | 'disabled' }
+export type SharingCatalog = { devices: SharingDevice[]; publications: SharingPublication[]; registrationStatus?: 'unregistered' | 'approved' | 'pending' | 'rejected' | 'disabled'; authenticationMode?: 'anonymous' | 'account'; member?: z.infer<typeof sharingMemberSchema> }
 export const sharingModelConfigSchema = z.object({
   id: z.string().min(1).max(4500), releaseId: sharingIdSchema,
   name: z.string(), version: z.string(), model: z.string(),
@@ -46,12 +55,12 @@ export const sharingModelImportSchema = z.object({
 }).strict()
 export type SharingModelCatalog = z.infer<typeof sharingModelCatalogSchema>
 export type SharingModelImport = z.infer<typeof sharingModelImportSchema>
-export type DeviceSharingApi = {
+export type DeviceSharingApi = SharingPersonasApi & {
   getModelConfigs: () => Promise<SharingModelCatalog>
   importModelConfig: (input: SharingModelImport) => Promise<{ imported: boolean }>
   getSettings: () => Promise<SharingSettings>
   saveSettings: (input: SharingSettingsInput) => Promise<SharingSettings>
-  registerDevice: () => Promise<SharingDevice>
+  registerDevice: (input?: SharingRegistrationInput) => Promise<SharingDevice>
   getCatalog: () => Promise<SharingCatalog>
   publish: (input: SharingPublicationDraft) => Promise<SharingPublication>
   revoke: (id: string) => Promise<SharingPublication>

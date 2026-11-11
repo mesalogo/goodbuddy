@@ -40,3 +40,22 @@ export async function publishSharingModels(directory: string, serverUrl: string,
   }
   return keys
 }
+
+export async function prepareAccountRegistration(serverUrl: string) {
+  const login = await fetch(`${serverUrl}/api/v1/auth/login`, { method: 'POST', headers: { Origin: serverUrl, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'model-test', password: 'isolated-model-test-password' }) })
+  assert.equal(login.ok, true)
+  const cookie = login.headers.get('set-cookie')!.split(';')[0]!
+  const headers = { Origin: serverUrl, 'Content-Type': 'application/json', Cookie: cookie }
+  const username = 'registration-member', password = 'isolated-registration-password'
+  const memberResponse = await fetch(`${serverUrl}/api/v1/organization/members`, { method: 'POST', headers, body: JSON.stringify({ username, password, displayName: 'Registration member', email: '', role: 'member' }) })
+  assert.equal(memberResponse.ok, true)
+  const member = await memberResponse.json() as { id: string }
+  const policy = await fetch(`${serverUrl}/api/v1/sharing/registration`, { method: 'PUT', headers, body: JSON.stringify({ authenticationModes: ['account'] }) })
+  assert.equal(policy.ok, true)
+  return { username, password, async ownedDeviceIds(): Promise<string[]> {
+    const response = await fetch(`${serverUrl}/api/v1/organization`, { headers })
+    assert.equal(response.ok, true)
+    const data = await response.json() as { members: { id: string; deviceIds: string[] }[] }
+    return data.members.find(item => item.id === member.id)!.deviceIds
+  } }
+}

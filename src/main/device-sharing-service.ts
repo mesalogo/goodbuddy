@@ -5,18 +5,20 @@ import { z } from 'zod'
 import {
   sharingDeviceSchema, sharingIdSchema, sharingPublicationDraftSchema, sharingPublicationSchema,
   sharingSettingsInputSchema, sharingSettingsSchema,
-  sharingModelCatalogSchema, sharingModelImportSchema,
+  sharingModelCatalogSchema, sharingModelImportSchema, sharingRegistrationInputSchema,
   type SharingCatalog, type SharingSettings
 } from '../shared/device-sharing-contracts'
 import { assertSupportedSettingsVersion, isMissingFileError, writeJsonFileAtomically } from './settings-file-utils'
 import type { RuntimeSettingsStore } from './runtime-settings-store'
 import { readOfficeCapabilities } from './office-capabilities'
+import { personaAnswerSchema, personaCatalogSchema, personaChatSchema, personaDraftSchema, personaTransitionSchema, sharedPersonaSchema } from '../shared/sharing-personas'
 
 const storedSchema = sharingSettingsSchema.extend({ version: z.literal(1) }).strict()
 
 export class DeviceSharingService {
   private settings?: Promise<SharingSettings>
   private updateQueue: Promise<unknown> = Promise.resolve()
+  private personaRequests = new Map<string, AbortController>()
 
   constructor(private readonly filePath: string, private readonly appVersion: string, private readonly timeoutMs = 10_000,
     private readonly modelSettings?: Pick<RuntimeSettingsStore, 'importModelProfile'>) {}
@@ -84,15 +86,15 @@ export class DeviceSharingService {
     return operation
   }
 
-  private async request<T>(settings: SharingSettings, path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
+  private async request<T>(settings: SharingSettings, path: string, schema: z.ZodType<T>, body?: unknown, options?: { method?: string; signal?: AbortSignal; timeout?: number }): Promise<T> {
     const credential = await this.credential(settings, path === 'devices/register')
     if (!credential) throw new Error('请先注册此设备。')
     const response = await fetch(`${settings.serverUrl.replace(/\/+$/, '')}/api/v1/device-sharing/${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
+      method: options?.method ?? (body === undefined ? 'GET' : 'POST'),
       headers: { Authorization: `Bearer ${credential}`, 'X-Device-Id': settings.deviceId, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: 'error',
-      signal: AbortSignal.timeout(this.timeoutMs)
+      signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeoutMs)]) : AbortSignal.timeout(options?.timeout ?? this.timeoutMs)
     })
     if (!response.ok) {
       const error = await response.json().catch(() => null) as { message?: string } | null
@@ -104,6 +106,26 @@ export class DeviceSharingService {
   async getModelConfigs() {
     return this.request(await this.getSettings(), 'model-configs', sharingModelCatalogSchema)
   }
+
+  async getPersonas() { return this.request(await this.getSettings(), 'personas', personaCatalogSchema) }
+  async savePersona(input: unknown) {
+    const draft = personaDraftSchema.parse(input)
+    return this.request(await this.getSettings(), draft.id ? `personas/${encodeURIComponent(draft.id)}` : 'personas', sharedPersonaSchema, draft, { method: draft.id ? 'PUT' : 'POST' })
+  }
+  async transitionPersona(input: unknown) {
+    const value = personaTransitionSchema.parse(input)
+    return this.request(await this.getSettings(), `personas/${encodeURIComponent(value.id)}/${value.action}`, sharedPersonaSchema, { revision: value.revision })
+  }
+  async chatPersona(input: unknown) {
+    const value = personaChatSchema.parse(input)
+    if (this.personaRequests.has(value.requestId)) throw new Error('分身请求已存在。')
+    const controller = new AbortController()
+    this.personaRequests.set(value.requestId, controller)
+    try { return await this.request(await this.getSettings(), `personas/${encodeURIComponent(value.id)}/chat`, personaAnswerSchema, { message: value.message }, { signal: controller.signal, timeout: 125_000 }) }
+    finally { this.personaRequests.delete(value.requestId) }
+  }
+  cancelPersonaChat(input: unknown) { this.personaRequests.get(z.uuid().parse(input))?.abort() }
+  disposePersonaRequests() { for (const controller of this.personaRequests.values()) controller.abort() }
 
   async importModelConfig(input: unknown) {
     const selection = sharingModelImportSchema.parse(input)
@@ -120,10 +142,12 @@ export class DeviceSharingService {
       imageGenerationQuality: 'auto', apiKey: { action: 'keep' } })
   }
 
-  async registerDevice() {
+  async registerDevice(input?: unknown) {
+    const authentication = sharingRegistrationInputSchema.parse(input)
     const settings = await this.getSettings()
     return this.request(settings, 'devices/register', sharingDeviceSchema, {
-      id: settings.deviceId, name: settings.name, platform: process.platform, appVersion: this.appVersion
+      id: settings.deviceId, name: settings.name, platform: process.platform, appVersion: this.appVersion,
+      ...(authentication.mode === 'account' ? { authentication } : {})
     })
   }
 
@@ -131,12 +155,13 @@ export class DeviceSharingService {
     const settings = await this.getSettings()
     if (!await this.credential(settings)) return { devices: [], publications: [], registrationStatus: 'unregistered' }
     const identity = await this.request(settings, 'status', sharingDeviceSchema)
-    if (identity.registrationStatus !== 'approved') return { devices: [], publications: [], registrationStatus: identity.registrationStatus ?? 'unregistered' }
+    const account = { ...(identity.authenticationMode ? { authenticationMode: identity.authenticationMode } : {}), ...(identity.member ? { member: identity.member } : {}) }
+    if (identity.registrationStatus !== 'approved') return { devices: [], publications: [], registrationStatus: identity.registrationStatus ?? 'unregistered', ...account }
     const [devices, publications] = await Promise.all([
       this.request(settings, 'devices', z.object({ devices: z.array(sharingDeviceSchema) })),
       this.request(settings, 'publications', z.object({ publications: z.array(sharingPublicationSchema) }))
     ])
-    return { ...devices, ...publications, registrationStatus: identity.registrationStatus }
+    return { ...devices, ...publications, registrationStatus: identity.registrationStatus, ...account }
   }
 
   async publish(input: unknown) {

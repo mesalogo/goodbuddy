@@ -4,9 +4,14 @@ import { DeviceSharingPage } from './DeviceSharingPage'
 import type { DeviceSharingApi, SharingCatalog, SharingPublicationDraft } from '../../shared/device-sharing-contracts'
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 const settings = { deviceId: 'mine', name: 'My desktop', serverUrl: 'http://127.0.0.1:8787' }
-function setup() {
-  const catalog: SharingCatalog = { devices: [], publications: [] }
+function setup(initial: Partial<SharingCatalog> = {}) {
+  const catalog: SharingCatalog = { devices: [], publications: [], ...initial }
   const sharing = {
+    getPersonas: vi.fn(async () => ({ personas: [], canCreate: true, models: [], sources: [], subjects: { members: [], groups: [] } })),
+    savePersona: vi.fn(async () => { throw new Error('Unconfigured fixture') }),
+    transitionPersona: vi.fn(async () => { throw new Error('Unconfigured fixture') }),
+    chatPersona: vi.fn(async () => { throw new Error('Unconfigured fixture') }),
+    cancelPersonaChat: vi.fn(async () => undefined),
     getModelConfigs: vi.fn(async () => ({ items: [{ id: 'config', releaseId: 'release', name: 'Team', version: '1', model: 'chat', baseURL: 'http://192.168.0.2/v1', protocol: 'openai-chat-completions' as const, routeType: 'gateway' as const, authentication: 'client-supplied-api-key' as const }] })),
     importModelConfig: vi.fn(async () => ({ imported: true })),
     getSettings: vi.fn(async () => settings), saveSettings: vi.fn(async input => ({ ...settings, ...input })),
@@ -99,4 +104,36 @@ it('shows pending, rejection and disabled status without enabling publication', 
     await screen.findByText(new RegExp(message))
     expect(screen.getByRole('button', { name: '发布元数据' })).toBeDisabled()
   }
+})
+
+it('registers with a member account, clears the submitted password and preserves the username on failure', async () => {
+  const { sharing, notify } = setup()
+  await waitFor(() => expect(screen.getByRole('button', { name: '注册本机' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: '用户名和密码' }))
+  expect(screen.getByRole('button', { name: '注册本机' })).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('成员用户名'), { target: { value: 'member-one' } })
+  fireEvent.change(screen.getByLabelText('成员密码'), { target: { value: 'test-only-password' } })
+  sharing.registerDevice.mockRejectedValueOnce(new Error('Sharing HTTP 401: 账号或密码错误'))
+  fireEvent.keyDown(screen.getByLabelText('成员密码'), { key: 'Enter' })
+  await waitFor(() => {
+    expect(sharing.registerDevice).toHaveBeenCalledWith({ mode: 'account', username: 'member-one', password: 'test-only-password' })
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ tone: 'error', message: expect.stringContaining('401') }))
+    expect(screen.getByLabelText('成员密码')).toHaveValue('')
+    expect(screen.getByLabelText('成员用户名')).toHaveValue('member-one')
+  })
+  expect(sharing.saveSettings).not.toHaveBeenCalled()
+  fireEvent.change(screen.getByLabelText('成员密码'), { target: { value: 'another-password' } })
+  fireEvent.change(screen.getByLabelText('服务地址'), { target: { value: 'http://other.example:8088' } })
+  expect(screen.getByLabelText('成员密码')).toHaveValue('')
+})
+
+it('restores account mode from device status without retaining or auto-submitting a password', async () => {
+  const { sharing } = setup({ authenticationMode: 'account', member: { id: 'member-1', username: 'member-one', displayName: 'Member one' } })
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: '用户名和密码' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('成员用户名')).toHaveValue('member-one')
+    expect(screen.getByLabelText('成员密码')).toHaveValue('')
+  })
+  expect(screen.getByText('设备已关联成员：Member one（member-one）')).toBeInTheDocument()
+  expect(sharing.registerDevice).not.toHaveBeenCalled()
 })

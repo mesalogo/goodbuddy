@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SharingCatalog, SharingPublicationDraft, SharingSettings } from '../../shared/device-sharing-contracts'
 import { sharingSettingsInputSchema } from '../../shared/device-sharing-contracts'
-import { EmptyState, PageHeader, PageShell, PageTabs } from './WorkspacePrimitives'
+import { EmptyState, PageHeader, PageShell, PageTabs, SegmentedControl } from './WorkspacePrimitives'
 import type { AppNotificationInput } from './notifications'
 import './device-sharing.css'
 import { SharingModelConfigs } from './SharingModelConfigs'
+import { SharingPersonas } from './SharingPersonas'
 
 const emptyDraft: SharingPublicationDraft = {
   name: '', description: '', kind: 'capability', sourceMode: 'device',
@@ -14,10 +15,13 @@ const emptyDraft: SharingPublicationDraft = {
 
 export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationInput) => void }): React.JSX.Element {
   const { t } = useTranslation('app')
-  const [activeTab, setActiveTab] = useState<'mine' | 'shared'>('mine')
+  const [activeTab, setActiveTab] = useState<'mine' | 'shared' | 'personas'>('mine')
   const [settings, setSettings] = useState<SharingSettings>()
   const [name, setName] = useState('')
   const [serverUrl, setServerUrl] = useState('')
+  const [authenticationMode, setAuthenticationMode] = useState<'anonymous' | 'account'>('anonymous')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [catalog, setCatalog] = useState<SharingCatalog>()
   const [draft, setDraft] = useState(emptyDraft)
   const [busy, setBusy] = useState(true)
@@ -31,7 +35,7 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
       if (!active) return
       setSettings(next); setName(next.name); setServerUrl(next.serverUrl)
       const snapshot = await window.goodbuddy.sharing.getCatalog()
-      if (active) { setCatalog(snapshot); setError('') }
+      if (active) { setCatalog(snapshot); setError(''); if (snapshot.authenticationMode) setAuthenticationMode(snapshot.authenticationMode); if (snapshot.member) setUsername(snapshot.member.username) }
     }).catch((reason: unknown) => { if (active) setError(String(reason)) })
       .finally(() => { if (active) setBusy(false) })
     return () => { active = false }
@@ -39,7 +43,10 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
 
   const refresh = async (): Promise<void> => {
     try {
-      setCatalog(await window.goodbuddy.sharing.getCatalog())
+      const snapshot = await window.goodbuddy.sharing.getCatalog()
+      setCatalog(snapshot)
+      if (snapshot.authenticationMode) setAuthenticationMode(snapshot.authenticationMode)
+      if (snapshot.member) setUsername(snapshot.member.username)
       setError('')
     } catch (reason) {
       setCatalog(undefined)
@@ -60,13 +67,25 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
   const registered = Boolean(settings && catalog?.devices.some(device => device.id === settings.deviceId))
   const canPublish = registered && !dirty && !error && !busy
   const validSettings = sharingSettingsInputSchema.safeParse({ name, serverUrl }).success
+  const validRegistration = authenticationMode === 'anonymous' || (/^[a-zA-Z0-9_.@-]{3,64}$/.test(username.trim()) && Boolean(password))
+  const register = async (): Promise<void> => {
+    if (busy || dirty || !validRegistration) return
+    await run(async () => {
+      const authentication = authenticationMode === 'account' ? { mode: 'account' as const, username: username.trim(), password } : { mode: 'anonymous' as const }
+      setPassword('')
+      const device = await window.goodbuddy.sharing.registerDevice(authentication)
+      notify({ tone: device.registrationStatus === 'approved' ? 'success' : 'info', message: t(`sharing.registrationStatus.${device.registrationStatus ?? 'unregistered'}`) })
+      await refresh()
+    })
+  }
   const myDevices = catalog?.devices.filter(device => device.id === settings?.deviceId) ?? []
   const myPublications = catalog?.publications.filter(item => item.deviceId === settings?.deviceId) ?? []
   const sharedDevices = catalog?.devices.filter(device => device.id !== settings?.deviceId) ?? []
   const sharedPublications = catalog?.publications.filter(item => item.deviceId !== settings?.deviceId) ?? []
   const tabs = [
     { id: 'mine' as const, label: t('sharing.tabs.mine') },
-    { id: 'shared' as const, label: t('sharing.tabs.shared') }
+    { id: 'shared' as const, label: t('sharing.tabs.shared') },
+    { id: 'personas' as const, label: '数字分身' }
   ]
 
   return <PageShell variant="standard">
@@ -80,6 +99,7 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
       {catalog?.registrationStatus && <p role="status">{t(`sharing.registrationStatus.${catalog.registrationStatus}`)}</p>}
       {error && <div role="alert" className="settings-warning">{t('sharing.loadFailed')} {error}</div>}
       <PageTabs ariaLabel={t('sharing.tabsLabel')} idPrefix="sharing" onChange={setActiveTab} tabs={tabs} value={activeTab} />
+      {activeTab === 'personas' && <div id="sharing-panel-personas" role="tabpanel" aria-labelledby="sharing-tab-personas">{settings && registered && !dirty ? <SharingPersonas key={settings.serverUrl} serverUrl={settings.serverUrl} deviceId={settings.deviceId} notify={notify} /> : <p>请先保存服务器地址并完成设备注册。</p>}</div>}
       {activeTab === 'mine' && <div id="sharing-panel-mine" className="device-sharing__panel" role="tabpanel" aria-labelledby="sharing-tab-mine">
       {settings && <section className="device-sharing__section" aria-labelledby="sharing-settings">
         <h2 id="sharing-settings">{t('sharing.thisDevice')}</h2>
@@ -89,17 +109,23 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
           setSettings(next); setName(next.name); setServerUrl(next.serverUrl); setCatalog(undefined)
           await refresh()
         }, t('sharing.saved')) }}>
-          <label className="field"><span>{t('sharing.serverUrl')}</span><input type="url" required value={serverUrl} disabled={busy} onChange={event => setServerUrl(event.target.value)} /></label>
+          <label className="field"><span>{t('sharing.serverUrl')}</span><input type="url" required value={serverUrl} disabled={busy} onChange={event => { setServerUrl(event.target.value); setPassword('') }} /></label>
           <label className="field"><span>{t('sharing.deviceName')}</span><input required maxLength={200} value={name} disabled={busy} onChange={event => setName(event.target.value)} /></label>
+          <fieldset className="device-sharing__authentication" disabled={busy}>
+            <legend>{t('sharing.authentication.title')}</legend>
+            <SegmentedControl ariaLabel={t('sharing.authentication.title')} disabled={busy} value={authenticationMode} onChange={value => { setAuthenticationMode(value); setPassword('') }} options={[{ value: 'anonymous', label: t('sharing.authentication.anonymous') }, { value: 'account', label: t('sharing.authentication.account') }]} />
+            <p>{t(authenticationMode === 'account' ? 'sharing.authentication.accountHelp' : 'sharing.authentication.anonymousHelp')}</p>
+            {authenticationMode === 'account' && <div className="device-sharing__account-fields">
+              <label className="field"><span>{t('sharing.authentication.username')}</span><input autoComplete="username" maxLength={64} value={username} onChange={event => setUsername(event.target.value)} /></label>
+              <label className="field"><span>{t('sharing.authentication.password')}</span><input type="password" autoComplete="current-password" maxLength={1024} value={password} onChange={event => setPassword(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void register() } }} /></label>
+            </div>}
+          </fieldset>
           <div className="device-sharing__actions">
             <button className="secondary-button" disabled={busy || !dirty || !validSettings}>{t('sharing.save')}</button>
-            <button type="button" className="secondary-button" disabled={busy || Boolean(dirty)} onClick={() => void run(async () => {
-              const device = await window.goodbuddy.sharing.registerDevice()
-              notify({ tone: device.registrationStatus === 'approved' ? 'success' : 'info', message: t(`sharing.registrationStatus.${device.registrationStatus ?? 'unregistered'}`) })
-              await refresh()
-            })}>{t('sharing.register')}</button>
+            <button type="button" className="secondary-button" disabled={busy || Boolean(dirty) || !validRegistration} onClick={() => void register()}>{t('sharing.register')}</button>
           </div>
           {dirty && <p>{t('sharing.saveFirst')}</p>}
+          {catalog?.member && <p>{t('sharing.authentication.linked', { name: catalog.member.displayName, username: catalog.member.username })}</p>}
         </form>
       </section>}
       {settings && <SharingModelConfigs key={settings.serverUrl} serverUrl={settings.serverUrl} disabled={!canPublish} notify={notify} />}

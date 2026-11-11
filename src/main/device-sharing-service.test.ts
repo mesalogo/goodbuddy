@@ -150,3 +150,24 @@ it('returns pending, rejected and disabled status without requesting the protect
     expect(requests.map(r => r.path)).toEqual(['/api/v1/device-sharing/status'])
   }
 })
+
+it('sends account credentials only in registration and never persists or exposes the password', async () => {
+  const { service, file, requests } = await setup()
+  const password = 'test-only-member-password'
+  const result = await service.registerDevice({ mode: 'account', username: 'member-one', password })
+  expect(requests[0]!.body.authentication).toEqual({ mode: 'account', username: 'member-one', password })
+  expect(JSON.stringify(result)).not.toContain(password)
+  expect(await readFile(file, 'utf8')).not.toContain(password)
+  expect(await readFile(`${file}.credentials`, 'utf8')).not.toContain(password)
+  await service.getCatalog()
+  expect(requests.slice(1).every(request => !Object.hasOwn(request.body, 'authentication'))).toBe(true)
+  await expect(service.registerDevice({ mode: 'account', username: 'member-one', password: '' })).rejects.toThrow()
+})
+
+it('restores the authenticated member context from the server status response', async () => {
+  const { service, devices } = await setup()
+  await service.registerDevice()
+  devices[0]!.authenticationMode = 'account'
+  devices[0]!.member = { id: 'member-1', username: 'member-one', displayName: 'Member one' }
+  expect(await service.getCatalog()).toMatchObject({ authenticationMode: 'account', member: { username: 'member-one' } })
+})

@@ -861,11 +861,16 @@ const desktopApi: DesktopApi = {
     apply: input => ipcRenderer.invoke(officeChannels.apply, input)
   },
   sharing: {
+    getPersonas: () => ipcRenderer.invoke(ipcChannels.sharingPersonas),
+    savePersona: input => ipcRenderer.invoke(ipcChannels.sharingPersonaSave, input),
+    transitionPersona: input => ipcRenderer.invoke(ipcChannels.sharingPersonaTransition, input),
+    chatPersona: input => ipcRenderer.invoke(ipcChannels.sharingPersonaChat, input),
+    cancelPersonaChat: requestId => ipcRenderer.invoke(ipcChannels.sharingPersonaCancel, requestId),
     getModelConfigs: () => ipcRenderer.invoke(ipcChannels.sharingModelConfigs),
     importModelConfig: input => ipcRenderer.invoke(ipcChannels.sharingModelImport, input),
     getSettings: () => ipcRenderer.invoke(ipcChannels.sharingSettingsGet),
     saveSettings: input => ipcRenderer.invoke(ipcChannels.sharingSettingsSave, input),
-    registerDevice: () => ipcRenderer.invoke(ipcChannels.sharingRegister),
+    registerDevice: input => ipcRenderer.invoke(ipcChannels.sharingRegister, input),
     getCatalog: () => ipcRenderer.invoke(ipcChannels.sharingCatalog),
     publish: input => ipcRenderer.invoke(ipcChannels.sharingPublish, input),
     revoke: id => ipcRenderer.invoke(ipcChannels.sharingRevoke, id)

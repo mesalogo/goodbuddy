@@ -9,6 +9,7 @@ export const app = {
     openSource: '返回原会话：{{title}}', sourceMissing: '原会话已不可用：{{title}}',
   },
   sharing: {
+    authentication: { title: '注册认证方式', anonymous: '匿名设备', account: '用户名和密码', username: '成员用户名', password: '成员密码', anonymousHelp: '不使用成员账号，按网关允许的方式登记设备；是否需要审批由网关决定。', accountHelp: '使用本站成员账号验证并绑定设备，不是管理员登录。密码仅用于本次注册，提交后清空且不保存；后续连接使用设备凭据。', linked: '设备已关联成员：{{name}}（{{username}}）' },
     models: { title: '服务器模型配置', help: '获取管理员向本设备或所属用户组发布的稳定版配置。导入后在模型设置中填写 API Key 并测试连接。已导入的模型保留本地设置；需要重新导入时先在模型设置中删除旧条目。', fetch: '获取模型配置', empty: '暂无向本设备发布的稳定版模型配置。', gateway: '网关地址', custom: '自定义地址', import: '导入模型', imported: '模型已导入，请在模型设置中填写 API Key 并测试连接。', exists: '该模型已导入，已保留本地设置。' },
     title: '设备共享（技术预览）', boundary: '连接 ShareServer 共享目录。注册按服务器策略自动接纳或等待管理员审批，后续请求使用设备凭据。注册记录不代表设备在线；此页不提供远程执行或知识内容访问。',
     registrationStatus: {

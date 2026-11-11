@@ -1,8 +1,7 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createServer as createHttpServer } from 'node:http'
@@ -12,7 +11,10 @@ import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
 
 it.skipIf(!process.env.GOODBUDDY_SHARING_SERVER_ROOT)('uses the real ShareServer through Electron preload and trusted Main IPC', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-sharing-electron-'))
+  const temporaryRoot = resolve('temp', 'device-sharing')
+  await mkdir(temporaryRoot, { recursive: true })
+  const directory = await mkdtemp(join(temporaryRoot, 'registration-'))
+  const host = process.env.GOODBUDDY_SHARING_TEST_HOST ?? '127.0.0.1'
   const portProbe = createHttpServer()
   await new Promise<void>(resolve => portProbe.listen(0, '127.0.0.1', resolve))
   const port = (portProbe.address() as { port: number }).port
@@ -21,7 +23,7 @@ it.skipIf(!process.env.GOODBUDDY_SHARING_SERVER_ROOT)('uses the real ShareServer
     cwd: process.env.GOODBUDDY_SHARING_SERVER_ROOT,
     env: { ...process.env, DATABASE_URL: '', OFFICE_ENABLED: 'false', SHARESERVER_AUTH_ENABLED: 'true',
        SHARESERVER_MASTER_KEY: randomBytes(32).toString('hex'), SHARESERVER_MASTER_KEY_FILE: '',
-       SHARESERVER_PUBLIC_URL: `http://127.0.0.1:${port}`, SHARESERVER_PORT: String(port), SHARESERVER_DATA_DIR: join(directory, 'server-data') },
+   SHARESERVER_PUBLIC_URL: `http://${host}:${port}`, SHARESERVER_HOST: host, SHARESERVER_PORT: String(port), SHARESERVER_DATA_DIR: join(directory, 'server-data') },
     stdio: ['ignore', 'pipe', 'pipe']
   })
   let backendOutput = ''
@@ -44,7 +46,7 @@ it.skipIf(!process.env.GOODBUDDY_SHARING_SERVER_ROOT)('uses the real ShareServer
     await build({ entryPoints: ['tests/support/device-sharing-main.ts'], outfile: join(directory, 'main.cjs'), bundle: true, platform: 'node', format: 'cjs', external: ['electron'] })
     await build({ entryPoints: ['src/preload/index.ts'], outfile: join(directory, 'preload.cjs'), bundle: true, platform: 'node', format: 'cjs', external: ['electron'] })
     await server.listen()
-    const env: NodeJS.ProcessEnv = { ...process.env, GB_SHARING_DIRECTORY: directory, GB_SHARING_URL: `http://127.0.0.1:${port}`,
+    const env: NodeJS.ProcessEnv = { ...process.env, GB_SHARING_DIRECTORY: directory, GB_SHARING_URL: `http://${host}:${port}`,
       GB_SHARING_RENDERER: server.resolvedUrls!.local[0] + 'sharing.html' }
     delete env.ELECTRON_RUN_AS_NODE
     const child = spawn(createRequire(import.meta.url)('electron'), [...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), join(directory, 'main.cjs')], { env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -57,6 +59,8 @@ it.skipIf(!process.env.GOODBUDDY_SHARING_SERVER_ROOT)('uses the real ShareServer
       expect(await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) }), output).toBe(0)
       expect(timedOut).toBe(false)
       expect(output).toContain('SHARING_MODEL_IMPORT_OK')
+      expect(output).toContain('SHARING_ACCOUNT_REGISTRATION_OK')
+      if (process.env.GOODBUDDY_SHARING_MODEL_ENV) expect(output).toContain('SHARING_PERSONAS_OK')
       process.stdout.write(output)
     } finally { clearTimeout(timer) }
   } finally {

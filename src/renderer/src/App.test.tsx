@@ -263,6 +263,11 @@ const terminalSnapshot: TerminalSnapshot = {
 
 const api: DesktopApi & RuntimeNativeClientApi = {
   sharing: {
+    getPersonas: vi.fn(async () => ({ personas: [], canCreate: true, models: [], sources: [], subjects: { members: [], groups: [] } })),
+    savePersona: vi.fn(async () => { throw new Error('Unconfigured fixture') }),
+    transitionPersona: vi.fn(async () => { throw new Error('Unconfigured fixture') }),
+    chatPersona: vi.fn(async () => { throw new Error('Unconfigured fixture') }),
+    cancelPersonaChat: vi.fn(async () => undefined),
     getModelConfigs: vi.fn(async () => ({ items: [] })),
     importModelConfig: vi.fn(async () => ({ imported: true })),
     getSettings: vi.fn(async () => ({ deviceId: 'test-device', name: 'Test device', serverUrl: 'http://127.0.0.1:8787' })),
