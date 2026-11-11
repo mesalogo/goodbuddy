@@ -655,6 +655,16 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 
 ## Agent 本地模型 gateway
 
+Provider connection failures are distinguished from uncertain dispatches. Before
+an HTTP connection is established, `ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN` and
+`UND_ERR_CONNECT_TIMEOUT` permit at most two retries (250 ms, then 1 second),
+under the same call identity, cancellation signal and total request deadline.
+Resets and incomplete responses do not permit automatic replay. An uncertain
+provider failure still terminates the affected task, but uses
+`model-request-failed` cleanup and preserves `AgentModelGatewayError` with a safe
+phase/transport code in the semantic terminal. Agent diagnostics record
+`runtime.model.failed`; neither raw provider messages nor credentials are logged.
+
 - Main 在 `runtime/preparePrompt` 中发送当前解析后的有界 profile；Agent 只在该 operation
   的内存状态中持有 Provider URL、API Key 和认证信息。OpenCode 仍通过 Prompt 私有 Unix
   socket 发出模型请求，但 HTTP Provider dispatch、响应交付和稳定 call ledger 全部位于

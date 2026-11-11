@@ -46,7 +46,8 @@ async function main(): Promise<void> {
   const reopenChannel = process.argv[2] === '--reopen-channel'
   const closedChannel = process.argv[2] === '--closed-channel' || realModel
   const toolFailure = process.argv[2] === '--tool-failure'
-  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect || closedChannel || toolFailure || reopenChannel
+  const providerFailure = process.argv[2] === '--provider-failure'
+  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect || closedChannel || toolFailure || reopenChannel || providerFailure
   const retirement = process.argv[2] === '--retirement' || runtimeCrash || catchUp
   const directRetirement = process.argv[2] === '--direct-retirement'
   const directDisconnect = process.argv[2] === '--direct-disconnect'
@@ -186,6 +187,15 @@ async function main(): Promise<void> {
       let releaseRealResponse!: () => void
       const realResponseGate = new Promise<void>(resolve => { releaseRealResponse = resolve })
       const server = createServer((modelRequest, response) => {
+        if (providerFailure) {
+          scriptedModelCalls++
+          if (scriptedModelCalls === 1) {
+            // HTTP request reached the provider, but no response reached Agent.
+            modelRequest.resume()
+            modelRequest.on('end', () => modelRequest.socket.destroy())
+            return
+          }
+        }
         if (realModel) {
           void (async () => {
             assert(realModelCalls < 2, 'Real-model recovery probe allows two provider requests')
@@ -227,7 +237,7 @@ async function main(): Promise<void> {
         }
         response.writeHead(200, { 'content-type': 'text/event-stream' })
         response.flushHeaders()
-        if (prepareLoss || reopenChannel) {
+        if (prepareLoss || reopenChannel || providerFailure) {
           response.end(`data: ${JSON.stringify({ id: 'probe', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: 'probe', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`)
         }
         // Keep this local deterministic model call open until cancellation.
@@ -250,7 +260,7 @@ async function main(): Promise<void> {
           let attachments = 0
           let channels = 0
           let progressConnections = 0
-          let interrupt = !prepareLoss && !startResponseLoss && !toolFailure && !reopenChannel
+          let interrupt = !prepareLoss && !startResponseLoss && !toolFailure && !reopenChannel && !providerFailure
           let exhaust = liveChannelBudget
           const bindings = new MemoryRuntimeSessionBindingStore()
           const controllerId = await controllerState.getControllerId()
@@ -350,6 +360,27 @@ async function main(): Promise<void> {
           const controller = new AbortController()
           let pending: Promise<unknown> | undefined
           try {
+            if (providerFailure) {
+              const events = []
+              let failure: unknown
+              try {
+                for await (const event of instance.run(prompt, AbortSignal.timeout(30_000))) events.push(event)
+              } catch (error) { failure = error }
+              const outcome = JSON.stringify(events) + String(failure ?? '')
+              assert.match(outcome, /Model provider request failed/)
+              assert.doesNotMatch(outcome, /Runtime stopped before|identity-conflict/)
+              assert(!events.some(event => event.type === 'done'))
+              assert.equal(scriptedModelCalls, 1, 'Uncertain dispatch must not be replayed')
+              const followup = []
+              for await (const event of instance.run({ ...prompt, requestId: randomUUID() }, AbortSignal.timeout(30_000))) followup.push(event)
+              assert(followup.some(event => event.type === 'done'))
+              assert(!followup.some(event => event.type === 'error'))
+              assert.equal(starts, 2)
+              assert.equal(scriptedModelCalls, 2)
+              process.stdout.write(`${JSON.stringify({ passed: true, providerFailure, realRuntime: runtime.runtimeId,
+                originalErrorPreserved: true, uncertainDispatches: 1, followupCompleted: true, promptStarts: starts, externalModelCalls: 0 })}\n`)
+              return
+            }
             if (reopenChannel) {
               for (let turn = 0; turn < 3; turn++) {
                 const events = []

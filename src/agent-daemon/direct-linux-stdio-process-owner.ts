@@ -337,6 +337,7 @@ export class DirectLinuxStdioProcessOwner {
       | 'controller-disconnected'
       | 'deadline-exceeded'
       | 'identity-conflict'
+      | 'model-request-failed'
       | 'output-quota'
       | 'user-cancelled'
     deadlineAt: string

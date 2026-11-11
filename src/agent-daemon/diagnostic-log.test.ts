@@ -26,6 +26,17 @@ afterEach(() => {
 })
 
 describe('Agent diagnostic log', () => {
+  it('retains model failure phase and transport code without raw provider errors', async () => {
+    const log = new AgentDiagnosticLog(temporaryStateDirectory())
+    log.record('runtime.model.failed', {
+      runtimeId: 'opencode', reason: 'dispatch:ECONNRESET', outcome: 'outcome-unknown',
+      error: Object.assign(new Error('private-provider-secret'), { name: 'AgentModelGatewayError', code: 'outcome-unknown' })
+    })
+    await log.flush()
+    expect(log.read()).toEqual([expect.objectContaining({ event: 'runtime.model.failed', level: 'error', reason: 'dispatch:ECONNRESET' })])
+    expect(readFileSync(log.currentFilePath, 'utf8')).not.toContain('private-provider-secret')
+    await log.dispose()
+  })
   it('removes only historical owned top-level modes while holding the append lock', async () => {
     const stateDirectory = temporaryStateDirectory()
     const first = new AgentDiagnosticLog(stateDirectory)

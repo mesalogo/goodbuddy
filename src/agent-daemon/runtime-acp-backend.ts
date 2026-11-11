@@ -196,6 +196,7 @@ export type RuntimeAcpProcessReconciliation = {
 }
 
 export type RuntimeAcpProcessStopReason =
+  | 'model-request-failed'
   | 'binding-closed'
   | 'controller-disconnected'
   | 'deadline-exceeded'
@@ -1839,10 +1840,17 @@ export class RuntimeAcpBackend {
             ) {
               binding.poisoned = true
               binding.state = 'outcome-unknown'
+              this.#options.diagnostics?.tryRecord('runtime.model.failed', {
+                runtimeId: binding.request.runtimeId,
+                reason: `${error.phase ?? 'dispatch'}:${error.transportCode ?? error.code}`,
+                outcome: 'outcome-unknown',
+                error
+              })
               void this.#enqueueControl(async () => {
                 await this.#stopAndReconcile(
                   binding,
-                  'identity-conflict'
+                  'model-request-failed',
+                  error
                 )
               }).catch(() => undefined)
             }
@@ -2262,7 +2270,8 @@ export class RuntimeAcpBackend {
 
   async #stopAndReconcile(
     binding: BindingState,
-    reason: RuntimeAcpProcessStopReason
+    reason: RuntimeAcpProcessStopReason,
+    modelError?: AgentModelGatewayError
   ): Promise<void> {
     if (binding.state === 'closed') {
       return
@@ -2277,14 +2286,14 @@ export class RuntimeAcpBackend {
           }
         : {
             status: this.#abnormalOwnedPromptState(binding),
-            name:
+            name: modelError?.name ?? (
               reason === 'deadline-exceeded'
                 ? 'PromptDeadlineExceeded'
-                : 'RuntimeStopped',
-            message:
+                : 'RuntimeStopped'),
+            message: modelError?.message ?? (
               reason === 'deadline-exceeded'
                 ? 'Prompt execution exceeded its Runtime deadline'
-                : 'Runtime stopped before the prompt reached a terminal state'
+                : 'Runtime stopped before the prompt reached a terminal state')
           }
     )
     await this.#closeModelBridge(binding, true)

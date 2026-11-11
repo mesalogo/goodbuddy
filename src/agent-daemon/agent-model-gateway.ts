@@ -26,6 +26,26 @@ import {
   readBoundedResponseBytes
 } from '../shared/node/bounded-response'
 import { openPrivateSqliteDatabase } from '../shared/node/private-sqlite-database'
+import { raceWithAbort } from './async-utils'
+
+// These errors prove that no HTTP connection was established. Reset/socket/body
+// failures can occur after a write and must never enter this retry path.
+const CONNECT_FAILURE_CODES = new Set([
+  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT'
+])
+const TRANSPORT_CODES = new Set([
+  ...CONNECT_FAILURE_CODES, 'ECONNRESET', 'EPIPE', 'ETIMEDOUT',
+  'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'
+])
+
+function transportCode(error: unknown): string | undefined {
+  for (let depth = 0; depth < 4 && error instanceof Error; depth += 1) {
+    const code = (error as Error & { code?: unknown }).code
+    if (typeof code === 'string' && TRANSPORT_CODES.has(code)) return code
+    error = error.cause
+  }
+  return undefined
+}
 
 const RESPONSE_HEADERS = [
   'content-type',
@@ -47,6 +67,8 @@ type CallRow = {
 }
 
 export class AgentModelGatewayError extends Error {
+  readonly phase?: 'dispatch' | 'response-body'
+  readonly transportCode?: string
   constructor(
     readonly code:
       | 'already-dispatched'
@@ -56,10 +78,17 @@ export class AgentModelGatewayError extends Error {
       | 'policy'
       | 'response-too-large'
       | 'timeout',
-    message: string
+    message: string,
+    details?: { phase: 'dispatch' | 'response-body'; cause: unknown }
   ) {
-    super(message)
+    const safeCode = transportCode(details?.cause)
+    super(
+      `${message}${details ? ` (${details.phase}${safeCode ? `: ${safeCode}` : ''})` : ''}`,
+      details ? { cause: details.cause } : undefined
+    )
     this.name = 'AgentModelGatewayError'
+    this.phase = details?.phase
+    this.transportCode = safeCode
   }
 }
 
@@ -375,15 +404,36 @@ export class AgentModelGateway {
     timer?.unref?.()
     let response: Response
     try {
-      signal.throwIfAborted()
-      response = await this.#fetch(prepared.url, {
-        method: 'POST',
-        redirect: 'error',
-        headers: prepared.headers,
-        body: prepared.body,
-        signal: AbortSignal.any([signal, timeout.signal])
-      })
-    } catch {
+      const requestSignal = AbortSignal.any([signal, timeout.signal])
+      for (let attempt = 0; ; attempt += 1) {
+        requestSignal.throwIfAborted()
+        try {
+          response = await this.#fetch(prepared.url, {
+            method: 'POST',
+            redirect: 'error',
+            headers: prepared.headers,
+            body: prepared.body,
+            signal: requestSignal
+          })
+          break
+        } catch (error) {
+          if (
+            requestSignal.aborted || attempt >= 2 ||
+            !CONNECT_FAILURE_CODES.has(transportCode(error) ?? '')
+          ) {
+            throw error
+          }
+          let retryTimer: NodeJS.Timeout | undefined
+          try {
+            await raceWithAbort(new Promise<void>(resolve => {
+              retryTimer = setTimeout(resolve, attempt === 0 ? 250 : 1_000)
+            }), requestSignal)
+          } finally {
+            clearTimeout(retryTimer)
+          }
+        }
+      }
+    } catch (error) {
       clearTimeout(timer)
       const code = timeout.signal.aborted
         ? 'timeout'
@@ -393,7 +443,12 @@ export class AgentModelGateway {
       await this.#ledger.outcomeUnknown(callId, code)
       throw new AgentModelGatewayError(
         code,
-        'Provider dispatch outcome is unknown'
+        code === 'timeout'
+          ? 'Model provider request timed out'
+          : code === 'cancelled'
+            ? 'Model provider request was cancelled'
+            : 'Model provider request failed; response was not received',
+        { phase: 'dispatch', cause: error }
       )
     }
     let bytes: Uint8Array
@@ -422,7 +477,8 @@ export class AgentModelGateway {
               ? error.message
               : code === 'response-too-large'
                 ? (error as Error).message
-                : 'Provider response could not be read completely'
+                : 'Provider response could not be read completely',
+            { phase: 'response-body', cause: error }
           )
     }
     clearTimeout(timer)

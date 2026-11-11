@@ -1691,7 +1691,13 @@ describe('RuntimeAcpBackend', () => {
         })
       )
     )
-    expect(fixture.process.stops).toContain('identity-conflict')
+    expect(fixture.semanticPrompts?.append).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ error: {
+        name: 'AgentModelGatewayError', message: 'Provider dispatch outcome is unknown'
+      } })
+    }))
+    expect(fixture.process.stops).toContain('model-request-failed')
+    expect(fixture.process.stops).not.toContain('identity-conflict')
     await fixture.backend.dispose()
   })
 

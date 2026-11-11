@@ -1,5 +1,68 @@
 # 进度与证据
 
+## 2026-11-11 Provider failures retain their cause and bounded pre-connect retries
+
+Read-only inspection of the shared Linux Host found a task started at 15:57:11
+and marked `outcome-unknown` at 16:28:14 (UTC+8). Its first 95 model calls were
+delivered; call 96 failed after about 63 seconds with `outcome-unknown` and no
+delivery ACK. The deployed Agent maps that gateway error to `identity-conflict`
+cleanup and replaces it with `Runtime stopped before the prompt reached a
+terminal state`. There was no daemon restart or recorded connection close at
+that time. Another stored task completed after roughly 57 minutes with 72
+delivered calls. This is not evidence of a 30-minute task deadline. The original
+provider transport cause was not retained, so its exact failure remains unknown.
+
+Changes:
+
+- Agent gateway retries only explicit failures to establish the provider
+  connection (`ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `UND_ERR_CONNECT_TIMEOUT`),
+  at 250 ms and 1 second, at most three attempts total. Attempts share the
+  existing call identity, cancellation signal and configured total timeout.
+- A reset, socket failure, headers/body timeout or incomplete response is not
+  replayed. Final errors retain an in-memory cause and expose only the failure
+  phase and allowlisted transport code, without provider URLs, keys or content.
+- Uncertain model calls still interrupt the affected task and preserve its
+  progress. Cleanup now uses `model-request-failed` and persists the gateway
+  error instead of a generic Runtime stop or identity conflict. This does not
+  claim that an uncertain provider call can continue automatically.
+- Existing Agent diagnostics now record `runtime.model.failed` with the phase
+  and safe error code. No new state machine, RPC or database schema was added.
+  Local Runtime and desktop direct-model execution do not use this Agent gateway;
+  their retry behavior is unchanged.
+
+Validation:
+
+- Four focused assertions failed against the prior implementation: refused
+  connection retry, dispatch/body error details, and preserved task terminal.
+- Five related suites: **140 passed, 10 skipped**. Coverage includes retry
+  exhaustion, cancellation and configured timeout during backoff, no replay
+  after uncertain writes/body failures, diagnostic redaction, and a virtual
+  31-minute request with no configured deadline that remains cancellable.
+- Current-source `scripts/remote-recovery-host-probe.ts --provider-failure` on
+  the shared Linux Host used actual OpenCode. A local provider accepted the HTTP
+  request and closed the socket without a response: **one uncertain dispatch**,
+  specific model error delivered to Desktop, and the same conversation's next
+  explicit message completed. **Two messages, two task starts**; external model
+  requests in this fault test: **0**.
+- Default real-provider validation: **two gpt-6-astra / Responses requests, both
+  HTTP 200**. Actual OpenCode completed a task after relay interruption/progress
+  synchronization and then a follow-up message. **Two task starts, one progress
+  attach**; the original task was not replayed. Provider credentials were
+  decrypted only in the isolated desktop process and added by its local proxy.
+- `npm run typecheck`, changed-file ESLint and `git diff --check` passed.
+
+Host launch setup initially failed because the isolated bundle lacked dependencies
+and the expected Node layout; those attempts never reached the provider and are
+not counted as passing fault tests. Test-owned resources and the isolated
+credential profile were cleaned. No installed Agent or desktop was replaced.
+Full-repository tests and installed-app UI acceptance were not run in this round.
+
+Re-run the focused suites with:
+
+```text
+npx vitest run src/agent-daemon/agent-model-gateway.test.ts src/agent-daemon/runtime-acp-backend.test.ts src/agent-daemon/diagnostic-log.test.ts src/agent-daemon/model-bridge.test.ts src/agent-daemon/direct-linux-stdio-process-owner.test.ts
+```
+
 ## 2026-11-09 Agent-owned execution without unused ACP binary registration
 
 Reproduced `Remote Runtime binary channel could not be registered` on the shared

@@ -49,6 +49,7 @@ export type AgentDiagnosticEvent =
   | 'runtime.started'
   | 'runtime.start.failed'
   | 'runtime.exited'
+  | 'runtime.model.failed'
 
 export type AgentDiagnosticRecord = {
   formatVersion: 1
@@ -617,5 +618,6 @@ const DIAGNOSTIC_EVENTS = new Set<AgentDiagnosticEvent>([
   'runtime.starting',
   'runtime.started',
   'runtime.start.failed',
-  'runtime.exited'
+  'runtime.exited',
+  'runtime.model.failed'
 ])

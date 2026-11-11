@@ -7,6 +7,7 @@ import { REMOTE_MODEL_GATEWAY_LIMITS } from '../shared/remote-model-gateway-cont
 import {
   AgentModelCallLedger,
   AgentModelGateway,
+  AgentModelGatewayError,
   type ModelCallLedger
 } from './agent-model-gateway'
 
@@ -137,7 +138,7 @@ describe('AgentModelGateway', () => {
     await rejected
   })
 
-  it('keeps a slow provider request alive past 60 seconds and still cancels it', async () => {
+  it('keeps an unbounded provider request alive past 30 minutes and still cancels it', async () => {
     vi.useFakeTimers()
     let providerSignal: AbortSignal | undefined
     const { gateway, ledger } = setup(vi.fn<typeof fetch>(async (_url, init) => {
@@ -150,7 +151,7 @@ describe('AgentModelGateway', () => {
       const controller = new AbortController()
       const pending = gateway.dispatch({ ...context, profile: { ...profile, limits: {} } }, request, controller.signal)
       const rejected = expect(pending).rejects.toMatchObject({ code: 'cancelled' })
-      await vi.advanceTimersByTimeAsync(600_000)
+      await vi.advanceTimersByTimeAsync(31 * 60_000)
       expect(providerSignal?.aborted).toBe(false)
       controller.abort()
       await rejected
@@ -389,6 +390,59 @@ describe('AgentModelGateway', () => {
     ).rejects.toMatchObject({ code: 'outcome-unknown' })
     expect(fetcher).toHaveBeenCalledOnce()
     ledger.close()
+  })
+
+  it('retries a refused connection before dispatch, with one ledger claim', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('fetch failed', { cause: Object.assign(new Error(secret), { code: 'ECONNREFUSED' }) }))
+      .mockResolvedValueOnce(new Response('{}'))
+    const { gateway, ledger } = setup(fetcher)
+    try {
+      const pending = gateway.dispatch(context, request, new AbortController().signal)
+      void pending.catch(() => undefined)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await (await pending).acknowledgeDelivery()
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally { ledger.close(); vi.useRealTimers() }
+  })
+
+  it.each(['dispatch', 'response-body'] as const)('preserves safe %s failure details without replay or secrets', async phase => {
+    const failure = new TypeError(secret, { cause: Object.assign(new Error(secret), { code: 'ECONNRESET' }) })
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      if (phase === 'dispatch') throw failure
+      return new Response(new ReadableStream({ start(controller) { controller.error(failure) } }))
+    })
+    const { gateway, ledger } = setup(fetcher)
+    try {
+      const error = await gateway.dispatch(context, request, new AbortController().signal).catch(error => error)
+      expect(error).toBeInstanceOf(AgentModelGatewayError)
+      expect(error).toMatchObject({ code: 'outcome-unknown', phase, transportCode: 'ECONNRESET', cause: failure })
+      expect(error.message).toContain('ECONNRESET')
+      expect(error.message).not.toContain(secret)
+      expect(fetcher).toHaveBeenCalledOnce()
+    } finally { ledger.close() }
+  })
+
+  it.each(['exhausted', 'cancelled', 'timeout'] as const)('bounds connection retries when %s', async mode => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error(secret), { code: 'ECONNREFUSED' }) })
+    })
+    const { gateway, ledger } = setup(fetcher)
+    const controller = new AbortController()
+    try {
+      const pending = gateway.dispatch({ ...context, profile: { ...profile, limits: {
+        ...profile.limits, requestTimeoutMilliseconds: mode === 'timeout' ? 100 : 5_000
+      } } }, request, controller.signal)
+      const rejected = expect(pending).rejects.toMatchObject({ code: mode === 'exhausted' ? 'outcome-unknown' : mode })
+      await vi.advanceTimersByTimeAsync(0)
+      if (mode === 'cancelled') controller.abort()
+      await vi.advanceTimersByTimeAsync(10_000)
+      await rejected
+      expect(fetcher).toHaveBeenCalledTimes(mode === 'exhausted' ? 3 : 1)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { ledger.close(); vi.useRealTimers() }
   })
 
   it('rejects an oversized declared provider response before buffering it', async () => {
