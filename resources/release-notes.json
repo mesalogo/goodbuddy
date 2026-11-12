@@ -3,7 +3,7 @@
   "releases": [
     {
       "version": "0.17.5",
-      "releasedAt": "2026-11-10",
+      "releasedAt": "2026-11-11",
       "notes": {
         "zh-CN": {
           "highlights": [],
@@ -11,15 +11,18 @@
             "**画布连续阅读与清晰 PDF 显示**：画布笔记阅读和编辑时可切换分页与连续布局，点击连续页面即可切换当前页。PDF 放大及高分屏显示更清晰，视图切换不改动笔记内容或批注坐标。",
             "**远程语音转写**：语音设置可配置 OpenAI 兼容 ASR 服务、密钥和语言，并进行录音测试。流式结果默认关闭，开启后在完整录音上传后逐步预览文字，完成后填入原会话草稿而不自动发送。录音会发送到所配置的服务，这不是边说边识别；原有本地识别仍可使用。",
             "**导入 ShareServer 模型配置**：已注册设备可主动获取兼容 ShareServer 发布的模型配置，并逐项导入本机模型设置，支持网关地址和自定义地址。导入后仍需填写调用密钥，不改变默认模型、不覆盖重复条目的本地设置，也不自动同步更新；更新已有条目需先删除旧条目再导入。",
-            "**钉钉扫码接入（预览）**：连接页新增扫码创建机器人入口，授权完成后自动保存凭据并启用消息通道。仍需按页面提示获取并添加发送者 ID，手动填写凭据入口保留。真实手机授权及消息收发尚待完整验收。"
+            "**钉钉扫码接入（预览）**：连接页新增扫码创建机器人入口，授权完成后自动保存凭据并启用消息通道。仍需按页面提示获取并添加发送者 ID，手动填写凭据入口保留。真实手机授权及消息收发尚待完整验收。",
+            "**成员注册与服务器托管数字分身**：设备共享支持匿名设备或成员账号注册，并可配置数字分身的模型、指令、可用服务器知识及成员或群组授权。分身由兼容 ShareServer 托管，发布设备离线后仍可使用，并支持编辑、暂停和撤回；发布不会自动上传本地项目、记忆、文件或密钥。当前提供页面内的独立文字问答，不保存为多轮会话。",
+            "**读取图谱来源的完整上下文**：模型核对会话图谱来源时，默认读取当前完整消息，并可按需读取同一会话的前后消息。长内容支持分页，仍遵守项目权限和会话图谱开关。历史整理片段需明确选择，当前消息不可用时不会用历史片段代替。"
           ],
           "fixes": [
             "**改善笔记编辑与保存**：工具栏更紧凑，窄栏中的取消和保存按钮保持可见，画布颜色与粗细按当前工具或选区显示。修改带附件的记录时复用未变资源，减少重复传输和处理。保存成功后即可继续操作，自动分析使用已保存内容，分析失败不影响已完成的保存。",
             "**修复 Office 设备认证**：使用支持设备认证的 ShareServer 时，Office 上传、编辑和保存沿用已注册设备的凭据，修复缺少身份导致的 401。无需以管理员身份登录，切换服务器后已打开文档仍使用原连接。",
-            "**修复远端会话后续消息失败**：桌面运行实例被回收、Host 连接仍保留时，后续消息不再因重复注册旧通道而失败。继续使用原有任务同步和取消机制，不重复提交之前的任务。"
+            "**修复远端会话后续消息失败**：桌面运行实例被回收、Host 连接仍保留时，后续消息不再因重复注册旧通道而失败。继续使用原有任务同步和取消机制，不重复提交之前的任务。",
+            "**保留远端模型失败原因并限制重试**：远端模型请求失败时，保留具体错误，避免被笼统的运行停止提示覆盖。仅对确认尚未连接成功的网络错误进行最多两次重试，并遵守原有取消和总超时设置；响应中断或请求是否送达不明时不自动重试，避免重复调用。需更新 Host 上的 Agent 至 `0.15.14`。"
           ],
           "notices": [
-            "继续配套 Agent `0.15.13`，已使用此版本的 Host 无需重装。数据库 schema 和内置 Runtime 版本不变；Office 和模型配置导入需要兼容 ShareServer。"
+            "使用远端能力时，请同时更新 Host 上的 Agent 至 `0.15.14`。数据库 schema 和内置 Runtime 版本不变；Office、模型配置导入、成员注册和数字分身需要支持相应功能的兼容 ShareServer。"
           ]
         },
         "en-US": {
@@ -28,15 +31,18 @@
             "**Continuous canvas reading and sharper PDFs**: Switch between paged and continuous layouts when reading or editing canvas notes, and click a page to make it active. PDF display is sharper when zoomed or viewed on high-density screens; changing layouts preserves note content and annotation coordinates.",
             "**Remote speech transcription**: Configure an OpenAI-compatible ASR service, credentials, and language, then test it with a recording. Result streaming is off by default; when enabled, text appears progressively after the complete recording is uploaded, and the final result fills the original conversation draft without sending it. Audio is sent to the configured service, not transcribed live while speaking; local recognition remains available.",
             "**Import ShareServer model configurations**: Registered devices can fetch configurations published by a compatible ShareServer and import them individually, supporting gateway and custom addresses. Supply credentials in model settings afterward; imports do not change the default model, overwrite existing entries, or synchronize automatically, and updating an imported entry requires deleting it before importing again.",
-            "**DingTalk QR setup (Preview)**: The Connection page adds QR-based bot creation, automatically saving credentials and enabling the channel after authorization. Follow the instructions to obtain and add sender IDs; manual credential entry remains available. Real phone authorization and messaging still await complete acceptance testing."
+            "**DingTalk QR setup (Preview)**: The Connection page adds QR-based bot creation, automatically saving credentials and enabling the channel after authorization. Follow the instructions to obtain and add sender IDs; manual credential entry remains available. Real phone authorization and messaging still await complete acceptance testing.",
+            "**Member registration and server-hosted personas**: Device Sharing supports anonymous-device or member-account registration, with persona settings for models, instructions, available server knowledge, and member or group access. A compatible ShareServer hosts personas so they remain available while the publishing device is offline, with editing, pause, and withdrawal controls; publishing does not automatically upload local projects, memories, files, or credentials. The current interface provides standalone text questions and answers without saving a multi-turn conversation.",
+            "**Read complete context from graph sources**: When checking conversation graph sources, models now read the current complete message by default and can request surrounding messages from the same conversation. Long content supports pagination while preserving project permissions and conversation graph settings. Historical review excerpts require explicit selection and never substitute for an unavailable current message."
           ],
           "fixes": [
             "**Improve note editing and saving**: Compact toolbars keep Cancel and Save visible in narrow panes, with canvas color and width controls following the active tool or selection. Editing records with attachments reuses unchanged resources to reduce repeated transfer and processing. Continue working once saving succeeds; automatic analysis uses saved content, and analysis failures do not undo a successful save.",
             "**Fix Office device authentication**: With a ShareServer supporting device authentication, Office uploads, editing, and saves use registered-device credentials, fixing missing-identity 401 errors. Administrator login is not required, and documents already open retain their original connection when the server changes.",
-            "**Fix follow-up messages in remote conversations**: Follow-up messages no longer fail from re-registering an old channel after the desktop Runtime is recycled while its Host connection remains open. Existing task synchronization and cancellation remain in place without resubmitting earlier tasks."
+            "**Fix follow-up messages in remote conversations**: Follow-up messages no longer fail from re-registering an old channel after the desktop Runtime is recycled while its Host connection remains open. Existing task synchronization and cancellation remain in place without resubmitting earlier tasks.",
+            "**Preserve remote model errors and limit retries**: Remote model request failures retain their specific errors instead of being replaced by a generic runtime-stopped message. Only confirmed pre-connection network failures receive up to two retries within the existing cancellation and total timeout settings; interrupted responses and uncertain delivery are not automatically retried, avoiding duplicate calls. Update the Host’s Agent to `0.15.14`."
           ],
           "notices": [
-            "Continues to use Agent `0.15.13`; Hosts already using it need no reinstall. The database schema and bundled Runtime versions are unchanged. Office and model configuration imports require a compatible ShareServer."
+            "For remote execution, also update the Host’s Agent to `0.15.14`. The database schema and bundled Runtime versions are unchanged. Office, model configuration imports, member registration, and personas require a compatible ShareServer supporting the corresponding features."
           ]
         }
       }

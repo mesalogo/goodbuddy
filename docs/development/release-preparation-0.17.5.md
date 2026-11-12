@@ -1,6 +1,6 @@
-# Desktop 0.17.5 release preparation
+# Desktop 0.17.5 / Agent 0.15.14 release preparation
 
-Date: 2026-11-10.
+Approved release-note date: 2026-11-11.
 
 ## Scope and approval
 
@@ -17,7 +17,25 @@ Date: 2026-11-10.
 - The user then approved Desktop `0.17.5`, exact bilingual notes dated
   `2026-11-10`, DingTalk QR Preview wording, version/feature-list updates and
   candidate commit/push to both remotes. Six standard Desktop targets only;
-  LoongArch declined. Keep published Agent `0.15.13`, no new Agent release.
+  LoongArch declined. That initial approval kept Agent `0.15.13`; this decision
+  is superseded by the expanded scope below, not by a published release.
+- Expanded source range: `v0.17.4..bae5152360d26b30c63e3302e02c7280e35df6bd`.
+  After preparation commit `8cac9a2e`, three product commits add graph source
+  context (`121a7e17`), Agent provider-failure handling (`b66fc07a`) and member
+  registration/server-hosted personas (`bae51523`).
+- The user approved Desktop `0.17.5` plus Agent `0.15.14`, the exact additional
+  bilingual notes and replacement upgrade notice, and the date `2026-11-11`.
+  The original four feature and three fix items stay verbatim; published
+  release history is preserved. Agent notes are independently approved in
+  `resources/agent-release-notes/0.15.14.md`.
+- Retain six standard Desktop targets and no LoongArch. Agent has Linux x64,
+  Linux arm64 and Darwin arm64 production targets, with a separate non-Latest
+  release. Neither final candidate SHA nor either tag has been authorized.
+- GitHub main was verified at `bae51523`; origin SSH reads and the requested
+  push failed with connection closure. Last verified origin main is `8cac9a2e`,
+  not proof of its current ref. The user explicitly approved pushing the new
+  candidate to GitHub for CI first, then synchronizing origin after recovery.
+  Do not tag until both remote main refs match the approved final candidate.
 - CI-only validation remains requested: no local tests, typecheck, lint, build,
   packaging or packaged-app probes. JSON metadata/Git checks are not source
   test passes. Exact candidate main validators and production build must pass
@@ -46,16 +64,31 @@ Date: 2026-11-10.
 - Remote follow-up after Runtime eviction avoids an unused binary registration;
   Agent-owned execution uses existing task RPCs, while direct ACP keeps its
   binary transport. No prior task is replayed.
+- Graph source reads default to the current complete message. Optional before/
+  after counts select same-conversation messages, with shared body pagination.
+  Explicit snapshot mode retains historical excerpts; unavailable current
+  content never silently falls back. Existing scope and graph switches apply.
+- Device registration supports anonymous and member-account modes. Compatible
+  ShareServer owns persona configuration, model/knowledge/access selection,
+  editing, pause and withdrawal. Hosted execution works while the publisher
+  is offline; publication does not automatically upload local content or keys.
+  The current client offers standalone text Q&A, not persisted multi-turn chat.
+- Agent retries only confirmed pre-connection errors, at most twice (250 ms
+  and 1 s backoff), under the same call identity, cancellation and total
+  deadline. Uncertain delivery or interrupted responses are not retried.
+  Task termination retains the gateway error; diagnostic phase and allowlisted
+  transport codes exclude request content and credentials.
 
 ## Agent and data compatibility
 
-- Daemon source, Agent package tooling, protocol and Runtime locks have no
-  changes since `agent-v0.15.13`. The remote fix is in Desktop managed/protocol
-  channel composition; existing Agent task APIs already support it.
-- New shared schemas concern Desktop IPC/settings and optional note save DTOs.
-  Note storage remains Desktop-owned, including remote MCP callers; no separate
-  Agent save implementation is deployed. ASR and ShareServer calls run from
-  Desktop, not through the Agent. Hosts already on `0.15.13` need no reinstall.
+- The initial no-Agent-bump assessment was correct only through `9c464292`.
+  `b66fc07a` changes the deployed Agent model gateway, ACP backend, diagnostic
+  event selection and process stop reason. These fixes require a new compound
+  Agent package; the lock advances to `0.15.14`. Its production catalog derives
+  minimum Desktop `0.17.5` from package.json. Upgrade Desktop, then the Host.
+- There is no new Agent RPC or protocol version. Note storage remains
+  Desktop-owned, including remote MCP callers; ASR and ShareServer requests
+  run from Desktop. Shared graph-tool definitions accompany the source update.
 - Schema 65 and pins remain unchanged: OpenCode `1.19.3`, Continue `1.5.47`,
   DSH `0.2.2-rc.1` (upstream RC), Cordis `4.1.0` and Node `24.19.0`.
 
@@ -72,7 +105,8 @@ Date: 2026-11-10.
   later 123-case group; four real Qwen3 ASR requests, normal and streaming, using
   file-backed Chromium audio. No physical microphone/macOS/Linux acceptance;
   the interrupted full run and its failures remain documented.
-- [Device sharing](../features/device-sharing/progress.md): 112 focused tests,
+- Device sharing at `752309b8` (historical `docs/features/device-sharing/progress.md`
+  in Git, replaced by the persona documentation in `bae51523`): 112 focused tests,
   real authenticated Electron import/persistence, two real provider requests
   using imported fields, not full chat Runtime acceptance. Full typecheck was
   blocked in that environment and the memory-exhausted full run did not finish.
@@ -86,7 +120,45 @@ Date: 2026-11-10.
   tests, current-source Linux OpenCode eviction/fault comparisons, and two real
   provider responses. Earlier full run had 15 failures outside remote modules;
   current candidate CI must establish its own result.
+- [Provider failures](../features/unified-execution/progress.md), 2026-11-11:
+  author reports 140 focused passes and 10 skips, current-source Linux/OpenCode
+  accepted-then-socket-close fault with one uncertain dispatch and a successful
+  explicit follow-up, plus two real provider responses in disconnect/recovery
+  validation. No replay was observed. Typecheck and changed-file lint passed;
+  no full-suite or installed-UI acceptance was claimed. The historical incident
+  does not establish a 30-minute task limit or identify its original transport
+  cause. These are author's development results, not release-assistant reruns.
+- [Personas](../features/device-sharing/progress.md), 2026-11-11: author reports
+  19 tests in five files, late-response/cancellation checks, and real Electron
+  through Preload/Main to ShareServer publish/answer/recreated-client/revoke
+  scenarios. Three model calls total include two prior import calls and one
+  persona answer. Light/dark and 480px checks passed. Full typecheck in that
+  environment was blocked by dependencies/types; not complete platform/package
+  acceptance. Historical LAN evidence is not a newly run VPN Host check.
+- [Graph context](../features/conversation-supervision/story-graph-source-context.md)
+  records defaults, pagination, same-conversation context and unavailable-source
+  boundaries; reader and Agent integration regression coverage changed with it.
 - Release preparation adds no model/ASR calls and does not repeat local checks.
   Both feature lists are aligned with shipped scope, Preview status, compatible
   server requirements and remaining acceptance. Published notes are preserved.
   Candidate CI, six-target native release and public verification remain pending.
+
+## Candidate CI history and remaining gates
+
+- Initial metadata candidate `8cac9a2ec3af7622e99d43e55f99022449f7109f`:
+  Agent `42753734611` and website `42753734321` succeeded. Desktop `42753734330`
+  attempt 1 reached the 30-minute job limit after 7,030 passing and 76 skipped
+  tests; typecheck completed, lint was interrupted, and production build did not
+  run. Full unchanged attempt 2 succeeded. No checks or timeout were weakened.
+- Expanded source `bae51523`: Desktop `43019441052` and Agent `43019441043`
+  reported success in run metadata. This is not evidence for the subsequent
+  version-lock/release-note candidate, nor a claim that every job log was reviewed.
+- The revised metadata candidate needs its own main-branch validators and
+  production build, plus Agent native branch CI. No manual package dispatch.
+  Record the resulting exact SHA and runs before requesting final tag approval.
+- origin synchronization is blocked. After recovery, inspect remote movement
+  rather than overwriting it; verify both main refs and unused local/remote
+  `v0.17.5` and `agent-v0.15.14` tags immediately before any tagging.
+- Production tag workflows and public artifact/catalog/index verification remain
+  separate gates. No local tests, lint, typecheck, production build, package
+  launch, installer download or new model/ASR call is part of this preparation.

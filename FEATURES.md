@@ -203,6 +203,14 @@ records are listed separately and do not introduce another feature status.
   endpoint configurations. Credentials are supplied in model settings afterward.
   Imports preserve the default model and existing entries; there is no automatic
   update, and replacing an imported configuration requires deleting it first.
+- [x] **Member registration and server-hosted personas**: Register anonymously
+  or with a member account, then configure a persona's model, instructions,
+  available server knowledge and member/group access on a compatible ShareServer.
+  Edit, pause or withdraw published personas; server-hosted execution remains
+  available while the publishing device is offline. Publishing does not
+  automatically upload local projects, memories, files or credentials.
+  Answers are standalone text interactions on the current page, not saved
+  multi-turn conversations. See [scope and evidence](./docs/features/device-sharing/README.md).
 - [ ] **Privately deployable application marketplace** (planned): Extends
   application management with an organization-owned catalog and application
   distribution. Current management covers built-in apps only, not marketplace
@@ -405,7 +413,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.13`, paired with the current Desktop release candidate `0.17.5`; formal
+  `0.15.14`, paired with the current Desktop release candidate `0.17.5`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -416,6 +424,14 @@ records are listed separately and do not introduce another feature status.
   `0.11.23` requires Desktop `0.12.11` or later.
   Agent `0.11.24` requires Desktop `0.13.0` and fixes native question routing
   and sending another message after cancelling a pending question.
+- [x] **Remote model failure details and bounded connection retries**:
+  Agent `0.15.14` preserves the gateway failure instead of replacing it with a
+  generic Runtime-stopped error. Confirmed pre-connection network failures
+  receive at most two retries under the same cancellation and total deadline.
+  Interrupted responses and uncertain delivery are not replayed. Safe diagnostics
+  retain the failure phase and allowlisted transport codes, not request bodies
+  or credentials. Requires Desktop `0.17.5`; see
+  [development evidence](./docs/features/unified-execution/progress.md).
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
   authentication, and system probes succeed, GoodBuddy saves the Host and
   read-only probes the shared Agent/Runtime. Saving a Host or opening a project
@@ -987,6 +1003,11 @@ records are listed separately and do not introduce another feature status.
   and tool guidance support model-selected lookups without automatic full-graph
   context injection; experiences remain advice, not instructions. See the
   [design and validation](./docs/features/conversation-supervision/story-graph-mcp-design.md).
+  Desktop `0.17.5` defaults source reads to the current complete message and can
+  page through surrounding messages in the same conversation. Historical
+  excerpts require explicit selection and never replace unavailable current
+  content. Permissions and graph settings still apply; see
+  [source context](./docs/features/conversation-supervision/story-graph-source-context.md).
 - [ ] **Temporal memory and fact-conflict detection** (planned): Adds validity
   periods, current/expired/conflicting fact detection, fact checking, and
   evidence tracing to memory and the knowledge graph.
@@ -1109,7 +1130,7 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.17.5`, paired with published Agent `0.15.13`, with
+- The current Desktop candidate is `0.17.5`, paired with Agent candidate `0.15.14`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
   `0.2.2-rc.1` (upstream RC). Publication status follows the independent
   Desktop and Agent release channels.
@@ -1117,10 +1138,15 @@ records are listed separately and do not introduce another feature status.
   transcription, explicit ShareServer model imports and preview DingTalk QR
   setup. It improves note editing/media saves, authenticates Office through the
   registered device, and fixes remote follow-up after Desktop Runtime eviction.
-  Agent `0.15.13`, schema 65 and Runtime pins are unchanged. Existing development
+  It also adds member registration, server-hosted personas and complete graph
+  source context. Agent `0.15.14` preserves remote model errors and retries only
+  confirmed pre-connection failures; it requires Desktop `0.17.5`.
+  Schema 65 and Runtime pins are unchanged. Existing development
   evidence does not replace exact-candidate CI or close the phone authorization,
   physical microphone and installed-package gaps. Six Desktop targets only,
-  no LoongArch or new Agent release. See
+  no LoongArch; Agent has three separate native targets and remains non-Latest.
+  The user approved GitHub-first candidate CI while origin SSH is unavailable;
+  dual-remote synchronization and final SHA/tag approval remain required. See
   [release preparation](./docs/development/release-preparation-0.17.5.md).
 - Desktop `0.17.4` and Agent `0.15.13` repair remote task progress synchronization
   without reopening the old execution channel or replaying the task. Hosts need
