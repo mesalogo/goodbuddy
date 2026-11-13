@@ -26,7 +26,7 @@ UI 细节归 [ui-design.md](./ui-design.md)，主数据迁移归 [data-migration
 | [CapabilityService](../../../src/main/capabilities/capability-service.ts) | `getResolvedMcpServers` 按 enabled、assignments 取自定义 MCP；`getEnabledBuiltinMcpServerIds` 处理内置服务 | 服务启用及 Runtime 分配是现有接入依据 |
 | [capability-contracts](../../../src/shared/capability-contracts.ts) | 内置服务、Skills、自定义 MCP 有开关或分配合同 | 不等价于每个原生工具都有设置 |
 | [McpSettingsSection](../../../src/renderer/src/McpSettingsSection.tsx) | Web 有开关；filesystem/programming 分组主要展示工具说明 | 展示清单不能算原生逐工具控制 |
-| [CapabilitiesAndToolsSettingsSection](../../../src/renderer/src/CapabilitiesAndToolsSettingsSection.tsx) | tools 页签进入工具环境配置 | 环境选择不构成工具授权开关 |
+| [ToolEnvironmentSettingsSection](../../../src/renderer/src/ToolEnvironmentSettingsSection.tsx) | 设置中心“工具执行环境”分类配置工具环境 | 环境选择不构成工具授权开关 |
 | [builtin-mcp-servers](../../../src/shared/builtin-mcp-servers.ts) | knowledge、notes、config、browser、Obsidian、Story Graph 声明支持的 Runtime | 必须保留真实支持范围，不能统一标成可用 |
 
 原生工具没有统一逐项设置映射，这是当前设置粒度。此次沿用 Runtime 正常能力，不新增逐工具开关，也不以其作为移除模式的前置条件。

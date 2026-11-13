@@ -40,7 +40,13 @@ export const app = {
     menuLabel: '应用',
     alwaysShown: '始终显示', optional: '可选',
     manage: '管理应用',
-    title: '应用中心', description: '打开内置应用，管理启用和常驻菜单，配置飞书、企业微信、钉钉、微信和 Telegram 等平台应用。',
+    title: '应用中心', description: '管理内置应用、连接器、Skills 和 MCP。',
+    tabs: { ariaLabel: '应用中心分类', builtin: '内置应用', connectors: '连接器', skills: 'Skills', mcp: 'MCP' },
+    tabDescriptions: {
+      skills: '导入、启用 Skills，并把它们分配给各个 Runtime。',
+      mcp: '管理内置 MCP、直连模型工具、自定义 MCP Server 和电脑控制能力。',
+    },
+    searchConnectors: '搜索连接器', localConnectorGroup: '本机应用',
     localInference: '本机推理监控', settings: '应用设置', enable: '启用应用', pin: '常驻左侧菜单',
     enableShort: '启用', pinShort: '常驻菜单',
     enableNamed: '启用{{name}}', pinNamed: '{{name}}常驻左侧菜单', openNamed: '打开{{name}}',
@@ -67,7 +73,8 @@ export const app = {
       wecom: '通过企业微信智能机器人收发消息，交给通道项目处理。',
       dingtalk: '通过钉钉应用机器人收发消息，交给通道项目处理。',
       telegram: '通过 Telegram Bot 收发私聊消息，交给通道项目处理。',
-      feishu: '通过飞书应用机器人收发消息，并在对话中读写飞书文档、知识库、云空间和多维表格。'
+      feishu: '通过飞书应用机器人收发消息，并在对话中读写飞书文档、知识库、云空间和多维表格。',
+      obsidian: '读取、搜索和管理本机 Obsidian 仓库中的笔记。'
     }
   },
   remoteHosts: {

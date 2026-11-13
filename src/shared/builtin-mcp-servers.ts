@@ -112,3 +112,9 @@ export const builtinMcpServers = [
     computerCapabilityId: 'host-browser-control'
   }
 ] as const satisfies readonly BuiltinMcpServerSummary[]
+
+/**
+ * Built-in servers that connect a local app. The Application Center lists them
+ * under Connectors instead of the MCP tab; they remain built-in MCP servers.
+ */
+export const connectorBuiltinMcpServerIds: readonly BuiltinMcpServerId[] = ['obsidian']

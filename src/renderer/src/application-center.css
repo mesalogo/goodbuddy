@@ -3,6 +3,10 @@
   height: auto;
   max-height: calc(100vh - 2 * var(--space-4));
 }
+/* Skills and MCP are long, editable lists: keep a stable frame while switching. */
+.settings-backdrop .settings-panel.application-center.application-center--capabilities {
+  height: min(900px, calc(100vh - 2 * var(--space-4)));
+}
 /* Application settings use the same frame as the system settings dialog. */
 .application-center__detail-content {
   gap: var(--space-4);
@@ -46,6 +50,53 @@
   flex-direction: column;
   gap: var(--space-0);
   font-size: var(--font-body);
+}
+/* Category tabs sit between the title and the scrolling body; their divider
+   replaces the header's, so title, tabs and content read as one header block.
+   This file loads before styles.css, so these selectors must out-rank the generic
+   `.settings-panel` rules; otherwise the tab row falls into the 1fr row and collapses. */
+.settings-panel.application-center--tabbed {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.settings-panel.application-center--tabbed > .settings-panel__header {
+  padding-bottom: var(--space-2);
+  border-bottom: 0;
+}
+.application-center__tabs {
+  position: sticky;
+  top: 0;
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  scrollbar-width: none;
+}
+.application-center__tabs > .page-tabs {
+  min-width: max-content;
+  overflow: visible;
+}
+@media (max-width: 720px) {
+  .application-center__tabs {
+    padding: 0 var(--space-4);
+  }
+}
+.application-center__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  min-width: 0;
+}
+.application-center__capability-panel {
+  gap: var(--space-4);
+}
+.application-center__panel[hidden] {
+  display: none;
+}
+.application-center__panel-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
 }
 .application-center__search {
   position: relative;

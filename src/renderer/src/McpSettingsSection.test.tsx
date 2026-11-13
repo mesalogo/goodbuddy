@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, expect, it, vi } from 'vitest'
 import { McpSettingsSection } from './McpSettingsSection'
 import i18n from './i18n'
+import { connectorBuiltinMcpServerIds } from '../../shared/builtin-mcp-servers'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -18,7 +19,7 @@ it('defaults Obsidian off and tests draft scope without saving or enabling it', 
     getSnapshot, updateObsidianSettings, testObsidianConnection,
     selectObsidianVault, setBuiltinMcpServerEnabled
   } })
-  render(<McpSettingsSection onOpenImageModelSettings={vi.fn()} />)
+  render(<McpSettingsSection connectorServerIds={connectorBuiltinMcpServerIds} onOpenImageModelSettings={vi.fn()} />)
   const testButton = screen.getByRole('button', { name: i18n.t('integrations:mcp.obsidian.test') })
   await waitFor(() => expect(testButton).toBeEnabled())
   expect(screen.getByRole('switch', { name: i18n.t('integrations:mcp.builtin.enableAriaLabel', { name: 'Obsidian' }) })).not.toBeChecked()
@@ -60,7 +61,7 @@ it.each(['loaded', 'saved'] as const)('keeps a %s specified vault selected when 
     getSnapshot: vi.fn().mockResolvedValue(snapshot),
     updateObsidianSettings, testObsidianConnection
   } })
-  render(<McpSettingsSection onOpenImageModelSettings={vi.fn()} />)
+  render(<McpSettingsSection connectorServerIds={connectorBuiltinMcpServerIds} onOpenImageModelSettings={vi.fn()} />)
   const input = await screen.findByRole('textbox', { name: i18n.t('integrations:mcp.obsidian.path') })
   const scope = screen.getByRole('combobox', { name: i18n.t('integrations:mcp.obsidian.scope') })
   const saveButton = screen.getByRole('button', { name: i18n.t('integrations:mcp.editor.save') })
@@ -110,7 +111,7 @@ it('clears Obsidian connection results when changing scope', async () => {
     getSnapshot: vi.fn().mockResolvedValue({ mcpServers: [], skills: [], obsidian: { vaultPath: '/notes/work' } }),
     testObsidianConnection
   } })
-  render(<McpSettingsSection onOpenImageModelSettings={vi.fn()} />)
+  render(<McpSettingsSection connectorServerIds={connectorBuiltinMcpServerIds} onOpenImageModelSettings={vi.fn()} />)
   const testButton = screen.getByRole('button', { name: i18n.t('integrations:mcp.obsidian.test') })
   await waitFor(() => expect(testButton).toBeEnabled())
   fireEvent.click(testButton)
@@ -130,7 +131,7 @@ it('preserves the Obsidian draft after failures and folder-picker cancellation',
     getSnapshot: vi.fn().mockResolvedValue({ mcpServers: [], skills: [], obsidian: { vaultPath: '/notes/original' } }),
     selectObsidianVault, updateObsidianSettings
   } })
-  render(<McpSettingsSection onOpenImageModelSettings={vi.fn()} />)
+  render(<McpSettingsSection connectorServerIds={connectorBuiltinMcpServerIds} onOpenImageModelSettings={vi.fn()} />)
   const input = await screen.findByRole('textbox', { name: i18n.t('integrations:mcp.obsidian.path') })
   fireEvent.change(input, { target: { value: '/notes/draft' } })
   const selectButton = screen.getByRole('button', { name: i18n.t('integrations:mcp.obsidian.select') })
@@ -146,6 +147,23 @@ it('preserves the Obsidian draft after failures and folder-picker cancellation',
     expect(input).toHaveValue('/notes/draft')
     expect(selectButton).toBeEnabled()
   })
+})
+
+it('lists Obsidian as a connector instead of a built-in MCP card', async () => {
+  const getSnapshot = vi.fn().mockResolvedValue({ mcpServers: [], skills: [], obsidian: { vaultPath: '' } })
+  vi.stubGlobal('goodbuddy', { capabilities: { getSnapshot } })
+  const obsidianSwitch = { name: i18n.t('integrations:mcp.builtin.enableAriaLabel', { name: 'Obsidian' }) }
+  const { unmount } = render(<McpSettingsSection onOpenImageModelSettings={vi.fn()} />)
+  await waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce())
+  expect(screen.queryByRole('switch', obsidianSwitch)).not.toBeInTheDocument()
+  expect(screen.getByRole('switch', { name: i18n.t('integrations:mcp.builtin.enableAriaLabel', { name: '知识库' }) })).toBeInTheDocument()
+  unmount()
+
+  render(<McpSettingsSection connectorServerIds={connectorBuiltinMcpServerIds} onOpenImageModelSettings={vi.fn()} />)
+  expect(screen.getByRole('switch', obsidianSwitch)).toBeInTheDocument()
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+  expect(screen.queryByRole('switch', { name: i18n.t('integrations:mcp.builtin.enableAriaLabel', { name: '知识库' }) })).not.toBeInTheDocument()
+  expect(screen.queryByText(i18n.t('integrations:conversationImages.title'))).not.toBeInTheDocument()
 })
 
 it('lists the image generation and save tools on the managed image card', async () => {

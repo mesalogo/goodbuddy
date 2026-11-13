@@ -43,7 +43,13 @@ export const app = {
     menuLabel: 'Apps',
     alwaysShown: 'Always shown', optional: 'Optional',
     manage: 'Manage Apps',
-    title: 'Application Center', description: 'Open built-in applications, turn them on or off and choose which appear in the sidebar, and configure platform apps such as Feishu, WeCom, DingTalk, WeChat, and Telegram.',
+    title: 'Application Center', description: 'Manage built-in apps, connectors, Skills, and MCP.',
+    tabs: { ariaLabel: 'Application Center categories', builtin: 'Built-in apps', connectors: 'Connectors', skills: 'Skills', mcp: 'MCP' },
+    tabDescriptions: {
+      skills: 'Import and enable Skills, and assign them to each Runtime.',
+      mcp: 'Manage built-in MCP, direct-model tools, custom MCP servers, and computer control.',
+    },
+    searchConnectors: 'Search connectors', localConnectorGroup: 'Local apps',
     localInference: 'Local Inference Monitor', settings: 'Application settings', enable: 'Enable application', pin: 'Pin to sidebar',
     enableShort: 'On', pinShort: 'In menu',
     enableNamed: 'Enable {{name}}', pinNamed: 'Show {{name}} in the sidebar', openNamed: 'Open {{name}}',
@@ -70,7 +76,8 @@ export const app = {
       wecom: 'Send and receive messages through a WeCom smart bot, handled by its channel project.',
       dingtalk: 'Send and receive messages through a DingTalk app bot, handled by its channel project.',
       telegram: 'Send and receive private messages through a Telegram bot, handled by its channel project.',
-      feishu: 'Send and receive messages through a Feishu app bot, and read and write Feishu docs, wikis, drive, and Bitable in conversations.'
+      feishu: 'Send and receive messages through a Feishu app bot, and read and write Feishu docs, wikis, drive, and Bitable in conversations.',
+      obsidian: 'Read, search, and manage notes in local Obsidian vaults.'
     }
   },
   remoteHosts: {

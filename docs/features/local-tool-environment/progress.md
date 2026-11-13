@@ -12,8 +12,8 @@
 
 ## 当前结论
 
-本机工具执行环境的生产链路已经进入源码。“能力与工具”现在显示 `Skills`、`MCP`、
-`工具执行环境` 三个真实 Tab；Main 统一解析托管或自定义 Node/Python，并把不可变 PATH
+本机工具执行环境的生产链路已经进入源码。工具执行环境是设置中心的独立分类；Skills 和
+MCP 自 2026-11-13 起在应用中心对应 Tab 中管理（原“能力与工具”分类已删除）。Main 统一解析托管或自定义 Node/Python，并把不可变 PATH
 快照应用到新启动的本机 Runtime 与 stdio MCP。Windows x64 已完成真实托管 Node 和原生
 地址托管 Python 安装验证。
 
@@ -183,6 +183,16 @@ git diff --check
 
 - 完成“能力与工具”一级菜单及 Skills/MCP Tab，并修复可滚动 Flex 布局将页签压缩为零
   高度的问题；加入 `flex: 0 0 auto` 回归约束。
+
+### 2026-11-13 入口迁移
+
+- 删除设置中心“能力与工具”分类及 `CapabilitiesAndToolsSettingsSection`；Skills 和 MCP
+  改为应用中心的 `skills`、`mcp` Tab，Obsidian 内置 MCP 改在“连接器” Tab 管理，工具执行
+  环境保留为独立设置分类。原 `.capabilities-settings__tabs` 的 `flex: 0 0 auto` 约束改由
+  `.application-center__tabs` 承担并有回归测试。
+- `npm run typecheck` 通过；`ApplicationCenter`、`SettingsPanel`、`McpSettingsSection`、
+  `SkillsSettingsSection`、`WorkspacePrimitives`、`App`、`ChannelApplicationSettings`、
+  `ipc` 及 `src/shared` 定向测试通过。尚未在真实 Electron App 中目视验收。
 
 ## 进度维护要求
 

@@ -15,7 +15,10 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
+import {
+  builtinMcpServers,
+  connectorBuiltinMcpServerIds
+} from '../../shared/builtin-mcp-servers'
 import {
   builtinModelToolGroups,
   builtinModelTools
@@ -99,11 +102,23 @@ function editorFromServer(server: McpServerSummary): McpEditor {
 
 export function McpSettingsSection({
   onOpenImageModelSettings,
-  magicNotesEnabled = false
+  magicNotesEnabled = false,
+  connectorServerIds
 }: {
   onOpenImageModelSettings: () => void
   magicNotesEnabled?: boolean
+  /**
+   * Connector mode: render only these built-in servers, without MCP tabs. Otherwise
+   * connector servers are left out, since the connectors tab already manages them.
+   */
+  connectorServerIds?: readonly BuiltinMcpServerId[]
 }): React.JSX.Element {
+  const connectorMode = connectorServerIds !== undefined
+  const visibleBuiltinServers = builtinMcpServers.filter((server) =>
+    connectorMode
+      ? connectorServerIds.includes(server.id)
+      : !connectorBuiltinMcpServerIds.includes(server.id)
+  )
   const { t } = useTranslation('integrations')
   const tRef = useRef(t)
   useEffect(() => {
@@ -431,8 +446,13 @@ export function McpSettingsSection({
     tools: ['web_search', 'web_fetch'] as const
   }
 
+  const currentTab: McpSettingsTab = connectorMode ? 'builtin' : activeTab
+
   return (
     <>
+      {connectorMode ? (
+        error && <p className="settings-warning" role="alert">{error}</p>
+      ) : (
       <div className="mcp-settings__tabs">
         <PageTabs
           ariaLabel={t('mcp.tabs.ariaLabel')}
@@ -467,14 +487,15 @@ export function McpSettingsSection({
           variant="segmented"
         />
       </div>
+      )}
       <section
-        aria-labelledby={`mcp-settings-tab-${activeTab}`}
-        className="settings-section mcp-settings__panel"
-        id={`mcp-settings-panel-${activeTab}`}
-        role="tabpanel"
+        aria-labelledby={connectorMode ? undefined : `mcp-settings-tab-${activeTab}`}
+        className={connectorMode ? 'mcp-settings__panel mcp-settings__panel--connector' : 'settings-section mcp-settings__panel'}
+        id={connectorMode ? undefined : `mcp-settings-panel-${activeTab}`}
+        role={connectorMode ? undefined : 'tabpanel'}
       >
 
-      {activeTab === 'custom' && (
+      {currentTab === 'custom' && (
         <>
           <div className="settings-content-actions">
             <button
@@ -495,7 +516,7 @@ export function McpSettingsSection({
           <p className="settings-notice">{t('mcp.customNotice')}</p>
         </>
       )}
-      {activeTab === 'computer' && (
+      {currentTab === 'computer' && (
         <section
         aria-labelledby="computer-capabilities-heading"
         className="mcp-tool-section"
@@ -595,11 +616,12 @@ export function McpSettingsSection({
       </section>
       )}
 
-      {activeTab === 'builtin' && (
+      {currentTab === 'builtin' && (
       <section
-        aria-labelledby="builtin-mcp-heading"
+        aria-labelledby={connectorMode ? undefined : 'builtin-mcp-heading'}
         className="mcp-tool-section"
       >
+        {!connectorMode && (
         <div className="mcp-subsection-heading">
           <div>
             <Database size={15} />
@@ -609,11 +631,13 @@ export function McpSettingsSection({
           </div>
           <small>
             {t('mcp.profiles.count', {
-              count: builtinMcpServers.length + 1
+              count: visibleBuiltinServers.length + 1
             })}
           </small>
         </div>
+        )}
         <div className="mcp-server-list">
+          {!connectorMode && (
           <article
             className="capability-card builtin-mcp-card"
             aria-label={t('conversationImages.title')}
@@ -711,7 +735,8 @@ export function McpSettingsSection({
               </div>
             )}
           </article>
-          {builtinMcpServers.map((server) => {
+          )}
+          {visibleBuiltinServers.map((server) => {
             const expansionId = `builtin:${server.id}`
             const expanded = expandedItemIds.has(expansionId)
             const panelId = `mcp-server-tools-${server.id}`
@@ -1029,7 +1054,7 @@ export function McpSettingsSection({
       </section>
       )}
 
-      {activeTab === 'model-tools' && (
+      {currentTab === 'model-tools' && (
       <div className="mcp-tool-section">
         <div className="mcp-subsection-heading">
           <div>
@@ -1500,7 +1525,7 @@ export function McpSettingsSection({
           document.body
         )}
 
-      {activeTab === 'custom' && (
+      {currentTab === 'custom' && (
         <>
         <div className="mcp-subsection-heading">
         <div>

@@ -310,6 +310,7 @@ describe('Application Center', () => {
     const onOpenChannel = vi.fn()
     const channelProject = { id: 'p1', kind: 'channel', channel: 'weixin' } as never
     render(<ApplicationCenter {...handlers} platform={{ projects: [channelProject], onOpenChannel, onUpdateProject: vi.fn() }} />)
+    fireEvent.click(screen.getByRole('tab', { name: '连接器' }))
     const group = await screen.findByRole('region', { name: '平台应用' })
     const weixin = (await within(group).findByText('微信 ClawBot', { exact: true })).closest('article')!
     expect(await within(weixin).findByText(/已连接/u)).toBeInTheDocument()
@@ -367,6 +368,7 @@ describe('Application Center', () => {
       },
     })
     render(<ApplicationCenter {...props()} platform={{ projects: [], onOpenChannel: vi.fn(), onUpdateProject: vi.fn() }} />)
+    fireEvent.click(screen.getByRole('tab', { name: '连接器' }))
     const toggle = await screen.findByRole('switch', { name: '启用钉钉' })
     expect(toggle).toBeChecked()
     fireEvent.click(toggle)
@@ -392,6 +394,91 @@ describe('Application Center', () => {
     render(<ApplicationCenter {...props()} platform={{ projects: [], initialChannel: 'wecom', onOpenChannel: vi.fn(), onUpdateProject: vi.fn() }} />)
     expect(screen.getByRole('dialog', { name: '企业微信' })).toBeInTheDocument()
     expect(await screen.findByText('正在读取消息通道设置…')).toBeInTheDocument()
+  })
+
+  it('separates built-in apps, connectors, Skills, and MCP into tabs', async () => {
+    const getSnapshot = vi.fn(async () => ({
+      skills: [{
+        id: 'document-writing', name: '文档写作', description: '起草专业办公文档', version: '1.0.0', tags: [],
+        source: 'builtin', digest: 'a'.repeat(64), enabled: true, assignments: ['model'],
+      }],
+      builtinMcpServers: [], mcpServers: [], obsidian: { vaultPath: '' },
+      webSearch: { provider: 'exa', enabled: true, tools: ['web_search', 'web_fetch'] },
+      computerCapabilities: [], browserProfiles: { profiles: [], defaultProfileId: null },
+    }))
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        capabilities: { getSnapshot },
+        channels: {
+          getSnapshot: vi.fn(() => new Promise(() => undefined)),
+          onStatusChanged: vi.fn(() => () => undefined),
+          getWeixinBinding: vi.fn(async () => ({ status: 'stopped' })),
+          onWeixinBindingChanged: vi.fn(() => () => undefined),
+        },
+        settings: { getRuntime: vi.fn(() => new Promise(() => undefined)) },
+      },
+    })
+    render(
+      <ApplicationCenter
+        {...props()}
+        platform={{ projects: [], onOpenChannel: vi.fn(), onUpdateProject: vi.fn() }}
+        capabilities={{ magicNotesEnabled: true, onOpenImageModelSettings: vi.fn() }}
+      />,
+    )
+    const tabs = screen.getByRole('tablist', { name: '应用中心分类' })
+    expect(within(tabs).getAllByRole('tab').map((tab) => tab.textContent))
+      .toEqual(['内置应用', '连接器', 'Skills', 'MCP'])
+    expect(screen.getByRole('tabpanel', { name: '内置应用' })).toContainElement(card('魔法笔记'))
+    expect(screen.queryByRole('region', { name: '平台应用' })).not.toBeInTheDocument()
+    expect(getSnapshot).not.toHaveBeenCalled()
+
+    fireEvent.click(within(tabs).getByRole('tab', { name: '连接器' }))
+    expect(screen.getByRole('searchbox', { name: '搜索连接器' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: '平台应用' })).toBeInTheDocument()
+    const local = screen.getByRole('region', { name: '本机应用' })
+    expect(await within(local).findByRole('switch', { name: '启用 Obsidian 内置 MCP' })).toBeInTheDocument()
+    expect(screen.queryByText('魔法笔记', { selector: 'strong' })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '飞书' } })
+    expect(screen.queryByRole('region', { name: '本机应用' })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+
+    fireEvent.click(within(tabs).getByRole('tab', { name: 'Skills' }))
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+    expect(await screen.findByText('文档写作')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toHaveClass('application-center--capabilities')
+
+    fireEvent.click(within(tabs).getByRole('tab', { name: 'MCP' }))
+    expect(await screen.findByRole('tablist', { name: 'MCP 设置分类' })).toBeInTheDocument()
+    expect(within(screen.getByRole('tabpanel', { name: 'MCP' })).queryByText('Obsidian')).not.toBeInTheDocument()
+    // Revisiting a capability tab keeps it mounted instead of reloading.
+    expect(screen.getByText('文档写作')).not.toBeVisible()
+    fireEvent.click(within(tabs).getByRole('tab', { name: 'Skills' }))
+    expect(screen.getByText('文档写作')).toBeVisible()
+  })
+
+  it('opens on the connectors tab for a requested channel and on a requested tab', () => {
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        capabilities: { getSnapshot: vi.fn(() => new Promise(() => undefined)) },
+        channels: {
+          getSnapshot: vi.fn(() => new Promise(() => undefined)),
+          onStatusChanged: vi.fn(() => () => undefined),
+          getWeixinBinding: vi.fn(async () => ({ status: 'stopped' })),
+          onWeixinBindingChanged: vi.fn(() => () => undefined),
+        },
+        settings: { getRuntime: vi.fn(() => new Promise(() => undefined)) },
+      },
+    })
+    const platform = { projects: [], onOpenChannel: vi.fn(), onUpdateProject: vi.fn() }
+    const capabilities = { magicNotesEnabled: false, onOpenImageModelSettings: vi.fn() }
+    const { unmount } = render(<ApplicationCenter {...props()} platform={{ ...platform, initialChannel: 'feishu' }} capabilities={capabilities} />)
+    fireEvent.click(screen.getByRole('button', { name: '返回应用中心' }))
+    expect(screen.getByRole('tab', { name: '连接器' })).toHaveAttribute('aria-selected', 'true')
+    unmount()
+    render(<ApplicationCenter {...props()} platform={platform} capabilities={capabilities} initialTab="mcp" />)
+    expect(screen.getByRole('tab', { name: 'MCP' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('keeps disabled page drafts mounted without a generic settings shortcut', () => {

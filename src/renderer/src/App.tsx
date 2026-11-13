@@ -7592,6 +7592,14 @@ function App(): React.JSX.Element {
                 }}
                 onUpdate={updateApplicationSettings}
                 onRetry={() => void reloadApplicationSettings()}
+                capabilities={{
+                  magicNotesEnabled,
+                  onOpenImageModelSettings: () => {
+                    setApplicationCenterOpen(false);
+                    setApplicationCenterChannel(undefined);
+                    openImageModelSettings();
+                  },
+                }}
                 platform={{
                   projects,
                   initialChannel: applicationCenterChannel,
@@ -7673,7 +7681,6 @@ function App(): React.JSX.Element {
                       }
                       brandingPreferences={brandingPreferences}
                       initialCategory={settingsInitialCategory}
-                      magicNotesEnabled={magicNotesEnabled}
                       onConversationHtmlRenderingEnabledChange={
                         setConversationHtmlRenderingEnabled
                       }

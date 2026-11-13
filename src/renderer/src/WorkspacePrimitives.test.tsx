@@ -152,13 +152,43 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
-  it('keeps Capabilities and tools tabs visible in scrollable Settings', () => {
-    const capabilitiesTabs = stylesheet.match(
-      /\.capabilities-settings__tabs\s*\{(?<rules>[^}]*)\}/u
+  it('keeps Application Center category tabs visible in its scrollable body', () => {
+    const applicationCenterStylesheet = readFileSync(
+      join(process.cwd(), 'src', 'renderer', 'src', 'application-center.css'),
+      'utf8'
+    )
+    const tabs = applicationCenterStylesheet.match(
+      /\.application-center__tabs\s*\{(?<rules>[^}]*)\}/u
     )?.groups?.rules
 
-    expect(capabilitiesTabs).toBeDefined()
-    expect(capabilitiesTabs).toMatch(/flex:\s*0 0 auto;/u)
+    expect(tabs).toBeDefined()
+    expect(tabs).toMatch(/flex:\s*0 0 auto;/u)
+    expect(tabs).toMatch(/border-bottom:\s*1px solid var\(--border-subtle\);/u)
+    // application-center.css loads before styles.css, so the three-row grid must
+    // out-rank `.settings-panel { grid-template-rows }` or the tab row collapses.
+    expect(applicationCenterStylesheet).toMatch(
+      /\.settings-panel\.application-center--tabbed\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\);/u
+    )
+  })
+
+  it('draws underline tabs as text with an accent bar on the active tab', () => {
+    render(
+      <PageTabs
+        ariaLabel="Categories"
+        idPrefix="underline"
+        onChange={vi.fn()}
+        tabs={[{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }]}
+        value="a"
+        variant="underline"
+      />
+    )
+    expect(screen.getByRole('tablist', { name: 'Categories' })).toHaveClass('page-tabs--underline')
+    expect(stylesheet).toMatch(
+      /\.page-tabs--underline \.page-tabs__tab--active::after\s*\{[^}]*background:\s*var\(--accent\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.page-tabs--underline \.page-tabs__tab\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;/u
+    )
   })
 
   it('keeps dialog scrollbars outside close-button hitboxes', () => {

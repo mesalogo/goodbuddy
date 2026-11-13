@@ -5,8 +5,8 @@ stdio MCP 提供明确、可诊断的 Node.js 与 Python 环境，同时允许�
 解释器。
 
 本功能不作用于 SSH Host 上的 GoodBuddy Agent、固定 Node、签名 Runtime、SKILL 或 MCP。
-用户从设置中心的“能力与工具”进入，并在 `Skills`、`MCP`、`工具执行环境` 三个水平
-Tab 之间切换。
+用户从设置中心的“工具执行环境”分类进入。Skills 和 MCP 在应用中心的同名 Tab 中管理，
+见[应用中心](../application-tool-navigation/README.md)。
 
 [Obsidian 接入](../obsidian/README.md)复用本功能的 `LaunchEnvironmentProvider` 启动
 随包交付的 MCPVault，不新增 Node 安装或下载源设置。生产组件自动化已覆盖真实 MCPVault
@@ -32,7 +32,6 @@ remaining managed fallback and validation are tracked in
 
 | 术语 | 定义 |
 | --- | --- |
-| 能力与工具 | 设置中心中统一承载 Skills、MCP 和工具执行环境的一级分类 |
 | 工具执行环境 | GoodBuddy 在桌面所在设备上向本机 Runtime 和 stdio MCP 提供的工具命令环境 |
 | GoodBuddy 托管 | 由 GoodBuddy 提供、验证并解析的 Node.js 或 Python |
 | 自定义环境 | 用户从检测结果中选择或直接指定的外部解释器 |

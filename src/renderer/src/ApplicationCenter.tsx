@@ -38,9 +38,10 @@ import {
   type ProjectChannel,
   type ProjectCreateInput,
 } from '../../shared/assistant-contracts'
+import { connectorBuiltinMcpServerIds } from '../../shared/builtin-mcp-servers'
 import type { AppNotificationInput } from './notifications'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
-import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
+import { PageHeader, PageTabs, SegmentedControl } from './WorkspacePrimitives'
 import { ChannelIcon } from './ChannelIcon'
 import './application-center.css'
 
@@ -54,6 +55,15 @@ const PlatformApplicationRows = lazy(() =>
 const ChannelApplicationSettings = lazy(() =>
   import('./ChannelApplicationSettings').then((module) => ({ default: module.ChannelApplicationSettings })),
 )
+// Skills and MCP each load their own capability snapshot; mount them only once visited.
+const SkillsSettingsSection = lazy(() =>
+  import('./SkillsSettingsSection').then((module) => ({ default: module.SkillsSettingsSection })),
+)
+const McpSettingsSection = lazy(() =>
+  import('./McpSettingsSection').then((module) => ({ default: module.McpSettingsSection })),
+)
+
+export type ApplicationCenterTab = 'builtin' | 'connectors' | 'skills' | 'mcp'
 
 export type PlatformApplicationsProps = {
   projects: AssistantProject[]
@@ -324,6 +334,8 @@ export function ApplicationCenter({
   onUpdate,
   onRetry,
   platform,
+  capabilities,
+  initialTab,
 }: {
   settings?: ApplicationSettings
   pending: boolean
@@ -334,12 +346,32 @@ export function ApplicationCenter({
   onUpdate: (patch: ApplicationSettingsUpdate) => Promise<boolean>
   onRetry: () => void
   platform?: PlatformApplicationsProps
+  /** Enables the Skills and MCP tabs, which used to live in system settings. */
+  capabilities?: { magicNotesEnabled: boolean; onOpenImageModelSettings: () => void }
+  initialTab?: ApplicationCenterTab
 }): React.JSX.Element {
   const { t } = useTranslation(['app', 'integrations'])
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<EditableApplicationId | ProjectChannel | undefined>(
     platform?.initialChannel,
   )
+  const availableTabs = useMemo<ApplicationCenterTab[]>(() => [
+    'builtin',
+    ...(platform || capabilities ? ['connectors' as const] : []),
+    ...(capabilities ? ['skills' as const, 'mcp' as const] : []),
+  ], [platform, capabilities])
+  const [activeTab, setActiveTab] = useState<ApplicationCenterTab>(() =>
+    platform?.initialChannel ? 'connectors' : initialTab ?? 'builtin')
+  const currentTab = availableTabs.includes(activeTab) ? activeTab : 'builtin'
+  // Keep a visited capability tab mounted so switching tabs keeps its drafts and snapshot.
+  const [visitedTabs, setVisitedTabs] = useState<ReadonlySet<ApplicationCenterTab>>(
+    () => new Set([currentTab]),
+  )
+  const selectTab = (tab: ApplicationCenterTab): void => {
+    setActiveTab(tab)
+    setVisitedTabs((current) => current.has(tab) ? current : new Set([...current, tab]))
+  }
+  const searchable = currentTab === 'builtin' || currentTab === 'connectors'
   const selectedChannel = selected && (projectChannels as readonly string[]).includes(selected)
     ? selected as ProjectChannel
     : undefined
@@ -382,6 +414,11 @@ export function ApplicationCenter({
         : [],
     [platform, query, t],
   )
+  // Local app connectors (Obsidian) are built-in MCP servers configured in place.
+  const localConnectorVisible = capabilities !== undefined &&
+    `Obsidian ${t('applications.descriptions.obsidian')}`
+      .toLocaleLowerCase()
+      .includes(query.trim().toLocaleLowerCase())
   const channelProjectIds = useMemo(
     () => new Set(platform?.projects.flatMap((project) =>
       project.kind === 'channel' && project.channel ? [project.channel] : []) ?? []),
@@ -415,7 +452,7 @@ export function ApplicationCenter({
   return createPortal(
     <div className="settings-backdrop" role="presentation">
       <section
-        className={`settings-panel application-center${selected ? ' application-center--detail' : ''}`}
+        className={`settings-panel application-center${selected ? ' application-center--detail' : ''}${!selected && availableTabs.length > 1 ? ' application-center--tabbed' : ''}${!selected && !searchable ? ' application-center--capabilities' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={selected ? 'application-settings-title' : 'application-center-title'}
@@ -460,6 +497,18 @@ export function ApplicationCenter({
             }
           />
         </div>
+        {!selected && availableTabs.length > 1 && (
+          <div className="application-center__tabs">
+            <PageTabs
+              ariaLabel={t('applications.tabs.ariaLabel')}
+              idPrefix="application-center"
+              onChange={selectTab}
+              tabs={availableTabs.map((tab) => ({ id: tab, label: t(`applications.tabs.${tab}`) }))}
+              value={currentTab}
+              variant="underline"
+            />
+          </div>
+        )}
         {selected ? (
           <div className="settings-panel__body application-center__detail" aria-busy={pending}>
             <nav
@@ -566,22 +615,27 @@ export function ApplicationCenter({
               </button>
             </div>
           )}
-          {!settings ? (
+          {searchable && !settings ? (
             <p role="status">{t('route.loading')}</p>
-          ) : (
-            <>
+          ) : searchable ? (
+            <div
+              aria-labelledby={availableTabs.length > 1 ? `application-center-tab-${currentTab}` : undefined}
+              className="application-center__panel"
+              id={`application-center-panel-${currentTab}`}
+              role={availableTabs.length > 1 ? 'tabpanel' : undefined}
+            >
               <label className="application-center__search">
                 <Search size={16} aria-hidden="true" />
                 <input
                   ref={search}
                   type="search"
                   value={query}
-                  placeholder={t('applications.search')}
-                  aria-label={t('applications.search')}
+                  placeholder={t(currentTab === 'connectors' ? 'applications.searchConnectors' : 'applications.search')}
+                  aria-label={t(currentTab === 'connectors' ? 'applications.searchConnectors' : 'applications.search')}
                   onChange={(event) => setQuery(event.target.value)}
                 />
               </label>
-              {results.length === 0 && platformResults.length === 0 && (
+              {(currentTab === 'builtin' ? results.length === 0 : platformResults.length === 0 && !localConnectorVisible) && (
                 <div>
                   <p>{t('applications.noResults')}</p>
                   <button
@@ -593,9 +647,10 @@ export function ApplicationCenter({
                   </button>
                 </div>
               )}
-              {results.length > 0 && (
+              {currentTab === 'builtin' && results.length > 0 && (
               <section className="application-center__group" aria-labelledby="application-center-builtin-heading">
-              <h2 id="application-center-builtin-heading">{t('applications.builtinGroup')}</h2>
+              {/* The tab already names this group; keep the heading for the region only. */}
+              <h2 id="application-center-builtin-heading" className={availableTabs.length > 1 ? 'sr-only' : undefined}>{t('applications.builtinGroup')}</h2>
               <div className="application-center__cards">{results.map((id) => {
                 const definition = applicationDefinitions[id]
                 const Icon = definition.icon
@@ -662,7 +717,22 @@ export function ApplicationCenter({
               })}</div>
               </section>
               )}
-              {platform && platformResults.length > 0 && (
+              {currentTab === 'connectors' && capabilities && localConnectorVisible && (
+                <section
+                  className="application-center__group"
+                  aria-labelledby="application-center-local-heading"
+                >
+                  <h2 id="application-center-local-heading">{t('applications.localConnectorGroup')}</h2>
+                  <Suspense fallback={<p role="status">{t('route.loading')}</p>}>
+                    <McpSettingsSection
+                      connectorServerIds={connectorBuiltinMcpServerIds}
+                      magicNotesEnabled={capabilities.magicNotesEnabled}
+                      onOpenImageModelSettings={capabilities.onOpenImageModelSettings}
+                    />
+                  </Suspense>
+                </section>
+              )}
+              {currentTab === 'connectors' && platform && platformResults.length > 0 && (
                 <section
                   className="application-center__group"
                   aria-labelledby="application-center-platform-heading"
@@ -680,8 +750,32 @@ export function ApplicationCenter({
                   </div>
                 </section>
               )}
-            </>
-          )}
+            </div>
+          ) : null}
+          {capabilities && (['skills', 'mcp'] as const).map((tab) => visitedTabs.has(tab) && (
+            <section
+              aria-labelledby={`application-center-tab-${tab}`}
+              className="application-center__panel application-center__capability-panel"
+              hidden={currentTab !== tab}
+              id={`application-center-panel-${tab}`}
+              key={tab}
+              role="tabpanel"
+            >
+              <p className="application-center__panel-description">
+                {t(`applications.tabDescriptions.${tab}`)}
+              </p>
+              <Suspense fallback={<p role="status">{t('route.loading')}</p>}>
+                {tab === 'skills' ? (
+                  <SkillsSettingsSection />
+                ) : (
+                  <McpSettingsSection
+                    magicNotesEnabled={capabilities.magicNotesEnabled}
+                    onOpenImageModelSettings={capabilities.onOpenImageModelSettings}
+                  />
+                )}
+              </Suspense>
+            </section>
+          ))}
         </div>
         )}
       </section>

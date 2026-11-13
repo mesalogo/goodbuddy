@@ -466,6 +466,18 @@ textarea.field-control {
 
 .segmented-control__option--active, .page-tabs--segmented .page-tabs__tab--active { background: var(--surface-raised); color: var(--accent); box-shadow: var(--shadow-card); }
 
+.page-tabs--underline { gap: var(--space-5, 20px); }
+
+.page-tabs--underline .page-tabs__tab { position: relative; min-height: 40px; padding: 0 2px; border: 0; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: var(--font-body); font-weight: 500; }
+
+.page-tabs--underline .page-tabs__tab:hover:where(:not(.page-tabs__tab--active)) { background: transparent; color: var(--text-primary); }
+
+.page-tabs--underline .page-tabs__tab--active { background: transparent; color: var(--text-primary); font-weight: 600; }
+
+.page-tabs--underline .page-tabs__tab--active::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--accent); content: ''; }
+
+.page-tabs--underline .page-tabs__tab:focus-visible { outline-offset: -2px; }
+
 .icon-button:disabled, .segmented-control__option:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .empty-state { display: grid; place-content: center; justify-items: center; padding: var(--space-6); color: var(--text-muted); gap: var(--space-2); text-align: center; }

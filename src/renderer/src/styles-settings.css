@@ -3330,27 +3330,6 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.capabilities-settings__tabs {
-  max-width: 100%;
-  overflow-x: auto;
-  flex: 0 0 auto;
-}
-
-.capabilities-settings__tabs > .page-tabs {
-  min-width: max-content;
-}
-
-.capabilities-settings__panel {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.capabilities-settings__panel[hidden] {
-  display: none;
-}
-
 .tool-environment {
   display: grid;
   min-width: 0;
@@ -3661,6 +3640,11 @@
 .mcp-settings__panel {
   min-width: 0;
   gap: var(--space-4);
+}
+
+/* Connector cards sit directly in the Application Center group, without a section frame. */
+.mcp-settings__panel--connector {
+  display: grid;
 }
 
 .mcp-server-list {

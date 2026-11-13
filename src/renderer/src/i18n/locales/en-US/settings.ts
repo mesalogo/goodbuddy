@@ -83,23 +83,11 @@ export const settings = {
       navigationDescription: 'Roles, descriptions, and system prompts',
       description: 'Roles, descriptions, and system prompts'
     },
-    capabilities: {
-      label: 'Capabilities and tools',
-      navigationDescription: 'Skills and MCP',
-      description: 'Manage Skills and MCP'
-    },
     about: {
       label: 'About and updates',
       navigationDescription: 'Version checks and downloads',
       description:
         'Checks the selected official update source and never installs automatically'
-    }
-  },
-  capabilities: {
-    tabs: {
-      ariaLabel: 'Capabilities and tools settings',
-      skills: 'Skills',
-      mcp: 'MCP'
     }
   },
   actions: {

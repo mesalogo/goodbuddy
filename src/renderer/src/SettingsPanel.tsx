@@ -47,7 +47,6 @@ import {
   modelRequestHeadersSchema
 } from '../../shared/contracts'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
-import { CapabilitiesAndToolsSettingsSection } from './CapabilitiesAndToolsSettingsSection'
 import { ToolEnvironmentSettingsSection } from './ToolEnvironmentSettingsSection'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
 import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSection'
@@ -242,7 +241,6 @@ type SettingsPanelProps = {
   onBrandingPreferencesChange?: (
     preferences: BrandingPreferences
   ) => boolean
-  magicNotesEnabled?: boolean
   onConversationHtmlRenderingEnabledChange?: (
     enabled: boolean
   ) => void
@@ -653,7 +651,6 @@ function SettingsPanelView({
   brandingPreferences = defaultBrandingPreferences,
   brandingFallbackLogo,
   onBrandingPreferencesChange = () => false,
-  magicNotesEnabled = false,
   onConversationHtmlRenderingEnabledChange = () => {},
   onShortcutSettingsChanged = () => {},
   onLeaveRequestReady = () => {}
@@ -897,7 +894,6 @@ function SettingsPanelView({
   const categoryRendersOwnHeader =
     activeTab === 'platform-features' ||
     activeTab === 'document-parsing' ||
-    activeTab === 'capabilities' ||
     activeTab === 'tool-environment' ||
     activeTab === 'about'
 
@@ -4316,22 +4312,6 @@ function SettingsPanelView({
           )}
           {activeTab === 'tool-environment' && (
             <ToolEnvironmentSettingsSection onNotify={onNotify} />
-          )}
-          {activeTab === 'capabilities' && (
-            <CapabilitiesAndToolsSettingsSection
-              onOpenImageModelSettings={() => {
-                if (requestTabChange('model')) {
-                  setModelType('llm')
-                  const imageProfile = modelProfiles.find(
-                    (profile) => profile.protocol === 'openai-images-generations'
-                  )
-                  if (imageProfile) {
-                    setSelectedModelProfileId(imageProfile.id)
-                  }
-                }
-              }}
-              magicNotesEnabled={magicNotesEnabled}
-            />
           )}
           {activeTab === 'about' && (
             <UpdateSettingsSection onNotify={onNotify} />

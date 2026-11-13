@@ -197,7 +197,8 @@ export function PageTabs<T extends string>({
   onChange: (value: T) => void | boolean
   tabs: readonly PageTab<T>[]
   value: T
-  variant?: 'default' | 'segmented'
+  /** `underline`: top-level categories of a dialog, drawn as a text row over a divider. */
+  variant?: 'default' | 'segmented' | 'underline'
 }): React.JSX.Element {
   return (
     <nav

@@ -41,7 +41,10 @@ import type {
 } from '../../shared/embedding-contracts'
 import type { SpeechModelSnapshot } from '../../shared/speech-model-contracts'
 import type { DocumentParsingSnapshot } from '../../shared/document-parsing-contracts'
-import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
+import {
+  builtinMcpServers,
+  connectorBuiltinMcpServerIds
+} from '../../shared/builtin-mcp-servers'
 import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
 import {
   SettingsPanel,
@@ -51,6 +54,7 @@ import {
   RuntimeCustomizationSection,
   type RuntimeCustomizationSectionHandle
 } from './RuntimeCustomizationSection'
+import { ApplicationCenter } from './ApplicationCenter'
 import { changeUiLocale } from './i18n'
 import { UiLocaleProvider } from './i18n/UiLocaleProvider'
 import type { BrandingPreferences } from './branding'
@@ -64,17 +68,43 @@ function harnessModelSourceRadios(): HTMLElement[] {
     .filter((radio) => radio.getAttribute('name') !== 'runtime-default-provider')
 }
 
-function openCapabilitySettingsTab(
-  tab: 'Skills' | 'MCP' | '工具执行环境'
-): void {
-  fireEvent.click(
-    screen.getByRole('tab', { name: '能力与工具' })
+// Connector servers (Obsidian) are listed under Connectors, not the MCP tab.
+const mcpTabBuiltinServers = builtinMcpServers.filter(
+  (server) => !connectorBuiltinMcpServerIds.includes(server.id)
+)
+
+// Skills and MCP moved from Settings to the Application Center; these tests keep
+// covering them with the same capability API mocks.
+function capabilityCenter({
+  magicNotesEnabled = false,
+  onOpenImageModelSettings = vi.fn()
+}: {
+  magicNotesEnabled?: boolean
+  onOpenImageModelSettings?: () => void
+} = {}): React.JSX.Element {
+  return (
+    <ApplicationCenter
+      capabilities={{ magicNotesEnabled, onOpenImageModelSettings }}
+      onClose={vi.fn()}
+      onOpen={vi.fn()}
+      onRetry={vi.fn()}
+      onUpdate={vi.fn(async () => true)}
+      pending={false}
+    />
   )
+}
+
+function openCapabilityTab(tab: 'Skills' | 'MCP'): void {
   fireEvent.click(
     within(
-      screen.getByRole('tablist', { name: '能力与工具设置' })
+      screen.getByRole('tablist', { name: '应用中心分类' })
     ).getByRole('tab', { name: tab })
   )
+}
+
+function openCapabilitySettingsTab(tab: 'Skills' | 'MCP'): void {
+  render(capabilityCenter())
+  openCapabilityTab(tab)
 }
 
 class DecodableBrandImage {
@@ -2013,19 +2043,11 @@ describe('SettingsPanel runtime files', () => {
   })
 
   it('refreshes built-in Notes MCP after enabling Magic Notes', async () => {
-    const panel = (magicNotesEnabled: boolean): React.JSX.Element => (
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        magicNotesEnabled={magicNotesEnabled}
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
+    const panel = (magicNotesEnabled: boolean): React.JSX.Element =>
+      capabilityCenter({ magicNotesEnabled })
     const { rerender } = render(panel(false))
 
-    openCapabilitySettingsTab('MCP')
+    openCapabilityTab('MCP')
     const noteServerToggle = await screen.findByRole('button', {
       name: '展开服务器 笔记'
     })
@@ -2100,7 +2122,7 @@ describe('SettingsPanel runtime files', () => {
       'settings-tab-model', 'settings-tab-context-control', 'settings-tab-runtime',
       'settings-tab-tool-environment',
       'settings-tab-document-parsing', 'settings-tab-roles',
-      'settings-tab-capabilities', 'settings-tab-about'
+      'settings-tab-about'
     ])
   })
 
@@ -4222,17 +4244,9 @@ describe('SettingsPanel runtime files', () => {
       .getByRole('heading', { level: 2, name: '平台功能' })
       .closest('.settings-category-header')
     expect(platformHeader).toHaveClass('settings-category-header--sticky')
-
-    fireEvent.click(screen.getByRole('tab', { name: '能力与工具' }))
-    const capabilitiesHeader = screen
-      .getByRole('heading', { level: 2, name: '能力与工具' })
-      .closest('.settings-category-header')
-    expect(capabilitiesHeader).toHaveClass(
-      'settings-category-header--sticky'
-    )
     expect(
-      capabilitiesHeader?.querySelector('.capabilities-settings__tabs')
-    ).toBeInTheDocument()
+      screen.queryByRole('tab', { name: '能力与工具' })
+    ).not.toBeInTheDocument()
   })
 
   it('copies a model connection and schedules its saved API key for copying', async () => {
@@ -5461,10 +5475,11 @@ describe('SettingsPanel runtime files', () => {
       }
     }
     getCapabilitySnapshot.mockResolvedValueOnce(snapshot).mockResolvedValueOnce(snapshot)
-    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
-    fireEvent.click(screen.getByRole('tab', { name: '能力与工具' }))
+    const onOpenImageModelSettings = vi.fn()
+    render(capabilityCenter({ onOpenImageModelSettings }))
+    openCapabilityTab('Skills')
     await screen.findByText('文档写作')
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    openCapabilityTab('MCP')
     const card = screen.getByRole('article', { name: '图片生成与编辑' })
     await waitFor(() => {
       const checkboxes = within(card).getAllByRole('checkbox')
@@ -5491,8 +5506,7 @@ describe('SettingsPanel runtime files', () => {
     navigation.focus()
     expect(navigation).toHaveFocus()
     fireEvent.click(navigation)
-    expect(screen.getByRole('tab', { name: '模型连接' })).toHaveAttribute('aria-selected', 'true')
-    expect(await screen.findByRole('button', { name: '添加自定义' })).toBeEnabled()
+    expect(onOpenImageModelSettings).toHaveBeenCalledOnce()
   })
 
   it('traps modal focus and protects dirty drafts on Escape', async () => {
@@ -5563,7 +5577,7 @@ describe('SettingsPanel runtime files', () => {
     })))
   })
 
-  it('groups Skills and MCP under Capabilities and tools', async () => {
+  it('keeps Skills and MCP out of Settings', () => {
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -5577,24 +5591,32 @@ describe('SettingsPanel runtime files', () => {
     const categoryTabs = screen.getByRole('tablist', {
       name: '设置分类'
     })
-    expect(
-      within(categoryTabs).queryByRole('tab', { name: 'Skills' })
-    ).not.toBeInTheDocument()
-    expect(
-      within(categoryTabs).queryByRole('tab', { name: 'MCP' })
-    ).not.toBeInTheDocument()
+    for (const name of ['Skills', 'MCP', '能力与工具']) {
+      expect(
+        within(categoryTabs).queryByRole('tab', { name })
+      ).not.toBeInTheDocument()
+    }
+    expect(getCapabilitySnapshot).not.toHaveBeenCalled()
+  })
 
-    fireEvent.click(
-      within(categoryTabs).getByRole('tab', { name: '能力与工具' })
-    )
+  it('groups Skills and MCP as Application Center tabs', async () => {
+    render(capabilityCenter())
+
     const capabilityTabs = screen.getByRole('tablist', {
-      name: '能力与工具设置'
+      name: '应用中心分类'
     })
     expect(
       within(capabilityTabs)
         .getAllByRole('tab')
         .map((tab) => tab.textContent)
-    ).toEqual(['Skills', 'MCP'])
+    ).toEqual(['内置应用', '连接器', 'Skills', 'MCP'])
+    expect(
+      within(capabilityTabs).getByRole('tab', { name: '内置应用' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(getCapabilitySnapshot).not.toHaveBeenCalled()
+    fireEvent.click(
+      within(capabilityTabs).getByRole('tab', { name: 'Skills' })
+    )
     expect(
       within(capabilityTabs).getByRole('tab', { name: 'Skills' })
     ).toHaveAttribute('aria-selected', 'true')
@@ -5876,9 +5898,12 @@ describe('SettingsPanel runtime files', () => {
       screen.getAllByRole('button', {
         name: /^(?:展开|收起)服务器 /u
       })
-    ).toHaveLength(builtinMcpServers.length + 1)
+    ).toHaveLength(mcpTabBuiltinServers.length + 1)
+    expect(
+      screen.queryByRole('button', { name: '展开服务器 Obsidian' })
+    ).not.toBeInTheDocument()
     const serverNames = [
-      ...builtinMcpServers.map(server => server.name),
+      ...mcpTabBuiltinServers.map(server => server.name),
       '图片生成与编辑'
     ]
     for (const serverName of serverNames) {
@@ -5979,15 +6004,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(
-      screen.getByRole('tab', { name: '能力与工具' })
-    )
     expect(getLocalToolEnvironmentSnapshot).not.toHaveBeenCalled()
-    expect(
-      within(
-        screen.getByRole('tablist', { name: '能力与工具设置' })
-      ).queryByRole('tab', { name: '工具执行环境' })
-    ).not.toBeInTheDocument()
 
     fireEvent.click(
       screen.getByRole('tab', { name: '工具执行环境' })
@@ -6009,16 +6026,6 @@ describe('SettingsPanel runtime files', () => {
   })
 
   it('traps MCP editor focus and restores it after saving or backdrop dismissal', async () => {
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
-
     openCapabilitySettingsTab('MCP')
     fireEvent.click(screen.getByRole('tab', { name: '自定义 MCP' }))
     const addServer = await screen.findByRole('button', {
@@ -6100,7 +6107,6 @@ describe('SettingsPanel runtime files', () => {
 
   it('opens an existing MCP Server in the same modal and returns focus on Escape', async () => {
     getCapabilitySnapshot
-      .mockResolvedValueOnce(capabilitySnapshot)
       .mockResolvedValueOnce({
         ...capabilitySnapshot,
         mcpServers: [
@@ -6117,16 +6123,6 @@ describe('SettingsPanel runtime files', () => {
           }
         ]
       })
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
-
     openCapabilitySettingsTab('MCP')
     fireEvent.click(screen.getByRole('tab', { name: '自定义 MCP' }))
     const editButton = await screen.findByRole('button', {
@@ -6154,7 +6150,6 @@ describe('SettingsPanel runtime files', () => {
 
   it('shows custom MCP tools under their expandable server after testing', async () => {
     getCapabilitySnapshot
-      .mockResolvedValueOnce(capabilitySnapshot)
       .mockResolvedValueOnce({
         ...capabilitySnapshot,
         mcpServers: [
@@ -6210,16 +6205,6 @@ describe('SettingsPanel runtime files', () => {
         }
       ]
     })
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
-
     openCapabilitySettingsTab('MCP')
     fireEvent.click(screen.getByRole('tab', { name: '自定义 MCP' }))
     const serverToggle = await screen.findByRole('button', {

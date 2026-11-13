@@ -260,23 +260,17 @@ stdio MCP：
 
 ## 11. Renderer 状态与 IPC
 
-### 11.1 统一设置分类
+### 11.1 设置分类与能力入口
 
-- `settingsCategoryList` 用一个 `capabilities` 分类替换现有 `skills`、`mcp` 分类，不增加
-  `sdk` 分类。
-- 新增 `CapabilitiesAndToolsSettingsSection`，在统一分类标题下使用共享 `PageTabs` 渲染
-  第一阶段的 `skills | mcp`。
-- `SkillsSettingsSection` 和 `McpSettingsSection` 继续拥有各自业务状态；嵌入时不重复渲染
-  一级分类标题。MCP 原有内层 `PageTabs` 保持独立。
-- `ToolEnvironmentSettingsSection` 只承载工具下载源、Node.js、Python 和诊断。
-- 当前源码没有 Settings 外部 Skills/MCP 定向入口，第一阶段不增加未使用的
-  `initialCapabilityTab`。未来出现真实定向入口时再增加会话级初始 Tab 参数。
-- 普通进入 `capabilities` 时默认 `skills`。外层选中值只存在于当前 Renderer 会话，不写入
-  Shared 设置。
-- 为避免切换时丢失编辑状态，外层面板首次访问时挂载，之后在本次设置面板会话中保留并用
-  `hidden` 控制可见性；关闭设置面板后按现有生命周期释放。
-- 工具执行环境生产路径完成时，把 `tool-environment` 追加到同一个组件；完成前不注册
-  Tab、不渲染占位面板。
+2026-11-13 起：
+
+- `settingsCategoryList` 中的 `tool-environment` 分类渲染 `ToolEnvironmentSettingsSection`，
+  只承载工具下载源、Node.js、Python 和诊断。原 `capabilities` 分类及
+  `CapabilitiesAndToolsSettingsSection` 已删除。
+- `SkillsSettingsSection` 和 `McpSettingsSection` 由 `ApplicationCenter` 的 `skills`、`mcp`
+  Tab 懒加载渲染，继续拥有各自业务状态；MCP 原有内层 `PageTabs` 保持独立。接口与挂载
+  规则见[应用中心技术设计](../application-tool-navigation/technical-design.md)。
+- Tab 选中值只存在于当前 Renderer 会话，不写入 Shared 设置。
 - 页签直接包装层使用 `flex: 0 0 auto`，并由 CSS 回归测试保证在滚动设置布局中不可收缩。
 
 `McpSettingsSection` 的添加与编辑共用 body Portal，遮罩使用 `--z-dialog`。
@@ -328,7 +322,7 @@ Renderer 不能提交 PATH、环境变量、下载 URL、摘要、安装目录�
 ### 阶段 1：契约、迁移、探测和 UI
 
 - Shared schema、设置迁移、IPC。
-- 用“能力与工具”分类合并现有 Skills/MCP 入口，增加三个外层水平 Tab。
+- 用“能力与工具”分类合并现有 Skills/MCP 入口，增加三个外层水平 Tab（后续已拆分，见 11.1）。
 - 增加“工具执行环境”面板及原生/OSS 下载源设置。
 - Node/Python 候选探测和完整诊断。
 - 设置卡片和状态。

@@ -83,7 +83,7 @@
 
 ## UI 设计
 
-此章节独立承担功能 UI 设计职责，服从[统一界面设计系统](../../../UI-DESIGN.md)。入口为“能力与工具 → MCP → 内置 MCP”的 Obsidian 卡片，复用 `PageTabs`、卡片、表单、按钮、Switch 及 Runtime 分配 Checkbox。
+此章节独立承担功能 UI 设计职责，服从[统一界面设计系统](../../../UI-DESIGN.md)。入口为“应用中心 → 连接器 → 本机应用”的 Obsidian 卡片（2026-11-13 前在“设置 → 能力与工具 → MCP → 内置 MCP”），复用卡片、表单、按钮、Switch 及 Runtime 分配 Checkbox。Obsidian 仍是内置 MCP Server（`connectorBuiltinMcpServerIds`），只是管理位置在连接器，应用中心“MCP” Tab 不再列出它；卡片由 `McpSettingsSection` 的 `connectorServerIds` 模式渲染。
 
 卡片顺序为名称及状态、启用开关、能力说明、仓库范围、可选路径输入、已保存范围、选择/测试/保存操作、关联反馈、Runtime 分配和可展开工具列表。主按钮为“保存”，测试与选择文件夹为次按钮。范围选项为“所有本机仓库”和“指定文件夹”；指定模式才显示路径输入框。页面明确区分草稿与“已保存范围”。
 

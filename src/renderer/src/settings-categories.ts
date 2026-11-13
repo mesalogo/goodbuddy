@@ -8,8 +8,7 @@ import {
   Palette,
   SlidersHorizontal,
   Terminal,
-  Users,
-  Wrench
+  Users
 } from 'lucide-react'
 
 export const settingsCategoryList = [
@@ -64,12 +63,7 @@ export const settingsCategoryList = [
     translationKey: 'roles',
     icon: Users
   },
-  {
-    id: 'capabilities',
-    group: 'extensions',
-    translationKey: 'capabilities',
-    icon: Wrench
-  },
+
   {
     id: 'about',
     group: 'system',
@@ -82,7 +76,8 @@ export type SettingsCategoryDefinition =
   (typeof settingsCategoryList)[number]
 export type SettingsCategoryId = SettingsCategoryDefinition['id']
 
-// SSH hosts moved to the Hosts application and are no longer a settings category.
+// SSH hosts moved to the Hosts application, and Skills and MCP to the Application
+// Center; neither is a settings category any more.
 export function getSettingsCategoryList(): readonly SettingsCategoryDefinition[] {
   return settingsCategoryList
 }

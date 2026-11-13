@@ -73,22 +73,10 @@ export const settings = {
       navigationDescription: '角色、说明与系统提示词',
       description: '角色、说明与系统提示词'
     },
-    capabilities: {
-      label: '能力与工具',
-      navigationDescription: 'Skills 与 MCP',
-      description: '管理 Skills 和 MCP'
-    },
     about: {
       label: '关于与更新',
       navigationDescription: '版本检查与下载页',
       description: '检查所选官方更新源，不自动下载安装'
-    }
-  },
-  capabilities: {
-    tabs: {
-      ariaLabel: '能力与工具设置',
-      skills: 'Skills',
-      mcp: 'MCP'
     }
   },
   actions: {
